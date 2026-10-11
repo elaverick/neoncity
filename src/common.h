@@ -19,6 +19,7 @@
 #define LAMP_SPACING      27.0f
 #define LAMP_HEIGHT       7.5f
 #define SIDEWALK_HEIGHT   0.15f
+#define KERB_STONE_WIDTH  0.32f    /* the kerb-stone strip along each sidewalk edge */
 
 /* Render distance: long, but deliberately finite. Haze reaches 100% exactly at
  * VIEW_DISTANCE so chunks streaming in at the edge are never visible popping. */

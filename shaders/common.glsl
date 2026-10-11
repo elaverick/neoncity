@@ -5,6 +5,7 @@
 const float CHUNK_SIZE      = 110.0;
 const float LAMP_HEIGHT     = 7.5;
 const float SIDEWALK_HEIGHT = 0.15;
+const float KERB_STONE_WIDTH = 0.32;
 const uint  WORLD_SEED      = 0xC1B3A7u;
 
 const uint MAT_ROAD = 0u, MAT_SIDEWALK = 1u, MAT_CURB = 2u, MAT_LOT = 3u,

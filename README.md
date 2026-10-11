@@ -237,8 +237,11 @@ parallax. Three materials use textures so far, all CC0 from ambientCG:
 - **Roads:** `road_012a` ([Road012A](https://ambientcg.com/view?id=Road012A)), mapped in
   world space so carriageways and junction fill meet without seams.
 - **Kerb stones:** `ground_032` ([Ground032](https://ambientcg.com/view?id=Ground032)).
-  It covers both the top edge strip, in the paving's grain frame, and the vertical face,
-  whose u runs along `cross(up, n)` so the shader can rebuild its tangent from the normal.
+  It covers both the top edge strip and the vertical face. The strip is laid along the
+  kerb: its uv runs along the edge and inward in metres. The shader uses that to cut a
+  dirt-filled joint, about 1.5 cm wide, where the strip meets the paving, and to round the
+  stone's arris down into it. On the face, u runs along `cross(up, n)` so the shader can
+  rebuild its tangent from the normal.
 
 Everything else stays procedural.
 

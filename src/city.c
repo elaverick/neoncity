@@ -1409,7 +1409,7 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
         }
         for (int i = 0; i < n; ++i) {
             DVec2 n0 = nin[(i + n - 1) % n], n1 = nin[i];
-            DVec2 off = dscale(dadd(n0, n1), 0.32 / fmax(1.0 + ddot(n0, n1), 0.05));
+            DVec2 off = dscale(dadd(n0, n1), KERB_STONE_WIDTH / fmax(1.0 + ddot(n0, n1), 0.05));
             if (dlen(off) > 1.2) off = dscale(dnorm(off), 1.2);
             in[i] = dadd(c[i], off);
         }
@@ -1418,7 +1418,7 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
         float uv[48][2];
 #define PAVE_UV(k) do { double X = cl[k].x + wx, Z = cl[k].z + wz; \
         uv[k][0] = (float)(gc * X + gs * Z); uv[k][1] = (float)(-gs * X + gc * Z); } while (0)
-        /* The seed carries the grain angle (float bits): the tangent frame for normal-mapped paving and kerb stones. */
+        /* The seed carries the grain angle (float bits): the tangent frame for normal-mapped paving. */
         float grain = (float)atan2(gs, gc);
         uint32_t gbits;
         memcpy(&gbits, &grain, 4);
@@ -1431,8 +1431,20 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
             int j = (i + 1) % n;
             DVec2 strip[4] = { c[i], c[j], in[j], in[i] };
             k = clip_chunk(strip, 4, cl);
-            for (int t = 0; t < k; ++t) PAVE_UV(t);
-            if (k) emit_flat(m, cl, k, gy + 0.003f, (const float (*)[2])uv, mat(MAT_SIDEWALK, gbits, 1, 0, 0));
+            /* Kerb stones are laid along the edge: u runs along it and v inward from the
+             * outer edge (metres), so the shader knows where the joint with the paving
+             * falls (v = KERB_STONE_WIDTH). The inward normal is u turned 90 degrees,
+             * (-e.z, e.x), so the edge angle in the seed rebuilds the whole frame. */
+            DVec2 along = dv(nin[i].z, -nin[i].x);
+            float ea = (float)atan2(along.z, along.x);
+            uint32_t ebits;
+            memcpy(&ebits, &ea, 4);
+            for (int t = 0; t < k; ++t) {
+                DVec2 d = dsub(cl[t], c[i]);
+                uv[t][0] = (float)ddot(d, along);
+                uv[t][1] = (float)ddot(d, nin[i]);
+            }
+            if (k) emit_flat(m, cl, k, gy + 0.003f, (const float (*)[2])uv, mat(MAT_SIDEWALK, ebits, 1, 0, 0));
 
             DVec2 a = c[i], b = c[j];
             if (!clip_segment(&a, &b)) continue;

@@ -209,8 +209,9 @@ const float PAVING_ALBEDO = 0.5;   // mean 0.22 -> 0.11, near the procedural ker
 const vec2 KERB_TILE = vec2(2.0, 1.0);
 const float KERB_ALBEDO = 0.5;   // mean 0.25 -> 0.12, as the procedural kerb stones
 
-// Sidewalk tangent frame from the block grain angle the seed carries (src/city.c):
-// T = +u, B = -v (image up; normal maps are OpenGL convention).
+// Sidewalk tangent frame from the angle the seed carries (src/city.c): the block
+// grain for paving, the kerb edge for kerb stones. T = +u, B = -v (image up;
+// normal maps are OpenGL convention).
 void grainFrame(uint seed, out vec3 T, out vec3 B) {
     float a = uintBitsToFloat(seed);
     T = vec3(cos(a), 0.0, sin(a));
@@ -327,7 +328,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         n = s.n; ao = s.ao;
         rough = s.rough; specK = 0.04;   // dielectric F0
     } else if (mat == MAT_SIDEWALK && prm.y == 1u && pbrLoaded(PBR_KERB)) {
-        // authored kerb-stone edge, in the same grain frame as the paving
+        // authored kerb stones, laid along the edge (uv = along, inward)
         vec3 T, B;
         grainFrame(seed, T, B);
         Surface s = samplePBR(PBR_KERB, uv / KERB_TILE, T, B, n);
@@ -362,6 +363,27 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         shin = 8.0; specK = 0.03;
     } else {
         alb = vec3(0.045, 0.043, 0.04) * (0.6 + 0.8 * fbm(w.xz * 0.5, 0x7116u));
+    }
+
+    if (mat == MAT_SIDEWALK && prm.y == 1u) {
+        // The joint where the kerb stones meet the paving (v = KERB_STONE_WIDTH): a
+        // narrow gap packed with grit, dead leaves and a little moss, with the
+        // stone's worn arris rounding down into it.
+        float jd = KERB_STONE_WIDTH - uv.y;          // metres from the paving edge
+        float fw = fwidth(uv.y) + 1e-4;
+        float gap = 1.0 - smoothstep(0.015 - fw, 0.015 + fw, jd);
+        float arris = 1.0 - smoothstep(0.0, 0.035, jd - 0.015);
+        vec3 T, B;
+        grainFrame(seed, T, B);                      // -B points into the paving
+        float grit = fbm(vec2(uv.x * 30.0, jd * 60.0), 0x7119u);
+        vec3 dirt = mix(vec3(0.030, 0.025, 0.018), vec3(0.075, 0.060, 0.042), smoothstep(0.3, 0.75, grit));
+        dirt = mix(dirt, vec3(0.020, 0.032, 0.014), smoothstep(0.55, 0.8, fbm(vec2(uv.x * 3.0, 0.0), 0x711Au)));
+        // grime washed out of the joint onto the stone beside it, patchy along the kerb
+        float spill = (1.0 - smoothstep(0.0, 0.05, jd - 0.015)) * smoothstep(0.35, 0.7, fbm(vec2(uv.x * 2.0, 1.7), 0x711Bu));
+        n = normalize(n - B * 0.45 * arris * (1.0 - gap));
+        alb = mix(alb * (1.0 - 0.35 * spill), dirt, gap);
+        ao *= mix(1.0, 0.45, gap) * (1.0 - 0.25 * arris);
+        if (rough >= 0.0) rough = mix(rough, 0.92, gap);
     }
 
     vec3 diff = ambientLight(n, p.y) * ao;
