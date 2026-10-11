@@ -23,6 +23,8 @@ float gTime;
 vec3 gWorld;
 vec4 gRefl = vec4(0.0);   // -> outRefl
 
+const float SHEEN = 3.5;   // pane sheen strength over glass's physical reflectance (paneSheen)
+
 // Glass marks itself for screen-space reflections: w is the weight its sky
 // reflection (envReflection) carries in this pixel's final colour, which the
 // reflections pass swaps for the screen's reflection (ssr_apply.frag).
@@ -178,6 +180,52 @@ vec3 neonBounce(vec3 w, float h) {
     float k = vnoise(w.xz / 17.0 + 7.3, 0xB0B1u);
     vec3 c = mix(vec3(1.0, 0.1, 0.5), vec3(0.1, 0.8, 1.0), smoothstep(0.3, 0.7, m));
     return c * smoothstep(0.35, 0.8, k) * exp(-h / 14.0) * 0.06;
+}
+
+/* Pane sheen: a soft, blurred reflection that gives glass its presence where
+ * screen-space reflections can't reach (glass seen near head-on reflects the
+ * street behind the camera, which isn't on screen). A view-dependent gradient
+ * (the dark street below, a glowing band of the lit facades across the way,
+ * the sodium-lit overcast above) plus soft blooms where the real lamps and
+ * lit shopfronts nearby would reflect. Strongest head-on, it fades out as the
+ * reflected ray turns toward the screen and SSR takes over (ssr.comp), so the
+ * two never double up. Added on top of the pane: it shows on dark windows and
+ * is drowned out by lit rooms, as real night glass is. */
+vec3 paneSheen(vec3 p, vec3 n, vec3 V) {
+    vec3 R = reflect(-V, n);
+    float reach = 1.0 - smoothstep(-0.3, 0.1, dot(R, frame.camFwd.xyz));   // SSR's own cut-off, inverted
+    if (reach <= 0.0) return vec3(0.0);
+    float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
+
+    // the gradient: street, facades across, overcast (blurred: low frequencies only)
+    float az = atan(R.z, R.x);
+    float across = smoothstep(-0.35, -0.02, R.y) * (1.0 - smoothstep(0.05, 0.45, R.y));
+    float rhythm = 0.55 + 0.45 * vnoise(vec2(az * 9.0 + gWorld.x * 0.03, 0.0), 0x5EE1u);
+    vec3 c = mix(vec3(0.010, 0.010, 0.013), CLOUD_DECK * 0.8, smoothstep(0.0, 0.5, R.y))
+           + vec3(0.11, 0.085, 0.06) * across * rhythm
+           + neonBounce(gWorld, p.y) * 4.0 * across;
+
+    // soft blooms of the lamps and shopfronts nearby, where they'd reflect
+    int base = gC.info.z;
+    if (base >= 0 && p.y < 40.0) {
+        vec4 hdr = uintBitsToFloat(lightRec[base]);
+        ivec2 t = clamp(ivec2(floor((p.xz - hdr.xy) * hdr.zw)), ivec2(0), ivec2(3));
+        int ti = t.y * 4 + t.x;
+        uint tile = lightRec[base + 1 + (ti >> 2)][ti & 3];
+        int first = base + int(tile >> 16), count = int(tile & 0xFFFFu);
+        for (int i = 0; i < count; ++i) {
+            uvec4 r = lightRec[first + i];
+            vec3 l = uintBitsToFloat(r.xyz) - p;
+            float d = length(l);
+            if (dot(l, n) <= 0.0) continue;   // behind the pane
+            uint type = r.w & 3u;
+            vec3 lc = type < 2u ? lampColor(int(type)) : type == 2u ? shopColor(r.w) : vec3(0.70, 0.78, 0.95);
+            float k = max(dot(R, l / d), 0.0);
+            float bloom = pow(k, 40.0) * 3.0 + pow(k, 6.0) * 0.25;   // a soft core in a wide halo
+            c += lc * bloom * (type < 2u ? 1.0 : 0.5) * 30.0 / (d * d + 30.0);
+        }
+    }
+    return c * F * reach * SHEEN;
 }
 
 
@@ -943,6 +991,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         vec3 inner = interiorColor(vec2(fract(u / 8.0), clamp(yy / groundH, 0.0, 1.0)), d, 8.0, groundH, 9.0, r);
         float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
         vec3 glass = inner * (1.0 - F) + envReflection(reflect(-V, n)) * F;
+        glass += paneSheen(p, n, V);
         float lodL = smoothstep(0.08, 0.4, dU / 8.0);
         glass = mix(glass, r.light * r.bright * 0.5, lodL);
         glassRefl(n, F * (1.0 - lodL) * clamp(inWin, 0.0, 1.0));
@@ -983,7 +1032,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
                 inner = interiorColor(vec2(fs, clamp(yy / groundH, 0.0, 1.0)), d, 6.0, groundH, 5.0, r);
             }
             float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
-            vec3 glass = inner * (1.0 - F) + envReflection(reflect(-V, n)) * F;
+            vec3 glass = inner * (1.0 - F) + envReflection(reflect(-V, n)) * F + paneSheen(p, n, V);
             // mullions
             float mull = band(fract(fs * 3.0), 0.0, 0.02, aa * 3.0) + band(fract(fs * 3.0), 0.98, 1.0, aa * 3.0);
             glass = mix(glass, vec3(0.01), clamp(mull, 0.0, 1.0));
@@ -1065,7 +1114,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     if (glassWall) {
         float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
         wallW = 0.08 + F * 0.9;
-        wallLit += envReflection(reflect(-V, n)) * wallW;
+        wallLit += envReflection(reflect(-V, n)) * wallW + paneSheen(p, n, V);
     }
     // shop signs and light below throw colour up the lower facade
     if (atGround && relV < 4.0) {
@@ -1080,7 +1129,10 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 refl = envReflection(R);
     vec3 roomAvg = room.lit ? room.light * room.bright * 0.42 : vec3(0.003, 0.0035, 0.005);
     if (room.blinds > 0.0 && room.lit) roomAvg *= 1.0 - 0.4 * room.blinds;
-    vec3 winMid = roomAvg * glassT * (1.0 - F) + refl * F;
+    // no two panes sit quite flat in their frames: each catches a slightly different reflection
+    vec3 paneN = normalize(n + T * (hf(roomHash, 50u) - 0.5) * 0.08 + vec3(0.0, (hf(roomHash, 51u) - 0.5) * 0.08, 0.0));
+    vec3 sheen = paneSheen(p, paneN, V);
+    vec3 winMid = roomAvg * glassT * (1.0 - F) + refl * F + sheen;
 
     vec3 winNear = winMid;
     float nearW = F;     // ...and in the near window, after its frame
@@ -1106,7 +1158,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             vec3 bc = room.lit ? room.light * room.bright * 0.28 * (0.55 + 0.45 * slat) : vec3(0.02) * slat;
             inner = mix(inner, bc, 0.9);
         }
-        winNear = inner * glassT * (1.0 - F) + refl * F;
+        winNear = inner * glassT * (1.0 - F) + refl * F + sheen;
         // window frame & mullions
         float fw = 0.05;
         float frameU = fw / (W * winW), frameV = fw / (H * winH);
@@ -1345,7 +1397,7 @@ vec3 shadeDoor(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         if (wM > 1.6) frame = max(frame, 1.0 - smoothstep(0.03, 0.03 + aa, abs(m.x - wM * 0.5)));   // double doors
         float bar = band(m.y, 1.0, 1.08, aa) * step(0.15, edge);
         float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
-        vec3 glass = inside * (1.0 - F) + envReflection(reflect(-V, n)) * F;
+        vec3 glass = inside * (1.0 - F) + envReflection(reflect(-V, n)) * F + paneSheen(p, n, V);
         glassRefl(n, F * (1.0 - clamp(frame + bar, 0.0, 1.0)));
         return mix(glass, vec3(0.03) * diff + spec, clamp(frame + bar, 0.0, 1.0));
     }

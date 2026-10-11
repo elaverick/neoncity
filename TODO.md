@@ -41,8 +41,9 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 **Next:**
 - **SSR limits.** Reflections of anything off-screen fall back to the sky, so they vanish
-  at the screen edges as you turn. Glass reflects too, but only what's on screen, so head-on
-  glass shows little, since the street behind the camera isn't there to reflect.
+  at the screen edges as you turn. Glass reflects too, but only what's on screen. Head-on
+  glass falls back to a blurred pane sheen (`paneSheen`) rather than a true reflection.
+- **Rain on glass** (optional): rivulets and beads running down windows and shopfronts.
   A temporal pass would let the trace run at half resolution and stay smooth in motion.
 **Done:** rain.
 - **Weather** (`weather_update` in `src/main.c`): rain intensity drifts between drizzle and

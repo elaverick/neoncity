@@ -263,6 +263,13 @@ surfaces are lit with GGX:
   the sky reflection that reaches the final pixel, after frames, mullions and the
   distance blends, so the swap leaves no double image. Glass therefore mirrors the
   street, lamps, neon and neighbouring towers at grazing angles.
+- **Pane sheen** (`paneSheen`): where SSR can't reach (glass seen near head-on reflects
+  the street behind the camera, which is off screen), glass gets a soft blurred
+  reflection. It combines a view-dependent gradient (dark street, a glowing band of
+  facades across the way, the lit overcast) with soft blooms where the real lamps and
+  lit shopfronts nearby would reflect. Each window pane is tilted very slightly, so
+  neighbouring panes catch different reflections. The sheen fades out exactly where SSR
+  takes over. It shows on dark windows and is drowned out by lit rooms.
 - **Procedural materials:** keep their normalised Blinn-Phong lobes. The height
 channel is packed but unused for now: it is reserved for puddles in the joints and for
 parallax. Three materials use textures so far, all CC0 from ambientCG:
