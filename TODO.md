@@ -41,7 +41,8 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 **Next:**
 - **SSR limits.** Reflections of anything off-screen fall back to the sky, so they vanish
-  at the screen edges as you turn. Glass and other procedural materials don't reflect yet.
+  at the screen edges as you turn. Glass reflects too, but only what's on screen, so head-on
+  glass shows little, since the street behind the camera isn't there to reflect.
   A temporal pass would let the trace run at half resolution and stay smooth in motion.
 **Done:** rain.
 - **Weather** (`weather_update` in `src/main.c`): rain intensity drifts between drizzle and

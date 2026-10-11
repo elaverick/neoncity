@@ -258,6 +258,11 @@ surfaces are lit with GGX:
   reflection by confidence. The lamps' GGX lobe is stretched the same way (anisotropic
   along the view direction). Specular anti-aliasing widens the lobe where the normal
   varies within a pixel, so the film doesn't sparkle.
+- **Glass reflections:** windows, shopfronts, lobbies, glass curtain walls, door glass and
+  glass pyramid roofs write the same G-buffer (roughness 0). Their weight is the share of
+  the sky reflection that reaches the final pixel, after frames, mullions and the
+  distance blends, so the swap leaves no double image. Glass therefore mirrors the
+  street, lamps, neon and neighbouring towers at grazing angles.
 - **Procedural materials:** keep their normalised Blinn-Phong lobes. The height
 channel is packed but unused for now: it is reserved for puddles in the joints and for
 parallax. Three materials use textures so far, all CC0 from ambientCG:

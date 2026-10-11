@@ -22,6 +22,12 @@ ChunkGPU gC;
 float gTime;
 vec3 gWorld;
 vec4 gRefl = vec4(0.0);   // -> outRefl
+
+// Glass marks itself for screen-space reflections: w is the weight its sky
+// reflection (envReflection) carries in this pixel's final colour, which the
+// reflections pass swaps for the screen's reflection (ssr_apply.frag).
+const float GLASS_ROUGH = 0.0;
+void glassRefl(vec3 n, float w) { gRefl = vec4(n.x, n.z, GLASS_ROUGH, w); }
 float gStreak = 1.0;      // wet surfaces: how far GGX highlights stretch toward the viewer    // chunk-local position + wrapped chunk offset: continuous for noise
 
 const float PI = 3.14159265;
@@ -937,7 +943,9 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         vec3 inner = interiorColor(vec2(fract(u / 8.0), clamp(yy / groundH, 0.0, 1.0)), d, 8.0, groundH, 9.0, r);
         float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
         vec3 glass = inner * (1.0 - F) + envReflection(reflect(-V, n)) * F;
-        glass = mix(glass, r.light * r.bright * 0.5, smoothstep(0.08, 0.4, dU / 8.0));
+        float lodL = smoothstep(0.08, 0.4, dU / 8.0);
+        glass = mix(glass, r.light * r.bright * 0.5, lodL);
+        glassRefl(n, F * (1.0 - lodL) * clamp(inWin, 0.0, 1.0));
         return mix(wallC, glass, clamp(inWin, 0.0, 1.0));
     }
 
@@ -982,6 +990,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             // farther away, just the average glow
             float lod = smoothstep(0.08, 0.4, dFs);
             glass = mix(glass, r.light * r.bright * 0.5, lod);
+            glassRefl(n, F * (1.0 - clamp(mull, 0.0, 1.0)) * (1.0 - lod) * inWin);
             return mix(wallC, glass, inWin);
         } else {
             // rolled-down shutter
@@ -1052,9 +1061,11 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         wallC = vec3(0.06, 0.062, 0.065) * mix(0.55, 1.0, smoothstep(0.3, 0.6, sl) * (1.0 - lodT) + lodT * 0.75);
     }
     vec3 wallLit = wallC * wdiff + wspec;
+    float wallW = 0.0;   // weight of the sky reflection in wallLit (glass curtain walls)
     if (glassWall) {
         float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
-        wallLit += envReflection(reflect(-V, n)) * (0.08 + F * 0.9);
+        wallW = 0.08 + F * 0.9;
+        wallLit += envReflection(reflect(-V, n)) * wallW;
     }
     // shop signs and light below throw colour up the lower facade
     if (atGround && relV < 4.0) {
@@ -1072,6 +1083,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 winMid = roomAvg * glassT * (1.0 - F) + refl * F;
 
     vec3 winNear = winMid;
+    float nearW = F;     // ...and in the near window, after its frame
     if (lodT < 1.0 && cov > 0.0) {
         // A corner room is the neighbouring face's corner bay deep: the same box from either side.
         float W = bayW, H = floorH;
@@ -1101,18 +1113,22 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float frame = 1.0 - band(wx, frameU, 1.0 - frameU, fwU / winW + 0.002) * band(wy, frameV, 1.0 - frameV, fwV / winH + 0.002);
         if (type == 2) frame = max(frame, band(fract(u / 1.25), 0.0, 0.03, dU / 1.25 + 0.002));
         winNear = mix(winNear, vec3(0.012, 0.012, 0.014) * wdiff * 2.0, clamp(frame, 0.0, 1.0));
+        nearW = F * (1.0 - clamp(frame, 0.0, 1.0));
     }
 
     vec3 near = mix(wallLit, winNear, cov);
     vec3 mid = mix(wallLit, winMid, cov);
     vec3 col = mix(near, mid, lodT);
+    float reflW = mix(mix(wallW, nearW, cov), mix(wallW, F, cov), lodT);
     if (farT > 0.0) {
         // average of many cells: expected lit fraction and window area
         vec3 avgLight = (tintSel < 0.5 ? kelvin(3300.0) : kelvin(4700.0)) * 1.75 * 0.42;
         vec3 avgWin = avgLight * litFrac * glassT * (1.0 - F) + refl * F;
         vec3 far_ = mix(wallLit, avgWin, winW * winH);
         col = mix(col, far_, farT);
+        reflW = mix(reflW, mix(wallW, F, winW * winH), farT);
     }
+    glassRefl(n, reflW);
     return col;
 }
 
@@ -1291,6 +1307,7 @@ vec3 shadeMetal(vec3 p, vec3 rel, vec3 n, vec2 uv, uvec4 prm) {
         float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
         float mull = max(step(0.94, fract(uv.x * 8.0)), step(0.94, fract(uv.y * 8.0)));
         vec3 glow = mix(vec3(0.9, 0.7, 0.45), vec3(0.6, 0.8, 1.0), hfloat(vSeed)) * 0.35;
+        glassRefl(n, F * (1.0 - mull * 0.8));
         return mix(glow * (1.0 - F) + envReflection(reflect(-V, n)) * F, vec3(0.02), mull * 0.8);
     }
     vec3 spec;
@@ -1329,6 +1346,7 @@ vec3 shadeDoor(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float bar = band(m.y, 1.0, 1.08, aa) * step(0.15, edge);
         float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
         vec3 glass = inside * (1.0 - F) + envReflection(reflect(-V, n)) * F;
+        glassRefl(n, F * (1.0 - clamp(frame + bar, 0.0, 1.0)));
         return mix(glass, vec3(0.03) * diff + spec, clamp(frame + bar, 0.0, 1.0));
     }
     if (prm.y == 1u) {

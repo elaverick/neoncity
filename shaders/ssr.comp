@@ -2,7 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 #include "common.glsl"
 
-/* Screen-space reflections for the wet streets.
+/* Screen-space reflections for the wet streets and the city's glass.
  *
  * For each pixel the scene pass marked reflective (city.frag: outRefl), march
  * the mirror ray through the depth buffer: steps that grow with distance,
@@ -46,6 +46,8 @@ void main() {
     vec3 n = vec3(g.x, sqrt(max(1.0 - g.x * g.x - g.y * g.y, 0.0)), g.y);
     vec3 P = dir * (fwd / max(dot(dir, frame.camFwd.xyz), 1e-4)) + n * 0.02;
     vec3 R = reflect(dir, n);
+    // rays turning back toward the camera find nothing on screen (glass seen head-on)
+    if (dot(R, frame.camFwd.xyz) < -0.3) { imageStore(ssrOut, px, vec4(0.0)); return; }
 
     float t = 0.0, tPrev = 0.0, dt = 0.06 + 0.008 * fwd;
     vec3 hit = vec3(-1.0);
