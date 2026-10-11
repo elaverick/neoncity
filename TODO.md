@@ -19,19 +19,16 @@ Interior mapping for rooms and shops that wrap a building corner is still not ri
 - **Repro:** walk the sidewalk along a corner shop near the spawn and look obliquely through it.
   `findcorner` (a scratch tool, not in the repo) printed street-level cameras with `--cam`.
 
-## GGX lighting for PBR materials
-Textured materials (`samplePBR` in `shaders/city.frag`) still go through the procedural
-lighting model. Roughness becomes a normalised Blinn-Phong exponent (`roughToShin`), and
-`specK` is a flat F0 of 0.04.
+## Wet streets
+Textured materials now use GGX (`ggxSpec`, `envBRDF` in `shaders/city.frag`), so the road's
+sheen follows its roughness map. The old oily look came from the procedural road's
+non-physical `specK` (up to 0.75). Getting a properly wet street back needs a wetness layer.
 
-- **Goal:** a GGX microfacet BRDF for textured surfaces: GGX distribution, Smith
-  height-correlated visibility, Schlick Fresnel, `alpha = roughness^2`. Evaluate it in
-  `addLamp` / `addShop` (`cityLights`), and use a roughness-aware environment term in place
-  of the `fres * specK * 2` sheen.
-- **Why it matters:** the textured road is now physically matte (mean roughness 0.71), so
-  it has lost the oily blue sheen that the procedural road's `specK` (up to 0.75) gave it.
-  GGX with Fresnel on lamp specular, plus a wetness layer, is the principled way to get
-  wet streets back. A wetness layer means lower roughness, darker albedo and a flattened
-  normal; it could pool in the low points of the packed height channel (`orm.b`).
-- **Keep:** procedural materials on their current model until each one is moved over, so
-  the look doesn't shift all at once.
+- **Goal:** a `layer()`-style wet coat. It lowers roughness toward ~0.05, darkens albedo
+  (water darkens porous surfaces), and flattens the normal where water fills the relief.
+  Water should pool in the low points of the packed height channel (`orm.b`): in the paving
+  joints and in ruts along the carriageway.
+- **Then:** lamp and shopfront reflections should streak along the view direction (the
+  stretched highlights of a wet road at night). That likely needs an anisotropic or
+  view-stretched lobe, or screen-space reflections.
+- **Keep:** procedural materials on their current Blinn-Phong model until each is moved over.

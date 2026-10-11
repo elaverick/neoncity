@@ -220,9 +220,15 @@ textures instead. Each material is a folder under `assets/textures/` with three 
 | `normal.png` | tangent-space normal, OpenGL convention (+Y green) | linear |
 | `orm.png` | R = ambient occlusion, G = roughness, B = height | linear |
 
-They are uploaded with full mip chains and sampled with anisotropic filtering. Lamp
-specular uses roughness, through the normalised Blinn-Phong exponent equivalent to GGX
-`alpha = roughness^2`. AO darkens only the ambient, neon-bounce and sky terms. The height
+They are uploaded with full mip chains and sampled with anisotropic filtering. Textured
+surfaces are lit with GGX:
+- **Model:** Trowbridge-Reitz distribution, height-correlated Smith visibility, Schlick
+  Fresnel, `alpha = roughness^2`, dielectric F0 = 0.04.
+- **Lights:** street lamps use the lobe directly. Shopfront spill widens it by the
+  storefront's size, as a cheap area light.
+- **Sky and haze:** reflected through Karis's analytic split-sum BRDF.
+- **Ambient occlusion:** darkens only the ambient, neon-bounce and sky terms.
+- **Procedural materials:** keep their normalised Blinn-Phong lobes. The height
 channel is packed but unused for now: it is reserved for puddles in the joints and for
 parallax. Two materials use textures so far, both CC0 from ambientCG:
 - **Main sidewalk area:** `paving_stones_111`
@@ -273,8 +279,8 @@ sprinting:
 ## Extending
 - **Environment** (rain, wet streets, fog volumes, weather): the atmosphere lives in
   `hazeColor` / `fogAmount` in `shaders/common.glsl`. The procedural road's slickness is
-  the `specK` term in `shadeGround`. The textured road follows its roughness map; see the
-  GGX entry in `TODO.md`.
+  the `specK` term in `shadeGround`. The textured road's sheen follows its roughness map under
+  GGX; wet streets are the next step (`TODO.md`).
 - **Pool size and view distance**: `POOL_PAGES` and `VIEW_DISTANCE` in `src/common.h`.
   The default pool is 384 MB.
 - **A different city**: change `WORLD_SEED`. For a different layout, change `TOWN_SIZE` and

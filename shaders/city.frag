@@ -52,7 +52,40 @@ vec3 ambientLight(vec3 n, float h) {
     return mix(bounce, sky, up) * (0.8 + 0.8 * exp(-h / 30.0));
 }
 
-void addLamp(vec3 p, vec3 n, vec3 V, float shin, float specK, vec3 lpos, vec3 lcol,
+/* Specular lobes. Procedural materials use a normalised Blinn-Phong lobe
+ * (shin, specK) and pass rough < 0. Authored PBR materials pass rough >= 0
+ * and get GGX (Trowbridge-Reitz distribution, height-correlated Smith
+ * visibility, Schlick Fresnel, alpha = rough^2) with F0 = specK. Lighting here
+ * leaves the 1/pi out of Lambert diffuse (diffuse is alb * E), so the GGX
+ * lobe carries a factor of pi to stay in the same units. */
+float ggxSpec(vec3 n, vec3 L, vec3 V, float alpha, float f0, float ndl) {
+    vec3 H = normalize(L + V);
+    float ndh = max(dot(n, H), 0.0), ndv = max(dot(n, V), 1e-4), vdh = max(dot(V, H), 0.0);
+    float a2 = max(alpha * alpha, 1e-6);
+    float dd = ndh * ndh * (a2 - 1.0) + 1.0;
+    float D = a2 / (PI * dd * dd);
+    float vis = 0.5 / (ndl * sqrt(ndv * ndv * (1.0 - a2) + a2) + ndv * sqrt(ndl * ndl * (1.0 - a2) + a2) + 1e-5);
+    float F = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
+    return PI * D * vis * F * ndl;
+}
+
+float specLobe(vec3 n, vec3 L, vec3 V, float shin, float specK, float rough, float ndl) {
+    if (rough >= 0.0) return ggxSpec(n, L, V, max(rough * rough, 0.002), specK, ndl);
+    vec3 H = normalize(L + V);
+    return pow(max(dot(n, H), 0.0), shin) * specK * ndl * (shin + 8.0) / 25.0;
+}
+
+// Split-sum environment BRDF, analytic fit (Karis, "Physically Based Shading on Mobile").
+float envBRDF(float f0, float rough, float ndv) {
+    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+    const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+    vec4 r = rough * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * ndv)) * r.x + r.y;
+    vec2 AB = vec2(-1.04, 1.04) * a004 + r.zw;
+    return f0 * AB.x + AB.y;
+}
+
+void addLamp(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, vec3 lpos, vec3 lcol,
              inout vec3 diff, inout vec3 spec) {
     vec3 l = lpos - p;
     float d2 = dot(l, l);
@@ -64,19 +97,23 @@ void addLamp(vec3 p, vec3 n, vec3 V, float shin, float specK, vec3 lpos, vec3 lc
     float att = 70.0 / (d2 + 1.0) * range * spot;
     float ndl = max(dot(n, L), 0.0);
     diff += lcol * att * ndl;
-    vec3 H = normalize(L + V);
-    spec += lcol * att * pow(max(dot(n, H), 0.0), shin) * specK * ndl * (shin + 8.0) / 25.0;
+    spec += lcol * att * specLobe(n, L, V, shin, specK, rough, ndl);
 }
 
-// Coloured light thrown onto the sidewalk and street by a lit shopfront.
-void addShop(vec3 p, vec3 n, float specK, vec3 lpos, vec3 col, inout vec3 diff, inout vec3 spec) {
+// Coloured light thrown onto the sidewalk and street by a lit shopfront. The
+// storefront is a large source: for GGX its size widens the lobe (alpha grows
+// by its ~1.5 m half-width over twice the distance, as for a sphere light), so
+// the sheen spreads like a reflection of the window, not a point highlight.
+void addShop(vec3 p, vec3 n, vec3 V, float specK, float rough, vec3 lpos, vec3 col, inout vec3 diff, inout vec3 spec) {
     vec3 l = lpos - p;
     float d = length(l);
     if (d > 12.0) return;
-    float ndl = max(dot(n, l / max(d, 1e-3)), 0.0);
+    vec3 L = l / max(d, 1e-3);
+    float ndl = max(dot(n, L), 0.0);
     vec3 c = col * 0.45 * exp(-d * 0.38) * smoothstep(12.0, 7.0, d);
     diff += c * (0.35 + 0.65 * ndl);
-    spec += c * specK * 0.6;
+    if (rough >= 0.0) spec += c * ggxSpec(n, L, V, min(max(rough * rough, 0.002) + 0.75 / max(d, 0.5), 1.0), specK, ndl);
+    else spec += c * specK * 0.6;
 }
 
 /* Facade faces are numbered within their section, round the outline. The
@@ -93,7 +130,8 @@ uint shopHash(uint seed, int section, int face, int next, bool endShare, float a
     return hash3i(WORLD_SEED ^ 0x5B0Au, int(seed), section * 64 + k.x, k.y);
 }
 
-void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, inout vec3 diff, inout vec3 spec) {
+// rough < 0: procedural Blinn-Phong (shin, specK); rough >= 0: GGX with F0 = specK.
+void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, inout vec3 diff, inout vec3 spec) {
     int base = gC.info.z;
     if (base < 0 || p.y > 32.0) return;
     vec4 hdr = uintBitsToFloat(lightRec[base]);
@@ -105,8 +143,8 @@ void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, inout vec3 diff
         uvec4 r = lightRec[first + i];
         vec3 lp = uintBitsToFloat(r.xyz);
         uint type = r.w & 3u;
-        if (type < 2u) addLamp(p, n, V, shin, specK, lp, lampColor(int(type)), diff, spec);
-        else addShop(p, n, specK, lp, type == 2u ? shopColor(r.w) : vec3(0.70, 0.78, 0.95), diff, spec);
+        if (type < 2u) addLamp(p, n, V, shin, specK, rough, lp, lampColor(int(type)), diff, spec);
+        else addShop(p, n, V, specK, rough, lp, type == 2u ? shopColor(r.w) : vec3(0.70, 0.78, 0.95), diff, spec);
     }
 }
 
@@ -173,11 +211,6 @@ const float PAVING_ALBEDO = 0.5;   // mean 0.22 -> 0.11, near the procedural ker
 const float ROAD_TILE = 4.0;
 const float ROAD_ALBEDO = 1.0;
 
-// Roughness to the normalised Blinn-Phong exponent the lamp loops use (alpha = r^2).
-float roughToShin(float r) {
-    float a = max(r * r, 0.03);
-    return clamp(2.0 / (a * a) - 2.0, 1.0, 2048.0);
-}
 
 /* ======================================================================
  * Ground: asphalt with markings, sidewalks, curbs, lots
@@ -213,6 +246,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
     float aa = max(fwidth(p.x), fwidth(p.z)) * 0.7 + 0.004;
     vec3 alb;
     float shin = 16.0, specK = 0.08, ao = 1.0;
+    float rough = -1.0;   // >= 0: GGX with F0 = specK (authored materials)
 
     if (mat == MAT_ROAD) {
         // Base asphalt (authored or procedural), then markings and covers
@@ -266,7 +300,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         s.albedo *= mix(0.6, 1.0, smoothstep(0.0, 0.6, dCurb));
         alb = s.albedo; n = s.n; ao = s.ao;
         if (pbr) {
-            shin = roughToShin(s.rough); specK = 0.04;
+            rough = s.rough; specK = 0.04;   // dielectric F0
         } else {
             shin = 60.0;
             specK = (0.25 + 0.5 * big) * (1.0 - 0.6 * mk.x);   // oily, slightly slick asphalt
@@ -279,7 +313,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         alb = s.albedo * PAVING_ALBEDO;
         alb *= 0.6 + 0.4 * smoothstep(0.2, 0.55, fbm(w.xz * 0.15, 0x7114u));  // stains, as below
         n = s.n; ao = s.ao;
-        shin = roughToShin(s.rough); specK = 0.04;   // dielectric F0
+        rough = s.rough; specK = 0.04;   // dielectric F0
     } else if (mat == MAT_SIDEWALK) {
         // paving runs with the block grain (uv); prm.y = 1 is the kerb-stone edge
         vec2 tp = uv / 1.2;
@@ -305,11 +339,18 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
 
     vec3 diff = ambientLight(n, p.y) * ao;
     vec3 spec = vec3(0.0);
-    cityLights(p, n, V, shin, specK, diff, spec);
+    cityLights(p, n, V, shin, specK, rough, diff, spec);
     diff += neonBounce(w, p.y) * ao;
-    // sky / haze sheen at grazing angles
-    float fres = pow(1.0 - max(dot(n, V), 0.0), 5.0);
-    spec += envReflection(reflect(-V, n)) * fres * specK * 2.0 * ao;
+    if (rough >= 0.0) {
+        // sky / haze reflection: rougher surfaces reflect closer to the normal
+        float ndv = max(dot(n, V), 1e-4);
+        vec3 R = normalize(mix(reflect(-V, n), n, rough * rough));
+        spec += envReflection(R) * envBRDF(specK, rough, ndv) * ao;
+    } else {
+        // sky / haze sheen at grazing angles
+        float fres = pow(1.0 - max(dot(n, V), 0.0), 5.0);
+        spec += envReflection(reflect(-V, n)) * fres * specK * 2.0 * ao;
+    }
     return alb * diff + spec;
 }
 
@@ -606,7 +647,7 @@ vec3 cornerInterior(vec2 cell, vec3 d, float W, float H, float D, Room r, bool g
 vec3 wallLighting(vec3 p, vec3 n, vec3 V, float shin, float specK, float height, out vec3 spec) {
     vec3 diff = ambientLight(n, height);
     spec = vec3(0.0);
-    cityLights(p, n, V, shin, specK, diff, spec);
+    cityLights(p, n, V, shin, specK, -1.0, diff, spec);
     diff += neonBounce(gWorld, height) * 1.5;
     return diff;
 }
