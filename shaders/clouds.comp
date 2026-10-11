@@ -33,7 +33,11 @@ layout(std430, set = 0, binding = 7) readonly buffer SkyLights {
     uint skyCells[SKY_GRID * SKY_GRID];   // first index << 8 | count
     uint skyIndex[SKY_MAX_INDEX];
     SkyLight skyLight[SKY_MAX_LIGHTS];
+    uint airCount;
+    SkyLight airLight[AIR_MAX_LIGHTS];   // lamps, shopfronts and signs near the camera
 };
+// Rain mist: light the rain-filled air scatters toward the eye, near the street.
+layout(set = 0, binding = 8, rgba16f) uniform writeonly image2D mistOut;
 
 const float CLOUD_BASE = 250.0;            // mean height of the deck's underside
 const float CLOUD_TOP = CLOUD_HIGH;
@@ -156,6 +160,49 @@ vec3 signLight(vec3 q) {
     return sum;
 }
 
+/* Rain mist. Falling rain fills the air with droplets that scatter the
+ * light of every lamp, shopfront and sign: halos round the lamps, glowing
+ * cones under them and coloured haze in front of the neon. Each light's
+ * in-scattering along the view ray, out to the scene, has a closed form
+ * (the "airlight" integral of an inverse-square source):
+ *     integral over [0, T] of dt / (h^2 + (t - t0)^2) = (atan((T - t0)/h) + atan(t0/h)) / h
+ * where t0 is the ray's closest approach to the light and h its distance
+ * there. Shaped by a forward-scattering halo, the lamps' downward cones and
+ * the signs' facing. No shadows: lights round a corner glow faintly through. */
+const float MIST = 0.0006;   // in-scattering per unit rain intensity
+
+vec3 airColor(SkyLight L) {
+    uint cls = L.kind >> 8u;
+    if (cls == AIR_LAMP_SODIUM) return lampColor(0);
+    if (cls == AIR_LAMP_LED) return lampColor(1);
+    if (cls == AIR_SHOP) return shopColor(L.seed);
+    if (cls == AIR_LOBBY) return vec3(0.70, 0.78, 0.95);
+    return skyLightColor(L);
+}
+
+vec3 mistLight(vec3 dir, float tEnd, float rain) {
+    float T = min(tEnd, AIR_RANGE);
+    vec3 sum = vec3(0.0);
+    for (uint i = 0u; i < airCount; ++i) {
+        SkyLight L = airLight[i];
+        float t0 = dot(L.pos, dir);
+        vec3 q = dir * clamp(t0, 0.0, T) - L.pos;      // nearest point on the ray, from the light
+        float h = max(length(dir * t0 - L.pos), 0.25);
+        float I = (atan((T - t0) / h) + atan(t0 / h)) / h;
+        float lq = max(length(q), 1e-3);
+        uint cls = L.kind >> 8u;
+        float shape;
+        if (cls == AIR_LAMP_SODIUM || cls == AIR_LAMP_LED)
+            shape = mix(0.12, 1.0, smoothstep(0.05, 0.6, -q.y / lq));         // the cone under the lamp head
+        else
+            shape = 0.3 + 0.7 * clamp(0.5 + 0.5 * dot(q.xz, L.n) / lq, 0.0, 1.0);   // in front of the sign
+        float c = dot(dir, L.pos) / max(length(L.pos), 1e-3);
+        float halo = 0.6 + 3.0 * pow(max(c, 0.0), 24.0);                       // rain scatters forward
+        sum += airColor(L) * (L.power * I * shape * halo * exp(-h / 60.0));
+    }
+    return sum * (MIST * rain);
+}
+
 // Interleaved gradient noise: a stable per-pixel offset that hides step banding.
 float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 
@@ -181,6 +228,7 @@ void main() {
     vec3 dir = normalize(frame.rayBasis[2].xyz + ndc.x * frame.rayBasis[0].xyz - ndc.y * frame.rayBasis[1].xyz);
     float tScene = fwd / max(dot(dir, frame.camFwd.xyz), 1e-4);
     vec3 ro = frame.camPos.xyz;
+    imageStore(mistOut, hp, vec4(mistLight(dir, tScene, frame.weather.x), 1.0));
 
     // The ray's span inside the cloud layer, up to the scene and the view distance.
     float lo = SCUD_LO, hi = CLOUD_TOP, t0, t1;

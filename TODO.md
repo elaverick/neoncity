@@ -20,7 +20,7 @@ Interior mapping for rooms and shops that wrap a building corner is still not ri
   `findcorner` (a scratch tool, not in the repo) printed street-level cameras with `--cam`.
 
 ## Wet streets
-**Done:** the wet coat. `WETNESS` in `shaders/city.frag` controls it. Every authored
+**Done:** the wet coat. `WETNESS` in `shaders/city.frag` (the weather's street wetness) controls it. Every authored
 surface (road, paving, kerb) carries a film of rain: darker and glossy. Water stands only
 where it collects:
 - **Gutters, the kerb joint and slab joints.**
@@ -43,5 +43,26 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 - **SSR limits.** Reflections of anything off-screen fall back to the sky, so they vanish
   at the screen edges as you turn. Glass and other procedural materials don't reflect yet.
   A temporal pass would let the trace run at half resolution and stay smooth in motion.
-- **Rain.** Falling rain, ripple normals in the puddles, and `WETNESS` driven by weather.
+**Done:** rain.
+- **Weather** (`weather_update` in `src/main.c`): rain intensity drifts between drizzle and
+  downpour over minutes without stopping. Street wetness follows it, quickly up and slowly
+  down, so puddles grow and shrink. `--rain X` pins the intensity.
+- **Ripples** (`ripples()`): rings from drops landing at random, strong in standing water
+  and faint on the film, at a rate set by the rain. They also distort the reflections.
+- **Rain mist** (`mistLight` in `clouds.comp`): lamps, shopfronts and signs light the
+  rain-filled air (halos, cones under the lamps, coloured haze before the neon), and rain
+  thickens the haze.
+- **Falling rain** (`composite.frag`): tapered, glinting, defocused-when-near streaks on
+  five layers around the camera, occluded by scene depth and lit by the mist, so rain shows
+  where light falls through it.
+
+**Next (rain):**
+- **Shelter.** Rain falls under canopies and overhangs too. It needs a top-down occlusion
+  map (a height or depth render of the city from above, around the camera) for the
+  streaks and the wetness to test against.
+- **Splashes** where drops hit the ground, and drips running down glass and facades.
+- **Mist shadows.** The mist has no shadowing, so a lamp just round a corner glows faintly
+  through the building. The shelter map would serve here too.
+- **Lens drops** (optional, cinematic): the occasional drop on the lens, refracting the
+  scene.
 - **Keep:** procedural materials on their current Blinn-Phong model until each is moved over.

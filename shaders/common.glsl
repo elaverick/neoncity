@@ -18,6 +18,10 @@ const int   SKY_MAX_INDEX   = 32768;
 const float SKY_GAIN        = 4.0;
 const float SKY_RANGE_MAX   = 220.0;
 const uint  SKY_KIND_SCREEN = 32u;
+// Air lights (src/common.h): what lights the rain mist
+const int   AIR_MAX_LIGHTS  = 256;
+const float AIR_RANGE       = 140.0;
+const uint  AIR_SIGN = 0u, AIR_LAMP_SODIUM = 1u, AIR_LAMP_LED = 2u, AIR_SHOP = 3u, AIR_LOBBY = 4u;
 float skyLightRange(float power) { return min(sqrt(power * SKY_GAIN / 0.04), SKY_RANGE_MAX); }
 const uint  WORLD_SEED      = 0xC1B3A7u;
 
@@ -35,6 +39,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 camPos;     // xyz world (approx), w = time
     vec4 camFwd;     // xyz forward, w = view distance
     vec4 screen;
+    vec4 weather;    // x rain intensity, y street wetness (src/main.c: weather_update)
 } frame;
 
 struct ChunkGPU {
@@ -89,6 +94,9 @@ vec3 neonColor(uint i) {
     return vec3(1.00, 0.85, 0.15);               // yellow
 }
 
+// A lit storefront's light (its shop hash picks the colour; src/city.c: city_shop_hash).
+vec3 shopColor(uint h) { return mix(neonColor(h >> 4), vec3(1.0, 0.82, 0.62), 0.45); }
+
 vec3 lampColor(int type) {
     return type == 0 ? vec3(1.0, 0.52, 0.20) * 1.0   // sodium
                      : vec3(0.55, 0.80, 1.0) * 0.9;  // cold LED
@@ -128,7 +136,7 @@ vec3 hazeColor(vec3 dir) {
 
 float fogAmount(vec3 rel, float dist) {
     float viewDist = frame.camFwd.w;
-    const float density = 1.0 / 380.0;
+    float density = (1.0 + 1.2 * frame.weather.x) / 380.0;   // rain thickens the air
     const float H = 110.0;                       // haze scale height
     float h0 = max(frame.camPos.y, 0.0);
     float h1 = max(frame.camPos.y + rel.y, 0.0);

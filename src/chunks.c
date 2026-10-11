@@ -22,6 +22,8 @@ typedef struct Entry {
     float    mn[3], mx[3];  /* chunk-local bounds */
     SkyLight *sky;          /* kept while RESIDENT (chunks_sky_lights) */
     uint32_t  nsky;
+    SkyLight *air;
+    uint32_t  nair;
 } Entry;
 
 typedef struct Job { int cx, cz; } Job;
@@ -78,6 +80,9 @@ struct ChunkSystem {
 
     ChunkStats stats;
     SkyGrid    sky;     /* built here, then copied out: the destination is write-combined GPU memory */
+    SkyLight   airCand[16384];
+    float      airScore[16384];
+    int        airOrder[16384];
 };
 
 /* ---------------------------------------------------------------- table --- */
@@ -114,8 +119,9 @@ static void table_remove(ChunkSystem *cs, int idx) {
     if (*link == idx) *link = e->next;
     mesh_free(&e->mesh);
     free(e->sky);
-    e->sky = NULL;
-    e->nsky = 0;
+    free(e->air);
+    e->sky = e->air = NULL;
+    e->nsky = e->nair = 0;
     e->state = 0;
     cs->freeEntries[cs->freeEntryCount++] = idx;
 }
@@ -196,7 +202,7 @@ void chunks_destroy(ChunkSystem *cs) {
     for (int i = 0; i < cs->workerCount; ++i) thread_join(cs->workers[i]);
     for (int i = 0; i < cs->doneCount; ++i) mesh_free(&cs->done[i].mesh);
     free(cs->done);
-    for (int i = 0; i < MAX_ENTRIES; ++i) { mesh_free(&cs->entries[i].mesh); free(cs->entries[i].sky); }
+    for (int i = 0; i < MAX_ENTRIES; ++i) { mesh_free(&cs->entries[i].mesh); free(cs->entries[i].sky); free(cs->entries[i].air); }
     for (int i = 0; i < MAX_FRAMES; ++i) {
         vk_buffer_destroy(cs->vk, &cs->staging[i]);
         vk_buffer_destroy(cs->vk, &cs->indirect[i]);
@@ -458,6 +464,9 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
         e->sky = e->mesh.sky;
         e->nsky = e->mesh.nsky;
         e->mesh.sky = NULL;
+        e->air = e->mesh.air;
+        e->nair = e->mesh.nair;
+        e->mesh.air = NULL;
         mesh_free(&e->mesh);
         e->state = CS_RESIDENT;
         uploads++;
@@ -513,6 +522,12 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     cs->stats.pagesTotal = POOL_PAGES;
     cs->stats.pagesUsed = POOL_PAGES - cs->freePageCount - cs->pendingFreeCount;
     cs->stats.uploadsThisFrame = uploads;
+}
+
+static const float *g_airScore;
+static int cmp_air(const void *a, const void *b) {
+    float sa = g_airScore[*(const int *)a], sb = g_airScore[*(const int *)b];
+    return sa < sb ? 1 : sa > sb ? -1 : 0;
 }
 
 void chunks_sky_lights(ChunkSystem *cs, const double cam[3], SkyGrid *dst) {
@@ -580,6 +595,32 @@ void chunks_sky_lights(ChunkSystem *cs, const double cam[3], SkyGrid *dst) {
     for (int c = 0; c < SKY_GRID * SKY_GRID; ++c) nindex += counts[c];
     memcpy(dst, out, offsetof(SkyGrid, index) + nindex * sizeof(uint32_t));
     memcpy(dst->lights, out->lights, out->count * sizeof(SkyLight));
+
+    /* Air lights: those that matter most to the camera's rain mist. */
+    int na = 0;
+    for (int i = 0; i < MAX_ENTRIES; ++i) {
+        const Entry *e = &cs->entries[i];
+        if (e->state != CS_RESIDENT || !e->nair) continue;
+        double ox = e->cx * P - cam[0], oz = e->cz * P - cam[2];
+        if (fabs(ox + 0.5 * P) > AIR_RANGE + P || fabs(oz + 0.5 * P) > AIR_RANGE + P) continue;
+        for (uint32_t k = 0; k < e->nair && na < (int)ARRAY_LEN(cs->airCand); ++k) {
+            SkyLight L = e->air[k];
+            L.pos[0] = (float)(ox + L.pos[0]);
+            L.pos[1] = (float)(L.pos[1] - cam[1]);
+            L.pos[2] = (float)(oz + L.pos[2]);
+            float d2 = L.pos[0] * L.pos[0] + L.pos[1] * L.pos[1] + L.pos[2] * L.pos[2];
+            if (d2 > AIR_RANGE * AIR_RANGE) continue;
+            cs->airCand[na] = L;
+            cs->airScore[na] = L.power / (d2 + 25.0f);
+            cs->airOrder[na] = na;
+            na++;
+        }
+    }
+    g_airScore = cs->airScore;
+    qsort(cs->airOrder, (size_t)na, sizeof(int), cmp_air);
+    uint32_t nkeep = na < AIR_MAX_LIGHTS ? (uint32_t)na : AIR_MAX_LIGHTS;
+    for (uint32_t k = 0; k < nkeep; ++k) dst->air[k] = cs->airCand[cs->airOrder[k]];
+    dst->airCount = nkeep;
 }
 
 void chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {

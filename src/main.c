@@ -64,10 +64,26 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
     if (action == GLFW_PRESS && !g_captured) set_capture(w, true);
 }
 
+/* Weather: steady rain whose intensity drifts between drizzle and downpour
+ * over minutes, never quite stopping. The streets wet quickly as it
+ * strengthens and dry slowly as it eases. fixedRain >= 0 pins the intensity. */
+typedef struct Weather { float rain, wet; } Weather;
+
+static void weather_update(Weather *w, double t, float dt, float fixedRain) {
+    float rain = fixedRain >= 0.0f ? fixedRain
+               : (float)(0.6 + 0.25 * sin(t / 53.0) + 0.15 * sin(t / 31.0 + 1.7));
+    float target = 0.55f + 0.45f * rain;
+    if (w->wet < 0.0f) w->wet = target;   /* first frame: it has already been raining for a while */
+    float tau = target > w->wet ? 15.0f : 120.0f;
+    w->wet += (target - w->wet) * (1.0f - expf(-dt / tau));
+    w->rain = rain;
+}
+
 static void usage(void) {
-    printf("NeonCity [--validation] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS] [--rain 0..1] [--shot FILE.bmp]\n"
            "  --cam   start position (world metres); a HEIGHT starts in fly mode at that altitude\n"
            "  --walk  hold W for this many seconds before a --shot\n"
+           "  --rain  fix the rain intensity (0 drizzle .. 1 downpour); otherwise it drifts\n"
            "  --shot  wait for streaming to settle, save a screenshot and exit\n");
 }
 
@@ -76,11 +92,12 @@ int main(int argc, char **argv) {
     const char *shotPath = NULL;
     bool haveCam = false;
     double camArgs[5] = { 0, 0, 0, 0, -1 };
-    float walkSeconds = 0.0f;
+    float walkSeconds = 0.0f, fixedRain = -1.0f;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--validation") == 0) validation = true;
         else if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) shotPath = argv[++i];
         else if (strcmp(argv[i], "--walk") == 0 && i + 1 < argc) walkSeconds = (float)atof(argv[++i]);
+        else if (strcmp(argv[i], "--rain") == 0 && i + 1 < argc) fixedRain = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--cam") == 0 && i + 4 < argc) {
             haveCam = true;
             for (int k = 0; k < 4; ++k) camArgs[k] = atof(argv[++i]);
@@ -122,6 +139,7 @@ int main(int argc, char **argv) {
     float emaDt = 0.0f;
     int framesAfterWalk = 0;
     bool walkStarted = false;
+    Weather weather = { 0.0f, -1.0f };
     while (!glfwWindowShouldClose(win)) {
         glfwPollEvents();
         double now = glfwGetTime();
@@ -195,6 +213,9 @@ int main(int argc, char **argv) {
         ubo.camPos[3] = (float)(now - startTime);
         ubo.camFwd[0] = player.fwd.x; ubo.camFwd[1] = player.fwd.y; ubo.camFwd[2] = player.fwd.z;
         ubo.camFwd[3] = VIEW_DISTANCE;
+        weather_update(&weather, now - startTime, dt, fixedRain);
+        ubo.weather[0] = weather.rain;
+        ubo.weather[1] = weather.wet;
 
         bool resized = g_resized;
         g_resized = false;

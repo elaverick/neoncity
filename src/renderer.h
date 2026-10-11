@@ -10,6 +10,7 @@ typedef struct FrameUBO {
     float   camPos[4];     /* xyz world (approximate), w = time in seconds */
     float   camFwd[4];     /* xyz forward, w = view distance */
     float   screen[4];     /* width, height, 1/width, 1/height */
+    float   weather[4];    /* rain intensity (0 drizzle .. 1 downpour), street wetness, unused, unused */
 } FrameUBO;
 
 typedef struct Renderer Renderer;

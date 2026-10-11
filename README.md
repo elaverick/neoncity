@@ -41,7 +41,8 @@ procedural look.
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
-Command line: `--cam X Z YAW PITCH [HEIGHT]` sets the start position (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot`, and `--validation` enables the Khronos validation layer if it is installed.
+Command line: `--cam X Z YAW PITCH [HEIGHT]` sets the start position (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot`, `--rain 0..1` pins the rain intensity
+(otherwise it drifts between drizzle and downpour), and `--validation` enables the Khronos validation layer if it is installed.
 
 ## How it works
 
@@ -228,8 +229,21 @@ surfaces are lit with GGX:
   storefront's size, as a cheap area light.
 - **Sky and haze:** reflected through Karis's analytic split-sum BRDF.
 - **Ambient occlusion:** darkens only the ambient, neon-bounce and sky terms.
-- **Rain:** the streets are wet (`WETNESS`). Authored surfaces carry a film of rain:
-  darker and glossy. Water stands only where it collects (gutters, joints, faint ruts and
+- **Rain:** it always rains. The weather (`weather_update` in `src/main.c`, passed to the
+  shaders as `frame.weather`) drifts between drizzle and downpour over minutes. Street
+  wetness follows it, wetting quickly and drying slowly. Rain thickens the haze, and fills the air with a mist
+  (`mistLight` in `clouds.comp`) lit by every nearby lamp, shopfront and sign: halos round
+  the lamps, glowing cones beneath them and coloured haze before the neon. Each light's
+  in-scattering along the view ray has a closed form, so the mist costs one `atan` pair per
+  light. Lights are gathered per frame as air lights (the 256 that matter most, by power
+  over distance squared).
+
+  Falling rain is drawn in `composite.frag`: drops on five layers around the camera, hidden
+  by the scene depth. Each is a motion-blurred streak as a camera sees it: tapered, with
+  glints along it and its own brightness. Near drops are out of focus. Drops are lit by
+  that same mist, so rain shows where light falls through it, as it does at night. Drops ring the puddles with
+  ripples (`ripples()`), which also distort the reflections. Authored surfaces carry a film
+  of rain (`WETNESS`): darker and glossy. Water stands only where it collects (gutters, joints, faint ruts and
   sparse isolated hollows), as smooth films that mirror the lamps and the overcast.
 - **Reflections:** wet surfaces also write a reflection G-buffer (normal, roughness and
   the weight of their sky reflection) from the scene pass. `ssr.comp` traces their mirror
@@ -316,7 +330,7 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
 3. Screen-space reflections on the wet streets: a compute trace, then a streaked additive blend.
 4. Clouds: half-resolution compute ray march, blended into the HDR target with a depth-aware upsample.
 5. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
-6. Composite: ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
+6. Composite: falling rain, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
 
 ## Extending
 - **Environment** (rain, wet streets, fog volumes, weather): the atmosphere lives in

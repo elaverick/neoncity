@@ -45,7 +45,13 @@ static const uint32_t SPV_ssr_apply_frag[] = {
 #define CLOUD_NOISE_SIZE 128   /* cloud noise volume edge (texels) */
 
 typedef struct BloomPush { float threshold, knee, radius; int prefilter; } BloomPush;
-typedef struct CompositePush { float time, bloom, exposure, grain; float width, height, aberration, vignette; } CompositePush;
+/* right/up/fwd: the camera ray basis (as FrameUBO.rayBasis); right.w = near
+ * plane, up.w = far plane, fwd.w = rain intensity (composite.frag draws the rain). */
+typedef struct CompositePush {
+    float time, bloom, exposure, grain;
+    float width, height, aberration, vignette;
+    float right[4], up[4], fwd[4];
+} CompositePush;
 typedef struct CloudPush { float zn, zf; } CloudPush;
 
 struct Renderer {
@@ -63,7 +69,7 @@ struct Renderer {
     /* size-dependent targets. depthResolve is the single-sample copy of the MSAA
      * depth the clouds read (without MSAA they read depth itself); cloud and
      * cloudDist are the half-resolution cloud march (clouds.comp). */
-    Image        msaaColor, depth, depthResolve, hdr, bloom, cloud, cloudDist;
+    Image        msaaColor, depth, depthResolve, hdr, bloom, cloud, cloudDist, mist;   /* mist: rain mist (clouds.comp) */
     /* reflection G-buffer (city.frag outRefl; reflMsaa is the multisampled
      * attachment resolved into refl) and the screen-space reflections */
     Image        reflMsaa, refl, ssr;
@@ -152,31 +158,35 @@ static void create_layouts(Renderer *r) {
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
     };
     r->sceneLayout = make_set_layout(vk, scene, 4);
-    VkDescriptorSetLayoutBinding tex[2] = {
+    VkDescriptorSetLayoutBinding tex[4] = {
         { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
+        { 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* scene depth (rain) */
+        { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* rain mist (rain lighting) */
     };
-    r->texLayout = make_set_layout(vk, tex, 2);
+    r->texLayout = make_set_layout(vk, tex, 4);
     VkDescriptorSetLayoutBinding bloom[2] = {
         { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },
     };
     r->bloomLayout = make_set_layout(vk, bloom, 2);
-    VkDescriptorSetLayoutBinding cloud[6] = {
+    VkDescriptorSetLayoutBinding cloud[7] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },
         { 7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },           /* sky lights */
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },   /* noise volume */
         { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },   /* scene depth */
         { 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },            /* cloud */
         { 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },            /* cloudDist */
+        { 8, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },            /* mist */
     };
-    r->cloudLayout = make_set_layout(vk, cloud, 6);
-    VkDescriptorSetLayoutBinding cloudComp[3] = {
+    r->cloudLayout = make_set_layout(vk, cloud, 7);
+    VkDescriptorSetLayoutBinding cloudComp[4] = {
         { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
+        { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
     };
-    r->cloudCompLayout = make_set_layout(vk, cloudComp, 3);
+    r->cloudCompLayout = make_set_layout(vk, cloudComp, 4);
     VkDescriptorSetLayoutBinding ssr[5] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },   /* HDR scene */
@@ -476,6 +486,8 @@ static void create_targets(Renderer *r) {
                         VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     r->cloudDist = vk_image(vk, cw, ch, 1, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                             VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    r->mist = vk_image(vk, cw, ch, 1, HDR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                       VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     if (msaa)
         r->reflMsaa = vk_image(vk, w, h, 1, HDR_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
                                vk->msaa, VK_IMAGE_ASPECT_COLOR_BIT);
@@ -495,8 +507,8 @@ static void create_targets(Renderer *r) {
         r->bloomMip[i] = vk_view(vk, r->bloom.img, HDR_FORMAT, VK_IMAGE_ASPECT_COLOR_BIT, i, 1);
 
     VkDescriptorPoolSize sizes[4] = {
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 4 + 2 * MAX_FRAMES + 3 + 5 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * BLOOM_MIPS + 2 * MAX_FRAMES + MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 6 + 2 * MAX_FRAMES + 4 + 5 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * BLOOM_MIPS + 3 * MAX_FRAMES + MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES },
     };
@@ -521,6 +533,8 @@ static void create_targets(Renderer *r) {
     r->compositeSet = alloc_set(r, r->texLayout);
     write_tex_set(vk, r->compositeSet, 0, CIS, r->linearClamp, r->hdr.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     write_tex_set(vk, r->compositeSet, 1, CIS, r->linearClamp, r->bloomMip[0], VK_IMAGE_LAYOUT_GENERAL);
+    write_tex_set(vk, r->compositeSet, 2, CIS, r->nearestClamp, sceneDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    write_tex_set(vk, r->compositeSet, 3, CIS, r->linearClamp, r->mist.view, VK_IMAGE_LAYOUT_GENERAL);
 
     for (int i = 0; i < MAX_FRAMES; ++i) {
         r->cloudSet[i] = alloc_set(r, r->cloudLayout);
@@ -536,6 +550,7 @@ static void create_targets(Renderer *r) {
         write_tex_set(vk, r->cloudSet[i], 4, CIS, r->nearestClamp, sceneDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         write_tex_set(vk, r->cloudSet[i], 5, SI, VK_NULL_HANDLE, r->cloud.view, VK_IMAGE_LAYOUT_GENERAL);
         write_tex_set(vk, r->cloudSet[i], 6, SI, VK_NULL_HANDLE, r->cloudDist.view, VK_IMAGE_LAYOUT_GENERAL);
+        write_tex_set(vk, r->cloudSet[i], 8, SI, VK_NULL_HANDLE, r->mist.view, VK_IMAGE_LAYOUT_GENERAL);
     }
     for (int i = 0; i < MAX_FRAMES; ++i) {
         VkDescriptorBufferInfo ub = { r->ubo[i].buf, 0, sizeof(FrameUBO) };
@@ -558,6 +573,7 @@ static void create_targets(Renderer *r) {
     write_tex_set(vk, r->cloudCompSet, 0, CIS, r->nearestClamp, r->cloud.view, VK_IMAGE_LAYOUT_GENERAL);
     write_tex_set(vk, r->cloudCompSet, 1, CIS, r->nearestClamp, r->cloudDist.view, VK_IMAGE_LAYOUT_GENERAL);
     write_tex_set(vk, r->cloudCompSet, 2, CIS, r->nearestClamp, sceneDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    write_tex_set(vk, r->cloudCompSet, 3, CIS, r->nearestClamp, r->mist.view, VK_IMAGE_LAYOUT_GENERAL);
 }
 
 static void destroy_targets(Renderer *r) {
@@ -571,6 +587,7 @@ static void destroy_targets(Renderer *r) {
     vk_image_destroy(vk, &r->msaaColor);
     vk_image_destroy(vk, &r->cloud);
     vk_image_destroy(vk, &r->cloudDist);
+    vk_image_destroy(vk, &r->mist);
     vk_image_destroy(vk, &r->reflMsaa);
     vk_image_destroy(vk, &r->refl);
     vk_image_destroy(vk, &r->ssr);
@@ -708,8 +725,8 @@ static void record_clouds(Renderer *r, VkCommandBuffer cmd, int slot) {
     VkCore *vk = r->vk;
     const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, FS = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
     const VkPipelineStageFlags2 COLOR = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    VkImage outs[2] = { r->cloud.img, r->cloudDist.img };
-    for (int i = 0; i < 2; ++i)
+    VkImage outs[3] = { r->cloud.img, r->cloudDist.img, r->mist.img };
+    for (int i = 0; i < 3; ++i)
         vk_image_barrier(cmd, outs[i], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
                          FS, 0, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, 0, 1);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->cloudPipe);
@@ -907,6 +924,10 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->compositePipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->compositePL, 0, 1, &r->compositeSet, 0, NULL);
     CompositePush cp = { ubo.camPos[3], 0.14f, 1.0f, 0.035f, (float)W, (float)H, 0.008f, 0.32f };
+    for (int k = 0; k < 3; ++k) {
+        cp.right[k] = ubo.rayBasis.m[k]; cp.up[k] = ubo.rayBasis.m[4 + k]; cp.fwd[k] = ubo.rayBasis.m[8 + k];
+    }
+    cp.right[3] = NEAR_PLANE; cp.up[3] = FAR_PLANE; cp.fwd[3] = ubo.weather[0];
     vkCmdPushConstants(cmd, r->compositePL, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cp), &cp);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);

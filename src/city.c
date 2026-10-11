@@ -553,7 +553,7 @@ void city_layout(int cx, int cz, BlockLayout *L) {
  * Mesh emission helpers
  * ========================================================================= */
 
-void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); memset(m, 0, sizeof(*m)); }
+void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); free(m->air); memset(m, 0, sizeof(*m)); }
 
 static void mesh_push(Mesh *m, vec3 p, vec3 n, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux) {
     if (m->count == m->cap) {
@@ -688,15 +688,24 @@ static vec3 face_point(const Face *f, float u, float y, float out) {
     return v3_add(v3_add(f->o, v3_scale(f->t, u)), v3_add(v3(0, y, 0), v3_scale(f->n, out)));
 }
 
-/* A neon sign or video screen that can reach the cloud layer becomes a sky
- * light (src/common.h): its centre and facing in chunk-local space (through
- * the current emission transform, as mesh_push), and its power, from the
- * sign's average emitted radiance (shadeNeon / shadeScreen) and its area. */
-static void sky_light(Mesh *m, vec3 c, vec3 n, float area, Mat mt) {
+static void push_light(SkyLight **arr, uint32_t *n, uint32_t *cap, const SkyLight *L) {
+    if (*n == *cap) {
+        *cap = *cap ? *cap * 2 : 16;
+        *arr = (SkyLight *)realloc(*arr, *cap * sizeof(SkyLight));
+        if (!*arr) fatal("out of memory building chunk lights");
+    }
+    (*arr)[(*n)++] = *L;
+}
+
+/* A neon sign or video screen lights the rain mist (an air light) and, if it
+ * can reach the cloud layer, the clouds (a sky light; src/common.h): its
+ * centre and facing in chunk-local space (through the current emission
+ * transform, as mesh_push), and its power, from the sign's average emitted
+ * radiance (shadeNeon / shadeScreen) and its area. */
+static void sign_lights(Mesh *m, vec3 c, vec3 n, float area, Mat mt) {
     int screen = mt.p[0] == MAT_SCREEN;
     float power = area * (screen ? 0.7f : 1.0f);
     float reach = sky_light_range(power);
-    if (c.y + reach < CLOUD_LOW || c.y - reach > CLOUD_HIGH) return;
     if (m->xf) {
         float x = c.x, z = c.z;
         c.x = m->xx + m->xc * x - m->xs * z;
@@ -705,17 +714,15 @@ static void sky_light(Mesh *m, vec3 c, vec3 n, float area, Mat mt) {
         n.x = m->xc * x - m->xs * z;
         n.z = m->xs * x + m->xc * z;
     }
-    if (m->nsky == m->capsky) {
-        m->capsky = m->capsky ? m->capsky * 2 : 16;
-        m->sky = (SkyLight *)realloc(m->sky, m->capsky * sizeof(SkyLight));
-        if (!m->sky) fatal("out of memory building chunk sky lights");
-    }
-    SkyLight *L = &m->sky[m->nsky++];
-    L->pos[0] = c.x; L->pos[1] = c.y; L->pos[2] = c.z;
-    L->power = power;
-    L->nx = n.x; L->nz = n.z;
-    L->seed = mt.seed;
-    L->kind = screen ? SKY_KIND_SCREEN : (uint32_t)((mt.p[1] & 7) | (((mt.p[1] >> 6) & 3) << 3));
+    SkyLight L;
+    L.pos[0] = c.x; L.pos[1] = c.y; L.pos[2] = c.z;
+    L.power = power;
+    L.nx = n.x; L.nz = n.z;
+    L.seed = mt.seed;
+    L.kind = screen ? SKY_KIND_SCREEN : (uint32_t)((mt.p[1] & 7) | (((mt.p[1] >> 6) & 3) << 3));
+    L.kind |= AIR_SIGN << 8;
+    push_light(&m->air, &m->nair, &m->capair, &L);
+    if (c.y + reach >= CLOUD_LOW && c.y - reach <= CLOUD_HIGH) push_light(&m->sky, &m->nsky, &m->capsky, &L);
 }
 
 /* Flat quad parallel to a face: u in [u0,u1], y in [y0,y1], offset `out`. uv normalised 0..1. */
@@ -724,7 +731,7 @@ static void emit_face_panel(Mesh *m, const Face *f, float u0, float u1, float y0
     emit_quad(m, face_point(f, u0, y0, out), face_point(f, u1, y0, out),
               face_point(f, u1, y1, out), face_point(f, u0, y1, out), f->n, uv, mt);
     if (mt.p[0] == MAT_NEON || mt.p[0] == MAT_SCREEN)
-        sky_light(m, face_point(f, 0.5f * (u0 + u1), 0.5f * (y0 + y1), out), f->n, fabsf((u1 - u0) * (y1 - y0)), mt);
+        sign_lights(m, face_point(f, 0.5f * (u0 + u1), 0.5f * (y0 + y1), out), f->n, fabsf((u1 - u0) * (y1 - y0)), mt);
 }
 
 static uint8_t q_half(float metres) { float v = metres * 2.0f + 0.5f; return (uint8_t)(v > 255 ? 255 : v); }
@@ -1517,6 +1524,14 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
 
 typedef struct LightSrc { float x, y, z, range; uint32_t w; } LightSrc;
 
+/* A lamp or shopfront lighting the rain mist. Several chunks see the same
+ * light; only the chunk it stands in records it. */
+static void air_light(Mesh *m, float x, float y, float z, float power, uint32_t seed, uint32_t kind) {
+    if (x < 0.0f || x >= CHUNK_SIZE || z < 0.0f || z >= CHUNK_SIZE) return;
+    SkyLight L = { { x, y, z }, power, 0.0f, 0.0f, seed, kind };
+    push_light(&m->air, &m->nair, &m->capair, &L);
+}
+
 static void build_lights(Mesh *m, ChunkGen *g) {
     if (!m->count) return;
     float bx0 = m->mn[0], bz0 = m->mn[2], bx1 = m->mx[0], bz1 = m->mx[2];
@@ -1532,6 +1547,7 @@ static void build_lights(Mesh *m, ChunkGen *g) {
         float x = (float)(L->x - g->ox) + L->dx * 1.7f, z = (float)(L->z - g->oz) + L->dz * 1.7f;
         if (x < bx0 - 34.0f || x > bx1 + 34.0f || z < bz0 - 34.0f || z > bz1 + 34.0f) continue;
         ADD_LIGHT(x, LAMP_HEIGHT - 0.4f, z, 34.0f, (uint32_t)L->type);
+        air_light(m, x, LAMP_HEIGHT - 0.4f, z, 70.0f, 0, (L->type ? AIR_LAMP_LED : AIR_LAMP_SODIUM) << 8);
     }
     for (int i = 0; i < g->nb; ++i) {
         const Building *b = &g->bld[i];
@@ -1568,6 +1584,7 @@ static void build_lights(Mesh *m, ChunkGen *g) {
                         if (j != i && g->bblk[j] == g->bblk[i] && inside_building(&g->bld[j], w.x, w.z, 0.0)) party = 1;
                     if (party) continue;
                     ADD_LIGHT(x, SIDEWALK_HEIGHT + 1.4f, z, 12.0f, h);
+                    air_light(m, x, SIDEWALK_HEIGHT + 2.0f, z, 5.0f, h, ((h & 3u) == 2u ? AIR_SHOP : AIR_LOBBY) << 8);
                 }
             }
         }

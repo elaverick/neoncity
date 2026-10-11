@@ -61,6 +61,19 @@
 #define SKY_RANGE_MAX     220.0f
 #define SKY_KIND_SCREEN   32u           /* kind bits: 0-2 neon colour, 3-4 flicker mode, 5 video screen */
 
+/* Air lights: every lamp, lit shopfront, neon sign and screen, for the rain
+ * mist they light (clouds.comp: mistLight). Each frame the AIR_MAX_LIGHTS
+ * that matter most to the camera (power / distance^2, within AIR_RANGE) are
+ * gathered with the sky lights. kind >> 8 is the class; signs keep the sky
+ * light kind bits below it. power: irradiance at 1 m, as the lamp loops. */
+#define AIR_MAX_LIGHTS    256
+#define AIR_RANGE         140.0f
+#define AIR_SIGN          0u
+#define AIR_LAMP_SODIUM   1u
+#define AIR_LAMP_LED      2u
+#define AIR_SHOP          3u            /* seed: the shop hash (its colour) */
+#define AIR_LOBBY         4u
+
 /* Materials (vertex params.x). Must match shaders/common.glsl. */
 enum {
     MAT_ROAD = 0, MAT_SIDEWALK, MAT_CURB, MAT_LOT,
@@ -109,6 +122,8 @@ typedef struct SkyGrid {
     uint32_t cells[SKY_GRID * SKY_GRID];   /* first index << 8 | count */
     uint32_t index[SKY_MAX_INDEX];
     SkyLight lights[SKY_MAX_LIGHTS];
+    uint32_t airCount, airPad[3];
+    SkyLight air[AIR_MAX_LIGHTS];         /* camera-relative */
 } SkyGrid;
 
 /* Distance beyond which a sky light adds too little to see. */
