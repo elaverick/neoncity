@@ -232,6 +232,12 @@ from 5.5 m but never sag below 5 m, and never pass a lamp below its head; alley 
 sag below 3.4 m. Stations are spaced by streams seeded from the road or wall alone, so a
 cable comes out the same from whichever chunk builds it.
 
+Cables sway when a gust passes (`cableSway` in `city.vert`). Each one swings about the line
+between its ends, so a taut cable barely stirs, and like a pendulum it swings slower the
+slacker it hangs. Gusts are a slow noise field blowing across the city with the cloud deck's
+wind. They come only occasionally, cables near each other feel the same gust together, and
+cables running across the wind take it most.
+
 Lights are not evaluated one by one. Every lamp and lit shopfront near a chunk goes into a
 small light table, cut into 4x4 tiles over the chunk's bounds, and each fragment walks only
 its own tile. The table is built from the same plan as the geometry. Light pools therefore

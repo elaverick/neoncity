@@ -1909,18 +1909,43 @@ static int clears_lamps(const ChunkGen *g, DVec2 a, float ya, DVec2 b, float yb,
     return 1;
 }
 
-/* A parabolic sag (close enough to a catenary this taut), as thin beams. */
+/* One length of cable, as emit_beam, but each end's vertices carry that end's
+ * drop below the chord and the cable's sag in uv, for cableSway. */
+static void emit_strand(Mesh *m, vec3 a, float da, vec3 b, float db, float sag, float size, Mat mt) {
+    vec3 ax = v3_norm(v3_sub(b, a));
+    vec3 h = v3_cross(ax, v3(0, 1, 0));
+    h = v3_len(h) < 1e-3f ? v3(1, 0, 0) : v3_norm(h);
+    vec3 v = v3_norm(v3_cross(h, ax));
+    float r = size * 0.5f;
+    vec3 o[4] = { v3_add(v3_scale(h, r), v3_scale(v, r)), v3_add(v3_scale(h, -r), v3_scale(v, r)),
+                  v3_add(v3_scale(h, -r), v3_scale(v, -r)), v3_add(v3_scale(h, r), v3_scale(v, -r)) };
+    float uv[4][2] = { { da, sag }, { da, sag }, { db, sag }, { db, sag } };
+    for (int i = 0; i < 4; ++i) {
+        int j = (i + 1) & 3;
+        emit_quad(m, v3_add(a, o[i]), v3_add(a, o[j]), v3_add(b, o[j]), v3_add(b, o[i]), v3_norm(v3_add(o[i], o[j])), uv, mt);
+    }
+}
+
+/* A parabolic sag (close enough to a catenary this taut), as thin beams. The
+ * vertex shader swings it about its chord in the gusts (cableSway in
+ * shaders/city.vert): params.w flags it, aux holds the direction it swings
+ * in (across the chord, horizontal) as an angle in 16 bits. */
 static void emit_cable(Mesh *m, const Cable *c, Mat mt) {
     vec3 d = v3_sub(c->b, c->a);
     float span = sqrtf(d.x * d.x + d.z * d.z);
     int n = (int)clampf(span / 3.5f, 5.0f, 12.0f);
+    float ang = atan2f(d.x, -d.z);   /* of the horizontal perpendicular (-dz, dx) */
+    mt.p[3] = 1;
+    mt.aux = (uint32_t)((ang / (2.0f * PI_F) + 0.5f) * 65535.0f + 0.5f);
     vec3 prev = c->a;
+    float prevDrop = 0.0f;
     for (int i = 1; i <= n; ++i) {
-        float t = (float)i / (float)n;
+        float t = (float)i / (float)n, drop = 4.0f * c->sag * t * (1.0f - t);
         vec3 p = v3_add(c->a, v3_scale(d, t));
-        p.y -= 4.0f * c->sag * t * (1.0f - t);
-        emit_beam(m, prev, p, c->thick, mt);
+        p.y -= drop;
+        emit_strand(m, prev, prevDrop, p, drop, c->sag, c->thick, mt);
         prev = p;
+        prevDrop = drop;
     }
 }
 
