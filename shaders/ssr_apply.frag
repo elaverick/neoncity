@@ -24,7 +24,7 @@ void main() {
     vec4 g = texelFetch(reflTex, px, 0);
     outColor = vec4(0.0);   // additive: zero leaves the scene as it is
     if (g.a <= 1e-3) return;
-    float rough = g.b;
+    float rough = max(g.b, 0.0);   // glass is marked negative (city.frag: GLASS_ROUGH)
 
     ivec2 size = textureSize(ssrTex, 0);
     float len = float(size.y) * 0.09 * smoothstep(0.04, 0.4, rough);   // streak half-length, pixels

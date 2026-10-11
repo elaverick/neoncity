@@ -27,8 +27,9 @@ const float SHEEN = 3.5;   // pane sheen strength over glass's physical reflecta
 
 // Glass marks itself for screen-space reflections: w is the weight its sky
 // reflection (envReflection) carries in this pixel's final colour, which the
-// reflections pass swaps for the screen's reflection (ssr_apply.frag).
-const float GLASS_ROUGH = 0.0;
+// reflections pass swaps for the screen's reflection (ssr_apply.frag). Glass is
+// a mirror; the negative roughness tells the passes it's glass, not wet ground.
+const float GLASS_ROUGH = -1.0;
 void glassRefl(vec3 n, float w) { gRefl = vec4(n.x, n.z, GLASS_ROUGH, w); }
 float gStreak = 1.0;      // wet surfaces: how far GGX highlights stretch toward the viewer    // chunk-local position + wrapped chunk offset: continuous for noise
 
@@ -186,8 +187,8 @@ vec3 neonBounce(vec3 w, float h) {
  * screen-space reflections can't reach (glass seen near head-on reflects the
  * street behind the camera, which isn't on screen). A view-dependent gradient
  * (the dark street below, a glowing band of the lit facades across the way,
- * the sodium-lit overcast above) plus soft blooms where the real lamps and
- * lit shopfronts nearby would reflect. Strongest head-on, it fades out as the
+ * the sodium-lit overcast above) plus soft blooms where the street lamps
+ * nearby would reflect. Strongest head-on, it fades out as the
  * reflected ray turns toward the screen and SSR takes over (ssr.comp), so the
  * two never double up. Added on top of the pane: it shows on dark windows and
  * is drowned out by lit rooms, as real night glass is. */
@@ -205,7 +206,7 @@ vec3 paneSheen(vec3 p, vec3 n, vec3 V) {
            + vec3(0.11, 0.085, 0.06) * across * rhythm
            + neonBounce(gWorld, p.y) * 4.0 * across;
 
-    // soft blooms of the lamps and shopfronts nearby, where they'd reflect
+    // soft blooms of the street lamps nearby, where they'd reflect
     int base = gC.info.z;
     if (base >= 0 && p.y < 40.0) {
         vec4 hdr = uintBitsToFloat(lightRec[base]);
@@ -218,11 +219,15 @@ vec3 paneSheen(vec3 p, vec3 n, vec3 V) {
             vec3 l = uintBitsToFloat(r.xyz) - p;
             float d = length(l);
             if (dot(l, n) <= 0.0) continue;   // behind the pane
+            // Shop and lobby lights stand in for the glow spilling out of the
+            // glass, not for anything you could see: they'd reflect as balls
+            // of light floating at chest height.
             uint type = r.w & 3u;
-            vec3 lc = type < 2u ? lampColor(int(type)) : type == 2u ? shopColor(r.w) : vec3(0.70, 0.78, 0.95);
+            if (type >= 2u) continue;
+            vec3 lc = lampColor(int(type));
             float k = max(dot(R, l / d), 0.0);
             float bloom = pow(k, 40.0) * 3.0 + pow(k, 6.0) * 0.25;   // a soft core in a wide halo
-            c += lc * bloom * (type < 2u ? 1.0 : 0.5) * 30.0 / (d * d + 30.0);
+            c += lc * bloom * 30.0 / (d * d + 30.0);
         }
     }
     return c * F * reach * SHEEN;

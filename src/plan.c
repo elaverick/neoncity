@@ -224,7 +224,7 @@ static RoadAttr boulevard_attr(Site a, Site b) {
     r.cls = ROAD_BOULEVARD;
     r.half = ((h >> 4) & 1u) ? 13.0f : 11.5f;
     r.walk = 5.5f;
-    r.lamp = (uint8_t)((h >> 5) & 1u);
+    r.lamp = 0;   /* every street lamp is sodium */
     r.own = site_key(a) < site_key(b);
     return r;
 }
@@ -236,7 +236,7 @@ static RoadAttr arterial_attr(Site a, Site b) {
     r.cls = ROAD_ARTERIAL;
     r.half = ((h >> 4) & 1u) ? 9.5f : 8.0f;
     r.walk = ((h >> 6) & 1u) ? 5.0f : 4.5f;
-    r.lamp = (uint8_t)((h >> 5) & 1u);
+    r.lamp = 0;   /* every street lamp is sodium */
     r.own = site_key(a) < site_key(b);
     return r;
 }
@@ -546,7 +546,7 @@ static void process_piece(PlanCtx *c, const TownPlan *tp, const Piece *pc) {
     DVec2 cen = poly_centroid(p);
     float d = plan_density(cen.x, cen.z);
     sc.blockSize = 230.0 - 120.0 * d;
-    sc.lamp = (uint8_t)((pc->nb.h >> 7) & 1u);
+    sc.lamp = 0;  /* every street lamp is sodium */
     split_rec(&sc, p, 1u, 0);
 }
 

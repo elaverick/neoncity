@@ -21,6 +21,7 @@ layout(set = 0, binding = 6, rgba16f) uniform writeonly image2D ssrOut;
 
 const int STEPS = 64;
 const int REFINE = 6;
+const float GROUND_KNEE = 0.25;   // luminance where wet ground seen in glass is halved
 
 ivec2 gSize;
 
@@ -79,6 +80,13 @@ void main() {
                * (1.0 - smoothstep(0.75, 1.0, float(hitStep) / float(STEPS)))   // the march's last steps
                * smoothstep(-0.3, 0.1, dot(R, frame.camFwd.xyz));
     vec3 col = textureLod(hdrTex, hit.xy, 0.0).rgb;
+    // Glass seeing wet ground: the ground's lamp highlights streak toward the
+    // camera, and a mirror would show them elsewhere (toward the camera's
+    // mirror image), so they'd smear diagonally across the pane. Roll them
+    // off, leaving the dark street and only a faint glow.
+    vec4 hg = texelFetch(reflTex, clamp(ivec2(hit.xy * vec2(gSize)), ivec2(0), gSize - 1), 0);
+    if (g.b < 0.0 && hg.a > 1e-3 && hg.b >= 0.0)
+        col *= mix(1.0, GROUND_KNEE / (GROUND_KNEE + luma(col)), min(-g.b, 1.0));
     // The hit's colour is hazed for the camera's distance to it, but the light
     // travelled further, via the reflecting surface: haze it over the extra.
     vec2 hn = hit.xy * 2.0 - 1.0;

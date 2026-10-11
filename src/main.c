@@ -225,10 +225,12 @@ int main(int argc, char **argv) {
         titleTimer += dt;
         if (titleTimer > 0.5) {
             ChunkStats s = chunks_stats(chunks);
-            char title[256];
+            char title[320];
             snprintf(title, sizeof(title),
-                     "NeonCity | %.0f fps | chunk (%d,%d) | drawn %d (%d draws) | resident %d | queued %d | pool %d%%%s",
-                     frames / titleTimer, (int)floor(player.feet[0] / CHUNK_SIZE), (int)floor(player.feet[2] / CHUNK_SIZE),
+                     "NeonCity | %.0f fps | --cam %.1f %.1f %.0f %.0f | chunk (%d,%d) | drawn %d (%d draws) | resident %d | queued %d | pool %d%%%s",
+                     frames / titleTimer, player.eye[0], player.eye[2],
+                     player.yaw * 180.0f / PI_F, player.pitch * 180.0f / PI_F,
+                     (int)floor(player.feet[0] / CHUNK_SIZE), (int)floor(player.feet[2] / CHUNK_SIZE),
                      s.drawnChunks, s.drawCalls, s.resident, s.queued + s.ready,
                      s.pagesUsed * 100 / (s.pagesTotal ? s.pagesTotal : 1), player.fly ? " | FLY" : "");
             glfwSetWindowTitle(win, title);

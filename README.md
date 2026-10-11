@@ -259,7 +259,10 @@ surfaces are lit with GGX:
   along the view direction). Specular anti-aliasing widens the lobe where the normal
   varies within a pixel, so the film doesn't sparkle.
 - **Glass reflections:** windows, shopfronts, lobbies, glass curtain walls, door glass and
-  glass pyramid roofs write the same G-buffer (roughness 0). Their weight is the share of
+  glass pyramid roofs write the same G-buffer, marked with a negative roughness
+  (`GLASS_ROUGH`); they are mirrors. Where glass sees wet ground, `ssr.comp` rolls off the
+  ground's lamp highlights: they streak toward the camera, not toward its mirror image, so
+  in the glass they would smear diagonally across the pane. Their weight is the share of
   the sky reflection that reaches the final pixel, after frames, mullions and the
   distance blends, so the swap leaves no double image. Glass therefore mirrors the
   street, lamps, neon and neighbouring towers at grazing angles. Glass reflectance
@@ -273,8 +276,8 @@ surfaces are lit with GGX:
 - **Pane sheen** (`paneSheen`): where SSR can't reach (glass seen near head-on reflects
   the street behind the camera, which is off screen), glass gets a soft blurred
   reflection. It combines a view-dependent gradient (dark street, a glowing band of
-  facades across the way, the lit overcast) with soft blooms where the real lamps and
-  lit shopfronts nearby would reflect. Each window pane is tilted very slightly, so
+  facades across the way, the lit overcast) with soft blooms where the street lamps
+  nearby would reflect. Each window pane is tilted very slightly, so
   neighbouring panes catch different reflections. The sheen fades out exactly where SSR
   takes over. It shows on dark windows and is drowned out by lit rooms.
 - **Procedural materials:** keep their normalised Blinn-Phong lobes. The height
