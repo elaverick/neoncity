@@ -49,6 +49,14 @@ enum {
     MAT_EMISSIVE, MAT_SCREEN, MAT_LEDSTRIP, MAT_DOOR
 };
 
+/* Authored PBR materials, loaded from assets/textures/ (src/textures.c). Each
+ * has three maps, bound at material * PBR_MAPS_PER_MATERIAL + map. Surfaces
+ * opt in per material in the shader; the rest stay procedural. Must match
+ * shaders/common.glsl. */
+enum { PBR_PAVING_STONES = 0, PBR_ROAD, PBR_MATERIAL_COUNT };
+enum { PBR_ALBEDO = 0, PBR_NORMAL, PBR_ORM, PBR_MAPS_PER_MATERIAL };
+#define PBR_TEXTURE_COUNT (PBR_MATERIAL_COUNT * PBR_MAPS_PER_MATERIAL)
+
 typedef struct Vertex {
     float    pos[3];     /* chunk-local position, metres */
     int8_t   nrm[4];     /* snorm normal */

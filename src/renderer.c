@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "textures.h"
 
 /* SPIR-V is compiled at build time and embedded as word lists. */
 static const uint32_t SPV_city_vert[] = {
@@ -49,6 +50,7 @@ struct Renderer {
     VkDescriptorSet  bloomDownSet[BLOOM_MIPS], bloomUpSet[BLOOM_MIPS], compositeSet;
 
     VkSampler    linearClamp;
+    Textures    *textures;
     VkDescriptorPool      staticPool;
     VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout;
     VkDescriptorSet       sceneSet[MAX_FRAMES];
@@ -117,12 +119,13 @@ static VkPipelineLayout make_pipeline_layout(VkCore *vk, VkDescriptorSetLayout s
 
 static void create_layouts(Renderer *r) {
     VkCore *vk = r->vk;
-    VkDescriptorSetLayoutBinding scene[3] = {
+    VkDescriptorSetLayoutBinding scene[4] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
+        { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
     };
-    r->sceneLayout = make_set_layout(vk, scene, 3);
+    r->sceneLayout = make_set_layout(vk, scene, 4);
     VkDescriptorSetLayoutBinding tex[2] = {
         { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
@@ -138,16 +141,19 @@ static void create_layouts(Renderer *r) {
     r->compositePL = make_pipeline_layout(vk, r->texLayout, sizeof(CompositePush), VK_SHADER_STAGE_FRAGMENT_BIT);
     r->bloomPL = make_pipeline_layout(vk, r->bloomLayout, sizeof(BloomPush), VK_SHADER_STAGE_COMPUTE_BIT);
 
-    VkDescriptorPoolSize sizes[2] = {
+    VkDescriptorPoolSize sizes[3] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = MAX_FRAMES;
-    pci.poolSizeCount = 2;
+    pci.poolSizeCount = 3;
     pci.pPoolSizes = sizes;
     VK_CHECK(vkCreateDescriptorPool(vk->device, &pci, NULL, &r->staticPool));
 
+    VkDescriptorImageInfo maps[PBR_TEXTURE_COUNT];
+    textures_descriptors(r->textures, maps);
     for (int i = 0; i < MAX_FRAMES; ++i) {
         VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
         ai.descriptorPool = r->staticPool;
@@ -157,15 +163,17 @@ static void create_layouts(Renderer *r) {
         VkDescriptorBufferInfo ub = { r->ubo[i].buf, 0, sizeof(FrameUBO) };
         VkDescriptorBufferInfo sb = { chunks_gpu_buffer(r->chunks, i), 0, chunks_gpu_buffer_size() };
         VkDescriptorBufferInfo lb = { chunks_light_buffer(r->chunks), 0, chunks_light_buffer_size() };
-        VkWriteDescriptorSet w[3] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
-                                      { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
+        VkWriteDescriptorSet w[4] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
+                                      { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
         w[0].dstSet = r->sceneSet[i]; w[0].dstBinding = 0; w[0].descriptorCount = 1;
         w[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[0].pBufferInfo = &ub;
         w[1].dstSet = r->sceneSet[i]; w[1].dstBinding = 1; w[1].descriptorCount = 1;
         w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w[1].pBufferInfo = &sb;
         w[2].dstSet = r->sceneSet[i]; w[2].dstBinding = 2; w[2].descriptorCount = 1;
         w[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w[2].pBufferInfo = &lb;
-        vkUpdateDescriptorSets(vk->device, 3, w, 0, NULL);
+        w[3].dstSet = r->sceneSet[i]; w[3].dstBinding = 3; w[3].descriptorCount = PBR_TEXTURE_COUNT;
+        w[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[3].pImageInfo = maps;
+        vkUpdateDescriptorSets(vk->device, 4, w, 0, NULL);
     }
 
     VkSamplerCreateInfo si = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
@@ -400,6 +408,7 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
         r->ubo[i] = vk_buffer(vk, sizeof(FrameUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     }
+    r->textures = textures_create(vk);
     create_layouts(r);
     create_pipelines(r);
     create_targets(r);
@@ -421,6 +430,7 @@ void renderer_destroy(Renderer *r) {
     vkDestroyDescriptorSetLayout(vk->device, r->bloomLayout, NULL);
     vkDestroyDescriptorPool(vk->device, r->staticPool, NULL);
     vkDestroySampler(vk->device, r->linearClamp, NULL);
+    textures_destroy(r->textures);
     for (int i = 0; i < MAX_FRAMES; ++i) {
         vkDestroyFence(vk->device, r->fence[i], NULL);
         vkDestroySemaphore(vk->device, r->imageReady[i], NULL);

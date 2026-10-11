@@ -41,6 +41,12 @@ FetchContent_Declare(glfw
   GIT_TAG 3.4 GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(glfw)
 
+# --- stb (image loading for PBR textures; header-only, so download only) ------
+FetchContent_Declare(stb
+  URL https://github.com/nothings/stb/archive/2c980bb59875b0d32144a71867fbdebb2f77cd20.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(stb)
+
 # --- Shader compiler: use the Vulkan SDK's if present, otherwise build glslang -
 find_program(GLSLC glslc HINTS $ENV{VULKAN_SDK}/bin $ENV{VULKAN_SDK}/Bin)
 if(GLSLC)
@@ -112,11 +118,25 @@ endforeach()
 add_test(NAME city_determinism COMMAND city_test)
 add_test(NAME building_rules COMMAND building_lab 2000)
 
+# --- Tools: PBR texture packer --------------------------------------------------
+# Converts an ambientCG-style download into assets/textures/<name>/ (see README).
+add_executable(pbr_pack tools/pbr_pack.c)
+target_include_directories(pbr_pack PRIVATE ${stb_SOURCE_DIR})
+if(MSVC)
+  target_compile_options(pbr_pack PRIVATE /W3 /wd4996)
+else()
+  target_link_libraries(pbr_pack PRIVATE m)
+endif()
+
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/main.c src/vkcore.c src/renderer.c src/city.c src/plan.c src/building.c src/chunks.c src/player.c src/thread.c)
+  src/main.c src/vkcore.c src/renderer.c src/textures.c src/city.c src/plan.c src/building.c src/chunks.c src/player.c src/thread.c)
 add_dependencies(NeonCity shaders)
-target_include_directories(NeonCity PRIVATE src ${SHADER_OUT_DIR})
+target_include_directories(NeonCity PRIVATE src ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
+# Authored textures are loaded at run time from assets/ beside the executable.
+add_custom_command(TARGET NeonCity POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/assets $<TARGET_FILE_DIR:NeonCity>/assets
+  VERBATIM)
 target_link_libraries(NeonCity PRIVATE volk glfw)
 if(MSVC)
   target_compile_options(NeonCity PRIVATE /W3 /wd4100 /wd4996 /fp:fast)

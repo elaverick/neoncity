@@ -126,6 +126,60 @@ vec3 envReflection(vec3 R) {
 }
 
 /* ======================================================================
+ * Authored PBR materials (src/textures.c). Surfaces opt in per material;
+ * a material whose maps were not found is bound as 1x1 placeholders and
+ * its surfaces keep their procedural look.
+ * ==================================================================== */
+
+layout(set = 0, binding = 3) uniform sampler2D pbrMaps[PBR_MATERIAL_COUNT * PBR_MAPS_PER_MATERIAL];
+
+struct Surface { vec3 albedo; vec3 n; float ao; float rough; float height; };
+
+bool pbrLoaded(int m) { return textureSize(pbrMaps[m * PBR_MAPS_PER_MATERIAL + PBR_ALBEDO], 0).x > 1; }
+
+// st: texture coordinates. T, B: world directions of image right and image up
+// (normal maps are OpenGL convention, +Y green = up the image).
+Surface samplePBR(int m, vec2 st, vec3 T, vec3 B, vec3 N) {
+    int i = m * PBR_MAPS_PER_MATERIAL;
+    Surface s;
+    s.albedo = texture(pbrMaps[i + PBR_ALBEDO], st).rgb;
+    vec3 tn = texture(pbrMaps[i + PBR_NORMAL], st).xyz * 2.0 - 1.0;
+    s.n = normalize(T * tn.x + B * tn.y + N * tn.z);
+    vec3 orm = texture(pbrMaps[i + PBR_ORM], st).rgb;
+    s.ao = orm.r; s.rough = orm.g; s.height = orm.b;
+    return s;
+}
+
+// Paints a flat coat (road paint, a cover plate) over a surface with coverage m.
+// The coat fills the texture's relief, so its normal and occlusion return to
+// the geometric ones; on a procedural surface (n == nGeom, ao == 1) only the
+// colour and roughness change.
+Surface layer(Surface s, vec3 nGeom, vec3 col, float rough, float m) {
+    s.albedo = mix(s.albedo, col, m);
+    s.n = normalize(mix(s.n, nGeom, m));
+    s.rough = mix(s.rough, rough, m);
+    s.ao = mix(s.ao, 1.0, m);
+    return s;
+}
+
+// PavingStones111 (ambientCG): metres per texture repeat (2:1 image, slabs
+// about 60 cm), and an albedo scale that keeps it in the city's night palette.
+const vec2 PAVING_TILE = vec2(9.6, 4.8);
+const float PAVING_ALBEDO = 0.5;   // mean 0.22 -> 0.11, near the procedural kerb stones
+
+// Road012A (ambientCG): mapped in world space so carriageways and the junction
+// fill match across their seams. The repeat must divide 64 chunks (7040 m),
+// where the shader's world coordinates wrap.
+const float ROAD_TILE = 4.0;
+const float ROAD_ALBEDO = 1.0;
+
+// Roughness to the normalised Blinn-Phong exponent the lamp loops use (alpha = r^2).
+float roughToShin(float r) {
+    float a = max(r * r, 0.03);
+    return clamp(2.0 / (a * a) - 2.0, 1.0, 2048.0);
+}
+
+/* ======================================================================
  * Ground: asphalt with markings, sidewalks, curbs, lots
  * ==================================================================== */
 
@@ -158,16 +212,26 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
     vec3 w = gWorld;
     float aa = max(fwidth(p.x), fwidth(p.z)) * 0.7 + 0.004;
     vec3 alb;
-    float shin = 16.0, specK = 0.08;
+    float shin = 16.0, specK = 0.08, ao = 1.0;
 
     if (mat == MAT_ROAD) {
-        float nn = fbm(w.xz * 0.45, 0xA5u);
+        // Base asphalt (authored or procedural), then markings and covers
+        // layered over it, then grime.
+        bool pbr = pbrLoaded(PBR_ROAD);
         float big = vnoise(w.xz * 0.045, 0xA6u);
-        alb = vec3(0.030, 0.030, 0.033) * (0.7 + 0.6 * nn) * (0.75 + 0.5 * big);
+        Surface s;
+        if (pbr) {
+            // world-planar: +x is image right, -z image up
+            s = samplePBR(PBR_ROAD, w.xz / ROAD_TILE, vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0), n);
+            s.albedo *= ROAD_ALBEDO;
+        } else {
+            float nn = fbm(w.xz * 0.45, 0xA5u);
+            s = Surface(vec3(0.030, 0.030, 0.033) * (0.7 + 0.6 * nn) * (0.75 + 0.5 * big), n, 1.0, 0.5, 0.5);
+        }
         // patched / resurfaced rectangles
         vec2 pc = floor(w.xz / 7.0);
         uint ph = hash2i(0xA7u, int(pc.x), int(pc.y));
-        if (hfloat(ph) < 0.12) alb *= 0.75;
+        if (hfloat(ph) < 0.12) s.albedo *= 0.75;
 
         float half_ = float(prm.y) * 0.25;
         vec2 mk = vec2(0.0);
@@ -184,7 +248,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         }
         float wear = 0.45 + 0.55 * smoothstep(0.25, 0.6, fbm(w.xz * 1.7, 0xA8u));
         vec3 paint = mix(vec3(0.42, 0.41, 0.38), vec3(0.45, 0.30, 0.05), mk.y);
-        alb = mix(alb, paint, mk.x * wear);
+        s = layer(s, n, paint, 0.45, mk.x * wear);
 
         // manhole covers
         vec2 mc = floor(w.xz / 13.0);
@@ -195,13 +259,27 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
             float ring = band(r, 0.30, 0.36, aa);
             float disc = 1.0 - smoothstep(0.3, 0.3 + aa, r);
             float grid = step(0.5, fract((w.x + w.z) * 6.0));
-            alb = mix(alb, vec3(0.045, 0.04, 0.035) * (0.8 + 0.3 * grid), disc);
-            alb *= 1.0 - ring * 0.5;
+            s = layer(s, n, vec3(0.045, 0.04, 0.035) * (0.8 + 0.3 * grid), 0.35, disc);
+            s.albedo *= 1.0 - ring * 0.5;
         }
         // gutter grime along the kerbs
-        alb *= mix(0.6, 1.0, smoothstep(0.0, 0.6, dCurb));
-        shin = 60.0;
-        specK = (0.25 + 0.5 * big) * (1.0 - 0.6 * mk.x);   // oily, slightly slick asphalt
+        s.albedo *= mix(0.6, 1.0, smoothstep(0.0, 0.6, dCurb));
+        alb = s.albedo; n = s.n; ao = s.ao;
+        if (pbr) {
+            shin = roughToShin(s.rough); specK = 0.04;
+        } else {
+            shin = 60.0;
+            specK = (0.25 + 0.5 * big) * (1.0 - 0.6 * mk.x);   // oily, slightly slick asphalt
+        }
+    } else if (mat == MAT_SIDEWALK && prm.y == 0u && pbrLoaded(PBR_PAVING_STONES)) {
+        // authored paving laid with the block grain (uv); the seed holds the grain angle
+        float a = uintBitsToFloat(seed);
+        vec3 T = vec3(cos(a), 0.0, sin(a)), B = vec3(sin(a), 0.0, -cos(a));   // +u, and -v (image up)
+        Surface s = samplePBR(PBR_PAVING_STONES, uv / PAVING_TILE, T, B, n);
+        alb = s.albedo * PAVING_ALBEDO;
+        alb *= 0.6 + 0.4 * smoothstep(0.2, 0.55, fbm(w.xz * 0.15, 0x7114u));  // stains, as below
+        n = s.n; ao = s.ao;
+        shin = roughToShin(s.rough); specK = 0.04;   // dielectric F0
     } else if (mat == MAT_SIDEWALK) {
         // paving runs with the block grain (uv); prm.y = 1 is the kerb-stone edge
         vec2 tp = uv / 1.2;
@@ -225,13 +303,13 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         alb = vec3(0.045, 0.043, 0.04) * (0.6 + 0.8 * fbm(w.xz * 0.5, 0x7116u));
     }
 
-    vec3 diff = ambientLight(n, p.y);
+    vec3 diff = ambientLight(n, p.y) * ao;
     vec3 spec = vec3(0.0);
     cityLights(p, n, V, shin, specK, diff, spec);
-    diff += neonBounce(w, p.y);
+    diff += neonBounce(w, p.y) * ao;
     // sky / haze sheen at grazing angles
     float fres = pow(1.0 - max(dot(n, V), 0.0), 5.0);
-    spec += envReflection(reflect(-V, n)) * fres * specK * 2.0;
+    spec += envReflection(reflect(-V, n)) * fres * specK * 2.0 * ao;
     return alb * diff + spec;
 }
 
@@ -256,6 +334,7 @@ struct Room {
     float furnZ;     // furniture plane depth fraction
     bool  person;
     bool  shop;
+    bool  tv;        // dark room lit only by a television on the back wall
     uint  h;
 };
 
@@ -273,21 +352,42 @@ vec3 shelves(vec2 w, vec3 base, uint h) {
     return mix(neonColor(ih >> 5), vec3(0.8), 0.35) * (0.4 + 0.6 * hf(ih, 3u));
 }
 
+// Lamp colour at a colour temperature (K): blackbody hues from warm incandescent
+// to daylight, softened as an eye adapted to mixed city light sees them.
+vec3 kelvin(float k) {
+    const vec3 c2700 = vec3(1.00, 0.62, 0.32), c3000 = vec3(1.00, 0.69, 0.42), c3500 = vec3(1.00, 0.77, 0.55),
+               c4000 = vec3(1.00, 0.84, 0.68), c5000 = vec3(1.00, 0.93, 0.85), c6500 = vec3(0.93, 0.97, 1.00);
+    if (k < 3000.0) return mix(c2700, c3000, clamp((k - 2700.0) / 300.0, 0.0, 1.0));
+    if (k < 3500.0) return mix(c3000, c3500, (k - 3000.0) / 500.0);
+    if (k < 4000.0) return mix(c3500, c4000, (k - 3500.0) / 500.0);
+    if (k < 5000.0) return mix(c4000, c5000, (k - 4000.0) / 1000.0);
+    return mix(c5000, c6500, clamp((k - 5000.0) / 1500.0, 0.0, 1.0));
+}
+
+// A television's light: a new scene every few seconds (mostly cool blue-white,
+// sometimes warm or green), flickering within each scene.
+vec3 tvGlow(uint h) {
+    float scene = floor(gTime * (0.2 + 0.3 * hf(h, 14u)) + 64.0 * hf(h, 15u));
+    uint sh = hash_combine(h, uint(scene));
+    float k = hf(sh, 1u);
+    vec3 c = k < 0.6 ? mix(vec3(0.50, 0.64, 1.0), vec3(0.80, 0.88, 1.0), hf(sh, 2u))
+           : k < 0.85 ? vec3(1.0, 0.76, 0.52) : vec3(0.58, 0.90, 0.72);
+    float flicker = 0.7 + 0.3 * vnoise(vec2(gTime * 9.0, float(h & 255u)), 0xF11Cu);
+    return c * mix(0.45, 1.0, hf(sh, 3u)) * flicker;
+}
+
 Room makeRoom(uint h, float litChance, float tintSel, bool shop, vec3 shopCol) {
     Room r;
     r.h = h;
     r.lit = shop || hf(h, 1u) < litChance;
-    float pick = hf(h, 2u);
-    vec3 warm = vec3(1.0, 0.68, 0.40), cool = vec3(0.72, 0.88, 1.0), pink = vec3(1.0, 0.35, 0.62),
-         teal = vec3(0.30, 0.95, 0.85), tv = vec3(0.45, 0.60, 1.0);
-    vec3 base = tintSel < 0.5 ? warm : cool;
-    vec3 alt = tintSel < 0.5 ? cool : warm;
-    r.light = pick < 0.6 ? base : pick < 0.82 ? alt : pick < 0.9 ? pink : pick < 0.95 ? teal : tv;
+    // Some otherwise dark rooms have the television on.
+    r.tv = !shop && !r.lit && hf(h, 12u) < 0.14;
+    // Homes (tintSel < 0.5) lean warm, offices neutral to cool; a quarter go the other way.
+    float pick = hf(h, 2u), kt = hf(h, 13u);
+    float k = (tintSel < 0.5) == (pick < 0.75) ? mix(2700.0, 3400.0, kt) : mix(4000.0, 6500.0, kt * kt);
+    r.light = kelvin(k);
     r.bright = mix(0.9, 2.6, hf(h, 3u));
-    if (pick >= 0.95) {   // television flicker
-        float f = vnoise(vec2(gTime * 7.0, float(h & 255u)), 0xF11Cu);
-        r.bright *= 0.35 + 0.9 * f;
-    }
+    if (r.tv) { r.lit = true; r.light = tvGlow(h); r.bright = 0.45; }
     if (shop) { r.light = shopCol; r.bright = mix(0.9, 1.7, hf(h, 3u)); }
     r.wall = mix(vec3(0.35, 0.33, 0.30), vec3(0.55, 0.50, 0.45), hf(h, 4u)) * (0.5 + 0.5 * hf(h, 5u));
     r.floorC = vec3(0.12, 0.10, 0.09) * (0.6 + 0.8 * hf(h, 6u));
@@ -296,7 +396,7 @@ Room makeRoom(uint h, float litChance, float tintSel, bool shop, vec3 shopCol) {
     r.curtain = (!shop && b > 0.86) ? 1.0 : 0.0;
     r.curtainC = mix(vec3(0.9, 0.25, 0.12), vec3(0.85, 0.65, 0.35), hf(h, 9u));
     r.furnZ = mix(0.3, 0.65, hf(h, 10u));
-    r.person = r.lit && hf(h, 11u) < (shop ? 0.4 : 0.08);
+    r.person = r.lit && !r.tv && hf(h, 11u) < (shop ? 0.4 : 0.08);
     r.shop = shop;
     return r;
 }
@@ -318,6 +418,29 @@ float furniture(float x, float y, float W, Room r) {
     return m;
 }
 
+// TV rooms: the set stands against the back wall; screen centre and half size.
+vec3 tvPos(Room r, float W, float D) { return vec3(W * (0.3 + 0.4 * hf(r.h, 16u)), 0.95, D); }
+vec2 tvHalf(float W) { return vec2(min(0.55, W * 0.2), 0.32); }
+
+/* Light leaving interior point p (room box: x along the wall, y up, z into the
+ * room) with albedo alb. Lit rooms have a ceiling panel (half extents `panel`);
+ * TV rooms are dark but for the screen and the glow it throws into the room. */
+vec3 roomLight(Room r, vec3 p, vec3 alb, bool ceiling, float W, float H, float D, vec2 panel) {
+    if (!r.lit) return alb * vec3(0.010, 0.012, 0.020);   // only the city glow from outside
+    if (r.tv) {
+        vec3 tp = tvPos(r, W, D);
+        vec2 q = abs(p.xy - tp.xy), hs = tvHalf(W);
+        if (p.z > D - 0.01 && q.x < hs.x && q.y < hs.y) return r.light * 3.0;
+        vec3 dl = p - tp;
+        float fwd = clamp(-dl.z / max(length(dl), 1e-3), 0.0, 1.0);
+        return alb * (r.light * 1.6 * (0.2 + 0.8 * fwd) / (1.0 + dot(dl, dl) * 0.6) + vec3(0.010, 0.012, 0.020));
+    }
+    if (ceiling && abs(p.x - W * 0.5) < panel.x && abs(p.z - D * 0.5) < panel.y)
+        return r.light * r.bright * 5.0;
+    vec3 dl = p - vec3(W * 0.5, H - 0.05, D * 0.5);
+    return alb * r.light * r.bright * (0.18 + 2.2 / (1.0 + dot(dl, dl) * 0.35));
+}
+
 vec3 interiorColor(vec2 cell, vec3 d, float W, float H, float D, Room r) {
     vec3 o = vec3(cell.x * W, cell.y * H, 0.0);
     d.z = max(d.z, 1e-3);
@@ -336,7 +459,7 @@ vec3 interiorColor(vec2 cell, vec3 d, float W, float H, float D, Room r) {
         if (r.shop) alb = shelves(p.xy, r.wall, r.h);
         else if (dx < 0.45 && p.y < 2.1) alb *= 0.45;
         else if (hf(r.h, 31u) < 0.3 && dx > 0.8 && dx < 1.4 && p.y > 1.1 && p.y < 1.9)
-            alb = neonColor(r.h >> 3) * 0.5;
+            alb = mix(neonColor(r.h >> 3), vec3(0.45), 0.6) * 0.4;   // a print on the wall
     } else if (t == tx) {
         alb = r.shop ? shelves(p.zy, r.wall, r.h ^ 0x55u) : r.wall * 0.85;
     } else if (d.y > 0.0) {
@@ -346,17 +469,7 @@ vec3 interiorColor(vec2 cell, vec3 d, float W, float H, float D, Room r) {
         alb = r.floorC;
     }
 
-    vec3 col;
-    if (r.lit) {
-        vec3 lp = vec3(W * 0.5, H - 0.05, D * 0.5);
-        vec3 dl = p - lp;
-        float illum = r.bright * (0.18 + 2.2 / (1.0 + dot(dl, dl) * 0.35));
-        col = alb * r.light * illum;
-        if (ceiling && abs(p.x - W * 0.5) < W * 0.2 && abs(p.z - D * 0.5) < min(D * 0.15, 0.6))
-            col = r.light * r.bright * 5.0;
-    } else {
-        col = alb * vec3(0.010, 0.012, 0.020);   // only the city glow from outside
-    }
+    vec3 col = roomLight(r, p, alb, ceiling, W, H, D, vec2(W * 0.2, min(D * 0.15, 0.6)));
 
     // furniture / figure layer
     float tf = (D * r.furnZ) / d.z;
@@ -365,7 +478,7 @@ vec3 interiorColor(vec2 cell, vec3 d, float W, float H, float D, Room r) {
         if (pf.x > 0.0 && pf.x < W && pf.y > 0.0) {
             float m = furniture(pf.x, pf.y, W, r);
             if (m > 0.5) {
-                vec3 sil = r.lit ? r.light * r.bright * (m > 1.5 ? 0.03 : 0.10) : vec3(0.002);
+                vec3 sil = r.tv ? r.light * 0.006 : r.lit ? r.light * r.bright * (m > 1.5 ? 0.03 : 0.10) : vec3(0.002);
                 col = sil;
             }
         }
@@ -482,14 +595,8 @@ vec3 cornerInterior(vec2 cell, vec3 d, float W, float H, float D, Room r, bool g
         alb = r.floorC;
     }
 
-    if (!r.lit) return alb * vec3(0.010, 0.012, 0.020);
-    vec3 lp = vec3(W * 0.5, H - 0.05, D * 0.5);
-    vec3 dl = p - lp;
-    float illum = r.bright * (0.18 + 2.2 / (1.0 + dot(dl, dl) * 0.35));
     float panel = min(min(W, D) * 0.2, 0.6);   // square, so it matches from both faces
-    if (ceiling && abs(p.x - W * 0.5) < panel && abs(p.z - D * 0.5) < panel)
-        return r.light * r.bright * 5.0;
-    return alb * r.light * illum;
+    return roomLight(r, p, alb, ceiling, W, H, D, vec2(panel));
 }
 
 /* ======================================================================
@@ -546,6 +653,12 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
                                    vec3(0.014, 0.024, 0.040);    // blue glass
     wallAlb *= (0.7 + 0.6 * hf(sh, 10u)) * 1.4;
     bool glassWall = palette == 4u || palette == 7u || type == 1;
+    // Window glass transmission: clear float glass is faintly green; tinted
+    // curtain walls and bronze-clad towers carry their tint into the rooms.
+    vec3 glassT = palette == 7u ? vec3(0.62, 0.78, 0.92) :   // blue glass
+                  palette == 4u ? vec3(0.55, 0.57, 0.60) :   // grey (black) glass
+                  palette == 6u ? vec3(0.86, 0.74, 0.58) :   // bronze
+                                  vec3(0.84, 0.90, 0.86);    // clear
 
     // uv.x = metres along the face; chunk-local y is absolute height.
     float u = uv.x, vAbs = p.y;
@@ -573,7 +686,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         uint lh = hash3i(seed ^ 0x10BBu, section, faceDir, int(floor(u / 8.0)));
         Room r = makeRoom(lh, 1.0, tintSel, false, vec3(0.0));
         r.lit = true; r.blinds = 0.0; r.curtain = 0.0;
-        r.light = mix(vec3(0.80, 0.86, 1.0), vec3(1.0, 0.86, 0.66), step(0.5, tintSel));
+        r.light = tintSel < 0.5 ? kelvin(5000.0) : kelvin(3500.0);
         r.bright = groundMode == 3u ? 0.7 : 1.35;
         r.wall = vec3(0.55, 0.53, 0.50);
         r.person = hf(lh, 11u) < 0.3;
@@ -713,7 +826,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 refl = envReflection(R);
     vec3 roomAvg = room.lit ? room.light * room.bright * 0.42 : vec3(0.003, 0.0035, 0.005);
     if (room.blinds > 0.0 && room.lit) roomAvg *= 1.0 - 0.4 * room.blinds;
-    vec3 winMid = roomAvg * (1.0 - F) + refl * F;
+    vec3 winMid = roomAvg * glassT * (1.0 - F) + refl * F;
 
     vec3 winNear = winMid;
     if (lodT < 1.0 && cov > 0.0) {
@@ -738,7 +851,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             vec3 bc = room.lit ? room.light * room.bright * 0.28 * (0.55 + 0.45 * slat) : vec3(0.02) * slat;
             inner = mix(inner, bc, 0.9);
         }
-        winNear = inner * (1.0 - F) * 0.9 + refl * F;
+        winNear = inner * glassT * (1.0 - F) + refl * F;
         // window frame & mullions
         float fw = 0.05;
         float frameU = fw / (W * winW), frameV = fw / (H * winH);
@@ -752,8 +865,8 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 col = mix(near, mid, lodT);
     if (farT > 0.0) {
         // average of many cells: expected lit fraction and window area
-        vec3 avgLight = mix(vec3(1.0, 0.68, 0.40), vec3(0.72, 0.88, 1.0), step(0.5, tintSel)) * 1.75 * 0.42;
-        vec3 avgWin = avgLight * litFrac * 0.9 * (1.0 - F) + refl * F;
+        vec3 avgLight = (tintSel < 0.5 ? kelvin(3300.0) : kelvin(4700.0)) * 1.75 * 0.42;
+        vec3 avgWin = avgLight * litFrac * glassT * (1.0 - F) + refl * F;
         vec3 far_ = mix(wallLit, avgWin, winW * winH);
         col = mix(col, far_, farT);
     }

@@ -11,6 +11,10 @@ const uint MAT_ROAD = 0u, MAT_SIDEWALK = 1u, MAT_CURB = 2u, MAT_LOT = 3u,
            MAT_FACADE = 4u, MAT_ROOF = 5u, MAT_NEON = 6u, MAT_METAL = 7u,
            MAT_EMISSIVE = 8u, MAT_SCREEN = 9u, MAT_LEDSTRIP = 10u, MAT_DOOR = 11u;
 
+// Authored PBR materials (src/textures.c): maps at material * PBR_MAPS_PER_MATERIAL + map.
+const int PBR_PAVING_STONES = 0, PBR_ROAD = 1, PBR_MATERIAL_COUNT = 2;
+const int PBR_ALBEDO = 0, PBR_NORMAL = 1, PBR_ORM = 2, PBR_MAPS_PER_MATERIAL = 3;
+
 layout(set = 0, binding = 0) uniform Frame {
     mat4 viewProj;
     mat4 rayBasis;   // col0 right*tanX, col1 up*tanY, col2 forward

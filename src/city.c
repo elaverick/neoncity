@@ -1418,10 +1418,14 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
         float uv[48][2];
 #define PAVE_UV(k) do { double X = cl[k].x + wx, Z = cl[k].z + wz; \
         uv[k][0] = (float)(gc * X + gs * Z); uv[k][1] = (float)(-gs * X + gc * Z); } while (0)
+        /* The seed carries the grain angle (float bits): the tangent frame for normal-mapped paving. */
+        float grain = (float)atan2(gs, gc);
+        uint32_t gbits;
+        memcpy(&gbits, &grain, 4);
 
         int k = clip_chunk(c, n, cl);
         for (int i = 0; i < k; ++i) PAVE_UV(i);
-        if (k) emit_flat(m, cl, k, gy, (const float (*)[2])uv, mat(MAT_SIDEWALK, 0, 0, 0, 0));
+        if (k) emit_flat(m, cl, k, gy, (const float (*)[2])uv, mat(MAT_SIDEWALK, gbits, 0, 0, 0));
 
         for (int i = 0; i < n; ++i) {
             int j = (i + 1) % n;

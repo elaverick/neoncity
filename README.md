@@ -20,11 +20,13 @@ build/city_map map.bmp         # top-down map of the plan (6 km around the spawn
 build/building_lab 3000 5      # building archetypes, retries and rejections; 5 decision logs
 ```
 
-CMake fetches its dependencies at configure time: Vulkan-Headers, volk and GLFW.
+CMake fetches its dependencies at configure time: Vulkan-Headers, volk, GLFW and stb.
 The Vulkan SDK is optional. If `glslc` or `glslangValidator` is on the PATH (or in
 `$VULKAN_SDK`), CMake uses it. If not, CMake builds glslang from source. Shaders are
-compiled at build time and embedded in the executable, so `NeonCity.exe` is a single
-file with nothing to install.
+compiled at build time and embedded in the executable. Authored textures are not: the
+build copies `assets/` next to `NeonCity.exe`, and the game reads them at startup. Without
+that folder the game still runs; any surface whose textures are missing keeps its
+procedural look.
 
 ## Controls
 
@@ -173,9 +175,14 @@ kilometres from the origin.
 Facades are single quads. For each window cell the fragment shader traces the view ray
 through a virtual room box behind the glass and shades whichever surface it hits first:
 back wall, side walls, floor or ceiling. Each room has its own ceiling light panel and
-lighting falloff. Extra depth layers add furniture silhouettes and occasional people walking
-across the room, plus blinds, curtains and TV flicker. Ground-floor shops use the same trace
-with shelving and stock on their walls. Glass mixes the interior with a Fresnel reflection. Window bays are
+lighting falloff, at an ordinary colour temperature (`kelvin`, 2700-6500 K). Homes lean warm
+and offices lean neutral to cool. Some dark rooms have the television on instead: the only
+light is the screen on the back wall and the flickering glow it throws into the room, which
+cuts to a new scene every few seconds. Extra depth layers add furniture silhouettes and
+occasional people walking across the room, plus blinds and curtains. Ground-floor shops use
+the same trace with shelving and stock on their walls. Glass tints what passes through it
+(faintly green clear glass, or the building's blue, grey or bronze), and mixes the interior
+with a Fresnel reflection. Window bays are
 stretched so each face ends on a whole bay. The bay wrapping a corner is keyed as the first
 bay of the next face, so both windows of a corner room, or both fronts of a corner shop, show
 the same space. Corner rooms and corner shops get their own trace. Each is the same box from
@@ -203,6 +210,45 @@ sit exactly under the lamp heads, and the coloured spill from each lit shopfront
 storefront itself: the shader and the generator use the same hash for which 6 m shop bay is
 open.
 
+### Textures (`src/textures.c`, `assets/textures/`)
+Most surfaces are shaded procedurally. Individual materials can opt in to authored PBR
+textures instead. Each material is a folder under `assets/textures/` with three maps:
+
+| File | Contents | Format |
+|---|---|---|
+| `albedo.png` | base colour | sRGB |
+| `normal.png` | tangent-space normal, OpenGL convention (+Y green) | linear |
+| `orm.png` | R = ambient occlusion, G = roughness, B = height | linear |
+
+They are uploaded with full mip chains and sampled with anisotropic filtering. Lamp
+specular uses roughness, through the normalised Blinn-Phong exponent equivalent to GGX
+`alpha = roughness^2`. AO darkens only the ambient, neon-bounce and sky terms. The height
+channel is packed but unused for now: it is reserved for puddles in the joints and for
+parallax. Two materials use textures so far, both CC0 from ambientCG:
+- **Main sidewalk area:** `paving_stones_111`
+  ([PavingStones111](https://ambientcg.com/view?id=PavingStones111)), laid with the block
+  grain.
+- **Roads:** `road_012a` ([Road012A](https://ambientcg.com/view?id=Road012A)), mapped in
+  world space so carriageways and junction fill meet without seams.
+
+The kerb-stone edge and everything else stay procedural.
+
+Road markings and manhole covers stay procedural masks. `layer()` paints them over the base
+surface, whether textured or procedural. Within the mask it blends in the coat's colour and
+roughness, and returns the normal and AO to the geometric ones, because paint fills the
+asphalt's relief. Any future decal (kerb paint, stains, puddles) can follow the same pattern.
+
+To add a material from an ambientCG download (any resolution):
+1. Pack it: `build/pbr_pack <download>/<Name>_4K-PNG assets/textures/<name> 2048`. This
+   reads `_Color`, `_NormalGL`, `_Roughness`, and `_AmbientOcclusion` / `_Displacement`
+   when present. It box-filters them down to the given width and writes the three maps.
+   The `.blend`, `.mtlx`, `.tres`, `.usdc`, `_NormalDX` and preview files are not needed.
+2. Add an entry to the `PBR_*` enum in `src/common.h` and the matching constant in
+   `shaders/common.glsl`. Add its folder name to `MATERIAL_DIRS` in `src/textures.c`.
+3. In `shaders/city.frag`, guard the surface with `pbrLoaded(PBR_X)` and call
+   `samplePBR(PBR_X, st, T, B, n)`. `T` and `B` are the world directions of image right and
+   image up. The paving branch in `shadeGround` is the example.
+
 ### Walking (`src/player.c`)
 Collision runs against the same deterministic block layouts, using circle-vs-footprint tests
 against the oriented footprints and sliding along walls. Curbs are stepped up and down automatically. A critically damped
@@ -226,8 +272,9 @@ sprinting:
 
 ## Extending
 - **Environment** (rain, wet streets, fog volumes, weather): the atmosphere lives in
-  `hazeColor` / `fogAmount` in `shaders/common.glsl`. The road's slickness is the `specK`
-  term in `shadeGround`.
+  `hazeColor` / `fogAmount` in `shaders/common.glsl`. The procedural road's slickness is
+  the `specK` term in `shadeGround`. The textured road follows its roughness map; see the
+  GGX entry in `TODO.md`.
 - **Pool size and view distance**: `POOL_PAGES` and `VIEW_DISTANCE` in `src/common.h`.
   The default pool is 384 MB.
 - **A different city**: change `WORLD_SEED`. For a different layout, change `TOWN_SIZE` and
