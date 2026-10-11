@@ -204,6 +204,30 @@ are the block's own polygons, raised on kerbs with a kerb-stone edge, and the pa
 with the block's grain. Street lamps are real geometry, spaced evenly along each
 carriageway and skipping side-street mouths.
 
+Overhead cables hang across the streets, more of them in denser districts. Crossings run from
+facade to facade, singly or in loose bundles of two or three, mostly at 6–15 m and now and
+then high between towers. Lamps are linked to the next lamp along the sidewalk, and some
+have a feeder line climbing to the wall behind them. The alleys and courtyards between
+buildings are thicker with them: from stations along every low wall, cables are cast at
+a skew to whatever wall faces across the gap, so they criss-cross overhead. They count
+only where the gap lies inside the block's lot, never over a street.
+
+Each cable is a parabolic sag of thin beams. Its ends are found by casting horizontally
+into the building graphs, so every cable ends on a wall, and never on glass. Each end slides
+along the wall it hit to the nearest spot the facade shader draws solid, following the
+shader's own window rhythm. That can be the band between two rows of windows, the pier
+between two bays (a curtain wall's spandrels and mullions count), or on the ground floor the
+pier between two shopfronts or a lobby mullion. Ends keep clear of door canopies and of the
+neon in the lower windows. Glass cladding with windows punched in it takes no cables above
+the ground floor. Alleys are stricter, because there a cable runs close along the walls near
+its ends. Both ends need 0.3 m of solid wall either side and 0.15 m above and below, since a
+skewed cable drifts sideways but leaves the wall near level. That rules out lobby and
+curtain-wall mullions, but a curtain wall's spandrels still count. Wherever the cable passes
+within 0.35 m of a wall, sag included, it must be in front of solid facade. Crossings hang
+from 5.5 m but never sag below 5 m, and never pass a lamp below its head; alley cables never
+sag below 3.4 m. Stations are spaced by streams seeded from the road or wall alone, so a
+cable comes out the same from whichever chunk builds it.
+
 Lights are not evaluated one by one. Every lamp and lit shopfront near a chunk goes into a
 small light table, cut into 4x4 tiles over the chunk's bounds, and each fragment walks only
 its own tile. The table is built from the same plan as the geometry. Light pools therefore
