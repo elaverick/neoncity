@@ -553,7 +553,7 @@ void city_layout(int cx, int cz, BlockLayout *L) {
  * Mesh emission helpers
  * ========================================================================= */
 
-void mesh_free(Mesh *m) { free(m->v); free(m->lights); memset(m, 0, sizeof(*m)); }
+void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); memset(m, 0, sizeof(*m)); }
 
 static void mesh_push(Mesh *m, vec3 p, vec3 n, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux) {
     if (m->count == m->cap) {
@@ -688,11 +688,43 @@ static vec3 face_point(const Face *f, float u, float y, float out) {
     return v3_add(v3_add(f->o, v3_scale(f->t, u)), v3_add(v3(0, y, 0), v3_scale(f->n, out)));
 }
 
+/* A neon sign or video screen that can reach the cloud layer becomes a sky
+ * light (src/common.h): its centre and facing in chunk-local space (through
+ * the current emission transform, as mesh_push), and its power, from the
+ * sign's average emitted radiance (shadeNeon / shadeScreen) and its area. */
+static void sky_light(Mesh *m, vec3 c, vec3 n, float area, Mat mt) {
+    int screen = mt.p[0] == MAT_SCREEN;
+    float power = area * (screen ? 0.7f : 1.0f);
+    float reach = sky_light_range(power);
+    if (c.y + reach < CLOUD_LOW || c.y - reach > CLOUD_HIGH) return;
+    if (m->xf) {
+        float x = c.x, z = c.z;
+        c.x = m->xx + m->xc * x - m->xs * z;
+        c.z = m->xz + m->xs * x + m->xc * z;
+        x = n.x; z = n.z;
+        n.x = m->xc * x - m->xs * z;
+        n.z = m->xs * x + m->xc * z;
+    }
+    if (m->nsky == m->capsky) {
+        m->capsky = m->capsky ? m->capsky * 2 : 16;
+        m->sky = (SkyLight *)realloc(m->sky, m->capsky * sizeof(SkyLight));
+        if (!m->sky) fatal("out of memory building chunk sky lights");
+    }
+    SkyLight *L = &m->sky[m->nsky++];
+    L->pos[0] = c.x; L->pos[1] = c.y; L->pos[2] = c.z;
+    L->power = power;
+    L->nx = n.x; L->nz = n.z;
+    L->seed = mt.seed;
+    L->kind = screen ? SKY_KIND_SCREEN : (uint32_t)((mt.p[1] & 7) | (((mt.p[1] >> 6) & 3) << 3));
+}
+
 /* Flat quad parallel to a face: u in [u0,u1], y in [y0,y1], offset `out`. uv normalised 0..1. */
 static void emit_face_panel(Mesh *m, const Face *f, float u0, float u1, float y0, float y1, float out, Mat mt) {
     float uv[4][2] = { {0,0}, {1,0}, {1,1}, {0,1} };
     emit_quad(m, face_point(f, u0, y0, out), face_point(f, u1, y0, out),
               face_point(f, u1, y1, out), face_point(f, u0, y1, out), f->n, uv, mt);
+    if (mt.p[0] == MAT_NEON || mt.p[0] == MAT_SCREEN)
+        sky_light(m, face_point(f, 0.5f * (u0 + u1), 0.5f * (y0 + y1), out), f->n, fabsf((u1 - u0) * (y1 - y0)), mt);
 }
 
 static uint8_t q_half(float metres) { float v = metres * 2.0f + 0.5f; return (uint8_t)(v > 255 ? 255 : v); }

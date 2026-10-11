@@ -1010,18 +1010,7 @@ float glyphDist(uint g, vec2 q) {
     return d;
 }
 
-float flickerOn(uint seed, uint mode) {
-    if (mode == 0u) return 1.0;
-    if (mode == 1u) {   // occasional dropout
-        float t = floor(gTime * 14.0);
-        float burst = step(0.93, hfloat(hash_combine(seed, uint(floor(gTime * 0.5)))));
-        return 1.0 - burst * step(0.5, hfloat(hash_combine(seed, uint(t))));
-    }
-    // failing tube: buzzes and dims
-    float ph = fract(gTime * 0.23 + hfloat(seed));
-    float buzz = step(0.85, ph) * step(0.4, hfloat(hash_combine(seed, uint(gTime * 20.0))));
-    return mix(1.0, 0.15, buzz) * (0.85 + 0.15 * sin(gTime * 120.0));
-}
+float flickerOn(uint seed, uint mode) { return neonFlicker(seed, mode, gTime); }
 
 vec3 shadeNeon(vec2 uv, uint seed, uvec4 prm, vec3 rel) {
     uint colI = prm.y & 7u, style = (prm.y >> 3) & 7u, flick = (prm.y >> 6) & 3u;
@@ -1076,8 +1065,7 @@ vec3 shadeNeon(vec2 uv, uint seed, uvec4 prm, vec3 rel) {
 
 vec3 shadeScreen(vec2 uv, uint seed, uvec4 prm) {
     float wM = float(prm.z) * 0.5, hM = float(prm.w) * 0.5;
-    float slot = floor((gTime + hfloat(seed) * 30.0) / 9.0);
-    uint h = hash_combine(seed, uint(slot));
+    uint h = screenAdvert(seed, gTime);
     uint scene = h & 3u;
     vec3 c1 = neonColor(h >> 4), c2 = neonColor(h >> 8);
     vec3 col;

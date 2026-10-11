@@ -77,6 +77,8 @@ typedef struct Mesh {
     float    mn[3], mx[3];
     uint32_t *lights;    /* light tile records (4 words each), see city_build_mesh */
     uint32_t  nlights;
+    SkyLight *sky;       /* signs high enough to light the clouds (chunk-local) */
+    uint32_t  nsky, capsky;
     int       xf;        /* emission transform: local frame -> chunk-local */
     float     xc, xs, xx, xz;
 } Mesh;

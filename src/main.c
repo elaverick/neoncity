@@ -179,7 +179,7 @@ int main(int argc, char **argv) {
         /* Camera-relative rendering: the camera sits at the origin and every
          * chunk is offset by (chunk origin - camera) computed in doubles. */
         float aspect = (float)vk.extent.width / (float)(vk.extent.height ? vk.extent.height : 1);
-        mat4 proj = mat4_perspective_rz(player.fovY, aspect, NEAR_PLANE, VIEW_DISTANCE * 1.05f);
+        mat4 proj = mat4_perspective_rz(player.fovY, aspect, NEAR_PLANE, FAR_PLANE);
         mat4 view = mat4_view_rot(player.right, player.up, player.fwd);
         FrameUBO ubo;
         memset(&ubo, 0, sizeof(ubo));

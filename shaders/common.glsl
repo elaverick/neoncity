@@ -6,6 +6,19 @@ const float CHUNK_SIZE      = 110.0;
 const float LAMP_HEIGHT     = 7.5;
 const float SIDEWALK_HEIGHT = 0.15;
 const float KERB_STONE_WIDTH = 0.32;
+const float NEAR_PLANE      = 0.08;
+const float FAR_PLANE       = 1995.0;   // VIEW_DISTANCE * 1.05 (reverse-Z projection, src/main.c)
+const float CLOUD_LOW       = 165.0;    // the rain-cloud layer: scud...
+const float CLOUD_HIGH      = 720.0;    // ...to deck top
+
+// Sky lights (src/common.h)
+const int   SKY_GRID        = 32;
+const int   SKY_MAX_LIGHTS  = 2048;
+const int   SKY_MAX_INDEX   = 32768;
+const float SKY_GAIN        = 4.0;
+const float SKY_RANGE_MAX   = 220.0;
+const uint  SKY_KIND_SCREEN = 32u;
+float skyLightRange(float power) { return min(sqrt(power * SKY_GAIN / 0.04), SKY_RANGE_MAX); }
 const uint  WORLD_SEED      = 0xC1B3A7u;
 
 const uint MAT_ROAD = 0u, MAT_SIDEWALK = 1u, MAT_CURB = 2u, MAT_LOT = 3u,
@@ -82,6 +95,22 @@ vec3 lampColor(int type) {
 }
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+/* Neon flicker modes (the sign material's flicker bits): 0 steady,
+ * 1 occasional dropout, 2 failing tube that buzzes and dims. */
+float neonFlicker(uint seed, uint mode, float t) {
+    if (mode == 0u) return 1.0;
+    if (mode == 1u) {
+        float burst = step(0.93, hfloat(hash_combine(seed, uint(floor(t * 0.5)))));
+        return 1.0 - burst * step(0.5, hfloat(hash_combine(seed, uint(floor(t * 14.0)))));
+    }
+    float ph = fract(t * 0.23 + hfloat(seed));
+    float buzz = step(0.85, ph) * step(0.4, hfloat(hash_combine(seed, uint(t * 20.0))));
+    return mix(1.0, 0.15, buzz) * (0.85 + 0.15 * sin(t * 120.0));
+}
+
+// Video screens change advert every 9 s; the advert's hash picks its scene and colours.
+uint screenAdvert(uint seed, float t) { return hash_combine(seed, uint(floor((t + hfloat(seed) * 30.0) / 9.0))); }
 
 /* ---------------- atmosphere ----------------
  * A smoggy night: warm city-lit haze near the horizon, cold dark zenith.

@@ -28,3 +28,5 @@ VkDeviceSize chunks_gpu_buffer_size(void);
 VkBuffer     chunks_light_buffer(ChunkSystem *cs);   /* light tables of resident chunks (device local) */
 VkDeviceSize chunks_light_buffer_size(void);
 ChunkStats   chunks_stats(ChunkSystem *cs);
+/* Sky lights (src/common.h) of resident chunks around the camera, camera-relative and gridded. */
+void         chunks_sky_lights(ChunkSystem *cs, const double cam[3], SkyGrid *out);

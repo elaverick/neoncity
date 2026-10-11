@@ -1,0 +1,221 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+/* Rain clouds: a low nimbostratus deck with torn scud drifting beneath it,
+ * ray marched at half resolution.
+ *
+ * Each half-res pixel marches its view ray through the cloud layer, stopping
+ * at the nearest scene depth in its 2x2 block, so the deck swallows the tops
+ * of the tallest towers. At night the deck is lit from below by the city:
+ * every step looks down through the cloud toward the street (a short light
+ * march) and adds a few multiple-scattering octaves, so the underside glows
+ * sodium-orange while the body above stays dark and heavy. Neon signs and
+ * video screens high on the towers (sky lights, src/common.h) also light the
+ * cloud around them in their own colour, flickering and changing with them,
+ * found through a coarse grid around the camera. Each step is also
+ * fogged by its own distance, so the deck dissolves into the haze at range.
+ *
+ * Output: rgb = in-scattered light, a = transmittance, and the forward
+ * distance the march stopped at (for the depth-aware upsample in
+ * cloud_composite.frag). */
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 3) uniform sampler3D cloudNoise;   // cloud_noise.comp
+layout(set = 0, binding = 4) uniform sampler2D sceneDepth;
+layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D cloudOut;
+layout(set = 0, binding = 6, r32f) uniform writeonly image2D cloudDist;
+
+struct SkyLight { vec3 pos; float power; vec2 n; uint seed; uint kind; };   // src/common.h
+layout(std430, set = 0, binding = 7) readonly buffer SkyLights {
+    vec2 skyOrigin;                    // camera-relative corner of cell (0, 0)
+    float skyCell;
+    uint skyCount;
+    uint skyCells[SKY_GRID * SKY_GRID];   // first index << 8 | count
+    uint skyIndex[SKY_MAX_INDEX];
+    SkyLight skyLight[SKY_MAX_LIGHTS];
+};
+
+const float CLOUD_BASE = 250.0;            // mean height of the deck's underside
+const float CLOUD_TOP = CLOUD_HIGH;
+const float SCUD_LO = CLOUD_LOW;           // torn scud drifts between here and the deck
+const float SHAPE_SCALE = 1.0 / 900.0;     // the noise volume repeats every 900 m for the deck's masses...
+const float DETAIL_SCALE = 1.0 / 170.0;    // ...and every 170 m for the eroded edges
+const float SCUD_SCALE = 1.0 / 480.0;
+const float SIGMA = 0.012;                 // extinction per metre at density 1
+const vec3 WIND = vec3(1.5, 0.0, 0.55);    // deck drift, m/s; the scud below runs faster
+const float GLOW = 1.3;                    // city light reaching the cloud base
+
+float gTime;
+
+float remap(float x, float a, float b, float c, float d) { return c + (x - a) * (d - c) / (b - a); }
+
+// Per-column cloud state: cover (mostly overcast, with slow-moving thinner
+// patches and breaks) and the height of the deck's underside, which sags
+// lower where the deck is heaviest and undulates on its own.
+struct Column { float cov; float base; };
+Column column(vec2 xz) {
+    Column c;
+    c.cov = mix(0.25, 0.85, smoothstep(0.2, 0.8, fbm(xz / 1800.0, 0xC10Du)));
+    c.base = CLOUD_BASE + 80.0 * (fbm(xz / 650.0, 0xC111u) - 0.5) - 50.0 * (c.cov - 0.55);
+    return c;
+}
+
+// Light thrown up by the city: sodium-orange, brighter over dense districts,
+// tinted by the neon in places.
+vec3 cityGlow(vec2 xz) {
+    float a = fbm(xz / 1400.0, 0xC10Eu);
+    vec3 c = vec3(1.0, 0.50, 0.26) * mix(0.5, 1.4, a);
+    return mix(c, vec3(0.95, 0.38, 0.80), smoothstep(0.62, 0.9, vnoise(xz / 2100.0, 0xC10Fu)) * 0.4);
+}
+
+float erodeBy(vec3 q) {
+    vec4 dn = textureLod(cloudNoise, q * DETAIL_SCALE, 0.0);
+    return dn.g * 0.625 + dn.b * 0.25 + dn.a * 0.125;
+}
+
+// The deck: a thick sheet of billowing masses over an undulating underside.
+float deck(vec3 p, Column c, bool detail) {
+    float h = (p.y - c.base) / (CLOUD_TOP - c.base);
+    if (h < 0.0 || h > 1.0) return 0.0;
+    vec4 n = textureLod(cloudNoise, p * SHAPE_SCALE, 0.0);
+    float wfbm = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
+    float shape = remap(n.r, wfbm - 1.0, 1.0, 0.0, 1.0);
+    float prof = smoothstep(0.0, 0.12, h) * (1.0 - smoothstep(0.5, 1.0, h));
+    float d = clamp(remap(shape * prof, 1.0 - c.cov, 1.0, 0.0, 1.0), 0.0, 1.0);
+    if (detail && d > 0.0) {
+        float df = erodeBy(p + vec3(0.0, gTime * 0.12, 0.0));
+        // ragged along the underside, rounder billows higher up
+        float e = mix(1.0 - df, df, clamp(h * 3.0, 0.0, 1.0));
+        d = clamp(remap(d, e * 0.45, 1.0, 0.0, 1.0), 0.0, 1.0);
+    }
+    return d;
+}
+
+// Scud: torn fragments hanging below the deck, more of them under heavy cloud.
+float scud(vec3 p, Column c, bool detail) {
+    float top = c.base + 20.0;
+    if (p.y < SCUD_LO || p.y > top) return 0.0;
+    float hs = (p.y - SCUD_LO) / (top - SCUD_LO);
+    vec3 q = p + WIND * gTime * 0.5;
+    vec4 n = textureLod(cloudNoise, q * SCUD_SCALE, 0.0);
+    float wfbm = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
+    float shape = remap(n.r, wfbm - 1.0, 1.0, 0.0, 1.0) * smoothstep(0.0, 0.6, hs) * smoothstep(1.0, 0.85, hs);
+    float d = clamp(remap(shape, 0.66 - 0.25 * c.cov, 1.0, 0.0, 1.0), 0.0, 1.0);
+    if (detail && d > 0.0) d = clamp(remap(d, (1.0 - erodeBy(q * 1.7)) * 0.6, 1.0, 0.0, 1.0), 0.0, 1.0);
+    return d;
+}
+
+// Density at world point p (deck drift already applied).
+float density(vec3 p, Column c, bool detail) { return max(deck(p, c, detail), scud(p, c, detail)); }
+
+// Light scattered toward the eye at p: city glow from below through the cloud
+// between p and the street, plus a trace of night sky from above.
+vec3 lightAt(vec3 p, Column c, vec3 glow) {
+    float below = max(p.y - SCUD_LO, 1.0);
+    float od = 0.0;
+    for (int i = 0; i < 4; ++i) od += density(p - vec3(0.0, below * (float(i) + 0.5) * 0.25, 0.0), c, false);
+    od *= below * 0.25 * SIGMA;
+    // multiple scattering: light diffuses deep into the deck rather than dying out
+    float ms = exp(-od) + 0.3 * exp(-od * 0.25) + 0.1 * exp(-od * 0.06);
+    float above = max(CLOUD_TOP - p.y, 1.0);
+    float odUp = deck(p + vec3(0.0, above * 0.35, 0.0), c, false) * above * SIGMA * 0.5;
+    // the city's light spreads as it rises: the lowest scud and bulges catch the most
+    float fall = exp(-(p.y - SCUD_LO) / 80.0);
+    return glow * GLOW * ms * fall + vec3(0.008, 0.010, 0.018) * exp(-odUp);
+}
+
+// What a sky light is showing now: a neon sign's colour through its flicker,
+// or the average of a video screen's current advert colours (city.frag).
+vec3 skyLightColor(SkyLight L) {
+    if ((L.kind & SKY_KIND_SCREEN) != 0u) {
+        uint h = screenAdvert(L.seed, gTime);
+        return mix(neonColor(h >> 4), neonColor(h >> 8), 0.5);
+    }
+    return neonColor(L.kind & 7u) * neonFlicker(L.seed, (L.kind >> 3) & 3u, gTime);
+}
+
+// Light from nearby signs scattered at camera-relative point q: inverse-square,
+// softened by the sign's size, dimmed through the cloud it crosses, and
+// strongest in front of the sign.
+vec3 signLight(vec3 q) {
+    vec2 g = (q.xz - skyOrigin) / skyCell;
+    if (any(lessThan(g, vec2(0.0))) || any(greaterThanEqual(g, vec2(float(SKY_GRID))))) return vec3(0.0);
+    uint cell = skyCells[int(g.y) * SKY_GRID + int(g.x)];
+    uint first = cell >> 8u, n = cell & 255u;
+    vec3 sum = vec3(0.0);
+    for (uint i = 0u; i < n; ++i) {
+        SkyLight L = skyLight[skyIndex[first + i]];
+        vec3 d = q - L.pos;
+        float r2 = dot(d, d), reach = skyLightRange(L.power);
+        if (r2 >= reach * reach) continue;
+        float r = sqrt(r2);
+        float front = 0.25 + 0.75 * clamp(0.5 + 0.5 * dot(d.xz, L.n) / max(r, 1.0), 0.0, 1.0);
+        float att = L.power * SKY_GAIN / (r2 + 0.5 * L.power + 25.0) * exp(-r * SIGMA * 0.35) * (1.0 - smoothstep(0.6 * reach, reach, r));
+        sum += skyLightColor(L) * att * front;
+    }
+    return sum;
+}
+
+// Interleaved gradient noise: a stable per-pixel offset that hides step banding.
+float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+
+void main() {
+    ivec2 hp = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 hs = imageSize(cloudOut);
+    if (any(greaterThanEqual(hp, hs))) return;
+    gTime = frame.camPos.w;
+
+    // The nearest scene depth in this pixel's 2x2 block (reverse-Z: largest is nearest).
+    ivec2 fs = textureSize(sceneDepth, 0);
+    float dz = -1.0;
+    ivec2 pick = hp * 2;
+    for (int k = 0; k < 4; ++k) {
+        ivec2 c = min(hp * 2 + ivec2(k & 1, k >> 1), fs - 1);
+        float z = texelFetch(sceneDepth, c, 0).r;
+        if (z > dz) { dz = z; pick = c; }
+    }
+    float fwd = dz > 0.0 ? NEAR_PLANE * FAR_PLANE / (dz * (FAR_PLANE - NEAR_PLANE) + NEAR_PLANE) : 1e9;
+    imageStore(cloudDist, hp, vec4(fwd));
+
+    vec2 ndc = (vec2(pick) + 0.5) / vec2(fs) * 2.0 - 1.0;
+    vec3 dir = normalize(frame.rayBasis[2].xyz + ndc.x * frame.rayBasis[0].xyz - ndc.y * frame.rayBasis[1].xyz);
+    float tScene = fwd / max(dot(dir, frame.camFwd.xyz), 1e-4);
+    vec3 ro = frame.camPos.xyz;
+
+    // The ray's span inside the cloud layer, up to the scene and the view distance.
+    float lo = SCUD_LO, hi = CLOUD_TOP, t0, t1;
+    if (abs(dir.y) < 1e-5) {
+        t0 = 0.0;
+        t1 = (ro.y > lo && ro.y < hi) ? 1e9 : -1.0;
+    } else {
+        float ta = (lo - ro.y) / dir.y, tb = (hi - ro.y) / dir.y;
+        t0 = max(min(ta, tb), 0.0);
+        t1 = max(ta, tb);
+    }
+    t1 = min(t1, min(tScene, frame.camFwd.w));
+    if (t1 <= t0) { imageStore(cloudOut, hp, vec4(0.0, 0.0, 0.0, 1.0)); return; }
+
+    int steps = int(clamp((t1 - t0) / 5.0, 16.0, 80.0));
+    float ds = (t1 - t0) / float(steps);
+    float jitter = ign(vec2(hp));
+    vec3 haze = hazeColor(dir);
+    vec3 drift = WIND * gTime;
+    float T = 1.0;
+    vec3 L = vec3(0.0);
+    for (int i = 0; i < steps; ++i) {
+        float t = t0 + (float(i) + jitter) * ds;
+        vec3 pw = ro + dir * t;          // world position: the city glow stays put...
+        vec3 p = pw + drift;             // ...while the clouds drift over it
+        Column c = column(p.xz);
+        float d = density(p, c, true);
+        if (d <= 0.002) continue;
+        float Ts = exp(-d * SIGMA * ds);
+        vec3 lit = lightAt(p, c, cityGlow(pw.xz)) + signLight(dir * t);
+        // seen through the haze between the eye and this step
+        vec3 s = mix(lit, haze, fogAmount(dir * t, t));
+        L += T * (1.0 - Ts) * s;
+        T *= Ts;
+        if (T < 0.01) { T = 0.0; break; }
+    }
+    imageStore(cloudOut, hp, vec4(L, T));
+}

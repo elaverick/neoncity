@@ -20,6 +20,8 @@ typedef struct Entry {
     int      lightPage;     /* -1 if the chunk has no light table */
     uint32_t vcount;
     float    mn[3], mx[3];  /* chunk-local bounds */
+    SkyLight *sky;          /* kept while RESIDENT (chunks_sky_lights) */
+    uint32_t  nsky;
 } Entry;
 
 typedef struct Job { int cx, cz; } Job;
@@ -75,6 +77,7 @@ struct ChunkSystem {
     int      readyCount;
 
     ChunkStats stats;
+    SkyGrid    sky;     /* built here, then copied out: the destination is write-combined GPU memory */
 };
 
 /* ---------------------------------------------------------------- table --- */
@@ -110,6 +113,9 @@ static void table_remove(ChunkSystem *cs, int idx) {
     while (*link >= 0 && *link != idx) link = &cs->entries[*link].next;
     if (*link == idx) *link = e->next;
     mesh_free(&e->mesh);
+    free(e->sky);
+    e->sky = NULL;
+    e->nsky = 0;
     e->state = 0;
     cs->freeEntries[cs->freeEntryCount++] = idx;
 }
@@ -190,7 +196,7 @@ void chunks_destroy(ChunkSystem *cs) {
     for (int i = 0; i < cs->workerCount; ++i) thread_join(cs->workers[i]);
     for (int i = 0; i < cs->doneCount; ++i) mesh_free(&cs->done[i].mesh);
     free(cs->done);
-    for (int i = 0; i < MAX_ENTRIES; ++i) mesh_free(&cs->entries[i].mesh);
+    for (int i = 0; i < MAX_ENTRIES; ++i) { mesh_free(&cs->entries[i].mesh); free(cs->entries[i].sky); }
     for (int i = 0; i < MAX_FRAMES; ++i) {
         vk_buffer_destroy(cs->vk, &cs->staging[i]);
         vk_buffer_destroy(cs->vk, &cs->indirect[i]);
@@ -449,6 +455,9 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
         e->vcount = vc;
         memcpy(e->mn, e->mesh.mn, sizeof(e->mn));
         memcpy(e->mx, e->mesh.mx, sizeof(e->mx));
+        e->sky = e->mesh.sky;
+        e->nsky = e->mesh.nsky;
+        e->mesh.sky = NULL;
         mesh_free(&e->mesh);
         e->state = CS_RESIDENT;
         uploads++;
@@ -504,6 +513,73 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     cs->stats.pagesTotal = POOL_PAGES;
     cs->stats.pagesUsed = POOL_PAGES - cs->freePageCount - cs->pendingFreeCount;
     cs->stats.uploadsThisFrame = uploads;
+}
+
+void chunks_sky_lights(ChunkSystem *cs, const double cam[3], SkyGrid *dst) {
+    const double P = CHUNK_SIZE;
+    SkyGrid *out = &cs->sky;
+    const float half = SKY_GRID * SKY_CELL * 0.5f;
+    out->origin[0] = out->origin[1] = -half;
+    out->cell = SKY_CELL;
+    out->count = 0;
+    static uint32_t counts[SKY_GRID * SKY_GRID];
+    memset(counts, 0, sizeof(counts));
+
+    /* Gather, camera-relative, those whose reach touches the grid. */
+    for (int i = 0; i < MAX_ENTRIES && out->count < SKY_MAX_LIGHTS; ++i) {
+        const Entry *e = &cs->entries[i];
+        if (e->state != CS_RESIDENT || !e->nsky) continue;
+        double ox = e->cx * P - cam[0], oz = e->cz * P - cam[2];
+        if (fabs(ox + 0.5 * P) > half + P + SKY_RANGE_MAX || fabs(oz + 0.5 * P) > half + P + SKY_RANGE_MAX) continue;
+        for (uint32_t k = 0; k < e->nsky && out->count < SKY_MAX_LIGHTS; ++k) {
+            SkyLight L = e->sky[k];
+            L.pos[0] = (float)(ox + L.pos[0]);
+            L.pos[1] = (float)(L.pos[1] - cam[1]);
+            L.pos[2] = (float)(oz + L.pos[2]);
+            float r = sky_light_range(L.power);
+            if (fabsf(L.pos[0]) > half + r || fabsf(L.pos[2]) > half + r) continue;
+            out->lights[out->count++] = L;
+        }
+    }
+
+    /* Bin each light into every cell its reach overlaps: count, prefix-sum, fill. */
+    for (int pass = 0; pass < 2; ++pass) {
+        if (pass == 1) {
+            uint32_t first = 0;
+            for (int c = 0; c < SKY_GRID * SKY_GRID; ++c) {
+                uint32_t n = counts[c] > 255 ? 255 : counts[c];
+                if (first + n > SKY_MAX_INDEX) n = first < SKY_MAX_INDEX ? SKY_MAX_INDEX - first : 0;
+                out->cells[c] = first << 8;
+                counts[c] = n;
+                first += n;
+            }
+        }
+        for (uint32_t li = 0; li < out->count; ++li) {
+            const SkyLight *L = &out->lights[li];
+            float r = sky_light_range(L->power);
+            int x0 = (int)floorf((L->pos[0] - r + half) / SKY_CELL), x1 = (int)floorf((L->pos[0] + r + half) / SKY_CELL);
+            int z0 = (int)floorf((L->pos[2] - r + half) / SKY_CELL), z1 = (int)floorf((L->pos[2] + r + half) / SKY_CELL);
+            if (x0 < 0) x0 = 0;
+            if (z0 < 0) z0 = 0;
+            if (x1 > SKY_GRID - 1) x1 = SKY_GRID - 1;
+            if (z1 > SKY_GRID - 1) z1 = SKY_GRID - 1;
+            for (int z = z0; z <= z1; ++z)
+                for (int x = x0; x <= x1; ++x) {
+                    int c = z * SKY_GRID + x;
+                    if (pass == 0) { counts[c]++; continue; }
+                    uint32_t filled = out->cells[c] & 255u;
+                    if (filled < counts[c]) {
+                        out->index[(out->cells[c] >> 8) + filled] = li;
+                        out->cells[c]++;
+                    }
+                }
+        }
+    }
+
+    uint32_t nindex = 0;
+    for (int c = 0; c < SKY_GRID * SKY_GRID; ++c) nindex += counts[c];
+    memcpy(dst, out, offsetof(SkyGrid, index) + nindex * sizeof(uint32_t));
+    memcpy(dst->lights, out->lights, out->count * sizeof(SkyLight));
 }
 
 void chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {

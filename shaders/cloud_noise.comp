@@ -1,0 +1,68 @@
+#version 450
+/* Builds the tileable cloud noise volume once at startup (see clouds.comp):
+ *   R    Perlin-Worley: billowy Perlin fBm dilated by Worley cells, for the cloud masses
+ *   GBA  inverted Worley fBm at three rising frequencies, to erode them
+ * Every lattice wraps at the volume's edge, so the texture repeats seamlessly. */
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+layout(set = 0, binding = 0, rgba8) uniform writeonly image3D noiseOut;
+
+uvec3 pcg3d(uvec3 v) {
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    return v;
+}
+vec3 hash33(ivec3 c, uint salt) { return vec3(pcg3d(uvec3(c) ^ uvec3(salt, salt * 7u, salt * 13u))) * (1.0 / 4294967295.0); }
+
+// 1 - distance to the nearest feature point; cells wrap at `period`.
+float worley(vec3 p, int period, uint salt) {
+    vec3 x = p * float(period);
+    ivec3 i = ivec3(floor(x));
+    vec3 f = fract(x);
+    float md = 1.0;
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dx = -1; dx <= 1; ++dx) {
+                ivec3 o = ivec3(dx, dy, dz);
+                ivec3 c = (i + o + period) % period;
+                md = min(md, length(vec3(o) + hash33(c, salt) - f));
+            }
+    return 1.0 - clamp(md, 0.0, 1.0);
+}
+
+float worleyFbm(vec3 p, int period, uint salt) {
+    return worley(p, period, salt) * 0.625 + worley(p, period * 2, salt + 1u) * 0.25 + worley(p, period * 4, salt + 2u) * 0.125;
+}
+
+// Gradient noise in [0,1]; the lattice wraps at `period`.
+float perlin(vec3 p, int period, uint salt) {
+    vec3 x = p * float(period);
+    ivec3 i = ivec3(floor(x));
+    vec3 f = fract(x);
+    vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float n[8];
+    for (int k = 0; k < 8; ++k) {
+        ivec3 o = ivec3(k & 1, (k >> 1) & 1, k >> 2);
+        vec3 g = normalize(hash33((i + o) % period, salt) * 2.0 - 1.0);
+        n[k] = dot(g, f - vec3(o));
+    }
+    float v = mix(mix(mix(n[0], n[1], u.x), mix(n[2], n[3], u.x), u.y),
+                  mix(mix(n[4], n[5], u.x), mix(n[6], n[7], u.x), u.y), u.z);
+    return clamp(v * 0.75 + 0.5, 0.0, 1.0);
+}
+
+float perlinFbm(vec3 p, int period, uint salt) {
+    return (perlin(p, period, salt) * 0.5 + perlin(p, period * 2, salt + 1u) * 0.25 + perlin(p, period * 4, salt + 2u) * 0.125) / 0.875;
+}
+
+void main() {
+    ivec3 id = ivec3(gl_GlobalInvocationID);
+    ivec3 size = imageSize(noiseOut);
+    if (any(greaterThanEqual(id, size))) return;
+    vec3 p = (vec3(id) + 0.5) / vec3(size);
+    float pf = perlinFbm(p, 4, 11u);
+    float wf = worleyFbm(p, 4, 21u);
+    float pw = clamp((pf - (wf - 1.0)) / (2.0 - wf), 0.0, 1.0);   // remap(pf, wf - 1, 1, 0, 1)
+    imageStore(noiseOut, id, vec4(pw, worleyFbm(p, 8, 31u), worleyFbm(p, 16, 41u), worleyFbm(p, 32, 51u)));
+}

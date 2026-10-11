@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 /* ---------------------------------------------------------------------------
  * World layout. The city plan (src/plan.c) is a polycentric network of towns,
@@ -26,6 +27,7 @@
 #define VIEW_DISTANCE     1900.0f
 #define NEAR_RING_DIST    260.0f   /* chunks this close are kept regardless of view direction */
 #define NEAR_PLANE        0.08f
+#define FAR_PLANE         (VIEW_DISTANCE * 1.05f)
 
 /* GPU geometry pool: chunk meshes live in fixed-size pages of non-indexed
  * triangles so a chunk may occupy any set of free pages (no fragmentation). */
@@ -42,6 +44,22 @@
  * pool of fixed pages of 16-byte records, uploaded once with the mesh. */
 #define LIGHT_PAGE_RECS   2048
 #define LIGHT_PAGES       2560          /* 2560 * 32 KB = 80 MB */
+
+/* The rain-cloud layer's vertical extent (scud to deck top, shaders/clouds.comp). */
+#define CLOUD_LOW         165.0f
+#define CLOUD_HIGH        720.0f
+
+/* Sky lights: neon signs and video screens high enough to light the cloud
+ * layer. Each frame the ones within SKY_GRID * SKY_CELL / 2 of the camera are
+ * gathered (chunks_sky_lights) into a grid the cloud march looks up. A
+ * light's reach grows with its power (emitted radiance x area). */
+#define SKY_GRID          32            /* cells per side, centred on the camera */
+#define SKY_CELL          100.0f        /* metres */
+#define SKY_MAX_LIGHTS    2048
+#define SKY_MAX_INDEX     32768
+#define SKY_GAIN          4.0f          /* scattered light per unit power at 1 m (artistic: signs bloom in the haze) */
+#define SKY_RANGE_MAX     220.0f
+#define SKY_KIND_SCREEN   32u           /* kind bits: 0-2 neon colour, 3-4 flicker mode, 5 video screen */
 
 /* Materials (vertex params.x). Must match shaders/common.glsl. */
 enum {
@@ -72,6 +90,32 @@ typedef struct ChunkGPU {
     float   origin[4];   /* chunk origin relative to the camera */
     int32_t info[4];     /* cx, cz, first light record (-1 if none), unused */
 } ChunkGPU;
+
+/* std430, mirrored in shaders/clouds.comp. pos is chunk-local in a Mesh and
+ * camera-relative on the GPU; seed and kind let the shader reproduce the
+ * sign's flicker and a screen's current advert colours. */
+typedef struct SkyLight {
+    float    pos[3];
+    float    power;       /* emitted radiance x area */
+    float    nx, nz;      /* the way the sign faces */
+    uint32_t seed;
+    uint32_t kind;
+} SkyLight;
+
+typedef struct SkyGrid {
+    float    origin[2];   /* camera-relative corner of cell (0, 0) */
+    float    cell;
+    uint32_t count;
+    uint32_t cells[SKY_GRID * SKY_GRID];   /* first index << 8 | count */
+    uint32_t index[SKY_MAX_INDEX];
+    SkyLight lights[SKY_MAX_LIGHTS];
+} SkyGrid;
+
+/* Distance beyond which a sky light adds too little to see. */
+static inline float sky_light_range(float power) {
+    float r = sqrtf(power * SKY_GAIN / 0.04f);
+    return r < SKY_RANGE_MAX ? r : SKY_RANGE_MAX;
+}
 
 #define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
 

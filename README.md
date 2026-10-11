@@ -276,15 +276,40 @@ sprinting:
 
 `Player.footsteps` counts footfalls, ready for footstep audio.
 
+### Clouds (`shaders/clouds.comp`)
+Rain clouds hang over the city: a nimbostratus deck whose underside sits around 250 m, with
+torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
+- **Noise:** a tileable 128³ Perlin-Worley/Worley noise volume, built once on the GPU at
+  startup (`cloud_noise.comp`). It shapes the deck's billows and erodes their edges.
+- **Shape:** cover comes from a slow 2D field, so the deck is mostly overcast with thinner
+  patches and breaks. The underside undulates and sags lower where the cloud is heaviest.
+  The scud runs faster than the deck.
+- **Lighting:** at night the clouds are lit from below. Each march step looks down through
+  the cloud toward the street, and adds multiple-scattering octaves and a falloff with
+  height, so low bulges and scud glow sodium-orange (tinted by neon in places) while the
+  body stays dark.
+- **Signs:** neon signs and video screens high enough to reach the clouds also light them
+  in their own colour. They flicker with the sign and change with each screen's advert.
+  `city.c` records each one as a sky light (position, facing, power = radiance x area) while
+  building the chunk. Each frame `chunks_sky_lights` gathers those near the camera into a
+  grid of 100 m cells, so each march step only tests the few signs around it.
+- **Haze:** each step is fogged by its own distance, so the deck dissolves into the haze at
+  range.
+- **Rendering:** the march runs at half resolution against the scene depth (a sample-zero
+  resolve of the MSAA depth). A depth-aware upsample (`cloud_composite.frag`) then blends it
+  over the HDR scene, so cloud never smears across a tower's silhouette.
+
 ### Frame
-1. MSAA x4 HDR scene, resolved.
+1. MSAA x4 HDR scene, resolved (colour averaged, depth sample zero).
 2. Sky, drawn into the empty depth.
-3. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
-4. Composite: ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
+3. Clouds: half-resolution compute ray march, blended into the HDR target with a depth-aware upsample.
+4. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
+5. Composite: ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
 
 ## Extending
 - **Environment** (rain, wet streets, fog volumes, weather): the atmosphere lives in
-  `hazeColor` / `fogAmount` in `shaders/common.glsl`. The procedural road's slickness is
+  `hazeColor` / `fogAmount` in `shaders/common.glsl`. The cloud deck's height, cover,
+  wind and glow are the constants at the top of `shaders/clouds.comp`. The procedural road's slickness is
   the `specK` term in `shadeGround`. The textured road's sheen follows its roughness map under
   GGX; wet streets are the next step (`TODO.md`).
 - **Pool size and view distance**: `POOL_PAGES` and `VIEW_DISTANCE` in `src/common.h`.
