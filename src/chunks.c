@@ -6,6 +6,7 @@
 #define HASH_BUCKETS   16384
 #define MAX_JOBS       1024
 #define MAX_WORKERS    16
+#define INDIRECT_CAP   (POOL_PAGES * 2)   /* the view's draws, then the shelter map's */
 
 enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
 
@@ -59,6 +60,7 @@ struct ChunkSystem {
     Buffer   indirect[MAX_FRAMES];
     Buffer   chunkData[MAX_FRAMES];
     uint32_t drawCount[MAX_FRAMES];
+    uint32_t shelterFirst[MAX_FRAMES], shelterCount[MAX_FRAMES];
 
     /* jobs (shared with workers) */
     Mutex    jobLock;
@@ -177,7 +179,7 @@ ChunkSystem *chunks_create(VkCore *vk) {
     VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     for (int i = 0; i < MAX_FRAMES; ++i) {
         cs->staging[i]   = vk_buffer(vk, STAGING_BYTES, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host);
-        cs->indirect[i]  = vk_buffer(vk, sizeof(VkDrawIndirectCommand) * POOL_PAGES, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, host);
+        cs->indirect[i]  = vk_buffer(vk, sizeof(VkDrawIndirectCommand) * INDIRECT_CAP, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, host);
         cs->chunkData[i] = vk_buffer(vk, chunks_gpu_buffer_size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, host);
     }
 
@@ -513,12 +515,36 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     }
     cs->drawCount[slot] = ndraw;
 
+    /* 6. Shelter map draws: resident chunks overlapping its square, whatever the view. */
+    const float SR = SHELTER_RADIUS + 1.0f;
+    uint32_t sFirst = ndraw, viewChunks = nchunk;
+    for (int i = 0; i < MAX_ENTRIES && nchunk < MAX_DRAW_CHUNKS; ++i) {
+        Entry *e = &cs->entries[i];
+        if (e->state != CS_RESIDENT || ndraw + (uint32_t)e->npages > INDIRECT_CAP) continue;
+        float x0 = (float)(e->cx * (double)P - cam[0]), z0 = (float)(e->cz * (double)P - cam[2]);
+        if (x0 + e->mx[0] < -SR || x0 + e->mn[0] > SR || z0 + e->mx[2] < -SR || z0 + e->mn[2] > SR) continue;
+        ChunkGPU *g = &gpu[nchunk];
+        g->origin[0] = x0; g->origin[1] = -(float)cam[1]; g->origin[2] = z0; g->origin[3] = 0;
+        g->info[0] = e->cx; g->info[1] = e->cz; g->info[2] = -1; g->info[3] = 0;
+        for (int p = 0; p < e->npages; ++p) {
+            uint32_t first = p * PAGE_VERTS;
+            VkDrawIndirectCommand *c = &cmds[ndraw++];
+            c->vertexCount = e->vcount - first < PAGE_VERTS ? e->vcount - first : PAGE_VERTS;
+            c->instanceCount = 1;
+            c->firstVertex = (uint32_t)e->pages[p] * PAGE_VERTS;
+            c->firstInstance = nchunk;
+        }
+        nchunk++;
+    }
+    cs->shelterFirst[slot] = sFirst;
+    cs->shelterCount[slot] = ndraw - sFirst;
+
     for (int i = 0; i < MAX_ENTRIES; ++i) if (cs->entries[i].state == CS_RESIDENT) residentCount++;
     cs->stats.resident = (int)residentCount;
     cs->stats.queued = queued;
     cs->stats.ready = cs->readyCount;
-    cs->stats.drawnChunks = (int)nchunk;
-    cs->stats.drawCalls = (int)ndraw;
+    cs->stats.drawnChunks = (int)viewChunks;
+    cs->stats.drawCalls = (int)cs->drawCount[slot];
     cs->stats.pagesTotal = POOL_PAGES;
     cs->stats.pagesUsed = POOL_PAGES - cs->freePageCount - cs->pendingFreeCount;
     cs->stats.uploadsThisFrame = uploads;
@@ -623,8 +649,7 @@ void chunks_sky_lights(ChunkSystem *cs, const double cam[3], SkyGrid *dst) {
     dst->airCount = nkeep;
 }
 
-void chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {
-    uint32_t n = cs->drawCount[slot];
+static void draw_range(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint32_t start, uint32_t n) {
     if (!n) return;
     VkDeviceSize off = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &cs->pool.buf, &off);
@@ -632,12 +657,18 @@ void chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {
         uint32_t maxCount = cs->vk->props.limits.maxDrawIndirectCount;
         for (uint32_t first = 0; first < n; first += maxCount) {
             uint32_t cnt = n - first < maxCount ? n - first : maxCount;
-            vkCmdDrawIndirect(cmd, cs->indirect[slot].buf, first * sizeof(VkDrawIndirectCommand), cnt,
+            vkCmdDrawIndirect(cmd, cs->indirect[slot].buf, (start + first) * sizeof(VkDrawIndirectCommand), cnt,
                               sizeof(VkDrawIndirectCommand));
         }
     } else {
-        const VkDrawIndirectCommand *c = (const VkDrawIndirectCommand *)cs->indirect[slot].mapped;
+        const VkDrawIndirectCommand *c = (const VkDrawIndirectCommand *)cs->indirect[slot].mapped + start;
         for (uint32_t i = 0; i < n; ++i)
             vkCmdDraw(cmd, c[i].vertexCount, 1, c[i].firstVertex, c[i].firstInstance);
     }
+}
+
+void chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot) { draw_range(cs, cmd, slot, 0, cs->drawCount[slot]); }
+
+void chunks_draw_shelter(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {
+    draw_range(cs, cmd, slot, cs->shelterFirst[slot], cs->shelterCount[slot]);
 }

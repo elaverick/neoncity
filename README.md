@@ -241,7 +241,12 @@ surfaces are lit with GGX:
   Falling rain is drawn in `composite.frag`: drops on five layers around the camera, hidden
   by the scene depth. Each is a motion-blurred streak as a camera sees it: tapered, with
   glints along it and its own brightness. Near drops are out of focus. Drops are lit by
-  that same mist, so rain shows where light falls through it, as it does at night. Drops ring the puddles with
+  that same mist, so rain shows where light falls through it, as it does at night.
+
+  Shelter comes from a top-down depth render of the city around the camera
+  (`record_shelter`), which holds the highest surface over each spot. Drops beneath a
+  canopy, arcade or overhang are skipped, and puddles there are still (water runs in, so
+  the ground stays wet, but nothing falls into it). Drops ring the puddles with
   ripples (`ripples()`), which also distort the reflections. Authored surfaces carry a film
   of rain (`WETNESS`): darker and glossy. Water stands only where it collects (gutters, joints, faint ruts and
   sparse isolated hollows), as smooth films that mirror the lamps and the overcast.
@@ -325,12 +330,13 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
   over the HDR scene, so cloud never smears across a tower's silhouette.
 
 ### Frame
-1. MSAA x4 HDR scene and reflection G-buffer, resolved (colour averaged, depth sample zero).
-2. Sky, drawn into the empty depth.
-3. Screen-space reflections on the wet streets: a compute trace, then a streaked additive blend.
-4. Clouds: half-resolution compute ray march, blended into the HDR target with a depth-aware upsample.
-5. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
-6. Composite: falling rain, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
+1. Shelter map: the city round the camera rendered from above, depth only.
+2. MSAA x4 HDR scene and reflection G-buffer, resolved (colour averaged, depth sample zero).
+3. Sky, drawn into the empty depth.
+4. Screen-space reflections on the wet streets: a compute trace, then a streaked additive blend.
+5. Clouds and rain mist: half-resolution compute ray march, blended into the HDR target with a depth-aware upsample.
+6. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
+7. Composite: falling rain, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
 
 ## Extending
 - **Environment** (rain, wet streets, fog volumes, weather): the atmosphere lives in

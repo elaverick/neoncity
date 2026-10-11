@@ -38,6 +38,12 @@ static const uint32_t SPV_ssr[] = {
 static const uint32_t SPV_ssr_apply_frag[] = {
 #include "ssr_apply.frag.inc"
 };
+static const uint32_t SPV_shelter_vert[] = {
+#include "shelter.vert.inc"
+};
+static const uint32_t SPV_shelter_frag[] = {
+#include "shelter.frag.inc"
+};
 
 #define HDR_FORMAT   VK_FORMAT_R16G16B16A16_SFLOAT
 #define DEPTH_FORMAT VK_FORMAT_D32_SFLOAT
@@ -51,6 +57,7 @@ typedef struct CompositePush {
     float time, bloom, exposure, grain;
     float width, height, aberration, vignette;
     float right[4], up[4], fwd[4];
+    float shelter[4];   /* as FrameUBO.shelter */
 } CompositePush;
 typedef struct CloudPush { float zn, zf; } CloudPush;
 
@@ -83,11 +90,13 @@ struct Renderer {
     VkSampler    linearClamp, nearestClamp, linearRepeat;
     Textures    *textures;
     Image        cloudNoise;
+    Image        shelter;   /* shelter map: top-down depth of the city round the camera (record_shelter) */
     VkDescriptorPool      staticPool;
     VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout, cloudLayout, cloudCompLayout, ssrLayout, ssrApplyLayout;
     VkDescriptorSet       sceneSet[MAX_FRAMES];
-    VkPipelineLayout      scenePL, compositePL, bloomPL, cloudPL, cloudCompPL, ssrPL, ssrApplyPL;
-    VkPipeline            cityPipe, skyPipe, compositePipe, bloomDownPipe, bloomUpPipe, cloudPipe, cloudCompPipe, ssrPipe, ssrApplyPipe;
+    VkPipelineLayout      scenePL, compositePL, bloomPL, cloudPL, cloudCompPL, ssrPL, ssrApplyPL, shelterPL;
+    VkPipeline            cityPipe, skyPipe, compositePipe, bloomDownPipe, bloomUpPipe, cloudPipe, cloudCompPipe, ssrPipe, ssrApplyPipe,
+                          shelterPipe;
 
     char   shotPath[512];
     bool   shotPending;
@@ -149,22 +158,27 @@ static VkPipelineLayout make_pipeline_layout(VkCore *vk, VkDescriptorSetLayout s
     return l;
 }
 
+static void write_tex_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkDescriptorType type,
+                          VkSampler s, VkImageView v, VkImageLayout layout);
+
 static void create_layouts(Renderer *r) {
     VkCore *vk = r->vk;
-    VkDescriptorSetLayoutBinding scene[4] = {
+    VkDescriptorSetLayoutBinding scene[5] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
+        { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shelter map */
     };
-    r->sceneLayout = make_set_layout(vk, scene, 4);
-    VkDescriptorSetLayoutBinding tex[4] = {
+    r->sceneLayout = make_set_layout(vk, scene, 5);
+    VkDescriptorSetLayoutBinding tex[5] = {
         { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* scene depth (rain) */
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* rain mist (rain lighting) */
+        { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shelter map (rain) */
     };
-    r->texLayout = make_set_layout(vk, tex, 4);
+    r->texLayout = make_set_layout(vk, tex, 5);
     VkDescriptorSetLayoutBinding bloom[2] = {
         { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },
@@ -209,11 +223,12 @@ static void create_layouts(Renderer *r) {
     r->cloudCompPL = make_pipeline_layout(vk, r->cloudCompLayout, sizeof(CloudPush), VK_SHADER_STAGE_FRAGMENT_BIT);
     r->ssrPL = make_pipeline_layout(vk, r->ssrLayout, 0, 0);
     r->ssrApplyPL = make_pipeline_layout(vk, r->ssrApplyLayout, 0, 0);
+    r->shelterPL = make_pipeline_layout(vk, r->sceneLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
 
     VkDescriptorPoolSize sizes[3] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (PBR_TEXTURE_COUNT + 1) * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = MAX_FRAMES;
@@ -256,6 +271,10 @@ static void create_layouts(Renderer *r) {
     si.magFilter = si.minFilter = VK_FILTER_LINEAR;    /* the tiling cloud noise volume */
     si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     VK_CHECK(vkCreateSampler(vk->device, &si, NULL, &r->linearRepeat));
+
+    for (int i = 0; i < MAX_FRAMES; ++i)
+        write_tex_set(vk, r->sceneSet[i], 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, r->nearestClamp, r->shelter.view,
+                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 /* ---------------------------------------------------------- pipelines --- */
@@ -269,8 +288,10 @@ typedef struct GfxDesc {
     VkSampleCountFlagBits samples;
     bool vertexInput, depthTest, depthWrite, cull;
     bool blend;   /* out = src.rgb + dst.rgb * src.a (premultiplied transmittance) */
+    /* colorFormat UNDEFINED: depth only */
     bool additive;           /* out = src.rgb + dst.rgb */
     VkFormat colorFormat2;   /* a second colour attachment (UNDEFINED: none), written unblended */
+    bool positionOnly;       /* the vertex shader reads only the position attribute */
 } GfxDesc;
 
 static VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
@@ -291,7 +312,7 @@ static VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
     VkPipelineVertexInputStateCreateInfo vi = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
     if (d->vertexInput) {
         vi.vertexBindingDescriptionCount = 1; vi.pVertexBindingDescriptions = &bind;
-        vi.vertexAttributeDescriptionCount = 6; vi.pVertexAttributeDescriptions = attrs;
+        vi.vertexAttributeDescriptionCount = d->positionOnly ? 1 : 6; vi.pVertexAttributeDescriptions = attrs;
     }
     VkPipelineInputAssemblyStateCreateInfo ia = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
     ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -319,7 +340,7 @@ static VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
         cba[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         cba[0].alphaBlendOp = VK_BLEND_OP_ADD;
     }
-    uint32_t ncolor = d->colorFormat2 != VK_FORMAT_UNDEFINED ? 2 : 1;
+    uint32_t ncolor = d->colorFormat == VK_FORMAT_UNDEFINED ? 0 : d->colorFormat2 != VK_FORMAT_UNDEFINED ? 2 : 1;
     VkFormat formats[2] = { d->colorFormat, d->colorFormat2 };
     VkPipelineColorBlendStateCreateInfo cb = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
     cb.attachmentCount = ncolor; cb.pAttachments = cba;
@@ -388,6 +409,10 @@ static void create_pipelines(Renderer *r) {
                    r->ssrApplyPL, HDR_FORMAT, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false };
     sa.additive = true;
     r->ssrApplyPipe = make_graphics(vk, &sa);
+    GfxDesc sh = { SPV_shelter_vert, sizeof(SPV_shelter_vert), SPV_shelter_frag, sizeof(SPV_shelter_frag),
+                   r->shelterPL, VK_FORMAT_UNDEFINED, DEPTH_FORMAT, VK_SAMPLE_COUNT_1_BIT, true, true, true, false };
+    sh.positionOnly = true;
+    r->shelterPipe = make_graphics(vk, &sh);
 }
 
 /* ------------------------------------------------------------ targets --- */
@@ -507,7 +532,7 @@ static void create_targets(Renderer *r) {
         r->bloomMip[i] = vk_view(vk, r->bloom.img, HDR_FORMAT, VK_IMAGE_ASPECT_COLOR_BIT, i, 1);
 
     VkDescriptorPoolSize sizes[4] = {
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 6 + 2 * MAX_FRAMES + 4 + 5 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 7 + 2 * MAX_FRAMES + 4 + 5 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * BLOOM_MIPS + 3 * MAX_FRAMES + MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES },
@@ -535,6 +560,7 @@ static void create_targets(Renderer *r) {
     write_tex_set(vk, r->compositeSet, 1, CIS, r->linearClamp, r->bloomMip[0], VK_IMAGE_LAYOUT_GENERAL);
     write_tex_set(vk, r->compositeSet, 2, CIS, r->nearestClamp, sceneDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     write_tex_set(vk, r->compositeSet, 3, CIS, r->linearClamp, r->mist.view, VK_IMAGE_LAYOUT_GENERAL);
+    write_tex_set(vk, r->compositeSet, 4, CIS, r->nearestClamp, r->shelter.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     for (int i = 0; i < MAX_FRAMES; ++i) {
         r->cloudSet[i] = alloc_set(r, r->cloudLayout);
@@ -636,6 +662,9 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     }
     r->textures = textures_create(vk);
+    r->shelter = vk_image(vk, SHELTER_SIZE, SHELTER_SIZE, 1, DEPTH_FORMAT,
+                          VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                          VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
     create_layouts(r);
     create_pipelines(r);
     build_cloud_noise(r);
@@ -649,7 +678,7 @@ void renderer_destroy(Renderer *r) {
     destroy_targets(r);
     vk_buffer_destroy(vk, &r->shotBuf);
     VkPipeline pipes[] = { r->cityPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
-                           r->ssrPipe, r->ssrApplyPipe };
+                           r->ssrPipe, r->ssrApplyPipe, r->shelterPipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
     vkDestroyPipelineLayout(vk->device, r->compositePL, NULL);
@@ -658,6 +687,7 @@ void renderer_destroy(Renderer *r) {
     vkDestroyPipelineLayout(vk->device, r->cloudCompPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->ssrPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->ssrApplyPL, NULL);
+    vkDestroyPipelineLayout(vk->device, r->shelterPL, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->sceneLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->texLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->bloomLayout, NULL);
@@ -670,6 +700,7 @@ void renderer_destroy(Renderer *r) {
     vkDestroySampler(vk->device, r->nearestClamp, NULL);
     vkDestroySampler(vk->device, r->linearRepeat, NULL);
     vk_image_destroy(vk, &r->cloudNoise);
+    vk_image_destroy(vk, &r->shelter);
     textures_destroy(r->textures);
     for (int i = 0; i < MAX_FRAMES; ++i) {
         vkDestroyFence(vk->device, r->fence[i], NULL);
@@ -757,6 +788,37 @@ static void record_clouds(Renderer *r, VkCommandBuffer cmd, int slot) {
     vkCmdEndRendering(cmd);
 }
 
+/* Shelter map: the city round the camera seen from straight above, depth
+ * only, keeping the highest surface over each spot (shelter.vert). Rain
+ * streaks and the wet coat test against it, so none falls under a canopy,
+ * arcade or overhang. */
+static void record_shelter(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *topDown) {
+    const VkPipelineStageFlags2 DEPTHS = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    const VkPipelineStageFlags2 FS = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    vk_image_barrier(cmd, r->shelter.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                     FS, 0, DEPTHS, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT, 0, 1);
+    VkRenderingAttachmentInfo da = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+    da.imageView = r->shelter.view;
+    da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    da.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    da.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    da.clearValue.depthStencil.depth = 0.0f;   /* nothing there: below SHELTER_LO */
+    VkRenderingInfo ri = { VK_STRUCTURE_TYPE_RENDERING_INFO };
+    ri.renderArea.extent.width = ri.renderArea.extent.height = SHELTER_SIZE;
+    ri.layerCount = 1;
+    ri.pDepthAttachment = &da;
+    vkCmdBeginRendering(cmd, &ri);
+    set_viewport(cmd, SHELTER_SIZE, SHELTER_SIZE);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->shelterPipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->shelterPL, 0, 1, &r->sceneSet[slot], 0, NULL);
+    vkCmdPushConstants(cmd, r->shelterPL, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(mat4), topDown);
+    chunks_draw_shelter(r->chunks, cmd, slot);
+    vkCmdEndRendering(cmd);
+    vk_image_barrier(cmd, r->shelter.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     FS, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, 1);
+}
+
 /* Screen-space reflections: trace the wet surfaces' mirror rays against the
  * scene depth (ssr.comp), then streak and blend them into the HDR target
  * (ssr_apply.frag). Leaves the scene depth readable for the clouds after. */
@@ -818,6 +880,18 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     FrameUBO ubo = *uboIn;
     uint32_t W = vk->extent.width, H = vk->extent.height;
     ubo.screen[0] = (float)W; ubo.screen[1] = (float)H; ubo.screen[2] = 1.0f / W; ubo.screen[3] = 1.0f / H;
+    /* Shelter map: centred on the camera, snapped to its texels so it doesn't
+     * shimmer as the camera moves; camera-relative x, z to the square, height
+     * (SHELTER_LO..SHELTER_HI) to depth, highest nearest. */
+    const double texel = 2.0 * SHELTER_RADIUS / SHELTER_SIZE;
+    float scx = (float)(floor(cam[0] / texel + 0.5) * texel - cam[0]);
+    float scz = (float)(floor(cam[2] / texel + 0.5) * texel - cam[2]);
+    ubo.shelter[0] = scx; ubo.shelter[1] = scz; ubo.shelter[2] = SHELTER_RADIUS; ubo.shelter[3] = 0.0f;
+    mat4 topDown = { { 0 } };
+    topDown.m[0] = 1.0f / SHELTER_RADIUS;  topDown.m[12] = -scx / SHELTER_RADIUS;
+    topDown.m[9] = 1.0f / SHELTER_RADIUS;  topDown.m[13] = -scz / SHELTER_RADIUS;
+    topDown.m[6] = 1.0f / (SHELTER_HI - SHELTER_LO);  topDown.m[14] = -SHELTER_LO / (SHELTER_HI - SHELTER_LO);
+    topDown.m[15] = 1.0f;
     memcpy(r->ubo[slot].mapped, &ubo, sizeof(ubo));
 
     VkCommandBuffer cmd = r->cmd[slot];
@@ -828,6 +902,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
 
     chunks_update(r->chunks, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     chunks_sky_lights(r->chunks, cam, (SkyGrid *)r->skyBuf[slot].mapped);
+    record_shelter(r, cmd, slot, &topDown);
 
     /* ---- scene pass (MSAA HDR, resolved into r->hdr) ---- */
     const VkPipelineStageFlags2 COLOR = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -928,6 +1003,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
         cp.right[k] = ubo.rayBasis.m[k]; cp.up[k] = ubo.rayBasis.m[4 + k]; cp.fwd[k] = ubo.rayBasis.m[8 + k];
     }
     cp.right[3] = NEAR_PLANE; cp.up[3] = FAR_PLANE; cp.fwd[3] = ubo.weather[0];
+    memcpy(cp.shelter, ubo.shelter, sizeof(cp.shelter));
     vkCmdPushConstants(cmd, r->compositePL, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cp), &cp);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);

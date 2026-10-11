@@ -11,6 +11,7 @@ typedef struct FrameUBO {
     float   camFwd[4];     /* xyz forward, w = view distance */
     float   screen[4];     /* width, height, 1/width, 1/height */
     float   weather[4];    /* rain intensity (0 drizzle .. 1 downpour), street wetness, unused, unused */
+    float   shelter[4];    /* shelter map: camera-relative centre x, z; half-width; unused (renderer.c) */
 } FrameUBO;
 
 typedef struct Renderer Renderer;

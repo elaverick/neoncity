@@ -45,6 +45,15 @@
 #define LIGHT_PAGE_RECS   2048
 #define LIGHT_PAGES       2560          /* 2560 * 32 KB = 80 MB */
 
+/* Shelter map: a top-down depth render of the city around the camera
+ * (renderer.c: record_shelter), holding the highest surface over each spot,
+ * so rain and wetness know what is under a canopy, arcade or overhang. Depth
+ * maps camera-relative height SHELTER_LO..SHELTER_HI to 0..1. */
+#define SHELTER_SIZE      1024
+#define SHELTER_RADIUS    80.0f         /* half-width of the square, metres */
+#define SHELTER_LO        (-60.0f)
+#define SHELTER_HI        500.0f
+
 /* The rain-cloud layer's vertical extent (scud to deck top, shaders/clouds.comp). */
 #define CLOUD_LOW         165.0f
 #define CLOUD_HIGH        720.0f

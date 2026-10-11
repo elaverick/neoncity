@@ -8,6 +8,9 @@ const float SIDEWALK_HEIGHT = 0.15;
 const float KERB_STONE_WIDTH = 0.32;
 const float NEAR_PLANE      = 0.08;
 const float FAR_PLANE       = 1995.0;   // VIEW_DISTANCE * 1.05 (reverse-Z projection, src/main.c)
+const float SHELTER_SIZE    = 1024.0;   // shelter map (src/common.h)
+const float SHELTER_LO      = -60.0;
+const float SHELTER_HI      = 500.0;
 const float CLOUD_LOW       = 165.0;    // the rain-cloud layer: scud...
 const float CLOUD_HIGH      = 720.0;    // ...to deck top
 
@@ -40,6 +43,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 camFwd;     // xyz forward, w = view distance
     vec4 screen;
     vec4 weather;    // x rain intensity, y street wetness (src/main.c: weather_update)
+    vec4 shelter;    // shelter map: camera-relative centre x, z; half-width
 } frame;
 
 struct ChunkGPU {

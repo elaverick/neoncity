@@ -23,6 +23,8 @@ void         chunks_destroy(ChunkSystem *cs);
 void         chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t frameIndex,
                            const double cam[3], const mat4 *viewProj);
 void         chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot);
+/* Draws resident chunks overlapping the shelter map square (SHELTER_RADIUS around the camera). */
+void         chunks_draw_shelter(ChunkSystem *cs, VkCommandBuffer cmd, int slot);
 VkBuffer     chunks_gpu_buffer(ChunkSystem *cs, int slot);
 VkDeviceSize chunks_gpu_buffer_size(void);
 VkBuffer     chunks_light_buffer(ChunkSystem *cs);   /* light tables of resident chunks (device local) */

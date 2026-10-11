@@ -56,13 +56,16 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
   five layers around the camera, occluded by scene depth and lit by the mist, so rain shows
   where light falls through it.
 
+- **Shelter map** (`record_shelter` in `renderer.c`, `shelter.vert`): each frame a 1024²
+  top-down depth render of the city 160 m around the camera keeps the highest surface over
+  each spot. No rain falls under canopies, arcades and overhangs, and their puddles don't
+  ripple. The ground there stays wet, since water runs in.
+
 **Next (rain):**
-- **Shelter.** Rain falls under canopies and overhangs too. It needs a top-down occlusion
-  map (a height or depth render of the city from above, around the camera) for the
-  streaks and the wetness to test against.
 - **Splashes** where drops hit the ground, and drips running down glass and facades.
 - **Mist shadows.** The mist has no shadowing, so a lamp just round a corner glows faintly
-  through the building. The shelter map would serve here too.
+  through the building. It needs per-light visibility (a cube or paraboloid shadow map for
+  the brightest few lights, or rays marched against the shelter map's heights).
 - **Lens drops** (optional, cinematic): the occasional drop on the lens, refracting the
   scene.
 - **Keep:** procedural materials on their current Blinn-Phong model until each is moved over.

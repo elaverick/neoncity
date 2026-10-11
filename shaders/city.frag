@@ -237,6 +237,24 @@ void grainFrame(uint seed, out vec3 T, out vec3 B) {
 // How wet the streets are (0 dry .. 1 soaked), from the weather (src/main.c).
 #define WETNESS (frame.weather.y)
 
+// Shelter map (renderer.c: record_shelter): the highest surface over each spot
+// around the camera, seen from above. How sheltered camera-relative point q is
+// from the rain: 1 under a canopy, arcade or overhang, 0 in the open (and off
+// the map). Five taps across about 0.3 m soften the edge.
+layout(set = 0, binding = 4) uniform sampler2D shelterMap;
+float shelterAt(vec3 q) {
+    vec2 uv = (q.xz - frame.shelter.xy) / frame.shelter.z * 0.5 + 0.5;
+    vec2 e = abs(uv * 2.0 - 1.0);
+    if (max(e.x, e.y) >= 1.0) return 0.0;
+    float s = 0.0;
+    for (int k = 0; k < 5; ++k) {
+        vec2 o = k == 0 ? vec2(0.0) : vec2(k == 1 ? 2.0 : k == 2 ? -2.0 : 0.0, k == 3 ? 2.0 : k == 4 ? -2.0 : 0.0);
+        float top = SHELTER_LO + texture(shelterMap, uv + o / SHELTER_SIZE).r * (SHELTER_HI - SHELTER_LO);
+        s += smoothstep(0.25, 0.6, top - q.y);
+    }
+    return s * 0.2 * (1.0 - smoothstep(0.85, 1.0, max(e.x, e.y)));
+}
+
 // Raindrop ripples: drops land at random in a grid of small cells, each
 // sending out a ring that fades as it spreads; two offset grids overlap so
 // the pattern never looks regular. rate = share of cells hit each cycle.
@@ -483,25 +501,29 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
     }
 
     if (wettable && WETNESS > 0.0) {
-        gStreak = 1.0 + 3.0 * WETNESS;
+        // Under a canopy, arcade or overhang no rain falls, but water runs in,
+        // so the ground stays wet and keeps its puddles; only the ripples stop.
+        float wet = WETNESS;
+        float open = 1.0 - shelterAt(vRel);
+        gStreak = 1.0 + 3.0 * wet;
         // Wet coat: in steady rain every authored surface carries a film of water
         // (porous asphalt and stone darken, and turn glossy), but water only
         // stands where it collects: gutters, joints, faint wheel-path ruts and
         // the odd isolated hollow. The surface's own relief just breaks up the
         // puddles' edges, so the street still reads as flat.
-        float level = -0.25 * WETNESS;
+        float level = -0.25 * wet;
         float broad = smoothstep(0.0, 0.08, level - (0.3 * relBroad + 0.05 * relH - sink));
-        float fine = smoothstep(0.0, 0.1, WETNESS * jointLevel - relH);
-        float pool = max(broad, fine) * smoothstep(0.7, 0.9, nGeom.y);
-        alb *= mix(1.0, 0.55, WETNESS) * mix(1.0, 0.92, pool);
-        rough = mix(rough, rough * 0.45, WETNESS);
-        n = normalize(mix(n, nGeom, 0.5 * WETNESS));   // the film fills the fine relief
+        float fine = smoothstep(0.0, 0.1, wet * jointLevel - relH);
+        float pool = max(broad, fine) * smoothstep(0.7, 0.9, nGeom.y) * smoothstep(0.3, 0.6, wet);
+        alb *= mix(1.0, 0.55, wet) * mix(1.0, 0.92, pool);
+        rough = mix(rough, rough * 0.45, wet);
+        n = normalize(mix(n, nGeom, 0.5 * wet));   // the film fills the fine relief
         // standing water: a smooth film over the surface, filling its relief
         rough = mix(rough, 0.03, pool);
         n = normalize(mix(n, nGeom, pool));
-        // drops ringing the standing water, and faintly the film
+        // drops ringing the standing water, and faintly the film (none under cover)
         vec2 rg = ripples(w.xz, gTime, 0.25 + 0.6 * frame.weather.x);
-        n = normalize(n + vec3(rg.x, 0.0, rg.y) * mix(0.15, 1.0, pool));
+        n = normalize(n + vec3(rg.x, 0.0, rg.y) * mix(0.15, 1.0, pool) * open);
         ao = mix(ao, 1.0, pool);
         specK = mix(specK, 0.02, pool);   // water's F0
     }

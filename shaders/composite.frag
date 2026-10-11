@@ -5,13 +5,24 @@ layout(set = 0, binding = 0) uniform sampler2D hdrTex;
 layout(set = 0, binding = 1) uniform sampler2D bloomTex;
 layout(set = 0, binding = 2) uniform sampler2D depthTex;
 layout(set = 0, binding = 3) uniform sampler2D mistTex;   // rain mist (clouds.comp): how lit the air is along each ray
+layout(set = 0, binding = 4) uniform sampler2D shelterMap; // highest surface over each spot (renderer.c: record_shelter)
 layout(push_constant) uniform Push {
     float time, bloom, exposure, grain;
     float width, height, aberration, vignette;
     vec4 right;   // camera ray basis (FrameUBO.rayBasis); w = near plane
     vec4 up;      // w = far plane
     vec4 fwd;     // w = rain intensity
+    vec4 shelter; // shelter map: camera-relative centre x, z; half-width; w unused
 } pc;
+
+const float SHELTER_LO = -60.0, SHELTER_HI = 500.0;   // src/common.h
+
+// Whether camera-relative point q is under cover (a canopy, arcade, overhang).
+bool sheltered(vec3 q) {
+    vec2 uv = (q.xz - pc.shelter.xy) / pc.shelter.z * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return false;
+    return SHELTER_LO + textureLod(shelterMap, uv, 0.0).r * (SHELTER_HI - SHELTER_LO) > q.y + 0.1;
+}
 
 vec3 aces(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
@@ -39,7 +50,8 @@ float hf(uint h, uint k) { return float(hash3u(h, k, 0x51EDu) >> 8) * (1.0 / 167
  * at both ends, with glints along it from the drop's oscillation, and its
  * own brightness. Near drops are out of focus, wide, soft and faint; far
  * ones are anti-aliased by their pixel footprint into a faint veil. The scene
- * depth hides drops behind walls. Returns coverage x brightness. */
+ * depth hides drops behind walls, and no rain falls under cover (the shelter
+ * map). Returns coverage x brightness. */
 float rainCover(vec3 dir, float sceneFwd, float t, float rain) {
     float hz = length(dir.xz);
     if (hz < 0.08) return 0.0;   // straight up or down
@@ -58,6 +70,7 @@ float rainCover(vec3 dir, float sceneFwd, float t, float rain) {
         float vv = q.y / L + hf(hc, 1u);
         uint hd = hash3u(hc, uint(int(floor(vv))), 0x2A1Fu);
         if (hf(hd, 0u) > 0.25 + 0.55 * rain) continue;
+        if (sheltered(dir * (D / hz))) continue;
         float dx = abs(q.x - (cx + 0.15 + 0.7 * hf(hd, 1u)) * CW);
         float pxw = D * pixAngle;                          // metres per pixel at this distance
         float blur = 0.012 / (D * D);                      // defocus: wide near the lens
