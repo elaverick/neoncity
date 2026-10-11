@@ -202,7 +202,11 @@ asphalt base that fills the junctions. Its UVs run across and along the road. Fr
 the shader draws lane markings, crosswalks and stop lines at each end. Sidewalks and lots
 are the block's own polygons, raised on kerbs with a kerb-stone edge, and the paving runs
 with the block's grain. Street lamps are real geometry, spaced evenly along each
-carriageway and skipping side-street mouths.
+carriageway and skipping side-street mouths. About one in 80 is failing (`lamp_fault`,
+`lampState`). It is either dead, dim and reddened, or cycling as a worn sodium lamp does:
+running, sputtering, going out, then restriking with a red glow that warms back to orange.
+Its head, the light it casts, its reflections and its halo in the rain all follow the
+fault together.
 
 Overhead cables hang across the streets, more of them in denser districts. Crossings run from
 facade to facade, singly or in loose bundles of two or three, mostly at 6–15 m and now and
@@ -257,7 +261,10 @@ surfaces are lit with GGX:
   shaders as `frame.weather`) drifts between drizzle and downpour over minutes. Street
   wetness follows it, wetting quickly and drying slowly. Rain thickens the haze, and fills the air with a mist
   (`mistLight` in `clouds.comp`) lit by every nearby lamp, shopfront and sign: halos round
-  the lamps, glowing cones beneath them and coloured haze before the neon. Each light's
+  the lamps, glowing cones beneath them and coloured haze before the neon and the
+  shopfronts. A shopfront's light is spread over a soft 2.5 m radius with no bright core,
+  because a pane metres wide glowing from a single point read as a ball floating in front of
+  the glass. Each light's
   in-scattering along the view ray has a closed form, so the mist costs one `atan` pair per
   light. Lights are gathered per frame as air lights (the 256 that matter most, by power
   over distance squared).

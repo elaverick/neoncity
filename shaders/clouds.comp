@@ -173,8 +173,8 @@ const float MIST = 0.0006;   // in-scattering per unit rain intensity
 
 vec3 airColor(SkyLight L) {
     uint cls = L.kind >> 8u;
-    if (cls == AIR_LAMP_SODIUM) return lampColor(0);
-    if (cls == AIR_LAMP_LED) return lampColor(1);
+    if (cls == AIR_LAMP_SODIUM) return lampColor(0) * lampState(L.seed, gTime);
+    if (cls == AIR_LAMP_LED) return lampColor(1) * lampState(L.seed, gTime);
     if (cls == AIR_SHOP) return shopColor(L.seed);
     if (cls == AIR_LOBBY) return vec3(0.70, 0.78, 0.95);
     return skyLightColor(L);
@@ -187,10 +187,14 @@ vec3 mistLight(vec3 dir, float tEnd, float rain) {
         SkyLight L = airLight[i];
         float t0 = dot(L.pos, dir);
         vec3 q = dir * clamp(t0, 0.0, T) - L.pos;      // nearest point on the ray, from the light
-        float h = max(length(dir * t0 - L.pos), 0.25);
+        uint cls = L.kind >> 8u;
+        // A lamp is a bright head the halo gathers round. A shopfront is a pane
+        // metres wide: as a point it glowed as a ball floating in front of the
+        // glass, so it is spread over a soft 2.5 m radius with no core.
+        float hl = length(dir * t0 - L.pos);
+        float h = (cls == AIR_SHOP || cls == AIR_LOBBY) ? sqrt(hl * hl + 6.25) : max(hl, 0.25);
         float I = (atan((T - t0) / h) + atan(t0 / h)) / h;
         float lq = max(length(q), 1e-3);
-        uint cls = L.kind >> 8u;
         float shape;
         if (cls == AIR_LAMP_SODIUM || cls == AIR_LAMP_LED)
             shape = mix(0.12, 1.0, smoothstep(0.05, 0.6, -q.y / lq));         // the cone under the lamp head

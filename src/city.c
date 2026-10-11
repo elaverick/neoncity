@@ -1325,6 +1325,17 @@ static void emit_building(Mesh *m, const Building *b, const BGraph *g) {
 
 #define BASE_Y (-0.03f)   /* plain asphalt under everything; marked carriageways sit at 0 */
 
+/* Now and then a street lamp is failing (lampState in shaders/common.glsl):
+ * about one in 250 is dead, one in 250 cycles on and off as a worn sodium
+ * lamp does, and one in 250 burns dim and red. State in the low 2 bits, a
+ * seed for its rhythm above; the same for every chunk that sees the lamp. */
+static uint32_t lamp_fault(const Lamp *L) {
+    uint32_t h = hash2i(WORLD_SEED ^ 0x1A3BADu, (int32_t)floor(L->x * 4.0), (int32_t)floor(L->z * 4.0));
+    float r = hash_float(h);
+    uint32_t state = r < 0.004f ? 1u : r < 0.008f ? 2u : r < 0.012f ? 3u : 0u;
+    return state | (hash_u32(h) & 0x3FFFFFu) << 2;
+}
+
 /* Pole at the origin, arm along +x (the emission transform turns it to the road). */
 static void build_lamp(Mesh *m, const ChunkGen *g, const Lamp *L, uint32_t idx) {
     m->xf = 1;
@@ -1342,7 +1353,7 @@ static void build_lamp(Mesh *m, const ChunkGen *g, const Lamp *L, uint32_t idx) 
     float y = top - 0.33f;
     emit_quad(m, v3(hx - hw + 0.04f, y, -hd + 0.04f), v3(hx + hw - 0.04f, y, -hd + 0.04f),
               v3(hx + hw - 0.04f, y, hd - 0.04f), v3(hx - hw + 0.04f, y, hd - 0.04f),
-              v3(0, -1, 0), uv, mat(MAT_EMISSIVE, 0, 0, (uint8_t)(2 + L->type), 0));
+              v3(0, -1, 0), uv, mat(MAT_EMISSIVE, lamp_fault(L), 0, (uint8_t)(2 + L->type), 0));
     m->xf = 0;
 }
 
@@ -1524,11 +1535,12 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
 
 typedef struct LightSrc { float x, y, z, range; uint32_t w; } LightSrc;
 
-/* A lamp or shopfront lighting the rain mist. Several chunks see the same
- * light; only the chunk it stands in records it. */
-static void air_light(Mesh *m, float x, float y, float z, float power, uint32_t seed, uint32_t kind) {
+/* A lamp or shopfront lighting the rain mist, facing (nx, nz) if it has a
+ * front. Several chunks see the same light; only the chunk it stands in
+ * records it. */
+static void air_light(Mesh *m, float x, float y, float z, float power, float nx, float nz, uint32_t seed, uint32_t kind) {
     if (x < 0.0f || x >= CHUNK_SIZE || z < 0.0f || z >= CHUNK_SIZE) return;
-    SkyLight L = { { x, y, z }, power, 0.0f, 0.0f, seed, kind };
+    SkyLight L = { { x, y, z }, power, nx, nz, seed, kind };
     push_light(&m->air, &m->nair, &m->capair, &L);
 }
 
@@ -1546,8 +1558,10 @@ static void build_lights(Mesh *m, ChunkGen *g) {
         const Lamp *L = &g->lamp[i];
         float x = (float)(L->x - g->ox) + L->dx * 1.7f, z = (float)(L->z - g->oz) + L->dz * 1.7f;
         if (x < bx0 - 34.0f || x > bx1 + 34.0f || z < bz0 - 34.0f || z > bz1 + 34.0f) continue;
-        ADD_LIGHT(x, LAMP_HEIGHT - 0.4f, z, 34.0f, (uint32_t)L->type);
-        air_light(m, x, LAMP_HEIGHT - 0.4f, z, 70.0f, 0, (L->type ? AIR_LAMP_LED : AIR_LAMP_SODIUM) << 8);
+        uint32_t fault = lamp_fault(L);
+        if ((fault & 3u) == 1u) continue;   /* dead: lights nothing */
+        ADD_LIGHT(x, LAMP_HEIGHT - 0.4f, z, 34.0f, (uint32_t)L->type | fault << 2);
+        air_light(m, x, LAMP_HEIGHT - 0.4f, z, 70.0f, 0.0f, 0.0f, fault, (L->type ? AIR_LAMP_LED : AIR_LAMP_SODIUM) << 8);
     }
     for (int i = 0; i < g->nb; ++i) {
         const Building *b = &g->bld[i];
@@ -1584,7 +1598,8 @@ static void build_lights(Mesh *m, ChunkGen *g) {
                         if (j != i && g->bblk[j] == g->bblk[i] && inside_building(&g->bld[j], w.x, w.z, 0.0)) party = 1;
                     if (party) continue;
                     ADD_LIGHT(x, SIDEWALK_HEIGHT + 1.4f, z, 12.0f, h);
-                    air_light(m, x, SIDEWALK_HEIGHT + 2.0f, z, 5.0f, h, ((h & 3u) == 2u ? AIR_SHOP : AIR_LOBBY) << 8);
+                    float nx = b->c * -e.ez - b->s * e.ex, nz = b->s * -e.ez + b->c * e.ex;   /* out of the shopfront */
+                    air_light(m, x, SIDEWALK_HEIGHT + 2.0f, z, 5.0f, nx, nz, h, ((h & 3u) == 2u ? AIR_SHOP : AIR_LOBBY) << 8);
                 }
             }
         }

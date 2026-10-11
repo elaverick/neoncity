@@ -106,6 +106,24 @@ vec3 lampColor(int type) {
                      : vec3(0.55, 0.80, 1.0) * 0.9;  // cold LED
 }
 
+/* Failing street lamps (lamp_fault in src/city.c): fault & 3 is the state,
+ * fault >> 2 a seed. 0 works; 1 is dead; 2 cycles, as a worn sodium lamp does:
+ * it runs, sputters, goes out, then restrikes with a red glow that warms back
+ * to orange; 3 is dim and reddened. Multiplies the lamp's colour. */
+vec3 lampState(uint fault, float t) {
+    uint state = fault & 3u, s = fault >> 2;
+    if (state == 0u) return vec3(1.0);
+    if (state == 1u) return vec3(0.0);
+    if (state == 3u) return vec3(0.30, 0.17, 0.11);
+    float period = 9.0 + 8.0 * hfloat(hash_combine(s, 1u));
+    float ph = fract(t / period + hfloat(s));
+    if (ph < 0.5) return vec3(1.0);
+    if (ph < 0.66) return vec3(step(0.45, hfloat(hash_combine(s, uint(t * 14.0)))) * 0.9 + 0.1);   // sputtering
+    if (ph < 0.82) return vec3(0.0);                                                                // out
+    float w = smoothstep(0.82, 1.0, ph);                                                            // restrike
+    return mix(vec3(0.25, 0.04, 0.03), vec3(1.0), w) * mix(0.3, 1.0, w);
+}
+
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
 /* Neon flicker modes (the sign material's flicker bits): 0 steady,

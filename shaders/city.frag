@@ -170,7 +170,7 @@ void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, in
         uvec4 r = lightRec[first + i];
         vec3 lp = uintBitsToFloat(r.xyz);
         uint type = r.w & 3u;
-        if (type < 2u) addLamp(p, n, V, shin, specK, rough, lp, lampColor(int(type)), diff, spec);
+        if (type < 2u) addLamp(p, n, V, shin, specK, rough, lp, lampColor(int(type)) * lampState(r.w >> 2, gTime), diff, spec);
         else addShop(p, n, V, specK, rough, lp, type == 2u ? shopColor(r.w) : vec3(0.70, 0.78, 0.95), diff, spec);
     }
 }
@@ -224,7 +224,7 @@ vec3 paneSheen(vec3 p, vec3 n, vec3 V) {
             // of light floating at chest height.
             uint type = r.w & 3u;
             if (type >= 2u) continue;
-            vec3 lc = lampColor(int(type));
+            vec3 lc = lampColor(int(type)) * lampState(r.w >> 2, gTime);
             float k = max(dot(R, l / d), 0.0);
             float bloom = pow(k, 40.0) * 3.0 + pow(k, 6.0) * 0.25;   // a soft core in a wide halo
             c += lc * bloom * 30.0 / (d * d + 30.0);
@@ -1335,14 +1335,15 @@ vec3 shadeScreen(vec2 uv, uint seed, uvec4 prm) {
     return col * 1.8;
 }
 
-vec3 shadeEmissive(uvec4 prm) {
+// seed: a street lamp head's fault (lampState)
+vec3 shadeEmissive(uvec4 prm, uint seed) {
     uint mode = prm.z;
     if (mode == 1u) {   // aircraft warning light
         float ph = float(prm.w) / 255.0;
         float b = smoothstep(0.0, 0.05, fract(gTime / 1.6 + ph)) * smoothstep(0.35, 0.2, fract(gTime / 1.6 + ph));
         return vec3(1.0, 0.05, 0.02) * (0.3 + 30.0 * b);
     }
-    if (mode >= 2u) return lampColor(int(mode) - 2) * 22.0;
+    if (mode >= 2u) return vec3(0.02, 0.02, 0.021) + lampColor(int(mode) - 2) * lampState(seed, gTime) * 22.0;   // dead: cold glass
     return neonColor(prm.y) * 8.0;
 }
 
@@ -1435,7 +1436,7 @@ void main() {
     else if (mat == MAT_DOOR)      col = shadeDoor(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_NEON)      col = shadeNeon(vUV, vSeed, vParams, vRel);
     else if (mat == MAT_METAL)     col = shadeMetal(vLocal, vRel, n, vUV, vParams);
-    else if (mat == MAT_EMISSIVE)  col = shadeEmissive(vParams);
+    else if (mat == MAT_EMISSIVE)  col = shadeEmissive(vParams, vSeed);
     else if (mat == MAT_SCREEN)    col = shadeScreen(vUV, vSeed, vParams);
     else {
         // LED strip: steady or chasing
