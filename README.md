@@ -329,7 +329,7 @@ sprinting:
 `Player.footsteps` counts footfalls, ready for footstep audio.
 
 ### Clouds (`shaders/clouds.comp`)
-Rain clouds hang over the city: a nimbostratus deck whose underside sits around 250 m, with
+Rain clouds hang over the city: a nimbostratus deck whose underside sits around 200 m, with
 torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
 - **Noise:** a tileable 128³ Perlin-Worley/Worley noise volume, built once on the GPU at
   startup (`cloud_noise.comp`). It shapes the deck's billows and erodes their edges.

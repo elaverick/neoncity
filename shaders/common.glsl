@@ -11,8 +11,8 @@ const float FAR_PLANE       = 1995.0;   // VIEW_DISTANCE * 1.05 (reverse-Z proje
 const float SHELTER_SIZE    = 1024.0;   // shelter map (src/common.h)
 const float SHELTER_LO      = -60.0;
 const float SHELTER_HI      = 500.0;
-const float CLOUD_LOW       = 165.0;    // the rain-cloud layer: scud...
-const float CLOUD_HIGH      = 720.0;    // ...to deck top
+const float CLOUD_LOW       = 115.0;    // the rain-cloud layer: scud...
+const float CLOUD_HIGH      = 670.0;    // ...to deck top
 
 // Sky lights (src/common.h)
 const int   SKY_GRID        = 32;

@@ -39,7 +39,7 @@ layout(std430, set = 0, binding = 7) readonly buffer SkyLights {
 // Rain mist: light the rain-filled air scatters toward the eye, near the street.
 layout(set = 0, binding = 8, rgba16f) uniform writeonly image2D mistOut;
 
-const float CLOUD_BASE = 250.0;            // mean height of the deck's underside
+const float CLOUD_BASE = 200.0;            // mean height of the deck's underside
 const float CLOUD_TOP = CLOUD_HIGH;
 const float SCUD_LO = CLOUD_LOW;           // torn scud drifts between here and the deck
 const float SHAPE_SCALE = 1.0 / 900.0;     // the noise volume repeats every 900 m for the deck's masses...

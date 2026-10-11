@@ -55,8 +55,8 @@
 #define SHELTER_HI        500.0f
 
 /* The rain-cloud layer's vertical extent (scud to deck top, shaders/clouds.comp). */
-#define CLOUD_LOW         165.0f
-#define CLOUD_HIGH        720.0f
+#define CLOUD_LOW         115.0f
+#define CLOUD_HIGH        670.0f
 
 /* Sky lights: neon signs and video screens high enough to light the cloud
  * layer. Each frame the ones within SKY_GRID * SKY_CELL / 2 of the camera are
