@@ -138,6 +138,20 @@ float fogAmount(vec3 rel, float dist) {
     return max(f, smoothstep(viewDist * 0.72, viewDist * 0.98, dist));
 }
 
+// The rain-cloud deck (clouds.comp) as reflections see it: an overcast lit
+// sodium-orange from below, filling the upper sky.
+const vec3 CLOUD_DECK = vec3(0.10, 0.052, 0.034);
+
+vec3 envReflection(vec3 R) {
+    vec3 c = mix(hazeColor(R) * 1.5, CLOUD_DECK, smoothstep(0.03, 0.3, R.y) * 0.85);
+    float below = smoothstep(0.1, -0.2, R.y);
+    c += vec3(0.05, 0.025, 0.04) * below;   // the lit city below
+    return c;
+}
+
+// Forward (view-axis) distance from a reverse-Z depth value; 0 (the sky) is infinitely far.
+float forwardDist(float z) { return z > 0.0 ? NEAR_PLANE * FAR_PLANE / (z * (FAR_PLANE - NEAR_PLANE) + NEAR_PLANE) : 1e9; }
+
 vec3 applyFog(vec3 col, vec3 rel) {
     float d = length(rel);
     vec3 dir = rel / max(d, 1e-4);

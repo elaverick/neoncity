@@ -4,6 +4,7 @@
 
 layout(location = 0) in vec2 vUV;
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outRefl;   // nothing reflective (city.frag)
 
 void main() {
     vec2 ndc = vUV * 2.0 - 1.0;
@@ -18,4 +19,5 @@ void main() {
         col += vec3(0.075, 0.036, 0.030) * band;
     }
     outColor = vec4(col, 1.0);
+    outRefl = vec4(0.0);
 }

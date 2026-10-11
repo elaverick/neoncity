@@ -32,6 +32,12 @@ static const uint32_t SPV_clouds[] = {
 static const uint32_t SPV_cloud_composite_frag[] = {
 #include "cloud_composite.frag.inc"
 };
+static const uint32_t SPV_ssr[] = {
+#include "ssr.comp.inc"
+};
+static const uint32_t SPV_ssr_apply_frag[] = {
+#include "ssr_apply.frag.inc"
+};
 
 #define HDR_FORMAT   VK_FORMAT_R16G16B16A16_SFLOAT
 #define DEPTH_FORMAT VK_FORMAT_D32_SFLOAT
@@ -58,20 +64,24 @@ struct Renderer {
      * depth the clouds read (without MSAA they read depth itself); cloud and
      * cloudDist are the half-resolution cloud march (clouds.comp). */
     Image        msaaColor, depth, depthResolve, hdr, bloom, cloud, cloudDist;
+    /* reflection G-buffer (city.frag outRefl; reflMsaa is the multisampled
+     * attachment resolved into refl) and the screen-space reflections */
+    Image        reflMsaa, refl, ssr;
     VkImageView  bloomMip[BLOOM_MIPS];
     uint32_t     bloomMips;
     VkDescriptorPool targetPool;
     VkDescriptorSet  bloomDownSet[BLOOM_MIPS], bloomUpSet[BLOOM_MIPS], compositeSet;
     VkDescriptorSet  cloudSet[MAX_FRAMES], cloudCompSet;
+    VkDescriptorSet  ssrSet[MAX_FRAMES], ssrApplySet[MAX_FRAMES];
 
     VkSampler    linearClamp, nearestClamp, linearRepeat;
     Textures    *textures;
     Image        cloudNoise;
     VkDescriptorPool      staticPool;
-    VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout, cloudLayout, cloudCompLayout;
+    VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout, cloudLayout, cloudCompLayout, ssrLayout, ssrApplyLayout;
     VkDescriptorSet       sceneSet[MAX_FRAMES];
-    VkPipelineLayout      scenePL, compositePL, bloomPL, cloudPL, cloudCompPL;
-    VkPipeline            cityPipe, skyPipe, compositePipe, bloomDownPipe, bloomUpPipe, cloudPipe, cloudCompPipe;
+    VkPipelineLayout      scenePL, compositePL, bloomPL, cloudPL, cloudCompPL, ssrPL, ssrApplyPL;
+    VkPipeline            cityPipe, skyPipe, compositePipe, bloomDownPipe, bloomUpPipe, cloudPipe, cloudCompPipe, ssrPipe, ssrApplyPipe;
 
     char   shotPath[512];
     bool   shotPending;
@@ -167,12 +177,28 @@ static void create_layouts(Renderer *r) {
         { 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
     };
     r->cloudCompLayout = make_set_layout(vk, cloudComp, 3);
+    VkDescriptorSetLayoutBinding ssr[5] = {
+        { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },
+        { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },   /* HDR scene */
+        { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },   /* scene depth */
+        { 5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },   /* reflection G-buffer */
+        { 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },            /* ssr */
+    };
+    r->ssrLayout = make_set_layout(vk, ssr, 5);
+    VkDescriptorSetLayoutBinding ssrApply[3] = {
+        { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
+        { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },  /* ssr */
+        { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },  /* reflection G-buffer */
+    };
+    r->ssrApplyLayout = make_set_layout(vk, ssrApply, 3);
 
     r->scenePL = make_pipeline_layout(vk, r->sceneLayout, 0, 0);
     r->compositePL = make_pipeline_layout(vk, r->texLayout, sizeof(CompositePush), VK_SHADER_STAGE_FRAGMENT_BIT);
     r->bloomPL = make_pipeline_layout(vk, r->bloomLayout, sizeof(BloomPush), VK_SHADER_STAGE_COMPUTE_BIT);
     r->cloudPL = make_pipeline_layout(vk, r->cloudLayout, 0, 0);
     r->cloudCompPL = make_pipeline_layout(vk, r->cloudCompLayout, sizeof(CloudPush), VK_SHADER_STAGE_FRAGMENT_BIT);
+    r->ssrPL = make_pipeline_layout(vk, r->ssrLayout, 0, 0);
+    r->ssrApplyPL = make_pipeline_layout(vk, r->ssrApplyLayout, 0, 0);
 
     VkDescriptorPoolSize sizes[3] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
@@ -233,6 +259,8 @@ typedef struct GfxDesc {
     VkSampleCountFlagBits samples;
     bool vertexInput, depthTest, depthWrite, cull;
     bool blend;   /* out = src.rgb + dst.rgb * src.a (premultiplied transmittance) */
+    bool additive;           /* out = src.rgb + dst.rgb */
+    VkFormat colorFormat2;   /* a second colour attachment (UNDEFINED: none), written unblended */
 } GfxDesc;
 
 static VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
@@ -270,25 +298,27 @@ static VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
     ds.depthTestEnable = d->depthTest;
     ds.depthWriteEnable = d->depthWrite;
     ds.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;   /* reverse-Z */
-    VkPipelineColorBlendAttachmentState cba = { 0 };
-    cba.colorWriteMask = 0xF;
-    if (d->blend) {
-        cba.blendEnable = VK_TRUE;
-        cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-        cba.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        cba.colorBlendOp = VK_BLEND_OP_ADD;
-        cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        cba.alphaBlendOp = VK_BLEND_OP_ADD;
+    VkPipelineColorBlendAttachmentState cba[2] = { { 0 }, { 0 } };
+    cba[0].colorWriteMask = cba[1].colorWriteMask = 0xF;
+    if (d->blend || d->additive) {
+        cba[0].blendEnable = VK_TRUE;
+        cba[0].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        cba[0].dstColorBlendFactor = d->additive ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_SRC_ALPHA;
+        cba[0].colorBlendOp = VK_BLEND_OP_ADD;
+        cba[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        cba[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        cba[0].alphaBlendOp = VK_BLEND_OP_ADD;
     }
+    uint32_t ncolor = d->colorFormat2 != VK_FORMAT_UNDEFINED ? 2 : 1;
+    VkFormat formats[2] = { d->colorFormat, d->colorFormat2 };
     VkPipelineColorBlendStateCreateInfo cb = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-    cb.attachmentCount = 1; cb.pAttachments = &cba;
+    cb.attachmentCount = ncolor; cb.pAttachments = cba;
     VkDynamicState dyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
     VkPipelineDynamicStateCreateInfo dy = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
     dy.dynamicStateCount = 2; dy.pDynamicStates = dyn;
     VkPipelineRenderingCreateInfo ri = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachmentFormats = &d->colorFormat;
+    ri.colorAttachmentCount = ncolor;
+    ri.pColorAttachmentFormats = formats;
     ri.depthAttachmentFormat = d->depthFormat;
 
     VkGraphicsPipelineCreateInfo ci = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
@@ -328,9 +358,11 @@ static void create_pipelines(Renderer *r) {
     VkCore *vk = r->vk;
     GfxDesc city = { SPV_city_vert, sizeof(SPV_city_vert), SPV_city_frag, sizeof(SPV_city_frag),
                      r->scenePL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, true, true, true, true };
+    city.colorFormat2 = HDR_FORMAT;   /* reflection G-buffer */
     r->cityPipe = make_graphics(vk, &city);
     GfxDesc sky = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_sky_frag, sizeof(SPV_sky_frag),
                     r->scenePL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, false, false };
+    sky.colorFormat2 = HDR_FORMAT;
     r->skyPipe = make_graphics(vk, &sky);
     GfxDesc comp = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_composite_frag, sizeof(SPV_composite_frag),
                      r->compositePL, vk->swapFormat, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false };
@@ -341,6 +373,11 @@ static void create_pipelines(Renderer *r) {
     GfxDesc cc = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_cloud_composite_frag, sizeof(SPV_cloud_composite_frag),
                    r->cloudCompPL, HDR_FORMAT, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false, true };
     r->cloudCompPipe = make_graphics(vk, &cc);
+    r->ssrPipe = make_compute(vk, SPV_ssr, sizeof(SPV_ssr), r->ssrPL);
+    GfxDesc sa = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_ssr_apply_frag, sizeof(SPV_ssr_apply_frag),
+                   r->ssrApplyPL, HDR_FORMAT, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false };
+    sa.additive = true;
+    r->ssrApplyPipe = make_graphics(vk, &sa);
 }
 
 /* ------------------------------------------------------------ targets --- */
@@ -439,6 +476,13 @@ static void create_targets(Renderer *r) {
                         VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     r->cloudDist = vk_image(vk, cw, ch, 1, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                             VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    if (msaa)
+        r->reflMsaa = vk_image(vk, w, h, 1, HDR_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+                               vk->msaa, VK_IMAGE_ASPECT_COLOR_BIT);
+    r->refl = vk_image(vk, w, h, 1, HDR_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                       VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    r->ssr = vk_image(vk, w, h, 1, HDR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                      VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     r->hdr = vk_image(vk, w, h, 1, HDR_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                       VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
 
@@ -451,13 +495,13 @@ static void create_targets(Renderer *r) {
         r->bloomMip[i] = vk_view(vk, r->bloom.img, HDR_FORMAT, VK_IMAGE_ASPECT_COLOR_BIT, i, 1);
 
     VkDescriptorPoolSize sizes[4] = {
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 4 + 2 * MAX_FRAMES + 3 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * BLOOM_MIPS + 2 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 4 + 2 * MAX_FRAMES + 3 + 5 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * BLOOM_MIPS + 2 * MAX_FRAMES + MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-    pci.maxSets = 2 * BLOOM_MIPS + 2 + MAX_FRAMES + 1;
+    pci.maxSets = 2 * BLOOM_MIPS + 2 + MAX_FRAMES + 1 + 2 * MAX_FRAMES;
     pci.poolSizeCount = 4;
     pci.pPoolSizes = sizes;
     VK_CHECK(vkCreateDescriptorPool(vk->device, &pci, NULL, &r->targetPool));
@@ -493,6 +537,23 @@ static void create_targets(Renderer *r) {
         write_tex_set(vk, r->cloudSet[i], 5, SI, VK_NULL_HANDLE, r->cloud.view, VK_IMAGE_LAYOUT_GENERAL);
         write_tex_set(vk, r->cloudSet[i], 6, SI, VK_NULL_HANDLE, r->cloudDist.view, VK_IMAGE_LAYOUT_GENERAL);
     }
+    for (int i = 0; i < MAX_FRAMES; ++i) {
+        VkDescriptorBufferInfo ub = { r->ubo[i].buf, 0, sizeof(FrameUBO) };
+        VkWriteDescriptorSet w[2] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
+        r->ssrSet[i] = alloc_set(r, r->ssrLayout);
+        r->ssrApplySet[i] = alloc_set(r, r->ssrApplyLayout);
+        for (int k = 0; k < 2; ++k) {
+            w[k].dstSet = k ? r->ssrApplySet[i] : r->ssrSet[i]; w[k].dstBinding = 0; w[k].descriptorCount = 1;
+            w[k].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[k].pBufferInfo = &ub;
+        }
+        vkUpdateDescriptorSets(vk->device, 2, w, 0, NULL);
+        write_tex_set(vk, r->ssrSet[i], 3, CIS, r->linearClamp, r->hdr.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        write_tex_set(vk, r->ssrSet[i], 4, CIS, r->nearestClamp, sceneDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        write_tex_set(vk, r->ssrSet[i], 5, CIS, r->nearestClamp, r->refl.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        write_tex_set(vk, r->ssrSet[i], 6, SI, VK_NULL_HANDLE, r->ssr.view, VK_IMAGE_LAYOUT_GENERAL);
+        write_tex_set(vk, r->ssrApplySet[i], 3, CIS, r->nearestClamp, r->ssr.view, VK_IMAGE_LAYOUT_GENERAL);
+        write_tex_set(vk, r->ssrApplySet[i], 4, CIS, r->nearestClamp, r->refl.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
     r->cloudCompSet = alloc_set(r, r->cloudCompLayout);
     write_tex_set(vk, r->cloudCompSet, 0, CIS, r->nearestClamp, r->cloud.view, VK_IMAGE_LAYOUT_GENERAL);
     write_tex_set(vk, r->cloudCompSet, 1, CIS, r->nearestClamp, r->cloudDist.view, VK_IMAGE_LAYOUT_GENERAL);
@@ -510,6 +571,9 @@ static void destroy_targets(Renderer *r) {
     vk_image_destroy(vk, &r->msaaColor);
     vk_image_destroy(vk, &r->cloud);
     vk_image_destroy(vk, &r->cloudDist);
+    vk_image_destroy(vk, &r->reflMsaa);
+    vk_image_destroy(vk, &r->refl);
+    vk_image_destroy(vk, &r->ssr);
 }
 
 static void recreate_swapchain(Renderer *r) {
@@ -567,18 +631,23 @@ void renderer_destroy(Renderer *r) {
     vkDeviceWaitIdle(vk->device);
     destroy_targets(r);
     vk_buffer_destroy(vk, &r->shotBuf);
-    VkPipeline pipes[] = { r->cityPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe };
+    VkPipeline pipes[] = { r->cityPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
+                           r->ssrPipe, r->ssrApplyPipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
     vkDestroyPipelineLayout(vk->device, r->compositePL, NULL);
     vkDestroyPipelineLayout(vk->device, r->bloomPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->cloudPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->cloudCompPL, NULL);
+    vkDestroyPipelineLayout(vk->device, r->ssrPL, NULL);
+    vkDestroyPipelineLayout(vk->device, r->ssrApplyPL, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->sceneLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->texLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->bloomLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->cloudLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->cloudCompLayout, NULL);
+    vkDestroyDescriptorSetLayout(vk->device, r->ssrLayout, NULL);
+    vkDestroyDescriptorSetLayout(vk->device, r->ssrApplyLayout, NULL);
     vkDestroyDescriptorPool(vk->device, r->staticPool, NULL);
     vkDestroySampler(vk->device, r->linearClamp, NULL);
     vkDestroySampler(vk->device, r->nearestClamp, NULL);
@@ -639,12 +708,6 @@ static void record_clouds(Renderer *r, VkCommandBuffer cmd, int slot) {
     VkCore *vk = r->vk;
     const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, FS = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
     const VkPipelineStageFlags2 COLOR = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    bool msaa = vk->msaa != VK_SAMPLE_COUNT_1_BIT;
-    vk_image_barrier(cmd, msaa ? r->depthResolve.img : r->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT,
-                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                     VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | COLOR,
-                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                     CS | FS, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, 1);
     VkImage outs[2] = { r->cloud.img, r->cloudDist.img };
     for (int i = 0; i < 2; ++i)
         vk_image_barrier(cmd, outs[i], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
@@ -653,7 +716,7 @@ static void record_clouds(Renderer *r, VkCommandBuffer cmd, int slot) {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->cloudPL, 0, 1, &r->cloudSet[slot], 0, NULL);
     vkCmdDispatch(cmd, (r->cloud.w + 7) / 8, (r->cloud.h + 7) / 8, 1);
     vk_memory_barrier(cmd, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, FS, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-    /* the scene resolve wrote the HDR target; the blend reads it back */
+    /* the reflections pass wrote the HDR target; the blend reads it back */
     vk_memory_barrier(cmd, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                       COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
@@ -673,6 +736,51 @@ static void record_clouds(Renderer *r, VkCommandBuffer cmd, int slot) {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->cloudCompPL, 0, 1, &r->cloudCompSet, 0, NULL);
     CloudPush cp = { NEAR_PLANE, FAR_PLANE };
     vkCmdPushConstants(cmd, r->cloudCompPL, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cp), &cp);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+    vkCmdEndRendering(cmd);
+}
+
+/* Screen-space reflections: trace the wet surfaces' mirror rays against the
+ * scene depth (ssr.comp), then streak and blend them into the HDR target
+ * (ssr_apply.frag). Leaves the scene depth readable for the clouds after. */
+static void record_reflections(Renderer *r, VkCommandBuffer cmd, int slot) {
+    VkCore *vk = r->vk;
+    const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, FS = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    const VkPipelineStageFlags2 COLOR = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    const VkAccessFlags2 READ = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+    bool msaa = vk->msaa != VK_SAMPLE_COUNT_1_BIT;
+    vk_image_barrier(cmd, msaa ? r->depthResolve.img : r->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT,
+                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | COLOR,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     CS | FS, READ, 0, 1);
+    vk_image_barrier(cmd, r->hdr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, CS, READ, 0, 1);
+    vk_image_barrier(cmd, r->refl.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, CS | FS, READ, 0, 1);
+    vk_image_barrier(cmd, r->ssr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                     FS, 0, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, 0, 1);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->ssrPipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->ssrPL, 0, 1, &r->ssrSet[slot], 0, NULL);
+    vkCmdDispatch(cmd, (r->ssr.w + 7) / 8, (r->ssr.h + 7) / 8, 1);
+    vk_memory_barrier(cmd, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, FS, READ);
+    vk_image_barrier(cmd, r->hdr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     CS, 0, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+
+    VkRenderingAttachmentInfo ca = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+    ca.imageView = r->hdr.view;
+    ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    ca.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    ca.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingInfo ri = { VK_STRUCTURE_TYPE_RENDERING_INFO };
+    ri.renderArea.extent = vk->extent;
+    ri.layerCount = 1;
+    ri.colorAttachmentCount = 1;
+    ri.pColorAttachments = &ca;
+    vkCmdBeginRendering(cmd, &ri);
+    set_viewport(cmd, vk->extent.width, vk->extent.height);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->ssrApplyPipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->ssrApplyPL, 0, 1, &r->ssrApplySet[slot], 0, NULL);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);
 }
@@ -723,16 +831,25 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     vk_image_barrier(cmd, r->hdr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
                      COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+    vk_image_barrier(cmd, r->refl.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     READERS, 0, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+    if (msaa)
+        vk_image_barrier(cmd, r->reflMsaa.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
 
-    VkRenderingAttachmentInfo ca = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-    ca.imageView = msaa ? r->msaaColor.view : r->hdr.view;
-    ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    ca.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    ca.storeOp = msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
-    if (msaa) {
-        ca.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
-        ca.resolveImageView = r->hdr.view;
-        ca.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    /* colour, and the reflection G-buffer (both cleared to zero) */
+    VkRenderingAttachmentInfo ca[2] = { { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO }, { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO } };
+    VkImageView colorMs[2] = { r->msaaColor.view, r->reflMsaa.view }, colorRes[2] = { r->hdr.view, r->refl.view };
+    for (int i = 0; i < 2; ++i) {
+        ca[i].imageView = msaa ? colorMs[i] : colorRes[i];
+        ca[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        ca[i].storeOp = msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
+        if (msaa) {
+            ca[i].resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+            ca[i].resolveImageView = colorRes[i];
+            ca[i].resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
     }
     VkRenderingAttachmentInfo da = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
     da.imageView = r->depth.view;
@@ -748,8 +865,8 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     VkRenderingInfo ri = { VK_STRUCTURE_TYPE_RENDERING_INFO };
     ri.renderArea.extent = vk->extent;
     ri.layerCount = 1;
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachments = &ca;
+    ri.colorAttachmentCount = 2;
+    ri.pColorAttachments = ca;
     ri.pDepthAttachment = &da;
     vkCmdBeginRendering(cmd, &ri);
     set_viewport(cmd, W, H);
@@ -760,7 +877,8 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);
 
-    /* ---- clouds, blended into r->hdr ---- */
+    /* ---- screen-space reflections, then clouds, blended into r->hdr ---- */
+    record_reflections(r, cmd, slot);
     record_clouds(r, cmd, slot);
 
     vk_image_barrier(cmd, r->hdr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,

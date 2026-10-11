@@ -231,6 +231,14 @@ surfaces are lit with GGX:
 - **Rain:** the streets are wet (`WETNESS`). Authored surfaces carry a film of rain:
   darker and glossy. Water stands only where it collects (gutters, joints, faint ruts and
   sparse isolated hollows), as smooth films that mirror the lamps and the overcast.
+- **Reflections:** wet surfaces also write a reflection G-buffer (normal, roughness and
+  the weight of their sky reflection) from the scene pass. `ssr.comp` traces their mirror
+  rays through the depth buffer, and `ssr_apply.frag` averages the hits vertically over a
+  length that grows with roughness. Lamp heads, neon and shopfronts therefore stretch into
+  tall streaks down the road, while puddles stay sharp. It then swaps them in for the sky
+  reflection by confidence. The lamps' GGX lobe is stretched the same way (anisotropic
+  along the view direction). Specular anti-aliasing widens the lobe where the normal
+  varies within a pixel, so the film doesn't sparkle.
 - **Procedural materials:** keep their normalised Blinn-Phong lobes. The height
 channel is packed but unused for now: it is reserved for puddles in the joints and for
 parallax. Three materials use textures so far, all CC0 from ambientCG:
@@ -303,11 +311,12 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
   over the HDR scene, so cloud never smears across a tower's silhouette.
 
 ### Frame
-1. MSAA x4 HDR scene, resolved (colour averaged, depth sample zero).
+1. MSAA x4 HDR scene and reflection G-buffer, resolved (colour averaged, depth sample zero).
 2. Sky, drawn into the empty depth.
-3. Clouds: half-resolution compute ray march, blended into the HDR target with a depth-aware upsample.
-4. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
-5. Composite: ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
+3. Screen-space reflections on the wet streets: a compute trace, then a streaked additive blend.
+4. Clouds: half-resolution compute ray march, blended into the HDR target with a depth-aware upsample.
+5. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
+6. Composite: ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
 
 ## Extending
 - **Environment** (rain, wet streets, fog volumes, weather): the atmosphere lives in

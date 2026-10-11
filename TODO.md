@@ -32,13 +32,16 @@ where it collects:
 
 The sky reflection (`envReflection`) now includes the lit cloud deck.
 
+**Done:** reflections of the city and streaked lights.
+- **Screen-space reflections** (`ssr.comp`, `ssr_apply.frag`) mirror lamp heads, neon,
+  shopfronts and windows in the wet surfaces, falling back to `envReflection` off-screen.
+- **Streaks:** the hits are averaged vertically over a length that grows with roughness,
+  and the wet GGX lamp lobe is anisotropic, stretched along the view direction.
+- **Anti-aliasing:** specular AA keeps the normal-mapped film from sparkling.
+
 **Next:**
-- **Reflections of the city in the water.** Puddles can only reflect the street lamps (as
-  GGX highlights) and the sky. The lit shopfronts, neon and windows that make a wet street
-  at night are missing. Screen-space reflections against the HDR target and depth would
-  cover most of it, falling back to `envReflection` off-screen.
-- **Streaked highlights.** Lamp and sign reflections should stretch toward the viewer
-  (rain-roughened water), with an anisotropic or view-stretched lobe, or by blurring the
-  SSR result vertically.
+- **SSR limits.** Reflections of anything off-screen fall back to the sky, so they vanish
+  at the screen edges as you turn. Glass and other procedural materials don't reflect yet.
+  A temporal pass would let the trace run at half resolution and stay smooth in motion.
 - **Rain.** Falling rain, ripple normals in the puddles, and `WETNESS` driven by weather.
 - **Keep:** procedural materials on their current Blinn-Phong model until each is moved over.

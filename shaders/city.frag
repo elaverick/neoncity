@@ -13,10 +13,16 @@ layout(location = 7) flat in uint  vFacePack;
 layout(location = 8) flat in uint  vAux;
 
 layout(location = 0) out vec4 outColor;
+// Reflection G-buffer for screen-space reflections (ssr.comp): world normal
+// x and z, roughness, and the weight of the sky reflection this pixel added
+// (zero where nothing reflective was drawn).
+layout(location = 1) out vec4 outRefl;
 
 ChunkGPU gC;
 float gTime;
-vec3 gWorld;    // chunk-local position + wrapped chunk offset: continuous for noise
+vec3 gWorld;
+vec4 gRefl = vec4(0.0);   // -> outRefl
+float gStreak = 1.0;      // wet surfaces: how far GGX highlights stretch toward the viewer    // chunk-local position + wrapped chunk offset: continuous for noise
 
 const float PI = 3.14159265;
 
@@ -62,8 +68,21 @@ float ggxSpec(vec3 n, vec3 L, vec3 V, float alpha, float f0, float ndl) {
     vec3 H = normalize(L + V);
     float ndh = max(dot(n, H), 0.0), ndv = max(dot(n, V), 1e-4), vdh = max(dot(V, H), 0.0);
     float a2 = max(alpha * alpha, 1e-6);
-    float dd = ndh * ndh * (a2 - 1.0) + 1.0;
-    float D = a2 / (PI * dd * dd);
+    float D;
+    vec3 tv = V - n * dot(n, V);   // the view direction across the surface
+    float s = 1.0 + (gStreak - 1.0) * smoothstep(0.2, 0.7, length(tv));
+    if (s > 1.001) {
+        // Anisotropic GGX, wider along the view direction and narrower across
+        // it (same area): rain-slicked streets streak lights toward the viewer.
+        vec3 t = normalize(tv), b = cross(n, t);
+        float ax = min(alpha * s, 1.0), ay = max(alpha / s, 1e-3);
+        vec3 h = vec3(dot(H, t) / ax, dot(H, b) / ay, ndh);
+        float q = dot(h, h);
+        D = 1.0 / (PI * ax * ay * q * q);
+    } else {
+        float dd = ndh * ndh * (a2 - 1.0) + 1.0;
+        D = a2 / (PI * dd * dd);
+    }
     float vis = 0.5 / (ndl * sqrt(ndv * ndv * (1.0 - a2) + a2) + ndv * sqrt(ndl * ndl * (1.0 - a2) + a2) + 1e-5);
     float F = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
     return PI * D * vis * F * ndl;
@@ -156,16 +175,6 @@ vec3 neonBounce(vec3 w, float h) {
     return c * smoothstep(0.35, 0.8, k) * exp(-h / 14.0) * 0.06;
 }
 
-// The rain-cloud deck (clouds.comp) as reflections see it: an overcast lit
-// sodium-orange from below, filling the upper sky.
-const vec3 CLOUD_DECK = vec3(0.10, 0.052, 0.034);
-
-vec3 envReflection(vec3 R) {
-    vec3 c = mix(hazeColor(R) * 1.5, CLOUD_DECK, smoothstep(0.03, 0.3, R.y) * 0.85);
-    float below = smoothstep(0.1, -0.2, R.y);
-    c += vec3(0.05, 0.025, 0.04) * below;   // the lit city below
-    return c;
-}
 
 /* ======================================================================
  * Authored PBR materials (src/textures.c). Surfaces opt in per material;
@@ -449,6 +458,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
     }
 
     if (wettable && WETNESS > 0.0) {
+        gStreak = 1.0 + 3.0 * WETNESS;
         // Wet coat: in steady rain every authored surface carries a film of water
         // (porous asphalt and stone darken, and turn glossy), but water only
         // stands where it collects: gutters, joints, faint wheel-path ruts and
@@ -460,11 +470,21 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         float pool = max(broad, fine) * smoothstep(0.7, 0.9, nGeom.y);
         alb *= mix(1.0, 0.55, WETNESS) * mix(1.0, 0.92, pool);
         rough = mix(rough, rough * 0.45, WETNESS);
+        n = normalize(mix(n, nGeom, 0.5 * WETNESS));   // the film fills the fine relief
         // standing water: a smooth film over the surface, filling its relief
         rough = mix(rough, 0.03, pool);
         n = normalize(mix(n, nGeom, pool));
         ao = mix(ao, 1.0, pool);
         specK = mix(specK, 0.02, pool);   // water's F0
+    }
+
+    if (rough >= 0.0) {
+        // Specular anti-aliasing: widen the lobe by how much the normal turns
+        // across this pixel, so detail finer than a pixel blurs the highlight
+        // instead of sparkling.
+        vec3 dnx = dFdx(n), dny = dFdy(n);
+        float kernel = min(0.5 * (dot(dnx, dnx) + dot(dny, dny)), 0.2);
+        rough = pow(rough * rough * rough * rough + kernel, 0.25);
     }
 
     vec3 diff = ambientLight(n, p.y) * ao;
@@ -475,7 +495,9 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         // sky / haze reflection: rougher surfaces reflect closer to the normal
         float ndv = max(dot(n, V), 1e-4);
         vec3 R = normalize(mix(reflect(-V, n), n, rough * rough));
-        spec += envReflection(R) * envBRDF(specK, rough, ndv) * ao;
+        float w = envBRDF(specK, rough, ndv) * ao;
+        spec += envReflection(R) * w;
+        gRefl = vec4(n.x, n.z, rough, w);   // screen-space reflections refine this
     } else {
         // sky / haze sheen at grazing angles
         float fres = pow(1.0 - max(dot(n, V), 0.0), 5.0);
@@ -1296,6 +1318,8 @@ void main() {
         col = neonColor(vParams.y) * 6.0 * chase;
     }
 
-    col = applyFog(col, vRel);
-    outColor = vec4(col, 1.0);
+    float dist = length(vRel);
+    float fog = fogAmount(vRel, dist);
+    outColor = vec4(mix(col, hazeColor(vRel / max(dist, 1e-4)), fog), 1.0);
+    outRefl = vec4(gRefl.xyz, gRefl.w * (1.0 - fog));
 }

@@ -83,7 +83,7 @@ set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/spv)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp
-            cloud_noise.comp clouds.comp cloud_composite.frag)
+            cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag)
 file(GLOB SHADER_INCLUDES ${SHADER_SRC_DIR}/*.glsl)
 set(SPV_OUTPUTS "")
 foreach(S ${SHADERS})
