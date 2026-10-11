@@ -1,0 +1,51 @@
+#version 450
+// 13-tap downsample (Jimenez, "Next Generation Post Processing in Call of Duty").
+// The first pass applies a soft threshold and a Karis average to stop single
+// bright pixels (distant lamp heads) from flickering.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dst;
+layout(push_constant) uniform Push { float threshold, knee, radius; int prefilter; } pc;
+
+float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+vec3 karis(vec3 a, vec3 b, vec3 c, vec3 d) {
+    vec4 s = vec4(a, 1.0) / (1.0 + luma(a)) + vec4(b, 1.0) / (1.0 + luma(b)) +
+             vec4(c, 1.0) / (1.0 + luma(c)) + vec4(d, 1.0) / (1.0 + luma(d));
+    return s.rgb / s.a;
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(dst);
+    if (p.x >= size.x || p.y >= size.y) return;
+    vec2 t = 1.0 / vec2(textureSize(src, 0));
+    vec2 uv = (vec2(p) + 0.5) / vec2(size);
+
+    vec3 a = texture(src, uv + t * vec2(-2, -2)).rgb;
+    vec3 b = texture(src, uv + t * vec2( 0, -2)).rgb;
+    vec3 c = texture(src, uv + t * vec2( 2, -2)).rgb;
+    vec3 d = texture(src, uv + t * vec2(-1, -1)).rgb;
+    vec3 e = texture(src, uv + t * vec2( 1, -1)).rgb;
+    vec3 f = texture(src, uv + t * vec2(-2,  0)).rgb;
+    vec3 g = texture(src, uv).rgb;
+    vec3 h = texture(src, uv + t * vec2( 2,  0)).rgb;
+    vec3 i = texture(src, uv + t * vec2(-1,  1)).rgb;
+    vec3 j = texture(src, uv + t * vec2( 1,  1)).rgb;
+    vec3 k = texture(src, uv + t * vec2(-2,  2)).rgb;
+    vec3 l = texture(src, uv + t * vec2( 0,  2)).rgb;
+    vec3 m = texture(src, uv + t * vec2( 2,  2)).rgb;
+
+    vec3 col;
+    if (pc.prefilter != 0) {
+        col = karis(d, e, i, j) * 0.5 + karis(a, b, f, g) * 0.125 + karis(b, c, g, h) * 0.125 +
+              karis(f, g, k, l) * 0.125 + karis(g, h, l, m) * 0.125;
+        float br = max(col.r, max(col.g, col.b));
+        float soft = clamp(br - pc.threshold + pc.knee, 0.0, 2.0 * pc.knee);
+        soft = soft * soft / (4.0 * pc.knee + 1e-4);
+        float w = max(soft, br - pc.threshold) / max(br, 1e-4);
+        col *= w;
+    } else {
+        col = (d + e + i + j) * 0.125 + (a + c + k + m) * 0.03125 + (b + f + h + l) * 0.0625 + g * 0.125;
+    }
+    imageStore(dst, p, vec4(min(col, vec3(500.0)), 1.0));
+}
