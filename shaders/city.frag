@@ -156,8 +156,12 @@ vec3 neonBounce(vec3 w, float h) {
     return c * smoothstep(0.35, 0.8, k) * exp(-h / 14.0) * 0.06;
 }
 
+// The rain-cloud deck (clouds.comp) as reflections see it: an overcast lit
+// sodium-orange from below, filling the upper sky.
+const vec3 CLOUD_DECK = vec3(0.10, 0.052, 0.034);
+
 vec3 envReflection(vec3 R) {
-    vec3 c = hazeColor(R) * 1.5;
+    vec3 c = mix(hazeColor(R) * 1.5, CLOUD_DECK, smoothstep(0.03, 0.3, R.y) * 0.85);
     float below = smoothstep(0.1, -0.2, R.y);
     c += vec3(0.05, 0.025, 0.04) * below;   // the lit city below
     return c;
@@ -188,6 +192,10 @@ Surface samplePBR(int m, vec2 st, vec3 T, vec3 B, vec3 N) {
     return s;
 }
 
+// Broad relief: the height map averaged over many texels (a biased mip), for
+// shapes like puddles that should follow hollows rather than every grain.
+float pbrBroadHeight(int m, vec2 st, float bias) { return texture(pbrMaps[m * PBR_MAPS_PER_MATERIAL + PBR_ORM], st, bias).b; }
+
 // Paints a flat coat (road paint, a cover plate) over a surface with coverage m.
 // The coat fills the texture's relief, so its normal and occlusion return to
 // the geometric ones; on a procedural surface (n == nGeom, ao == 1) only the
@@ -217,6 +225,35 @@ void grainFrame(uint seed, out vec3 T, out vec3 B) {
     T = vec3(cos(a), 0.0, sin(a));
     B = vec3(sin(a), 0.0, -cos(a));
 }
+
+// How wet the streets are (0 dry, 1 after rain). Weather will drive this.
+const float WETNESS = 1.0;
+
+// Isolated shallow hollows where rain collects (sunken asphalt, a settled
+// slab): a soft ellipse in about `chance` of the 5 m cells. Returns the dip's
+// depth profile, 1 at its centre.
+float hollow(vec2 xz, float chance, uint salt) {
+    vec2 c = floor(xz / 5.0);
+    float best = 0.0;
+    for (int k = 0; k < 9; ++k) {
+        vec2 cc = c + vec2(float(k % 3 - 1), float(k / 3 - 1));
+        uint h = hash2i(salt, int(cc.x), int(cc.y));
+        if (hfloat(h) > chance) continue;
+        vec2 d = xz - (cc + 0.2 + 0.6 * vec2(hf(h, 1u), hf(h, 2u))) * 5.0;
+        float a = hf(h, 3u) * PI, ca = cos(a), sa = sin(a);
+        vec2 q = vec2(ca * d.x + sa * d.y, -sa * d.x + ca * d.y);
+        float r = mix(0.4, 1.4, hf(h, 4u));
+        best = max(best, 1.0 - smoothstep(0.2, 1.0, length(q / vec2(r, r * mix(0.5, 1.0, hf(h, 5u))))));
+    }
+    return best;
+}
+
+// Height-map statistics of the authored materials (median and spread of
+// orm.b), so water levels mean the same on each: relative height
+// (h - median) / spread runs from about -0.5 (joints, hollows) to 0.5.
+const vec2 ROAD_RELIEF = vec2(0.80, 0.13);
+const vec2 PAVING_RELIEF = vec2(0.59, 0.32);
+const vec2 KERB_RELIEF = vec2(0.49, 0.19);
 
 // Road012A (ambientCG): mapped in world space so carriageways and the junction
 // fill match across their seams. The repeat must divide 64 chunks (7040 m),
@@ -260,6 +297,11 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
     vec3 alb;
     float shin = 16.0, specK = 0.08, ao = 1.0;
     float rough = -1.0;   // >= 0: GGX with F0 = specK (authored materials)
+    vec3 nGeom = n;
+    // wet coat inputs (authored materials): relative height of the surface's
+    // relief, and how far ruts, gutters and joints sink it further
+    bool wettable = false;
+    float relH = 0.0, relBroad = 0.0, sink = 0.0, jointLevel = -1.0;
 
     if (mat == MAT_ROAD) {
         // Base asphalt (authored or procedural), then markings and covers
@@ -292,7 +334,12 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
                 if (into < 5.2) mk = cw; else mk = max(mk, cw);
             }
             dCurb = half_ - abs(t);
+            // ruts faintly worn into the wheel paths, 0.85 m either side of each lane's centre
+            float u = mod(abs(t), 3.4);
+            sink += 0.2 * (exp(-(u - 0.85) * (u - 0.85) / 0.04) + exp(-(u - 2.55) * (u - 2.55) / 0.04));
         }
+        sink += 0.6 * (1.0 - smoothstep(0.1, 0.35, dCurb));   // the gutter along the kerb
+        if (pbr) sink += 0.6 * hollow(w.xz, 0.25, 0x7E7Bu);
         float wear = 0.45 + 0.55 * smoothstep(0.25, 0.6, fbm(w.xz * 1.7, 0xA8u));
         vec3 paint = mix(vec3(0.42, 0.41, 0.38), vec3(0.45, 0.30, 0.05), mk.y);
         s = layer(s, n, paint, 0.45, mk.x * wear);
@@ -314,6 +361,10 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         alb = s.albedo; n = s.n; ao = s.ao;
         if (pbr) {
             rough = s.rough; specK = 0.04;   // dielectric F0
+            wettable = true;
+            relH = (s.height - ROAD_RELIEF.x) / ROAD_RELIEF.y;
+            relBroad = (pbrBroadHeight(PBR_ROAD, w.xz / ROAD_TILE, 5.0) - ROAD_RELIEF.x) / ROAD_RELIEF.y;
+            jointLevel = -1.0;   // asphalt is too fine-grained for its pits to hold water
         } else {
             shin = 60.0;
             specK = (0.25 + 0.5 * big) * (1.0 - 0.6 * mk.x);   // oily, slightly slick asphalt
@@ -327,6 +378,11 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         alb *= 0.6 + 0.4 * smoothstep(0.2, 0.55, fbm(w.xz * 0.15, 0x7114u));  // stains, as below
         n = s.n; ao = s.ao;
         rough = s.rough; specK = 0.04;   // dielectric F0
+        wettable = true;
+        relH = (s.height - PAVING_RELIEF.x) / PAVING_RELIEF.y;
+        relBroad = (pbrBroadHeight(PBR_PAVING_STONES, uv / PAVING_TILE, 4.0) - PAVING_RELIEF.x) / PAVING_RELIEF.y;
+        jointLevel = -0.3;   // the joints between slabs
+        sink += 0.6 * hollow(w.xz, 0.1, 0x7E7Cu);
     } else if (mat == MAT_SIDEWALK && prm.y == 1u && pbrLoaded(PBR_KERB)) {
         // authored kerb stones, laid along the edge (uv = along, inward)
         vec3 T, B;
@@ -336,12 +392,17 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         alb *= 0.6 + 0.4 * smoothstep(0.2, 0.55, fbm(w.xz * 0.15, 0x7114u));  // stains, as the paving
         n = s.n; ao = s.ao;
         rough = s.rough; specK = 0.04;   // dielectric F0
+        wettable = true;
+        relH = (s.height - KERB_RELIEF.x) / KERB_RELIEF.y;
+        relBroad = (pbrBroadHeight(PBR_KERB, uv / KERB_TILE, 4.0) - KERB_RELIEF.x) / KERB_RELIEF.y;
+        jointLevel = -0.4;
     } else if (mat == MAT_CURB && pbrLoaded(PBR_KERB)) {
         // authored kerb face: uv = (metres along cross(up, n), height), so image up is -y
         Surface s = samplePBR(PBR_KERB, uv / KERB_TILE, normalize(vec3(n.z, 0.0, -n.x)), vec3(0.0, -1.0, 0.0), n);
         alb = s.albedo * KERB_ALBEDO;
         n = s.n; ao = s.ao;
         rough = s.rough; specK = 0.04;   // dielectric F0
+        wettable = true;   // vertical: damp, never pooled
     } else if (mat == MAT_SIDEWALK) {
         // paving runs with the block grain (uv); prm.y = 1 is the kerb-stone edge
         vec2 tp = uv / 1.2;
@@ -384,6 +445,26 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         alb = mix(alb * (1.0 - 0.35 * spill), dirt, gap);
         ao *= mix(1.0, 0.45, gap) * (1.0 - 0.25 * arris);
         if (rough >= 0.0) rough = mix(rough, 0.92, gap);
+        sink += 0.9 * gap;   // water runs into the joint
+    }
+
+    if (wettable && WETNESS > 0.0) {
+        // Wet coat: in steady rain every authored surface carries a film of water
+        // (porous asphalt and stone darken, and turn glossy), but water only
+        // stands where it collects: gutters, joints, faint wheel-path ruts and
+        // the odd isolated hollow. The surface's own relief just breaks up the
+        // puddles' edges, so the street still reads as flat.
+        float level = -0.25 * WETNESS;
+        float broad = smoothstep(0.0, 0.08, level - (0.3 * relBroad + 0.05 * relH - sink));
+        float fine = smoothstep(0.0, 0.1, WETNESS * jointLevel - relH);
+        float pool = max(broad, fine) * smoothstep(0.7, 0.9, nGeom.y);
+        alb *= mix(1.0, 0.55, WETNESS) * mix(1.0, 0.92, pool);
+        rough = mix(rough, rough * 0.45, WETNESS);
+        // standing water: a smooth film over the surface, filling its relief
+        rough = mix(rough, 0.03, pool);
+        n = normalize(mix(n, nGeom, pool));
+        ao = mix(ao, 1.0, pool);
+        specK = mix(specK, 0.02, pool);   // water's F0
     }
 
     vec3 diff = ambientLight(n, p.y) * ao;

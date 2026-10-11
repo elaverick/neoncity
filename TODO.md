@@ -20,15 +20,25 @@ Interior mapping for rooms and shops that wrap a building corner is still not ri
   `findcorner` (a scratch tool, not in the repo) printed street-level cameras with `--cam`.
 
 ## Wet streets
-Textured materials now use GGX (`ggxSpec`, `envBRDF` in `shaders/city.frag`), so the road's
-sheen follows its roughness map. The old oily look came from the procedural road's
-non-physical `specK` (up to 0.75). Getting a properly wet street back needs a wetness layer.
+**Done:** the wet coat. `WETNESS` in `shaders/city.frag` controls it. Every authored
+surface (road, paving, kerb) carries a film of rain: darker and glossy. Water stands only
+where it collects:
+- **Gutters, the kerb joint and slab joints.**
+- **Faint wheel-path ruts**, in patches.
+- **Isolated shallow hollows** (`hollow()`): sparse soft ellipses, 0.4-1.4 m across, whose
+  edges the surface relief breaks up. Puddle shapes deliberately don't follow the
+  texture's relief directly; at street scale that read as an undulating surface.
+- **Standing water** is a smooth film (roughness 0.03, flat normal, F0 0.02).
 
-- **Goal:** a `layer()`-style wet coat. It lowers roughness toward ~0.05, darkens albedo
-  (water darkens porous surfaces), and flattens the normal where water fills the relief.
-  Water should pool in the low points of the packed height channel (`orm.b`): in the paving
-  joints and in ruts along the carriageway.
-- **Then:** lamp and shopfront reflections should streak along the view direction (the
-  stretched highlights of a wet road at night). That likely needs an anisotropic or
-  view-stretched lobe, or screen-space reflections.
+The sky reflection (`envReflection`) now includes the lit cloud deck.
+
+**Next:**
+- **Reflections of the city in the water.** Puddles can only reflect the street lamps (as
+  GGX highlights) and the sky. The lit shopfronts, neon and windows that make a wet street
+  at night are missing. Screen-space reflections against the HDR target and depth would
+  cover most of it, falling back to `envReflection` off-screen.
+- **Streaked highlights.** Lamp and sign reflections should stretch toward the viewer
+  (rain-roughened water), with an anisotropic or view-stretched lobe, or by blurring the
+  SSR result vertically.
+- **Rain.** Falling rain, ripple normals in the puddles, and `WETNESS` driven by weather.
 - **Keep:** procedural materials on their current Blinn-Phong model until each is moved over.

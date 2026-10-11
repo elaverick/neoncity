@@ -228,6 +228,9 @@ surfaces are lit with GGX:
   storefront's size, as a cheap area light.
 - **Sky and haze:** reflected through Karis's analytic split-sum BRDF.
 - **Ambient occlusion:** darkens only the ambient, neon-bounce and sky terms.
+- **Rain:** the streets are wet (`WETNESS`). Authored surfaces carry a film of rain:
+  darker and glossy. Water stands only where it collects (gutters, joints, faint ruts and
+  sparse isolated hollows), as smooth films that mirror the lamps and the overcast.
 - **Procedural materials:** keep their normalised Blinn-Phong lobes. The height
 channel is packed but unused for now: it is reserved for puddles in the joints and for
 parallax. Three materials use textures so far, all CC0 from ambientCG:
