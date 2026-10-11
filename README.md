@@ -262,7 +262,14 @@ surfaces are lit with GGX:
   glass pyramid roofs write the same G-buffer (roughness 0). Their weight is the share of
   the sky reflection that reaches the final pixel, after frames, mullions and the
   distance blends, so the swap leaves no double image. Glass therefore mirrors the
-  street, lamps, neon and neighbouring towers at grazing angles.
+  street, lamps, neon and neighbouring towers at grazing angles. Glass reflectance
+  (`glassFresnel`) rises toward grazing but tops out around 70%, for rain film, grime and
+  bowed panes. A reflection's colour is hazed over the whole path the light took via the
+  glass, not just the camera's distance to what's reflected, so a long glass frontage gets
+  more mirror-like but hazier into the distance. Where the screen holds nothing to reflect,
+  the fallback (`envReflection`) is street-shaped rather than flat sky: the lit overcast
+  above, a blurred band of lit facades and signs around the horizon, and the dark street
+  below.
 - **Pane sheen** (`paneSheen`): where SSR can't reach (glass seen near head-on reflects
   the street behind the camera, which is off screen), glass gets a soft blurred
   reflection. It combines a view-dependent gradient (dark street, a glowing band of

@@ -195,7 +195,7 @@ vec3 paneSheen(vec3 p, vec3 n, vec3 V) {
     vec3 R = reflect(-V, n);
     float reach = 1.0 - smoothstep(-0.3, 0.1, dot(R, frame.camFwd.xyz));   // SSR's own cut-off, inverted
     if (reach <= 0.0) return vec3(0.0);
-    float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
+    float F = glassFresnel(n, V);
 
     // the gradient: street, facades across, overcast (blurred: low frequencies only)
     float az = atan(R.z, R.x);
@@ -989,7 +989,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         r.person = hf(lh, 11u) < 0.3;
         vec3 d = vec3(dot(-V, T), -V.y, -dot(-V, n));
         vec3 inner = interiorColor(vec2(fract(u / 8.0), clamp(yy / groundH, 0.0, 1.0)), d, 8.0, groundH, 9.0, r);
-        float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
+        float F = glassFresnel(n, V);
         vec3 glass = inner * (1.0 - F) + envReflection(reflect(-V, n)) * F;
         glass += paneSheen(p, n, V);
         float lodL = smoothstep(0.08, 0.4, dU / 8.0);
@@ -1031,7 +1031,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             } else {
                 inner = interiorColor(vec2(fs, clamp(yy / groundH, 0.0, 1.0)), d, 6.0, groundH, 5.0, r);
             }
-            float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
+            float F = glassFresnel(n, V);
             vec3 glass = inner * (1.0 - F) + envReflection(reflect(-V, n)) * F + paneSheen(p, n, V);
             // mullions
             float mull = band(fract(fs * 3.0), 0.0, 0.02, aa * 3.0) + band(fract(fs * 3.0), 0.98, 1.0, aa * 3.0);
@@ -1112,7 +1112,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 wallLit = wallC * wdiff + wspec;
     float wallW = 0.0;   // weight of the sky reflection in wallLit (glass curtain walls)
     if (glassWall) {
-        float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
+        float F = glassFresnel(n, V);
         wallW = 0.08 + F * 0.9;
         wallLit += envReflection(reflect(-V, n)) * wallW + paneSheen(p, n, V);
     }
@@ -1125,7 +1125,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
 
     // window: near = full interior mapping, mid = per-room flat glow, far = average
     vec3 R = reflect(-V, n);
-    float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
+    float F = glassFresnel(n, V);
     vec3 refl = envReflection(R);
     vec3 roomAvg = room.lit ? room.light * room.bright * 0.42 : vec3(0.003, 0.0035, 0.005);
     if (room.blinds > 0.0 && room.lit) roomAvg *= 1.0 - 0.4 * room.blinds;
@@ -1356,7 +1356,7 @@ vec3 shadeMetal(vec3 p, vec3 rel, vec3 n, vec2 uv, uvec4 prm) {
         return vec3(0.008, 0.012, 0.03) * grid * diff + spec + envReflection(reflect(-V, n)) * 0.25;
     }
     if (v == 7u) {                                                                                       // glass pyramid
-        float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
+        float F = glassFresnel(n, V);
         float mull = max(step(0.94, fract(uv.x * 8.0)), step(0.94, fract(uv.y * 8.0)));
         vec3 glow = mix(vec3(0.9, 0.7, 0.45), vec3(0.6, 0.8, 1.0), hfloat(vSeed)) * 0.35;
         glassRefl(n, F * (1.0 - mull * 0.8));
@@ -1396,7 +1396,7 @@ vec3 shadeDoor(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float frame = 1.0 - smoothstep(0.07, 0.07 + aa, edge);
         if (wM > 1.6) frame = max(frame, 1.0 - smoothstep(0.03, 0.03 + aa, abs(m.x - wM * 0.5)));   // double doors
         float bar = band(m.y, 1.0, 1.08, aa) * step(0.15, edge);
-        float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
+        float F = glassFresnel(n, V);
         vec3 glass = inside * (1.0 - F) + envReflection(reflect(-V, n)) * F + paneSheen(p, n, V);
         glassRefl(n, F * (1.0 - clamp(frame + bar, 0.0, 1.0)));
         return mix(glass, vec3(0.03) * diff + spec, clamp(frame + bar, 0.0, 1.0));

@@ -154,12 +154,28 @@ float fogAmount(vec3 rel, float dist) {
 // sodium-orange from below, filling the upper sky.
 const vec3 CLOUD_DECK = vec3(0.10, 0.052, 0.034);
 
+/* What a reflection sees where the screen can't show it (the fallback that
+ * screen-space reflections replace by confidence): the overcast lit
+ * sodium-orange from below; around the horizon a blurred band of the lit
+ * facades across the way, blocks of windows and the odd sign, varying with
+ * direction; and below, the dark wet street under its lamps. */
 vec3 envReflection(vec3 R) {
     vec3 c = mix(hazeColor(R) * 1.5, CLOUD_DECK, smoothstep(0.03, 0.3, R.y) * 0.85);
-    float below = smoothstep(0.1, -0.2, R.y);
-    c += vec3(0.05, 0.025, 0.04) * below;   // the lit city below
-    return c;
+    float az = atan(R.z, R.x);
+    float band = smoothstep(-0.3, -0.03, R.y) * (1.0 - smoothstep(0.08, 0.45, R.y));
+    float rows = 0.45 + 0.55 * vnoise(vec2(az * 7.0, 0.0), 0xFAC1u);          // blocks of lit windows
+    uint sh = hash2i(0xFAC3u, int(floor(az * 5.0)), 0);
+    float sign_ = smoothstep(0.6, 0.85, vnoise(vec2(az * 13.0, 3.1), 0xFAC2u)) * (1.0 - smoothstep(-0.04, 0.1, R.y));
+    vec3 facades = vec3(0.09, 0.068, 0.05) * rows + neonColor(sh) * sign_ * 0.12;
+    c = mix(c, facades, band * 0.85);
+    vec3 street = vec3(0.016, 0.014, 0.014) + lampColor(0) * 0.012;
+    return mix(c, street, smoothstep(-0.12, -0.4, R.y));
 }
+
+// Fresnel reflectance of window glass (n.V = cos of the view angle). Real
+// panes never quite reach a perfect mirror at grazing angles: rain film,
+// grime and the slight bow of large panes keep it to about 70%.
+float glassFresnel(vec3 n, vec3 V) { return 0.04 + 0.66 * pow(1.0 - max(dot(n, V), 0.0), 5.0); }
 
 // Forward (view-axis) distance from a reverse-Z depth value; 0 (the sky) is infinitely far.
 float forwardDist(float z) { return z > 0.0 ? NEAR_PLANE * FAR_PLANE / (z * (FAR_PLANE - NEAR_PLANE) + NEAR_PLANE) : 1e9; }
