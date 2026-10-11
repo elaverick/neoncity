@@ -12,6 +12,7 @@
 static const char *const MATERIAL_DIRS[PBR_MATERIAL_COUNT] = {
     [PBR_PAVING_STONES] = "paving_stones_111",
     [PBR_ROAD]          = "road_012a",
+    [PBR_KERB]          = "ground_032",
 };
 
 static const struct {

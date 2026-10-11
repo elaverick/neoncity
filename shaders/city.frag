@@ -205,6 +205,18 @@ Surface layer(Surface s, vec3 nGeom, vec3 col, float rough, float m) {
 const vec2 PAVING_TILE = vec2(9.6, 4.8);
 const float PAVING_ALBEDO = 0.5;   // mean 0.22 -> 0.11, near the procedural kerb stones
 
+// Ground032 (ambientCG) for the kerb stones: fine aggregate, 2:1 image.
+const vec2 KERB_TILE = vec2(2.0, 1.0);
+const float KERB_ALBEDO = 0.5;   // mean 0.25 -> 0.12, as the procedural kerb stones
+
+// Sidewalk tangent frame from the block grain angle the seed carries (src/city.c):
+// T = +u, B = -v (image up; normal maps are OpenGL convention).
+void grainFrame(uint seed, out vec3 T, out vec3 B) {
+    float a = uintBitsToFloat(seed);
+    T = vec3(cos(a), 0.0, sin(a));
+    B = vec3(sin(a), 0.0, -cos(a));
+}
+
 // Road012A (ambientCG): mapped in world space so carriageways and the junction
 // fill match across their seams. The repeat must divide 64 chunks (7040 m),
 // where the shader's world coordinates wrap.
@@ -306,12 +318,27 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
             specK = (0.25 + 0.5 * big) * (1.0 - 0.6 * mk.x);   // oily, slightly slick asphalt
         }
     } else if (mat == MAT_SIDEWALK && prm.y == 0u && pbrLoaded(PBR_PAVING_STONES)) {
-        // authored paving laid with the block grain (uv); the seed holds the grain angle
-        float a = uintBitsToFloat(seed);
-        vec3 T = vec3(cos(a), 0.0, sin(a)), B = vec3(sin(a), 0.0, -cos(a));   // +u, and -v (image up)
+        // authored paving laid with the block grain (uv)
+        vec3 T, B;
+        grainFrame(seed, T, B);
         Surface s = samplePBR(PBR_PAVING_STONES, uv / PAVING_TILE, T, B, n);
         alb = s.albedo * PAVING_ALBEDO;
         alb *= 0.6 + 0.4 * smoothstep(0.2, 0.55, fbm(w.xz * 0.15, 0x7114u));  // stains, as below
+        n = s.n; ao = s.ao;
+        rough = s.rough; specK = 0.04;   // dielectric F0
+    } else if (mat == MAT_SIDEWALK && prm.y == 1u && pbrLoaded(PBR_KERB)) {
+        // authored kerb-stone edge, in the same grain frame as the paving
+        vec3 T, B;
+        grainFrame(seed, T, B);
+        Surface s = samplePBR(PBR_KERB, uv / KERB_TILE, T, B, n);
+        alb = s.albedo * KERB_ALBEDO;
+        alb *= 0.6 + 0.4 * smoothstep(0.2, 0.55, fbm(w.xz * 0.15, 0x7114u));  // stains, as the paving
+        n = s.n; ao = s.ao;
+        rough = s.rough; specK = 0.04;   // dielectric F0
+    } else if (mat == MAT_CURB && pbrLoaded(PBR_KERB)) {
+        // authored kerb face: uv = (metres along cross(up, n), height), so image up is -y
+        Surface s = samplePBR(PBR_KERB, uv / KERB_TILE, normalize(vec3(n.z, 0.0, -n.x)), vec3(0.0, -1.0, 0.0), n);
+        alb = s.albedo * KERB_ALBEDO;
         n = s.n; ao = s.ao;
         rough = s.rough; specK = 0.04;   // dielectric F0
     } else if (mat == MAT_SIDEWALK) {

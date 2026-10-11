@@ -230,14 +230,17 @@ surfaces are lit with GGX:
 - **Ambient occlusion:** darkens only the ambient, neon-bounce and sky terms.
 - **Procedural materials:** keep their normalised Blinn-Phong lobes. The height
 channel is packed but unused for now: it is reserved for puddles in the joints and for
-parallax. Two materials use textures so far, both CC0 from ambientCG:
+parallax. Three materials use textures so far, all CC0 from ambientCG:
 - **Main sidewalk area:** `paving_stones_111`
   ([PavingStones111](https://ambientcg.com/view?id=PavingStones111)), laid with the block
   grain.
 - **Roads:** `road_012a` ([Road012A](https://ambientcg.com/view?id=Road012A)), mapped in
   world space so carriageways and junction fill meet without seams.
+- **Kerb stones:** `ground_032` ([Ground032](https://ambientcg.com/view?id=Ground032)).
+  It covers both the top edge strip, in the paving's grain frame, and the vertical face,
+  whose u runs along `cross(up, n)` so the shader can rebuild its tangent from the normal.
 
-The kerb-stone edge and everything else stay procedural.
+Everything else stays procedural.
 
 Road markings and manhole covers stay procedural masks. `layer()` paints them over the base
 surface, whether textured or procedural. Within the mask it blends in the coat's colour and

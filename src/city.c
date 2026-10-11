@@ -1418,7 +1418,7 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
         float uv[48][2];
 #define PAVE_UV(k) do { double X = cl[k].x + wx, Z = cl[k].z + wz; \
         uv[k][0] = (float)(gc * X + gs * Z); uv[k][1] = (float)(-gs * X + gc * Z); } while (0)
-        /* The seed carries the grain angle (float bits): the tangent frame for normal-mapped paving. */
+        /* The seed carries the grain angle (float bits): the tangent frame for normal-mapped paving and kerb stones. */
         float grain = (float)atan2(gs, gc);
         uint32_t gbits;
         memcpy(&gbits, &grain, 4);
@@ -1432,12 +1432,15 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
             DVec2 strip[4] = { c[i], c[j], in[j], in[i] };
             k = clip_chunk(strip, 4, cl);
             for (int t = 0; t < k; ++t) PAVE_UV(t);
-            if (k) emit_flat(m, cl, k, gy + 0.003f, (const float (*)[2])uv, mat(MAT_SIDEWALK, 0, 1, 0, 0));
+            if (k) emit_flat(m, cl, k, gy + 0.003f, (const float (*)[2])uv, mat(MAT_SIDEWALK, gbits, 1, 0, 0));
 
             DVec2 a = c[i], b = c[j];
             if (!clip_segment(&a, &b)) continue;
             vec3 nn = v3((float)-nin[i].x, 0, (float)-nin[i].z);
             float u0 = (float)dlen(dsub(a, c[i])), u1 = (float)dlen(dsub(b, c[i]));
+            /* u runs along cross(up, n), so the shader can rebuild the face's tangent from its normal. */
+            DVec2 e = dsub(c[j], c[i]);
+            if (e.x * nn.z - e.z * nn.x < 0) { u0 = -u0; u1 = -u1; }
             float quv[4][2] = { { u0, BASE_Y }, { u1, BASE_Y }, { u1, gy }, { u0, gy } };
             emit_quad(m, v3((float)a.x, BASE_Y, (float)a.z), v3((float)b.x, BASE_Y, (float)b.z),
                       v3((float)b.x, gy, (float)b.z), v3((float)a.x, gy, (float)a.z), nn, quv, mat(MAT_CURB, 0, 0, 0, 0));
