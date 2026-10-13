@@ -107,8 +107,12 @@ vec3 neonColor(uint i) {
 // A lit storefront's light (its shop hash picks the colour; src/city.c: city_shop_hash).
 vec3 shopColor(uint h) { return mix(neonColor(h >> 4), vec3(1.0, 0.82, 0.62), 0.45); }
 
+// Light from the lobbies thrown onto the street and into the rain (about 3700 K,
+// between the lobbies' warm and neutral panels: city.frag lobbyLight).
+const vec3 LOBBY_SPILL = vec3(1.0, 0.80, 0.60);
+
 vec3 lampColor(int type) {
-    return type == 0 ? vec3(1.0, 0.52, 0.20) * 1.0   // sodium
+    return type == 0 ? vec3(1.0, 0.42, 0.10) * 1.0   // sodium: deep amber
                      : vec3(0.55, 0.80, 1.0) * 0.9;  // cold LED
 }
 

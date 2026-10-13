@@ -23,6 +23,7 @@ ChunkGPU gC;
 float gTime;
 vec3 gWorld;
 vec4 gRefl = vec4(0.0);   // -> outRefl
+vec3 gWinE = vec3(0.0);   // light reaching a window from outside, through its glass: all a dark room has (shadeFacade)
 
 const float SHEEN = 3.5;   // pane sheen strength over glass's physical reflectance (paneSheen)
 
@@ -62,8 +63,8 @@ float glyphDist(uint g, vec2 q);   // signs (below)
  * ==================================================================== */
 
 vec3 ambientLight(vec3 n, float h) {
-    vec3 sky = vec3(0.016, 0.019, 0.032);
-    vec3 bounce = vec3(0.034, 0.020, 0.016);
+    vec3 sky = vec3(0.006, 0.007, 0.013);
+    vec3 bounce = vec3(0.013, 0.008, 0.006);
     float up = n.y * 0.5 + 0.5;
     return mix(bounce, sky, up) * (0.8 + 0.8 * exp(-h / 30.0));
 }
@@ -122,8 +123,10 @@ void addLamp(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, vec3 
     float range = smoothstep(34.0, 14.0, d);
     if (range <= 0.0) return;
     vec3 L = l / d;
-    float spot = smoothstep(0.05, 0.55, L.y);
-    float att = 70.0 / (d2 + 1.0) * range * spot;
+    // the beam below the head, and a spill all round it (the glowing bowl, light
+    // scattered off the wet street) that carries up the columns and facades
+    float spot = mix(0.12, 1.0, smoothstep(0.05, 0.55, L.y));
+    float att = 90.0 / (d2 + 1.0) * range * spot;
     float ndl = max(dot(n, L), 0.0);
     diff += lcol * att * ndl;
     spec += lcol * att * specLobe(n, L, V, shin, specK, rough, ndl);
@@ -173,7 +176,7 @@ void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, in
         vec3 lp = uintBitsToFloat(r.xyz);
         uint type = r.w & 3u;
         if (type < 2u) addLamp(p, n, V, shin, specK, rough, lp, lampColor(int(type)) * lampState(r.w >> 2, gTime), diff, spec);
-        else addShop(p, n, V, specK, rough, lp, type == 2u ? shopColor(r.w) : vec3(0.70, 0.78, 0.95), diff, spec);
+        else addShop(p, n, V, specK, rough, lp, type == 2u ? shopColor(r.w) : LOBBY_SPILL, diff, spec);
     }
 }
 
@@ -182,7 +185,7 @@ vec3 neonBounce(vec3 w, float h) {
     float m = vnoise(w.xz / 23.0, 0xB0B0u);
     float k = vnoise(w.xz / 17.0 + 7.3, 0xB0B1u);
     vec3 c = mix(vec3(1.0, 0.1, 0.5), vec3(0.1, 0.8, 1.0), smoothstep(0.3, 0.7, m));
-    return c * smoothstep(0.35, 0.8, k) * exp(-h / 14.0) * 0.06;
+    return c * smoothstep(0.35, 0.8, k) * exp(-h / 14.0) * 0.035;
 }
 
 /* Pane sheen: a soft, blurred reflection that gives glass its presence where
@@ -382,7 +385,7 @@ const float ROAD_ALBEDO = 1.0;
 vec2 laneLines(float t, float along, float half_, float aa) {
     float at = abs(t);
     float centre = band(at, 0.10, 0.24, aa);
-    float dash = step(fract(along / 9.0), 0.42);
+    float dash = band(mod(along + 1.0, 9.0), 1.0, 4.78, aa);   // 3.78 m dashes every 9 m
     float lanes = 0.0;
     for (int i = 1; i <= 3; ++i) {
         float L = 3.4 * float(i);
@@ -401,6 +404,20 @@ vec2 crosswalk(float lateral, float half_, float into, float walk, float aa) {
     return vec2(max(zone * stripes, stop), 0.0);
 }
 
+// Road paint at carriageway uv (t across, s along, metres): lane lines, and the
+// crosswalk and stop line at a crossing end. x = coverage, y = yellow.
+vec2 roadPaint(vec2 uv, float half_, float len, bool crossing, float aa) {
+    vec2 mk = laneLines(uv.x, uv.y, half_, aa);
+    if (crossing) {
+        float into = min(uv.y, len - uv.y);
+        vec2 cw = crosswalk(uv.x, half_, into, 4.2, aa);
+        mk = into < 5.2 ? cw : max(mk, cw);
+    }
+    return mk;
+}
+
+// Road markings are thermoplastic, laid a few millimetres thick.
+const float PAINT_H = 0.003;
 /* Fine litter, too small and too many for the litter layer (src/litter.c):
  * flecks of paper and wrappers, dead leaves, grit and cigarette ends, and
  * flattened chewing gum on the sidewalks, more of them the more squalid the
@@ -462,6 +479,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
     // relief, and how far ruts, gutters and joints sink it further
     bool wettable = false;
     float relH = 0.0, relBroad = 0.0, sink = 0.0, jointLevel = -1.0;
+    float paintC = 0.0;   // road paint coverage (raised: stays out of the standing water)
 
     if (mat == MAT_ROAD) {
         // Base asphalt (authored or procedural), then markings and covers
@@ -484,25 +502,51 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
 
         float half_ = float(prm.y) * 0.25;
         vec2 mk = vec2(0.0);
-        float dCurb = 10.0;
+        float dCurb = 10.0, side = 0.0, rim = 0.0;
+        vec3 tilt = vec3(0.0);
+        float wear = 0.45 + 0.55 * smoothstep(0.25, 0.6, fbm(w.xz * 1.7, 0xA8u));
         if (half_ > 0.0) {
-            float t = uv.x, s = uv.y, len = uintBitsToFloat(seed);
-            mk = laneLines(t, s, half_, aa);
-            if ((prm.z & 1u) != 0u) {
-                float into = min(s, len - s);
-                vec2 cw = crosswalk(t, half_, into, 4.2, aa);
-                if (into < 5.2) mk = cw; else mk = max(mk, cw);
-            }
-            dCurb = half_ - abs(t);
+            float len = uintBitsToFloat(seed);
+            bool xing = (prm.z & 1u) != 0u;
+            // The paint stands PAINT_H proud. A view ray crosses the paint's top
+            // nearer the eye than it meets the asphalt, so the top shows shifted
+            // toward the viewer, with the near edge's side wall between. uv are
+            // metres; the screen derivatives map world offsets into them.
+            mat2 Juv = mat2(dFdx(uv), dFdy(uv)), Jw = mat2(dFdx(p.xz), dFdy(p.xz));
+            mat2 toUV = abs(determinant(Jw)) > 1e-12 ? Juv * inverse(Jw) : mat2(0.0);
+            vec2 lift = V.xz * (PAINT_H / max(V.y, 0.02));
+            lift *= min(1.0, 0.15 / max(length(lift), 1e-6));
+            vec2 uvTop = uv + toUV * lift;
+            vec2 mTop = roadPaint(uvTop, half_, len, xing, aa);
+            vec2 mBase = roadPaint(uv, half_, len, xing, aa);
+            mk = vec2(max(mTop.x, mBase.x), max(mTop.y, mBase.y));
+            side = max(mBase.x - mTop.x, 0.0);
+            // the rounded edges of the top catch the light: its slope from the coverage gradient
+            float e = aa * 0.5 + 0.002;
+            vec2 g = vec2(roadPaint(uvTop + vec2(e, 0.0), half_, len, xing, aa).x - mTop.x,
+                          roadPaint(uvTop + vec2(0.0, e), half_, len, xing, aa).x - mTop.x) / e;
+            vec2 gw = transpose(toUV) * g;
+            tilt = -vec3(gw.x, 0.0, gw.y) * PAINT_H * wear;
+            // water dams up against the paint's edges, and grime collects in the angle
+            rim = max(roadPaint(uv, half_, len, xing, aa + 0.025).x - mk.x, 0.0) * wear;
+            dCurb = half_ - abs(uv.x);
             // ruts faintly worn into the wheel paths, 0.85 m either side of each lane's centre
-            float u = mod(abs(t), 3.4);
+            float u = mod(abs(uv.x), 3.4);
             sink += 0.2 * (exp(-(u - 0.85) * (u - 0.85) / 0.04) + exp(-(u - 2.55) * (u - 2.55) / 0.04));
         }
         sink += 0.6 * (1.0 - smoothstep(0.1, 0.35, dCurb));   // the gutter along the kerb
         if (pbr) sink += 0.6 * hollow(w.xz, 0.25, 0x7E7Bu);
-        float wear = 0.45 + 0.55 * smoothstep(0.25, 0.6, fbm(w.xz * 1.7, 0xA8u));
-        vec3 paint = mix(vec3(0.42, 0.41, 0.38), vec3(0.45, 0.30, 0.05), mk.y);
-        s = layer(s, n, paint, 0.45, mk.x * wear);
+        // speckled with the glass beads and grit pressed into it
+        float bead = vnoise(w.xz * 45.0, 0xA8Bu) * (1.0 - smoothstep(0.004, 0.02, aa));
+        vec3 paint = mix(vec3(0.42, 0.41, 0.38), vec3(0.45, 0.30, 0.05), mk.y) * (1.0 - 0.3 * side) * (0.88 + 0.24 * bead);
+        paintC = mk.x * wear;
+        vec3 nAsphalt = s.n;
+        s = layer(s, n, paint, 0.45, paintC);
+        // the coat follows the asphalt's coarse grain a little; the bevel on its
+        // top, and the side wall, which faces the viewer
+        s.n = normalize(mix(s.n + (nAsphalt - n) * 0.35 * paintC + tilt, normalize(vec3(V.x, 0.0, V.z) + vec3(0.0, 0.3, 0.0)), side * wear));
+        sink += 1.0 * rim - 1.2 * paintC;
+        s.albedo *= 1.0 - 0.35 * rim;
 
         // manhole covers
         vec2 mc = floor(w.xz / 13.0);
@@ -523,7 +567,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         if (pbr) {
             rough = s.rough; specK = 0.04;   // dielectric F0
             wettable = true;
-            relH = (s.height - ROAD_RELIEF.x) / ROAD_RELIEF.y;
+            relH = mix((s.height - ROAD_RELIEF.x) / ROAD_RELIEF.y, 1.0, paintC);   // the paint fills the relief, and stands above it
             relBroad = (pbrBroadHeight(PBR_ROAD, w.xz / ROAD_TILE, 5.0) - ROAD_RELIEF.x) / ROAD_RELIEF.y;
             jointLevel = -1.0;   // asphalt is too fine-grained for its pits to hold water
         } else {
@@ -618,7 +662,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         // so the ground stays wet and keeps its puddles; only the ripples stop.
         float wet = WETNESS;
         float open = 1.0 - shelterAt(vRel);
-        gStreak = 1.0 + 3.0 * wet;
+        gStreak = 1.0 + 3.5 * wet;
         // Wet coat: in steady rain every authored surface carries a film of water
         // (porous asphalt and stone darken, and turn glossy), but water only
         // stands where it collects: gutters, joints, faint wheel-path ruts and
@@ -628,7 +672,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         float broad = smoothstep(0.0, 0.08, level - (0.3 * relBroad + 0.05 * relH - sink));
         float fine = smoothstep(0.0, 0.1, wet * jointLevel - relH);
         float pool = max(broad, fine) * smoothstep(0.7, 0.9, nGeom.y) * smoothstep(0.3, 0.6, wet);
-        alb *= mix(1.0, 0.55, wet) * mix(1.0, 0.92, pool);
+        alb *= mix(1.0, mix(0.55, 0.85, paintC), wet) * mix(1.0, 0.92, pool);   // paint soaks up no water
         rough = mix(rough, rough * 0.45, wet);
         n = normalize(mix(n, nGeom, 0.5 * wet));   // the film fills the fine relief
         // standing water: a smooth film over the surface, filling its relief
@@ -738,11 +782,13 @@ Room makeRoom(uint h, float litChance, float tintSel, bool shop, vec3 shopCol) {
     r.lit = shop || hf(h, 1u) < litChance;
     // Some otherwise dark rooms have the television on.
     r.tv = !shop && !r.lit && hf(h, 12u) < 0.14;
-    // Homes (tintSel < 0.5) lean warm, offices neutral to cool; a quarter go the other way.
+    // Most rooms glow warm: homes (tintSel < 0.5) almost all incandescent-warm,
+    // offices warm to neutral, with the odd cold fluorescent room among them.
     float pick = hf(h, 2u), kt = hf(h, 13u);
-    float k = (tintSel < 0.5) == (pick < 0.75) ? mix(2700.0, 3400.0, kt) : mix(4000.0, 6500.0, kt * kt);
+    float k = tintSel < 0.5 ? (pick < 0.88 ? mix(2700.0, 3300.0, kt) : mix(3600.0, 4500.0, kt))
+                            : (pick < 0.65 ? mix(2900.0, 3600.0, kt) : pick < 0.9 ? mix(3800.0, 4500.0, kt) : mix(5000.0, 6500.0, kt));
     r.light = kelvin(k);
-    r.bright = mix(0.9, 2.6, hf(h, 3u));
+    r.bright = mix(0.6, 1.7, hf(h, 3u));   // kept below where the tone curve bleaches a warm room white
     if (r.tv) { r.lit = true; r.light = tvGlow(h); r.bright = 0.45; }
     if (shop) { r.light = shopCol; r.bright = mix(0.9, 1.7, hf(h, 3u)); }
     r.wall = mix(vec3(0.35, 0.33, 0.30), vec3(0.55, 0.50, 0.45), hf(h, 4u)) * (0.5 + 0.5 * hf(h, 5u));
@@ -781,15 +827,32 @@ vec2 tvHalf(float W) { return vec2(min(0.55, W * 0.2), 0.32); }
 /* Light leaving interior point p (room box: x along the wall, y up, z into the
  * room) with albedo alb. Lit rooms have a ceiling panel (half extents `panel`);
  * TV rooms are dark but for the screen and the glow it throws into the room. */
+// Light falling into a dark room through its window (gWinE): strongest by the
+// glass and fading with depth, so whatever hangs at the glass, the furniture
+// and the back wall each read apart. Surfaces facing the window catch the most.
+vec3 windowLight(vec3 p, bool ceiling, float D) {
+    float facing = ceiling ? 0.45 : p.z > D - 0.01 ? 1.0 : p.y < 0.01 ? 0.7 : 0.5;
+    return gWinE * facing / (1.0 + p.z * p.z);
+}
+
+// Curtains and blinds hang just inside the glass: in a dark room they catch
+// the light coming in more than anything beyond them.
+vec3 curtainLight(Room r, float fold) {
+    return r.lit ? r.curtainC * r.light * r.bright * 0.35 * fold : mix(r.curtainC, vec3(0.5), 0.4) * gWinE * 0.6 * fold;
+}
+vec3 blindLight(Room r, float slat) {
+    return r.lit ? r.light * r.bright * 0.28 * (0.55 + 0.45 * slat) : vec3(0.45) * gWinE * (0.35 + 0.65 * slat);
+}
+
 vec3 roomLight(Room r, vec3 p, vec3 alb, bool ceiling, float W, float H, float D, vec2 panel) {
-    if (!r.lit) return alb * vec3(0.010, 0.012, 0.020);   // only the city glow from outside
+    if (!r.lit) return alb * windowLight(p, ceiling, D);
     if (r.tv) {
         vec3 tp = tvPos(r, W, D);
         vec2 q = abs(p.xy - tp.xy), hs = tvHalf(W);
         if (p.z > D - 0.01 && q.x < hs.x && q.y < hs.y) return r.light * 3.0;
         vec3 dl = p - tp;
         float fwd = clamp(-dl.z / max(length(dl), 1e-3), 0.0, 1.0);
-        return alb * (r.light * 1.6 * (0.2 + 0.8 * fwd) / (1.0 + dot(dl, dl) * 0.6) + vec3(0.010, 0.012, 0.020));
+        return alb * (r.light * 1.6 * (0.2 + 0.8 * fwd) / (1.0 + dot(dl, dl) * 0.6) + windowLight(p, ceiling, D));
     }
     if (ceiling && abs(p.x - W * 0.5) < panel.x && abs(p.z - D * 0.5) < panel.y)
         return r.light * r.bright * 5.0;
@@ -834,7 +897,8 @@ vec3 interiorColor(vec2 cell, vec3 d, float W, float H, float D, Room r) {
         if (pf.x > 0.0 && pf.x < W && pf.y > 0.0) {
             float m = furniture(pf.x, pf.y, W, r);
             if (m > 0.5) {
-                vec3 sil = r.tv ? r.light * 0.006 : r.lit ? r.light * r.bright * (m > 1.5 ? 0.03 : 0.10) : vec3(0.002);
+                vec3 sil = r.tv ? r.light * 0.006 : r.lit ? r.light * r.bright * (m > 1.5 ? 0.03 : 0.10)
+                                 : 0.06 * gWinE / (1.0 + pf.z * pf.z);   // dark shapes against the dim room
                 col = sil;
             }
         }
@@ -926,14 +990,11 @@ vec3 cornerInterior(vec2 cell, vec3 d, float W, float H, float D, Room r, bool g
         if (ax > 0.0 && ax < 1.0 && ay > 0.0 && ay < 1.0) {
             // the room's curtain and blinds cover this window too
             float open = 0.18 + 0.2 * hf(r.h, 41u);
-            if (r.curtain > 0.5 && (ax < open || ax > 1.0 - open)) {
-                float fold = 0.75 + 0.25 * sin(ax * 60.0);
-                return r.lit ? r.curtainC * r.light * r.bright * 0.35 * fold : r.curtainC * 0.01;
-            }
+            if (r.curtain > 0.5 && (ax < open || ax > 1.0 - open))
+                return curtainLight(r, 0.75 + 0.25 * sin(ax * 60.0));
             if (r.blinds > 0.0 && ay > 1.0 - r.blinds) {
                 float sl = fract(p.y / 0.055);
-                float slat = smoothstep(0.08, 0.2, sl) * smoothstep(0.92, 0.8, sl);
-                return r.lit ? r.light * r.bright * 0.28 * (0.55 + 0.45 * slat) : vec3(0.02) * slat;
+                return blindLight(r, smoothstep(0.08, 0.2, sl) * smoothstep(0.92, 0.8, sl));
             }
             float edge = min(min(ax, 1.0 - ax) * (za.y - za.x), min(ay, 1.0 - ay) * (yA.y - yA.x));
             vec3 outside = throughView(worldDir, eyeY) + (r.lit ? r.light * r.bright * 0.025 : vec3(0.0));
@@ -983,7 +1044,7 @@ const uint IR_VESTIBULE = 1u, IR_HALL = 2u, IR_SECURE = 3u, IR_TOILET = 7u, IR_W
            IR_FACILITIES = 12u, IR_MEETING = 14u, IR_SHOWER = 15u;
 
 vec3 lobbyLight(uint seed) {
-    return (hf(styleHash(seed), 8u) < 0.5 ? kelvin(5000.0) : kelvin(3500.0)) * 1.35;   // as the lobby glass (shadeFacade)
+    return (hf(styleHash(seed), 8u) < 0.5 ? kelvin(4000.0) : kelvin(3000.0)) * 1.35;   // as the lobby glass (shadeFacade)
 }
 
 // Light panels: 1.2 m squares on a 3 m grid in the building's frame.
@@ -1621,10 +1682,10 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     bool glassWall = palette == 4u || palette == 7u || type == 1;
     // Window glass transmission: clear float glass is faintly green; tinted
     // curtain walls and bronze-clad towers carry their tint into the rooms.
-    vec3 glassT = palette == 7u ? vec3(0.62, 0.78, 0.92) :   // blue glass
-                  palette == 4u ? vec3(0.55, 0.57, 0.60) :   // grey (black) glass
+    vec3 glassT = palette == 7u ? vec3(0.72, 0.79, 0.86) :   // blue glass
+                  palette == 4u ? vec3(0.58, 0.59, 0.60) :   // grey (black) glass
                   palette == 6u ? vec3(0.86, 0.74, 0.58) :   // bronze
-                                  vec3(0.84, 0.90, 0.86);    // clear
+                                  vec3(0.87, 0.89, 0.86);    // clear
 
     // uv.x = metres along the face; chunk-local y is absolute height.
     float u = uv.x, vAbs = p.y;
@@ -1693,7 +1754,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         uint lh = hash3i(seed ^ 0x10BBu, section, faceDir, int(floor(u / 8.0)));
         Room r = makeRoom(lh, 1.0, tintSel, false, vec3(0.0));
         r.lit = true; r.blinds = 0.0; r.curtain = 0.0;
-        r.light = tintSel < 0.5 ? kelvin(5000.0) : kelvin(3500.0);
+        r.light = tintSel < 0.5 ? kelvin(4000.0) : kelvin(3000.0);
         r.bright = groundMode == 3u ? 0.7 : 1.35;
         r.wall = vec3(0.55, 0.53, 0.50);
         r.person = hf(lh, 11u) < 0.3;
@@ -1797,6 +1858,8 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float wallShin = glassWall ? 80.0 : 12.0;
     float wallSpecK = glassWall ? 0.4 : 0.05;
     vec3 wdiff = wallLighting(p, n, V, wallShin, wallSpecK, vAbs, wspec);
+    // a dark room has only what reaches its window: the lamps, neon and city glow on the facade, through the glass
+    gWinE = (wdiff + mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) * 0.45) * glassT;   // the window's view: overcast and facades across
     float streak = vnoise(vec2(u * 1.3, vAbs * 0.04), seed & 0xFFFFu);
     float grime = mix(0.65, 1.15, streak) * mix(0.8, 1.0, smoothstep(0.0, 25.0, vAbs));
     vec3 wallC = wallAlb * grime;
@@ -1830,15 +1893,19 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     if (atGround && relV < 4.0) {
         uint h = shopHash(seed, section, faceDir, nextFace, endShare, u, faceW);
         if (groundMode == 0u && hfloat(h) < shopP) wallLit += wallC * shopColor(h) * exp(-relV * 0.6) * 1.2;
-        else if (groundMode != 0u) wallLit += wallC * vec3(0.7, 0.78, 0.95) * exp(-relV * 0.6) * 0.8;
+        else if (groundMode != 0u) wallLit += wallC * LOBBY_SPILL * exp(-relV * 0.6) * 0.8;
     }
 
     // window: near = full interior mapping, mid = per-room flat glow, far = average
     vec3 R = reflect(-V, n);
     float F = glassFresnel(n, V);
     vec3 refl = envReflection(R);
-    vec3 roomAvg = room.lit ? room.light * room.bright * 0.42 : vec3(0.003, 0.0035, 0.005);
+    // Privacy film across the bottom of some panes: dark, on the glass itself.
+    float film = hf(roomHash, 52u) < 0.3 ? mix(0.2, 0.38, hf(roomHash, 53u)) : 0.0;
+    vec3 roomAvg = room.lit ? room.light * room.bright * 0.42 : gWinE * 0.08;
     if (room.blinds > 0.0 && room.lit) roomAvg *= 1.0 - 0.4 * room.blinds;
+    if (!room.lit) roomAvg += gWinE * 0.2 * max(room.blinds, room.curtain * 0.5);
+    roomAvg *= 1.0 - 0.9 * film;
     // no two panes sit quite flat in their frames: each catches a slightly different reflection
     vec3 paneN = normalize(n + T * (hf(roomHash, 50u) - 0.5) * 0.08 + vec3(0.0, (hf(roomHash, 51u) - 0.5) * 0.08, 0.0));
     vec3 sheen = paneSheen(p, paneN, V);
@@ -1855,19 +1922,24 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
                                                  vec2(x0, x1) * D, vec2(x0, x1) * D, vec2(y0, y1) * H)
                                 : interiorColor(vec2(fu, fv), d, W, H, D, room);
         float wy = (fv - y0) / winH, wx = (fu - x0) / winW;
+        // Curtains and blinds hang 8 cm inside the glass: seen at an angle they
+        // slide against the frame, apart from the pane and the room.
+        vec2 hang = d.xy / max(d.z, 0.05) * 0.08;
+        float hx = wx + hang.x / (W * winW), hy = wy + hang.y / (H * winH);
         if (room.curtain > 0.5) {
             float open = 0.18 + 0.2 * hf(roomHash, 41u);
-            float cMask = 1.0 - band(wx, open, 1.0 - open, 0.01);
-            float fold = 0.75 + 0.25 * sin(wx * 60.0);
-            vec3 cc = room.lit ? room.curtainC * room.light * room.bright * 0.35 * fold : room.curtainC * 0.01;
-            inner = mix(inner, cc, cMask);
+            float cMask = 1.0 - band(hx, open, 1.0 - open, 0.01);
+            inner = mix(inner, curtainLight(room, 0.75 + 0.25 * sin(hx * 60.0)), cMask);
         }
-        if (room.blinds > 0.0 && wy > 1.0 - room.blinds) {
-            float s = fract((fv * H) / 0.055);
+        if (room.blinds > 0.0) {
+            float s = fract((fv * H + hang.y) / 0.055);
             float slat = smoothstep(0.08, 0.2, s) * smoothstep(0.92, 0.8, s);
-            vec3 bc = room.lit ? room.light * room.bright * 0.28 * (0.55 + 0.45 * slat) : vec3(0.02) * slat;
-            inner = mix(inner, bc, 0.9);
+            slat = mix(slat, 0.75, smoothstep(0.25, 0.7, fwV * H / 0.055));   // slats finer than a pixel blur to their average
+            float bMask = smoothstep(1.0 - room.blinds - 0.004, 1.0 - room.blinds + 0.004, hy);
+            inner = mix(inner, blindLight(room, slat), bMask * (0.7 + 0.25 * slat));   // the room shows between the slats
         }
+        float filmM = 1.0 - smoothstep(film - fwV / winH - 0.003, film + fwV / winH + 0.003, wy);
+        inner *= 1.0 - 0.92 * filmM * step(0.001, film);
         winNear = inner * glassT * (1.0 - F) + refl * F + sheen;
         // window frame & mullions
         float fw = 0.05;
@@ -1884,8 +1956,8 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float reflW = mix(mix(wallW, nearW, cov), mix(wallW, F, cov), lodT);
     if (farT > 0.0) {
         // average of many cells: expected lit fraction and window area
-        vec3 avgLight = (tintSel < 0.5 ? kelvin(3300.0) : kelvin(4700.0)) * 1.75 * 0.42;
-        vec3 avgWin = avgLight * litFrac * glassT * (1.0 - F) + refl * F;
+        vec3 avgLight = (tintSel < 0.5 ? kelvin(3050.0) : kelvin(3600.0)) * 1.15 * 0.42;
+        vec3 avgWin = (avgLight * litFrac * glassT + gWinE * 0.1 * (1.0 - litFrac)) * (1.0 - F) + refl * F;
         vec3 far_ = mix(wallLit, avgWin, winW * winH);
         col = mix(col, far_, farT);
         reflW = mix(reflW, mix(wallW, F, winW * winH), farT);

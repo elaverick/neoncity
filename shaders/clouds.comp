@@ -176,7 +176,7 @@ vec3 airColor(SkyLight L) {
     if (cls == AIR_LAMP_SODIUM) return lampColor(0) * lampState(L.seed, gTime);
     if (cls == AIR_LAMP_LED) return lampColor(1) * lampState(L.seed, gTime);
     if (cls == AIR_SHOP) return shopColor(L.seed);
-    if (cls == AIR_LOBBY) return vec3(0.70, 0.78, 0.95);
+    if (cls == AIR_LOBBY) return LOBBY_SPILL;
     return skyLightColor(L);
 }
 

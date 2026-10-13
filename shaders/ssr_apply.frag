@@ -27,7 +27,7 @@ void main() {
     float rough = max(g.b, 0.0);   // glass is marked negative (city.frag: GLASS_ROUGH)
 
     ivec2 size = textureSize(ssrTex, 0);
-    float len = float(size.y) * 0.09 * smoothstep(0.04, 0.4, rough);   // streak half-length, pixels
+    float len = float(size.y) * 0.11 * smoothstep(0.04, 0.4, rough);   // streak half-length, pixels
     vec3 sum = vec3(0.0);
     float conf = 0.0, wsum = 0.0;
     for (int i = -TAPS; i <= TAPS; ++i) {

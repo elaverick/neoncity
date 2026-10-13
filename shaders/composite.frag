@@ -124,7 +124,7 @@ void main() {
     float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
     vec3 shadowTint = vec3(0.80, 1.02, 1.12);
     vec3 highTint = vec3(1.10, 0.97, 0.84);
-    col *= mix(shadowTint, highTint, smoothstep(0.02, 0.8, l));
+    col *= mix(shadowTint, highTint, smoothstep(0.015, 0.45, l));
 
     col = aces(col);
 
