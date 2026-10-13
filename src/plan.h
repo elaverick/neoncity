@@ -75,6 +75,9 @@ typedef struct PlanArea {
 
 /* Development density 0..1 (polycentric: peaks at town and regional centres). */
 float plan_density(double x, double z);
+/* Affluence 0 (poor) .. 1 (wealthy): highest in the regional cores, with whole
+ * districts and neighbourhoods better or worse off than their density says. */
+float plan_affluence(double x, double z);
 
 /* Every road and block whose footprint touches the rectangle. PlanArea is
  * large; allocate it on the heap. */

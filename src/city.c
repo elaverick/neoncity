@@ -1401,7 +1401,8 @@ static int clip_segment(DVec2 *a, DVec2 *b) {
 
 /* Carriageways, cut back at junctions so markings never overlap. uv = (offset
  * from the centre line, distance along); seed carries the length for the
- * crossings at each end, params the half-width (quarter metres) and class. */
+ * crossings at each end, params the half-width (quarter metres), crossings |
+ * squalor (0..127) << 1, and class. */
 static void build_roads(Mesh *m, const ChunkGen *g) {
     const double P = CHUNK_SIZE;
     DVec2 base[4] = { {0, 0}, {P, 0}, {P, P}, {0, P} };
@@ -1431,11 +1432,13 @@ static void build_roads(Mesh *m, const ChunkGen *g) {
         uint32_t lbits;
         memcpy(&lbits, &Lf, 4);
         uint8_t hq = (uint8_t)clampf(r->at.half * 4.0f + 0.5f, 1.0f, 255.0f);
-        emit_flat(m, c, n, 0.0f, (const float (*)[2])uv, mat(MAT_ROAD, lbits, hq, (uint8_t)(L > 16.0 ? 1 : 0), r->at.cls));
+        uint8_t sq = (uint8_t)(city_squalor(-1, (r->a.x + r->b.x) * 0.5, (r->a.z + r->b.z) * 0.5) * 127.0f + 0.5f);
+        emit_flat(m, c, n, 0.0f, (const float (*)[2])uv, mat(MAT_ROAD, lbits, hq, (uint8_t)((L > 16.0 ? 1 : 0) | sq << 1), r->at.cls));
     }
 }
 
-/* Raised blocks: sidewalk, kerb stones, kerb faces and the lot inside. */
+/* Raised blocks: sidewalk, kerb stones, kerb faces and the lot inside. The
+ * paving and lot carry the block's squalor (0..255) in params.z. */
 static void build_blocks(Mesh *m, const ChunkGen *g) {
     const double P = CHUNK_SIZE;
     const float gy = SIDEWALK_HEIGHT;
@@ -1464,6 +1467,8 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
             in[i] = dadd(c[i], off);
         }
         float gc = bk->gc, gs = bk->gs;
+        DVec2 bc = poly_centroid(&bk->curb);
+        uint8_t sq = (uint8_t)(city_squalor(bk->zone, bc.x, bc.z) * 255.0f + 0.5f);
         DVec2 cl[48];
         float uv[48][2];
 #define PAVE_UV(k) do { double X = cl[k].x + wx, Z = cl[k].z + wz; \
@@ -1475,7 +1480,7 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
 
         int k = clip_chunk(c, n, cl);
         for (int i = 0; i < k; ++i) PAVE_UV(i);
-        if (k) emit_flat(m, cl, k, gy, (const float (*)[2])uv, mat(MAT_SIDEWALK, gbits, 0, 0, 0));
+        if (k) emit_flat(m, cl, k, gy, (const float (*)[2])uv, mat(MAT_SIDEWALK, gbits, 0, sq, 0));
 
         for (int i = 0; i < n; ++i) {
             int j = (i + 1) % n;
@@ -1494,7 +1499,7 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
                 uv[t][0] = (float)ddot(d, along);
                 uv[t][1] = (float)ddot(d, nin[i]);
             }
-            if (k) emit_flat(m, cl, k, gy + 0.003f, (const float (*)[2])uv, mat(MAT_SIDEWALK, ebits, 1, 0, 0));
+            if (k) emit_flat(m, cl, k, gy + 0.003f, (const float (*)[2])uv, mat(MAT_SIDEWALK, ebits, 1, sq, 0));
 
             DVec2 a = c[i], b = c[j];
             if (!clip_segment(&a, &b)) continue;
@@ -1513,7 +1518,7 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
             for (int i = 0; i < bk->lot.n; ++i) l[i] = dv(bk->lot.v[i].x - g->ox, bk->lot.v[i].z - g->oz);
             k = clip_chunk(l, bk->lot.n, cl);
             for (int i = 0; i < k; ++i) PAVE_UV(i);
-            if (k) emit_flat(m, cl, k, gy + 0.006f, (const float (*)[2])uv, mat(MAT_LOT, 0, (uint8_t)(bk->zone == ZONE_PARK), 0, 0));
+            if (k) emit_flat(m, cl, k, gy + 0.006f, (const float (*)[2])uv, mat(MAT_LOT, 0, (uint8_t)(bk->zone == ZONE_PARK), sq, 0));
         }
 #undef PAVE_UV
     }

@@ -1,5 +1,16 @@
 # TODO
 
+## Litter
+Rubbish in the streets is static geometry in a near-only layer (`src/litter.c`), plus fine
+debris drawn by the ground shader (`debris`). See the README.
+- **Wind-blown paper:** loose dry paper only flaps where it lies. A small GPU particle pool
+  (a few dozen sheets and bags round the camera, simulated in a compute pass against the
+  shelter map's heights) could send the odd sheet tumbling down the street under cover or on
+  the driest nights. It is the one part of litter that a particle system suits.
+- **Floating litter:** rubbish in standing water doesn't drift or bob with the ripples.
+- **Litter bins and dumpsters** to anchor the piles, and the odd heap where a bin overflowed.
+- **Light:** void decks and alleys are lit only by the ambient, so rubbish there is hard to see.
+
 ## Corner rooms and corner shops (parked)
 Interior mapping for rooms and shops that wrap a building corner is still not right.
 

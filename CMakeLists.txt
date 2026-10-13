@@ -98,13 +98,13 @@ add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 
 # --- Tests: generator determinism ------------------------------------------------
 enable_testing()
-add_executable(city_test tests/city_test.c src/city.c src/plan.c src/building.c src/thread.c)
+add_executable(city_test tests/city_test.c src/city.c src/litter.c src/plan.c src/building.c src/thread.c)
 target_include_directories(city_test PRIVATE src)
 # Top-down map of the generated plan (city_map out.bmp [x z] [size] [m/px]).
-add_executable(city_map tests/city_map.c src/city.c src/plan.c src/building.c)
+add_executable(city_map tests/city_map.c src/city.c src/litter.c src/plan.c src/building.c)
 target_include_directories(city_map PRIVATE src)
 # Building generator lab: archetype mix, retries, rejections; fails on invalid buildings.
-add_executable(building_lab tests/building_lab.c src/city.c src/plan.c src/building.c)
+add_executable(building_lab tests/building_lab.c src/city.c src/litter.c src/plan.c src/building.c)
 target_include_directories(building_lab PRIVATE src)
 foreach(T city_test city_map building_lab)
   if(MSVC)
@@ -131,7 +131,7 @@ endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/main.c src/vkcore.c src/renderer.c src/textures.c src/city.c src/plan.c src/building.c src/chunks.c src/player.c src/thread.c)
+  src/main.c src/vkcore.c src/renderer.c src/textures.c src/city.c src/litter.c src/plan.c src/building.c src/chunks.c src/player.c src/thread.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE src ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

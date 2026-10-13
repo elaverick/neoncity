@@ -88,6 +88,12 @@ typedef struct Mesh {
 float    city_height_cap(int cx, int cz);       /* conservative upper bound of anything in the chunk */
 void     city_layout(int cx, int cz, BlockLayout *out);
 void     city_build_mesh(int cx, int cz, Mesh *m);
+/* The litter layer (src/litter.c): rubbish lying in the streets, alleys and
+ * doorways of the chunk. It has no light table of its own; the shader uses the chunk's. */
+void     city_build_litter(int cx, int cz, Mesh *m);
+/* How squalid the streets are at (x, z) in a block of `zone` (-1: on a road), 0..1:
+ * how much rubbish lies about (src/litter.c) and how much fine debris the ground shader draws. */
+float    city_squalor(int zone, double x, double z);
 void     mesh_free(Mesh *m);
 
 /* Buildings filling one plan block (all of them, wherever their centres are). */

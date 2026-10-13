@@ -22,7 +22,8 @@ static uint64_t fnv(const void *data, size_t n, uint64_t h) {
     return h;
 }
 
-static uint64_t chunk_checksum(int cx, int cz, uint32_t *countOut, uint32_t *lightsOut) {
+/* Both layers: the chunk itself and its litter. */
+static uint64_t chunk_checksum(int cx, int cz, uint32_t *countOut, uint32_t *lightsOut, uint32_t *litterOut) {
     Mesh m = { 0 };
     city_build_mesh(cx, cz, &m);
     uint64_t h = fnv(m.v, (size_t)m.count * sizeof(Vertex), 0xcbf29ce484222325ULL);
@@ -32,6 +33,11 @@ static uint64_t chunk_checksum(int cx, int cz, uint32_t *countOut, uint32_t *lig
     if (countOut) *countOut = m.count;
     if (lightsOut) *lightsOut = m.nlights;
     mesh_free(&m);
+    Mesh lt = { 0 };
+    city_build_litter(cx, cz, &lt);
+    h = fnv(lt.v, (size_t)lt.count * sizeof(Vertex), h);
+    if (litterOut) *litterOut = lt.count;
+    mesh_free(&lt);
     return h;
 }
 
@@ -43,7 +49,7 @@ static int worker(void *arg) {
     for (int k = 0; k < N_CHUNKS; ++k) {
         int j = (w->start + k) % N_CHUNKS;
         int i = w->reverse ? N_CHUNKS - 1 - j : j;
-        w->out[i] = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL);
+        w->out[i] = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL, NULL);
     }
     return 0;
 }
@@ -103,16 +109,20 @@ int main(void) {
     }
 
     /* 1. Reference pass, in order. Track mesh sizes against the GPU page budget. */
-    uint32_t maxVerts = 0, maxLights = 0;
-    double total = 0, totalLights = 0;
+    uint32_t maxVerts = 0, maxLights = 0, maxLitter = 0;
+    double total = 0, totalLights = 0, totalLitter = 0;
     for (int i = 0; i < N_CHUNKS; ++i) {
-        uint32_t c, l;
-        g_ref[i] = chunk_checksum(g_cx[i], g_cz[i], &c, &l);
+        uint32_t c, l, lt;
+        g_ref[i] = chunk_checksum(g_cx[i], g_cz[i], &c, &l, &lt);
         if (c > maxVerts) maxVerts = c;
         if (l > maxLights) maxLights = l;
+        if (lt > maxLitter) maxLitter = lt;
         total += c;
         totalLights += l;
+        totalLitter += lt;
     }
+    printf("litter vertices per chunk: avg %.0f, max %u (budget %d)\n", totalLitter / N_CHUNKS, maxLitter, MAX_CHUNK_PAGES * PAGE_VERTS);
+    CHECK(maxLitter <= (uint32_t)(MAX_CHUNK_PAGES * PAGE_VERTS), "chunk litter exceeds page budget");
     printf("mesh vertices per chunk: avg %.0f, max %u (budget %d)\n", total / N_CHUNKS, maxVerts, MAX_CHUNK_PAGES * PAGE_VERTS);
     printf("light records per chunk: avg %.0f, max %u (page %d)\n", totalLights / N_CHUNKS, maxLights, LIGHT_PAGE_RECS);
     CHECK(maxVerts <= (uint32_t)(MAX_CHUNK_PAGES * PAGE_VERTS), "chunk exceeds page budget");
@@ -120,8 +130,8 @@ int main(void) {
 
     /* 2. Reverse order, interleaved with unrelated generation, must match. */
     for (int i = N_CHUNKS - 1; i >= 0; --i) {
-        chunk_checksum(g_cx[i] + 7, g_cz[i] - 3, NULL, NULL);
-        uint64_t h = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL);
+        chunk_checksum(g_cx[i] + 7, g_cz[i] - 3, NULL, NULL, NULL);
+        uint64_t h = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL, NULL);
         CHECK(h == g_ref[i], "chunk (%d,%d) differs when generated in a different order", g_cx[i], g_cz[i]);
     }
 
@@ -144,7 +154,9 @@ int main(void) {
     DVec2 home = plan_town_centre(0, 0);
     int hx = (int)floor(home.x / CHUNK_SIZE), hz = (int)floor(home.z / CHUNK_SIZE);
     int buildings = 0, lamps = 0, kinds[3] = { 0 }, zones[5] = { 0 }, megaX = 0, megaZ = 0, foundMega = 0;
-    uint32_t coreLights = 0, coreVerts = 0;
+    uint32_t coreLights = 0, coreVerts = 0, litterMax = 0;
+    double litterSum = 0;
+    int litterChunks = 0;
     const int R = 20;
     for (int cz = hz - R; cz <= hz + R; ++cz)
         for (int cx = hx - R; cx <= hx + R; ++cx) {
@@ -190,10 +202,24 @@ int main(void) {
                       "chunk (%d,%d) geometry overhangs by more than %.0f m", cx, cz, CITY_OVERHANG);
                 mesh_free(&m);
             }
+            /* Litter near the spawn: within its page budget, on the ground, never far outside its chunk. */
+            if (abs(cx - hx) <= 4 && abs(cz - hz) <= 4) {
+                Mesh m = { 0 };
+                city_build_litter(cx, cz, &m);
+                if (m.count > litterMax) litterMax = m.count;
+                litterSum += m.count;
+                litterChunks++;
+                CHECK(m.count <= (uint32_t)(MAX_CHUNK_PAGES * PAGE_VERTS), "chunk (%d,%d) litter exceeds page budget", cx, cz);
+                CHECK(m.count == 0 || (m.mn[0] >= -1.0f && m.mx[0] <= CHUNK_SIZE + 1.0f && m.mn[2] >= -1.0f && m.mx[2] <= CHUNK_SIZE + 1.0f &&
+                                       m.mn[1] >= -0.05f && m.mx[1] <= SIDEWALK_HEIGHT + 1.2f),
+                      "chunk (%d,%d) litter strays from the ground (%.2f..%.2f m up)", cx, cz, m.mn[1], m.mx[1]);
+                mesh_free(&m);
+            }
         }
     int n = (2 * R + 1) * (2 * R + 1);
     printf("%d chunks around the spawn: %.1f buildings and %.1f lamps per chunk\n", n, (double)buildings / n, (double)lamps / n);
     printf("  busiest chunk: %u vertices, %u light records\n", coreVerts, coreLights);
+    printf("  litter near the spawn: avg %.0f, max %u vertices per chunk\n", litterSum / litterChunks, litterMax);
     printf("  kinds: %d blocks, %d towers, %d arcologies\n", kinds[0], kinds[1], kinds[2]);
     printf("  zones: %d core, %d centre, %d estate, %d industrial\n", zones[0], zones[1], zones[2], zones[3]);
     if (foundMega) printf("  first arcology near world (%d, %d)\n", megaX, megaZ);

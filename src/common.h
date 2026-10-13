@@ -26,6 +26,10 @@
  * VIEW_DISTANCE so chunks streaming in at the edge are never visible popping. */
 #define VIEW_DISTANCE     1900.0f
 #define NEAR_RING_DIST    260.0f   /* chunks this close are kept regardless of view direction */
+/* Street litter (src/litter.c) is a second layer of chunks, streamed only this
+ * close. Each item shrinks away in the vertex shader before its own fade distance
+ * (a few metres for a cigarette butt, nearly this far for a bin bag). */
+#define LITTER_DISTANCE   120.0f
 #define NEAR_PLANE        0.08f
 #define FAR_PLANE         (VIEW_DISTANCE * 1.05f)
 
@@ -87,7 +91,15 @@
 enum {
     MAT_ROAD = 0, MAT_SIDEWALK, MAT_CURB, MAT_LOT,
     MAT_FACADE, MAT_ROOF, MAT_NEON, MAT_METAL,
-    MAT_EMISSIVE, MAT_SCREEN, MAT_LEDSTRIP, MAT_DOOR
+    MAT_EMISSIVE, MAT_SCREEN, MAT_LEDSTRIP, MAT_DOOR,
+    MAT_LITTER
+};
+
+/* Litter kinds (MAT_LITTER params.y; src/litter.c). LK_SHADOW is the contact
+ * shadow under an item. Must match shaders/common.glsl. */
+enum {
+    LK_SHADOW = 0, LK_NEWS, LK_FLYER, LK_SCRAP, LK_CARDBOARD, LK_WAD, LK_CAN,
+    LK_BOTTLE, LK_BUTT, LK_CUP, LK_BOX, LK_BAG, LK_BINBAG, LK_COUNT
 };
 
 /* Authored PBR materials, loaded from assets/textures/ (src/textures.c). Each

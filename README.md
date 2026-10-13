@@ -162,6 +162,10 @@ never blocks a chunk that just came into view. Meshes are uploaded into a fixed 
 is then drawn with one `vkCmdDrawIndirect` call, with one command per page. Each chunk's light
 table goes into a second pool of 32 KB pages, uploaded once with its mesh.
 
+Litter is a second layer, keyed by the same coordinates: the streamer wants it only for chunks
+within `LITTER_DISTANCE`, just behind the chunks themselves, draws it with its chunk's light
+table and leaves it out of the shelter map.
+
 When the pool runs low, chunks you haven't seen for the longest time are evicted first.
 If a nearer chunk is still waiting for space, the farthest visible chunks go next; those are
 already deep in the haze. An evicted chunk is simply regenerated when it comes back into
@@ -244,6 +248,47 @@ its own tile. The table is built from the same plan as the geometry. Light pools
 sit exactly under the lamp heads, and the coloured spill from each lit shopfront matches the
 storefront itself: the shader and the generator use the same hash for which 6 m shop bay is
 open.
+
+### Litter (`src/litter.c`)
+Rubbish lies still, so it isn't a particle system. Each item is ordinary geometry in a second,
+near-only layer of chunk meshes, streamed within `LITTER_DISTANCE` (120 m) and generated, like
+everything else, as a pure function of the plan. The CPU does nothing per frame.
+
+- **Kinds:** newspapers, flyers, till receipts and wrappers, flattened cardboard, balls of paper,
+  drinks cans (standing, lying or crushed), bottles, takeaway cups, noodle and pizza boxes,
+  polystyrene clamshells, cigarette packets, cigarette butts, carrier bags and bin bags. Sheets
+  are crumpled grids with a curling corner; cans, bottles, cups and butts are lathed; bags are
+  lumpy ellipsoids, a bin bag with its neck tied. Print, labels and brands are shaded from the
+  item's seed. Volumetric items stand in a contact shadow that covers part of each pixel's
+  samples (`litterShadow`), so it needs MSAA.
+- **Where it lies:** along the gutters, in the run-off; at the kerb line and the building line,
+  drifted into heaps against the walls in squalid streets; round lamp posts; butts where office
+  workers smoke beside the entrance; bin bags piled by service doors and loading bays and, in
+  poorer streets, out on the kerb; scattered over alleys and courtyards (most at the foot of the
+  walls), parks, and the carriageway, run flat. Every kerb edge, door, lamp and 2.5 m cell of
+  ground has its own random stream, and an item belongs to the chunk it lies in.
+- **How much:** each block has a squalor (`city_squalor`) from its zone (industrial land and the
+  estates start dirtier than the cores and parks) and the district's affluence
+  (`plan_affluence`: highest near the regional cores, with whole districts and neighbourhoods
+  better or worse off). Rubbish grows with the square of squalor, so every street has a little
+  and the poorest have several times as much.
+- **Fine debris:** what is too small and too plentiful to be geometry the ground shader draws
+  (`debris`): flecks of paper and wrappers, dead leaves, grit and cigarette ends, thickest in
+  the gutter, flattened chewing gum on the sidewalks, and grimy stains, all from the squalor the
+  paving and carriageways carry. One cell lookup per pixel; flecks fade out before they shrink
+  below a pixel.
+- **Rain:** the vertex shader (`litter` in `city.vert`) reads the shelter map at each item.
+  Whatever lies in the open is soaked, and whatever lies in the gutter's run-off is soaked
+  whatever the weather. Soaked paper, card and carrier bags slump flat to the ground, and
+  paper soaks from its edges in patches, turning darker, duller and glossy, its creases
+  catching the lamps. Plastic, glass and metal turn glossier and bead with drops. Under
+  arcades, canopies and void decks things stay dry, and dry paper and bags stir in the
+  cables' gusts: sheets flap at their edges and creep downwind, and bags billow.
+- **Cost:** each item shrinks into its anchor before its own fade distance, from 16 m for a
+  butt to 116 m for a bin bag, so nothing small is drawn far off and nothing pops. The layer
+  averages about 34,000 vertices per chunk (some 11,000 in the well-off centre round the
+  spawn, up to a 180,000 cap in the worst slums). Measured on an RTX 4080 SUPER at 1600x900,
+  neither the layer nor the debris shading showed a cost above run-to-run noise (about 0.1 ms).
 
 ### Textures (`src/textures.c`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual materials can opt in to authored PBR

@@ -10,8 +10,10 @@
 
 enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
 
+/* Layers: 0 the chunk itself, 1 its litter (city_build_litter), wanted only
+ * within LITTER_DISTANCE of the camera and lit by the chunk's own light table. */
 typedef struct Entry {
-    int      cx, cz;
+    int      cx, cz, layer;
     int      state;
     int      next;          /* hash chain */
     uint64_t lastSeen;
@@ -27,10 +29,10 @@ typedef struct Entry {
     uint32_t  nair;
 } Entry;
 
-typedef struct Job { int cx, cz; } Job;
-typedef struct Result { int cx, cz; Mesh mesh; } Result;
+typedef struct Job { int cx, cz, layer; } Job;
+typedef struct Result { int cx, cz, layer; Mesh mesh; } Result;
 typedef struct PendingFree { uint16_t page; uint64_t frame; } PendingFree;
-typedef struct Want { int cx, cz; float key; int inView; } Want;
+typedef struct Want { int cx, cz, layer; float key; int inView; } Want;
 
 struct ChunkSystem {
     VkCore *vk;
@@ -89,25 +91,25 @@ struct ChunkSystem {
 
 /* ---------------------------------------------------------------- table --- */
 
-static uint32_t bucket_of(int cx, int cz) {
-    uint32_t h = (uint32_t)cx * 73856093u ^ (uint32_t)cz * 19349663u;
+static uint32_t bucket_of(int cx, int cz, int layer) {
+    uint32_t h = (uint32_t)cx * 73856093u ^ (uint32_t)cz * 19349663u ^ (uint32_t)layer * 83492791u;
     return (h ^ (h >> 15)) & (HASH_BUCKETS - 1);
 }
 
-static int table_find(ChunkSystem *cs, int cx, int cz) {
-    for (int i = cs->buckets[bucket_of(cx, cz)]; i >= 0; i = cs->entries[i].next)
-        if (cs->entries[i].cx == cx && cs->entries[i].cz == cz) return i;
+static int table_find(ChunkSystem *cs, int cx, int cz, int layer) {
+    for (int i = cs->buckets[bucket_of(cx, cz, layer)]; i >= 0; i = cs->entries[i].next)
+        if (cs->entries[i].cx == cx && cs->entries[i].cz == cz && cs->entries[i].layer == layer) return i;
     return -1;
 }
 
-static int table_insert(ChunkSystem *cs, int cx, int cz) {
+static int table_insert(ChunkSystem *cs, int cx, int cz, int layer) {
     if (!cs->freeEntryCount) return -1;
     int i = cs->freeEntries[--cs->freeEntryCount];
     Entry *e = &cs->entries[i];
     memset(e, 0, sizeof(*e));
-    e->cx = cx; e->cz = cz;
+    e->cx = cx; e->cz = cz; e->layer = layer;
     e->lightPage = -1;
-    uint32_t b = bucket_of(cx, cz);
+    uint32_t b = bucket_of(cx, cz, layer);
     e->next = cs->buckets[b];
     cs->buckets[b] = i;
     return i;
@@ -115,7 +117,7 @@ static int table_insert(ChunkSystem *cs, int cx, int cz) {
 
 static void table_remove(ChunkSystem *cs, int idx) {
     Entry *e = &cs->entries[idx];
-    uint32_t b = bucket_of(e->cx, e->cz);
+    uint32_t b = bucket_of(e->cx, e->cz, e->layer);
     int *link = &cs->buckets[b];
     while (*link >= 0 && *link != idx) link = &cs->entries[*link].next;
     if (*link == idx) *link = e->next;
@@ -140,9 +142,10 @@ static int worker_main(void *arg) {
         mutex_unlock(&cs->jobLock);
 
         Result r;
-        r.cx = job.cx; r.cz = job.cz;
+        r.cx = job.cx; r.cz = job.cz; r.layer = job.layer;
         memset(&r.mesh, 0, sizeof(r.mesh));
-        city_build_mesh(job.cx, job.cz, &r.mesh);
+        if (job.layer == 1) city_build_litter(job.cx, job.cz, &r.mesh);
+        else city_build_mesh(job.cx, job.cz, &r.mesh);
 
         mutex_lock(&cs->doneLock);
         if (cs->doneCount == cs->doneCap) {
@@ -316,13 +319,13 @@ static int cmp_want(const void *a, const void *b) {
     return ka < kb ? -1 : ka > kb ? 1 : 0;
 }
 
-static void push_want(ChunkSystem *cs, int cx, int cz, float key, int inView) {
+static void push_want(ChunkSystem *cs, int cx, int cz, int layer, float key, int inView) {
     if (cs->wantCount == cs->wantCap) {
         cs->wantCap = cs->wantCap ? cs->wantCap * 2 : 4096;
         cs->want = (Want *)realloc(cs->want, sizeof(Want) * cs->wantCap);
     }
     Want *w = &cs->want[cs->wantCount++];
-    w->cx = cx; w->cz = cz; w->key = key; w->inView = inView;
+    w->cx = cx; w->cz = cz; w->layer = layer; w->key = key; w->inView = inView;
 }
 
 static const double *g_sortCam;
@@ -343,7 +346,7 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     mutex_lock(&cs->doneLock);
     for (int i = 0; i < cs->doneCount; ++i) {
         Result *r = &cs->done[i];
-        int idx = table_find(cs, r->cx, r->cz);
+        int idx = table_find(cs, r->cx, r->cz, r->layer);
         if (idx >= 0 && cs->entries[idx].state == CS_QUEUED) {
             cs->entries[idx].mesh = r->mesh;
             cs->entries[idx].state = CS_READY;
@@ -358,14 +361,15 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     /* 2. Withdraw jobs no worker has started yet; they are re-prioritised below. */
     mutex_lock(&cs->jobLock);
     for (int i = cs->jobHead; i < cs->jobCount; ++i) {
-        int idx = table_find(cs, cs->jobs[i].cx, cs->jobs[i].cz);
+        int idx = table_find(cs, cs->jobs[i].cx, cs->jobs[i].cz, cs->jobs[i].layer);
         if (idx >= 0 && cs->entries[idx].state == CS_QUEUED) table_remove(cs, idx);
     }
     cs->jobHead = cs->jobCount = 0;
     mutex_unlock(&cs->jobLock);
 
     /* 3. Frustum fill: every chunk inside the view distance whose conservative
-     *    bounds touch the frustum, plus a ring around the player. */
+     *    bounds touch the frustum, plus a ring around the player; and the
+     *    litter of the chunks near the camera, just behind the chunks themselves. */
     cs->wantCount = 0;
     int ccx = (int)floor(cam[0] / P), ccz = (int)floor(cam[2] / P);
     int rad = (int)ceilf(VIEW_DISTANCE / P) + 1;
@@ -376,7 +380,7 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
             float nx = clampf(0.0f, x0, x0 + P), nz = clampf(0.0f, z0, z0 + P);
             float d = sqrtf(nx * nx + nz * nz);
             if (d > VIEW_DISTANCE) continue;
-            int idx = table_find(cs, cx, cz);
+            int idx = table_find(cs, cx, cz, 0);
             float y1;
             vec3 mn, mx;
             if (idx >= 0 && cs->entries[idx].state == CS_RESIDENT) {
@@ -390,8 +394,9 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
                 mx = v3(x0 + P + CITY_OVERHANG, y1 - (float)cam[1], z0 + P + CITY_OVERHANG);
             }
             int inView = frustum_test_aabb(&fr, mn, mx);
-            if (inView) push_want(cs, cx, cz, d, 1);
-            else if (d < NEAR_RING_DIST) push_want(cs, cx, cz, d * 3.0f + 200.0f, 0);
+            if (inView) push_want(cs, cx, cz, 0, d, 1);
+            else if (d < NEAR_RING_DIST) push_want(cs, cx, cz, 0, d * 3.0f + 200.0f, 0);
+            if (d < LITTER_DISTANCE) push_want(cs, cx, cz, 1, d + 30.0f + (inView ? 0.0f : d * 2.0f), inView);
         }
     }
     qsort(cs->want, cs->wantCount, sizeof(Want), cmp_want);
@@ -400,13 +405,13 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     int nj = 0, queued = 0;
     for (int i = 0; i < cs->wantCount; ++i) {
         Want *w = &cs->want[i];
-        int idx = table_find(cs, w->cx, w->cz);
+        int idx = table_find(cs, w->cx, w->cz, w->layer);
         if (idx < 0) {
             if (nj >= MAX_JOBS || cs->freeEntryCount < 64) continue;
-            idx = table_insert(cs, w->cx, w->cz);
+            idx = table_insert(cs, w->cx, w->cz, w->layer);
             if (idx < 0) continue;
             cs->entries[idx].state = CS_QUEUED;
-            newJobs[nj].cx = w->cx; newJobs[nj].cz = w->cz; nj++;
+            newJobs[nj].cx = w->cx; newJobs[nj].cz = w->cz; newJobs[nj].layer = w->layer; nj++;
         }
         cs->entries[idx].lastSeen = frame;
         if (cs->entries[idx].state == CS_QUEUED) queued++;
@@ -489,8 +494,8 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     for (int i = 0; i < cs->wantCount && nchunk < MAX_DRAW_CHUNKS; ++i) {
         Want *w = &cs->want[i];
         if (!w->inView) continue;
-        int idx = table_find(cs, w->cx, w->cz);
-        if (idx < 0 || cs->entries[idx].state != CS_RESIDENT) continue;
+        int idx = table_find(cs, w->cx, w->cz, w->layer);
+        if (idx < 0 || cs->entries[idx].state != CS_RESIDENT || !cs->entries[idx].npages) continue;
         Entry *e = &cs->entries[idx];
         float x0 = (float)(e->cx * (double)P - cam[0]), z0 = (float)(e->cz * (double)P - cam[2]);
         float y0 = -(float)cam[1];
@@ -501,7 +506,12 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
         ChunkGPU *g = &gpu[nchunk];
         g->origin[0] = x0; g->origin[1] = y0; g->origin[2] = z0; g->origin[3] = 0;
         g->info[0] = e->cx; g->info[1] = e->cz;
-        g->info[2] = e->lightPage >= 0 ? e->lightPage * LIGHT_PAGE_RECS : -1;
+        int lp = e->lightPage;
+        if (e->layer == 1) {   /* litter is lit by its chunk's lamps and shopfronts */
+            int base = table_find(cs, e->cx, e->cz, 0);
+            lp = base >= 0 && cs->entries[base].state == CS_RESIDENT ? cs->entries[base].lightPage : -1;
+        }
+        g->info[2] = lp >= 0 ? lp * LIGHT_PAGE_RECS : -1;
         g->info[3] = 0;
         for (int p = 0; p < e->npages; ++p) {
             uint32_t first = p * PAGE_VERTS;
@@ -520,7 +530,7 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     uint32_t sFirst = ndraw, viewChunks = nchunk;
     for (int i = 0; i < MAX_ENTRIES && nchunk < MAX_DRAW_CHUNKS; ++i) {
         Entry *e = &cs->entries[i];
-        if (e->state != CS_RESIDENT || ndraw + (uint32_t)e->npages > INDIRECT_CAP) continue;
+        if (e->state != CS_RESIDENT || e->layer || ndraw + (uint32_t)e->npages > INDIRECT_CAP) continue;   /* litter shelters nothing */
         float x0 = (float)(e->cx * (double)P - cam[0]), z0 = (float)(e->cz * (double)P - cam[2]);
         if (x0 + e->mx[0] < -SR || x0 + e->mn[0] > SR || z0 + e->mx[2] < -SR || z0 + e->mn[2] > SR) continue;
         ChunkGPU *g = &gpu[nchunk];

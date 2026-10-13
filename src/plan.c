@@ -92,6 +92,16 @@ float plan_density(double x, double z) {
     return clampf((float)sum, 0.0f, 1.0f);
 }
 
+/* Affluence: the regional cores are well off, and so is whatever stands
+ * nearest the centres. Beyond that, a slow field makes whole districts
+ * better or worse off, and a neighbourhood-scale one varies them within it. */
+float plan_affluence(double x, double z) {
+    double a = 0.5 + 0.45 * (plan_density(x, z) - 0.4)
+                   + 0.6 * (vnoise(x / 1300.0, z / 1300.0, 0xAF1Au) - 0.5)
+                   + 0.35 * (vnoise(x / 430.0, z / 430.0, 0xAF1Bu) - 0.5);
+    return clampf((float)a, 0.0f, 1.0f);
+}
+
 /* ===========================================================================
  * Convex polygons with per-edge road attributes
  * ========================================================================= */
