@@ -10,8 +10,10 @@
 
 enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
 
-/* Layers: 0 the chunk itself, 1 its litter (city_build_litter), wanted only
- * within LITTER_DISTANCE of the camera and lit by the chunk's own light table. */
+/* Layers: 0 the chunk itself, 1 its office lobbies (city_build_interiors),
+ * wanted only within INTERIOR_DISTANCE of the camera, 2 its litter
+ * (city_build_litter), wanted only within LITTER_DISTANCE and lit by the
+ * chunk's own light table. */
 typedef struct Entry {
     int      cx, cz, layer;
     int      state;
@@ -144,7 +146,8 @@ static int worker_main(void *arg) {
         Result r;
         r.cx = job.cx; r.cz = job.cz; r.layer = job.layer;
         memset(&r.mesh, 0, sizeof(r.mesh));
-        if (job.layer == 1) city_build_litter(job.cx, job.cz, &r.mesh);
+        if (job.layer == 1) city_build_interiors(job.cx, job.cz, &r.mesh);
+        else if (job.layer == 2) city_build_litter(job.cx, job.cz, &r.mesh);
         else city_build_mesh(job.cx, job.cz, &r.mesh);
 
         mutex_lock(&cs->doneLock);
@@ -369,7 +372,8 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
 
     /* 3. Frustum fill: every chunk inside the view distance whose conservative
      *    bounds touch the frustum, plus a ring around the player; and the
-     *    litter of the chunks near the camera, just behind the chunks themselves. */
+     *    lobbies and litter of the chunks near the camera, just behind the
+     *    chunks themselves. */
     cs->wantCount = 0;
     int ccx = (int)floor(cam[0] / P), ccz = (int)floor(cam[2] / P);
     int rad = (int)ceilf(VIEW_DISTANCE / P) + 1;
@@ -396,7 +400,8 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
             int inView = frustum_test_aabb(&fr, mn, mx);
             if (inView) push_want(cs, cx, cz, 0, d, 1);
             else if (d < NEAR_RING_DIST) push_want(cs, cx, cz, 0, d * 3.0f + 200.0f, 0);
-            if (d < LITTER_DISTANCE) push_want(cs, cx, cz, 1, d + 30.0f + (inView ? 0.0f : d * 2.0f), inView);
+            if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, 1, d + 60.0f + (inView ? 0.0f : d * 2.0f), inView);
+            if (d < LITTER_DISTANCE) push_want(cs, cx, cz, 2, d + 30.0f + (inView ? 0.0f : d * 2.0f), inView);
         }
     }
     qsort(cs->want, cs->wantCount, sizeof(Want), cmp_want);
@@ -507,7 +512,7 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
         g->origin[0] = x0; g->origin[1] = y0; g->origin[2] = z0; g->origin[3] = 0;
         g->info[0] = e->cx; g->info[1] = e->cz;
         int lp = e->lightPage;
-        if (e->layer == 1) {   /* litter is lit by its chunk's lamps and shopfronts */
+        if (e->layer >= 1) {   /* interiors and litter are lit by their chunk's lamps, shopfronts and arcology lights */
             int base = table_find(cs, e->cx, e->cz, 0);
             lp = base >= 0 && cs->entries[base].state == CS_RESIDENT ? cs->entries[base].lightPage : -1;
         }
@@ -530,7 +535,7 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     uint32_t sFirst = ndraw, viewChunks = nchunk;
     for (int i = 0; i < MAX_ENTRIES && nchunk < MAX_DRAW_CHUNKS; ++i) {
         Entry *e = &cs->entries[i];
-        if (e->state != CS_RESIDENT || e->layer || ndraw + (uint32_t)e->npages > INDIRECT_CAP) continue;   /* litter shelters nothing */
+        if (e->state != CS_RESIDENT || e->layer || ndraw + (uint32_t)e->npages > INDIRECT_CAP) continue;   /* lobbies are under roofs; litter shelters nothing */
         float x0 = (float)(e->cx * (double)P - cam[0]), z0 = (float)(e->cz * (double)P - cam[2]);
         if (x0 + e->mx[0] < -SR || x0 + e->mn[0] > SR || z0 + e->mx[2] < -SR || z0 + e->mn[2] > SR) continue;
         ChunkGPU *g = &gpu[nchunk];

@@ -4,7 +4,7 @@
 #include "mathlib.h"
 
 /* ===========================================================================
- * Street litter: a second, near-only layer of chunk meshes (src/chunks.c).
+ * Street litter: the third, near-only layer of chunk meshes (src/chunks.c).
  *
  * Rubbish lies still, so it isn't simulated. Every item is ordinary geometry,
  * generated with its chunk as a pure function of the plan. The vertex shader

@@ -1,5 +1,7 @@
 #include "city.h"
 #include "building.h"
+#include "interior.h"
+#include "arcology.h"
 #include "hash.h"
 #include "mathlib.h"
 
@@ -493,6 +495,8 @@ static int owns(const ChunkGen *g, double x, double z) {
     return (int)floor(x / CHUNK_SIZE) == g->cx && (int)floor(z / CHUNK_SIZE) == g->cz;
 }
 
+static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg);
+
 void city_layout(int cx, int cz, BlockLayout *L) {
     const double P = CHUNK_SIZE;
     ChunkGen g;
@@ -504,38 +508,7 @@ void city_layout(int cx, int cz, BlockLayout *L) {
         const Building *b = &g.bld[i];
         if (!owns(&g, b->ox, b->oz)) continue;
         L->build[L->nbuild++] = *b;
-        /* what stands at street level: ground floors, piers, cores and columns */
-        const BGraph *bg = gen_graph(&g, i);
-        for (int si = 0; si < bg->nsec; ++si) {
-            const BSection *s = &bg->sec[si];
-            if (s->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
-            const BLoop *loops[2] = { &s->foot.outer, &s->foot.hole };
-            if (L->ncoll >= MAX_COLL || L->ncollv + loops[0]->n + loops[1]->n > MAX_COLL_VERTS) break;
-            CollPoly *c = &L->coll[L->ncoll++];
-            c->first = L->ncollv; c->n = loops[0]->n;
-            for (int k = 0; k < loops[0]->n; ++k) {
-                DVec2 w = to_world(b, loops[0]->x[k], loops[0]->z[k]);
-                L->collv[L->ncollv][0] = w.x; L->collv[L->ncollv][1] = w.z; L->ncollv++;
-            }
-            c->holeFirst = L->ncollv; c->holeN = loops[1]->n;
-            for (int k = 0; k < loops[1]->n; ++k) {
-                DVec2 w = to_world(b, loops[1]->x[k], loops[1]->z[k]);
-                L->collv[L->ncollv][0] = w.x; L->collv[L->ncollv][1] = w.z; L->ncollv++;
-            }
-        }
-        for (int k = 0; k < bg->nsup; ++k) {
-            const BSupport *sp = &bg->sup[k];
-            if (sp->type != SUP_COLUMN || sp->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
-            if (L->ncoll >= MAX_COLL || L->ncollv + 4 > MAX_COLL_VERTS) break;
-            CollPoly *c = &L->coll[L->ncoll++];
-            c->first = L->ncollv; c->n = 4; c->holeFirst = 0; c->holeN = 0;
-            float h = sp->size * 0.5f;
-            float cx[4] = { -h, -h, h, h }, cz[4] = { -h, h, h, -h };   /* negative turn, like every outer loop */
-            for (int q = 0; q < 4; ++q) {
-                DVec2 w = to_world(b, sp->x0 + cx[q], sp->z0 + cz[q]);
-                L->collv[L->ncollv][0] = w.x; L->collv[L->ncollv][1] = w.z; L->ncollv++;
-            }
-        }
+        collide_building(L, b, gen_graph(&g, i));
     }
     for (int i = 0; i < g.nl && L->nlamps < MAX_LAMPS; ++i)
         if (owns(&g, g.lamp[i].x, g.lamp[i].z)) L->lamp[L->nlamps++] = g.lamp[i];
@@ -802,16 +775,113 @@ static FaceKey face_key(const BLoop *l, int k, int base) {
     return f;
 }
 
+/* Does a closed room or a core stand 0.4 m in from u along edge e? */
+static int lined_at(const ILayout *L, const EdgeInfo *e, float u) {
+    float px = e->ax + e->ex * u + e->ez * 0.4f, pz = e->az + e->ez * u - e->ex * 0.4f, fx, fz;
+    interior_to_frame(L, px, pz, &fx, &fz);
+    int i = (int)floorf((fx - L->gx0) / IN_CELL), j = (int)floorf((fz - L->gz0) / IN_CELL);
+    int r = (i >= 0 && j >= 0 && i < L->nx && j < L->nz && L->occ[j * L->nx + i] == IO_USABLE) ? L->own[j * L->nx + i] : 255;
+    return r != 255 && ((L->reg[r].kind == IK_ROOM && !L->reg[r].glazed) || L->reg[r].kind == IK_SOLID);
+}
+
+/* What stands behind a ground section's envelope: a planned office lobby (L)
+ * or an arcology's concourse level (A), for the facade, its inside and collision. */
+typedef struct Behind { const ILayout *L; const ALayout *A; int si; } Behind;
+
+/* Does something opaque (a closed room, a core, a market block) stand 0.4 m in from u along edge e? */
+static int behind_lined(const Behind *bh, const EdgeInfo *e, float u) {
+    if (bh->L) return lined_at(bh->L, e, u);
+    float px = e->ax + e->ex * u + e->ez * 0.4f, pz = e->az + e->ez * u - e->ex * 0.4f, fx, fz;
+    arcology_to_frame(bh->A, px, pz, &fx, &fz);
+    int use = arcology_use_at(bh->A, fx, fz);
+    return use == AU_BLOCK || use == AU_STALL || use == AU_CORE || use == AU_STAIR || use == AU_SPINE || use == AU_KIOSK;
+}
+
+/* Openings cut through face k of loop li: (u0, u1, top) — the lobby's entrance or the arcology's portals. */
+static int face_openings(const BGraph *g, const Behind *bh, int li, int k, float (*op)[3], int max) {
+    int n = 0;
+    if (!bh || li != 0) return 0;
+    if (bh->L)
+        for (int d = 0; d < g->ndoor && n < max; ++d)
+            if (g->door[d].section == bh->si && g->door[d].face == k && g->door[d].type == DOOR_PRIMARY) {
+                op[n][0] = g->door[d].u - g->door[d].width * 0.5f; op[n][1] = g->door[d].u + g->door[d].width * 0.5f;
+                op[n][2] = SIDEWALK_HEIGHT + g->door[d].height; n++;
+            }
+    if (bh->A)
+        for (int p = 0; p < bh->A->nportal && n < max; ++p)
+            if (bh->A->portal[p].face == k) {
+                const APortal *pt = &bh->A->portal[p];
+                op[n][0] = pt->u - pt->width * 0.5f; op[n][1] = pt->u + pt->width * 0.5f; op[n][2] = SIDEWALK_HEIGHT + pt->height; n++;
+            }
+    return n;
+}
+
+/* Spans (u0, u1 along face k of loop li) of a planned ground floor's
+ * envelope, with what stands behind each: 1 where a closed room or a core
+ * backs onto it (the facade is opaque there), 0 where the lobby looks out
+ * through glass. Each change is found on the partition between the two, then
+ * the opaque side is widened to the next mullion of the facade's 1.5 m module
+ * (shadeFacade), so it is whole back-painted panes and no clear strip is left
+ * beside the partition; it never widens over an opening. */
+static int envelope_spans(const BGraph *g, const Behind *bh, const BLoop *l, int li, int k, float (*span)[2], uint8_t *lined, int max) {
+    EdgeInfo e = edge_of(l, k);
+    float bnd[65], op[8][3];
+    uint8_t raw[64];
+    int nop = face_openings(g, bh, li, k, op, 8);
+    for (int o = 0; o < nop; ++o) { op[o][0] -= 0.15f; op[o][1] += 0.15f; }
+    if (max > 64) max = 64;
+    int nS = (int)ceilf(e.len / 0.25f), n = 0, prev = -1;
+    float step = nS ? e.len / (float)nS : 0.0f;
+    for (int q = 0; q < nS; ++q) {
+        int cur = behind_lined(bh, &e, ((float)q + 0.5f) * step);
+        if (cur == prev) continue;
+        if (n == max) break;
+        float b = 0.0f;
+        if (n > 0) {
+            float lo = ((float)q - 0.5f) * step, hi = ((float)q + 0.5f) * step;
+            for (int it = 0; it < 14; ++it) {
+                float mid = 0.5f * (lo + hi);
+                if (behind_lined(bh, &e, mid) == prev) lo = mid; else hi = mid;
+            }
+            float c = 0.5f * (lo + hi);   /* the partition */
+            b = prev ? ceilf((c + 0.01f) / 1.5f) * 1.5f : floorf((c - 0.01f) / 1.5f) * 1.5f;
+            for (int o = 0; o < nop; ++o) {
+                float du0 = op[o][0], du1 = op[o][1];
+                if (prev && c <= du0 && b > du0) b = maxf(du0, c + 0.07f);
+                if (!prev && c >= du1 && b < du1) b = minf(du1, c - 0.07f);
+            }
+            b = clampf(b, 0.0f, e.len);
+        }
+        bnd[n] = b; raw[n] = (uint8_t)cur; n++;
+        prev = cur;
+    }
+    if (n == 0) return 0;
+    bnd[n] = e.len;
+    /* a clear stretch squeezed out between two widened opaque ones goes, and they join */
+    int m = 0;
+    for (int t = 0; t < n; ++t) {
+        float a = bnd[t], b = bnd[t + 1];
+        if (!raw[t] && b - a < 0.01f) continue;
+        if (m > 0 && lined[m - 1] == raw[t]) { span[m - 1][1] = maxf(span[m - 1][1], b); continue; }
+        if (m > 0) a = span[m - 1][1];
+        span[m][0] = a; span[m][1] = maxf(a, b); lined[m] = raw[t]; m++;
+    }
+    return m;
+}
+
 /* Facade vertex data (decoded by shadeFacade in shaders/city.frag):
  *   uv.y   this face's width | the next face's width << 12, in 1/16 m (an exact integer)
  *   aux    the previous face's width | face << 12 | next face << 18 |
  *          corner flags << 24 (start/end convex, start/end square) | plant-floor code << 28
- *   params y section, z at-ground | ground mode << 1 | window << 3 | bands << 5 | fine bays << 6,
- *          w palette | shop level << 3 */
-static Mat facade_mat(const Building *b, const BGraph *g, int si, const FaceKey *fk, float *packW) {
+ *   params y section, z at-ground | ground mode << 1 | window << 3 | bands << 5 | fine bays << 6 |
+ *          a real interior behind the ground floor << 7, w palette | shop level << 3 |
+ *          a room or core behind this stretch of the ground floor << 6, an arcology's
+ *          market block (lightboxes in the glass) << 7 (both set by emit_walls) */
+static Mat facade_mat(const Building *b, const BGraph *g, int si, const FaceKey *fk, int real, float *packW) {
     const BSection *s = &g->sec[si];
     Mat mt = mat(MAT_FACADE, g->seed, (uint8_t)si,
-                 (uint8_t)((s->y0 <= SIDEWALK_HEIGHT + 0.01f ? 1 : 0) | (g->groundMode << 1) | (s->win << 3) | (s->bands ? 32 : 0) | (g->fine ? 64 : 0)),
+                 (uint8_t)((s->y0 <= SIDEWALK_HEIGHT + 0.01f ? 1 : 0) | (g->groundMode << 1) | (s->win << 3) | (s->bands ? 32 : 0) |
+                           (g->fine ? 64 : 0) | (real ? 128 : 0)),
                  (uint8_t)(s->palette | (b->shop << 3)));
     mt.aux = w16(fk->prevLen) | (uint32_t)fk->face << 12 | (uint32_t)fk->next << 18 |
              (uint32_t)(fk->startConvex | fk->endConvex << 1 | fk->start90 << 2 | fk->end90 << 3) << 24 |
@@ -820,7 +890,10 @@ static Mat facade_mat(const Building *b, const BGraph *g, int si, const FaceKey 
     return mt;
 }
 
-static void emit_walls(Mesh *m, const Building *b, const BGraph *g, int si) {
+/* With a real interior behind it (bh), each face is cut round its openings
+ * (a lobby's entrance, an arcology's portals), so you can walk in, and split
+ * where something opaque stands against it, so the facade there is opaque. */
+static void emit_walls(Mesh *m, const Building *b, const BGraph *g, int si, const Behind *bh) {
     const BSection *s = &g->sec[si];
     const BLoop *loops[2] = { &s->foot.outer, &s->foot.hole };
     int base = 0;
@@ -828,12 +901,39 @@ static void emit_walls(Mesh *m, const Building *b, const BGraph *g, int si) {
         const BLoop *l = loops[li];
         for (int k = 0; k < l->n; ++k) {
             FaceKey fk = face_key(l, k, base);
-            float pw;
-            Mat mt = facade_mat(b, g, si, &fk, &pw);
+            float pw, op[8][3];
+            Mat mt = facade_mat(b, g, si, &fk, bh != NULL, &pw);
             Xf sv = xf_save(m);
             float len = enter_face(m, l, k);
-            float uv[4][2] = { { 0, pw }, { len, pw }, { len, pw }, { 0, pw } };
-            emit_quad(m, v3(0, s->y0, 0), v3(len, s->y0, 0), v3(len, s->y1, 0), v3(0, s->y1, 0), v3(0, 0, 1), uv, mt);
+            int nop = face_openings(g, bh, li, k, op, 8);
+            for (int i = 0; i < nop; ++i)                     /* left to right */
+                for (int j = i; j > 0 && op[j][0] < op[j - 1][0]; --j) { float t[3]; memcpy(t, op[j], sizeof(t)); memcpy(op[j], op[j - 1], sizeof(t)); memcpy(op[j - 1], t, sizeof(t)); }
+            float span[64][2] = { { 0.0f, len } };
+            uint8_t lined[64] = { 0 };
+            int ns = bh ? envelope_spans(g, bh, l, li, k, span, lined, 64) : 1;
+            for (int q = 0; q < ns; ++q) {
+                float sa = span[q][0], sb = q == ns - 1 ? len : span[q][1];
+                Mat mq = mt;
+                if (lined[q]) mq.p[3] |= (uint8_t)(bh->A ? 64 | 128 : 64);   /* an arcology's: lightboxes */
+                /* full height between openings, above each opening from its head */
+                float cur = sa;
+                for (int o = 0; o <= nop; ++o) {
+                    float a = cur, c = o < nop ? minf(sb, op[o][0]) : sb;
+                    float pieces[2][4] = { { a, c, s->y0, s->y1 }, { 0, 0, 0, 0 } };
+                    int np = 1;
+                    if (o < nop) {
+                        pieces[1][0] = maxf(sa, op[o][0]); pieces[1][1] = minf(sb, op[o][1]);
+                        pieces[1][2] = op[o][2]; pieces[1][3] = s->y1; np = 2;
+                        cur = maxf(cur, op[o][1]);
+                    }
+                    for (int p = 0; p < np; ++p) {
+                        float pa = pieces[p][0], pc = pieces[p][1], y0 = pieces[p][2], y1 = pieces[p][3];
+                        if (pc - pa < 1e-3f || y1 - y0 < 1e-3f) continue;
+                        float uv[4][2] = { { pa, pw }, { pc, pw }, { pc, pw }, { pa, pw } };
+                        emit_quad(m, v3(pa, y0, 0), v3(pc, y0, 0), v3(pc, y1, 0), v3(pa, y1, 0), v3(0, 0, 1), uv, mq);
+                    }
+                }
+            }
             xf_restore(m, sv);
         }
         base += l->n;
@@ -1150,7 +1250,1834 @@ static void face_feature(Mesh *m, const BGraph *g, const BSection *s, float widt
     }
 }
 
-static void emit_doors(Mesh *m, const BGraph *g) {
+/* ===========================================================================
+ * Interiors: a planned office lobby (src/interior.c) realised in the
+ * building's frame. The planning frame is the building frame turned in
+ * quarter turns, so its rectangles are boxes here too. Floors and ceilings
+ * follow the true footprint; partitions come from the boundary table;
+ * furniture is rough boxes for now.
+ * ========================================================================= */
+
+/* The planned ground floors of one building: office lobbies (the main one and
+ * at most one more), or an arcology's concourse level and canyon. */
+typedef struct Interiors { int n; ILayout *lay[2]; ALayout *arc; } Interiors;
+
+static void interiors_plan(const Building *b, const BGraph *g, Interiors *in) {
+    memset(in, 0, sizeof(*in));
+    if (g->archetype == ARCH_ARCOLOGY) {
+        ALayout *A = (ALayout *)malloc(sizeof(ALayout));
+        if (!A) fatal("out of memory planning an arcology");
+        if (arcology_plan(b, g, 0, A, NULL) && A->ok) in->arc = A;
+        else free(A);
+        return;
+    }
+    int secs[2], ns = interior_sections(g, secs, 2);
+    for (int k = 0; k < ns; ++k) {
+        ILayout *L = (ILayout *)malloc(sizeof(ILayout));
+        if (!L) fatal("out of memory planning an interior");
+        if (interior_plan(b, g, secs[k], 0, L, NULL)) in->lay[in->n++] = L;
+        else free(L);
+    }
+}
+
+static void interiors_free(Interiors *in) {
+    for (int k = 0; k < in->n; ++k) free(in->lay[k]);
+    free(in->arc);
+    in->n = 0;
+    in->arc = NULL;
+}
+
+static const ILayout *interior_of(const Interiors *in, int si) {
+    for (int k = 0; in && k < in->n; ++k) if (in->lay[k]->section == si) return in->lay[k];
+    return NULL;
+}
+
+/* What stands behind section si's envelope, if anything was planned there. */
+static int behind_of(const Interiors *in, int si, Behind *bh) {
+    bh->L = interior_of(in, si); bh->A = NULL; bh->si = si;
+    if (!bh->L && in && in->arc && in->arc->tier[0].section == si) bh->A = in->arc;
+    return bh->L || bh->A;
+}
+
+/* MAT_INTERIOR surfaces (params y; shadeInterior in shaders/city.frag). */
+enum { IS_FLOOR = 0, IS_ROOMFLOOR, IS_WALL, IS_CEILING, IS_CORE, IS_METAL, IS_WOOD, IS_FABRIC, IS_GLASS,
+       IS_LIGHT, IS_PLANT, IS_LINING, IS_STONE, IS_LIFTDOOR, IS_DOOR, IS_SCREEN, IS_SKYLIGHT, IS_OFFICE, IS_SIGN };
+
+/* params: y surface, z variety (a region or fixture type), w ceiling height above the floor (half metres). */
+static Mat imat(const BGraph *g, const ILayout *L, int surface, int sub) {
+    return mat(MAT_INTERIOR, g->seed, (uint8_t)surface, (uint8_t)sub, q_half(L->ceilY - L->floorY));
+}
+
+/* Floors and ceilings carry the building frame's angle (aux), so the shader
+ * can follow their uv (building metres) in world space. */
+static Mat iframe(const Mesh *m, Mat mt) {
+    float a = m->xf ? atan2f(m->xs, m->xc) : 0.0f;
+    mt.aux = (uint32_t)((a + PI_F) / (2.0f * PI_F) * 65535.0f + 0.5f) & 0xFFFFu;
+    return mt;
+}
+
+/* Frame rectangle -> building-frame box. */
+static void ibox(Mesh *m, const ILayout *L, float x0, float z0, float x1, float z1, float y0, float y1, int faces, Mat mt) {
+    float ax, az, bx, bz;
+    interior_to_local(L, x0, z0, &ax, &az);
+    interior_to_local(L, x1, z1, &bx, &bz);
+    if (y1 - y0 < 1e-3f || fabsf(ax - bx) < 1e-3f || fabsf(az - bz) < 1e-3f) return;
+    emit_box(m, v3(minf(ax, bx), y0, minf(az, bz)), v3(maxf(ax, bx), y1, maxf(az, bz)), faces, mt, UV_FACADE);
+}
+
+static void iflat(Mesh *m, const ILayout *L, float x0, float z0, float x1, float z1, float y, int down, Mat mt) {
+    float ax, az, bx, bz;
+    interior_to_local(L, x0, z0, &ax, &az);
+    interior_to_local(L, x1, z1, &bx, &bz);
+    float lx0 = minf(ax, bx), lx1 = maxf(ax, bx), lz0 = minf(az, bz), lz1 = maxf(az, bz);
+    float uv[4][2] = { { lx0, lz0 }, { lx1, lz0 }, { lx1, lz1 }, { lx0, lz1 } };
+    emit_quad(m, v3(lx0, y, lz0), v3(lx1, y, lz0), v3(lx1, y, lz1), v3(lx0, y, lz1), v3(0, down ? -1.0f : 1.0f, 0), uv, mt);
+}
+
+/* Vertical quad on the frame line (x0,z0)-(x1,z1), facing frame direction (nx, nz). */
+static void iwall(Mesh *m, const ILayout *L, float x0, float z0, float x1, float z1, float y0, float y1, float nx, float nz, Mat mt) {
+    float ax, az, bx, bz, lnx, lnz;
+    interior_to_local(L, x0, z0, &ax, &az);
+    interior_to_local(L, x1, z1, &bx, &bz);
+    interior_to_local(L, nx, nz, &lnx, &lnz);
+    float len = sqrtf((bx - ax) * (bx - ax) + (bz - az) * (bz - az));
+    float uv[4][2] = { { 0, y0 }, { len, y0 }, { len, y1 }, { 0, y1 } };
+    emit_quad(m, v3(ax, y0, az), v3(bx, y0, bz), v3(bx, y1, bz), v3(ax, y1, az), v3(lnx, 0, lnz), uv, mt);
+}
+
+/* A sloped panel on the frame line (x0,z0)-(x1,z1): its foot rises from ya to yb, h tall. */
+static void iwall_slope(Mesh *m, const ILayout *L, float x0, float z0, float x1, float z1, float ya, float yb, float h, float nx, float nz, Mat mt) {
+    float ax, az, bx, bz, lnx, lnz;
+    interior_to_local(L, x0, z0, &ax, &az);
+    interior_to_local(L, x1, z1, &bx, &bz);
+    interior_to_local(L, nx, nz, &lnx, &lnz);
+    float len = sqrtf((bx - ax) * (bx - ax) + (bz - az) * (bz - az));
+    float uv[4][2] = { { 0, ya }, { len, yb }, { len, yb + h }, { 0, ya + h } };
+    emit_quad(m, v3(ax, ya, az), v3(bx, yb, bz), v3(bx, yb + h, bz), v3(ax, ya + h, az), v3(lnx, 0, lnz), uv, mt);
+}
+
+/* Greedy rectangles covering the cells of region r (whole cells only, or edge cells too). */
+static int region_rects(const ILayout *L, int r, int wholeOnly, int16_t (*out)[4], int max) {
+    int N = L->nx * L->nz, n = 0;
+    uint8_t *used = (uint8_t *)calloc((size_t)N, 1);
+    if (!used) fatal("out of memory realising an interior");
+#define WANT(i, j) (L->occ[(j) * L->nx + (i)] == IO_USABLE && L->own[(j) * L->nx + (i)] == r && \
+                    !(wholeOnly && (L->flag[(j) * L->nx + (i)] & IF_EDGE)) && !used[(j) * L->nx + (i)])
+    for (int j = 0; j < L->nz && n < max; ++j)
+        for (int i = 0; i < L->nx && n < max; ++i) {
+            if (!WANT(i, j)) continue;
+            int i1 = i + 1, j1 = j + 1;
+            while (i1 < L->nx && WANT(i1, j)) i1++;
+            for (;;) {
+                if (j1 >= L->nz) break;
+                int ok = 1;
+                for (int a = i; a < i1 && ok; ++a) ok = WANT(a, j1);
+                if (!ok) break;
+                j1++;
+            }
+            for (int b = j; b < j1; ++b) for (int a = i; a < i1; ++a) used[b * L->nx + a] = 1;
+            out[n][0] = (int16_t)i; out[n][1] = (int16_t)j; out[n][2] = (int16_t)i1; out[n][3] = (int16_t)j1;
+            n++;
+        }
+#undef WANT
+    free(used);
+    return n;
+}
+
+/* Sutherland-Hodgman: keep the part of a polygon where a*x + b*z + c >= 0. */
+static int clip_half(const float (*in)[2], int n, float a, float b, float c, float (*out)[2]) {
+    int m = 0;
+    for (int i = 0; i < n; ++i) {
+        const float *p = in[i], *q = in[(i + 1) % n];
+        float dp = a * p[0] + b * p[1] + c, dq = a * q[0] + b * q[1] + c;
+        if (dp >= 0.0f) { out[m][0] = p[0]; out[m][1] = p[1]; m++; }
+        if ((dp >= 0.0f) != (dq >= 0.0f)) {
+            float t = dp / (dp - dq);
+            out[m][0] = p[0] + (q[0] - p[0]) * t; out[m][1] = p[1] + (q[1] - p[1]) * t; m++;
+        }
+        if (m >= 2 * BG_MAX_PV - 2) break;
+    }
+    return m;
+}
+
+/* A footprint outline minus a frame rectangle (the atrium void), as up to
+ * four caps: the void may touch or cut the outline, so it is never a hole. */
+static void emit_cap_minus(Mesh *m, const ILayout *L, const BLoop *outer, float vx0, float vz0, float vx1, float vz1, float y, int down, Mat mt) {
+    float poly[2 * BG_MAX_PV][2], a[2 * BG_MAX_PV][2], b[2 * BG_MAX_PV][2];
+    int n = outer->n;
+    for (int i = 0; i < n; ++i) interior_to_frame(L, outer->x[i], outer->z[i], &poly[i][0], &poly[i][1]);
+    for (int piece = 0; piece < 4; ++piece) {
+        int k;
+        if (piece == 0)      k = clip_half((const float (*)[2])poly, n, -1, 0, vx0, a);   /* x <= vx0 */
+        else if (piece == 1) k = clip_half((const float (*)[2])poly, n, 1, 0, -vx1, a);   /* x >= vx1 */
+        else {
+            k = clip_half((const float (*)[2])poly, n, 1, 0, -vx0, b);
+            k = clip_half((const float (*)[2])b, k, -1, 0, vx1, a);
+            memcpy(b, a, sizeof(float) * 2 * (size_t)k);
+            k = piece == 2 ? clip_half((const float (*)[2])b, k, 0, -1, vz0, a) : clip_half((const float (*)[2])b, k, 0, 1, -vz1, a);
+        }
+        if (k < 3 || k > BG_MAX_PV) continue;
+        BFoot f;
+        memset(&f, 0, sizeof(f));
+        f.outer.n = k;
+        for (int i = 0; i < k; ++i) interior_to_local(L, a[i][0], a[i][1], &f.outer.x[i], &f.outer.z[i]);
+        if (fabsf(bloop_area(&f.outer)) < 0.01f) continue;
+        emit_cap(m, &f, y, down, mt);
+    }
+}
+
+/* Runs along one side of the void where the floor beyond it is inside (so a
+ * slab edge and a balustrade belong there). side: 0 front, 1 right, 2 rear, 3 left. */
+static int void_side_runs(const ILayout *L, int side, float (*run)[2], int max) {
+    const IAtrium *A = &L->atrium;
+    int alongX = side == 0 || side == 2, a0 = alongX ? A->x0 : A->z0, a1 = alongX ? A->x1 : A->z1, n = 0, start = -1;
+    for (int k = a0; k <= a1; ++k) {
+        int ok = 0;
+        if (k < a1) {
+            int i = alongX ? k : (side == 1 ? A->x1 : A->x0 - 1), j = alongX ? (side == 2 ? A->z1 : A->z0 - 1) : k;
+            ok = i >= 0 && j >= 0 && i < L->nx && j < L->nz && L->occ[j * L->nx + i] == IO_USABLE && !(L->flag[j * L->nx + i] & IF_EDGE);
+        }
+        if (ok && start < 0) start = k;
+        if (!ok && start >= 0) {
+            if (n < max) { run[n][0] = (float)start * IN_CELL; run[n][1] = (float)k * IN_CELL; n++; }
+            start = -1;
+        }
+    }
+    return n;
+}
+
+/* Slab edges round the void (y0..y1) and, if rail > 0, a glass balustrade on
+ * them, with a gap where the feature stair lands. */
+static void emit_void_edges(Mesh *m, const BGraph *g, const ILayout *L, float y0, float y1, float rail, const IFixture *stair) {
+    const IAtrium *A = &L->atrium;
+    float vx0 = L->gx0 + A->x0 * IN_CELL, vx1 = L->gx0 + A->x1 * IN_CELL, vz0 = L->gz0 + A->z0 * IN_CELL, vz1 = L->gz0 + A->z1 * IN_CELL;
+    Mat edge = imat(g, L, IS_WALL, 1), glass = imat(g, L, IS_GLASS, 0), metal = imat(g, L, IS_METAL, 0);
+    for (int side = 0; side < 4; ++side) {
+        float run[32][2];
+        int nr = void_side_runs(L, side, run, 32);
+        int alongX = side == 0 || side == 2;
+        float line = side == 0 ? vz0 : side == 1 ? vx1 : side == 2 ? vz1 : vx0;
+        float nx = side == 1 ? -1.0f : side == 3 ? 1.0f : 0.0f, nz = side == 0 ? 1.0f : side == 2 ? -1.0f : 0.0f;
+        for (int r = 0; r < nr; ++r) {
+            float a0 = (alongX ? L->gx0 : L->gz0) + run[r][0], a1 = (alongX ? L->gx0 : L->gz0) + run[r][1];
+            if (alongX) iwall(m, L, a0, line + nz * 0.01f, a1, line + nz * 0.01f, y0, y1, nx, nz, edge);
+            else        iwall(m, L, line + nx * 0.01f, a0, line + nx * 0.01f, a1, y0, y1, nx, nz, edge);
+            if (rail <= 0.0f) continue;
+            float gap0 = a1, gap1 = a1;
+            if (stair && side == 2) { gap0 = clampf(stair->x0 - 0.05f, a0, a1); gap1 = clampf(stair->x1 + 0.05f, a0, a1); }
+            float seg[2][2] = { { a0, gap0 }, { gap1, a1 } };
+            for (int sgi = 0; sgi < 2; ++sgi) {
+                float s0 = seg[sgi][0], s1 = seg[sgi][1];
+                if (s1 - s0 < 0.1f) continue;
+                if (alongX) {
+                    float zc = line - nz * 0.06f;
+                    ibox(m, L, s0, zc - 0.015f, s1, zc + 0.015f, y1, y1 + rail, F_NOBOT, glass);
+                    ibox(m, L, s0, zc - 0.03f, s1, zc + 0.03f, y1 + rail, y1 + rail + 0.05f, F_NOBOT | F_BOT, metal);
+                } else {
+                    float xc = line - nx * 0.06f;
+                    ibox(m, L, xc - 0.015f, s0, xc + 0.015f, s1, y1, y1 + rail, F_NOBOT, glass);
+                    ibox(m, L, xc - 0.03f, s0, xc + 0.03f, s1, y1 + rail, y1 + rail + 0.05f, F_NOBOT | F_BOT, metal);
+                }
+            }
+        }
+    }
+}
+
+/* The inside of the envelope: glazing with mullions on the lobby's 1.5 m
+ * module (the facade shader's), a head panel above it, and a lining where a
+ * room or core stands against it (the facade outside is opaque there). */
+static void emit_envelope_inside(Mesh *m, const BGraph *g, const ILayout *L, const BSection *s, int si) {
+    const BLoop *loops[2] = { &s->foot.outer, &s->foot.hole };
+    Mat lining = imat(g, L, IS_LINING, 0), head = imat(g, L, IS_WALL, 0), metal = imat(g, L, IS_METAL, 0), glass = imat(g, L, IS_GLASS, 1);
+    float y0 = L->floorY, gt = L->glassTop, yc = L->ceilY;
+    float uvq[4][2] = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } };
+    for (int li = 0; li < 2; ++li) {
+        const BLoop *l = loops[li];
+        for (int k = 0; k < l->n; ++k) {
+            EdgeInfo e = edge_of(l, k);
+            if (e.len < 0.3f) continue;
+            float du0 = 1e9f, du1 = -1e9f, dTop = 0.0f;
+            for (int d = 0; d < g->ndoor && li == 0; ++d)
+                if (g->door[d].section == si && g->door[d].face == k && g->door[d].type == DOOR_PRIMARY) {
+                    du0 = g->door[d].u - g->door[d].width * 0.5f - 0.15f; du1 = g->door[d].u + g->door[d].width * 0.5f + 0.15f;
+                    dTop = y0 + g->door[d].height + 0.15f;
+                }
+            Xf sv = xf_save(m);
+            enter_face(m, l, k);
+            float span[64][2];
+            uint8_t lined[64];
+            Behind bh = { L, NULL, si };
+            int ns = envelope_spans(g, &bh, l, li, k, span, lined, 64);
+            for (int q = 0; q < ns; ++q) {
+                float u0 = span[q][0], u1 = q == ns - 1 ? e.len : span[q][1];
+                if (u1 - u0 > 0.01f) {
+                    if (lined[q]) {
+                        /* faced both ways: through the lobby glass beside it, a glance
+                           into the cavity behind the facade meets the lining, not the room */
+                        emit_quad(m, v3(u0, y0, -0.05f), v3(u1, y0, -0.05f), v3(u1, yc, -0.05f), v3(u0, yc, -0.05f), v3(0, 0, -1), uvq, lining);
+                        emit_quad(m, v3(u0, y0, -0.05f), v3(u1, y0, -0.05f), v3(u1, yc, -0.05f), v3(u0, yc, -0.05f), v3(0, 0, 1), uvq, lining);
+                    } else {
+                        emit_quad(m, v3(u0, gt, -0.03f), v3(u1, gt, -0.03f), v3(u1, yc, -0.03f), v3(u0, yc, -0.03f), v3(0, 0, -1), uvq, head);
+                        /* glass, split round the entrance */
+                        float cut0 = clampf(du0, u0, u1), cut1 = clampf(du1, u0, u1);
+                        if (cut0 - u0 > 0.01f) emit_quad(m, v3(u0, y0 + 0.08f, -0.015f), v3(cut0, y0 + 0.08f, -0.015f), v3(cut0, gt, -0.015f), v3(u0, gt, -0.015f), v3(0, 0, -1), uvq, glass);
+                        if (u1 - cut1 > 0.01f) emit_quad(m, v3(cut1, y0 + 0.08f, -0.015f), v3(u1, y0 + 0.08f, -0.015f), v3(u1, gt, -0.015f), v3(cut1, gt, -0.015f), v3(0, 0, -1), uvq, glass);
+                        if (cut1 - cut0 > 0.01f && gt > dTop) emit_quad(m, v3(cut0, dTop, -0.015f), v3(cut1, dTop, -0.015f), v3(cut1, gt, -0.015f), v3(cut0, gt, -0.015f), v3(0, 0, -1), uvq, glass);
+                        /* mullions, and one on each edge it shares with a lined stretch */
+                        float m0 = q > 0 ? u0 - 0.05f : u0 + 0.05f, m1 = q < ns - 1 ? u1 + 0.05f : u1 - 0.05f;
+                        for (float um = ceilf(m0 / 1.5f) * 1.5f; um < m1; um += 1.5f) {
+                            if (um > du0 - 0.05f && um < du1 + 0.05f) continue;
+                            emit_box(m, v3(um - 0.04f, y0, -0.15f), v3(um + 0.04f, gt, -0.01f), F_SIDES, metal, UV_FACADE);
+                        }
+                        emit_box(m, v3(u0, gt - 0.06f, -0.12f), v3(u1, gt, -0.01f), F_SIDES | F_BOT, metal, UV_FACADE);
+                    }
+                }
+            }
+            xf_restore(m, sv);
+        }
+    }
+}
+
+/* Height of a partition: up to the ceiling, or to the gallery slab's underside. */
+static float wall_top(const ILayout *L) {
+    return L->atrium.mode == IA_GALLERY && L->atrium.x1 > L->atrium.x0 ? L->atrium.galleryY - 0.35f : L->ceilY;
+}
+
+/* A strip of half-thickness t centred on a partition run. */
+static void run_strip(const IWall *r, float t, float *x0, float *z0, float *x1, float *z1) {
+    if (fabsf(r->z1 - r->z0) < 1e-4f) { *x0 = r->x0; *x1 = r->x1; *z0 = r->z0 - t; *z1 = r->z0 + t; }
+    else                              { *x0 = r->x0 - t; *x1 = r->x0 + t; *z0 = r->z0; *z1 = r->z1; }
+}
+
+/* Is the frame point (x, z) at least `inset` inside the envelope? */
+static int inside_by(const ILayout *L, float x, float z, float inset) {
+    return bfoot_contains(&L->foot, x, z) && bfoot_boundary_dist(&L->foot, x, z, NULL, NULL) >= inset;
+}
+
+/* Stop a partition that runs into the envelope just behind the facade's
+ * lining (0.05 m in), so its end is not drawn on the facade's plane. */
+static void trim_run(const ILayout *L, IWall *r) {
+    float len = sqrtf((r->x1 - r->x0) * (r->x1 - r->x0) + (r->z1 - r->z0) * (r->z1 - r->z0));
+    if (len < 0.3f) return;
+    float ux = (r->x1 - r->x0) / len, uz = (r->z1 - r->z0) / len;
+    for (int s = 0; s < 40 && !inside_by(L, r->x0, r->z0, 0.055f); ++s) { r->x0 += ux * 0.005f; r->z0 += uz * 0.005f; }
+    for (int s = 0; s < 40 && !inside_by(L, r->x1, r->z1, 0.055f); ++s) { r->x1 -= ux * 0.005f; r->z1 -= uz * 0.005f; }
+}
+
+static void emit_partitions(Mesh *m, const BGraph *g, const ILayout *L) {
+    int max = 4096;
+    IWall *w = (IWall *)malloc(sizeof(IWall) * (size_t)max);
+    if (!w) fatal("out of memory realising an interior");
+    int n = interior_walls(L, w, max);
+    float y0 = L->floorY, top = wall_top(L);
+    Mat wall = imat(g, L, IS_WALL, 0), glass = imat(g, L, IS_GLASS, 0), metal = imat(g, L, IS_METAL, 0), door = imat(g, L, IS_DOOR, 0);
+    for (int k = 0; k < n; ++k) {
+        IWall rw = w[k];
+        trim_run(L, &rw);
+        const IWall *r = &rw;
+        int alongX = fabsf(r->z1 - r->z0) < 1e-4f;
+        float len = alongX ? r->x1 - r->x0 : r->z1 - r->z0, x0, z0, x1, z1;
+        if (len < 0.02f || r->door == 2) continue;                    /* gates: the speed gates stand there */
+        if (r->door == 1) {
+            float dTop = y0 + (r->doorKind == ID_INNER ? 2.6f : 2.15f);
+            if (r->type == IB_WALL) {
+                run_strip(r, 0.07f, &x0, &z0, &x1, &z1);
+                ibox(m, L, x0, z0, x1, z1, dTop, top, F_NOBOT | F_BOT, wall);
+            } else if (r->type == IB_GLASS) {
+                run_strip(r, 0.015f, &x0, &z0, &x1, &z1);
+                ibox(m, L, x0, z0, x1, z1, dTop + 0.08f, top - 0.06f, F_NOBOT, glass);
+                run_strip(r, 0.04f, &x0, &z0, &x1, &z1);
+                ibox(m, L, x0, z0, x1, z1, dTop, dTop + 0.08f, F_NOBOT | F_BOT, metal);
+                ibox(m, L, x0, z0, x1, z1, top - 0.06f, top, F_NOBOT | F_BOT, metal);
+            }
+            /* an open door leaf, swung into the room */
+            if (r->doorKind == ID_ROOM && r->side != 0) {
+                float s = (float)r->side;
+                if (alongX) ibox(m, L, r->x0, s > 0 ? r->z0 + 0.04f : r->z0 - len + 0.04f, r->x0 + 0.05f, s > 0 ? r->z0 + len : r->z0 - 0.04f, y0, y0 + 2.1f, F_NOBOT, door);
+                else        ibox(m, L, s > 0 ? r->x0 + 0.04f : r->x0 - len + 0.04f, r->z0, s > 0 ? r->x0 + len : r->x0 - 0.04f, r->z0 + 0.05f, y0, y0 + 2.1f, F_NOBOT, door);
+            }
+            continue;
+        }
+        if (r->type == IB_WALL) {
+            run_strip(r, 0.07f, &x0, &z0, &x1, &z1);
+            ibox(m, L, x0, z0, x1, z1, y0, top, F_NOBOT, wall);
+            continue;
+        }
+        float h = r->type == IB_BARRIER ? 1.0f : top - y0;
+        run_strip(r, 0.015f, &x0, &z0, &x1, &z1);
+        ibox(m, L, x0, z0, x1, z1, y0 + 0.06f, y0 + h - 0.06f, F_NOBOT, glass);
+        run_strip(r, 0.03f, &x0, &z0, &x1, &z1);
+        ibox(m, L, x0, z0, x1, z1, y0 + h - 0.06f, y0 + h, F_NOBOT | F_BOT, metal);
+        ibox(m, L, x0, z0, x1, z1, y0, y0 + 0.06f, F_SIDES | F_TOP, metal);
+        int np = (int)floorf(len / 1.5f);
+        for (int p = 0; p <= np; ++p) {        /* posts every 1.5 m or so */
+            float a = (alongX ? r->x0 : r->z0) + (np ? len * (float)p / (float)np : 0.0f);
+            if (alongX) ibox(m, L, a - 0.03f, r->z0 - 0.03f, a + 0.03f, r->z0 + 0.03f, y0, y0 + h, F_SIDES, metal);
+            else        ibox(m, L, r->x0 - 0.03f, a - 0.03f, r->x0 + 0.03f, a + 0.03f, y0, y0 + h, F_SIDES, metal);
+        }
+    }
+    free(w);
+}
+
+/* A panel on one face of a lift or stair door's grid line, on the hall side. */
+static void door_panel(Mesh *m, const ILayout *L, const IDoor *dr, float sg, float a0, float a1, float d0, float d1, float y0, float y1, Mat mt) {
+    float lm = (dr->axis == 0 ? L->gz0 : L->gx0) + dr->line * IN_CELL;
+    if (dr->axis == 0) ibox(m, L, a0, lm + sg * d0, a1, lm + sg * d1, y0, y1, F_NOBOT, mt);
+    else               ibox(m, L, lm + sg * d0, a0, lm + sg * d1, a1, y0, y1, F_NOBOT, mt);
+}
+
+/* Pull each side of a frame rectangle in until it stands `inset` inside the
+ * envelope, so a box on an outside wall stays behind the facade and its lining. */
+static int fit_inside(const ILayout *L, float *x0, float *z0, float *x1, float *z1, float inset) {
+    for (int pass = 0; pass < 2; ++pass)
+        for (int side = 0; side < 4; ++side) {
+            for (int step = 0; step < 20; ++step) {
+                int ok = 1;
+                for (int t = 0; t < 5 && ok; ++t) {
+                    float f = pass ? 0.01f + 0.245f * (float)t : 0.15f + 0.175f * (float)t;   /* the middle first, then corners */
+                    float x = *x0 + (*x1 - *x0) * f, z = *z0 + (*z1 - *z0) * f;
+                    if (side == 0) z = *z0; else if (side == 1) x = *x1; else if (side == 2) z = *z1; else x = *x0;
+                    ok = inside_by(L, x, z, inset);
+                }
+                if (ok) break;
+                if (side == 0) *z0 += 0.04f; else if (side == 1) *x1 -= 0.04f; else if (side == 2) *z1 -= 0.04f; else *x0 += 0.04f;
+            }
+        }
+    return *x1 - *x0 > 0.1f && *z1 - *z0 > 0.1f;
+}
+
+/* Lift shafts, stairs and risers as solids, with doors on the hall face. */
+static void emit_solids(Mesh *m, const BGraph *g, const ILayout *L) {
+    int16_t (*rc)[4] = (int16_t (*)[4])malloc(sizeof(int16_t) * 4 * 512);
+    if (!rc) fatal("out of memory realising an interior");
+    for (int r = 0; r < L->nreg; ++r) {
+        if (L->reg[r].kind != IK_SOLID || !L->reg[r].cells) continue;
+        int n = region_rects(L, r, 0, rc, 512);
+        Mat mt = imat(g, L, IS_CORE, L->reg[r].type);
+        for (int k = 0; k < n; ++k) {
+            float x0 = L->gx0 + rc[k][0] * IN_CELL, z0 = L->gz0 + rc[k][1] * IN_CELL, x1 = L->gx0 + rc[k][2] * IN_CELL, z1 = L->gz0 + rc[k][3] * IN_CELL;
+            if (fit_inside(L, &x0, &z0, &x1, &z1, 0.08f)) ibox(m, L, x0, z0, x1, z1, L->floorY, L->ceilY, F_SIDES, mt);
+        }
+    }
+    free(rc);
+    Mat metal = imat(g, L, IS_METAL, 0), amber = imat(g, L, IS_LIGHT, 1), white = imat(g, L, IS_LIGHT, 2), sign = imat(g, L, IS_SIGN, 0);
+    for (int d = 0; d < L->ndoor; ++d) {
+        const IDoor *dr = &L->door[d];
+        if (dr->kind != ID_LIFT && dr->kind != ID_STAIR) continue;
+        int lift = dr->kind == ID_LIFT;
+        int i0 = dr->axis == 0 ? dr->at : dr->line - 1, j0 = dr->axis == 0 ? dr->line - 1 : dr->at;
+        int lowHall = i0 >= 0 && j0 >= 0 && i0 < L->nx && j0 < L->nz && L->own[j0 * L->nx + i0] == dr->a;
+        float sg = lowHall ? -1.0f : 1.0f;
+        float a0 = (dr->axis == 0 ? L->gx0 : L->gz0) + dr->at * IN_CELL, ac = a0 + dr->len * IN_CELL * 0.5f;
+        float hw = lift ? 0.5f : 0.45f, h = lift ? 2.2f : 2.1f, y0 = L->floorY;
+        Mat leaf = imat(g, L, lift ? IS_LIFTDOOR : IS_DOOR, lift ? 0 : 1);
+        door_panel(m, L, dr, sg, ac - hw, ac + hw, 0.0f, 0.03f, y0, y0 + h, leaf);
+        door_panel(m, L, dr, sg, ac - hw - 0.08f, ac - hw, 0.0f, 0.06f, y0, y0 + h + 0.08f, metal);
+        door_panel(m, L, dr, sg, ac + hw, ac + hw + 0.08f, 0.0f, 0.06f, y0, y0 + h + 0.08f, metal);
+        door_panel(m, L, dr, sg, ac - hw, ac + hw, 0.0f, 0.06f, y0 + h, y0 + h + 0.08f, metal);
+        if (lift) {
+            door_panel(m, L, dr, sg, ac - 0.25f, ac + 0.25f, 0.0f, 0.04f, y0 + h + 0.25f, y0 + h + 0.38f, amber);   /* floor indicator */
+            door_panel(m, L, dr, sg, ac + hw + 0.25f, ac + hw + 0.35f, 0.0f, 0.03f, y0 + 1.0f, y0 + 1.2f, white);  /* call button */
+        } else {
+            door_panel(m, L, dr, sg, ac - 0.18f, ac + 0.18f, 0.0f, 0.04f, y0 + h + 0.2f, y0 + h + 0.36f, sign);    /* exit sign */
+        }
+    }
+}
+
+/* The side of a fixture's footprint away from its front, `depth` deep. */
+static void back_strip(const IFixture *f, float depth, float *x0, float *z0, float *x1, float *z1) {
+    *x0 = f->x0; *x1 = f->x1; *z0 = f->z0; *z1 = f->z1;
+    switch (f->facing) {
+    case 0:  *z0 = f->z1 - depth; break;
+    case 2:  *z1 = f->z0 + depth; break;
+    case 1:  *x1 = f->x0 + depth; break;
+    default: *x0 = f->x1 - depth; break;
+    }
+}
+
+static void emit_fixture(Mesh *m, const BGraph *g, const ILayout *L, const IFixture *f, int idx) {
+    float y0 = L->floorY + f->y0, y1 = L->floorY + f->y1, bx0, bz0, bx1, bz1;
+    uint8_t var = (uint8_t)(hash_combine(L->seed, (uint32_t)idx) & 0xFF);
+    switch (f->type) {
+    case IX_DESK: case IX_COUNTER:
+        ibox(m, L, f->x0 + 0.05f, f->z0 + 0.05f, f->x1 - 0.05f, f->z1 - 0.05f, y0, y1 - 0.04f, F_SIDES, imat(g, L, IS_WOOD, var));
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y1 - 0.04f, y1, F_NOBOT | F_BOT, imat(g, L, IS_STONE, 0));
+        break;
+    case IX_CHAIR:
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y0, y0 + 0.46f, F_NOBOT, imat(g, L, IS_FABRIC, var));
+        back_strip(f, 0.08f, &bx0, &bz0, &bx1, &bz1);
+        ibox(m, L, bx0, bz0, bx1, bz1, y0 + 0.46f, y1, F_NOBOT, imat(g, L, IS_FABRIC, var));
+        break;
+    case IX_SOFA: {
+        Mat fab = imat(g, L, IS_FABRIC, (uint8_t)(L->seed >> 3));
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y0, y0 + 0.42f, F_NOBOT, fab);
+        back_strip(f, 0.22f, &bx0, &bz0, &bx1, &bz1);
+        ibox(m, L, bx0, bz0, bx1, bz1, y0 + 0.42f, y1, F_NOBOT, fab);
+        break;
+    }
+    case IX_TABLE: {
+        float cx = 0.5f * (f->x0 + f->x1), cz = 0.5f * (f->z0 + f->z1);
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y1 - 0.05f, y1, F_NOBOT | F_BOT, imat(g, L, IS_WOOD, var));
+        ibox(m, L, cx - 0.08f, cz - 0.08f, cx + 0.08f, cz + 0.08f, y0, y1 - 0.05f, F_SIDES, imat(g, L, IS_METAL, 0));
+        break;
+    }
+    case IX_PLANTER:
+        ibox(m, L, f->x0 + 0.1f, f->z0 + 0.1f, f->x1 - 0.1f, f->z1 - 0.1f, y0, y0 + 0.55f, F_NOBOT, imat(g, L, IS_STONE, 1));
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y0 + 0.55f, y1, F_NOBOT | F_BOT, imat(g, L, IS_PLANT, var));
+        break;
+    case IX_FEATURE: {
+        float cx = 0.5f * (f->x0 + f->x1), cz = 0.5f * (f->z0 + f->z1);
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y0, y0 + 0.4f, F_NOBOT, imat(g, L, IS_STONE, 0));
+        ibox(m, L, cx - 0.3f, cz - 0.3f, cx + 0.3f, cz + 0.3f, y0 + 0.4f, y1, F_NOBOT, imat(g, L, IS_METAL, 1));
+        ibox(m, L, cx - 0.32f, cz - 0.32f, cx + 0.32f, cz + 0.32f, y1 - 0.9f, y1 - 0.75f, F_NOBOT | F_BOT, imat(g, L, IS_LIGHT, 3));
+        break;
+    }
+    case IX_FLIGHT: {
+        float rise = y1 - y0;
+        int n = (int)ceilf(rise / 0.18f);
+        if (n < 2) n = 2;
+        Mat step = imat(g, L, IS_STONE, 2), glass = imat(g, L, IS_GLASS, 0), metal = imat(g, L, IS_METAL, 0);
+        int alongZ = f->facing == 0 || f->facing == 2;
+        float r0 = alongZ ? f->z0 : f->x0, r1 = alongZ ? f->z1 : f->x1;      /* run, low end to high end */
+        if (f->facing == 0 || f->facing == 3) { float t = r0; r0 = r1; r1 = t; }
+        /* solid steps: each from the floor to its tread, over its own going only */
+        for (int k = 0; k < n; ++k) {
+            float a = r0 + (r1 - r0) * (float)k / (float)n, b = r0 + (r1 - r0) * (float)(k + 1) / (float)n;
+            float lo = minf(a, b), hi = maxf(a, b), h = y0 + rise * (float)(k + 1) / (float)n;
+            if (alongZ) ibox(m, L, f->x0, lo, f->x1, hi, y0, h, F_NOBOT, step);
+            else        ibox(m, L, lo, f->z0, hi, f->z1, y0, h, F_NOBOT, step);
+        }
+        /* a glass balustrade with a handrail up each side, following the nosings */
+        float yb0 = y0 + rise / (float)n, yb1 = y1, rail = 0.95f;
+        for (int s = 0; s < 2; ++s) {
+            float c = alongZ ? (s ? f->x1 - 0.04f : f->x0 + 0.04f) : (s ? f->z1 - 0.04f : f->z0 + 0.04f);
+            for (int side = 0; side < 2; ++side) {
+                float o = side ? 0.012f : -0.012f, nrm = side ? 1.0f : -1.0f;
+                if (alongZ) iwall_slope(m, L, c + o, r0, c + o, r1, yb0, yb1, rail - 0.05f, nrm, 0.0f, glass);
+                else        iwall_slope(m, L, r0, c + o, r1, c + o, yb0, yb1, rail - 0.05f, 0.0f, nrm, glass);
+                o = side ? 0.03f : -0.03f;
+                if (alongZ) iwall_slope(m, L, c + o, r0, c + o, r1, yb0 + rail - 0.05f, yb1 + rail - 0.05f, 0.06f, nrm, 0.0f, metal);
+                else        iwall_slope(m, L, r0, c + o, r1, c + o, yb0 + rail - 0.05f, yb1 + rail - 0.05f, 0.06f, 0.0f, nrm, metal);
+            }
+        }
+        break;
+    }
+    case IX_CUBICLE: {
+        Mat part = imat(g, L, IS_LINING, 1);
+        float t = 0.025f;
+        if (f->facing == 0 || f->facing == 2) {
+            ibox(m, L, f->x0, f->z0, f->x0 + t, f->z1, y0 + 0.15f, y1, F_NOBOT | F_BOT, part);
+            ibox(m, L, f->x1 - t, f->z0, f->x1, f->z1, y0 + 0.15f, y1, F_NOBOT | F_BOT, part);
+            float zf = f->facing == 0 ? f->z0 : f->z1 - t;
+            ibox(m, L, f->x0 + t, zf, f->x1 - t, zf + t, y0 + 0.15f, y1, F_NOBOT | F_BOT, part);
+        } else {
+            ibox(m, L, f->x0, f->z0, f->x1, f->z0 + t, y0 + 0.15f, y1, F_NOBOT | F_BOT, part);
+            ibox(m, L, f->x0, f->z1 - t, f->x1, f->z1, y0 + 0.15f, y1, F_NOBOT | F_BOT, part);
+            float xf = f->facing == 3 ? f->x0 : f->x1 - t;
+            ibox(m, L, xf, f->z0 + t, xf + t, f->z1 - t, y0 + 0.15f, y1, F_NOBOT | F_BOT, part);
+        }
+        break;
+    }
+    case IX_SCREEN:
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y0, y1, F_NOBOT | F_BOT, imat(g, L, IS_SCREEN, var));
+        break;
+    case IX_TURNSTILE:
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y0, y1 - 0.03f, F_NOBOT, imat(g, L, IS_METAL, 2));
+        ibox(m, L, f->x0 + 0.02f, f->z0 + 0.02f, f->x1 - 0.02f, f->z1 - 0.02f, y1 - 0.03f, y1, F_NOBOT, imat(g, L, IS_LIGHT, 0));
+        break;
+    case IX_PALLET:
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y0, y0 + 0.15f, F_NOBOT, imat(g, L, IS_WOOD, 1));
+        if (y1 > y0 + 0.3f) ibox(m, L, f->x0 + 0.05f, f->z0 + 0.05f, f->x1 - 0.05f, f->z1 - 0.05f, y0 + 0.15f, y1, F_NOBOT, imat(g, L, IS_FABRIC, 200));
+        break;
+    case IX_VANITY: case IX_UNIT:
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y0, y1, F_NOBOT, imat(g, L, f->region >= 0 && L->reg[f->region].type == IR_PLANT ? IS_METAL : IS_STONE, 3));
+        break;
+    default:   /* shelves, bins, racks, lockers */
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y0, y1, F_NOBOT, imat(g, L, IS_METAL, (uint8_t)(10 + f->type)));
+        break;
+    }
+}
+
+static void emit_interior(Mesh *m, const BGraph *g, const ILayout *L) {
+    const BSection *s = &g->sec[L->section];
+    const IAtrium *A = &L->atrium;
+    int hasVoid = A->x1 > A->x0 && (A->mode == IA_GALLERY || A->mode == IA_PODIUM);
+    float vx0 = L->gx0 + A->x0 * IN_CELL, vx1 = L->gx0 + A->x1 * IN_CELL, vz0 = L->gz0 + A->z0 * IN_CELL, vz1 = L->gz0 + A->z1 * IN_CELL;
+
+    /* floor: the true footprint, with region finishes laid over it in whole cells */
+    emit_cap(m, &s->foot, L->floorY + 0.01f, 0, iframe(m, imat(g, L, IS_FLOOR, 0)));
+    int16_t (*rc)[4] = (int16_t (*)[4])malloc(sizeof(int16_t) * 4 * 1024);
+    if (!rc) fatal("out of memory realising an interior");
+    for (int r = 1; r < L->nreg; ++r) {
+        if (L->reg[r].kind == IK_SOLID || !L->reg[r].cells) continue;
+        int n = region_rects(L, r, 1, rc, 1024);
+        Mat mt = iframe(m, imat(g, L, IS_ROOMFLOOR, L->reg[r].type));
+        for (int k = 0; k < n; ++k)
+            iflat(m, L, L->gx0 + rc[k][0] * IN_CELL, L->gz0 + rc[k][1] * IN_CELL, L->gx0 + rc[k][2] * IN_CELL, L->gz0 + rc[k][3] * IN_CELL, L->floorY + 0.02f, 0, mt);
+    }
+    free(rc);
+
+    /* ceiling, open over a podium void */
+    Mat ceiling = iframe(m, imat(g, L, IS_CEILING, 0));
+    if (A->mode == IA_PODIUM && hasVoid) emit_cap_minus(m, L, &s->foot.outer, vx0, vz0, vx1, vz1, L->ceilY - 0.03f, 1, ceiling);
+    else emit_cap(m, &s->foot, L->ceilY - 0.03f, 1, ceiling);
+
+    emit_envelope_inside(m, g, L, s, L->section);
+    emit_partitions(m, g, L);
+    emit_solids(m, g, L);
+    const IFixture *stair = NULL;
+    for (int f = 0; f < L->nfix; ++f) {
+        emit_fixture(m, g, L, &L->fix[f], f);
+        if (L->fix[f].type == IX_FLIGHT && L->fix[f].region == 0) stair = &L->fix[f];
+    }
+
+    if (hasVoid && A->mode == IA_GALLERY) {
+        /* the gallery: a slab round the void at half the storey height */
+        emit_cap_minus(m, L, &s->foot.outer, vx0, vz0, vx1, vz1, A->galleryY, 0, iframe(m, imat(g, L, IS_FLOOR, 1)));
+        emit_cap_minus(m, L, &s->foot.outer, vx0, vz0, vx1, vz1, A->galleryY - 0.35f, 1, iframe(m, imat(g, L, IS_CEILING, 1)));
+        emit_void_edges(m, g, L, A->galleryY - 0.35f, A->galleryY, 1.05f, stair);
+    } else if (hasVoid) {
+        /* a podium atrium: the void rises through the floors above to a glazed roof */
+        Mat office = imat(g, L, IS_OFFICE, 0), edge = imat(g, L, IS_WALL, 1), glass = imat(g, L, IS_GLASS, 0), metal = imat(g, L, IS_METAL, 0);
+        float y0 = L->ceilY - 0.03f, y1 = A->topY;
+        iwall(m, L, vx0, vz0, vx1, vz0, y0, y1, 0, 1, office);
+        iwall(m, L, vx1, vz0, vx1, vz1, y0, y1, -1, 0, office);
+        iwall(m, L, vx1, vz1, vx0, vz1, y0, y1, 0, -1, office);
+        iwall(m, L, vx0, vz1, vx0, vz0, y0, y1, 1, 0, office);
+        for (int f = 0; f < A->levels; ++f) {
+            float yl = L->ceilY + (float)f * g->floorH, e = 0.02f, r0 = yl + 0.05f, r1 = yl + 1.1f;
+            iwall(m, L, vx0, vz0 + e, vx1, vz0 + e, yl - 0.35f, yl + 0.05f, 0, 1, edge);
+            iwall(m, L, vx1 - e, vz0, vx1 - e, vz1, yl - 0.35f, yl + 0.05f, -1, 0, edge);
+            iwall(m, L, vx1, vz1 - e, vx0, vz1 - e, yl - 0.35f, yl + 0.05f, 0, -1, edge);
+            iwall(m, L, vx0 + e, vz1, vx0 + e, vz0, yl - 0.35f, yl + 0.05f, 1, 0, edge);
+            ibox(m, L, vx0, vz0 + 0.05f, vx1, vz0 + 0.08f, r0, r1, F_NOBOT, glass);
+            ibox(m, L, vx0, vz1 - 0.08f, vx1, vz1 - 0.05f, r0, r1, F_NOBOT, glass);
+            ibox(m, L, vx0 + 0.05f, vz0 + 0.08f, vx0 + 0.08f, vz1 - 0.08f, r0, r1, F_NOBOT, glass);
+            ibox(m, L, vx1 - 0.08f, vz0 + 0.08f, vx1 - 0.05f, vz1 - 0.08f, r0, r1, F_NOBOT, glass);
+            ibox(m, L, vx0, vz0 + 0.03f, vx1, vz0 + 0.1f, r1, r1 + 0.05f, F_NOBOT | F_BOT, metal);
+            ibox(m, L, vx0, vz1 - 0.1f, vx1, vz1 - 0.03f, r1, r1 + 0.05f, F_NOBOT | F_BOT, metal);
+        }
+        iflat(m, L, vx0, vz0, vx1, vz1, y1 - 0.02f, 1, imat(g, L, IS_SKYLIGHT, 0));
+        for (float x = vx0 + 1.5f; x < vx1 - 0.5f; x += 1.5f) ibox(m, L, x - 0.04f, vz0, x + 0.04f, vz1, y1 - 0.2f, y1 - 0.03f, F_SIDES | F_BOT, metal);
+    }
+}
+
+/* Steel doors the building graph does not hold: a synthesised service
+ * entrance, and the escape stair's fire exits. */
+static void emit_steel_door(Mesh *m, const BGraph *g, const BLoop *l, int face, float u, float w, uint32_t seed) {
+    const float gy = SIDEWALK_HEIGHT;
+    Xf sv = xf_save(m);
+    float len = enter_face(m, l, face);
+    Face f = face_local(len);
+    float u0 = clampf(u - w * 0.5f, 0.2f, len - 0.2f - w), u1 = u0 + w, y1 = gy + 2.2f;
+    emit_box(m, v3(u0 - 0.1f, gy, 0.0f), v3(u1 + 0.1f, y1 + 0.1f, 0.06f), F_NOBOT, mat(MAT_METAL, g->seed, 3, 0, 0), UV_FACADE);
+    emit_face_panel(m, &f, u0, u1, gy, y1, 0.08f, mat(MAT_DOOR, seed, DOOR_SERVICE, q_half(w), q_half(2.2f)));
+    emit_emissive_box(m, v3(0.5f * (u0 + u1), y1 + 0.35f, 0.2f), 0.12f, 0, 2, 0);
+    xf_restore(m, sv);
+}
+
+static void emit_interior_doors(Mesh *m, const BGraph *g, const ILayout *L) {
+    const BLoop *l = &g->sec[L->section].foot.outer;
+    if (L->synthFace >= 0) emit_steel_door(m, g, l, L->synthFace, L->synthU, L->synthW, hash_combine(L->seed, 0x5EDu));
+    for (int d = 0; d < L->ndoor; ++d) {
+        const IDoor *dr = &L->door[d];
+        if (dr->kind != ID_FIRE) continue;
+        float a = (dr->at + dr->len * 0.5f) * IN_CELL, lm = dr->line * IN_CELL, fx, fz, x, z;
+        if (dr->axis == 0) { fx = L->gx0 + a; fz = L->gz0 + lm; } else { fx = L->gx0 + lm; fz = L->gz0 + a; }
+        interior_to_local(L, fx, fz, &x, &z);
+        int best = -1;
+        float bd = 1.5f, bu = 0.0f;
+        for (int k = 0; k < l->n; ++k) {
+            EdgeInfo e = edge_of(l, k);
+            float t = (x - e.ax) * e.ex + (z - e.az) * e.ez;
+            if (t < 0.8f || t > e.len - 0.8f) continue;
+            float px = e.ax + e.ex * t - x, pz = e.az + e.ez * t - z, dd = sqrtf(px * px + pz * pz);
+            if (dd < bd) { bd = dd; best = k; bu = t; }
+        }
+        if (best >= 0) emit_steel_door(m, g, l, best, bu, 1.0f, hash_combine(L->seed, (uint32_t)d));
+    }
+}
+
+/* ===========================================================================
+ * Arcologies (src/arcology.c): the concourse level, its market blocks and the
+ * canyon realised in the building frame. As for a lobby, the planning frame is
+ * the building frame turned in quarter turns, so its rectangles are boxes.
+ * Every MAT_ARCOLOGY vertex carries its stratum height, so shadeArcology can
+ * make the street stratum wet, grimy and sodium-lit and the upper strata
+ * sparse and warm. Signs, screens and lamp heads reuse the street's neon,
+ * screen and emissive materials.
+ * ========================================================================= */
+
+static Mat amat(const ALayout *A, int surf, int var, float t) {
+    return mat(MAT_ARCOLOGY, A->seed, (uint8_t)surf, (uint8_t)var, (uint8_t)(clampf(t, 0.0f, 1.0f) * 255.0f + 0.5f));
+}
+
+/* Frame face bits (F_NX .. F_PZ) as the building frame's. */
+static int afaces(const ALayout *A, int faces) {
+    static const float N[4][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
+    int out = faces & (F_TOP | F_BOT);
+    for (int f = 0; f < 4; ++f)
+        if (faces & (1 << f)) {
+            float x, z;
+            arcology_to_local(A, N[f][0], N[f][1], &x, &z);
+            out |= 1 << (x < -0.5f ? 0 : x > 0.5f ? 1 : z < -0.5f ? 2 : 3);
+        }
+    return out;
+}
+
+static void abox(Mesh *m, const ALayout *A, float x0, float z0, float x1, float z1, float y0, float y1, int faces, Mat mt) {
+    float ax, az, bx, bz;
+    arcology_to_local(A, x0, z0, &ax, &az);
+    arcology_to_local(A, x1, z1, &bx, &bz);
+    if (y1 - y0 < 1e-3f || fabsf(ax - bx) < 1e-3f || fabsf(az - bz) < 1e-3f) return;
+    emit_box(m, v3(minf(ax, bx), y0, minf(az, bz)), v3(maxf(ax, bx), y1, maxf(az, bz)), afaces(A, faces), mt, UV_FACADE);
+}
+
+static void abox_r(Mesh *m, const ALayout *A, ARect r, float y0, float y1, int faces, Mat mt) { abox(m, A, r.x0, r.z0, r.x1, r.z1, y0, y1, faces, mt); }
+
+/* A flat frame rectangle at y; uv building metres, or given per frame corner (x0z0, x1z0, x1z1, x0z1). */
+static void aflat(Mesh *m, const ALayout *A, ARect r, float y, int down, const float (*uvIn)[2], Mat mt) {
+    float px[4] = { r.x0, r.x1, r.x1, r.x0 }, pz[4] = { r.z0, r.z0, r.z1, r.z1 }, uv[4][2];
+    vec3 p[4];
+    if (r.x1 - r.x0 < 1e-3f || r.z1 - r.z0 < 1e-3f) return;
+    for (int i = 0; i < 4; ++i) {
+        float x, z;
+        arcology_to_local(A, px[i], pz[i], &x, &z);
+        p[i] = v3(x, y, z);
+        uv[i][0] = uvIn ? uvIn[i][0] : x; uv[i][1] = uvIn ? uvIn[i][1] : z;
+    }
+    emit_quad(m, p[0], p[1], p[2], p[3], v3(0, down ? -1.0f : 1.0f, 0), uv, mt);
+}
+
+/* A vertical quad on the frame line (x0,z0)-(x1,z1), y0..y1, facing frame (nx, nz); uv u0..u1 along it, v0..v1 up. */
+static void awall(Mesh *m, const ALayout *A, float x0, float z0, float x1, float z1, float y0, float y1, float nx, float nz,
+                  float u0, float u1, float v0, float v1, Mat mt) {
+    float ax, az, bx, bz, lnx, lnz;
+    if (y1 - y0 < 1e-3f || (fabsf(x1 - x0) < 1e-3f && fabsf(z1 - z0) < 1e-3f)) return;
+    arcology_to_local(A, x0, z0, &ax, &az);
+    arcology_to_local(A, x1, z1, &bx, &bz);
+    arcology_to_local(A, nx, nz, &lnx, &lnz);
+    float uv[4][2] = { { u0, v0 }, { u1, v0 }, { u1, v1 }, { u0, v1 } };
+    emit_quad(m, v3(ax, y0, az), v3(bx, y0, bz), v3(bx, y1, bz), v3(ax, y1, az), v3(lnx, 0, lnz), uv, mt);
+}
+
+/* A sign plane facing (nx, nz), its uv running 0..1 left to right as seen from the front. */
+static void asign_quad(Mesh *m, const ALayout *A, float x0, float z0, float x1, float z1, float y0, float y1, float nx, float nz, Mat mt) {
+    if ((x1 - x0) * nz - (z1 - z0) * nx < 0.0f) { float t = x0; x0 = x1; x1 = t; t = z0; z0 = z1; z1 = t; }
+    awall(m, A, x0, z0, x1, z1, y0, y1, nx, nz, 0, 1, 0, 1, mt);
+}
+
+/* Greedy rectangles over the cells whose use is in useMask (and in block blk, if >= 0). */
+static int arc_rects(const ALayout *A, uint32_t useMask, int blk, ARect *out, int max) {
+    int N = A->nx * A->nz, n = 0;
+    uint8_t *used = (uint8_t *)calloc((size_t)N, 1);
+    if (!used) fatal("out of memory realising an arcology");
+#define AWANT(i, j) ((useMask & (1u << A->use[(j) * A->nx + (i)])) && (blk < 0 || A->blk[(j) * A->nx + (i)] == blk) && !used[(j) * A->nx + (i)])
+    for (int j = 0; j < A->nz && n < max; ++j)
+        for (int i = 0; i < A->nx && n < max; ++i) {
+            if (!AWANT(i, j)) continue;
+            int i1 = i + 1, j1 = j + 1;
+            while (i1 < A->nx && AWANT(i1, j)) i1++;
+            for (;;) {
+                if (j1 >= A->nz) break;
+                int ok = 1;
+                for (int a = i; a < i1 && ok; ++a) ok = AWANT(a, j1);
+                if (!ok) break;
+                j1++;
+            }
+            for (int b = j; b < j1; ++b) for (int a = i; a < i1; ++a) used[b * A->nx + a] = 1;
+            out[n].x0 = A->gx0 + (float)i * AR_CELL; out[n].z0 = A->gz0 + (float)j * AR_CELL;
+            out[n].x1 = A->gx0 + (float)i1 * AR_CELL; out[n].z1 = A->gz0 + (float)j1 * AR_CELL;
+            n++;
+        }
+#undef AWANT
+    free(used);
+    return n;
+}
+
+/* A footprint outline (building frame) minus frame rectangles, as caps facing up or down. */
+typedef struct CapPiece { int n; float p[2 * BG_MAX_PV][2]; } CapPiece;
+
+static void emit_cap_holes(Mesh *m, const ALayout *A, const BLoop *outer, const ARect *holes, int nh, float y, int down, Mat mt) {
+    enum { MAXP = 48 };
+    CapPiece *cur = (CapPiece *)malloc(sizeof(CapPiece) * MAXP), *nxt = (CapPiece *)malloc(sizeof(CapPiece) * MAXP);
+    if (!cur || !nxt) fatal("out of memory realising an arcology");
+    int nc = 1;
+    cur[0].n = outer->n;
+    for (int i = 0; i < outer->n; ++i) { cur[0].p[i][0] = outer->x[i]; cur[0].p[i][1] = outer->z[i]; }
+    for (int h = 0; h < nh; ++h) {
+        float ax, az, bx, bz;
+        arcology_to_local(A, holes[h].x0, holes[h].z0, &ax, &az);
+        arcology_to_local(A, holes[h].x1, holes[h].z1, &bx, &bz);
+        float x0 = minf(ax, bx), x1 = maxf(ax, bx), z0 = minf(az, bz), z1 = maxf(az, bz);
+        int nn = 0;
+        for (int c = 0; c < nc; ++c) {
+            float b[2 * BG_MAX_PV][2], t[2 * BG_MAX_PV][2];
+            for (int piece = 0; piece < 4 && nn < MAXP; ++piece) {
+                CapPiece *o = &nxt[nn];
+                if (piece == 0)      o->n = clip_half((const float (*)[2])cur[c].p, cur[c].n, -1, 0, x0, o->p);
+                else if (piece == 1) o->n = clip_half((const float (*)[2])cur[c].p, cur[c].n, 1, 0, -x1, o->p);
+                else {
+                    int k = clip_half((const float (*)[2])cur[c].p, cur[c].n, 1, 0, -x0, b);
+                    k = clip_half((const float (*)[2])b, k, -1, 0, x1, t);
+                    o->n = piece == 2 ? clip_half((const float (*)[2])t, k, 0, -1, z0, o->p) : clip_half((const float (*)[2])t, k, 0, 1, -z1, o->p);
+                }
+                if (o->n >= 3) nn++;
+            }
+        }
+        CapPiece *sw = cur; cur = nxt; nxt = sw;
+        nc = nn;
+    }
+    for (int c = 0; c < nc; ++c) {
+        if (cur[c].n > BG_MAX_PV) continue;
+        BFoot f;
+        memset(&f, 0, sizeof(f));
+        f.outer.n = cur[c].n;
+        for (int i = 0; i < cur[c].n; ++i) { f.outer.x[i] = cur[c].p[i][0]; f.outer.z[i] = cur[c].p[i][1]; }
+        if (fabsf(bloop_area(&f.outer)) < 0.01f) continue;
+        emit_cap(m, &f, y, down, mt);
+    }
+    free(cur); free(nxt);
+}
+
+/* Runs (from, to along the axis) of a concourse's line `off` across its centre that lie over street, not the canyon floor. */
+static int arc_street_runs(const ALayout *A, const AConcourse *c, float off, float (*run)[2], int max) {
+    float mid = (c->axis ? 0.5f * (c->r.x0 + c->r.x1) : 0.5f * (c->r.z0 + c->r.z1)) + off;
+    float a0 = c->axis ? c->r.z0 : c->r.x0, a1 = c->axis ? c->r.z1 : c->r.x1, start = 0.0f;
+    int n = 0, inRun = 0;
+    for (float a = a0; a <= a1 + 1e-3f; a += AR_CELL) {
+        int u = a < a1 ? (c->axis ? arcology_use_at(A, mid, a + 0.25f) : arcology_use_at(A, a + 0.25f, mid)) : AU_OUT;
+        int ok = u == AU_CONCOURSE || u == AU_COLONNADE;
+        if (ok && !inRun) { inRun = 1; start = a; }
+        if (!ok && inRun) { inRun = 0; if (a - start >= 1.0f && n < max) { run[n][0] = start; run[n][1] = a; n++; } }
+    }
+    return n;
+}
+
+/* Sodium lamps along a concourse, for the floor's analytic pools (shadeArcology):
+ * step | phase << 8 | offset across << 16 | height << 24, in decimetres. */
+static uint32_t lamp_pack(const ALayout *A, const AConcourse *c) {
+    uint32_t s = (uint32_t)clampf(c->lampStep * 10.0f + 0.5f, 1.0f, 255.0f), p = (uint32_t)clampf(c->lampPhase * 10.0f + 0.5f, 0.0f, 255.0f);
+    uint32_t o = (uint32_t)clampf(c->lampOff * 10.0f + 0.5f, 0.0f, 255.0f), h = (uint32_t)clampf((A->lamp[0].y - A->floorY) * 10.0f + 0.5f, 0.0f, 255.0f);
+    if (!A->nlamp) h = 50;
+    return s | p << 8 | o << 16 | h << 24;
+}
+
+/* The concourse level's floor: base, streets (with their lamp pools), plaza, hall, yard, stalls. */
+static void emit_arc_floor(Mesh *m, const BGraph *g, const ALayout *A) {
+    const BSection *gs = &g->sec[A->tier[0].section];
+    float fy = A->floorY;
+    emit_cap(m, &gs->foot, fy + 0.01f, 0, iframe(m, amat(A, ARS_FLOOR, 5, 0.0f)));
+    for (int c = 0; c < A->nconc; ++c) {
+        const AConcourse *cc = &A->conc[c];
+        float run[16][2];
+        int nr = arc_street_runs(A, cc, 0.0f, run, 16);
+        float mid = cc->axis ? 0.5f * (cc->r.x0 + cc->r.x1) : 0.5f * (cc->r.z0 + cc->r.z1), hw = cc->axis ? 0.5f * (cc->r.x1 - cc->r.x0) : 0.5f * (cc->r.z1 - cc->r.z0);
+        float a0 = cc->axis ? cc->r.z0 : cc->r.x0;
+        Mat mt = amat(A, ARS_STREET, cc->boulevard ? 1 : 0, 0.0f);
+        mt.aux = lamp_pack(A, cc);
+        for (int r = 0; r < nr; ++r) {
+            ARect q;
+            float uv[4][2];
+            if (cc->axis) {
+                q = (ARect){ mid - hw, run[r][0], mid + hw, run[r][1] };
+                float u0 = run[r][0] - a0, u1 = run[r][1] - a0;
+                uv[0][0] = u0; uv[0][1] = -hw; uv[1][0] = u0; uv[1][1] = hw; uv[2][0] = u1; uv[2][1] = hw; uv[3][0] = u1; uv[3][1] = -hw;
+            } else {
+                q = (ARect){ run[r][0], mid - hw, run[r][1], mid + hw };
+                float u0 = run[r][0] - a0, u1 = run[r][1] - a0;
+                uv[0][0] = u0; uv[0][1] = -hw; uv[1][0] = u1; uv[1][1] = -hw; uv[2][0] = u1; uv[2][1] = hw; uv[3][0] = u0; uv[3][1] = hw;
+            }
+            aflat(m, A, q, fy + 0.02f, 0, (const float (*)[2])uv, mt);
+        }
+    }
+    ARect *rc = (ARect *)malloc(sizeof(ARect) * 1024);
+    if (!rc) fatal("out of memory realising an arcology");
+    static const struct { int use, var; } F[] = { { AU_COLONNADE, 4 }, { AU_PLAZA, 0 }, { AU_HALL, 2 }, { AU_YARD, 1 }, { AU_STALL, 3 }, { AU_COREHALL, 6 }, { AU_KIOSK, 7 } };
+    for (int f = 0; f < (int)ARRAY_LEN(F); ++f) {
+        int n = arc_rects(A, 1u << F[f].use, -1, rc, 1024);
+        Mat mt = iframe(m, amat(A, ARS_FLOOR, F[f].var, 0.0f));
+        for (int k = 0; k < n; ++k) aflat(m, A, rc[k], fy + (F[f].use == AU_COLONNADE ? 0.02f : 0.025f), 0, NULL, mt);
+    }
+    free(rc);
+}
+
+/* The concourse ceiling (open where the canyon rises), with stepped beams on the column lines. */
+static void emit_arc_ceiling(Mesh *m, const BGraph *g, const ALayout *A) {
+    const BSection *gs = &g->sec[A->tier[0].section];
+    float top = A->ceilY - 0.4f, s = A->colSpacing;
+    emit_cap_holes(m, A, &gs->foot.outer, A->voids, A->nvoid, top, 1, iframe(m, amat(A, ARS_CEILING, 0, 0.0f)));
+    Mat beam = amat(A, ARS_BEAM, 0, 0.0f), transfer = amat(A, ARS_BEAM, 1, 0.0f);
+    float gx1 = A->gx0 + (float)A->nx * AR_CELL, gz1 = A->gz0 + (float)A->nz * AR_CELL;
+    for (int axis = 0; axis < 2; ++axis) {
+        float o = axis ? A->gridOx : A->gridOz, lo = axis ? A->gx0 : A->gz0, hi = axis ? gx1 : gz1;
+        for (float line = o - ceilf((o - lo) / s) * s; line <= hi; line += s) {
+            if (line < lo + 1.0f || line > hi - 1.0f) continue;
+            float a0 = axis ? A->gz0 : A->gx0, a1 = axis ? gz1 : gx1, start = 0.0f;
+            int inRun = 0;
+            for (float a = a0; a <= a1 + 1e-3f; a += AR_CELL) {
+                float x = axis ? line : a + 0.25f, z = axis ? a + 0.25f : line;
+                int ok = a < a1 && arcology_use_at(A, x, z) != AU_OUT;
+                for (int v = 0; v < A->nvoid && ok; ++v) ok = !(x > A->voids[v].x0 - 0.8f && x < A->voids[v].x1 + 0.8f && z > A->voids[v].z0 - 0.8f && z < A->voids[v].z1 + 0.8f);
+                if (ok && !inRun) { inRun = 1; start = a; }
+                if (!ok && inRun) {
+                    inRun = 0;
+                    if (a - start < 2.0f) continue;
+                    if (axis) { abox(m, A, line - 0.35f, start, line + 0.35f, a, top - 1.3f, top - 0.6f, F_SIDES | F_BOT, beam);
+                                abox(m, A, line - 0.7f, start, line + 0.7f, a, top - 0.6f, top, F_SIDES | F_BOT, beam); }
+                    else      { abox(m, A, start, line - 0.35f, a, line + 0.35f, top - 1.3f, top - 0.6f, F_SIDES | F_BOT, beam);
+                                abox(m, A, start, line - 0.7f, a, line + 0.7f, top - 0.6f, top, F_SIDES | F_BOT, beam); }
+                }
+            }
+        }
+    }
+    for (int b = 0; b < A->nbeam; ++b) {
+        const ABeam *bm = &A->beam[b];
+        if (fabsf(bm->z1 - bm->z0) < 0.01f) abox(m, A, minf(bm->x0, bm->x1), bm->z0 - 0.8f, maxf(bm->x0, bm->x1), bm->z0 + 0.8f, top - 1.8f, top, F_SIDES | F_BOT, transfer);
+        else if (fabsf(bm->x1 - bm->x0) < 0.01f) abox(m, A, bm->x0 - 0.8f, minf(bm->z0, bm->z1), bm->x0 + 0.8f, maxf(bm->z0, bm->z1), top - 1.8f, top, F_SIDES | F_BOT, transfer);
+    }
+}
+
+/* The inside of the envelope: glazing and mullions on the 1.5 m module where a
+ * street meets the facade, a lining where a block stands against it, and the
+ * streetlight slatted through the mullions onto the floor. */
+static void emit_arc_envelope(Mesh *m, const BGraph *g, const ALayout *A) {
+    int si = A->tier[0].section;
+    const BLoop *l = &g->sec[si].foot.outer;
+    Behind bh = { NULL, A, si };
+    Mat lining = amat(A, ARS_LINING, 0, 0.0f), head = amat(A, ARS_LINING, 1, 0.0f), metal = amat(A, ARS_METAL, 7, 0.0f);
+    Mat glass = amat(A, ARS_RAIL, 3, 0.0f), slat = amat(A, ARS_SLAT, 0, 0.0f);
+    float y0 = A->floorY, gt = A->ceilY - 1.2f, yc = A->ceilY - 0.4f;
+    float uvq[4][2] = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } };
+    for (int k = 0; k < l->n; ++k) {
+        EdgeInfo e = edge_of(l, k);
+        if (e.len < 0.3f) continue;
+        float span[64][2], op[8][3];
+        uint8_t lined[64];
+        int ns = envelope_spans(g, &bh, l, 0, k, span, lined, 64), nop = face_openings(g, &bh, 0, k, op, 8);
+        Xf sv = xf_save(m);
+        enter_face(m, l, k);
+        for (int q = 0; q < ns; ++q) {
+            float u0 = span[q][0], u1 = q == ns - 1 ? e.len : span[q][1];
+            if (u1 - u0 < 0.01f) continue;
+            if (lined[q]) {
+                emit_quad(m, v3(u0, y0, -0.05f), v3(u1, y0, -0.05f), v3(u1, yc, -0.05f), v3(u0, yc, -0.05f), v3(0, 0, -1), uvq, lining);
+                emit_quad(m, v3(u0, y0, -0.05f), v3(u1, y0, -0.05f), v3(u1, yc, -0.05f), v3(u0, yc, -0.05f), v3(0, 0, 1), uvq, lining);
+                continue;
+            }
+            emit_quad(m, v3(u0, gt, -0.03f), v3(u1, gt, -0.03f), v3(u1, yc, -0.03f), v3(u0, yc, -0.03f), v3(0, 0, -1), uvq, head);
+            /* glass, cut round the openings (glazed above them up to the head) */
+            float cur = u0;
+            for (int o = 0; o <= nop; ++o) {
+                float a = cur, c = o < nop ? minf(u1, op[o][0]) : u1;
+                if (o < nop && op[o][1] < u0) continue;
+                if (c - a > 0.01f) {
+                    emit_quad(m, v3(a, y0 + 0.08f, -0.015f), v3(c, y0 + 0.08f, -0.015f), v3(c, gt, -0.015f), v3(a, gt, -0.015f), v3(0, 0, -1), uvq, glass);
+                    /* streetlight through this glass: slats on the floor, keyed to the mullions */
+                    float suv[4][2] = { { a, 0.1f }, { c, 0.1f }, { c, 4.5f }, { a, 4.5f } };
+                    emit_quad(m, v3(a, y0 + 0.03f, -0.1f), v3(c, y0 + 0.03f, -0.1f), v3(c, y0 + 0.03f, -4.5f), v3(a, y0 + 0.03f, -4.5f), v3(0, 1, 0), suv, slat);
+                }
+                if (o < nop) {
+                    float b0 = maxf(u0, op[o][0]), b1 = minf(u1, op[o][1]);
+                    if (b1 - b0 > 0.01f && gt > op[o][2] + 0.1f)
+                        emit_quad(m, v3(b0, op[o][2], -0.015f), v3(b1, op[o][2], -0.015f), v3(b1, gt, -0.015f), v3(b0, gt, -0.015f), v3(0, 0, -1), uvq, glass);
+                    cur = maxf(cur, op[o][1]);
+                }
+            }
+            float m0 = q > 0 ? u0 - 0.05f : u0 + 0.05f, m1 = q < ns - 1 ? u1 + 0.05f : u1 - 0.05f;
+            for (float um = ceilf(m0 / 1.5f) * 1.5f; um < m1; um += 1.5f) {
+                int inOpen = 0;
+                for (int o = 0; o < nop && !inOpen; ++o) inOpen = um > op[o][0] - 0.05f && um < op[o][1] + 0.05f;
+                float mb = y0;
+                for (int o = 0; o < nop && inOpen; ++o) if (um > op[o][0] - 0.05f && um < op[o][1] + 0.05f) mb = op[o][2];
+                emit_box(m, v3(um - 0.05f, mb, -0.18f), v3(um + 0.05f, gt, -0.01f), F_SIDES, metal, UV_FACADE);
+            }
+            emit_box(m, v3(u0, gt - 0.08f, -0.14f), v3(u1, gt, -0.01f), F_SIDES | F_BOT, metal, UV_FACADE);
+        }
+        xf_restore(m, sv);
+    }
+}
+
+/* A megastructure column: plinth, shaft and a stepped (ziggurat) capital. */
+static void emit_arc_column(Mesh *m, const ALayout *A, const AColumn *c) {
+    float h = c->size * 0.5f, fy = A->floorY, top = A->ceilY - 0.4f, c0 = top - 1.7f;
+    Mat col = amat(A, ARS_COLUMN, c->ring, 0.0f), cap = amat(A, ARS_CAPITAL, c->ring, 0.0f);
+    abox(m, A, c->x - h * 1.15f, c->z - h * 1.15f, c->x + h * 1.15f, c->z + h * 1.15f, fy, fy + 0.6f, F_NOBOT, cap);
+    abox(m, A, c->x - h, c->z - h, c->x + h, c->z + h, fy + 0.6f, c0, F_SIDES, col);
+    static const float STEP[3][2] = { { 1.25f, 0.45f }, { 1.6f, 0.55f }, { 2.0f, 0.7f } };
+    float y = c0;
+    for (int s = 0; s < 3; ++s) {
+        float w = h * STEP[s][0];
+        abox(m, A, c->x - w, c->z - w, c->x + w, c->z + w, y, y + STEP[s][1], F_SIDES | F_BOT, cap);
+        y += STEP[s][1];
+    }
+    if (c->ring) {   /* the setback piers wear a neon band, so the nested colonnades read */
+        float w = h + 0.03f;
+        abox(m, A, c->x - w, c->z - w, c->x + w, c->z + w, fy + 3.0f, fy + 3.18f, F_SIDES, mat(MAT_LEDSTRIP, A->seed, A->palette[1], 0, 0));
+    }
+}
+
+/* Lift doors in a row on side `d` of rect r: n doors of width w. */
+static void emit_arc_lifts(Mesh *m, const ALayout *A, ARect r, int d, int n, float w, float h, int var) {
+    float fy = A->floorY;
+    float a0 = (d == 0 || d == 2) ? r.x0 : r.z0, a1 = (d == 0 || d == 2) ? r.x1 : r.z1, line = d == 0 ? r.z0 : d == 2 ? r.z1 : d == 1 ? r.x1 : r.x0;
+    float nx = d == 1 ? 1.0f : d == 3 ? -1.0f : 0.0f, nz = d == 0 ? -1.0f : d == 2 ? 1.0f : 0.0f;
+    float pitch = (a1 - a0) / (float)n;
+    if (pitch < w + 0.6f) { n = (int)((a1 - a0) / (w + 0.6f)); pitch = n ? (a1 - a0) / (float)n : 0.0f; }
+    Mat door = amat(A, ARS_LIFTDOOR, var, 0.0f), frame = amat(A, ARS_METAL, 4, 0.0f), lamp = amat(A, ARS_LIFTDOOR, 9, 0.0f);
+    for (int i = 0; i < n; ++i) {
+        float c = a0 + pitch * ((float)i + 0.5f), o = 0.03f;
+        if (d == 0 || d == 2) {
+            asign_quad(m, A, c - w * 0.5f, line + nz * o, c + w * 0.5f, line + nz * o, fy, fy + h, nx, nz, door);
+            abox(m, A, c - w * 0.5f - 0.12f, line + nz * 0.0f, c - w * 0.5f, line + nz * 0.08f, fy, fy + h + 0.12f, F_SIDES | F_TOP, frame);
+            abox(m, A, c + w * 0.5f, line + nz * 0.0f, c + w * 0.5f + 0.12f, line + nz * 0.08f, fy, fy + h + 0.12f, F_SIDES | F_TOP, frame);
+            abox(m, A, c - w * 0.5f, line, c + w * 0.5f, line + nz * 0.08f, fy + h, fy + h + 0.12f, F_SIDES | F_TOP | F_BOT, frame);
+            asign_quad(m, A, c - 0.3f, line + nz * 0.05f, c + 0.3f, line + nz * 0.05f, fy + h + 0.3f, fy + h + 0.45f, nx, nz, lamp);
+        } else {
+            asign_quad(m, A, line + nx * o, c - w * 0.5f, line + nx * o, c + w * 0.5f, fy, fy + h, nx, nz, door);
+            abox(m, A, line, c - w * 0.5f - 0.12f, line + nx * 0.08f, c - w * 0.5f, fy, fy + h + 0.12f, F_SIDES | F_TOP, frame);
+            abox(m, A, line, c + w * 0.5f, line + nx * 0.08f, c + w * 0.5f + 0.12f, fy, fy + h + 0.12f, F_SIDES | F_TOP, frame);
+            abox(m, A, line, c - w * 0.5f, line + nx * 0.08f, c + w * 0.5f, fy + h, fy + h + 0.12f, F_SIDES | F_TOP | F_BOT, frame);
+            asign_quad(m, A, line + nx * 0.05f, c - 0.3f, line + nx * 0.05f, c + 0.3f, fy + h + 0.3f, fy + h + 0.45f, nx, nz, lamp);
+        }
+    }
+}
+
+/* Market block masses: walls along every edge between mass and anything else
+ * (but the facade), flat roofs on top. mass_id: the block, 254 outside, 255 anything else. */
+static int mass_id(const ALayout *A, int i, int j) {
+    if (i < 0 || j < 0 || i >= A->nx || j >= A->nz) return 254;
+    int c = j * A->nx + i;
+    return A->use[c] == AU_BLOCK ? A->blk[c] : A->use[c] == AU_OUT ? 254 : 255;
+}
+
+static void emit_arc_blocks(Mesh *m, const ALayout *A) {
+    float fy = A->floorY;
+    for (int axis = 0; axis < 2; ++axis) {
+        int nLines = axis == 0 ? A->nz + 1 : A->nx + 1, nAlong = axis == 0 ? A->nx : A->nz;
+        for (int line = 0; line < nLines; ++line) {
+            int ra = 255, rb = 255, start = 0;
+            for (int k = 0; k <= nAlong; ++k) {
+                int a = 255, b = 255;
+                if (k < nAlong) {
+                    if (axis == 0) { a = mass_id(A, k, line - 1); b = mass_id(A, k, line); }
+                    else           { a = mass_id(A, line - 1, k); b = mass_id(A, line, k); }
+                    if (a == b) a = b = 255;
+                }
+                if (k < nAlong && a == ra && b == rb) continue;
+                if (k > 0 && (ra < 254 || rb < 254)) {
+                    float lm = (axis == 0 ? A->gz0 : A->gx0) + (float)line * AR_CELL;
+                    float s0 = (axis == 0 ? A->gx0 : A->gz0) + (float)start * AR_CELL, s1 = (axis == 0 ? A->gx0 : A->gz0) + (float)k * AR_CELL;
+                    for (int side = 0; side < 2; ++side) {
+                        int id = side ? rb : ra, other = side ? ra : rb;
+                        if (id >= 254 || other == 254) continue;          /* none against the facade: it is opaque there */
+                        const ABlock *B = &A->block[id];
+                        float dir = side ? -1.0f : 1.0f;     /* the wall faces away from its mass */
+                        Mat mt = amat(A, ARS_BLOCK, B->use, 0.0f);
+                        mt.seed = hash_combine(A->seed, (uint32_t)id);
+                        if (axis == 0) awall(m, A, s0, lm, s1, lm, fy, fy + B->height, 0.0f, dir, s0, s1, 0.0f, B->height, mt);
+                        else           awall(m, A, lm, s0, lm, s1, fy, fy + B->height, dir, 0.0f, s0, s1, 0.0f, B->height, mt);
+                    }
+                }
+                ra = a; rb = b; start = k;
+            }
+        }
+    }
+    ARect *rc = (ARect *)malloc(sizeof(ARect) * 512);
+    if (!rc) fatal("out of memory realising an arcology");
+    for (int b = 0; b < A->nblock; ++b) {
+        const ABlock *B = &A->block[b];
+        if (B->use == AB_KIOSK || B->use == AB_YARD) continue;
+        int n = arc_rects(A, 1u << AU_BLOCK, b, rc, 512);
+        Mat roof = iframe(m, amat(A, ARS_ROOF, B->use, 0.0f));
+        for (int k = 0; k < n; ++k) aflat(m, A, rc[k], fy + B->height, 0, NULL, roof);
+    }
+    free(rc);
+}
+
+/* A stall: side walls, a lit back, a canopy, and a shutter if it is closed. */
+static void emit_arc_stall(Mesh *m, const ALayout *A, const AStall *st) {
+    float fy = A->floorY, h = 3.2f, t = 0.08f;
+    ARect r = st->r;
+    int d = st->facing;
+    Mat in = amat(A, ARS_STALL, st->kind, 0.0f), roof = amat(A, ARS_STALLROOF, st->kind, 0.0f), shut = amat(A, ARS_SHUTTER, 0, 0.0f);
+    Mat out = amat(A, ARS_BLOCK, A->block[st->block].use, 0.0f);
+    in.seed = roof.seed = shut.seed = st->seed;
+    out.seed = hash_combine(A->seed, (uint32_t)st->block);
+    static const int FRONT[4] = { F_NZ, F_PX, F_PZ, F_NX };
+    if (d == 0 || d == 2) {
+        /* side walls: lit shelves inside, the block's own face outside */
+        awall(m, A, r.x0 + t, r.z0, r.x0 + t, r.z1, fy, fy + h, 1.0f, 0.0f, r.z0, r.z1, 0.0f, h, in);
+        awall(m, A, r.x1 - t, r.z0, r.x1 - t, r.z1, fy, fy + h, -1.0f, 0.0f, r.z0, r.z1, 0.0f, h, in);
+        awall(m, A, r.x0, r.z0, r.x0, r.z1, fy, fy + h, -1.0f, 0.0f, r.z0, r.z1, 0.0f, h, out);
+        awall(m, A, r.x1, r.z0, r.x1, r.z1, fy, fy + h, 1.0f, 0.0f, r.z0, r.z1, 0.0f, h, out);
+        abox(m, A, r.x0, d == 0 ? r.z0 : r.z1 - 0.01f, r.x0 + t, d == 0 ? r.z0 + 0.01f : r.z1, fy, fy + h, d == 0 ? F_NZ : F_PZ, out);
+        abox(m, A, r.x1 - t, d == 0 ? r.z0 : r.z1 - 0.01f, r.x1, d == 0 ? r.z0 + 0.01f : r.z1, fy, fy + h, d == 0 ? F_NZ : F_PZ, out);
+        float back = d == 0 ? r.z1 - 0.02f : r.z0 + 0.02f, nz = d == 0 ? -1.0f : 1.0f;
+        awall(m, A, r.x0, back, r.x1, back, fy, fy + h, 0.0f, nz, 0.0f, r.x1 - r.x0, 0.0f, h, in);
+        if (st->closed) { float fz = d == 0 ? r.z0 + 0.12f : r.z1 - 0.12f; awall(m, A, r.x0 + t, fz, r.x1 - t, fz, fy, fy + h, 0.0f, nz, 0.0f, r.x1 - r.x0, 0.0f, h, shut); }
+    } else {
+        awall(m, A, r.x0, r.z0 + t, r.x1, r.z0 + t, fy, fy + h, 0.0f, 1.0f, r.x0, r.x1, 0.0f, h, in);
+        awall(m, A, r.x0, r.z1 - t, r.x1, r.z1 - t, fy, fy + h, 0.0f, -1.0f, r.x0, r.x1, 0.0f, h, in);
+        awall(m, A, r.x0, r.z0, r.x1, r.z0, fy, fy + h, 0.0f, -1.0f, r.x0, r.x1, 0.0f, h, out);
+        awall(m, A, r.x0, r.z1, r.x1, r.z1, fy, fy + h, 0.0f, 1.0f, r.x0, r.x1, 0.0f, h, out);
+        abox(m, A, d == 3 ? r.x0 : r.x1 - 0.01f, r.z0, d == 3 ? r.x0 + 0.01f : r.x1, r.z0 + t, fy, fy + h, d == 3 ? F_NX : F_PX, out);
+        abox(m, A, d == 3 ? r.x0 : r.x1 - 0.01f, r.z1 - t, d == 3 ? r.x0 + 0.01f : r.x1, r.z1, fy, fy + h, d == 3 ? F_NX : F_PX, out);
+        float back = d == 1 ? r.x0 + 0.02f : r.x1 - 0.02f, nx = d == 1 ? 1.0f : -1.0f;
+        awall(m, A, back, r.z0, back, r.z1, fy, fy + h, nx, 0.0f, 0.0f, r.z1 - r.z0, 0.0f, h, in);
+        if (st->closed) { float fx = d == 1 ? r.x1 - 0.12f : r.x0 + 0.12f; awall(m, A, fx, r.z0 + t, fx, r.z1 - t, fy, fy + h, nx, 0.0f, 0.0f, r.z1 - r.z0, 0.0f, h, shut); }
+    }
+    abox(m, A, r.x0, r.z0, r.x1, r.z1, fy + h, fy + h + 0.15f, F_TOP | F_BOT | FRONT[d], roof);
+}
+
+static void emit_arc_fixture(Mesh *m, const ALayout *A, const AFix *f) {
+    float fy = A->floorY, y0 = fy + f->y0, y1 = fy + f->y1;
+    Mat metal = amat(A, ARS_METAL, 3, 0.0f);
+    switch (f->type) {
+    case AX_COUNTER: {
+        Mat c = amat(A, ARS_COUNTER, f->facing, 0.0f);
+        c.seed = f->seed;
+        abox(m, A, f->x0, f->z0, f->x1, f->z1, y0, y1, F_NOBOT, c);
+        break;
+    }
+    case AX_AWNING: {
+        /* sloping down and out from the stall front, with a valance and a string of lights */
+        int d = f->facing;
+        float hi = y1, lo = y0;
+        Mat cloth = amat(A, ARS_CRATE, 10, 0.0f), lights = mat(MAT_LEDSTRIP, f->seed, A->palette[f->seed % 3], (uint8_t)((f->seed >> 3) & 1), 0);
+        cloth.seed = f->seed;
+        float ax0, az0, ax1, az1, bx0, bz0, bx1, bz1;   /* inner edge (a) at the stall, outer edge (b) */
+        if (d == 0)      { ax0 = f->x0; ax1 = f->x1; az0 = az1 = f->z1; bx0 = f->x0; bx1 = f->x1; bz0 = bz1 = f->z0; }
+        else if (d == 2) { ax0 = f->x0; ax1 = f->x1; az0 = az1 = f->z0; bx0 = f->x0; bx1 = f->x1; bz0 = bz1 = f->z1; }
+        else if (d == 1) { az0 = f->z0; az1 = f->z1; ax0 = ax1 = f->x0; bz0 = f->z0; bz1 = f->z1; bx0 = bx1 = f->x1; }
+        else             { az0 = f->z0; az1 = f->z1; ax0 = ax1 = f->x1; bz0 = f->z0; bz1 = f->z1; bx0 = bx1 = f->x0; }
+        float lx[4], lz[4];
+        arcology_to_local(A, ax0, az0, &lx[0], &lz[0]); arcology_to_local(A, ax1, az1, &lx[1], &lz[1]);
+        arcology_to_local(A, bx1, bz1, &lx[2], &lz[2]); arcology_to_local(A, bx0, bz0, &lx[3], &lz[3]);
+        vec3 p[4] = { v3(lx[0], hi, lz[0]), v3(lx[1], hi, lz[1]), v3(lx[2], lo, lz[2]), v3(lx[3], lo, lz[3]) };
+        vec3 n = v3_norm(v3_cross(v3_sub(p[1], p[0]), v3_sub(p[3], p[0])));
+        if (n.y < 0.0f) n = v3_scale(n, -1.0f);
+        float len = fabsf(ax1 - ax0) + fabsf(az1 - az0);
+        float uv[4][2] = { { 0, 1 }, { len, 1 }, { len, 0 }, { 0, 0 } };
+        emit_quad(m, p[0], p[1], p[2], p[3], n, uv, cloth);
+        emit_quad(m, p[0], p[1], p[2], p[3], v3_scale(n, -1.0f), uv, cloth);
+        float onx = (float)(d == 1) - (float)(d == 3), onz = (float)(d == 2) - (float)(d == 0);
+        awall(m, A, bx0, bz0, bx1, bz1, lo - 0.3f, lo, onx, onz, 0.0f, len, 0.0f, 0.3f, cloth);
+        awall(m, A, bx0 + onx * 0.01f, bz0 + onz * 0.01f, bx1 + onx * 0.01f, bz1 + onz * 0.01f, lo - 0.34f, lo - 0.28f, onx, onz, 0.0f, len, 0.0f, 1.0f, lights);
+        break;
+    }
+    case AX_GATE:
+        abox(m, A, f->x0, f->z0, f->x1, f->z1, y0, y1 - 0.04f, F_NOBOT, metal);
+        abox(m, A, f->x0 + 0.03f, f->z0 + 0.03f, f->x1 - 0.03f, f->z1 - 0.03f, y1 - 0.04f, y1, F_NOBOT, mat(MAT_LEDSTRIP, f->seed, 3, 0, 0));
+        break;
+    case AX_BOOTH:
+        abox(m, A, f->x0, f->z0, f->x1, f->z1, y0, y0 + 1.1f, F_NOBOT, amat(A, ARS_KIOSK, 1, 0.0f));
+        abox(m, A, f->x0 + 0.05f, f->z0 + 0.05f, f->x1 - 0.05f, f->z1 - 0.05f, y0 + 1.1f, y1 - 0.2f, F_SIDES, amat(A, ARS_RAIL, 3, 0.0f));
+        abox(m, A, f->x0 - 0.1f, f->z0 - 0.1f, f->x1 + 0.1f, f->z1 + 0.1f, y1 - 0.2f, y1, F_NOBOT | F_BOT, amat(A, ARS_KIOSK, 1, 0.0f));
+        break;
+    case AX_BENCH: {
+        Mat seat = amat(A, ARS_METAL, 8, 0.0f);
+        abox(m, A, f->x0, f->z0, f->x1, f->z1, y1 - 0.08f, y1, F_NOBOT | F_BOT, seat);
+        int alongX = f->x1 - f->x0 > f->z1 - f->z0;
+        for (int s = 0; s < 2; ++s) {
+            float a = s ? 0.85f : 0.15f;
+            if (alongX) { float x = f->x0 + (f->x1 - f->x0) * a; abox(m, A, x - 0.05f, f->z0 + 0.05f, x + 0.05f, f->z1 - 0.05f, y0, y1 - 0.08f, F_SIDES, seat); }
+            else        { float z = f->z0 + (f->z1 - f->z0) * a; abox(m, A, f->x0 + 0.05f, z - 0.05f, f->x1 - 0.05f, z + 0.05f, y0, y1 - 0.08f, F_SIDES, seat); }
+        }
+        break;
+    }
+    case AX_VENT:
+        abox(m, A, f->x0, f->z0, f->x1, f->z1, y0, y1, F_NOBOT, amat(A, ARS_METAL, 5, 0.0f));
+        break;
+    case AX_STEAM: {
+        /* two crossed planes, seen from both sides */
+        Mat st = amat(A, ARS_STEAM, 0, 0.0f);
+        st.seed = f->seed;
+        float cx = 0.5f * (f->x0 + f->x1), cz = 0.5f * (f->z0 + f->z1);
+        for (int s = 0; s < 2; ++s) {
+            awall(m, A, f->x0, cz, f->x1, cz, y0, y1, 0.0f, s ? 1.0f : -1.0f, 0.0f, 1.0f, 0.0f, 1.0f, st);
+            awall(m, A, cx, f->z0, cx, f->z1, y0, y1, s ? 1.0f : -1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, st);
+        }
+        break;
+    }
+    case AX_PUDDLE: {
+        float cx = 0.5f * (f->x0 + f->x1), cz = 0.5f * (f->z0 + f->z1), r = 0.5f * (f->x1 - f->x0);
+        Mat pm = amat(A, ARS_PUDDLE, q_half(r), 0.0f);
+        pm.seed = f->seed;
+        float lx, lz;
+        arcology_to_local(A, cx, cz, &lx, &lz);
+        for (int k = 0; k < 8; ++k) {
+            float a0 = (float)k * PI_F * 0.25f, a1 = (float)(k + 1) * PI_F * 0.25f;
+            float w0 = 1.0f + 0.25f * hash_float(hash_combine(f->seed, (uint32_t)k)), w1 = 1.0f + 0.25f * hash_float(hash_combine(f->seed, (uint32_t)(k + 1) & 7u));
+            float uv[3][2] = { { 0, 0 }, { cosf(a0) * r * w0, sinf(a0) * r * w0 }, { cosf(a1) * r * w1, sinf(a1) * r * w1 } };
+            emit_tri(m, v3(lx, fy + 0.03f, lz), v3(lx + uv[1][0], fy + 0.03f, lz + uv[1][1]), v3(lx + uv[2][0], fy + 0.03f, lz + uv[2][1]), v3(0, 1, 0), uv, pm);
+        }
+        break;
+    }
+    case AX_KIOSK: {
+        Mat k = amat(A, ARS_KIOSK, 0, 0.0f);
+        k.seed = f->seed;
+        abox(m, A, f->x0, f->z0, f->x1, f->z1, y0, y1, F_SIDES, k);
+        abox(m, A, f->x0 - 0.3f, f->z0 - 0.3f, f->x1 + 0.3f, f->z1 + 0.3f, y1, y1 + 0.18f, F_NOBOT | F_BOT, amat(A, ARS_METAL, 3, 0.0f));
+        Mat sg = mat(MAT_NEON, f->seed, (uint8_t)(A->palette[f->seed % 3] | (1 << 3)), q_half(f->x1 - f->x0 - 0.2f), q_half(0.5f));
+        if (f->facing == 0) {
+            sg.p[2] = q_half(f->x1 - f->x0 - 0.2f);
+            asign_quad(m, A, f->x0 + 0.1f, f->z0 - 0.31f, f->x1 - 0.1f, f->z0 - 0.31f, y1 + 0.2f, y1 + 0.7f, 0.0f, -1.0f, sg);
+            asign_quad(m, A, f->x0 + 0.1f, f->z1 + 0.31f, f->x1 - 0.1f, f->z1 + 0.31f, y1 + 0.2f, y1 + 0.7f, 0.0f, 1.0f, sg);
+        } else {
+            sg.p[2] = q_half(f->z1 - f->z0 - 0.2f);
+            asign_quad(m, A, f->x0 - 0.31f, f->z0 + 0.1f, f->x0 - 0.31f, f->z1 - 0.1f, y1 + 0.2f, y1 + 0.7f, -1.0f, 0.0f, sg);
+            asign_quad(m, A, f->x1 + 0.31f, f->z0 + 0.1f, f->x1 + 0.31f, f->z1 - 0.1f, y1 + 0.2f, y1 + 0.7f, 1.0f, 0.0f, sg);
+        }
+        break;
+    }
+    default: {   /* crates, bins, plant, tanks */
+        Mat c = amat(A, ARS_CRATE, f->type, 0.0f);
+        c.seed = f->seed;
+        abox(m, A, f->x0, f->z0, f->x1, f->z1, y0, y1, F_NOBOT, c);
+        if (f->type == AX_PLANT) abox(m, A, f->x0 + 0.15f, f->z0 + 0.15f, f->x1 - 0.15f, f->z1 - 0.15f, y1, y1 + 0.08f, F_NOBOT, amat(A, ARS_METAL, 5, 0.0f));
+        break;
+    }
+    }
+}
+
+static void emit_arc_signs(Mesh *m, const ALayout *A) {
+    for (int s = 0; s < A->nsign; ++s) {
+        const ASign *g = &A->sign[s];
+        float w = sqrtf((g->x1 - g->x0) * (g->x1 - g->x0) + (g->z1 - g->z0) * (g->z1 - g->z0)), h = g->y1 - g->y0;
+        if (w < 0.2f || h < 0.2f) continue;
+        float t = arcology_t(A, g->y0);
+        Mat back = amat(A, ARS_METAL, 7, t);
+        if (g->kind == AG_SCREEN) {
+            Mat sc = mat(MAT_SCREEN, g->seed, 0, q_half(w), q_half(h));
+            asign_quad(m, A, g->x0, g->z0, g->x1, g->z1, g->y0, g->y1, (float)g->nx, (float)g->nz, sc);
+            /* a frame standing behind it */
+            float x0 = minf(g->x0, g->x1), x1 = maxf(g->x0, g->x1), z0 = minf(g->z0, g->z1), z1 = maxf(g->z0, g->z1);
+            if (g->nx) { float x = g->x0, b = x - (float)g->nx * 0.25f; x0 = minf(x, b) + (g->nx < 0 ? 0.01f : -0.01f); x1 = maxf(x, b) + (g->nx < 0 ? 0.01f : -0.01f); z0 -= 0.3f; z1 += 0.3f; }
+            else       { float z = g->z0, b = z - (float)g->nz * 0.25f; z0 = minf(z, b) + (g->nz < 0 ? 0.01f : -0.01f); z1 = maxf(z, b) + (g->nz < 0 ? 0.01f : -0.01f); x0 -= 0.3f; x1 += 0.3f; }
+            abox(m, A, x0, z0, x1, z1, g->y0 - 0.3f, g->y1 + 0.3f, F_SIDES | F_TOP | F_BOT, back);
+            continue;
+        }
+        Mat nm = mat(MAT_NEON, g->seed, (uint8_t)((g->color & 7) | ((g->style & 7) << 3) | ((g->flick & 3) << 6)), q_half(w), q_half(h));
+        if (g->kind == AG_BLADE) {
+            /* a board projecting off a column face, lit on both sides */
+            float dx = (g->x1 - g->x0) / w, dz = (g->z1 - g->z0) / w, px = -dz, pz = dx, th = 0.07f;
+            abox(m, A, minf(g->x0, g->x1) - fabsf(px) * th, minf(g->z0, g->z1) - fabsf(pz) * th, maxf(g->x0, g->x1) + fabsf(px) * th, maxf(g->z0, g->z1) + fabsf(pz) * th,
+                 g->y0 - 0.05f, g->y1 + 0.05f, F_NOBOT | F_BOT, back);
+            for (int sd = -1; sd <= 1; sd += 2) {
+                float o = (th + 0.01f) * (float)sd;
+                asign_quad(m, A, g->x0 + px * o, g->z0 + pz * o, g->x1 + px * o, g->z1 + pz * o, g->y0, g->y1, px * (float)sd, pz * (float)sd, nm);
+            }
+            continue;
+        }
+        /* boards: a dark backing and the neon on its face */
+        float nx = (float)g->nx, nz = (float)g->nz;
+        asign_quad(m, A, g->x0, g->z0, g->x1, g->z1, g->y0, g->y1, nx, nz, nm);
+        asign_quad(m, A, g->x0 - nx * 0.06f, g->z0 - nz * 0.06f, g->x1 - nx * 0.06f, g->z1 - nz * 0.06f, g->y0 - 0.04f, g->y1 + 0.04f, -nx, -nz, back);
+        if (g->kind == AG_BANNER) {   /* hangers up to the slab edge */
+            float y = g->y1 + 0.45f;
+            abox(m, A, g->x0 - nx * 0.06f - 0.02f, g->z0 - nz * 0.06f - 0.02f, g->x0 - nx * 0.06f + 0.02f, g->z0 - nz * 0.06f + 0.02f, g->y1, y, F_SIDES, back);
+            abox(m, A, g->x1 - nx * 0.06f - 0.02f, g->z1 - nz * 0.06f - 0.02f, g->x1 - nx * 0.06f + 0.02f, g->z1 - nz * 0.06f + 0.02f, g->y1, y, F_SIDES, back);
+        }
+    }
+}
+
+static void emit_arc_retrofit(Mesh *m, const ALayout *A) {
+    float top = A->ceilY - 0.4f;
+    for (int k = 0; k < A->nduct; ++k) {
+        const ADuct *d = &A->duct[k];
+        int alongX = fabsf(d->z1 - d->z0) < 1e-3f;
+        float len = alongX ? d->x1 - d->x0 : d->z1 - d->z0, hs = d->size * 0.5f, t = arcology_t(A, d->y);
+        Mat mt = amat(A, ARS_METAL, d->kind, t);
+        float th = d->kind == AD_TRAY ? 0.12f : d->size;
+        if (alongX) abox(m, A, d->x0, d->z0 - hs, d->x1, d->z0 + hs, d->y, d->y + th, F_NOBOT | F_BOT, mt);
+        else        abox(m, A, d->x0 - hs, d->z0, d->x0 + hs, d->z1, d->y, d->y + th, F_NOBOT | F_BOT, mt);
+        if (d->kind == AD_PIPE) continue;
+        /* flanges on ducts, hangers up to the ceiling */
+        float step = d->kind == AD_DUCT ? 3.0f : 2.4f;
+        for (float a = 0.8f; a < len - 0.4f; a += step) {
+            float x = alongX ? d->x0 + a : d->x0, z = alongX ? d->z0 : d->z0 + a;
+            if (d->kind == AD_DUCT) {
+                float f = hs + 0.06f;
+                if (alongX) abox(m, A, x - 0.06f, z - f, x + 0.06f, z + f, d->y - 0.06f, d->y + th + 0.06f, F_NOBOT | F_BOT, mt);
+                else        abox(m, A, x - f, z - 0.06f, x + f, z + 0.06f, d->y - 0.06f, d->y + th + 0.06f, F_NOBOT | F_BOT, mt);
+            }
+            if (top - (d->y + th) > 0.1f) {
+                float o = hs - 0.05f;
+                if (alongX) { abox(m, A, x - 0.025f, z - o - 0.025f, x + 0.025f, z - o + 0.025f, d->y + th, top, F_SIDES, mt);
+                              abox(m, A, x - 0.025f, z + o - 0.025f, x + 0.025f, z + o + 0.025f, d->y + th, top, F_SIDES, mt); }
+                else        { abox(m, A, x - o - 0.025f, z - 0.025f, x - o + 0.025f, z + 0.025f, d->y + th, top, F_SIDES, mt);
+                              abox(m, A, x + o - 0.025f, z - 0.025f, x + o + 0.025f, z + 0.025f, d->y + th, top, F_SIDES, mt); }
+            }
+        }
+    }
+    /* sodium lamps on drop rods, under the ducts where a duct runs */
+    Mat metal = amat(A, ARS_METAL, 6, 0.0f), head = mat(MAT_EMISSIVE, 0, 0, 2, 0);
+    for (int k = 0; k < A->nlamp; ++k) {
+        const ALamp *l = &A->lamp[k];
+        float rodTop = top;
+        for (int d = 0; d < A->nduct; ++d) {
+            const ADuct *dt = &A->duct[d];
+            if (dt->kind != AD_DUCT) continue;
+            int alongX = fabsf(dt->z1 - dt->z0) < 1e-3f;
+            int over = alongX ? fabsf(l->z - dt->z0) < dt->size * 0.5f && l->x >= dt->x0 && l->x <= dt->x1
+                              : fabsf(l->x - dt->x0) < dt->size * 0.5f && l->z >= dt->z0 && l->z <= dt->z1;
+            if (over) rodTop = minf(rodTop, dt->y);
+        }
+        abox(m, A, l->x - 0.03f, l->z - 0.03f, l->x + 0.03f, l->z + 0.03f, l->y + 0.25f, rodTop, F_SIDES, metal);
+        abox(m, A, l->x - 0.38f, l->z - 0.24f, l->x + 0.38f, l->z + 0.24f, l->y + 0.06f, l->y + 0.26f, F_NOBOT | F_BOT, metal);
+        abox(m, A, l->x - 0.28f, l->z - 0.15f, l->x + 0.28f, l->z + 0.15f, l->y, l->y + 0.06f, F_SIDES | F_BOT, head);
+    }
+}
+
+/* The gallery strips round void v: side 0..3 (-z, +x, +z, -x); none against the spine. */
+static int arc_side_open(const ALayout *A, int v, int side) {
+    ARect r = A->voids[v];
+    float mx = (side == 0 || side == 2) ? 0.5f * (r.x0 + r.x1) : side == 1 ? r.x1 : r.x0;
+    float mz = (side == 1 || side == 3) ? 0.5f * (r.z0 + r.z1) : side == 0 ? r.z0 : r.z1;
+    if (A->canyon == AC_SPINE) return 1;
+    ARect s = A->spine;
+    return !(mx >= s.x0 - 0.1f && mx <= s.x1 + 0.1f && mz >= s.z0 - 0.1f && mz <= s.z1 + 0.1f);
+}
+
+static void emit_arc_galleries(Mesh *m, const ALayout *A) {
+    if (!A->nvoid) return;
+    float gd = A->galleryD, slab = 0.4f;
+    for (int v = 0; v < A->nvoid; ++v) {
+        ARect r = A->voids[v];
+        int open[4];
+        for (int s = 0; s < 4; ++s) open[s] = arc_side_open(A, v, s);
+        for (int side = 0; side < 4; ++side) {
+            if (!open[side]) continue;
+            ARect strip;
+            float fl, bl;                 /* fascia line, back line */
+            float a0, a1, b0, b1;         /* fascia extent; back wall extent */
+            float nx = 0, nz = 0;         /* into the void */
+            if (side == 0)      { strip = (ARect){ r.x0 - gd, r.z0 - gd, r.x1 + gd, r.z0 }; fl = r.z0; bl = r.z0 - gd; nz = 1; a0 = r.x0; a1 = r.x1; b0 = r.x0 - gd; b1 = r.x1 + gd; }
+            else if (side == 2) { strip = (ARect){ r.x0 - gd, r.z1, r.x1 + gd, r.z1 + gd }; fl = r.z1; bl = r.z1 + gd; nz = -1; a0 = r.x0; a1 = r.x1; b0 = r.x0 - gd; b1 = r.x1 + gd; }
+            else {
+                float z0 = open[0] ? r.z0 : r.z0 - gd, z1 = open[2] ? r.z1 : r.z1 + gd;
+                if (side == 1) { strip = (ARect){ r.x1, z0, r.x1 + gd, z1 }; fl = r.x1; bl = r.x1 + gd; nx = -1; }
+                else           { strip = (ARect){ r.x0 - gd, z0, r.x0, z1 }; fl = r.x0; bl = r.x0 - gd; nx = 1; }
+                a0 = r.z0; a1 = r.z1; b0 = r.z0 - gd; b1 = r.z1 + gd;
+            }
+            int alongX = side == 0 || side == 2;
+            for (int k = 0; k < A->nlevel; ++k) {
+                float y = A->levelY[k], yb = y - slab, t = arcology_t(A, y);
+                int st = arcology_stratum(A, t);
+                float yTop = k + 1 < A->nlevel ? A->levelY[k + 1] - slab : A->crownY;
+                aflat(m, A, strip, y, 0, NULL, iframe(m, amat(A, ARS_GALLERY, st, t)));
+                if (k > 0) aflat(m, A, strip, yb, 1, NULL, iframe(m, amat(A, ARS_SOFFIT, st, t)));
+                /* the slab edge, and a light strip on it in the lower strata */
+                Mat fas = amat(A, ARS_FASCIA, st, t);
+                if (alongX) awall(m, A, a0, fl, a1, fl, yb, y, nx, nz, a0, a1, 0.0f, slab, fas);
+                else        awall(m, A, fl, a0, fl, a1, yb, y, nx, nz, a0, a1, 0.0f, slab, fas);
+                /* light strips on some slab edges: neon in the street stratum, cold white in habitat */
+                uint32_t hk = hash_combine(A->seed ^ 0x1ED5u, (uint32_t)(k * 8 + side + v * 4));
+                int strip = st == AS_STREET ? hash_float(hk) < 0.7f : st == AS_HABITAT ? hash_float(hk) < 0.35f : 0;
+                if (strip) {
+                    uint8_t col = st == AS_STREET ? A->palette[(hk >> 8) % 3] : 6;
+                    if (st == AS_STREET && hash_float(hk >> 3) < 0.25f) col = (uint8_t)((hk >> 12) & 7);
+                    Mat led = mat(MAT_LEDSTRIP, A->seed, col, (uint8_t)(st == AS_STREET && hash_float(hk >> 5) < 0.15f), 0);
+                    float e = 0.012f;
+                    if (alongX) awall(m, A, a0, fl + nz * e, a1, fl + nz * e, yb + 0.1f, yb + 0.22f, nx, nz, 0.0f, a1 - a0, 0.0f, 1.0f, led);
+                    else        awall(m, A, fl + nx * e, a0, fl + nx * e, a1, yb + 0.1f, yb + 0.22f, nx, nz, 0.0f, a1 - a0, 0.0f, 1.0f, led);
+                }
+                /* the balustrade (glass; a solid parapet in the corporate stratum), gapped for bridges */
+                float gaps[8][2];
+                int ng = 0;
+                for (int b = 0; b < A->nbridge && ng < 8; ++b) {
+                    const ABridge *br = &A->bridge[b];
+                    if (br->level != k) continue;
+                    ARect q = br->r;
+                    int touches = side == 0 ? (q.z0 <= fl + 0.01f && q.z1 >= fl - 0.01f && br->axis == 1) : side == 2 ? (q.z1 >= fl - 0.01f && q.z0 <= fl + 0.01f && br->axis == 1)
+                                : side == 1 ? (q.x1 >= fl - 0.01f && q.x0 <= fl + 0.01f && br->axis == 0) : (q.x0 <= fl + 0.01f && q.x1 >= fl - 0.01f && br->axis == 0);
+                    if (!touches) continue;
+                    gaps[ng][0] = alongX ? q.x0 : q.z0; gaps[ng][1] = alongX ? q.x1 : q.z1; ng++;
+                }
+                float rail = 1.05f, ri = 0.08f;
+                Mat glass = amat(A, ARS_RAIL, st == AS_CORPORATE ? 2 : 0, t), top = amat(A, ARS_RAIL, 1, t);
+                float cur = a0;
+                for (int q = 0; q <= ng; ++q) {
+                    float s0 = cur, s1 = q < ng ? gaps[q][0] : a1;
+                    if (q < ng) cur = gaps[q][1];
+                    if (s1 - s0 < 0.1f) continue;
+                    float L = fl + (alongX ? nz : nx) * ri;
+                    for (int fs = 0; fs < 2; ++fs) {
+                        float sx = fs ? -1.0f : 1.0f;
+                        if (alongX) awall(m, A, s0, L, s1, L, y, y + rail, nx * sx, nz * sx, s0, s1, 0.0f, rail, glass);
+                        else        awall(m, A, L, s0, L, s1, y, y + rail, nx * sx, nz * sx, s0, s1, 0.0f, rail, glass);
+                    }
+                    if (alongX) abox(m, A, s0, L - 0.03f, s1, L + 0.03f, y + rail, y + rail + 0.05f, F_TOP | (nz > 0 ? F_PZ : F_NZ), top);
+                    else        abox(m, A, L - 0.03f, s0, L + 0.03f, s1, y + rail, y + rail + 0.05f, F_TOP | (nx > 0 ? F_PX : F_NX), top);
+                }
+                /* the back wall: unit fronts (shopfronts, flat doors, glass) at the fine window pitch */
+                Mat units = amat(A, ARS_UNITS, st, t);
+                if (alongX) awall(m, A, b0, bl, b1, bl, y, yTop, nx, nz, b0, b1, 0.0f, yTop - y, units);
+                else        awall(m, A, bl, b0, bl, b1, y, yTop, nx, nz, b0, b1, 0.0f, yTop - y, units);
+                /* end walls where the gallery stops at the spine */
+                if (alongX) {
+                    if (!open[1]) awall(m, A, r.x1 + gd, bl, r.x1 + gd, fl, y, yTop, -1.0f, 0.0f, 0.0f, gd, 0.0f, yTop - y, units);
+                    if (!open[3]) awall(m, A, r.x0 - gd, bl, r.x0 - gd, fl, y, yTop, 1.0f, 0.0f, 0.0f, gd, 0.0f, yTop - y, units);
+                } else {
+                    if (!open[0]) awall(m, A, bl, r.z0 - gd, fl, r.z0 - gd, y, yTop, 0.0f, 1.0f, 0.0f, gd, 0.0f, yTop - y, units);
+                    if (!open[2]) awall(m, A, bl, r.z1 + gd, fl, r.z1 + gd, y, yTop, 0.0f, -1.0f, 0.0f, gd, 0.0f, yTop - y, units);
+                }
+            }
+            /* closed over the top level, at the crown */
+            aflat(m, A, strip, A->crownY, 1, NULL, iframe(m, amat(A, ARS_SOFFIT, AS_CORPORATE, arcology_t(A, A->crownY))));
+        }
+    }
+    /* bridges */
+    for (int b = 0; b < A->nbridge; ++b) {
+        const ABridge *br = &A->bridge[b];
+        float y = A->levelY[br->level], t = arcology_t(A, y);
+        int st = arcology_stratum(A, t);
+        ARect q = br->r;
+        abox_r(m, A, q, y - 0.35f, y, F_TOP | F_BOT | (br->axis ? (F_NX | F_PX) : (F_NZ | F_PZ)), amat(A, ARS_BRIDGE, st, t));
+        Mat glass = amat(A, ARS_RAIL, st == AS_CORPORATE ? 2 : 0, t), top = amat(A, ARS_RAIL, 1, t);
+        for (int s = 0; s < 2; ++s) {
+            float L = br->axis ? (s ? q.x1 - 0.06f : q.x0 + 0.06f) : (s ? q.z1 - 0.06f : q.z0 + 0.06f);
+            for (int fs = 0; fs < 2; ++fs) {
+                float sg = fs ? -1.0f : 1.0f;
+                if (br->axis) awall(m, A, L, q.z0, L, q.z1, y, y + 1.05f, sg, 0.0f, q.z0, q.z1, 0.0f, 1.05f, glass);
+                else          awall(m, A, q.x0, L, q.x1, L, y, y + 1.05f, 0.0f, sg, q.x0, q.x1, 0.0f, 1.05f, glass);
+            }
+            if (br->axis) abox(m, A, L - 0.03f, q.z0, L + 0.03f, q.z1, y + 1.05f, y + 1.1f, F_TOP | F_NX | F_PX, top);
+            else          abox(m, A, q.x0, L - 0.03f, q.x1, L + 0.03f, y + 1.05f, y + 1.1f, F_TOP | F_NZ | F_PZ, top);
+            if (st <= AS_HABITAT) {
+                Mat led = mat(MAT_LEDSTRIP, A->seed, A->palette[(br->level + s) % 3], 0, 0);
+                if (br->axis) awall(m, A, s ? q.x1 + 0.01f : q.x0 - 0.01f, q.z0, s ? q.x1 + 0.01f : q.x0 - 0.01f, q.z1, y - 0.3f, y - 0.2f, s ? 1.0f : -1.0f, 0.0f, 0.0f, q.z1 - q.z0, 0.0f, 1.0f, led);
+                else          awall(m, A, q.x0, s ? q.z1 + 0.01f : q.z0 - 0.01f, q.x1, s ? q.z1 + 0.01f : q.z0 - 0.01f, y - 0.3f, y - 0.2f, 0.0f, s ? 1.0f : -1.0f, 0.0f, q.x1 - q.x0, 0.0f, 1.0f, led);
+            }
+        }
+    }
+}
+
+/* Frame point in the chunk's space (through the mesh's emission transform), for vertex-animated geometry. */
+static void chunk_xz(const Mesh *m, float x, float z, float *cx, float *cz) {
+    if (m->xf) { *cx = m->xx + m->xc * x - m->xs * z; *cz = m->xz + m->xs * x + m->xc * z; }
+    else       { *cx = x; *cz = z; }
+}
+
+/* A searchlight beam: a tapered box hanging straight down from its pivot,
+ * swung to and fro along the canyon by the vertex shader. uv: the pivot less
+ * the vertex (chunk xz); aux: how far along the beam | the drop below the
+ * pivot << 16 (1/64 m); params z its swing direction in the chunk (of 2 pi),
+ * w its phase; seed: amplitude | speed << 8. */
+static void emit_arc_searchlight(Mesh *m, const ALayout *A, const ASearch *s) {
+    float px, pz, dx, dz;
+    arcology_to_local(A, s->x, s->z, &px, &pz);
+    arcology_to_local(A, cosf(s->az), sinf(s->az), &dx, &dz);
+    float cdx = m->xf ? m->xc * dx - m->xs * dz : dx, cdz = m->xf ? m->xs * dx + m->xc * dz : dz;
+    float az = atan2f(cdz, cdx);
+    if (az < 0.0f) az += 6.2831853f;
+    vec3 P = v3(px, s->y, pz), D = v3(0, -1, 0);
+    vec3 U = v3_norm(v3(dx, 0, dz)), W = v3_norm(v3_cross(U, D));
+    float r0 = 0.3f, r1 = s->len * 0.06f, a0 = 0.8f, a1 = s->len;
+    vec3 c[2][4];
+    for (int e = 0; e < 2; ++e) {
+        float a = e ? a1 : a0, r = e ? r1 : r0;
+        vec3 o = v3_add(P, v3_scale(D, a));
+        c[e][0] = v3_add(o, v3_add(v3_scale(U, -r), v3_scale(W, -r)));
+        c[e][1] = v3_add(o, v3_add(v3_scale(U, r), v3_scale(W, -r)));
+        c[e][2] = v3_add(o, v3_add(v3_scale(U, r), v3_scale(W, r)));
+        c[e][3] = v3_add(o, v3_add(v3_scale(U, -r), v3_scale(W, r)));
+    }
+    float cpx, cpz;
+    chunk_xz(m, P.x, P.z, &cpx, &cpz);
+    uint8_t prm[4] = { MAT_ARCOLOGY, ARS_SEARCH, (uint8_t)(az / 6.2831853f * 255.0f + 0.5f), (uint8_t)(s->phase / 6.2831853f * 255.0f) };
+    uint32_t seed = (uint32_t)clampf(s->amp / 0.6f * 255.0f + 0.5f, 0.0f, 255.0f) | (uint32_t)clampf((s->speed - 0.1f) / 0.3f * 255.0f + 0.5f, 0.0f, 255.0f) << 8;
+    seed |= hash_combine(A->seed, (uint32_t)(s->phase * 1000.0f)) & 0xFFFF0000u;
+    for (int f = 0; f < 4; ++f) {
+        vec3 q[4] = { c[0][f], c[0][(f + 1) & 3], c[1][(f + 1) & 3], c[1][f] };
+        uint32_t along[4] = { 0u, 0u, 65535u, 65535u };
+        vec3 n = v3_norm(v3_cross(v3_sub(q[1], q[0]), v3_sub(q[3], q[0])));
+        static const int TRI[2][6] = { { 0, 1, 2, 0, 2, 3 }, { 0, 2, 1, 0, 3, 2 } };
+        for (int side = 0; side < 2; ++side)
+            for (int i = 0; i < 6; ++i) {
+                int k = TRI[side][i];
+                float vx, vz;
+                chunk_xz(m, q[k].x, q[k].z, &vx, &vz);
+                uint32_t drop = (uint32_t)clampf((P.y - q[k].y) * 64.0f + 0.5f, 0.0f, 65535.0f);
+                mesh_push(m, q[k], side ? v3_scale(n, -1.0f) : n, cpx - vx, cpz - vz, seed, prm, along[k] | drop << 16);
+            }
+    }
+}
+
+/* The light crown: glazing over the canyon on a grid of transfer beams, cold
+ * shafts falling from it and the searchlights hung under it. */
+static void emit_arc_crown(Mesh *m, const ALayout *A) {
+    if (!A->nvoid) return;
+    float y = A->crownY, t = arcology_t(A, y);
+    Mat glass = amat(A, ARS_CROWN, 0, t), beam = amat(A, ARS_BEAM, 2, t);
+    ARect s = A->spine;
+    for (int v = 0; v < A->nvoid; ++v) {
+        ARect r = A->voids[v];
+        if (A->canyon == AC_SPINE) {
+            aflat(m, A, (ARect){ r.x0, r.z0, r.x1, s.z0 }, y - 0.05f, 1, NULL, glass);
+            aflat(m, A, (ARect){ r.x0, s.z1, r.x1, r.z1 }, y - 0.05f, 1, NULL, glass);
+            aflat(m, A, (ARect){ r.x0, s.z0, s.x0, s.z1 }, y - 0.05f, 1, NULL, glass);
+            aflat(m, A, (ARect){ s.x1, s.z0, r.x1, s.z1 }, y - 0.05f, 1, NULL, glass);
+        } else {
+            aflat(m, A, r, y - 0.05f, 1, NULL, glass);
+        }
+        for (float x = r.x0 + 4.0f; x < r.x1 - 2.0f; x += 7.0f)
+            if (A->canyon != AC_SPINE || x < s.x0 - 0.6f || x > s.x1 + 0.6f) abox(m, A, x - 0.45f, r.z0, x + 0.45f, r.z1, y - 1.8f, y - 0.05f, F_SIDES | F_BOT, beam);
+        for (float z = r.z0 + 4.0f; z < r.z1 - 2.0f; z += 7.0f)
+            if (A->canyon != AC_SPINE || z < s.z0 - 0.6f || z > s.z1 + 0.6f) abox(m, A, r.x0, z - 0.35f, r.x1, z + 0.35f, y - 1.4f, y - 0.05f, F_SIDES | F_BOT, beam);
+    }
+    for (int k = 0; k < A->nshaft; ++k) {
+        /* uv: 0..1 across each face (so its edges can fade), 0 at the floor to 1 at the crown */
+        const AShaft *sh = &A->shaft[k];
+        Mat mt = amat(A, ARS_SHAFT, 0, t);
+        mt.seed = hash_combine(A->seed, (uint32_t)k);
+        ARect q = sh->r;
+        for (int fs = 0; fs < 2; ++fs) {
+            float sg = fs ? -1.0f : 1.0f;
+            awall(m, A, q.x0, q.z0, q.x1, q.z0, sh->y0, sh->y1, 0.0f, -sg, 0.0f, 1.0f, 0.0f, 1.0f, mt);
+            awall(m, A, q.x0, q.z1, q.x1, q.z1, sh->y0, sh->y1, 0.0f, sg, 0.0f, 1.0f, 0.0f, 1.0f, mt);
+            awall(m, A, q.x0, q.z0, q.x0, q.z1, sh->y0, sh->y1, -sg, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, mt);
+            awall(m, A, q.x1, q.z0, q.x1, q.z1, sh->y0, sh->y1, sg, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, mt);
+        }
+    }
+    for (int k = 0; k < A->nsearch; ++k) {
+        const ASearch *sl = &A->search[k];
+        abox(m, A, sl->x - 0.5f, sl->z - 0.5f, sl->x + 0.5f, sl->z + 0.5f, sl->y - 0.3f, y - 0.05f, F_SIDES | F_BOT, beam);
+        emit_arc_searchlight(m, A, sl);
+    }
+}
+
+/* The interior of an arcology, for the near-only layer (city_build_interiors). */
+static void emit_arcology(Mesh *m, const BGraph *g, const ALayout *A) {
+    float fy = A->floorY, top = A->ceilY - 0.4f;
+    emit_arc_floor(m, g, A);
+    emit_arc_ceiling(m, g, A);
+    emit_arc_envelope(m, g, A);
+    for (int c = 0; c < A->ncol; ++c) emit_arc_column(m, A, &A->col[c]);
+
+    /* the spine core, a segment per tier so its finish follows the strata, with corner light bars */
+    float spineTop = A->nvoid ? A->crownY : top;
+    for (int t = 0; t < A->ntier; ++t) {
+        float y0 = t ? A->tier[t].y0 : fy, y1 = minf(A->tier[t].y1, spineTop);
+        if (y1 <= y0) break;
+        abox_r(m, A, A->spine, y0, y1, F_SIDES, amat(A, ARS_SPINE, arcology_stratum(A, A->tier[t].t), A->tier[t].t));
+    }
+    for (int c = 0; c < 4; ++c) {
+        float x = (c & 1) ? A->spine.x1 : A->spine.x0, z = (c & 2) ? A->spine.z1 : A->spine.z0;
+        abox(m, A, x - 0.12f, z - 0.12f, x + 0.12f, z + 0.12f, fy + 0.4f, spineTop, F_SIDES, mat(MAT_LEDSTRIP, A->seed, A->palette[0], 1, 0));
+    }
+    emit_arc_lifts(m, A, A->spine, 0, A->expressLifts, 1.4f, 3.0f, 0);
+    /* local cores with their lifts, escape stairs with an exit */
+    for (int k = 0; k < A->ncore; ++k) {
+        const ACore *c = &A->core[k];
+        abox_r(m, A, c->r, fy, top, F_SIDES, amat(A, ARS_CORE, c->topTier, 0.0f));
+        emit_arc_lifts(m, A, c->r, c->door, c->lifts, 1.1f, 2.4f, 1);
+    }
+    for (int k = 0; k < A->nstair; ++k) {
+        const AStair *s = &A->stair[k];
+        abox_r(m, A, s->r, fy, top, F_SIDES, amat(A, ARS_STAIR, 0, 0.0f));
+        emit_arc_lifts(m, A, s->r, s->facing, 1, 1.2f, 2.2f, 2);
+    }
+    emit_arc_blocks(m, A);
+    for (int s = 0; s < A->nstall; ++s) emit_arc_stall(m, A, &A->stall[s]);
+    for (int f = 0; f < A->nfix; ++f) emit_arc_fixture(m, A, &A->fix[f]);
+    emit_arc_retrofit(m, A);
+    emit_arc_signs(m, A);
+    emit_arc_galleries(m, A);
+    emit_arc_crown(m, A);
+}
+
+/* The outside of the portals (base layer, seen from the street): stepped
+ * surrounds, a light frame, a sign over each, a canopy over the main one. */
+static void emit_arc_portals(Mesh *m, const BGraph *g, const ALayout *A) {
+    const BLoop *l = &g->sec[A->tier[0].section].foot.outer;
+    const float gy = SIDEWALK_HEIGHT;
+    for (int p = 0; p < A->nportal; ++p) {
+        const APortal *pt = &A->portal[p];
+        Xf sv = xf_save(m);
+        float len = enter_face(m, l, pt->face);
+        float u0 = pt->u - pt->width * 0.5f, u1 = pt->u + pt->width * 0.5f, top = gy + pt->height;
+        uint32_t h = hash_combine(A->seed, (uint32_t)p);
+        if (pt->service) {
+            Mat steel = mat(MAT_METAL, g->seed, 3, 0, 0);
+            emit_box(m, v3(u0 - 0.25f, gy, -0.4f), v3(u0, top + 0.25f, 0.15f), F_NOBOT, steel, UV_FACADE);
+            emit_box(m, v3(u1, gy, -0.4f), v3(u1 + 0.25f, top + 0.25f, 0.15f), F_NOBOT, steel, UV_FACADE);
+            emit_box(m, v3(u0, top, -0.4f), v3(u1, top + 0.25f, 0.15f), F_NOBOT | F_BOT, steel, UV_FACADE);
+            emit_emissive_box(m, v3(pt->u, top + 0.5f, 0.3f), 0.15f, 0, 2, 0);
+            xf_restore(m, sv);
+            continue;
+        }
+        /* three nested frames stepping out and forward: the tiers again, in miniature */
+        for (int s = 0; s < 3; ++s) {
+            float w = 0.45f + 0.5f * (float)s, wi = s ? 0.45f + 0.5f * (float)(s - 1) : 0.0f;
+            float zi = -0.7f + 0.15f * (float)s, zo = 0.45f - 0.12f * (float)s, up = 0.45f + 0.55f * (float)s;
+            Mat fr = amat(A, ARS_PORTAL, s, 0.0f);
+            emit_box(m, v3(u0 - w, gy, zi), v3(u0 - wi, top + up, zo), F_NOBOT, fr, UV_FACADE);
+            emit_box(m, v3(u1 + wi, gy, zi), v3(u1 + w, top + up, zo), F_NOBOT, fr, UV_FACADE);
+            emit_box(m, v3(u0 - wi, top + (s ? 0.45f + 0.55f * (float)(s - 1) : 0.0f), zi), v3(u1 + wi, top + up, zo), F_NOBOT | F_BOT, fr, UV_FACADE);
+        }
+        /* a light frame round the opening */
+        Mat led = mat(MAT_LEDSTRIP, h, A->palette[p % 3], 0, 0);
+        emit_box(m, v3(u0 - 0.06f, gy + 0.2f, 0.42f), v3(u0, top, 0.48f), F_SIDES, led, UV_FACADE);
+        emit_box(m, v3(u1, gy + 0.2f, 0.42f), v3(u1 + 0.06f, top, 0.48f), F_SIDES, led, UV_FACADE);
+        emit_box(m, v3(u0, top, 0.42f), v3(u1, top + 0.06f, 0.48f), F_SIDES | F_BOT, led, UV_FACADE);
+        /* a sign over it */
+        float sy0 = top + 1.75f, sy1 = minf(sy0 + 1.5f, gy + (A->ceilY - A->floorY) - 0.3f);
+        if (sy1 - sy0 > 0.6f) {
+            Face f = face_local(len);
+            float w = minf(pt->width + 1.0f, len - 1.0f);
+            emit_face_panel(m, &f, pt->u - w * 0.5f, pt->u + w * 0.5f, sy0, sy1, 0.5f,
+                            mat(MAT_NEON, h, (uint8_t)(A->palette[(p + 1) % 3] | (1 << 3)), q_half(w), q_half(sy1 - sy0)));
+        }
+        if (pt->main) {
+            Mat metal = mat(MAT_METAL, g->seed, 3, 0, 0);
+            emit_box(m, v3(u0 - 1.8f, top + 1.0f, 0.0f), v3(u1 + 1.8f, top + 1.35f, 4.0f), F_NOBOT | F_BOT, metal, UV_FACADE);
+            float uv[4][2] = { { 0, 0 }, { u1 - u0 + 3.4f, 0 }, { u1 - u0 + 3.4f, 1 }, { 0, 1 } };
+            emit_quad(m, v3(u0 - 1.7f, top + 0.99f, 3.7f), v3(u1 + 1.7f, top + 0.99f, 3.7f), v3(u1 + 1.7f, top + 0.99f, 3.9f),
+                      v3(u0 - 1.7f, top + 0.99f, 3.9f), v3(0, -1, 0), uv, mat(MAT_LEDSTRIP, h, A->palette[0], 1, 0));
+        }
+        xf_restore(m, sv);
+    }
+}
+
+/* The arcology's street front (base layer): neon boards over the glazing
+ * between the portals and blade signs off the facade above them, as dense as
+ * the street stratum it belongs to. */
+static void emit_arc_frontage(Mesh *m, const BGraph *g, const ALayout *A) {
+    int si = A->tier[0].section;
+    const BLoop *l = &g->sec[si].foot.outer;
+    Behind bh = { NULL, A, si };
+    Rng r = rng_make(A->seed ^ 0xF20Eu);
+    float top = A->ceilY;
+    for (int k = 0; k < l->n; ++k) {
+        float op[8][3];
+        int nop = face_openings(g, &bh, 0, k, op, 8);
+        Xf sv = xf_save(m);
+        float len = enter_face(m, l, k);
+        Face f = face_local(len);
+        for (float u = 1.5f; u < len - 4.0f; u += rng_range(&r, 6.0f, 10.0f)) {
+            float w = rng_range(&r, 3.0f, 6.0f);
+            if (u + w > len - 1.0f) break;
+            int clear = 1;
+            for (int o = 0; o < nop && clear; ++o) clear = u + w < op[o][0] - 2.0f || u > op[o][1] + 2.0f;   /* the portals keep their own signs */
+            if (!clear || rng_float(&r) > A->signDensity) continue;
+            uint8_t col = rng_float(&r) < 0.7f ? A->palette[rng_int(&r, 0, 2)] : (uint8_t)rng_int(&r, 0, 7);
+            emit_face_panel(m, &f, u, u + w, top - 1.15f, top - 0.3f, 0.22f,
+                            mat(MAT_NEON, rng_u32(&r), (uint8_t)(col | (1 << 3) | ((rng_float(&r) < 0.1f) << 6)), q_half(w), q_half(0.85f)));
+        }
+        for (float u = 3.0f; u < len - 3.0f; u += rng_range(&r, 9.0f, 14.0f)) {
+            if (rng_float(&r) > A->signDensity * 0.85f) continue;
+            float h = rng_range(&r, 4.0f, 9.0f), y0 = top + rng_range(&r, 0.6f, 2.5f), depth = rng_range(&r, 1.2f, 2.0f), th = 0.12f;
+            emit_box(m, v3(u - th, y0, 0.25f), v3(u + th, y0 + h, 0.25f + depth), F_NOBOT | F_BOT, mat(MAT_METAL, g->seed, 3, 0, 0), UV_FACADE);
+            uint8_t col = rng_float(&r) < 0.7f ? A->palette[rng_int(&r, 0, 2)] : (uint8_t)rng_int(&r, 0, 7);
+            uint8_t flick = (uint8_t)(rng_float(&r) < 0.15f ? 1 : 0);
+            Mat nm = mat(MAT_NEON, rng_u32(&r), (uint8_t)(col | (flick << 6)), q_half(depth), q_half(h));
+            float uvA[4][2] = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } }, uvB[4][2] = { { 1, 0 }, { 0, 0 }, { 0, 1 }, { 1, 1 } };
+            for (int sd = -1; sd <= 1; sd += 2) {
+                float uu = u + (float)sd * (th + 0.01f);
+                emit_quad(m, v3(uu, y0 + 0.1f, 0.3f), v3(uu, y0 + 0.1f, 0.2f + depth), v3(uu, y0 + h - 0.1f, 0.2f + depth), v3(uu, y0 + h - 0.1f, 0.3f),
+                          v3((float)sd, 0, 0), sd < 0 ? uvB : uvA, nm);
+            }
+            sign_lights(m, v3(u, y0 + h * 0.5f, 0.25f + depth * 0.5f), v3(0, 0, 1), depth * h, nm);
+        }
+        xf_restore(m, sv);
+    }
+}
+
+/* The tier decks seen from outside (base layer): each sky lobby as a lit
+ * glazed band round its tier's first floor, and its terrace on the setback
+ * roof below, with planters along the tier's foot and lamps out by the edge,
+ * warmer and fewer the higher the stratum. */
+static void emit_arc_terraces(Mesh *m, const BGraph *g, const ALayout *A) {
+    for (int k = 0; k < A->nsky; ++k) {
+        const ASkyLobby *sk = &A->sky[k];
+        int t = sk->tier, st = A->tier[t].stratum;
+        const BSection *up = &g->sec[A->tier[t].section], *below = &g->sec[A->tier[t - 1].section];
+        const BLoop *l = &up->foot.outer;
+        float y0 = sk->y, tt = A->tier[t].t;
+        Mat band = amat(A, ARS_SKYLOBBY, st, tt), planter = amat(A, ARS_CRATE, 12, tt), plant = amat(A, ARS_CRATE, 13, tt), post = amat(A, ARS_METAL, 3, tt);
+        uint8_t lampCol = (uint8_t)(st == AS_HABITAT ? 6 : st == AS_COMMERCE ? 3 : st == AS_CORPORATE ? 7 : 0);
+        float pitch = st == AS_CORPORATE ? 3.5f : st == AS_COMMERCE ? 5.0f : 7.0f;
+        for (int f = 0; f < l->n; ++f) {
+            EdgeInfo e = edge_of(l, f);
+            if (e.len < 2.0f) continue;
+            float ox = -e.ez, oz = e.ex;                    /* out of the building */
+            Xf sv = xf_save(m);
+            enter_face(m, l, f);
+            float uv[4][2] = { { 0.3f, 0.4f }, { e.len - 0.3f, 0.4f }, { e.len - 0.3f, A->floorH - 0.5f }, { 0.3f, A->floorH - 0.5f } };
+            emit_quad(m, v3(0.3f, y0 + 0.4f, 0.07f), v3(e.len - 0.3f, y0 + 0.4f, 0.07f), v3(e.len - 0.3f, y0 + A->floorH - 0.5f, 0.07f),
+                      v3(0.3f, y0 + A->floorH - 0.5f, 0.07f), v3(0, 0, 1), uv, band);
+            for (float u = pitch * 0.5f; u < e.len - 1.0f; u += pitch) {
+                /* on the terrace: out over the roof of the tier below, clear of its edge */
+                float px = e.ax + e.ex * u + ox * 1.4f, pz = e.az + e.ez * u + oz * 1.4f;
+                if (!bfoot_contains(&below->foot, px, pz) || bfoot_boundary_dist(&below->foot, px, pz, NULL, NULL) < 1.2f || bfoot_contains(&up->foot, px, pz)) continue;
+                emit_box(m, v3(u - 0.8f, y0, 1.0f), v3(u + 0.8f, y0 + 0.65f, 1.7f), F_NOBOT, planter, UV_FACADE);
+                emit_box(m, v3(u - 0.7f, y0 + 0.65f, 1.1f), v3(u + 0.7f, y0 + 0.65f + (st == AS_CORPORATE ? 1.1f : 0.6f), 1.6f), F_NOBOT, plant, UV_FACADE);
+                float qx = e.ax + e.ex * u + ox * 3.6f, qz = e.az + e.ez * u + oz * 3.6f;
+                if (((int)(u / pitch) & 1) || !bfoot_contains(&below->foot, qx, qz) || bfoot_boundary_dist(&below->foot, qx, qz, NULL, NULL) < 0.8f) continue;
+                emit_box(m, v3(u - 0.05f, y0, 3.55f), v3(u + 0.05f, y0 + 2.6f, 3.65f), F_SIDES, post, UV_FACADE);
+                emit_emissive_box(m, v3(u, y0 + 2.75f, 3.6f), 0.14f, lampCol, 0, 0);
+            }
+            xf_restore(m, sv);
+        }
+    }
+}
+
+/* ===========================================================================
+ * Collision: what stands at street level
+ * ========================================================================= */
+
+static int coll_begin(BlockLayout *L, int n) {
+    if (L->ncoll >= MAX_COLL || L->ncollv + n > MAX_COLL_VERTS) return 0;
+    CollPoly *c = &L->coll[L->ncoll++];
+    c->first = L->ncollv; c->n = n; c->holeFirst = 0; c->holeN = 0;
+    return 1;
+}
+
+static void coll_vertex(BlockLayout *L, const Building *b, float x, float z) {
+    DVec2 w = to_world(b, x, z);
+    L->collv[L->ncollv][0] = w.x; L->collv[L->ncollv][1] = w.z; L->ncollv++;
+}
+
+/* A box in the building frame, given as a frame rectangle of an interior. */
+static void coll_frame_box(BlockLayout *BL, const Building *b, const ILayout *L, float x0, float z0, float x1, float z1) {
+    float ax, az, bx, bz;
+    interior_to_local(L, x0, z0, &ax, &az);
+    interior_to_local(L, x1, z1, &bx, &bz);
+    if (!coll_begin(BL, 4)) return;
+    float lx0 = minf(ax, bx), lx1 = maxf(ax, bx), lz0 = minf(az, bz), lz1 = maxf(az, bz);
+    coll_vertex(BL, b, lx0, lz0); coll_vertex(BL, b, lx0, lz1); coll_vertex(BL, b, lx1, lz1); coll_vertex(BL, b, lx1, lz0);
+}
+
+/* A planned ground floor's envelope: solid 0.3 m in from the facade, open at its openings. */
+static void collide_envelope(BlockLayout *BL, const Building *b, const BGraph *g, const Behind *bh) {
+    const BSection *s = &g->sec[bh->si];
+    const BLoop *loops[2] = { &s->foot.outer, &s->foot.hole };
+    for (int li = 0; li < 2; ++li)
+        for (int k = 0; k < loops[li]->n; ++k) {
+            EdgeInfo e = edge_of(loops[li], k);
+            float op[8][3];
+            int nop = face_openings(g, bh, li, k, op, 8);
+            for (int i = 0; i < nop; ++i)
+                for (int j = i; j > 0 && op[j][0] < op[j - 1][0]; --j) { float t[3]; memcpy(t, op[j], sizeof(t)); memcpy(op[j], op[j - 1], sizeof(t)); memcpy(op[j - 1], t, sizeof(t)); }
+            float cur = 0.0f;
+            for (int o = 0; o <= nop; ++o) {
+                float u0 = cur, u1 = o < nop ? op[o][0] : e.len;
+                if (o < nop) cur = maxf(cur, op[o][1]);
+                if (u1 - u0 < 0.05f || !coll_begin(BL, 4)) continue;
+                float ix = e.ez * 0.3f, iz = -e.ex * 0.3f;          /* 0.3 m in from the facade */
+                coll_vertex(BL, b, e.ax + e.ex * u0, e.az + e.ez * u0);
+                coll_vertex(BL, b, e.ax + e.ex * u1, e.az + e.ez * u1);
+                coll_vertex(BL, b, e.ax + e.ex * u1 + ix, e.az + e.ez * u1 + iz);
+                coll_vertex(BL, b, e.ax + e.ex * u0 + ix, e.az + e.ez * u0 + iz);
+            }
+        }
+}
+
+/* A box given as a frame rectangle of an arcology. */
+static void coll_arc_box(BlockLayout *BL, const Building *b, const ALayout *A, ARect r) {
+    float ax, az, bx, bz;
+    arcology_to_local(A, r.x0, r.z0, &ax, &az);
+    arcology_to_local(A, r.x1, r.z1, &bx, &bz);
+    if (!coll_begin(BL, 4)) return;
+    float lx0 = minf(ax, bx), lx1 = maxf(ax, bx), lz0 = minf(az, bz), lz1 = maxf(az, bz);
+    coll_vertex(BL, b, lx0, lz0); coll_vertex(BL, b, lx0, lz1); coll_vertex(BL, b, lx1, lz1); coll_vertex(BL, b, lx1, lz0);
+}
+
+/* An arcology's concourse level is walked into through its portals: columns,
+ * cores, stairs, block masses, stalls and street furniture are solid. */
+static void collide_arcology(BlockLayout *BL, const Building *b, const BGraph *g, const ALayout *A) {
+    Behind bh = { NULL, A, A->tier[0].section };
+    collide_envelope(BL, b, g, &bh);
+    for (int c = 0; c < A->ncol; ++c) {
+        float h = A->col[c].size * 0.5f * 1.15f;
+        coll_arc_box(BL, b, A, (ARect){ A->col[c].x - h, A->col[c].z - h, A->col[c].x + h, A->col[c].z + h });
+    }
+    coll_arc_box(BL, b, A, A->spine);
+    for (int k = 0; k < A->ncore; ++k) coll_arc_box(BL, b, A, A->core[k].r);
+    for (int k = 0; k < A->nstair; ++k) coll_arc_box(BL, b, A, A->stair[k].r);
+    ARect *rc = (ARect *)malloc(sizeof(ARect) * 512);
+    if (!rc) fatal("out of memory building collision");
+    int n = arc_rects(A, 1u << AU_BLOCK, -1, rc, 512);
+    for (int k = 0; k < n; ++k) coll_arc_box(BL, b, A, rc[k]);
+    free(rc);
+    for (int s = 0; s < A->nstall; ++s) {
+        const AStall *st = &A->stall[s];
+        ARect r = st->r;
+        if (st->closed) { coll_arc_box(BL, b, A, r); continue; }
+        if (st->facing == 0 || st->facing == 2) {
+            coll_arc_box(BL, b, A, (ARect){ r.x0, r.z0, r.x0 + 0.1f, r.z1 });
+            coll_arc_box(BL, b, A, (ARect){ r.x1 - 0.1f, r.z0, r.x1, r.z1 });
+        } else {
+            coll_arc_box(BL, b, A, (ARect){ r.x0, r.z0, r.x1, r.z0 + 0.1f });
+            coll_arc_box(BL, b, A, (ARect){ r.x0, r.z1 - 0.1f, r.x1, r.z1 });
+        }
+    }
+    for (int f = 0; f < A->nfix; ++f) {
+        const AFix *x = &A->fix[f];
+        if (x->y0 > 0.5f || x->y1 < 0.3f || x->type == AX_PUDDLE || x->type == AX_AWNING || x->type == AX_STEAM) continue;
+        coll_arc_box(BL, b, A, (ARect){ x->x0, x->z0, x->x1, x->z1 });
+    }
+}
+
+/* A lobby is walked into: its envelope (open at the entrance), partitions,
+ * cores and furniture are solid, the rest of the floor is not. */
+static void collide_interior(BlockLayout *BL, const Building *b, const BGraph *g, const ILayout *L) {
+    Behind bh = { L, NULL, L->section };
+    collide_envelope(BL, b, g, &bh);
+    IWall *w = (IWall *)malloc(sizeof(IWall) * 4096);
+    int16_t (*rc)[4] = (int16_t (*)[4])malloc(sizeof(int16_t) * 4 * 512);
+    if (!w || !rc) fatal("out of memory building collision");
+    int n = interior_walls(L, w, 4096);
+    for (int k = 0; k < n; ++k) {
+        if (w[k].door) continue;
+        float x0, z0, x1, z1;
+        run_strip(&w[k], 0.1f, &x0, &z0, &x1, &z1);
+        coll_frame_box(BL, b, L, x0, z0, x1, z1);
+    }
+    for (int r = 0; r < L->nreg; ++r) {
+        if (L->reg[r].kind != IK_SOLID || !L->reg[r].cells) continue;
+        int nr = region_rects(L, r, 0, rc, 512);
+        for (int q = 0; q < nr; ++q)
+            coll_frame_box(BL, b, L, L->gx0 + rc[q][0] * IN_CELL, L->gz0 + rc[q][1] * IN_CELL, L->gx0 + rc[q][2] * IN_CELL, L->gz0 + rc[q][3] * IN_CELL);
+    }
+    for (int f = 0; f < L->nfix; ++f)
+        if (L->fix[f].y1 > 0.3f) coll_frame_box(BL, b, L, L->fix[f].x0, L->fix[f].z0, L->fix[f].x1, L->fix[f].z1);
+    free(w);
+    free(rc);
+}
+
+/* Ground floors, piers, cores and columns are solid; a planned lobby is walked into. */
+static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg) {
+    Interiors in;
+    interiors_plan(b, bg, &in);
+    for (int si = 0; si < bg->nsec; ++si) {
+        const BSection *s = &bg->sec[si];
+        if (s->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
+        const ILayout *il = interior_of(&in, si);
+        if (il) { collide_interior(L, b, bg, il); continue; }
+        if (in.arc && in.arc->tier[0].section == si) { collide_arcology(L, b, bg, in.arc); continue; }
+        const BLoop *loops[2] = { &s->foot.outer, &s->foot.hole };
+        if (!coll_begin(L, loops[0]->n + loops[1]->n)) break;
+        CollPoly *c = &L->coll[L->ncoll - 1];
+        c->n = loops[0]->n;
+        for (int k = 0; k < loops[0]->n; ++k) coll_vertex(L, b, loops[0]->x[k], loops[0]->z[k]);
+        c->holeFirst = L->ncollv; c->holeN = loops[1]->n;
+        for (int k = 0; k < loops[1]->n; ++k) coll_vertex(L, b, loops[1]->x[k], loops[1]->z[k]);
+    }
+    interiors_free(&in);
+    for (int k = 0; k < bg->nsup; ++k) {
+        const BSupport *sp = &bg->sup[k];
+        if (sp->type != SUP_COLUMN || sp->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
+        if (!coll_begin(L, 4)) break;
+        float h = sp->size * 0.5f;
+        float cx[4] = { -h, -h, h, h }, cz[4] = { -h, h, h, -h };   /* negative turn, like every outer loop */
+        for (int q = 0; q < 4; ++q) coll_vertex(L, b, sp->x0 + cx[q], sp->z0 + cz[q]);
+    }
+}
+
+static void emit_doors(Mesh *m, const BGraph *g, const Interiors *in) {
     const float gy = SIDEWALK_HEIGHT;
     Mat metal = mat(MAT_METAL, g->seed, 3, 0, 0);
     for (int d = 0; d < g->ndoor; ++d) {
@@ -1159,8 +3086,15 @@ static void emit_doors(Mesh *m, const BGraph *g) {
         float len = enter_face(m, &g->sec[dr->section].foot.outer, dr->face);
         Face f = face_local(len);
         float u0 = dr->u - dr->width * 0.5f, u1 = dr->u + dr->width * 0.5f, y1 = gy + dr->height;
-        emit_box(m, v3(u0 - 0.15f, gy, 0.0f), v3(u1 + 0.15f, y1 + 0.15f, 0.08f), F_NOBOT, metal, UV_FACADE);
-        emit_face_panel(m, &f, u0, u1, gy, y1, 0.1f, mat(MAT_DOOR, hash_combine(g->seed, (uint32_t)d), (uint8_t)dr->type, q_half(dr->width), q_half(dr->height)));
+        if (dr->type == DOOR_PRIMARY && interior_of(in, dr->section)) {
+            /* an open doorway into the lobby: jambs and a head through the wall */
+            emit_box(m, v3(u0 - 0.15f, gy, -0.12f), v3(u0, y1 + 0.15f, 0.08f), F_NOBOT, metal, UV_FACADE);
+            emit_box(m, v3(u1, gy, -0.12f), v3(u1 + 0.15f, y1 + 0.15f, 0.08f), F_NOBOT, metal, UV_FACADE);
+            emit_box(m, v3(u0, y1, -0.12f), v3(u1, y1 + 0.15f, 0.08f), F_NOBOT | F_BOT, metal, UV_FACADE);
+        } else {
+            emit_box(m, v3(u0 - 0.15f, gy, 0.0f), v3(u1 + 0.15f, y1 + 0.15f, 0.08f), F_NOBOT, metal, UV_FACADE);
+            emit_face_panel(m, &f, u0, u1, gy, y1, 0.1f, mat(MAT_DOOR, hash_combine(g->seed, (uint32_t)d), (uint8_t)dr->type, q_half(dr->width), q_half(dr->height)));
+        }
         if (dr->canopy) {
             emit_box(m, v3(u0 - 0.8f, y1 + 0.3f, 0.0f), v3(u1 + 0.8f, y1 + 0.55f, 1.8f), F_NOBOT | F_BOT, metal, UV_FACADE);
             float uv[4][2] = { { 0, 0 }, { u1 - u0 + 1.4f, 0 }, { u1 - u0 + 1.4f, 1 }, { 0, 1 } };
@@ -1174,16 +3108,34 @@ static void emit_doors(Mesh *m, const BGraph *g) {
 }
 
 /* Everything that makes up one building, in its own frame. */
-static void emit_building(Mesh *m, const Building *b, const BGraph *g) {
+static void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors *in) {
     const float gy = SIDEWALK_HEIGHT;
     Rng r = rng_make(b->seed ^ 0x77u);
     int fins = 0;
     float bay = bgen_bay_width(g->seed, g->fine);
     for (int si = 0; si < g->nsec; ++si) {
         const BSection *s = &g->sec[si];
-        emit_walls(m, b, g, si);
-        emit_cap(m, &s->foot, s->y1, 0, mat(MAT_ROOF, g->seed, (uint8_t)si, 0, 0));
-        if (s->y0 > gy + 0.01f) emit_cap(m, &s->foot, s->y0, 1, mat(MAT_ROOF, g->seed, (uint8_t)si, 1, 0));
+        Behind bh;
+        emit_walls(m, b, g, si, behind_of(in, si, &bh) ? &bh : NULL);
+        /* an arcology's canyon rises through the slabs between the tiers it passes */
+        int tier = -1;
+        for (int t = 0; in->arc && t < in->arc->ntier; ++t) if (in->arc->tier[t].section == si) tier = t;
+        if (tier >= 0 && tier < in->arc->topTier) emit_cap_holes(m, in->arc, &s->foot.outer, in->arc->voids, in->arc->nvoid, s->y1, 0, mat(MAT_ROOF, g->seed, (uint8_t)si, 0, 0));
+        else emit_cap(m, &s->foot, s->y1, 0, mat(MAT_ROOF, g->seed, (uint8_t)si, 0, 0));
+        if (tier >= 1 && tier <= in->arc->topTier) {
+            emit_cap_holes(m, in->arc, &s->foot.outer, in->arc->voids, in->arc->nvoid, s->y0, 1, mat(MAT_ROOF, g->seed, (uint8_t)si, 1, 0));
+        } else if (s->y0 > gy + 0.01f) {
+            /* a podium atrium's void rises through the slab under this section */
+            const ILayout *pl = NULL;
+            for (int k = 0; k < in->n; ++k) {
+                const ILayout *L = in->lay[k];
+                if (L->atrium.mode != IA_PODIUM || L->atrium.x1 <= L->atrium.x0 || fabsf(s->y0 - L->ceilY) > 0.05f) continue;
+                for (int q = 0; q < s->nbelow; ++q) if (s->below[q] == L->section) pl = L;
+            }
+            if (pl) emit_cap_minus(m, pl, &s->foot.outer, pl->gx0 + pl->atrium.x0 * IN_CELL, pl->gz0 + pl->atrium.z0 * IN_CELL,
+                                   pl->gx0 + pl->atrium.x1 * IN_CELL, pl->gz0 + pl->atrium.z1 * IN_CELL, s->y0, 1, mat(MAT_ROOF, g->seed, (uint8_t)si, 1, 0));
+            else emit_cap(m, &s->foot, s->y0, 1, mat(MAT_ROOF, g->seed, (uint8_t)si, 1, 0));
+        }
         const BLoop *l = &s->foot.outer;
         uint8_t ledCol = (uint8_t)(hash_combine(g->seed, (uint32_t)si) & 7);
         for (int k = 0; k < l->n; ++k) {
@@ -1261,7 +3213,13 @@ static void emit_building(Mesh *m, const Building *b, const BGraph *g) {
             emit_box(m, v3(s->x0, s->y0, s->z0), v3(s->x1, s->y1, s->z1), F_SIDES | F_BOT, concrete, UV_FACADE);
         }
     }
-    emit_doors(m, g);
+    if (in->arc) {   /* the portals replace the graph's doors */
+        emit_arc_portals(m, g, in->arc);
+        emit_arc_frontage(m, g, in->arc);
+        emit_arc_terraces(m, g, in->arc);
+    }
+    else emit_doors(m, g, in);
+    for (int k = 0; k < in->n; ++k) emit_interior_doors(m, g, in->lay[k]);   /* the lobbies themselves: city_build_interiors */
 
     /* signs: street level on faces onto the street, big elements on tall faces */
     for (int si = 0; si < g->nsec; ++si) {
@@ -1575,6 +3533,21 @@ static void build_lights(Mesh *m, ChunkGen *g) {
         float lx = (float)(b->ox - g->ox), lz = (float)(b->oz - g->oz);
         if (lx < bx0 - rr || lx > bx1 + rr || lz < bz0 - rr || lz > bz1 + rr) continue;
         const BGraph *bg = gen_graph(g, i);
+        if (bg->archetype == ARCH_ARCOLOGY) {
+            /* the arcology's real lights: cold light from the crown, sodium in the portals */
+            Interiors in;
+            interiors_plan(b, bg, &in);
+            for (int k = 0; in.arc && k < in.arc->nlight; ++k) {
+                const ALight *al = &in.arc->light[k];
+                float ax, az;
+                arcology_to_local(in.arc, al->x, al->z, &ax, &az);
+                DVec2 w = to_world(b, ax, az);
+                float x = (float)(w.x - g->ox), z = (float)(w.z - g->oz);
+                if (x < bx0 - 34.0f || x > bx1 + 34.0f || z < bz0 - 34.0f || z > bz1 + 34.0f) continue;
+                ADD_LIGHT(x, al->y, z, 34.0f, (uint32_t)al->type);
+            }
+            interiors_free(&in);
+        }
         int retail = bg->groundMode == GF_RETAIL;
         if (retail && !b->shop) continue;
         for (int si = 0; si < bg->nsec; ++si) {
@@ -2203,11 +4176,44 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
         m->xf = 1;
         m->xc = b->c; m->xs = b->s;
         m->xx = (float)(b->ox - g.ox); m->xz = (float)(b->oz - g.oz);
-        emit_building(m, b, gen_graph(&g, i));
+        const BGraph *bg = gen_graph(&g, i);
+        Interiors in;
+        interiors_plan(b, bg, &in);
+        emit_building(m, b, bg, &in);
+        interiors_free(&in);
         m->xf = 0;
     }
     build_cables(m, &g);
     build_lights(m, &g);
+    gen_free(&g);
+}
+
+/* The near-only layer (src/chunks.c): the lobbies behind the ground-floor
+ * glass of the buildings centred in this chunk, in the same chunk-local space. */
+void city_build_interiors(int cx, int cz, Mesh *m) {
+    ChunkGen g;
+    gen_init(&g, cx, cz, 25.0, 0.0, 0.0);
+    m->count = 0;
+    m->xf = 0;
+    m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
+    m->mx[0] = m->mx[1] = m->mx[2] = -1e30f;
+    free(m->lights);
+    m->lights = NULL;
+    m->nlights = 0;
+    for (int i = 0; i < g.nb; ++i) {
+        const Building *b = &g.bld[i];
+        if (!owns(&g, b->ox, b->oz)) continue;
+        const BGraph *bg = gen_graph(&g, i);
+        Interiors in;
+        interiors_plan(b, bg, &in);
+        m->xf = 1;
+        m->xc = b->c; m->xs = b->s;
+        m->xx = (float)(b->ox - g.ox); m->xz = (float)(b->oz - g.oz);
+        for (int k = 0; k < in.n; ++k) emit_interior(m, bg, in.lay[k]);
+        if (in.arc) emit_arcology(m, bg, in.arc);
+        m->xf = 0;
+        interiors_free(&in);
+    }
     gen_free(&g);
 }
 

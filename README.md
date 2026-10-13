@@ -18,6 +18,8 @@ cmake --build build
 ctest --test-dir build         # determinism, layout and building-rule tests
 build/city_map map.bmp         # top-down map of the plan (6 km around the spawn)
 build/building_lab 3000 5      # building archetypes, retries and rejections; 5 decision logs
+build/interior_lab 3000 12 out # office lobbies: pass rate, attempts, rejections; 12 plan renders and cameras
+build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders, cameras
 ```
 
 CMake fetches its dependencies at configure time: Vulkan-Headers, volk, GLFW and stb.
@@ -137,6 +139,97 @@ A building is a pure function of its plot, so revisiting an area regenerates exa
 building. The tests regenerate every building in a 2 km area twice and compare the results
 byte for byte.
 
+### Office lobbies (`src/interior.c`)
+The ground floors of office buildings with a lobby are real interiors, planned by the method in
+`procedural-office-atrium-generation.md`. The planner produces a semantic layout, not a mesh:
+- **Frame and grid.** The building's frame is turned in quarter turns so the primary entrance
+  faces "front", and the footprint is covered with half-metre cells (usable, outside or
+  courtyard). Prefix sums answer rectangle queries, chamfer distance fields give clearances and
+  flood fills test connectivity.
+- **Anchors, in order.** A column grid on large floors; one core per tower above the base (a
+  default rule positions it when there is no tower), built from templates (lifts in one bank or
+  two facing banks, stairs, risers and a lift hall), scored over every position and orientation
+  and accepted only if a 1.5 m corridor reaches its hall. Then a glazed vestibule, an atrium void
+  (a gallery on double-height floors, or a void through the podium floors above to a glazed
+  roof), the main route to each hall with a 2.5 m reserve, and gated access control: a secure
+  side, a low glass barrier and speed gates where the route crosses it.
+- **Back of house.** Rooms (toilets split into A, B and an accessible WC, stores, security, mail,
+  facilities, plant, meeting rooms, showers, cycles, bin stores and loading bays round their
+  service doors, an escape stair) are cut from bands along the rear and side facades, never in
+  the frontage, never stranding part of the lobby. Pockets and slivers join their neighbours;
+  the lobby is whatever remains.
+- **Doors, fixtures, validation.** Each room gets a door on its longest open boundary; then a
+  reception desk facing the entrance, a waiting area, a cafe, planters, a feature piece in the
+  void, a feature stair to the gallery, and rough furniture in the rooms. Each group declares
+  use zones (both sides of the desk, the edge of a bay, the foot of a stair) that are kept
+  clear, and a placement stands only if every zone so far and every lobby door is still reached
+  from the route through floor at least 1 m wide (one flood fill per test, best few candidates
+  in score order); otherwise the next candidate is tried or the group dropped. Validation measures
+  reachability, overlaps, clear lift approaches, route width and the void. A failure is retried
+  down a fixed ladder of six simplifications, then left as an open floor plate. Named random
+  streams keep each decision family independent.
+
+Other ground sections (the second pier of a gateway) get a service grammar: one lift, one stair
+and a plant room, entered by a service door or one the planner adds. `city.c` realises the layout
+from a boundary table: floors on the true footprint with room finishes, a ceiling of light panels,
+walls, glazed partitions and barriers with door openings, solid cores with lift and stair doors,
+the inside of the envelope (mullions on the facade's 1.5 m module, and a lining where a closed
+room or core stands against it; the facade is split there and drawn as opaque back-painted glass,
+and cores and partitions stop short of it), atrium slabs and balustrades, and box furniture. The entrance is a real
+opening and collision follows the plan, so you can walk in.
+
+Lobbies are a second layer of chunk meshes, streamed only within `INTERIOR_DISTANCE` (260 m).
+Within `REAL_GLASS_DIST` (150 m) the lobby glass covers only part of each pixel's MSAA samples
+(`paneCoverage` writes `gl_SampleMask`), so the geometry shows through a reflective pane; farther
+off it falls back to interior mapping. `interior_lab` reports pass rates and rejection reasons
+and writes top-down plan renders.
+
+### Arcologies (`src/arcology.c`)
+An arcology's ground floor is planned as a district, not a lobby, by the grammar in section 11 of
+`procedural-office-atrium-generation.md`, with a Blade Runner / Syd Mead look written as rules.
+The plan is again a semantic layout on a half-metre grid in a frame turned so the main portal
+faces front, and every space carries its **stratum height** (0 at the ground, 1 at the top tier),
+which sets density, signage, clutter and finish: the street stratum is wet, crowded and
+neon-lit; habitat, commerce and the corporate top tier get sparser, cooler, then warmer and
+quieter.
+- **Anchors, in order.** A megastructure column grid (12 to 16 m), with every upper tier's outline
+  brought down as a ring of piers, so the stepped exterior repeats inside as nested colonnades
+  (transfer beams where a ring crosses a street). The spine core of express lifts on the vertical
+  axis. The canyon, a void rising through as many tiers as it fits, inset by its galleries: round
+  the spine, two naves either side of it, or a well in front; capped by a glazed light crown.
+  Concourses run between column lines from facade to facade (a cross, a grid, or a boulevard with
+  a central colonnade and narrow ribs), with a portal wherever one meets the facade. Local cores
+  are spread by farthest-point sampling, each rising until the next tier no longer contains it.
+  The express hall faces the main portal, gated by stratum.
+- **Subdivision.** Market blocks are what is left, each with one use (night market, noodle hall,
+  arcade, clinic, capsule hotel, repair shops, bathhouse, exchange, housing entrance where a core
+  lands, a service yard on the rear portal, kiosk strips where too narrow). Escape stairs are
+  claimed until every walk to a stair or portal is within 45 m; then every street-facing block edge
+  is cut into stall units. A gallery rings the canyon on every floor, with bridges staggered
+  between levels, and each upper tier has a sky lobby and a terrace.
+- **Dressing.** Stall fascias, blade signs off column faces over the streets, banners hanging
+  from the gallery fascias and giant screens on the spine; ducts, cable trays and pipes; sodium
+  lamps every 12 m, cold light shafts from the crown, searchlights swinging along the canyon,
+  steam from vents, puddles where the crown drips. All of it fades with altitude, and none of it
+  comes below the streets' clear height. Validation checks portal-to-portal connectivity, stall
+  frontage, every tier reached, cores and the void inside every tier they pass, bridge spans,
+  travel distance, clear heights and an eight-light budget; failures go down a retry ladder.
+
+`city.c` builds the concourse level and the canyon into the near-only interior layer: floors
+(street floors carry their lamp row, so the shader lays sodium pools under the lamp heads),
+coffered ceilings with stepped beams, ziggurat-capitalled columns, block masses with stall rows,
+the galleries' slabs, fascias, balustrades and unit fronts, bridges, the crown, and the signs.
+The base layer holds the portals (stepped surrounds and a light frame), signs along the street
+front, poster lightboxes in the opaque glass over the blocks, the sky lobbies as lit glazed bands
+round each tier and dressed terraces on the setbacks, and the canyon cut out of the slabs between
+tiers. `shadeArcology` shades it low-key: a dark base, neon washing the street stratum, the
+arcology's real lights (cold from the crown, sodium in the portals) from the chunk's light table,
+wet floors reflecting the screen, and a haze that is thick and warm low down and thin and cool up
+the canyon. Light shafts, searchlight beams and steam are translucent veils that cover one MSAA
+sample each; the searchlights swing in the vertex shader. `interior_lab arcology` reports pass
+rates over a wide area and writes plan renders and the architectural section view through the
+canyon.
+
 ### Chunks
 The world is streamed as an infinite grid of 110 m square chunks. These are only tiles: a
 chunk holds the ground, roads, kerbs and lamps inside it, plus the buildings whose centres
@@ -162,9 +255,10 @@ never blocks a chunk that just came into view. Meshes are uploaded into a fixed 
 is then drawn with one `vkCmdDrawIndirect` call, with one command per page. Each chunk's light
 table goes into a second pool of 32 KB pages, uploaded once with its mesh.
 
-Litter is a second layer, keyed by the same coordinates: the streamer wants it only for chunks
-within `LITTER_DISTANCE`, just behind the chunks themselves, draws it with its chunk's light
-table and leaves it out of the shelter map.
+Office lobbies and arcology interiors are a second layer, keyed by the same coordinates: the
+streamer wants it only for chunks within `INTERIOR_DISTANCE`, just behind the chunks themselves,
+and leaves it out of the shelter map. Litter is a third, within `LITTER_DISTANCE`. Both are drawn
+with their chunk's light table.
 
 When the pool runs low, chunks you haven't seen for the longest time are evicted first.
 If a nearer chunk is still waiting for space, the farthest visible chunks go next; those are
@@ -250,7 +344,7 @@ storefront itself: the shader and the generator use the same hash for which 6 m 
 open.
 
 ### Litter (`src/litter.c`)
-Rubbish lies still, so it isn't a particle system. Each item is ordinary geometry in a second,
+Rubbish lies still, so it isn't a particle system. Each item is ordinary geometry in a third,
 near-only layer of chunk meshes, streamed within `LITTER_DISTANCE` (120 m) and generated, like
 everything else, as a pure function of the plan. The CPU does nothing per frame.
 
@@ -260,7 +354,7 @@ everything else, as a pure function of the plan. The CPU does nothing per frame.
   are crumpled grids with a curling corner; cans, bottles, cups and butts are lathed; bags are
   lumpy ellipsoids, a bin bag with its neck tied. Print, labels and brands are shaded from the
   item's seed. Volumetric items stand in a contact shadow that covers part of each pixel's
-  samples (`litterShadow`), so it needs MSAA.
+  samples, as the lobby glass does (`litterShadow`, like `paneCoverage`).
 - **Where it lies:** along the gutters, in the run-off; at the kerb line and the building line,
   drifted into heaps against the walls in squalid streets; round lamp posts; butts where office
   workers smoke beside the entrance; bin bags piled by service doors and loading bays and, in
@@ -397,7 +491,8 @@ To add a material from an ambientCG download (any resolution):
 
 ### Walking (`src/player.c`)
 Collision runs against the same deterministic block layouts, using circle-vs-footprint tests
-against the oriented footprints and sliding along walls. Curbs are stepped up and down automatically. A critically damped
+against the oriented footprints and sliding along walls. A planned lobby is open: its envelope
+(with a gap at the entrance), partitions, cores and furniture collide instead of its footprint. Curbs are stepped up and down automatically. A critically damped
 spring on the eye height absorbs the 15 cm step and jump landings. The head bob is driven by
 distance travelled rather than by time, with one footfall every 0.78 m walking and 1.35 m
 sprinting:

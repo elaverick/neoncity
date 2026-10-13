@@ -26,8 +26,13 @@
  * VIEW_DISTANCE so chunks streaming in at the edge are never visible popping. */
 #define VIEW_DISTANCE     1900.0f
 #define NEAR_RING_DIST    260.0f   /* chunks this close are kept regardless of view direction */
-/* Street litter (src/litter.c) is a second layer of chunks, streamed only this
- * close. Each item shrinks away in the vertex shader before its own fade distance
+/* Office lobbies are real geometry (src/interior.c), streamed as a second
+ * layer of chunks only this close; beyond REAL_GLASS_DIST (shaders/common.glsl)
+ * their glass falls back to interior mapping. The gap covers a building's
+ * overhang of its chunk (CITY_OVERHANG) and the time to stream a layer in. */
+#define INTERIOR_DISTANCE 260.0f
+/* Street litter (src/litter.c) is a third layer, streamed only this close.
+ * Each item shrinks away in the vertex shader before its own fade distance
  * (a few metres for a cigarette butt, nearly this far for a bin bag). */
 #define LITTER_DISTANCE   120.0f
 #define NEAR_PLANE        0.08f
@@ -92,7 +97,7 @@ enum {
     MAT_ROAD = 0, MAT_SIDEWALK, MAT_CURB, MAT_LOT,
     MAT_FACADE, MAT_ROOF, MAT_NEON, MAT_METAL,
     MAT_EMISSIVE, MAT_SCREEN, MAT_LEDSTRIP, MAT_DOOR,
-    MAT_LITTER
+    MAT_INTERIOR, MAT_LITTER, MAT_ARCOLOGY
 };
 
 /* Litter kinds (MAT_LITTER params.y; src/litter.c). LK_SHADOW is the contact

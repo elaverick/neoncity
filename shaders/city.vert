@@ -110,6 +110,29 @@ void main() {
         vec3 r0 = rel;
         litter(rel, nrm, lit);
         local += rel - r0;
+    } else if (inParams.x == MAT_ARCOLOGY && inParams.y == 23u) {
+        /* An arcology's searchlight beam (emit_arc_searchlight in src/city.c)
+         * hangs from its pivot and swings to and fro along the canyon: uv is
+         * the pivot less this vertex (chunk xz), aux how far along | the drop
+         * below the pivot << 16 (1/64 m), params z the swing direction, w the
+         * phase, seed the amplitude | speed << 8. */
+        float az = float(inParams.z) / 255.0 * 6.2831853;
+        vec2 S = vec2(cos(az), sin(az));
+        float amp = float(inSeed & 255u) / 255.0 * 0.6, spd = 0.1 + float((inSeed >> 8) & 255u) / 255.0 * 0.3;
+        float th = amp * sin(frame.camPos.w * spd + float(inParams.w) / 255.0 * 6.2831853);
+        float c = cos(th), sn = sin(th);
+        vec3 d = vec3(-inUV.x, -float(inAux >> 16) / 64.0, -inUV.y);
+        float s = dot(d.xz, S);
+        vec2 q = d.xz - s * S;
+        float s2 = s * c - d.y * sn, y2 = s * sn + d.y * c;
+        vec3 off = vec3(q.x + s2 * S.x, y2, q.y + s2 * S.y) - d;
+        rel += off;
+        local += off;
+        float ns = dot(nrm.xz, S);
+        vec2 nq = nrm.xz - ns * S;
+        float ns2 = ns * c - nrm.y * sn;
+        nrm = vec3(nq.x + ns2 * S.x, ns * sn + nrm.y * c, nq.y + ns2 * S.y);
+        lit = vec2(float(inAux & 0xFFFFu) / 65535.0, 0.0);
     }
     vRel = rel;
     vLocal = local;

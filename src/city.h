@@ -20,8 +20,8 @@
 #define MAX_LAMPS       96
 #define MAX_CURBS       48
 #define MAX_CURB_PV     PLAN_MAX_PV
-#define MAX_COLL        384
-#define MAX_COLL_VERTS  8192
+#define MAX_COLL        4096
+#define MAX_COLL_VERTS  20480
 #define CITY_OVERHANG   70.0f
 
 typedef struct Rect { float x0, z0, x1, z1; } Rect;
@@ -88,6 +88,8 @@ typedef struct Mesh {
 float    city_height_cap(int cx, int cz);       /* conservative upper bound of anything in the chunk */
 void     city_layout(int cx, int cz, BlockLayout *out);
 void     city_build_mesh(int cx, int cz, Mesh *m);
+/* The near-only layer: real office lobbies of the buildings centred in the chunk. */
+void     city_build_interiors(int cx, int cz, Mesh *m);
 /* The litter layer (src/litter.c): rubbish lying in the streets, alleys and
  * doorways of the chunk. It has no light table of its own; the shader uses the chunk's. */
 void     city_build_litter(int cx, int cz, Mesh *m);

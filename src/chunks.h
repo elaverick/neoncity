@@ -8,9 +8,9 @@
  * VIEW_DISTANCE), plus a small ring around the player, is computed. Missing
  * chunks are generated nearest-first on worker threads; because generation is
  * a pure function of chunk coordinates, evicted chunks are simply rebuilt
- * identically when they come back into view. Street litter is a second,
- * near-only layer of chunks (city_build_litter), wanted within
- * LITTER_DISTANCE. */
+ * identically when they come back into view. Office lobbies are a second,
+ * near-only layer of chunks (city_build_interiors), wanted within
+ * INTERIOR_DISTANCE. */
 
 typedef struct ChunkSystem ChunkSystem;
 

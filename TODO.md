@@ -1,5 +1,29 @@
 # TODO
 
+## Office lobbies (next)
+Real lobbies stand behind office ground floors (`src/interior.c`, `emit_interior` in `src/city.c`).
+- **Furniture** is rough boxes; reception, sofas, cafe, cubicles and plant want real assets.
+- **Vertical circulation:** the gallery, feature stair and escape stairs can't be climbed (collision
+  is 2D); lift doors don't open.
+- **Glazed courtyard atria** (the design's fifth atrium mode) and a mezzanine planned as its own level.
+- **Light:** interiors are lit analytically by their ceiling panels; street lamps don't reach in,
+  and the lobby doesn't throw its real layout's light onto the street.
+- **Glass** over real interiors needs MSAA (`paneCoverage`); without it the panes vanish.
+
+## Arcologies (next)
+Arcology interiors are planned and built (`src/arcology.c`, `emit_arcology` in `src/city.c`).
+- **Above the concourse:** sky lobbies and the floors round the canyon are planned but only seen
+  as the galleries' unit fronts and the lit band outside; nothing above the ground can be reached
+  (collision is 2D, lifts don't run).
+- **Block interiors** are solid masses behind their stall rows; a night market or noodle hall you
+  can walk into would want its own small grammar.
+- **Signage** reuses the street's glyph and screen shaders; the arcology's own brands, kanji-style
+  vertical boards and animated holographic adverts would set it apart.
+- **Crowds, steam and rain:** no people; steam is a simple veil; rain doesn't fall through the
+  light crown into the canyon (the drips are only ripples in the puddles).
+- **Small footprints** (50 to 60 m) often fit fewer local cores than the grammar asks for, and
+  escape stairs are rarely needed; larger mega plots would exercise more of the grammar.
+
 ## Litter
 Rubbish in the streets is static geometry in a near-only layer (`src/litter.c`), plus fine
 debris drawn by the ground shader (`debris`). See the README.
