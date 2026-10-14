@@ -20,6 +20,9 @@
 #define MAX_LAMPS       96
 #define MAX_CURBS       48
 #define MAX_CURB_PV     PLAN_MAX_PV
+#define MAX_DROPS       64
+#define MAX_BLOCK_DROPS 24
+#define MAX_DROP_PV     16
 #define MAX_COLL        4096
 #define MAX_COLL_VERTS  20480
 #define CITY_OVERHANG   70.0f
@@ -53,6 +56,29 @@ typedef struct Lamp {
 
 typedef struct CurbPoly { int n; double v[MAX_CURB_PV][2]; } CurbPoly;
 
+/* A drop kerb: where a crosswalk meets a sidewalk, the kerb is cut down to
+ * DROP_KERB_HEIGHT for the width of the crossing, and the paving behind it
+ * slopes back up to the sidewalk over DROP_RAMP_RUN, between kerb-stone
+ * sides. Its frame: o on the kerb line, t along it, n inward; d = (p - o).n
+ * is the distance in from the kerb. The outline is convex (world), its edges
+ * labelled DE_*. Tactile paving covers the foot of the slope in whole slabs
+ * (DROP_TILE), in rows of slabs from u = tu[r][0] to tu[r][1] along t,
+ * measured from tc, the row r being d = KERB_STONE_WIDTH + r * DROP_TILE
+ * to the next. */
+enum { DE_KERB = 0, DE_BACK, DE_SIDE, DE_OPEN };   /* lowered kerb, top of the slope, kerb-stone side, open to the next drop */
+#define DROP_TILE       0.4
+#define DROP_ROWS       2
+typedef struct DropKerb {
+    int     edge;                 /* the block's curb edge it is cut into */
+    double  ox, oz, tx, tz, nx, nz;
+    int     n;
+    double  v[MAX_DROP_PV][2];
+    uint8_t lab[MAX_DROP_PV];     /* edge v[i] -> v[i + 1] */
+    double  tc, tu[DROP_ROWS][2];
+    int     nopen;                /* the corners it shares: keeps p.x * open[i][0] + p.z * open[i][1] <= open[i][2] */
+    double  open[4][3];
+} DropKerb;
+
 /* Solid ground-level outline (world coordinates in BlockLayout.collv), with an optional courtyard. */
 typedef struct CollPoly { int first, n, holeFirst, holeN; } CollPoly;
 
@@ -66,6 +92,8 @@ typedef struct BlockLayout {
     Lamp     lamp[MAX_LAMPS];       /* lamp poles standing in this chunk */
     int      ncurbs;
     CurbPoly curb[MAX_CURBS];       /* raised kerb outlines touching this chunk */
+    int      ndrops;
+    DropKerb drop[MAX_DROPS];       /* drop kerbs cut into them, touching this chunk */
     int      ncoll, ncollv;         /* what stands at street level: walls, piers, cores, columns */
     CollPoly coll[MAX_COLL];
     double   collv[MAX_COLL_VERTS][2];
@@ -100,6 +128,13 @@ void     mesh_free(Mesh *m);
 
 /* Buildings filling one plan block (all of them, wherever their centres are). */
 int      city_block_buildings(const Block *bk, Building *out, int max);
+/* Drop kerbs cut into a block's sidewalks (all of them), one at each side of
+ * every crosswalk. Uses the roads of the plan area along the block's edges. */
+int      city_block_drops(const PlanArea *pa, const Block *bk, DropKerb *out, int max);
+/* Whether (x, z) lies in a drop kerb's outline (grown by margin), and the
+ * height of its ground there. */
+int      city_drop_contains(const DropKerb *d, double x, double z, double margin);
+float    city_drop_height(const DropKerb *d, double x, double z);
 /* Lamp poles along road `ri` of a plan area, limited to a rectangle. */
 int      city_road_lamps(const PlanArea *pa, int ri, double x0, double z0, double x1, double z1, Lamp *out, int max);
 /* A spot on a sidewalk in the central regional centre, facing along the street. */

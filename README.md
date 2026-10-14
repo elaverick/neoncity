@@ -299,7 +299,21 @@ Each carriageway is one quad, trimmed at its junctions and clipped to the chunk,
 asphalt base that fills the junctions. Its UVs run across and along the road. From those,
 the shader draws lane markings, crosswalks and stop lines at each end. Sidewalks and lots
 are the block's own polygons, raised on kerbs with a kerb-stone edge, and the paving runs
-with the block's grain. Street lamps are real geometry, spaced evenly along each
+with the block's grain.
+
+Where each crosswalk meets a sidewalk there is a drop kerb (`city_block_drops`, `emit_drop`).
+Across the width of the crossing the kerb is lowered to 1 cm above the road. Behind it the
+paving slopes back up to the sidewalk over 1.5 m (about 1:11), between vertical kerb-stone
+sides topped with kerb stones. Two rows of tactile slabs are laid at the foot of the slope.
+They are concrete, 0.4 m square, each set with 7 x 7 raised steel studs (`tactileStuds`,
+shaded with parallax like the road paint), and only whole slabs are laid. A drop kerb is a
+rectangle along its kerb, cut back so it keeps clear of any other kerb. Where two come
+together at a corner they lower the whole corner between them: each takes the side nearer
+its own kerb, and their slopes meet in a valley with no wall between. Water collects in the
+gutter in front of each drop kerb and creeps up the foot of its slope, further in heavier
+rain. Street lamps stay out of the way, and walking and litter follow the slope.
+
+Street lamps are real geometry, spaced evenly along each
 carriageway and skipping side-street mouths. About one in 80 is failing (`lamp_fault`,
 `lampState`). It is either dead, dim and reddened, or cycling as a worn sodium lamp does:
 running, sputtering, going out, then restriking with a red glow that warms back to orange.
@@ -458,7 +472,7 @@ surfaces are lit with GGX:
   takes over. It shows on dark windows and is drowned out by lit rooms.
 - **Procedural materials:** keep their normalised Blinn-Phong lobes. The height
 channel is packed but unused for now: it is reserved for puddles in the joints and for
-parallax. Three materials use textures so far, all CC0 from ambientCG:
+parallax. Four materials use textures so far; the first three are CC0 from ambientCG:
 - **Main sidewalk area:** `paving_stones_111`
   ([PavingStones111](https://ambientcg.com/view?id=PavingStones111)), laid with the block
   grain.
@@ -469,7 +483,12 @@ parallax. Three materials use textures so far, all CC0 from ambientCG:
   kerb: its uv runs along the edge and inward in metres. The shader uses that to cut a
   dirt-filled joint, about 1.5 cm wide, where the strip meets the paving, and to round the
   stone's arris down into it. On the face, u runs along `cross(up, n)` so the shader can
-  rebuild its tangent from the normal.
+  rebuild its tangent from the normal. The tactile slabs at drop kerbs are cast in it too.
+- **Tactile studs:** `tactile_stud`, a single stud. `tools/stud_pack.c` crops it out of a
+  colour, normal and ORM set shot on a plain background:
+  `build/stud_pack <colour.png> <normal.png> <orm.png> assets/textures/tactile_stud 512`.
+  The albedo's alpha is the stud's coverage. The shader repeats the stud on its own grid
+  and cuts it out with an analytic circle, so the image's background never shows.
 
 Everything else stays procedural.
 

@@ -84,6 +84,8 @@ typedef struct LGen {
     Lamp     *lamp;
     int       nl, capl;
     float    *sq;            /* squalor of each block, < 0 until asked */
+    DropKerb **drops;        /* drop kerbs of each block, found when first asked */
+    int      *nd;            /* how many, < 0 until asked */
     Tris     *T;             /* the item being built */
     Mesh     *m;
 } LGen;
@@ -105,10 +107,12 @@ static void lgen_init(LGen *g, int cx, int cz, Mesh *m) {
     g->pa = (PlanArea *)malloc(sizeof(PlanArea));
     g->T = (Tris *)malloc(sizeof(Tris));
     g->sq = (float *)malloc(sizeof(float) * PLAN_MAX_BLOCKS);
-    if (!g->pa || !g->T || !g->sq) fatal("out of memory generating litter");
+    g->drops = (DropKerb **)calloc(PLAN_MAX_BLOCKS, sizeof(DropKerb *));
+    g->nd = (int *)malloc(sizeof(int) * PLAN_MAX_BLOCKS);
+    if (!g->pa || !g->T || !g->sq || !g->drops || !g->nd) fatal("out of memory generating litter");
     /* lamps are found within 2 m, which must stay 20 m inside the plan area (gen_init in src/city.c) */
     plan_area(g->ox - 30.0, g->oz - 30.0, g->ox + P + 30.0, g->oz + P + 30.0, g->pa);
-    for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) g->sq[k] = -1.0f;
+    for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) { g->sq[k] = -1.0f; g->nd[k] = -1; }
 
     Building tmp[256];
     for (int bi = 0; bi < g->pa->nblocks; ++bi) {
@@ -156,7 +160,8 @@ static const BGraph *graph(LGen *g, int i) {
 static void lgen_free(LGen *g) {
     if (g->graph) for (int i = 0; i < g->nb; ++i) free(g->graph[i]);
     free(g->graph);
-    free(g->pa); free(g->bld); free(g->bblk); free(g->lamp); free(g->sq); free(g->T);
+    for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) free(g->drops[k]);
+    free(g->pa); free(g->bld); free(g->bblk); free(g->lamp); free(g->sq); free(g->T); free(g->drops); free(g->nd);
     memset(g, 0, sizeof(*g));
 }
 
@@ -183,8 +188,18 @@ static float amount(float sq) { return 0.1f + 1.25f * sq * sq; }
 
 typedef struct Ground { int type, block; float y; } Ground;
 
+static int block_drops(LGen *g, int bi, const DropKerb **out) {
+    if (g->nd[bi] < 0) {
+        g->drops[bi] = (DropKerb *)malloc(sizeof(DropKerb) * MAX_BLOCK_DROPS);
+        if (!g->drops[bi]) fatal("out of memory generating litter");
+        g->nd[bi] = city_block_drops(g->pa, &g->pa->blocks[bi], g->drops[bi], MAX_BLOCK_DROPS);
+    }
+    *out = g->drops[bi];
+    return g->nd[bi];
+}
+
 /* What the ground is at (x, z) and how high it stands (src/city.c: build_roads, build_blocks). */
-static Ground ground_at(const LGen *g, double x, double z) {
+static Ground ground_at(LGen *g, double x, double z) {
     Ground gr = { G_ROAD, -1, BASE_Y };
     for (int k = 0; k < g->pa->nblocks; ++k) {
         const Block *bk = &g->pa->blocks[k];
@@ -196,6 +211,17 @@ static Ground ground_at(const LGen *g, double x, double z) {
         } else {
             gr.type = G_SIDEWALK;
             gr.y = SIDEWALK_HEIGHT + (poly_contains(&bk->curb, x, z, -KERB_STONE_WIDTH) ? 0.0f : 0.003f);
+            /* down a drop kerb, or on the kerb stones along its sides */
+            const DropKerb *dk;
+            int nd = block_drops(g, k, &dk);
+            for (int i = 0; i < nd; ++i) {
+                if (city_drop_contains(&dk[i], x, z, 0.0)) {
+                    gr.y = city_drop_height(&dk[i], x, z);
+                    if (gr.y <= DROP_KERB_HEIGHT) gr.y += 0.003f;
+                    break;
+                }
+                if (city_drop_contains(&dk[i], x, z, KERB_STONE_WIDTH)) gr.y = SIDEWALK_HEIGHT + 0.003f;
+            }
         }
         return gr;
     }

@@ -162,7 +162,7 @@ int main(void) {
      *    sidewalks clear of buildings; geometry stays under the culling bound. */
     DVec2 home = plan_town_centre(0, 0);
     int hx = (int)floor(home.x / CHUNK_SIZE), hz = (int)floor(home.z / CHUNK_SIZE);
-    int buildings = 0, lamps = 0, kinds[3] = { 0 }, zones[5] = { 0 }, megaX = 0, megaZ = 0, foundMega = 0;
+    int buildings = 0, lamps = 0, drops = 0, slabs = 0, kinds[3] = { 0 }, zones[5] = { 0 }, megaX = 0, megaZ = 0, foundMega = 0;
     uint32_t coreLights = 0, coreVerts = 0, litterMax = 0;
     double litterSum = 0;
     int litterChunks = 0;
@@ -196,7 +196,32 @@ int main(void) {
                 CHECK(ok, "chunk (%d,%d) lamp %d is not on a sidewalk", cx, cz, i);
                 for (int j = 0; j < L.nbuild; ++j)
                     CHECK(!point_in_building(&L.build[j], lp->x, lp->z, -0.25), "chunk (%d,%d) lamp %d inside building %d", cx, cz, i, j);
+                for (int j = 0; j < L.ndrops; ++j)
+                    CHECK(!city_drop_contains(&L.drop[j], lp->x, lp->z, 0.2), "chunk (%d,%d) lamp %d stands in a drop kerb", cx, cz, i);
                 lamps++;
+            }
+            /* Drop kerbs lie on their blocks, keep a lowered kerb wide enough to
+             * cross by, and don't run into each other (bar a shared corner). */
+            for (int i = 0; i < L.ndrops; ++i) {
+                const DropKerb *d = &L.drop[i];
+                double kerb = 0.0, mx = 0.0, mz = 0.0;
+                for (int k = 0; k < d->n; ++k) {
+                    int ok = 0;
+                    for (int j = 0; j < L.ncurbs && !ok; ++j) ok = in_curb(&L.curb[j], d->v[k][0], d->v[k][1]);
+                    CHECK(ok, "chunk (%d,%d) drop kerb %d corner %d is off its block", cx, cz, i, k);
+                    if (d->lab[k] == DE_KERB) kerb += hypot(d->v[(k + 1) % d->n][0] - d->v[k][0], d->v[(k + 1) % d->n][1] - d->v[k][1]);
+                    mx += d->v[k][0] / d->n; mz += d->v[k][1] / d->n;
+                }
+                CHECK(kerb >= 1.5 - 1e-6, "chunk (%d,%d) drop kerb %d is only %.2f m wide", cx, cz, i, kerb);
+                for (int j = 0; j < L.ndrops; ++j)
+                    CHECK(j == i || !city_drop_contains(&L.drop[j], mx, mz, -0.05), "chunk (%d,%d) drop kerbs %d and %d overlap", cx, cz, i, j);
+                CHECK(fabs(city_drop_height(d, mx, mz) - 0.5 * (DROP_KERB_HEIGHT + SIDEWALK_HEIGHT)) < 0.1f,
+                      "chunk (%d,%d) drop kerb %d slopes the wrong way", cx, cz, i);
+                /* owned by the chunk holding its middle, to count each once */
+                if ((int)floor(mx / CHUNK_SIZE) == cx && (int)floor(mz / CHUNK_SIZE) == cz) {
+                    drops++;
+                    for (int r = 0; r < DROP_ROWS; ++r) slabs += (int)((d->tu[r][1] - d->tu[r][0]) / DROP_TILE + 0.5);
+                }
             }
             if ((cx + cz) % 3 == 0) {
                 Mesh m = { 0 };
@@ -228,12 +253,14 @@ int main(void) {
     int n = (2 * R + 1) * (2 * R + 1);
     printf("%d chunks around the spawn: %.1f buildings and %.1f lamps per chunk\n", n, (double)buildings / n, (double)lamps / n);
     printf("  busiest chunk: %u vertices, %u light records\n", coreVerts, coreLights);
+    printf("  %.1f drop kerbs per chunk, %.1f tactile slabs each\n", (double)drops / n, drops ? (double)slabs / drops : 0.0);
     printf("  litter near the spawn: avg %.0f, max %u vertices per chunk\n", litterSum / litterChunks, litterMax);
     printf("  kinds: %d blocks, %d towers, %d arcologies\n", kinds[0], kinds[1], kinds[2]);
     printf("  zones: %d core, %d centre, %d estate, %d industrial\n", zones[0], zones[1], zones[2], zones[3]);
     if (foundMega) printf("  first arcology near world (%d, %d)\n", megaX, megaZ);
     CHECK(buildings > n * 3, "too few buildings around the spawn");
     CHECK(lamps > n, "too few lamps around the spawn");
+    CHECK(drops > n, "too few drop kerbs around the spawn");
 
     /* 5. The spawn point is on a sidewalk and clear of buildings. */
     double sx, sz;

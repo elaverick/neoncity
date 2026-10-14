@@ -418,6 +418,80 @@ vec2 roadPaint(vec2 uv, float half_, float len, bool crossing, float aa) {
 
 // Road markings are thermoplastic, laid a few millimetres thick.
 const float PAINT_H = 0.003;
+
+// Tactile paving at the foot of a drop kerb (src/city.c: emit_drop): concrete
+// slabs 0.4 m square, each set with 7 x 7 stainless steel studs 30 mm across
+// that stand 5 mm proud. uv counts from the slab grid, in metres.
+const float SLAB = 0.4, STUD_PITCH = SLAB / 7.0, STUD_R = 0.015, STUD_H = 0.005;
+const float STUD_COVER = 3.14159265 * STUD_R * STUD_R / (STUD_PITCH * STUD_PITCH);
+
+// Offset (metres) of uv from the centre of the stud whose square it is in.
+vec2 studOffset(vec2 uv) { return (fract(uv / STUD_PITCH) - 0.5) * STUD_PITCH; }
+
+// Lays the studs over the slab's surface. They are metal: little diffuse,
+// a bright grey specular. As with the road paint, a stud's top shows shifted
+// toward the viewer by its height, with its near side between; a ring of
+// grime and shadow sits round its foot. Beyond where a stud is a pixel or so
+// the pattern gives way to its average. Studs stand clear of the water, and
+// water lies in the joints between slabs.
+void tactileStuds(vec3 p, vec3 V, vec2 uv, vec3 T, vec3 B, vec3 nGeom, float aa,
+                  inout vec3 alb, inout vec3 n, inout float rough, inout float specK, inout float ao,
+                  inout float relH, inout float sink) {
+    mat2 Juv = mat2(dFdx(uv), dFdy(uv)), Jw = mat2(dFdx(p.xz), dFdy(p.xz));
+    mat2 toUV = abs(determinant(Jw)) > 1e-12 ? Juv * inverse(Jw) : mat2(0.0);
+    vec2 lift = V.xz * (STUD_H / max(V.y, 0.02));
+    lift *= min(1.0, 0.03 / max(length(lift), 1e-6));
+    vec2 uvTop = uv + toUV * lift;
+    vec2 oTop = studOffset(uvTop), oBase = studOffset(uv);
+    float e = 0.5 * aa + 0.0004;
+    float covTop = 1.0 - smoothstep(STUD_R - e, STUD_R + e, length(oTop));
+    float covBase = 1.0 - smoothstep(STUD_R - e, STUD_R + e, length(oBase));
+    float side = max(covBase - covTop, 0.0);
+    float vis = 1.0 - smoothstep(0.25, 0.6, aa / STUD_PITCH);
+
+    vec3 sAlb, sN;
+    float sRough, sAO = 1.0;
+    if (pbrLoaded(PBR_TACTILE)) {
+        int i = PBR_TACTILE * PBR_MAPS_PER_MATERIAL;
+        vec2 st = oTop / (2.0 * STUD_R) + 0.5;
+        vec2 gx = dFdx(uvTop) / (2.0 * STUD_R), gy = dFdy(uvTop) / (2.0 * STUD_R);
+        sAlb = textureGrad(pbrMaps[i + PBR_ALBEDO], st, gx, gy).rgb;
+        vec3 tn = textureGrad(pbrMaps[i + PBR_NORMAL], st, gx, gy).xyz * 2.0 - 1.0;
+        sN = normalize(T * tn.x + B * tn.y + nGeom * tn.z);
+        vec3 orm = textureGrad(pbrMaps[i + PBR_ORM], st, gx, gy).rgb;
+        sAO = orm.r;
+        sRough = orm.g * 0.7;   // the tops are polished by feet
+    } else {
+        // a low dome, brushed steel
+        vec2 d = oTop / STUD_R;
+        sN = normalize(nGeom + (T * d.x - B * d.y) * 0.6);
+        sAlb = vec3(0.5, 0.5, 0.52) * (0.8 + 0.3 * vnoise(uvTop * 300.0, 0x57D0u));
+        sRough = 0.35;
+    }
+    float lum = dot(sAlb, vec3(0.2126, 0.7152, 0.0722));
+    float m = mix(STUD_COVER, covTop, vis);
+    alb = mix(alb, sAlb * 0.12, m);
+    specK = mix(specK, mix(0.45, 0.7, lum), m);
+    rough = mix(rough, mix(0.3, sRough, vis), m);
+    n = normalize(mix(n, sN, covTop * vis));
+    ao *= mix(1.0, sAO, m);
+    // the near side wall faces the viewer, dimmer and rougher
+    n = normalize(mix(n, normalize(vec3(V.x, 0.0, V.z) + vec3(0.0, 0.3, 0.0)), side * vis));
+    alb *= 1.0 - 0.3 * side * vis;
+    // grime and shadow round its foot
+    float ring = (1.0 - covBase) * (1.0 - smoothstep(STUD_R, STUD_R + 0.008, length(oBase)));
+    ao *= 1.0 - 0.45 * ring * vis;
+    alb *= 1.0 - 0.25 * ring * vis;
+    relH += 4.0 * max(covTop, covBase) * vis;
+    sink -= 3.0 * m;
+
+    // the joints between slabs
+    vec2 g = abs(fract(uv / SLAB - 0.5) - 0.5) * SLAB;
+    float joint = 1.0 - smoothstep(0.002, 0.004 + aa, min(g.x, g.y));
+    alb *= 1.0 - 0.5 * joint;
+    ao *= 1.0 - 0.3 * joint;
+    sink += 0.8 * joint;
+}
 /* Fine litter, too small and too many for the litter layer (src/litter.c):
  * flecks of paper and wrappers, dead leaves, grit and cigarette ends, and
  * flattened chewing gum on the sidewalks, more of them the more squalid the
@@ -530,6 +604,8 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
             // water dams up against the paint's edges, and grime collects in the angle
             rim = max(roadPaint(uv, half_, len, xing, aa + 0.025).x - mk.x, 0.0) * wear;
             dCurb = half_ - abs(uv.x);
+            // run-off pools in the gutter at the foot of each drop kerb
+            if (xing) sink += 0.9 * band(min(uv.y, len - uv.y), 0.3, 3.9, 0.3) * (1.0 - smoothstep(0.15, 0.9, dCurb));
             // ruts faintly worn into the wheel paths, 0.85 m either side of each lane's centre
             float u = mod(abs(uv.x), 3.4);
             sink += 0.2 * (exp(-(u - 0.85) * (u - 0.85) / 0.04) + exp(-(u - 2.55) * (u - 2.55) / 0.04));
@@ -574,8 +650,9 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
             shin = 60.0;
             specK = (0.25 + 0.5 * big) * (1.0 - 0.6 * mk.x);   // oily, slightly slick asphalt
         }
-    } else if (mat == MAT_SIDEWALK && prm.y == 0u && pbrLoaded(PBR_PAVING_STONES)) {
-        // authored paving laid with the block grain (uv)
+    } else if (mat == MAT_SIDEWALK && (prm.y == 0u || prm.y == 2u) && pbrLoaded(PBR_PAVING_STONES)) {
+        // authored paving laid with the block grain (uv); a drop kerb's slope (2)
+        // is laid along its kerb instead (uv = along, in from the kerb line)
         vec3 T, B;
         grainFrame(seed, T, B);
         Surface s = samplePBR(PBR_PAVING_STONES, uv / PAVING_TILE, T, B, n);
@@ -588,8 +665,9 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         relBroad = (pbrBroadHeight(PBR_PAVING_STONES, uv / PAVING_TILE, 4.0) - PAVING_RELIEF.x) / PAVING_RELIEF.y;
         jointLevel = -0.3;   // the joints between slabs
         sink += 0.6 * hollow(w.xz, 0.1, 0x7E7Cu);
-    } else if (mat == MAT_SIDEWALK && prm.y == 1u && pbrLoaded(PBR_KERB)) {
-        // authored kerb stones, laid along the edge (uv = along, inward)
+    } else if (mat == MAT_SIDEWALK && (prm.y == 1u || prm.y == 3u) && pbrLoaded(PBR_KERB)) {
+        // authored kerb stones, laid along the edge (uv = along, inward); the
+        // tactile slabs at a drop kerb (3) are cast in the same concrete
         vec3 T, B;
         grainFrame(seed, T, B);
         Surface s = samplePBR(PBR_KERB, uv / KERB_TILE, T, B, n);
@@ -617,7 +695,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         float grout = 1.0 - smoothstep(0.012, 0.03 + aa, g);
         alb = vec3(0.080, 0.077, 0.074) * (0.78 + 0.4 * th) * (0.65 + 0.7 * fbm(w.xz * 0.7, 0x7112u));
         alb = mix(alb, vec3(0.028), grout * 0.75);
-        if (prm.y == 1u) alb = vec3(0.12, 0.115, 0.11) * (0.8 + 0.3 * fbm(w.xz * 3.0, 0x7113u));
+        if (prm.y == 1u || prm.y == 3u) alb = vec3(0.12, 0.115, 0.11) * (0.8 + 0.3 * fbm(w.xz * 3.0, 0x7113u));
         alb *= 0.6 + 0.4 * smoothstep(0.2, 0.55, fbm(w.xz * 0.15, 0x7114u));  // stains
         shin = 24.0; specK = 0.1;
     } else if (mat == MAT_CURB) {
@@ -655,6 +733,20 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         ao *= mix(1.0, 0.45, gap) * (1.0 - 0.25 * arris);
         if (rough >= 0.0) rough = mix(rough, 0.92, gap);
         sink += 0.9 * gap;   // water runs into the joint
+    }
+
+    if (mat == MAT_SIDEWALK && prm.y == 3u) {
+        vec3 T, B;
+        grainFrame(seed, T, B);
+        tactileStuds(p, V, uv, T, B, nGeom, aa, alb, n, rough, specK, ao, relH, sink);
+    }
+
+    if (mat == MAT_SIDEWALK && prm.w == 1u) {
+        // A drop kerb sits low: water stands on its lowered kerb stones and
+        // creeps up the foot of its slope, further the harder it rains.
+        float d = prm.y == 3u ? uv.y + KERB_STONE_WIDTH : uv.y;   // in from the kerb line
+        float foot = 1.0 - smoothstep(0.0, 0.2 + 0.5 * WETNESS, d - KERB_STONE_WIDTH);
+        sink += 1.1 * foot * (0.55 + 0.9 * vnoise(w.xz * 1.6, 0xD20Bu));
     }
 
     if (wettable && WETNESS > 0.0) {

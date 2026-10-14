@@ -51,6 +51,8 @@ static bool in_curb(const CurbPoly *c, double x, double z) {
 static float ground_height(double x, double z) {
     int cx = (int)floor(x / CHUNK_SIZE), cz = (int)floor(z / CHUNK_SIZE);
     const BlockLayout *L = layout_get(cx, cz);
+    for (int i = 0; i < L->ndrops; ++i)
+        if (city_drop_contains(&L->drop[i], x, z, 0.0)) return city_drop_height(&L->drop[i], x, z);
     for (int i = 0; i < L->ncurbs; ++i)
         if (in_curb(&L->curb[i], x, z)) return SIDEWALK_HEIGHT;
     return 0.0f;

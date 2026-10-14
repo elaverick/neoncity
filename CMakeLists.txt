@@ -136,6 +136,14 @@ if(MSVC)
 else()
   target_link_libraries(pbr_pack PRIVATE m)
 endif()
+# Crops a single round object (the tactile stud) out of its texture set.
+add_executable(stud_pack tools/stud_pack.c)
+target_include_directories(stud_pack PRIVATE ${stb_SOURCE_DIR})
+if(MSVC)
+  target_compile_options(stud_pack PRIVATE /W3 /wd4996)
+else()
+  target_link_libraries(stud_pack PRIVATE m)
+endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity

@@ -365,6 +365,273 @@ int city_block_buildings(const Block *bk, Building *out, int max) {
 }
 
 /* ===========================================================================
+ * Drop kerbs: at each side of every crosswalk the kerb is lowered for the
+ * width of the crossing and the paving behind it slopes back up to the
+ * sidewalk between kerb-stone sides, with tactile paving at the foot. Each is
+ * a rectangle along its kerb, cut back where it would run into another kerb.
+ * Where two come together at a corner they lower the whole corner between
+ * them, each taking the side nearer its own kerb, so their slopes meet in a
+ * valley with no wall between. Pure function of the plan, like the lamps.
+ * ========================================================================= */
+
+#define DROP_SPAN0    0.4                        /* along the carriageway from its trimmed end: a */
+#define DROP_SPAN1    3.8                        /* little wider than the crosswalk (0.5-3.7 m, roadPaint) */
+#define DROP_DEPTH    (KERB_STONE_WIDTH + DROP_RAMP_RUN)
+#define DROP_CLEAR    (2.0 * KERB_STONE_WIDTH)   /* kept off any other kerb: its stones, then the side's own */
+#define DROP_MIN_W    1.5                        /* the narrowest lowered kerb worth cutting */
+#define DROP_SLAB_GAP 0.08                       /* tactile slabs stay this far off a kerb-stone side */
+
+/* Keeps the part of convex polygon `in` where p.nr <= c. With labels, the edge
+ * cut along the line takes `lab`; out must not alias in. */
+static int clip_hp(const DVec2 *in, const uint8_t *li, int n, DVec2 nr, double c, uint8_t lab, DVec2 *out, uint8_t *lo) {
+    int k = 0;
+    for (int i = 0; i < n && k < 46; ++i) {
+        DVec2 a = in[i], b = in[(i + 1) % n];
+        double da = ddot(a, nr) - c, db = ddot(b, nr) - c;
+        uint8_t la = li ? li[i] : 0;
+        if (da <= 0.0) { if (lo) lo[k] = la; out[k++] = a; }
+        if ((da <= 0.0) != (db <= 0.0)) {
+            double t = da / (da - db);
+            if (lo) lo[k] = da <= 0.0 ? lab : la;
+            out[k++] = dv(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t);
+        }
+    }
+    return k >= 3 ? k : 0;
+}
+
+static double area2(const DVec2 *p, int n) {
+    double s = 0.0;
+    for (int i = 0; i < n; ++i) s += p[i].x * p[(i + 1) % n].z - p[(i + 1) % n].x * p[i].z;
+    return s;
+}
+
+typedef struct DropCand { int edge, alive; double u0, u1; } DropCand;
+typedef struct HPlane { DVec2 nr; double c; uint8_t lab; } HPlane;   /* keep p.nr <= c */
+
+/* The block's curb edges: inward normals, the kerb-stone frame's along
+ * direction (as build_blocks) and the range of u along each. */
+typedef struct CurbFrame { int n; DVec2 nin[PLAN_MAX_PV], al[PLAN_MAX_PV]; double u0[PLAN_MAX_PV], u1[PLAN_MAX_PV]; } CurbFrame;
+
+/* A rectangle along curb edge e, from u0 to u1, as corners and as its four half-planes. */
+static void drop_rect(const Poly *c, const CurbFrame *F, int e, double u0, double u1, DVec2 *q, uint8_t *lb, HPlane *hp) {
+    DVec2 o = c->v[e], t = F->al[e], nn = F->nin[e];
+    q[0] = dadd(o, dscale(t, u0));
+    q[1] = dadd(o, dscale(t, u1));
+    q[2] = dadd(q[1], dscale(nn, DROP_DEPTH));
+    q[3] = dadd(q[0], dscale(nn, DROP_DEPTH));
+    lb[0] = DE_KERB; lb[1] = DE_SIDE; lb[2] = DE_BACK; lb[3] = DE_SIDE;
+    double on = ddot(o, nn), ot = ddot(o, t);
+    hp[0].nr = dv(-nn.x, -nn.z); hp[0].c = -on;              hp[0].lab = DE_KERB;
+    hp[1].nr = t;                 hp[1].c = ot + u1;          hp[1].lab = DE_SIDE;
+    hp[2].nr = nn;                hp[2].c = on + DROP_DEPTH;  hp[2].lab = DE_BACK;
+    hp[3].nr = dv(-t.x, -t.z);    hp[3].c = -(ot + u0);       hp[3].lab = DE_SIDE;
+}
+
+/* Whether a's rectangle comes within DROP_CLEAR of b's. */
+static int drop_near(const Poly *c, const CurbFrame *F, const DropCand *a, const DropCand *b) {
+    DVec2 qa[4], qb[4], p[48], r[48];
+    uint8_t lb[4];
+    HPlane hb[4], ha[4];
+    drop_rect(c, F, a->edge, a->u0, a->u1, qa, lb, ha);
+    drop_rect(c, F, b->edge, b->u0, b->u1, qb, lb, hb);
+    int n = 4;
+    memcpy(p, qa, sizeof(qa));
+    for (int k = 0; k < 4 && n; ++k) {
+        n = clip_hp(p, NULL, n, hb[k].nr, hb[k].c + DROP_CLEAR, 0, r, NULL);
+        memcpy(p, r, sizeof(DVec2) * n);
+    }
+    return n && fabs(area2(p, n)) > 2e-3;
+}
+
+/* Every half-plane bounding candidate ai, its rectangle's four first. For each
+ * other kerb: where a drop on it comes near, the two share the corner, each
+ * taking the side nearer its own kerb, and when the corner is the one between
+ * their kerbs, each runs right round to it so the whole corner is lowered;
+ * otherwise it keeps DROP_CLEAR off that kerb. */
+static int drop_planes(const Poly *c, const CurbFrame *F, const DropCand *cd, int nc, int ai, HPlane *hp, double *u0, double *u1) {
+    const DropCand *a = &cd[ai];
+    int n = c->n, k = 4, ea = a->edge;
+    DVec2 na = F->nin[ea];
+    *u0 = a->u0; *u1 = a->u1;
+    for (int e = 0; e < n; ++e) {
+        if (e == ea || F->u1[e] - F->u0[e] < 1e-6) continue;
+        DVec2 ne = F->nin[e];
+        if (ddot(na, ne) > 0.996) continue;   /* the same kerb line carrying on */
+        int share = 0;
+        for (int b = 0; b < nc && !share; ++b)
+            share = b != ai && cd[b].alive && cd[b].edge == e && (drop_near(c, F, a, &cd[b]) || drop_near(c, F, &cd[b], a));
+        if (share) {
+            hp[k].nr = dsub(na, ne);
+            hp[k].c = ddot(c->v[ea], na) - ddot(c->v[e], ne);
+            hp[k++].lab = DE_OPEN;
+            int next = e == (ea + 1) % n, prev = e == (ea + n - 1) % n;
+            if (next || prev) {
+                double cu = next ? ddot(dsub(c->v[(ea + 1) % n], c->v[ea]), F->al[ea]) : 0.0;
+                if (cu <= 0.5 * (a->u0 + a->u1)) *u0 = fmin(*u0, cu - DROP_DEPTH - 1.0);
+                else *u1 = fmax(*u1, cu + DROP_DEPTH + 1.0);
+            }
+        } else {
+            hp[k].nr = dv(-ne.x, -ne.z);
+            hp[k].c = -ddot(c->v[e], ne) - DROP_CLEAR;
+            hp[k++].lab = DE_SIDE;
+        }
+    }
+    DVec2 q[4];
+    uint8_t lb[4];
+    drop_rect(c, F, ea, *u0, *u1, q, lb, hp);
+    return k;
+}
+
+/* Candidate ai's outline (labelled), and its half-planes. */
+static int drop_outline(const Poly *c, const CurbFrame *F, const DropCand *cd, int nc, int ai, HPlane *hp, int *nhp, DVec2 *p, uint8_t *lp) {
+    double u0, u1;
+    int k = drop_planes(c, F, cd, nc, ai, hp, &u0, &u1);
+    HPlane rh[4];
+    DVec2 q[48];
+    uint8_t lq[48];
+    drop_rect(c, F, cd[ai].edge, u0, u1, p, lp, rh);
+    int m = 4;
+    for (int j = 4; j < k && m; ++j) {
+        m = clip_hp(p, lp, m, hp[j].nr, hp[j].c, hp[j].lab, q, lq);
+        memcpy(p, q, sizeof(DVec2) * m);
+        memcpy(lp, lq, (size_t)m);
+    }
+    *nhp = k;
+    return m;
+}
+
+int city_block_drops(const PlanArea *pa, const Block *bk, DropKerb *out, int max) {
+    const Poly *c = &bk->curb;
+    int n = c->n;
+    if (n < 3) return 0;
+    CurbFrame F;
+    F.n = n;
+    DVec2 cen = poly_centroid(c);
+    for (int i = 0; i < n; ++i) {
+        DVec2 d = dsub(c->v[(i + 1) % n], c->v[i]);
+        F.nin[i] = dlen(d) > 1e-6 ? dnorm(dv(-d.z, d.x)) : dv(0, 0);
+        if (ddot(F.nin[i], dsub(cen, c->v[i])) < 0) F.nin[i] = dv(-F.nin[i].x, -F.nin[i].z);
+        F.al[i] = dv(F.nin[i].z, -F.nin[i].x);
+        double ue = ddot(d, F.al[i]);
+        F.u0[i] = fmin(0.0, ue); F.u1[i] = fmax(0.0, ue);
+    }
+
+    /* A crosswalk crosses each end of every carriageway long enough to have
+     * them (build_roads), meeting the kerbs that run along its sides. */
+    DropCand cd[MAX_BLOCK_DROPS];
+    int nc = 0;
+    for (int i = 0; i < n; ++i) {
+        if (!c->e[i].id || F.u1[i] - F.u0[i] < DROP_MIN_W) continue;
+        for (int ri = 0; ri < pa->nroads; ++ri) {
+            const Road *r = &pa->roads[ri];
+            if (r->at.id != c->e[i].id) continue;
+            DVec2 d = dsub(r->b, r->a);
+            double rl = dlen(d);
+            if (rl < 1.0 || rl - r->trimA - r->trimB <= 16.0) continue;
+            DVec2 dir = dscale(d, 1.0 / rl), w = dsub(c->v[i], r->a);
+            if (fabs(ddot(dir, F.al[i])) < 0.999 || fabs(fabs(dir.x * w.z - dir.z * w.x) - r->at.half) > 0.05) continue;
+            for (int end = 0; end < 2 && nc < MAX_BLOCK_DROPS; ++end) {
+                double s0 = end ? rl - r->trimB - DROP_SPAN1 : r->trimA + DROP_SPAN0;
+                double u0 = ddot(dsub(dadd(r->a, dscale(dir, s0)), c->v[i]), F.al[i]);
+                double u1 = ddot(dsub(dadd(r->a, dscale(dir, s0 + DROP_SPAN1 - DROP_SPAN0)), c->v[i]), F.al[i]);
+                if (u0 > u1) { double t = u0; u0 = u1; u1 = t; }
+                if (u1 <= F.u0[i] || u0 >= F.u1[i]) continue;
+                cd[nc].edge = i; cd[nc].alive = 1; cd[nc].u0 = u0; cd[nc].u1 = u1;
+                ++nc;
+            }
+        }
+    }
+
+    /* Cut each back; drop any left too narrow, and again for the drops that
+     * were sharing a corner with it. */
+    HPlane hp[4 + PLAN_MAX_PV];
+    for (int iter = 0; iter < 4; ++iter) {
+        int changed = 0;
+        for (int a = 0; a < nc; ++a) {
+            if (!cd[a].alive) continue;
+            DVec2 p[48];
+            uint8_t lp[48];
+            int k, m = drop_outline(c, &F, cd, nc, a, hp, &k, p, lp);
+            double w = 0.0;
+            for (int j = 0; j < m; ++j)
+                if (lp[j] == DE_KERB) w += dlen(dsub(p[(j + 1) % m], p[j]));
+            if (w < DROP_MIN_W) { cd[a].alive = 0; changed = 1; }
+        }
+        if (!changed) break;
+    }
+
+    int no = 0;
+    for (int a = 0; a < nc && no < max; ++a) {
+        if (!cd[a].alive) continue;
+        DropKerb *D = &out[no];
+        DVec2 p[48];
+        uint8_t lp[48];
+        int k, m = drop_outline(c, &F, cd, nc, a, hp, &k, p, lp);
+        if (m < 3 || m > MAX_DROP_PV) continue;
+        D->nopen = 0;
+        for (int j = 4; j < k; ++j)
+            if (hp[j].lab == DE_OPEN && D->nopen < 4) {
+                double *s = D->open[D->nopen++];
+                s[0] = hp[j].nr.x; s[1] = hp[j].nr.z; s[2] = hp[j].c;
+            }
+        int e = cd[a].edge;
+        DVec2 o = c->v[e], t = F.al[e], nn = F.nin[e];
+        D->edge = e;
+        D->ox = o.x; D->oz = o.z; D->tx = t.x; D->tz = t.z; D->nx = nn.x; D->nz = nn.z;
+        D->n = m;
+        for (int j = 0; j < m; ++j) { D->v[j][0] = p[j].x; D->v[j][1] = p[j].z; D->lab[j] = lp[j]; }
+        /* Tactile slabs: whole ones only, on a grid centred on the crossing,
+         * clear of the kerb-stone sides. */
+        D->tc = 0.5 * (cd[a].u0 + cd[a].u1);
+        for (int r = 0; r < DROP_ROWS; ++r) {
+            double d0 = KERB_STONE_WIDTH + r * DROP_TILE, d1 = d0 + DROP_TILE;
+            int lo = 1000, hi = -1000;
+            for (int s = -12; s < 12; ++s) {
+                double ua = D->tc + s * DROP_TILE, ub = ua + DROP_TILE;
+                int fits = 1;
+                for (int corner = 0; corner < 4 && fits; ++corner) {
+                    DVec2 pt = dadd(o, dadd(dscale(t, corner & 1 ? ub : ua), dscale(nn, corner & 2 ? d1 : d0)));
+                    for (int j = 0; j < k && fits; ++j)
+                        fits = ddot(pt, hp[j].nr) <= hp[j].c - (hp[j].lab == DE_SIDE ? DROP_SLAB_GAP : 0.0) + 1e-9;
+                }
+                if (fits) { if (s < lo) lo = s; if (s > hi) hi = s; }
+            }
+            D->tu[r][0] = hi >= lo ? D->tc + lo * DROP_TILE : 0.0;
+            D->tu[r][1] = hi >= lo ? D->tc + (hi + 1) * DROP_TILE : 0.0;
+        }
+        ++no;
+    }
+    return no;
+}
+
+int city_drop_contains(const DropKerb *d, double x, double z, double margin) {
+    double s = 0.0;
+    for (int i = 0; i < d->n; ++i) {
+        const double *a = d->v[i], *b = d->v[(i + 1) % d->n];
+        s += a[0] * b[1] - b[0] * a[1];
+    }
+    s = s >= 0.0 ? 1.0 : -1.0;
+    for (int i = 0; i < d->n; ++i) {
+        const double *a = d->v[i], *b = d->v[(i + 1) % d->n];
+        double ex = b[0] - a[0], ez = b[1] - a[1], l = sqrt(ex * ex + ez * ez);
+        if (l < 1e-9) continue;
+        if (s * (ex * (z - a[1]) - ez * (x - a[0])) / l < -margin) return 0;
+    }
+    return 1;
+}
+
+/* The lowered kerb stones at DROP_KERB_HEIGHT, then the slope up to the sidewalk. */
+static float drop_y(double d) {
+    double f = (d - KERB_STONE_WIDTH) / DROP_RAMP_RUN;
+    f = f < 0.0 ? 0.0 : f > 1.0 ? 1.0 : f;
+    return (float)(DROP_KERB_HEIGHT + (SIDEWALK_HEIGHT - DROP_KERB_HEIGHT) * f);
+}
+
+float city_drop_height(const DropKerb *d, double x, double z) {
+    return drop_y((x - d->ox) * d->nx + (z - d->oz) * d->nz);
+}
+
+/* ===========================================================================
  * Street lamps: evenly spaced along each carriageway between its junctions,
  * on both sidewalks, skipping side-street mouths. Pure function of the plan.
  * ========================================================================= */
@@ -381,7 +648,14 @@ static int lamp_site_ok(const PlanArea *pa, int ri, DVec2 q) {
     for (int k = 0; k < pa->nblocks; ++k) {
         const Block *bk = &pa->blocks[k];
         if (q.x < bk->x0 || q.x > bk->x1 || q.z < bk->z0 || q.z > bk->z1) continue;
-        if (poly_contains(&bk->curb, q.x, q.z, -0.3) && !(bk->lot.n && poly_contains(&bk->lot, q.x, q.z, 0.3))) return 1;
+        if (poly_contains(&bk->curb, q.x, q.z, -0.3) && !(bk->lot.n && poly_contains(&bk->lot, q.x, q.z, 0.3))) {
+            /* not in a drop kerb's way */
+            DropKerb dk[MAX_BLOCK_DROPS];
+            int nd = city_block_drops(pa, bk, dk, MAX_BLOCK_DROPS);
+            for (int i = 0; i < nd; ++i)
+                if (city_drop_contains(&dk[i], q.x, q.z, 0.6)) return 0;
+            return 1;
+        }
     }
     return 0;
 }
@@ -518,6 +792,16 @@ void city_layout(int cx, int cz, BlockLayout *L) {
         CurbPoly *c = &L->curb[L->ncurbs++];
         c->n = bk->curb.n;
         for (int k = 0; k < c->n; ++k) { c->v[k][0] = bk->curb.v[k].x; c->v[k][1] = bk->curb.v[k].z; }
+        DropKerb dk[MAX_BLOCK_DROPS];
+        int nd = city_block_drops(g.pa, bk, dk, MAX_BLOCK_DROPS);
+        for (int d = 0; d < nd && L->ndrops < MAX_DROPS; ++d) {
+            double x0 = 1e300, z0 = 1e300, x1 = -1e300, z1 = -1e300;
+            for (int k = 0; k < dk[d].n; ++k) {
+                x0 = fmin(x0, dk[d].v[k][0]); x1 = fmax(x1, dk[d].v[k][0]);
+                z0 = fmin(z0, dk[d].v[k][1]); z1 = fmax(z1, dk[d].v[k][1]);
+            }
+            if (x1 >= g.ox && x0 <= g.ox + P && z1 >= g.oz && z0 <= g.oz + P) L->drop[L->ndrops++] = dk[d];
+        }
     }
     gen_free(&g);
 }
@@ -3395,12 +3679,196 @@ static void build_roads(Mesh *m, const ChunkGen *g) {
     }
 }
 
-/* Raised blocks: sidewalk, kerb stones, kerb faces and the lot inside. The
- * paving and lot carry the block's squalor (0..255) in params.z. */
+/* Pieces of convex polygons cut round other convex polygons (the sidewalk
+ * round its drop kerbs, a slope round its tactile slabs). */
+#define MAX_SHARDS 96
+typedef struct Shard { int n; DVec2 v[48]; } Shard;
+
+/* Replaces the *ns shards in s with their parts outside convex polygon b;
+ * tmp is scratch for MAX_SHARDS more. */
+static void shards_minus(Shard *s, int *ns, Shard *tmp, const DVec2 *b, int nb) {
+    double bx0 = 1e300, bz0 = 1e300, bx1 = -1e300, bz1 = -1e300;
+    for (int i = 0; i < nb; ++i) {
+        bx0 = fmin(bx0, b[i].x); bx1 = fmax(bx1, b[i].x);
+        bz0 = fmin(bz0, b[i].z); bz1 = fmax(bz1, b[i].z);
+    }
+    double sg = area2(b, nb) >= 0.0 ? 1.0 : -1.0;
+    int nt = 0;
+    for (int k = 0; k < *ns; ++k) {
+        const Shard *a = &s[k];
+        double ax0 = 1e300, az0 = 1e300, ax1 = -1e300, az1 = -1e300;
+        for (int i = 0; i < a->n; ++i) {
+            ax0 = fmin(ax0, a->v[i].x); ax1 = fmax(ax1, a->v[i].x);
+            az0 = fmin(az0, a->v[i].z); az1 = fmax(az1, a->v[i].z);
+        }
+        if (ax1 <= bx0 || ax0 >= bx1 || az1 <= bz0 || az0 >= bz1) {
+            if (nt < MAX_SHARDS) tmp[nt++] = *a;
+            continue;
+        }
+        /* outside each of b's edges in turn, inside the ones before */
+        DVec2 cur[48], nxt[48];
+        int nc = a->n;
+        memcpy(cur, a->v, sizeof(DVec2) * nc);
+        for (int j = 0; j < nb && nc; ++j) {
+            DVec2 e = dsub(b[(j + 1) % nb], b[j]), out = dv(e.z * sg, -e.x * sg);
+            double c = ddot(b[j], out);
+            if (nt < MAX_SHARDS) {
+                int m = clip_hp(cur, NULL, nc, dv(-out.x, -out.z), -c, 0, tmp[nt].v, NULL);
+                if (m && fabs(area2(tmp[nt].v, m)) > 1e-6) tmp[nt++].n = m;
+            }
+            nc = clip_hp(cur, NULL, nc, out, c, 0, nxt, NULL);
+            memcpy(cur, nxt, sizeof(DVec2) * nc);
+        }
+    }
+    memcpy(s, tmp, sizeof(Shard) * nt);
+    *ns = nt;
+}
+
+/* The kerb's face to the road, from t0 to t1 along the edge from c (unit eh), up to y1. */
+static void kerb_face(Mesh *m, DVec2 c, DVec2 eh, double t0, double t1, vec3 nn, float y1) {
+    DVec2 a = dadd(c, dscale(eh, t0)), b = dadd(c, dscale(eh, t1));
+    if (!clip_segment(&a, &b)) return;
+    float u0 = (float)dlen(dsub(a, c)), u1 = (float)dlen(dsub(b, c));
+    /* u runs along cross(up, n), so the shader can rebuild the face's tangent from its normal. */
+    if (eh.x * nn.z - eh.z * nn.x < 0) { u0 = -u0; u1 = -u1; }
+    float quv[4][2] = { { u0, BASE_Y }, { u1, BASE_Y }, { u1, y1 }, { u0, y1 } };
+    emit_quad(m, v3((float)a.x, BASE_Y, (float)a.z), v3((float)b.x, BASE_Y, (float)b.z),
+              v3((float)b.x, y1, (float)b.z), v3((float)a.x, y1, (float)a.z), nn, quv, mat(MAT_CURB, 0, 0, 0, 0));
+}
+
+/* A convex piece of a drop kerb's slope (chunk-local; o, t, nn its frame):
+ * its height follows d, the distance in from the kerb line. uv = (u - du, d - dd). */
+static void emit_slope(Mesh *m, const DVec2 *p, int n, DVec2 o, DVec2 t, DVec2 nn, double du, double dd, Mat mt) {
+    const float k = (SIDEWALK_HEIGHT - DROP_KERB_HEIGHT) / DROP_RAMP_RUN;
+    vec3 N = v3_norm(v3((float)(-k * nn.x), 1.0f, (float)(-k * nn.z)));
+    for (int i = 1; i + 1 < n; ++i) {
+        int id[3] = { 0, i, i + 1 };
+        vec3 q[3];
+        float uv[3][2];
+        for (int j = 0; j < 3; ++j) {
+            DVec2 r = dsub(p[id[j]], o);
+            double d = ddot(r, nn);
+            q[j] = v3((float)p[id[j]].x, drop_y(d), (float)p[id[j]].z);
+            uv[j][0] = (float)(ddot(r, t) - du);
+            uv[j][1] = (float)(d - dd);
+        }
+        emit_tri(m, q[0], q[1], q[2], N, uv, mt);
+    }
+}
+
+/* A drop kerb (outline v, chunk-local): the lowered kerb stones, the slope
+ * behind them round its tactile slabs, and the kerb-stone sides. The stones,
+ * slope and slabs are marked lowered (params.w = 1) for the water they hold. */
+static void emit_drop(Mesh *m, const ChunkGen *g, const DropKerb *D, const DVec2 *v, uint8_t sq, Shard *sh, Shard *tmp) {
+    const float gy = SIDEWALK_HEIGHT;
+    const double KS = KERB_STONE_WIDTH;
+    DVec2 o = dv(D->ox - g->ox, D->oz - g->oz), t = dv(D->tx, D->tz), nn = dv(D->nx, D->nz);
+    double on = ddot(o, nn);
+    float ea = (float)atan2(t.z, t.x);
+    uint32_t ebits;
+    memcpy(&ebits, &ea, 4);
+    DVec2 p[48], q[48], cl[48];
+    float uv[48][2];
+    int k;
+
+    /* the lowered kerb stones, laid as the kerb's own (uv along, and in from the kerb line) */
+    k = clip_hp(v, NULL, D->n, nn, on + KS, 0, p, NULL);
+    k = k ? clip_chunk(p, k, cl) : 0;
+    for (int i = 0; i < k; ++i) { DVec2 r = dsub(cl[i], o); uv[i][0] = (float)ddot(r, t); uv[i][1] = (float)ddot(r, nn); }
+    if (k) emit_flat(m, cl, k, DROP_KERB_HEIGHT + 0.003f, (const float (*)[2])uv, mat(MAT_SIDEWALK, ebits, 1, sq, 1));
+
+    /* the slope, round its tactile slabs; the slabs' uv count from the slab grid */
+    int ns = 0;
+    k = clip_hp(v, NULL, D->n, dv(-nn.x, -nn.z), -(on + KS), 0, sh[0].v, NULL);
+    if (k) { sh[0].n = k; ns = 1; }
+    DVec2 slab[DROP_ROWS][4];
+    int rows[DROP_ROWS];
+    for (int r = 0; r < DROP_ROWS; ++r) {
+        double d0 = KS + r * DROP_TILE, d1 = d0 + DROP_TILE, u0 = D->tu[r][0], u1 = D->tu[r][1];
+        rows[r] = u1 - u0 > 1e-6;
+        if (!rows[r]) continue;
+        slab[r][0] = dadd(o, dadd(dscale(t, u0), dscale(nn, d0)));
+        slab[r][1] = dadd(o, dadd(dscale(t, u1), dscale(nn, d0)));
+        slab[r][2] = dadd(o, dadd(dscale(t, u1), dscale(nn, d1)));
+        slab[r][3] = dadd(o, dadd(dscale(t, u0), dscale(nn, d1)));
+        shards_minus(sh, &ns, tmp, slab[r], 4);
+    }
+    for (int s = 0; s < ns; ++s) {
+        k = clip_chunk(sh[s].v, sh[s].n, cl);
+        if (k) emit_slope(m, cl, k, o, t, nn, 0.0, 0.0, mat(MAT_SIDEWALK, ebits, 2, sq, 1));
+    }
+    for (int r = 0; r < DROP_ROWS; ++r) {
+        k = rows[r] ? clip_chunk(slab[r], 4, cl) : 0;
+        if (k) emit_slope(m, cl, k, o, t, nn, D->tc, KS, mat(MAT_SIDEWALK, ebits, 3, sq, 1));
+    }
+
+    /* the sides: a kerb-stone wall from the slope up to the sidewalk, with
+     * kerb stones along its top on the sidewalk side */
+    DVec2 vc = dv(0, 0);
+    for (int i = 0; i < D->n; ++i) vc = dadd(vc, v[i]);
+    vc = dscale(vc, 1.0 / D->n);
+    for (int i = 0; i < D->n; ++i) {
+        if (D->lab[i] != DE_SIDE) continue;
+        DVec2 a = v[i], b = v[(i + 1) % D->n], e = dsub(b, a);
+        if (dlen(e) < 1e-6) continue;
+        DVec2 w = dnorm(dv(-e.z, e.x));
+        if (ddot(w, dsub(vc, a)) < 0) w = dv(-w.x, -w.z);   /* into the cut */
+        vec3 wn = v3((float)w.x, 0.0f, (float)w.z);
+        DVec2 cr = dv(w.z, -w.x);                             /* cross(up, n), as the kerb faces */
+        double da = ddot(a, nn) - on, db = ddot(b, nn) - on;
+        DVec2 pts[3] = { a, b, b };
+        int np = 2;
+        if ((da - KS) * (db - KS) < 0.0) { pts[1] = dadd(a, dscale(e, (KS - da) / (db - da))); np = 3; }
+        Mat face = mat(MAT_CURB, 0, 0, 0, 0);
+        for (int s = 0; s + 1 < np; ++s) {
+            DVec2 A = pts[s], B = pts[s + 1];
+            if (!clip_segment(&A, &B)) continue;
+            float ya = drop_y(ddot(A, nn) - on), yb = drop_y(ddot(B, nn) - on);
+            if (ya > gy - 1e-4f && yb > gy - 1e-4f) continue;
+            float ua = (float)ddot(dsub(A, o), cr), ub = (float)ddot(dsub(B, o), cr);
+            vec3 A0 = v3((float)A.x, ya, (float)A.z), A1 = v3((float)A.x, gy, (float)A.z);
+            vec3 B0 = v3((float)B.x, yb, (float)B.z), B1 = v3((float)B.x, gy, (float)B.z);
+            if (ya > gy - 1e-4f) {
+                float tuv[3][2] = { { ua, gy }, { ub, yb }, { ub, gy } };
+                emit_tri(m, A1, B0, B1, wn, tuv, face);
+            } else if (yb > gy - 1e-4f) {
+                float tuv[3][2] = { { ua, ya }, { ub, gy }, { ua, gy } };
+                emit_tri(m, A0, B1, A1, wn, tuv, face);
+            } else {
+                float quv[4][2] = { { ua, ya }, { ub, yb }, { ub, gy }, { ua, gy } };
+                emit_quad(m, A0, B0, B1, A1, wn, quv, face);
+            }
+        }
+        /* its kerb stones: from the lowered kerb's back to the top of the slope,
+         * and no further than a corner shared with the next drop */
+        DVec2 out = dv(-w.x, -w.z), al = dv(out.z, -out.x);
+        DVec2 st[4] = { a, b, dadd(b, dscale(out, KS)), dadd(a, dscale(out, KS)) };
+        k = clip_hp(st, NULL, 4, dv(-nn.x, -nn.z), -(on + KS), 0, p, NULL);
+        k = k ? clip_hp(p, NULL, k, nn, on + DROP_DEPTH, 0, q, NULL) : 0;
+        for (int j = 0; j < D->nopen && k; ++j) {
+            DVec2 nr = dv(D->open[j][0], D->open[j][1]);
+            k = clip_hp(q, NULL, k, nr, D->open[j][2] - (nr.x * g->ox + nr.z * g->oz), 0, p, NULL);
+            memcpy(q, p, sizeof(DVec2) * k);
+        }
+        k = k ? clip_chunk(q, k, cl) : 0;
+        if (!k) continue;
+        float sa = (float)atan2(al.z, al.x);
+        uint32_t sbits;
+        memcpy(&sbits, &sa, 4);
+        for (int j = 0; j < k; ++j) { DVec2 r = dsub(cl[j], a); uv[j][0] = (float)ddot(r, al); uv[j][1] = (float)ddot(r, out); }
+        emit_flat(m, cl, k, gy + 0.003f, (const float (*)[2])uv, mat(MAT_SIDEWALK, sbits, 1, sq, 0));
+    }
+}
+
+/* Raised blocks: sidewalk, kerb stones, kerb faces, drop kerbs and the lot
+ * inside. The paving and lot carry the block's squalor (0..255) in params.z. */
 static void build_blocks(Mesh *m, const ChunkGen *g) {
     const double P = CHUNK_SIZE;
     const float gy = SIDEWALK_HEIGHT;
     double wx = (g->cx & 63) * P, wz = (g->cz & 63) * P;   /* wrapped offset, as gWorld in the shader */
+    Shard *sh = (Shard *)malloc(sizeof(Shard) * MAX_SHARDS * 2);
+    if (!sh) fatal("out of memory building sidewalks");
+    Shard *tmp = sh + MAX_SHARDS;
     for (int bi = 0; bi < g->pa->nblocks; ++bi) {
         const Block *bk = &g->pa->blocks[bi];
         if (bk->x1 < g->ox || bk->x0 > g->ox + P || bk->z1 < g->oz || bk->z0 > g->oz + P) continue;
@@ -3436,14 +3904,25 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
         uint32_t gbits;
         memcpy(&gbits, &grain, 4);
 
-        int k = clip_chunk(c, n, cl);
-        for (int i = 0; i < k; ++i) PAVE_UV(i);
-        if (k) emit_flat(m, cl, k, gy, (const float (*)[2])uv, mat(MAT_SIDEWALK, gbits, 0, sq, 0));
+        DropKerb dk[MAX_BLOCK_DROPS];
+        DVec2 dl[MAX_BLOCK_DROPS][MAX_DROP_PV];
+        int nd = city_block_drops(g->pa, bk, dk, MAX_BLOCK_DROPS);
+        for (int d = 0; d < nd; ++d)
+            for (int i = 0; i < dk[d].n; ++i) dl[d][i] = dv(dk[d].v[i][0] - g->ox, dk[d].v[i][1] - g->oz);
+
+        /* the sidewalk, round the drop kerbs */
+        int ns = 1, k;
+        sh[0].n = n;
+        memcpy(sh[0].v, c, sizeof(DVec2) * n);
+        for (int d = 0; d < nd; ++d) shards_minus(sh, &ns, tmp, dl[d], dk[d].n);
+        for (int s = 0; s < ns; ++s) {
+            k = clip_chunk(sh[s].v, sh[s].n, cl);
+            for (int i = 0; i < k; ++i) PAVE_UV(i);
+            if (k) emit_flat(m, cl, k, gy, (const float (*)[2])uv, mat(MAT_SIDEWALK, gbits, 0, sq, 0));
+        }
 
         for (int i = 0; i < n; ++i) {
             int j = (i + 1) % n;
-            DVec2 strip[4] = { c[i], c[j], in[j], in[i] };
-            k = clip_chunk(strip, 4, cl);
             /* Kerb stones are laid along the edge: u runs along it and v inward from the
              * outer edge (metres), so the shader knows where the joint with the paving
              * falls (v = KERB_STONE_WIDTH). The inward normal is u turned 90 degrees,
@@ -3452,24 +3931,49 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
             float ea = (float)atan2(along.z, along.x);
             uint32_t ebits;
             memcpy(&ebits, &ea, 4);
-            for (int t = 0; t < k; ++t) {
-                DVec2 d = dsub(cl[t], c[i]);
-                uv[t][0] = (float)ddot(d, along);
-                uv[t][1] = (float)ddot(d, nin[i]);
+            ns = 1;
+            sh[0].n = 4;
+            sh[0].v[0] = c[i]; sh[0].v[1] = c[j]; sh[0].v[2] = in[j]; sh[0].v[3] = in[i];
+            for (int d = 0; d < nd; ++d) shards_minus(sh, &ns, tmp, dl[d], dk[d].n);
+            for (int s = 0; s < ns; ++s) {
+                k = clip_chunk(sh[s].v, sh[s].n, cl);
+                for (int t = 0; t < k; ++t) {
+                    DVec2 d = dsub(cl[t], c[i]);
+                    uv[t][0] = (float)ddot(d, along);
+                    uv[t][1] = (float)ddot(d, nin[i]);
+                }
+                if (k) emit_flat(m, cl, k, gy + 0.003f, (const float (*)[2])uv, mat(MAT_SIDEWALK, ebits, 1, sq, 0));
             }
-            if (k) emit_flat(m, cl, k, gy + 0.003f, (const float (*)[2])uv, mat(MAT_SIDEWALK, ebits, 1, sq, 0));
 
-            DVec2 a = c[i], b = c[j];
-            if (!clip_segment(&a, &b)) continue;
-            vec3 nn = v3((float)-nin[i].x, 0, (float)-nin[i].z);
-            float u0 = (float)dlen(dsub(a, c[i])), u1 = (float)dlen(dsub(b, c[i]));
-            /* u runs along cross(up, n), so the shader can rebuild the face's tangent from its normal. */
+            /* the kerb face, lowered across each drop kerb along this edge */
             DVec2 e = dsub(c[j], c[i]);
-            if (e.x * nn.z - e.z * nn.x < 0) { u0 = -u0; u1 = -u1; }
-            float quv[4][2] = { { u0, BASE_Y }, { u1, BASE_Y }, { u1, gy }, { u0, gy } };
-            emit_quad(m, v3((float)a.x, BASE_Y, (float)a.z), v3((float)b.x, BASE_Y, (float)b.z),
-                      v3((float)b.x, gy, (float)b.z), v3((float)a.x, gy, (float)a.z), nn, quv, mat(MAT_CURB, 0, 0, 0, 0));
+            double el = dlen(e);
+            if (el < 1e-9) continue;
+            DVec2 eh = dscale(e, 1.0 / el);
+            vec3 nn = v3((float)-nin[i].x, 0, (float)-nin[i].z);
+            double cut[MAX_BLOCK_DROPS][2];
+            int ncut = 0;
+            for (int d = 0; d < nd; ++d) {
+                if (dk[d].edge != i) continue;
+                for (int q = 0; q < dk[d].n; ++q) {
+                    if (dk[d].lab[q] != DE_KERB) continue;
+                    double t0 = ddot(dsub(dl[d][q], c[i]), eh), t1 = ddot(dsub(dl[d][(q + 1) % dk[d].n], c[i]), eh);
+                    int at = ncut++;
+                    while (at > 0 && cut[at - 1][0] > fmin(t0, t1)) { cut[at][0] = cut[at - 1][0]; cut[at][1] = cut[at - 1][1]; --at; }
+                    cut[at][0] = fmin(t0, t1); cut[at][1] = fmax(t0, t1);
+                }
+            }
+            double t = 0.0;
+            for (int q = 0; q <= ncut; ++q) {
+                double t0 = q < ncut ? fmax(cut[q][0], t) : el;
+                if (t0 > t + 1e-6) kerb_face(m, c[i], eh, t, t0, nn, gy);
+                if (q == ncut) break;
+                if (cut[q][1] > t0 + 1e-6) kerb_face(m, c[i], eh, t0, cut[q][1], nn, DROP_KERB_HEIGHT);
+                t = fmax(t, cut[q][1]);
+            }
         }
+
+        for (int d = 0; d < nd; ++d) emit_drop(m, g, &dk[d], dl[d], sq, sh, tmp);
 
         if (bk->lot.n) {
             DVec2 l[PLAN_MAX_PV];
@@ -3480,6 +3984,7 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
         }
 #undef PAVE_UV
     }
+    free(sh);
 }
 
 /* ===========================================================================

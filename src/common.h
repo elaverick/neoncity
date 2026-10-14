@@ -21,6 +21,8 @@
 #define LAMP_HEIGHT       7.5f
 #define SIDEWALK_HEIGHT   0.15f
 #define KERB_STONE_WIDTH  0.32f    /* the kerb-stone strip along each sidewalk edge */
+#define DROP_KERB_HEIGHT  0.01f    /* a drop kerb's lowered stones, just proud of the road */
+#define DROP_RAMP_RUN     1.5f     /* the slope behind them, back up to the sidewalk (about 1:11) */
 
 /* Render distance: long, but deliberately finite. Haze reaches 100% exactly at
  * VIEW_DISTANCE so chunks streaming in at the edge are never visible popping. */
@@ -111,7 +113,7 @@ enum {
  * has three maps, bound at material * PBR_MAPS_PER_MATERIAL + map. Surfaces
  * opt in per material in the shader; the rest stay procedural. Must match
  * shaders/common.glsl. */
-enum { PBR_PAVING_STONES = 0, PBR_ROAD, PBR_KERB, PBR_MATERIAL_COUNT };
+enum { PBR_PAVING_STONES = 0, PBR_ROAD, PBR_KERB, PBR_TACTILE, PBR_MATERIAL_COUNT };
 enum { PBR_ALBEDO = 0, PBR_NORMAL, PBR_ORM, PBR_MAPS_PER_MATERIAL };
 #define PBR_TEXTURE_COUNT (PBR_MATERIAL_COUNT * PBR_MAPS_PER_MATERIAL)
 

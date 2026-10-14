@@ -6,6 +6,7 @@ const float CHUNK_SIZE      = 110.0;
 const float LAMP_HEIGHT     = 7.5;
 const float SIDEWALK_HEIGHT = 0.15;
 const float KERB_STONE_WIDTH = 0.32;
+const float DROP_RAMP_RUN = 1.5;
 const float NEAR_PLANE      = 0.08;
 const float FAR_PLANE       = 1995.0;   // VIEW_DISTANCE * 1.05 (reverse-Z projection, src/main.c)
 const float SHELTER_SIZE    = 1024.0;   // shelter map (src/common.h)
@@ -39,7 +40,7 @@ const uint LK_SHADOW = 0u, LK_NEWS = 1u, LK_FLYER = 2u, LK_SCRAP = 3u, LK_CARDBO
 const float REAL_GLASS_DIST = 150.0;
 
 // Authored PBR materials (src/textures.c): maps at material * PBR_MAPS_PER_MATERIAL + map.
-const int PBR_PAVING_STONES = 0, PBR_ROAD = 1, PBR_KERB = 2, PBR_MATERIAL_COUNT = 3;
+const int PBR_PAVING_STONES = 0, PBR_ROAD = 1, PBR_KERB = 2, PBR_TACTILE = 3, PBR_MATERIAL_COUNT = 4;
 const int PBR_ALBEDO = 0, PBR_NORMAL = 1, PBR_ORM = 2, PBR_MAPS_PER_MATERIAL = 3;
 
 layout(set = 0, binding = 0) uniform Frame {
