@@ -16,7 +16,10 @@ layout(location = 9) in vec2 vLitter;     // litter: ambient occlusion, how soak
 layout(location = 0) out vec4 outColor;
 // Reflection G-buffer for screen-space reflections (ssr.comp): world normal
 // x and z, roughness, and the weight of the sky reflection this pixel added
-// (zero where nothing reflective was drawn).
+// (zero where nothing reflective was drawn). The first three are multiplied by
+// the weight, so the MSAA resolve's average weighs each sample by how much it
+// reflects: a pane covering one sample over a matt room keeps its own normal
+// (readers divide by the weight: reflSample in common.glsl).
 layout(location = 1) out vec4 outRefl;
 
 ChunkGPU gC;
@@ -33,6 +36,9 @@ const float SHEEN = 3.5;   // pane sheen strength over glass's physical reflecta
 // a mirror; the negative roughness tells the passes it's glass, not wet ground.
 const float GLASS_ROUGH = -1.0;
 void glassRefl(vec3 n, float w) { gRefl = vec4(n.x, n.z, GLASS_ROUGH, w); }
+// Indoors (a lobby's polished floor) the scene pass adds no sky reflection for
+// the screen's to replace (ssr_apply.frag), and the reflection streaks only a little.
+const float INDOOR_ROUGH = -3.0;
 float gStreak = 1.0;      // wet surfaces: how far GGX highlights stretch toward the viewer    // chunk-local position + wrapped chunk offset: continuous for noise
 
 const float PI = 3.14159265;
@@ -54,6 +60,10 @@ float filteredPulse(float x, float a, float b, float w) {
 
 float hf(uint h, uint k) { return hfloat(hash_combine(h, k)); }
 float glyphDist(uint g, vec2 q);   // signs (below)
+float segDist(vec2 p, vec2 a, vec2 b);
+
+// Signed distance to a box of half-size b centred on the origin.
+float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
 
 
 /* ======================================================================
@@ -1130,13 +1140,31 @@ float paneCoverage(float F) {
 
 const uint IS_FLOOR = 0u, IS_ROOMFLOOR = 1u, IS_WALL = 2u, IS_CEILING = 3u, IS_CORE = 4u, IS_METAL = 5u, IS_WOOD = 6u,
            IS_FABRIC = 7u, IS_GLASS = 8u, IS_LIGHT = 9u, IS_PLANT = 10u, IS_LINING = 11u, IS_STONE = 12u, IS_LIFTDOOR = 13u,
-           IS_DOOR = 14u, IS_SCREEN = 15u, IS_SKYLIGHT = 16u, IS_OFFICE = 17u, IS_SIGN = 18u;
+           IS_DOOR = 14u, IS_SCREEN = 15u, IS_SKYLIGHT = 16u, IS_OFFICE = 17u, IS_SIGN = 18u, IS_EMBLEM = 19u;
 // region types (IR_* in src/interior.h) that change a floor's finish
 const uint IR_VESTIBULE = 1u, IR_HALL = 2u, IR_SECURE = 3u, IR_TOILET = 7u, IR_WC = 8u, IR_SECURITY = 10u, IR_MAIL = 11u,
            IR_FACILITIES = 12u, IR_MEETING = 14u, IR_SHOWER = 15u;
 
+/* Lobby finishes. Each building picks a dark, warm palette (styleHash):
+ * polished stone underfoot (a black and white chequer, dark granite, veined
+ * dark marble or warm limestone), walls of dark marble, smoked bronze, walnut
+ * or charcoal plaster, and cores clad in dark stone. The marbles, limestone
+ * and woods are authored textures (finish), with the procedural ones as the
+ * fallback. Warm panels in a dark ceiling light it low, and light is built
+ * into the walls: a slot at the ceiling washes down them, coves glow at their
+ * feet and slots run up the cores. */
+
 vec3 lobbyLight(uint seed) {
-    return (hf(styleHash(seed), 8u) < 0.5 ? kelvin(4000.0) : kelvin(3000.0)) * 1.35;   // as the lobby glass (shadeFacade)
+    return (hf(styleHash(seed), 8u) < 0.5 ? kelvin(3000.0) : kelvin(2700.0)) * 1.35;   // as the lobby glass (shadeFacade)
+}
+
+// The light in the walls' slots and coves: warmer than the panels.
+const vec3 COVE = vec3(1.0, 0.55, 0.22);
+
+// A lobby's accent light outside (lobby_accent in src/city.c): its mullion lines and canopy strip.
+vec3 lobbyAccent(uint seed) {
+    float a = hf(styleHash(seed), 61u);
+    return neonColor(a < 0.55 ? 1u : a < 0.7 ? 6u : a < 0.85 ? 4u : 3u);
 }
 
 // Light panels: 1.2 m squares on a 3 m grid in the building's frame.
@@ -1145,16 +1173,218 @@ float ceilingPanel(vec2 q, float aa) {
     return (1.0 - smoothstep(0.6 - aa, 0.6 + aa, d.x)) * (1.0 - smoothstep(0.6 - aa, 0.6 + aa, d.y));
 }
 
-vec3 lobbyStone(uint seed, vec2 q, float aa, out float joint) {
-    uint sh = styleHash(seed);
+// Polished stone (q in metres): a base broken by soft clouding and thin wandering veins.
+vec3 marble(vec2 q, vec3 base, vec3 vein, uint salt, float aa) {
+    float cloud = fbm(q * 0.4, salt);
+    float s = abs(sin(q.x * 0.9 + q.y * 1.6 + fbm(q * 0.5 + 7.0, salt + 3u) * 3.0));
+    float v = (1.0 - smoothstep(0.0, 0.02 + aa * 2.0, s)) * smoothstep(0.35, 0.75, fbm(q * 1.3, salt + 9u));
+    v *= 1.0 - smoothstep(0.02, 0.12, aa);   // veins finer than a pixel fade out
+    return mix(base * (0.75 + 0.5 * cloud), vein, v * 0.4);
+}
+
+/* Authored stone and wood (src/textures.c, assets/textures/): m a PBR_*
+ * material whose image spans `size` metres of q, shifted by off (each slab or
+ * panel its own piece of the stone) and turned a quarter if `turn`. gx, gy:
+ * q's screen derivatives, taken where q is continuous, so a slab's offset
+ * doesn't upset the filtering at its joints. rough: the map's roughness. */
+vec3 finish(int m, vec2 q, float size, vec2 off, bool turn, vec2 gx, vec2 gy, out float rough) {
+    int i = m * PBR_MAPS_PER_MATERIAL;
+    if (turn) { q = q.yx; gx = gx.yx; gy = gy.yx; }
+    vec2 st = q / size + off;
+    gx /= size; gy /= size;
+    rough = textureGrad(pbrMaps[i + PBR_ORM], st, gx, gy).g;
+    return textureGrad(pbrMaps[i + PBR_ALBEDO], st, gx, gy).rgb;
+}
+
+// How glossy a polished finish is where its map says it is rough (worn, honed or open-grained).
+float polishOf(float rough) { return 1.0 - smoothstep(0.05, 0.7, rough); }
+
+// A piece of stone per cell: an offset into the image.
+vec2 slabOffset(uint h, vec2 cell) { return vec2(hfloat(hash3i(h, int(cell.x), int(cell.y), 11)), hfloat(hash3i(h, int(cell.x), int(cell.y), 12))); }
+
+// Book-matched panels w metres wide: each pair cut from one block, the second
+// mirrored, so the veins meet at the joint between them. Returns the panel's
+// q (mirrored where it should be) and its pair's index in `pair`.
+vec2 bookMatch(vec2 q, float w, out float pair) {
+    float k = floor(q.x / w), x = q.x - k * w;
+    pair = floor(k * 0.5);
+    return vec2(mod(k, 2.0) < 0.5 ? x : 2.0 * w - x, q.y);
+}
+
+// The lobby floor: 1.2 m slabs. polish: how glossy the stone is between its joints.
+vec3 lobbyStone(uint seed, vec2 q, vec2 gx, vec2 gy, float aa, out float joint, out float polish) {
+    uint sh = styleHash(seed), salt = sh & 0xFFFFu;
     float pick = hf(sh, 21u);
-    vec3 c = pick < 0.3 ? vec3(0.42, 0.38, 0.32) : pick < 0.55 ? vec3(0.055, 0.055, 0.06) : pick < 0.8 ? vec3(0.55, 0.55, 0.53) : vec3(0.30, 0.29, 0.27);
     vec2 cell = floor(q / 1.2), t = fract(q / 1.2);
-    c *= 0.9 + 0.2 * hfloat(hash3i(sh, int(cell.x), int(cell.y), 5));
-    c *= 0.85 + 0.3 * fbm(q * 0.9, sh & 0xFFFFu);
+    vec2 off = slabOffset(sh, cell);
+    bool turn = hfloat(hash3i(sh, int(cell.x), int(cell.y), 13)) < 0.5;
+    vec3 c;
+    float rough;
+    polish = 0.75;
     float w = 0.004 + aa;
     joint = max(1.0 - smoothstep(0.0, w, min(t.x, 1.0 - t.x) * 1.2), 1.0 - smoothstep(0.0, w, min(t.y, 1.0 - t.y) * 1.2));
+    if (pick < 0.35) {                // a chequer of black and white marble
+        bool dark = mod(cell.x + cell.y, 2.0) > 0.5;
+        if (dark && pbrLoaded(PBR_MARBLE_DARK)) {
+            c = finish(PBR_MARBLE_DARK, q, 2.0, off, turn, gx, gy, rough) * 0.8;
+            polish *= polishOf(rough);
+        } else if (!dark && pbrLoaded(PBR_MARBLE_WHITE)) {
+            c = finish(PBR_MARBLE_WHITE, q, 2.0, off, turn, gx, gy, rough) * 0.5;
+            polish *= polishOf(rough);
+        } else {
+            c = dark ? marble(q, vec3(0.028, 0.028, 0.03), vec3(0.20, 0.19, 0.18), salt, aa)
+                     : marble(q, vec3(0.22, 0.215, 0.20), vec3(0.09, 0.085, 0.08), salt + 5u, aa);
+        }
+    } else if (pick < 0.6) {          // dark granite
+        float speck = mix(vnoise(q * 40.0, salt), 0.5, smoothstep(0.005, 0.03, aa));
+        c = vec3(0.045, 0.043, 0.042) * (0.6 + 0.8 * speck);
+    } else if (pick < 0.8) {          // veined dark marble
+        if (pbrLoaded(PBR_MARBLE_DARK)) {
+            c = finish(PBR_MARBLE_DARK, q, 2.0, off, turn, gx, gy, rough);
+            polish *= polishOf(rough);
+        } else {
+            c = marble(q, vec3(0.05, 0.045, 0.04), vec3(0.32, 0.27, 0.20), salt, aa);
+        }
+    } else {                          // warm limestone, honed: 0.6 m tiles with their own joints
+        polish = 0.4;
+        if (pbrLoaded(PBR_LIMESTONE)) {
+            joint = 0.0;
+            c = finish(PBR_LIMESTONE, q, 3.6, vec2(0.0), false, gx, gy, rough) * 0.75;
+            polish *= polishOf(rough * 0.6);
+            return c;
+        }
+        c = vec3(0.30, 0.27, 0.22) * (0.85 + 0.3 * fbm(q * 0.9, salt));
+    }
+    c *= 0.92 + 0.16 * hfloat(hash3i(sh, int(cell.x), int(cell.y), 5));
     return c;
+}
+
+// The lobby's walls (q = metres along, height): the building's finish.
+vec3 lobbyWall(uint seed, vec2 q, vec2 gx, vec2 gy, float aa, out float gloss) {
+    uint sh = styleHash(seed), salt = (sh >> 8) & 0xFFFFu;
+    float pick = hf(sh, 64u), rough;
+    if (pick < 0.35) {                // dark marble, book-matched in 1.2 m panels
+        gloss = 0.5;
+        if (pbrLoaded(PBR_MARBLE_DARK)) {
+            float pair, gap = 1.0 - band(fract(q.x / 1.2), 0.003, 0.997, aa / 1.2 + 0.001);
+            vec3 c = finish(PBR_MARBLE_DARK, bookMatch(q, 1.2, pair), 2.4, slabOffset(sh, vec2(pair, 7.0)), false, gx, gy, rough);
+            gloss *= polishOf(rough);
+            return c * (1.0 - 0.7 * gap);
+        }
+        return marble(q, vec3(0.05, 0.047, 0.045), vec3(0.30, 0.28, 0.26), salt, aa);
+    }
+    if (pick < 0.6) {                 // smoked bronze panels with shadow gaps
+        gloss = 0.45;
+        float gap = 1.0 - band(fract(q.x / 1.2), 0.008, 0.992, aa / 1.2 + 0.002);
+        return vec3(0.075, 0.052, 0.032) * (0.85 + 0.3 * vnoise(vec2(q.x * 0.3, q.y * 6.0), salt)) * (1.0 - 0.8 * gap);
+    }
+    if (pick < 0.8) {                 // walnut slats, the grain running up them
+        gloss = 0.2;
+        float slat = mix(band(fract(q.x / 0.12), 0.12, 0.88, aa / 0.12 + 0.01), 0.76, smoothstep(0.3, 0.8, aa / 0.12));
+        vec3 c = pbrLoaded(PBR_WOOD_MID)
+               ? finish(PBR_WOOD_MID, q, 1.5, vec2(0.0, floor(q.x / 0.12) * 0.37), true, gx, gy, rough) * 1.2
+               : vec3(0.10, 0.055, 0.03) * (0.8 + 0.3 * sin(q.y * 9.0 + vnoise(q * vec2(8.0, 0.5), salt) * 5.0));
+        return c * mix(0.25, 1.0, slat);
+    }
+    gloss = 0.1;                      // charcoal plaster
+    return vec3(0.06, 0.058, 0.055) * (0.85 + 0.3 * fbm(q * 0.8, salt));
+}
+
+// Light washing down a wall from the slot where it meets the ceiling:
+// brightest just under the ceiling, and even along the wall.
+float wallWash(float y, float ceilH) {
+    float dy = ceilH - y;
+    return smoothstep(0.0, 0.35, dy) * exp(-dy * 0.5);
+}
+
+// A vertical light slot dx metres away (y0..y1 high): its glow, and the light it grazes the wall beside it with.
+void lightSlot(float dx, float y, float y0, float y1, float aa, inout vec3 emit, inout vec3 irr) {
+    float w = max(0.015, aa);
+    float vert = band(y, y0, y1, aa + 0.005);
+    emit += COVE * 5.0 * (1.0 - smoothstep(w * 0.5, w, dx)) * (0.015 / w) * vert;
+    irr += COVE * 1.4 * exp(-dx / 0.12) * smoothstep(y0 - 0.3, y0 + 0.2, y) * smoothstep(y1 + 0.3, y1 - 0.2, y);
+}
+
+// A lit cove at the foot of a wall, and the light it washes up the wall.
+void footCove(float y, float aa, inout vec3 emit, inout vec3 irr) {
+    emit += COVE * 3.0 * (1.0 - smoothstep(0.035, 0.035 + aa, y));
+    irr += COVE * 1.1 * exp(-y / 0.35);
+}
+
+// Sharp-cornered equilateral triangle of circumradius-ish r (Quilez).
+float sdTriangle(vec2 p, float r) {
+    const float k = 1.7320508;
+    p.x = abs(p.x) - r;
+    p.y = p.y + r / k;
+    if (p.x + k * p.y > 0.0) p = vec2(p.x - k * p.y, -k * p.x - p.y) * 0.5;
+    p.x -= clamp(p.x, -2.0 * r, 0.0);
+    return -length(p) * sign(p.y);
+}
+
+/* Procedural emblems: a small grammar for corporate marks; h makes every choice.
+ *   mark  := motif | motif in a frame
+ *   motif := bars      2-4 sheared bars, level or rising like a chart
+ *          | chevrons  1-3 nested, pointing up or down
+ *          | ring      cut by a gap, with a bar or a dot inside
+ *          | diamonds  2-4 turned squares in a row or a cluster, solid or hollow
+ *          | monogram  a pseudo-kanji glyph, as on the signs
+ *          | delta     a triangle cut by a slit or hollowed by an inner one
+ *   frame := none | circle | square
+ * q in [-1, 1]^2, y up. Returns the signed distance (negative inside) in q units. */
+float emblemDist(uint h, vec2 q) {
+    uint frame = (h >> 24) % 3u, kind = h % 6u;
+    float sc = frame == 0u ? 1.0 : 0.62;
+    vec2 p = q / sc;
+    float d = 1e9;
+    if (kind == 0u) {
+        int n = 2 + int(hf(h, 1u) * 3.0);
+        float shear = 0.2 + 0.5 * hf(h, 2u), pitch = 1.7 / float(n);
+        bool rise = hf(h, 3u) < 0.6;
+        p *= 1.0 + 0.6 * shear;                     // room for the lean
+        for (int i = 0; i < 4; ++i) {
+            if (i >= n) break;
+            float ht = rise ? 0.35 + 0.65 * float(i + 1) / float(n) : 1.0;
+            vec2 b = p - vec2(-0.85 + pitch * (float(i) + 0.5), -0.85 + 0.85 * ht);
+            d = min(d, sdBox(vec2(b.x - shear * b.y, b.y), vec2(pitch * 0.3, 0.85 * ht)));
+        }
+        d /= 1.0 + 0.6 * shear;
+    } else if (kind == 1u) {
+        int n = 1 + int(hf(h, 1u) * 3.0);
+        float t = 0.07 + 0.06 * hf(h, 2u);
+        vec2 pp = vec2(abs(p.x), p.y * (hf(h, 3u) < 0.5 ? 1.0 : -1.0));
+        for (int i = 0; i < 3; ++i) {
+            if (i >= n) break;
+            float y0 = 0.3 + 0.42 * (float(i) - 0.5 * float(n - 1));
+            d = min(d, segDist(pp, vec2(0.0, y0), vec2(0.8, y0 - 0.6)) - t);
+        }
+    } else if (kind == 2u) {
+        float t = 0.08 + 0.05 * hf(h, 2u), a = hf(h, 3u) * 6.2831853;
+        vec2 r = mat2(cos(a), sin(a), -sin(a), cos(a)) * p;
+        d = max(abs(length(p) - 0.75) - t, -sdBox(r - vec2(0.75, 0.0), vec2(0.3, 0.12 + 0.2 * hf(h, 4u))));
+        d = min(d, hf(h, 5u) < 0.5 ? length(p) - 0.22 : sdBox(r, vec2(0.5, t)));
+    } else if (kind == 3u) {
+        int n = 2 + int(hf(h, 1u) * 3.0);
+        bool hollow = hf(h, 2u) < 0.4, row = hf(h, 3u) < 0.5;
+        float s = row ? 0.75 / float(n) + 0.12 : 0.3;
+        for (int i = 0; i < 4; ++i) {
+            if (i >= n) break;
+            vec2 c = row ? vec2(-0.8 + 1.6 * (float(i) + 0.5) / float(n), 0.0)
+                         : vec2(i == 1 ? -0.42 : i == 2 ? 0.42 : 0.0, i == 0 ? 0.42 : i == 3 ? -0.42 : 0.0);
+            vec2 b = (p - c) * 0.7071;
+            float dd = sdBox(vec2(b.x + b.y, b.y - b.x), vec2(s * 0.7071));
+            d = min(d, hollow ? abs(dd) - 0.05 : dd);
+        }
+    } else if (kind == 4u) {
+        d = glyphDist(h, clamp(p * 0.5 + 0.5, 0.0, 1.0)) * 2.0 - 0.09;
+    } else {
+        d = sdTriangle(p - vec2(0.0, -0.15), 0.95);
+        d = hf(h, 1u) < 0.5 ? max(d, -sdBox(p - vec2(0.0, -0.2), vec2(0.06, 0.65)))
+                            : max(d, -sdTriangle(p - vec2(0.0, -0.32), 0.4));
+    }
+    d *= sc;
+    if (frame == 1u) d = min(d, abs(length(q) - 0.92) - 0.06);
+    else if (frame == 2u) d = min(d, abs(sdBox(q, vec2(0.86))) - 0.06);
+    return d;
 }
 
 vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
@@ -1163,7 +1393,10 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     uint surf = prm.y, sub = prm.z;
     float ceilH = max(float(prm.w) * 0.5, 2.6), y = p.y - SIDEWALK_HEIGHT;
     vec3 Lc = lobbyLight(seed);
+    uint sh = styleHash(seed);
     float aa = max(length(fwidth(uv)), 1e-4);
+    // screen derivatives of the floor's uv and of a wall's (along, height), for the authored finishes
+    vec2 uvx = dFdx(uv), uvy = dFdy(uv), wx = vec2(uvx.x, dFdx(p.y)), wy = vec2(uvy.x, dFdy(p.y));
     // the building's frame: world -> building directions, for floors and ceilings
     float ang = (float(vAux & 0xFFFFu) / 65535.0) * 6.2831853 - 3.14159265;
     mat2 toFrame = mat2(cos(ang), -sin(ang), sin(ang), cos(ang));
@@ -1172,17 +1405,19 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float E = n.y > 0.5 ? 0.55 : n.y < -0.5 ? 0.14 : 0.26 + 0.14 * smoothstep(0.0, ceilH, y);
     E *= mix(0.65, 1.0, smoothstep(0.0, 0.7, y)) * mix(1.0, 0.75, smoothstep(5.0, 14.0, y));
     vec3 diff = Lc * E + ambientLight(n, p.y) * 0.5;
+    vec3 irr = vec3(0.0);                              // light built into the walls, falling on this surface
     float specB = pow(max(dot(n, normalize(vec3(0.0, 1.0, 0.0) + V)), 0.0), 40.0);
+    bool cove = hf(sh, 70u) < 0.7;                     // lit coves at the walls' feet
 
     vec3 alb = vec3(0.5), emit = vec3(0.0);
     float gloss = 0.05;
     uint h = hash_combine(seed, sub);
     if (surf == IS_FLOOR || (surf == IS_ROOMFLOOR && (sub == IR_HALL || sub == IR_SECURE)) || (surf == IS_STONE && sub == 2u)) {
-        float joint;
-        alb = lobbyStone(seed, uv, aa, joint);
+        float joint, polish;
+        alb = lobbyStone(seed, uv, uvx, uvy, aa, joint, polish);
         if (surf == IS_ROOMFLOOR) alb *= 0.6;
         alb *= 1.0 - 0.5 * joint;
-        gloss = 0.6 * (1.0 - joint);
+        gloss = polish * (1.0 - joint);
     } else if (surf == IS_ROOMFLOOR) {
         if (sub == IR_VESTIBULE) {
             alb = vec3(0.035, 0.035, 0.04) * (0.8 + 0.2 * step(0.5, fract(uv.x * 12.0)));
@@ -1201,18 +1436,73 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             gloss = 0.1;
         }
     } else if (surf == IS_WALL) {
-        alb = mix(vec3(0.62, 0.60, 0.56), vec3(0.55, 0.57, 0.58), hf(seed, 24u)) * (sub == 1u ? 0.7 : 1.0);
-        if (y < 0.1) alb *= 0.3;                       // skirting
+        if (sub == 1u) {
+            alb = vec3(0.04, 0.038, 0.036);            // slab edges round a void
+            gloss = 0.3;
+        } else {
+            alb = lobbyWall(seed, vec2(uv.x, y), wx, wy, aa, gloss);
+            irr += Lc * 0.3 * wallWash(y, ceilH);
+            if (cove) footCove(y, aa, emit, irr);
+            else if (y < 0.1) alb *= 0.3;              // skirting
+        }
     } else if (surf == IS_CEILING) {
-        alb = vec3(0.7, 0.7, 0.68);
-        float panel = ceilingPanel(uv, aa);
-        emit = Lc * 2.4 * panel;
-    } else if (surf == IS_CORE) {
-        float pick = hf(styleHash(seed), 22u);
-        alb = pick < 0.3 ? vec3(0.07, 0.07, 0.075) : pick < 0.55 ? vec3(0.16, 0.11, 0.06) : pick < 0.8 ? vec3(0.55, 0.54, 0.52) : vec3(0.30, 0.18, 0.10);
-        float jx = fract(uv.x / 1.2), jy = fract(y / 3.0);
-        alb *= 1.0 - 0.45 * max(1.0 - smoothstep(0.0, 0.004 + aa, min(jx, 1.0 - jx) * 1.2), 1.0 - smoothstep(0.0, 0.004 + aa, min(jy, 1.0 - jy) * 3.0));
-        gloss = pick >= 0.3 && pick < 0.55 ? 0.6 : 0.35;
+        alb = vec3(0.045, 0.044, 0.042);
+        emit = Lc * 2.6 * ceilingPanel(uv, aa);
+    } else if (surf == IS_CORE || surf == IS_EMBLEM) {
+        // dark stone cladding (now and then pale marble or bronze) in 1.2 m by 3 m panels
+        float pick = hf(sh, 22u);
+        uint salt = (sh >> 4) & 0xFFFFu;
+        vec2 q = vec2(uv.x, y);
+        if (surf == IS_EMBLEM) pick = hf(sh, 68u) < 0.6 ? 0.8 : 0.0;   // the feature panel against the cladding
+        gloss = 0.55;
+        float pair, rough;
+        vec2 bq = bookMatch(q, 1.2, pair), boff = slabOffset(sh, vec2(pair, floor(y / 3.0) + 3.0));
+        if (pick < 0.7 && pbrLoaded(PBR_MARBLE_DARK)) {
+            alb = finish(PBR_MARBLE_DARK, bq, 2.4, boff, false, wx, wy, rough) * 0.8;
+            gloss *= polishOf(rough);
+        } else if (pick >= 0.7 && pick < 0.88 && pbrLoaded(PBR_MARBLE_WHITE)) {
+            alb = finish(PBR_MARBLE_WHITE, bq, 2.4, boff, false, wx, wy, rough) * 0.6;
+            gloss *= polishOf(rough);
+        } else {
+            alb = pick < 0.7 ? marble(q, vec3(0.04, 0.038, 0.036), vec3(0.24, 0.22, 0.20), salt, aa)
+                : pick < 0.88 ? marble(q, vec3(0.30, 0.295, 0.28), vec3(0.12, 0.115, 0.11), salt, aa)
+                : vec3(0.08, 0.055, 0.035) * (0.85 + 0.3 * vnoise(vec2(q.x * 0.3, q.y * 6.0), salt));
+        }
+        irr += Lc * 0.3 * wallWash(y, ceilH);
+        if (cove) footCove(y, aa, emit, irr);
+        if (surf == IS_CORE) {
+            float jx = fract(q.x / 1.2), jy = fract(y / 3.0);
+            alb *= 1.0 - 0.6 * max(1.0 - smoothstep(0.0, 0.004 + aa, min(jx, 1.0 - jx) * 1.2), 1.0 - smoothstep(0.0, 0.004 + aa, min(jy, 1.0 - jy) * 3.0));
+            // light slots in every second or third vertical joint (none on a face's first)
+            float every = 2.0 + floor(hf(sh, 67u) * 2.0), k = floor(q.x / 1.2 + 0.5);
+            if (hf(sh, 66u) < 0.8 && k > 0.5 && mod(k, every) < 0.5)
+                lightSlot(abs(q.x - k * 1.2), y, 0.12, ceilH - 0.12, aa, emit, irr);
+        } else {
+            // the building's mark (emit_emblem in src/city.c; sub: the panel's width in half metres)
+            float W = float(sub) * 0.5;
+            float S = clamp(min(W * 0.26, (ceilH - 1.2) * 0.25), 0.3, 0.85);   // the mark's half-size
+            vec2 c = vec2(W * 0.5, min(2.4, ceilH * 0.55));
+            uint mh = hash_combine(seed, 0xE3B1u);
+            float d = emblemDist(mh, (q - c) / S) * S;
+            // a wordmark under it: a row of glyphs
+            float gs = S * 0.3, pitch = gs * 1.2;
+            int nG = 3 + int(hf(mh, 40u) * 4.0);
+            vec2 wq = q - vec2(c.x - 0.5 * float(nG) * pitch, c.y - S * 1.3 - gs);
+            float gi = clamp(floor(wq.x / pitch), 0.0, float(nG) - 1.0);
+            vec2 gq = vec2(wq.x - gi * pitch, wq.y) / gs, gc = clamp(gq, 0.0, 1.0);
+            d = min(d, (glyphDist(hash_combine(mh, uint(gi)), gc) + length(gq - gc)) * gs - 0.012);
+            float inside = 1.0 - smoothstep(-aa, aa, d);
+            if (hf(sh, 69u) < 0.45) {
+                emit += kelvin(4000.0) * 3.0 * inside;                            // backlit acrylic
+            } else {
+                // brass letters standing off the stone, lit from behind: a halo round them on the panel
+                emit += COVE * 1.2 * exp(-max(d, 0.0) / 0.04) * (1.0 - inside);
+                alb = mix(alb, vec3(0.55, 0.40, 0.18), inside);
+                gloss = mix(gloss, 0.9, inside);
+            }
+            lightSlot(abs(uv.x - 0.04), y, 0.12, ceilH - 0.12, aa, emit, irr);
+            lightSlot(abs(uv.x - (W - 0.04)), y, 0.12, ceilH - 0.12, aa, emit, irr);
+        }
     } else if (surf == IS_METAL) {
         alb = sub == 1u ? vec3(0.30, 0.20, 0.10) : sub == 2u ? vec3(0.18) : vec3(0.06, 0.065, 0.07);   // dark anodised frames
         if (sub == 10u + 10u) alb = vec3(0.25) * (0.6 + 0.4 * step(0.1, fract(y / 0.4)));                    // shelving
@@ -1220,9 +1510,20 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         if (sub == 10u + 15u) alb = vec3(0.30, 0.32, 0.35) * (0.7 + 0.3 * step(0.03, fract(uv.x / 0.5)));  // lockers
         gloss = 0.5;
     } else if (surf == IS_WOOD) {
-        alb = sub == 1u ? vec3(0.40, 0.30, 0.18) : hfloat(h) < 0.5 ? vec3(0.22, 0.12, 0.06) : vec3(0.45, 0.32, 0.18);
-        alb *= 0.85 + 0.15 * sin(uv.x * 40.0 + vnoise(uv * 3.0, 0x900Du) * 6.0);
+        // sub 1 counters in pale oak; other pieces in dark or light veneer
+        bool pale = sub == 1u || hfloat(h) >= 0.5;
+        float rough;
         gloss = 0.25;
+        if (pale && pbrLoaded(PBR_WOOD_LIGHT)) {
+            alb = finish(PBR_WOOD_LIGHT, uv, 2.0, vec2(hfloat(h), 0.0), false, uvx, uvy, rough) * 0.9;
+            gloss *= 0.6 + 0.6 * polishOf(rough);
+        } else if (!pale && pbrLoaded(PBR_WOOD_DARK)) {
+            alb = finish(PBR_WOOD_DARK, uv, 1.5, vec2(hfloat(h), 0.0), false, uvx, uvy, rough) * 1.4;
+            gloss *= 0.6 + 0.6 * polishOf(rough);
+        } else {
+            alb = sub == 1u ? vec3(0.40, 0.30, 0.18) : pale ? vec3(0.45, 0.32, 0.18) : vec3(0.22, 0.12, 0.06);
+            alb *= 0.85 + 0.15 * sin(uv.x * 40.0 + vnoise(uv * 3.0, 0x900Du) * 6.0);
+        }
     } else if (surf == IS_FABRIC) {
         float k = hfloat(h);
         alb = sub == 200u ? vec3(0.40, 0.28, 0.15) : k < 0.25 ? vec3(0.06) : k < 0.45 ? vec3(0.03, 0.12, 0.12) : k < 0.65 ? vec3(0.35, 0.25, 0.05) :
@@ -1232,7 +1533,7 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float cov = paneCoverage(F);
         return (Lc * (0.05 + 0.6 * specB) * (sub == 1u ? 0.6 : 1.0) * mix(1.0, 4.0, F) + vec3(0.004, 0.006, 0.006)) * 0.25 / cov;
     } else if (surf == IS_LIGHT) {
-        return sub == 1u ? vec3(1.0, 0.45, 0.1) * 4.0 : sub == 3u ? neonColor(seed >> 5) * 5.0 : Lc * (sub == 2u ? 3.0 : 4.0);
+        return sub == 1u ? vec3(1.0, 0.45, 0.1) * 4.0 : sub == 3u ? neonColor(seed >> 5) * 5.0 : sub == 4u ? COVE * 3.5 : Lc * (sub == 2u ? 3.0 : 4.0);
     } else if (surf == IS_SIGN) {
         return vec3(0.1, 1.0, 0.35) * 3.0;
     } else if (surf == IS_SCREEN) {
@@ -1244,11 +1545,19 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         if (sub == 1u) alb = hf(seed, 26u) < 0.5 ? vec3(0.35, 0.36, 0.38) : vec3(0.30, 0.38, 0.40);
         else { alb = vec3(0.015); gloss = 0.8; }
     } else if (surf == IS_STONE) {
-        alb = sub == 1u ? vec3(0.10, 0.10, 0.11) : sub == 3u ? vec3(0.70) : vec3(0.65, 0.64, 0.62);
-        gloss = 0.5;
+        // 1 planters, 3 vanities, 4 the reception desk: dark polished stone
+        alb = sub == 1u ? vec3(0.10, 0.10, 0.11) : sub == 3u ? vec3(0.70) : sub == 4u ? marble(vec2(uv.x, y) * 2.0, vec3(0.035), vec3(0.22, 0.2, 0.18), 0x0DE5u, aa)
+            : vec3(0.65, 0.64, 0.62);
+        gloss = sub == 4u ? 0.7 : 0.5;
+        if (sub == 4u && pbrLoaded(PBR_MARBLE_DARK)) {
+            float rough;
+            bool top = abs(n.y) > 0.5;   // the top's uv runs over it; the sides' along and up
+            alb = finish(PBR_MARBLE_DARK, top ? uv : vec2(uv.x, y), 1.6, vec2(0.3, 0.6), false, top ? uvx : wx, top ? uvy : wy, rough) * 0.8;
+            gloss *= polishOf(rough);
+        }
     } else if (surf == IS_LIFTDOOR) {
         float seam = 1.0 - smoothstep(0.0, 0.01 + aa, abs(fract(uv.x) - 0.5) - 0.0);
-        alb = vec3(0.40) * (0.9 + 0.1 * vnoise(vec2(uv.x * 60.0, y * 2.0), 0x11F7u)) * (1.0 - 0.7 * seam);
+        alb = (hf(sh, 71u) < 0.5 ? vec3(0.40) : vec3(0.42, 0.30, 0.16)) * (0.9 + 0.1 * vnoise(vec2(uv.x * 60.0, y * 2.0), 0x11F7u)) * (1.0 - 0.7 * seam);
         gloss = 0.7;
     } else if (surf == IS_DOOR) {
         alb = sub == 1u ? vec3(0.25, 0.27, 0.30) : vec3(0.30, 0.20, 0.12);
@@ -1267,16 +1576,18 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         return mix(c, vec3(0.02), mull);
     }
 
-    vec3 col = alb * diff + Lc * specB * gloss * 0.08 + emit;
+    vec3 col = alb * (diff + irr) + Lc * specB * gloss * 0.08 + emit;
+    float ndv = max(dot(n, V), 0.0), F = 0.04 + 0.96 * pow(1.0 - ndv, 5.0);
+    if (abs(n.y) < 0.5) col += Lc * 0.05 * F * gloss;   // polished walls catch the lit room
     if (gloss > 0.4 && n.y > 0.5) {
-        // polished floors mirror the ceiling's panels
+        // polished floors mirror the ceiling's panels, and (screen-space) the lit walls round them
         vec3 R = reflect(-V, n);
-        float ndv = max(dot(n, V), 0.0), F = 0.04 + 0.96 * pow(1.0 - ndv, 5.0);
         if (R.y > 0.05) {
             float t = (ceilH - y) / R.y;
             vec2 q = uv + toFrame * (R.xz * t);
-            col += Lc * 1.2 * ceilingPanel(q, aa + 0.12 * t + 0.1) * F * gloss + Lc * 0.03 * F;
+            col += Lc * 0.8 * ceilingPanel(q, aa + 0.12 * t + 0.1) * F * gloss + Lc * 0.02 * F;
         }
+        gRefl = vec4(n.x, n.z, INDOOR_ROUGH, min((F * 1.5 + 0.08) * gloss, 0.9));
     }
     return col;
 }
@@ -1802,6 +2113,13 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         vec3 spec;
         vec3 diffL = wallLighting(p, n, V, 30.0, 0.15, vAbs, spec);
         vec3 wallC = wallAlb * 0.9 * diffL + spec;
+        // light lines set into the mullions (every first, second or third) in the lobby's accent colour
+        if (groundMode != 3u && hf(sh, 63u) < 0.8) {
+            float every = 1.0 + floor(hf(sh, 62u) * 3.0), k = floor(u / 1.5 + 0.5);
+            float dm = abs(u - k * 1.5), w = max(0.012, 0.5 * dU);
+            if (mod(k, every) < 0.5)
+                wallC += lobbyAccent(seed) * 6.0 * (1.0 - smoothstep(w * 0.6, w, dm)) * (0.012 / w) * band(yy, 0.08, glassTop, dV + 0.01);
+        }
         float lodR = smoothstep(0.08, 0.4, dU / 8.0);
         if ((prm.w & 64u) != 0u) {
             // A closed room or a core of the real lobby stands behind this
@@ -2107,6 +2425,37 @@ float glyphDist(uint g, vec2 q) {
 
 float flickerOn(uint seed, uint mode) { return neonFlicker(seed, mode, gTime); }
 
+// Distance (metres) from board point m to the nearest tube's centreline: the
+// glyphs, and on boards and banners a border tube. Points between glyphs are
+// measured to the nearest one, so the light the tubes throw on the board runs
+// on unbroken. gi: that glyph.
+float tubeDist(vec2 m, uint seed, float wM, float hM, uint style, bool vertical, float cell, float pad, out float gi) {
+    vec2 g;
+    if (vertical) {
+        float n = max(floor((hM - pad) / (cell * 1.08)), 1.0);
+        float k = (hM - pad - m.y) / (cell * 1.08);
+        gi = clamp(floor(k), 0.0, n - 1.0);
+        g = vec2((m.x - pad) / cell, 1.0 - (k - gi) * 1.08);
+    } else {
+        float n = max(floor((wM - pad) / (cell * 0.95)), 1.0);
+        float k = (m.x - pad) / (cell * 0.95);
+        gi = clamp(floor(k), 0.0, n - 1.0);
+        g = vec2((k - gi) * 0.95, (m.y - pad) / cell);
+    }
+    vec2 gc = clamp(g, 0.0, 1.0);
+    float d = (glyphDist(hash_combine(seed, uint(gi)), gc) + length(g - gc)) * cell;
+    if (style != 0u) {
+        vec2 e = min(m, vec2(wM, hM) - m);
+        d = min(d, abs(min(e.x, e.y) - 0.12));
+    }
+    return d;
+}
+
+/* A neon sign: glass tubes bent into glyphs (and a border on boards and
+ * banners), standing a few centimetres off a dark painted board. The view ray
+ * meets the tubes' layer before the board, so seen at an angle they slide
+ * across it, apart from the light they throw on it: a tight pool round each
+ * tube, falling off as a line source's does. */
 vec3 shadeNeon(vec2 uv, uint seed, uvec4 prm, vec3 rel) {
     uint colI = prm.y & 7u, style = (prm.y >> 3) & 7u, flick = (prm.y >> 6) & 3u;
     float wM = max(float(prm.z) * 0.5, 0.5), hM = max(float(prm.w) * 0.5, 0.5);
@@ -2118,43 +2467,47 @@ vec3 shadeNeon(vec2 uv, uint seed, uvec4 prm, vec3 rel) {
     bool vertical = hM >= wM;
     float cell = vertical ? wM * 0.78 : hM * 0.72;
     float pad = vertical ? (wM - cell) * 0.5 : (hM - cell) * 0.5;
-    vec2 g;
-    float gi;
-    if (vertical) {
-        float n = max(floor((hM - pad) / (cell * 1.08)), 1.0);
-        float yTop = hM - pad;
-        float k = (yTop - m.y) / (cell * 1.08);
-        gi = floor(k);
-        g = vec2((m.x - pad) / cell, 1.0 - fract(k) * 1.08);
-        if (gi < 0.0 || gi >= n || g.y < 0.0) g = vec2(-1.0);
-    } else {
-        float n = max(floor((wM - pad) / (cell * 0.95)), 1.0);
-        float k = (m.x - pad) / (cell * 0.95);
-        gi = floor(k);
-        g = vec2(fract(k) * 0.95, (m.y - pad) / cell);
-        if (gi < 0.0 || gi >= n) g = vec2(-1.0);
+    float px = max(fwidth(m.x), fwidth(m.y));
+
+    // Where the ray crosses the tubes' layer, `stand` in front of the board, in
+    // board metres: the board's tangent frame from the screen derivatives of
+    // position and m.
+    float stand = 0.03 + cell * 0.02;
+    vec3 dpx = dFdx(rel), dpy = dFdy(rel);
+    vec2 dmx = dFdx(m), dmy = dFdy(m);
+    float det = dmx.x * dmy.y - dmy.x * dmx.y;
+    vec2 mt = m;
+    if (abs(det) > 1e-12) {
+        vec3 T = (dpx * dmy.y - dpy * dmx.y) / det, B = (dpy * dmx.x - dpx * dmy.x) / det;   // d(position)/d(m)
+        vec3 N = normalize(cross(T, B)), V = -normalize(rel);
+        if (dot(N, V) < 0.0) N = -N;
+        vec3 off = V * (stand / max(dot(N, V), 0.2));   // from the board back along the ray to the tubes
+        mt += vec2(dot(off, T) / max(dot(T, T), 1e-8), dot(off, B) / max(dot(B, B), 1e-8));
     }
-    float d = 1e3;
-    if (all(greaterThanEqual(g, vec2(0.0))) && all(lessThanEqual(g, vec2(1.0))))
-        d = glyphDist(hash_combine(seed, uint(gi)), g) * cell;     // metres
-    // border tube on boards and banners
+    float gi, giT;
+    float dB = tubeDist(m, seed, wM, hM, style, vertical, cell, pad, gi);     // the board, to the tube over it
+    float dT = tubeDist(mt, seed, wM, hM, style, vertical, cell, pad, giT);   // the tubes
+    // dead segments on some signs
+    float liveB = flick == 2u && hfloat(hash_combine(seed, uint(gi) + 99u)) < 0.3 ? 0.05 : 1.0;
+    float liveT = flick == 2u && hfloat(hash_combine(seed, uint(giT) + 99u)) < 0.3 ? 0.05 : 1.0;
+
+    // the tube: a white-hot core in its colour; thinner than a pixel, its light spreads over the pixel
+    float r = max(0.008, cell * 0.026), rw = max(r, px * 0.6);
+    float cover = 1.0 - smoothstep(rw - px * 0.5, rw + px * 0.5, dT);
+    float x = clamp(dT / rw, 0.0, 1.0), prof = sqrt(max(1.0 - x * x, 0.0));   // depth of glowing gas along the ray
+    vec3 tube = (mix(col, vec3(1.0), 0.6 * prof * prof) * (2.0 + 7.0 * prof) * on * liveT + col * 0.03) * (r / rw);
+
+    // the board: dark paint, lit by the tubes standing off it, and a metal lip round boards and banners
+    float s2 = stand * stand, halo = s2 / (s2 + dB * dB);
+    vec3 board = vec3(0.005, 0.005, 0.006) + col * on * ((0.4 + 0.8 * halo) * halo * liveB + 0.003);
     if (style != 0u) {
         vec2 e = min(m, vec2(wM, hM) - m);
-        float bd = abs(min(e.x, e.y) - 0.12);
-        d = min(d, bd);
+        board = mix(board, vec3(0.02) + col * on * 0.04, 1.0 - smoothstep(0.03, 0.03 + px, min(e.x, e.y)));
     }
-    float px = max(fwidth(m.x), fwidth(m.y));
-    float tube = 0.025 + cell * 0.018 + px * 0.5;
-    float core = 1.0 - smoothstep(tube * 0.5, tube, d);
-    float glow = exp(-d * 7.0 / max(cell, 0.6));
-    // dead segments on some signs
-    if (flick == 2u && hfloat(hash_combine(seed, uint(gi) + 99u)) < 0.3) { core *= 0.05; glow *= 0.05; }
-
-    vec3 bg = vec3(0.012, 0.010, 0.014) + col * 0.05 * on;
-    vec3 c = bg + (mix(col, vec3(1.0), 0.45) * core * 7.0 + col * glow * 1.6) * on;
+    vec3 c = mix(board, tube, cover);
     // far away: average emission (avoids shimmering strokes)
-    float lod = smoothstep(0.03, 0.12, px / max(cell, 0.1));
-    vec3 avg = bg + col * 0.9 * on;
+    float lod = smoothstep(0.06, 0.2, px / max(cell, 0.1));
+    vec3 avg = vec3(0.008, 0.007, 0.009) + col * 0.6 * on;
     return mix(c, avg, lod);
 }
 
@@ -2536,5 +2889,6 @@ void main() {
     float dist = length(vRel);
     float fog = fogAmount(vRel, dist);
     outColor = vec4(mix(col, hazeColor(vRel / max(dist, 1e-4)), fog), 1.0);
-    outRefl = vec4(gRefl.xyz, gRefl.w * (1.0 - fog));
+    float reflW = gRefl.w * (1.0 - fog);
+    outRefl = vec4(gRefl.xyz * reflW, reflW);
 }

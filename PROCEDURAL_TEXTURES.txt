@@ -1,0 +1,99 @@
+NeonCity: surfaces still textured procedurally
+================================================
+
+Everything below is drawn in shaders (noise, hashes and patterns), not from
+authored image maps. Line references are to shaders/city.frag unless noted.
+
+Authored (image) materials today, from assets/textures/ (src/textures.c):
+  - paving_stones_111  sidewalk paving
+  - road_012a          road asphalt
+  - ground_032         kerb stones, kerb faces, tactile slabs
+  - tactile_stud       tactile studs
+  - marble_016         lobby: dark marble floors, chequer dark slabs, walls, core cladding, reception desk
+  - marble_012         lobby: chequer white slabs, pale core cladding, emblem panels
+  - tiles_139          lobby: limestone floor
+  - wood_051           lobby: dark wood furniture
+  - wood_066           lobby: walnut slat walls
+  - wood_095           lobby: light wood furniture and counters
+If an authored material's files are missing, its surfaces fall back to the
+procedural versions, which still exist in the shader.
+
+
+STREETS AND GROUND (shadeGround)
+--------------------------------
+  - Asphalt grime, patched/resurfaced rectangles, wheel ruts and gutter grime (over the road texture)
+  - Road paint: lane lines, crossings, glass-bead speckle, wear
+  - Manhole covers
+  - Kerb-stone / paving joint: grit, dead leaves, moss, grime spill
+  - Stains over paving and kerb stones
+  - Fine debris (gum, grit, leaves) on sidewalks and lots (debris)
+  - Park grass with worn patches
+  - Bare lots / waste ground
+  - Puddles, wet film, standing water and rain ripples (hollow, ripples)
+
+BUILDING EXTERIORS (shadeFacade, shadeRoof, shadeMetal, shadeDoor)
+------------------------------------------------------------------
+  - Facade wall palettes: concrete, grimy brick-brown, teal metal panels, pale tile,
+    black glass, warm stone, bronze, blue glass
+  - Slab edges and pilasters, rust drips under windows, spandrel bands, plant-floor louvres
+  - Curtain-wall glass and window glass (reflection, pane sheen, privacy film)
+  - Window interiors (interior mapping): room walls, floors, ceilings, furniture
+    silhouettes, curtains, blinds, TVs, lights (makeRoom, interiorColor, cornerInterior)
+  - Shopfront interiors: shelves of goods (shelves), shop lighting, rolled-down shutters
+  - Lobby facade: mullion accent lines
+  - Roofs: flat roof membrane, clay tiles on hip roofs, soffits
+  - Rooftop metal: plant/vents, concrete, generic metal, solar panels, glass pyramids
+  - Doors: glass lobby doors, steel service doors, roller-shutter loading bays with hazard stripes
+
+SIGNS AND LIGHTS (shadeNeon, shadeScreen, shadeEmissive, LED strips)
+--------------------------------------------------------------------
+  - Neon signs: pseudo-kanji glyphs, tubes, painted boards, metal lip
+  - Video screens / billboards: portrait adverts, scrolling tickers, pulsing rings, brand marks, LED grid
+  - Street lamp heads, aircraft warning lights, emissive boxes
+  - LED strips (steady and chasing)
+
+OFFICE LOBBIES (shadeInterior)
+------------------------------
+  - Granite floor (dark, speckled)
+  - Smoked bronze wall panels
+  - Charcoal plaster walls
+  - Bronze core cladding
+  - Slab edges round voids
+  - Ceiling and its light panels
+  - Wall wash, foot coves, light slots
+  - Emblems and wordmarks (emblemDist)
+  - Room floors: vestibule mats, toilet/shower tiles, meeting/office carpet, plain floors
+  - Metal: dark anodised frames, shelving, bins, lockers
+  - Fabric: sofas and upholstery
+  - Glass partitions, lift doors (steel/bronze), interior doors
+  - Planters, vanities, plants, linings
+  - Screens, exit signs, light fittings
+  - Skylights, podium office glazing around atria
+
+ARCOLOGIES (shadeArcology)
+--------------------------
+  - Street, floor and slat paving (wet concrete pavers, terrazzo, tile, rubber, etc.)
+  - Coffered ceilings with bare tubes
+  - Megastructure concrete: columns, capitals, beams, portals (board marks, grime, wet streaks),
+    fluted stone piers, posters on columns
+  - Block masses: painted concrete, corrugated sheet, small windows, capsule portholes, graffiti
+  - Roofs and puddles, stall interiors (goods, menu boards), stall canopies
+  - Shutters, counters, the express spine, cores (hazard skirts)
+  - Galleries and bridges, soffits with lamps, fascias, unit fronts (unitFronts)
+  - Rails and glass balustrades, metalwork, the glazed crown, sky lobby glazing
+  - Crates, AC units, awnings, terrace planters, stairs, linings, kiosks, lift doors
+  - Steam and searchlight shafts
+
+LITTER (shadeLitter)
+--------------------
+  - Newsprint, flyers, till receipts, wrappers and foil, cardboard
+  - Paper wads, cigarette butts, cups, noodle/pizza/polystyrene/cigarette boxes
+  - Drinks cans, bottles, carrier bags, bin bags
+  - Soaking, wrinkling, beading of rain and contact shadows
+
+SKY AND ATMOSPHERE (other shaders)
+----------------------------------
+  - Sky (sky.frag)
+  - Clouds and cloud noise (clouds.comp, cloud_noise.comp)
+  - Rain mist and falling rain (clouds.comp, composite.frag)
+  - Haze and fog (common.glsl)

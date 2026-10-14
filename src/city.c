@@ -22,6 +22,13 @@ static uint32_t style_hash(uint32_t seed) { return hash_u32(seed ^ 0x5f3759dfu);
 float city_floor_height(uint32_t seed)  { return 3.3f + 0.9f * hash_float(hash_combine(style_hash(seed), 1u)); }
 float city_ground_height(uint32_t seed) { return 4.6f + 1.4f * hash_float(hash_combine(style_hash(seed), 2u)); }
 
+/* An office lobby's accent light, the neon colour of its mullion lines and
+ * canopy strip (lobbyAccent in shaders/city.frag): mostly cyan. */
+static uint8_t lobby_accent(uint32_t seed) {
+    float a = hash_float(hash_combine(style_hash(seed), 61u));
+    return (uint8_t)(a < 0.55f ? 1 : a < 0.7f ? 6 : a < 0.85f ? 4 : 3);
+}
+
 /* Storefronts are 6 m bays along each ground-floor face; shaders/city.frag
  * uses the same hash so lit shops, their signs and their light spill agree.
  * Faces are numbered within their section; the bay that wraps a convex
@@ -1585,7 +1592,7 @@ static int behind_of(const Interiors *in, int si, Behind *bh) {
 
 /* MAT_INTERIOR surfaces (params y; shadeInterior in shaders/city.frag). */
 enum { IS_FLOOR = 0, IS_ROOMFLOOR, IS_WALL, IS_CEILING, IS_CORE, IS_METAL, IS_WOOD, IS_FABRIC, IS_GLASS,
-       IS_LIGHT, IS_PLANT, IS_LINING, IS_STONE, IS_LIFTDOOR, IS_DOOR, IS_SCREEN, IS_SKYLIGHT, IS_OFFICE, IS_SIGN };
+       IS_LIGHT, IS_PLANT, IS_LINING, IS_STONE, IS_LIFTDOOR, IS_DOOR, IS_SCREEN, IS_SKYLIGHT, IS_OFFICE, IS_SIGN, IS_EMBLEM };
 
 /* params: y surface, z variety (a region or fixture type), w ceiling height above the floor (half metres). */
 static Mat imat(const BGraph *g, const ILayout *L, int surface, int sub) {
@@ -1984,8 +1991,11 @@ static void emit_fixture(Mesh *m, const BGraph *g, const ILayout *L, const IFixt
     uint8_t var = (uint8_t)(hash_combine(L->seed, (uint32_t)idx) & 0xFF);
     switch (f->type) {
     case IX_DESK: case IX_COUNTER:
-        ibox(m, L, f->x0 + 0.05f, f->z0 + 0.05f, f->x1 - 0.05f, f->z1 - 0.05f, y0, y1 - 0.04f, F_SIDES, imat(g, L, IS_WOOD, var));
-        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y1 - 0.04f, y1, F_NOBOT | F_BOT, imat(g, L, IS_STONE, 0));
+        /* the reception desk is dark polished stone, a cafe counter wood; both float on a lit toe-kick */
+        ibox(m, L, f->x0 + 0.12f, f->z0 + 0.12f, f->x1 - 0.12f, f->z1 - 0.12f, y0, y0 + 0.08f, F_SIDES, imat(g, L, IS_LIGHT, 4));
+        ibox(m, L, f->x0 + 0.05f, f->z0 + 0.05f, f->x1 - 0.05f, f->z1 - 0.05f, y0 + 0.08f, y1 - 0.04f, F_SIDES | F_BOT,
+             f->type == IX_DESK ? imat(g, L, IS_STONE, 4) : imat(g, L, IS_WOOD, var));
+        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y1 - 0.04f, y1, F_NOBOT | F_BOT, imat(g, L, IS_STONE, f->type == IX_DESK ? 4 : 0));
         break;
     case IX_CHAIR:
         ibox(m, L, f->x0, f->z0, f->x1, f->z1, y0, y0 + 0.46f, F_NOBOT, imat(g, L, IS_FABRIC, var));
@@ -2082,6 +2092,47 @@ static void emit_fixture(Mesh *m, const BGraph *g, const ILayout *L, const IFixt
     }
 }
 
+/* The building's mark on the core face the entrance looks at (the planning
+ * frame's front is the low-z edge, so that face looks to -z): a stone panel on
+ * the widest stretch of it that is clear of doors and faces open floor, into
+ * which shadeInterior (IS_EMBLEM) inlays the mark and a wordmark. */
+static void emit_emblem(Mesh *m, const BGraph *g, const ILayout *L) {
+    int16_t (*rc)[4] = (int16_t (*)[4])malloc(sizeof(int16_t) * 4 * 512);
+    if (!rc) fatal("out of memory realising an interior");
+    float best = -1e9f, bx0 = 0.0f, bx1 = 0.0f, bz = 0.0f;
+    for (int r = 0; r < L->nreg; ++r) {
+        if (L->reg[r].kind != IK_SOLID || !L->reg[r].cells) continue;
+        int n = region_rects(L, r, 0, rc, 512);
+        for (int k = 0; k < n; ++k) {
+            int j = rc[k][1], start = -1;
+            if (j < 1) continue;
+            for (int i = rc[k][0]; i <= rc[k][2]; ++i) {
+                int ok = 0;
+                if (i < rc[k][2]) {
+                    int c = (j - 1) * L->nx + i;
+                    ok = L->occ[c] == IO_USABLE && L->own[c] != 255 && L->reg[L->own[c]].kind == IK_OPEN && !(L->flag[c] & IF_EDGE);
+                    for (int d = 0; d < L->ndoor && ok; ++d) {
+                        const IDoor *dr = &L->door[d];
+                        if (dr->axis == 0 && dr->line == j && i >= dr->at - 1 && i <= dr->at + dr->len) ok = 0;
+                    }
+                }
+                if (ok && start < 0) start = i;
+                if (!ok && start >= 0) {
+                    float w = (float)(i - start) * IN_CELL, score = minf(w, 4.0f) - 0.02f * (float)j * IN_CELL;   /* wide, then near the front */
+                    if (w >= 1.5f && score > best) { best = score; bx0 = L->gx0 + start * IN_CELL; bx1 = L->gx0 + i * IN_CELL; bz = L->gz0 + j * IN_CELL; }
+                    start = -1;
+                }
+            }
+        }
+    }
+    free(rc);
+    if (best < -1e8f) return;
+    float w = minf(bx1 - bx0 - 0.2f, 4.0f), cx = 0.5f * (bx0 + bx1);
+    Mat mt = imat(g, L, IS_EMBLEM, 0);
+    mt.p[2] = q_half(w);   /* the shader centres the mark on the panel */
+    iwall(m, L, cx - w * 0.5f, bz - 0.02f, cx + w * 0.5f, bz - 0.02f, L->floorY, wall_top(L), 0, -1, mt);
+}
+
 static void emit_interior(Mesh *m, const BGraph *g, const ILayout *L) {
     const BSection *s = &g->sec[L->section];
     const IAtrium *A = &L->atrium;
@@ -2109,6 +2160,7 @@ static void emit_interior(Mesh *m, const BGraph *g, const ILayout *L) {
     emit_envelope_inside(m, g, L, s, L->section);
     emit_partitions(m, g, L);
     emit_solids(m, g, L);
+    emit_emblem(m, g, L);
     const IFixture *stair = NULL;
     for (int f = 0; f < L->nfix; ++f) {
         emit_fixture(m, g, L, &L->fix[f], f);
@@ -3382,13 +3434,33 @@ static void emit_doors(Mesh *m, const BGraph *g, const Interiors *in) {
         if (dr->canopy) {
             emit_box(m, v3(u0 - 0.8f, y1 + 0.3f, 0.0f), v3(u1 + 0.8f, y1 + 0.55f, 1.8f), F_NOBOT | F_BOT, metal, UV_FACADE);
             float uv[4][2] = { { 0, 0 }, { u1 - u0 + 1.4f, 0 }, { u1 - u0 + 1.4f, 1 }, { 0, 1 } };
+            int lobby = g->groundMode == GF_LOBBY || g->groundMode == GF_DOUBLE;
             emit_quad(m, v3(u0 - 0.7f, y1 + 0.29f, 1.55f), v3(u1 + 0.7f, y1 + 0.29f, 1.55f), v3(u1 + 0.7f, y1 + 0.29f, 1.75f),
-                      v3(u0 - 0.7f, y1 + 0.29f, 1.75f), v3(0, -1, 0), uv, mat(MAT_LEDSTRIP, g->seed, (uint8_t)(g->seed & 7), 0, 0));
+                      v3(u0 - 0.7f, y1 + 0.29f, 1.75f), v3(0, -1, 0), uv,
+                      mat(MAT_LEDSTRIP, g->seed, lobby ? lobby_accent(g->seed) : (uint8_t)(g->seed & 7), 0, 0));
         } else if (dr->type != DOOR_PRIMARY) {
             emit_emissive_box(m, v3(dr->u, y1 + 0.45f, 0.25f), 0.15f, 0, 2, 0);   /* a sodium bulb over the door */
         }
         xf_restore(m, sv);
     }
+}
+
+/* Light set into the sidewalk along a lobby's face k (in the face's frame):
+ * small amber uplights every two mullions, clear of its doors, and now and
+ * then a red status lamp on the fascia above. Their own random stream, so the
+ * signs drawn after them are unchanged. */
+static void lobby_lights(Mesh *m, const BGraph *g, int si, int k, float len) {
+    const float gy = SIDEWALK_HEIGHT;
+    Rng r = rng_make(hash2i(g->seed ^ 0x0B1Eu, si, k));
+    Mat up = mat(MAT_EMISSIVE, 0, 3, 0, 0);
+    for (float u = 0.75f; u < len - 0.5f; u += 3.0f) {
+        int clear = 1;
+        for (int d = 0; d < g->ndoor && clear; ++d)
+            if (g->door[d].section == si && g->door[d].face == k && fabsf(u - g->door[d].u) < g->door[d].width * 0.5f + 0.6f) clear = 0;
+        if (clear) emit_box(m, v3(u - 0.07f, gy, 0.38f), v3(u + 0.07f, gy + 0.008f, 0.52f), F_TOP, up, UV_UNIT);
+    }
+    if (len > 2.0f && rng_float(&r) < 0.5f)
+        emit_emissive_box(m, v3(rng_range(&r, 0.5f, len - 0.5f), gy + g->groundH + rng_range(&r, 0.4f, 1.2f), 0.06f), 0.05f, 2, 0, 0);
 }
 
 /* Everything that makes up one building, in its own frame. */
@@ -3518,6 +3590,7 @@ static void emit_building(Mesh *m, const Building *b, const BGraph *g, const Int
             if (s->y0 <= gy + 0.01f) {
                 float px = e.ax + e.ex * e.len * 0.5f + e.ez * 0.3f, pz = e.az + e.ez * e.len * 0.5f - e.ex * 0.3f;
                 face_signs(m, b, g, si, &fk, facade_top(g, si, px, pz), &r);
+                if (g->groundMode == GF_LOBBY || g->groundMode == GF_DOUBLE) lobby_lights(m, g, si, k, e.len);
             }
             face_feature(m, g, s, e.len, &r);
             xf_restore(m, sv);
@@ -4066,7 +4139,7 @@ static void build_lights(Mesh *m, ChunkGen *g) {
                 for (int seg = 0; seg * step < e.len; ++seg) {
                     float u0 = seg * step, u1 = minf(u0 + step, e.len);
                     if (u1 - u0 < 2.0f) continue;
-                    uint32_t h = 3u;                               /* lobby: cool white */
+                    uint32_t h = 3u;                               /* lobby: warm white */
                     if (retail) {
                         h = city_shop_hash(b->seed, si, fk.face, seg, e.len, fk.next, fk.endConvex);
                         if (!city_shop_lit(h, b->shop)) continue;

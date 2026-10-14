@@ -9,6 +9,8 @@ layout(push_constant) uniform Push { float threshold, knee, radius; int prefilte
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 vec3 karis(vec3 a, vec3 b, vec3 c, vec3 d) {
+    // nothing below zero: a negative pixel near luma -1 would blow its weight up into a black disc
+    a = max(a, vec3(0.0)); b = max(b, vec3(0.0)); c = max(c, vec3(0.0)); d = max(d, vec3(0.0));
     vec4 s = vec4(a, 1.0) / (1.0 + luma(a)) + vec4(b, 1.0) / (1.0 + luma(b)) +
              vec4(c, 1.0) / (1.0 + luma(c)) + vec4(d, 1.0) / (1.0 + luma(d));
     return s.rgb / s.a;

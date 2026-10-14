@@ -9,6 +9,31 @@ Real lobbies stand behind office ground floors (`src/interior.c`, `emit_interior
 - **Light:** interiors are lit analytically by their ceiling panels; street lamps don't reach in,
   and the lobby doesn't throw its real layout's light onto the street.
 - **Glass** over real interiors needs MSAA (`paneCoverage`); without it the panes vanish.
+- **Look:** the lobby palette, built-in light and the outside accent lines are done (see the
+  README). Still to do: the mullion lines and uplights don't light the street or the glass (only
+  SSR and bloom carry them); polished floors seen through the lobby glass get only the analytic
+  panel reflection (the pane covers MSAA sample 0, so SSR never sees the floor); and the vertical
+  neon lines up the facade above the lobby in the reference image.
+
+## Emblems and brands (next)
+`emblemDist` in `shaders/city.frag` is a first, shader-only grammar of corporate marks (motif,
+frame, a wordmark of pseudo-glyphs), drawn on one panel per lobby. A fuller version:
+- **A shared grammar** (C and GLSL, or C baking a small SDF atlas) so the same brand can be
+  placed on the lobby wall, the canopy fascia, the rooftop billboard and the blade signs, and
+  tested for legibility and variety in a lab tool.
+- **More grammar:** composition rules (stacking, radial and grid repetition, negative-space
+  cuts, an interlocking monogram of two glyphs), weights and proportions, and a brand palette
+  (primary, accent, material: brass, steel, acrylic, neon) chosen together.
+- **Wordmarks** that read as words: a pseudo-Latin alphabet alongside the pseudo-kanji, and
+  layout (tracking, a tagline, a mark beside or above the name).
+- **Corporate tiers:** megacorp marks repeated across a district (towers of one company sharing
+  a brand), against one-off small-firm marks.
+- The wordmark reads mirrored on some panels (the panel's uv runs the way the frame's x does).
+
+## Neon signs
+Tubes now stand off a dark board (`shadeNeon`). Next: tube supports and the black-painted
+jumper runs between strokes, electrode caps at stroke ends, a tube's shadow on the board from
+street light, and signs built as real tube geometry up close.
 
 ## Arcologies (next)
 Arcology interiors are planned and built (`src/arcology.c`, `emit_arcology` in `src/city.c`).

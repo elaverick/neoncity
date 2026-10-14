@@ -135,6 +135,11 @@ fins, parapets and doors are emitted in each face's own frame. Collision uses wh
 street level (ground floors, piers, lift cores and columns), so you can walk under arcades,
 through void decks and through gateways.
 
+Neon signs (`shadeNeon`) are glass tubes bent into pseudo-kanji, with a border tube on boards
+and banners, standing a few centimetres off a dark painted board. The view ray meets the tubes'
+layer before the board (its tangent frame comes from screen derivatives), so seen at an angle
+the tubes slide across the board, apart from the tight pool of light each throws on it.
+
 A building is a pure function of its plot, so revisiting an area regenerates exactly the same
 building. The tests regenerate every building in a 2 km area twice and compare the results
 byte for byte.
@@ -183,6 +188,20 @@ Within `REAL_GLASS_DIST` (150 m) the lobby glass covers only part of each pixel'
 (`paneCoverage` writes `gl_SampleMask`), so the geometry shows through a reflective pane; farther
 off it falls back to interior mapping. `interior_lab` reports pass rates and rejection reasons
 and writes top-down plan renders.
+
+**Finishes and light** (`shadeInterior`). Each lobby picks a dark, warm palette from its
+building's hash: polished stone underfoot (a black and white chequer, granite, veined marble or
+limestone) that mirrors the room through screen-space reflections, walls of dark marble, smoked
+bronze, walnut or charcoal plaster, and cores clad in dark stone. The marbles (book-matched on
+walls and cores, each floor slab its own piece of stone), limestone and wood veneers are authored
+textures (`assets/textures/marble_*`, `tiles_139`, `wood_*`, packed with `pbr_pack`); without them
+the procedural finishes stand in. Warm 2700-3000 K panels in a dark ceiling light it low, and
+the rest of the light is built in: a slot at the ceiling washes down the walls, coves glow at
+their feet, slots run up the cores' joints and the reception desk floats on a lit toe-kick. The core face the entrance looks at carries the building's emblem on a stone
+panel (`emit_emblem`), drawn by a small grammar of marks (`emblemDist`: bars, chevrons, rings,
+diamonds, monograms or deltas, framed or not) in halo-lit brass or backlit acrylic over a
+wordmark. Outside, light lines in the building's accent colour (mostly cyan) run up some of the
+mullions and under the canopy, and amber uplights are set into the sidewalk along the glass.
 
 ### Arcologies (`src/arcology.c`)
 An arcology's ground floor is planned as a district, not a lobby, by the grammar in section 11 of

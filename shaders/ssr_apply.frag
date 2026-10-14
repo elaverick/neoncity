@@ -21,10 +21,12 @@ const int TAPS = 12;   // either side
 
 void main() {
     ivec2 px = ivec2(gl_FragCoord.xy);
-    vec4 g = texelFetch(reflTex, px, 0);
+    vec4 g = reflSample(reflTex, px);
     outColor = vec4(0.0);   // additive: zero leaves the scene as it is
     if (g.a <= 1e-3) return;
     float rough = max(g.b, 0.0);   // glass is marked negative (city.frag: GLASS_ROUGH)
+    bool indoor = g.b < -2.0;      // a lobby floor (city.frag: INDOOR_ROUGH): polished, with no sky added
+    if (indoor) rough = 0.06;
 
     ivec2 size = textureSize(ssrTex, 0);
     float len = float(size.y) * 0.11 * smoothstep(0.04, 0.4, rough);   // streak half-length, pixels
@@ -49,6 +51,6 @@ void main() {
     vec2 ndc = vUV * 2.0 - 1.0;
     vec3 dir = normalize(frame.rayBasis[2].xyz + ndc.x * frame.rayBasis[0].xyz - ndc.y * frame.rayBasis[1].xyz);
     vec3 n = vec3(g.x, sqrt(max(1.0 - g.x * g.x - g.y * g.y, 0.0)), g.y);
-    vec3 sky = envReflection(normalize(mix(reflect(dir, n), n, rough * rough)));
+    vec3 sky = indoor ? vec3(0.0) : envReflection(normalize(mix(reflect(dir, n), n, rough * rough)));
     outColor = vec4(g.a * conf * (col - sky), 0.0);
 }

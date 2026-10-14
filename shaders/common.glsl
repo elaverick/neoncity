@@ -40,7 +40,9 @@ const uint LK_SHADOW = 0u, LK_NEWS = 1u, LK_FLYER = 2u, LK_SCRAP = 3u, LK_CARDBO
 const float REAL_GLASS_DIST = 150.0;
 
 // Authored PBR materials (src/textures.c): maps at material * PBR_MAPS_PER_MATERIAL + map.
-const int PBR_PAVING_STONES = 0, PBR_ROAD = 1, PBR_KERB = 2, PBR_TACTILE = 3, PBR_MATERIAL_COUNT = 4;
+const int PBR_PAVING_STONES = 0, PBR_ROAD = 1, PBR_KERB = 2, PBR_TACTILE = 3,
+          PBR_MARBLE_DARK = 4, PBR_MARBLE_WHITE = 5, PBR_LIMESTONE = 6, PBR_WOOD_DARK = 7, PBR_WOOD_MID = 8, PBR_WOOD_LIGHT = 9,
+          PBR_MATERIAL_COUNT = 10;
 const int PBR_ALBEDO = 0, PBR_NORMAL = 1, PBR_ORM = 2, PBR_MAPS_PER_MATERIAL = 3;
 
 layout(set = 0, binding = 0) uniform Frame {
@@ -108,9 +110,9 @@ vec3 neonColor(uint i) {
 // A lit storefront's light (its shop hash picks the colour; src/city.c: city_shop_hash).
 vec3 shopColor(uint h) { return mix(neonColor(h >> 4), vec3(1.0, 0.82, 0.62), 0.45); }
 
-// Light from the lobbies thrown onto the street and into the rain (about 3700 K,
-// between the lobbies' warm and neutral panels: city.frag lobbyLight).
-const vec3 LOBBY_SPILL = vec3(1.0, 0.80, 0.60);
+// Light from the lobbies thrown onto the street and into the rain (about 2900 K,
+// between the lobbies' 2700 K and 3000 K panels: city.frag lobbyLight).
+const vec3 LOBBY_SPILL = vec3(1.0, 0.66, 0.37);
 
 vec3 lampColor(int type) {
     return type == 0 ? vec3(1.0, 0.42, 0.10) * 1.0   // sodium: deep amber
@@ -208,6 +210,13 @@ float glassFresnel(vec3 n, vec3 V) { return 0.04 + 0.66 * pow(1.0 - max(dot(n, V
 
 // Forward (view-axis) distance from a reverse-Z depth value; 0 (the sky) is infinitely far.
 float forwardDist(float z) { return z > 0.0 ? NEAR_PLANE * FAR_PLANE / (z * (FAR_PLANE - NEAR_PLANE) + NEAR_PLANE) : 1e9; }
+
+// A texel of the reflection G-buffer (city.frag: outRefl), with the normal and
+// roughness divided back out of the weight; a = 0 where nothing reflects.
+vec4 reflSample(sampler2D t, ivec2 px) {
+    vec4 g = texelFetch(t, px, 0);
+    return g.a > 1e-3 ? vec4(g.xyz / g.a, g.a) : vec4(0.0);
+}
 
 vec3 applyFog(vec3 col, vec3 rel) {
     float d = length(rel);

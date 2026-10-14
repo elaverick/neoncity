@@ -14,6 +14,12 @@ static const char *const MATERIAL_DIRS[PBR_MATERIAL_COUNT] = {
     [PBR_ROAD]          = "road_012a",
     [PBR_KERB]          = "ground_032",
     [PBR_TACTILE]       = "tactile_stud",
+    [PBR_MARBLE_DARK]   = "marble_016",
+    [PBR_MARBLE_WHITE]  = "marble_012",
+    [PBR_LIMESTONE]     = "tiles_139",
+    [PBR_WOOD_DARK]     = "wood_051",
+    [PBR_WOOD_MID]      = "wood_066",
+    [PBR_WOOD_LIGHT]    = "wood_095",
 };
 
 static const struct {
