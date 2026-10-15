@@ -115,6 +115,7 @@ enum {
  * shaders/common.glsl. */
 enum { PBR_PAVING_STONES = 0, PBR_ROAD, PBR_KERB, PBR_TACTILE,
        PBR_MARBLE_DARK, PBR_MARBLE_WHITE, PBR_LIMESTONE, PBR_WOOD_DARK, PBR_WOOD_MID, PBR_WOOD_LIGHT,   /* lobby finishes */
+       PBR_LEAF,                                                                                         /* lobby plants */
        PBR_MATERIAL_COUNT };
 enum { PBR_ALBEDO = 0, PBR_NORMAL, PBR_ORM, PBR_MAPS_PER_MATERIAL };
 #define PBR_TEXTURE_COUNT (PBR_MATERIAL_COUNT * PBR_MAPS_PER_MATERIAL)

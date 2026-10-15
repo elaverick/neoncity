@@ -2,7 +2,8 @@
 
 ## Office lobbies (next)
 Real lobbies stand behind office ground floors (`src/interior.c`, `emit_interior` in `src/city.c`).
-- **Furniture** is rough boxes; reception, sofas, cafe, cubicles and plant want real assets.
+- **Furniture** is rough boxes; reception, sofas, cafe and cubicles want real assets. Planters hold
+  real plants now (see Lobby plants below).
 - **Vertical circulation:** the gallery, feature stair and escape stairs can't be climbed (collision
   is 2D); lift doors don't open.
 - **Glazed courtyard atria** (the design's fifth atrium mode) and a mezzanine planned as its own level.
@@ -48,6 +49,19 @@ Arcology interiors are planned and built (`src/arcology.c`, `emit_arcology` in `
   light crown into the canyon (the drips are only ripples in the puddles).
 - **Small footprints** (50 to 60 m) often fit fewer local cores than the grammar asks for, and
   escape stairs are rarely needed; larger mega plots would exercise more of the grammar.
+
+## Lobby plants
+Lobby planters hold plants grown by `src/plant.c` (LPLS-1.19; see the README).
+- **Instancing.** A frontage row repeats three specimens, but each copy is still its own geometry.
+  Busy chunks (one has 43 planters) fall back to low detail or an equal triangle share. Drawing
+  repeated plants as instances would keep them at medium detail.
+- **Planters** are plain stone boxes, always 0.55 m tall; long troughs, round pots and pot
+  materials picked with the lobby's palette would vary them.
+- **Elsewhere:** the arcologies' planters (`AX_PLANT`, the sky-lobby terraces) and roof gardens
+  are still boxes, and parks have no trees. The same generator could fill them.
+- **Light:** plants are lit by the lobby's panels only. The coves and wall slots don't reach them,
+  and they cast no shadow on the floor.
+- **Motion:** no sway (spec section 12). An HVAC draught on the outer fronds and leaves would do.
 
 ## Litter
 Rubbish in the streets is static geometry in a near-only layer (`src/litter.c`), plus fine

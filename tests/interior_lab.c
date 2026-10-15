@@ -539,6 +539,33 @@ int main(int argc, char **argv) {
                             double wtx = b->ox + b->c * tx - b->s * tz, wtz = b->oz + b->s * tx + b->c * tz;
                             printf("  outside: --cam %.1f %.1f %.1f -4\n", wox, woz, atan2(wix - wox, -(wiz - woz)) * 57.29578);
                             printf("  inside:  --cam %.1f %.1f %.1f -6\n", wix, wiz, atan2(wtx - wix, -(wtz - wiz)) * 57.29578);
+                            /* and one on the first planter of each planting group, from open floor 4 m off */
+                            static const char *GROUP[4] = { "", "row", "pair", "single" };
+                            int shown = 0;
+                            for (int fi = 0; fi < L->nfix; ++fi) {
+                                const IFixture *f = &L->fix[fi];
+                                if (f->type != IX_PLANTER || (shown & (1 << f->group))) continue;
+                                float pcx = 0.5f * (f->x0 + f->x1), pcz = 0.5f * (f->z0 + f->z1);
+                                for (int d = 0; d < 16; ++d) {
+                                    float a = (float)d * 0.3927f, dx = sinf(a), dz = -cosf(a);
+                                    int ok = 1;
+                                    for (float r = 1.0f; r <= 4.0f && ok; r += 0.5f) {
+                                        int ci = (int)floorf((pcx + dx * r - L->gx0) / IN_CELL), cj = (int)floorf((pcz + dz * r - L->gz0) / IN_CELL);
+                                        ok = ci >= 0 && cj >= 0 && ci < L->nx && cj < L->nz && L->occ[cj * L->nx + ci] == IO_USABLE &&
+                                             L->own[cj * L->nx + ci] != 255 && L->reg[L->own[cj * L->nx + ci]].kind == IK_OPEN &&
+                                             !(L->flag[cj * L->nx + ci] & (IF_FIXTURE | IF_EDGE | IF_COLUMN));
+                                    }
+                                    if (!ok) continue;
+                                    float cx2, cz2, px2, pz2;
+                                    interior_to_local(L, pcx + dx * 4.0f, pcz + dz * 4.0f, &cx2, &cz2);
+                                    interior_to_local(L, pcx, pcz, &px2, &pz2);
+                                    double wcx = b->ox + b->c * cx2 - b->s * cz2, wcz = b->oz + b->s * cx2 + b->c * cz2;
+                                    double wpx = b->ox + b->c * px2 - b->s * pz2, wpz = b->oz + b->s * px2 + b->c * pz2;
+                                    printf("  plants (%s): --cam %.1f %.1f %.1f -10\n", GROUP[f->group & 3], wcx, wcz, atan2(wpx - wcx, -(wpz - wcz)) * 57.29578);
+                                    shown |= 1 << f->group;
+                                    break;
+                                }
+                            }
                             rendered++;
                         }
                     }

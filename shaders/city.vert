@@ -110,6 +110,8 @@ void main() {
         vec3 r0 = rel;
         litter(rel, nrm, lit);
         local += rel - r0;
+    } else if (inParams.x == MAT_INTERIOR && (inParams.y == 10u || inParams.y == 20u)) {
+        lit = vec2(inNrm.w, 0.0);   // lobby plants (grow_plants in src/city.c): how open the crown is there
     } else if (inParams.x == MAT_ARCOLOGY && inParams.y == 23u) {
         /* An arcology's searchlight beam (emit_arc_searchlight in src/city.c)
          * hangs from its pivot and swings to and fro along the canyon: uv is

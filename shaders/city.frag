@@ -1387,11 +1387,132 @@ float emblemDist(uint h, vec2 q) {
     return d;
 }
 
+/* Lobby plants (src/plant.c, grow_plants in src/city.c). Leaves (IS_PLANT)
+ * carry their own surface coordinates (see PlantVertex in src/plant.h) and
+ * are textured with assets/textures/leaf, tinted to each species' green;
+ * stems (IS_BARK) theirs, (around 0..1, along in metres). params z is the
+ * leaf shape or stem material (LS_* / WM_* in src/plant.h); aux the organ's
+ * tint | its hash << 8 | species << 24; vLitter.x how open the crown is there.
+ * A leaf is a single surface (drawn unculled); its normal is the upper side,
+ * so `under` says the viewer sees its paler underside. They are lit as the lobby is: the warm panels overhead
+ * and a little bounce, the panels' sheen on glossy leaves, and light through
+ * the thin blades seen from below. The pots' top dressing is IS_SOIL. */
+const uint IS_BARK = 20u, IS_SOIL = 21u;
+const uint LS_KENTIA = 0u, LS_LINEAR = 1u, LS_FIDDLE = 2u, LS_ELLIPTIC = 3u, LS_UMBRELLA = 4u, LS_ZZ = 5u;
+const uint WM_PALM = 0u, WM_CANE = 1u, WM_FICUS = 2u, WM_UMBRELLA = 3u, WM_GREEN = 4u, WM_ZZ = 5u, WM_ROOT = 6u;
+
+// The leaf texture (assets/textures/leaf): where its midrib lies across the image, and its mean albedo.
+const float LEAF_MIDRIB = 0.513;
+const vec3 LEAF_MEAN = vec3(0.100, 0.166, 0.047);
+
+// The dracaena blade's width along it (the linear profile in src/plant.c), as a fraction of its widest.
+float linearWidth(float t) {
+    return t < 0.06 ? mix(0.55, 0.9, t / 0.06) : t < 0.25 ? mix(0.9, 1.0, (t - 0.06) / 0.19)
+         : t < 0.6 ? mix(1.0, 0.85, (t - 0.25) / 0.35) : t < 0.85 ? mix(0.85, 0.45, (t - 0.6) / 0.25) : mix(0.45, 0.0, (t - 0.85) / 0.15);
+}
+
+vec3 shadePlant(vec3 p, vec3 V, vec3 n, vec2 uv, uint seed, uint surf, uint kind, float y, bool under) {
+    vec3 Lc = lobbyLight(seed);
+    float open = clamp(vLitter.x, 0.0, 1.0), occ = mix(0.3, 1.0, open);
+    float tint = (float(vAux & 255u) - 128.0) / 127.0;
+    uint org = (vAux >> 8) & 0x7FFFu;
+    vec2 fw = fwidth(uv);
+    vec3 alb;
+    float gloss, trans = 0.0, shin = 30.0;
+    if (surf == IS_PLANT) {
+        // uv: across as a fraction of the blade's widest half-width; along, t + 2 * its length / width in quarters
+        float A = floor(uv.y * 0.5), t = uv.y - 2.0 * A, aspect = max(A * 0.25, 0.25), s = uv.x;
+        float u = kind == LS_LINEAR ? s / max(linearWidth(t), 0.05) : s, au = abs(u), aa = max(fw.x, 1e-3);
+        vec3 base;
+        if (kind == LS_KENTIA)        { base = vec3(0.045, 0.10, 0.032);  gloss = 0.25; trans = 0.35; }
+        else if (kind == LS_LINEAR)   { base = vec3(0.03, 0.07, 0.03);    gloss = 0.4;  trans = 0.3; }
+        else if (kind == LS_FIDDLE)   { base = vec3(0.03, 0.075, 0.022);  gloss = 0.55; trans = 0.15; }
+        else if (kind == LS_ELLIPTIC) { base = vec3(0.035, 0.09, 0.028);  gloss = 0.6;  trans = 0.25; shin = 50.0; }
+        else if (kind == LS_UMBRELLA) { base = vec3(0.05, 0.12, 0.03);    gloss = 0.55; trans = 0.25; shin = 45.0; }
+        else                          { base = vec3(0.02, 0.06, 0.022);   gloss = 0.85; trans = 0.08; shin = 70.0; }   // zz
+        if (pbrLoaded(PBR_LEAF)) {
+            /* The leaf texture tiles along its midrib but not across it, so the
+             * midrib runs down the blade's middle, the image's width spans at
+             * most the blade's width, and it repeats only along the blade, at
+             * the same scale both ways. Narrow blades take a strip either side
+             * of the midrib; each blade starts at its own place along it. */
+            float k = clamp(2.0 / aspect, 0.22, 0.95);
+            vec2 st = vec2(LEAF_MIDRIB + 0.5 * k * s, hfloat(hash_combine(org, 5u)) * 4.0 - t * aspect * k);
+            vec3 dp1 = dFdx(p), dp2 = dFdy(p), q1 = cross(n, dp1), q2 = cross(dp2, n);
+            vec2 d1 = dFdx(st), d2 = dFdy(st);
+            vec3 T = q2 * d1.x + q1 * d2.x, B = q2 * d1.y + q1 * d2.y;   // the image's right and down
+            float im = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
+            Surface sf = samplePBR(PBR_LEAF, st, T * im, -B * im, n);
+            alb = sf.albedo / LEAF_MEAN * base;                         // the species' own green
+            n = sf.n;
+            gloss *= clamp((1.0 - sf.rough) / 0.75, 0.3, 1.3);
+            occ *= mix(1.0, sf.ao, 0.7);
+        } else {
+            alb = mix(base, base * 1.8, (1.0 - smoothstep(0.0, 0.05 + aa, au)) * 0.5);   // a paler midrib
+        }
+        if (kind == LS_LINEAR) alb = mix(alb, vec3(0.13, 0.02, 0.035), smoothstep(0.8, 0.92, au));   // dracaena: red margins
+        // the odd dry, browned tip on the long narrow leaves
+        if ((kind == LS_KENTIA || kind == LS_LINEAR) && hfloat(hash_combine(uint(org), 3u)) < 0.25)
+            alb = mix(alb, vec3(0.12, 0.08, 0.04), smoothstep(0.9, 1.0, t));
+        alb *= 1.6 + 0.24 * tint;
+        alb.r *= 1.0 + 0.25 * tint;
+        if (under) { alb = alb * 1.3 + vec3(0.01, 0.015, 0.005); gloss *= 0.3; }
+    } else if (surf == IS_BARK) {
+        float aa = max(fw.y, 1e-3);
+        gloss = 0.12;
+        if (kind == WM_PALM) {                   // ringed with old frond scars
+            float r = fract(uv.y / 0.045);
+            alb = vec3(0.17, 0.17, 0.12) * (1.0 - 0.45 * (1.0 - smoothstep(0.0, 0.08 + aa / 0.045, min(r, 1.0 - r))));
+        } else if (kind == WM_CANE) {            // leaf scars close up the cane
+            float r = fract(uv.y / 0.014 + hfloat(uint(org)));
+            alb = mix(vec3(0.13, 0.10, 0.075), vec3(0.22, 0.19, 0.15), (1.0 - smoothstep(0.0, 0.15 + aa / 0.014, min(r, 1.0 - r))) * (1.0 - smoothstep(0.3, 1.0, aa / 0.014)));
+            gloss = 0.15;
+        } else if (kind == WM_FICUS) {           // smooth grey bark flecked with lenticels
+            alb = vec3(0.20, 0.18, 0.15) * (0.85 + 0.3 * vnoise(vec2(uv.x * 6.0, uv.y * 20.0), 0x7A11u));
+        } else if (kind == WM_UMBRELLA) {
+            alb = vec3(0.22, 0.18, 0.13) * (0.9 + 0.2 * vnoise(vec2(uv.x * 4.0, uv.y * 12.0), 0x7A12u));
+        } else if (kind == WM_GREEN) {           // petioles and rachises
+            alb = vec3(0.06, 0.12, 0.035); gloss = 0.3;
+        } else if (kind == WM_ZZ) {              // fleshy, glossy, mottled dark
+            float mo = smoothstep(0.55, 0.75, vnoise(vec2(uv.x * 8.0, uv.y * 30.0), 0x7A13u));
+            alb = mix(vec3(0.045, 0.10, 0.03), vec3(0.015, 0.03, 0.012), mo * 0.7); gloss = 0.6; shin = 50.0;
+        } else {
+            alb = vec3(0.14, 0.10, 0.07);
+        }
+    } else {                                     // the pot's top dressing: polished black pebbles, or bark
+        occ = 1.0;
+        uint sh = styleHash(seed);
+        if (hf(sh, 81u) < 0.6) {
+            vec2 q = uv / 0.03, c = floor(q), f = fract(q) - 0.5;
+            float k = hfloat(hash2i(sh, int(c.x), int(c.y)));
+            float d = length(f + (vec2(k, fract(k * 7.3)) - 0.5) * 0.3);
+            float stone = 1.0 - smoothstep(0.32, 0.46, d);
+            alb = mix(vec3(0.004), vec3(0.03, 0.03, 0.033) * (0.6 + 0.8 * k), stone);
+            gloss = 0.6 * stone; shin = 60.0;
+            n = normalize(n + vec3(f.x, 0.0, f.y) * stone * 1.2);
+        } else {
+            alb = vec3(0.035, 0.024, 0.016) * (0.4 + fbm(uv * 40.0, 0x5017u));
+            gloss = 0.03;
+        }
+    }
+    float up = n.y * 0.5 + 0.5;
+    float E = mix(0.12, 0.62, up * up) * mix(0.65, 1.0, smoothstep(0.0, 0.7, y)) * mix(1.0, 0.75, smoothstep(5.0, 14.0, y));
+    vec3 col = alb * (Lc * E + ambientLight(n, p.y) * 0.5) * occ;
+    col += alb * vec3(1.1, 1.3, 0.6) * Lc * 0.35 * trans * occ * smoothstep(0.0, 0.8, -n.y);   // through the blade
+    vec3 Hh = normalize(vec3(0.0, 1.0, 0.0) + V);
+    float spec = pow(max(dot(n, Hh), 0.0), shin) * (shin + 2.0) / 32.0;
+    float F = 0.04 + 0.96 * pow(1.0 - max(dot(n, V), 0.0), 5.0);
+    col += Lc * (spec * 0.1 + 0.05 * F) * gloss * occ;
+    return col;
+}
+
 vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 V = -normalize(rel);
-    if (dot(n, V) < 0.0) n = -n;                       // thin panes and panels are seen from both sides
+    bool flipped = dot(n, V) < 0.0;
+    if (flipped) n = -n;                               // thin panes and panels are seen from both sides
     uint surf = prm.y, sub = prm.z;
     float ceilH = max(float(prm.w) * 0.5, 2.6), y = p.y - SIDEWALK_HEIGHT;
+    if (surf == IS_PLANT || surf == IS_BARK || surf == IS_SOIL) return shadePlant(p, V, n, uv, seed, surf, sub, y, flipped);
     vec3 Lc = lobbyLight(seed);
     uint sh = styleHash(seed);
     float aa = max(length(fwidth(uv)), 1e-4);
@@ -1539,8 +1660,6 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     } else if (surf == IS_SCREEN) {
         float scan = 0.85 + 0.15 * step(0.5, fract(y * 120.0));
         return vec3(0.25, 0.45, 0.9) * 2.5 * scan * (0.7 + 0.3 * vnoise(vec2(uv.x * 6.0, gTime * 2.0), h & 0xFFFFu));
-    } else if (surf == IS_PLANT) {
-        alb = mix(vec3(0.02, 0.05, 0.015), vec3(0.08, 0.16, 0.05), fbm(vec2(uv.x * 4.0, y * 4.0), h & 0xFFFFu));
     } else if (surf == IS_LINING) {
         if (sub == 1u) alb = hf(seed, 26u) < 0.5 ? vec3(0.35, 0.36, 0.38) : vec3(0.30, 0.38, 0.40);
         else { alb = vec3(0.015); gloss = 0.8; }

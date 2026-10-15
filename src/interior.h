@@ -67,8 +67,12 @@ typedef struct IRegion {
  * line x = line, running along z. a, b: the regions either side (-1: outside). */
 typedef struct IDoor { uint8_t kind, axis; int16_t line, at, len, a, b; } IDoor;
 
-/* Box in frame metres; facing 0..3 = -z, +x, +z, -x (the way its front looks). */
-typedef struct IFixture { uint8_t type, facing; int16_t region; float x0, z0, x1, z1, y0, y1; } IFixture;
+/* Planting groups: planters set out together hold plants of one kind. */
+enum { IP_NONE = 0, IP_ROW /* along the frontage */, IP_PAIR /* either side of a lift hall */, IP_SINGLE /* by the waiting area */ };
+
+/* Box in frame metres; facing 0..3 = -z, +x, +z, -x (the way its front looks).
+ * Planters: group IP_*, member its place in the group (a pair: the core * 2 + side). */
+typedef struct IFixture { uint8_t type, facing, group, member; int16_t region; float x0, z0, x1, z1, y0, y1; } IFixture;
 typedef struct IZone { uint8_t type; float x0, z0, x1, z1; } IZone;
 
 typedef struct ICore {

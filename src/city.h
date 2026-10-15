@@ -118,6 +118,9 @@ void     city_layout(int cx, int cz, BlockLayout *out);
 void     city_build_mesh(int cx, int cz, Mesh *m);
 /* The near-only layer: real office lobbies of the buildings centred in the chunk. */
 void     city_build_interiors(int cx, int cz, Mesh *m);
+/* The plants in those lobbies' planters (src/plant.c), a layer of their own:
+ * a leaf is a single surface, drawn without back-face culling. */
+void     city_build_plants(int cx, int cz, Mesh *m);
 /* The litter layer (src/litter.c): rubbish lying in the streets, alleys and
  * doorways of the chunk. It has no light table of its own; the shader uses the chunk's. */
 void     city_build_litter(int cx, int cz, Mesh *m);

@@ -20,6 +20,7 @@ build/city_map map.bmp         # top-down map of the plan (6 km around the spawn
 build/building_lab 3000 5      # building archetypes, retries and rejections; 5 decision logs
 build/interior_lab 3000 12 out # office lobbies: pass rate, attempts, rejections; 12 plan renders and cameras
 build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders, cameras
+build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
 ```
 
 CMake fetches its dependencies at configure time: Vulkan-Headers, volk, GLFW and stb.
@@ -203,6 +204,47 @@ diamonds, monograms or deltas, framed or not) in halo-lit brass or backlit acryl
 wordmark. Outside, light lines in the building's accent colour (mostly cyan) run up some of the
 mullions and under the canopy, and amber uplights are set into the sidewalk along the glass.
 
+### Lobby plants (`src/plant.c`)
+Every lobby planter holds a plant grown by the hybrid L-system and space-colonisation method in
+`Lobby Plant L-System Specification.md` (LPLS-1.19). There are six archetypes: kentia palm,
+dracaena marginata, fiddle-leaf fig, weeping fig, dwarf umbrella tree and ZZ plant.
+- **Grammar.** Each species is a bounded, parametric L-system of typed modules (a symbol, a few
+  parameters and a stable node path), rewritten in parallel by guarded productions. Every random
+  choice is a hash of the seed, the species, the node path and a named channel, so changing one
+  branch does not reshuffle the rest. A 3D turtle interprets the result into tapered stem
+  segments and organ descriptors. The weeping fig's trunk is a macro: braided strands whose
+  orbits close onto the axis at both ends round a central core, or a single spiral leader, with
+  the crown starting exactly at its top.
+- **Crowns.** The two figs and the umbrella tree grow extra twigs by space colonisation inside an
+  ellipsoid crown envelope (180/300/460 attraction points and at most 44/82/132 new nodes at
+  low/medium/high detail). A candidate outside the envelope is rejected, never projected back
+  onto it. Woody centre-lines get three octaves of coherent noise that fade to nothing at their
+  junctions, and a gravity sag that accumulates along each branch, so long limbs droop and
+  upright trunks stay upright.
+- **Organs.** Leaves, pinnate fronds, palmate umbrellas, terminal clusters and aerial roots share
+  one library of leaf outlines (kentia, linear, fiddle, elliptic, umbrella and ZZ), with camber,
+  ripple, twist, petiole sag and blade sag. The cost is estimated before any mesh is built. Over
+  budget, the colonised twigs go first, then leaflets, then blade and stem detail. A coarse grid
+  of leaf area gives each vertex its openness to the light.
+- **Planting.** Planters set out together hold one kind of plant: the row along the frontage,
+  the pair either side of a lift hall, the one by the waiting area. Groups whose planters stand
+  within 4.5 m of each other are merged, so planters that read as a pair always match. A row
+  repeats three specimens, each turned its own way. The ceiling (or a gallery's soffit) caps a
+  plant's height and the open floor round its planters caps its spread. A species too wide for
+  the spot gives way to a narrow one.
+- **Rendering.** Plants are a fourth layer of chunk meshes (`city_build_plants`), streamed with
+  the lobbies. They are drawn by a pipeline that doesn't cull back faces, because a leaf is a
+  single surface. A chunk's plants share a 188,000-vertex budget. They get medium detail if it
+  fits; if not, the frontage rows drop to low, then every plant does, then each is held to an
+  equal share of triangles. `shadePlant` lights them like the rest of the lobby. Every blade
+  wears the authored leaf texture (see Textures), tinted to its species' green, with each
+  species' gloss, red dracaena margins, browned tips, and light through the blades seen from
+  below. The pots are topped with polished black pebbles or bark.
+
+`plant_lab` builds every species over a set of seeds, the three detail tiers and gravity 0,
+0.85 and 1.5. It checks that each plant validates, is deterministic and keeps to its budget,
+reports generation times and counts, and writes contact sheets.
+
 ### Arcologies (`src/arcology.c`)
 An arcology's ground floor is planned as a district, not a lobby, by the grammar in section 11 of
 `procedural-office-atrium-generation.md`, with a Blade Runner / Syd Mead look written as rules.
@@ -276,8 +318,9 @@ table goes into a second pool of 32 KB pages, uploaded once with its mesh.
 
 Office lobbies and arcology interiors are a second layer, keyed by the same coordinates: the
 streamer wants it only for chunks within `INTERIOR_DISTANCE`, just behind the chunks themselves,
-and leaves it out of the shelter map. Litter is a third, within `LITTER_DISTANCE`. Both are drawn
-with their chunk's light table.
+and leaves it out of the shelter map. Litter is a third, within `LITTER_DISTANCE`. The lobbies'
+plants are a fourth, wanted with the lobbies and drawn last by a pipeline that doesn't cull back
+faces. All three are drawn with their chunk's light table.
 
 When the pool runs low, chunks you haven't seen for the longest time are evicted first.
 If a nearer chunk is still waiting for space, the farthest visible chunks go next; those are
@@ -508,8 +551,17 @@ parallax. Four materials use textures so far; the first three are CC0 from ambie
   `build/stud_pack <colour.png> <normal.png> <orm.png> assets/textures/tactile_stud 512`.
   The albedo's alpha is the stud's coverage. The shader repeats the stud on its own grid
   and cuts it out with an analytic circle, so the image's background never shows.
+- **Leaves:** `leaf`, a close-up of a glossy blade with its midrib running up the image. It
+  tiles along the midrib but not across it. Each blade carries its position across it (a
+  fraction of its widest half-width) and its length-to-width ratio (`PlantVertex` in
+  `src/plant.h`). `shadePlant` lays the midrib down the blade's middle, at most the image's
+  width across it (narrow blades take a strip either side of the midrib), and repeats it only
+  along the blade, at the same scale both ways. The tangent frame comes from screen
+  derivatives. The albedo is divided by the image's mean and multiplied by each species' own
+  green.
 
-Everything else stays procedural.
+The lobby stone and wood finishes are covered under Office lobbies. Everything else stays
+procedural.
 
 Road markings and manhole covers stay procedural masks. `layer()` paints them over the base
 surface, whether textured or procedural. Within the mask it blends in the coat's colour and

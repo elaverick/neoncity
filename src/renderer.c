@@ -95,7 +95,7 @@ struct Renderer {
     VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout, cloudLayout, cloudCompLayout, ssrLayout, ssrApplyLayout;
     VkDescriptorSet       sceneSet[MAX_FRAMES];
     VkPipelineLayout      scenePL, compositePL, bloomPL, cloudPL, cloudCompPL, ssrPL, ssrApplyPL, shelterPL;
-    VkPipeline            cityPipe, skyPipe, compositePipe, bloomDownPipe, bloomUpPipe, cloudPipe, cloudCompPipe, ssrPipe, ssrApplyPipe,
+    VkPipeline            cityPipe, plantPipe, skyPipe, compositePipe, bloomDownPipe, bloomUpPipe, cloudPipe, cloudCompPipe, ssrPipe, ssrApplyPipe,
                           shelterPipe;
 
     char   shotPath[512];
@@ -391,6 +391,8 @@ static void create_pipelines(Renderer *r) {
                      r->scenePL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, true, true, true, true };
     city.colorFormat2 = HDR_FORMAT;   /* reflection G-buffer */
     r->cityPipe = make_graphics(vk, &city);
+    city.cull = false;                /* lobby plants: a leaf is a single surface, seen from both sides */
+    r->plantPipe = make_graphics(vk, &city);
     GfxDesc sky = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_sky_frag, sizeof(SPV_sky_frag),
                     r->scenePL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, false, false };
     sky.colorFormat2 = HDR_FORMAT;
@@ -677,7 +679,7 @@ void renderer_destroy(Renderer *r) {
     vkDeviceWaitIdle(vk->device);
     destroy_targets(r);
     vk_buffer_destroy(vk, &r->shotBuf);
-    VkPipeline pipes[] = { r->cityPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
+    VkPipeline pipes[] = { r->cityPipe, r->plantPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
                            r->ssrPipe, r->ssrApplyPipe, r->shelterPipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
@@ -965,6 +967,8 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->scenePL, 0, 1, &r->sceneSet[slot], 0, NULL);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->cityPipe);
     chunks_draw(r->chunks, cmd, slot);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->plantPipe);
+    chunks_draw_plants(r->chunks, cmd, slot);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->skyPipe);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);

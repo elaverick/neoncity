@@ -22,8 +22,8 @@ static uint64_t fnv(const void *data, size_t n, uint64_t h) {
     return h;
 }
 
-/* All three layers: the chunk itself, its office lobbies and its litter. */
-static uint64_t chunk_checksum(int cx, int cz, uint32_t *countOut, uint32_t *lightsOut, uint32_t *interiorOut, uint32_t *litterOut) {
+/* All four layers: the chunk itself, its office lobbies, its litter and the lobbies' plants. */
+static uint64_t chunk_checksum(int cx, int cz, uint32_t *countOut, uint32_t *lightsOut, uint32_t *interiorOut, uint32_t *litterOut, uint32_t *plantOut) {
     Mesh m = { 0 };
     city_build_mesh(cx, cz, &m);
     uint64_t h = fnv(m.v, (size_t)m.count * sizeof(Vertex), 0xcbf29ce484222325ULL);
@@ -43,6 +43,11 @@ static uint64_t chunk_checksum(int cx, int cz, uint32_t *countOut, uint32_t *lig
     h = fnv(lt.v, (size_t)lt.count * sizeof(Vertex), h);
     if (litterOut) *litterOut = lt.count;
     mesh_free(&lt);
+    Mesh pl = { 0 };
+    city_build_plants(cx, cz, &pl);
+    h = fnv(pl.v, (size_t)pl.count * sizeof(Vertex), h);
+    if (plantOut) *plantOut = pl.count;
+    mesh_free(&pl);
     return h;
 }
 
@@ -54,7 +59,7 @@ static int worker(void *arg) {
     for (int k = 0; k < N_CHUNKS; ++k) {
         int j = (w->start + k) % N_CHUNKS;
         int i = w->reverse ? N_CHUNKS - 1 - j : j;
-        w->out[i] = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL, NULL, NULL);
+        w->out[i] = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL, NULL, NULL, NULL);
     }
     return 0;
 }
@@ -114,11 +119,13 @@ int main(void) {
     }
 
     /* 1. Reference pass, in order. Track mesh sizes against the GPU page budget. */
-    uint32_t maxVerts = 0, maxLights = 0, maxInterior = 0, maxLitter = 0;
-    double total = 0, totalLights = 0, totalInterior = 0, totalLitter = 0;
+    uint32_t maxVerts = 0, maxLights = 0, maxInterior = 0, maxLitter = 0, maxPlants = 0;
+    double total = 0, totalLights = 0, totalInterior = 0, totalLitter = 0, totalPlants = 0;
     for (int i = 0; i < N_CHUNKS; ++i) {
-        uint32_t c, l, in, lt;
-        g_ref[i] = chunk_checksum(g_cx[i], g_cz[i], &c, &l, &in, &lt);
+        uint32_t c, l, in, lt, pv;
+        g_ref[i] = chunk_checksum(g_cx[i], g_cz[i], &c, &l, &in, &lt, &pv);
+        if (pv > maxPlants) maxPlants = pv;
+        totalPlants += pv;
         if (c > maxVerts) maxVerts = c;
         if (l > maxLights) maxLights = l;
         if (in > maxInterior) maxInterior = in;
@@ -132,6 +139,8 @@ int main(void) {
     CHECK(maxLitter <= (uint32_t)(MAX_CHUNK_PAGES * PAGE_VERTS), "chunk litter exceeds page budget");
     printf("lobby vertices per chunk: avg %.0f, max %u (budget %d)\n", totalInterior / N_CHUNKS, maxInterior, MAX_CHUNK_PAGES * PAGE_VERTS);
     CHECK(maxInterior <= (uint32_t)(MAX_CHUNK_PAGES * PAGE_VERTS), "chunk lobbies exceed page budget");
+    printf("plant vertices per chunk: avg %.0f, max %u (budget %d)\n", totalPlants / N_CHUNKS, maxPlants, MAX_CHUNK_PAGES * PAGE_VERTS);
+    CHECK(maxPlants <= (uint32_t)(MAX_CHUNK_PAGES * PAGE_VERTS), "chunk plants exceed page budget");
     printf("mesh vertices per chunk: avg %.0f, max %u (budget %d)\n", total / N_CHUNKS, maxVerts, MAX_CHUNK_PAGES * PAGE_VERTS);
     printf("light records per chunk: avg %.0f, max %u (page %d)\n", totalLights / N_CHUNKS, maxLights, LIGHT_PAGE_RECS);
     CHECK(maxVerts <= (uint32_t)(MAX_CHUNK_PAGES * PAGE_VERTS), "chunk exceeds page budget");
@@ -139,8 +148,8 @@ int main(void) {
 
     /* 2. Reverse order, interleaved with unrelated generation, must match. */
     for (int i = N_CHUNKS - 1; i >= 0; --i) {
-        chunk_checksum(g_cx[i] + 7, g_cz[i] - 3, NULL, NULL, NULL, NULL);
-        uint64_t h = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL, NULL, NULL);
+        chunk_checksum(g_cx[i] + 7, g_cz[i] - 3, NULL, NULL, NULL, NULL, NULL);
+        uint64_t h = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL, NULL, NULL, NULL);
         CHECK(h == g_ref[i], "chunk (%d,%d) differs when generated in a different order", g_cx[i], g_cz[i]);
     }
 

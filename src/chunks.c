@@ -13,7 +13,9 @@ enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
 /* Layers: 0 the chunk itself, 1 its office lobbies (city_build_interiors),
  * wanted only within INTERIOR_DISTANCE of the camera, 2 its litter
  * (city_build_litter), wanted only within LITTER_DISTANCE and lit by the
- * chunk's own light table. */
+ * chunk's own light table, 3 the lobbies' plants (city_build_plants), wanted
+ * with the lobbies and drawn last, without back-face culling. */
+#define LAYER_PLANTS 3
 typedef struct Entry {
     int      cx, cz, layer;
     int      state;
@@ -63,7 +65,7 @@ struct ChunkSystem {
     Buffer   staging[MAX_FRAMES];
     Buffer   indirect[MAX_FRAMES];
     Buffer   chunkData[MAX_FRAMES];
-    uint32_t drawCount[MAX_FRAMES];
+    uint32_t drawCount[MAX_FRAMES], plantFirst[MAX_FRAMES];
     uint32_t shelterFirst[MAX_FRAMES], shelterCount[MAX_FRAMES];
 
     /* jobs (shared with workers) */
@@ -148,6 +150,7 @@ static int worker_main(void *arg) {
         memset(&r.mesh, 0, sizeof(r.mesh));
         if (job.layer == 1) city_build_interiors(job.cx, job.cz, &r.mesh);
         else if (job.layer == 2) city_build_litter(job.cx, job.cz, &r.mesh);
+        else if (job.layer == LAYER_PLANTS) city_build_plants(job.cx, job.cz, &r.mesh);
         else city_build_mesh(job.cx, job.cz, &r.mesh);
 
         mutex_lock(&cs->doneLock);
@@ -401,6 +404,7 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
             if (inView) push_want(cs, cx, cz, 0, d, 1);
             else if (d < NEAR_RING_DIST) push_want(cs, cx, cz, 0, d * 3.0f + 200.0f, 0);
             if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, 1, d + 60.0f + (inView ? 0.0f : d * 2.0f), inView);
+            if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, LAYER_PLANTS, d + 70.0f + (inView ? 0.0f : d * 2.0f), inView);
             if (d < LITTER_DISTANCE) push_want(cs, cx, cz, 2, d + 30.0f + (inView ? 0.0f : d * 2.0f), inView);
         }
     }
@@ -492,13 +496,16 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
                           VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                           VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
 
-    /* 5. Build the indirect draw list from resident, visible chunks (front to back). */
+    /* 5. Build the indirect draw list from resident, visible chunks (front to
+     *    back), the plants' layer last: it is drawn with its own pipeline. */
     VkDrawIndirectCommand *cmds = (VkDrawIndirectCommand *)cs->indirect[slot].mapped;
     ChunkGPU *gpu = (ChunkGPU *)cs->chunkData[slot].mapped;
     uint32_t ndraw = 0, nchunk = 0, residentCount = 0;
-    for (int i = 0; i < cs->wantCount && nchunk < MAX_DRAW_CHUNKS; ++i) {
-        Want *w = &cs->want[i];
-        if (!w->inView) continue;
+    cs->plantFirst[slot] = UINT32_MAX;
+    for (int k = 0; k < 2 * cs->wantCount && nchunk < MAX_DRAW_CHUNKS; ++k) {
+        if (k == cs->wantCount) cs->plantFirst[slot] = ndraw;
+        Want *w = &cs->want[k % cs->wantCount];
+        if (!w->inView || (w->layer == LAYER_PLANTS) != (k >= cs->wantCount)) continue;
         int idx = table_find(cs, w->cx, w->cz, w->layer);
         if (idx < 0 || cs->entries[idx].state != CS_RESIDENT || !cs->entries[idx].npages) continue;
         Entry *e = &cs->entries[idx];
@@ -529,6 +536,7 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
         nchunk++;
     }
     cs->drawCount[slot] = ndraw;
+    if (cs->plantFirst[slot] > ndraw) cs->plantFirst[slot] = ndraw;   /* no plants this frame */
 
     /* 6. Shelter map draws: resident chunks overlapping its square, whatever the view. */
     const float SR = SHELTER_RADIUS + 1.0f;
@@ -682,7 +690,11 @@ static void draw_range(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint32_t 
     }
 }
 
-void chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot) { draw_range(cs, cmd, slot, 0, cs->drawCount[slot]); }
+void chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot) { draw_range(cs, cmd, slot, 0, cs->plantFirst[slot]); }
+
+void chunks_draw_plants(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {
+    draw_range(cs, cmd, slot, cs->plantFirst[slot], cs->drawCount[slot] - cs->plantFirst[slot]);
+}
 
 void chunks_draw_shelter(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {
     draw_range(cs, cmd, slot, cs->shelterFirst[slot], cs->shelterCount[slot]);

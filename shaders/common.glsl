@@ -42,7 +42,7 @@ const float REAL_GLASS_DIST = 150.0;
 // Authored PBR materials (src/textures.c): maps at material * PBR_MAPS_PER_MATERIAL + map.
 const int PBR_PAVING_STONES = 0, PBR_ROAD = 1, PBR_KERB = 2, PBR_TACTILE = 3,
           PBR_MARBLE_DARK = 4, PBR_MARBLE_WHITE = 5, PBR_LIMESTONE = 6, PBR_WOOD_DARK = 7, PBR_WOOD_MID = 8, PBR_WOOD_LIGHT = 9,
-          PBR_MATERIAL_COUNT = 10;
+          PBR_LEAF = 10, PBR_MATERIAL_COUNT = 11;
 const int PBR_ALBEDO = 0, PBR_NORMAL = 1, PBR_ORM = 2, PBR_MAPS_PER_MATERIAL = 3;
 
 layout(set = 0, binding = 0) uniform Frame {

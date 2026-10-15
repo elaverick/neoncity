@@ -20,6 +20,7 @@ static const char *const MATERIAL_DIRS[PBR_MATERIAL_COUNT] = {
     [PBR_WOOD_DARK]     = "wood_051",
     [PBR_WOOD_MID]      = "wood_066",
     [PBR_WOOD_LIGHT]    = "wood_095",
+    [PBR_LEAF]          = "leaf",
 };
 
 static const struct {

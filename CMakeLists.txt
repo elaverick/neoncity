@@ -98,20 +98,24 @@ add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 
 # --- Tests: generator determinism ------------------------------------------------
 enable_testing()
-add_executable(city_test tests/city_test.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/thread.c)
+add_executable(city_test tests/city_test.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c src/thread.c)
 target_include_directories(city_test PRIVATE src)
 # Top-down map of the generated plan (city_map out.bmp [x z] [size] [m/px]).
-add_executable(city_map tests/city_map.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c)
+add_executable(city_map tests/city_map.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c)
 target_include_directories(city_map PRIVATE src)
 # Building generator lab: archetype mix, retries, rejections; fails on invalid buildings.
-add_executable(building_lab tests/building_lab.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c)
+add_executable(building_lab tests/building_lab.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c)
 target_include_directories(building_lab PRIVATE src)
 # Office lobby interiors: pass rate, attempts, rejections; optional plan renders
 # (interior_lab [size_m] [renders] [out_dir] [verbose_count] [x z]); arcologies with
 # plan and section renders (interior_lab arcology [size_m] [renders] [out_dir] [verbose_count] [x z]).
-add_executable(interior_lab tests/interior_lab.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c)
+add_executable(interior_lab tests/interior_lab.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c)
 target_include_directories(interior_lab PRIVATE src ${stb_SOURCE_DIR})
-foreach(T city_test city_map building_lab interior_lab)
+# Lobby plants (src/plant.c): every archetype over seeds, tiers and gravities; optional contact sheets
+# (plant_lab [seeds] [out_dir]).
+add_executable(plant_lab tests/plant_lab.c src/plant.c)
+target_include_directories(plant_lab PRIVATE src ${stb_SOURCE_DIR})
+foreach(T city_test city_map building_lab interior_lab plant_lab)
   if(MSVC)
     target_compile_options(${T} PRIVATE /W3 /wd4996)
   else()
@@ -124,6 +128,7 @@ endforeach()
 add_test(NAME city_determinism COMMAND city_test)
 add_test(NAME building_rules COMMAND building_lab 2000)
 add_test(NAME interior_rules COMMAND interior_lab 1500)
+add_test(NAME plant_rules COMMAND plant_lab 12)
 # Arcology interiors over a wide area (only mega plots are generated, so it is quick).
 add_test(NAME arcology_rules COMMAND interior_lab arcology 12000)
 
@@ -147,7 +152,7 @@ endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/main.c src/vkcore.c src/renderer.c src/textures.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/chunks.c src/player.c src/thread.c)
+  src/main.c src/vkcore.c src/renderer.c src/textures.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c src/chunks.c src/player.c src/thread.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE src ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

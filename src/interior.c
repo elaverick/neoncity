@@ -1605,7 +1605,7 @@ static IFixture *add_fix(Gen *G, int type, int facing, int region, float x0, flo
     ILayout *L = G->L;
     if (L->nfix >= IN_MAX_FIX) return NULL;
     IFixture *f = &L->fix[L->nfix++];
-    f->type = (uint8_t)type; f->facing = (uint8_t)facing; f->region = (int16_t)region;
+    f->type = (uint8_t)type; f->facing = (uint8_t)facing; f->group = IP_NONE; f->member = 0; f->region = (int16_t)region;
     f->x0 = x0; f->z0 = z0; f->x1 = x1; f->z1 = z1; f->y0 = y0; f->y1 = y1;
     if (mark) {
         int i0, j0, i1, j1;
@@ -1888,7 +1888,8 @@ static void place_waiting(Gen *G, float rx, float rz, int hasRec) {
         add_fix(G, IX_TABLE, 0, 0, x0 + w * 0.5f - 0.3f, z0 + d * 0.5f - 0.6f, x0 + w * 0.5f + 0.3f, z0 + d * 0.5f + 0.6f, 0.0f, 0.42f, 0);
         add_fix(G, IX_SOFA, 3, 0, x0 + w - 1.2f, sz, x0 + w - 0.3f, sz + 2.2f, 0.0f, 0.8f, 0);
     }
-    add_fix(G, IX_PLANTER, 0, 0, x0 + w - 0.8f, z0 + 0.1f, x0 + w - 0.1f, z0 + 0.8f, 0.0f, 1.5f, 0);
+    IFixture *pf = add_fix(G, IX_PLANTER, 0, 0, x0 + w - 0.8f, z0 + 0.1f, x0 + w - 0.1f, z0 + 0.8f, 0.0f, 1.5f, 0);
+    if (pf) pf->group = IP_SINGLE;
     IZone *z = &L->zone[L->nzone++];
     z->type = IZ_WAITING; z->x0 = x0; z->z0 = z0; z->x1 = x0 + w; z->z1 = z0 + d;
     alog(G, "  info: waiting area by the frontage\n");
@@ -1934,7 +1935,8 @@ static void place_decoration(Gen *G) {
             if (c < 0 || L->occ[c] != IO_USABLE) continue;
             float pr[4] = { x, z, x + 1.0f, z + 1.0f };
             if (fits(L, 0, x, z, x + 1.0f, z + 1.0f, FIT_SOLID) && access_ok(G, pr, NULL, 0)) {
-                add_fix(G, IX_PLANTER, 0, 0, x, z, x + 1.0f, z + 1.0f, 0.0f, 1.6f, 1);
+                IFixture *pf = add_fix(G, IX_PLANTER, 0, 0, x, z, x + 1.0f, z + 1.0f, 0.0f, 1.6f, 1);
+                if (pf) { pf->group = IP_ROW; pf->member = (uint8_t)(planters < 255 ? planters : 255); }
                 planters++;
                 break;
             }
@@ -1956,7 +1958,8 @@ static void place_decoration(Gen *G) {
         for (int s = 0; s < 2; ++s) {
             float pr[4] = { px[s], pz[s], px[s] + 1.0f, pz[s] + 1.0f };
             if (fits(L, 0, px[s], pz[s], px[s] + 1.0f, pz[s] + 1.0f, FIT_SOLID) && access_ok(G, pr, NULL, 0)) {
-                add_fix(G, IX_PLANTER, 0, 0, px[s], pz[s], px[s] + 1.0f, pz[s] + 1.0f, 0.0f, 1.6f, 1);
+                IFixture *pf = add_fix(G, IX_PLANTER, 0, 0, px[s], pz[s], px[s] + 1.0f, pz[s] + 1.0f, 0.0f, 1.6f, 1);
+                if (pf) { pf->group = IP_PAIR; pf->member = (uint8_t)(k * 2 + s); }
                 planters++;
             }
         }
