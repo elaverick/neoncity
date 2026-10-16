@@ -636,11 +636,14 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     cs->readyCount -= r;
     if (nreg) vkCmdCopyBuffer(cmd, stg->buf, cs->pool.buf, (uint32_t)nreg, regions);
     if (nlreg) vkCmdCopyBuffer(cmd, stg->buf, cs->lightPool.buf, (uint32_t)nlreg, lightRegions);
-    if (nreg || nlreg)
-        vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
-                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+    if (nreg || nlreg) {
+        /* the BLAS builds read the vertices too, when there are any (the stage needs the feature) */
+        VkPipelineStageFlags2 readers = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        if (cs->rt) readers |= VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+        vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, readers,
                           VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT);
+    }
     /* A chunk arriving within range gets its BLAS in the frame it is first
      * drawn, so it never appears without its shadows. */
     for (int u = 0; cs->rt && u < uploads; ++u) {
