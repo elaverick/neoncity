@@ -17,6 +17,20 @@ Every light in the chunks' light tables casts ray-traced shadows (`src/render/rt
 - **Glass** casts no shadow at all; a tint, or the facade's own windows, would be truer.
 - **Cost:** settled lights could be traced every other frame, and the filter taps cached in shared memory.
 
+## Code structure
+The sources are split by module (`src/core`, `plan`, `gen`, `city`, `render`, `app`), each module's shared internals in
+its `*_internal.h`. `city_test --fingerprint` hashes every generated layer, so a refactor can be checked to generate the
+same city; screenshots of the same `--cam` with `--rain 0` show the renderer's run-to-run noise to compare against.
+- **The big shading functions** (`shadeFacade`, `shadeArcology`, `shadeGround`, `shadeInterior` in `shaders/city/`) are
+  still one long chain over their surface types each. Splitting them changes the SPIR-V's control flow, so it can't be
+  checked byte for byte like the rest; it wants a capture of each surface type (lobby finishes, stalls, lift doors...)
+  before and after.
+- **Constants shared by C and GLSL** (`MAT_*`, `LK_*`, `PBR_*`, the shadow ranges) are kept in step by hand ("must
+  match shaders/common.glsl"). A `#define`-only header included by both `common.h` and `common.glsl` would end that.
+- **Four polygon clippers** (`poly_clip` in `src/plan/plan.c`, `clip_hp` in `drops.c`, `clip_half` in `mesh_lobby.c`,
+  `clip_axis` in `streets.c`) differ in precision and edge labels; merging them would change generated geometry, so it
+  needs a deliberate re-baseline of the fingerprint.
+
 ## Office lobbies (next)
 Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/mesh_lobby.c`).
 - **Furniture** is rough boxes; reception, sofas, cafe and cubicles want real assets. Planters hold
