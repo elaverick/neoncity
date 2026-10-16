@@ -183,7 +183,7 @@ endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/textures.c ${GEN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/core/thread.c)
+  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/textures.c ${GEN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/core/thread.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.
