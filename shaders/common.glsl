@@ -128,8 +128,15 @@ bool shadowsOn() { return (uint(frame.shadow.y) & SHADOWS_ON) != 0u; }
 const int   SHADOW_SLOTS = 8;                            // lights a pixel keeps soft shadows for
 const uint  RT_MASK_LITTER = 0x04u;                      // src/rt.h
 const float LIGHT_NEGLIGIBLE = 0.002;                    // a light this faint shows no shadow worth tracing
-// Prepass G-buffer (prepass.frag): x the normal (octEncode), y the draw chunk | these flags.
-const uint  PG_LIT = 1u << 30, PG_LITTER = 1u << 29;
+// Prepass G-buffer (prepass.frag): x the normal (octEncode), y the draw chunk | these flags;
+// for a lobby surface (PG_LOBBY), bits 16..23 hold its ceiling's height above the floor (half metres).
+const uint  PG_LIT = 1u << 30, PG_LITTER = 1u << 29, PG_LOBBY = 1u << 28;
+/* A lobby is lit by the panels in its ceiling (city.frag: shadeInterior), not
+ * by the light table, so its pixels' slots hold the ceiling instead: CEIL_SLOTS
+ * rays, one into each quarter of the sky above the surface, under ids no light
+ * has (shadow_trace.comp: traceCeiling). */
+const int   CEIL_SLOTS = 4;
+const uint  CEIL_ID = 0xFFF0u;
 // Shadow slots (shadow_trace.comp, shadow_denoise.comp): flags in raw.x and vis.w.
 const uint  SH_VALID = 1u << 30, SH_OVERFLOW = 1u << 31;
 
@@ -196,7 +203,7 @@ vec3 emitterCentre(vec3 lp, uint w, vec3 p) {
 uint lightId(ivec2 chunk, vec3 lp, uint w) {
     uvec3 q = uvec3(ivec3(floor(lp * 4.0)) + ivec3(chunk.x * 440, 0, chunk.y * 440));   // 440 = CHUNK_SIZE * 4
     uint h = q.x * 73856093u ^ q.y * 19349663u ^ q.z * 83492791u ^ (w & 3u) * 2654435761u;
-    return max((h ^ (h >> 16)) & 0xFFFFu, 1u);
+    return clamp((h ^ (h >> 16)) & 0xFFFFu, 1u, CEIL_ID - 1u);
 }
 
 uint octEncode(vec3 n) {

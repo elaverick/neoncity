@@ -4,7 +4,7 @@
 
 /* Depth prepass (renderer.c: record_prepass): the city's opaque surfaces, with
  * each pixel's geometric normal, its draw chunk and whether its material is
- * lit by the city's lights, for shadow_trace.comp. */
+ * lit by the city's lights or by a lobby's ceiling, for shadow_trace.comp. */
 layout(location = 0) in vec3 vRel;
 layout(location = 1) in vec3 vLocal;
 layout(location = 2) in vec3 vNrm;
@@ -30,5 +30,9 @@ void main() {
     }
     // the materials whose shading calls cityLights (city.frag)
     bool lit = m <= MAT_ROOF || m == MAT_METAL || m == MAT_DOOR || m == MAT_LITTER || m == MAT_ARCOLOGY;
-    outG = uvec2(octEncode(normalize(vNrm)), (vChunk & 0xFFFFu) | (lit ? PG_LIT : 0u) | (m == MAT_LITTER ? PG_LITTER : 0u));
+    // lobby surfaces the ceiling's panels light (not its lights, screens, signs, skylight or the offices above)
+    uint is = vParams.y;
+    bool lobby = m == MAT_INTERIOR && is != 9u && (is < 15u || is > 18u);
+    outG = uvec2(octEncode(normalize(vNrm)), (vChunk & 0xFFFFu) | (lit ? PG_LIT : 0u) | (m == MAT_LITTER ? PG_LITTER : 0u) |
+                 (lobby ? PG_LOBBY | min(vParams.w, 255u) << 16 : 0u));
 }

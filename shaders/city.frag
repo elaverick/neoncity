@@ -185,6 +185,7 @@ uvec4 gSlotIds = uvec4(0u), gSlotVis = uvec4(0u);
 bool  gSlotsOurs = false;        // the slots at this pixel were made for this surface
 vec3  gGeoN = vec3(0.0, 1.0, 0.0);
 uint  gShadowCull = 0xFFu;       // instance mask (src/rt.h)
+float gFwd, gFwdTol;             // this fragment's forward distance, and how near a slot's must be to be ours
 #endif
 float gShadowFade = 1.0;         // 1: unshadowed (shadows off, or faded out with distance)
 
@@ -192,6 +193,7 @@ void shadowsBegin() {
 #ifdef RT_SHADOWS
     float fwd = dot(vRel, frame.camFwd.xyz);
     float tol = fwidth(fwd) * 1.5 + fwd * 0.002 + 0.01;   // the slots are for sample 0; this fragment is at the pixel's centre
+    gFwd = fwd; gFwdTol = tol;
     gGeoN = normalize(vNrm);
     gShadowCull = vParams.x == MAT_LITTER ? 0xFFu & ~RT_MASK_LITTER : 0xFFu;   // litter's own shape moves (city.vert)
     if (!shadowsOn()) return;
@@ -231,6 +233,36 @@ float shadowVis(vec3 p, vec3 n, vec3 V, vec3 lp, uint w) {
     }
     if (v < 0.0) v = lightImportance(p, n, V, lp, w) < LIGHT_NEGLIGIBLE ? 1.0 : traceShadow(p, lp, w);
     return mix(v, 1.0, gShadowFade);
+#else
+    return 1.0;
+#endif
+}
+
+/* How much of a lobby's ceiling panels' light reaches this fragment: the mean
+ * of its ceiling slots (shadow_trace.comp: traceCeiling). A fragment the
+ * prepass didn't see at sample 0 (the floor at a desk's edge) borrows a
+ * neighbouring pixel's slots if they are its surface's, else is unshadowed. */
+float ceilingVis() {
+#ifdef RT_SHADOWS
+    if (gShadowFade >= 1.0) return 1.0;
+    uvec4 ids = gSlotIds, vis = gSlotVis;
+    bool ours = gSlotsOurs;
+    const ivec2 NB[4] = ivec2[](ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1));
+    for (int i = 0; i < 4 && !ours; ++i) {
+        ivec2 q = ivec2(gl_FragCoord.xy) + NB[i];
+        vis = texelFetch(shadowVisTex, q, 0);
+        ours = (vis.w & SH_VALID) != 0u && (vis.w & 0xFFFFu) == vChunk && abs(uintBitsToFloat(vis.z) - gFwd) < gFwdTol * 2.0;
+        if (ours) ids = texelFetch(shadowIdsTex, q, 0);
+    }
+    if (!ours) return 1.0;
+    float sum = 0.0, cnt = 0.0;
+    for (int k = 0; k < SHADOW_SLOTS; ++k) {
+        uint id = (ids[k >> 1] >> (16u * uint(k & 1))) & 0xFFFFu;
+        if (id < CEIL_ID || id >= CEIL_ID + uint(CEIL_SLOTS)) continue;
+        sum += float((vis[k >> 2] >> (8u * uint(k & 3))) & 255u) / 255.0;
+        cnt += 1.0;
+    }
+    return cnt > 0.0 ? mix(sum / cnt, 1.0, gShadowFade) : 1.0;
 #else
     return 1.0;
 #endif
@@ -1226,6 +1258,10 @@ vec3 lobbyLight(uint seed) {
     return (hf(styleHash(seed), 8u) < 0.5 ? kelvin(3000.0) : kelvin(2700.0)) * 1.35;   // as the lobby glass (shadeFacade)
 }
 
+// The share of the panels' light still reaching a surface in their full shadow (under a desk):
+// what the lit floor, walls and ceiling throw back.
+const float PANEL_FILL = 0.2;
+
 // The light in the walls' slots and coves: warmer than the panels.
 const vec3 COVE = vec3(1.0, 0.55, 0.22);
 
@@ -1479,8 +1515,8 @@ float linearWidth(float t) {
          : t < 0.6 ? mix(1.0, 0.85, (t - 0.25) / 0.35) : t < 0.85 ? mix(0.85, 0.45, (t - 0.6) / 0.25) : mix(0.45, 0.0, (t - 0.85) / 0.15);
 }
 
-vec3 shadePlant(vec3 p, vec3 V, vec3 n, vec2 uv, uint seed, uint surf, uint kind, float y, bool under) {
-    vec3 Lc = lobbyLight(seed);
+vec3 shadePlant(vec3 p, vec3 V, vec3 n, vec2 uv, uint seed, uint surf, uint kind, float y, bool under, float panels) {
+    vec3 Lc = lobbyLight(seed) * panels;
     float open = clamp(vLitter.x, 0.0, 1.0), occ = mix(0.3, 1.0, open);
     float tint = (float(vAux & 255u) - 128.0) / 127.0;
     uint org = (vAux >> 8) & 0x7FFFu;
@@ -1580,7 +1616,9 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     if (flipped) n = -n;                               // thin panes and panels are seen from both sides
     uint surf = prm.y, sub = prm.z;
     float ceilH = max(float(prm.w) * 0.5, 2.6), y = p.y - SIDEWALK_HEIGHT;
-    if (surf == IS_PLANT || surf == IS_BARK || surf == IS_SOIL) return shadePlant(p, V, n, uv, seed, surf, sub, y, flipped);
+    // the panels' light, where furniture, plants and walls let it through (ray-traced shadows); the room's bounce fills the shade
+    float panels = mix(PANEL_FILL, 1.0, ceilingVis());
+    if (surf == IS_PLANT || surf == IS_BARK || surf == IS_SOIL) return shadePlant(p, V, n, uv, seed, surf, sub, y, flipped, panels);
     vec3 Lc = lobbyLight(seed);
     uint sh = styleHash(seed);
     float aa = max(length(fwidth(uv)), 1e-4);
@@ -1593,7 +1631,7 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     // irradiance from the panels overhead: strong on what faces up, softer on walls, a little bounce above
     float E = n.y > 0.5 ? 0.55 : n.y < -0.5 ? 0.14 : 0.26 + 0.14 * smoothstep(0.0, ceilH, y);
     E *= mix(0.65, 1.0, smoothstep(0.0, 0.7, y)) * mix(1.0, 0.75, smoothstep(5.0, 14.0, y));
-    vec3 diff = Lc * E + ambientLight(n, p.y) * 0.5;
+    vec3 diff = Lc * E * panels + ambientLight(n, p.y) * 0.5;
     vec3 irr = vec3(0.0);                              // light built into the walls, falling on this surface
     float specB = pow(max(dot(n, normalize(vec3(0.0, 1.0, 0.0) + V)), 0.0), 40.0);
     bool cove = hf(sh, 70u) < 0.7;                     // lit coves at the walls' feet
@@ -1763,7 +1801,7 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         return mix(c, vec3(0.02), mull);
     }
 
-    vec3 col = alb * (diff + irr) + Lc * specB * gloss * 0.08 + emit;
+    vec3 col = alb * (diff + irr) + Lc * specB * gloss * 0.08 * panels + emit;
     float ndv = max(dot(n, V), 0.0), F = 0.04 + 0.96 * pow(1.0 - ndv, 5.0);
     if (abs(n.y) < 0.5) col += Lc * 0.05 * F * gloss;   // polished walls catch the lit room
     if (gloss > 0.4 && n.y > 0.5) {
@@ -1772,7 +1810,7 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         if (R.y > 0.05) {
             float t = (ceilH - y) / R.y;
             vec2 q = uv + toFrame * (R.xz * t);
-            col += Lc * 0.8 * ceilingPanel(q, aa + 0.12 * t + 0.1) * F * gloss + Lc * 0.02 * F;
+            col += (Lc * 0.8 * ceilingPanel(q, aa + 0.12 * t + 0.1) * F * gloss + Lc * 0.02 * F) * panels;
         }
         gRefl = vec4(n.x, n.z, INDOOR_ROUGH, min((F * 1.5 + 0.08) * gloss, 0.9));
     }
@@ -3062,9 +3100,12 @@ void main() {
         // shadow debug view (F10): only the light the lamps, shopfronts and lobbies throw on each surface
         vec3 d = vec3(0.0), sp = vec3(0.0);
         cityLights(vLocal, n, V, 1.0, 0.0, -1.0, d, sp);
+        if (mat == MAT_INTERIOR && vParams.y != IS_GLASS) {
+            // and in a lobby, the ceiling panels' light on what faces up or sideways
+            vec3 nv = dot(n, V) < 0.0 ? -n : n;
+            if (nv.y > -0.5) d += LOBBY_SPILL * (nv.y > 0.5 ? 0.55 : 0.3) * 3.0 * ceilingVis();
+        }
         outColor = vec4(d * 0.3 + vec3(0.004), 1.0);
-#ifdef RT_SHADOWS
-#endif
         outRefl = vec4(0.0);
         return;
     }

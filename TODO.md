@@ -8,8 +8,10 @@ Every light in the chunks' light tables casts ray-traced shadows (`src/rt.c`, `s
   so it would need their motion too, or to drop its history where they are (its fast path assumes shadows don't move).
 - **Vertex animation** isn't in the structures: cables cast from where they hang at rest, and the litter whose shape
   changes casts nothing.
-- **Lobby light** is still analytic (the panels, coves and slots in `shadeInterior`), so plants and furniture cast no
-  shadow indoors; the panels could join the light table, or trace a few rays of their own.
+- **Lobby light** is shadowed as one glowing ceiling (see the README), so furniture and plants cast soft shadows but not
+  the separate shadows of each panel; the panels' grid (the floor and ceiling uv, in the building's frame) could go in
+  the G-buffer so the rays aim at real panels. The coves and wall slots are still unshadowed. Filtering lobby pixels
+  costs about 1 ms when a lobby fills the screen.
 - **Mist shadows** (see Wet streets): the rain mist could take the same structures, a ray per air light.
 - **Signs and screens** light the clouds and the mist, but not the street, so they cast nothing.
 - **Glass** casts no shadow at all; a tint, or the facade's own windows, would be truer.

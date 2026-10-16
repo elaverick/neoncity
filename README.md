@@ -342,7 +342,7 @@ kilometres from the origin.
 
 ### Shadows (`src/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the
-arcologies' sodium lamps. (An arcology's crown lights stand for the cold light falling down the canyon from its glazed
+arcologies' sodium lamps; so do the lobbies' ceilings, indoors. (An arcology's crown lights stand for the cold light falling down the canyon from its glazed
 crown, a fill from far above rather than a light where they are placed, so they stay unshadowed: from their marked
 points the galleries and bridges would black out the canyon.) They need a GPU with Vulkan ray queries (`VK_KHR_ray_query`); without one, or with
 `--noshadows`, the city is lit as before.
@@ -375,6 +375,12 @@ points the galleries and bridges would black out the canyon.) They need a GPU wi
   edge the pixel's neighbours on the same surface are searched for blocked rays, the blockers' distances give the
   penumbra's width, the visibility is averaged over a disc that size and blended into the history, so the shadow
   settles on the true soft one: sharp at a pole's foot, softening with distance from it, very soft from a shopfront.
+- **Lobbies.** A lobby is lit by the panels in its ceiling (`shadeInterior`), not the light table, so its pixels
+  (`PG_LOBBY` in the prepass, with their ceiling's height) trace the ceiling instead: four rays, one into each quarter
+  of a cosine-weighted sky above the surface, which get through if they reach the ceiling or something high up (a
+  gallery's underside, the top of a wall) and are blocked by furniture, planters, plants and the foot of a wall. They
+  are filtered like any light's, under ids of their own (`CEIL_ID`), and their mean scales the panels' light, down to
+  a fifth (`PANEL_FILL`) in full shadow, as what the lit room throws back.
 - **Lookup.** `cityLights` takes each light's visibility from those eight slots when they were made for this
   fragment's surface (same draw chunk, same depth). Anything else bright enough to matter, on a surface the prepass
   didn't see (an edge that misses sample 0) or beyond the eight, gets a hard shadow ray traced in the fragment shader.

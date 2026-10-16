@@ -14,6 +14,8 @@
  * each frame (interleaved gradient noise), against the TLAS of the city round
  * the camera.
  *
+ * A lobby's pixels trace its ceiling instead (traceCeiling).
+ *
  * Out: ids, each slot's lightId (16 bits; 0 for an empty slot), most
  * important first; raw.x, a bit per slot set where its ray got through, plus
  * SH_VALID and SH_OVERFLOW; raw.y, per slot (4 bits) the penumbra width a
@@ -28,6 +30,43 @@ layout(set = 0, binding = 11, rg32ui) uniform writeonly uimage2D rawOut;
 // Penumbra width (metres) in 4 bits, logarithmically from 1 cm to 10 m (shadow_denoise.comp: penDecode).
 uint penEncode(float w) { return uint(clamp(log2(max(w, 0.01) / 0.01) * 1.5 + 1.0, 1.0, 15.0)); }
 
+/* A lobby surface (PG_LOBBY): its slots are the ceiling's panels, whose light
+ * city.frag spreads evenly over the room (shadeInterior). Treated as a ceiling
+ * that glows all over, the light reaching the surface comes from every way up,
+ * cosine-weighted, so slot k traces a ray into the k-th quarter of that
+ * cosine-weighted sky (turned onto the surface's side if it faces sideways).
+ * A ray gets through if it reaches the ceiling's height, or strikes something
+ * high up: another ceiling (under a gallery), the top of a wall or a pendant,
+ * all lit or lighting. Furniture, plants, desks and the foot of a wall block
+ * it. What faces down, or stands at the ceiling, keeps no slots: its light is
+ * the room's bounce. */
+void traceCeiling(ivec2 px, vec3 rel, float dist, vec3 p, vec3 n, vec3 V, uint gy, inout uvec4 ids, inout uvec2 raw) {
+    float ceilH = max(float((gy >> 16) & 255u) * 0.5, 2.6), y = p.y - SIDEWALK_HEIGHT;
+    vec3 nn = dot(n, V) >= 0.0 ? n : -n;   // the side we see (shadeInterior turns thin panels to the viewer)
+    if (nn.y < -0.5 || y > ceilH - 0.1) return;
+    float high = min(ceilH - 0.3, max(2.4, y + 1.2));   // a hit this far above the floor is lit ceiling
+    vec3 o = rel + nn * (0.01 + dist * 2e-4);
+    float fr = float(uint(frame.shadow.x) & 63u);
+    vec2 xi0 = vec2(ign(vec2(px) + fr * 5.588238), ign(vec2(px.yx) + vec2(41.0, 17.0) + fr * 5.588238));
+    for (int k = 0; k < CEIL_SLOTS; ++k) {
+        ids[k >> 1] |= (CEIL_ID + uint(k)) << (16u * uint(k & 1));
+        vec2 xi = fract(xi0 + float(k) * vec2(0.7548777, 0.5698403));
+        float r = sqrt(xi.x), a = (float(k) + xi.y) * 1.5707963;
+        vec3 d = vec3(r * cos(a), sqrt(max(1.0 - xi.x, 0.0)), r * sin(a));
+        float dn = dot(d, nn);
+        if (dn < 0.0) d -= 2.0 * dn * nn;
+        if (d.y < 0.05) { raw.x |= 1u << uint(k); continue; }   // along the floor: the room's bounce, not the panels
+        float tmax = min((ceilH - y) / d.y + 0.05, 14.0);
+        rayQueryEXT q;
+        rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu, o, 0.0, d, tmax);
+        while (rayQueryProceedEXT(q)) {}
+        bool miss = rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT;
+        float th = miss ? tmax : rayQueryGetIntersectionTEXT(q, true);
+        if (miss || y + d.y * th >= high) raw.x |= 1u << uint(k);
+        else raw.y |= penEncode(th * 1.5) << (4u * uint(k));   // the quarter's spread, about 1.5 rad
+    }
+}
+
 void main() {
     ivec2 px = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(px, imageSize(idsOut)))) return;
@@ -41,6 +80,13 @@ void main() {
     ChunkGPU c = chunks[g.y & 0xFFFFu];
     vec3 p = rel - c.origin.xyz;
     int base = c.info.z;
+    if (z > 0.0 && (g.y & PG_LOBBY) != 0u && shadowsOn() && dist <= SHADOW_FAR) {
+        raw.x = SH_VALID;
+        traceCeiling(px, rel, dist, p, octDecode(g.x), -rel / dist, g.y, ids, raw);
+        imageStore(idsOut, px, ids);
+        imageStore(rawOut, px, uvec4(raw, 0u, 0u));
+        return;
+    }
     if (z <= 0.0 || (g.y & PG_LIT) == 0u || !shadowsOn() || dist > SHADOW_FAR || base < 0 || p.y > 32.0) {
         imageStore(idsOut, px, ids);
         imageStore(rawOut, px, uvec4(raw, 0u, 0u));
