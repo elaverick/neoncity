@@ -151,101 +151,98 @@ void player_init(Player *p) {
     p->fovY = BASE_FOV;
 }
 
-void player_update(Player *p, const PlayerInput *in, float dt) {
-    if (dt > 0.05f) dt = 0.05f;
-    p->time += dt;
-    if (in->toggleFly) { p->fly = !p->fly; p->vel[0] = p->vel[1] = p->vel[2] = 0; }
-
-    /* --- look --- */
+/* Yaw and pitch from the mouse. */
+static void update_look(Player *p, const PlayerInput *in) {
     p->yaw += in->lookDX * MOUSE_SENS;
     p->pitch -= in->lookDY * MOUSE_SENS;
     p->pitch = clampf(p->pitch, -1.53f, 1.53f);
     if (p->yaw > PI_F) p->yaw -= 2 * PI_F;
     if (p->yaw < -PI_F) p->yaw += 2 * PI_F;
 
-    float sy = sinf(p->yaw), cy = cosf(p->yaw);
-    vec3 flatFwd = v3(sy, 0, -cy), flatRight = v3(cy, 0, sy);
-    vec3 look = v3(cosf(p->pitch) * sy, sinf(p->pitch), -cosf(p->pitch) * cy);
+}
 
-    float mx = in->moveX, mz = in->moveZ;
-    float ml = sqrtf(mx * mx + mz * mz);
-    if (ml > 1.0f) { mx /= ml; mz /= ml; }
+/* Fly mode: free movement along the view, never below 1 m over the ground. */
+static void move_fly(Player *p, const PlayerInput *in, vec3 look, vec3 flatRight, float mx, float mz, float dt) {
+    float sp = FLY_SPEED * (in->sprint ? 5.0f : 1.0f);
+    vec3 t = v3_add(v3_scale(look, mz * sp), v3_scale(flatRight, mx * sp));
+    if (in->jump) t.y += sp;
+    if (in->down) t.y -= sp;
+    for (int i = 0; i < 3; ++i) {
+        float target = i == 0 ? t.x : i == 1 ? t.y : t.z;
+        p->vel[i] = damp(p->vel[i], target, 6.0f, dt);
+    }
+    for (int i = 0; i < 3; ++i) p->feet[i] += p->vel[i] * dt;
+    float gh = ground_height(p->feet[0], p->feet[2]) + 1.0f;
+    if (p->feet[1] < gh) p->feet[1] = gh;
+    p->bobWeight = damp(p->bobWeight, 0, 8.0f, dt);
+}
 
-    if (p->fly) {
-        float sp = FLY_SPEED * (in->sprint ? 5.0f : 1.0f);
-        vec3 t = v3_add(v3_scale(look, mz * sp), v3_scale(flatRight, mx * sp));
-        if (in->jump) t.y += sp;
-        if (in->down) t.y -= sp;
-        for (int i = 0; i < 3; ++i) {
-            float target = i == 0 ? t.x : i == 1 ? t.y : t.z;
-            p->vel[i] = damp(p->vel[i], target, 6.0f, dt);
-        }
-        for (int i = 0; i < 3; ++i) p->feet[i] += p->vel[i] * dt;
-        float gh = ground_height(p->feet[0], p->feet[2]) + 1.0f;
-        if (p->feet[1] < gh) p->feet[1] = gh;
-        p->bobWeight = damp(p->bobWeight, 0, 8.0f, dt);
+/* Walking: accelerate toward the input, jump and fall, slide along walls, keep
+ * to the ground over curbs, and advance the head bob's step phase. */
+static void move_walk(Player *p, const PlayerInput *in, vec3 flatFwd, vec3 flatRight, float mx, float mz, float ml, float dt) {
+    bool moving = ml > 0.01f;
+    p->sprintBlend = damp(p->sprintBlend, (in->sprint && moving && mz > 0.2f) ? 1.0f : 0.0f, 4.0f, dt);
+    float speed = lerpf(WALK_SPEED, SPRINT_SPEED, p->sprintBlend);
+    vec3 target = v3_add(v3_scale(flatFwd, mz * speed), v3_scale(flatRight, mx * speed));
+    /* Humans accelerate quickly and stop a little faster; very little air control. */
+    float rate = p->onGround ? (moving ? 8.0f : 10.0f) : 1.2f;
+    p->vel[0] = damp(p->vel[0], target.x, rate, dt);
+    p->vel[2] = damp(p->vel[2], target.z, rate, dt);
+
+    if (p->onGround && in->jump) { p->vel[1] = JUMP_SPEED; p->onGround = false; }
+    p->vel[1] -= GRAVITY * dt;
+
+    double nx = p->feet[0] + p->vel[0] * dt, nz = p->feet[2] + p->vel[2] * dt;
+    collide(&nx, &nz);
+    /* Recover velocity actually achieved so sliding along walls feels right. */
+    p->vel[0] = (float)((nx - p->feet[0]) / dt);
+    p->vel[2] = (float)((nz - p->feet[2]) / dt);
+    p->feet[0] = nx; p->feet[2] = nz;
+
+    float prevY = (float)p->feet[1];
+    p->feet[1] += p->vel[1] * dt;
+    float gh = ground_height(p->feet[0], p->feet[2]);
+    bool wasGround = p->onGround;
+    if (p->feet[1] <= gh) {
+        /* Landing: dip the head proportionally to the impact speed. */
+        if (!wasGround && p->vel[1] < -1.0f) p->eyeOffsetVel += p->vel[1] * 0.35f;
+        /* Stepping up a curb: snap the feet, let the eye spring catch up. */
+        if (wasGround && gh > prevY) p->eyeOffset -= gh - prevY;
+        p->feet[1] = gh;
+        p->vel[1] = 0;
+        p->onGround = true;
+    } else if (wasGround && p->vel[1] <= 0 && (float)p->feet[1] - gh < 0.35f) {
+        /* Stepping down off a curb: stay glued to the ground, eye eases down. */
+        p->eyeOffset += (float)p->feet[1] - gh;
+        p->feet[1] = gh;
+        p->vel[1] = 0;
+        p->onGround = true;
     } else {
-        /* --- walking --- */
-        bool moving = ml > 0.01f;
-        p->sprintBlend = damp(p->sprintBlend, (in->sprint && moving && mz > 0.2f) ? 1.0f : 0.0f, 4.0f, dt);
-        float speed = lerpf(WALK_SPEED, SPRINT_SPEED, p->sprintBlend);
-        vec3 target = v3_add(v3_scale(flatFwd, mz * speed), v3_scale(flatRight, mx * speed));
-        /* Humans accelerate quickly and stop a little faster; very little air control. */
-        float rate = p->onGround ? (moving ? 8.0f : 10.0f) : 1.2f;
-        p->vel[0] = damp(p->vel[0], target.x, rate, dt);
-        p->vel[2] = damp(p->vel[2], target.z, rate, dt);
-
-        if (p->onGround && in->jump) { p->vel[1] = JUMP_SPEED; p->onGround = false; }
-        p->vel[1] -= GRAVITY * dt;
-
-        double nx = p->feet[0] + p->vel[0] * dt, nz = p->feet[2] + p->vel[2] * dt;
-        collide(&nx, &nz);
-        /* Recover velocity actually achieved so sliding along walls feels right. */
-        p->vel[0] = (float)((nx - p->feet[0]) / dt);
-        p->vel[2] = (float)((nz - p->feet[2]) / dt);
-        p->feet[0] = nx; p->feet[2] = nz;
-
-        float prevY = (float)p->feet[1];
-        p->feet[1] += p->vel[1] * dt;
-        float gh = ground_height(p->feet[0], p->feet[2]);
-        bool wasGround = p->onGround;
-        if (p->feet[1] <= gh) {
-            /* Landing: dip the head proportionally to the impact speed. */
-            if (!wasGround && p->vel[1] < -1.0f) p->eyeOffsetVel += p->vel[1] * 0.35f;
-            /* Stepping up a curb: snap the feet, let the eye spring catch up. */
-            if (wasGround && gh > prevY) p->eyeOffset -= gh - prevY;
-            p->feet[1] = gh;
-            p->vel[1] = 0;
-            p->onGround = true;
-        } else if (wasGround && p->vel[1] <= 0 && (float)p->feet[1] - gh < 0.35f) {
-            /* Stepping down off a curb: stay glued to the ground, eye eases down. */
-            p->eyeOffset += (float)p->feet[1] - gh;
-            p->feet[1] = gh;
-            p->vel[1] = 0;
-            p->onGround = true;
-        } else {
-            p->onGround = false;
-        }
-
-        /* --- head bob --- */
-        float hs = sqrtf(p->vel[0] * p->vel[0] + p->vel[2] * p->vel[2]);
-        float stride = lerpf(0.78f, 1.35f, p->sprintBlend);              /* metres per step */
-        float prevPhase = p->bobPhase;
-        if (p->onGround) p->bobPhase += hs * dt / stride * PI_F;        /* one step per half cycle */
-        if (floorf(prevPhase / PI_F) != floorf(p->bobPhase / PI_F)) p->footsteps++;
-        float targetW = p->onGround ? clampf(hs / WALK_SPEED, 0.0f, 1.0f) : 0.0f;
-        p->bobWeight = damp(p->bobWeight, targetW, 6.0f, dt);
+        p->onGround = false;
     }
 
-    /* Eye spring (critically damped) returns curb/landing offsets to rest. */
-    {
-        const float w = 16.0f;
-        float a = -w * w * p->eyeOffset - 2.0f * w * p->eyeOffsetVel;
-        p->eyeOffsetVel += a * dt;
-        p->eyeOffset += p->eyeOffsetVel * dt;
-        p->eyeOffset = clampf(p->eyeOffset, -0.5f, 0.5f);
-    }
+    /* --- head bob --- */
+    float hs = sqrtf(p->vel[0] * p->vel[0] + p->vel[2] * p->vel[2]);
+    float stride = lerpf(0.78f, 1.35f, p->sprintBlend);              /* metres per step */
+    float prevPhase = p->bobPhase;
+    if (p->onGround) p->bobPhase += hs * dt / stride * PI_F;        /* one step per half cycle */
+    if (floorf(prevPhase / PI_F) != floorf(p->bobPhase / PI_F)) p->footsteps++;
+    float targetW = p->onGround ? clampf(hs / WALK_SPEED, 0.0f, 1.0f) : 0.0f;
+    p->bobWeight = damp(p->bobWeight, targetW, 6.0f, dt);
+}
 
+/* Eye spring (critically damped) returns curb/landing offsets to rest. */
+static void eye_spring(Player *p, float dt) {
+    const float w = 16.0f;
+    float a = -w * w * p->eyeOffset - 2.0f * w * p->eyeOffsetVel;
+    p->eyeOffsetVel += a * dt;
+    p->eyeOffset += p->eyeOffsetVel * dt;
+    p->eyeOffset = clampf(p->eyeOffset, -0.5f, 0.5f);
+}
+
+/* The camera: head bob and breathing, lean into strafes, a wider view at a
+ * sprint, and the eye position and basis they give. */
+static void set_camera(Player *p, float sy, float cy, vec3 flatRight, float dt) {
     /* Bob shape: |sin| gives a firm footfall at the bottom and a rounded top
      * (head is highest mid-stance); lateral sway and roll run at half the step
      * rate, toward the supporting foot. Amplitudes grow with sprinting. */
@@ -281,4 +278,23 @@ void player_update(Player *p, const PlayerInput *in, float dt) {
     p->eye[0] = p->feet[0] + flatRight.x * side;
     p->eye[1] = p->feet[1] + eyeH + vert + p->eyeOffset;
     p->eye[2] = p->feet[2] + flatRight.z * side;
+}
+
+void player_update(Player *p, const PlayerInput *in, float dt) {
+    if (dt > 0.05f) dt = 0.05f;
+    p->time += dt;
+    if (in->toggleFly) { p->fly = !p->fly; p->vel[0] = p->vel[1] = p->vel[2] = 0; }
+    update_look(p, in);
+    float sy = sinf(p->yaw), cy = cosf(p->yaw);
+    vec3 flatFwd = v3(sy, 0, -cy), flatRight = v3(cy, 0, sy);
+    vec3 look = v3(cosf(p->pitch) * sy, sinf(p->pitch), -cosf(p->pitch) * cy);
+
+    float mx = in->moveX, mz = in->moveZ;
+    float ml = sqrtf(mx * mx + mz * mz);
+    if (ml > 1.0f) { mx /= ml; mz /= ml; }
+
+    if (p->fly) move_fly(p, in, look, flatRight, mx, mz, dt);
+    else move_walk(p, in, flatFwd, flatRight, mx, mz, ml, dt);
+    eye_spring(p, dt);
+    set_camera(p, sy, cy, flatRight, dt);
 }
