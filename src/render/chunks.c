@@ -466,14 +466,8 @@ static int cmp_ready(const void *a, const void *b) {
     return da < db ? -1 : da > db ? 1 : 0;
 }
 
-void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t frame,
-                   const double cam[3], const mat4 *viewProj) {
-    const float P = CHUNK_SIZE;
-    Frustum fr = frustum_from_matrix(*viewProj);
-    reclaim_pages(cs, frame);
-    if (cs->rt) rt_begin_frame(cs->rt, cmd, slot, frame);
-
-    /* 1. Collect finished meshes from the workers. */
+/* 1. Collect finished meshes from the workers. */
+static void collect_finished(ChunkSystem *cs) {
     mutex_lock(&cs->doneLock);
     for (int i = 0; i < cs->doneCount; ++i) {
         Result *r = &cs->done[i];
@@ -489,7 +483,10 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     cs->doneCount = 0;
     mutex_unlock(&cs->doneLock);
 
-    /* 2. Withdraw jobs no worker has started yet; they are re-prioritised below. */
+}
+
+/* 2. Withdraw jobs no worker has started yet; they are re-prioritised below. */
+static void withdraw_jobs(ChunkSystem *cs) {
     mutex_lock(&cs->jobLock);
     for (int i = cs->jobHead; i < cs->jobCount; ++i) {
         int idx = table_find(cs, cs->jobs[i].cx, cs->jobs[i].cz, cs->jobs[i].layer);
@@ -498,10 +495,15 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     cs->jobHead = cs->jobCount = 0;
     mutex_unlock(&cs->jobLock);
 
-    /* 3. Frustum fill: every chunk inside the view distance whose conservative
-     *    bounds touch the frustum, plus a ring around the player; and the
-     *    lobbies and litter of the chunks near the camera, just behind the
-     *    chunks themselves. */
+}
+
+/* 3. Frustum fill: every chunk inside the view distance whose conservative
+ *    bounds touch the frustum, plus a ring around the player; and the
+ *    lobbies and litter of the chunks near the camera, just behind the
+ *    chunks themselves. */
+static void want_chunks(ChunkSystem *cs, const Frustum *frp, const double cam[3]) {
+    const float P = CHUNK_SIZE;
+    const Frustum fr = *frp;
     cs->wantCount = 0;
     int ccx = (int)floor(cam[0] / P), ccz = (int)floor(cam[2] / P);
     int rad = (int)ceilf(VIEW_DISTANCE / P) + 1;
@@ -545,6 +547,11 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     }
     qsort(cs->want, cs->wantCount, sizeof(Want), cmp_want);
 
+}
+
+/* Queues the wanted chunks not yet known, nearest first, for the workers.
+ * Returns how many wanted chunks are queued. */
+static int queue_wanted(ChunkSystem *cs, uint64_t frame) {
     Job newJobs[MAX_JOBS];
     int nj = 0, queued = 0;
     for (int i = 0; i < cs->wantCount; ++i) {
@@ -568,8 +575,12 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
         cond_broadcast(&cs->jobCond);
         mutex_unlock(&cs->jobLock);
     }
+    return queued;
+}
 
-    /* 4. Upload ready meshes, nearest first, within the staging budget. */
+/* 4. Upload ready meshes, nearest first, within the staging budget; build
+ *    the BLAS of those arriving within shadow range. Returns how many. */
+static int upload_ready(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t frame, const double cam[3]) {
     evict_to_watermark(cs, frame, cam);
     g_sortCam = cam; g_sortCs = cs;
     qsort(cs->ready, cs->readyCount, sizeof(int), cmp_ready);
@@ -650,12 +661,18 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
         Entry *e = &cs->entries[cs->uploaded[u]];
         if (e->rtTotal && chunk_dist(e, cam) < RT_RANGE) build_blas(cs, cmd, slot, e);
     }
+    return uploads;
+}
 
-    /* 5. Build the indirect draw list from resident, visible chunks (front to
-     *    back), the plants' layer last: it is drawn with its own pipeline. */
+/* 5. Build the indirect draw list from resident, visible chunks (front to
+ *    back), the plants' layer last: it is drawn with its own pipeline.
+ *    Returns the draws; *nchunkOut, the chunk records used. */
+static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, const double cam[3], uint32_t *nchunkOut) {
+    const float P = CHUNK_SIZE;
+    const Frustum fr = *frp;
     VkDrawIndirectCommand *cmds = (VkDrawIndirectCommand *)cs->indirect[slot].mapped;
     ChunkGPU *gpu = (ChunkGPU *)cs->chunkData[slot].mapped;
-    uint32_t ndraw = 0, nchunk = 0, residentCount = 0;
+    uint32_t ndraw = 0, nchunk = 0;
     cs->plantFirst[slot] = UINT32_MAX;
     for (int k = 0; k < 2 * cs->wantCount && nchunk < MAX_DRAW_CHUNKS; ++k) {
         if (k == cs->wantCount) cs->plantFirst[slot] = ndraw;
@@ -692,10 +709,18 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     }
     cs->drawCount[slot] = ndraw;
     if (cs->plantFirst[slot] > ndraw) cs->plantFirst[slot] = ndraw;   /* no plants this frame */
+    *nchunkOut = nchunk;
+    return ndraw;
+}
 
-    /* 6. Shelter map draws: resident chunks overlapping its square, whatever the view. */
+/* 6. Shelter map draws: resident chunks overlapping its square, whatever the
+ *    view, after the view's ndraw draws and nchunk chunk records. */
+static uint32_t build_shelter_draws(ChunkSystem *cs, int slot, const double cam[3], uint32_t ndraw, uint32_t nchunk) {
+    const float P = CHUNK_SIZE;
+    VkDrawIndirectCommand *cmds = (VkDrawIndirectCommand *)cs->indirect[slot].mapped;
+    ChunkGPU *gpu = (ChunkGPU *)cs->chunkData[slot].mapped;
     const float SR = SHELTER_RADIUS + 1.0f;
-    uint32_t sFirst = ndraw, viewChunks = nchunk;
+    uint32_t sFirst = ndraw;
     for (int i = 0; i < MAX_ENTRIES && nchunk < MAX_DRAW_CHUNKS; ++i) {
         Entry *e = &cs->entries[i];
         if (e->state != CS_RESIDENT || e->layer || ndraw + (uint32_t)e->npages > INDIRECT_CAP) continue;   /* lobbies are under roofs; litter shelters nothing */
@@ -716,10 +741,16 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     }
     cs->shelterFirst[slot] = sFirst;
     cs->shelterCount[slot] = ndraw - sFirst;
+    return ndraw;
+}
 
-    /* 7. Depth prepass draws (ray-traced shadows): the view's draws of chunks
-     *    close enough to hold a surface that receives shadows, as the same
-     *    draws (the same chunk records), so both passes agree on every pixel. */
+/* 7. Depth prepass draws (ray-traced shadows): the view's draws of chunks
+ *    close enough to hold a surface that receives shadows, as the same
+ *    draws (the same chunk records), so both passes agree on every pixel. */
+static uint32_t build_prepass_draws(ChunkSystem *cs, int slot, uint32_t ndraw) {
+    const float P = CHUNK_SIZE;
+    VkDrawIndirectCommand *cmds = (VkDrawIndirectCommand *)cs->indirect[slot].mapped;
+    const ChunkGPU *gpu = (const ChunkGPU *)cs->chunkData[slot].mapped;
     uint32_t pFirst = ndraw;
     for (uint32_t i = 0; cs->rt && i < cs->plantFirst[slot] && ndraw < INDIRECT_CAP; ++i) {
         const ChunkGPU *g = &gpu[cmds[i].firstInstance];
@@ -730,8 +761,11 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     cs->preFirst[slot] = pFirst;
     cs->preCount[slot] = ndraw - pFirst;
 
-    if (cs->rt) update_shadows(cs, cmd, slot, frame, cam);
+    return ndraw;
+}
 
+static void update_stats(ChunkSystem *cs, int slot, int queued, uint32_t viewChunks, int uploads) {
+    uint32_t residentCount = 0;
     for (int i = 0; i < MAX_ENTRIES; ++i) if (cs->entries[i].state == CS_RESIDENT) residentCount++;
     cs->stats.resident = (int)residentCount;
     cs->stats.queued = queued;
@@ -746,6 +780,24 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     cs->stats.blasBuilds = rs.builds;
     cs->stats.instances = rs.instances;
     cs->stats.blasMB = (int)(rs.arenaUsedMB + 0.5);
+}
+
+void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t frame,
+                   const double cam[3], const mat4 *viewProj) {
+    Frustum fr = frustum_from_matrix(*viewProj);
+    reclaim_pages(cs, frame);
+    if (cs->rt) rt_begin_frame(cs->rt, cmd, slot, frame);
+    collect_finished(cs);
+    withdraw_jobs(cs);
+    want_chunks(cs, &fr, cam);
+    int queued = queue_wanted(cs, frame);
+    int uploads = upload_ready(cs, cmd, slot, frame, cam);
+    uint32_t viewChunks;
+    uint32_t ndraw = build_draw_list(cs, slot, &fr, cam, &viewChunks);
+    ndraw = build_shelter_draws(cs, slot, cam, ndraw, viewChunks);
+    build_prepass_draws(cs, slot, ndraw);
+    if (cs->rt) update_shadows(cs, cmd, slot, frame, cam);
+    update_stats(cs, slot, queued, viewChunks, uploads);
 }
 
 static const float *g_airScore;
