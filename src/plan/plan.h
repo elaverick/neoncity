@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "geom2d.h"
 
 /* The city plan: a polycentric, cellular layout in the spirit of Singapore's
  * new towns, generated as a pure function of world position.
@@ -29,8 +30,6 @@
 
 enum { ROAD_NONE = 0, ROAD_LOCAL, ROAD_ARTERIAL, ROAD_BOULEVARD };
 enum { ZONE_CORE = 0, ZONE_CENTRE, ZONE_RESIDENTIAL, ZONE_INDUSTRIAL, ZONE_PARK };
-
-typedef struct DVec2 { double x, z; } DVec2;
 
 /* Attributes of a polygon edge: the road (if any) running along it. */
 typedef struct RoadAttr {

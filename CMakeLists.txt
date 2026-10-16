@@ -117,7 +117,8 @@ add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 # builds them with /fp:fast and the static runtime, the tests and labs without.
 # Sources live in src/<module>/; every module directory is on the include path.
 set(SRC_DIRS src/core src/plan src/gen src/city src/render src/app)
-set(GEN_SOURCES src/city/city.c src/city/litter.c src/plan/plan.c src/gen/building.c src/gen/interior.c src/gen/arcology.c src/gen/plant.c)
+set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/litter.c src/plan/plan.c
+                src/gen/gen_common.c src/gen/building.c src/gen/interior.c src/gen/arcology.c src/gen/plant.c)
 
 # --- Tests: generator determinism ------------------------------------------------
 enable_testing()

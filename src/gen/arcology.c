@@ -1,6 +1,7 @@
 #include "arcology.h"
 #include "hash.h"
 #include "mathlib.h"
+#include "gen_common.h"
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -55,25 +56,12 @@ typedef struct Gen {
  * Decision log (section 12): info, simplify, reject, pass
  * ========================================================================= */
 
-static void logv(BLog *log, const char *fmt, va_list ap) {
-    if (!log || !log->buf || log->len >= log->cap - 1) return;
-    int n = vsnprintf(log->buf + log->len, (size_t)(log->cap - log->len), fmt, ap);
-    if (n > 0) log->len = log->len + n < log->cap - 1 ? log->len + n : log->cap - 1;
-}
-
-static void blog_raw(BLog *log, const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    logv(log, fmt, ap);
-    va_end(ap);
-}
-
 static void alog(Gen *G, const char *fmt, ...) {
     if (!G->log) return;
     BLog a = { G->abuf, (int)sizeof(G->abuf), G->alen };
     va_list ap;
     va_start(ap, fmt);
-    logv(&a, fmt, ap);
+    blog_vprintf(&a, fmt, ap);
     va_end(ap);
     G->alen = a.len;
 }
@@ -90,25 +78,8 @@ static int fail(Gen *G, const char *fmt, ...) {
  * Frame, grid and geometry helpers
  * ========================================================================= */
 
-static void rotq(int q, float x, float z, float *ox, float *oz) {
-    switch (q & 3) {
-    case 0:  *ox = x;  *oz = z;  break;
-    case 1:  *ox = -z; *oz = x;  break;
-    case 2:  *ox = -x; *oz = -z; break;
-    default: *ox = z;  *oz = -x; break;
-    }
-}
-
-void arcology_to_local(const ALayout *A, float fx, float fz, float *x, float *z) { rotq(A->quarter, fx, fz, x, z); }
-void arcology_to_frame(const ALayout *A, float x, float z, float *fx, float *fz) { rotq(4 - A->quarter, x, z, fx, fz); }
-
-static void foot_frame(int q, const BFoot *in, BFoot *out) {
-    memset(out, 0, sizeof(*out));
-    out->outer.n = in->outer.n;
-    for (int i = 0; i < in->outer.n; ++i) rotq(4 - q, in->outer.x[i], in->outer.z[i], &out->outer.x[i], &out->outer.z[i]);
-    out->hole.n = in->hole.n;
-    for (int i = 0; i < in->hole.n; ++i) rotq(4 - q, in->hole.x[i], in->hole.z[i], &out->hole.x[i], &out->hole.z[i]);
-}
+void arcology_to_local(const ALayout *A, float fx, float fz, float *x, float *z) { quarter_turn(A->quarter, fx, fz, x, z); }
+void arcology_to_frame(const ALayout *A, float x, float z, float *fx, float *fz) { quarter_turn(4 - A->quarter, x, z, fx, fz); }
 
 static float ccx(const ALayout *A, int i) { return A->gx0 + ((float)i + 0.5f) * CELL; }
 static float ccz(const ALayout *A, int j) { return A->gz0 + ((float)j + 0.5f) * CELL; }
@@ -130,7 +101,6 @@ int arcology_stratum(const ALayout *A, float t) {
     return t < A->stratumEdge[0] ? AS_STREET : t < A->stratumEdge[1] ? AS_HABITAT : t < A->stratumEdge[2] ? AS_COMMERCE : AS_CORPORATE;
 }
 
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static ARect rect(float x0, float z0, float x1, float z1) { ARect r = { x0, z0, x1, z1 }; return r; }
 static ARect expand(ARect r, float m) { return rect(r.x0 - m, r.z0 - m, r.x1 + m, r.z1 + m); }
 static int in_rect(ARect r, float x, float z) { return x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1; }
@@ -275,7 +245,7 @@ static int prepare(Gen *G) {
     for (int i = 0; i < n; ++i) {
         const BSection *s = &g->sec[idx[i]];
         ATier *t = &A->tier[i];
-        foot_frame(q, &s->foot, &t->foot);
+        foot_to_frame(q, &s->foot, &t->foot);
         t->y0 = s->y0; t->y1 = s->y1; t->section = idx[i];
         float base = i ? s->y0 : G0 + g->groundH;
         t->floors = (int)floorf((s->y1 - base) / g->floorH + 0.5f) + (i ? 0 : 1);
@@ -1623,11 +1593,11 @@ int arcology_plan(const Building *b, const BGraph *g, int variant, ALayout *A, B
     G->sat = (int *)malloc(sizeof(int) * (size_t)(AR_MAX_DIM + 1) * (AR_MAX_DIM + 1));
     if (!G->base || !G->colMask || !G->dist || !G->heap || !G->sat) fatal("out of memory planning an arcology");
     A->planned = 1;
-    blog_raw(log, "arcology %08x\n", A->seed);
+    blog_printf(log, "arcology %08x\n", A->seed);
     if (!prepare(G)) {
-        blog_raw(log, "  reject: %s\n  fallback: painted lobby\n", G->why);
+        blog_printf(log, "  reject: %s\n  fallback: painted lobby\n", G->why);
     } else {
-        blog_raw(log, "  info: %d tiers, %.0f m2 concourse level, %d x %d cells, top at %.0f m\n", A->ntier, A->area, A->nx, A->nz, A->topY - G0);
+        blog_printf(log, "  info: %d tiers, %.0f m2 concourse level, %d x %d cells, top at %.0f m\n", A->ntier, A->area, A->nx, A->nz, A->topY - G0);
         for (int at = 0; at < AR_ATTEMPTS && !A->ok; ++at) {
             G->attempt = at;
             init_streams(G);
@@ -1635,15 +1605,15 @@ int arcology_plan(const Building *b, const BGraph *g, int variant, ALayout *A, B
             if (attempt_layout(G)) {
                 A->ok = 1;
                 A->attempts = at + 1;
-                blog_raw(log, "attempt %d\n%s  pass\n", at + 1, G->abuf);
+                blog_printf(log, "attempt %d\n%s  pass\n", at + 1, G->abuf);
             } else {
-                blog_raw(log, "attempt %d\n%s  reject: %s\n", at + 1, G->abuf, G->why);
+                blog_printf(log, "attempt %d\n%s  reject: %s\n", at + 1, G->abuf, G->why);
             }
         }
         if (!A->ok) {
             reset_attempt(G);
             A->attempts = AR_ATTEMPTS;
-            blog_raw(log, "  fallback: painted lobby\n");
+            blog_printf(log, "  fallback: painted lobby\n");
         }
     }
     free(G->base); free(G->colMask); free(G->dist); free(G->heap); free(G->sat);

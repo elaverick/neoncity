@@ -1,4 +1,4 @@
-#include "city.h"
+#include "city_internal.h"
 #include "building.h"
 #include "hash.h"
 #include "mathlib.h"
@@ -74,15 +74,7 @@ typedef struct LV { vec3 p, n; float u, v, flex; } LV;
 typedef struct Tris { int n; LV v[MAX_LV]; } Tris;
 
 typedef struct LGen {
-    int       cx, cz;
-    double    ox, oz;
-    PlanArea *pa;
-    Building *bld;
-    int      *bblk;          /* block index of each building */
-    BGraph  **graph;         /* generated on demand */
-    int       nb, capb;
-    Lamp     *lamp;
-    int       nl, capl;
+    ChunkGen  c;             /* the plan, buildings and lamps round the chunk */
     float    *sq;            /* squalor of each block, < 0 until asked */
     DropKerb **drops;        /* drop kerbs of each block, found when first asked */
     int      *nd;            /* how many, < 0 until asked */
@@ -90,78 +82,23 @@ typedef struct LGen {
     Mesh     *m;
 } LGen;
 
-static int near_chunk(const LGen *g, double x0, double z0, double x1, double z1, double pad) {
-    return x1 >= g->ox - pad && x0 <= g->ox + CHUNK_SIZE + pad && z1 >= g->oz - pad && z0 <= g->oz + CHUNK_SIZE + pad;
-}
-
-static int owns(const LGen *g, double x, double z) {
-    return (int)floor(x / CHUNK_SIZE) == g->cx && (int)floor(z / CHUNK_SIZE) == g->cz;
-}
-
 static void lgen_init(LGen *g, int cx, int cz, Mesh *m) {
-    const double P = CHUNK_SIZE;
     memset(g, 0, sizeof(*g));
-    g->cx = cx; g->cz = cz;
-    g->ox = cx * P; g->oz = cz * P;
+    /* lamps are found within 2 m, which must stay 20 m inside the plan area (chunk_gen_init) */
+    chunk_gen_init(&g->c, cx, cz, 30.0, 8.0, 2.0);
     g->m = m;
-    g->pa = (PlanArea *)malloc(sizeof(PlanArea));
     g->T = (Tris *)malloc(sizeof(Tris));
     g->sq = (float *)malloc(sizeof(float) * PLAN_MAX_BLOCKS);
     g->drops = (DropKerb **)calloc(PLAN_MAX_BLOCKS, sizeof(DropKerb *));
     g->nd = (int *)malloc(sizeof(int) * PLAN_MAX_BLOCKS);
-    if (!g->pa || !g->T || !g->sq || !g->drops || !g->nd) fatal("out of memory generating litter");
-    /* lamps are found within 2 m, which must stay 20 m inside the plan area (gen_init in src/city/city.c) */
-    plan_area(g->ox - 30.0, g->oz - 30.0, g->ox + P + 30.0, g->oz + P + 30.0, g->pa);
+    if (!g->T || !g->sq || !g->drops || !g->nd) fatal("out of memory generating litter");
     for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) { g->sq[k] = -1.0f; g->nd[k] = -1; }
-
-    Building tmp[256];
-    for (int bi = 0; bi < g->pa->nblocks; ++bi) {
-        const Block *bk = &g->pa->blocks[bi];
-        if (!near_chunk(g, bk->x0, bk->z0, bk->x1, bk->z1, 8.0)) continue;
-        int n = city_block_buildings(bk, tmp, 256);
-        for (int i = 0; i < n; ++i) {
-            if (g->nb == g->capb) {
-                g->capb = g->capb ? g->capb * 2 : 128;
-                g->bld = (Building *)realloc(g->bld, sizeof(Building) * g->capb);
-                g->bblk = (int *)realloc(g->bblk, sizeof(int) * g->capb);
-                if (!g->bld || !g->bblk) fatal("out of memory generating litter");
-            }
-            g->bld[g->nb] = tmp[i];
-            g->bblk[g->nb++] = bi;
-        }
-    }
-    Lamp lt[128];
-    for (int ri = 0; ri < g->pa->nroads; ++ri) {
-        int n = city_road_lamps(g->pa, ri, g->ox - 2.0, g->oz - 2.0, g->ox + P + 2.0, g->oz + P + 2.0, lt, 128);
-        for (int i = 0; i < n; ++i) {
-            if (g->nl == g->capl) {
-                g->capl = g->capl ? g->capl * 2 : 64;
-                g->lamp = (Lamp *)realloc(g->lamp, sizeof(Lamp) * g->capl);
-                if (!g->lamp) fatal("out of memory generating litter");
-            }
-            g->lamp[g->nl++] = lt[i];
-        }
-    }
-}
-
-static const BGraph *graph(LGen *g, int i) {
-    if (!g->graph) {
-        g->graph = (BGraph **)calloc((size_t)(g->nb ? g->nb : 1), sizeof(BGraph *));
-        if (!g->graph) fatal("out of memory generating litter");
-    }
-    if (!g->graph[i]) {
-        g->graph[i] = (BGraph *)malloc(sizeof(BGraph));
-        if (!g->graph[i]) fatal("out of memory generating litter");
-        bgen_build(&g->bld[i], g->graph[i], NULL);
-    }
-    return g->graph[i];
 }
 
 static void lgen_free(LGen *g) {
-    if (g->graph) for (int i = 0; i < g->nb; ++i) free(g->graph[i]);
-    free(g->graph);
     for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) free(g->drops[k]);
-    free(g->pa); free(g->bld); free(g->bblk); free(g->lamp); free(g->sq); free(g->T); free(g->drops); free(g->nd);
+    free(g->sq); free(g->T); free(g->drops); free(g->nd);
+    chunk_gen_free(&g->c);
     memset(g, 0, sizeof(*g));
 }
 
@@ -174,7 +111,7 @@ float city_squalor(int zone, double x, double z) {
 
 static float squalor(LGen *g, int bi) {
     if (g->sq[bi] < 0.0f) {
-        const Block *bk = &g->pa->blocks[bi];
+        const Block *bk = &g->c.pa->blocks[bi];
         DVec2 c = poly_centroid(&bk->curb);
         g->sq[bi] = city_squalor(bk->zone, c.x, c.z);
     }
@@ -192,7 +129,7 @@ static int block_drops(LGen *g, int bi, const DropKerb **out) {
     if (g->nd[bi] < 0) {
         g->drops[bi] = (DropKerb *)malloc(sizeof(DropKerb) * MAX_BLOCK_DROPS);
         if (!g->drops[bi]) fatal("out of memory generating litter");
-        g->nd[bi] = city_block_drops(g->pa, &g->pa->blocks[bi], g->drops[bi], MAX_BLOCK_DROPS);
+        g->nd[bi] = city_block_drops(g->c.pa, &g->c.pa->blocks[bi], g->drops[bi], MAX_BLOCK_DROPS);
     }
     *out = g->drops[bi];
     return g->nd[bi];
@@ -201,8 +138,8 @@ static int block_drops(LGen *g, int bi, const DropKerb **out) {
 /* What the ground is at (x, z) and how high it stands (src/city/city.c: build_roads, build_blocks). */
 static Ground ground_at(LGen *g, double x, double z) {
     Ground gr = { G_ROAD, -1, BASE_Y };
-    for (int k = 0; k < g->pa->nblocks; ++k) {
-        const Block *bk = &g->pa->blocks[k];
+    for (int k = 0; k < g->c.pa->nblocks; ++k) {
+        const Block *bk = &g->c.pa->blocks[k];
         if (x < bk->x0 || x > bk->x1 || z < bk->z0 || z > bk->z1 || !poly_contains(&bk->curb, x, z, 0.0)) continue;
         gr.block = k;
         if (bk->lot.n && poly_contains(&bk->lot, x, z, 0.0)) {
@@ -226,8 +163,8 @@ static Ground ground_at(LGen *g, double x, double z) {
         return gr;
     }
     /* a marked carriageway (y = 0) or the plain asphalt at a junction */
-    for (int ri = 0; ri < g->pa->nroads; ++ri) {
-        const Road *r = &g->pa->roads[ri];
+    for (int ri = 0; ri < g->c.pa->nroads; ++ri) {
+        const Road *r = &g->c.pa->roads[ri];
         double dx = r->b.x - r->a.x, dz = r->b.z - r->a.z, len = sqrt(dx * dx + dz * dz);
         if (len < 1.0 || len - r->trimA - r->trimB < 1.0) continue;
         double ux = dx / len, uz = dz / len, px = x - r->a.x, pz = z - r->a.z;
@@ -246,14 +183,14 @@ static int in_plot(const Building *b, double x, double z, double margin, float *
 
 /* Whether something of radius rad at (x, z) would stand in a wall, a column or a lamp post. */
 static int blocked(LGen *g, double x, double z, float rad) {
-    for (int i = 0; i < g->nl; ++i) {
-        double dx = x - g->lamp[i].x, dz = z - g->lamp[i].z, r = 0.22 + rad;
+    for (int i = 0; i < g->c.nl; ++i) {
+        double dx = x - g->c.lamp[i].x, dz = z - g->c.lamp[i].z, r = 0.22 + rad;
         if (dx * dx + dz * dz < r * r) return 1;
     }
-    for (int i = 0; i < g->nb; ++i) {
+    for (int i = 0; i < g->c.nb; ++i) {
         float lx, lz;
-        if (!in_plot(&g->bld[i], x, z, rad + 0.05, &lx, &lz)) continue;
-        const BGraph *bg = graph(g, i);
+        if (!in_plot(&g->c.bld[i], x, z, rad + 0.05, &lx, &lz)) continue;
+        const BGraph *bg = chunk_gen_graph(&g->c, i);
         for (int si = 0; si < bg->nsec; ++si) {
             const BSection *s = &bg->sec[si];
             if (s->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
@@ -273,10 +210,10 @@ static int blocked(LGen *g, double x, double z, float rad) {
 /* Distance to the nearest wall standing at street level, up to maxD. */
 static float wall_dist(LGen *g, double x, double z, float maxD) {
     float best = maxD;
-    for (int i = 0; i < g->nb; ++i) {
+    for (int i = 0; i < g->c.nb; ++i) {
         float lx, lz;
-        if (!in_plot(&g->bld[i], x, z, maxD, &lx, &lz)) continue;
-        const BGraph *bg = graph(g, i);
+        if (!in_plot(&g->c.bld[i], x, z, maxD, &lx, &lz)) continue;
+        const BGraph *bg = chunk_gen_graph(&g->c, i);
         for (int si = 0; si < bg->nsec; ++si) {
             const BSection *s = &bg->sec[si];
             if (s->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
@@ -549,7 +486,7 @@ static int quant(float v, float unit, int lo, int hi) {
 static void commit(LGen *g, const Item *it, int first, int kind, float aoH) {
     const Tris *T = g->T;
     float c = cosf(it->yaw), s = sinf(it->yaw);
-    float ax = (float)(it->x - g->ox), az = (float)(it->z - g->oz);
+    float ax = (float)(it->x - g->c.ox), az = (float)(it->z - g->c.oz);
     int fade = quant(FADE[it->kind], 4.0f, 1, 63);
     for (int i = first; i < T->n; ++i) {
         const LV *v = &T->v[i];
@@ -689,7 +626,7 @@ static void build_item(LGen *g, const Item *it) {
 
 /* Lays an item of `kind` at (x, z) if it lies in this chunk on suitable ground. */
 static int drop(LGen *g, int kind, double x, double z, float yaw, uint32_t seed, int want, uint8_t flags) {
-    if (!owns(g, x, z) || g->m->count > BUDGET) return 0;
+    if (!chunk_gen_owns(&g->c, x, z) || g->m->count > BUDGET) return 0;
     Item it;
     if (!site_ok(g, x, z, RADIUS[kind], want, &it.y)) return 0;
     it.x = x; it.z = z; it.yaw = yaw; it.seed = seed; it.kind = kind; it.flags = flags;
@@ -765,9 +702,9 @@ static void kerbs(LGen *g) {
     enum { MAXS = 512 };
     float u[MAXS];
     uint32_t ss[MAXS];
-    for (int bi = 0; bi < g->pa->nblocks; ++bi) {
-        const Block *bk = &g->pa->blocks[bi];
-        if (!near_chunk(g, bk->x0, bk->z0, bk->x1, bk->z1, 1.0)) continue;
+    for (int bi = 0; bi < g->c.pa->nblocks; ++bi) {
+        const Block *bk = &g->c.pa->blocks[bi];
+        if (!chunk_gen_near(&g->c, bk->x0, bk->z0, bk->x1, bk->z1, 1.0)) continue;
         const Poly *c = &bk->curb;
         float sq = squalor(g, bi), a = amount(sq);
         DVec2 cen = poly_centroid(c);
@@ -776,7 +713,7 @@ static void kerbs(LGen *g) {
             DVec2 A = c->v[i], B = c->v[(i + 1) % c->n];
             double dx = B.x - A.x, dz = B.z - A.z, len = sqrt(dx * dx + dz * dz);
             float walk = c->e[i].walk;
-            if (len < 2.0 || !near_chunk(g, fmin(A.x, B.x), fmin(A.z, B.z), fmax(A.x, B.x), fmax(A.z, B.z), walk + 1.0)) continue;
+            if (len < 2.0 || !chunk_gen_near(&g->c, fmin(A.x, B.x), fmin(A.z, B.z), fmax(A.x, B.x), fmax(A.z, B.z), walk + 1.0)) continue;
             DVec2 t = { dx / len, dz / len }, out = { -t.z, t.x };
             if (out.x * (A.x - cen.x) + out.z * (A.z - cen.z) < 0.0) { out.x = -out.x; out.z = -out.z; }
             float along = atan2f((float)t.z, (float)t.x);
@@ -872,7 +809,7 @@ static void scatter(LGen *g) {
     const int N = (int)(CHUNK_SIZE / CELL + 0.5);
     for (int j = 0; j < N; ++j)
         for (int i = 0; i < N; ++i) {
-            int wx = g->cx * N + i, wz = g->cz * N + j;
+            int wx = g->c.cx * N + i, wz = g->c.cz * N + j;
             Rng r = rng_make(hash2i(WORLD_SEED ^ 0x11773u, wx, wz));
             double x = (wx + rng_float(&r)) * CELL, z = (wz + rng_float(&r)) * CELL;
             float roll = rng_float(&r);
@@ -907,13 +844,13 @@ static void scatter(LGen *g) {
  * entrance, odds and ends outside shops, bin bags piled by service doors and
  * loading bays. */
 static void doorways(LGen *g) {
-    for (int i = 0; i < g->nb; ++i) {
-        const Building *b = &g->bld[i];
+    for (int i = 0; i < g->c.nb; ++i) {
+        const Building *b = &g->c.bld[i];
         double rr = 0.5 * sqrt((double)(b->foot.x1 - b->foot.x0) * (b->foot.x1 - b->foot.x0) +
                                (double)(b->foot.z1 - b->foot.z0) * (b->foot.z1 - b->foot.z0)) + 5.0;
-        if (!near_chunk(g, b->ox - rr, b->oz - rr, b->ox + rr, b->oz + rr, 0.0)) continue;
-        const BGraph *bg = graph(g, i);
-        float sq = squalor(g, g->bblk[i]);
+        if (!chunk_gen_near(&g->c, b->ox - rr, b->oz - rr, b->ox + rr, b->oz + rr, 0.0)) continue;
+        const BGraph *bg = chunk_gen_graph(&g->c, i);
+        float sq = squalor(g, g->c.bblk[i]);
         int office = bg->groundMode == GF_LOBBY || bg->groundMode == GF_DOUBLE;
         for (int di = 0; di < bg->ndoor; ++di) {
             const BDoor *d = &bg->door[di];
@@ -926,7 +863,7 @@ static void doorways(LGen *g) {
             double lx = l->x[k] + ex * d->u, lz = l->z[k] + ez * d->u;
             DVec2 at = { b->ox + b->c * lx - b->s * lz, b->oz + b->s * lx + b->c * lz };
             DVec2 along = { b->c * ex - b->s * ez, b->s * ex + b->c * ez }, out = { -along.z, along.x };
-            if (!near_chunk(g, at.x, at.z, at.x, at.z, 4.0)) continue;
+            if (!chunk_gen_near(&g->c, at.x, at.z, at.x, at.z, 4.0)) continue;
             Rng r = rng_make(hash3i(bg->seed ^ 0xD00Bu, d->section, d->face, di));
             float side = rng_float(&r) < 0.5f ? -1.0f : 1.0f;
             if (d->type == DOOR_PRIMARY && office) {
@@ -963,8 +900,8 @@ static void doorways(LGen *g) {
 
 /* Round the foot of lamp posts: a can, a cup, butts; in poor streets a bin bag left against it. */
 static void lampposts(LGen *g) {
-    for (int i = 0; i < g->nl; ++i) {
-        const Lamp *L = &g->lamp[i];
+    for (int i = 0; i < g->c.nl; ++i) {
+        const Lamp *L = &g->c.lamp[i];
         Ground gr = ground_at(g, L->x, L->z);
         if (gr.block < 0) continue;
         float sq = squalor(g, gr.block);

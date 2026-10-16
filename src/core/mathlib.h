@@ -21,6 +21,7 @@ static inline float clampf(float x, float lo, float hi) { return x < lo ? lo : (
 static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 static inline float minf(float a, float b) { return a < b ? a : b; }
 static inline float maxf(float a, float b) { return a > b ? a : b; }
+static inline int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static inline float smoothstepf(float e0, float e1, float x) {
     float t = clampf((x - e0) / (e1 - e0), 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);

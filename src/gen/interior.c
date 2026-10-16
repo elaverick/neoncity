@@ -1,6 +1,7 @@
 #include "interior.h"
 #include "hash.h"
 #include "mathlib.h"
+#include "gen_common.h"
 #include <stdarg.h>
 
 /* Office-lobby planner (docs/procedural-office-atrium-generation.md). Section
@@ -109,26 +110,13 @@ typedef struct Gen {
     char   why[200];
 } Gen;
 
-static void logv(BLog *log, const char *fmt, va_list ap) {
-    if (!log || !log->buf || log->len >= log->cap - 1) return;
-    int n = vsnprintf(log->buf + log->len, (size_t)(log->cap - log->len), fmt, ap);
-    if (n > 0) log->len = log->len + n < log->cap - 1 ? log->len + n : log->cap - 1;
-}
-
-static void blog_raw(BLog *log, const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    logv(log, fmt, ap);
-    va_end(ap);
-}
-
 /* Attempt log: tags info, simplify, reject and pass (section 12). */
 static void alog(Gen *G, const char *fmt, ...) {
     if (!G->log) return;
     BLog a = { G->abuf, (int)sizeof(G->abuf), G->alen };
     va_list ap;
     va_start(ap, fmt);
-    logv(&a, fmt, ap);
+    blog_vprintf(&a, fmt, ap);
     va_end(ap);
     G->alen = a.len;
 }
@@ -145,28 +133,8 @@ static int fail(Gen *G, const char *fmt, ...) {
  * Frame and grid
  * ========================================================================= */
 
-static void rotq(int q, float x, float z, float *ox, float *oz) {
-    switch (q & 3) {
-    case 0:  *ox = x;  *oz = z;  break;
-    case 1:  *ox = -z; *oz = x;  break;
-    case 2:  *ox = -x; *oz = -z; break;
-    default: *ox = z;  *oz = -x; break;
-    }
-}
-
-void interior_to_local(const ILayout *L, float fx, float fz, float *x, float *z) { rotq(L->quarter, fx, fz, x, z); }
-void interior_to_frame(const ILayout *L, float x, float z, float *fx, float *fz) { rotq(4 - L->quarter, x, z, fx, fz); }
-
-static void loop_frame(int q, const BLoop *in, BLoop *out) {
-    memset(out, 0, sizeof(*out));
-    out->n = in->n;
-    for (int i = 0; i < in->n; ++i) rotq(4 - q, in->x[i], in->z[i], &out->x[i], &out->z[i]);
-}
-
-static void foot_frame(int q, const BFoot *in, BFoot *out) {
-    loop_frame(q, &in->outer, &out->outer);
-    loop_frame(q, &in->hole, &out->hole);
-}
+void interior_to_local(const ILayout *L, float fx, float fz, float *x, float *z) { quarter_turn(L->quarter, fx, fz, x, z); }
+void interior_to_frame(const ILayout *L, float x, float z, float *fx, float *fz) { quarter_turn(4 - L->quarter, x, z, fx, fz); }
 
 static float ccx(const ILayout *L, int i) { return L->gx0 + ((float)i + 0.5f) * CELL; }
 static float ccz(const ILayout *L, int j) { return L->gz0 + ((float)j + 0.5f) * CELL; }
@@ -471,7 +439,7 @@ static int prepare(Gen *G) {
         if (d > bd + 1e-4f) { bd = d; q = k; }
     }
     L->quarter = q;
-    foot_frame(q, &s->foot, &L->foot);
+    foot_to_frame(q, &s->foot, &L->foot);
     float x0 = 1e30f, z0 = 1e30f, x1 = -1e30f, z1 = -1e30f;
     for (int i = 0; i < L->foot.outer.n; ++i) {
         x0 = minf(x0, L->foot.outer.x[i]); x1 = maxf(x1, L->foot.outer.x[i]);
@@ -508,8 +476,8 @@ static int prepare(Gen *G) {
 
     /* entrance in the frame */
     SDoor *e = &G->entry;
-    rotq(4 - q, cx, cz, &e->x, &e->z);
-    rotq(4 - q, nx, nz, &e->nx, &e->nz);
+    quarter_turn(4 - q, cx, cz, &e->x, &e->z);
+    quarter_turn(4 - q, nx, nz, &e->nx, &e->nz);
     e->w = w; e->side = side_of(e->nx, e->nz); e->type = ed >= 0 ? g->door[ed].type : DOOR_SERVICE;
     G->entryCell = -1;
     for (float t = 0.6f; t < 3.0f && G->entryCell < 0; t += 0.25f) {
@@ -534,8 +502,8 @@ static int prepare(Gen *G) {
         float fx = ol->x[f1] - ol->x[dr->face], fz = ol->z[f1] - ol->z[dr->face], fl = sqrtf(fx * fx + fz * fz);
         fx /= fl; fz /= fl;
         SDoor *sd = &G->serv[G->nserv++];
-        rotq(4 - q, ol->x[dr->face] + fx * dr->u, ol->z[dr->face] + fz * dr->u, &sd->x, &sd->z);
-        rotq(4 - q, -fz, fx, &sd->nx, &sd->nz);
+        quarter_turn(4 - q, ol->x[dr->face] + fx * dr->u, ol->z[dr->face] + fz * dr->u, &sd->x, &sd->z);
+        quarter_turn(4 - q, -fz, fx, &sd->nx, &sd->nz);
         sd->w = dr->width; sd->side = side_of(sd->nx, sd->nz); sd->type = dr->type;
     }
 
@@ -548,7 +516,7 @@ static int prepare(Gen *G) {
         for (int i = 0; i < ts->foot.outer.n; ++i) { mx += ts->foot.outer.x[i]; mz += ts->foot.outer.z[i]; }
         mx /= (float)ts->foot.outer.n; mz /= (float)ts->foot.outer.n;
         if (!bfoot_contains(&s->foot, mx, mz)) continue;
-        foot_frame(q, &ts->foot, &G->tower[G->ntower++]);
+        foot_to_frame(q, &ts->foot, &G->tower[G->ntower++]);
     }
 
     /* the section directly above the ground floor (podium atria) */
@@ -560,7 +528,7 @@ static int prepare(Gen *G) {
             for (int k = 0; k < a->nbelow; ++k)
                 if (a->below[k] == G->si && !a->foot.hole.n && !s->foot.hole.n) {
                     G->hasAbove = 1;
-                    foot_frame(q, &a->foot, &G->above);
+                    foot_to_frame(q, &a->foot, &G->above);
                     G->aboveFloors = (int)floorf((a->y1 - a->y0) / g->floorH + 0.5f);
                     G->aboveArea = -bloop_area(&a->foot.outer);
                 }
@@ -2443,9 +2411,9 @@ int interior_plan(const Building *b, const BGraph *g, int si, int variant, ILayo
     if (!G) fatal("out of memory planning an interior");
     G->b = b; G->g = g; G->L = L; G->log = log; G->si = si;
     L->seed = hash_combine(hash_combine(hash_combine(b->seed, 0x1A7E0000u), (uint32_t)si), (uint32_t)variant);
-    blog_raw(log, "interior %08x: section %d\n", L->seed, si);
+    blog_printf(log, "interior %08x: section %d\n", L->seed, si);
     if (!prepare(G)) {
-        blog_raw(log, "  reject: %s; no interior\n", G->why);
+        blog_printf(log, "  reject: %s; no interior\n", G->why);
         free(G);
         return 0;
     }
@@ -2461,7 +2429,7 @@ int interior_plan(const Building *b, const BGraph *g, int si, int variant, ILayo
     for (int k = 0; k < IN_MAX_CORE; ++k) G->path[k] = (int *)malloc(sizeof(int) * N);
     if (!G->sat[0] || !G->sat[1] || !G->sat[2] || !G->sat[3] || !G->dist || !G->cost || !G->hkey || !G->prev || !G->heap || !G->mark || !G->reach || !G->path[0] || !G->path[1])
         fatal("out of memory planning an interior");
-    blog_raw(log, "  info: %s grammar, %.0f m2, %d x %d cells, frame turned %d deg, %.0f floors served\n",
+    blog_printf(log, "  info: %s grammar, %.0f m2, %d x %d cells, frame turned %d deg, %.0f floors served\n",
              G->grammar == IG_OFFICE ? "office" : "service", L->area, L->nx, L->nz, L->quarter * 90, L->floors);
     L->planned = 1;
     for (int at = 0; at < IN_ATTEMPTS; ++at) {
@@ -2471,11 +2439,11 @@ int interior_plan(const Building *b, const BGraph *g, int si, int variant, ILayo
         if (attempt_layout(G)) {
             L->ok = 1;
             L->attempts = at + 1;
-            blog_raw(log, " attempt %d:\n%s", at + 1, G->abuf);
-            blog_raw(log, "  pass: %d regions, %d doors, %d fixtures\n", L->nreg, L->ndoor, L->nfix);
+            blog_printf(log, " attempt %d:\n%s", at + 1, G->abuf);
+            blog_printf(log, "  pass: %d regions, %d doors, %d fixtures\n", L->nreg, L->ndoor, L->nfix);
             break;
         }
-        blog_raw(log, "  reject: attempt %d: %s\n", at + 1, G->why);
+        blog_printf(log, "  reject: attempt %d: %s\n", at + 1, G->why);
     }
     if (!L->ok) {
         /* an open floor plate */
@@ -2486,7 +2454,7 @@ int interior_plan(const Building *b, const BGraph *g, int si, int variant, ILayo
         L->atrium.mode = (uint8_t)(g->groundMode == GF_DOUBLE ? IA_DOUBLE : IA_NONE);
         L->atrium.topY = L->ceilY;
         L->routeStart = G->entryCell;
-        blog_raw(log, "  simplify: six attempts failed; open floor plate\n");
+        blog_printf(log, "  simplify: six attempts failed; open floor plate\n");
     }
     for (int k = 0; k < IN_MAX_CORE; ++k) free(G->path[k]);
     for (int k = 0; k < 4; ++k) free(G->sat[k]);

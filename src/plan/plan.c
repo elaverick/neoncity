@@ -12,12 +12,6 @@ typedef struct Site { int i, j; DVec2 p; uint32_t h; } Site;
 static int64_t site_key(Site s) { return (int64_t)(((uint64_t)(uint32_t)s.i << 32) | (uint32_t)s.j); }
 static float hf(uint32_t h, uint32_t k) { return hash_float(hash_combine(h, k)); }
 
-static DVec2 dv(double x, double z) { DVec2 r = { x, z }; return r; }
-static DVec2 dsub(DVec2 a, DVec2 b) { return dv(a.x - b.x, a.z - b.z); }
-static double ddot(DVec2 a, DVec2 b) { return a.x * b.x + a.z * b.z; }
-static double dcross(DVec2 a, DVec2 b) { return a.x * b.z - a.z * b.x; }
-static double dlen(DVec2 a) { return sqrt(a.x * a.x + a.z * a.z); }
-static DVec2 dnorm(DVec2 a) { double l = dlen(a); return l > 1e-12 ? dv(a.x / l, a.z / l) : dv(1, 0); }
 
 /* ===========================================================================
  * Lattice sites

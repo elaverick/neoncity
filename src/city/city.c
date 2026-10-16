@@ -1,4 +1,4 @@
-#include "city.h"
+#include "city_internal.h"
 #include "building.h"
 #include "interior.h"
 #include "arcology.h"
@@ -45,22 +45,6 @@ int city_shop_lit(uint32_t h, int level) { return hash_float(h) < (float)level *
 /* ===========================================================================
  * 2D helpers
  * ========================================================================= */
-
-static DVec2 dv(double x, double z) { DVec2 r = { x, z }; return r; }
-static DVec2 dsub(DVec2 a, DVec2 b) { return dv(a.x - b.x, a.z - b.z); }
-static DVec2 dadd(DVec2 a, DVec2 b) { return dv(a.x + b.x, a.z + b.z); }
-static DVec2 dscale(DVec2 a, double s) { return dv(a.x * s, a.z * s); }
-static double ddot(DVec2 a, DVec2 b) { return a.x * b.x + a.z * b.z; }
-static double dlen(DVec2 a) { return sqrt(a.x * a.x + a.z * a.z); }
-static DVec2 dnorm(DVec2 a) { double l = dlen(a); return l > 1e-12 ? dv(a.x / l, a.z / l) : dv(1, 0); }
-
-static double seg_dist(DVec2 p, DVec2 a, DVec2 b) {
-    DVec2 ab = dsub(b, a);
-    double l2 = ddot(ab, ab);
-    double t = l2 > 1e-12 ? ddot(dsub(p, a), ab) / l2 : 0.0;
-    t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
-    return dlen(dsub(p, dadd(a, dscale(ab, t))));
-}
 
 static DVec2 to_world(const Building *b, double lx, double lz) {
     return dv(b->ox + b->c * lx - b->s * lz, b->oz + b->s * lx + b->c * lz);
@@ -699,102 +683,23 @@ int city_road_lamps(const PlanArea *pa, int ri, double x0, double z0, double x1,
  * Everything near one chunk
  * ========================================================================= */
 
-typedef struct ChunkGen {
-    int       cx, cz;
-    double    ox, oz;       /* chunk origin, world */
-    PlanArea *pa;
-    Building *bld;
-    int      *bblk;         /* block index of each building */
-    int       nb, capb;
-    Lamp     *lamp;
-    int       nl, capl;
-    BGraph  **graph;        /* building graphs, generated on demand */
-} ChunkGen;
-
-/* planPad: plan area margin. Buildings are generated for blocks within
- * buildPad of the chunk and lamps within lampPad; lampPad must stay 20 m
- * inside planPad so every road and kerb a lamp is checked against is known. */
-static void gen_init(ChunkGen *g, int cx, int cz, double planPad, double buildPad, double lampPad) {
-    const double P = CHUNK_SIZE;
-    memset(g, 0, sizeof(*g));
-    g->cx = cx; g->cz = cz;
-    g->ox = cx * P; g->oz = cz * P;
-    g->pa = (PlanArea *)malloc(sizeof(PlanArea));
-    if (!g->pa) fatal("out of memory generating a chunk");
-    plan_area(g->ox - planPad, g->oz - planPad, g->ox + P + planPad, g->oz + P + planPad, g->pa);
-
-    Building tmp[256];
-    for (int bi = 0; bi < g->pa->nblocks; ++bi) {
-        const Block *bk = &g->pa->blocks[bi];
-        if (bk->x1 < g->ox - buildPad || bk->x0 > g->ox + P + buildPad ||
-            bk->z1 < g->oz - buildPad || bk->z0 > g->oz + P + buildPad) continue;
-        int n = city_block_buildings(bk, tmp, 256);
-        for (int i = 0; i < n; ++i) {
-            if (g->nb == g->capb) {
-                g->capb = g->capb ? g->capb * 2 : 256;
-                g->bld = (Building *)realloc(g->bld, sizeof(Building) * g->capb);
-                g->bblk = (int *)realloc(g->bblk, sizeof(int) * g->capb);
-                if (!g->bld || !g->bblk) fatal("out of memory generating a chunk");
-            }
-            g->bld[g->nb] = tmp[i];
-            g->bblk[g->nb++] = bi;
-        }
-    }
-    Lamp lt[128];
-    for (int ri = 0; ri < g->pa->nroads; ++ri) {
-        int n = city_road_lamps(g->pa, ri, g->ox - lampPad, g->oz - lampPad, g->ox + P + lampPad, g->oz + P + lampPad, lt, 128);
-        for (int i = 0; i < n; ++i) {
-            if (g->nl == g->capl) {
-                g->capl = g->capl ? g->capl * 2 : 128;
-                g->lamp = (Lamp *)realloc(g->lamp, sizeof(Lamp) * g->capl);
-                if (!g->lamp) fatal("out of memory generating a chunk");
-            }
-            g->lamp[g->nl++] = lt[i];
-        }
-    }
-}
-
-static const BGraph *gen_graph(ChunkGen *g, int i) {
-    if (!g->graph) {
-        g->graph = (BGraph **)calloc((size_t)(g->nb ? g->nb : 1), sizeof(BGraph *));
-        if (!g->graph) fatal("out of memory generating a chunk");
-    }
-    if (!g->graph[i]) {
-        g->graph[i] = (BGraph *)malloc(sizeof(BGraph));
-        if (!g->graph[i]) fatal("out of memory generating a chunk");
-        bgen_build(&g->bld[i], g->graph[i], NULL);
-    }
-    return g->graph[i];
-}
-
-static void gen_free(ChunkGen *g) {
-    if (g->graph) for (int i = 0; i < g->nb; ++i) free(g->graph[i]);
-    free(g->graph);
-    free(g->pa); free(g->bld); free(g->bblk); free(g->lamp);
-    memset(g, 0, sizeof(*g));
-}
-
-static int owns(const ChunkGen *g, double x, double z) {
-    return (int)floor(x / CHUNK_SIZE) == g->cx && (int)floor(z / CHUNK_SIZE) == g->cz;
-}
-
 static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg);
 
 void city_layout(int cx, int cz, BlockLayout *L) {
     const double P = CHUNK_SIZE;
     ChunkGen g;
-    gen_init(&g, cx, cz, 25.0, 0.0, 0.0);
+    chunk_gen_init(&g, cx, cz, 25.0, 0.0, 0.0);
     memset(L, 0, sizeof(*L));
     L->cx = cx; L->cz = cz;
     L->density = plan_density((cx + 0.5) * P, (cz + 0.5) * P);
     for (int i = 0; i < g.nb && L->nbuild < MAX_BUILDINGS; ++i) {
         const Building *b = &g.bld[i];
-        if (!owns(&g, b->ox, b->oz)) continue;
+        if (!chunk_gen_owns(&g, b->ox, b->oz)) continue;
         L->build[L->nbuild++] = *b;
-        collide_building(L, b, gen_graph(&g, i));
+        collide_building(L, b, chunk_gen_graph(&g, i));
     }
     for (int i = 0; i < g.nl && L->nlamps < MAX_LAMPS; ++i)
-        if (owns(&g, g.lamp[i].x, g.lamp[i].z)) L->lamp[L->nlamps++] = g.lamp[i];
+        if (chunk_gen_owns(&g, g.lamp[i].x, g.lamp[i].z)) L->lamp[L->nlamps++] = g.lamp[i];
     for (int i = 0; i < g.pa->nblocks && L->ncurbs < MAX_CURBS; ++i) {
         const Block *bk = &g.pa->blocks[i];
         if (bk->x1 < g.ox || bk->x0 > g.ox + P || bk->z1 < g.oz || bk->z0 > g.oz + P) continue;
@@ -812,7 +717,7 @@ void city_layout(int cx, int cz, BlockLayout *L) {
             if (x1 >= g.ox && x0 <= g.ox + P && z1 >= g.oz && z0 <= g.oz + P) L->drop[L->ndrops++] = dk[d];
         }
     }
-    gen_free(&g);
+    chunk_gen_free(&g);
 }
 
 /* ===========================================================================
@@ -4346,7 +4251,7 @@ static void build_lights(Mesh *m, ChunkGen *g) {
         double rr = 0.5 * sqrt((double)(b->foot.x1 - b->foot.x0) * (b->foot.x1 - b->foot.x0) + (double)(b->foot.z1 - b->foot.z0) * (b->foot.z1 - b->foot.z0)) + 14.0;
         float lx = (float)(b->ox - g->ox), lz = (float)(b->oz - g->oz);
         if (lx < bx0 - rr || lx > bx1 + rr || lz < bz0 - rr || lz > bz1 + rr) continue;
-        const BGraph *bg = gen_graph(g, i);
+        const BGraph *bg = chunk_gen_graph(g, i);
         if (bg->archetype == ARCH_ARCOLOGY) {
             /* the arcology's real lights: cold light from the crown, sodium in the portals */
             Interiors in;
@@ -4479,7 +4384,7 @@ static WallHit facade_ray(ChunkGen *g, DVec2 p, DVec2 dir, float y, double maxT)
         double t0 = 0.0, t1 = best;
         if (!slab(lx, ux, b->foot.x0 - pad, b->foot.x1 + pad, &t0, &t1) ||
             !slab(lz, uz, b->foot.z0 - pad, b->foot.z1 + pad, &t0, &t1)) continue;
-        const BGraph *bg = gen_graph(g, i);
+        const BGraph *bg = chunk_gen_graph(g, i);
         for (int si = 0; si < bg->nsec; ++si) {
             const BSection *s = &bg->sec[si];
             if (y < s->y0 || y > s->y1) continue;
@@ -4665,7 +4570,7 @@ static int wall_anchor(ChunkGen *g, DVec2 p, DVec2 dir, float y, double maxT, fl
     WallHit h = facade_ray(g, p, dir, y, maxT);
     if (h.t < 0.0) return 0;
     const Building *b = &g->bld[h.b];
-    const BGraph *bg = gen_graph(g, h.b);
+    const BGraph *bg = chunk_gen_graph(g, h.b);
     const BSection *s = &bg->sec[h.s];
     EdgeInfo e = edge_of(h.li ? &s->foot.hole : &s->foot.outer, h.k);
     float u2, y2;
@@ -4796,7 +4701,7 @@ static void build_street_cables(Mesh *m, ChunkGen *g) {
         int k = 0;
         for (double s = rd->trimA + 3.0 + rng_range(&step, 0.0, 8.0); s < s1; s += rng_range(&step, 5.0f, 13.0f), ++k) {
             DVec2 q = dadd(rd->a, dscale(dir, s));
-            if (!owns(g, q.x, q.z)) continue;
+            if (!chunk_gen_owns(g, q.x, q.z)) continue;
             Rng r = rng_make(hash_combine(seedR, (uint32_t)k));
             float dens = plan_density(q.x, q.z);
             if (rng_float(&r) >= minf(0.1f + 0.7f * dens, 0.7f)) continue;
@@ -4821,7 +4726,7 @@ static void build_street_cables(Mesh *m, ChunkGen *g) {
         int nl = city_road_lamps(g->pa, ri, g->ox - 60.0, g->oz - 60.0, g->ox + P + 60.0, g->oz + P + 60.0, lt, 128);
         for (int i = 0; i < nl; ++i) {
             const Lamp *A = &lt[i];
-            if (!owns(g, A->x, A->z)) continue;
+            if (!chunk_gen_owns(g, A->x, A->z)) continue;
             Rng r = rng_make(hash2i(seedR ^ 0x1A4Fu, (int32_t)floor(A->x * 4.0), (int32_t)floor(A->z * 4.0)));
             float dens = plan_density(A->x, A->z);
             const float top = LAMP_HEIGHT - 0.25f;
@@ -4874,7 +4779,7 @@ typedef struct WallFrame { DVec2 o, t, n; float len; const BGraph *bg; int s; } 
 static WallFrame wall_frame(ChunkGen *g, int bi, int si, int li, int k) {
     const Building *b = &g->bld[bi];
     WallFrame w;
-    w.bg = gen_graph(g, bi);
+    w.bg = chunk_gen_graph(g, bi);
     w.s = si;
     const BSection *s = &w.bg->sec[si];
     EdgeInfo e = edge_of(li ? &s->foot.hole : &s->foot.outer, k);
@@ -4907,8 +4812,8 @@ static int clear_of_glass(const WallFrame *w, DVec2 a, float ya, DVec2 b, float 
 static void build_alley_cables(Mesh *m, ChunkGen *g) {
     for (int i = 0; i < g->nb; ++i) {
         const Building *b = &g->bld[i];
-        if (!owns(g, b->ox, b->oz)) continue;
-        const BGraph *bg = gen_graph(g, i);
+        if (!chunk_gen_owns(g, b->ox, b->oz)) continue;
+        const BGraph *bg = chunk_gen_graph(g, i);
         float pCable = 0.3f + 0.45f * b->density;
         for (int si = 0; si < bg->nsec; ++si) {
             const BSection *s = &bg->sec[si];
@@ -4973,7 +4878,7 @@ static void build_cables(Mesh *m, ChunkGen *g) {
 
 void city_build_mesh(int cx, int cz, Mesh *m) {
     ChunkGen g;
-    gen_init(&g, cx, cz, 130.0, 90.0, 105.0);
+    chunk_gen_init(&g, cx, cz, 130.0, 90.0, 105.0);
     m->count = 0;
     m->xf = 0;
     m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
@@ -4985,14 +4890,14 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
     build_roads(m, &g);
     build_blocks(m, &g);
     for (int i = 0; i < g.nl; ++i)
-        if (owns(&g, g.lamp[i].x, g.lamp[i].z)) build_lamp(m, &g, &g.lamp[i], (uint32_t)i);
+        if (chunk_gen_owns(&g, g.lamp[i].x, g.lamp[i].z)) build_lamp(m, &g, &g.lamp[i], (uint32_t)i);
     for (int i = 0; i < g.nb; ++i) {
         const Building *b = &g.bld[i];
-        if (!owns(&g, b->ox, b->oz)) continue;
+        if (!chunk_gen_owns(&g, b->ox, b->oz)) continue;
         m->xf = 1;
         m->xc = b->c; m->xs = b->s;
         m->xx = (float)(b->ox - g.ox); m->xz = (float)(b->oz - g.oz);
-        const BGraph *bg = gen_graph(&g, i);
+        const BGraph *bg = chunk_gen_graph(&g, i);
         Interiors in;
         interiors_plan(b, bg, &in);
         emit_building(m, b, bg, &in);
@@ -5001,14 +4906,14 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
     }
     build_cables(m, &g);
     build_lights(m, &g);
-    gen_free(&g);
+    chunk_gen_free(&g);
 }
 
 /* The near-only layer (src/render/chunks.c): the lobbies behind the ground-floor
  * glass of the buildings centred in this chunk, in the same chunk-local space. */
 void city_build_interiors(int cx, int cz, Mesh *m) {
     ChunkGen g;
-    gen_init(&g, cx, cz, 25.0, 0.0, 0.0);
+    chunk_gen_init(&g, cx, cz, 25.0, 0.0, 0.0);
     m->count = 0;
     m->xf = 0;
     m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
@@ -5018,8 +4923,8 @@ void city_build_interiors(int cx, int cz, Mesh *m) {
     m->nlights = 0;
     for (int i = 0; i < g.nb; ++i) {
         const Building *b = &g.bld[i];
-        if (!owns(&g, b->ox, b->oz)) continue;
-        const BGraph *bg = gen_graph(&g, i);
+        if (!chunk_gen_owns(&g, b->ox, b->oz)) continue;
+        const BGraph *bg = chunk_gen_graph(&g, i);
         Interiors in;
         interiors_plan(b, bg, &in);
         m->xf = 1;
@@ -5030,12 +4935,12 @@ void city_build_interiors(int cx, int cz, Mesh *m) {
         m->xf = 0;
         interiors_free(&in);
     }
-    gen_free(&g);
+    chunk_gen_free(&g);
 }
 
 void city_build_plants(int cx, int cz, Mesh *m) {
     ChunkGen g;
-    gen_init(&g, cx, cz, 25.0, 0.0, 0.0);
+    chunk_gen_init(&g, cx, cz, 25.0, 0.0, 0.0);
     m->count = 0;
     m->xf = 0;
     m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
@@ -5047,8 +4952,8 @@ void city_build_plants(int cx, int cz, Mesh *m) {
     ILayout *L = NULL;
     for (int i = 0; i < g.nb; ++i) {
         const Building *b = &g.bld[i];
-        if (!owns(&g, b->ox, b->oz)) continue;
-        const BGraph *bg = gen_graph(&g, i);
+        if (!chunk_gen_owns(&g, b->ox, b->oz)) continue;
+        const BGraph *bg = chunk_gen_graph(&g, i);
         if (bg->archetype == ARCH_ARCOLOGY) continue;   /* arcologies have no planters */
         int secs[2], ns = interior_sections(bg, secs, 2);
         if (!ns) continue;
@@ -5061,7 +4966,7 @@ void city_build_plants(int cx, int cz, Mesh *m) {
         m->xf = 0;
     }
     free(L);
-    gen_free(&g);
+    chunk_gen_free(&g);
     grow_plants(m, &pl);
     free(pl.s);
 }

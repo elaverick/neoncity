@@ -1,4 +1,5 @@
 #include "building.h"
+#include "gen_common.h"
 #include "hash.h"
 #include "mathlib.h"
 #include <stdarg.h>
@@ -14,15 +15,6 @@ static const char *ARR_NAMES[] = { "ground", "stack", "arcade", "projection", "s
 
 const char *bgen_archetype_name(int a) { return a >= 0 && a < ARCH_COUNT ? ARCH_NAMES[a] : "?"; }
 const char *bgen_district_name(int d) { return d >= 0 && d < DIST_COUNT ? DIST_NAMES[d] : "?"; }
-
-static void blog(BLog *log, const char *fmt, ...) {
-    if (!log || !log->buf || log->len >= log->cap - 1) return;
-    va_list ap;
-    va_start(ap, fmt);
-    int n = vsnprintf(log->buf + log->len, (size_t)(log->cap - log->len), fmt, ap);
-    va_end(ap);
-    if (n > 0) log->len = log->len + n < log->cap - 1 ? log->len + n : log->cap - 1;
-}
 
 float bgen_bay_width(uint32_t seed, int fine) {
     float h = hash_float(hash_combine(hash_u32(seed ^ 0x5f3759dfu), 4u));
@@ -482,7 +474,7 @@ static int build_base(Ctx *c, const FootSpec *s, int nTop, int arcade, int stree
             if (bi < 0) return -1;
             c->g->sec[bi].arr = ARR_ARCADE;
             columns_under(c, bi, 0.7f, rng_range(&c->rf, 4.5f, 6.5f), G0, 0.6f, mask);
-            blog(c->log, "  arcade: ground floor set back %.1f m behind columns\n", sb);
+            blog_printf(c->log, "  arcade: ground floor set back %.1f m behind columns\n", sb);
             *groundOut = gi;
             return bi;
         }
@@ -500,7 +492,7 @@ static int build_tower(Ctx *c, FootSpec ts, int on, int k0, int kTop, int allowP
     static const char *PROF[] = { "straight", "tapered", "waisted", "flared", "twisted" };
     float pw[5] = { 0.5f, 0.15f, 0.1f, 0.1f, 0.15f };
     int prof = allowProfile && kTop - k0 >= 10 ? pick(&c->rf, pw, 5) : 0;
-    blog(c->log, "  tower: %s %s %.0fx%.0f m, floors %d-%d\n", PROF[prof], FAM_NAMES[ts.fam], ts.w, ts.d, k0, kTop);
+    blog_printf(c->log, "  tower: %s %s %.0fx%.0f m, floors %d-%d\n", PROF[prof], FAM_NAMES[ts.fam], ts.w, ts.d, k0, kTop);
     int below = on;
     if (prof == 0) {
         int steps = rng_float(&c->rf) < 0.3f ? rng_int(&c->rf, 1, 2) : 0;
@@ -562,7 +554,7 @@ static int arch_office(Ctx *c) {
     int fam = pick(&c->rf, fw, FAM_COUNT);
     FootSpec s = site_spec(c, fam, rng_range(&c->rf, 0.0f, 1.2f));
     if (!spec_ok(&s)) s = site_spec(c, FAM_RECT, 0.5f);
-    blog(c->log, "  footprint: %s %.0fx%.0f m\n", FAM_NAMES[s.fam], s.w, s.d);
+    blog_printf(c->log, "  footprint: %s %.0fx%.0f m\n", FAM_NAMES[s.fam], s.w, s.d);
     int arcade = (s.fam == FAM_RECT || s.fam == FAM_CHAMFER) && rng_float(&c->rf) < 0.12f;
     int setback = c->N >= 6 && rng_float(&c->rf) < 0.35f;
     int kLow = setback ? (int)maxf(2.0f, (float)c->N * rng_range(&c->rf, 0.55f, 0.8f)) : c->N;
@@ -662,7 +654,7 @@ static int arch_projection(Ctx *c) {
     int k1 = k0 + rng_int(&c->rf, 2, 6);
     if (k1 > N) k1 = N;
     static const char *SUP[] = { "columns", "raked struts", "core" };
-    blog(c->log, "  projection: %.1f m on %s%s, %s, floors %d-%d\n", p,
+    blog_printf(c->log, "  projection: %.1f m on %s%s, %s, floors %d-%d\n", p,
          (sideMask & (SIDE_W | SIDE_E)) && (sideMask & (SIDE_S | SIDE_N)) ? "a corner" : "one side", "", SUP[sup], k0, k1);
     int gi, base = build_base(c, &bs, k0, 0, 0, SEC_BODY, &gi);
     if (base < 0) return 0;
@@ -766,7 +758,7 @@ static int arch_twin(Ctx *c) {
             c->g->sec[bi].win = WIN_CURTAIN;
             c->g->sec[bi].ledTop = 1;
             c->g->sec[bi].fins = 0;
-            blog(c->log, "  sky bridge: floors %d-%d, clear span %.1f m\n", kb, kb + 2, gap);
+            blog_printf(c->log, "  sky bridge: floors %d-%d, clear span %.1f m\n", kb, kb + 2, gap);
         }
     }
     return 1;
@@ -781,7 +773,7 @@ static int arch_gateway(Ctx *c) {
     int ke = ks + rng_int(&c->rf, 3, 7);
     if (ke > c->N) ke = c->N;
     if (ke <= ks || pw < 8.0f || S - 2.0f * m < 10.0f) return 0;
-    blog(c->log, "  gateway: piers %.0f m wide, clear span %.1f m, span floors %d-%d\n", pw, L - 2.0f * m - 2.0f * pw, ks, ke);
+    blog_printf(c->log, "  gateway: piers %.0f m wide, clear span %.1f m, span floors %d-%d\n", pw, L - 2.0f * m - 2.0f * pw, ks, ke);
     int pier[2];
     for (int t = 0; t < 2; ++t) {
         FootSpec s;
@@ -887,7 +879,7 @@ static int arch_housing(Ctx *c, int point) {
         if (top < 0) return 0;
         c->g->sec[top].arr = ARR_ARCADE;
         columns_under(c, top, 0.8f, 6.0f, G0, 0.7f, -1);
-        blog(c->log, "  void deck: %d lift core(s) and columns\n", nc);
+        blog_printf(c->log, "  void deck: %d lift core(s) and columns\n", nc);
     } else {
         int gi;
         top = build_base(c, &s, c->N - crown, 0, 0, SEC_BODY, &gi);
@@ -1210,7 +1202,7 @@ static float supporter_depth(const BGraph *g, const BSection *s) {
 int bgen_validate(const BGraph *g, const Building *b, BLog *log) {
     const float tol = 0.02f;
     int ok = 1;
-#define REJECT(...) do { blog(log, "  rejected: " __VA_ARGS__); blog(log, "\n"); ok = 0; } while (0)
+#define REJECT(...) do { blog_printf(log, "  rejected: " __VA_ARGS__); blog_printf(log, "\n"); ok = 0; } while (0)
     if (g->nsec == 0) { REJECT("no sections"); return 0; }
     float top = 0.0f;
     for (int i = 0; i < g->nsec && ok; ++i) {
@@ -1288,7 +1280,7 @@ int bgen_validate(const BGraph *g, const Building *b, BLog *log) {
         default:
             REJECT("section %d: unknown arrangement", i);
         }
-        if (ok && s->arr != ARR_STACK) blog(log, "  accepted %s for section %d (%.1f m)\n", ARR_NAMES[s->arr], i, o.max);
+        if (ok && s->arr != ARR_STACK) blog_printf(log, "  accepted %s for section %d (%.1f m)\n", ARR_NAMES[s->arr], i, o.max);
     }
     /* sections side by side must not collide */
     for (int i = 0; i < g->nsec && ok; ++i)
@@ -1383,7 +1375,7 @@ static void build_simple(Ctx *c) {
 
 void bgen_build(const Building *b, BGraph *g, BLog *log) {
     Ctx c;
-    blog(log, "building %08x: plot %.0fx%.0f m, height %.0f m, %s\n", b->seed,
+    blog_printf(log, "building %08x: plot %.0fx%.0f m, height %.0f m, %s\n", b->seed,
          b->foot.x1 - b->foot.x0, b->foot.z1 - b->foot.z0, b->height, DIST_NAMES[district_of(b)]);
     for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
         init_ctx(&c, b, g, log, attempt);
@@ -1392,7 +1384,7 @@ void bgen_build(const Building *b, BGraph *g, BLog *log) {
         g->groundMode = choose_ground(&c);
         g->fine = g->archetype == ARCH_ARCOLOGY;
         set_floors(&c);
-        blog(log, " attempt %d: %s, %d floors\n", attempt + 1, ARCH_NAMES[g->archetype], c.N);
+        blog_printf(log, " attempt %d: %s, %d floors\n", attempt + 1, ARCH_NAMES[g->archetype], c.N);
         int built = 0;
         switch (g->archetype) {
         case ARCH_OFFICE:     built = arch_office(&c); break;
@@ -1406,13 +1398,13 @@ void bgen_build(const Building *b, BGraph *g, BLog *log) {
         case ARCH_POINT:      built = arch_housing(&c, 1); break;
         default:              built = arch_shed(&c); break;
         }
-        if (!built) { blog(log, "  rejected: proposal does not fit the plot\n"); continue; }
+        if (!built) { blog_printf(log, "  rejected: proposal does not fit the plot\n"); continue; }
         if (g->groundMode == GF_VOID) g->groundH = city_ground_height(g->seed);
         choose_roofs(&c);
         place_doors(&c);
         if (bgen_validate(g, b, log)) {
             g->attempts = attempt + 1;
-            blog(log, " accepted: %d sections, %d supports, %d doors\n", g->nsec, g->nsup, g->ndoor);
+            blog_printf(log, " accepted: %d sections, %d supports, %d doors\n", g->nsec, g->nsup, g->ndoor);
             return;
         }
     }
@@ -1422,5 +1414,5 @@ void bgen_build(const Building *b, BGraph *g, BLog *log) {
     choose_roofs(&c);
     g->attempts = MAX_ATTEMPTS;
     g->simplified = 1;
-    blog(log, " simplified to a plain block\n");
+    blog_printf(log, " simplified to a plain block\n");
 }
