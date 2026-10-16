@@ -105,10 +105,43 @@ static void pick_device(VkCore *vk) {
     printf("GPU: %s (MSAA x%d)\n", vk->props.deviceName, (int)vk->msaa);
 }
 
-static void create_device(VkCore *vk) {
+static bool has_device_ext(VkPhysicalDevice pd, const char *name) {
+    uint32_t n = 0;
+    vkEnumerateDeviceExtensionProperties(pd, NULL, &n, NULL);
+    VkExtensionProperties *props = (VkExtensionProperties *)malloc(sizeof(VkExtensionProperties) * (n ? n : 1));
+    vkEnumerateDeviceExtensionProperties(pd, NULL, &n, props);
+    bool found = false;
+    for (uint32_t i = 0; i < n; ++i)
+        if (strcmp(props[i].extensionName, name) == 0) found = true;
+    free(props);
+    return found;
+}
+
+static void create_device(VkCore *vk, bool wantRt) {
     VkPhysicalDeviceFeatures supported;
     vkGetPhysicalDeviceFeatures(vk->phys, &supported);
     vk->mdi = supported.multiDrawIndirect && supported.drawIndirectFirstInstance;
+
+    /* Ray queries: everything ray-traced shadows need, or none of it. */
+    VkPhysicalDeviceRayQueryFeaturesKHR rqHave = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR };
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR asHave = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR };
+    VkPhysicalDeviceVulkan12Features f12Have = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+    asHave.pNext = &rqHave;
+    f12Have.pNext = &asHave;
+    VkPhysicalDeviceFeatures2 haveAll = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+    haveAll.pNext = &f12Have;
+    bool rtExts = has_device_ext(vk->phys, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+                  has_device_ext(vk->phys, VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
+                  has_device_ext(vk->phys, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+    if (rtExts) vkGetPhysicalDeviceFeatures2(vk->phys, &haveAll);
+    vk->rt = wantRt && rtExts && asHave.accelerationStructure && rqHave.rayQuery && f12Have.bufferDeviceAddress;
+    if (vk->rt) {
+        vk->asProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
+        VkPhysicalDeviceProperties2 p2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+        p2.pNext = &vk->asProps;
+        vkGetPhysicalDeviceProperties2(vk->phys, &p2);
+    }
+    printf("Ray-traced shadows: %s\n", vk->rt ? "on" : wantRt ? "off (the GPU has no ray queries)" : "off (--noshadows)");
 
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qi = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
@@ -116,35 +149,46 @@ static void create_device(VkCore *vk) {
     qi.queueCount = 1;
     qi.pQueuePriorities = &prio;
 
+    VkPhysicalDeviceRayQueryFeaturesKHR rq = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR };
+    rq.rayQuery = VK_TRUE;
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR as = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR };
+    as.accelerationStructure = VK_TRUE;
+    as.pNext = &rq;
+    VkPhysicalDeviceVulkan12Features f12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+    f12.bufferDeviceAddress = VK_TRUE;
+    f12.pNext = &as;
     VkPhysicalDeviceVulkan13Features f13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
     f13.dynamicRendering = VK_TRUE;
     f13.synchronization2 = VK_TRUE;
+    f13.shaderDemoteToHelperInvocation = VK_TRUE;   /* city.frag's discards (required in Vulkan 1.3) */
+    if (vk->rt) f13.pNext = &f12;
     VkPhysicalDeviceFeatures2 f2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
     f2.pNext = &f13;
     f2.features.multiDrawIndirect = vk->mdi ? VK_TRUE : VK_FALSE;
     f2.features.drawIndirectFirstInstance = vk->mdi ? VK_TRUE : VK_FALSE;
     f2.features.samplerAnisotropy = supported.samplerAnisotropy;
 
-    const char *exts[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+    const char *exts[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+                           VK_KHR_RAY_QUERY_EXTENSION_NAME, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME };
     VkDeviceCreateInfo ci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     ci.pNext = &f2;
     ci.queueCreateInfoCount = 1;
     ci.pQueueCreateInfos = &qi;
-    ci.enabledExtensionCount = 1;
+    ci.enabledExtensionCount = vk->rt ? 4 : 1;
     ci.ppEnabledExtensionNames = exts;
     VK_CHECK(vkCreateDevice(vk->phys, &ci, NULL, &vk->device));
     volkLoadDevice(vk->device);
     vkGetDeviceQueue(vk->device, vk->queueFamily, 0, &vk->queue);
 }
 
-void vk_init(VkCore *vk, GLFWwindow *window, bool validation) {
+void vk_init(VkCore *vk, GLFWwindow *window, bool validation, bool rt) {
     memset(vk, 0, sizeof(*vk));
     vk->window = window;
     VK_CHECK(volkInitialize());
     create_instance(vk, validation);
     VK_CHECK(glfwCreateWindowSurface(vk->instance, window, NULL, &vk->surface));
     pick_device(vk);
-    create_device(vk);
+    create_device(vk, rt);
     vk_create_swapchain(vk);
 }
 
@@ -244,11 +288,20 @@ Buffer vk_buffer(VkCore *vk, VkDeviceSize size, VkBufferUsageFlags usage, VkMemo
     VkMemoryAllocateInfo ai = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
     ai.allocationSize = req.size;
     ai.memoryTypeIndex = find_memory(vk, req.memoryTypeBits, props);
+    VkMemoryAllocateFlagsInfo fi = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO };
+    fi.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) ai.pNext = &fi;
     VK_CHECK(vkAllocateMemory(vk->device, &ai, NULL, &b.mem));
     VK_CHECK(vkBindBufferMemory(vk->device, b.buf, b.mem, 0));
     if (props & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
         VK_CHECK(vkMapMemory(vk->device, b.mem, 0, VK_WHOLE_SIZE, 0, &b.mapped));
     return b;
+}
+
+VkDeviceAddress vk_buffer_address(VkCore *vk, VkBuffer b) {
+    VkBufferDeviceAddressInfo ai = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+    ai.buffer = b;
+    return vkGetBufferDeviceAddress(vk->device, &ai);
 }
 
 void vk_buffer_destroy(VkCore *vk, Buffer *b) {

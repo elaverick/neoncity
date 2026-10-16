@@ -1,0 +1,197 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+/* Ray-traced shadows, second pass (renderer.c: record_shadows): soft shadows
+ * from one ray per light per pixel (shadow_trace.comp).
+ *
+ * History first: the previous frame's result for this surface (reprojected,
+ * checked against the depth it had then, each slot matched by light id). Where
+ * a slot was fully lit, or fully in shadow, and this frame's ray agrees, that
+ * stands: the world doesn't move, so neither do its shadows. That is most of
+ * the screen, once the history has settled.
+ *
+ * The rest (near a shadow's edge, or newly in view) are filtered:
+ * - Blocker search: neighbouring pixels on the same surface (its plane, facing
+ *   the same way) over a disc about SEARCH_M across at this depth, matched by
+ *   light id. If every ray there got through, or none did, the slot is simply
+ *   lit or in shadow. Otherwise the blocked rays' penumbra widths say how soft
+ *   the edge is.
+ * - Filter: the slot's visibility averaged over a disc the size of the
+ *   penumbra (the most important MAX_FILTERED slots on taps of their own, any
+ *   others from the search's taps).
+ * - Accumulate: blended into the history. The rays sample other points on the
+ *   emitters each frame, and the taps turn, so the average settles on the true
+ *   soft shadow.
+ *
+ * Out (vis): x, y 8 bits of visibility per slot (slots as ids); z the pixel's
+ * forward distance; w its draw chunk | SH_VALID | SH_OVERFLOW. city.frag uses
+ * the slots only for the surface they were made for. */
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 8) uniform sampler2D depthTex;
+layout(set = 0, binding = 9) uniform usampler2D gbufTex;
+layout(set = 0, binding = 10, rgba32ui) uniform readonly uimage2D idsIn;
+layout(set = 0, binding = 11, rg32ui) uniform readonly uimage2D rawIn;
+layout(set = 0, binding = 12, rgba32ui) uniform writeonly uimage2D visOut;
+layout(set = 0, binding = 13) uniform usampler2D prevVis;
+layout(set = 0, binding = 14) uniform usampler2D prevIds;
+layout(push_constant) uniform Push { uint history; } pc;   // 0: the previous frame's results aren't there
+
+const int   SEARCH_TAPS = 12, FILTER_TAPS = 12, MAX_FILTERED = 3;
+const int   HISTORY_TAPS = 6;       // taps for a slot the history already carries (the taps turn every frame)
+const float SEARCH_M = 1.5;        // blocker search disc, metres across at the pixel's depth
+const float MAX_RADIUS = 40.0;     // pixels
+const float ALPHA = 0.2;           // weight of this frame against the history
+const float GOLDEN_ANGLE = 2.39996323;
+
+ivec2 gSize;
+vec3  gRel, gN;
+float gLin;
+
+float penDecode(uint code) { return 0.01 * exp2((float(code) - 1.0) / 1.5); }   // shadow_trace.comp: penEncode
+uint  slotId(uvec4 ids, int k) { return (ids[k >> 1] >> (16u * uint(k & 1))) & 0xFFFFu; }
+float slotLit(uvec2 raw, int k) { return float((raw.x >> uint(k)) & 1u); }
+float slotPen(uvec2 raw, int k) { return penDecode((raw.y >> (4u * uint(k))) & 15u); }
+// Where light id sits among a pixel's slots (-1: not there); neighbours mostly rank their lights alike, so try k first.
+int findSlot(uvec4 ids, uint id, int k) {
+    if (slotId(ids, k) == id) return k;
+    for (int j = 0; j < SHADOW_SLOTS; ++j)
+        if (slotId(ids, j) == id) return j;
+    return -1;
+}
+
+vec3 relAt(ivec2 q, float z) {
+    vec2 ndc = (vec2(q) + frame.shadow.zw) * frame.screen.zw * 2.0 - 1.0;
+    return (frame.rayBasis[2].xyz + ndc.x * frame.rayBasis[0].xyz - ndc.y * frame.rayBasis[1].xyz) * forwardDist(z);
+}
+
+// Point i of an n-point Vogel disc of unit radius, turned by rot.
+vec2 vogel(int i, int n, float rot) {
+    float r = sqrt((float(i) + 0.5) / float(n)), a = float(i) * GOLDEN_ANGLE + rot;
+    return r * vec2(cos(a), sin(a));
+}
+
+// How far a neighbour's sample lies on this pixel's surface (1: on its plane,
+// facing the same way); its slots come back in ids and raw.
+float sameSurface(ivec2 q, out uvec4 ids, out uvec2 raw) {
+    ids = uvec4(0u); raw = uvec2(0u);
+    if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, gSize))) return 0.0;
+    raw = imageLoad(rawIn, q).xy;
+    float z = texelFetch(depthTex, q, 0).r;
+    if ((raw.x & SH_VALID) == 0u || z <= 0.0) return 0.0;
+    float plane = abs(dot(gN, relAt(q, z) - gRel)) / (0.02 + gLin * 0.003);
+    if (plane > 2.0) return 0.0;
+    ids = imageLoad(idsIn, q);
+    vec3 n = octDecode(texelFetch(gbufTex, q, 0).x);
+    return exp(-plane * plane) * pow(max(dot(gN, n), 0.0), 8.0);
+}
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    gSize = imageSize(visOut);
+    if (any(greaterThanEqual(px, gSize))) return;
+    uvec2 raw = imageLoad(rawIn, px).xy;
+    float z = texelFetch(depthTex, px, 0).r;
+    uvec2 g = texelFetch(gbufTex, px, 0).xy;
+    gLin = forwardDist(z);
+    uvec4 outv = uvec4(0xFFFFFFFFu, 0xFFFFFFFFu, floatBitsToUint(gLin), (g.y & 0xFFFFu) | (raw.x & (SH_VALID | SH_OVERFLOW)));
+    uvec4 ids = imageLoad(idsIn, px);
+    int ns = 0;
+    while (ns < SHADOW_SLOTS && slotId(ids, ns) != 0u) ++ns;
+    if ((raw.x & SH_VALID) == 0u || ns == 0) { imageStore(visOut, px, outv); return; }
+    gRel = relAt(px, z);
+    gN = octDecode(g.x);
+
+    // the history, and which slots it settles
+    float vis[SHADOW_SLOTS], hist[SHADOW_SLOTS];
+    for (int k = 0; k < ns; ++k) hist[k] = -1.0;
+    if (pc.history != 0u) {
+        vec4 c = frame.prevViewProj * vec4(gRel, 1.0);
+        if (c.w > 1e-3) {
+            ivec2 pq = ivec2(floor((c.xy / c.w * 0.5 + 0.5) * vec2(gSize) - frame.shadow.zw + 0.5));
+            if (all(greaterThanEqual(pq, ivec2(0))) && all(lessThan(pq, gSize))) {
+                uvec4 hv = texelFetch(prevVis, pq, 0);
+                if ((hv.w & SH_VALID) != 0u && abs(uintBitsToFloat(hv.z) - c.w) < 0.02 * c.w + 0.05) {
+                    uvec4 hid = texelFetch(prevIds, pq, 0);
+                    for (int k = 0; k < ns; ++k) {
+                        int j = findSlot(hid, slotId(ids, k), k);
+                        if (j >= 0) hist[k] = float((hv[j >> 2] >> (8u * uint(j & 3))) & 255u) / 255.0;
+                    }
+                }
+            }
+        }
+    }
+    uint need = 0u;
+    for (int k = 0; k < ns; ++k) {
+        float b = slotLit(raw, k);
+        if ((b > 0.5 && hist[k] > 0.995) || (b < 0.5 && hist[k] >= 0.0 && hist[k] < 0.005)) vis[k] = b;
+        else need |= 1u << uint(k);
+    }
+
+    if (need != 0u) {
+        float ppm = frame.screen.y / (2.0 * length(frame.rayBasis[1].xyz) * gLin);   // pixels per metre here
+        float rot = (ign(vec2(px)) + float(uint(frame.shadow.x) & 63u) * 0.618034) * 6.2831853;
+        bool settled = true;   // every slot that needs filtering has a history to blend into
+        for (int k = 0; k < ns; ++k) if ((need & (1u << uint(k))) != 0u && hist[k] < 0.0) settled = false;
+        int searchTaps = settled ? HISTORY_TAPS : SEARCH_TAPS, filterTaps = settled ? HISTORY_TAPS : FILTER_TAPS;
+        float lit[SHADOW_SLOTS], cnt[SHADOW_SLOTS], pen[SHADOW_SLOTS], penN[SHADOW_SLOTS];
+        for (int k = 0; k < ns; ++k) {
+            lit[k] = slotLit(raw, k);
+            cnt[k] = 1.0;
+            pen[k] = lit[k] > 0.5 ? 0.0 : slotPen(raw, k);
+            penN[k] = lit[k] > 0.5 ? 0.0 : 1.0;
+        }
+
+        // blocker search
+        float Rs = clamp(SEARCH_M * 0.5 * ppm, 3.0, MAX_RADIUS);
+        for (int i = 0; i < searchTaps; ++i) {
+            uvec4 tid; uvec2 traw;
+            if (sameSurface(px + ivec2(round(vogel(i, searchTaps, rot) * Rs)), tid, traw) < 0.5) continue;
+            for (int k = 0; k < ns; ++k) {
+                if ((need & (1u << uint(k))) == 0u) continue;
+                int j = findSlot(tid, slotId(ids, k), k);
+                if (j < 0) continue;
+                float b = slotLit(traw, j);
+                lit[k] += b;
+                cnt[k] += 1.0;
+                if (b < 0.5) { pen[k] += slotPen(traw, j); penN[k] += 1.0; }
+            }
+        }
+
+        // filter the slots near a shadow's edge, then accumulate
+        int filtered = 0;
+        for (int k = 0; k < ns; ++k) {
+            if ((need & (1u << uint(k))) == 0u) continue;
+            float v;
+            if (lit[k] < 0.5 || lit[k] > cnt[k] - 0.5) {
+                v = lit[k] > 0.5 ? 1.0 : 0.0;
+            } else if (filtered == MAX_FILTERED) {
+                v = lit[k] / cnt[k];
+            } else {
+                filtered++;
+                float r = clamp(0.5 * pen[k] / max(penN[k], 1.0) * ppm, 1.5, MAX_RADIUS);
+                uint id = slotId(ids, k);
+                float sw = 1.0, sv = slotLit(raw, k);
+                for (int i = 0; i < filterTaps; ++i) {
+                    vec2 o = vogel(i, filterTaps, rot + 1.3) * r;
+                    ivec2 q = px + ivec2(round(o));
+                    if (q == px) continue;
+                    uvec4 tid; uvec2 traw;
+                    float w = sameSurface(q, tid, traw) * exp(-2.0 * dot(o, o) / (r * r));
+                    if (w < 0.01) continue;
+                    int j = findSlot(tid, id, k);
+                    if (j < 0) continue;
+                    sw += w;
+                    sv += w * slotLit(traw, j);
+                }
+                v = sv / sw;
+            }
+            vis[k] = hist[k] >= 0.0 ? mix(hist[k], v, ALPHA) : v;
+        }
+    }
+
+    outv.x = outv.y = 0u;
+    for (int k = 0; k < ns; ++k) outv[k >> 2] |= uint(clamp(vis[k], 0.0, 1.0) * 255.0 + 0.5) << (8u * uint(k & 3));
+    for (int k = ns; k < SHADOW_SLOTS; ++k) outv[k >> 2] |= 255u << (8u * uint(k & 3));
+    imageStore(visOut, px, outv);
+}

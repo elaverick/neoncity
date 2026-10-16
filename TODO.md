@@ -1,5 +1,20 @@
 # TODO
 
+## Shadows
+Every light in the chunks' light tables casts ray-traced shadows (`src/rt.c`, `shaders/shadow_trace.comp`,
+`shaders/shadow_denoise.comp`; see the README).
+- **Dynamic shadows.** Moving things (people, traffic) would go into the top-level structure as instances of their own
+  bottom-level structures, rebuilt or refitted as they move. The denoiser's history is reprojected by the camera alone,
+  so it would need their motion too, or to drop its history where they are (its fast path assumes shadows don't move).
+- **Vertex animation** isn't in the structures: cables cast from where they hang at rest, and the litter whose shape
+  changes casts nothing.
+- **Lobby light** is still analytic (the panels, coves and slots in `shadeInterior`), so plants and furniture cast no
+  shadow indoors; the panels could join the light table, or trace a few rays of their own.
+- **Mist shadows** (see Wet streets): the rain mist could take the same structures, a ray per air light.
+- **Signs and screens** light the clouds and the mist, but not the street, so they cast nothing.
+- **Glass** casts no shadow at all; a tint, or the facade's own windows, would be truer.
+- **Cost:** settled lights could be traced every other frame, and the filter taps cached in shared memory.
+
 ## Office lobbies (next)
 Real lobbies stand behind office ground floors (`src/interior.c`, `emit_interior` in `src/city.c`).
 - **Furniture** is rough boxes; reception, sofas, cafe and cubicles want real assets. Planters hold
@@ -140,8 +155,8 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 **Next (rain):**
 - **Splashes** where drops hit the ground, and drips running down glass and facades.
 - **Mist shadows.** The mist has no shadowing, so a lamp just round a corner glows faintly
-  through the building. It needs per-light visibility (a cube or paraboloid shadow map for
-  the brightest few lights, or rays marched against the shelter map's heights).
+  through the building. The acceleration structures the surfaces' shadows use (see Shadows) are
+  what it needs: a ray per air light from each march step, or from a few points along the view ray.
 - **Lens drops** (optional, cinematic): the occasional drop on the lens, refracting the
   scene.
 - **Keep:** procedural materials on their current Blinn-Phong model until each is moved over.

@@ -1,5 +1,8 @@
-#version 450
+#version 460
 #extension GL_GOOGLE_include_directive : require
+#ifdef RT_SHADOWS
+#extension GL_EXT_ray_query : require
+#endif
 #include "common.glsl"
 
 layout(location = 0) in vec3 vRel;
@@ -128,15 +131,11 @@ float envBRDF(float f0, float rough, float ndv) {
 void addLamp(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, vec3 lpos, vec3 lcol,
              inout vec3 diff, inout vec3 spec) {
     vec3 l = lpos - p;
-    float d2 = dot(l, l);
-    float d = sqrt(d2);
-    float range = smoothstep(34.0, 14.0, d);
-    if (range <= 0.0) return;
-    vec3 L = l / d;
     // the beam below the head, and a spill all round it (the glowing bowl, light
     // scattered off the wet street) that carries up the columns and facades
-    float spot = mix(0.12, 1.0, smoothstep(0.05, 0.55, L.y));
-    float att = 90.0 / (d2 + 1.0) * range * spot;
+    float att = lampFalloff(l);
+    if (att <= 0.0) return;
+    vec3 L = normalize(l);
     float ndl = max(dot(n, L), 0.0);
     diff += lcol * att * ndl;
     spec += lcol * att * specLobe(n, L, V, shin, specK, rough, ndl);
@@ -152,7 +151,7 @@ void addShop(vec3 p, vec3 n, vec3 V, float specK, float rough, vec3 lpos, vec3 c
     if (d > 12.0) return;
     vec3 L = l / max(d, 1e-3);
     float ndl = max(dot(n, L), 0.0);
-    vec3 c = col * 0.45 * exp(-d * 0.38) * smoothstep(12.0, 7.0, d);
+    vec3 c = col * shopFalloff(d);
     diff += c * (0.35 + 0.65 * ndl);
     if (rough >= 0.0) spec += c * ggxSpec(n, L, V, min(max(rough * rough, 0.002) + 0.75 / max(d, 0.5), 1.0), specK, ndl);
     else spec += c * specK * 0.6;
@@ -172,6 +171,71 @@ uint shopHash(uint seed, int section, int face, int next, bool endShare, float a
     return hash3i(WORLD_SEED ^ 0x5B0Au, int(seed), section * 64 + k.x, k.y);
 }
 
+/* Ray-traced shadows (common.glsl). shadow_denoise.comp leaves soft shadows
+ * for the most important lights of the surface the prepass saw at this pixel;
+ * shadowsBegin (in main) reads them and checks they are this surface's. Any
+ * other light bright enough to matter, and every light on a surface the
+ * prepass didn't draw (glass, veils, a triangle's edge that misses sample 0),
+ * gets a hard shadow traced here, to the middle of its emitter. */
+#ifdef RT_SHADOWS
+layout(set = 0, binding = 5) uniform accelerationStructureEXT tlas;
+layout(set = 0, binding = 6) uniform usampler2D shadowIdsTex;   // shadow_trace.comp: slot light ids
+layout(set = 0, binding = 7) uniform usampler2D shadowVisTex;   // shadow_denoise.comp: slot visibility
+uvec4 gSlotIds = uvec4(0u), gSlotVis = uvec4(0u);
+bool  gSlotsOurs = false;        // the slots at this pixel were made for this surface
+vec3  gGeoN = vec3(0.0, 1.0, 0.0);
+uint  gShadowCull = 0xFFu;       // instance mask (src/rt.h)
+#endif
+float gShadowFade = 1.0;         // 1: unshadowed (shadows off, or faded out with distance)
+
+void shadowsBegin() {
+#ifdef RT_SHADOWS
+    float fwd = dot(vRel, frame.camFwd.xyz);
+    float tol = fwidth(fwd) * 1.5 + fwd * 0.002 + 0.01;   // the slots are for sample 0; this fragment is at the pixel's centre
+    gGeoN = normalize(vNrm);
+    gShadowCull = vParams.x == MAT_LITTER ? 0xFFu & ~RT_MASK_LITTER : 0xFFu;   // litter's own shape moves (city.vert)
+    if (!shadowsOn()) return;
+    gShadowFade = smoothstep(SHADOW_FADE, SHADOW_FAR, length(vRel));
+    ivec2 px = ivec2(gl_FragCoord.xy);
+    gSlotVis = texelFetch(shadowVisTex, px, 0);
+    gSlotsOurs = (gSlotVis.w & SH_VALID) != 0u && (gSlotVis.w & 0xFFFFu) == vChunk && abs(uintBitsToFloat(gSlotVis.z) - fwd) < tol;
+    if (gSlotsOurs) gSlotIds = texelFetch(shadowIdsTex, px, 0);
+#endif
+}
+
+#ifdef RT_SHADOWS
+// 1 if nothing stands between this fragment (p, chunk-local) and the middle of the light's emitter.
+float traceShadow(vec3 p, vec3 lp, uint w) {
+    vec3 e = emitterCentre(lp, w, p) + gC.origin.xyz;
+    vec3 nn = dot(gGeoN, e - vRel) >= 0.0 ? gGeoN : -gGeoN;
+    vec3 o = vRel + nn * (0.01 + length(vRel) * 2e-4);
+    vec3 toE = e - o;
+    float len = length(toE);
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, gShadowCull, o, 0.0, toE / len, max(len - 0.02, 0.0));
+    while (rayQueryProceedEXT(q)) {}
+    return rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
+}
+#endif
+
+// How much of light record w (at lp, chunk-local) reaches this fragment.
+float shadowVis(vec3 p, vec3 n, vec3 V, vec3 lp, uint w) {
+#ifdef RT_SHADOWS
+    if (gShadowFade >= 1.0 || !castsShadow(w)) return 1.0;
+    float v = -1.0;
+    if (gSlotsOurs) {
+        uint id = lightId(gC.info.xy, lp, w);
+        for (int k = 0; k < SHADOW_SLOTS; ++k)
+            if (((gSlotIds[k >> 1] >> (16u * uint(k & 1))) & 0xFFFFu) == id) v = float((gSlotVis[k >> 2] >> (8u * uint(k & 3))) & 255u) / 255.0;
+        if (v < 0.0 && (gSlotVis.w & SH_OVERFLOW) == 0u) return 1.0;   // too faint here to show a shadow
+    }
+    if (v < 0.0) v = lightImportance(p, n, V, lp, w) < LIGHT_NEGLIGIBLE ? 1.0 : traceShadow(p, lp, w);
+    return mix(v, 1.0, gShadowFade);
+#else
+    return 1.0;
+#endif
+}
+
 // rough < 0: procedural Blinn-Phong (shin, specK); rough >= 0: GGX with F0 = specK.
 void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, inout vec3 diff, inout vec3 spec) {
     int base = gC.info.z;
@@ -185,8 +249,12 @@ void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, in
         uvec4 r = lightRec[first + i];
         vec3 lp = uintBitsToFloat(r.xyz);
         uint type = r.w & 3u;
-        if (type < 2u) addLamp(p, n, V, shin, specK, rough, lp, lampColor(int(type)) * lampState(r.w >> 2, gTime), diff, spec);
-        else addShop(p, n, V, specK, rough, lp, type == 2u ? shopColor(r.w) : LOBBY_SPILL, diff, spec);
+        vec3 l = lp - p;
+        if (dot(l, l) > (type < 2u ? 34.0 * 34.0 : 12.0 * 12.0)) continue;   // out of its reach (addLamp, addShop)
+        float vis = shadowVis(p, n, V, lp, r.w);
+        if (vis <= 0.0) continue;
+        if (type < 2u) addLamp(p, n, V, shin, specK, rough, lp, lampColor(int(type)) * lampState(r.w >> 2, gTime) * vis, diff, spec);
+        else addShop(p, n, V, specK, rough, lp, (type == 2u ? shopColor(r.w) : LOBBY_SPILL) * vis, diff, spec);
     }
 }
 
@@ -2229,8 +2297,11 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float fs = fract(u / 1.5);
         float aa = dU / 1.5 * 1.5 + dV * 0.2;
         float inWin = band(yy, 0.08, glassTop, dV + 0.01) * (1.0 - band(fs, 0.0, 0.04, aa) - band(fs, 0.96, 1.0, aa));
-        vec3 spec;
-        vec3 diffL = wallLighting(p, n, V, 30.0, 0.15, vAbs, spec);
+        float lodR = smoothstep(0.08, 0.4, dU / 8.0);
+        // a pane over a real lobby (below) shows no light on its own surface: skip the lamps' shadow rays there
+        bool realPane = (prm.z & 128u) != 0u && (prm.w & 64u) == 0u && inWin > 0.5 && length(rel) < REAL_GLASS_DIST && lodR < 0.75;
+        vec3 spec = vec3(0.0);
+        vec3 diffL = realPane ? vec3(0.0) : wallLighting(p, n, V, 30.0, 0.15, vAbs, spec);
         vec3 wallC = wallAlb * 0.9 * diffL + spec;
         // light lines set into the mullions (every first, second or third) in the lobby's accent colour
         if (groundMode != 3u && hf(sh, 63u) < 0.8) {
@@ -2239,7 +2310,6 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             if (mod(k, every) < 0.5)
                 wallC += lobbyAccent(seed) * 6.0 * (1.0 - smoothstep(w * 0.6, w, dm)) * (0.012 / w) * band(yy, 0.08, glassTop, dV + 0.01);
         }
-        float lodR = smoothstep(0.08, 0.4, dU / 8.0);
         if ((prm.w & 64u) != 0u) {
             // A closed room or a core of the real lobby stands behind this
             // stretch (emit_walls in src/city.c): opaque back-painted glass.
@@ -2983,9 +3053,21 @@ void main() {
     gC = chunks[vChunk];
     gTime = frame.camPos.w;
     gWorld = vLocal + vec3(float(gC.info.x & 63) * CHUNK_SIZE, 0.0, float(gC.info.y & 63) * CHUNK_SIZE);
+    shadowsBegin();
     vec3 n = normalize(vNrm);
     uint mat = vParams.x;
     vec3 V = -normalize(vRel);
+
+    if ((uint(frame.shadow.y) & SHADOWS_DEBUG) != 0u) {
+        // shadow debug view (F10): only the light the lamps, shopfronts and lobbies throw on each surface
+        vec3 d = vec3(0.0), sp = vec3(0.0);
+        cityLights(vLocal, n, V, 1.0, 0.0, -1.0, d, sp);
+        outColor = vec4(d * 0.3 + vec3(0.004), 1.0);
+#ifdef RT_SHADOWS
+#endif
+        outRefl = vec4(0.0);
+        return;
+    }
 
     vec3 col;
     if (mat <= MAT_LOT)            col = shadeGround(mat, vLocal, n, V, vUV, vSeed, vParams);

@@ -1,0 +1,114 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_ray_query : require
+#include "common.glsl"
+
+/* Ray-traced shadows, first pass (renderer.c: record_shadows).
+ *
+ * For each pixel the prepass drew with a lit material, walk its chunk's light
+ * tile as city.frag's cityLights does, rank the lights by lightImportance and
+ * keep the SHADOW_SLOTS most important; lights too faint to show a shadow are
+ * left out, and if more than SHADOW_SLOTS deserve one the pixel is marked so
+ * city.frag traces the rest itself. Then trace one ray from the surface to a
+ * point on each kept light's emitter, a different point at each pixel and in
+ * each frame (interleaved gradient noise), against the TLAS of the city round
+ * the camera.
+ *
+ * Out: ids, each slot's lightId (16 bits; 0 for an empty slot), most
+ * important first; raw.x, a bit per slot set where its ray got through, plus
+ * SH_VALID and SH_OVERFLOW; raw.y, per slot (4 bits) the penumbra width a
+ * blocked ray's blocker casts here, for shadow_denoise.comp. */
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 5) uniform accelerationStructureEXT tlas;
+layout(set = 0, binding = 8) uniform sampler2D depthTex;    // prepass depth at sample 0
+layout(set = 0, binding = 9) uniform usampler2D gbufTex;    // prepass.frag at sample 0
+layout(set = 0, binding = 10, rgba32ui) uniform writeonly uimage2D idsOut;
+layout(set = 0, binding = 11, rg32ui) uniform writeonly uimage2D rawOut;
+
+// Penumbra width (metres) in 4 bits, logarithmically from 1 cm to 10 m (shadow_denoise.comp: penDecode).
+uint penEncode(float w) { return uint(clamp(log2(max(w, 0.01) / 0.01) * 1.5 + 1.0, 1.0, 15.0)); }
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(px, imageSize(idsOut)))) return;
+    uvec4 ids = uvec4(0u);
+    uvec2 raw = uvec2(0u);
+    float z = texelFetch(depthTex, px, 0).r;
+    uvec2 g = texelFetch(gbufTex, px, 0).xy;
+    vec2 ndc = (vec2(px) + frame.shadow.zw) * frame.screen.zw * 2.0 - 1.0;
+    vec3 rel = (frame.rayBasis[2].xyz + ndc.x * frame.rayBasis[0].xyz - ndc.y * frame.rayBasis[1].xyz) * forwardDist(z);
+    float dist = length(rel);
+    ChunkGPU c = chunks[g.y & 0xFFFFu];
+    vec3 p = rel - c.origin.xyz;
+    int base = c.info.z;
+    if (z <= 0.0 || (g.y & PG_LIT) == 0u || !shadowsOn() || dist > SHADOW_FAR || base < 0 || p.y > 32.0) {
+        imageStore(idsOut, px, ids);
+        imageStore(rawOut, px, uvec4(raw, 0u, 0u));
+        return;
+    }
+    vec3 n = octDecode(g.x), V = -rel / dist;
+
+    vec4 hdr = uintBitsToFloat(lightRec[base]);
+    ivec2 t = clamp(ivec2(floor((p.xz - hdr.xy) * hdr.zw)), ivec2(0), ivec2(3));
+    int ti = t.y * 4 + t.x;
+    uint tile = lightRec[base + 1 + (ti >> 2)][ti & 3];
+    int first = base + int(tile >> 16), count = int(tile & 0xFFFFu);
+
+    // a light shows no shadow worth tracing below 1% of all the light here
+    float total = 0.0;
+    for (int i = 0; i < count; ++i) {
+        uvec4 r = lightRec[first + i];
+        total += lightImportance(p, n, V, uintBitsToFloat(r.xyz), r.w);
+    }
+    float faint = max(LIGHT_NEGLIGIBLE, total * 0.01);
+
+    // the most important lights, in order
+    int   keep[SHADOW_SLOTS];
+    float imp[SHADOW_SLOTS];
+    int nk = 0;
+    bool overflow = false;
+    for (int i = 0; i < count; ++i) {
+        uvec4 r = lightRec[first + i];
+        float m = lightImportance(p, n, V, uintBitsToFloat(r.xyz), r.w);
+        if (m < faint || !castsShadow(r.w)) continue;
+        if (nk == SHADOW_SLOTS) {
+            overflow = true;
+            if (m <= imp[SHADOW_SLOTS - 1]) continue;
+            nk--;
+        }
+        int k = nk++;
+        while (k > 0 && imp[k - 1] < m) { imp[k] = imp[k - 1]; keep[k] = keep[k - 1]; --k; }
+        imp[k] = m;
+        keep[k] = i;
+    }
+
+    raw.x = SH_VALID | (overflow ? SH_OVERFLOW : 0u);
+    uint mask = (g.y & PG_LITTER) != 0u ? 0xFFu & ~RT_MASK_LITTER : 0xFFu;   // litter's own shape moves (city.vert)
+    float fr = float(uint(frame.shadow.x) & 63u);
+    vec3 xi0 = vec3(ign(vec2(px) + fr * 5.588238), ign(vec2(px.yx) + vec2(41.0, 17.0) + fr * 5.588238),
+                    ign(vec2(px) + vec2(23.0, 71.0) + fr * 5.588238));
+    for (int k = 0; k < nk; ++k) {
+        uvec4 r = lightRec[first + keep[k]];
+        vec3 lp = uintBitsToFloat(r.xyz);
+        ids[k >> 1] |= lightId(c.info.xy, lp, r.w) << (16u * uint(k & 1));
+
+        float size;
+        vec3 xi = fract(xi0 + float(k) * vec3(0.7548777, 0.5698403, 0.618034));
+        vec3 e = emitterPoint(lp, r.w, xi, p, size) + c.origin.xyz;
+        vec3 nn = dot(n, e - rel) >= 0.0 ? n : -n;   // leave from the side the light is on (leaves are seen from both)
+        vec3 o = rel + nn * (0.01 + dist * 2e-4);
+        vec3 toE = e - o;
+        float len = length(toE);
+        rayQueryEXT q;
+        rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, mask, o, 0.0, toE / len, max(len - 0.02, 0.0));
+        while (rayQueryProceedEXT(q)) {}
+        if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT) {
+            raw.x |= 1u << uint(k);
+        } else {
+            float th = rayQueryGetIntersectionTEXT(q, true);
+            raw.y |= penEncode(size * th / max(len - th, 0.05)) << (4u * uint(k));
+        }
+    }
+    imageStore(idsOut, px, ids);
+    imageStore(rawOut, px, uvec4(raw, 0u, 0u));
+}

@@ -1596,6 +1596,21 @@ enum { IS_FLOOR = 0, IS_ROOMFLOOR, IS_WALL, IS_CEILING, IS_CORE, IS_METAL, IS_WO
        IS_LIGHT, IS_PLANT, IS_LINING, IS_STONE, IS_LIFTDOOR, IS_DOOR, IS_SCREEN, IS_SKYLIGHT, IS_OFFICE, IS_SIGN, IS_EMBLEM,
        IS_BARK, IS_SOIL };   /* IS_PLANT: leaves; IS_BARK: stems (grow_plants) */
 
+int city_casts_shadow(const Vertex *v) {
+    const uint8_t *p = v->params;
+    switch (p[0]) {
+    case MAT_INTERIOR:
+        return p[1] != IS_GLASS;
+    case MAT_ARCOLOGY:
+        if (p[1] == ARS_RAIL) return p[2] != 0 && p[2] != 3;   /* glass balustrades */
+        return p[1] != ARS_SHAFT && p[1] != ARS_SEARCH && p[1] != ARS_STEAM && p[1] != ARS_PUDDLE;
+    case MAT_LITTER:   /* the rigid things: soaked paper slumps, dry paper and bags stir (city.vert: litter) */
+        return p[1] == LK_CAN || p[1] == LK_BOTTLE || p[1] == LK_CUP || p[1] == LK_BOX || p[1] == LK_BINBAG;
+    default:
+        return 1;
+    }
+}
+
 #define POT_HEIGHT 0.55f   /* lobby planters: the pot's rim above the floor */
 
 /* params: y surface, z variety (a region or fixture type), w ceiling height above the floor (half metres). */
@@ -4277,9 +4292,16 @@ static void build_blocks(Mesh *m, const ChunkGen *g) {
  *   0      bounds x0, z0 (chunk-local) and 4/width, 4/depth (floats)
  *   1..4   16 tile words: first record << 16 | count
  *   5..    lights: x, y, z (floats), w = type | data
- *          type 0/1: sodium/LED street lamp; type 2: shop (w & ~3 = shop hash);
- *          type 3: office or estate lobby (white)
+ *          type 0/1: sodium/LED street lamp, w >> 2 its fault (lamp_fault, 24
+ *          bits), w >> 26 its emitter (LE_*: how large a source it is, for
+ *          soft shadows); type 2: shop (bits 4..6: the shop hash's colour);
+ *          type 3: office or estate lobby (white). Shops and lobbies stand 1 m
+ *          out from their glass: bits 16..23 are the way it faces (256ths of a
+ *          turn from +x towards +z) and bits 24..29 the bay's width (quarter
+ *          metres), so shadows can be cast from the whole pane.
  * ========================================================================= */
+
+enum { LE_LAMP = 0, LE_ARC_SODIUM = 1, LE_ARC_CROWN = 2 };   /* must match emitterPoint in shaders/common.glsl */
 
 typedef struct LightSrc { float x, y, z, range; uint32_t w; } LightSrc;
 
@@ -4329,7 +4351,7 @@ static void build_lights(Mesh *m, ChunkGen *g) {
                 DVec2 w = to_world(b, ax, az);
                 float x = (float)(w.x - g->ox), z = (float)(w.z - g->oz);
                 if (x < bx0 - 34.0f || x > bx1 + 34.0f || z < bz0 - 34.0f || z > bz1 + 34.0f) continue;
-                ADD_LIGHT(x, al->y, z, 34.0f, (uint32_t)al->type);
+                ADD_LIGHT(x, al->y, z, 34.0f, (uint32_t)al->type | (uint32_t)(al->type == AL_COLD ? LE_ARC_CROWN : LE_ARC_SODIUM) << 26);
             }
             interiors_free(&in);
         }
@@ -4360,8 +4382,10 @@ static void build_lights(Mesh *m, ChunkGen *g) {
                     for (int j = 0; j < g->nb && !party; ++j)
                         if (j != i && g->bblk[j] == g->bblk[i] && inside_building(&g->bld[j], w.x, w.z, 0.0)) party = 1;
                     if (party) continue;
-                    ADD_LIGHT(x, SIDEWALK_HEIGHT + 1.4f, z, 12.0f, h);
                     float nx = b->c * -e.ez - b->s * e.ex, nz = b->s * -e.ez + b->c * e.ex;   /* out of the shopfront */
+                    uint32_t face = (uint32_t)(int)floorf(atan2f(nz, nx) / 6.2831853f * 256.0f + 256.5f) & 255u;
+                    uint32_t bay = (uint32_t)minf((u1 - u0) * 4.0f + 0.5f, 63.0f);
+                    ADD_LIGHT(x, SIDEWALK_HEIGHT + 1.4f, z, 12.0f, (h & 0xFFFFu) | face << 16 | bay << 24);
                     air_light(m, x, SIDEWALK_HEIGHT + 2.0f, z, 5.0f, nx, nz, h, ((h & 3u) == 2u ? AIR_SHOP : AIR_LOBBY) << 8);
                 }
             }

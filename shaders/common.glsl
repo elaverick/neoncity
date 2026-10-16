@@ -53,6 +53,8 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 screen;
     vec4 weather;    // x rain intensity, y street wetness (src/main.c: weather_update)
     vec4 shelter;    // shelter map: camera-relative centre x, z; half-width
+    vec4 shadow;     // ray-traced shadows: x frame number, y SHADOWS_ON | SHADOWS_DEBUG, zw where sample 0 lies in a pixel
+    mat4 prevViewProj;   // the previous frame's viewProj, taking this frame's camera-relative positions
 } frame;
 
 struct ChunkGPU {
@@ -114,6 +116,105 @@ vec3 shopColor(uint h) { return mix(neonColor(h >> 4), vec3(1.0, 0.82, 0.62), 0.
 // between the lobbies' 2700 K and 3000 K panels: city.frag lobbyLight).
 const vec3 LOBBY_SPILL = vec3(1.0, 0.66, 0.37);
 
+/* ---------------- ray-traced shadows ----------------
+ * src/rt.c builds the acceleration structures; shadow_trace.comp traces one
+ * ray per light at each pixel's most important lights, shadow_denoise.comp
+ * filters them into soft shadows, and city.frag looks each light up
+ * (shadowVis), tracing a hard shadow itself wherever the pixel's surface
+ * isn't the one the prepass saw. */
+const float SHADOW_FADE = 350.0, SHADOW_FAR = 450.0;    // src/common.h
+const uint  SHADOWS_ON = 1u, SHADOWS_DEBUG = 2u;         // frame.shadow.y (renderer.c)
+bool shadowsOn() { return (uint(frame.shadow.y) & SHADOWS_ON) != 0u; }
+const int   SHADOW_SLOTS = 8;                            // lights a pixel keeps soft shadows for
+const uint  RT_MASK_LITTER = 0x04u;                      // src/rt.h
+const float LIGHT_NEGLIGIBLE = 0.002;                    // a light this faint shows no shadow worth tracing
+// Prepass G-buffer (prepass.frag): x the normal (octEncode), y the draw chunk | these flags.
+const uint  PG_LIT = 1u << 30, PG_LITTER = 1u << 29;
+// Shadow slots (shadow_trace.comp, shadow_denoise.comp): flags in raw.x and vis.w.
+const uint  SH_VALID = 1u << 30, SH_OVERFLOW = 1u << 31;
+
+// Street lamp falloff (city.frag: addLamp), l = light - p: the beam below the
+// head, and a spill all round it that carries up the columns and facades.
+float lampFalloff(vec3 l) {
+    float d2 = dot(l, l), d = sqrt(d2);
+    float spot = mix(0.12, 1.0, smoothstep(0.05, 0.55, l.y / max(d, 1e-4)));
+    return 90.0 / (d2 + 1.0) * smoothstep(34.0, 14.0, d) * spot;
+}
+// A lit shopfront's or lobby's spill, d metres from its light (city.frag: addShop).
+float shopFalloff(float d) { return d > 12.0 ? 0.0 : 0.45 * exp(-d * 0.38) * smoothstep(12.0, 7.0, d); }
+
+/* Of a lamp's light reaching p, the share that comes straight from the head:
+ * lampFalloff's beam, rather than its spill all round, which stands for the
+ * light the wet street throws back up from the pool under the lamp. */
+float lampBeamShare(vec3 lp, vec3 p) {
+    vec3 l = lp - p;
+    float t = smoothstep(0.05, 0.55, l.y / max(length(l), 1e-4));
+    return 0.88 * t / (0.12 + 0.88 * t);
+}
+const float POOL_RADIUS = 4.0, POOL_HEIGHT = 0.5;   // the lit pool a lamp's spill comes from, just above the street
+
+/* A point on light record w's emitter (lp chunk-local) as seen from p, from
+ * xi in [0,1)^3, and the emitter's size (for penumbra estimates). A street
+ * lamp's beam glows through the diffuser under the head, a disc just below it,
+ * and its spill rises from the pool of light beneath it: xi.z picks one, by
+ * the share each has at p. Arcology lights are broader (LE_* in src/city.c).
+ * A shop or lobby light stands 1 m out from its pane, which glows over the
+ * bay's width from knee height to over the door. */
+vec3 emitterPoint(vec3 lp, uint w, vec3 xi, vec3 p, out float size) {
+    if ((w & 3u) < 2u) {
+        uint cls = (w >> 26) & 3u;
+        float R = cls == 0u ? 0.25 : cls == 1u ? 0.4 : 1.5;
+        vec3 c = lp;
+        if (xi.z >= lampBeamShare(lp, p)) { R = POOL_RADIUS; c.y = POOL_HEIGHT; }
+        float r = R * sqrt(xi.x), a = 6.2831853 * xi.y;
+        size = 2.0 * R;
+        return c + vec3(r * cos(a), 0.0, r * sin(a));
+    }
+    float ang = float((w >> 16) & 255u) * (6.2831853 / 256.0);
+    vec3 N = vec3(cos(ang), 0.0, sin(ang)), T = vec3(-N.z, 0.0, N.x);
+    float hw = max(float((w >> 24) & 63u) * 0.125 - 0.3, 0.3), hh = 1.25;
+    size = 2.0 * max(hw, hh);
+    return lp - N * 0.8 + T * ((xi.x * 2.0 - 1.0) * hw) + vec3(0.0, 0.35 + (xi.y * 2.0 - 1.0) * hh, 0.0);   // 20 cm proud of the glass
+}
+
+// Whether light record w casts shadows. An arcology's crown lights (LE_ARC_CROWN
+// in src/city.c) stand for the cold light falling down the canyon from its
+// glazed crown, a fill from far above rather than a light at the point they
+// mark, so they light the galleries unshadowed.
+bool castsShadow(uint w) { return (w & 3u) >= 2u || ((w >> 26) & 3u) != 2u; }
+
+// The middle of the emitter, as seen from p: where city.frag aims a hard shadow ray.
+vec3 emitterCentre(vec3 lp, uint w, vec3 p) {
+    if ((w & 3u) < 2u) return lampBeamShare(lp, p) >= 0.5 ? lp : vec3(lp.x, POOL_HEIGHT, lp.z);
+    float ang = float((w >> 16) & 255u) * (6.2831853 / 256.0);
+    return lp - vec3(cos(ang), 0.0, sin(ang)) * 0.8 + vec3(0.0, 0.35, 0.0);
+}
+
+// A light's identity in a pixel's shadow slots: the quarter-metre cell it
+// stands in, counted in whole cells from its chunk, so the same lamp listed in
+// two chunks' tables (and in successive frames) has the same id. 0 = empty.
+uint lightId(ivec2 chunk, vec3 lp, uint w) {
+    uvec3 q = uvec3(ivec3(floor(lp * 4.0)) + ivec3(chunk.x * 440, 0, chunk.y * 440));   // 440 = CHUNK_SIZE * 4
+    uint h = q.x * 73856093u ^ q.y * 19349663u ^ q.z * 83492791u ^ (w & 3u) * 2654435761u;
+    return max((h ^ (h >> 16)) & 0xFFFFu, 1u);
+}
+
+uint octEncode(vec3 n) {
+    vec2 p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
+    if (n.z < 0.0) p = (1.0 - abs(p.yx)) * vec2(p.x >= 0.0 ? 1.0 : -1.0, p.y >= 0.0 ? 1.0 : -1.0);
+    return packSnorm2x16(p);
+}
+vec3 octDecode(uint u) {
+    vec2 p = unpackSnorm2x16(u);
+    vec3 n = vec3(p, 1.0 - abs(p.x) - abs(p.y));
+    float t = max(-n.z, 0.0);
+    n.xy += vec2(n.x >= 0.0 ? -t : t, n.y >= 0.0 ? -t : t);
+    return normalize(n);
+}
+
+// Interleaved gradient noise (Jimenez): neighbouring pixels well spread over [0,1).
+float ign(vec2 px) { return fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715)))); }
+
 vec3 lampColor(int type) {
     return type == 0 ? vec3(1.0, 0.42, 0.10) * 1.0   // sodium: deep amber
                      : vec3(0.55, 0.80, 1.0) * 0.9;  // cold LED
@@ -138,6 +239,22 @@ vec3 lampState(uint fault, float t) {
 }
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+/* How much light record w (at lp) throws on a surface at p, facing n and seen
+ * along V, before shadowing: its falloff, its lit side (shop light wraps round,
+ * as addShop's does) and a rough mirror lobe, so a lamp glinting in a wet
+ * street counts even when it barely lights it. Picks which lights get soft
+ * shadows, and which are too faint to shadow at all. */
+float lightImportance(vec3 p, vec3 n, vec3 V, vec3 lp, uint w) {
+    vec3 l = lp - p;
+    float d = length(l);
+    vec3 L = l / max(d, 1e-4);
+    float ndl = dot(n, L);
+    float glint = ndl > 0.0 ? 4.0 * pow(max(dot(reflect(-V, n), L), 0.0), 24.0) : 0.0;
+    uint type = w & 3u;
+    if (type < 2u) return lampFalloff(l) * luma(lampColor(int(type))) * (max(ndl, 0.0) + 0.05 + glint);
+    return shopFalloff(d) * 0.6 * (0.35 + 0.65 * max(ndl, 0.0) + glint);
+}
 
 /* Neon flicker modes (the sign material's flicker bits): 0 steady,
  * 1 occasional dropout, 2 failing tube that buzzes and dims. */

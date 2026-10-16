@@ -128,6 +128,10 @@ void     city_build_litter(int cx, int cz, Mesh *m);
  * how much rubbish lies about (src/litter.c) and how much fine debris the ground shader draws. */
 float    city_squalor(int zone, double x, double z);
 void     mesh_free(Mesh *m);
+/* Whether a triangle with this vertex casts ray-traced shadows (src/rt.c).
+ * Glass, veils of light, puddles and contact shadows don't; nor does flat or
+ * wind-stirred litter, whose shape the vertex shader changes. */
+int      city_casts_shadow(const Vertex *v);
 
 /* Buildings filling one plan block (all of them, wherever their centres are). */
 int      city_block_buildings(const Block *bk, Building *out, int max);

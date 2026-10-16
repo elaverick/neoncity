@@ -1,12 +1,14 @@
 #include "chunks.h"
 #include "city.h"
+#include "rt.h"
 #include "thread.h"
 
 #define MAX_ENTRIES    8192
 #define HASH_BUCKETS   16384
 #define MAX_JOBS       1024
 #define MAX_WORKERS    16
-#define INDIRECT_CAP   (POOL_PAGES * 2)   /* the view's draws, then the shelter map's */
+#define KNOWN_BOUNDS   16384              /* chunks whose true bounds have been seen (a power of two) */
+#define INDIRECT_CAP   (POOL_PAGES * 3)   /* the view's draws, the shelter map's, then the depth prepass's */
 
 enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
 
@@ -31,9 +33,17 @@ typedef struct Entry {
     uint32_t  nsky;
     SkyLight *air;
     uint32_t  nair;
+    /* ray-traced shadows (src/rt.c): the casting triangles of each page, as
+     * page-local vertex indices, kept while resident so the BLAS can be
+     * rebuilt whenever the chunk comes back within RT_RANGE */
+    uint16_t *rtIdx;
+    uint32_t  rtCount[MAX_CHUNK_PAGES];
+    uint32_t  rtTotal;
+    int       blas;         /* -1: none */
 } Entry;
 
 typedef struct Job { int cx, cz, layer; } Job;
+typedef struct KnownBounds { int cx, cz, used; float mn[3], mx[3]; } KnownBounds;
 typedef struct Result { int cx, cz, layer; Mesh mesh; } Result;
 typedef struct PendingFree { uint16_t page; uint64_t frame; } PendingFree;
 typedef struct Want { int cx, cz, layer; float key; int inView; } Want;
@@ -67,6 +77,7 @@ struct ChunkSystem {
     Buffer   chunkData[MAX_FRAMES];
     uint32_t drawCount[MAX_FRAMES], plantFirst[MAX_FRAMES];
     uint32_t shelterFirst[MAX_FRAMES], shelterCount[MAX_FRAMES];
+    uint32_t preFirst[MAX_FRAMES], preCount[MAX_FRAMES];
 
     /* jobs (shared with workers) */
     Mutex    jobLock;
@@ -85,6 +96,14 @@ struct ChunkSystem {
     int      wantCount, wantCap;
     int      ready[MAX_ENTRIES];
     int      readyCount;
+
+    Rt        *rt;      /* NULL without ray queries */
+    /* The mesh bounds of chunks generated before, kept after they are evicted.
+     * A chunk is a pure function of its coordinates, so they stay true, and the
+     * frustum test needn't fall back to the conservative bounds (which can
+     * want a chunk that its true bounds then don't, over and over). */
+    KnownBounds known[KNOWN_BOUNDS];
+    int        uploaded[MAX_ENTRIES];
 
     ChunkStats stats;
     SkyGrid    sky;     /* built here, then copied out: the destination is write-combined GPU memory */
@@ -113,6 +132,7 @@ static int table_insert(ChunkSystem *cs, int cx, int cz, int layer) {
     memset(e, 0, sizeof(*e));
     e->cx = cx; e->cz = cz; e->layer = layer;
     e->lightPage = -1;
+    e->blas = -1;
     uint32_t b = bucket_of(cx, cz, layer);
     e->next = cs->buckets[b];
     cs->buckets[b] = i;
@@ -128,6 +148,8 @@ static void table_remove(ChunkSystem *cs, int idx) {
     mesh_free(&e->mesh);
     free(e->sky);
     free(e->air);
+    free(e->rtIdx);
+    e->rtIdx = NULL;
     e->sky = e->air = NULL;
     e->nsky = e->nair = 0;
     e->state = 0;
@@ -181,8 +203,10 @@ ChunkSystem *chunks_create(VkCore *vk) {
     cs->pendingLight = (PendingFree *)malloc(sizeof(PendingFree) * LIGHT_PAGES);
 
     VkDeviceSize poolBytes = (VkDeviceSize)POOL_PAGES * PAGE_VERTS * sizeof(Vertex);
-    cs->pool = vk_buffer(vk, poolBytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VkBufferUsageFlags poolUse = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    if (vk->rt) poolUse |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+    cs->pool = vk_buffer(vk, poolBytes, poolUse, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    cs->rt = rt_create(vk);
     cs->lightPool = vk_buffer(vk, chunks_light_buffer_size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -213,7 +237,10 @@ void chunks_destroy(ChunkSystem *cs) {
     for (int i = 0; i < cs->workerCount; ++i) thread_join(cs->workers[i]);
     for (int i = 0; i < cs->doneCount; ++i) mesh_free(&cs->done[i].mesh);
     free(cs->done);
-    for (int i = 0; i < MAX_ENTRIES; ++i) { mesh_free(&cs->entries[i].mesh); free(cs->entries[i].sky); free(cs->entries[i].air); }
+    for (int i = 0; i < MAX_ENTRIES; ++i) {
+        mesh_free(&cs->entries[i].mesh); free(cs->entries[i].sky); free(cs->entries[i].air); free(cs->entries[i].rtIdx);
+    }
+    rt_destroy(cs->rt);
     for (int i = 0; i < MAX_FRAMES; ++i) {
         vk_buffer_destroy(cs->vk, &cs->staging[i]);
         vk_buffer_destroy(cs->vk, &cs->indirect[i]);
@@ -233,8 +260,19 @@ void chunks_destroy(ChunkSystem *cs) {
 VkBuffer chunks_gpu_buffer(ChunkSystem *cs, int slot) { return cs->chunkData[slot].buf; }
 VkDeviceSize chunks_gpu_buffer_size(void) { return sizeof(ChunkGPU) * MAX_DRAW_CHUNKS; }
 VkBuffer chunks_light_buffer(ChunkSystem *cs) { return cs->lightPool.buf; }
+Rt *chunks_rt(ChunkSystem *cs) { return cs->rt; }
 VkDeviceSize chunks_light_buffer_size(void) { return (VkDeviceSize)LIGHT_PAGES * LIGHT_PAGE_RECS * 16; }
 ChunkStats chunks_stats(ChunkSystem *cs) { return cs->stats; }
+
+static KnownBounds *known_slot(ChunkSystem *cs, int cx, int cz, bool insert) {
+    uint32_t h = bucket_of(cx, cz, 0) & (KNOWN_BOUNDS - 1);
+    for (int i = 0; i < 8; ++i) {
+        KnownBounds *k = &cs->known[(h + i) & (KNOWN_BOUNDS - 1)];
+        if (k->used && k->cx == cx && k->cz == cz) return k;
+        if (!k->used) return insert ? k : NULL;
+    }
+    return insert ? &cs->known[h] : NULL;   /* full run: overwrite, it's only a cache */
+}
 
 /* ---------------------------------------------------------------- pages --- */
 
@@ -246,6 +284,8 @@ static void evict(ChunkSystem *cs, int idx, uint64_t frame) {
         cs->pendingFreeCount++;
     }
     e->npages = 0;
+    if (cs->rt) rt_free_blas(cs->rt, e->blas, frame);
+    e->blas = -1;
     if (e->lightPage >= 0) {
         cs->pendingLight[cs->pendingLightCount].page = (uint16_t)e->lightPage;
         cs->pendingLight[cs->pendingLightCount].frame = frame;
@@ -318,6 +358,90 @@ static void reclaim_pages(ChunkSystem *cs, uint64_t frame) {
     cs->pendingLightCount = w;
 }
 
+/* -------------------------------------------------------------- shadows --- */
+
+/* The casting triangles of each page, as page-local indices (city_casts_shadow). */
+static void caster_indices(Entry *e, const Vertex *v, uint32_t vc) {
+    free(e->rtIdx);
+    e->rtIdx = NULL;
+    e->rtTotal = 0;
+    memset(e->rtCount, 0, sizeof(e->rtCount));
+    if (e->layer == LAYER_PLANTS) return;   /* lit by the lobby panels only, which cast no shadows yet */
+    uint16_t *idx = (uint16_t *)malloc(sizeof(uint16_t) * (vc ? vc : 1));
+    if (!idx) fatal("out of memory");
+    uint32_t n = 0;
+    for (int p = 0; p < e->npages; ++p) {
+        uint32_t first = p * PAGE_VERTS, cnt = vc - first < PAGE_VERTS ? vc - first : PAGE_VERTS, start = n;
+        for (uint32_t t = 0; t + 2 < cnt; t += 3) {
+            if (!city_casts_shadow(&v[first + t])) continue;
+            idx[n++] = (uint16_t)t; idx[n++] = (uint16_t)(t + 1); idx[n++] = (uint16_t)(t + 2);
+        }
+        e->rtCount[p] = n - start;
+    }
+    if (!n) { free(idx); return; }
+    e->rtIdx = idx;
+    e->rtTotal = n;
+}
+
+static uint32_t rt_mask(int layer) { return layer == 0 ? RT_MASK_CITY : layer == 1 ? RT_MASK_INTERIOR : RT_MASK_LITTER; }
+
+/* Distance from the camera to the chunk's square, horizontally. */
+static float chunk_dist(const Entry *e, const double cam[3]) {
+    float x0 = (float)(e->cx * (double)CHUNK_SIZE - cam[0]), z0 = (float)(e->cz * (double)CHUNK_SIZE - cam[2]);
+    float nx = clampf(0.0f, x0, x0 + CHUNK_SIZE), nz = clampf(0.0f, z0, z0 + CHUNK_SIZE);
+    return sqrtf(nx * nx + nz * nz);
+}
+
+static bool build_blas(ChunkSystem *cs, VkCommandBuffer cmd, int slot, Entry *e) {
+    uint32_t verts[MAX_CHUNK_PAGES];
+    for (int p = 0; p < e->npages; ++p) {
+        uint32_t first = p * PAGE_VERTS;
+        verts[p] = e->vcount - first < PAGE_VERTS ? e->vcount - first : PAGE_VERTS;
+    }
+    e->blas = rt_build_blas(cs->rt, cmd, slot, cs->pool.buf, e->pages, e->npages, verts, e->rtIdx, e->rtCount);
+    return e->blas >= 0;
+}
+
+typedef struct RtCand { int idx; float d; } RtCand;
+static int cmp_rtcand(const void *a, const void *b) {
+    float da = ((const RtCand *)a)->d, db = ((const RtCand *)b)->d;
+    return da < db ? -1 : da > db ? 1 : 0;
+}
+
+/* Bottom-level structures for resident chunks within RT_RANGE (nearest first,
+ * within this frame's build budget), dropped beyond it; then the frame's TLAS
+ * over all of them, wherever the camera is looking. */
+static void update_shadows(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t frame, const double cam[3]) {
+    static RtCand cand[MAX_ENTRIES];
+    int n = 0;
+    for (int i = 0; i < MAX_ENTRIES; ++i) {
+        Entry *e = &cs->entries[i];
+        if (e->state != CS_RESIDENT || !e->rtTotal) continue;
+        float d = chunk_dist(e, cam);
+        if (e->blas >= 0 && d > RT_RANGE + RT_HYSTERESIS) {
+            rt_free_blas(cs->rt, e->blas, frame);
+            e->blas = -1;
+        } else if (e->blas < 0 && d < RT_RANGE) {
+            cand[n].idx = i; cand[n].d = d; n++;
+        }
+    }
+    qsort(cand, n, sizeof(RtCand), cmp_rtcand);
+    for (int i = 0; i < n; ++i) {
+        Entry *e = &cs->entries[cand[i].idx];
+        if (!rt_can_build(cs->rt, slot, e->rtTotal)) break;
+        build_blas(cs, cmd, slot, e);
+    }
+
+    const float P = CHUNK_SIZE;
+    for (int i = 0; i < MAX_ENTRIES; ++i) {
+        Entry *e = &cs->entries[i];
+        if (e->state != CS_RESIDENT || e->blas < 0) continue;
+        float o[3] = { (float)(e->cx * (double)P - cam[0]), -(float)cam[1], (float)(e->cz * (double)P - cam[2]) };
+        rt_add_instance(cs->rt, slot, e->blas, o, rt_mask(e->layer));
+    }
+    rt_build_tlas(cs->rt, cmd, slot);
+}
+
 /* --------------------------------------------------------------- update --- */
 
 static int cmp_want(const void *a, const void *b) {
@@ -347,6 +471,7 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     const float P = CHUNK_SIZE;
     Frustum fr = frustum_from_matrix(*viewProj);
     reclaim_pages(cs, frame);
+    if (cs->rt) rt_begin_frame(cs->rt, cmd, slot, frame);
 
     /* 1. Collect finished meshes from the workers. */
     mutex_lock(&cs->doneLock);
@@ -390,10 +515,14 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
             int idx = table_find(cs, cx, cz, 0);
             float y1;
             vec3 mn, mx;
+            const KnownBounds *kb = known_slot(cs, cx, cz, false);
             if (idx >= 0 && cs->entries[idx].state == CS_RESIDENT) {
                 Entry *e = &cs->entries[idx];
                 mn = v3(x0 + e->mn[0], e->mn[1] - (float)cam[1], z0 + e->mn[2]);
                 mx = v3(x0 + e->mx[0], e->mx[1] - (float)cam[1], z0 + e->mx[2]);
+            } else if (kb) {
+                mn = v3(x0 + kb->mn[0], kb->mn[1] - (float)cam[1], z0 + kb->mn[2]);
+                mx = v3(x0 + kb->mx[0], kb->mx[1] - (float)cam[1], z0 + kb->mx[2]);
             } else {
                 /* Buildings centred in the chunk may overhang it. */
                 y1 = city_height_cap(cx, cz);
@@ -401,7 +530,13 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
                 mx = v3(x0 + P + CITY_OVERHANG, y1 - (float)cam[1], z0 + P + CITY_OVERHANG);
             }
             int inView = frustum_test_aabb(&fr, mn, mx);
+            /* Within a light's reach of the frustum, a chunk can shadow what is
+             * in view, so it is kept too: shadows never wait for it to stream in. */
+            const float R = SHADOW_REACH;
+            int casts = !inView && cs->rt && d < RT_RANGE &&
+                        frustum_test_aabb(&fr, v3(mn.x - R, mn.y - R, mn.z - R), v3(mx.x + R, mx.y + R, mx.z + R));
             if (inView) push_want(cs, cx, cz, 0, d, 1);
+            else if (casts) push_want(cs, cx, cz, 0, d + 40.0f, 0);
             else if (d < NEAR_RING_DIST) push_want(cs, cx, cz, 0, d * 3.0f + 200.0f, 0);
             if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, 1, d + 60.0f + (inView ? 0.0f : d * 2.0f), inView);
             if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, LAYER_PLANTS, d + 70.0f + (inView ? 0.0f : d * 2.0f), inView);
@@ -475,8 +610,18 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
         stgOff = (lightOff + lbytes + 255) & ~(VkDeviceSize)255;
         e->npages = np;
         e->vcount = vc;
+        if (cs->rt) {
+            caster_indices(e, e->mesh.v, vc);
+            cs->uploaded[uploads] = cs->ready[r];
+        }
         memcpy(e->mn, e->mesh.mn, sizeof(e->mn));
         memcpy(e->mx, e->mesh.mx, sizeof(e->mx));
+        if (e->layer == 0) {
+            KnownBounds *kb = known_slot(cs, e->cx, e->cz, true);
+            kb->cx = e->cx; kb->cz = e->cz; kb->used = 1;
+            memcpy(kb->mn, e->mn, sizeof(kb->mn));
+            memcpy(kb->mx, e->mx, sizeof(kb->mx));
+        }
         e->sky = e->mesh.sky;
         e->nsky = e->mesh.nsky;
         e->mesh.sky = NULL;
@@ -493,8 +638,15 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     if (nlreg) vkCmdCopyBuffer(cmd, stg->buf, cs->lightPool.buf, (uint32_t)nlreg, lightRegions);
     if (nreg || nlreg)
         vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                          VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+                          VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                          VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT);
+    /* A chunk arriving within range gets its BLAS in the frame it is first
+     * drawn, so it never appears without its shadows. */
+    for (int u = 0; cs->rt && u < uploads; ++u) {
+        Entry *e = &cs->entries[cs->uploaded[u]];
+        if (e->rtTotal && chunk_dist(e, cam) < RT_RANGE) build_blas(cs, cmd, slot, e);
+    }
 
     /* 5. Build the indirect draw list from resident, visible chunks (front to
      *    back), the plants' layer last: it is drawn with its own pipeline. */
@@ -562,6 +714,21 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     cs->shelterFirst[slot] = sFirst;
     cs->shelterCount[slot] = ndraw - sFirst;
 
+    /* 7. Depth prepass draws (ray-traced shadows): the view's draws of chunks
+     *    close enough to hold a surface that receives shadows, as the same
+     *    draws (the same chunk records), so both passes agree on every pixel. */
+    uint32_t pFirst = ndraw;
+    for (uint32_t i = 0; cs->rt && i < cs->plantFirst[slot] && ndraw < INDIRECT_CAP; ++i) {
+        const ChunkGPU *g = &gpu[cmds[i].firstInstance];
+        float nx = clampf(0.0f, g->origin[0], g->origin[0] + P), nz = clampf(0.0f, g->origin[2], g->origin[2] + P);
+        if (sqrtf(nx * nx + nz * nz) > SHADOW_FAR + 80.0f) continue;   /* 80: a building's overhang of its chunk, and some */
+        cmds[ndraw++] = cmds[i];
+    }
+    cs->preFirst[slot] = pFirst;
+    cs->preCount[slot] = ndraw - pFirst;
+
+    if (cs->rt) update_shadows(cs, cmd, slot, frame, cam);
+
     for (int i = 0; i < MAX_ENTRIES; ++i) if (cs->entries[i].state == CS_RESIDENT) residentCount++;
     cs->stats.resident = (int)residentCount;
     cs->stats.queued = queued;
@@ -571,6 +738,11 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     cs->stats.pagesTotal = POOL_PAGES;
     cs->stats.pagesUsed = POOL_PAGES - cs->freePageCount - cs->pendingFreeCount;
     cs->stats.uploadsThisFrame = uploads;
+    RtStats rs = rt_stats(cs->rt);
+    cs->stats.blas = rs.blas;
+    cs->stats.blasBuilds = rs.builds;
+    cs->stats.instances = rs.instances;
+    cs->stats.blasMB = (int)(rs.arenaUsedMB + 0.5);
 }
 
 static const float *g_airScore;
@@ -694,6 +866,10 @@ void chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot) { draw_range(cs
 
 void chunks_draw_plants(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {
     draw_range(cs, cmd, slot, cs->plantFirst[slot], cs->drawCount[slot] - cs->plantFirst[slot]);
+}
+
+void chunks_draw_prepass(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {
+    draw_range(cs, cmd, slot, cs->preFirst[slot], cs->preCount[slot]);
 }
 
 void chunks_draw_shelter(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {

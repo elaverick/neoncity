@@ -22,6 +22,10 @@ typedef struct VkCore {
     VkQueue          queue;
     bool             mdi;            /* multiDrawIndirect + drawIndirectFirstInstance */
     VkSampleCountFlagBits msaa;
+    /* Ray queries against acceleration structures (ray-traced shadows, src/rt.c):
+     * VK_KHR_acceleration_structure + VK_KHR_ray_query + buffer device addresses. */
+    bool             rt;
+    VkPhysicalDeviceAccelerationStructurePropertiesKHR asProps;
 
     VkSwapchainKHR   swapchain;
     VkFormat         swapFormat;
@@ -47,13 +51,16 @@ typedef struct Image {
     uint32_t       w, h, mips;
 } Image;
 
-void     vk_init(VkCore *vk, GLFWwindow *window, bool validation);
+/* rt: use ray queries if the device has them (vk->rt says whether it did). */
+void     vk_init(VkCore *vk, GLFWwindow *window, bool validation, bool rt);
 void     vk_shutdown(VkCore *vk);
 void     vk_create_swapchain(VkCore *vk);
 void     vk_destroy_swapchain(VkCore *vk);
 
 Buffer   vk_buffer(VkCore *vk, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props);
 void     vk_buffer_destroy(VkCore *vk, Buffer *b);
+/* Device address of a buffer created with VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT. */
+VkDeviceAddress vk_buffer_address(VkCore *vk, VkBuffer b);
 Image    vk_image(VkCore *vk, uint32_t w, uint32_t h, uint32_t mips, VkFormat fmt, VkImageUsageFlags usage,
                   VkSampleCountFlagBits samples, VkImageAspectFlags aspect);
 Image    vk_image_3d(VkCore *vk, uint32_t w, uint32_t h, uint32_t d, VkFormat fmt, VkImageUsageFlags usage);

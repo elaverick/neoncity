@@ -83,7 +83,11 @@ set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/spv)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp
-            cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag)
+            cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
+            prepass.frag shadow_trace.comp shadow_denoise.comp)
+# Variants of a shader built with a define: output:source:define. Ray-traced
+# shadows need ray queries in the scene pass, and a depth prepass.
+set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)
 file(GLOB SHADER_INCLUDES ${SHADER_SRC_DIR}/*.glsl)
 set(SPV_OUTPUTS "")
 foreach(S ${SHADERS})
@@ -92,6 +96,18 @@ foreach(S ${SHADERS})
     COMMAND ${SHADER_CMD} -I${SHADER_SRC_DIR} -o ${OUT} ${SHADER_SRC_DIR}/${S}
     DEPENDS ${SHADER_SRC_DIR}/${S} ${SHADER_INCLUDES} ${SHADER_DEP}
     COMMENT "Compiling shader ${S}" VERBATIM)
+  list(APPEND SPV_OUTPUTS ${OUT})
+endforeach()
+foreach(V ${SHADER_VARIANTS})
+  string(REPLACE ":" ";" P ${V})
+  list(GET P 0 NAME)
+  list(GET P 1 SRC)
+  list(GET P 2 DEF)
+  set(OUT ${SHADER_OUT_DIR}/${NAME}.inc)
+  add_custom_command(OUTPUT ${OUT}
+    COMMAND ${SHADER_CMD} -I${SHADER_SRC_DIR} -D${DEF}=1 -o ${OUT} ${SHADER_SRC_DIR}/${SRC}
+    DEPENDS ${SHADER_SRC_DIR}/${SRC} ${SHADER_INCLUDES} ${SHADER_DEP}
+    COMMENT "Compiling shader ${NAME}" VERBATIM)
   list(APPEND SPV_OUTPUTS ${OUT})
 endforeach()
 add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
@@ -152,7 +168,7 @@ endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/main.c src/vkcore.c src/renderer.c src/textures.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c src/chunks.c src/player.c src/thread.c)
+  src/main.c src/vkcore.c src/renderer.c src/textures.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c src/chunks.c src/rt.c src/player.c src/thread.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE src ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

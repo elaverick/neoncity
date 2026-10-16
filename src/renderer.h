@@ -12,6 +12,8 @@ typedef struct FrameUBO {
     float   screen[4];     /* width, height, 1/width, 1/height */
     float   weather[4];    /* rain intensity (0 drizzle .. 1 downpour), street wetness, unused, unused */
     float   shelter[4];    /* shelter map: camera-relative centre x, z; half-width; unused (renderer.c) */
+    float   shadow[4];     /* ray-traced shadows: frame number, on (1) / off (0), where sample 0 lies in a pixel (renderer.c) */
+    mat4    prevViewProj;  /* the previous frame's viewProj for this frame's camera-relative positions (renderer.c) */
 } FrameUBO;
 
 typedef struct Renderer Renderer;
@@ -21,5 +23,13 @@ void      renderer_destroy(Renderer *r);
 /* Renders and presents one frame. cam is the precise world-space camera position. */
 void      renderer_frame(Renderer *r, const FrameUBO *ubo, const double cam[3], bool resized);
 uint64_t  renderer_frame_index(Renderer *r);
+/* Ray-traced shadows on or off (they stay off without ray queries). */
+void      renderer_set_shadows(Renderer *r, bool on);
+bool      renderer_shadows(Renderer *r);
+/* Shadow debug view: only the city's lights on each surface, so their shadows stand out. */
+void      renderer_set_shadow_debug(Renderer *r, bool on);
+bool      renderer_shadow_debug(Renderer *r);
+/* How long the GPU spends on each pass, smoothed over recent frames (one line of text). */
+void      renderer_gpu_times(Renderer *r, char *buf, size_t n);
 /* Saves the next presented frame as a 24-bit BMP. */
 void      renderer_request_screenshot(Renderer *r, const char *path);

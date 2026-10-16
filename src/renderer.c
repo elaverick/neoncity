@@ -1,5 +1,6 @@
 #include "renderer.h"
 #include "textures.h"
+#include "rt.h"
 
 /* SPIR-V is compiled at build time and embedded as word lists. */
 static const uint32_t SPV_city_vert[] = {
@@ -44,9 +45,28 @@ static const uint32_t SPV_shelter_vert[] = {
 static const uint32_t SPV_shelter_frag[] = {
 #include "shelter.frag.inc"
 };
+/* ray-traced shadows: the scene pass with ray queries, the depth prepass, the trace and the denoiser */
+static const uint32_t SPV_city_rt_frag[] = {
+#include "city_rt.frag.inc"
+};
+static const uint32_t SPV_city_pre_vert[] = {
+#include "city_pre.vert.inc"
+};
+static const uint32_t SPV_prepass_frag[] = {
+#include "prepass.frag.inc"
+};
+static const uint32_t SPV_shadow_trace[] = {
+#include "shadow_trace.comp.inc"
+};
+static const uint32_t SPV_shadow_denoise[] = {
+#include "shadow_denoise.comp.inc"
+};
 
 #define HDR_FORMAT   VK_FORMAT_R16G16B16A16_SFLOAT
 #define DEPTH_FORMAT VK_FORMAT_D32_SFLOAT
+#define GBUF_FORMAT  VK_FORMAT_R32G32_UINT         /* prepass.frag: normal, draw chunk | flags */
+#define SLOT_FORMAT  VK_FORMAT_R32G32B32A32_UINT   /* shadow slots: light ids, or visibility */
+#define RAW_FORMAT   VK_FORMAT_R32G32_UINT         /* shadow_trace.comp: rays through, penumbrae */
 #define BLOOM_MIPS   7
 #define CLOUD_NOISE_SIZE 128   /* cloud noise volume edge (texels) */
 
@@ -60,6 +80,10 @@ typedef struct CompositePush {
     float shelter[4];   /* as FrameUBO.shelter */
 } CompositePush;
 typedef struct CloudPush { float zn, zf; } CloudPush;
+
+/* GPU timestamps between the frame's passes (renderer_gpu_times). */
+enum { GT_START = 0, GT_STREAM, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_SCENE, GT_POST, GT_COUNT };
+static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "shelter", "prepass", "shadow rays", "shadow filter", "scene", "post" };
 
 struct Renderer {
     VkCore      *vk;
@@ -98,12 +122,54 @@ struct Renderer {
     VkPipeline            cityPipe, plantPipe, skyPipe, compositePipe, bloomDownPipe, bloomUpPipe, cloudPipe, cloudCompPipe, ssrPipe, ssrApplyPipe,
                           shelterPipe;
 
+    /* Ray-traced shadows (rt: NULL without ray queries). The depth prepass
+     * writes the MSAA G-buffer, resolved into gbuf (sample 0, as is the depth
+     * the shadow passes read); shadow_trace.comp writes sIds and sRaw,
+     * shadow_denoise.comp sVis, which the scene pass reads. sIds and sVis
+     * alternate between frames: the denoiser blends in the previous frame's. */
+    Rt          *rt;
+    bool         shadowsOn, shadowDebug, historyValid, shadowTargetsFresh, havePrev;
+    Image        gbufMsaa, gbuf, sIds[MAX_FRAMES], sRaw, sVis[MAX_FRAMES];
+    VkDescriptorSetLayout shadowLayout;
+    VkPipelineLayout      shadowPL;
+    VkDescriptorSet       shadowSet[MAX_FRAMES];
+    VkPipeline            prepassPipe, prepassPlantPipe, tracePipe, denoisePipe;
+    mat4         prevViewProj;   /* last frame's, camera-relative to prevCam */
+    double       prevCam[3];
+
+    VkQueryPool  timeQ[MAX_FRAMES];
+    bool         timeWritten[MAX_FRAMES];
+    float        gpuMs[64][GT_COUNT];   /* the last 64 frames: each pass's time, ending at that timestamp */
+    uint32_t     gpuFrames;
+
     char   shotPath[512];
     bool   shotPending;
     Buffer shotBuf;
 };
 
+void renderer_set_shadows(Renderer *r, bool on) { r->shadowsOn = on && r->rt; }
+bool renderer_shadows(Renderer *r) { return r->shadowsOn; }
+void renderer_set_shadow_debug(Renderer *r, bool on) { r->shadowDebug = on; }
+bool renderer_shadow_debug(Renderer *r) { return r->shadowDebug; }
+
 uint64_t renderer_frame_index(Renderer *r) { return r->frameIndex; }
+
+void renderer_gpu_times(Renderer *r, char *buf, size_t n) {
+    float total = 0.0f;
+    uint32_t frames = r->gpuFrames < 64 ? r->gpuFrames : 64;
+    int k = snprintf(buf, n, "GPU (last %u frames)", frames);
+    for (int i = 1; i < GT_COUNT && k > 0 && (size_t)k < n; ++i) {
+        float ms = 0.0f;
+        for (uint32_t f = 0; f < frames; ++f) ms += r->gpuMs[f][i] / (float)frames;
+        total += ms;
+        k += snprintf(buf + k, n - k, "%s %s %.2f", i == 1 ? "" : ",", GT_NAMES[i], ms);
+    }
+    if (k > 0 && (size_t)k < n) snprintf(buf + k, n - k, " = %.2f ms", total);
+}
+
+static void timestamp(Renderer *r, VkCommandBuffer cmd, int slot, int which) {
+    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, r->timeQ[slot], (uint32_t)which);
+}
 
 void renderer_request_screenshot(Renderer *r, const char *path) {
     snprintf(r->shotPath, sizeof(r->shotPath), "%s", path);
@@ -161,16 +227,58 @@ static VkPipelineLayout make_pipeline_layout(VkCore *vk, VkDescriptorSetLayout s
 static void write_tex_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkDescriptorType type,
                           VkSampler s, VkImageView v, VkImageLayout layout);
 
+static void write_as_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkAccelerationStructureKHR as) {
+    VkWriteDescriptorSetAccelerationStructureKHR wa = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR };
+    wa.accelerationStructureCount = 1;
+    wa.pAccelerationStructures = &as;
+    VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    w.pNext = &wa;
+    w.dstSet = set; w.dstBinding = binding; w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    vkUpdateDescriptorSets(vk->device, 1, &w, 0, NULL);
+}
+
+static void write_buf_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkDescriptorType type, VkBuffer b, VkDeviceSize size) {
+    VkDescriptorBufferInfo bi = { b, 0, size };
+    VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    w.dstSet = set; w.dstBinding = binding; w.descriptorCount = 1;
+    w.descriptorType = type; w.pBufferInfo = &bi;
+    vkUpdateDescriptorSets(vk->device, 1, &w, 0, NULL);
+}
+
 static void create_layouts(Renderer *r) {
     VkCore *vk = r->vk;
-    VkDescriptorSetLayoutBinding scene[5] = {
+    VkDescriptorSetLayoutBinding scene[8] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shelter map (litter: city.vert) */
+        /* ray-traced shadows only */
+        { 5, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
+        { 6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shadow slot ids */
+        { 7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shadow slot visibility */
     };
-    r->sceneLayout = make_set_layout(vk, scene, 5);
+    r->sceneLayout = make_set_layout(vk, scene, r->rt ? 8 : 5);
+    if (r->rt) {
+        const VkShaderStageFlags C = VK_SHADER_STAGE_COMPUTE_BIT;
+        const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        VkDescriptorSetLayoutBinding sh[11] = {
+            { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, C, NULL },
+            { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, C, NULL },              /* chunks */
+            { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, C, NULL },              /* light tables */
+            { 5, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, C, NULL },
+            { 8, CIS, 1, C, NULL },    /* prepass depth, sample 0 */
+            { 9, CIS, 1, C, NULL },    /* prepass G-buffer, sample 0 */
+            { 10, SI, 1, C, NULL },    /* slot ids */
+            { 11, SI, 1, C, NULL },    /* raw rays */
+            { 12, SI, 1, C, NULL },    /* slot visibility */
+            { 13, CIS, 1, C, NULL },   /* the previous frame's visibility */
+            { 14, CIS, 1, C, NULL },   /* the previous frame's ids */
+        };
+        r->shadowLayout = make_set_layout(vk, sh, 11);
+        r->shadowPL = make_pipeline_layout(vk, r->shadowLayout, sizeof(uint32_t), C);
+    }
     VkDescriptorSetLayoutBinding tex[5] = {
         { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
@@ -225,14 +333,15 @@ static void create_layouts(Renderer *r) {
     r->ssrApplyPL = make_pipeline_layout(vk, r->ssrApplyLayout, 0, 0);
     r->shelterPL = make_pipeline_layout(vk, r->sceneLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
 
-    VkDescriptorPoolSize sizes[3] = {
+    VkDescriptorPoolSize sizes[4] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (PBR_TEXTURE_COUNT + 1) * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (PBR_TEXTURE_COUNT + 3) * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = MAX_FRAMES;
-    pci.poolSizeCount = 3;
+    pci.poolSizeCount = r->rt ? 4 : 3;
     pci.pPoolSizes = sizes;
     VK_CHECK(vkCreateDescriptorPool(vk->device, &pci, NULL, &r->staticPool));
 
@@ -258,6 +367,7 @@ static void create_layouts(Renderer *r) {
         w[3].dstSet = r->sceneSet[i]; w[3].dstBinding = 3; w[3].descriptorCount = PBR_TEXTURE_COUNT;
         w[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[3].pImageInfo = maps;
         vkUpdateDescriptorSets(vk->device, 4, w, 0, NULL);
+        if (r->rt) write_as_set(vk, r->sceneSet[i], 5, rt_tlas(r->rt, i));
     }
 
     VkSamplerCreateInfo si = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
@@ -387,7 +497,8 @@ static VkPipeline make_compute(VkCore *vk, const uint32_t *code, size_t bytes, V
 
 static void create_pipelines(Renderer *r) {
     VkCore *vk = r->vk;
-    GfxDesc city = { SPV_city_vert, sizeof(SPV_city_vert), SPV_city_frag, sizeof(SPV_city_frag),
+    GfxDesc city = { SPV_city_vert, sizeof(SPV_city_vert), r->rt ? SPV_city_rt_frag : SPV_city_frag,
+                     r->rt ? sizeof(SPV_city_rt_frag) : sizeof(SPV_city_frag),
                      r->scenePL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, true, true, true, true };
     city.colorFormat2 = HDR_FORMAT;   /* reflection G-buffer */
     r->cityPipe = make_graphics(vk, &city);
@@ -415,6 +526,15 @@ static void create_pipelines(Renderer *r) {
                    r->shelterPL, VK_FORMAT_UNDEFINED, DEPTH_FORMAT, VK_SAMPLE_COUNT_1_BIT, true, true, true, false };
     sh.positionOnly = true;
     r->shelterPipe = make_graphics(vk, &sh);
+    if (r->rt) {
+        GfxDesc pre = { SPV_city_pre_vert, sizeof(SPV_city_pre_vert), SPV_prepass_frag, sizeof(SPV_prepass_frag),
+                        r->scenePL, GBUF_FORMAT, DEPTH_FORMAT, vk->msaa, true, true, true, true };
+        r->prepassPipe = make_graphics(vk, &pre);
+        pre.cull = false;   /* lobby plants */
+        r->prepassPlantPipe = make_graphics(vk, &pre);
+        r->tracePipe = make_compute(vk, SPV_shadow_trace, sizeof(SPV_shadow_trace), r->shadowPL);
+        r->denoisePipe = make_compute(vk, SPV_shadow_denoise, sizeof(SPV_shadow_denoise), r->shadowPL);
+    }
 }
 
 /* ------------------------------------------------------------ targets --- */
@@ -501,8 +621,9 @@ static void create_targets(Renderer *r) {
         r->msaaColor = vk_image(vk, w, h, 1, HDR_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
                                 vk->msaa, VK_IMAGE_ASPECT_COLOR_BIT);
     /* The clouds read scene depth: a sample-zero resolve of the MSAA depth, or the depth itself. */
+    /* (with shadows the scene pass loads the prepass's depth, so it is kept) */
     r->depth = vk_image(vk, w, h, 1, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                        (msaa ? VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT : VK_IMAGE_USAGE_SAMPLED_BIT),
+                        (!msaa ? VK_IMAGE_USAGE_SAMPLED_BIT : r->rt ? 0 : VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT),
                         vk->msaa, VK_IMAGE_ASPECT_DEPTH_BIT);
     if (msaa)
         r->depthResolve = vk_image(vk, w, h, 1, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -533,15 +654,32 @@ static void create_targets(Renderer *r) {
     for (uint32_t i = 0; i < r->bloomMips; ++i)
         r->bloomMip[i] = vk_view(vk, r->bloom.img, HDR_FORMAT, VK_IMAGE_ASPECT_COLOR_BIT, i, 1);
 
-    VkDescriptorPoolSize sizes[4] = {
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 7 + 2 * MAX_FRAMES + 4 + 5 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * BLOOM_MIPS + 3 * MAX_FRAMES + MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES },
+    if (r->rt) {
+        const VkImageUsageFlags SLOT = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        if (msaa)
+            r->gbufMsaa = vk_image(vk, w, h, 1, GBUF_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+                                   vk->msaa, VK_IMAGE_ASPECT_COLOR_BIT);
+        r->gbuf = vk_image(vk, w, h, 1, GBUF_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                           VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        for (int i = 0; i < MAX_FRAMES; ++i) {
+            r->sIds[i] = vk_image(vk, w, h, 1, SLOT_FORMAT, SLOT, VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+            r->sVis[i] = vk_image(vk, w, h, 1, SLOT_FORMAT, SLOT, VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        }
+        r->sRaw = vk_image(vk, w, h, 1, RAW_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        r->shadowTargetsFresh = true;
+        r->historyValid = false;
+    }
+
+    VkDescriptorPoolSize sizes[5] = {
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 7 + 2 * MAX_FRAMES + 4 + 5 * MAX_FRAMES + 4 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * BLOOM_MIPS + 3 * MAX_FRAMES + MAX_FRAMES + 3 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES + MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES + 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-    pci.maxSets = 2 * BLOOM_MIPS + 2 + MAX_FRAMES + 1 + 2 * MAX_FRAMES;
-    pci.poolSizeCount = 4;
+    pci.maxSets = 2 * BLOOM_MIPS + 2 + MAX_FRAMES + 1 + 2 * MAX_FRAMES + MAX_FRAMES;
+    pci.poolSizeCount = r->rt ? 5 : 4;
     pci.pPoolSizes = sizes;
     VK_CHECK(vkCreateDescriptorPool(vk->device, &pci, NULL, &r->targetPool));
 
@@ -602,6 +740,24 @@ static void create_targets(Renderer *r) {
     write_tex_set(vk, r->cloudCompSet, 1, CIS, r->nearestClamp, r->cloudDist.view, VK_IMAGE_LAYOUT_GENERAL);
     write_tex_set(vk, r->cloudCompSet, 2, CIS, r->nearestClamp, sceneDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     write_tex_set(vk, r->cloudCompSet, 3, CIS, r->nearestClamp, r->mist.view, VK_IMAGE_LAYOUT_GENERAL);
+
+    for (int i = 0; r->rt && i < MAX_FRAMES; ++i) {
+        int prev = (i + MAX_FRAMES - 1) % MAX_FRAMES;
+        VkDescriptorSet set = r->shadowSet[i] = alloc_set(r, r->shadowLayout);
+        write_buf_set(vk, set, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, r->ubo[i].buf, sizeof(FrameUBO));
+        write_buf_set(vk, set, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, chunks_gpu_buffer(r->chunks, i), chunks_gpu_buffer_size());
+        write_buf_set(vk, set, 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, chunks_light_buffer(r->chunks), chunks_light_buffer_size());
+        write_as_set(vk, set, 5, rt_tlas(r->rt, i));
+        write_tex_set(vk, set, 8, CIS, r->nearestClamp, sceneDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        write_tex_set(vk, set, 9, CIS, r->nearestClamp, r->gbuf.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        write_tex_set(vk, set, 10, SI, VK_NULL_HANDLE, r->sIds[i].view, VK_IMAGE_LAYOUT_GENERAL);
+        write_tex_set(vk, set, 11, SI, VK_NULL_HANDLE, r->sRaw.view, VK_IMAGE_LAYOUT_GENERAL);
+        write_tex_set(vk, set, 12, SI, VK_NULL_HANDLE, r->sVis[i].view, VK_IMAGE_LAYOUT_GENERAL);
+        write_tex_set(vk, set, 13, CIS, r->nearestClamp, r->sVis[prev].view, VK_IMAGE_LAYOUT_GENERAL);
+        write_tex_set(vk, set, 14, CIS, r->nearestClamp, r->sIds[prev].view, VK_IMAGE_LAYOUT_GENERAL);
+        write_tex_set(vk, r->sceneSet[i], 6, CIS, r->nearestClamp, r->sIds[i].view, VK_IMAGE_LAYOUT_GENERAL);
+        write_tex_set(vk, r->sceneSet[i], 7, CIS, r->nearestClamp, r->sVis[i].view, VK_IMAGE_LAYOUT_GENERAL);
+    }
 }
 
 static void destroy_targets(Renderer *r) {
@@ -619,6 +775,13 @@ static void destroy_targets(Renderer *r) {
     vk_image_destroy(vk, &r->reflMsaa);
     vk_image_destroy(vk, &r->refl);
     vk_image_destroy(vk, &r->ssr);
+    vk_image_destroy(vk, &r->gbufMsaa);
+    vk_image_destroy(vk, &r->gbuf);
+    vk_image_destroy(vk, &r->sRaw);
+    for (int i = 0; i < MAX_FRAMES; ++i) {
+        vk_image_destroy(vk, &r->sIds[i]);
+        vk_image_destroy(vk, &r->sVis[i]);
+    }
 }
 
 static void recreate_swapchain(Renderer *r) {
@@ -642,6 +805,8 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
     Renderer *r = (Renderer *)calloc(1, sizeof(Renderer));
     r->vk = vk;
     r->chunks = chunks;
+    r->rt = chunks_rt(chunks);
+    r->shadowsOn = r->rt != NULL;
 
     VkCommandPoolCreateInfo cp = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     cp.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -662,6 +827,10 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         r->skyBuf[i] = vk_buffer(vk, sizeof(SkyGrid), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VkQueryPoolCreateInfo qi = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+        qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        qi.queryCount = GT_COUNT;
+        VK_CHECK(vkCreateQueryPool(vk->device, &qi, NULL, &r->timeQ[i]));
     }
     r->textures = textures_create(vk);
     r->shelter = vk_image(vk, SHELTER_SIZE, SHELTER_SIZE, 1, DEPTH_FORMAT,
@@ -680,7 +849,7 @@ void renderer_destroy(Renderer *r) {
     destroy_targets(r);
     vk_buffer_destroy(vk, &r->shotBuf);
     VkPipeline pipes[] = { r->cityPipe, r->plantPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
-                           r->ssrPipe, r->ssrApplyPipe, r->shelterPipe };
+                           r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
     vkDestroyPipelineLayout(vk->device, r->compositePL, NULL);
@@ -690,6 +859,8 @@ void renderer_destroy(Renderer *r) {
     vkDestroyPipelineLayout(vk->device, r->ssrPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->ssrApplyPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->shelterPL, NULL);
+    vkDestroyPipelineLayout(vk->device, r->shadowPL, NULL);
+    vkDestroyDescriptorSetLayout(vk->device, r->shadowLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->sceneLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->texLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->bloomLayout, NULL);
@@ -709,6 +880,7 @@ void renderer_destroy(Renderer *r) {
         vkDestroySemaphore(vk->device, r->imageReady[i], NULL);
         vk_buffer_destroy(vk, &r->ubo[i]);
         vk_buffer_destroy(vk, &r->skyBuf[i]);
+        vkDestroyQueryPool(vk->device, r->timeQ[i], NULL);
     }
     vkDestroyCommandPool(vk->device, r->cmdPool, NULL);
     free(r);
@@ -821,6 +993,106 @@ static void record_shelter(Renderer *r, VkCommandBuffer cmd, int slot, const mat
                      FS, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, 1);
 }
 
+/* Depth prepass (ray-traced shadows only): the city's opaque surfaces into the
+ * scene's depth, which the scene pass then loads, and the G-buffer the shadow
+ * passes read (prepass.frag). Sample 0 of both is resolved for them. What
+ * city.frag draws over only part of a pixel is left out (city.vert: PREPASS). */
+static void record_prepass(Renderer *r, VkCommandBuffer cmd, int slot) {
+    VkCore *vk = r->vk;
+    bool msaa = vk->msaa != VK_SAMPLE_COUNT_1_BIT;
+    const VkPipelineStageFlags2 COLOR = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    const VkPipelineStageFlags2 DEPTHS = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    const VkPipelineStageFlags2 READERS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    const VkAccessFlags2 DEPTH_RW = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    vk_image_barrier(cmd, r->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                     DEPTHS | READERS, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, DEPTHS, DEPTH_RW, 0, 1);
+    if (msaa) {
+        vk_image_barrier(cmd, r->depthResolve.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         READERS, 0, DEPTHS | COLOR, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+        vk_image_barrier(cmd, r->gbufMsaa.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+    }
+    vk_image_barrier(cmd, r->gbuf.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     READERS, 0, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+
+    VkRenderingAttachmentInfo ca = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+    ca.imageView = msaa ? r->gbufMsaa.view : r->gbuf.view;
+    ca.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    ca.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    ca.storeOp = msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
+    if (msaa) {
+        ca.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;   /* an integer format: sample 0, as the depth */
+        ca.resolveImageView = r->gbuf.view;
+        ca.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+    VkRenderingAttachmentInfo da = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+    da.imageView = r->depth.view;
+    da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    da.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    da.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    da.clearValue.depthStencil.depth = 0.0f;
+    if (msaa) {
+        da.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+        da.resolveImageView = r->depthResolve.view;
+        da.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    }
+    VkRenderingInfo ri = { VK_STRUCTURE_TYPE_RENDERING_INFO };
+    ri.renderArea.extent = vk->extent;
+    ri.layerCount = 1;
+    ri.colorAttachmentCount = 1;
+    ri.pColorAttachments = &ca;
+    ri.pDepthAttachment = &da;
+    vkCmdBeginRendering(cmd, &ri);
+    set_viewport(cmd, vk->extent.width, vk->extent.height);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->scenePL, 0, 1, &r->sceneSet[slot], 0, NULL);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->prepassPipe);
+    chunks_draw_prepass(r->chunks, cmd, slot);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->prepassPlantPipe);
+    chunks_draw_plants(r->chunks, cmd, slot);
+    vkCmdEndRendering(cmd);
+
+    const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    vk_image_barrier(cmd, r->gbuf.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, CS, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, 1);
+    vk_image_barrier(cmd, msaa ? r->depthResolve.img : r->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT,
+                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | COLOR,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     CS, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, 1);
+}
+
+/* Ray-traced shadows: one ray per important light per pixel against the TLAS
+ * (shadow_trace.comp), then soft shadows filtered from them and accumulated
+ * over frames (shadow_denoise.comp), for the scene pass to look up. */
+static void record_shadows(Renderer *r, VkCommandBuffer cmd, int slot) {
+    const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, FS = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    if (r->shadowTargetsFresh) {   /* the slot images keep their contents from frame to frame: GENERAL from now on */
+        Image *imgs[2 * MAX_FRAMES + 1];
+        int n = 0;
+        for (int i = 0; i < MAX_FRAMES; ++i) { imgs[n++] = &r->sIds[i]; imgs[n++] = &r->sVis[i]; }
+        imgs[n++] = &r->sRaw;
+        for (int i = 0; i < n; ++i)
+            vk_image_barrier(cmd, imgs[i]->img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                             VK_PIPELINE_STAGE_2_NONE, 0, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, 0, 1);
+        r->shadowTargetsFresh = false;
+    }
+    /* what this frame overwrites was last read by the scene pass and, as history, the denoiser */
+    vk_memory_barrier(cmd, CS | FS, 0, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+    uint32_t w = r->vk->extent.width, h = r->vk->extent.height;
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->shadowPL, 0, 1, &r->shadowSet[slot], 0, NULL);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->tracePipe);
+    vkCmdDispatch(cmd, (w + 7) / 8, (h + 7) / 8, 1);
+    timestamp(r, cmd, slot, GT_TRACE);
+    vk_memory_barrier(cmd, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, CS, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+    uint32_t history = r->historyValid ? 1u : 0u;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->denoisePipe);
+    vkCmdPushConstants(cmd, r->shadowPL, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(history), &history);
+    vkCmdDispatch(cmd, (w + 7) / 8, (h + 7) / 8, 1);
+    timestamp(r, cmd, slot, GT_DENOISE);
+    vk_memory_barrier(cmd, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, FS | CS, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    r->historyValid = true;
+}
+
 /* Screen-space reflections: trace the wet surfaces' mirror rays against the
  * scene depth (ssr.comp), then streak and blend them into the HDR target
  * (ssr_apply.frag). Leaves the scene depth readable for the clouds after. */
@@ -877,6 +1149,13 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     if (acq == VK_ERROR_OUT_OF_DATE_KHR) { recreate_swapchain(r); return; }
     if (acq != VK_SUCCESS && acq != VK_SUBOPTIMAL_KHR) VK_CHECK(acq);
     VK_CHECK(vkResetFences(vk->device, 1, &r->fence[slot]));
+    if (r->timeWritten[slot]) {   /* this slot's last frame has finished: how long its passes took */
+        uint64_t t[GT_COUNT];
+        if (vkGetQueryPoolResults(vk->device, r->timeQ[slot], 0, GT_COUNT, sizeof(t), t, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+            float *ms = r->gpuMs[r->gpuFrames++ % 64];
+            for (int i = 1; i < GT_COUNT; ++i) ms[i] = (float)((double)(t[i] - t[i - 1]) * vk->props.limits.timestampPeriod * 1e-6);
+        }
+    }
 
     /* Projection depends on the (possibly new) aspect ratio. */
     FrameUBO ubo = *uboIn;
@@ -894,6 +1173,23 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     topDown.m[9] = 1.0f / SHELTER_RADIUS;  topDown.m[13] = -scz / SHELTER_RADIUS;
     topDown.m[6] = 1.0f / (SHELTER_HI - SHELTER_LO);  topDown.m[14] = -SHELTER_LO / (SHELTER_HI - SHELTER_LO);
     topDown.m[15] = 1.0f;
+    /* Ray-traced shadows: the frame number turns the rays' sample points; the
+     * shadow passes rebuild positions at sample 0 (Vulkan's standard sample
+     * locations); the denoiser reprojects this frame's camera-relative
+     * positions into the last frame's view. */
+    bool shadows = r->rt && r->shadowsOn;
+    bool msaa = vk->msaa != VK_SAMPLE_COUNT_1_BIT;
+    ubo.shadow[0] = (float)(r->frameIndex & 1023u);
+    ubo.shadow[1] = (float)((shadows ? 1 : 0) | (r->shadowDebug ? 2 : 0));   /* SHADOWS_ON | SHADOWS_DEBUG (common.glsl) */
+    ubo.shadow[2] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.375f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
+    ubo.shadow[3] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.125f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
+    if (!r->havePrev) { r->prevViewProj = ubo.viewProj; memcpy(r->prevCam, cam, sizeof(r->prevCam)); r->havePrev = true; }
+    mat4 moved = mat4_identity();
+    for (int k = 0; k < 3; ++k) moved.m[12 + k] = (float)(cam[k] - r->prevCam[k]);
+    ubo.prevViewProj = mat4_mul(r->prevViewProj, moved);
+    r->prevViewProj = ubo.viewProj;
+    memcpy(r->prevCam, cam, sizeof(r->prevCam));
+    if (!shadows) r->historyValid = false;
     memcpy(r->ubo[slot].mapped, &ubo, sizeof(ubo));
 
     VkCommandBuffer cmd = r->cmd[slot];
@@ -902,22 +1198,39 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
 
+    vkCmdResetQueryPool(cmd, r->timeQ[slot], 0, GT_COUNT);
+    timestamp(r, cmd, slot, GT_START);
     chunks_update(r->chunks, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     chunks_sky_lights(r->chunks, cam, (SkyGrid *)r->skyBuf[slot].mapped);
+    timestamp(r, cmd, slot, GT_STREAM);
     record_shelter(r, cmd, slot, &topDown);
+    timestamp(r, cmd, slot, GT_SHELTER);
+    if (shadows) record_prepass(r, cmd, slot);
+    timestamp(r, cmd, slot, GT_PREPASS);
+    if (shadows) {
+        record_shadows(r, cmd, slot);
+    } else {   /* the shadow passes' timestamps, empty */
+        timestamp(r, cmd, slot, GT_TRACE);
+        timestamp(r, cmd, slot, GT_DENOISE);
+    }
 
     /* ---- scene pass (MSAA HDR, resolved into r->hdr) ---- */
     const VkPipelineStageFlags2 COLOR = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
     const VkPipelineStageFlags2 DEPTHS = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-    bool msaa = vk->msaa != VK_SAMPLE_COUNT_1_BIT;
     if (msaa)
         vk_image_barrier(cmd, r->msaaColor.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                          COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
     /* (the previous frame's cloud passes may still be reading the scene depth) */
     const VkPipelineStageFlags2 READERS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-    vk_image_barrier(cmd, r->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                     DEPTHS | READERS, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, DEPTHS,
-                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT, 0, 1);
+    const VkAccessFlags2 DEPTH_RW = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    if (!shadows)
+        vk_image_barrier(cmd, r->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         DEPTHS | READERS, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, DEPTHS, DEPTH_RW, 0, 1);
+    else if (msaa)   /* the prepass's depth, kept */
+        vk_memory_barrier(cmd, DEPTHS, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, DEPTHS, DEPTH_RW);
+    else             /* the prepass's depth, which the shadow passes read */
+        vk_image_barrier(cmd, r->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, DEPTHS, DEPTH_RW, 0, 1);
     if (msaa)
         vk_image_barrier(cmd, r->depthResolve.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                          READERS, 0, DEPTHS | COLOR,
@@ -948,7 +1261,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     VkRenderingAttachmentInfo da = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
     da.imageView = r->depth.view;
     da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    da.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    da.loadOp = shadows ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
     da.storeOp = msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
     da.clearValue.depthStencil.depth = 0.0f;   /* reverse-Z: 0 is infinitely far */
     if (msaa) {
@@ -972,6 +1285,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->skyPipe);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);
+    timestamp(r, cmd, slot, GT_SCENE);
 
     /* ---- screen-space reflections, then clouds, blended into r->hdr ---- */
     record_reflections(r, cmd, slot);
@@ -1011,6 +1325,8 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     vkCmdPushConstants(cmd, r->compositePL, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cp), &cp);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);
+    timestamp(r, cmd, slot, GT_POST);
+    r->timeWritten[slot] = true;
     bool shot = r->shotPending;
     if (shot) {
         r->shotPending = false;

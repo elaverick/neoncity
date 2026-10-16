@@ -1,8 +1,8 @@
 /* NeonCity - an infinite, deterministic, cyberpunk city walk in C + Vulkan.
  *
  * Controls: mouse look, WASD move, Shift sprint, Space jump,
- *           F toggle fly (debug: Space/Ctrl up/down), F11 fullscreen,
- *           Esc release mouse (Esc again to quit), click to recapture. */
+ *           F toggle fly (debug: Space/Ctrl up/down), F9 toggle shadows, F10 shadow debug view,
+ *           F11 fullscreen, Esc release mouse (Esc again to quit), click to recapture. */
 #include "vkcore.h"
 #include "renderer.h"
 #include "chunks.h"
@@ -13,7 +13,7 @@ static bool   g_captured = true;
 static double g_lastMX, g_lastMY;
 static bool   g_haveMouse;
 static float  g_mouseDX, g_mouseDY;
-static bool   g_flyPressed, g_jumpPressed, g_shotPressed;
+static bool   g_flyPressed, g_jumpPressed, g_shotPressed, g_shadowPressed, g_debugPressed;
 static int    g_windowed[4];
 
 static void on_resize(GLFWwindow *w, int width, int height) { g_resized = true; }
@@ -56,6 +56,8 @@ static void on_key(GLFWwindow *w, int key, int sc, int action, int mods) {
     }
     if (key == GLFW_KEY_F) g_flyPressed = true;
     if (key == GLFW_KEY_SPACE) g_jumpPressed = true;
+    if (key == GLFW_KEY_F9) g_shadowPressed = true;
+    if (key == GLFW_KEY_F10) g_debugPressed = true;
     if (key == GLFW_KEY_F11) toggle_fullscreen(w);
     if (key == GLFW_KEY_F12) g_shotPressed = true;
 }
@@ -80,7 +82,9 @@ static void weather_update(Weather *w, double t, float dt, float fixedRain) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS] [--rain 0..1] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS] [--rain 0..1] [--shot FILE.bmp]\n"
+           "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
+           "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --cam   start position (world metres); a HEIGHT starts in fly mode at that altitude\n"
            "  --walk  hold W for this many seconds before a --shot\n"
            "  --rain  fix the rain intensity (0 drizzle .. 1 downpour); otherwise it drifts\n"
@@ -88,13 +92,15 @@ static void usage(void) {
 }
 
 int main(int argc, char **argv) {
-    bool validation = false;
+    bool validation = false, shadows = true, shadowDebug = false;
     const char *shotPath = NULL;
     bool haveCam = false;
     double camArgs[5] = { 0, 0, 0, 0, -1 };
     float walkSeconds = 0.0f, fixedRain = -1.0f;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--validation") == 0) validation = true;
+        else if (strcmp(argv[i], "--noshadows") == 0) shadows = false;
+        else if (strcmp(argv[i], "--shadowdebug") == 0) shadowDebug = true;
         else if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) shotPath = argv[++i];
         else if (strcmp(argv[i], "--walk") == 0 && i + 1 < argc) walkSeconds = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--rain") == 0 && i + 1 < argc) fixedRain = (float)atof(argv[++i]);
@@ -117,9 +123,10 @@ int main(int argc, char **argv) {
     set_capture(win, true);
 
     VkCore vk;
-    vk_init(&vk, win, validation);
+    vk_init(&vk, win, validation, shadows);
     ChunkSystem *chunks = chunks_create(&vk);
     Renderer *renderer = renderer_create(&vk, chunks);
+    renderer_set_shadow_debug(renderer, shadowDebug);
 
     Player player;
     player_init(&player);
@@ -163,14 +170,23 @@ int main(int argc, char **argv) {
         }
         g_mouseDX = g_mouseDY = 0;
         g_flyPressed = g_jumpPressed = false;
-        /* Scripted walk for captures: starts once the initial view has streamed in. */
-        if (shotPath && walkSeconds > 0.0f && (walkStarted || settledFrames > 30)) {
+        /* Scripted walk for captures: starts once the initial view has streamed in
+         * (or after a timeout, when the pool is too full for all of it to fit). */
+        if (shotPath && walkSeconds > 0.0f && (walkStarted || settledFrames > 30 || totalFrames > 900)) {
             walkStarted = true;
             in.moveZ = 1.0f;
             walkSeconds -= dt;
         }
         player_update(&player, &in, dt);
 
+        if (g_shadowPressed) {
+            renderer_set_shadows(renderer, !renderer_shadows(renderer));
+            g_shadowPressed = false;
+        }
+        if (g_debugPressed) {
+            renderer_set_shadow_debug(renderer, !renderer_shadow_debug(renderer));
+            g_debugPressed = false;
+        }
         if (g_shotPressed) {
             char name[64];
             snprintf(name, sizeof(name), "neoncity_%03d.bmp", shotCount++);
@@ -188,6 +204,12 @@ int main(int argc, char **argv) {
                 shotTaken = true;
                 printf("frame time %.2f ms (avg), drawn chunks %d, draws %d, resident %d, pool %d/%d pages\n",
                        emaDt * 1000.0f, s.drawnChunks, s.drawCalls, s.resident, s.pagesUsed, s.pagesTotal);
+                if (renderer_shadows(renderer))
+                    printf("shadows: %d bottom-level structures (%d MB, %d built so far), %d TLAS instances\n",
+                           s.blas, s.blasMB, s.blasBuilds, s.instances);
+                char gpu[256];
+                renderer_gpu_times(renderer, gpu, sizeof(gpu));
+                printf("%s\n", gpu);
                 printf("camera (%.1f, %.1f, %.1f) yaw %.1f pitch %.1f\n", player.eye[0], player.eye[1], player.eye[2],
                        player.yaw * 180.0f / PI_F, player.pitch * 180.0f / PI_F);
             }
@@ -227,12 +249,13 @@ int main(int argc, char **argv) {
             ChunkStats s = chunks_stats(chunks);
             char title[320];
             snprintf(title, sizeof(title),
-                     "NeonCity | %.0f fps | --cam %.1f %.1f %.0f %.0f | chunk (%d,%d) | drawn %d (%d draws) | resident %d | queued %d | pool %d%%%s",
+                     "NeonCity | %.0f fps | --cam %.1f %.1f %.0f %.0f | chunk (%d,%d) | drawn %d (%d draws) | resident %d | queued %d | pool %d%%%s%s",
                      frames / titleTimer, player.eye[0], player.eye[2],
                      player.yaw * 180.0f / PI_F, player.pitch * 180.0f / PI_F,
                      (int)floor(player.feet[0] / CHUNK_SIZE), (int)floor(player.feet[2] / CHUNK_SIZE),
                      s.drawnChunks, s.drawCalls, s.resident, s.queued + s.ready,
-                     s.pagesUsed * 100 / (s.pagesTotal ? s.pagesTotal : 1), player.fly ? " | FLY" : "");
+                     s.pagesUsed * 100 / (s.pagesTotal ? s.pagesTotal : 1), player.fly ? " | FLY" : "",
+                     renderer_shadows(renderer) ? "" : " | shadows off");
             glfwSetWindowTitle(win, title);
             titleTimer = 0;
             frames = 0;

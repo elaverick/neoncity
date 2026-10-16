@@ -94,6 +94,22 @@
 #define AIR_SHOP          3u            /* seed: the shop hash (its colour) */
 #define AIR_LOBBY         4u
 
+/* Ray-traced shadows (src/rt.c, shaders/shadow_trace.comp). Every light in a
+ * chunk's table (street lamps, shopfronts, lobby spill, arcology lights) is
+ * tested for visibility against acceleration structures of the city round the
+ * camera, whatever the view frustum holds. Receivers fade to unshadowed from
+ * SHADOW_FADE to SHADOW_FAR, deep in the haze. A chunk has a bottom-level
+ * structure while within RT_RANGE: anything that could shadow a receiver
+ * within SHADOW_FAR is then in one (a light reaches at most SHADOW_REACH, and
+ * a building overhangs its chunk by up to 70 m, CITY_OVERHANG). The streamer
+ * also keeps chunks within SHADOW_REACH of the frustum resident, so what is
+ * just off screen still casts. Must match shaders/common.glsl. */
+#define SHADOW_FADE       350.0f
+#define SHADOW_FAR        450.0f
+#define SHADOW_REACH      34.0f
+#define RT_RANGE          (SHADOW_FAR + SHADOW_REACH + 70.0f + 30.0f)
+#define RT_HYSTERESIS     60.0f         /* a structure is dropped this far beyond RT_RANGE */
+
 /* Materials (vertex params.x). Must match shaders/common.glsl. */
 enum {
     MAT_ROAD = 0, MAT_SIDEWALK, MAT_CURB, MAT_LOT,

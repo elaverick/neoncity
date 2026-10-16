@@ -40,12 +40,16 @@ procedural look.
 | Shift | Sprint |
 | Space | Jump |
 | F | Toggle fly mode (debug; Space/Ctrl to rise/descend, Shift for speed) |
+| F9 | Toggle ray-traced shadows |
+| F10 | Shadow debug view: only the light the city's lamps, shopfronts and lobbies throw on each surface |
 | F11 | Fullscreen |
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
 Command line: `--cam X Z YAW PITCH [HEIGHT]` sets the start position (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot`, `--rain 0..1` pins the rain intensity
-(otherwise it drifts between drizzle and downpour), and `--validation` enables the Khronos validation layer if it is installed.
+(otherwise it drifts between drizzle and downpour), `--noshadows` runs without ray-traced shadows (and without the
+ray-query device features they need), `--shadowdebug` starts in the shadow debug view, and `--validation` enables the
+Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
 
 ## How it works
 
@@ -322,6 +326,10 @@ and leaves it out of the shelter map. Litter is a third, within `LITTER_DISTANCE
 plants are a fourth, wanted with the lobbies and drawn last by a pipeline that doesn't cull back
 faces. All three are drawn with their chunk's light table.
 
+The streamer remembers the true bounds of every chunk it has generated, so a chunk that was evicted is tested
+against them next time rather than the conservative ones (which could want a chunk, generate it, find it out of view,
+evict it and want it again, over and over).
+
 When the pool runs low, chunks you haven't seen for the longest time are evicted first.
 If a nearer chunk is still waiting for space, the farthest visible chunks go next; those are
 already deep in the haze. An evicted chunk is simply regenerated when it comes back into
@@ -331,6 +339,50 @@ The render distance is long but finite. Haze reaches 100% exactly at the view di
 chunks that stream in at the edge fade in instead of popping. Rendering is camera-relative,
 with reverse-Z and per-chunk origins computed in doubles, so precision holds up thousands of
 kilometres from the origin.
+
+### Shadows (`src/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
+Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the
+arcologies' sodium lamps. (An arcology's crown lights stand for the cold light falling down the canyon from its glazed
+crown, a fill from far above rather than a light where they are placed, so they stay unshadowed: from their marked
+points the galleries and bridges would black out the canyon.) They need a GPU with Vulkan ray queries (`VK_KHR_ray_query`); without one, or with
+`--noshadows`, the city is lit as before.
+
+- **Acceleration structures.** Each chunk layer that casts (the city, its lobbies and arcology interiors, its litter) gets a
+  bottom-level structure built on the GPU straight from its pages in the geometry pool, through an index list of the
+  triangles that cast (`city_casts_shadow`): glass, veils of light, puddles, contact shadows and the litter whose shape
+  the vertex shader changes (soaked paper, stirred bags) are left out. It is built with compaction allowed and copied
+  into a compacted one once its size is known; the lot live in one arena (about 30 MB round the spawn). A chunk has
+  one while within `RT_RANGE` (580 m) of the camera, built in the frame it is uploaded so it never appears without its
+  shadows, rebuilt from the kept index list if it comes back into range. Every frame a top-level structure is built over
+  them at their camera-relative origins.
+- **Nothing pops.** The top-level structure holds everything in range, wherever the camera looks, so a building behind
+  you or beside the view still shadows what you see. The streamer also keeps resident every chunk within a light's reach
+  (`SHADOW_REACH`, 34 m) of the frustum, so an occluder just off screen is there before the light it blocks comes into
+  view.
+- **Depth prepass.** The opaque city is drawn first into the scene's depth, with each pixel's normal and draw chunk
+  (`prepass.frag`). What `city.frag` draws over only part of a pixel (the panes of glass over real lobbies, veils,
+  puddles, litter's contact shadows) is left out. The scene pass loads the depth, so it shades each pixel about once,
+  which pays for the shadows' lookups.
+- **Rays** (`shadow_trace.comp`). For each pixel within `SHADOW_FAR` (450 m) the trace walks its chunk's light tile as
+  `cityLights` does, ranks the lights by how much they light it (`lightImportance`: falloff, the lit side, and a rough
+  mirror lobe so a lamp glinting in a wet street counts), keeps the eight most important, and traces one ray to each.
+  Lights giving under 1% of the light there are too faint to show a shadow. Each ray goes to a point on the light's
+  emitter, different at each pixel and in each frame: the diffuser under a lamp's head; for the lamp's spill all
+  round, the pool of light on the street beneath it, which is what that light stands for (a facade above a lamp is lit
+  by the street, not shadowed by the lamp's head); the whole pane of a shopfront or lobby.
+- **Soft shadows** (`shadow_denoise.comp`). Where the previous frame (reprojected, matched by depth and by light) was
+  fully lit or fully shadowed and this frame's ray agrees, that stands, which is most of the screen. Near a shadow's
+  edge the pixel's neighbours on the same surface are searched for blocked rays, the blockers' distances give the
+  penumbra's width, the visibility is averaged over a disc that size and blended into the history, so the shadow
+  settles on the true soft one: sharp at a pole's foot, softening with distance from it, very soft from a shopfront.
+- **Lookup.** `cityLights` takes each light's visibility from those eight slots when they were made for this
+  fragment's surface (same draw chunk, same depth). Anything else bright enough to matter, on a surface the prepass
+  didn't see (an edge that misses sample 0) or beyond the eight, gets a hard shadow ray traced in the fragment shader.
+  Shadows fade out from `SHADOW_FADE` (350 m) to `SHADOW_FAR`, deep in the haze.
+
+On an RTX 4080 SUPER at 1600x900 with 4x MSAA, at the spawn point, shadows cost about 1.5 ms: the prepass 0.35, the
+rays 0.6, the filter 0.5 and the structures' upkeep 0.1; the scene pass is no slower, since the prepass saves it as
+much as the lookups cost.
 
 ### Interior mapping (`shaders/city.frag`)
 Facades are single quads. For each window cell the fragment shader traces the view ray
@@ -619,13 +671,15 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
   over the HDR scene, so cloud never smears across a tower's silhouette.
 
 ### Frame
-1. Shelter map: the city round the camera rendered from above, depth only.
-2. MSAA x4 HDR scene and reflection G-buffer, resolved (colour averaged, depth sample zero).
-3. Sky, drawn into the empty depth.
-4. Screen-space reflections on the wet streets: a compute trace, then a streaked additive blend.
-5. Clouds and rain mist: half-resolution compute ray march, blended into the HDR target with a depth-aware upsample.
-6. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
-7. Composite: falling rain, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
+1. Streaming: uploads, bottom-level structures for new chunks, compaction, the frame's top-level structure.
+2. Shelter map: the city round the camera rendered from above, depth only.
+3. With shadows: the depth prepass, then the shadow rays and their filter (compute).
+4. MSAA x4 HDR scene and reflection G-buffer, resolved (colour averaged, depth sample zero).
+5. Sky, drawn into the empty depth.
+6. Screen-space reflections on the wet streets: a compute trace, then a streaked additive blend.
+7. Clouds and rain mist: half-resolution compute ray march, blended into the HDR target with a depth-aware upsample.
+8. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
+9. Composite: falling rain, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
 
 ## Extending
 - **Environment** (rain, wet streets, fog volumes, weather): the atmosphere lives in

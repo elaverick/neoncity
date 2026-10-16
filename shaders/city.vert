@@ -16,9 +16,13 @@ layout(location = 3) out vec2 vUV;
 layout(location = 4) flat out uint  vSeed;
 layout(location = 5) flat out uvec4 vParams;
 layout(location = 6) flat out uint  vChunk;
+#ifndef PREPASS   // (prepass.frag reads neither)
 layout(location = 7) flat out uint  vFacePack;   // facades: packed face widths (exact, so not interpolated)
 layout(location = 8) flat out uint  vAux;        // facades: face identity, neighbour width, corners
+#endif
 layout(location = 9) out vec2 vLitter;           // litter: ambient occlusion, how soaked
+// The depth prepass (renderer.c: record_prepass) and the scene pass must agree to the bit.
+invariant gl_Position;
 
 // Shelter map (renderer.c: record_shelter), as shaders/city.frag reads it.
 layout(set = 0, binding = 4) uniform sampler2D shelterMap;
@@ -96,6 +100,21 @@ void litter(inout vec3 rel, inout vec3 nrm, out vec2 lit) {
     lit = vec2(inNrm.w, soak);
 }
 
+#ifdef PREPASS
+/* The prepass leaves out what city.frag draws over only some of a pixel's
+ * samples, or discards: glass over real interiors (paneCoverage), veils of
+ * light (veil), puddles, and litter's contact shadows. (The glazed ground
+ * floors of facades with a real lobby behind are cut out by prepass.frag.) */
+bool partialCoverage() {
+    uint m = inParams.x, y = inParams.y;
+    if (m == MAT_INTERIOR) return y == 8u;                     // IS_GLASS
+    if (m == MAT_LITTER) return y == LK_SHADOW;
+    if (m == MAT_ARCOLOGY)                                     // ARS_SHAFT, ARS_SEARCH, ARS_PUDDLE, ARS_STEAM; ARS_RAIL's glass
+        return (y >= 22u && y <= 25u) || (y == 19u && (inParams.z == 0u || inParams.z == 3u));
+    return false;
+}
+#endif
+
 void main() {
     ChunkGPU c = chunks[gl_InstanceIndex];
     vec3 rel = inPos + c.origin.xyz;
@@ -144,7 +163,12 @@ void main() {
     vSeed = inSeed;
     vParams = inParams;
     vChunk = uint(gl_InstanceIndex);
+#ifndef PREPASS
     vFacePack = uint(max(inUV.y, 0.0) + 0.5);
     vAux = inAux;
+#endif
     gl_Position = frame.viewProj * vec4(rel, 1.0);
+#ifdef PREPASS
+    if (partialCoverage()) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // all three corners outside: the triangle is clipped away
+#endif
 }
