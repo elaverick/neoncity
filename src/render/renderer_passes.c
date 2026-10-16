@@ -251,3 +251,116 @@ void record_reflections(Renderer *r, VkCommandBuffer cmd, int slot) {
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);
 }
+
+/* The scene pass: the city, its plants and the sky into the MSAA HDR target
+ * and the reflection G-buffer, resolved into r->hdr and r->refl. With
+ * shadows, the depth is the prepass's. */
+void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows) {
+    VkCore *vk = r->vk;
+    bool msaa = vk->msaa != VK_SAMPLE_COUNT_1_BIT;
+    uint32_t W = vk->extent.width, H = vk->extent.height;
+    const VkPipelineStageFlags2 COLOR = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    const VkPipelineStageFlags2 DEPTHS = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    if (msaa)
+        vk_image_barrier(cmd, r->msaaColor.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+    /* (the previous frame's cloud passes may still be reading the scene depth) */
+    const VkPipelineStageFlags2 READERS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    const VkAccessFlags2 DEPTH_RW = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    if (!shadows)
+        vk_image_barrier(cmd, r->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         DEPTHS | READERS, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, DEPTHS, DEPTH_RW, 0, 1);
+    else if (msaa)   /* the prepass's depth, kept */
+        vk_memory_barrier(cmd, DEPTHS, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, DEPTHS, DEPTH_RW);
+    else             /* the prepass's depth, which the shadow passes read */
+        vk_image_barrier(cmd, r->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, DEPTHS, DEPTH_RW, 0, 1);
+    if (msaa)
+        vk_image_barrier(cmd, r->depthResolve.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         READERS, 0, DEPTHS | COLOR,
+                         VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+    vk_image_barrier(cmd, r->hdr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                     COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+    vk_image_barrier(cmd, r->refl.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     READERS, 0, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+    if (msaa)
+        vk_image_barrier(cmd, r->reflMsaa.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+
+    /* colour, and the reflection G-buffer (both cleared to zero) */
+    VkRenderingAttachmentInfo ca[2] = { { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO }, { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO } };
+    VkImageView colorMs[2] = { r->msaaColor.view, r->reflMsaa.view }, colorRes[2] = { r->hdr.view, r->refl.view };
+    for (int i = 0; i < 2; ++i) {
+        ca[i].imageView = msaa ? colorMs[i] : colorRes[i];
+        ca[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        ca[i].storeOp = msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
+        if (msaa) {
+            ca[i].resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+            ca[i].resolveImageView = colorRes[i];
+            ca[i].resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
+    }
+    VkRenderingAttachmentInfo da = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+    da.imageView = r->depth.view;
+    da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    da.loadOp = shadows ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+    da.storeOp = msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
+    da.clearValue.depthStencil.depth = 0.0f;   /* reverse-Z: 0 is infinitely far */
+    if (msaa) {
+        da.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;   /* always supported */
+        da.resolveImageView = r->depthResolve.view;
+        da.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    }
+    VkRenderingInfo ri = { VK_STRUCTURE_TYPE_RENDERING_INFO };
+    ri.renderArea.extent = vk->extent;
+    ri.layerCount = 1;
+    ri.colorAttachmentCount = 2;
+    ri.pColorAttachments = ca;
+    ri.pDepthAttachment = &da;
+    vkCmdBeginRendering(cmd, &ri);
+    set_viewport(cmd, W, H);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->scenePL, 0, 1, &r->sceneSet[slot], 0, NULL);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->cityPipe);
+    chunks_draw(r->chunks, cmd, slot);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->plantPipe);
+    chunks_draw_plants(r->chunks, cmd, slot);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->skyPipe);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+    vkCmdEndRendering(cmd);
+}
+
+/* Composite and tonemap into swapchain image imageIndex: bloom, rain, grain,
+ * aberration and vignette (composite.frag). */
+void record_composite(Renderer *r, VkCommandBuffer cmd, uint32_t imageIndex, const FrameUBO *ubo) {
+    VkCore *vk = r->vk;
+    uint32_t W = vk->extent.width, H = vk->extent.height;
+    const VkPipelineStageFlags2 COLOR = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkImage swapImg = vk->images[imageIndex];
+    vk_image_barrier(cmd, swapImg, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     COLOR, 0, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
+    VkRenderingAttachmentInfo sa = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+    sa.imageView = vk->views[imageIndex];
+    sa.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    sa.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    sa.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingInfo ri2 = { VK_STRUCTURE_TYPE_RENDERING_INFO };
+    ri2.renderArea.extent = vk->extent;
+    ri2.layerCount = 1;
+    ri2.colorAttachmentCount = 1;
+    ri2.pColorAttachments = &sa;
+    vkCmdBeginRendering(cmd, &ri2);
+    set_viewport(cmd, W, H);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->compositePipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->compositePL, 0, 1, &r->compositeSet, 0, NULL);
+    CompositePush cp = { ubo->camPos[3], 0.14f, 1.0f, 0.035f, (float)W, (float)H, 0.008f, 0.32f };
+    for (int k = 0; k < 3; ++k) {
+        cp.right[k] = ubo->rayBasis.m[k]; cp.up[k] = ubo->rayBasis.m[4 + k]; cp.fwd[k] = ubo->rayBasis.m[8 + k];
+    }
+    cp.right[3] = NEAR_PLANE; cp.up[3] = FAR_PLANE; cp.fwd[3] = ubo->weather[0];
+    memcpy(cp.shelter, ubo->shelter, sizeof(cp.shelter));
+    vkCmdPushConstants(cmd, r->compositePL, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cp), &cp);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+    vkCmdEndRendering(cmd);
+}

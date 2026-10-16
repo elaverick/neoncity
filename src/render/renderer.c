@@ -143,15 +143,13 @@ void renderer_destroy(Renderer *r) {
     free(r);
 }
 
-void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], bool resized) {
+/* Waits for this slot's last frame, acquires a swapchain image and reads the
+ * slot's GPU timings. False if the swapchain had to be recreated. */
+static bool frame_acquire(Renderer *r, int slot, uint32_t *imageIndex) {
     VkCore *vk = r->vk;
-    int slot = (int)(r->frameIndex % MAX_FRAMES);
-    if (resized) recreate_swapchain(r);
-
     VK_CHECK(vkWaitForFences(vk->device, 1, &r->fence[slot], VK_TRUE, UINT64_MAX));
-    uint32_t imageIndex;
-    VkResult acq = vkAcquireNextImageKHR(vk->device, vk->swapchain, UINT64_MAX, r->imageReady[slot], VK_NULL_HANDLE, &imageIndex);
-    if (acq == VK_ERROR_OUT_OF_DATE_KHR) { recreate_swapchain(r); return; }
+    VkResult acq = vkAcquireNextImageKHR(vk->device, vk->swapchain, UINT64_MAX, r->imageReady[slot], VK_NULL_HANDLE, imageIndex);
+    if (acq == VK_ERROR_OUT_OF_DATE_KHR) { recreate_swapchain(r); return false; }
     if (acq != VK_SUCCESS && acq != VK_SUBOPTIMAL_KHR) VK_CHECK(acq);
     VK_CHECK(vkResetFences(vk->device, 1, &r->fence[slot]));
     if (r->timeWritten[slot]) {   /* this slot's last frame has finished: how long its passes took */
@@ -162,176 +160,54 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
         }
     }
 
-    /* Projection depends on the (possibly new) aspect ratio. */
-    FrameUBO ubo = *uboIn;
+    return true;
+}
+
+/* The frame's uniforms: screen size, the shelter map's frame (and its top-down
+ * projection), the shadow parameters and last frame's view for reprojection. */
+static void frame_uniforms(Renderer *r, int slot, const FrameUBO *uboIn, const double cam[3], FrameUBO *ubo, mat4 *topDown) {
+    VkCore *vk = r->vk;
+    bool shadows = r->rt && r->shadowsOn;
+    *ubo = *uboIn;
     uint32_t W = vk->extent.width, H = vk->extent.height;
-    ubo.screen[0] = (float)W; ubo.screen[1] = (float)H; ubo.screen[2] = 1.0f / W; ubo.screen[3] = 1.0f / H;
+    ubo->screen[0] = (float)W; ubo->screen[1] = (float)H; ubo->screen[2] = 1.0f / W; ubo->screen[3] = 1.0f / H;
     /* Shelter map: centred on the camera, snapped to its texels so it doesn't
      * shimmer as the camera moves; camera-relative x, z to the square, height
      * (SHELTER_LO..SHELTER_HI) to depth, highest nearest. */
     const double texel = 2.0 * SHELTER_RADIUS / SHELTER_SIZE;
     float scx = (float)(floor(cam[0] / texel + 0.5) * texel - cam[0]);
     float scz = (float)(floor(cam[2] / texel + 0.5) * texel - cam[2]);
-    ubo.shelter[0] = scx; ubo.shelter[1] = scz; ubo.shelter[2] = SHELTER_RADIUS; ubo.shelter[3] = 0.0f;
-    mat4 topDown = { { 0 } };
-    topDown.m[0] = 1.0f / SHELTER_RADIUS;  topDown.m[12] = -scx / SHELTER_RADIUS;
-    topDown.m[9] = 1.0f / SHELTER_RADIUS;  topDown.m[13] = -scz / SHELTER_RADIUS;
-    topDown.m[6] = 1.0f / (SHELTER_HI - SHELTER_LO);  topDown.m[14] = -SHELTER_LO / (SHELTER_HI - SHELTER_LO);
-    topDown.m[15] = 1.0f;
+    ubo->shelter[0] = scx; ubo->shelter[1] = scz; ubo->shelter[2] = SHELTER_RADIUS; ubo->shelter[3] = 0.0f;
+    mat4 td = { { 0 } };
+    td.m[0] = 1.0f / SHELTER_RADIUS;  td.m[12] = -scx / SHELTER_RADIUS;
+    td.m[9] = 1.0f / SHELTER_RADIUS;  td.m[13] = -scz / SHELTER_RADIUS;
+    td.m[6] = 1.0f / (SHELTER_HI - SHELTER_LO);  td.m[14] = -SHELTER_LO / (SHELTER_HI - SHELTER_LO);
+    td.m[15] = 1.0f;
     /* Ray-traced shadows: the frame number turns the rays' sample points; the
      * shadow passes rebuild positions at sample 0 (Vulkan's standard sample
      * locations); the denoiser reprojects this frame's camera-relative
      * positions into the last frame's view. */
-    bool shadows = r->rt && r->shadowsOn;
-    bool msaa = vk->msaa != VK_SAMPLE_COUNT_1_BIT;
-    ubo.shadow[0] = (float)(r->frameIndex & 1023u);
-    ubo.shadow[1] = (float)((shadows ? 1 : 0) | (r->shadowDebug ? 2 : 0));   /* SHADOWS_ON | SHADOWS_DEBUG (common.glsl) */
-    ubo.shadow[2] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.375f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
-    ubo.shadow[3] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.125f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
-    if (!r->havePrev) { r->prevViewProj = ubo.viewProj; memcpy(r->prevCam, cam, sizeof(r->prevCam)); r->havePrev = true; }
+    ubo->shadow[0] = (float)(r->frameIndex & 1023u);
+    ubo->shadow[1] = (float)((shadows ? 1 : 0) | (r->shadowDebug ? 2 : 0));   /* SHADOWS_ON | SHADOWS_DEBUG (common.glsl) */
+    ubo->shadow[2] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.375f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
+    ubo->shadow[3] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.125f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
+    if (!r->havePrev) { r->prevViewProj = ubo->viewProj; memcpy(r->prevCam, cam, sizeof(r->prevCam)); r->havePrev = true; }
     mat4 moved = mat4_identity();
     for (int k = 0; k < 3; ++k) moved.m[12 + k] = (float)(cam[k] - r->prevCam[k]);
-    ubo.prevViewProj = mat4_mul(r->prevViewProj, moved);
-    r->prevViewProj = ubo.viewProj;
+    ubo->prevViewProj = mat4_mul(r->prevViewProj, moved);
+    r->prevViewProj = ubo->viewProj;
     memcpy(r->prevCam, cam, sizeof(r->prevCam));
     if (!shadows) r->historyValid = false;
-    memcpy(r->ubo[slot].mapped, &ubo, sizeof(ubo));
+    memcpy(r->ubo[slot].mapped, ubo, sizeof(*ubo));
+    *topDown = td;
 
-    VkCommandBuffer cmd = r->cmd[slot];
-    VK_CHECK(vkResetCommandBuffer(cmd, 0));
-    VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
+}
 
-    vkCmdResetQueryPool(cmd, r->timeQ[slot], 0, GT_COUNT);
-    timestamp(r, cmd, slot, GT_START);
-    chunks_update(r->chunks, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
-    chunks_sky_lights(r->chunks, cam, (SkyGrid *)r->skyBuf[slot].mapped);
-    timestamp(r, cmd, slot, GT_STREAM);
-    record_shelter(r, cmd, slot, &topDown);
-    timestamp(r, cmd, slot, GT_SHELTER);
-    if (shadows) record_prepass(r, cmd, slot);
-    timestamp(r, cmd, slot, GT_PREPASS);
-    if (shadows) {
-        record_shadows(r, cmd, slot);
-    } else {   /* the shadow passes' timestamps, empty */
-        timestamp(r, cmd, slot, GT_TRACE);
-        timestamp(r, cmd, slot, GT_DENOISE);
-    }
-
-    /* ---- scene pass (MSAA HDR, resolved into r->hdr) ---- */
+/* Hands the swapchain image to presentation, copying it out first if a
+ * screenshot is pending. Returns whether it was. */
+static bool record_present_barrier(Renderer *r, VkCommandBuffer cmd, VkImage swapImg, uint32_t W, uint32_t H) {
+    VkCore *vk = r->vk;
     const VkPipelineStageFlags2 COLOR = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    const VkPipelineStageFlags2 DEPTHS = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-    if (msaa)
-        vk_image_barrier(cmd, r->msaaColor.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                         COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
-    /* (the previous frame's cloud passes may still be reading the scene depth) */
-    const VkPipelineStageFlags2 READERS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-    const VkAccessFlags2 DEPTH_RW = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-    if (!shadows)
-        vk_image_barrier(cmd, r->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                         DEPTHS | READERS, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, DEPTHS, DEPTH_RW, 0, 1);
-    else if (msaa)   /* the prepass's depth, kept */
-        vk_memory_barrier(cmd, DEPTHS, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, DEPTHS, DEPTH_RW);
-    else             /* the prepass's depth, which the shadow passes read */
-        vk_image_barrier(cmd, r->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, DEPTHS, DEPTH_RW, 0, 1);
-    if (msaa)
-        vk_image_barrier(cmd, r->depthResolve.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                         READERS, 0, DEPTHS | COLOR,
-                         VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
-    vk_image_barrier(cmd, r->hdr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
-                     COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
-    vk_image_barrier(cmd, r->refl.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                     READERS, 0, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
-    if (msaa)
-        vk_image_barrier(cmd, r->reflMsaa.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                         COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
-
-    /* colour, and the reflection G-buffer (both cleared to zero) */
-    VkRenderingAttachmentInfo ca[2] = { { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO }, { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO } };
-    VkImageView colorMs[2] = { r->msaaColor.view, r->reflMsaa.view }, colorRes[2] = { r->hdr.view, r->refl.view };
-    for (int i = 0; i < 2; ++i) {
-        ca[i].imageView = msaa ? colorMs[i] : colorRes[i];
-        ca[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        ca[i].storeOp = msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
-        if (msaa) {
-            ca[i].resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
-            ca[i].resolveImageView = colorRes[i];
-            ca[i].resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        }
-    }
-    VkRenderingAttachmentInfo da = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-    da.imageView = r->depth.view;
-    da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    da.loadOp = shadows ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
-    da.storeOp = msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
-    da.clearValue.depthStencil.depth = 0.0f;   /* reverse-Z: 0 is infinitely far */
-    if (msaa) {
-        da.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;   /* always supported */
-        da.resolveImageView = r->depthResolve.view;
-        da.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    }
-    VkRenderingInfo ri = { VK_STRUCTURE_TYPE_RENDERING_INFO };
-    ri.renderArea.extent = vk->extent;
-    ri.layerCount = 1;
-    ri.colorAttachmentCount = 2;
-    ri.pColorAttachments = ca;
-    ri.pDepthAttachment = &da;
-    vkCmdBeginRendering(cmd, &ri);
-    set_viewport(cmd, W, H);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->scenePL, 0, 1, &r->sceneSet[slot], 0, NULL);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->cityPipe);
-    chunks_draw(r->chunks, cmd, slot);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->plantPipe);
-    chunks_draw_plants(r->chunks, cmd, slot);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->skyPipe);
-    vkCmdDraw(cmd, 3, 1, 0, 0);
-    vkCmdEndRendering(cmd);
-    timestamp(r, cmd, slot, GT_SCENE);
-
-    /* ---- screen-space reflections, then clouds, blended into r->hdr ---- */
-    record_reflections(r, cmd, slot);
-    record_clouds(r, cmd, slot);
-
-    vk_image_barrier(cmd, r->hdr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                     COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, 1);
-
-    /* ---- bloom ---- */
-    record_bloom(r, cmd);
-
-    /* ---- composite / tonemap to the swapchain ---- */
-    VkImage swapImg = vk->images[imageIndex];
-    vk_image_barrier(cmd, swapImg, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                     COLOR, 0, COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, 1);
-    VkRenderingAttachmentInfo sa = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-    sa.imageView = vk->views[imageIndex];
-    sa.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    sa.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    sa.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    VkRenderingInfo ri2 = { VK_STRUCTURE_TYPE_RENDERING_INFO };
-    ri2.renderArea.extent = vk->extent;
-    ri2.layerCount = 1;
-    ri2.colorAttachmentCount = 1;
-    ri2.pColorAttachments = &sa;
-    vkCmdBeginRendering(cmd, &ri2);
-    set_viewport(cmd, W, H);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->compositePipe);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->compositePL, 0, 1, &r->compositeSet, 0, NULL);
-    CompositePush cp = { ubo.camPos[3], 0.14f, 1.0f, 0.035f, (float)W, (float)H, 0.008f, 0.32f };
-    for (int k = 0; k < 3; ++k) {
-        cp.right[k] = ubo.rayBasis.m[k]; cp.up[k] = ubo.rayBasis.m[4 + k]; cp.fwd[k] = ubo.rayBasis.m[8 + k];
-    }
-    cp.right[3] = NEAR_PLANE; cp.up[3] = FAR_PLANE; cp.fwd[3] = ubo.weather[0];
-    memcpy(cp.shelter, ubo.shelter, sizeof(cp.shelter));
-    vkCmdPushConstants(cmd, r->compositePL, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cp), &cp);
-    vkCmdDraw(cmd, 3, 1, 0, 0);
-    vkCmdEndRendering(cmd);
-    timestamp(r, cmd, slot, GT_POST);
-    r->timeWritten[slot] = true;
     bool shot = r->shotPending;
     if (shot) {
         r->shotPending = false;
@@ -351,8 +227,14 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
         vk_image_barrier(cmd, swapImg, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                          COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_NONE, 0, 0, 1);
     }
-    VK_CHECK(vkEndCommandBuffer(cmd));
+    return shot;
+}
 
+/* Submits the frame, saves the screenshot if one was taken, and presents. */
+static void frame_submit_present(Renderer *r, VkCommandBuffer cmd, int slot, uint32_t imageIndex, bool shot) {
+    VkCore *vk = r->vk;
+    const VkPipelineStageFlags2 COLOR = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    uint32_t W = vk->extent.width, H = vk->extent.height;
     VkSemaphoreSubmitInfo wait = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
     wait.semaphore = r->imageReady[slot];
     wait.stageMask = COLOR;
@@ -382,4 +264,62 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     r->frameIndex++;
     if (pr == VK_ERROR_OUT_OF_DATE_KHR || pr == VK_SUBOPTIMAL_KHR) recreate_swapchain(r);
     else if (pr != VK_SUCCESS) VK_CHECK(pr);
+}
+
+void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], bool resized) {
+    VkCore *vk = r->vk;
+    int slot = (int)(r->frameIndex % MAX_FRAMES);
+    if (resized) recreate_swapchain(r);
+    uint32_t imageIndex;
+    if (!frame_acquire(r, slot, &imageIndex)) return;
+    FrameUBO ubo;
+    mat4 topDown;
+    frame_uniforms(r, slot, uboIn, cam, &ubo, &topDown);
+    bool shadows = r->rt && r->shadowsOn;
+    uint32_t W = vk->extent.width, H = vk->extent.height;
+    const VkPipelineStageFlags2 COLOR = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+    VkCommandBuffer cmd = r->cmd[slot];
+    VK_CHECK(vkResetCommandBuffer(cmd, 0));
+    VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
+
+    vkCmdResetQueryPool(cmd, r->timeQ[slot], 0, GT_COUNT);
+    timestamp(r, cmd, slot, GT_START);
+    chunks_update(r->chunks, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
+    chunks_sky_lights(r->chunks, cam, (SkyGrid *)r->skyBuf[slot].mapped);
+    timestamp(r, cmd, slot, GT_STREAM);
+    record_shelter(r, cmd, slot, &topDown);
+    timestamp(r, cmd, slot, GT_SHELTER);
+    if (shadows) record_prepass(r, cmd, slot);
+    timestamp(r, cmd, slot, GT_PREPASS);
+    if (shadows) {
+        record_shadows(r, cmd, slot);
+    } else {   /* the shadow passes' timestamps, empty */
+        timestamp(r, cmd, slot, GT_TRACE);
+        timestamp(r, cmd, slot, GT_DENOISE);
+    }
+
+    record_scene(r, cmd, slot, shadows);
+    timestamp(r, cmd, slot, GT_SCENE);
+
+    /* ---- screen-space reflections, then clouds, blended into r->hdr ---- */
+    record_reflections(r, cmd, slot);
+    record_clouds(r, cmd, slot);
+
+    vk_image_barrier(cmd, r->hdr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, 1);
+
+    /* ---- bloom ---- */
+    record_bloom(r, cmd);
+
+    record_composite(r, cmd, imageIndex, &ubo);
+    timestamp(r, cmd, slot, GT_POST);
+    r->timeWritten[slot] = true;
+    VkImage swapImg = vk->images[imageIndex];
+    bool shot = record_present_barrier(r, cmd, swapImg, W, H);
+    VK_CHECK(vkEndCommandBuffer(cmd));
+    frame_submit_present(r, cmd, slot, imageIndex, shot);
 }

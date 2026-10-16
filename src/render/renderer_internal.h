@@ -121,3 +121,5 @@ void record_shelter(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *topD
 void record_prepass(Renderer *r, VkCommandBuffer cmd, int slot);
 void record_shadows(Renderer *r, VkCommandBuffer cmd, int slot);
 void record_reflections(Renderer *r, VkCommandBuffer cmd, int slot);
+void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows);
+void record_composite(Renderer *r, VkCommandBuffer cmd, uint32_t imageIndex, const FrameUBO *ubo);
