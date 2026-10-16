@@ -453,26 +453,10 @@ typedef struct Item {
     uint8_t  flags;      /* LF_* */
 } Item;
 
+/* A litter vertex: its ambient occlusion rides in the normal's w. Litter
+ * meshes have no emission transform (city_build_litter clears it). */
 static void push(Mesh *m, vec3 p, vec3 n, float ao, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux) {
-    if (m->count == m->cap) {
-        m->cap = m->cap ? m->cap * 2 : 8192;
-        m->v = (Vertex *)realloc(m->v, m->cap * sizeof(Vertex));
-        if (!m->v) fatal("out of memory building litter");
-    }
-    Vertex *o = &m->v[m->count++];
-    o->pos[0] = p.x; o->pos[1] = p.y; o->pos[2] = p.z;
-    o->nrm[0] = (int8_t)(n.x * 127.0f); o->nrm[1] = (int8_t)(n.y * 127.0f);
-    o->nrm[2] = (int8_t)(n.z * 127.0f); o->nrm[3] = (int8_t)(clampf(ao, 0.0f, 1.0f) * 127.0f);
-    o->uv[0] = u; o->uv[1] = v;
-    o->seed = seed;
-    memcpy(o->params, prm, 4);
-    o->aux = aux;
-    if (p.x < m->mn[0]) m->mn[0] = p.x;
-    if (p.y < m->mn[1]) m->mn[1] = p.y;
-    if (p.z < m->mn[2]) m->mn[2] = p.z;
-    if (p.x > m->mx[0]) m->mx[0] = p.x;
-    if (p.y > m->mx[1]) m->mx[1] = p.y;
-    if (p.z > m->mx[2]) m->mx[2] = p.z;
+    mesh_push_w(m, p, n, (int8_t)(clampf(ao, 0.0f, 1.0f) * 127.0f), u, v, seed, prm, aux);
 }
 
 static int quant(float v, float unit, int lo, int hi) {

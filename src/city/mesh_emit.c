@@ -7,6 +7,10 @@
 void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); free(m->air); memset(m, 0, sizeof(*m)); }
 
 void mesh_push(Mesh *m, vec3 p, vec3 n, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux) {
+    mesh_push_w(m, p, n, 0, u, v, seed, prm, aux);
+}
+
+void mesh_push_w(Mesh *m, vec3 p, vec3 n, int8_t w, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux) {
     if (m->count == m->cap) {
         m->cap = m->cap ? m->cap * 2 : 8192;
         m->v = (Vertex *)realloc(m->v, m->cap * sizeof(Vertex));
@@ -23,7 +27,7 @@ void mesh_push(Mesh *m, vec3 p, vec3 n, float u, float v, uint32_t seed, const u
     Vertex *o = &m->v[m->count++];
     o->pos[0] = p.x; o->pos[1] = p.y; o->pos[2] = p.z;
     o->nrm[0] = (int8_t)(n.x * 127.0f); o->nrm[1] = (int8_t)(n.y * 127.0f);
-    o->nrm[2] = (int8_t)(n.z * 127.0f); o->nrm[3] = 0;
+    o->nrm[2] = (int8_t)(n.z * 127.0f); o->nrm[3] = w;
     o->uv[0] = u; o->uv[1] = v;
     o->seed = seed;
     memcpy(o->params, prm, 4);

@@ -125,7 +125,10 @@ double area2(const DVec2 *p, int n);
 float drop_y(double d);
 
 /* mesh_emit.c */
+/* One vertex, through the emission transform; the mesh's bounds grow to hold it. */
 void mesh_push(Mesh *m, vec3 p, vec3 n, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux);
+/* As mesh_push, with w in the normal's fourth component (litter: ambient occlusion). */
+void mesh_push_w(Mesh *m, vec3 p, vec3 n, int8_t w, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux);
 Mat mat(uint8_t id, uint32_t seed, uint8_t a, uint8_t b, uint8_t c);
 void emit_quad(Mesh *m, vec3 a, vec3 b, vec3 c, vec3 d, vec3 n, const float uv[4][2], Mat mt);
 void emit_tri(Mesh *m, vec3 a, vec3 b, vec3 c, vec3 n, const float uv[3][2], Mat mt);

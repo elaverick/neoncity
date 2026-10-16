@@ -256,7 +256,19 @@ static int roof_spot(const BGraph *g, int si, Rng *r, float sx, float sz, Placed
     return 0;
 }
 
-static void dress_roof(Mesh *m, const BGraph *g, int si, Rng *r) {
+/* Bounds and vertex centroid of an outline. */
+static void loop_box(const BLoop *l, float *x0, float *z0, float *x1, float *z1) {
+    *x0 = 1e30f; *x1 = -1e30f; *z0 = 1e30f; *z1 = -1e30f;
+    for (int i = 0; i < l->n; ++i) { *x0 = minf(*x0, l->x[i]); *x1 = maxf(*x1, l->x[i]); *z0 = minf(*z0, l->z[i]); *z1 = maxf(*z1, l->z[i]); }
+}
+static void loop_centre(const BLoop *l, float *cx, float *cz) {
+    float x = 0.0f, z = 0.0f;
+    for (int i = 0; i < l->n; ++i) { x += l->x[i]; z += l->z[i]; }
+    *cx = x / (float)l->n; *cz = z / (float)l->n;
+}
+
+/* Plant units on a flat roof, and a plant room on a big one. */
+static void roof_plant(Mesh *m, const BGraph *g, int si, Rng *r) {
     const BSection *s = &g->sec[si];
     const BLoop *l = &s->foot.outer;
     float y = s->y1;
@@ -264,138 +276,168 @@ static void dress_roof(Mesh *m, const BGraph *g, int si, Rng *r) {
     Placed pl[32];
     int npl = 0;
     float x, z;
-    switch (s->roof) {
-    case ROOF_PLANT: {
-        int units = (int)clampf(area / 180.0f, 1.0f, 7.0f);
-        for (int i = 0; i < units; ++i) {
-            float sx = rng_range(r, 2.0f, 5.0f), sz = rng_range(r, 2.0f, 5.0f), sy = rng_range(r, 1.2f, 3.2f);
-            if (roof_spot(g, si, r, sx, sz, pl, &npl, &x, &z))
-                emit_box(m, v3(x, y, z), v3(x + sx, y + sy, z + sz), F_NOBOT, mat(MAT_METAL, g->seed + (uint32_t)i, 1, 0, 0), UV_FACADE);
+    int units = (int)clampf(area / 180.0f, 1.0f, 7.0f);
+    for (int i = 0; i < units; ++i) {
+        float sx = rng_range(r, 2.0f, 5.0f), sz = rng_range(r, 2.0f, 5.0f), sy = rng_range(r, 1.2f, 3.2f);
+        if (roof_spot(g, si, r, sx, sz, pl, &npl, &x, &z))
+            emit_box(m, v3(x, y, z), v3(x + sx, y + sy, z + sz), F_NOBOT, mat(MAT_METAL, g->seed + (uint32_t)i, 1, 0, 0), UV_FACADE);
+    }
+    if (area > 900.0f && roof_spot(g, si, r, 7.0f, 5.0f, pl, &npl, &x, &z))   /* plant room */
+        emit_box(m, v3(x, y, z), v3(x + 7.0f, y + 3.4f, z + 5.0f), F_NOBOT, mat(MAT_METAL, g->seed, 0, 0, 0), UV_FACADE);
+}
+
+/* Water tanks on legs. */
+static void roof_tanks(Mesh *m, const BGraph *g, int si, Rng *r) {
+    const BSection *s = &g->sec[si];
+    float y = s->y1;
+    Placed pl[32];
+    int npl = 0;
+    float x, z;
+    int n = rng_int(r, 1, 4);
+    Mat metal = mat(MAT_METAL, g->seed, 1, 0, 0), legs = mat(MAT_METAL, g->seed, 2, 0, 0);
+    for (int i = 0; i < n; ++i) {
+        float sz = rng_range(r, 3.0f, 4.5f);
+        if (!roof_spot(g, si, r, sz, sz, pl, &npl, &x, &z)) continue;
+        for (int k = 0; k < 4; ++k) {
+            float lx = x + ((k & 1) ? sz - 0.3f : 0.1f), lz = z + ((k & 2) ? sz - 0.3f : 0.1f);
+            emit_box(m, v3(lx, y, lz), v3(lx + 0.2f, y + 1.4f, lz + 0.2f), F_SIDES, legs, UV_FACADE);
         }
-        if (area > 900.0f && roof_spot(g, si, r, 7.0f, 5.0f, pl, &npl, &x, &z))   /* plant room */
-            emit_box(m, v3(x, y, z), v3(x + 7.0f, y + 3.4f, z + 5.0f), F_NOBOT, mat(MAT_METAL, g->seed, 0, 0, 0), UV_FACADE);
-        break;
+        emit_box(m, v3(x, y + 1.4f, z), v3(x + sz, y + 3.9f, z + sz), F_NOBOT | F_BOT, metal, UV_FACADE);
     }
-    case ROOF_TANKS: {
-        int n = rng_int(r, 1, 4);
-        Mat metal = mat(MAT_METAL, g->seed, 1, 0, 0), legs = mat(MAT_METAL, g->seed, 2, 0, 0);
-        for (int i = 0; i < n; ++i) {
-            float sz = rng_range(r, 3.0f, 4.5f);
-            if (!roof_spot(g, si, r, sz, sz, pl, &npl, &x, &z)) continue;
-            for (int k = 0; k < 4; ++k) {
-                float lx = x + ((k & 1) ? sz - 0.3f : 0.1f), lz = z + ((k & 2) ? sz - 0.3f : 0.1f);
-                emit_box(m, v3(lx, y, lz), v3(lx + 0.2f, y + 1.4f, lz + 0.2f), F_SIDES, legs, UV_FACADE);
-            }
-            emit_box(m, v3(x, y + 1.4f, z), v3(x + sz, y + 3.9f, z + sz), F_NOBOT | F_BOT, metal, UV_FACADE);
+}
+
+/* Rows of solar panels wherever the roof is open. */
+static void roof_solar(Mesh *m, const BGraph *g, int si, Rng *r) {
+    const BSection *s = &g->sec[si];
+    const BLoop *l = &s->foot.outer;
+    float y = s->y1;
+    (void)r;
+    Mat frame = mat(MAT_METAL, g->seed, 2, 0, 0), panel = mat(MAT_METAL, g->seed, 6, 0, 0);
+    float x0, z0, x1, z1;
+    loop_box(l, &x0, &z0, &x1, &z1);
+    int panels = 0;
+    for (float pz = z0 + 1.5f; pz + 1.2f < z1 - 1.0f && panels < 160; pz += 2.6f)
+        for (float px = x0 + 1.5f; px + 1.7f < x1 - 1.0f && panels < 160; px += 1.9f) {
+            if (!roof_free(g, si, px, pz, 0.8f) || !roof_free(g, si, px + 1.7f, pz + 1.1f, 0.8f)) continue;
+            float uv[4][2] = { {0,0}, {1,0}, {1,1}, {0,1} };
+            vec3 a = v3(px, y + 0.45f, pz), b = v3(px + 1.7f, y + 0.45f, pz), c = v3(px + 1.7f, y + 0.85f, pz + 1.1f), d = v3(px, y + 0.85f, pz + 1.1f);
+            emit_quad(m, a, b, c, d, v3_norm(v3(0, 1.1f, -0.4f)), uv, panel);
+            emit_box(m, v3(px + 0.75f, y, pz + 0.4f), v3(px + 0.95f, y + 0.6f, pz + 0.6f), F_SIDES, frame, UV_FACADE);
+            panels++;
         }
-        break;
+}
+
+/* A planted roof with raised beds. */
+static void roof_garden(Mesh *m, const BGraph *g, int si, Rng *r) {
+    const BSection *s = &g->sec[si];
+    float y = s->y1;
+    Placed pl[32];
+    int npl = 0;
+    float x, z;
+    emit_cap(m, &s->foot, y + 0.06f, 0, mat(MAT_LOT, 0, 1, 0, 0));
+    int n = rng_int(r, 2, 6);
+    for (int i = 0; i < n; ++i) {
+        float sx = rng_range(r, 1.5f, 4.0f), sz = rng_range(r, 1.0f, 2.0f);
+        if (roof_spot(g, si, r, sx, sz, pl, &npl, &x, &z))
+            emit_box(m, v3(x, y, z), v3(x + sx, y + 0.7f, z + sz), F_NOBOT, mat(MAT_METAL, g->seed, 0, 0, 0), UV_FACADE);
     }
-    case ROOF_SOLAR: {
-        Mat frame = mat(MAT_METAL, g->seed, 2, 0, 0), panel = mat(MAT_METAL, g->seed, 6, 0, 0);
-        float x0 = 1e30f, x1 = -1e30f, z0 = 1e30f, z1 = -1e30f;
-        for (int i = 0; i < l->n; ++i) { x0 = minf(x0, l->x[i]); x1 = maxf(x1, l->x[i]); z0 = minf(z0, l->z[i]); z1 = maxf(z1, l->z[i]); }
-        int panels = 0;
-        for (float pz = z0 + 1.5f; pz + 1.2f < z1 - 1.0f && panels < 160; pz += 2.6f)
-            for (float px = x0 + 1.5f; px + 1.7f < x1 - 1.0f && panels < 160; px += 1.9f) {
-                if (!roof_free(g, si, px, pz, 0.8f) || !roof_free(g, si, px + 1.7f, pz + 1.1f, 0.8f)) continue;
-                float uv[4][2] = { {0,0}, {1,0}, {1,1}, {0,1} };
-                vec3 a = v3(px, y + 0.45f, pz), b = v3(px + 1.7f, y + 0.45f, pz), c = v3(px + 1.7f, y + 0.85f, pz + 1.1f), d = v3(px, y + 0.85f, pz + 1.1f);
-                emit_quad(m, a, b, c, d, v3_norm(v3(0, 1.1f, -0.4f)), uv, panel);
-                emit_box(m, v3(px + 0.75f, y, pz + 0.4f), v3(px + 0.95f, y + 0.6f, pz + 0.6f), F_SIDES, frame, UV_FACADE);
-                panels++;
-            }
-        break;
+}
+
+/* A helipad with its H and edge lights, if the roof has room. */
+static void roof_helipad(Mesh *m, const BGraph *g, int si, Rng *r) {
+    const BSection *s = &g->sec[si];
+    const BLoop *l = &s->foot.outer;
+    float y = s->y1;
+    (void)r;
+    float cx, cz;
+    loop_centre(l, &cx, &cz);
+    int ok = 1;
+    for (int k = 0; k < 8 && ok; ++k)
+        ok = roof_free(g, si, cx + 9.0f * cosf(k * PI_F * 0.25f), cz + 9.0f * sinf(k * PI_F * 0.25f), 0.5f);
+    if (!ok) return;
+    BFoot pad;
+    memset(&pad, 0, sizeof(pad));
+    for (int k = 0; k < 8; ++k) {
+        float a = -(k + 0.5f) * PI_F * 0.25f;   /* negative turn: an outer loop */
+        pad.outer.x[k] = cx + 8.0f * cosf(a); pad.outer.z[k] = cz + 8.0f * sinf(a);
     }
-    case ROOF_GARDEN: {
-        emit_cap(m, &s->foot, y + 0.06f, 0, mat(MAT_LOT, 0, 1, 0, 0));
-        int n = rng_int(r, 2, 6);
-        for (int i = 0; i < n; ++i) {
-            float sx = rng_range(r, 1.5f, 4.0f), sz = rng_range(r, 1.0f, 2.0f);
-            if (roof_spot(g, si, r, sx, sz, pl, &npl, &x, &z))
-                emit_box(m, v3(x, y, z), v3(x + sx, y + 0.7f, z + sz), F_NOBOT, mat(MAT_METAL, g->seed, 0, 0, 0), UV_FACADE);
+    pad.outer.n = 8;
+    emit_cap(m, &pad, y + 0.3f, 0, mat(MAT_METAL, g->seed, 2, 0, 0));
+    /* the H, and edge lights */
+    emit_box(m, v3(cx - 2.2f, y + 0.3f, cz - 3.0f), v3(cx - 1.6f, y + 0.36f, cz + 3.0f), F_TOP, mat(MAT_EMISSIVE, 0, 6, 0, 0), UV_UNIT);
+    emit_box(m, v3(cx + 1.6f, y + 0.3f, cz - 3.0f), v3(cx + 2.2f, y + 0.36f, cz + 3.0f), F_TOP, mat(MAT_EMISSIVE, 0, 6, 0, 0), UV_UNIT);
+    emit_box(m, v3(cx - 1.6f, y + 0.3f, cz - 0.3f), v3(cx + 1.6f, y + 0.36f, cz + 0.3f), F_TOP, mat(MAT_EMISSIVE, 0, 6, 0, 0), UV_UNIT);
+    for (int k = 0; k < 8; ++k)
+        emit_emissive_box(m, v3(cx + 8.3f * cosf(k * PI_F * 0.25f), y + 0.4f, cz + 8.3f * sinf(k * PI_F * 0.25f)), 0.12f, 5, 0, 0);
+}
+
+/* A hipped roof (on a rectangle) or a glass pyramid. */
+static void roof_pitched(Mesh *m, const BGraph *g, int si, Rng *r) {
+    const BSection *s = &g->sec[si];
+    const BLoop *l = &s->foot.outer;
+    float y = s->y1;
+    (void)r;
+    if (s->foot.hole.n) return;
+    float cx, cz;
+    loop_centre(l, &cx, &cz);
+    float x0, z0, x1, z1;
+    loop_box(l, &x0, &z0, &x1, &z1);
+    float mn = minf(x1 - x0, z1 - z0);
+    int rect = l->n == 4 && fabsf((x1 - x0) * (z1 - z0) + bloop_area(l)) < 0.5f;
+    if (s->roof == ROOF_HIP && rect) {
+        /* ridge along the long axis */
+        float h = minf(mn * 0.3f, 7.0f), half = mn * 0.5f;
+        int alongX = x1 - x0 >= z1 - z0;
+        vec3 r0 = alongX ? v3(x0 + half, y + h, cz) : v3(cx, y + h, z0 + half);
+        vec3 r1 = alongX ? v3(x1 - half, y + h, cz) : v3(cx, y + h, z1 - half);
+        vec3 c00 = v3(x0, y, z0), c10 = v3(x1, y, z0), c11 = v3(x1, y, z1), c01 = v3(x0, y, z1);
+        Mat tiles = mat(MAT_ROOF, g->seed, 0, 0, 1);
+        float uv4[4][2] = { {0,0}, {1,0}, {1,1}, {0,1} }, uv3[3][2] = { {0,0}, {1,0}, {0.5f,1} };
+        vec3 q[4][4], t[2][3];
+        if (alongX) {
+            q[0][0] = c00; q[0][1] = c10; q[0][2] = r1; q[0][3] = r0;
+            q[1][0] = c11; q[1][1] = c01; q[1][2] = r0; q[1][3] = r1;
+            t[0][0] = c01; t[0][1] = c00; t[0][2] = r0;
+            t[1][0] = c10; t[1][1] = c11; t[1][2] = r1;
+        } else {
+            q[0][0] = c10; q[0][1] = c11; q[0][2] = r1; q[0][3] = r0;
+            q[1][0] = c01; q[1][1] = c00; q[1][2] = r0; q[1][3] = r1;
+            t[0][0] = c00; t[0][1] = c10; t[0][2] = r0;
+            t[1][0] = c11; t[1][1] = c01; t[1][2] = r1;
         }
-        break;
-    }
-    case ROOF_HELIPAD: {
-        float cx = 0.0f, cz = 0.0f;
-        for (int i = 0; i < l->n; ++i) { cx += l->x[i]; cz += l->z[i]; }
-        cx /= (float)l->n; cz /= (float)l->n;
-        int ok = 1;
-        for (int k = 0; k < 8 && ok; ++k)
-            ok = roof_free(g, si, cx + 9.0f * cosf(k * PI_F * 0.25f), cz + 9.0f * sinf(k * PI_F * 0.25f), 0.5f);
-        if (!ok) break;
-        BFoot pad;
-        memset(&pad, 0, sizeof(pad));
-        for (int k = 0; k < 8; ++k) {
-            float a = -(k + 0.5f) * PI_F * 0.25f;   /* negative turn: an outer loop */
-            pad.outer.x[k] = cx + 8.0f * cosf(a); pad.outer.z[k] = cz + 8.0f * sinf(a);
+        for (int i = 0; i < 2; ++i) {
+            vec3 n = v3_norm(v3_cross(v3_sub(q[i][1], q[i][0]), v3_sub(q[i][3], q[i][0])));
+            if (n.y < 0) n = v3_scale(n, -1.0f);
+            emit_quad(m, q[i][0], q[i][1], q[i][2], q[i][3], n, uv4, tiles);
+            vec3 tn = v3_norm(v3_cross(v3_sub(t[i][1], t[i][0]), v3_sub(t[i][2], t[i][0])));
+            if (tn.y < 0) tn = v3_scale(tn, -1.0f);
+            emit_tri(m, t[i][0], t[i][1], t[i][2], tn, uv3, tiles);
         }
-        pad.outer.n = 8;
-        emit_cap(m, &pad, y + 0.3f, 0, mat(MAT_METAL, g->seed, 2, 0, 0));
-        /* the H, and edge lights */
-        emit_box(m, v3(cx - 2.2f, y + 0.3f, cz - 3.0f), v3(cx - 1.6f, y + 0.36f, cz + 3.0f), F_TOP, mat(MAT_EMISSIVE, 0, 6, 0, 0), UV_UNIT);
-        emit_box(m, v3(cx + 1.6f, y + 0.3f, cz - 3.0f), v3(cx + 2.2f, y + 0.36f, cz + 3.0f), F_TOP, mat(MAT_EMISSIVE, 0, 6, 0, 0), UV_UNIT);
-        emit_box(m, v3(cx - 1.6f, y + 0.3f, cz - 0.3f), v3(cx + 1.6f, y + 0.36f, cz + 0.3f), F_TOP, mat(MAT_EMISSIVE, 0, 6, 0, 0), UV_UNIT);
-        for (int k = 0; k < 8; ++k)
-            emit_emissive_box(m, v3(cx + 8.3f * cosf(k * PI_F * 0.25f), y + 0.4f, cz + 8.3f * sinf(k * PI_F * 0.25f)), 0.12f, 5, 0, 0);
-        break;
-    }
-    case ROOF_HIP: case ROOF_PYRAMID: {
-        if (s->foot.hole.n) break;
-        float cx = 0.0f, cz = 0.0f;
-        for (int i = 0; i < l->n; ++i) { cx += l->x[i]; cz += l->z[i]; }
-        cx /= (float)l->n; cz /= (float)l->n;
-        float x0 = 1e30f, x1 = -1e30f, z0 = 1e30f, z1 = -1e30f;
-        for (int i = 0; i < l->n; ++i) { x0 = minf(x0, l->x[i]); x1 = maxf(x1, l->x[i]); z0 = minf(z0, l->z[i]); z1 = maxf(z1, l->z[i]); }
-        float mn = minf(x1 - x0, z1 - z0);
-        int rect = l->n == 4 && fabsf((x1 - x0) * (z1 - z0) + bloop_area(l)) < 0.5f;
-        if (s->roof == ROOF_HIP && rect) {
-            /* ridge along the long axis */
-            float h = minf(mn * 0.3f, 7.0f), half = mn * 0.5f;
-            int alongX = x1 - x0 >= z1 - z0;
-            vec3 r0 = alongX ? v3(x0 + half, y + h, cz) : v3(cx, y + h, z0 + half);
-            vec3 r1 = alongX ? v3(x1 - half, y + h, cz) : v3(cx, y + h, z1 - half);
-            vec3 c00 = v3(x0, y, z0), c10 = v3(x1, y, z0), c11 = v3(x1, y, z1), c01 = v3(x0, y, z1);
-            Mat tiles = mat(MAT_ROOF, g->seed, 0, 0, 1);
-            float uv4[4][2] = { {0,0}, {1,0}, {1,1}, {0,1} }, uv3[3][2] = { {0,0}, {1,0}, {0.5f,1} };
-            vec3 q[4][4], t[2][3];
-            if (alongX) {
-                q[0][0] = c00; q[0][1] = c10; q[0][2] = r1; q[0][3] = r0;
-                q[1][0] = c11; q[1][1] = c01; q[1][2] = r0; q[1][3] = r1;
-                t[0][0] = c01; t[0][1] = c00; t[0][2] = r0;
-                t[1][0] = c10; t[1][1] = c11; t[1][2] = r1;
-            } else {
-                q[0][0] = c10; q[0][1] = c11; q[0][2] = r1; q[0][3] = r0;
-                q[1][0] = c01; q[1][1] = c00; q[1][2] = r0; q[1][3] = r1;
-                t[0][0] = c00; t[0][1] = c10; t[0][2] = r0;
-                t[1][0] = c11; t[1][1] = c01; t[1][2] = r1;
-            }
-            for (int i = 0; i < 2; ++i) {
-                vec3 n = v3_norm(v3_cross(v3_sub(q[i][1], q[i][0]), v3_sub(q[i][3], q[i][0])));
-                if (n.y < 0) n = v3_scale(n, -1.0f);
-                emit_quad(m, q[i][0], q[i][1], q[i][2], q[i][3], n, uv4, tiles);
-                vec3 tn = v3_norm(v3_cross(v3_sub(t[i][1], t[i][0]), v3_sub(t[i][2], t[i][0])));
-                if (tn.y < 0) tn = v3_scale(tn, -1.0f);
-                emit_tri(m, t[i][0], t[i][1], t[i][2], tn, uv3, tiles);
-            }
-        } else if (s->roof == ROOF_PYRAMID) {
-            float h = minf(mn * 0.35f, 12.0f);
-            vec3 apex = v3(cx, y + h, cz);
-            Mat glass = mat(MAT_METAL, g->seed, 7, 0, 0);
-            float uv3[3][2] = { {0,0}, {1,0}, {0.5f,1} };
-            for (int k = 0; k < l->n; ++k) {
-                int k1 = (k + 1) % l->n;
-                vec3 a = v3(l->x[k], y, l->z[k]), b = v3(l->x[k1], y, l->z[k1]);
-                vec3 n = v3_norm(v3_cross(v3_sub(b, a), v3_sub(apex, a)));
-                if (n.y < 0) n = v3_scale(n, -1.0f);
-                emit_tri(m, a, b, apex, n, uv3, glass);
-            }
-            emit_emissive_box(m, v3(cx, y + h + 0.3f, cz), 0.3f, 2, 1, 0);
+    } else if (s->roof == ROOF_PYRAMID) {
+        float h = minf(mn * 0.35f, 12.0f);
+        vec3 apex = v3(cx, y + h, cz);
+        Mat glass = mat(MAT_METAL, g->seed, 7, 0, 0);
+        float uv3[3][2] = { {0,0}, {1,0}, {0.5f,1} };
+        for (int k = 0; k < l->n; ++k) {
+            int k1 = (k + 1) % l->n;
+            vec3 a = v3(l->x[k], y, l->z[k]), b = v3(l->x[k1], y, l->z[k1]);
+            vec3 n = v3_norm(v3_cross(v3_sub(b, a), v3_sub(apex, a)));
+            if (n.y < 0) n = v3_scale(n, -1.0f);
+            emit_tri(m, a, b, apex, n, uv3, glass);
         }
-        break;
+        emit_emissive_box(m, v3(cx, y + h + 0.3f, cz), 0.3f, 2, 1, 0);
     }
-    default:
-        break;
+}
+
+static void dress_roof(Mesh *m, const BGraph *g, int si, Rng *r) {
+    switch (g->sec[si].roof) {
+    case ROOF_PLANT:   roof_plant(m, g, si, r); break;
+    case ROOF_TANKS:   roof_tanks(m, g, si, r); break;
+    case ROOF_SOLAR:   roof_solar(m, g, si, r); break;
+    case ROOF_GARDEN:  roof_garden(m, g, si, r); break;
+    case ROOF_HELIPAD: roof_helipad(m, g, si, r); break;
+    case ROOF_HIP: case ROOF_PYRAMID: roof_pitched(m, g, si, r); break;
+    default: break;
     }
 }
 
@@ -561,100 +603,100 @@ static void lobby_lights(Mesh *m, const BGraph *g, int si, int k, float len) {
     }
 }
 
-/* Everything that makes up one building, in its own frame. */
-void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors *in) {
+/* Section si's roof slab and its underside (round an arcology's canyon or a podium atrium's void). */
+static void emit_section_caps(Mesh *m, const BGraph *g, int si, const Interiors *in) {
     const float gy = SIDEWALK_HEIGHT;
-    Rng r = rng_make(b->seed ^ 0x77u);
-    int fins = 0;
-    float bay = bgen_bay_width(g->seed, g->fine);
-    for (int si = 0; si < g->nsec; ++si) {
-        const BSection *s = &g->sec[si];
-        Behind bh;
-        emit_walls(m, b, g, si, behind_of(in, si, &bh) ? &bh : NULL);
-        /* an arcology's canyon rises through the slabs between the tiers it passes */
-        int tier = -1;
-        for (int t = 0; in->arc && t < in->arc->ntier; ++t) if (in->arc->tier[t].section == si) tier = t;
-        if (tier >= 0 && tier < in->arc->topTier) emit_cap_holes(m, in->arc, &s->foot.outer, in->arc->voids, in->arc->nvoid, s->y1, 0, mat(MAT_ROOF, g->seed, (uint8_t)si, 0, 0));
-        else emit_cap(m, &s->foot, s->y1, 0, mat(MAT_ROOF, g->seed, (uint8_t)si, 0, 0));
-        if (tier >= 1 && tier <= in->arc->topTier) {
-            emit_cap_holes(m, in->arc, &s->foot.outer, in->arc->voids, in->arc->nvoid, s->y0, 1, mat(MAT_ROOF, g->seed, (uint8_t)si, 1, 0));
-        } else if (s->y0 > gy + 0.01f) {
-            /* a podium atrium's void rises through the slab under this section */
-            const ILayout *pl = NULL;
-            for (int k = 0; k < in->n; ++k) {
-                const ILayout *L = in->lay[k];
-                if (L->atrium.mode != IA_PODIUM || L->atrium.x1 <= L->atrium.x0 || fabsf(s->y0 - L->ceilY) > 0.05f) continue;
-                for (int q = 0; q < s->nbelow; ++q) if (s->below[q] == L->section) pl = L;
-            }
-            if (pl) emit_cap_minus(m, pl, &s->foot.outer, pl->gx0 + pl->atrium.x0 * IN_CELL, pl->gz0 + pl->atrium.z0 * IN_CELL,
-                                   pl->gx0 + pl->atrium.x1 * IN_CELL, pl->gz0 + pl->atrium.z1 * IN_CELL, s->y0, 1, mat(MAT_ROOF, g->seed, (uint8_t)si, 1, 0));
-            else emit_cap(m, &s->foot, s->y0, 1, mat(MAT_ROOF, g->seed, (uint8_t)si, 1, 0));
+    const BSection *s = &g->sec[si];
+    /* an arcology's canyon rises through the slabs between the tiers it passes */
+    int tier = -1;
+    for (int t = 0; in->arc && t < in->arc->ntier; ++t) if (in->arc->tier[t].section == si) tier = t;
+    if (tier >= 0 && tier < in->arc->topTier) emit_cap_holes(m, in->arc, &s->foot.outer, in->arc->voids, in->arc->nvoid, s->y1, 0, mat(MAT_ROOF, g->seed, (uint8_t)si, 0, 0));
+    else emit_cap(m, &s->foot, s->y1, 0, mat(MAT_ROOF, g->seed, (uint8_t)si, 0, 0));
+    if (tier >= 1 && tier <= in->arc->topTier) {
+        emit_cap_holes(m, in->arc, &s->foot.outer, in->arc->voids, in->arc->nvoid, s->y0, 1, mat(MAT_ROOF, g->seed, (uint8_t)si, 1, 0));
+    } else if (s->y0 > gy + 0.01f) {
+        /* a podium atrium's void rises through the slab under this section */
+        const ILayout *pl = NULL;
+        for (int k = 0; k < in->n; ++k) {
+            const ILayout *L = in->lay[k];
+            if (L->atrium.mode != IA_PODIUM || L->atrium.x1 <= L->atrium.x0 || fabsf(s->y0 - L->ceilY) > 0.05f) continue;
+            for (int q = 0; q < s->nbelow; ++q) if (s->below[q] == L->section) pl = L;
         }
-        const BLoop *l = &s->foot.outer;
-        uint8_t ledCol = (uint8_t)(hash_combine(g->seed, (uint32_t)si) & 7);
-        for (int k = 0; k < l->n; ++k) {
-            Xf sv = xf_save(m);
-            float len = enter_face(m, l, k);
-            Face f = face_local(len);
-            /* LED strip under the top edge, and an accent band where a tower meets its base */
-            if (s->ledTop && s->roof != ROOF_HIP && s->roof != ROOF_PYRAMID) {
-                float uv[4][2] = { { 0, 0 }, { len, 0 }, { len, 1 }, { 0, 1 } };
-                emit_quad(m, v3(0, s->y1 - 0.75f, 0.06f), v3(len, s->y1 - 0.75f, 0.06f), v3(len, s->y1 - 0.45f, 0.06f),
-                          v3(0, s->y1 - 0.45f, 0.06f), v3(0, 0, 1), uv, mat(MAT_LEDSTRIP, g->seed, ledCol, (uint8_t)(ledCol & 1), 0));
-            }
-            if (s->accent) {
-                emit_box(m, v3(0, s->y0, 0), v3(len, s->y0 + 0.9f, 0.3f), F_NOBOT | F_BOT, mat(MAT_METAL, g->seed, 3, 0, 0), UV_FACADE);
-                float uv[4][2] = { { 0, 0 }, { len, 0 }, { len, 1 }, { 0, 1 } };
-                emit_quad(m, v3(0, s->y0 + 0.35f, 0.31f), v3(len, s->y0 + 0.35f, 0.31f), v3(len, s->y0 + 0.55f, 0.31f),
-                          v3(0, s->y0 + 0.55f, 0.31f), v3(0, 0, 1), uv, mat(MAT_LEDSTRIP, g->seed, (uint8_t)(ledCol + 3), 1, 0));
-            }
-            /* vertical fins on the bay lines (the shader stretches bays to fit the face) */
-            if (s->fins && fins < 320) {
-                int nB = (int)maxf(1.0f, floorf(len / bay + 0.5f));
-                float ys = s->y0 <= gy + 0.01f ? gy + g->groundH : s->y0;
-                for (int j = 1; j < nB && fins < 320; ++j, ++fins) {
-                    float u = (float)j * len / (float)nB;
-                    emit_box(m, v3(u - 0.09f, ys, 0.0f), v3(u + 0.09f, s->y1, 0.45f), F_NOBOT | F_BOT, mat(MAT_METAL, g->seed, 3, 0, 0), UV_FACADE);
-                }
-            }
-            /* parapet where the roof edge is open */
-            if (s->roof != ROOF_HIP && s->roof != ROOF_PYRAMID) {
-                EdgeInfo e = edge_of(l, k);
-                float mx = e.ax + e.ex * len * 0.5f + e.ez * 0.6f, mz = e.az + e.ez * len * 0.5f - e.ex * 0.6f;
-                if (roof_free(g, si, mx, mz, 0.0f))
-                    emit_box(m, v3(0, s->y1, -0.35f), v3(len, s->y1 + 1.1f, 0), F_NOBOT, mat(MAT_METAL, g->seed, 0, 0, 0), UV_FACADE);
-            }
-            (void)f;
-            xf_restore(m, sv);
-        }
-        dress_roof(m, g, si, &r);
+        if (pl) emit_cap_minus(m, pl, &s->foot.outer, pl->gx0 + pl->atrium.x0 * IN_CELL, pl->gz0 + pl->atrium.z0 * IN_CELL,
+                               pl->gx0 + pl->atrium.x1 * IN_CELL, pl->gz0 + pl->atrium.z1 * IN_CELL, s->y0, 1, mat(MAT_ROOF, g->seed, (uint8_t)si, 1, 0));
+        else emit_cap(m, &s->foot, s->y0, 1, mat(MAT_ROOF, g->seed, (uint8_t)si, 1, 0));
+    }
+}
 
-        /* masts, spires and aircraft warning lights on the tops */
-        if (!has_above(g, si)) {
-            float cx = 0, cz = 0;
-            for (int k = 0; k < l->n; ++k) { cx += l->x[k]; cz += l->z[k]; }
-            cx /= (float)l->n; cz /= (float)l->n;
-            float tall = s->y1 - gy;
-            float mh = s->spire ? (float)s->spire : (tall > 60.0f && rng_float(&r) < 0.5f ? rng_range(&r, 8.0f, 28.0f) : 0.0f);
-            if (mh > 0.0f && bfoot_contains(&s->foot, cx, cz) && s->roof != ROOF_HELIPAD && s->roof != ROOF_PYRAMID) {
-                float w = g->archetype == ARCH_ARCOLOGY ? 1.2f : s->spire ? 0.5f : 0.35f;
-                emit_box(m, v3(cx - w, s->y1, cz - w), v3(cx + w, s->y1 + mh, cz + w), F_NOBOT, mat(MAT_METAL, g->seed, 2, 0, 0), UV_FACADE);
-                emit_emissive_box(m, v3(cx, s->y1 + mh + 0.4f, cz), 0.4f, 2, 1, (uint8_t)(rng_u32(&r) & 255));
+/* Trim on section si's faces: LED strips, accent bands, fins on the bay lines, parapets. */
+static void emit_face_trims(Mesh *m, const BGraph *g, int si, float bay, int *fins) {
+    const float gy = SIDEWALK_HEIGHT;
+    const BSection *s = &g->sec[si];
+    const BLoop *l = &s->foot.outer;
+    uint8_t ledCol = (uint8_t)(hash_combine(g->seed, (uint32_t)si) & 7);
+    for (int k = 0; k < l->n; ++k) {
+        Xf sv = xf_save(m);
+        float len = enter_face(m, l, k);
+        /* LED strip under the top edge, and an accent band where a tower meets its base */
+        if (s->ledTop && s->roof != ROOF_HIP && s->roof != ROOF_PYRAMID) {
+            float uv[4][2] = { { 0, 0 }, { len, 0 }, { len, 1 }, { 0, 1 } };
+            emit_quad(m, v3(0, s->y1 - 0.75f, 0.06f), v3(len, s->y1 - 0.75f, 0.06f), v3(len, s->y1 - 0.45f, 0.06f),
+                      v3(0, s->y1 - 0.45f, 0.06f), v3(0, 0, 1), uv, mat(MAT_LEDSTRIP, g->seed, ledCol, (uint8_t)(ledCol & 1), 0));
+        }
+        if (s->accent) {
+            emit_box(m, v3(0, s->y0, 0), v3(len, s->y0 + 0.9f, 0.3f), F_NOBOT | F_BOT, mat(MAT_METAL, g->seed, 3, 0, 0), UV_FACADE);
+            float uv[4][2] = { { 0, 0 }, { len, 0 }, { len, 1 }, { 0, 1 } };
+            emit_quad(m, v3(0, s->y0 + 0.35f, 0.31f), v3(len, s->y0 + 0.35f, 0.31f), v3(len, s->y0 + 0.55f, 0.31f),
+                      v3(0, s->y0 + 0.55f, 0.31f), v3(0, 0, 1), uv, mat(MAT_LEDSTRIP, g->seed, (uint8_t)(ledCol + 3), 1, 0));
+        }
+        /* vertical fins on the bay lines (the shader stretches bays to fit the face) */
+        if (s->fins && *fins < 320) {
+            int nB = (int)maxf(1.0f, floorf(len / bay + 0.5f));
+            float ys = s->y0 <= gy + 0.01f ? gy + g->groundH : s->y0;
+            for (int j = 1; j < nB && *fins < 320; ++j, ++*fins) {
+                float u = (float)j * len / (float)nB;
+                emit_box(m, v3(u - 0.09f, ys, 0.0f), v3(u + 0.09f, s->y1, 0.45f), F_NOBOT | F_BOT, mat(MAT_METAL, g->seed, 3, 0, 0), UV_FACADE);
             }
-            if (tall > 90.0f) {
-                uint8_t ph = (uint8_t)(rng_u32(&r) & 255);
-                for (int k = 0; k < l->n; ++k) {
-                    FaceKey fk = face_key(l, k, 0);
-                    if (!fk.startConvex) continue;
-                    float vx = l->x[k] + (cx - l->x[k]) * 0.4f / maxf(1.0f, sqrtf((cx - l->x[k]) * (cx - l->x[k]) + (cz - l->z[k]) * (cz - l->z[k])));
-                    float vz = l->z[k] + (cz - l->z[k]) * 0.4f / maxf(1.0f, sqrtf((cx - l->x[k]) * (cx - l->x[k]) + (cz - l->z[k]) * (cz - l->z[k])));
-                    emit_emissive_box(m, v3(vx, s->y1 + 1.5f, vz), 0.3f, 2, 1, ph);
-                }
-            }
+        }
+        /* parapet where the roof edge is open */
+        if (s->roof != ROOF_HIP && s->roof != ROOF_PYRAMID) {
+            EdgeInfo e = edge_of(l, k);
+            float mx = e.ax + e.ex * len * 0.5f + e.ez * 0.6f, mz = e.az + e.ez * len * 0.5f - e.ex * 0.6f;
+            if (roof_free(g, si, mx, mz, 0.0f))
+                emit_box(m, v3(0, s->y1, -0.35f), v3(len, s->y1 + 1.1f, 0), F_NOBOT, mat(MAT_METAL, g->seed, 0, 0, 0), UV_FACADE);
+        }
+        xf_restore(m, sv);
+    }
+}
+
+/* Masts, spires and aircraft warning lights on top of section si (nothing stands on it). */
+static void emit_tops(Mesh *m, const BGraph *g, int si, Rng *rp) {
+    const float gy = SIDEWALK_HEIGHT;
+    const BSection *s = &g->sec[si];
+    const BLoop *l = &s->foot.outer;
+    float cx, cz;
+    loop_centre(l, &cx, &cz);
+    float tall = s->y1 - gy;
+    float mh = s->spire ? (float)s->spire : (tall > 60.0f && rng_float(rp) < 0.5f ? rng_range(rp, 8.0f, 28.0f) : 0.0f);
+    if (mh > 0.0f && bfoot_contains(&s->foot, cx, cz) && s->roof != ROOF_HELIPAD && s->roof != ROOF_PYRAMID) {
+        float w = g->archetype == ARCH_ARCOLOGY ? 1.2f : s->spire ? 0.5f : 0.35f;
+        emit_box(m, v3(cx - w, s->y1, cz - w), v3(cx + w, s->y1 + mh, cz + w), F_NOBOT, mat(MAT_METAL, g->seed, 2, 0, 0), UV_FACADE);
+        emit_emissive_box(m, v3(cx, s->y1 + mh + 0.4f, cz), 0.4f, 2, 1, (uint8_t)(rng_u32(rp) & 255));
+    }
+    if (tall > 90.0f) {
+        uint8_t ph = (uint8_t)(rng_u32(rp) & 255);
+        for (int k = 0; k < l->n; ++k) {
+            FaceKey fk = face_key(l, k, 0);
+            if (!fk.startConvex) continue;
+            float vx = l->x[k] + (cx - l->x[k]) * 0.4f / maxf(1.0f, sqrtf((cx - l->x[k]) * (cx - l->x[k]) + (cz - l->z[k]) * (cz - l->z[k])));
+            float vz = l->z[k] + (cz - l->z[k]) * 0.4f / maxf(1.0f, sqrtf((cx - l->x[k]) * (cx - l->x[k]) + (cz - l->z[k]) * (cz - l->z[k])));
+            emit_emissive_box(m, v3(vx, s->y1 + 1.5f, vz), 0.3f, 2, 1, ph);
         }
     }
+}
 
-    /* supports */
+/* Columns, struts and walls carrying the sections. */
+static void emit_supports(Mesh *m, const BGraph *g) {
     Mat concrete = mat(MAT_METAL, g->seed, 5, 0, 0);
     for (int i = 0; i < g->nsup; ++i) {
         const BSupport *s = &g->sup[i];
@@ -667,15 +709,11 @@ void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors 
             emit_box(m, v3(s->x0, s->y0, s->z0), v3(s->x1, s->y1, s->z1), F_SIDES | F_BOT, concrete, UV_FACADE);
         }
     }
-    if (in->arc) {   /* the portals replace the graph's doors */
-        emit_arc_portals(m, g, in->arc);
-        emit_arc_frontage(m, g, in->arc);
-        emit_arc_terraces(m, g, in->arc);
-    }
-    else emit_doors(m, g, in);
-    for (int k = 0; k < in->n; ++k) emit_interior_doors(m, g, in->lay[k]);   /* the lobbies themselves: city_build_interiors */
+}
 
-    /* signs: street level on faces onto the street, big elements on tall faces */
+/* Street-level signs on faces onto the street, and big elements on tall faces. */
+static void emit_street_signs(Mesh *m, const Building *b, const BGraph *g, Rng *rp) {
+    const float gy = SIDEWALK_HEIGHT;
     for (int si = 0; si < g->nsec; ++si) {
         const BSection *s = &g->sec[si];
         const BLoop *l = &s->foot.outer;
@@ -687,20 +725,23 @@ void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors 
             enter_face(m, l, k);
             if (s->y0 <= gy + 0.01f) {
                 float px = e.ax + e.ex * e.len * 0.5f + e.ez * 0.3f, pz = e.az + e.ez * e.len * 0.5f - e.ex * 0.3f;
-                face_signs(m, b, g, si, &fk, facade_top(g, si, px, pz), &r);
+                face_signs(m, b, g, si, &fk, facade_top(g, si, px, pz), rp);
                 if (g->groundMode == GF_LOBBY || g->groundMode == GF_DOUBLE) lobby_lights(m, g, si, k, e.len);
             }
-            face_feature(m, g, s, e.len, &r);
+            face_feature(m, g, s, e.len, rp);
             xf_restore(m, sv);
         }
     }
+}
 
-    /* Rooftop billboard on low buildings, facing a street. */
+/* A rooftop billboard on a low building, facing a street. */
+static void emit_billboards(Mesh *m, const Building *b, const BGraph *g, Rng *rp) {
+    const float gy = SIDEWALK_HEIGHT;
     for (int si = 0; si < g->nsec; ++si) {
         const BSection *s = &g->sec[si];
         if (has_above(g, si) || s->y1 - gy > 70.0f || s->roof == ROOF_HIP || s->roof == ROOF_PYRAMID || s->roof == ROOF_HELIPAD) continue;
         if (g->archetype != ARCH_OFFICE && g->archetype != ARCH_SHOPHOUSE && g->archetype != ARCH_SHED && g->archetype != ARCH_SLAB) continue;
-        if (rng_float(&r) >= 0.3f) continue;
+        if (rng_float(rp) >= 0.3f) continue;
         const BLoop *l = &s->foot.outer;
         int best = -1;
         float bl = 0.0f;
@@ -712,24 +753,51 @@ void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors 
         Xf sv = xf_save(m);
         enter_face(m, l, best);
         Face f = face_local(bl);
-        float w = minf(f.width - 2.0f, rng_range(&r, 8.0f, 18.0f));
+        float w = minf(f.width - 2.0f, rng_range(rp, 8.0f, 18.0f));
         float h = minf(w * 0.42f, 8.0f);
         float u0 = (f.width - w) * 0.5f;
-        float yb = s->y1 + rng_range(&r, 2.0f, 4.0f);
+        float yb = s->y1 + rng_range(rp, 2.0f, 4.0f);
         Mat metal = mat(MAT_METAL, b->seed, 3, 0, 0);
         for (int leg = 0; leg < 3; ++leg) {
             float uu = u0 + w * (0.15f + 0.35f * leg);
             emit_box(m, v3(uu - 0.15f, s->y1, -1.6f), v3(uu + 0.15f, yb, -1.3f), F_NOBOT, metal, UV_FACADE);
         }
         emit_box(m, v3(u0 - 0.3f, yb, -1.7f), v3(u0 + w + 0.3f, yb + h + 0.3f, -1.25f), F_NOBOT | F_BOT, metal, UV_FACADE);
-        if (rng_float(&r) < 0.4f)
-            emit_face_panel(m, &f, u0, u0 + w, yb + 0.15f, yb + h + 0.15f, -1.2f, mat(MAT_SCREEN, rng_u32(&r), 0, q_half(w), q_half(h)));
+        if (rng_float(rp) < 0.4f)
+            emit_face_panel(m, &f, u0, u0 + w, yb + 0.15f, yb + h + 0.15f, -1.2f, mat(MAT_SCREEN, rng_u32(rp), 0, q_half(w), q_half(h)));
         else {
-            uint32_t seed = rng_u32(&r), col = rng_u32(&r) & 7;
+            uint32_t seed = rng_u32(rp), col = rng_u32(rp) & 7;
             emit_face_panel(m, &f, u0, u0 + w, yb + 0.15f, yb + h + 0.15f, -1.2f,
                             mat(MAT_NEON, seed, (uint8_t)(col | (1 << 3)), q_half(w), q_half(h)));
         }
         xf_restore(m, sv);
         break;
     }
+}
+
+/* Everything that makes up one building, in its own frame. The building's
+ * stream r is drawn from in this order: roofs and tops section by section,
+ * then signs, then billboards. */
+void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors *in) {
+    Rng r = rng_make(b->seed ^ 0x77u);
+    int fins = 0;
+    float bay = bgen_bay_width(g->seed, g->fine);
+    for (int si = 0; si < g->nsec; ++si) {
+        Behind bh;
+        emit_walls(m, b, g, si, behind_of(in, si, &bh) ? &bh : NULL);
+        emit_section_caps(m, g, si, in);
+        emit_face_trims(m, g, si, bay, &fins);
+        dress_roof(m, g, si, &r);
+        if (!has_above(g, si)) emit_tops(m, g, si, &r);
+    }
+    emit_supports(m, g);
+    if (in->arc) {   /* the portals replace the graph's doors */
+        emit_arc_portals(m, g, in->arc);
+        emit_arc_frontage(m, g, in->arc);
+        emit_arc_terraces(m, g, in->arc);
+    }
+    else emit_doors(m, g, in);
+    for (int k = 0; k < in->n; ++k) emit_interior_doors(m, g, in->lay[k]);   /* the lobbies themselves: city_build_interiors */
+    emit_street_signs(m, b, g, &r);
+    emit_billboards(m, b, g, &r);
 }
