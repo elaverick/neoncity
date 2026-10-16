@@ -26,7 +26,11 @@ static inline uint32_t hash3i(uint32_t seed, int32_t a, int32_t b, int32_t c) {
 /* [0,1) from the top 24 bits. */
 static inline float hash_float(uint32_t h) { return (float)(h >> 8) * (1.0f / 16777216.0f); }
 
-/* Small deterministic stream generator seeded from a hash: same seed, same sequence. */
+/* Small deterministic stream generator seeded from a hash: same seed, same sequence.
+ * Draw from a stream at most once per expression: C leaves the order of a
+ * call's arguments, and of most operators' operands, to the compiler, so
+ * f(rng_float(&r), rng_u32(&r)) can draw in either order from one build to the
+ * next. Take each draw into a local first. (&&, || and ?: are safe.) */
 typedef struct Rng { uint32_t state; } Rng;
 static inline Rng rng_make(uint32_t seed) { Rng r = { hash_u32(seed ^ 0xA511E9B3U) }; return r; }
 static inline uint32_t rng_u32(Rng *r) { r->state = hash_u32(r->state + 0x6D2B79F5U); return r->state; }

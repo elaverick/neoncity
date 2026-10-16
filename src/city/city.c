@@ -277,7 +277,8 @@ static void fill_lots(Filler *f, const Poly *land, float maxLot, DVec2 grain) {
                 H = lerpf(90.0f, 80.0f + 400.0f * d, powf(rng_float(&f->rng), 1.4f));
             } else {
                 b->kind = BK_BLOCK;
-                H = lerpf(14.0f, 30.0f + 70.0f * d, rng_float(&f->rng)) * (0.7f + 0.6f * rng_float(&f->rng));
+                H = lerpf(14.0f, 30.0f + 70.0f * d, rng_float(&f->rng));
+                H *= 0.7f + 0.6f * rng_float(&f->rng);
                 H = minf(H, minDim * 9.0f);
             }
         }
@@ -3421,8 +3422,10 @@ static void emit_arc_frontage(Mesh *m, const BGraph *g, const ALayout *A) {
             for (int o = 0; o < nop && clear; ++o) clear = u + w < op[o][0] - 2.0f || u > op[o][1] + 2.0f;   /* the portals keep their own signs */
             if (!clear || rng_float(&r) > A->signDensity) continue;
             uint8_t col = rng_float(&r) < 0.7f ? A->palette[rng_int(&r, 0, 2)] : (uint8_t)rng_int(&r, 0, 7);
+            uint32_t seed = rng_u32(&r);
+            int flicker = rng_float(&r) < 0.1f;
             emit_face_panel(m, &f, u, u + w, top - 1.15f, top - 0.3f, 0.22f,
-                            mat(MAT_NEON, rng_u32(&r), (uint8_t)(col | (1 << 3) | ((rng_float(&r) < 0.1f) << 6)), q_half(w), q_half(0.85f)));
+                            mat(MAT_NEON, seed, (uint8_t)(col | (1 << 3) | (flicker << 6)), q_half(w), q_half(0.85f)));
         }
         for (float u = 3.0f; u < len - 3.0f; u += rng_range(&r, 9.0f, 14.0f)) {
             if (rng_float(&r) > A->signDensity * 0.85f) continue;
@@ -3681,8 +3684,10 @@ static void lobby_lights(Mesh *m, const BGraph *g, int si, int k, float len) {
             if (g->door[d].section == si && g->door[d].face == k && fabsf(u - g->door[d].u) < g->door[d].width * 0.5f + 0.6f) clear = 0;
         if (clear) emit_box(m, v3(u - 0.07f, gy, 0.38f), v3(u + 0.07f, gy + 0.008f, 0.52f), F_TOP, up, UV_UNIT);
     }
-    if (len > 2.0f && rng_float(&r) < 0.5f)
-        emit_emissive_box(m, v3(rng_range(&r, 0.5f, len - 0.5f), gy + g->groundH + rng_range(&r, 0.4f, 1.2f), 0.06f), 0.05f, 2, 0, 0);
+    if (len > 2.0f && rng_float(&r) < 0.5f) {
+        float bx = rng_range(&r, 0.5f, len - 0.5f), by = gy + g->groundH + rng_range(&r, 0.4f, 1.2f);
+        emit_emissive_box(m, v3(bx, by, 0.06f), 0.05f, 2, 0, 0);
+    }
 }
 
 /* Everything that makes up one building, in its own frame. */
@@ -3848,9 +3853,11 @@ static void emit_building(Mesh *m, const Building *b, const BGraph *g, const Int
         emit_box(m, v3(u0 - 0.3f, yb, -1.7f), v3(u0 + w + 0.3f, yb + h + 0.3f, -1.25f), F_NOBOT | F_BOT, metal, UV_FACADE);
         if (rng_float(&r) < 0.4f)
             emit_face_panel(m, &f, u0, u0 + w, yb + 0.15f, yb + h + 0.15f, -1.2f, mat(MAT_SCREEN, rng_u32(&r), 0, q_half(w), q_half(h)));
-        else
+        else {
+            uint32_t seed = rng_u32(&r), col = rng_u32(&r) & 7;
             emit_face_panel(m, &f, u0, u0 + w, yb + 0.15f, yb + h + 0.15f, -1.2f,
-                            mat(MAT_NEON, rng_u32(&r), (uint8_t)((rng_u32(&r) & 7) | (1 << 3)), q_half(w), q_half(h)));
+                            mat(MAT_NEON, seed, (uint8_t)(col | (1 << 3)), q_half(w), q_half(h)));
+        }
         xf_restore(m, sv);
         break;
     }

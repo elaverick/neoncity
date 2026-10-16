@@ -574,24 +574,33 @@ static void build_item(LGen *g, const Item *it) {
     case LK_NEWS: {
         int spread = rng_float(&r) < 0.35f;
         float w = spread ? rng_range(&r, 0.55f, 0.6f) : rng_range(&r, 0.27f, 0.31f), d = rng_range(&r, 0.36f, 0.4f);
-        sheet(T, sides, w, d, spread ? 4 : 3, 2, rng_range(&r, 0.0025f, 0.006f), rng_range(&r, 0.003f, 0.02f),
-              rng_range(&r, 0.0f, 0.07f) * rng_float(&r), 1.0f, h);
+        float lift = rng_range(&r, 0.0025f, 0.006f), crumple = rng_range(&r, 0.003f, 0.02f);
+        float curl = rng_range(&r, 0.0f, 0.07f);
+        curl *= rng_float(&r);
+        sheet(T, sides, w, d, spread ? 4 : 3, 2, lift, crumple, curl, 1.0f, h);
         break;
     }
-    case LK_FLYER:
-        sheet(T, sides, rng_range(&r, 0.105f, 0.15f), rng_range(&r, 0.15f, 0.21f), 2, 2, rng_range(&r, 0.002f, 0.005f), 0.004f,
-              rng_range(&r, 0.0f, 0.03f), 1.0f, h);
+    case LK_FLYER: {
+        float w = rng_range(&r, 0.105f, 0.15f), d = rng_range(&r, 0.15f, 0.21f);
+        float lift = rng_range(&r, 0.002f, 0.005f), curl = rng_range(&r, 0.0f, 0.03f);
+        sheet(T, sides, w, d, 2, 2, lift, 0.004f, curl, 1.0f, h);
         break;
+    }
     case LK_SCRAP:
-        if (!(var & 1u))   /* a till receipt, curling along its length */
-            sheet(T, sides, rng_range(&r, 0.07f, 0.09f), rng_range(&r, 0.15f, 0.24f), 1, 2, 0.002f, 0.004f, rng_range(&r, 0.01f, 0.03f), 1.0f, h);
-        else               /* a sweet or burger wrapper */
-            sheet(T, sides, rng_range(&r, 0.09f, 0.15f), rng_range(&r, 0.08f, 0.12f), 2, 2, 0.002f, rng_range(&r, 0.01f, 0.02f), 0.01f, 1.0f, h);
+        if (!(var & 1u)) {   /* a till receipt, curling along its length */
+            float w = rng_range(&r, 0.07f, 0.09f), d = rng_range(&r, 0.15f, 0.24f), curl = rng_range(&r, 0.01f, 0.03f);
+            sheet(T, sides, w, d, 1, 2, 0.002f, 0.004f, curl, 1.0f, h);
+        } else {             /* a sweet or burger wrapper */
+            float w = rng_range(&r, 0.09f, 0.15f), d = rng_range(&r, 0.08f, 0.12f), crumple = rng_range(&r, 0.01f, 0.02f);
+            sheet(T, sides, w, d, 2, 2, 0.002f, crumple, 0.01f, 1.0f, h);
+        }
         break;
-    case LK_CARDBOARD:
-        sheet(T, sides, rng_range(&r, 0.45f, 0.9f), rng_range(&r, 0.35f, 0.65f), 2, 2, rng_range(&r, 0.003f, 0.008f), 0.004f,
-              rng_range(&r, 0.0f, 0.05f), 0.35f, h);
+    case LK_CARDBOARD: {
+        float w = rng_range(&r, 0.45f, 0.9f), d = rng_range(&r, 0.35f, 0.65f);
+        float lift = rng_range(&r, 0.003f, 0.008f), curl = rng_range(&r, 0.0f, 0.05f);
+        sheet(T, sides, w, d, 2, 2, lift, 0.004f, curl, 0.35f, h);
         break;
+    }
     case LK_WAD: {
         float R = rng_range(&r, 0.035f, 0.06f);
         blob(T, R, R * 0.85f, R * 0.95f, 5, 3, 0.55f, 0.0f, 1, 0.3f, h);
@@ -649,16 +658,21 @@ static void build_item(LGen *g, const Item *it) {
         if (var == 0u && rng_float(&r) < 0.4f) settle(T, 0, 0.5f * PI_F, 0.0f, 0.001f);            /* on its side */
         aoH = 0.04f; shadow = 1.0f;
         break;
-    case LK_BAG:
-        blob(T, rng_range(&r, 0.11f, 0.17f), rng_range(&r, 0.03f, 0.06f), rng_range(&r, 0.08f, 0.13f), 6, 3, 0.6f, 0.0f, 1, 1.0f, h);
+    case LK_BAG: {
+        float rx = rng_range(&r, 0.11f, 0.17f), ry = rng_range(&r, 0.03f, 0.06f), rz = rng_range(&r, 0.08f, 0.13f);
+        blob(T, rx, ry, rz, 6, 3, 0.6f, 0.0f, 1, 1.0f, h);
         aoH = 0.04f; shadow = 0.6f;
         break;
-    case LK_BINBAG:
-        blob(T, rng_range(&r, 0.25f, 0.31f), rng_range(&r, 0.22f, 0.28f), rng_range(&r, 0.22f, 0.27f), 7, 4, 0.2f,
-             rng_range(&r, 0.03f, 0.08f), 0, 0.0f, h);
-        settle(T, 0, rng_range(&r, -0.2f, 0.2f), rng_range(&r, -0.2f, 0.2f), 0.0f);
+    }
+    case LK_BINBAG: {
+        float rx = rng_range(&r, 0.25f, 0.31f), ry = rng_range(&r, 0.22f, 0.28f), rz = rng_range(&r, 0.22f, 0.27f);
+        float neck = rng_range(&r, 0.03f, 0.08f);
+        blob(T, rx, ry, rz, 7, 4, 0.2f, neck, 0, 0.0f, h);
+        float tipRoll = rng_range(&r, -0.2f, 0.2f), tipPitch = rng_range(&r, -0.2f, 0.2f);
+        settle(T, 0, tipRoll, tipPitch, 0.0f);
         aoH = 0.3f; shadow = 1.0f;
         break;
+    }
     }
     commit(g, it, 0, it->kind, aoH);
     if (shadow > 0.0f && T->n) {
@@ -692,12 +706,20 @@ static int pick(Rng *r, const float *w) {
     return LK_SCRAP;
 }
 
+/* An item at (x, z), turned any way: its yaw, then its seed, drawn from r. */
+static int toss(LGen *g, int kind, double x, double z, Rng *r, int want, uint8_t flags) {
+    float yaw = rng_float(r) * TAU;
+    uint32_t seed = rng_u32(r);
+    return drop(g, kind, x, z, yaw, seed, want, flags);
+}
+
 /* n cigarette butts scattered round (x, z), thickest in the middle. */
 static void butts(LGen *g, double x, double z, int n, float spread, uint32_t seed, int want, uint8_t flags) {
     Rng r = rng_make(seed);
     for (int i = 0; i < n; ++i) {
-        float a = rng_float(&r) * TAU, d = spread * sqrtf(rng_float(&r)) * rng_float(&r);
-        drop(g, LK_BUTT, x + cosf(a) * d, z + sinf(a) * d, rng_float(&r) * TAU, rng_u32(&r), want, flags);
+        float a = rng_float(&r) * TAU, fr = sqrtf(rng_float(&r));
+        float d = spread * fr * rng_float(&r);
+        toss(g, LK_BUTT, x + cosf(a) * d, z + sinf(a) * d, &r, want, flags);
     }
 }
 
@@ -709,12 +731,13 @@ static void pile(LGen *g, DVec2 at, DVec2 along, DVec2 out, int count, uint32_t 
     for (int k = 0; k < count; ++k) {
         double u = (k % perRow) * 0.5 + rng_range(&r, -0.08f, 0.08f) + (k >= perRow ? 0.25 : 0.0);
         double v = (k / perRow) * 0.45 + rng_range(&r, -0.05f, 0.05f);
-        drop(g, LK_BINBAG, at.x + along.x * u + out.x * v, at.z + along.z * u + out.z * v, rng_float(&r) * TAU, rng_u32(&r), want, 0);
+        toss(g, LK_BINBAG, at.x + along.x * u + out.x * v, at.z + along.z * u + out.z * v, &r, want, 0);
     }
     int extra = rng_int(&r, 0, 3);
     for (int k = 0; k < extra; ++k) {
         double u = rng_range(&r, -0.4f, perRow * 0.5f + 0.3f), v = rng_range(&r, 0.4f, 1.2f);
-        drop(g, pick(&r, MIX_BACK), at.x + along.x * u + out.x * v, at.z + along.z * u + out.z * v, rng_float(&r) * TAU, rng_u32(&r), want, 0);
+        int kind = pick(&r, MIX_BACK);
+        toss(g, kind, at.x + along.x * u + out.x * v, at.z + along.z * u + out.z * v, &r, want, 0);
     }
 }
 
@@ -758,7 +781,8 @@ static void kerbs(LGen *g) {
             if (out.x * (A.x - cen.x) + out.z * (A.z - cen.z) < 0.0) { out.x = -out.x; out.z = -out.z; }
             float along = atan2f((float)t.z, (float)t.x);
             uint32_t es = hash_combine(bk->seed ^ 0x6077E2u, (uint32_t)i);
-#define AT(U, OFF, X, Z) double X = A.x + t.x * (U) + out.x * (OFF), Z = A.z + t.z * (U) + out.z * (OFF)
+/* The point U along the kerb from A and OFF out from it, as (X, Z); U and OFF are evaluated once each, U first. */
+#define AT(U, OFF, X, Z) double X, Z; { double u_ = (U), off_ = (OFF); X = A.x + t.x * u_ + out.x * off_; Z = A.z + t.z * u_ + out.z * off_; }
 
             /* gutter: rubbish washed against the kerb; cans and bottles roll to lie along it */
             int n = stations(hash_combine(es, 1u), len, 0.8f * a, u, ss, MAXS);
@@ -774,22 +798,24 @@ static void kerbs(LGen *g) {
             for (int k = 0; k < n; ++k) {
                 Rng r = rng_make(ss[k]);
                 AT(u[k], rng_range(&r, 0.03f, 0.3f), x, z);
-                drop(g, LK_BUTT, x, z, rng_float(&r) * TAU, rng_u32(&r), G_ROAD, LF_WATER);
+                toss(g, LK_BUTT, x, z, &r, G_ROAD, LF_WATER);
             }
             /* now and then the run-off has dammed a clump of it together */
             n = stations(hash_combine(es, 3u), len, 0.12f * a * a, u, ss, MAXS);
             for (int k = 0; k < n; ++k) {
                 Rng r = rng_make(ss[k]);
                 AT(u[k], RADIUS[LK_NEWS] + 0.03f, nx, nz);   /* a sodden newspaper under it all */
-                drop(g, LK_NEWS, nx, nz, along + rng_range(&r, -0.4f, 0.4f), rng_u32(&r), G_ROAD, LF_WATER);
+                float yaw = along + rng_range(&r, -0.4f, 0.4f);
+                drop(g, LK_NEWS, nx, nz, yaw, rng_u32(&r), G_ROAD, LF_WATER);
                 int m = rng_int(&r, 4, 9);
                 for (int j = 0; j < m; ++j) {
                     int kind = pick(&r, MIX_GUTTER);
                     AT(u[k] + rng_range(&r, -0.5f, 0.5f), RADIUS[kind] + 0.03f + rng_range(&r, 0.0f, 0.15f), x, z);
-                    drop(g, kind, x, z, rng_float(&r) * TAU, rng_u32(&r), G_ROAD, LF_WATER);
+                    toss(g, kind, x, z, &r, G_ROAD, LF_WATER);
                 }
                 AT(u[k], 0.12f, x, z);
-                butts(g, x, z, rng_int(&r, 2, 6), 0.5f, rng_u32(&r), G_ROAD, LF_WATER);
+                int nb = rng_int(&r, 2, 6);
+                butts(g, x, z, nb, 0.5f, rng_u32(&r), G_ROAD, LF_WATER);
             }
 
             /* sidewalk: along the kerb line, along the building line, now and then in between */
@@ -803,14 +829,14 @@ static void kerbs(LGen *g) {
                 else d = rng_range(&r, 0.3f, maxf(walk - 0.2f, 0.4f));
                 d = maxf(d, rad + 0.05f);
                 AT(u[k], -d, x, z);
-                drop(g, kind, x, z, rng_float(&r) * TAU, rng_u32(&r), G_SIDEWALK, 0);
+                toss(g, kind, x, z, &r, G_SIDEWALK, 0);
             }
             n = stations(hash_combine(es, 5u), len, 0.3f * a, u, ss, MAXS);
             for (int k = 0; k < n; ++k) {
                 Rng r = rng_make(ss[k]);
                 float d = rng_float(&r) < 0.6f ? rng_range(&r, 0.05f, 0.9f) : walk - rng_range(&r, 0.05f, 0.6f);
                 AT(u[k], -d, x, z);
-                drop(g, LK_BUTT, x, z, rng_float(&r) * TAU, rng_u32(&r), G_SIDEWALK, 0);
+                toss(g, LK_BUTT, x, z, &r, G_SIDEWALK, 0);
             }
             /* and in squalid streets the wind drifts it into heaps against the walls */
             n = stations(hash_combine(es, 7u), len, 0.2f * a * a, u, ss, MAXS);
@@ -820,7 +846,7 @@ static void kerbs(LGen *g) {
                 for (int j = 0; j < m; ++j) {
                     int kind = pick(&r, MIX_WALK);
                     AT(u[k] + rng_range(&r, -0.6f, 0.6f), -(walk - RADIUS[kind] - rng_range(&r, 0.05f, 0.35f)), x, z);
-                    drop(g, kind, x, z, rng_float(&r) * TAU, rng_u32(&r), G_SIDEWALK, 0);
+                    toss(g, kind, x, z, &r, G_SIDEWALK, 0);
                 }
             }
             /* poorer streets put their bin bags out on the kerb */
@@ -830,7 +856,8 @@ static void kerbs(LGen *g) {
                     Rng r = rng_make(ss[k]);
                     AT(u[k], -rng_range(&r, 0.45f, 0.7f), x, z);
                     DVec2 at = { x, z }, in = { -out.x, -out.z };
-                    pile(g, at, t, in, rng_int(&r, 2, 2 + (int)(sq * 5.0f)), rng_u32(&r), G_SIDEWALK);
+                    int count = rng_int(&r, 2, 2 + (int)(sq * 5.0f));
+                    pile(g, at, t, in, count, rng_u32(&r), G_SIDEWALK);
                 }
             }
 #undef AT
@@ -857,7 +884,8 @@ static void scatter(LGen *g) {
                 if (roll >= 0.3f * a * 2.2f) continue;
                 if (roll >= 0.3f * a * (wall_dist(g, x, z, 1.5f) < 1.5f ? 2.2f : 0.6f)) continue;
                 if (rng_float(&r) < 0.15f) {
-                    butts(g, x, z, rng_int(&r, 2, 7), 0.6f, rng_u32(&r), G_LOT, 0);
+                    int nb = rng_int(&r, 2, 7);
+                    butts(g, x, z, nb, 0.6f, rng_u32(&r), G_LOT, 0);
                     continue;
                 }
                 mix = MIX_LOT;
@@ -871,7 +899,7 @@ static void scatter(LGen *g) {
                 flags = LF_RUNOVER;
             } else continue;
             int kind = pick(&r, mix);
-            drop(g, kind, x, z, rng_float(&r) * TAU, rng_u32(&r), gr.type, flags);
+            toss(g, kind, x, z, &r, gr.type, flags);
         }
 }
 
@@ -905,22 +933,29 @@ static void doorways(LGen *g) {
                 if (rng_float(&r) >= 0.75f) continue;
                 float s = d->width * 0.5f + rng_range(&r, 0.8f, 2.2f), o = rng_range(&r, 0.6f, 1.6f);
                 double x = at.x + along.x * s * side + out.x * o, z = at.z + along.z * s * side + out.z * o;
-                butts(g, x, z, 6 + (int)(26.0f * rng_float(&r) * (0.35f + 0.65f * sq)), 0.75f, rng_u32(&r), WANT_FOOT, 0);
-                if (rng_float(&r) < 0.4f) drop(g, LK_CUP, x + rng_range(&r, -0.6f, 0.6f), z + rng_range(&r, -0.6f, 0.6f), rng_float(&r) * TAU, rng_u32(&r), WANT_FOOT, 0);
+                int nb = 6 + (int)(26.0f * rng_float(&r) * (0.35f + 0.65f * sq));
+                butts(g, x, z, nb, 0.75f, rng_u32(&r), WANT_FOOT, 0);
+                if (rng_float(&r) < 0.4f) {
+                    double cx = x + rng_range(&r, -0.6f, 0.6f), cz = z + rng_range(&r, -0.6f, 0.6f);
+                    toss(g, LK_CUP, cx, cz, &r, WANT_FOOT, 0);
+                }
             } else if (d->type == DOOR_PRIMARY) {
                 if (rng_float(&r) >= 0.25f + 0.5f * sq) continue;
                 int n = rng_int(&r, 1, 3);
                 for (int k2 = 0; k2 < n; ++k2) {
                     float s = rng_range(&r, -2.5f, 2.5f), o = rng_range(&r, 0.4f, 2.0f);
-                    drop(g, pick(&r, MIX_SHOP), at.x + along.x * s + out.x * o, at.z + along.z * s + out.z * o, rng_float(&r) * TAU, rng_u32(&r), WANT_FOOT, 0);
+                    int kind = pick(&r, MIX_SHOP);
+                    toss(g, kind, at.x + along.x * s + out.x * o, at.z + along.z * s + out.z * o, &r, WANT_FOOT, 0);
                 }
-                butts(g, at.x + out.x * 1.0, at.z + out.z * 1.0, (int)(2.0f + 6.0f * sq * rng_float(&r)), 1.5f, rng_u32(&r), WANT_FOOT, 0);
+                int nb = (int)(2.0f + 6.0f * sq * rng_float(&r));
+                butts(g, at.x + out.x * 1.0, at.z + out.z * 1.0, nb, 1.5f, rng_u32(&r), WANT_FOOT, 0);
             } else {
                 if (rng_float(&r) >= 0.3f + 0.65f * sq) continue;
                 float s = d->width * 0.5f + 0.45f;
                 DVec2 start = { at.x + along.x * s * side + out.x * 0.36, at.z + along.z * s * side + out.z * 0.36 };
                 DVec2 dir = { along.x * side, along.z * side };
-                pile(g, start, dir, out, 2 + (int)(rng_float(&r) * (1.0f + 6.0f * sq)), rng_u32(&r), WANT_FOOT);
+                int count = 2 + (int)(rng_float(&r) * (1.0f + 6.0f * sq));
+                pile(g, start, dir, out, count, rng_u32(&r), WANT_FOOT);
             }
         }
     }
@@ -939,12 +974,13 @@ static void lampposts(LGen *g) {
         for (int k = 0; k < n; ++k) {
             int kind = pick(&r, MIX_LAMP);
             float a = rng_float(&r) * TAU, d = 0.24f + RADIUS[kind] + rng_range(&r, 0.0f, 0.4f);
-            drop(g, kind, L->x + cosf(a) * d, L->z + sinf(a) * d, rng_float(&r) * TAU, rng_u32(&r), G_SIDEWALK, 0);
+            toss(g, kind, L->x + cosf(a) * d, L->z + sinf(a) * d, &r, G_SIDEWALK, 0);
         }
-        butts(g, L->x, L->z, (int)(2.0f + 8.0f * sq * rng_float(&r)), 0.8f, rng_u32(&r), G_SIDEWALK, 0);
+        int nb = (int)(2.0f + 8.0f * sq * rng_float(&r));
+        butts(g, L->x, L->z, nb, 0.8f, rng_u32(&r), G_SIDEWALK, 0);
         if (sq > 0.6f && rng_float(&r) < 0.25f) {
             float a = rng_float(&r) * TAU;
-            drop(g, LK_BINBAG, L->x + cosf(a) * 0.56, L->z + sinf(a) * 0.56, rng_float(&r) * TAU, rng_u32(&r), G_SIDEWALK, 0);
+            toss(g, LK_BINBAG, L->x + cosf(a) * 0.56, L->z + sinf(a) * 0.56, &r, G_SIDEWALK, 0);
         }
     }
 }

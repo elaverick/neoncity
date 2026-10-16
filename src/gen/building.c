@@ -522,7 +522,11 @@ static int build_tower(Ctx *c, FootSpec ts, int on, int k0, int kTop, int allowP
         return below;
     }
     int S = (int)clampf((float)((kTop - k0) / 2), 4.0f, 10.0f);
-    float twist = prof == 4 ? rng_range(&c->rf, 0.35f, 1.1f) * (rng_float(&c->rf) < 0.5f ? -1.0f : 1.0f) : 0.0f;
+    float twist = 0.0f;
+    if (prof == 4) {
+        twist = rng_range(&c->rf, 0.35f, 1.1f);
+        if (rng_float(&c->rf) < 0.5f) twist = -twist;
+    }
     for (int i = 0; i < S; ++i) {
         float t = S > 1 ? (float)i / (float)(S - 1) : 0.0f;
         float sc = prof == 1 ? 1.0f - 0.35f * t : prof == 2 ? 1.0f - 0.28f * sinf(PI_F * t) : prof == 3 ? 0.72f + 0.28f * t : 1.0f;
@@ -579,7 +583,8 @@ static int arch_skyscraper(Ctx *c) {
     int N = c->N;
     if (N < 8) return 0;
     int P = (int)clampf((float)N * rng_range(&c->rf, 0.08f, 0.18f), 1.0f, 5.0f);
-    FootSpec ps = site_spec(c, rng_float(&c->rf) < 0.65f ? FAM_RECT : FAM_CHAMFER, rng_range(&c->rf, 0.0f, 1.0f));
+    int fam = rng_float(&c->rf) < 0.65f ? FAM_RECT : FAM_CHAMFER;
+    FootSpec ps = site_spec(c, fam, rng_range(&c->rf, 0.0f, 1.0f));
     if (!spec_ok(&ps)) ps = site_spec(c, FAM_RECT, 0.5f);
     int gi, pod = build_base(c, &ps, P, rng_float(&c->rf) < 0.15f, 0, SEC_PODIUM, &gi);
     if (pod < 0) return 0;

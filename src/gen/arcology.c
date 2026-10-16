@@ -1201,7 +1201,10 @@ static void place_fixtures(Gen *G) {
             for (int j = j0; j < j1 && own; ++j) for (int i = i0; i < i1 && own; ++i) own = A->blk[IDX(A, i, j)] == b;
             if (!own) continue;
             float pick = rng_float(&G->rb);
-            if (yard) add_fix(A, pick < 0.6f ? AX_CRATE : AX_BIN, 0, x, z, x + sx * 0.7f, z + sz * 0.7f, 0.0f, rng_range(&G->rb, 0.6f, 1.8f), rng_u32(&G->rb));
+            if (yard) {
+                float h = rng_range(&G->rb, 0.6f, 1.8f);
+                add_fix(A, pick < 0.6f ? AX_CRATE : AX_BIN, 0, x, z, x + sx * 0.7f, z + sz * 0.7f, 0.0f, h, rng_u32(&G->rb));
+            }
             else {
                 int type = pick < 0.4f ? AX_PLANT : pick < 0.6f ? AX_TANK : pick < 0.85f ? AX_CRATE : AX_VENT;
                 float y0 = B->height, h = type == AX_TANK ? rng_range(&G->rb, 1.6f, 2.6f) : rng_range(&G->rb, 0.6f, 1.6f);
