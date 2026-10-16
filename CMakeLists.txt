@@ -121,7 +121,11 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/dr
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_lobby.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
                 src/city/litter.c src/plan/plan.c
-                src/gen/gen_common.c src/gen/building.c src/gen/interior.c src/gen/arcology.c src/gen/plant.c)
+                src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c
+                src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
+                src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
+                src/gen/interior_fixtures.c src/gen/interior_validate.c
+                src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c)
 
 # --- Tests: generator determinism ------------------------------------------------
 enable_testing()
@@ -140,7 +144,7 @@ add_executable(interior_lab tests/interior_lab.c ${GEN_SOURCES})
 target_include_directories(interior_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # Lobby plants (src/gen/plant.c): every archetype over seeds, tiers and gravities; optional contact sheets
 # (plant_lab [seeds] [out_dir]).
-add_executable(plant_lab tests/plant_lab.c src/gen/plant.c)
+add_executable(plant_lab tests/plant_lab.c src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c)
 target_include_directories(plant_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 foreach(T city_test city_map building_lab interior_lab plant_lab)
   if(MSVC)
