@@ -1,28 +1,28 @@
 #ifndef COMMON_GLSL
 #define COMMON_GLSL
 
-/* Must match src/common.h */
+/* Must match src/core/common.h */
 const float CHUNK_SIZE      = 110.0;
 const float LAMP_HEIGHT     = 7.5;
 const float SIDEWALK_HEIGHT = 0.15;
 const float KERB_STONE_WIDTH = 0.32;
 const float DROP_RAMP_RUN = 1.5;
 const float NEAR_PLANE      = 0.08;
-const float FAR_PLANE       = 1995.0;   // VIEW_DISTANCE * 1.05 (reverse-Z projection, src/main.c)
-const float SHELTER_SIZE    = 1024.0;   // shelter map (src/common.h)
+const float FAR_PLANE       = 1995.0;   // VIEW_DISTANCE * 1.05 (reverse-Z projection, src/app/main.c)
+const float SHELTER_SIZE    = 1024.0;   // shelter map (src/core/common.h)
 const float SHELTER_LO      = -60.0;
 const float SHELTER_HI      = 500.0;
 const float CLOUD_LOW       = 115.0;    // the rain-cloud layer: scud...
 const float CLOUD_HIGH      = 670.0;    // ...to deck top
 
-// Sky lights (src/common.h)
+// Sky lights (src/core/common.h)
 const int   SKY_GRID        = 32;
 const int   SKY_MAX_LIGHTS  = 2048;
 const int   SKY_MAX_INDEX   = 32768;
 const float SKY_GAIN        = 4.0;
 const float SKY_RANGE_MAX   = 220.0;
 const uint  SKY_KIND_SCREEN = 32u;
-// Air lights (src/common.h): what lights the rain mist
+// Air lights (src/core/common.h): what lights the rain mist
 const int   AIR_MAX_LIGHTS  = 256;
 const float AIR_RANGE       = 140.0;
 const uint  AIR_SIGN = 0u, AIR_LAMP_SODIUM = 1u, AIR_LAMP_LED = 2u, AIR_SHOP = 3u, AIR_LOBBY = 4u;
@@ -33,13 +33,13 @@ const uint MAT_ROAD = 0u, MAT_SIDEWALK = 1u, MAT_CURB = 2u, MAT_LOT = 3u,
            MAT_FACADE = 4u, MAT_ROOF = 5u, MAT_NEON = 6u, MAT_METAL = 7u,
            MAT_EMISSIVE = 8u, MAT_SCREEN = 9u, MAT_LEDSTRIP = 10u, MAT_DOOR = 11u,
            MAT_INTERIOR = 12u, MAT_LITTER = 13u, MAT_ARCOLOGY = 14u;
-// Litter kinds (src/common.h)
+// Litter kinds (src/core/common.h)
 const uint LK_SHADOW = 0u, LK_NEWS = 1u, LK_FLYER = 2u, LK_SCRAP = 3u, LK_CARDBOARD = 4u, LK_WAD = 5u, LK_CAN = 6u,
            LK_BOTTLE = 7u, LK_BUTT = 8u, LK_CUP = 9u, LK_BOX = 10u, LK_BAG = 11u, LK_BINBAG = 12u;
-// Closer than this, a lobby's glass shows its real interior (src/common.h INTERIOR_DISTANCE).
+// Closer than this, a lobby's glass shows its real interior (src/core/common.h INTERIOR_DISTANCE).
 const float REAL_GLASS_DIST = 150.0;
 
-// Authored PBR materials (src/textures.c): maps at material * PBR_MAPS_PER_MATERIAL + map.
+// Authored PBR materials (src/render/textures.c): maps at material * PBR_MAPS_PER_MATERIAL + map.
 const int PBR_PAVING_STONES = 0, PBR_ROAD = 1, PBR_KERB = 2, PBR_TACTILE = 3,
           PBR_MARBLE_DARK = 4, PBR_MARBLE_WHITE = 5, PBR_LIMESTONE = 6, PBR_WOOD_DARK = 7, PBR_WOOD_MID = 8, PBR_WOOD_LIGHT = 9,
           PBR_LEAF = 10, PBR_MATERIAL_COUNT = 11;
@@ -51,7 +51,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 camPos;     // xyz world (approx), w = time
     vec4 camFwd;     // xyz forward, w = view distance
     vec4 screen;
-    vec4 weather;    // x rain intensity, y street wetness (src/main.c: weather_update)
+    vec4 weather;    // x rain intensity, y street wetness (src/app/main.c: weather_update)
     vec4 shelter;    // shelter map: camera-relative centre x, z; half-width
     vec4 shadow;     // ray-traced shadows: x frame number, y SHADOWS_ON | SHADOWS_DEBUG, zw where sample 0 lies in a pixel
     mat4 prevViewProj;   // the previous frame's viewProj, taking this frame's camera-relative positions
@@ -63,11 +63,11 @@ struct ChunkGPU {
 };
 layout(std430, set = 0, binding = 1) readonly buffer Chunks { ChunkGPU chunks[]; };
 
-// Per-chunk light tables (see build_lights in src/city.c): a header record,
+// Per-chunk light tables (see build_lights in src/city/city.c): a header record,
 // 16 tile words (first << 16 | count), then lights (xyz, w = type | data).
 layout(std430, set = 0, binding = 2) readonly buffer Lights { uvec4 lightRec[]; };
 
-/* ---------------- hashing: bit-identical to src/hash.h ---------------- */
+/* ---------------- hashing: bit-identical to src/core/hash.h ---------------- */
 uint hash_u32(uint x) {
     x ^= x >> 16; x *= 0x7feb352du;
     x ^= x >> 15; x *= 0x846ca68bu;
@@ -92,7 +92,7 @@ float fbm(vec2 p, uint salt) {
     return 0.5 * vnoise(p, salt) + 0.3 * vnoise(p * 2.03, salt + 17u) + 0.2 * vnoise(p * 4.11, salt + 31u);
 }
 
-/* Facade rhythm: must match city_floor_height / city_ground_height in src/city.c */
+/* Facade rhythm: must match city_floor_height / city_ground_height in src/city/city.c */
 uint  styleHash(uint seed)      { return hash_u32(seed ^ 0x5f3759dfu); }
 float facadeFloorH(uint seed)  { return 3.3 + 0.9 * hfloat(hash_combine(styleHash(seed), 1u)); }
 float facadeGroundH(uint seed) { return 4.6 + 1.4 * hfloat(hash_combine(styleHash(seed), 2u)); }
@@ -109,7 +109,7 @@ vec3 neonColor(uint i) {
     return vec3(1.00, 0.85, 0.15);               // yellow
 }
 
-// A lit storefront's light (its shop hash picks the colour; src/city.c: city_shop_hash).
+// A lit storefront's light (its shop hash picks the colour; src/city/city.c: city_shop_hash).
 vec3 shopColor(uint h) { return mix(neonColor(h >> 4), vec3(1.0, 0.82, 0.62), 0.45); }
 
 // Light from the lobbies thrown onto the street and into the rain (about 2900 K,
@@ -117,16 +117,16 @@ vec3 shopColor(uint h) { return mix(neonColor(h >> 4), vec3(1.0, 0.82, 0.62), 0.
 const vec3 LOBBY_SPILL = vec3(1.0, 0.66, 0.37);
 
 /* ---------------- ray-traced shadows ----------------
- * src/rt.c builds the acceleration structures; shadow_trace.comp traces one
+ * src/render/rt.c builds the acceleration structures; shadow_trace.comp traces one
  * ray per light at each pixel's most important lights, shadow_denoise.comp
  * filters them into soft shadows, and city.frag looks each light up
  * (shadowVis), tracing a hard shadow itself wherever the pixel's surface
  * isn't the one the prepass saw. */
-const float SHADOW_FADE = 350.0, SHADOW_FAR = 450.0;    // src/common.h
+const float SHADOW_FADE = 350.0, SHADOW_FAR = 450.0;    // src/core/common.h
 const uint  SHADOWS_ON = 1u, SHADOWS_DEBUG = 2u;         // frame.shadow.y (renderer.c)
 bool shadowsOn() { return (uint(frame.shadow.y) & SHADOWS_ON) != 0u; }
 const int   SHADOW_SLOTS = 8;                            // lights a pixel keeps soft shadows for
-const uint  RT_MASK_LITTER = 0x04u;                      // src/rt.h
+const uint  RT_MASK_LITTER = 0x04u;                      // src/render/rt.h
 const float LIGHT_NEGLIGIBLE = 0.002;                    // a light this faint shows no shadow worth tracing
 // Prepass G-buffer (prepass.frag): x the normal (octEncode), y the draw chunk | these flags;
 // for a lobby surface (PG_LOBBY), bits 16..23 hold its ceiling's height above the floor (half metres).
@@ -164,7 +164,7 @@ const float POOL_RADIUS = 4.0, POOL_HEIGHT = 0.5;   // the lit pool a lamp's spi
  * xi in [0,1)^3, and the emitter's size (for penumbra estimates). A street
  * lamp's beam glows through the diffuser under the head, a disc just below it,
  * and its spill rises from the pool of light beneath it: xi.z picks one, by
- * the share each has at p. Arcology lights are broader (LE_* in src/city.c).
+ * the share each has at p. Arcology lights are broader (LE_* in src/city/city.c).
  * A shop or lobby light stands 1 m out from its pane, which glows over the
  * bay's width from knee height to over the door. */
 vec3 emitterPoint(vec3 lp, uint w, vec3 xi, vec3 p, out float size) {
@@ -185,7 +185,7 @@ vec3 emitterPoint(vec3 lp, uint w, vec3 xi, vec3 p, out float size) {
 }
 
 // Whether light record w casts shadows. An arcology's crown lights (LE_ARC_CROWN
-// in src/city.c) stand for the cold light falling down the canyon from its
+// in src/city/city.c) stand for the cold light falling down the canyon from its
 // glazed crown, a fill from far above rather than a light at the point they
 // mark, so they light the galleries unshadowed.
 bool castsShadow(uint w) { return (w & 3u) >= 2u || ((w >> 26) & 3u) != 2u; }
@@ -227,7 +227,7 @@ vec3 lampColor(int type) {
                      : vec3(0.55, 0.80, 1.0) * 0.9;  // cold LED
 }
 
-/* Failing street lamps (lamp_fault in src/city.c): fault & 3 is the state,
+/* Failing street lamps (lamp_fault in src/city/city.c): fault & 3 is the state,
  * fault >> 2 a seed. 0 works; 1 is dead; 2 cycles, as a worn sodium lamp does:
  * it runs, sputters, goes out, then restrikes with a red glow that warms back
  * to orange; 3 is dim and reddened. Multiplies the lamp's colour. */

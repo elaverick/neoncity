@@ -4,7 +4,7 @@
 #include "mathlib.h"
 
 /* ===========================================================================
- * Street litter: the third, near-only layer of chunk meshes (src/chunks.c).
+ * Street litter: the third, near-only layer of chunk meshes (src/render/chunks.c).
  *
  * Rubbish lies still, so it isn't simulated. Every item is ordinary geometry,
  * generated with its chunk as a pure function of the plan. The vertex shader
@@ -43,7 +43,7 @@
  *            x and z 11-bit signed in 2 mm, y 10-bit in 1 mm
  * ========================================================================= */
 
-#define BASE_Y   (-0.03f)   /* plain asphalt filling the junctions (src/city.c) */
+#define BASE_Y   (-0.03f)   /* plain asphalt filling the junctions (src/city/city.c) */
 #define CELL     2.5        /* area scatter grid; divides CHUNK_SIZE */
 #define MAX_LV   768
 #define TAU      6.2831853f
@@ -110,7 +110,7 @@ static void lgen_init(LGen *g, int cx, int cz, Mesh *m) {
     g->drops = (DropKerb **)calloc(PLAN_MAX_BLOCKS, sizeof(DropKerb *));
     g->nd = (int *)malloc(sizeof(int) * PLAN_MAX_BLOCKS);
     if (!g->pa || !g->T || !g->sq || !g->drops || !g->nd) fatal("out of memory generating litter");
-    /* lamps are found within 2 m, which must stay 20 m inside the plan area (gen_init in src/city.c) */
+    /* lamps are found within 2 m, which must stay 20 m inside the plan area (gen_init in src/city/city.c) */
     plan_area(g->ox - 30.0, g->oz - 30.0, g->ox + P + 30.0, g->oz + P + 30.0, g->pa);
     for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) { g->sq[k] = -1.0f; g->nd[k] = -1; }
 
@@ -198,7 +198,7 @@ static int block_drops(LGen *g, int bi, const DropKerb **out) {
     return g->nd[bi];
 }
 
-/* What the ground is at (x, z) and how high it stands (src/city.c: build_roads, build_blocks). */
+/* What the ground is at (x, z) and how high it stands (src/city/city.c: build_roads, build_blocks). */
 static Ground ground_at(LGen *g, double x, double z) {
     Ground gr = { G_ROAD, -1, BASE_Y };
     for (int k = 0; k < g->pa->nblocks; ++k) {
@@ -308,7 +308,7 @@ static int site_ok(LGen *g, double x, double z, float rad, int want, float *y) {
 
 static LV lv(vec3 p, vec3 n, float u, float v, float flex) { LV r; r.p = p; r.n = n; r.u = u; r.v = v; r.flex = flex; return r; }
 
-/* Winding follows the vertex normals, as emit_quad does (src/city.c). Degenerate triangles are dropped. */
+/* Winding follows the vertex normals, as emit_quad does (src/city/city.c). Degenerate triangles are dropped. */
 static void tri(Tris *T, LV a, LV b, LV c) {
     vec3 fn = v3_cross(v3_sub(b.p, a.p), v3_sub(c.p, a.p));
     if (v3_dot(fn, fn) < 1e-14f || T->n + 3 > MAX_LV) return;

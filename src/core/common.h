@@ -8,7 +8,7 @@
 #include <math.h>
 
 /* ---------------------------------------------------------------------------
- * World layout. The city plan (src/plan.c) is a polycentric network of towns,
+ * World layout. The city plan (src/plan/plan.c) is a polycentric network of towns,
  * neighbourhoods and blocks generated as a pure function of position; it is
  * streamed as an infinite grid of square chunks, each holding the ground
  * inside it and the buildings centred in it. Everything inside a chunk is a
@@ -28,12 +28,12 @@
  * VIEW_DISTANCE so chunks streaming in at the edge are never visible popping. */
 #define VIEW_DISTANCE     1900.0f
 #define NEAR_RING_DIST    260.0f   /* chunks this close are kept regardless of view direction */
-/* Office lobbies are real geometry (src/interior.c), streamed as a second
+/* Office lobbies are real geometry (src/gen/interior.c), streamed as a second
  * layer of chunks only this close; beyond REAL_GLASS_DIST (shaders/common.glsl)
  * their glass falls back to interior mapping. The gap covers a building's
  * overhang of its chunk (CITY_OVERHANG) and the time to stream a layer in. */
 #define INTERIOR_DISTANCE 260.0f
-/* Street litter (src/litter.c) is a third layer, streamed only this close.
+/* Street litter (src/city/litter.c) is a third layer, streamed only this close.
  * Each item shrinks away in the vertex shader before its own fade distance
  * (a few metres for a cigarette butt, nearly this far for a bin bag). */
 #define LITTER_DISTANCE   120.0f
@@ -94,7 +94,7 @@
 #define AIR_SHOP          3u            /* seed: the shop hash (its colour) */
 #define AIR_LOBBY         4u
 
-/* Ray-traced shadows (src/rt.c, shaders/shadow_trace.comp). Every light in a
+/* Ray-traced shadows (src/render/rt.c, shaders/shadow_trace.comp). Every light in a
  * chunk's table (street lamps, shopfronts, lobby spill, arcology lights) is
  * tested for visibility against acceleration structures of the city round the
  * camera, whatever the view frustum holds. Receivers fade to unshadowed from
@@ -118,14 +118,14 @@ enum {
     MAT_INTERIOR, MAT_LITTER, MAT_ARCOLOGY
 };
 
-/* Litter kinds (MAT_LITTER params.y; src/litter.c). LK_SHADOW is the contact
+/* Litter kinds (MAT_LITTER params.y; src/city/litter.c). LK_SHADOW is the contact
  * shadow under an item. Must match shaders/common.glsl. */
 enum {
     LK_SHADOW = 0, LK_NEWS, LK_FLYER, LK_SCRAP, LK_CARDBOARD, LK_WAD, LK_CAN,
     LK_BOTTLE, LK_BUTT, LK_CUP, LK_BOX, LK_BAG, LK_BINBAG, LK_COUNT
 };
 
-/* Authored PBR materials, loaded from assets/textures/ (src/textures.c). Each
+/* Authored PBR materials, loaded from assets/textures/ (src/render/textures.c). Each
  * has three maps, bound at material * PBR_MAPS_PER_MATERIAL + map. Surfaces
  * opt in per material in the shader; the rest stay procedural. Must match
  * shaders/common.glsl. */

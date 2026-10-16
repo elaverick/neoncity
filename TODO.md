@@ -1,7 +1,7 @@
 # TODO
 
 ## Shadows
-Every light in the chunks' light tables casts ray-traced shadows (`src/rt.c`, `shaders/shadow_trace.comp`,
+Every light in the chunks' light tables casts ray-traced shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`,
 `shaders/shadow_denoise.comp`; see the README).
 - **Dynamic shadows.** Moving things (people, traffic) would go into the top-level structure as instances of their own
   bottom-level structures, rebuilt or refitted as they move. The denoiser's history is reprojected by the camera alone,
@@ -18,7 +18,7 @@ Every light in the chunks' light tables casts ray-traced shadows (`src/rt.c`, `s
 - **Cost:** settled lights could be traced every other frame, and the filter taps cached in shared memory.
 
 ## Office lobbies (next)
-Real lobbies stand behind office ground floors (`src/interior.c`, `emit_interior` in `src/city.c`).
+Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/city.c`).
 - **Furniture** is rough boxes; reception, sofas, cafe and cubicles want real assets. Planters hold
   real plants now (see Lobby plants below).
 - **Vertical circulation:** the gallery, feature stair and escape stairs can't be climbed (collision
@@ -54,7 +54,7 @@ jumper runs between strokes, electrode caps at stroke ends, a tube's shadow on t
 street light, and signs built as real tube geometry up close.
 
 ## Arcologies (next)
-Arcology interiors are planned and built (`src/arcology.c`, `emit_arcology` in `src/city.c`).
+Arcology interiors are planned and built (`src/gen/arcology.c`, `emit_arcology` in `src/city/city.c`).
 - **Above the concourse:** sky lobbies and the floors round the canyon are planned but only seen
   as the galleries' unit fronts and the lit band outside; nothing above the ground can be reached
   (collision is 2D, lifts don't run).
@@ -68,7 +68,7 @@ Arcology interiors are planned and built (`src/arcology.c`, `emit_arcology` in `
   escape stairs are rarely needed; larger mega plots would exercise more of the grammar.
 
 ## Lobby plants
-Lobby planters hold plants grown by `src/plant.c` (LPLS-1.19; see the README).
+Lobby planters hold plants grown by `src/gen/plant.c` (LPLS-1.19; see the README).
 - **Instancing.** A frontage row repeats three specimens, but each copy is still its own geometry.
   Busy chunks (one has 43 planters) fall back to low detail or an equal triangle share. Drawing
   repeated plants as instances would keep them at medium detail.
@@ -81,7 +81,7 @@ Lobby planters hold plants grown by `src/plant.c` (LPLS-1.19; see the README).
 - **Motion:** no sway (spec section 12). An HVAC draught on the outer fronds and leaves would do.
 
 ## Litter
-Rubbish in the streets is static geometry in a near-only layer (`src/litter.c`), plus fine
+Rubbish in the streets is static geometry in a near-only layer (`src/city/litter.c`), plus fine
 debris drawn by the ground shader (`debris`). See the README.
 - **Wind-blown paper:** loose dry paper only flaps where it lies. A small GPU particle pool
   (a few dozen sheets and bags round the camera, simulated in a compute pass against the
@@ -137,7 +137,7 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 - **Rain on glass** (optional): rivulets and beads running down windows and shopfronts.
   A temporal pass would let the trace run at half resolution and stay smooth in motion.
 **Done:** rain.
-- **Weather** (`weather_update` in `src/main.c`): rain intensity drifts between drizzle and
+- **Weather** (`weather_update` in `src/app/main.c`): rain intensity drifts between drizzle and
   downpour over minutes without stopping. Street wetness follows it, quickly up and slowly
   down, so puddles grow and shrink. `--rain X` pins the intensity.
 - **Ripples** (`ripples()`): rings from drops landing at random, strong in standing water

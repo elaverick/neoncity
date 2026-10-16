@@ -963,7 +963,7 @@ static void push_light(SkyLight **arr, uint32_t *n, uint32_t *cap, const SkyLigh
 }
 
 /* A neon sign or video screen lights the rain mist (an air light) and, if it
- * can reach the cloud layer, the clouds (a sky light; src/common.h): its
+ * can reach the cloud layer, the clouds (a sky light; src/core/common.h): its
  * centre and facing in chunk-local space (through the current emission
  * transform, as mesh_push), and its power, from the sign's average emitted
  * radiance (shadeNeon / shadeScreen) and its area. */
@@ -1023,7 +1023,7 @@ static void emit_beam(Mesh *m, vec3 a, vec3 b, float size, Mat mt) {
 }
 
 /* ===========================================================================
- * Buildings: emitting a validated building graph (src/building.c) in the
+ * Buildings: emitting a validated building graph (src/gen/building.c) in the
  * building's own frame
  * ========================================================================= */
 
@@ -1543,7 +1543,7 @@ static void face_feature(Mesh *m, const BGraph *g, const BSection *s, float widt
 }
 
 /* ===========================================================================
- * Interiors: a planned office lobby (src/interior.c) realised in the
+ * Interiors: a planned office lobby (src/gen/interior.c) realised in the
  * building's frame. The planning frame is the building frame turned in
  * quarter turns, so its rectangles are boxes here too. Floors and ceilings
  * follow the true footprint; partitions come from the boundary table;
@@ -2161,7 +2161,7 @@ static void emit_emblem(Mesh *m, const BGraph *g, const ILayout *L) {
 }
 
 /* ---------------------------------------------------------------------------
- * Lobby plants (src/plant.c). A planter is a stone pot with a top dressing,
+ * Lobby plants (src/gen/plant.c). A planter is a stone pot with a top dressing,
  * part of the lobby; the plants are a layer of their own (city_build_plants),
  * drawn without back-face culling because a leaf is a single surface, so the
  * chunk's plant budget can choose their detail. Planters set out together hold
@@ -2457,7 +2457,7 @@ static void emit_interior_doors(Mesh *m, const BGraph *g, const ILayout *L) {
 }
 
 /* ===========================================================================
- * Arcologies (src/arcology.c): the concourse level, its market blocks and the
+ * Arcologies (src/gen/arcology.c): the concourse level, its market blocks and the
  * canyon realised in the building frame. As for a lobby, the planning frame is
  * the building frame turned in quarter turns, so its rectangles are boxes.
  * Every MAT_ARCOLOGY vertex carries its stratum height, so shadeArcology can
@@ -4997,7 +4997,7 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
     gen_free(&g);
 }
 
-/* The near-only layer (src/chunks.c): the lobbies behind the ground-floor
+/* The near-only layer (src/render/chunks.c): the lobbies behind the ground-floor
  * glass of the buildings centred in this chunk, in the same chunk-local space. */
 void city_build_interiors(int cx, int cz, Mesh *m) {
     ChunkGen g;

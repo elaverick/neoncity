@@ -22,7 +22,7 @@ typedef struct VkCore {
     VkQueue          queue;
     bool             mdi;            /* multiDrawIndirect + drawIndirectFirstInstance */
     VkSampleCountFlagBits msaa;
-    /* Ray queries against acceleration structures (ray-traced shadows, src/rt.c):
+    /* Ray queries against acceleration structures (ray-traced shadows, src/render/rt.c):
      * VK_KHR_acceleration_structure + VK_KHR_ray_query + buffer device addresses. */
     bool             rt;
     VkPhysicalDeviceAccelerationStructurePropertiesKHR asProps;

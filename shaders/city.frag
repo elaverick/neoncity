@@ -165,7 +165,7 @@ ivec2 cornerKey(int face, int next, bool endShare, int idx, int last) {
     return (endShare && idx >= last && last > 0) ? ivec2(next, 0) : ivec2(face, idx);
 }
 
-// Storefronts are 6 m bays along each ground-floor face (city_shop_hash in src/city.c).
+// Storefronts are 6 m bays along each ground-floor face (city_shop_hash in src/city/city.c).
 uint shopHash(uint seed, int section, int face, int next, bool endShare, float along, float faceW) {
     ivec2 k = cornerKey(face, next, endShare, int(floor(along / 6.0)), int(floor((faceW - 0.01) / 6.0)));
     return hash3i(WORLD_SEED ^ 0x5B0Au, int(seed), section * 64 + k.x, k.y);
@@ -184,7 +184,7 @@ layout(set = 0, binding = 7) uniform usampler2D shadowVisTex;   // shadow_denois
 uvec4 gSlotIds = uvec4(0u), gSlotVis = uvec4(0u);
 bool  gSlotsOurs = false;        // the slots at this pixel were made for this surface
 vec3  gGeoN = vec3(0.0, 1.0, 0.0);
-uint  gShadowCull = 0xFFu;       // instance mask (src/rt.h)
+uint  gShadowCull = 0xFFu;       // instance mask (src/render/rt.h)
 float gFwd, gFwdTol;             // this fragment's forward distance, and how near a slot's must be to be ours
 #endif
 float gShadowFade = 1.0;         // 1: unshadowed (shadows off, or faded out with distance)
@@ -350,7 +350,7 @@ vec3 paneSheen(vec3 p, vec3 n, vec3 V) {
 
 
 /* ======================================================================
- * Authored PBR materials (src/textures.c). Surfaces opt in per material;
+ * Authored PBR materials (src/render/textures.c). Surfaces opt in per material;
  * a material whose maps were not found is bound as 1x1 placeholders and
  * its surfaces keep their procedural look.
  * ==================================================================== */
@@ -399,7 +399,7 @@ const float PAVING_ALBEDO = 0.5;   // mean 0.22 -> 0.11, near the procedural ker
 const vec2 KERB_TILE = vec2(2.0, 1.0);
 const float KERB_ALBEDO = 0.5;   // mean 0.25 -> 0.12, as the procedural kerb stones
 
-// Sidewalk tangent frame from the angle the seed carries (src/city.c): the block
+// Sidewalk tangent frame from the angle the seed carries (src/city/city.c): the block
 // grain for paving, the kerb edge for kerb stones. T = +u, B = -v (image up;
 // normal maps are OpenGL convention).
 void grainFrame(uint seed, out vec3 T, out vec3 B) {
@@ -408,7 +408,7 @@ void grainFrame(uint seed, out vec3 T, out vec3 B) {
     B = vec3(sin(a), 0.0, -cos(a));
 }
 
-// How wet the streets are (0 dry .. 1 soaked), from the weather (src/main.c).
+// How wet the streets are (0 dry .. 1 soaked), from the weather (src/app/main.c).
 #define WETNESS (frame.weather.y)
 
 // Shelter map (renderer.c: record_shelter): the highest surface over each spot
@@ -529,7 +529,7 @@ vec2 roadPaint(vec2 uv, float half_, float len, bool crossing, float aa) {
 // Road markings are thermoplastic, laid a few millimetres thick.
 const float PAINT_H = 0.003;
 
-// Tactile paving at the foot of a drop kerb (src/city.c: emit_drop): concrete
+// Tactile paving at the foot of a drop kerb (src/city/city.c: emit_drop): concrete
 // slabs 0.4 m square, each set with 7 x 7 stainless steel studs 30 mm across
 // that stand 5 mm proud. uv counts from the slab grid, in metres.
 const float SLAB = 0.4, STUD_PITCH = SLAB / 7.0, STUD_R = 0.015, STUD_H = 0.005;
@@ -602,7 +602,7 @@ void tactileStuds(vec3 p, vec3 V, vec2 uv, vec3 T, vec3 B, vec3 nGeom, float aa,
     ao *= 1.0 - 0.3 * joint;
     sink += 0.8 * joint;
 }
-/* Fine litter, too small and too many for the litter layer (src/litter.c):
+/* Fine litter, too small and too many for the litter layer (src/city/litter.c):
  * flecks of paper and wrappers, dead leaves, grit and cigarette ends, and
  * flattened chewing gum on the sidewalks, more of them the more squalid the
  * street (sq, from the plan via params), over broad grimy stains. One cell
@@ -1219,7 +1219,7 @@ vec3 cornerInterior(vec2 cell, vec3 d, float W, float H, float D, Room r, bool g
 }
 
 /* ======================================================================
- * Interiors (emit_interior in src/city.c): real lobby geometry behind the
+ * Interiors (emit_interior in src/city/city.c): real lobby geometry behind the
  * ground-floor glass of office buildings, lit by the ceiling's light panels
  * in the building's lobby colour temperature, as the glass outside shows it.
  * params y surface, z variety (a region or fixture type), w ceiling height
@@ -1241,7 +1241,7 @@ float paneCoverage(float F) {
 const uint IS_FLOOR = 0u, IS_ROOMFLOOR = 1u, IS_WALL = 2u, IS_CEILING = 3u, IS_CORE = 4u, IS_METAL = 5u, IS_WOOD = 6u,
            IS_FABRIC = 7u, IS_GLASS = 8u, IS_LIGHT = 9u, IS_PLANT = 10u, IS_LINING = 11u, IS_STONE = 12u, IS_LIFTDOOR = 13u,
            IS_DOOR = 14u, IS_SCREEN = 15u, IS_SKYLIGHT = 16u, IS_OFFICE = 17u, IS_SIGN = 18u, IS_EMBLEM = 19u;
-// region types (IR_* in src/interior.h) that change a floor's finish
+// region types (IR_* in src/gen/interior.h) that change a floor's finish
 const uint IR_VESTIBULE = 1u, IR_HALL = 2u, IR_SECURE = 3u, IR_TOILET = 7u, IR_WC = 8u, IR_SECURITY = 10u, IR_MAIL = 11u,
            IR_FACILITIES = 12u, IR_MEETING = 14u, IR_SHOWER = 15u;
 
@@ -1265,7 +1265,7 @@ const float PANEL_FILL = 0.2;
 // The light in the walls' slots and coves: warmer than the panels.
 const vec3 COVE = vec3(1.0, 0.55, 0.22);
 
-// A lobby's accent light outside (lobby_accent in src/city.c): its mullion lines and canopy strip.
+// A lobby's accent light outside (lobby_accent in src/city/city.c): its mullion lines and canopy strip.
 vec3 lobbyAccent(uint seed) {
     float a = hf(styleHash(seed), 61u);
     return neonColor(a < 0.55 ? 1u : a < 0.7 ? 6u : a < 0.85 ? 4u : 3u);
@@ -1286,7 +1286,7 @@ vec3 marble(vec2 q, vec3 base, vec3 vein, uint salt, float aa) {
     return mix(base * (0.75 + 0.5 * cloud), vein, v * 0.4);
 }
 
-/* Authored stone and wood (src/textures.c, assets/textures/): m a PBR_*
+/* Authored stone and wood (src/render/textures.c, assets/textures/): m a PBR_*
  * material whose image spans `size` metres of q, shifted by off (each slab or
  * panel its own piece of the stone) and turned a quarter if `turn`. gx, gy:
  * q's screen derivatives, taken where q is continuous, so a slab's offset
@@ -1491,11 +1491,11 @@ float emblemDist(uint h, vec2 q) {
     return d;
 }
 
-/* Lobby plants (src/plant.c, grow_plants in src/city.c). Leaves (IS_PLANT)
- * carry their own surface coordinates (see PlantVertex in src/plant.h) and
+/* Lobby plants (src/gen/plant.c, grow_plants in src/city/city.c). Leaves (IS_PLANT)
+ * carry their own surface coordinates (see PlantVertex in src/gen/plant.h) and
  * are textured with assets/textures/leaf, tinted to each species' green;
  * stems (IS_BARK) theirs, (around 0..1, along in metres). params z is the
- * leaf shape or stem material (LS_* / WM_* in src/plant.h); aux the organ's
+ * leaf shape or stem material (LS_* / WM_* in src/gen/plant.h); aux the organ's
  * tint | its hash << 8 | species << 24; vLitter.x how open the crown is there.
  * A leaf is a single surface (drawn unculled); its normal is the upper side,
  * so `under` says the viewer sees its paler underside. They are lit as the lobby is: the warm panels overhead
@@ -1509,7 +1509,7 @@ const uint WM_PALM = 0u, WM_CANE = 1u, WM_FICUS = 2u, WM_UMBRELLA = 3u, WM_GREEN
 const float LEAF_MIDRIB = 0.513;
 const vec3 LEAF_MEAN = vec3(0.100, 0.166, 0.047);
 
-// The dracaena blade's width along it (the linear profile in src/plant.c), as a fraction of its widest.
+// The dracaena blade's width along it (the linear profile in src/gen/plant.c), as a fraction of its widest.
 float linearWidth(float t) {
     return t < 0.06 ? mix(0.55, 0.9, t / 0.06) : t < 0.25 ? mix(0.9, 1.0, (t - 0.06) / 0.19)
          : t < 0.6 ? mix(1.0, 0.85, (t - 0.25) / 0.35) : t < 0.85 ? mix(0.85, 0.45, (t - 0.6) / 0.25) : mix(0.45, 0.0, (t - 0.85) / 0.15);
@@ -1705,7 +1705,7 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             if (hf(sh, 66u) < 0.8 && k > 0.5 && mod(k, every) < 0.5)
                 lightSlot(abs(q.x - k * 1.2), y, 0.12, ceilH - 0.12, aa, emit, irr);
         } else {
-            // the building's mark (emit_emblem in src/city.c; sub: the panel's width in half metres)
+            // the building's mark (emit_emblem in src/city/city.c; sub: the panel's width in half metres)
             float W = float(sub) * 0.5;
             float S = clamp(min(W * 0.26, (ceilH - 1.2) * 0.25), 0.3, 0.85);   // the mark's half-size
             vec2 c = vec2(W * 0.5, min(2.4, ceilH * 0.55));
@@ -1818,12 +1818,12 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
 }
 
 /* ======================================================================
- * Arcologies (emit_arcology in src/city.c). Low-key light: a dark base,
+ * Arcologies (emit_arcology in src/city/city.c). Low-key light: a dark base,
  * neon washing the street stratum, sodium pools under the concourse lamps
  * (worked out here from the lamp row each street floor carries in aux), the
  * arcology's few real lights from the chunk's light table, cold light from
  * the crown higher up, and haze over everything, thick and warm low down,
- * thin and cool above. params y surface (ARS_* in src/arcology.h), z
+ * thin and cool above. params y surface (ARS_* in src/gen/arcology.h), z
  * variety, w stratum height * 255.
  * ==================================================================== */
 
@@ -1833,7 +1833,7 @@ const uint ARS_FLOOR = 0u, ARS_STREET = 1u, ARS_SLAT = 2u, ARS_CEILING = 3u, ARS
            ARS_RAIL = 19u, ARS_METAL = 20u, ARS_CROWN = 21u, ARS_SHAFT = 22u, ARS_SEARCH = 23u, ARS_PUDDLE = 24u,
            ARS_STEAM = 25u, ARS_CRATE = 26u, ARS_BRIDGE = 27u, ARS_PORTAL = 28u, ARS_STAIR = 29u, ARS_LINING = 30u,
            ARS_KIOSK = 31u, ARS_LIFTDOOR = 32u, ARS_SKYLOBBY = 33u;
-// block uses (AB_* in src/arcology.h)
+// block uses (AB_* in src/gen/arcology.h)
 const uint AB_MARKET = 0u, AB_NOODLE = 1u, AB_ARCADE = 2u, AB_CLINIC = 3u, AB_CAPSULE = 4u, AB_REPAIR = 5u, AB_BATH = 6u,
            AB_EXCHANGE = 7u, AB_HOUSING = 8u;
 
@@ -2268,7 +2268,7 @@ vec3 wallLighting(vec3 p, vec3 n, vec3 V, float shin, float specK, float height,
 
 vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 V = -normalize(rel);
-    // Facade data (facade_mat in src/city.c):
+    // Facade data (facade_mat in src/city/city.c):
     //   prm.y section; prm.z at-ground | ground mode << 1 | window << 3 | bands << 5 | fine bays << 6;
     //   prm.w palette | shop level << 3 | room or core behind the lobby glass << 6; vFacePack face width | next face width << 12 (1/16 m);
     //   vAux previous face width | face << 12 | next face << 18 | corners << 24 | plant floors << 28.
@@ -2297,7 +2297,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float litFrac = 0.16 + 0.42 * hf(sh, 6u);
     float tintSel = hf(sh, 8u);
 
-    // Wall material: the section's palette (choose_surfaces in src/building.c)
+    // Wall material: the section's palette (choose_surfaces in src/gen/building.c)
     vec3 wallAlb = palette == 0u ? vec3(0.085, 0.080, 0.075) :   // concrete
                    palette == 1u ? vec3(0.080, 0.060, 0.045) :   // grimy brick-brown
                    palette == 2u ? vec3(0.035, 0.055, 0.060) :   // teal metal panels
@@ -2350,7 +2350,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         }
         if ((prm.w & 64u) != 0u) {
             // A closed room or a core of the real lobby stands behind this
-            // stretch (emit_walls in src/city.c): opaque back-painted glass.
+            // stretch (emit_walls in src/city/city.c): opaque back-painted glass.
             float F = glassFresnel(n, V);
             vec3 pane = vec3(0.012, 0.013, 0.015) * diffL + envReflection(reflect(-V, n)) * F + paneSheen(p, n, V);
             if ((prm.w & 128u) != 0u) {
@@ -2375,7 +2375,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             return mix(wallC, pane, clamp(inWin, 0.0, 1.0));
         }
         if ((prm.z & 128u) != 0u && inWin > 0.5 && length(rel) < REAL_GLASS_DIST) {
-            // A real lobby stands behind this glass (src/interior.c): the pane
+            // A real lobby stands behind this glass (src/gen/interior.c): the pane
             // covers part of the pixel and the geometry shows through the rest.
             // Far off, where a pane is a few pixels, it settles to the lobby's glow.
             float F = glassFresnel(n, V);
@@ -2836,7 +2836,7 @@ vec3 shadeRoof(vec3 p, vec3 rel, vec3 n, vec2 uv, uvec4 prm) {
     return alb * diff + spec;
 }
 
-/* Entrances (BDoor in src/building.h): glass doors into a lit lobby, steel
+/* Entrances (BDoor in src/gen/building.h): glass doors into a lit lobby, steel
  * service doors and roller-shuttered loading bays. */
 vec3 shadeDoor(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 V = -normalize(rel);
@@ -2869,7 +2869,7 @@ vec3 shadeDoor(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
 }
 
 /* ======================================================================
- * Litter (src/litter.c): rubbish lying about the streets, as ordinary
+ * Litter (src/city/litter.c): rubbish lying about the streets, as ordinary
  * geometry in the near-only litter layer, lit by its chunk's lamps and
  * shopfronts. params y is the kind (LK_*); the seed picks colours, print and
  * brand; uv runs over the item's own surface. city.vert passes the ground's
@@ -2987,7 +2987,7 @@ vec3 shadeLitter(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     if (kind == LK_SHADOW) return litterShadow(uv);
     vec3 V = -normalize(rel);
     float ao = clamp(vLitter.x, 0.0, 1.0), soak = vLitter.y;
-    uint h = seed, var = (seed >> 4) & 3u;   // var: the variant src/litter.c built
+    uint h = seed, var = (seed >> 4) & 3u;   // var: the variant src/city/litter.c built
     vec2 fw = fwidth(uv) + 1e-5;
     vec3 alb = vec3(0.4), tint = vec3(1.0);
     float rough = 0.8, f0 = 0.04;

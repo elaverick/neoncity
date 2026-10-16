@@ -4,7 +4,7 @@ NeonCity: surfaces still textured procedurally
 Everything below is drawn in shaders (noise, hashes and patterns), not from
 authored image maps. Line references are to shaders/city.frag unless noted.
 
-Authored (image) materials today, from assets/textures/ (src/textures.c):
+Authored (image) materials today, from assets/textures/ (src/render/textures.c):
   - paving_stones_111  sidewalk paving
   - road_012a          road asphalt
   - ground_032         kerb stones, kerb faces, tactile slabs

@@ -8,7 +8,7 @@
 #define STBI_ONLY_PNG
 #include <stb_image.h>
 
-/* Directory of each PBR material under assets/textures/, indexed by PBR_* (src/common.h). */
+/* Directory of each PBR material under assets/textures/, indexed by PBR_* (src/core/common.h). */
 static const char *const MATERIAL_DIRS[PBR_MATERIAL_COUNT] = {
     [PBR_PAVING_STONES] = "paving_stones_111",
     [PBR_ROAD]          = "road_012a",

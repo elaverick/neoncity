@@ -6,7 +6,7 @@
  * The ground floor of an office building is planned as a semantic layout, not
  * a mesh: a spatial grammar says which spaces the building needs, a planning
  * grid of half-metre cells holds them while they are fitted to the footprint,
- * and validation checks the result before src/city.c realises it as walls,
+ * and validation checks the result before src/city/city.c realises it as walls,
  * floors, cores and furniture.
  *
  * The grid lies in a planning frame: the building's own frame turned in

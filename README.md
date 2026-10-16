@@ -53,7 +53,7 @@ Khronos validation layer if it is installed. A `--shot` also prints how long the
 
 ## How it works
 
-### The plan (`src/plan.c`)
+### The plan (`src/plan/plan.c`)
 The city is laid out as a polycentric, cellular plan in the spirit of Singapore's new towns,
 generated as a pure function of world position:
 
@@ -80,7 +80,7 @@ Junction geometry is resolved from the plan itself. Each carriageway is trimmed 
 every road meeting it, which leaves room for the crossings, so a road comes out identical
 whichever area it is requested through.
 
-### Plots (`src/city.c`)
+### Plots (`src/city/city.c`)
 Blocks are divided into plots that conform to the plan:
 - **Core, centre and industrial blocks** are split into lots along the grain. Each lot gets
   the largest rectangle that fronts its longest street edge. Downtown plots are larger, so
@@ -91,7 +91,7 @@ Blocks are divided into plots that conform to the plan:
 Each plot is an oriented site rectangle with a seed, a height limit and the faces that look onto
 the street. The building on it is generated inside that rectangle and never leaves it.
 
-### Buildings (`src/building.c`)
+### Buildings (`src/gen/building.c`)
 Buildings follow the rule-based method in `docs/procedural-building-generation.md`.
 
 **The graph.** A building is a typed graph of three kinds of node:
@@ -149,7 +149,7 @@ A building is a pure function of its plot, so revisiting an area regenerates exa
 building. The tests regenerate every building in a 2 km area twice and compare the results
 byte for byte.
 
-### Office lobbies (`src/interior.c`)
+### Office lobbies (`src/gen/interior.c`)
 The ground floors of office buildings with a lobby are real interiors, planned by the method in
 `docs/procedural-office-atrium-generation.md`. The planner produces a semantic layout, not a mesh:
 - **Frame and grid.** The building's frame is turned in quarter turns so the primary entrance
@@ -208,7 +208,7 @@ diamonds, monograms or deltas, framed or not) in halo-lit brass or backlit acryl
 wordmark. Outside, light lines in the building's accent colour (mostly cyan) run up some of the
 mullions and under the canopy, and amber uplights are set into the sidewalk along the glass.
 
-### Lobby plants (`src/plant.c`)
+### Lobby plants (`src/gen/plant.c`)
 Every lobby planter holds a plant grown by the hybrid L-system and space-colonisation method in
 `docs/Lobby Plant L-System Specification.md` (LPLS-1.19). There are six archetypes: kentia palm,
 dracaena marginata, fiddle-leaf fig, weeping fig, dwarf umbrella tree and ZZ plant.
@@ -249,7 +249,7 @@ dracaena marginata, fiddle-leaf fig, weeping fig, dwarf umbrella tree and ZZ pla
 0.85 and 1.5. It checks that each plant validates, is deterministic and keeps to its budget,
 reports generation times and counts, and writes contact sheets.
 
-### Arcologies (`src/arcology.c`)
+### Arcologies (`src/gen/arcology.c`)
 An arcology's ground floor is planned as a district, not a lobby, by the grammar in section 11 of
 `docs/procedural-office-atrium-generation.md`, with a Blade Runner / Syd Mead look written as rules.
 The plan is again a semantic layout on a half-metre grid in a frame turned so the main portal
@@ -302,14 +302,14 @@ fall in it. Those buildings may overhang the chunk by up to 70 m.
 
 ### Determinism
 Every decision is a pure function of `(WORLD_SEED, cx, cz)` through integer hashing
-(`src/hash.h`), and the plan is a pure function of world position computed in doubles. There is no shared RNG state, and nothing depends on visit order, time or
+(`src/core/hash.h`), and the plan is a pure function of world position computed in doubles. There is no shared RNG state, and nothing depends on visit order, time or
 thread. `shaders/common.glsl` contains a bit-identical copy of the hash, so details that
 are shaded on the GPU are also fixed per location: which rooms are lit, which shops are open,
 blinds, glyphs. `tests/city_test.c` builds 400 chunks in forward order, in reverse order
 and on 8 threads at once, and checks that every mesh is byte-identical. The test chunks
 include coordinates out to ±1,000,000.
 
-### Frustum filling (`src/chunks.c`)
+### Frustum filling (`src/render/chunks.c`)
 Each frame the streamer collects every chunk within the view distance (1.9 km) whose
 conservative bounds intersect the view frustum. Before a chunk is generated, those bounds come
 from the plan's density field plus the building overhang. It adds a 260 m ring around the player so
@@ -340,7 +340,7 @@ chunks that stream in at the edge fade in instead of popping. Rendering is camer
 with reverse-Z and per-chunk origins computed in doubles, so precision holds up thousands of
 kilometres from the origin.
 
-### Shadows (`src/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
+### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the
 arcologies' sodium lamps; so do the lobbies' ceilings, indoors. (An arcology's crown lights stand for the cold light falling down the canyon from its glazed
 crown, a fill from far above rather than a light where they are placed, so they stay unshadowed: from their marked
@@ -477,7 +477,7 @@ sit exactly under the lamp heads, and the coloured spill from each lit shopfront
 storefront itself: the shader and the generator use the same hash for which 6 m shop bay is
 open.
 
-### Litter (`src/litter.c`)
+### Litter (`src/city/litter.c`)
 Rubbish lies still, so it isn't a particle system. Each item is ordinary geometry in a third,
 near-only layer of chunk meshes, streamed within `LITTER_DISTANCE` (120 m) and generated, like
 everything else, as a pure function of the plan. The CPU does nothing per frame.
@@ -518,7 +518,7 @@ everything else, as a pure function of the plan. The CPU does nothing per frame.
   spawn, up to a 180,000 cap in the worst slums). Measured on an RTX 4080 SUPER at 1600x900,
   neither the layer nor the debris shading showed a cost above run-to-run noise (about 0.1 ms).
 
-### Textures (`src/textures.c`, `assets/textures/`)
+### Textures (`src/render/textures.c`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual materials can opt in to authored PBR
 textures instead. Each material is a folder under `assets/textures/` with three maps:
 
@@ -536,7 +536,7 @@ surfaces are lit with GGX:
   storefront's size, as a cheap area light.
 - **Sky and haze:** reflected through Karis's analytic split-sum BRDF.
 - **Ambient occlusion:** darkens only the ambient, neon-bounce and sky terms.
-- **Rain:** it always rains. The weather (`weather_update` in `src/main.c`, passed to the
+- **Rain:** it always rains. The weather (`weather_update` in `src/app/main.c`, passed to the
   shaders as `frame.weather`) drifts between drizzle and downpour over minutes. Street
   wetness follows it, wetting quickly and drying slowly. Rain thickens the haze, and fills the air with a mist
   (`mistLight` in `clouds.comp`) lit by every nearby lamp, shopfront and sign: halos round
@@ -612,7 +612,7 @@ parallax. Four materials use textures so far; the first three are CC0 from ambie
 - **Leaves:** `leaf`, a close-up of a glossy blade with its midrib running up the image. It
   tiles along the midrib but not across it. Each blade carries its position across it (a
   fraction of its widest half-width) and its length-to-width ratio (`PlantVertex` in
-  `src/plant.h`). `shadePlant` lays the midrib down the blade's middle, at most the image's
+  `src/gen/plant.h`). `shadePlant` lays the midrib down the blade's middle, at most the image's
   width across it (narrow blades take a strip either side of the midrib), and repeats it only
   along the blade, at the same scale both ways. The tangent frame comes from screen
   derivatives. The albedo is divided by the image's mean and multiplied by each species' own
@@ -631,13 +631,13 @@ To add a material from an ambientCG download (any resolution):
    reads `_Color`, `_NormalGL`, `_Roughness`, and `_AmbientOcclusion` / `_Displacement`
    when present. It box-filters them down to the given width and writes the three maps.
    The `.blend`, `.mtlx`, `.tres`, `.usdc`, `_NormalDX` and preview files are not needed.
-2. Add an entry to the `PBR_*` enum in `src/common.h` and the matching constant in
-   `shaders/common.glsl`. Add its folder name to `MATERIAL_DIRS` in `src/textures.c`.
+2. Add an entry to the `PBR_*` enum in `src/core/common.h` and the matching constant in
+   `shaders/common.glsl`. Add its folder name to `MATERIAL_DIRS` in `src/render/textures.c`.
 3. In `shaders/city.frag`, guard the surface with `pbrLoaded(PBR_X)` and call
    `samplePBR(PBR_X, st, T, B, n)`. `T` and `B` are the world directions of image right and
    image up. The paving branch in `shadeGround` is the example.
 
-### Walking (`src/player.c`)
+### Walking (`src/app/player.c`)
 Collision runs against the same deterministic block layouts, using circle-vs-footprint tests
 against the oriented footprints and sliding along walls. A planned lobby is open: its envelope
 (with a gap at the entrance), partitions, cores and furniture collide instead of its footprint. Curbs are stepped up and down automatically. A critically damped
@@ -693,8 +693,8 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
   wind and glow are the constants at the top of `shaders/clouds.comp`. The procedural road's slickness is
   the `specK` term in `shadeGround`. The textured road's sheen follows its roughness map under
   GGX; wet streets are the next step (`TODO.md`).
-- **Pool size and view distance**: `POOL_PAGES` and `VIEW_DISTANCE` in `src/common.h`.
+- **Pool size and view distance**: `POOL_PAGES` and `VIEW_DISTANCE` in `src/core/common.h`.
   The default pool is 384 MB.
 - **A different city**: change `WORLD_SEED`. For a different layout, change `TOWN_SIZE` and
-  `NBHD_SIZE` in `src/plan.h`, the block sizes in `process_piece`, and the zoning rules in
-  `zone_for` (`src/plan.c`). `build/city_map` renders the result from above.
+  `NBHD_SIZE` in `src/plan/plan.h`, the block sizes in `process_piece`, and the zoning rules in
+  `zone_for` (`src/plan/plan.c`). `build/city_map` renders the result from above.

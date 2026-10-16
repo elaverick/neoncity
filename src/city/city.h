@@ -4,7 +4,7 @@
 
 /* Deterministic city generation.
  *
- * The plan (src/plan.c) lays out towns, neighbourhoods, roads and zoned
+ * The plan (src/plan/plan.c) lays out towns, neighbourhoods, roads and zoned
  * blocks over the whole world. This file fills blocks with buildings that
  * conform to them (oriented to their streets or the neighbourhood grain) and
  * turns everything that touches a chunk into a mesh.
@@ -34,7 +34,7 @@ enum { SIDE_W = 1, SIDE_E = 2, SIDE_S = 4, SIDE_N = 8 };
 
 /* A building's plot: an axis-aligned site rectangle in its own frame, placed
  * in the world by a rotation (c, s) about its origin: world = o + (c*x - s*z,
- * s*x + c*z). src/building.c generates the building itself inside it. */
+ * s*x + c*z). src/gen/building.c generates the building itself inside it. */
 typedef struct Building {
     Rect     foot;      /* site rectangle in the local frame */
     double   ox, oz;    /* world position of the local origin (the footprint centre) */
@@ -118,17 +118,17 @@ void     city_layout(int cx, int cz, BlockLayout *out);
 void     city_build_mesh(int cx, int cz, Mesh *m);
 /* The near-only layer: real office lobbies of the buildings centred in the chunk. */
 void     city_build_interiors(int cx, int cz, Mesh *m);
-/* The plants in those lobbies' planters (src/plant.c), a layer of their own:
+/* The plants in those lobbies' planters (src/gen/plant.c), a layer of their own:
  * a leaf is a single surface, drawn without back-face culling. */
 void     city_build_plants(int cx, int cz, Mesh *m);
-/* The litter layer (src/litter.c): rubbish lying in the streets, alleys and
+/* The litter layer (src/city/litter.c): rubbish lying in the streets, alleys and
  * doorways of the chunk. It has no light table of its own; the shader uses the chunk's. */
 void     city_build_litter(int cx, int cz, Mesh *m);
 /* How squalid the streets are at (x, z) in a block of `zone` (-1: on a road), 0..1:
- * how much rubbish lies about (src/litter.c) and how much fine debris the ground shader draws. */
+ * how much rubbish lies about (src/city/litter.c) and how much fine debris the ground shader draws. */
 float    city_squalor(int zone, double x, double z);
 void     mesh_free(Mesh *m);
-/* Whether a triangle with this vertex casts ray-traced shadows (src/rt.c).
+/* Whether a triangle with this vertex casts ray-traced shadows (src/render/rt.c).
  * Glass, veils of light, puddles and contact shadows don't; nor does flat or
  * wind-stirred litter, whose shape the vertex shader changes. */
 int      city_casts_shadow(const Vertex *v);

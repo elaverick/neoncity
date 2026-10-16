@@ -6,7 +6,7 @@
 #include <string.h>
 
 /* ===========================================================================
- * Lobby plants (LPLS-1.19). See src/plant.h for the outline. The stages run
+ * Lobby plants (LPLS-1.19). See src/gen/plant.h for the outline. The stages run
  * in the specification's order:
  *
  *   1. resolve parameters and the crown envelope        (setup_*)

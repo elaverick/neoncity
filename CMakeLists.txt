@@ -115,27 +115,29 @@ add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 # --- City generator sources -------------------------------------------------------
 # Compiled into each target rather than built once as a library: the game
 # builds them with /fp:fast and the static runtime, the tests and labs without.
-set(GEN_SOURCES src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c)
+# Sources live in src/<module>/; every module directory is on the include path.
+set(SRC_DIRS src/core src/plan src/gen src/city src/render src/app)
+set(GEN_SOURCES src/city/city.c src/city/litter.c src/plan/plan.c src/gen/building.c src/gen/interior.c src/gen/arcology.c src/gen/plant.c)
 
 # --- Tests: generator determinism ------------------------------------------------
 enable_testing()
-add_executable(city_test tests/city_test.c ${GEN_SOURCES} src/thread.c)
-target_include_directories(city_test PRIVATE src)
+add_executable(city_test tests/city_test.c ${GEN_SOURCES} src/core/thread.c)
+target_include_directories(city_test PRIVATE ${SRC_DIRS})
 # Top-down map of the generated plan (city_map out.bmp [x z] [size] [m/px]).
 add_executable(city_map tests/city_map.c ${GEN_SOURCES})
-target_include_directories(city_map PRIVATE src)
+target_include_directories(city_map PRIVATE ${SRC_DIRS})
 # Building generator lab: archetype mix, retries, rejections; fails on invalid buildings.
 add_executable(building_lab tests/building_lab.c ${GEN_SOURCES})
-target_include_directories(building_lab PRIVATE src)
+target_include_directories(building_lab PRIVATE ${SRC_DIRS})
 # Office lobby interiors: pass rate, attempts, rejections; optional plan renders
 # (interior_lab [size_m] [renders] [out_dir] [verbose_count] [x z]); arcologies with
 # plan and section renders (interior_lab arcology [size_m] [renders] [out_dir] [verbose_count] [x z]).
 add_executable(interior_lab tests/interior_lab.c ${GEN_SOURCES})
-target_include_directories(interior_lab PRIVATE src ${stb_SOURCE_DIR})
-# Lobby plants (src/plant.c): every archetype over seeds, tiers and gravities; optional contact sheets
+target_include_directories(interior_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
+# Lobby plants (src/gen/plant.c): every archetype over seeds, tiers and gravities; optional contact sheets
 # (plant_lab [seeds] [out_dir]).
-add_executable(plant_lab tests/plant_lab.c src/plant.c)
-target_include_directories(plant_lab PRIVATE src ${stb_SOURCE_DIR})
+add_executable(plant_lab tests/plant_lab.c src/gen/plant.c)
+target_include_directories(plant_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 foreach(T city_test city_map building_lab interior_lab plant_lab)
   if(MSVC)
     target_compile_options(${T} PRIVATE /W3 /wd4996)
@@ -173,9 +175,9 @@ endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/main.c src/vkcore.c src/renderer.c src/textures.c ${GEN_SOURCES} src/chunks.c src/rt.c src/player.c src/thread.c)
+  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/textures.c ${GEN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/core/thread.c)
 add_dependencies(NeonCity shaders)
-target_include_directories(NeonCity PRIVATE src ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
+target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.
 add_custom_command(TARGET NeonCity POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/assets $<TARGET_FILE_DIR:NeonCity>/assets

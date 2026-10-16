@@ -11,7 +11,7 @@
  * every step looks down through the cloud toward the street (a short light
  * march) and adds a few multiple-scattering octaves, so the underside glows
  * sodium-orange while the body above stays dark and heavy. Neon signs and
- * video screens high on the towers (sky lights, src/common.h) also light the
+ * video screens high on the towers (sky lights, src/core/common.h) also light the
  * cloud around them in their own colour, flickering and changing with them,
  * found through a coarse grid around the camera. Each step is also
  * fogged by its own distance, so the deck dissolves into the haze at range.
@@ -25,7 +25,7 @@ layout(set = 0, binding = 4) uniform sampler2D sceneDepth;
 layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D cloudOut;
 layout(set = 0, binding = 6, r32f) uniform writeonly image2D cloudDist;
 
-struct SkyLight { vec3 pos; float power; vec2 n; uint seed; uint kind; };   // src/common.h
+struct SkyLight { vec3 pos; float power; vec2 n; uint seed; uint kind; };   // src/core/common.h
 layout(std430, set = 0, binding = 7) readonly buffer SkyLights {
     vec2 skyOrigin;                    // camera-relative corner of cell (0, 0)
     float skyCell;

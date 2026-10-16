@@ -33,7 +33,7 @@ typedef struct Entry {
     uint32_t  nsky;
     SkyLight *air;
     uint32_t  nair;
-    /* ray-traced shadows (src/rt.c): the casting triangles of each page, as
+    /* ray-traced shadows (src/render/rt.c): the casting triangles of each page, as
      * page-local vertex indices, kept while resident so the BLAS can be
      * rebuilt whenever the chunk comes back within RT_RANGE */
     uint16_t *rtIdx;

@@ -27,7 +27,7 @@ invariant gl_Position;
 // Shelter map (renderer.c: record_shelter), as shaders/city.frag reads it.
 layout(set = 0, binding = 4) uniform sampler2D shelterMap;
 
-/* Overhead cables (emit_cable in src/city.c) swing about their chord when a
+/* Overhead cables (emit_cable in src/city/city.c) swing about their chord when a
  * gust passes. uv.x is this vertex's drop below the chord, uv.y the cable's
  * sag, aux the horizontal direction across it. The swing rotates the drop
  * about the chord, so a taut cable, with little drop, barely stirs, and like
@@ -49,7 +49,7 @@ vec3 cableSway(vec3 world, float drop, float sag, uint aux, uint seed, float t) 
     return vec3(across.x * sin(theta), 1.0 - cos(theta), across.y * sin(theta)) * drop;
 }
 
-/* Litter (src/litter.c). aux holds each vertex's offset from its item's
+/* Litter (src/city/litter.c). aux holds each vertex's offset from its item's
  * anchor on the ground, so the item can be reshaped about it:
  * - Soaked: rain soaks whatever lies in the open (shelter map, one tap at the
  *   anchor), and the gutter's run-off soaks what lies in it whatever the
@@ -130,9 +130,9 @@ void main() {
         litter(rel, nrm, lit);
         local += rel - r0;
     } else if (inParams.x == MAT_INTERIOR && (inParams.y == 10u || inParams.y == 20u)) {
-        lit = vec2(inNrm.w, 0.0);   // lobby plants (grow_plants in src/city.c): how open the crown is there
+        lit = vec2(inNrm.w, 0.0);   // lobby plants (grow_plants in src/city/city.c): how open the crown is there
     } else if (inParams.x == MAT_ARCOLOGY && inParams.y == 23u) {
-        /* An arcology's searchlight beam (emit_arc_searchlight in src/city.c)
+        /* An arcology's searchlight beam (emit_arc_searchlight in src/city/city.c)
          * hangs from its pivot and swings to and fro along the canyon: uv is
          * the pivot less this vertex (chunk xz), aux how far along | the drop
          * below the pivot << 16 (1/64 m), params z the swing direction, w the

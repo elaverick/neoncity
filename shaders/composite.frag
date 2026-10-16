@@ -15,7 +15,7 @@ layout(push_constant) uniform Push {
     vec4 shelter; // shelter map: camera-relative centre x, z; half-width; w unused
 } pc;
 
-const float SHELTER_LO = -60.0, SHELTER_HI = 500.0;   // src/common.h
+const float SHELTER_LO = -60.0, SHELTER_HI = 500.0;   // src/core/common.h
 
 // Whether camera-relative point q is under cover (a canopy, arcade, overhang).
 bool sheltered(vec3 q) {
