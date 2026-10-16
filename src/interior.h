@@ -1,7 +1,7 @@
 #pragma once
 #include "building.h"
 
-/* Procedural office-lobby interiors (see procedural-office-atrium-generation.md).
+/* Procedural office-lobby interiors (see docs/procedural-office-atrium-generation.md).
  *
  * The ground floor of an office building is planned as a semantic layout, not
  * a mesh: a spatial grammar says which spaces the building needs, a planning

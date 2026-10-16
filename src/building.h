@@ -1,7 +1,7 @@
 #pragma once
 #include "city.h"
 
-/* Rule-based building generation (see procedural-building-generation.md).
+/* Rule-based building generation (see docs/procedural-building-generation.md).
  *
  * A building is a typed graph: sections (vertically bounded extrusions of a
  * polygon footprint), the supports that carry them, and its doors. The

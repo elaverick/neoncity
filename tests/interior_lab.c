@@ -1,7 +1,7 @@
 /* Interior lab: plans the ground floor of every office lobby in an area of
  * the plan and reports pass rate, attempts used, atrium modes, gate usage,
  * room counts, worst-case time and grouped rejection reasons
- * (procedural-office-atrium-generation.md, section 12). Fails if a layout
+ * (docs/procedural-office-atrium-generation.md, section 12). Fails if a layout
  * comes out differently twice, or if too few pass.
  *
  *   interior_lab [size_m] [renders] [out_dir] [verbose_count] [x z]

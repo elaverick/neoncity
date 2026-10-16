@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Arcology planner (procedural-office-atrium-generation.md, section 11 and
+/* Arcology planner (docs/procedural-office-atrium-generation.md, section 11 and
  * Appendix B). Section numbers in the comments refer to that document. */
 
 #define G0    SIDEWALK_HEIGHT

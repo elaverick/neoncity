@@ -3,7 +3,10 @@
  * The core promise of the streamer is that a chunk is rebuilt bit-identically
  * whenever it is revisited, no matter the order chunks are generated in or
  * which worker thread builds them. This checks exactly that, then checks that
- * the plan-driven layout is physically sensible. */
+ * the plan-driven layout is physically sensible.
+ *
+ * city_test --fingerprint prints a hash of each layer over a fixed set of
+ * chunks instead, to compare what two builds generate. */
 #include "city.h"
 #include "hash.h"
 #include "mathlib.h"
@@ -109,7 +112,119 @@ static int buildings_overlap(const Building *a, const Building *b) {
     return 1;
 }
 
-int main(void) {
+/* ---------------------------------------------------------------------------
+ * Fingerprint (city_test --fingerprint): one hash per layer over a fixed set
+ * of chunks, printed so that runs of two builds can be compared. The tests
+ * above only compare chunks within one run; this catches a change in what
+ * the generator makes at all (a refactor that should be pure, say). Layout
+ * structs are hashed field by field: their padding is not deterministic.
+ * ------------------------------------------------------------------------- */
+
+enum { FP_MESH, FP_LIGHTS, FP_SKY, FP_AIR, FP_INTERIORS, FP_PLANTS, FP_LITTER, FP_LAYOUT, FP_COUNT };
+static const char *const FP_NAMES[FP_COUNT] = { "mesh", "lights", "sky", "air", "interiors", "plants", "litter", "layout" };
+
+#define FNV_FIELD(h, x) ((h) = fnv(&(x), sizeof(x), (h)))
+
+static uint64_t fnv_mesh(const Mesh *m, uint64_t h) {
+    h = fnv(&m->count, sizeof(m->count), h);
+    h = fnv(m->v, (size_t)m->count * sizeof(Vertex), h);
+    if (m->count) { h = fnv(m->mn, sizeof(m->mn), h); h = fnv(m->mx, sizeof(m->mx), h); }
+    return h;
+}
+
+static uint64_t fnv_layout(const BlockLayout *L, uint64_t h) {
+    FNV_FIELD(h, L->density);
+    FNV_FIELD(h, L->nbuild);
+    for (int i = 0; i < L->nbuild; ++i) {
+        const Building *b = &L->build[i];
+        FNV_FIELD(h, b->foot); FNV_FIELD(h, b->ox); FNV_FIELD(h, b->oz); FNV_FIELD(h, b->c); FNV_FIELD(h, b->s);
+        FNV_FIELD(h, b->height); FNV_FIELD(h, b->seed); FNV_FIELD(h, b->kind); FNV_FIELD(h, b->frontage);
+        FNV_FIELD(h, b->shop); FNV_FIELD(h, b->zone); FNV_FIELD(h, b->density);
+    }
+    FNV_FIELD(h, L->nlamps);
+    for (int i = 0; i < L->nlamps; ++i) {
+        const Lamp *lp = &L->lamp[i];
+        FNV_FIELD(h, lp->x); FNV_FIELD(h, lp->z); FNV_FIELD(h, lp->dx); FNV_FIELD(h, lp->dz); FNV_FIELD(h, lp->type);
+    }
+    FNV_FIELD(h, L->ncurbs);
+    for (int i = 0; i < L->ncurbs; ++i) {
+        FNV_FIELD(h, L->curb[i].n);
+        h = fnv(L->curb[i].v, sizeof(L->curb[i].v[0]) * (size_t)L->curb[i].n, h);
+    }
+    FNV_FIELD(h, L->ndrops);
+    for (int i = 0; i < L->ndrops; ++i) {
+        const DropKerb *d = &L->drop[i];
+        FNV_FIELD(h, d->edge); FNV_FIELD(h, d->ox); FNV_FIELD(h, d->oz); FNV_FIELD(h, d->tx); FNV_FIELD(h, d->tz);
+        FNV_FIELD(h, d->nx); FNV_FIELD(h, d->nz); FNV_FIELD(h, d->n);
+        h = fnv(d->v, sizeof(d->v[0]) * (size_t)d->n, h);
+        h = fnv(d->lab, (size_t)d->n, h);
+        FNV_FIELD(h, d->tc); FNV_FIELD(h, d->tu); FNV_FIELD(h, d->nopen);
+        h = fnv(d->open, sizeof(d->open[0]) * (size_t)d->nopen, h);
+    }
+    FNV_FIELD(h, L->ncoll); FNV_FIELD(h, L->ncollv);
+    h = fnv(L->coll, sizeof(L->coll[0]) * (size_t)L->ncoll, h);
+    h = fnv(L->collv, sizeof(L->collv[0]) * (size_t)L->ncollv, h);
+    return h;
+}
+
+static void fingerprint_chunk(int cx, int cz, uint64_t fp[FP_COUNT]) {
+    static BlockLayout L;
+    Mesh m = { 0 };
+    city_build_mesh(cx, cz, &m);
+    fp[FP_MESH] = fnv_mesh(&m, fp[FP_MESH]);
+    fp[FP_LIGHTS] = fnv(&m.nlights, sizeof(m.nlights), fp[FP_LIGHTS]);
+    fp[FP_LIGHTS] = fnv(m.lights, (size_t)m.nlights * 16, fp[FP_LIGHTS]);
+    fp[FP_SKY] = fnv(&m.nsky, sizeof(m.nsky), fp[FP_SKY]);
+    fp[FP_SKY] = fnv(m.sky, (size_t)m.nsky * sizeof(SkyLight), fp[FP_SKY]);
+    fp[FP_AIR] = fnv(&m.nair, sizeof(m.nair), fp[FP_AIR]);
+    fp[FP_AIR] = fnv(m.air, (size_t)m.nair * sizeof(SkyLight), fp[FP_AIR]);
+    mesh_free(&m);
+    city_build_interiors(cx, cz, &m);
+    fp[FP_INTERIORS] = fnv_mesh(&m, fp[FP_INTERIORS]);
+    mesh_free(&m);
+    city_build_plants(cx, cz, &m);
+    fp[FP_PLANTS] = fnv_mesh(&m, fp[FP_PLANTS]);
+    mesh_free(&m);
+    city_build_litter(cx, cz, &m);
+    fp[FP_LITTER] = fnv_mesh(&m, fp[FP_LITTER]);
+    mesh_free(&m);
+    city_layout(cx, cz, &L);
+    fp[FP_LAYOUT] = fnv_layout(&L, fp[FP_LAYOUT]);
+}
+
+/* The 9 x 9 chunks round the home town centre, the 3 x 3 round the nearest
+ * arcology to it, and the first 100 scattered chunks of the tests. */
+static int fingerprint(void) {
+    uint64_t fp[FP_COUNT];
+    for (int k = 0; k < FP_COUNT; ++k) fp[k] = 0xcbf29ce484222325ULL;
+    DVec2 home = plan_town_centre(0, 0);
+    int hx = (int)floor(home.x / CHUNK_SIZE), hz = (int)floor(home.z / CHUNK_SIZE);
+    int n = 0;
+    for (int cz = hz - 4; cz <= hz + 4; ++cz)
+        for (int cx = hx - 4; cx <= hx + 4; ++cx) { fingerprint_chunk(cx, cz, fp); n++; }
+
+    static BlockLayout L;
+    int megaCx = 0, megaCz = 0, found = 0;
+    for (int ring = 0; ring <= 40 && !found; ++ring)
+        for (int cz = hz - ring; cz <= hz + ring && !found; ++cz)
+            for (int cx = hx - ring; cx <= hx + ring && !found; ++cx) {
+                if (abs(cx - hx) != ring && abs(cz - hz) != ring) continue;
+                city_layout(cx, cz, &L);
+                for (int i = 0; i < L.nbuild && !found; ++i)
+                    if (L.build[i].kind == BK_MEGA) { found = 1; megaCx = cx; megaCz = cz; }
+            }
+    if (found)
+        for (int cz = megaCz - 1; cz <= megaCz + 1; ++cz)
+            for (int cx = megaCx - 1; cx <= megaCx + 1; ++cx) { fingerprint_chunk(cx, cz, fp); n++; }
+
+    for (int i = 0; i < 100; ++i) { fingerprint_chunk(g_cx[i], g_cz[i], fp); n++; }
+
+    printf("fingerprint over %d chunks (arcology chunk %s (%d, %d))\n", n, found ? "at" : "not found near", megaCx, megaCz);
+    for (int k = 0; k < FP_COUNT; ++k) printf("  %-10s %016llx\n", FP_NAMES[k], (unsigned long long)fp[k]);
+    return 0;
+}
+
+int main(int argc, char **argv) {
     /* A scattered set of chunks, including far-away and negative coordinates. */
     Rng r = rng_make(1234);
     for (int i = 0; i < N_CHUNKS; ++i) {
@@ -117,6 +232,7 @@ int main(void) {
         g_cx[i] = rng_int(&r, -far, far);
         g_cz[i] = rng_int(&r, -far, far);
     }
+    if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
 
     /* 1. Reference pass, in order. Track mesh sizes against the GPU page budget. */
     uint32_t maxVerts = 0, maxLights = 0, maxInterior = 0, maxLitter = 0, maxPlants = 0;

@@ -3,7 +3,7 @@
 #include "mathlib.h"
 #include <stdarg.h>
 
-/* Office-lobby planner (procedural-office-atrium-generation.md). Section
+/* Office-lobby planner (docs/procedural-office-atrium-generation.md). Section
  * numbers in the comments refer to that document. */
 
 #define G0    SIDEWALK_HEIGHT

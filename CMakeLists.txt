@@ -88,7 +88,7 @@ set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_do
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)
-file(GLOB SHADER_INCLUDES ${SHADER_SRC_DIR}/*.glsl)
+file(GLOB_RECURSE SHADER_INCLUDES ${SHADER_SRC_DIR}/*.glsl)
 set(SPV_OUTPUTS "")
 foreach(S ${SHADERS})
   set(OUT ${SHADER_OUT_DIR}/${S}.inc)
@@ -112,20 +112,25 @@ foreach(V ${SHADER_VARIANTS})
 endforeach()
 add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 
+# --- City generator sources -------------------------------------------------------
+# Compiled into each target rather than built once as a library: the game
+# builds them with /fp:fast and the static runtime, the tests and labs without.
+set(GEN_SOURCES src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c)
+
 # --- Tests: generator determinism ------------------------------------------------
 enable_testing()
-add_executable(city_test tests/city_test.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c src/thread.c)
+add_executable(city_test tests/city_test.c ${GEN_SOURCES} src/thread.c)
 target_include_directories(city_test PRIVATE src)
 # Top-down map of the generated plan (city_map out.bmp [x z] [size] [m/px]).
-add_executable(city_map tests/city_map.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c)
+add_executable(city_map tests/city_map.c ${GEN_SOURCES})
 target_include_directories(city_map PRIVATE src)
 # Building generator lab: archetype mix, retries, rejections; fails on invalid buildings.
-add_executable(building_lab tests/building_lab.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c)
+add_executable(building_lab tests/building_lab.c ${GEN_SOURCES})
 target_include_directories(building_lab PRIVATE src)
 # Office lobby interiors: pass rate, attempts, rejections; optional plan renders
 # (interior_lab [size_m] [renders] [out_dir] [verbose_count] [x z]); arcologies with
 # plan and section renders (interior_lab arcology [size_m] [renders] [out_dir] [verbose_count] [x z]).
-add_executable(interior_lab tests/interior_lab.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c)
+add_executable(interior_lab tests/interior_lab.c ${GEN_SOURCES})
 target_include_directories(interior_lab PRIVATE src ${stb_SOURCE_DIR})
 # Lobby plants (src/plant.c): every archetype over seeds, tiers and gravities; optional contact sheets
 # (plant_lab [seeds] [out_dir]).
@@ -168,7 +173,7 @@ endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/main.c src/vkcore.c src/renderer.c src/textures.c src/city.c src/litter.c src/plan.c src/building.c src/interior.c src/arcology.c src/plant.c src/chunks.c src/rt.c src/player.c src/thread.c)
+  src/main.c src/vkcore.c src/renderer.c src/textures.c ${GEN_SOURCES} src/chunks.c src/rt.c src/player.c src/thread.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE src ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

@@ -1,7 +1,7 @@
 #pragma once
 #include "building.h"
 
-/* Arcology interiors (procedural-office-atrium-generation.md, section 11).
+/* Arcology interiors (docs/procedural-office-atrium-generation.md, section 11).
  *
  * An arcology's ground floor is a district, not a lobby: concourses carry
  * the street grid through the building from facade to facade between the

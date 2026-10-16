@@ -2,7 +2,7 @@
 #include <stdint.h>
 
 /* Lobby plants: hybrid L-system / space-colonisation generation of potted
- * plants, after "Lobby Plant L-System Specification.md" (LPLS-1.19).
+ * plants, after "docs/Lobby Plant L-System Specification.md" (LPLS-1.19).
  *
  * A plant is a pure function of its parameters. A bounded, parametric,
  * stochastic L-system (typed modules, guarded productions, applied in

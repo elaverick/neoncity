@@ -92,7 +92,7 @@ Each plot is an oriented site rectangle with a seed, a height limit and the face
 the street. The building on it is generated inside that rectangle and never leaves it.
 
 ### Buildings (`src/building.c`)
-Buildings follow the rule-based method in `procedural-building-generation.md`.
+Buildings follow the rule-based method in `docs/procedural-building-generation.md`.
 
 **The graph.** A building is a typed graph of three kinds of node:
 - **Sections:** vertical extrusions of a polygon footprint, each recording what it rests on.
@@ -151,7 +151,7 @@ byte for byte.
 
 ### Office lobbies (`src/interior.c`)
 The ground floors of office buildings with a lobby are real interiors, planned by the method in
-`procedural-office-atrium-generation.md`. The planner produces a semantic layout, not a mesh:
+`docs/procedural-office-atrium-generation.md`. The planner produces a semantic layout, not a mesh:
 - **Frame and grid.** The building's frame is turned in quarter turns so the primary entrance
   faces "front", and the footprint is covered with half-metre cells (usable, outside or
   courtyard). Prefix sums answer rectangle queries, chamfer distance fields give clearances and
@@ -210,7 +210,7 @@ mullions and under the canopy, and amber uplights are set into the sidewalk alon
 
 ### Lobby plants (`src/plant.c`)
 Every lobby planter holds a plant grown by the hybrid L-system and space-colonisation method in
-`Lobby Plant L-System Specification.md` (LPLS-1.19). There are six archetypes: kentia palm,
+`docs/Lobby Plant L-System Specification.md` (LPLS-1.19). There are six archetypes: kentia palm,
 dracaena marginata, fiddle-leaf fig, weeping fig, dwarf umbrella tree and ZZ plant.
 - **Grammar.** Each species is a bounded, parametric L-system of typed modules (a symbol, a few
   parameters and a stable node path), rewritten in parallel by guarded productions. Every random
@@ -251,7 +251,7 @@ reports generation times and counts, and writes contact sheets.
 
 ### Arcologies (`src/arcology.c`)
 An arcology's ground floor is planned as a district, not a lobby, by the grammar in section 11 of
-`procedural-office-atrium-generation.md`, with a Blade Runner / Syd Mead look written as rules.
+`docs/procedural-office-atrium-generation.md`, with a Blade Runner / Syd Mead look written as rules.
 The plan is again a semantic layout on a half-metre grid in a frame turned so the main portal
 faces front, and every space carries its **stratum height** (0 at the ground, 1 at the top tier),
 which sets density, signage, clutter and finish: the street stratum is wet, crowded and
