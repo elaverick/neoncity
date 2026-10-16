@@ -131,12 +131,12 @@ static void push_cand(Gen *G, float score, int x, int z, int o) {
     c->score = score; c->x = x; c->z = z; c->o = o;
 }
 
-int place_core(Gen *G, int ci) {
+/* Where core ci wants to be: under its tower (marking the tower's cells),
+ * else at the default rule's position. Returns whether it has a tower. */
+static int core_target(Gen *G, int ci, float *txOut, float *tzOut) {
     ILayout *L = G->L;
-    float ex = ccx(L, G->entryCell % L->nx), ez = ccz(L, G->entryCell / L->nx);
-    /* where the core wants to be: under its tower, else the default rule */
-    float tx, tz;
     int hasTower = ci < G->ntower;
+    float tx, tz;
     if (hasTower) {
         const BLoop *tl = &G->tower[ci].outer;
         tx = tz = 0.0f;
@@ -150,7 +150,100 @@ int place_core(Gen *G, int ci) {
         else                       { tx = cxm; tz = czm; }
         if (ci == 1) tx = 2.0f * cxm - tx;   /* a second core balances the first */
     }
-    static const char *RULE[] = { "rear-centre", "rear-side", "centre" };
+    *txOut = tx; *tzOut = tz;
+    return hasTower;
+}
+
+/* Every position and orientation of template t that fits, scored (lower is
+ * better) against the target (tx, tz) and the entrance cell (ex, ez). */
+static void score_core_cands(Gen *G, const Tmpl *t, int hasTower, float tx, float tz, float ex, float ez) {
+    ILayout *L = G->L;
+    for (int o = 0; o < 4; ++o) {
+        int W = (o & 1) ? t->td : t->tw, D = (o & 1) ? t->tw : t->td;
+        int md = rot_dir(o, t->mouth);
+        float area = (float)(W * D);
+        for (int z = 0; z + D <= L->nz; ++z)
+            for (int x = 0; x + W <= L->nx; ++x) {
+                if (sat_count(L, G->sat[0], x, z, x + W, z + D)) continue;
+                int mi0, mj0, mi1, mj1;
+                rot_rect(t, o, x, z, t->m[0], t->m[1], t->m[2], t->m[3], &mi0, &mj0, &mi1, &mj1);
+                if (sat_count(L, G->sat[1], mi0, mj0, mi1, mj1)) continue;
+                float cx = L->gx0 + ((float)x + (float)W * 0.5f) * CELL, cz = L->gz0 + ((float)z + (float)D * 0.5f) * CELL;
+                float mx = L->gx0 + (float)(mi0 + mi1) * 0.5f * CELL, mz = L->gz0 + (float)(mj0 + mj1) * 0.5f * CELL;
+                /* distance from the tower centre or the default rule's position */
+                float s = sqrtf((cx - tx) * (cx - tx) + (cz - tz) * (cz - tz));
+                /* share of the core outside the tower footprint */
+                if (hasTower) s += 40.0f * (float)sat_count(L, G->sat[2], x, z, x + W, z + D) / area;
+                /* the hall mouth facing the entrance */
+                float dx = ex - mx, dz = ez - mz, dl = sqrtf(dx * dx + dz * dz) + 1e-3f;
+                s -= 6.0f * ((float)DX[md] * dx + (float)DZ[md] * dz) / dl;
+                /* free space in front of the mouth */
+                int fi0 = mi0 + DX[md] * 6, fj0 = mj0 + DZ[md] * 6, fi1 = mi1 + DX[md] * 6, fj1 = mj1 + DZ[md] * 6;
+                int fb = sat_count(L, G->sat[1], fi0, fj0, fi1, fj1);
+                s -= 4.0f * (fb >= (1 << 20) ? 0.0f : 1.0f - (float)fb / (float)((fi1 - fi0) * (fj1 - fj0)));
+                /* intrusion into the frontage */
+                s += 20.0f * (float)sat_count(L, G->sat[3], x, z, x + W, z + D) / area;
+                /* the hall's distance from the entrance: 9 m or more preferred */
+                if (dl < 9.0f) s += (9.0f - dl) * 2.5f;
+                s += dl * 0.05f + rng_float(&G->rc) * 0.5f;
+                push_cand(G, s, x, z, o);
+            }
+    }
+}
+
+/* Claim candidate c for core ci: its parts as regions, the lift hall's
+ * approach, and the lift and stair doors onto the hall. */
+static int claim_core(Gen *G, int ci, const Tmpl *t, const Cand *c, int lifts, int facing, int hasTower) {
+    static const char *const RULE[] = { "rear-centre", "rear-side", "centre" };
+    ILayout *L = G->L;
+    int W = (c->o & 1) ? t->td : t->tw, D = (c->o & 1) ? t->tw : t->td;
+    int mi0, mj0, mi1, mj1;
+    rot_rect(t, c->o, c->x, c->z, t->m[0], t->m[1], t->m[2], t->m[3], &mi0, &mj0, &mi1, &mj1);
+    ICore *K = &L->core[L->ncore++];
+    memset(K, 0, sizeof(*K));
+    K->lifts = (uint8_t)lifts; K->facing = (uint8_t)facing; K->mouth = (uint8_t)rot_dir(c->o, t->mouth);
+    K->x0 = (int16_t)c->x; K->z0 = (int16_t)c->z; K->x1 = (int16_t)(c->x + W); K->z1 = (int16_t)(c->z + D);
+    K->hall = K->secure = -1;
+    char by[24];
+    snprintf(by, sizeof(by), "core %d", ci);
+    absorb_columns(G, c->x, c->z, c->x + W, c->z + D, by);
+    for (int p = 0; p < t->np; ++p) {
+        int i0, j0, i1, j1;
+        rot_rect(t, c->o, c->x, c->z, t->p[p].u0, t->p[p].v0, t->p[p].u1, t->p[p].v1, &i0, &j0, &i1, &j1);
+        int r = add_region(G, t->p[p].type, ci);
+        if (r < 0) return fail(G, "too many regions");
+        claim_rect(G, r, i0, j0, i1, j1);
+        if (t->p[p].type == IR_HALL) {
+            K->hall = (int16_t)r;
+            for (int j = j0; j < j1; ++j) for (int i = i0; i < i1; ++i) L->flag[IDX(L, i, j)] |= IF_APPROACH;
+        }
+        if (t->p[p].type == IR_STAIR) K->stairs++;
+    }
+    snprintf(by, sizeof(by), "lift hall %d", ci);
+    absorb_columns(G, mi0, mj0, mi1, mj1, by);
+    for (int j = mj0; j < mj1; ++j)
+        for (int i = mi0; i < mi1; ++i) if (in_grid(L, i, j)) L->flag[IDX(L, i, j)] |= IF_APPROACH;
+    /* lift and stair doors onto the hall */
+    for (int r = 0; r < L->nreg; ++r) {
+        if (L->reg[r].core != ci || (L->reg[r].type != IR_LIFT && L->reg[r].type != IR_STAIR)) continue;
+        Run run = best_run(L, r, K->hall);
+        if (run.len < 2) continue;
+        int w = 2;
+        add_door(G, L->reg[r].type == IR_LIFT ? ID_LIFT : ID_STAIR, run.axis, run.line, run.at + (run.len - w) / 2, w, K->hall, r);
+    }
+    static const char *DIRS[] = { "front", "right", "rear", "left" };
+    alog(G, "  info: core %d: %d lift%s%s, %d stair%s at (%.1f, %.1f), hall opening to the %s, %s\n", ci, lifts,
+         lifts == 1 ? "" : "s", facing ? " in facing banks" : " in one bank", K->stairs, K->stairs == 1 ? "" : "s",
+         L->gx0 + (c->x + W * 0.5f) * CELL, L->gz0 + (c->z + D * 0.5f) * CELL, DIRS[K->mouth],
+         hasTower ? "under its tower" : RULE[G->coreRule]);
+    return 1;
+}
+
+int place_core(Gen *G, int ci) {
+    ILayout *L = G->L;
+    float ex = ccx(L, G->entryCell % L->nx), ez = ccz(L, G->entryCell / L->nx);
+    float tx, tz;
+    int hasTower = core_target(G, ci, &tx, &tz);
     for (int step = 0; step < 2 * G->lifts + 1; ++step) {
         /* fewer lifts each time, and a compact hall (3 m deep, 2 m mouth) before giving up a lift;
          * last, a tiny core whose lift and stair open almost straight onto the lobby */
@@ -167,37 +260,7 @@ int place_core(Gen *G, int ci) {
         sat_build(G, Q_MOUTH, G->sat[1]);
         if (hasTower) sat_build(G, Q_MARKED, G->sat[2]);
         sat_build(G, Q_FRONT, G->sat[3]);
-        for (int o = 0; o < 4; ++o) {
-            int W = (o & 1) ? t.td : t.tw, D = (o & 1) ? t.tw : t.td;
-            int md = rot_dir(o, t.mouth);
-            float area = (float)(W * D);
-            for (int z = 0; z + D <= L->nz; ++z)
-                for (int x = 0; x + W <= L->nx; ++x) {
-                    if (sat_count(L, G->sat[0], x, z, x + W, z + D)) continue;
-                    int mi0, mj0, mi1, mj1;
-                    rot_rect(&t, o, x, z, t.m[0], t.m[1], t.m[2], t.m[3], &mi0, &mj0, &mi1, &mj1);
-                    if (sat_count(L, G->sat[1], mi0, mj0, mi1, mj1)) continue;
-                    float cx = L->gx0 + ((float)x + (float)W * 0.5f) * CELL, cz = L->gz0 + ((float)z + (float)D * 0.5f) * CELL;
-                    float mx = L->gx0 + (float)(mi0 + mi1) * 0.5f * CELL, mz = L->gz0 + (float)(mj0 + mj1) * 0.5f * CELL;
-                    /* distance from the tower centre or the default rule's position */
-                    float s = sqrtf((cx - tx) * (cx - tx) + (cz - tz) * (cz - tz));
-                    /* share of the core outside the tower footprint */
-                    if (hasTower) s += 40.0f * (float)sat_count(L, G->sat[2], x, z, x + W, z + D) / area;
-                    /* the hall mouth facing the entrance */
-                    float dx = ex - mx, dz = ez - mz, dl = sqrtf(dx * dx + dz * dz) + 1e-3f;
-                    s -= 6.0f * ((float)DX[md] * dx + (float)DZ[md] * dz) / dl;
-                    /* free space in front of the mouth */
-                    int fi0 = mi0 + DX[md] * 6, fj0 = mj0 + DZ[md] * 6, fi1 = mi1 + DX[md] * 6, fj1 = mj1 + DZ[md] * 6;
-                    int fb = sat_count(L, G->sat[1], fi0, fj0, fi1, fj1);
-                    s -= 4.0f * (fb >= (1 << 20) ? 0.0f : 1.0f - (float)fb / (float)((fi1 - fi0) * (fj1 - fj0)));
-                    /* intrusion into the frontage */
-                    s += 20.0f * (float)sat_count(L, G->sat[3], x, z, x + W, z + D) / area;
-                    /* the hall's distance from the entrance: 9 m or more preferred */
-                    if (dl < 9.0f) s += (9.0f - dl) * 2.5f;
-                    s += dl * 0.05f + rng_float(&G->rc) * 0.5f;
-                    push_cand(G, s, x, z, o);
-                }
-        }
+        score_core_cands(G, &t, hasTower, tx, tz, ex, ez);
         qsort(G->cand, (size_t)G->ncand, sizeof(Cand), cmp_cand);
         for (int k = 0; k < G->ncand && k < 40; ++k) {
             const Cand *c = &G->cand[k];
@@ -205,45 +268,7 @@ int place_core(Gen *G, int ci) {
             int mi0, mj0, mi1, mj1;
             rot_rect(&t, c->o, c->x, c->z, t.m[0], t.m[1], t.m[2], t.m[3], &mi0, &mj0, &mi1, &mj1);
             if (!core_reachable(G, c->x, c->z, c->x + W, c->z + D, mi0, mj0, mi1, mj1)) continue;
-            /* accept: claim the parts */
-            ICore *K = &L->core[L->ncore++];
-            memset(K, 0, sizeof(*K));
-            K->lifts = (uint8_t)lifts; K->facing = (uint8_t)facing; K->mouth = (uint8_t)rot_dir(c->o, t.mouth);
-            K->x0 = (int16_t)c->x; K->z0 = (int16_t)c->z; K->x1 = (int16_t)(c->x + W); K->z1 = (int16_t)(c->z + D);
-            K->hall = K->secure = -1;
-            char by[24];
-            snprintf(by, sizeof(by), "core %d", ci);
-            absorb_columns(G, c->x, c->z, c->x + W, c->z + D, by);
-            for (int p = 0; p < t.np; ++p) {
-                int i0, j0, i1, j1;
-                rot_rect(&t, c->o, c->x, c->z, t.p[p].u0, t.p[p].v0, t.p[p].u1, t.p[p].v1, &i0, &j0, &i1, &j1);
-                int r = add_region(G, t.p[p].type, ci);
-                if (r < 0) return fail(G, "too many regions");
-                claim_rect(G, r, i0, j0, i1, j1);
-                if (t.p[p].type == IR_HALL) {
-                    K->hall = (int16_t)r;
-                    for (int j = j0; j < j1; ++j) for (int i = i0; i < i1; ++i) L->flag[IDX(L, i, j)] |= IF_APPROACH;
-                }
-                if (t.p[p].type == IR_STAIR) K->stairs++;
-            }
-            snprintf(by, sizeof(by), "lift hall %d", ci);
-            absorb_columns(G, mi0, mj0, mi1, mj1, by);
-            for (int j = mj0; j < mj1; ++j)
-                for (int i = mi0; i < mi1; ++i) if (in_grid(L, i, j)) L->flag[IDX(L, i, j)] |= IF_APPROACH;
-            /* lift and stair doors onto the hall */
-            for (int r = 0; r < L->nreg; ++r) {
-                if (L->reg[r].core != ci || (L->reg[r].type != IR_LIFT && L->reg[r].type != IR_STAIR)) continue;
-                Run run = best_run(L, r, K->hall);
-                if (run.len < 2) continue;
-                int w = 2;
-                add_door(G, L->reg[r].type == IR_LIFT ? ID_LIFT : ID_STAIR, run.axis, run.line, run.at + (run.len - w) / 2, w, K->hall, r);
-            }
-            static const char *DIRS[] = { "front", "right", "rear", "left" };
-            alog(G, "  info: core %d: %d lift%s%s, %d stair%s at (%.1f, %.1f), hall opening to the %s, %s\n", ci, lifts,
-                 lifts == 1 ? "" : "s", facing ? " in facing banks" : " in one bank", K->stairs, K->stairs == 1 ? "" : "s",
-                 L->gx0 + (c->x + W * 0.5f) * CELL, L->gz0 + (c->z + D * 0.5f) * CELL, DIRS[K->mouth],
-                 hasTower ? "under its tower" : RULE[G->coreRule]);
-            return 1;
+            return claim_core(G, ci, &t, c, lifts, facing, hasTower);
         }
         if (tiny) break;
         if (!compact) alog(G, "  simplify: core %d does not fit with %d lifts; trying a compact hall\n", ci, lifts);

@@ -316,90 +316,97 @@ static float supporter_depth(const BGraph *g, const BSection *s) {
     return m;
 }
 
-int bgen_validate(const BGraph *g, const Building *b, BLog *log) {
+#define REJECT(...) do { blog_printf(log, "  rejected: " __VA_ARGS__); blog_printf(log, "\n"); ok = 0; } while (0)
+
+/* Section i's footprint and courtyard are sound, inside the plot and thick enough. */
+static int check_section_shape(const BGraph *g, const Building *b, int i, BLog *log) {
     const float tol = 0.02f;
     int ok = 1;
-#define REJECT(...) do { blog_printf(log, "  rejected: " __VA_ARGS__); blog_printf(log, "\n"); ok = 0; } while (0)
-    if (g->nsec == 0) { REJECT("no sections"); return 0; }
-    float top = 0.0f;
-    for (int i = 0; i < g->nsec && ok; ++i) {
-        const BSection *s = &g->sec[i];
-        const BLoop *l = &s->foot.outer;
-        top = maxf(top, s->y1);
-        if (l->n < 3 || !loop_simple(l) || loop_min_edge(l) < 0.9f || bloop_area(l) > -20.0f) { REJECT("section %d: invalid footprint", i); break; }
-        if (s->foot.hole.n) {
-            const BLoop *h = &s->foot.hole;
-            if (!loop_simple(h) || bloop_area(h) <= 0.0f) { REJECT("section %d: invalid courtyard", i); break; }
-            for (int k = 0; k < h->n && ok; ++k)
-                if (!bloop_inside(l, h->x[k], h->z[k]) || sqrtf(loop_dist2(l, h->x[k], h->z[k], NULL, NULL, 1e30f)) < 6.0f)
-                    REJECT("section %d: courtyard leaves too thin a floor plate", i);
-        }
-        for (int k = 0; k < l->n && ok; ++k)
-            if (l->x[k] < b->foot.x0 - tol || l->x[k] > b->foot.x1 + tol || l->z[k] < b->foot.z0 - tol || l->z[k] > b->foot.z1 + tol)
-                REJECT("section %d: outside its plot", i);
-        if (!ok) break;
-        if (s->y1 < s->y0 + 1.0f) { REJECT("section %d: too thin", i); break; }
-
-        /* support */
-        if (s->nbelow == 0) {
-            if (s->y0 > G0 + 0.01f) REJECT("section %d: floating %.1f m above the ground", i, s->y0 - G0);
-            continue;
-        }
-        for (int k = 0; k < s->nbelow; ++k)
-            if (g->sec[s->below[k]].y0 >= s->y0 - 0.01f) { REJECT("section %d: supporter %d is not below it", i, s->below[k]); break; }
-        if (!ok) break;
-        BSupport cols[BG_MAX_SUPP];
-        int ncol = 0, nstrut = 0, transfer = 0;
-        for (int k = 0; k < g->nsup; ++k) {
-            if (g->sup[k].section != i) continue;
-            if (g->sup[k].type == SUP_COLUMN) cols[ncol++] = g->sup[k];
-            else if (g->sup[k].type == SUP_STRUT) nstrut++;
-            else if (g->sup[k].type == SUP_TRANSFER) transfer++;
-        }
-        float reach = 0.0f;
-        Overhang o = overhang(g, s, cols, ncol, &reach);
-        float depth = supporter_depth(g, s);
-        switch (s->arr) {
-        case ARR_STACK:
-            if (o.max > 0.05f) REJECT("section %d: unsupported overhang of %.1f m on a plain stack", i, o.max);
-            break;
-        case ARR_ARCADE:
-            if (!ncol) REJECT("section %d: arcade without columns", i);
-            else if (g->sec[s->below[0]].type != SEC_CORE && o.max > 5.0f) REJECT("section %d: arcade setback %.1f m > 5", i, o.max);
-            else if (reach > 4.6f) REJECT("section %d: %.1f m from the nearest column", i, reach);
-            break;
-        case ARR_PROJECTION: {
-            float lim = s->support == SUP_COLUMN ? 6.5f : s->support == SUP_STRUT ? 4.5f : (o.corner ? 1.8f : 2.6f);
-            float frac = s->support == SUP_COLUMN ? 0.4f : s->support == SUP_STRUT ? 0.35f : 0.25f;
-            if (o.max > lim) REJECT("section %d: projection %.1f m > %.1f for its support", i, o.max, lim);
-            else if (o.max > frac * depth) REJECT("section %d: projection %.1f m > %.0f%% of the %.1f m depth below", i, o.max, frac * 100.0f, depth);
-            else if (s->support == SUP_COLUMN && (!ncol || reach > 5.0f)) REJECT("section %d: projecting edge %.1f m from a column", i, reach);
-            else if (s->support == SUP_STRUT && !nstrut) REJECT("section %d: strut-supported projection without struts", i);
-            else if (s->support == SUP_CORE && o.outsideLen > 0.45f * o.perimeter) REJECT("section %d: core cantilever along %.0f%% of its edge", i, 100.0f * o.outsideLen / o.perimeter);
-            break;
-        }
-        case ARR_STEP:
-            if (o.max > 1.2f) REJECT("section %d: steps out %.2f m > 1.2 from the slice below", i, o.max);
-            break;
-        case ARR_SPAN: case ARR_BRIDGE: {
-            if (s->nbelow != 2) { REJECT("section %d: span needs two supporters", i); break; }
-            const BSection *a = &g->sec[s->below[0]], *c2 = &g->sec[s->below[1]];
-            if (!loops_intersect(&s->foot.outer, &a->foot.outer) || !loops_intersect(&s->foot.outer, &c2->foot.outer)) { REJECT("section %d: span does not bear on both supports", i); break; }
-            float clear = 1e30f;
-            for (int k = 0; k < a->foot.outer.n; ++k)
-                clear = minf(clear, sqrtf(loop_dist2(&c2->foot.outer, a->foot.outer.x[k], a->foot.outer.z[k], NULL, NULL, 1e30f)));
-            float lim = s->arr == ARR_SPAN ? 32.0f : 40.0f;
-            if (clear > lim) REJECT("section %d: clear span %.1f m > %.0f", i, clear, lim);
-            else if (s->arr == ARR_SPAN && !transfer) REJECT("section %d: span without a transfer structure", i);
-            else if (a->y1 < s->y0 - 0.01f || c2->y1 < s->y0 - 0.01f) REJECT("section %d: supports stop short of the span", i);
-            break;
-        }
-        default:
-            REJECT("section %d: unknown arrangement", i);
-        }
-        if (ok && s->arr != ARR_STACK) blog_printf(log, "  accepted %s for section %d (%.1f m)\n", ARR_NAMES[s->arr], i, o.max);
+    const BSection *s = &g->sec[i];
+    const BLoop *l = &s->foot.outer;
+    if (l->n < 3 || !loop_simple(l) || loop_min_edge(l) < 0.9f || bloop_area(l) > -20.0f) { REJECT("section %d: invalid footprint", i); return 0; }
+    if (s->foot.hole.n) {
+        const BLoop *h = &s->foot.hole;
+        if (!loop_simple(h) || bloop_area(h) <= 0.0f) { REJECT("section %d: invalid courtyard", i); return 0; }
+        for (int k = 0; k < h->n && ok; ++k)
+            if (!bloop_inside(l, h->x[k], h->z[k]) || sqrtf(loop_dist2(l, h->x[k], h->z[k], NULL, NULL, 1e30f)) < 6.0f)
+                REJECT("section %d: courtyard leaves too thin a floor plate", i);
     }
-    /* sections side by side must not collide */
+    for (int k = 0; k < l->n && ok; ++k)
+        if (l->x[k] < b->foot.x0 - tol || l->x[k] > b->foot.x1 + tol || l->z[k] < b->foot.z0 - tol || l->z[k] > b->foot.z1 + tol)
+            REJECT("section %d: outside its plot", i);
+    if (!ok) return 0;
+    if (s->y1 < s->y0 + 1.0f) { REJECT("section %d: too thin", i); return 0; }
+    return ok;
+}
+
+/* Section i stands on the ground or on what is below it, within the rules of its arrangement. */
+static int check_section_support(const BGraph *g, int i, BLog *log) {
+    int ok = 1;
+    const BSection *s = &g->sec[i];
+    if (s->nbelow == 0) {
+        if (s->y0 > G0 + 0.01f) REJECT("section %d: floating %.1f m above the ground", i, s->y0 - G0);
+        return ok;
+    }
+    for (int k = 0; k < s->nbelow; ++k)
+        if (g->sec[s->below[k]].y0 >= s->y0 - 0.01f) { REJECT("section %d: supporter %d is not below it", i, s->below[k]); break; }
+    if (!ok) return 0;
+    BSupport cols[BG_MAX_SUPP];
+    int ncol = 0, nstrut = 0, transfer = 0;
+    for (int k = 0; k < g->nsup; ++k) {
+        if (g->sup[k].section != i) continue;
+        if (g->sup[k].type == SUP_COLUMN) cols[ncol++] = g->sup[k];
+        else if (g->sup[k].type == SUP_STRUT) nstrut++;
+        else if (g->sup[k].type == SUP_TRANSFER) transfer++;
+    }
+    float reach = 0.0f;
+    Overhang o = overhang(g, s, cols, ncol, &reach);
+    float depth = supporter_depth(g, s);
+    switch (s->arr) {
+    case ARR_STACK:
+        if (o.max > 0.05f) REJECT("section %d: unsupported overhang of %.1f m on a plain stack", i, o.max);
+        break;
+    case ARR_ARCADE:
+        if (!ncol) REJECT("section %d: arcade without columns", i);
+        else if (g->sec[s->below[0]].type != SEC_CORE && o.max > 5.0f) REJECT("section %d: arcade setback %.1f m > 5", i, o.max);
+        else if (reach > 4.6f) REJECT("section %d: %.1f m from the nearest column", i, reach);
+        break;
+    case ARR_PROJECTION: {
+        float lim = s->support == SUP_COLUMN ? 6.5f : s->support == SUP_STRUT ? 4.5f : (o.corner ? 1.8f : 2.6f);
+        float frac = s->support == SUP_COLUMN ? 0.4f : s->support == SUP_STRUT ? 0.35f : 0.25f;
+        if (o.max > lim) REJECT("section %d: projection %.1f m > %.1f for its support", i, o.max, lim);
+        else if (o.max > frac * depth) REJECT("section %d: projection %.1f m > %.0f%% of the %.1f m depth below", i, o.max, frac * 100.0f, depth);
+        else if (s->support == SUP_COLUMN && (!ncol || reach > 5.0f)) REJECT("section %d: projecting edge %.1f m from a column", i, reach);
+        else if (s->support == SUP_STRUT && !nstrut) REJECT("section %d: strut-supported projection without struts", i);
+        else if (s->support == SUP_CORE && o.outsideLen > 0.45f * o.perimeter) REJECT("section %d: core cantilever along %.0f%% of its edge", i, 100.0f * o.outsideLen / o.perimeter);
+        break;
+    }
+    case ARR_STEP:
+        if (o.max > 1.2f) REJECT("section %d: steps out %.2f m > 1.2 from the slice below", i, o.max);
+        break;
+    case ARR_SPAN: case ARR_BRIDGE: {
+        if (s->nbelow != 2) { REJECT("section %d: span needs two supporters", i); break; }
+        const BSection *a = &g->sec[s->below[0]], *c2 = &g->sec[s->below[1]];
+        if (!loops_intersect(&s->foot.outer, &a->foot.outer) || !loops_intersect(&s->foot.outer, &c2->foot.outer)) { REJECT("section %d: span does not bear on both supports", i); break; }
+        float clear = 1e30f;
+        for (int k = 0; k < a->foot.outer.n; ++k)
+            clear = minf(clear, sqrtf(loop_dist2(&c2->foot.outer, a->foot.outer.x[k], a->foot.outer.z[k], NULL, NULL, 1e30f)));
+        float lim = s->arr == ARR_SPAN ? 32.0f : 40.0f;
+        if (clear > lim) REJECT("section %d: clear span %.1f m > %.0f", i, clear, lim);
+        else if (s->arr == ARR_SPAN && !transfer) REJECT("section %d: span without a transfer structure", i);
+        else if (a->y1 < s->y0 - 0.01f || c2->y1 < s->y0 - 0.01f) REJECT("section %d: supports stop short of the span", i);
+        break;
+    }
+    default:
+        REJECT("section %d: unknown arrangement", i);
+    }
+    if (ok && s->arr != ARR_STACK) blog_printf(log, "  accepted %s for section %d (%.1f m)\n", ARR_NAMES[s->arr], i, o.max);
+    return ok;
+}
+
+/* Sections side by side must not collide. */
+static int check_collisions(const BGraph *g, BLog *log) {
+    int ok = 1;
     for (int i = 0; i < g->nsec && ok; ++i)
         for (int j = i + 1; j < g->nsec && ok; ++j) {
             const BSection *a = &g->sec[i], *c2 = &g->sec[j];
@@ -409,7 +416,12 @@ int bgen_validate(const BGraph *g, const Building *b, BLog *log) {
             for (int k = 0; k < c2->nbelow; ++k) if (c2->below[k] == i) related = 1;
             if (!related && loops_intersect(&a->foot.outer, &c2->foot.outer)) REJECT("sections %d and %d intersect", i, j);
         }
-    /* supports: inside the plot, standing on the ground or on a section */
+    return ok;
+}
+
+/* Supports: inside the plot, standing on the ground or on a section. */
+static int check_supports(const BGraph *g, const Building *b, BLog *log) {
+    int ok = 1;
     for (int k = 0; k < g->nsup && ok; ++k) {
         const BSupport *s = &g->sup[k];
         if (s->x0 < b->foot.x0 || s->x0 > b->foot.x1 || s->z0 < b->foot.z0 || s->z0 > b->foot.z1) REJECT("support %d outside its plot", k);
@@ -421,8 +433,12 @@ int bgen_validate(const BGraph *g, const Building *b, BLog *log) {
             if (!on) REJECT("strut %d has no wall to bear on", k);
         }
     }
-    /* entrances */
-    int primary = 0;
+    return ok;
+}
+
+/* Entrances: on ground-level faces, fitting them, not overlapping; counts the primary ones. */
+static int check_doors(const BGraph *g, BLog *log, int *primary) {
+    int ok = 1;
     for (int d = 0; d < g->ndoor && ok; ++d) {
         const BDoor *dr = &g->door[d];
         const BSection *s = &g->sec[dr->section];
@@ -434,13 +450,28 @@ int bgen_validate(const BGraph *g, const Building *b, BLog *log) {
         for (int e = 0; e < d && ok; ++e)
             if (g->door[e].section == dr->section && g->door[e].face == dr->face &&
                 fabsf(g->door[e].u - dr->u) < (g->door[e].width + dr->width) * 0.5f + 0.5f) REJECT("doors %d and %d overlap", e, d);
-        if (dr->type == DOOR_PRIMARY) primary++;
+        if (dr->type == DOOR_PRIMARY) (*primary)++;
     }
-    if (ok && !primary) REJECT("no primary entrance");
-    if (ok && top > G0 + b->height + 0.05f) REJECT("top %.1f m above the %.1f m height limit", top - G0, b->height);
-#undef REJECT
     return ok;
 }
+
+int bgen_validate(const BGraph *g, const Building *b, BLog *log) {
+    int ok = 1;
+    if (g->nsec == 0) { REJECT("no sections"); return 0; }
+    float top = 0.0f;
+    for (int i = 0; i < g->nsec && ok; ++i) {
+        top = maxf(top, g->sec[i].y1);
+        ok = check_section_shape(g, b, i, log) && check_section_support(g, i, log);
+    }
+    if (ok) ok = check_collisions(g, log);
+    if (ok) ok = check_supports(g, b, log);
+    int primary = 0;
+    if (ok) ok = check_doors(g, log, &primary);
+    if (ok && !primary) REJECT("no primary entrance");
+    if (ok && top > G0 + b->height + 0.05f) REJECT("top %.1f m above the %.1f m height limit", top - G0, b->height);
+    return ok;
+}
+#undef REJECT
 
 /* ===========================================================================
  * Driver

@@ -61,27 +61,25 @@ int interior_sections(const BGraph *g, int *out, int max) {
     return n;
 }
 
-static int prepare(Gen *G) {
+/* The entrance: the primary door, else a service door, else a synthesised one
+ * on the most street-facing edge. Gives the door's index (-1: synthesised)
+ * and its face, centre u and width w. */
+static int find_entrance(Gen *G, int *face, float *u, float *w) {
     const BGraph *g = G->g;
     ILayout *L = G->L;
-    const BSection *s = &g->sec[G->si];
-    const BLoop *ol = &s->foot.outer;
-
-    /* the entrance: the primary door, else a service door, else a synthesised one */
+    const BLoop *ol = &g->sec[G->si].foot.outer;
     int ed = -1;
     for (int d = 0; d < g->ndoor; ++d) if (g->door[d].section == G->si && g->door[d].type == DOOR_PRIMARY) ed = d;
     G->grammar = ed >= 0 ? IG_OFFICE : IG_SERVICE;
     L->grammar = G->grammar;
     if (ed < 0) for (int d = 0; d < g->ndoor && ed < 0; ++d) if (g->door[d].section == G->si) ed = d;
-    int face;
-    float u, w;
     L->synthFace = -1;
     if (ed >= 0) {
-        face = g->door[ed].face; u = g->door[ed].u; w = g->door[ed].width;
+        *face = g->door[ed].face; *u = g->door[ed].u; *w = g->door[ed].width;
     } else {
         /* the most street-facing edge (section 4.1 default) */
         float best = -1.0f;
-        face = 0;
+        int f = 0;
         for (int k = 0; k < ol->n; ++k) {
             int k1 = (k + 1) % ol->n;
             float ex = ol->x[k1] - ol->x[k], ez = ol->z[k1] - ol->z[k], len = sqrtf(ex * ex + ez * ez);
@@ -89,20 +87,21 @@ static int prepare(Gen *G) {
             float nx = -ez / len, nz = ex / len;
             int side = fabsf(nx) > fabsf(nz) ? (nx < 0 ? SIDE_W : SIDE_E) : (nz < 0 ? SIDE_S : SIDE_N);
             float sc = len * ((G->b->frontage & side) ? 4.0f : 1.0f);
-            if (sc > best) { best = sc; face = k; }
+            if (sc > best) { best = sc; f = k; }
         }
-        int k1 = (face + 1) % ol->n;
-        float len = sqrtf((ol->x[k1] - ol->x[face]) * (ol->x[k1] - ol->x[face]) + (ol->z[k1] - ol->z[face]) * (ol->z[k1] - ol->z[face]));
-        u = len * 0.5f; w = 1.3f;
-        L->synthFace = face; L->synthU = u; L->synthW = w;
+        int k1 = (f + 1) % ol->n;
+        float len = sqrtf((ol->x[k1] - ol->x[f]) * (ol->x[k1] - ol->x[f]) + (ol->z[k1] - ol->z[f]) * (ol->z[k1] - ol->z[f]));
+        *face = f; *u = len * 0.5f; *w = 1.3f;
+        L->synthFace = f; L->synthU = *u; L->synthW = *w;
     }
-    int k1 = (face + 1) % ol->n;
-    float ex = ol->x[k1] - ol->x[face], ez = ol->z[k1] - ol->z[face], len = sqrtf(ex * ex + ez * ez);
-    ex /= len; ez /= len;
-    float nx = -ez, nz = ex;                                    /* outward */
-    float cx = ol->x[face] + ex * u, cz = ol->z[face] + ez * u;
+    return ed;
+}
 
-    /* frame: turn so the entrance faces -z (section 5.1) */
+/* The frame: turned so the entrance (outward normal nx, nz) faces -z, and the
+ * planning grid over the footprint in it. */
+static int frame_and_grid(Gen *G, float nx, float nz, int *qOut) {
+    ILayout *L = G->L;
+    const BSection *s = &G->g->sec[G->si];
     static const float FX[4] = { 0, 1, 0, -1 }, FZ[4] = { -1, 0, 1, 0 };
     int q = 0;
     float bd = -2.0f;
@@ -124,7 +123,13 @@ static int prepare(Gen *G) {
         return fail(G, "footprint %.0f x %.0f m is outside the planning grid", x1 - x0, z1 - z0);
     L->gx0 = x0; L->gz0 = z0;
 
-    /* occupancy: outside, usable or courtyard; edge cells are not wholly inside */
+    *qOut = q;
+    return 1;
+}
+
+/* Occupancy: outside, usable or courtyard; edge cells are not wholly inside. */
+static void mark_occupancy(Gen *G) {
+    ILayout *L = G->L;
     int nUse = 0;
     for (int j = 0; j < L->nz; ++j)
         for (int i = 0; i < L->nx; ++i) {
@@ -146,7 +151,13 @@ static int prepare(Gen *G) {
         }
     L->area = (float)nUse * CELL * CELL;
 
-    /* entrance in the frame */
+}
+
+/* The entrance in the frame (centre cx, cz and outward normal nx, nz in the
+ * building frame), the cell behind it, and the first 3 m inside kept clear. */
+static int place_entry(Gen *G, int ed, int q, float cx, float cz, float nx, float nz, float w) {
+    const BGraph *g = G->g;
+    ILayout *L = G->L;
     SDoor *e = &G->entry;
     quarter_turn(4 - q, cx, cz, &e->x, &e->z);
     quarter_turn(4 - q, nx, nz, &e->nx, &e->nz);
@@ -165,7 +176,13 @@ static int prepare(Gen *G) {
             if (in > -0.3f && in < 3.0f && along < e->w * 0.5f + 1.0f) G->baseFlag[IDX(L, i, j)] |= IF_ENTRY;
         }
 
-    /* service and loading doors on this section (rooms are anchored to them) */
+    return 1;
+}
+
+/* Service and loading doors on this section (rooms are anchored to them). */
+static void find_service_doors(Gen *G, int ed, int q) {
+    const BGraph *g = G->g;
+    const BLoop *ol = &g->sec[G->si].foot.outer;
     G->nserv = 0;
     for (int d = 0; d < g->ndoor; ++d) {
         const BDoor *dr = &g->door[d];
@@ -179,7 +196,12 @@ static int prepare(Gen *G) {
         sd->w = dr->width; sd->side = side_of(sd->nx, sd->nz); sd->type = dr->type;
     }
 
-    /* towers above the base: each needs its own core */
+}
+
+/* Towers above the base: each needs its own core. */
+static void find_towers(Gen *G, int q) {
+    const BGraph *g = G->g;
+    const BSection *s = &g->sec[G->si];
     G->ntower = 0;
     for (int t = 0; t < g->nsec && G->ntower < IN_MAX_CORE; ++t) {
         const BSection *ts = &g->sec[t];
@@ -191,7 +213,12 @@ static int prepare(Gen *G) {
         foot_to_frame(q, &ts->foot, &G->tower[G->ntower++]);
     }
 
-    /* the section directly above the ground floor (podium atria) */
+}
+
+/* The section directly above the ground floor (podium atria). */
+static void find_above(Gen *G, int q) {
+    const BGraph *g = G->g;
+    const BSection *s = &g->sec[G->si];
     G->hasAbove = 0;
     if (s->type != SEC_PIER) {
         for (int t = 0; t < g->nsec && !G->hasAbove; ++t) {
@@ -207,12 +234,39 @@ static int prepare(Gen *G) {
         }
     }
 
+}
+
+/* Floors served, and the ground floor's levels. */
+static void set_levels(Gen *G) {
+    const BGraph *g = G->g;
+    ILayout *L = G->L;
     float top = 0.0f;
     for (int t = 0; t < g->nsec; ++t) top = maxf(top, g->sec[t].y1);
     L->floors = 1.0f + floorf((top - (G0 + g->groundH)) / g->floorH + 0.5f);
     L->floorY = G0;
     L->ceilY = G0 + g->groundH;
     L->glassTop = G0 + g->groundH - (g->groundMode == GF_DOUBLE ? 1.2f : 0.7f);
+}
+
+static int prepare(Gen *G) {
+    const BLoop *ol = &G->g->sec[G->si].foot.outer;
+    int face;
+    float u, w;
+    int ed = find_entrance(G, &face, &u, &w);
+    int k1 = (face + 1) % ol->n;
+    float ex = ol->x[k1] - ol->x[face], ez = ol->z[k1] - ol->z[face], len = sqrtf(ex * ex + ez * ez);
+    ex /= len; ez /= len;
+    float nx = -ez, nz = ex;                                    /* outward */
+    float cx = ol->x[face] + ex * u, cz = ol->z[face] + ez * u;
+
+    int q;
+    if (!frame_and_grid(G, nx, nz, &q)) return 0;
+    mark_occupancy(G);
+    if (!place_entry(G, ed, q, cx, cz, nx, nz, w)) return 0;
+    find_service_doors(G, ed, q);
+    find_towers(G, q);
+    find_above(G, q);
+    set_levels(G);
     return 1;
 }
 
