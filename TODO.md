@@ -18,7 +18,7 @@ Every light in the chunks' light tables casts ray-traced shadows (`src/render/rt
 - **Cost:** settled lights could be traced every other frame, and the filter taps cached in shared memory.
 
 ## Office lobbies (next)
-Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/city.c`).
+Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/mesh_lobby.c`).
 - **Furniture** is rough boxes; reception, sofas, cafe and cubicles want real assets. Planters hold
   real plants now (see Lobby plants below).
 - **Vertical circulation:** the gallery, feature stair and escape stairs can't be climbed (collision
@@ -54,7 +54,7 @@ jumper runs between strokes, electrode caps at stroke ends, a tube's shadow on t
 street light, and signs built as real tube geometry up close.
 
 ## Arcologies (next)
-Arcology interiors are planned and built (`src/gen/arcology.c`, `emit_arcology` in `src/city/city.c`).
+Arcology interiors are planned and built (`src/gen/arcology.c`, `emit_arcology` in `src/city/mesh_arcology.c`).
 - **Above the concourse:** sky lobbies and the floors round the canyon are planned but only seen
   as the galleries' unit fronts and the lit band outside; nothing above the ground can be reached
   (collision is 2D, lifts don't run).

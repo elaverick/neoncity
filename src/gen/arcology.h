@@ -16,7 +16,7 @@
  * The plan is a pure function of the building and a variant. Like the office
  * planner it works in a frame: the building frame turned in quarter turns so
  * the main portal faces -z, on a 0.5 m grid over the ground footprint. The
- * realisation (emit_arcology in src/city/city.c) reads it; nothing here makes
+ * realisation (emit_arcology in src/city/mesh_arcology.c) reads it; nothing here makes
  * geometry. */
 
 #define AR_CELL        0.5f

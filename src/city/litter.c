@@ -43,7 +43,7 @@
  *            x and z 11-bit signed in 2 mm, y 10-bit in 1 mm
  * ========================================================================= */
 
-#define BASE_Y   (-0.03f)   /* plain asphalt filling the junctions (src/city/city.c) */
+#define BASE_Y   (-0.03f)   /* plain asphalt filling the junctions (src/city/streets.c) */
 #define CELL     2.5        /* area scatter grid; divides CHUNK_SIZE */
 #define MAX_LV   768
 #define TAU      6.2831853f
@@ -135,7 +135,7 @@ static int block_drops(LGen *g, int bi, const DropKerb **out) {
     return g->nd[bi];
 }
 
-/* What the ground is at (x, z) and how high it stands (src/city/city.c: build_roads, build_blocks). */
+/* What the ground is at (x, z) and how high it stands (src/city/streets.c: build_roads, build_blocks). */
 static Ground ground_at(LGen *g, double x, double z) {
     Ground gr = { G_ROAD, -1, BASE_Y };
     for (int k = 0; k < g->c.pa->nblocks; ++k) {
@@ -245,7 +245,7 @@ static int site_ok(LGen *g, double x, double z, float rad, int want, float *y) {
 
 static LV lv(vec3 p, vec3 n, float u, float v, float flex) { LV r; r.p = p; r.n = n; r.u = u; r.v = v; r.flex = flex; return r; }
 
-/* Winding follows the vertex normals, as emit_quad does (src/city/city.c). Degenerate triangles are dropped. */
+/* Winding follows the vertex normals, as emit_quad does (src/city/mesh_emit.c). Degenerate triangles are dropped. */
 static void tri(Tris *T, LV a, LV b, LV c) {
     vec3 fn = v3_cross(v3_sub(b.p, a.p), v3_sub(c.p, a.p));
     if (v3_dot(fn, fn) < 1e-14f || T->n + 3 > MAX_LV) return;

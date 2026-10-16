@@ -63,7 +63,7 @@ struct ChunkGPU {
 };
 layout(std430, set = 0, binding = 1) readonly buffer Chunks { ChunkGPU chunks[]; };
 
-// Per-chunk light tables (see build_lights in src/city/city.c): a header record,
+// Per-chunk light tables (see build_lights in src/city/light_tiles.c): a header record,
 // 16 tile words (first << 16 | count), then lights (xyz, w = type | data).
 layout(std430, set = 0, binding = 2) readonly buffer Lights { uvec4 lightRec[]; };
 
@@ -164,7 +164,7 @@ const float POOL_RADIUS = 4.0, POOL_HEIGHT = 0.5;   // the lit pool a lamp's spi
  * xi in [0,1)^3, and the emitter's size (for penumbra estimates). A street
  * lamp's beam glows through the diffuser under the head, a disc just below it,
  * and its spill rises from the pool of light beneath it: xi.z picks one, by
- * the share each has at p. Arcology lights are broader (LE_* in src/city/city.c).
+ * the share each has at p. Arcology lights are broader (LE_* in src/city/light_tiles.c).
  * A shop or lobby light stands 1 m out from its pane, which glows over the
  * bay's width from knee height to over the door. */
 vec3 emitterPoint(vec3 lp, uint w, vec3 xi, vec3 p, out float size) {
@@ -185,7 +185,7 @@ vec3 emitterPoint(vec3 lp, uint w, vec3 xi, vec3 p, out float size) {
 }
 
 // Whether light record w casts shadows. An arcology's crown lights (LE_ARC_CROWN
-// in src/city/city.c) stand for the cold light falling down the canyon from its
+// in src/city/light_tiles.c) stand for the cold light falling down the canyon from its
 // glazed crown, a fill from far above rather than a light at the point they
 // mark, so they light the galleries unshadowed.
 bool castsShadow(uint w) { return (w & 3u) >= 2u || ((w >> 26) & 3u) != 2u; }
@@ -227,7 +227,7 @@ vec3 lampColor(int type) {
                      : vec3(0.55, 0.80, 1.0) * 0.9;  // cold LED
 }
 
-/* Failing street lamps (lamp_fault in src/city/city.c): fault & 3 is the state,
+/* Failing street lamps (lamp_fault in src/city/streets.c): fault & 3 is the state,
  * fault >> 2 a seed. 0 works; 1 is dead; 2 cycles, as a worn sodium lamp does:
  * it runs, sputters, goes out, then restrikes with a red glow that warms back
  * to orange; 3 is dim and reddened. Multiplies the lamp's colour. */

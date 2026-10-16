@@ -80,7 +80,7 @@ Junction geometry is resolved from the plan itself. Each carriageway is trimmed 
 every road meeting it, which leaves room for the crossings, so a road comes out identical
 whichever area it is requested through.
 
-### Plots (`src/city/city.c`)
+### Plots (`src/city/lots.c`)
 Blocks are divided into plots that conform to the plan:
 - **Core, centre and industrial blocks** are split into lots along the grain. Each lot gets
   the largest rectangle that fronts its longest street edge. Downtown plots are larger, so
