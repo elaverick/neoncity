@@ -252,9 +252,11 @@ void record_reflections(Renderer *r, VkCommandBuffer cmd, int slot) {
     vkCmdEndRendering(cmd);
 }
 
-/* The scene pass: the city, its plants and the sky into the MSAA HDR target
- * and the reflection G-buffer, resolved into r->hdr and r->refl. With
- * shadows, the depth is the prepass's. */
+/* The scene pass: the city, its plants, the terrain and the sky into the
+ * MSAA HDR target and the reflection G-buffer, resolved into r->hdr and
+ * r->refl. With shadows, the depth is the prepass's (which leaves the terrain
+ * out: it casts and takes no shadows yet). The terrain comes after the city,
+ * whose depth hides most of it, and before the sky, which fills what's left. */
 void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows) {
     VkCore *vk = r->vk;
     bool msaa = vk->msaa != VK_SAMPLE_COUNT_1_BIT;
@@ -326,6 +328,8 @@ void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows) {
     chunks_draw(r->chunks, cmd, slot);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->plantPipe);
     chunks_draw_plants(r->chunks, cmd, slot);
+    terrain_gpu_draw(r, cmd, slot);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->scenePL, 0, 1, &r->sceneSet[slot], 0, NULL);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->skyPipe);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);

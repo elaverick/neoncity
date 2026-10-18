@@ -56,6 +56,12 @@ static const uint32_t SPV_shadow_trace[] = {
 static const uint32_t SPV_shadow_denoise[] = {
 #include "shadow_denoise.comp.inc"
 };
+static const uint32_t SPV_terrain_vert[] = {
+#include "terrain/terrain.vert.inc"
+};
+static const uint32_t SPV_terrain_frag[] = {
+#include "terrain/terrain.frag.inc"
+};
 
 /* ------------------------------------------------------------ layouts --- */
 
@@ -176,6 +182,11 @@ void create_layouts(Renderer *r) {
         { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },  /* reflection G-buffer */
     };
     r->ssrApplyLayout = make_set_layout(vk, ssrApply, 3);
+    VkDescriptorSetLayoutBinding terrain[2] = {
+        { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
+        { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* clipmap samples */
+    };
+    r->terrainLayout = make_set_layout(vk, terrain, 2);
 
     r->scenePL = make_pipeline_layout(vk, r->sceneLayout, 0, 0);
     r->compositePL = make_pipeline_layout(vk, r->texLayout, sizeof(CompositePush), VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -185,6 +196,7 @@ void create_layouts(Renderer *r) {
     r->ssrPL = make_pipeline_layout(vk, r->ssrLayout, 0, 0);
     r->ssrApplyPL = make_pipeline_layout(vk, r->ssrApplyLayout, 0, 0);
     r->shelterPL = make_pipeline_layout(vk, r->sceneLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
+    r->terrainPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(TerrainPush), VK_SHADER_STAGE_VERTEX_BIT);
 
     VkDescriptorPoolSize sizes[4] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
@@ -361,6 +373,10 @@ void create_pipelines(Renderer *r) {
                     r->scenePL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, false, false };
     sky.colorFormat2 = HDR_FORMAT;
     r->skyPipe = make_graphics(vk, &sky);
+    GfxDesc terrain = { SPV_terrain_vert, sizeof(SPV_terrain_vert), SPV_terrain_frag, sizeof(SPV_terrain_frag),
+                        r->terrainPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
+    terrain.colorFormat2 = HDR_FORMAT;
+    r->terrainPipe = make_graphics(vk, &terrain);
     GfxDesc comp = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_composite_frag, sizeof(SPV_composite_frag),
                      r->compositePL, vk->swapFormat, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false };
     r->compositePipe = make_graphics(vk, &comp);

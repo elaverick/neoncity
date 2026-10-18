@@ -31,6 +31,19 @@ same city; screenshots of the same `--cam` with `--rain 0` show the renderer's r
   `clip_axis` in `streets.c`) differ in precision and edge labels; merging them would change generated geometry, so it
   needs a deliberate re-baseline of the fingerprint.
 
+## Terrain
+The clipmap is drawn out to `TERRAIN_DISTANCE` (`src/render/terrain_gpu.c`, `shaders/terrain/`); the milestones are in
+the terrain roadmap.
+- **Haze tuning.** Beyond the city the terrain takes a lighter haze of its own (`TERRAIN_HAZE`, 4000 m against the
+  city's 380, in `terrain.frag`), and within about 1.6 × `VIEW_DISTANCE` it takes the city's, so the fading city doesn't
+  stand out against it. Both are first guesses: the distant ridges barely show yet, and the land's colour (dark scrub
+  and rock under the lit cloud deck) is untuned. Judge from about 100 m up, below the cloud deck (inside it, at
+  250-300 m, the cloud hides everything), looking out past the city's edge, in drizzle and downpour.
+- **Frustum culling.** All nine rings are drawn every frame, whole (about 100k triangles each), whatever the camera
+  faces. Testing each ring, or blocks of it, against the frustum with bounds from `terrain_height_range` would skip
+  most of them; worth it once terrain shows in the GPU timings, or with the screen-space-error work (M7). It must only
+  choose what is drawn, never what the clipmap holds.
+
 ## Office lobbies (next)
 Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/mesh_lobby.c`).
 - **Furniture** is rough boxes; reception, sofas, cafe and cubicles want real assets. Planters hold

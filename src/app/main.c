@@ -212,6 +212,8 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
         char gpu[256];
         renderer_gpu_times(renderer, gpu, sizeof(gpu));
         printf("%s\n", gpu);
+        renderer_terrain_stats(renderer, gpu, sizeof(gpu));
+        printf("%s\n", gpu);
         printf("camera (%.1f, %.1f, %.1f) yaw %.1f pitch %.1f\n", player->eye[0], player->eye[1], player->eye[2],
                player->yaw * 180.0f / PI_F, player->pitch * 180.0f / PI_F);
     }

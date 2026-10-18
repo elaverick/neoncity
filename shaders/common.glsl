@@ -1,14 +1,15 @@
 #ifndef COMMON_GLSL
 #define COMMON_GLSL
 
+// VIEW_DISTANCE, TERRAIN_DISTANCE, NEAR_PLANE, FAR_PLANE: shared with C
+#include "distances.h"
+
 /* Must match src/core/common.h */
 const float CHUNK_SIZE      = 110.0;
 const float LAMP_HEIGHT     = 7.5;
 const float SIDEWALK_HEIGHT = 0.15;
 const float KERB_STONE_WIDTH = 0.32;
 const float DROP_RAMP_RUN = 1.5;
-const float NEAR_PLANE      = 0.08;
-const float FAR_PLANE       = 1995.0;   // VIEW_DISTANCE * 1.05 (reverse-Z projection, src/app/main.c)
 const float SHELTER_SIZE    = 1024.0;   // shelter map (src/core/common.h)
 const float SHELTER_LO      = -60.0;
 const float SHELTER_HI      = 500.0;
@@ -293,16 +294,24 @@ vec3 hazeColor(vec3 dir) {
     return c;
 }
 
-float fogAmount(vec3 rel, float dist) {
-    float viewDist = frame.camFwd.w;
-    float density = (1.0 + 1.2 * frame.weather.x) / 380.0;   // rain thickens the air
+// How much of the light from rel (camera-relative, dist away) the haze takes,
+// for air of the given density (per metre) at street level, thinning with
+// height to a quarter of that.
+float hazeAmount(vec3 rel, float dist, float density) {
     const float H = 110.0;                       // haze scale height
     float h0 = max(frame.camPos.y, 0.0);
     float h1 = max(frame.camPos.y + rel.y, 0.0);
     float dh = h1 - h0;
     float avg = abs(dh) > 1.0 ? H * (exp(-h0 / H) - exp(-h1 / H)) / dh : exp(-h0 / H);
-    float f = 1.0 - exp(-dist * density * (0.25 + 0.75 * avg));
-    return max(f, smoothstep(viewDist * 0.72, viewDist * 0.98, dist));
+    return 1.0 - exp(-dist * density * (0.25 + 0.75 * avg));
+}
+
+// The city's haze: total by the view distance, so chunks streaming in at the
+// edge never show.
+float fogAmount(vec3 rel, float dist) {
+    float viewDist = frame.camFwd.w;
+    float density = (1.0 + 1.2 * frame.weather.x) / 380.0;   // rain thickens the air
+    return max(hazeAmount(rel, dist, density), smoothstep(viewDist * 0.72, viewDist * 0.98, dist));
 }
 
 // The rain-cloud deck (clouds.comp) as reflections see it: an overcast lit

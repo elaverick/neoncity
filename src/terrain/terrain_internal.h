@@ -25,6 +25,11 @@
  * own, larger for small towns. */
 #define TERRAIN_URBAN_RELIEF_M 10.0
 #define TERRAIN_URBAN_WAVE     3000.0   /* its longest wavelength (m) */
+/* How far the drawn surface (TerrainSample) sits under terrain_height where
+ * plan_urban is 1, in proportion to it elsewhere: the city's lowest ground,
+ * the asphalt at y = -0.03 under its streets, then always wins the depth
+ * test, wherever the city's chunks happen to be loaded. */
+#define TERRAIN_URBAN_SINK_M   0.5
 #define TERRAIN_URBAN_OCTAVES  2
 
 #define TERRAIN_LAND_NEAR_M    12.0     /* land relief amplitude at the city's edge (m) */
@@ -48,6 +53,10 @@ double terrain_land_amplitude(double edge);
  * `octaves` kept at `spacing` (m); all of them at spacing 0. */
 int terrain_octaves(double wave, int octaves, double spacing);
 
+/* The drawn surface: terrain_height_lod less the urban sink. *urban, if not
+ * NULL, gets plan_urban at the point. */
+double terrain_surface_lod(double x, double z, double spacing, float *urban);
+
 /* Scratch sizes for a fill: a span (at most W a side) with a one-sample apron
  * for normals, and the parent samples under it. */
 #define TERRAIN_FILL_SIDE   (TERRAIN_CLIP_W + 2)
@@ -55,6 +64,6 @@ int terrain_octaves(double wave, int octaves, double spacing);
 
 /* Fills the samples of `span` (which must not wrap in storage; see
  * terrain_lod.c) on level `level` of c: heights at the level's spacing, the
- * parent's surface (hc) and normals. Every value written is a pure function of
+ * parent's surface (hc), normals and urban weights. Every value written is a pure function of
  * the level and the world sample. */
 void terrain_mesh_fill(TerrainClipmap *c, int level, TerrainSpan span);

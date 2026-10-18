@@ -81,19 +81,23 @@ endif()
 # the executable, so the game is a single self-contained binary.
 set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/spv)
-file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
+file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain)
 set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp
             cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
-            prepass.frag shadow_trace.comp shadow_denoise.comp)
+            prepass.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag)
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)
+# Shaders also include the #define-only headers they share with C.
+set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_clip.h)
+set(SHADER_SHARED_INC -I${CMAKE_CURRENT_SOURCE_DIR}/src/core -I${CMAKE_CURRENT_SOURCE_DIR}/src/terrain)
 file(GLOB_RECURSE SHADER_INCLUDES ${SHADER_SRC_DIR}/*.glsl)
+list(APPEND SHADER_INCLUDES ${SHADER_SHARED_HEADERS})
 set(SPV_OUTPUTS "")
 foreach(S ${SHADERS})
   set(OUT ${SHADER_OUT_DIR}/${S}.inc)
   add_custom_command(OUTPUT ${OUT}
-    COMMAND ${SHADER_CMD} -I${SHADER_SRC_DIR} -o ${OUT} ${SHADER_SRC_DIR}/${S}
+    COMMAND ${SHADER_CMD} -I${SHADER_SRC_DIR} ${SHADER_SHARED_INC} -o ${OUT} ${SHADER_SRC_DIR}/${S}
     DEPENDS ${SHADER_SRC_DIR}/${S} ${SHADER_INCLUDES} ${SHADER_DEP}
     COMMENT "Compiling shader ${S}" VERBATIM)
   list(APPEND SPV_OUTPUTS ${OUT})
@@ -105,7 +109,7 @@ foreach(V ${SHADER_VARIANTS})
   list(GET P 2 DEF)
   set(OUT ${SHADER_OUT_DIR}/${NAME}.inc)
   add_custom_command(OUTPUT ${OUT}
-    COMMAND ${SHADER_CMD} -I${SHADER_SRC_DIR} -D${DEF}=1 -o ${OUT} ${SHADER_SRC_DIR}/${SRC}
+    COMMAND ${SHADER_CMD} -I${SHADER_SRC_DIR} ${SHADER_SHARED_INC} -D${DEF}=1 -o ${OUT} ${SHADER_SRC_DIR}/${SRC}
     DEPENDS ${SHADER_SRC_DIR}/${SRC} ${SHADER_INCLUDES} ${SHADER_DEP}
     COMMENT "Compiling shader ${NAME}" VERBATIM)
   list(APPEND SPV_OUTPUTS ${OUT})
@@ -127,7 +131,7 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/dr
                 src/gen/interior_fixtures.c src/gen/interior_validate.c
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c)
 # Terrain (src/terrain): the ground everywhere, a pure function of position, and the clipmap that
-# samples it round the camera. Not in the game yet.
+# samples it round the camera (drawn by src/render/terrain_gpu.c).
 set(TERRAIN_SOURCES src/terrain/terrain_height.c src/terrain/terrain_lod.c src/terrain/terrain_mesh.c)
 
 # --- Tests: generator determinism ------------------------------------------------
@@ -191,7 +195,7 @@ endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/textures.c ${GEN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/core/thread.c)
+  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/textures.c ${GEN_SOURCES} ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/core/thread.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

@@ -100,7 +100,7 @@ static int in_window(const int64_t o[2], int64_t i, int64_t j) {
     return i >= o[0] && i < o[0] + TERRAIN_CLIP_W && j >= o[1] && j < o[1] + TERRAIN_CLIP_W;
 }
 
-/* Every sample of level l's window against the ground and its parent's own
+/* Every sample of level l's window against the drawn surface and its parent's own
  * samples. Needs l and every coarser level ready. */
 static void check_contents(const TerrainClipmap *c, int l) {
     const TerrainClipLevel *lv = &c->level[l], *pv = l + 1 < TERRAIN_CLIP_LEVELS ? &c->level[l + 1] : NULL;
@@ -109,7 +109,8 @@ static void check_contents(const TerrainClipmap *c, int l) {
     for (int64_t j = lv->origin[1]; j < lv->origin[1] + TERRAIN_CLIP_W; ++j)
         for (int64_t i = lv->origin[0]; i < lv->origin[0] + TERRAIN_CLIP_W; ++i) {
             const TerrainSample *t = terrain_clip_sample(lv, i, j);
-            float h = (float)terrain_height_lod((double)i * s, (double)j * s, s), hc = h;
+            float urban;
+            float h = (float)terrain_surface_lod((double)i * s, (double)j * s, s, &urban), hc = h;
             if (pv) {
                 int ox = i % 2 != 0, oz = j % 2 != 0;
                 int64_t a = (i - ox) / 2, b = (j - oz) / 2;
@@ -122,14 +123,15 @@ static void check_contents(const TerrainClipmap *c, int l) {
                 if (same && !ox && !oz && memcmp(&t->h, &hc, sizeof(float)) != 0 && bad++ < 5)
                     CHECK(0, "level %d sample (%lld, %lld) is %.6f, its parent's %.6f", l, (long long)i, (long long)j, t->h, hc);
             }
-            double gx = (terrain_height_lod((double)(i + 1) * s, (double)j * s, s) - terrain_height_lod((double)(i - 1) * s, (double)j * s, s)) / (2.0 * s);
-            double gz = (terrain_height_lod((double)i * s, (double)(j + 1) * s, s) - terrain_height_lod((double)i * s, (double)(j - 1) * s, s)) / (2.0 * s);
+            double gx = (terrain_surface_lod((double)(i + 1) * s, (double)j * s, s, NULL) - terrain_surface_lod((double)(i - 1) * s, (double)j * s, s, NULL)) / (2.0 * s);
+            double gz = (terrain_surface_lod((double)i * s, (double)(j + 1) * s, s, NULL) - terrain_surface_lod((double)i * s, (double)(j - 1) * s, s, NULL)) / (2.0 * s);
             double inv = 1.0 / sqrt(1.0 + gx * gx + gz * gz);
             int ok = memcmp(&t->h, &h, sizeof(float)) == 0 && memcmp(&t->hc, &hc, sizeof(float)) == 0 &&
-                     fabs(t->nx + gx * inv) <= 1e-6 && fabs(t->nz + gz * inv) <= 1e-6;
+                     fabs(t->nx + gx * inv) <= 1e-6 && fabs(t->nz + gz * inv) <= 1e-6 && t->urban == urban &&
+                     urban == plan_urban((double)i * s, (double)j * s);
             if (!ok && bad++ < 5)
-                CHECK(0, "level %d sample (%lld, %lld) holds h %.6f hc %.6f n (%.5f, %.5f), wants %.6f %.6f (%.5f, %.5f)", l, (long long)i, (long long)j,
-                      t->h, t->hc, t->nx, t->nz, h, hc, -gx * inv, -gz * inv);
+                CHECK(0, "level %d sample (%lld, %lld) holds h %.6f hc %.6f n (%.5f, %.5f) urban %.4f, wants %.6f %.6f (%.5f, %.5f) %.4f", l,
+                      (long long)i, (long long)j, t->h, t->hc, t->nx, t->nz, t->urban, h, hc, -gx * inv, -gz * inv, urban);
         }
 }
 
@@ -232,6 +234,7 @@ static uint64_t hash_clipmap(const TerrainClipmap *c, uint64_t h) {
                 h = fnv(&t->hc, sizeof(float), h);
                 h = fnv(&t->nx, sizeof(float), h);
                 h = fnv(&t->nz, sizeof(float), h);
+                h = fnv(&t->urban, sizeof(float), h);
             }
     }
     return h;

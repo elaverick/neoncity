@@ -29,16 +29,27 @@ static double land_at(double x, double z, double edge, double spacing) {
 double terrain_land(double x, double z) { return land_at(x, z, plan_city_edge(x, z), 0.0); }
 
 /* Each field is evaluated only where its weight is non-zero; that skips work
- * without changing any height. */
-double terrain_height_lod(double x, double z, double spacing) {
-    double edge = plan_city_edge(x, z);
-    double w = plan_urban_weight(edge), h = 0.0;
-    if (w < 1.0) h += (1.0 - w) * land_at(x, z, edge, spacing);
-    if (w > 0.0 && urban_relief() > 0.0) h += w * urban_relief() * urban_shape_lod(x, z, spacing);
+ * without changing any height. *w gets the urban weight. */
+static double height_lod(double x, double z, double spacing, double *w) {
+    double edge = plan_city_edge(x, z), h = 0.0;
+    *w = plan_urban_weight(edge);
+    if (*w < 1.0) h += (1.0 - *w) * land_at(x, z, edge, spacing);
+    if (*w > 0.0 && urban_relief() > 0.0) h += *w * urban_relief() * urban_shape_lod(x, z, spacing);
     return h;
 }
 
+double terrain_height_lod(double x, double z, double spacing) {
+    double w;
+    return height_lod(x, z, spacing, &w);
+}
+
 double terrain_height(double x, double z) { return terrain_height_lod(x, z, 0.0); }
+
+double terrain_surface_lod(double x, double z, double spacing, float *urban) {
+    double w, h = height_lod(x, z, spacing, &w);
+    if (urban) *urban = (float)w;
+    return h - TERRAIN_URBAN_SINK_M * w;
+}
 
 /* The height is a blend of urban (|h| <= its relief) and land (|h| <= its
  * amplitude, which grows with the edge measure), so it is bounded by whichever

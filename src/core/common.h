@@ -24,9 +24,7 @@
 #define DROP_KERB_HEIGHT  0.01f    /* a drop kerb's lowered stones, just proud of the road */
 #define DROP_RAMP_RUN     1.5f     /* the slope behind them, back up to the sidewalk (about 1:11) */
 
-/* Render distance: long, but deliberately finite. Haze reaches 100% exactly at
- * VIEW_DISTANCE so chunks streaming in at the edge are never visible popping. */
-#define VIEW_DISTANCE     1900.0f
+#include "distances.h"   /* VIEW_DISTANCE, TERRAIN_DISTANCE, NEAR_PLANE, FAR_PLANE */
 #define NEAR_RING_DIST    260.0f   /* chunks this close are kept regardless of view direction */
 /* Office lobbies are real geometry (src/gen/interior.c), streamed as a second
  * layer of chunks only this close; beyond REAL_GLASS_DIST (shaders/common.glsl)
@@ -37,8 +35,6 @@
  * Each item shrinks away in the vertex shader before its own fade distance
  * (a few metres for a cigarette butt, nearly this far for a bin bag). */
 #define LITTER_DISTANCE   120.0f
-#define NEAR_PLANE        0.08f
-#define FAR_PLANE         (VIEW_DISTANCE * 1.05f)
 
 /* GPU geometry pool: chunk meshes live in fixed-size pages of non-indexed
  * triangles so a chunk may occupy any set of free pages (no fragmentation). */

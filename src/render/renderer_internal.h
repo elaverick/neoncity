@@ -9,7 +9,8 @@
  *   renderer.c            the Renderer, settings, GPU timings, screenshots, create/destroy, the frame
  *   renderer_pipelines.c  descriptor set and pipeline layouts, the pipelines and their shaders
  *   renderer_targets.c    size-dependent render targets, the cloud noise volume, swapchain recreation
- *   renderer_passes.c     recording each pass: shelter map, prepass, shadows, reflections, clouds, bloom */
+ *   renderer_passes.c     recording each pass: shelter map, prepass, shadows, reflections, clouds, bloom
+ *   terrain_gpu.c         the terrain clipmap's GPU side: its samples' buffer and uploads, the ring meshes, drawing */
 
 #define HDR_FORMAT   VK_FORMAT_R16G16B16A16_SFLOAT
 #define DEPTH_FORMAT VK_FORMAT_D32_SFLOAT
@@ -30,6 +31,17 @@ typedef struct CompositePush {
     float shelter[4];   /* as FrameUBO.shelter */
 } CompositePush;
 typedef struct CloudPush { float zn, zf; } CloudPush;
+/* One terrain level's draw (shaders/terrain/terrain.vert: Level). */
+typedef struct TerrainPush {
+    float   anchor[2];   /* camera-relative x, z of the coarsest window's corner */
+    float   offset[2];   /* this window's corner less the anchor (m) */
+    float   spacing;
+    int32_t level;
+    int32_t slot[2];     /* storage slot of the window's corner */
+    int32_t pslot[2];    /* the parent's slot of the parent sample there */
+    int32_t top;
+} TerrainPush;
+typedef struct TerrainGpu TerrainGpu;
 /* GPU timestamps between the frame's passes (renderer_gpu_times). */
 enum { GT_START = 0, GT_STREAM, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_SCENE, GT_POST, GT_COUNT };
 struct Renderer {
@@ -62,6 +74,10 @@ struct Renderer {
     Textures    *textures;
     Image        cloudNoise;
     Image        shelter;   /* shelter map: top-down depth of the city round the camera (record_shelter) */
+    TerrainGpu  *terrain;   /* terrain_gpu.c */
+    VkDescriptorSetLayout terrainLayout;
+    VkPipelineLayout      terrainPL;
+    VkPipeline            terrainPipe;
     VkDescriptorPool      staticPool;
     VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout, cloudLayout, cloudCompLayout, ssrLayout, ssrApplyLayout;
     VkDescriptorSet       sceneSet[MAX_FRAMES];
@@ -123,3 +139,10 @@ void record_shadows(Renderer *r, VkCommandBuffer cmd, int slot);
 void record_reflections(Renderer *r, VkCommandBuffer cmd, int slot);
 void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows);
 void record_composite(Renderer *r, VkCommandBuffer cmd, uint32_t imageIndex, const FrameUBO *ubo);
+
+/* terrain_gpu.c. Update moves the clipmap to the camera and records the
+ * uploads (outside any rendering); draw records the rings into the scene pass. */
+void terrain_gpu_create(Renderer *r);
+void terrain_gpu_destroy(Renderer *r);
+void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3]);
+void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);

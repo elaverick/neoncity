@@ -46,25 +46,25 @@ void   terrain_height_range(double x0, double z0, double x1, double z1, double *
  * parent (terrain_clip_morph), reaching it exactly at the edge, so neighbouring
  * rings meet without cracks or pops. */
 
-#define TERRAIN_CLIP_LEVELS   9
-#define TERRAIN_CLIP_N        128                     /* storage side, slots (power of two) */
-#define TERRAIN_CLIP_W        (TERRAIN_CLIP_N - 1)    /* window side, samples; W - 1 even, (W - 1) / 2 odd */
-#define TERRAIN_CLIP_SPACING0 1.0                     /* level 0 sample spacing (m); level 8 spans 32 km */
-#define TERRAIN_CLIP_MORPH    12                      /* width of the blend into the parent, samples */
+#include "terrain_clip.h"   /* TERRAIN_CLIP_LEVELS, _N, _W, _SPACING0, _MORPH: shared with the shaders */
 /* Samples filled per update when the camera has jumped: the whole clipmap is
  * about 9 levels' worth, so a jump takes about 9 updates to fill in. */
 #define TERRAIN_CLIP_BUDGET   (TERRAIN_CLIP_W * TERRAIN_CLIP_W)
 #define TERRAIN_CLIP_MAX_SPANS 8                      /* pieces of one level's update (see terrain_lod.c) */
 #define TERRAIN_CLIP_MAX_DIRTY (2 * TERRAIN_CLIP_MAX_SPANS)
 
-/* One sample. Heights are world Y (m); (nx, nz) are the x and z components of
- * the unit normal (ny = sqrt(1 - nx^2 - nz^2)), from the level's own heights.
- * hc is the parent level's surface at this sample: its sample where the two
- * coincide (i and j even), the mean of the two parent samples either side
- * along an edge, and at a parent cell's centre the mean of the two ends of the
- * cell's diagonal from (i - 1, j - 1) to (i + 1, j + 1), which is how the
- * parent's grid must be triangulated. On the coarsest level hc = h. */
-typedef struct TerrainSample { float h, hc, nx, nz; } TerrainSample;
+/* One sample of the drawn surface: terrain_height_lod at the level's spacing,
+ * sunk a little under the city (see terrain_internal.h) so the city's own
+ * ground always covers it. Heights are world Y (m); (nx, nz) are the x and z
+ * components of the unit normal (ny = sqrt(1 - nx^2 - nz^2)), from the
+ * level's own heights. hc is the parent level's surface at this sample: its
+ * sample where the two coincide (i and j even), the mean of the two parent
+ * samples either side along an edge, and at a parent cell's centre the mean
+ * of the two ends of the cell's diagonal from (i - 1, j - 1) to
+ * (i + 1, j + 1), which is how the parent's grid must be triangulated. On the
+ * coarsest level hc = h. urban is plan_urban there: 1 in the city, 0 beyond
+ * its belt (the renderer hazes the two differently). */
+typedef struct TerrainSample { float h, hc, nx, nz, urban; } TerrainSample;
 
 /* A rectangle of storage slots, [x0, x1) x [z0, z1); never wraps. */
 typedef struct TerrainRect { int x0, z0, x1, z1; } TerrainRect;

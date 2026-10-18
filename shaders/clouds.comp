@@ -231,7 +231,9 @@ void main() {
     vec3 ro = frame.camPos.xyz;
     imageStore(mistOut, hp, vec4(mistLight(dir, tScene, frame.weather.x), 1.0));
 
-    // The ray's span inside the cloud layer, up to the scene and the view distance.
+    // The ray's span inside the cloud layer, up to the scene and the view
+    // distance. Terrain is drawn further, but the deck's own haze (fogAmount
+    // below) is total by the view distance, so marching on would add nothing.
     float lo = SCUD_LO, hi = CLOUD_TOP, t0, t1;
     if (abs(dir.y) < 1e-5) {
         t0 = 0.0;
