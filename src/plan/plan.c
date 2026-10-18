@@ -1,6 +1,7 @@
 #include "plan.h"
 #include "hash.h"
 #include "mathlib.h"
+#include "noise.h"
 
 #define VERT_EPS        0.05     /* metres: vertices closer than this are the same junction */
 #define MAX_TOWN_SEEDS  48
@@ -53,18 +54,7 @@ static void town_strength(Site t, float *intensity, float *sigma) {
  * Density: one peak per town centre, so the city has many centres
  * ========================================================================= */
 
-static float lattice(int64_t x, int64_t z, uint32_t salt) { return hash_float(hash2i(WORLD_SEED ^ salt, (int32_t)x, (int32_t)z)); }
-
-static float vnoise(double x, double z, uint32_t salt) {
-    double fx0 = floor(x), fz0 = floor(z);
-    int64_t ix = (int64_t)fx0, iz = (int64_t)fz0;
-    float fx = (float)(x - fx0), fz = (float)(z - fz0);
-    fx = fx * fx * (3.0f - 2.0f * fx);
-    fz = fz * fz * (3.0f - 2.0f * fz);
-    float a = lattice(ix, iz, salt), b = lattice(ix + 1, iz, salt);
-    float c = lattice(ix, iz + 1, salt), d = lattice(ix + 1, iz + 1, salt);
-    return lerpf(lerpf(a, b, fx), lerpf(c, d, fx), fz);
-}
+static float vnoise(double x, double z, uint32_t salt) { return noise_value2(WORLD_SEED ^ salt, x, z); }
 
 float plan_density(double x, double z) {
     /* Peaks are windowed to zero by 1.8 km, which is never closer than the
@@ -95,6 +85,21 @@ float plan_affluence(double x, double z) {
                    + 0.35 * (vnoise(x / 430.0, z / 430.0, 0xAF1Bu) - 0.5);
     return clampf((float)a, 0.0f, 1.0f);
 }
+
+/* ===========================================================================
+ * The city's footprint
+ * ========================================================================= */
+
+double plan_city_edge(double x, double z) {
+    DVec2 c = plan_town_centre(0, 0);
+    double wx = CITY_WARP1_M * (2.0 * vnoise(x / CITY_WARP1_WAVE, z / CITY_WARP1_WAVE, 0xED61u) - 1.0)
+              + CITY_WARP2_M * (2.0 * vnoise(x / CITY_WARP2_WAVE, z / CITY_WARP2_WAVE, 0xED63u) - 1.0);
+    double wz = CITY_WARP1_M * (2.0 * vnoise(x / CITY_WARP1_WAVE, z / CITY_WARP1_WAVE, 0xED62u) - 1.0)
+              + CITY_WARP2_M * (2.0 * vnoise(x / CITY_WARP2_WAVE, z / CITY_WARP2_WAVE, 0xED64u) - 1.0);
+    return hypot(x - c.x + wx, z - c.z + wz) - CITY_RADIUS;
+}
+
+float plan_urban(double x, double z) { return plan_urban_weight(plan_city_edge(x, z)); }
 
 /* ===========================================================================
  * Convex polygons with per-edge road attributes

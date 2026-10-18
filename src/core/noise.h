@@ -1,0 +1,42 @@
+#pragma once
+#include "hash.h"
+#include "mathlib.h"
+
+/* Value noise on the integer lattice, for slow procedural fields (the plan's
+ * density and affluence, terrain). Coordinates are in lattice units: divide a
+ * world position by the wavelength wanted. A pure function of (seed, x, z).
+ *
+ * The output feeds generated geometry, so changing the arithmetic here (the
+ * fade curve, float vs double, the lattice hash) changes the city: check
+ * city_test --fingerprint. */
+
+static inline float noise_lattice(uint32_t seed, int64_t x, int64_t z) { return hash_float(hash2i(seed, (int32_t)x, (int32_t)z)); }
+
+/* [0, 1). Smoothstep fade, so the field is C1 and its gradient is at most
+ * 1.5 per lattice unit along each axis. */
+static inline float noise_value2(uint32_t seed, double x, double z) {
+    double fx0 = floor(x), fz0 = floor(z);
+    int64_t ix = (int64_t)fx0, iz = (int64_t)fz0;
+    float fx = (float)(x - fx0), fz = (float)(z - fz0);
+    fx = fx * fx * (3.0f - 2.0f * fx);
+    fz = fz * fz * (3.0f - 2.0f * fz);
+    float a = noise_lattice(seed, ix, iz), b = noise_lattice(seed, ix + 1, iz);
+    float c = noise_lattice(seed, ix, iz + 1), d = noise_lattice(seed, ix + 1, iz + 1);
+    return lerpf(lerpf(a, b, fx), lerpf(c, d, fx), fz);
+}
+
+/* Signed fractal sum in [-1, 1]: octave k has wavelength 2^-k (lattice units)
+ * and weight 2^-k, normalised by the total weight, so the octave count of a
+ * call site fixes its scale and must not vary with level of detail. Each
+ * octave has its own seed and a fixed offset, so their lattices don't line up. */
+static inline float noise_fbm2(uint32_t seed, double x, double z, int octaves) {
+    double sum = 0.0, wsum = 0.0, w = 1.0, f = 1.0;
+    for (int k = 0; k < octaves; ++k) {
+        float v = noise_value2(hash_combine(seed, (uint32_t)k), x * f + 17.31 * k, z * f - 41.77 * k);
+        sum += w * (2.0 * v - 1.0);
+        wsum += w;
+        w *= 0.5;
+        f *= 2.0;
+    }
+    return (float)(sum / wsum);
+}

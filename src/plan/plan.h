@@ -1,6 +1,7 @@
 #pragma once
 #include "common.h"
 #include "geom2d.h"
+#include "mathlib.h"
 
 /* The city plan: a polycentric, cellular layout in the spirit of Singapore's
  * new towns, generated as a pure function of world position.
@@ -27,6 +28,22 @@
 #define PLAN_MAX_PV        24
 #define PLAN_MAX_ROADS    512
 #define PLAN_MAX_BLOCKS   384
+
+/* The city is finite: a disc round town (0,0)'s centre, its edge warped by two
+ * octaves of value noise so it doesn't read as a circle. Inside the edge, a
+ * belt where the city gives way to the land around it. Metres. */
+#define CITY_RADIUS     10000.0
+#define CITY_BELT        1500.0
+#define CITY_WARP1_M     1800.0   /* warp amplitude and wavelength, first octave */
+#define CITY_WARP1_WAVE  6000.0
+#define CITY_WARP2_M      500.0   /* second octave */
+#define CITY_WARP2_WAVE  2000.0
+/* Bound on how fast plan_city_edge changes, metres per metre. Each warp
+ * component's gradient is at most 3*sqrt(2)*(M1/WAVE1 + M2/WAVE2) (value
+ * noise: 1.5 per lattice unit per axis), so the warp's Jacobian has norm at
+ * most 6*(...), and the edge (a length through it) changes by at most 1 plus
+ * that. A little over, for float rounding. */
+#define CITY_EDGE_RATE  (1.0 + 6.0 * (CITY_WARP1_M / CITY_WARP1_WAVE + CITY_WARP2_M / CITY_WARP2_WAVE) + 0.01)
 
 enum { ROAD_NONE = 0, ROAD_LOCAL, ROAD_ARTERIAL, ROAD_BOULEVARD };
 enum { ZONE_CORE = 0, ZONE_CENTRE, ZONE_RESIDENTIAL, ZONE_INDUSTRIAL, ZONE_PARK };
@@ -77,6 +94,19 @@ float plan_density(double x, double z);
 /* Affluence 0 (poor) .. 1 (wealthy): highest in the regional cores, with whole
  * districts and neighbourhoods better or worse off than their density says. */
 float plan_affluence(double x, double z);
+/* Signed distance-like measure to the city's edge, metres: negative inside,
+ * positive outside, continuous, changing by at most CITY_EDGE_RATE per metre
+ * (it is a distance in the warped frame, not the true distance). */
+double plan_city_edge(double x, double z);
+/* Urban weight: 1 inside the city, falling smoothly to 0 across the belt and
+ * 0 beyond the edge. Terrain reads it to keep the ground under the city gentle. */
+float  plan_urban(double x, double z);
+/* The same weight from a plan_city_edge value already in hand: exactly 1 for
+ * edge <= -CITY_BELT, exactly 0 for edge >= 0. */
+static inline float plan_urban_weight(double edge) {
+    float t = clampf((float)((edge + CITY_BELT) / CITY_BELT), 0.0f, 1.0f);
+    return 1.0f - t * t * (3.0f - 2.0f * t);
+}
 
 /* Every road and block whose footprint touches the rectangle. PlanArea is
  * large; allocate it on the heap. */

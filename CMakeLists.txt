@@ -116,7 +116,7 @@ add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 # Compiled into each target rather than built once as a library: the game
 # builds them with /fp:fast and the static runtime, the tests and labs without.
 # Sources live in src/<module>/; every module directory is on the include path.
-set(SRC_DIRS src/core src/plan src/gen src/city src/render src/app)
+set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/render src/app)
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_lobby.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
@@ -126,6 +126,8 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/dr
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
                 src/gen/interior_fixtures.c src/gen/interior_validate.c
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c)
+# Terrain (src/terrain): the ground everywhere, a pure function of position. Not in the game yet.
+set(TERRAIN_SOURCES src/terrain/terrain_height.c)
 
 # --- Tests: generator determinism ------------------------------------------------
 enable_testing()
@@ -146,7 +148,10 @@ target_include_directories(interior_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # (plant_lab [seeds] [out_dir]).
 add_executable(plant_lab tests/plant_lab.c src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c)
 target_include_directories(plant_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
-foreach(T city_test city_map building_lab interior_lab plant_lab)
+# Terrain determinism, bounds, slopes and the city footprint (terrain_test [--fingerprint]).
+add_executable(terrain_test tests/terrain_test.c ${TERRAIN_SOURCES} ${GEN_SOURCES})
+target_include_directories(terrain_test PRIVATE ${SRC_DIRS})
+foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test)
   if(MSVC)
     target_compile_options(${T} PRIVATE /W3 /wd4996)
   else()
@@ -162,6 +167,7 @@ add_test(NAME interior_rules COMMAND interior_lab 1500)
 add_test(NAME plant_rules COMMAND plant_lab 12)
 # Arcology interiors over a wide area (only mega plots are generated, so it is quick).
 add_test(NAME arcology_rules COMMAND interior_lab arcology 12000)
+add_test(NAME terrain_rules COMMAND terrain_test)
 
 # --- Tools: PBR texture packer --------------------------------------------------
 # Converts an ambientCG-style download into assets/textures/<name>/ (see README).
