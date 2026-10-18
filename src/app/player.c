@@ -48,7 +48,8 @@ static bool in_curb(const CurbPoly *c, double x, double z) {
     return c->n >= 3;
 }
 
-static float ground_height(double x, double z) {
+/* Height of what is underfoot above the city's ground: a drop kerb, a sidewalk or the road. */
+static float kerb_height(double x, double z) {
     int cx = (int)floor(x / CHUNK_SIZE), cz = (int)floor(z / CHUNK_SIZE);
     const BlockLayout *L = layout_get(cx, cz);
     for (int i = 0; i < L->ndrops; ++i)
@@ -57,6 +58,8 @@ static float ground_height(double x, double z) {
         if (in_curb(&L->curb[i], x, z)) return SIDEWALK_HEIGHT;
     return 0.0f;
 }
+
+static float ground_height(double x, double z) { return city_ground_y(x, z) + kerb_height(x, z); }
 
 /* Push a circle out of an axis-aligned rectangle. */
 static void push_out(float *px, float *pz, Rect r) {
@@ -145,7 +148,7 @@ void player_init(Player *p) {
     memset(p, 0, sizeof(*p));
     /* Start on a sidewalk in the central regional centre, looking along the street. */
     city_spawn(&p->feet[0], &p->feet[2], &p->yaw);
-    p->feet[1] = SIDEWALK_HEIGHT;
+    p->feet[1] = city_ground_y(p->feet[0], p->feet[2]) + SIDEWALK_HEIGHT;
     p->pitch = 0.04f;
     p->onGround = true;
     p->fovY = BASE_FOV;

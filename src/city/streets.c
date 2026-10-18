@@ -17,11 +17,13 @@ uint32_t lamp_fault(const Lamp *L) {
     return state | (hash_u32(h) & 0x3FFFFFu) << 2;
 }
 
-/* Pole at the origin, arm along +x (the emission transform turns it to the road). */
+/* Pole at the origin, arm along +x (the emission transform turns it to the
+ * road and stands it on the ground). */
 void build_lamp(Mesh *m, const ChunkGen *g, const Lamp *L, uint32_t idx) {
     m->xf = 1;
     m->xc = L->dx; m->xs = L->dz;
     m->xx = (float)(L->x - g->ox); m->xz = (float)(L->z - g->oz);
+    m->xy = city_ground_y(L->x, L->z);
     const float gy = SIDEWALK_HEIGHT, top = LAMP_HEIGHT;
     Mat metal = mat(MAT_METAL, idx, 4, 0, 0);
     emit_box(m, v3(-0.11f, gy, -0.11f), v3(0.11f, top, 0.11f), F_NOBOT, metal, UV_FACADE);

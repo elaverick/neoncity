@@ -135,7 +135,8 @@ static int block_drops(LGen *g, int bi, const DropKerb **out) {
     return g->nd[bi];
 }
 
-/* What the ground is at (x, z) and how high it stands (src/city/streets.c: build_roads, build_blocks). */
+/* What the ground is at (x, z) and how high it stands above city_ground_y
+ * (src/city/streets.c: build_roads, build_blocks). */
 static Ground ground_at(LGen *g, double x, double z) {
     Ground gr = { G_ROAD, -1, BASE_Y };
     for (int k = 0; k < g->c.pa->nblocks; ++k) {
@@ -237,7 +238,7 @@ static int site_ok(LGen *g, double x, double z, float rad, int want, float *y) {
         top = maxf(top, e.y);
     }
     if (c.type != G_ROAD && blocked(g, x, z, rad)) return 0;
-    *y = top;
+    *y = top + city_ground_y(x, z);
     return 1;
 }
 
@@ -908,13 +909,7 @@ static void lampposts(LGen *g) {
 
 void city_build_litter(int cx, int cz, Mesh *m) {
     LGen g;
-    m->count = 0;
-    m->xf = 0;
-    m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
-    m->mx[0] = m->mx[1] = m->mx[2] = -1e30f;
-    free(m->lights);
-    m->lights = NULL;
-    m->nlights = 0;
+    mesh_begin(m, cx, cz);
     lgen_init(&g, cx, cz, m);
     kerbs(&g);
     scatter(&g);

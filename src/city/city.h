@@ -111,6 +111,9 @@ typedef struct Mesh {
     uint32_t  nair, capair;
     int       xf;        /* emission transform: local frame -> chunk-local */
     float     xc, xs, xx, xz;
+    float     xy;        /* ...raised this far: a building's or a lamp's base on the ground (city_ground_y) */
+    int       drape;     /* each vertex is raised by the ground under it: the streets' surfaces */
+    double    ox, oz;    /* the chunk's origin in the world, for the ground under a vertex */
 } Mesh;
 
 float    city_height_cap(int cx, int cz);       /* conservative upper bound of anything in the chunk */
@@ -139,13 +142,19 @@ int      city_block_buildings(const Block *bk, Building *out, int max);
  * every crosswalk. Uses the roads of the plan area along the block's edges. */
 int      city_block_drops(const PlanArea *pa, const Block *bk, DropKerb *out, int max);
 /* Whether (x, z) lies in a drop kerb's outline (grown by margin), and the
- * height of its ground there. */
+ * height of its ground there, above city_ground_y. */
 int      city_drop_contains(const DropKerb *d, double x, double z, double margin);
 float    city_drop_height(const DropKerb *d, double x, double z);
 /* Lamp poles along road `ri` of a plan area, limited to a rectangle. */
 int      city_road_lamps(const PlanArea *pa, int ri, double x0, double z0, double x1, double z1, Lamp *out, int max);
 /* A spot on a sidewalk in the central regional centre, facing along the street. */
 void     city_spawn(double *x, double *z, float *yaw);
+/* The ground the city stands on at world (x, z), world Y (m): the height the
+ * city's own heights count from. Marked carriageways lie on it, sidewalks
+ * SIDEWALK_HEIGHT above it, and a building's frame (src/gen, from G0) is
+ * raised by it at the building's base. It is the terrain's urban ground
+ * (terrain_urban_height in src/terrain). */
+float    city_ground_y(double x, double z);
 
 /* Facade rhythm shared with the shader (shaders/common.glsl: facadeFloorH/facadeGroundH). */
 float    city_floor_height(uint32_t seed);

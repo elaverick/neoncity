@@ -74,9 +74,9 @@ static inline int inside_building(const Building *b, double wx, double wz, doubl
 
 /* A surface's material: the vertex seed, params (material and its parameters) and aux. */
 typedef struct Mat { uint32_t seed; uint8_t p[4]; uint32_t aux; } Mat;
-/* Emission frames compose: a building's frame inside the chunk, a face's
- * frame inside the building (x along the face, z out of it). */
-typedef struct Xf { int on; float c, s, x, z; } Xf;
+/* Emission frames compose: a building's frame inside the chunk, raised to its
+ * base, then a face's frame inside the building (x along the face, z out of it). */
+typedef struct Xf { int on; float c, s, x, z, y; } Xf;
 enum { F_NX = 1, F_PX = 2, F_NZ = 4, F_PZ = 8, F_TOP = 16, F_BOT = 32, F_SIDES = 15, F_NOBOT = 31 };
 enum { UV_FACADE = 0, UV_UNIT = 1 };
 /* A face in its own frame: origin at its left corner on the ground, x along it, z out of it. */
@@ -118,6 +118,11 @@ typedef struct Planting { PlantSpot *s; int n, cap; } Planting;
 /* city.c */
 uint32_t style_hash(uint32_t seed);
 uint8_t lobby_accent(uint32_t seed);
+/* Where a building's frame stands: the ground at its plot's origin (world Y, m).
+ * Its sections' heights (src/gen, from G0) count from there. */
+float building_base(const Building *b);
+/* Emits in building b's frame from here on (xf_restore or m->xf = 0 to leave). */
+void enter_building(Mesh *m, const ChunkGen *g, const Building *b);
 
 /* drops.c */
 int clip_hp(const DVec2 *in, const uint8_t *li, int n, DVec2 nr, double c, uint8_t lab, DVec2 *out, uint8_t *lo);
@@ -125,7 +130,10 @@ double area2(const DVec2 *p, int n);
 float drop_y(double d);
 
 /* mesh_emit.c */
-/* One vertex, through the emission transform; the mesh's bounds grow to hold it. */
+/* Empties m for chunk (cx, cz)'s layer: no vertices, lights or transform, bounds reset. */
+void mesh_begin(Mesh *m, int cx, int cz);
+/* One vertex, through the emission transform (and onto the ground, if draping);
+ * the mesh's bounds grow to hold it. */
 void mesh_push(Mesh *m, vec3 p, vec3 n, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux);
 /* As mesh_push, with w in the normal's fourth component (litter: ambient occlusion). */
 void mesh_push_w(Mesh *m, vec3 p, vec3 n, int8_t w, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux);

@@ -17,8 +17,9 @@
  * detail (terrain_height_lod) leaves out the octaves its spacing can't carry
  * but never renormalises the rest, so coarse levels don't reshape the land. */
 
-/* The city's streets are still built flat at y = 0 (src/city), so its relief
- * stays off until the city builds on terrain_height. */
+/* The city reads its ground from terrain_urban_height (city_ground_y), but
+ * its streets are still emitted as large flat polygons, so the relief stays
+ * off until they are tessellated onto the grade. */
 #define TERRAIN_URBAN_GRADED   0
 /* Urban relief amplitude when graded (m). Megacities are kept nearly flat;
  * once the plan has more than one settlement, this becomes the settlement's

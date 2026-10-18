@@ -1,4 +1,5 @@
 #include "city_internal.h"
+#include "terrain.h"
 
 /* The city generator's entry points (see city.h): a chunk's mesh, its office
  * lobbies and their plants. The parts they are made of are listed in
@@ -14,6 +15,17 @@ float city_height_cap(int cx, int cz) {
     float d = plan_density((cx + 0.5) * (double)CHUNK_SIZE, (cz + 0.5) * (double)CHUNK_SIZE) + 0.22f;
     if (d >= 0.92f) return 800.0f;
     return 140.0f + 420.0f * minf(d, 1.0f);
+}
+
+float city_ground_y(double x, double z) { return (float)terrain_urban_height(x, z); }
+
+float building_base(const Building *b) { return city_ground_y(b->ox, b->oz); }
+
+void enter_building(Mesh *m, const ChunkGen *g, const Building *b) {
+    m->xf = 1;
+    m->xc = b->c; m->xs = b->s;
+    m->xx = (float)(b->ox - g->ox); m->xz = (float)(b->oz - g->oz);
+    m->xy = building_base(b);
 }
 
 /* Facade rhythm shared with shaders/common.glsl */
@@ -47,24 +59,18 @@ int city_shop_lit(uint32_t h, int level) { return hash_float(h) < (float)level *
 void city_build_mesh(int cx, int cz, Mesh *m) {
     ChunkGen g;
     chunk_gen_init(&g, cx, cz, 130.0, 90.0, 105.0);
-    m->count = 0;
-    m->xf = 0;
-    m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
-    m->mx[0] = m->mx[1] = m->mx[2] = -1e30f;
-    free(m->lights);
-    m->lights = NULL;
-    m->nlights = 0;
+    mesh_begin(m, cx, cz);
 
+    m->drape = 1;   /* the streets' surfaces lie on the ground, vertex by vertex */
     build_roads(m, &g);
     build_blocks(m, &g);
+    m->drape = 0;
     for (int i = 0; i < g.nl; ++i)
         if (chunk_gen_owns(&g, g.lamp[i].x, g.lamp[i].z)) build_lamp(m, &g, &g.lamp[i], (uint32_t)i);
     for (int i = 0; i < g.nb; ++i) {
         const Building *b = &g.bld[i];
         if (!chunk_gen_owns(&g, b->ox, b->oz)) continue;
-        m->xf = 1;
-        m->xc = b->c; m->xs = b->s;
-        m->xx = (float)(b->ox - g.ox); m->xz = (float)(b->oz - g.oz);
+        enter_building(m, &g, b);
         const BGraph *bg = chunk_gen_graph(&g, i);
         Interiors in;
         interiors_plan(b, bg, &in);
@@ -82,22 +88,14 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
 void city_build_interiors(int cx, int cz, Mesh *m) {
     ChunkGen g;
     chunk_gen_init(&g, cx, cz, 25.0, 0.0, 0.0);
-    m->count = 0;
-    m->xf = 0;
-    m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
-    m->mx[0] = m->mx[1] = m->mx[2] = -1e30f;
-    free(m->lights);
-    m->lights = NULL;
-    m->nlights = 0;
+    mesh_begin(m, cx, cz);
     for (int i = 0; i < g.nb; ++i) {
         const Building *b = &g.bld[i];
         if (!chunk_gen_owns(&g, b->ox, b->oz)) continue;
         const BGraph *bg = chunk_gen_graph(&g, i);
         Interiors in;
         interiors_plan(b, bg, &in);
-        m->xf = 1;
-        m->xc = b->c; m->xs = b->s;
-        m->xx = (float)(b->ox - g.ox); m->xz = (float)(b->oz - g.oz);
+        enter_building(m, &g, b);
         for (int k = 0; k < in.n; ++k) emit_interior(m, bg, in.lay[k]);
         if (in.arc) emit_arcology(m, bg, in.arc);
         m->xf = 0;
@@ -109,13 +107,7 @@ void city_build_interiors(int cx, int cz, Mesh *m) {
 void city_build_plants(int cx, int cz, Mesh *m) {
     ChunkGen g;
     chunk_gen_init(&g, cx, cz, 25.0, 0.0, 0.0);
-    m->count = 0;
-    m->xf = 0;
-    m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
-    m->mx[0] = m->mx[1] = m->mx[2] = -1e30f;
-    free(m->lights);
-    m->lights = NULL;
-    m->nlights = 0;
+    mesh_begin(m, cx, cz);
     Planting pl = { NULL, 0, 0 };
     ILayout *L = NULL;
     for (int i = 0; i < g.nb; ++i) {
@@ -126,9 +118,7 @@ void city_build_plants(int cx, int cz, Mesh *m) {
         int secs[2], ns = interior_sections(bg, secs, 2);
         if (!ns) continue;
         if (!L && !(L = (ILayout *)malloc(sizeof(ILayout)))) fatal("out of memory planning an interior");
-        m->xf = 1;
-        m->xc = b->c; m->xs = b->s;
-        m->xx = (float)(b->ox - g.ox); m->xz = (float)(b->oz - g.oz);
+        enter_building(m, &g, b);
         for (int k = 0; k < ns; ++k)
             if (interior_plan(b, bg, secs[k], 0, L, NULL)) collect_plants(m, bg, L, &pl);
         m->xf = 0;

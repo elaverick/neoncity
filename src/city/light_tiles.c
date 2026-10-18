@@ -48,8 +48,9 @@ void build_lights(Mesh *m, ChunkGen *g) {
         if (x < bx0 - 34.0f || x > bx1 + 34.0f || z < bz0 - 34.0f || z > bz1 + 34.0f) continue;
         uint32_t fault = lamp_fault(L);
         if ((fault & 3u) == 1u) continue;   /* dead: lights nothing */
-        ADD_LIGHT(x, LAMP_HEIGHT - 0.4f, z, 34.0f, (uint32_t)L->type | fault << 2);
-        air_light(m, x, LAMP_HEIGHT - 0.4f, z, 70.0f, 0.0f, 0.0f, fault, (L->type ? AIR_LAMP_LED : AIR_LAMP_SODIUM) << 8);
+        float y = city_ground_y(L->x, L->z) + (LAMP_HEIGHT - 0.4f);
+        ADD_LIGHT(x, y, z, 34.0f, (uint32_t)L->type | fault << 2);
+        air_light(m, x, y, z, 70.0f, 0.0f, 0.0f, fault, (L->type ? AIR_LAMP_LED : AIR_LAMP_SODIUM) << 8);
     }
     for (int i = 0; i < g->nb; ++i) {
         const Building *b = &g->bld[i];
@@ -58,6 +59,7 @@ void build_lights(Mesh *m, ChunkGen *g) {
         float lx = (float)(b->ox - g->ox), lz = (float)(b->oz - g->oz);
         if (lx < bx0 - rr || lx > bx1 + rr || lz < bz0 - rr || lz > bz1 + rr) continue;
         const BGraph *bg = chunk_gen_graph(g, i);
+        float base = building_base(b);   /* the sections' heights count from here */
         if (bg->archetype == ARCH_ARCOLOGY) {
             /* the arcology's real lights: cold light from the crown, sodium in the portals */
             Interiors in;
@@ -69,7 +71,7 @@ void build_lights(Mesh *m, ChunkGen *g) {
                 DVec2 w = to_world(b, ax, az);
                 float x = (float)(w.x - g->ox), z = (float)(w.z - g->oz);
                 if (x < bx0 - 34.0f || x > bx1 + 34.0f || z < bz0 - 34.0f || z > bz1 + 34.0f) continue;
-                ADD_LIGHT(x, al->y, z, 34.0f, (uint32_t)al->type | (uint32_t)(al->type == AL_COLD ? LE_ARC_CROWN : LE_ARC_SODIUM) << 26);
+                ADD_LIGHT(x, base + al->y, z, 34.0f, (uint32_t)al->type | (uint32_t)(al->type == AL_COLD ? LE_ARC_CROWN : LE_ARC_SODIUM) << 26);
             }
             interiors_free(&in);
         }
@@ -103,8 +105,8 @@ void build_lights(Mesh *m, ChunkGen *g) {
                     float nx = b->c * -e.ez - b->s * e.ex, nz = b->s * -e.ez + b->c * e.ex;   /* out of the shopfront */
                     uint32_t face = (uint32_t)(int)floorf(atan2f(nz, nx) / 6.2831853f * 256.0f + 256.5f) & 255u;
                     uint32_t bay = (uint32_t)minf((u1 - u0) * 4.0f + 0.5f, 63.0f);
-                    ADD_LIGHT(x, SIDEWALK_HEIGHT + 1.4f, z, 12.0f, (h & 0xFFFFu) | face << 16 | bay << 24);
-                    air_light(m, x, SIDEWALK_HEIGHT + 2.0f, z, 5.0f, nx, nz, h, ((h & 3u) == 2u ? AIR_SHOP : AIR_LOBBY) << 8);
+                    ADD_LIGHT(x, base + (SIDEWALK_HEIGHT + 1.4f), z, 12.0f, (h & 0xFFFFu) | face << 16 | bay << 24);
+                    air_light(m, x, base + (SIDEWALK_HEIGHT + 2.0f), z, 5.0f, nx, nz, h, ((h & 3u) == 2u ? AIR_SHOP : AIR_LOBBY) << 8);
                 }
             }
         }

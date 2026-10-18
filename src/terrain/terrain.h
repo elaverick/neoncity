@@ -14,6 +14,13 @@
 /* Ground height at a point. */
 double terrain_height(double x, double z);
 
+/* The ground the city builds on (city_ground_y in src/city): the urban relief
+ * alone, never blended into the land, so it stays gentle everywhere. Where
+ * plan_urban is 1 it is terrain_height, bit for bit. Until the plan is
+ * bounded the city also stands beyond its footprint, on this same ground,
+ * while the land drawn there rises past it. */
+double terrain_urban_height(double x, double z);
+
 /* The same ground as sampled every `spacing` metres: detail too fine for that
  * spacing to carry is left out, the rest is unchanged (no renormalising, so
  * coarse samples don't drift from terrain_height by more than the dropped

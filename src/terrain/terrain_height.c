@@ -45,6 +45,11 @@ double terrain_height_lod(double x, double z, double spacing) {
 
 double terrain_height(double x, double z) { return terrain_height_lod(x, z, 0.0); }
 
+/* height_lod's urban term at w = 1: 0 + 1 * relief * shape is relief * shape exactly. */
+double terrain_urban_height(double x, double z) {
+    return urban_relief() > 0.0 ? urban_relief() * urban_shape_lod(x, z, 0.0) : 0.0;
+}
+
 double terrain_surface_lod(double x, double z, double spacing, float *urban) {
     double w, h = height_lod(x, z, spacing, &w);
     if (urban) *urban = (float)w;

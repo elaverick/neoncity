@@ -50,6 +50,7 @@ static void record_plant(Mesh *m, const BGraph *g, const ILayout *L, const IFixt
         yaw += atan2f(m->xs, m->xc);
     } else { sp->x = lx; sp->z = lz; }
     sp->y = L->floorY + f->y0 + POT_HEIGHT - 0.05f;
+    if (m->xf) sp->y += m->xy;
     sp->c = cosf(yaw); sp->s = sinf(yaw);
     sp->clear = planter_clearance(L, f);
     sp->group = f->group; sp->member = f->member;

@@ -456,8 +456,11 @@ int main(int argc, char **argv) {
             double s = slope_of(urban_graded, x, z);
             if (s > urbanMax) urbanMax = s;
             CHECK(terrain_height(x, z) == (TERRAIN_URBAN_GRADED ? urban_graded(x, z) : 0.0), "height at (%.1f, %.1f) inside the city isn't the urban ground", x, z);
+            CHECK(terrain_urban_height(x, z) == terrain_height(x, z), "the city's ground at (%.1f, %.1f) inside the city isn't the terrain", x, z);
             nUrban++;
         }
+        /* The city's ground is the urban relief everywhere, even where the land rises past it. */
+        CHECK(terrain_urban_height(x, z) == (TERRAIN_URBAN_GRADED ? urban_graded(x, z) : 0.0), "the city's ground at (%.1f, %.1f) isn't the urban relief", x, z);
         double s = slope_of(terrain_height, x, z);
         if (e > -CITY_BELT && e < 2000.0) { if (s > beltMax) beltMax = s; nBelt++; }
         if (s > landMax) landMax = s;

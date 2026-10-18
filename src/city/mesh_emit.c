@@ -6,6 +6,19 @@
 
 void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); free(m->air); memset(m, 0, sizeof(*m)); }
 
+void mesh_begin(Mesh *m, int cx, int cz) {
+    m->count = 0;
+    m->xf = 0;
+    m->xy = 0.0f;
+    m->drape = 0;
+    m->ox = cx * (double)CHUNK_SIZE; m->oz = cz * (double)CHUNK_SIZE;
+    m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
+    m->mx[0] = m->mx[1] = m->mx[2] = -1e30f;
+    free(m->lights);
+    m->lights = NULL;
+    m->nlights = 0;
+}
+
 void mesh_push(Mesh *m, vec3 p, vec3 n, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux) {
     mesh_push_w(m, p, n, 0, u, v, seed, prm, aux);
 }
@@ -23,7 +36,9 @@ void mesh_push_w(Mesh *m, vec3 p, vec3 n, int8_t w, float u, float v, uint32_t s
         x = n.x; z = n.z;
         n.x = m->xc * x - m->xs * z;
         n.z = m->xs * x + m->xc * z;
+        p.y += m->xy;
     }
+    if (m->drape) p.y += city_ground_y(m->ox + p.x, m->oz + p.z);
     Vertex *o = &m->v[m->count++];
     o->pos[0] = p.x; o->pos[1] = p.y; o->pos[2] = p.z;
     o->nrm[0] = (int8_t)(n.x * 127.0f); o->nrm[1] = (int8_t)(n.y * 127.0f);
@@ -76,10 +91,10 @@ void emit_flat(Mesh *m, const DVec2 *p, int n, float y, const float (*uv)[2], Ma
             mesh_push(m, v3((float)p[k[j]].x, y, (float)p[k[j]].z), up, uv[k[j]][0], uv[k[j]][1], mt.seed, mt.p, mt.aux);
     }
 }
-Xf xf_save(const Mesh *m) { Xf t; t.on = m->xf; t.c = m->xc; t.s = m->xs; t.x = m->xx; t.z = m->xz; return t; }
-void xf_restore(Mesh *m, Xf t) { m->xf = t.on; m->xc = t.c; m->xs = t.s; m->xx = t.x; m->xz = t.z; }
+Xf xf_save(const Mesh *m) { Xf t; t.on = m->xf; t.c = m->xc; t.s = m->xs; t.x = m->xx; t.z = m->xz; t.y = m->xy; return t; }
+void xf_restore(Mesh *m, Xf t) { m->xf = t.on; m->xc = t.c; m->xs = t.s; m->xx = t.x; m->xz = t.z; m->xy = t.y; }
 void xf_enter(Mesh *m, float ox, float oz, float c, float s) {
-    if (!m->xf) { m->xf = 1; m->xc = c; m->xs = s; m->xx = ox; m->xz = oz; return; }
+    if (!m->xf) { m->xf = 1; m->xc = c; m->xs = s; m->xx = ox; m->xz = oz; m->xy = 0.0f; return; }
     float nc = m->xc * c - m->xs * s, ns = m->xs * c + m->xc * s;
     float nx = m->xx + m->xc * ox - m->xs * oz, nz = m->xz + m->xs * ox + m->xc * oz;
     m->xc = nc; m->xs = ns; m->xx = nx; m->xz = nz;
@@ -156,6 +171,7 @@ void sign_lights(Mesh *m, vec3 c, vec3 n, float area, Mat mt) {
         x = n.x; z = n.z;
         n.x = m->xc * x - m->xs * z;
         n.z = m->xs * x + m->xc * z;
+        c.y += m->xy;
     }
     SkyLight L;
     L.pos[0] = c.x; L.pos[1] = c.y; L.pos[2] = c.z;
