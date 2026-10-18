@@ -19,7 +19,38 @@ float city_height_cap(int cx, int cz) {
 
 float city_ground_y(double x, double z) { return (float)terrain_urban_height(x, z); }
 
-float building_base(const Building *b) { return city_ground_y(b->ox, b->oz); }
+void city_ground_range(int cx, int cz, float *lo, float *hi) {
+    const double P = CHUNK_SIZE, o = CITY_OVERHANG;
+    double l, h;
+    terrain_urban_height_range(cx * P - o, cz * P - o, (cx + 1) * P + o, (cz + 1) * P + o, &l, &h);
+    *lo = (float)floor(l);
+    *hi = (float)ceil(h);
+}
+
+/* The highest ground under the plot, sampled finely enough for the ground's
+ * gentle curve, so nothing of the ground floor is buried: where the ground
+ * falls away the walls reach down to it (Mesh.footing). Where the ground
+ * varies, a little more for the draped lot under the building, which can
+ * stand up to about a centimetre proud of the ground (DRAPE_CELL). */
+float plot_base(const Building *b) {
+    const float step = DRAPE_CELL * 0.5f;
+    float w = b->foot.x1 - b->foot.x0, d = b->foot.z1 - b->foot.z0;
+    int nu = 2 + (int)(w / step), nv = 2 + (int)(d / step);
+    float lo = 1e30f, hi = -1e30f;
+    for (int v = 0; v < nv; ++v)
+        for (int u = 0; u < nu; ++u) {
+            DVec2 p = to_world(b, b->foot.x0 + w * u / (nu - 1), b->foot.z0 + d * v / (nv - 1));
+            float y = city_ground_y(p.x, p.z);
+            lo = minf(lo, y); hi = maxf(hi, y);
+        }
+    return hi > lo ? hi + 0.02f : hi;
+}
+
+void city_ground_slope(double x, double z, float *gx, float *gz) {
+    const double h = 1.0;   /* the ground's shortest wavelengths are kilometres long */
+    *gx = (float)((terrain_urban_height(x + h, z) - terrain_urban_height(x - h, z)) / (2.0 * h));
+    *gz = (float)((terrain_urban_height(x, z + h) - terrain_urban_height(x, z - h)) / (2.0 * h));
+}
 
 void enter_building(Mesh *m, const ChunkGen *g, const Building *b) {
     m->xf = 1;
@@ -74,7 +105,9 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
         const BGraph *bg = chunk_gen_graph(&g, i);
         Interiors in;
         interiors_plan(b, bg, &in);
+        m->footing = 1;
         emit_building(m, b, bg, &in);
+        m->footing = 0;
         interiors_free(&in);
         m->xf = 0;
     }

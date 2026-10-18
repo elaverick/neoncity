@@ -51,6 +51,7 @@ static void record_plant(Mesh *m, const BGraph *g, const ILayout *L, const IFixt
     } else { sp->x = lx; sp->z = lz; }
     sp->y = L->floorY + f->y0 + POT_HEIGHT - 0.05f;
     if (m->xf) sp->y += m->xy;
+    sp->base = m->xf ? m->xy : 0.0f;
     sp->c = cosf(yaw); sp->s = sinf(yaw);
     sp->clear = planter_clearance(L, f);
     sp->group = f->group; sp->member = f->member;
@@ -113,6 +114,8 @@ static void plan_planting(Planting *pl, int first, const ILayout *L) {
 }
 
 static void emit_plant(Mesh *m, const PlantMesh *pm, const PlantSpot *sp) {
+    m->grounded = 1;   /* emitted outside the building's frame, counting from its base */
+    m->ground = sp->base;
     for (uint32_t i = 0; i < pm->count; ++i) {
         const PlantVertex *v = &pm->v[i];
         float x = v->p[0], z = v->p[2];
@@ -123,6 +126,7 @@ static void emit_plant(Mesh *m, const PlantMesh *pm, const PlantSpot *sp) {
         mesh_push(m, p, n, v->uv[0], v->uv[1], sp->bseed, prm, aux);
         m->v[m->count - 1].nrm[3] = (int8_t)(v->ao >> 1);   /* the crown's openness (city.vert passes it on) */
     }
+    m->grounded = 0;
 }
 
 /* Plants grown in this chunk, by their parameters: a row's repeated specimens are grown once. */

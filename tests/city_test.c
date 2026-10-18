@@ -139,7 +139,7 @@ static uint64_t fnv_layout(const BlockLayout *L, uint64_t h) {
         const Building *b = &L->build[i];
         FNV_FIELD(h, b->foot); FNV_FIELD(h, b->ox); FNV_FIELD(h, b->oz); FNV_FIELD(h, b->c); FNV_FIELD(h, b->s);
         FNV_FIELD(h, b->height); FNV_FIELD(h, b->seed); FNV_FIELD(h, b->kind); FNV_FIELD(h, b->frontage);
-        FNV_FIELD(h, b->shop); FNV_FIELD(h, b->zone); FNV_FIELD(h, b->density);
+        FNV_FIELD(h, b->shop); FNV_FIELD(h, b->zone); FNV_FIELD(h, b->density); FNV_FIELD(h, b->base);
     }
     FNV_FIELD(h, L->nlamps);
     for (int i = 0; i < L->nlamps; ++i) {
@@ -354,8 +354,11 @@ int main(int argc, char **argv) {
                 if (m.nlights > coreLights) coreLights = m.nlights;
                 if (m.count > coreVerts) coreVerts = m.count;
                 CHECK(m.nlights < LIGHT_PAGE_RECS, "chunk (%d,%d) light table is full (%u records)", cx, cz, m.nlights);
-                CHECK(m.mx[1] <= city_height_cap(cx, cz), "chunk (%d,%d) geometry (%.1f m) exceeds culling bound %.1f",
-                      cx, cz, m.mx[1], city_height_cap(cx, cz));
+                float g0, g1;
+                city_ground_range(cx, cz, &g0, &g1);
+                CHECK(m.mx[1] <= g1 + city_height_cap(cx, cz) && m.mn[1] >= g0 - 1.0f,
+                      "chunk (%d,%d) geometry (%.1f..%.1f m) exceeds culling bounds %.1f..%.1f",
+                      cx, cz, m.mn[1], m.mx[1], g0 - 1.0f, g1 + city_height_cap(cx, cz));
                 CHECK(m.count == 0 || (m.mn[0] >= -CITY_OVERHANG && m.mx[0] <= CHUNK_SIZE + CITY_OVERHANG &&
                                        m.mn[2] >= -CITY_OVERHANG && m.mx[2] <= CHUNK_SIZE + CITY_OVERHANG),
                       "chunk (%d,%d) geometry overhangs by more than %.0f m", cx, cz, CITY_OVERHANG);
@@ -369,9 +372,15 @@ int main(int argc, char **argv) {
                 litterSum += m.count;
                 litterChunks++;
                 CHECK(m.count <= (uint32_t)(MAX_CHUNK_PAGES * PAGE_VERTS), "chunk (%d,%d) litter exceeds page budget", cx, cz);
+                float up0 = 0.0f, up1 = 0.0f;   /* heights above the ground under each vertex */
+                for (uint32_t i = 0; i < m.count; ++i) {
+                    float up = m.v[i].pos[1] - m.v[i].base;
+                    if (i == 0 || up < up0) up0 = up;
+                    if (i == 0 || up > up1) up1 = up;
+                }
                 CHECK(m.count == 0 || (m.mn[0] >= -1.0f && m.mx[0] <= CHUNK_SIZE + 1.0f && m.mn[2] >= -1.0f && m.mx[2] <= CHUNK_SIZE + 1.0f &&
-                                       m.mn[1] >= -0.05f && m.mx[1] <= SIDEWALK_HEIGHT + 1.2f),
-                      "chunk (%d,%d) litter strays from the ground (%.2f..%.2f m up)", cx, cz, m.mn[1], m.mx[1]);
+                                       up0 >= -0.05f && up1 <= SIDEWALK_HEIGHT + 1.2f),
+                      "chunk (%d,%d) litter strays from the ground (%.2f..%.2f m up)", cx, cz, up0, up1);
                 mesh_free(&m);
             }
         }

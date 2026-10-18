@@ -473,6 +473,8 @@ static void commit(LGen *g, const Item *it, int first, int kind, float aoH) {
     float c = cosf(it->yaw), s = sinf(it->yaw);
     float ax = (float)(it->x - g->c.ox), az = (float)(it->z - g->c.oz);
     int fade = quant(FADE[it->kind], 4.0f, 1, 63);
+    g->m->grounded = 1;   /* the item is small: it counts from the ground at its anchor */
+    g->m->ground = city_ground_y(it->x, it->z);
     for (int i = first; i < T->n; ++i) {
         const LV *v = &T->v[i];
         float ox = c * v->p.x - s * v->p.z, oz = s * v->p.x + c * v->p.z, oy = v->p.y;
@@ -483,6 +485,7 @@ static void commit(LGen *g, const Item *it, int first, int kind, float aoH) {
         float ao = aoH > 0.0f ? 0.35f + 0.65f * smoothstepf(0.0f, aoH, oy) : 1.0f;
         push(g->m, v3(ax + ox, it->y + oy, az + oz), n, ao, v->u, v->v, it->seed, prm, aux);
     }
+    g->m->grounded = 0;
 }
 
 static void build_item(LGen *g, const Item *it) {

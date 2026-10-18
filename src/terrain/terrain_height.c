@@ -50,6 +50,13 @@ double terrain_urban_height(double x, double z) {
     return urban_relief() > 0.0 ? urban_relief() * urban_shape_lod(x, z, 0.0) : 0.0;
 }
 
+/* urban_shape is a fractal sum of unit amplitude: |shape| <= 1 everywhere. */
+void terrain_urban_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
+    (void)x0; (void)z0; (void)x1; (void)z1;
+    *lo = -urban_relief() - 1e-3;
+    *hi = urban_relief() + 1e-3;
+}
+
 double terrain_surface_lod(double x, double z, double spacing, float *urban) {
     double w, h = height_lod(x, z, spacing, &w);
     if (urban) *urban = (float)w;

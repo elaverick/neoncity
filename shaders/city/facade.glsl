@@ -61,8 +61,8 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
                   palette == 6u ? vec3(0.86, 0.74, 0.58) :   // bronze
                                   vec3(0.87, 0.89, 0.86);    // clear
 
-    // uv.x = metres along the face; chunk-local y is absolute height.
-    float u = uv.x, vAbs = p.y;
+    // uv.x = metres along the face; vAbs the height above the building's base.
+    float u = uv.x, vAbs = p.y - gBase;
     float faceW = float(vFacePack & 4095u) / 16.0, nextW = float(vFacePack >> 12) / 16.0, prevW = float(vAux & 4095u) / 16.0;
     float relV = vAbs - SIDEWALK_HEIGHT - groundH;
     // Derivatives must be taken in uniform control flow, before any per-pixel branching.
@@ -73,6 +73,17 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     bayW = faceW / nBays;
     float prevBayW = prevW / max(1.0, floor(prevW / baseBayW + 0.5));   // the neighbours' corner bays
     float nextBayW = nextW / max(1.0, floor(nextW / baseBayW + 0.5));
+
+    // ---------------- plinth ----------------
+    // Below the ground floor, where the street falls away from the building's
+    // base (Mesh.footing, and the steps up to its entrances: src/city/mesh_building.c):
+    // a dark stone base course.
+    if (atGround && vAbs < SIDEWALK_HEIGHT) {
+        vec3 spec = vec3(0.0);
+        vec3 diffL = wallLighting(p, n, V, 20.0, 0.12, vAbs, spec);
+        float grain = 0.8 + 0.4 * vnoise(vec2(u * 2.0, vAbs * 6.0), seed & 0xFFFFu);
+        return vec3(0.055, 0.052, 0.048) * grain * diffL + spec;
+    }
 
     // ---------------- lobbies and void decks ----------------
     if (atGround && relV < 0.0 && groundMode != 0u) {

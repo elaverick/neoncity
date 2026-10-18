@@ -15,10 +15,10 @@
 vec3 litterLight(vec3 p, vec3 n, vec3 V, vec3 alb, float rough, float f0, vec3 tint, float ao) {
     vec3 dnx = dFdx(n), dny = dFdy(n);   // specular anti-aliasing, as shadeGround
     rough = pow(pow(clamp(rough, 0.03, 1.0), 4.0) + min(0.5 * (dot(dnx, dnx) + dot(dny, dny)), 0.2), 0.25);
-    vec3 diff = ambientLight(n, p.y) * ao;
+    vec3 diff = ambientLight(n, p.y - gBase) * ao;
     vec3 spec = vec3(0.0);
     cityLights(p, n, V, 0.0, f0, rough, diff, spec);
-    diff += neonBounce(gWorld, p.y) * ao;
+    diff += neonBounce(gWorld, p.y - gBase) * ao;
     float ndv = max(dot(n, V), 1e-4);
     vec3 R = normalize(mix(reflect(-V, n), n, rough * rough));
     spec += envReflection(R) * envBRDF(f0, rough, ndv) * ao;

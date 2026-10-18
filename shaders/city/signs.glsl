@@ -204,7 +204,7 @@ vec3 shadeMetal(vec3 p, vec3 rel, vec3 n, vec2 uv, uvec4 prm) {
         vec2 cell = fract(uv * vec2(6.0, 4.0));
         float grid = step(0.06, cell.x) * step(0.06, cell.y);
         vec3 spec;
-        vec3 diff = wallLighting(p, n, V, 120.0, 0.9, p.y, spec);
+        vec3 diff = wallLighting(p, n, V, 120.0, 0.9, p.y - gBase, spec);
         return vec3(0.008, 0.012, 0.03) * grid * diff + spec + envReflection(reflect(-V, n)) * 0.25;
     }
     if (v == 7u) {                                                                                       // glass pyramid
@@ -215,7 +215,7 @@ vec3 shadeMetal(vec3 p, vec3 rel, vec3 n, vec2 uv, uvec4 prm) {
         return mix(glow * (1.0 - F) + envReflection(reflect(-V, n)) * F, vec3(0.02), mull * 0.8);
     }
     vec3 spec;
-    vec3 diff = wallLighting(p, n, V, 40.0, 0.25, p.y, spec);
+    vec3 diff = wallLighting(p, n, V, 40.0, 0.25, p.y - gBase, spec);
     return alb * diff + spec;
 }
 
@@ -229,7 +229,7 @@ vec3 shadeRoof(vec3 p, vec3 rel, vec3 n, vec2 uv, uvec4 prm) {
     }
     if (prm.z == 1u) alb *= 0.8;   // soffit under an overhang
     vec3 spec;
-    vec3 diff = wallLighting(p, n, V, 10.0, 0.05, p.y, spec);
+    vec3 diff = wallLighting(p, n, V, 10.0, 0.05, p.y - gBase, spec);
     return alb * diff + spec;
 }
 
@@ -241,7 +241,7 @@ vec3 shadeDoor(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec2 m = uv * vec2(wM, hM);
     float aa = max(fwidth(m.x), fwidth(m.y)) + 0.002;
     vec3 spec;
-    vec3 diff = wallLighting(p, n, V, 60.0, 0.3, p.y, spec);
+    vec3 diff = wallLighting(p, n, V, 60.0, 0.3, p.y - gBase, spec);
     float edge = min(min(m.x, wM - m.x), min(m.y, hM - m.y));
     if (prm.y == 0u) {
         vec3 inside = mix(vec3(1.0, 0.86, 0.66), vec3(0.75, 0.86, 1.0), hfloat(seed)) * 0.45;

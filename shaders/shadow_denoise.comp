@@ -94,7 +94,7 @@ void main() {
     float z = texelFetch(depthTex, px, 0).r;
     uvec2 g = texelFetch(gbufTex, px, 0).xy;
     gLin = forwardDist(z);
-    uvec4 outv = uvec4(0xFFFFFFFFu, 0xFFFFFFFFu, floatBitsToUint(gLin), (g.y & 0xFFFFu) | (raw.x & (SH_VALID | SH_OVERFLOW)));
+    uvec4 outv = uvec4(0xFFFFFFFFu, 0xFFFFFFFFu, floatBitsToUint(gLin), (g.y & PG_CHUNK) | (raw.x & (SH_VALID | SH_OVERFLOW)));
     uvec4 ids = imageLoad(idsIn, px);
     int ns = 0;
     while (ns < SHADOW_SLOTS && slotId(ids, ns) != 0u) ++ns;

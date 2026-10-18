@@ -21,6 +21,10 @@ double terrain_height(double x, double z);
  * while the land drawn there rises past it. */
 double terrain_urban_height(double x, double z);
 
+/* Conservative bounds on terrain_urban_height over the rectangle [x0,x1] x
+ * [z0,z1], as terrain_height_range. */
+void   terrain_urban_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi);
+
 /* The same ground as sampled every `spacing` metres: detail too fine for that
  * spacing to carry is left out, the rest is unchanged (no renormalising, so
  * coarse samples don't drift from terrain_height by more than the dropped

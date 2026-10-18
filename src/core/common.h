@@ -40,12 +40,12 @@
  * triangles so a chunk may occupy any set of free pages (no fragmentation). */
 #define PAGE_VERTS        3072          /* multiple of 3: pages hold whole triangles */
 #ifndef POOL_PAGES
-#define POOL_PAGES        3640          /* 3640 * 3072 * 36B = 384 MB */
+#define POOL_PAGES        3640          /* 3640 * 3072 * 40B = 427 MB */
 #endif
 #define MAX_CHUNK_PAGES   64
 #define MAX_FRAMES        2
 #define STAGING_BYTES     (24u * 1024u * 1024u)
-#define MAX_DRAW_CHUNKS   4096
+#define MAX_DRAW_CHUNKS   4096          /* 12 bits in the prepass G-buffer (PG_CHUNK in shaders/common.glsl) */
 
 /* Per-chunk light tables (street lamps, lit shopfronts) live in their own
  * pool of fixed pages of 16-byte records, uploaded once with the mesh. */
@@ -139,6 +139,8 @@ typedef struct Vertex {
     uint32_t seed;       /* building / sign seed for shader-side variation */
     uint8_t  params[4];  /* x = material, y,z,w = material parameters */
     uint32_t aux;        /* facades: face identity, neighbour widths, corners (see emit_facade) */
+    float    base;       /* the ground its heights count from, world Y (m): its building's or lamp's
+                          * base, else the ground under it (city_ground_y; mesh_push) */
 } Vertex;
 
 /* Per-chunk data visible to shaders (std430). */

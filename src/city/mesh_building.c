@@ -191,6 +191,19 @@ static void emit_walls(Mesh *m, const Building *b, const BGraph *g, int si, cons
                         float uv[4][2] = { { pa, pw }, { pc, pw }, { pc, pw }, { pa, pw } };
                         emit_quad(m, v3(pa, y0, 0), v3(pc, y0, 0), v3(pc, y1, 0), v3(pa, y1, 0), v3(0, 0, 1), uv, mq);
                     }
+                    /* the step up to the opening: from its sill (the floor) down to the ground */
+                    if (o < nop && s->y0 <= SIDEWALK_HEIGHT + 0.01f) {
+                        float pa = maxf(sa, op[o][0]), pc = minf(sb, op[o][1]);
+                        float ga = mesh_ground_local(m, pa, 0.0f) + SIDEWALK_HEIGHT, gc = mesh_ground_local(m, pc, 0.0f) + SIDEWALK_HEIGHT;
+                        if (pc - pa >= 1e-3f && minf(ga, gc) < s->y0 - 0.005f) {
+                            float uv[4][2] = { { pa, pw }, { pc, pw }, { pc, pw }, { pa, pw } };
+                            int ft = m->footing;
+                            m->footing = 0;
+                            emit_quad(m, v3(pa, minf(ga, s->y0) - FOOTING_SINK, 0), v3(pc, minf(gc, s->y0) - FOOTING_SINK, 0),
+                                      v3(pc, s->y0, 0), v3(pa, s->y0, 0), v3(0, 0, 1), uv, mq);
+                            m->footing = ft;
+                        }
+                    }
                 }
             }
             xf_restore(m, sv);

@@ -383,7 +383,7 @@ vec3 shadePlant(vec3 p, vec3 V, vec3 n, vec2 uv, uint seed, uint surf, uint kind
     }
     float up = n.y * 0.5 + 0.5;
     float E = mix(0.12, 0.62, up * up) * mix(0.65, 1.0, smoothstep(0.0, 0.7, y)) * mix(1.0, 0.75, smoothstep(5.0, 14.0, y));
-    vec3 col = alb * (Lc * E + ambientLight(n, p.y) * 0.5) * occ;
+    vec3 col = alb * (Lc * E + ambientLight(n, p.y - gBase) * 0.5) * occ;
     col += alb * vec3(1.1, 1.3, 0.6) * Lc * 0.35 * trans * occ * smoothstep(0.0, 0.8, -n.y);   // through the blade
     vec3 Hh = normalize(vec3(0.0, 1.0, 0.0) + V);
     float spec = pow(max(dot(n, Hh), 0.0), shin) * (shin + 2.0) / 32.0;
@@ -397,7 +397,7 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     bool flipped = dot(n, V) < 0.0;
     if (flipped) n = -n;                               // thin panes and panels are seen from both sides
     uint surf = prm.y, sub = prm.z;
-    float ceilH = max(float(prm.w) * 0.5, 2.6), y = p.y - SIDEWALK_HEIGHT;
+    float ceilH = max(float(prm.w) * 0.5, 2.6), y = p.y - gBase - SIDEWALK_HEIGHT;
     // the panels' light, where furniture, plants and walls let it through (ray-traced shadows); the room's bounce fills the shade
     float panels = mix(PANEL_FILL, 1.0, ceilingVis());
     if (surf == IS_PLANT || surf == IS_BARK || surf == IS_SOIL) return shadePlant(p, V, n, uv, seed, surf, sub, y, flipped, panels);
@@ -413,7 +413,7 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     // irradiance from the panels overhead: strong on what faces up, softer on walls, a little bounce above
     float E = n.y > 0.5 ? 0.55 : n.y < -0.5 ? 0.14 : 0.26 + 0.14 * smoothstep(0.0, ceilH, y);
     E *= mix(0.65, 1.0, smoothstep(0.0, 0.7, y)) * mix(1.0, 0.75, smoothstep(5.0, 14.0, y));
-    vec3 diff = Lc * E * panels + ambientLight(n, p.y) * 0.5;
+    vec3 diff = Lc * E * panels + ambientLight(n, p.y - gBase) * 0.5;
     vec3 irr = vec3(0.0);                              // light built into the walls, falling on this surface
     float specB = pow(max(dot(n, normalize(vec3(0.0, 1.0, 0.0) + V)), 0.0), 40.0);
     bool cove = hf(sh, 70u) < 0.7;                     // lit coves at the walls' feet

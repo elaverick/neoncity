@@ -15,6 +15,7 @@ layout(location = 6) flat in uint  vChunk;
 layout(location = 7) flat in uint  vFacePack;
 layout(location = 8) flat in uint  vAux;
 layout(location = 9) in vec2 vLitter;     // litter: ambient occlusion, how soaked (city.vert: litter)
+layout(location = 10) in float vBase;     // the ground its heights count from (city.vert)
 
 layout(location = 0) out vec4 outColor;
 // Reflection G-buffer for screen-space reflections (ssr.comp): world normal
@@ -28,6 +29,7 @@ layout(location = 1) out vec4 outRefl;
 ChunkGPU gC;
 float gTime;
 vec3 gWorld;
+float gBase;              // world Y of the ground this surface's heights count from: its building's base, or the ground under it
 vec4 gRefl = vec4(0.0);   // -> outRefl
 vec3 gWinE = vec3(0.0);   // light reaching a window from outside, through its glass: all a dark room has (shadeFacade)
 
@@ -86,6 +88,7 @@ void main() {
     gC = chunks[vChunk];
     gTime = frame.camPos.w;
     gWorld = vLocal + vec3(float(gC.info.x & 63) * CHUNK_SIZE, 0.0, float(gC.info.y & 63) * CHUNK_SIZE);
+    gBase = vBase;
     shadowsBegin();
     vec3 n = normalize(vNrm);
     uint mat = vParams.x;

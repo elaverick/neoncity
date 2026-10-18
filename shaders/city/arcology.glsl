@@ -113,7 +113,7 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     uint surf = prm.y, var = prm.z;
     float t = float(prm.w) / 255.0;
     if (dot(n, V) < 0.0) n = -n;                     // thin planes are seen from both sides
-    float y = p.y - SIDEWALK_HEIGHT;
+    float y = p.y - gBase - SIDEWALK_HEIGHT;
     float aa = max(length(fwidth(uv)), 1e-4);
     float dist = length(rel);
     vec3 w = gWorld;

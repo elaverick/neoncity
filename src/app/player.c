@@ -200,6 +200,8 @@ static void move_walk(Player *p, const PlayerInput *in, vec3 flatFwd, vec3 flatR
     /* Recover velocity actually achieved so sliding along walls feels right. */
     p->vel[0] = (float)((nx - p->feet[0]) / dt);
     p->vel[2] = (float)((nz - p->feet[2]) / dt);
+    /* On the ground the feet ride the street's grade; only kerbs and steps snap them (and dip the eye). */
+    if (p->onGround) p->feet[1] += city_ground_y(nx, nz) - city_ground_y(p->feet[0], p->feet[2]);
     p->feet[0] = nx; p->feet[2] = nz;
 
     float prevY = (float)p->feet[1];

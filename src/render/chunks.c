@@ -527,8 +527,10 @@ static void want_chunks(ChunkSystem *cs, const Frustum *frp, const double cam[3]
                 mx = v3(x0 + kb->mx[0], kb->mx[1] - (float)cam[1], z0 + kb->mx[2]);
             } else {
                 /* Buildings centred in the chunk may overhang it. */
-                y1 = city_height_cap(cx, cz);
-                mn = v3(x0 - CITY_OVERHANG, -(float)cam[1] - 1.0f, z0 - CITY_OVERHANG);
+                float g0, g1;
+                city_ground_range(cx, cz, &g0, &g1);
+                y1 = g1 + city_height_cap(cx, cz);
+                mn = v3(x0 - CITY_OVERHANG, g0 - (float)cam[1] - 1.0f, z0 - CITY_OVERHANG);
                 mx = v3(x0 + P + CITY_OVERHANG, y1 - (float)cam[1], z0 + P + CITY_OVERHANG);
             }
             int inView = frustum_test_aabb(&fr, mn, mx);

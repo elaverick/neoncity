@@ -46,6 +46,7 @@ typedef struct Building {
     int      shop;      /* 0..7: share of lit ground-floor shops, in eighths */
     int      zone;
     float    density;   /* plan density of its block */
+    float    base;      /* where its frame stands, world Y (building_base) */
 } Building;
 
 typedef struct Lamp {
@@ -111,12 +112,21 @@ typedef struct Mesh {
     uint32_t  nair, capair;
     int       xf;        /* emission transform: local frame -> chunk-local */
     float     xc, xs, xx, xz;
-    float     xy;        /* ...raised this far: a building's or a lamp's base on the ground (city_ground_y) */
-    int       drape;     /* each vertex is raised by the ground under it: the streets' surfaces */
+    float     xy;        /* ...raised this far: a building's or a lamp's base on the ground (city_ground_y),
+                          * which its vertices' heights count from (Vertex.base) */
+    int       drape;     /* each vertex is raised by the ground under it: the streets' surfaces
+                          * (outside a frame, a vertex's base is the ground under it anyway) */
+    int       footing;   /* in a building's frame, walls standing at street level reach down to the
+                          * ground under them, which may lie below the building's base (mesh_push) */
+    int       grounded;  /* outside a frame: every vertex counts from `ground` (one piece of litter's,
+                          * one plant's), not from the ground looked up under it */
+    float     ground;
     double    ox, oz;    /* the chunk's origin in the world, for the ground under a vertex */
 } Mesh;
 
-float    city_height_cap(int cx, int cz);       /* conservative upper bound of anything in the chunk */
+float    city_height_cap(int cx, int cz);       /* conservative upper bound of anything in the chunk, above its ground */
+/* Conservative bounds on the ground under anything of the chunk (overhangs too), world Y (m). */
+void     city_ground_range(int cx, int cz, float *lo, float *hi);
 void     city_layout(int cx, int cz, BlockLayout *out);
 void     city_build_mesh(int cx, int cz, Mesh *m);
 /* The near-only layer: real office lobbies of the buildings centred in the chunk. */

@@ -129,9 +129,12 @@ bool shadowsOn() { return (uint(frame.shadow.y) & SHADOWS_ON) != 0u; }
 const int   SHADOW_SLOTS = 8;                            // lights a pixel keeps soft shadows for
 const uint  RT_MASK_LITTER = 0x04u;                      // src/render/rt.h
 const float LIGHT_NEGLIGIBLE = 0.002;                    // a light this faint shows no shadow worth tracing
-// Prepass G-buffer (prepass.frag): x the normal (octEncode), y the draw chunk | these flags;
-// for a lobby surface (PG_LOBBY), bits 16..23 hold its ceiling's height above the floor (half metres).
-const uint  PG_LIT = 1u << 30, PG_LITTER = 1u << 29, PG_LOBBY = 1u << 28;
+// Prepass G-buffer (prepass.frag): x the normal (octEncode), y the draw chunk (PG_CHUNK; MAX_DRAW_CHUNKS
+// in src/core/common.h) | these flags; for a lobby surface (PG_LOBBY), bits 12..19 hold its ceiling's
+// height above the floor (half metres) and bits 20..27 its own (eighths of a metre).
+const uint  PG_LIT = 1u << 30, PG_LITTER = 1u << 29, PG_LOBBY = 1u << 28, PG_CHUNK = 0xFFFu;
+// Higher than this above their ground no street lamp or shopfront reaches (cityLights).
+const float CITY_LIGHTS_TOP = 32.0;
 /* A lobby is lit by the panels in its ceiling (city.frag: shadeInterior), not
  * by the light table, so its pixels' slots hold the ceiling instead: CEIL_SLOTS
  * rays, one into each quarter of the sky above the surface, under ids no light
@@ -160,6 +163,11 @@ float lampBeamShare(vec3 lp, vec3 p) {
     return 0.88 * t / (0.12 + 0.88 * t);
 }
 const float POOL_RADIUS = 4.0, POOL_HEIGHT = 0.5;   // the lit pool a lamp's spill comes from, just above the street
+// The ground under light record w's lamp at lp: a street lamp's light hangs LAMP_HEIGHT - 0.4
+// above it (build_lights in src/city/light_tiles.c), an arcology's light holds its own height.
+float lampGround(vec3 lp, uint w) {
+    return ((w >> 26) & 3u) == 0u ? lp.y - (LAMP_HEIGHT - 0.4) : lp.y - float((w >> 8) & 0xFFFFu) / 16.0;
+}
 
 /* A point on light record w's emitter (lp chunk-local) as seen from p, from
  * xi in [0,1)^3, and the emitter's size (for penumbra estimates). A street
@@ -173,7 +181,7 @@ vec3 emitterPoint(vec3 lp, uint w, vec3 xi, vec3 p, out float size) {
         uint cls = (w >> 26) & 3u;
         float R = cls == 0u ? 0.25 : cls == 1u ? 0.4 : 1.5;
         vec3 c = lp;
-        if (xi.z >= lampBeamShare(lp, p)) { R = POOL_RADIUS; c.y = POOL_HEIGHT; }
+        if (xi.z >= lampBeamShare(lp, p)) { R = POOL_RADIUS; c.y = lampGround(lp, w) + POOL_HEIGHT; }
         float r = R * sqrt(xi.x), a = 6.2831853 * xi.y;
         size = 2.0 * R;
         return c + vec3(r * cos(a), 0.0, r * sin(a));
@@ -193,7 +201,7 @@ bool castsShadow(uint w) { return (w & 3u) >= 2u || ((w >> 26) & 3u) != 2u; }
 
 // The middle of the emitter, as seen from p: where city.frag aims a hard shadow ray.
 vec3 emitterCentre(vec3 lp, uint w, vec3 p) {
-    if ((w & 3u) < 2u) return lampBeamShare(lp, p) >= 0.5 ? lp : vec3(lp.x, POOL_HEIGHT, lp.z);
+    if ((w & 3u) < 2u) return lampBeamShare(lp, p) >= 0.5 ? lp : vec3(lp.x, lampGround(lp, w) + POOL_HEIGHT, lp.z);
     float ang = float((w >> 16) & 255u) * (6.2831853 / 256.0);
     return lp - vec3(cos(ang), 0.0, sin(ang)) * 0.8 + vec3(0.0, 0.35, 0.0);
 }

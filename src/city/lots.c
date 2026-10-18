@@ -103,6 +103,7 @@ static void commit(Filler *f, Building *b, float height, double probe) {
     int cx = (int)floor(b->ox / CHUNK_SIZE), cz = (int)floor(b->oz / CHUNK_SIZE);
     float cap = city_height_cap(cx, cz) - (b->kind == BK_MEGA ? 66.0f : 34.0f);
     b->height = maxf(minf(height, cap), 9.0f);
+    b->base = plot_base(b);
     if (b->kind == BK_MEGA) {
         b->frontage = SIDE_W | SIDE_E | SIDE_S | SIDE_N;
     } else {

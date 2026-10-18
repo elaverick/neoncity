@@ -8,6 +8,7 @@ layout(location = 2) in vec2  inUV;
 layout(location = 3) in uint  inSeed;
 layout(location = 4) in uvec4 inParams;
 layout(location = 5) in uint  inAux;
+layout(location = 6) in float inBase;
 
 layout(location = 0) out vec3 vRel;     // camera-relative position
 layout(location = 1) out vec3 vLocal;   // chunk-local position
@@ -21,6 +22,7 @@ layout(location = 7) flat out uint  vFacePack;   // facades: packed face widths 
 layout(location = 8) flat out uint  vAux;        // facades: face identity, neighbour width, corners
 #endif
 layout(location = 9) out vec2 vLitter;           // litter: ambient occlusion, how soaked
+layout(location = 10) out float vBase;           // the ground its heights count from (Vertex.base), world Y
 // The depth prepass (renderer.c: record_prepass) and the scene pass must agree to the bit.
 invariant gl_Position;
 
@@ -159,6 +161,7 @@ void main() {
     vLocal = local;
     vNrm = normalize(nrm);
     vLitter = lit;
+    vBase = inBase;
     vUV = inUV;
     vSeed = inSeed;
     vParams = inParams;

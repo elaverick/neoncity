@@ -106,6 +106,7 @@ typedef struct PlantSpot {
     float    clear;           /* open floor round the planter, metres */
     int      group, member, tier;
     uint32_t bseed;           /* the building (the lobby's light and finishes) */
+    float    base;            /* ... and its base (Vertex.base) */
     uint8_t  ceil;            /* ceiling height above the floor, half metres */
     PlantParams pp;
 } PlantSpot;
@@ -118,9 +119,13 @@ typedef struct Planting { PlantSpot *s; int n, cap; } Planting;
 /* city.c */
 uint32_t style_hash(uint32_t seed);
 uint8_t lobby_accent(uint32_t seed);
-/* Where a building's frame stands: the ground at its plot's origin (world Y, m).
- * Its sections' heights (src/gen, from G0) count from there. */
-float building_base(const Building *b);
+/* Where a building's frame stands, world Y (m): its sections' heights (src/gen,
+ * from G0) count from there. plot_base works it out when the plot is laid out
+ * (lots.c); building_base reads it. */
+float plot_base(const Building *b);
+static inline float building_base(const Building *b) { return b->base; }
+/* The ground's gradient at world (x, z): rise (m) per metre along x and along z. */
+void city_ground_slope(double x, double z, float *gx, float *gz);
 /* Emits in building b's frame from here on (xf_restore or m->xf = 0 to leave). */
 void enter_building(Mesh *m, const ChunkGen *g, const Building *b);
 
@@ -130,8 +135,20 @@ double area2(const DVec2 *p, int n);
 float drop_y(double d);
 
 /* mesh_emit.c */
+/* How far a footing (Mesh.footing) reaches into the ground: under the draped
+ * sidewalk or lot, which can stand that much proud of the ground between the
+ * drape's cuts, and under a long wall's straight foot. */
+#define FOOTING_SINK 0.05f
+/* Draped surfaces (Mesh.drape) are cut into squares this wide (chunk-local, so
+ * the cuts line up across chunks) to follow the ground's curve. At the urban
+ * relief's 10 m a straight 55 m span strays at most 13 mm from the ground
+ * (27.5 m: 3 mm); finer cuts cost every chunk's street mesh vertices. Hillier
+ * settlements will want finer ones. */
+#define DRAPE_CELL (CHUNK_SIZE / 2.0f)
 /* Empties m for chunk (cx, cz)'s layer: no vertices, lights or transform, bounds reset. */
 void mesh_begin(Mesh *m, int cx, int cz);
+/* The ground under point (x, z) of the current emission frame, as a height in that frame. */
+float mesh_ground_local(const Mesh *m, float x, float z);
 /* One vertex, through the emission transform (and onto the ground, if draping);
  * the mesh's bounds grow to hold it. */
 void mesh_push(Mesh *m, vec3 p, vec3 n, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux);

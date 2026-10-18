@@ -43,6 +43,15 @@ the terrain roadmap.
   faces. Testing each ring, or blocks of it, against the frustum with bounds from `terrain_height_range` would skip
   most of them; worth it once terrain shows in the GPU timings, or with the screen-space-error work (M7). It must only
   choose what is drawn, never what the clipmap holds.
+- **The graded city** stands on `city_ground_y` (10 m of relief, grades up to about 1.1%): the streets are draped onto
+  it in `DRAPE_CELL` squares, and each building stands on the highest ground under its plot, its walls reaching down
+  to the street (`Mesh.footing`, drawn as a plinth) and a riser under each entrance. Across a plot the ground falls
+  6 cm on average and at most about 0.4 m, so for now:
+  - Entrances get a riser, not steps or a ramp; an arcology's portals too.
+  - Inside a lobby the player walks on the street's ground carried in, not on the lobby's floor at the building's base:
+    below it by as much as the plot falls. Hillier settlements want the floors in the collision layout.
+  - `DRAPE_CELL` (55 m) and the footing's 5 cm are sized for this relief; hillier ground wants finer cuts.
+  - The haze still thins with height above y = 0, not above the ground.
 
 ## Office lobbies (next)
 Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/mesh_lobby.c`).

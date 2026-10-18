@@ -385,7 +385,9 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         float level = -0.25 * wet;
         float broad = smoothstep(0.0, 0.08, level - (0.3 * relBroad + 0.05 * relH - sink));
         float fine = smoothstep(0.0, 0.1, wet * jointLevel - relH);
-        float pool = max(broad, fine) * smoothstep(0.7, 0.9, nGeom.y) * smoothstep(0.3, 0.6, wet);
+        // water runs off a graded street (the drape tilts its normal) instead of standing on it
+        float grade = length(nGeom.xz) / max(nGeom.y, 1e-3);
+        float pool = max(broad, fine) * (1.0 - smoothstep(0.02, 0.05, grade)) * smoothstep(0.3, 0.6, wet);
         alb *= mix(1.0, mix(0.55, 0.85, paintC), wet) * mix(1.0, 0.92, pool);   // paint soaks up no water
         rough = mix(rough, rough * 0.45, wet);
         n = normalize(mix(n, nGeom, 0.5 * wet));   // the film fills the fine relief
@@ -408,10 +410,10 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         rough = pow(rough * rough * rough * rough + kernel, 0.25);
     }
 
-    vec3 diff = ambientLight(n, p.y) * ao;
+    vec3 diff = ambientLight(n, p.y - gBase) * ao;
     vec3 spec = vec3(0.0);
     cityLights(p, n, V, shin, specK, rough, diff, spec);
-    diff += neonBounce(w, p.y) * ao;
+    diff += neonBounce(w, p.y - gBase) * ao;
     if (rough >= 0.0) {
         // sky / haze reflection: rougher surfaces reflect closer to the normal
         float ndv = max(dot(n, V), 1e-4);

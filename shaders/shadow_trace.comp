@@ -41,7 +41,7 @@ uint penEncode(float w) { return uint(clamp(log2(max(w, 0.01) / 0.01) * 1.5 + 1.
  * it. What faces down, or stands at the ceiling, keeps no slots: its light is
  * the room's bounce. */
 void traceCeiling(ivec2 px, vec3 rel, float dist, vec3 p, vec3 n, vec3 V, uint gy, inout uvec4 ids, inout uvec2 raw) {
-    float ceilH = max(float((gy >> 16) & 255u) * 0.5, 2.6), y = p.y - SIDEWALK_HEIGHT;
+    float ceilH = max(float((gy >> 12) & 255u) * 0.5, 2.6), y = float((gy >> 20) & 255u) * 0.125;
     vec3 nn = dot(n, V) >= 0.0 ? n : -n;   // the side we see (shadeInterior turns thin panels to the viewer)
     if (nn.y < -0.5 || y > ceilH - 0.1) return;
     float high = min(ceilH - 0.3, max(2.4, y + 1.2));   // a hit this far above the floor is lit ceiling
@@ -77,7 +77,7 @@ void main() {
     vec2 ndc = (vec2(px) + frame.shadow.zw) * frame.screen.zw * 2.0 - 1.0;
     vec3 rel = (frame.rayBasis[2].xyz + ndc.x * frame.rayBasis[0].xyz - ndc.y * frame.rayBasis[1].xyz) * forwardDist(z);
     float dist = length(rel);
-    ChunkGPU c = chunks[g.y & 0xFFFFu];
+    ChunkGPU c = chunks[g.y & PG_CHUNK];
     vec3 p = rel - c.origin.xyz;
     int base = c.info.z;
     if (z > 0.0 && (g.y & PG_LOBBY) != 0u && shadowsOn() && dist <= SHADOW_FAR) {
@@ -87,7 +87,7 @@ void main() {
         imageStore(rawOut, px, uvec4(raw, 0u, 0u));
         return;
     }
-    if (z <= 0.0 || (g.y & PG_LIT) == 0u || !shadowsOn() || dist > SHADOW_FAR || base < 0 || p.y > 32.0) {
+    if (z <= 0.0 || (g.y & PG_LIT) == 0u || !shadowsOn() || dist > SHADOW_FAR || base < 0) {   // (PG_LIT: low enough for the lights)
         imageStore(idsOut, px, ids);
         imageStore(rawOut, px, uvec4(raw, 0u, 0u));
         return;

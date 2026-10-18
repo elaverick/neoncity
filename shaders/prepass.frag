@@ -12,6 +12,7 @@ layout(location = 3) in vec2 vUV;
 layout(location = 4) flat in uint vSeed;
 layout(location = 5) flat in uvec4 vParams;
 layout(location = 6) flat in uint vChunk;
+layout(location = 10) in float vBase;
 
 layout(location = 0) out uvec2 outG;
 
@@ -25,14 +26,17 @@ void main() {
     if (m == MAT_FACADE && (vParams.z & 129u) == 129u && groundMode != 0u && (vParams.w & 64u) == 0u &&
         length(vRel) < REAL_GLASS_DIST && lodR < 0.75) {
         float groundH = facadeGroundH(vSeed) * (groundMode == 2u ? 2.0 : 1.0);
-        float yy = vLocal.y - SIDEWALK_HEIGHT, fs = fract(vUV.x / 1.5);
+        float yy = vLocal.y - vBase - SIDEWALK_HEIGHT, fs = fract(vUV.x / 1.5);
         if (yy > 0.08 && yy < groundH - (groundMode == 2u ? 1.2 : 0.7) && fs > 0.04 && fs < 0.96) discard;
     }
-    // the materials whose shading calls cityLights (city.frag)
-    bool lit = m <= MAT_ROOF || m == MAT_METAL || m == MAT_DOOR || m == MAT_LITTER || m == MAT_ARCOLOGY;
+    // the materials whose shading calls cityLights (city.frag), low enough for the lights to reach (cityLights)
+    float above = vLocal.y - vBase;
+    bool lit = (m <= MAT_ROOF || m == MAT_METAL || m == MAT_DOOR || m == MAT_LITTER || m == MAT_ARCOLOGY) && above <= CITY_LIGHTS_TOP;
     // lobby surfaces the ceiling's panels light (not its lights, screens, signs, skylight or the offices above)
     uint is = vParams.y;
     bool lobby = m == MAT_INTERIOR && is != 9u && (is < 15u || is > 18u);
-    outG = uvec2(octEncode(normalize(vNrm)), (vChunk & 0xFFFFu) | (lit ? PG_LIT : 0u) | (m == MAT_LITTER ? PG_LITTER : 0u) |
-                 (lobby ? PG_LOBBY | min(vParams.w, 255u) << 16 : 0u));
+    // a lobby surface's height above its floor (shadeInterior's y), eighths of a metre
+    uint floorY = uint(clamp((above - SIDEWALK_HEIGHT) * 8.0 + 0.5, 0.0, 255.0));
+    outG = uvec2(octEncode(normalize(vNrm)), (vChunk & PG_CHUNK) | (lit ? PG_LIT : 0u) | (m == MAT_LITTER ? PG_LITTER : 0u) |
+                 (lobby ? PG_LOBBY | min(vParams.w, 255u) << 12 | floorY << 20 : 0u));
 }

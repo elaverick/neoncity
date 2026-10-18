@@ -11,12 +11,19 @@ void mesh_begin(Mesh *m, int cx, int cz) {
     m->xf = 0;
     m->xy = 0.0f;
     m->drape = 0;
+    m->footing = 0;
+    m->grounded = 0;
     m->ox = cx * (double)CHUNK_SIZE; m->oz = cz * (double)CHUNK_SIZE;
     m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
     m->mx[0] = m->mx[1] = m->mx[2] = -1e30f;
     free(m->lights);
     m->lights = NULL;
     m->nlights = 0;
+}
+
+float mesh_ground_local(const Mesh *m, float x, float z) {
+    if (!m->xf) return city_ground_y(m->ox + x, m->oz + z);
+    return city_ground_y(m->ox + m->xx + m->xc * x - m->xs * z, m->oz + m->xz + m->xs * x + m->xc * z) - m->xy;
 }
 
 void mesh_push(Mesh *m, vec3 p, vec3 n, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux) {
@@ -29,6 +36,8 @@ void mesh_push_w(Mesh *m, vec3 p, vec3 n, int8_t w, float u, float v, uint32_t s
         m->v = (Vertex *)realloc(m->v, m->cap * sizeof(Vertex));
         if (!m->v) fatal("out of memory building chunk mesh");
     }
+    /* a wall's foot at street level, not a door (doors stand on their step: emit_walls) */
+    int foot = m->footing && m->xf && p.y <= SIDEWALK_HEIGHT + 1e-3f && fabsf(n.y) < 0.5f && prm[0] != MAT_DOOR;
     if (m->xf) {
         float x = p.x, z = p.z;
         p.x = m->xx + m->xc * x - m->xs * z;
@@ -38,7 +47,16 @@ void mesh_push_w(Mesh *m, vec3 p, vec3 n, int8_t w, float u, float v, uint32_t s
         n.z = m->xs * x + m->xc * z;
         p.y += m->xy;
     }
-    if (m->drape) p.y += city_ground_y(m->ox + p.x, m->oz + p.z);
+    if (foot) p.y = minf(p.y, city_ground_y(m->ox + p.x, m->oz + p.z) + (SIDEWALK_HEIGHT - FOOTING_SINK));
+    float base = m->xf ? m->xy : m->grounded ? m->ground : city_ground_y(m->ox + p.x, m->oz + p.z);
+    if (m->drape) {
+        p.y += base;
+        if (n.y != 0.0f) {   /* tilted with the ground (a vertical face stays as it is) */
+            float gx, gz;
+            city_ground_slope(m->ox + p.x, m->oz + p.z, &gx, &gz);
+            n = v3_norm(v3(n.x - gx * n.y, n.y, n.z - gz * n.y));
+        }
+    }
     Vertex *o = &m->v[m->count++];
     o->pos[0] = p.x; o->pos[1] = p.y; o->pos[2] = p.z;
     o->nrm[0] = (int8_t)(n.x * 127.0f); o->nrm[1] = (int8_t)(n.y * 127.0f);
@@ -47,12 +65,79 @@ void mesh_push_w(Mesh *m, vec3 p, vec3 n, int8_t w, float u, float v, uint32_t s
     o->seed = seed;
     memcpy(o->params, prm, 4);
     o->aux = aux;
+    o->base = base;
     if (p.x < m->mn[0]) m->mn[0] = p.x;
     if (p.y < m->mn[1]) m->mn[1] = p.y;
     if (p.z < m->mn[2]) m->mn[2] = p.z;
     if (p.x > m->mx[0]) m->mx[0] = p.x;
     if (p.y > m->mx[1]) m->mx[1] = p.y;
     if (p.z > m->mx[2]) m->mx[2] = p.z;
+}
+
+/* ---------------------------------------------------------------------------
+ * Draping (Mesh.drape): a vertex is raised by the ground under it, but a
+ * triangle is flat between its vertices, so a draped polygon is first cut
+ * along a grid of DRAPE_CELL squares. Each piece then follows the ground's
+ * gentle curve to about a millimetre, and polygons that share an edge, cut by
+ * the same lines, share the vertices along it.
+ * ------------------------------------------------------------------------- */
+
+#define DRAPE_MAXV 64
+typedef struct DrapeV { vec3 p; float u, v; } DrapeV;
+
+static int drape_before(const DrapeV *a, const DrapeV *b) {
+    return a->p.x != b->p.x ? a->p.x < b->p.x : a->p.z != b->p.z ? a->p.z < b->p.z : a->p.y < b->p.y;
+}
+
+/* The part of convex polygon in where sign * (x or z) <= sign * lim. A cut
+ * edge is interpolated from its lower end, so both polygons sharing it get
+ * the same point, and the point lies on the line exactly. */
+static int drape_clip(const DrapeV *in, int n, int axis, float sign, float lim, DrapeV *out) {
+    int k = 0;
+    for (int i = 0; i < n && k + 2 <= DRAPE_MAXV; ++i) {
+        const DrapeV *a = &in[i], *b = &in[(i + 1) % n];
+        float da = sign * ((axis ? a->p.z : a->p.x) - lim), db = sign * ((axis ? b->p.z : b->p.x) - lim);
+        if (da <= 0.0f) out[k++] = *a;
+        if ((da <= 0.0f) != (db <= 0.0f)) {
+            if (drape_before(b, a)) { const DrapeV *t = a; a = b; b = t; float d = da; da = db; db = d; }
+            float t = da / (da - db);
+            DrapeV *o = &out[k++];
+            o->p = v3_add(a->p, v3_scale(v3_sub(b->p, a->p), t));
+            o->u = a->u + (b->u - a->u) * t;
+            o->v = a->v + (b->v - a->v) * t;
+            if (axis) o->p.z = lim; else o->p.x = lim;
+        }
+    }
+    return k;
+}
+
+/* Convex polygon p (wound to face along nrm) cut along the drape grid and fanned. */
+static void emit_draped(Mesh *m, const DrapeV *p, int n, vec3 nrm, Mat mt) {
+    const float c = DRAPE_CELL;
+    float x0 = 1e30f, x1 = -1e30f, z0 = 1e30f, z1 = -1e30f;
+    for (int i = 0; i < n; ++i) {
+        x0 = minf(x0, p[i].p.x); x1 = maxf(x1, p[i].p.x);
+        z0 = minf(z0, p[i].p.z); z1 = maxf(z1, p[i].p.z);
+    }
+    /* a face lying on a grid line is cut once, not on both sides of it */
+    int i0 = (int)floorf(x0 / c), i1 = (int)ceilf(x1 / c) - 1, j0 = (int)floorf(z0 / c), j1 = (int)ceilf(z1 / c) - 1;
+    if (i1 < i0) i1 = i0;
+    if (j1 < j0) j1 = j0;
+    DrapeV a[DRAPE_MAXV], col[DRAPE_MAXV], cell[DRAPE_MAXV];
+    for (int i = i0; i <= i1; ++i) {
+        int nc = drape_clip(p, n, 0, -1.0f, i * c, a);
+        nc = drape_clip(a, nc, 0, 1.0f, (i + 1) * c, col);
+        if (nc < 3) continue;
+        for (int j = j0; j <= j1; ++j) {
+            int k = drape_clip(col, nc, 1, -1.0f, j * c, a);
+            k = drape_clip(a, k, 1, 1.0f, (j + 1) * c, cell);
+            for (int t = 1; t + 1 < k; ++t) {
+                const DrapeV *v[3] = { &cell[0], &cell[t], &cell[t + 1] };
+                if (v3_len(v3_cross(v3_sub(v[1]->p, v[0]->p), v3_sub(v[2]->p, v[0]->p))) < 1e-6f) continue;   /* a sliver along a cut */
+                for (int q = 0; q < 3; ++q) mesh_push(m, v[q]->p, nrm, v[q]->u, v[q]->v, mt.seed, mt.p, mt.aux);
+            }
+        }
+    }
 }
 
 Mat mat(uint8_t id, uint32_t seed, uint8_t a, uint8_t b, uint8_t c) {
@@ -66,6 +151,12 @@ void emit_quad(Mesh *m, vec3 a, vec3 b, vec3 c, vec3 d, vec3 n, const float uv[4
     vec3 p[4] = { a, b, c, d };
     int idx[4] = { 0, 1, 2, 3 };
     if (v3_dot(v3_cross(v3_sub(b, a), v3_sub(c, a)), n) < 0) { idx[1] = 3; idx[3] = 1; }
+    if (m->drape) {
+        DrapeV d[4];
+        for (int i = 0; i < 4; ++i) { d[i].p = p[idx[i]]; d[i].u = uv[idx[i]][0]; d[i].v = uv[idx[i]][1]; }
+        emit_draped(m, d, 4, n, mt);
+        return;
+    }
     static const int tri[6] = { 0, 1, 2, 0, 2, 3 };
     for (int i = 0; i < 6; ++i) {
         int k = idx[tri[i]];
@@ -77,12 +168,30 @@ void emit_tri(Mesh *m, vec3 a, vec3 b, vec3 c, vec3 n, const float uv[3][2], Mat
     int k[3] = { 0, 1, 2 };
     vec3 p[3] = { a, b, c };
     if (v3_dot(v3_cross(v3_sub(b, a), v3_sub(c, a)), n) < 0) { k[1] = 2; k[2] = 1; }
+    if (m->drape) {
+        DrapeV d[3];
+        for (int i = 0; i < 3; ++i) { d[i].p = p[k[i]]; d[i].u = uv[k[i]][0]; d[i].v = uv[k[i]][1]; }
+        emit_draped(m, d, 3, n, mt);
+        return;
+    }
     for (int i = 0; i < 3; ++i) mesh_push(m, p[k[i]], n, uv[k[i]][0], uv[k[i]][1], mt.seed, mt.p, mt.aux);
 }
 
 /* Convex polygon lying flat at height y, fan-triangulated, facing up. */
 void emit_flat(Mesh *m, const DVec2 *p, int n, float y, const float (*uv)[2], Mat mt) {
     vec3 up = v3(0, 1, 0);
+    if (m->drape) {
+        DrapeV d[DRAPE_MAXV];
+        if (n > DRAPE_MAXV - 4) n = DRAPE_MAXV - 4;   /* room for the cuts */
+        double turn = 0.0;   /* twice the signed area seen from above: negative faces up */
+        for (int i = 0; i < n; ++i) turn += p[i].x * p[(i + 1) % n].z - p[(i + 1) % n].x * p[i].z;
+        for (int i = 0; i < n; ++i) {
+            int k = turn > 0.0 ? n - 1 - i : i;
+            d[i].p = v3((float)p[k].x, y, (float)p[k].z); d[i].u = uv[k][0]; d[i].v = uv[k][1];
+        }
+        emit_draped(m, d, n, up, mt);
+        return;
+    }
     for (int i = 1; i + 1 < n; ++i) {
         int k[3] = { 0, i, i + 1 };
         vec3 a = v3((float)p[0].x, y, (float)p[0].z), b = v3((float)p[i].x, y, (float)p[i].z), c = v3((float)p[i + 1].x, y, (float)p[i + 1].z);

@@ -276,18 +276,19 @@ static VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
         { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_FRAGMENT_BIT, fs, "main", NULL },
     };
     VkVertexInputBindingDescription bind = { 0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX };
-    VkVertexInputAttributeDescription attrs[6] = {
+    VkVertexInputAttributeDescription attrs[7] = {
         { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos) },
         { 1, 0, VK_FORMAT_R8G8B8A8_SNORM,   offsetof(Vertex, nrm) },
         { 2, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(Vertex, uv) },
         { 3, 0, VK_FORMAT_R32_UINT,         offsetof(Vertex, seed) },
         { 4, 0, VK_FORMAT_R8G8B8A8_UINT,    offsetof(Vertex, params) },
         { 5, 0, VK_FORMAT_R32_UINT,         offsetof(Vertex, aux) },
+        { 6, 0, VK_FORMAT_R32_SFLOAT,       offsetof(Vertex, base) },
     };
     VkPipelineVertexInputStateCreateInfo vi = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
     if (d->vertexInput) {
         vi.vertexBindingDescriptionCount = 1; vi.pVertexBindingDescriptions = &bind;
-        vi.vertexAttributeDescriptionCount = d->positionOnly ? 1 : 6; vi.pVertexAttributeDescriptions = attrs;
+        vi.vertexAttributeDescriptionCount = d->positionOnly ? 1 : 7; vi.pVertexAttributeDescriptions = attrs;
     }
     VkPipelineInputAssemblyStateCreateInfo ia = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
     ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;

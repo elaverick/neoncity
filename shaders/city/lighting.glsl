@@ -202,7 +202,7 @@ float ceilingVis() {
 // rough < 0: procedural Blinn-Phong (shin, specK); rough >= 0: GGX with F0 = specK.
 void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, inout vec3 diff, inout vec3 spec) {
     int base = gC.info.z;
-    if (base < 0 || p.y > 32.0) return;
+    if (base < 0 || p.y - gBase > CITY_LIGHTS_TOP) return;
     vec4 hdr = uintBitsToFloat(lightRec[base]);
     ivec2 t = clamp(ivec2(floor((p.xz - hdr.xy) * hdr.zw)), ivec2(0), ivec2(3));
     int ti = t.y * 4 + t.x;
@@ -250,11 +250,11 @@ vec3 paneSheen(vec3 p, vec3 n, vec3 V) {
     float rhythm = 0.55 + 0.45 * vnoise(vec2(az * 9.0 + gWorld.x * 0.03, 0.0), 0x5EE1u);
     vec3 c = mix(vec3(0.010, 0.010, 0.013), CLOUD_DECK * 0.8, smoothstep(0.0, 0.5, R.y))
            + vec3(0.11, 0.085, 0.06) * across * rhythm
-           + neonBounce(gWorld, p.y) * 4.0 * across;
+           + neonBounce(gWorld, p.y - gBase) * 4.0 * across;
 
     // soft blooms of the street lamps nearby, where they'd reflect
     int base = gC.info.z;
-    if (base >= 0 && p.y < 40.0) {
+    if (base >= 0 && p.y - gBase < 40.0) {
         vec4 hdr = uintBitsToFloat(lightRec[base]);
         ivec2 t = clamp(ivec2(floor((p.xz - hdr.xy) * hdr.zw)), ivec2(0), ivec2(3));
         int ti = t.y * 4 + t.x;
