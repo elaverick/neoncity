@@ -6,13 +6,21 @@
  * really bounds them, the ground under the city stays gentle, the belt joins
  * city and land without a cliff, and the footprint is where it should be.
  *
- * terrain_test --fingerprint prints a hash of the heights and the footprint
- * over a fixed set of points instead, to compare what two builds generate. */
+ * Then levels of detail and the clipmap: coarse spacings drop only fine
+ * detail; filled samples are the ground at their level, each level's parent
+ * heights are its parent's own samples, windows nest, the blend into the
+ * parent ends exactly at each window's edge, a move fills exactly the newly
+ * exposed samples within its budget, and a clipmap that followed any camera
+ * path holds what one filled from scratch at the same camera holds.
+ *
+ * terrain_test --fingerprint prints a hash of the heights, the footprint and
+ * some filled clipmaps instead, to compare what two builds generate. */
 #include "terrain_internal.h"
 #include "plan.h"
 #include "city.h"
 #include "hash.h"
 #include "mathlib.h"
+#include <time.h>
 
 #define N_POINTS     20000
 #define REGION       25000.0   /* points scattered this far round the city centre (m) */
@@ -39,6 +47,309 @@ static double slope_of(double (*f)(double, double), double x, double z) {
 
 static double urban_graded(double x, double z) { return TERRAIN_URBAN_RELIEF_M * terrain_urban_shape(x, z); }
 
+/* --- Levels of detail and the clipmap -------------------------------------- */
+
+#define WALK_STEPS   6000
+#define CHECKPOINTS  12
+
+/* Share of a fractal sum's amplitude a spacing leaves out: the dropped
+ * octaves' weight over the total. */
+static double dropped_fraction(double wave, int octaves, double spacing) {
+    int used = terrain_octaves(wave, octaves, spacing);
+    double drop = 0.0, total = 0.0;
+    for (int k = 0; k < octaves; ++k) {
+        total += ldexp(1.0, -k);
+        if (k >= used) drop += ldexp(1.0, -k);
+    }
+    return drop / total;
+}
+
+static int same_octaves(double s0, double s1) {
+    return terrain_octaves(TERRAIN_LAND_WAVE, TERRAIN_LAND_OCTAVES, s0) == terrain_octaves(TERRAIN_LAND_WAVE, TERRAIN_LAND_OCTAVES, s1) &&
+           terrain_octaves(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s0) == terrain_octaves(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s1);
+}
+
+/* 6. Coarse spacings leave out fine detail only: within the range bounds, and
+ *    no further from full detail than the dropped octaves can reach. */
+static void test_lod_heights(void) {
+    double worst[TERRAIN_CLIP_LEVELS] = { 0 }, relief = TERRAIN_URBAN_GRADED ? TERRAIN_URBAN_RELIEF_M : 0.0;
+    for (int i = 0; i < N_POINTS; i += 4) {
+        double x = g_x[i], z = g_z[i], h = terrain_height(x, z), h0 = terrain_height_lod(x, z, 0.0), rlo, rhi;
+        CHECK(memcmp(&h, &h0, sizeof(h)) == 0, "terrain_height_lod at spacing 0 differs from terrain_height at (%.1f, %.1f)", x, z);
+        double amp = terrain_land_amplitude(plan_city_edge(x, z));
+        terrain_height_range(x, z, x, z, &rlo, &rhi);
+        for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
+            double s = terrain_clip_spacing(l), hl = terrain_height_lod(x, z, s);
+            /* 1e-4 m: each fractal sum is rounded to float before scaling. */
+            double bound = amp * dropped_fraction(TERRAIN_LAND_WAVE, TERRAIN_LAND_OCTAVES, s) +
+                           relief * dropped_fraction(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s) + 1e-4;
+            CHECK(hl >= rlo && hl <= rhi, "height %.3f at spacing %.0f m at (%.1f, %.1f) outside its range", hl, s, x, z);
+            CHECK(fabs(hl - h) <= bound, "height at spacing %.0f m at (%.1f, %.1f) is %.3f m from full detail (bound %.3f)", s, x, z, fabs(hl - h), bound);
+            if (fabs(hl - h) > worst[l]) worst[l] = fabs(hl - h);
+        }
+    }
+    printf("levels of detail (octaves kept of land %d, urban %d; largest change from full detail):\n", TERRAIN_LAND_OCTAVES, TERRAIN_URBAN_OCTAVES);
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
+        double s = terrain_clip_spacing(l);
+        printf("  level %d  %4.0f m  land %d  urban %d  %6.2f m\n", l, s, terrain_octaves(TERRAIN_LAND_WAVE, TERRAIN_LAND_OCTAVES, s),
+               terrain_octaves(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s), worst[l]);
+    }
+}
+
+static int in_window(const int64_t o[2], int64_t i, int64_t j) {
+    return i >= o[0] && i < o[0] + TERRAIN_CLIP_W && j >= o[1] && j < o[1] + TERRAIN_CLIP_W;
+}
+
+/* Every sample of level l's window against the ground and its parent's own
+ * samples. Needs l and every coarser level ready. */
+static void check_contents(const TerrainClipmap *c, int l) {
+    const TerrainClipLevel *lv = &c->level[l], *pv = l + 1 < TERRAIN_CLIP_LEVELS ? &c->level[l + 1] : NULL;
+    double s = lv->spacing;
+    int same = pv && same_octaves(s, pv->spacing), bad = 0;
+    for (int64_t j = lv->origin[1]; j < lv->origin[1] + TERRAIN_CLIP_W; ++j)
+        for (int64_t i = lv->origin[0]; i < lv->origin[0] + TERRAIN_CLIP_W; ++i) {
+            const TerrainSample *t = terrain_clip_sample(lv, i, j);
+            float h = (float)terrain_height_lod((double)i * s, (double)j * s, s), hc = h;
+            if (pv) {
+                int ox = i % 2 != 0, oz = j % 2 != 0;
+                int64_t a = (i - ox) / 2, b = (j - oz) / 2;
+                float p00 = terrain_clip_sample(pv, a, b)->h;
+                if (!ox && !oz)     hc = p00;
+                else if (ox && !oz) hc = 0.5f * (p00 + terrain_clip_sample(pv, a + 1, b)->h);
+                else if (!ox && oz) hc = 0.5f * (p00 + terrain_clip_sample(pv, a, b + 1)->h);
+                else                hc = 0.5f * (p00 + terrain_clip_sample(pv, a + 1, b + 1)->h);
+                /* Where both levels keep the same octaves, the shared samples are the same ground. */
+                if (same && !ox && !oz && memcmp(&t->h, &hc, sizeof(float)) != 0 && bad++ < 5)
+                    CHECK(0, "level %d sample (%lld, %lld) is %.6f, its parent's %.6f", l, (long long)i, (long long)j, t->h, hc);
+            }
+            double gx = (terrain_height_lod((double)(i + 1) * s, (double)j * s, s) - terrain_height_lod((double)(i - 1) * s, (double)j * s, s)) / (2.0 * s);
+            double gz = (terrain_height_lod((double)i * s, (double)(j + 1) * s, s) - terrain_height_lod((double)i * s, (double)(j - 1) * s, s)) / (2.0 * s);
+            double inv = 1.0 / sqrt(1.0 + gx * gx + gz * gz);
+            int ok = memcmp(&t->h, &h, sizeof(float)) == 0 && memcmp(&t->hc, &hc, sizeof(float)) == 0 &&
+                     fabs(t->nx + gx * inv) <= 1e-6 && fabs(t->nz + gz * inv) <= 1e-6;
+            if (!ok && bad++ < 5)
+                CHECK(0, "level %d sample (%lld, %lld) holds h %.6f hc %.6f n (%.5f, %.5f), wants %.6f %.6f (%.5f, %.5f)", l, (long long)i, (long long)j,
+                      t->h, t->hc, t->nx, t->nz, h, hc, -gx * inv, -gz * inv);
+        }
+}
+
+/* Each ready level inside its ready parent, edges on the parent's samples,
+ * and the blend: 1 on every edge sample, 0 wherever the child is drawn. */
+static void check_nesting_and_morph(const TerrainClipmap *c, int *marginMin, int *marginMax) {
+    for (int l = c->finest; l < TERRAIN_CLIP_LEVELS; ++l) {
+        const TerrainClipLevel *lv = &c->level[l];
+        double s = lv->spacing;
+        int64_t o0 = lv->origin[0], o1 = lv->origin[1], e0 = o0 + TERRAIN_CLIP_W - 1, e1 = o1 + TERRAIN_CLIP_W - 1;
+        int edgeBad = 0, innerBad = 0;
+        for (int64_t k = 0; k < TERRAIN_CLIP_W; ++k) {
+            double edge[4][2] = { { (double)(o0 + k) * s, (double)o1 * s }, { (double)(o0 + k) * s, (double)e1 * s },
+                                  { (double)o0 * s, (double)(o1 + k) * s }, { (double)e0 * s, (double)(o1 + k) * s } };
+            for (int q = 0; q < 4; ++q)
+                if (terrain_clip_morph(c, l, edge[q][0], edge[q][1]) != 1.0f) edgeBad++;
+        }
+        CHECK(edgeBad == 0, "level %d: blend short of 1 at %d edge samples", l, edgeBad);
+        if (l + 1 < TERRAIN_CLIP_LEVELS) {
+            const TerrainClipLevel *pv = &c->level[l + 1];
+            CHECK(o0 % 2 == 0 && o1 % 2 == 0, "level %d origin (%lld, %lld) is not on its parent's samples", l, (long long)o0, (long long)o1);
+            int64_t m[4] = { o0 / 2 - pv->origin[0], o1 / 2 - pv->origin[1],
+                             pv->origin[0] + TERRAIN_CLIP_W - 1 - e0 / 2, pv->origin[1] + TERRAIN_CLIP_W - 1 - e1 / 2 };
+            for (int q = 0; q < 4; ++q) {
+                CHECK(m[q] >= 1, "level %d pokes out of its parent (margin %lld)", l, (long long)m[q]);
+                if (m[q] < *marginMin) *marginMin = (int)m[q];
+                if (m[q] > *marginMax) *marginMax = (int)m[q];
+            }
+        }
+        if (l > c->finest) {
+            const TerrainClipLevel *cv = &c->level[l - 1];
+            double cs = cv->spacing;
+            for (int64_t j = cv->origin[1]; j < cv->origin[1] + TERRAIN_CLIP_W; ++j)
+                for (int64_t i = cv->origin[0]; i < cv->origin[0] + TERRAIN_CLIP_W; ++i)
+                    if (terrain_clip_morph(c, l, (double)i * cs, (double)j * cs) != 0.0f) innerBad++;
+            CHECK(innerBad == 0, "level %d blends into its parent at %d points where level %d is drawn", l, innerBad, l - 1);
+        }
+    }
+}
+
+/* The slots a level's update wrote are exactly the samples of its new window
+ * its old one lacked (all of it if there was none), each written once. */
+static void check_dirty(const TerrainClipLevel *lv, int l, int wasFilled, const int64_t was[2]) {
+    static int count[TERRAIN_CLIP_N][TERRAIN_CLIP_N];
+    memset(count, 0, sizeof(count));
+    for (int k = 0; k < lv->n_dirty; ++k) {
+        TerrainRect r = lv->dirty[k];
+        if (!(0 <= r.x0 && r.x0 < r.x1 && r.x1 <= TERRAIN_CLIP_N && 0 <= r.z0 && r.z0 < r.z1 && r.z1 <= TERRAIN_CLIP_N)) {
+            CHECK(0, "level %d dirty rectangle [%d,%d) x [%d,%d) is not inside storage", l, r.x0, r.x1, r.z0, r.z1);
+            return;
+        }
+        for (int z = r.z0; z < r.z1; ++z)
+            for (int x = r.x0; x < r.x1; ++x) count[z][x]++;
+    }
+    int bad = 0, written = 0;
+    for (int64_t j = lv->origin[1]; j < lv->origin[1] + TERRAIN_CLIP_W; ++j)
+        for (int64_t i = lv->origin[0]; i < lv->origin[0] + TERRAIN_CLIP_W; ++i) {
+            int *n = &count[terrain_clip_slot(j)][terrain_clip_slot(i)];
+            int want = !wasFilled || !in_window(was, i, j);
+            if (*n != want) bad++;
+            written += want;
+            *n = 0;
+        }
+    for (int z = 0; z < TERRAIN_CLIP_N; ++z)
+        for (int x = 0; x < TERRAIN_CLIP_N; ++x)
+            if (count[z][x]) bad++;
+    CHECK(bad == 0, "level %d: %d slots written wrongly moving (%lld, %lld) -> (%lld, %lld) (%d samples exposed)", l, bad,
+          (long long)was[0], (long long)was[1], (long long)lv->origin[0], (long long)lv->origin[1], written);
+}
+
+static int fill_all(TerrainClipmap *c, double x, double z) {
+    int updates = 0;
+    do {
+        terrain_clip_update(c, x, z, TERRAIN_CLIP_BUDGET);
+        updates++;
+    } while (c->finest > 0 && updates < 1000);
+    return updates;
+}
+
+/* Two clipmaps at the same camera hold the same windows, sample for sample. */
+static int same_clipmaps(const TerrainClipmap *a, const TerrainClipmap *b) {
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
+        const TerrainClipLevel *la = &a->level[l], *lb = &b->level[l];
+        if (la->origin[0] != lb->origin[0] || la->origin[1] != lb->origin[1]) return 0;
+        for (int64_t j = la->origin[1]; j < la->origin[1] + TERRAIN_CLIP_W; ++j)
+            for (int64_t i = la->origin[0]; i < la->origin[0] + TERRAIN_CLIP_W; ++i)
+                if (memcmp(terrain_clip_sample(la, i, j), terrain_clip_sample(lb, i, j), sizeof(TerrainSample)) != 0) return 0;
+    }
+    return 1;
+}
+
+static uint64_t hash_clipmap(const TerrainClipmap *c, uint64_t h) {
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
+        const TerrainClipLevel *lv = &c->level[l];
+        h = fnv(lv->origin, sizeof(lv->origin), h);
+        for (int64_t j = lv->origin[1]; j < lv->origin[1] + TERRAIN_CLIP_W; ++j)
+            for (int64_t i = lv->origin[0]; i < lv->origin[0] + TERRAIN_CLIP_W; ++i) {
+                const TerrainSample *t = terrain_clip_sample(lv, i, j);
+                h = fnv(&t->h, sizeof(float), h);
+                h = fnv(&t->hc, sizeof(float), h);
+                h = fnv(&t->nx, sizeof(float), h);
+                h = fnv(&t->nz, sizeof(float), h);
+            }
+    }
+    return h;
+}
+
+/* 7-10. The clipmap: a fill from scratch, then a long camera walk. */
+static void test_clipmap(Rng *r) {
+    DVec2 c0 = plan_town_centre(0, 0);
+    TerrainClipmap clip, fresh;
+    terrain_clip_init(&clip);
+    terrain_clip_init(&fresh);
+
+    /* 7. From scratch at the city's edge: every level ready, every sample right. */
+    double cx = c0.x + 9300.0, cz = c0.z - 2100.0;
+    clock_t t0 = clock();
+    int updates = fill_all(&clip, cx, cz);
+    double ms = 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC;
+    CHECK(clip.finest == 0 && updates <= TERRAIN_CLIP_LEVELS, "fill from scratch took %d updates (finest ready level %d)", updates, clip.finest);
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) check_contents(&clip, l);
+    int mMin = 1 << 30, mMax = 0;
+    check_nesting_and_morph(&clip, &mMin, &mMax);
+    printf("clipmap: %d levels of %d^2 samples, %.0f m to %.0f m apart, %.1f km across\n", TERRAIN_CLIP_LEVELS, TERRAIN_CLIP_W,
+           terrain_clip_spacing(0), terrain_clip_spacing(TERRAIN_CLIP_LEVELS - 1), (TERRAIN_CLIP_W - 1) * terrain_clip_spacing(TERRAIN_CLIP_LEVELS - 1) / 1000.0);
+    printf("  filled from scratch in %d updates, %.0f ms (%.0f ns a sample)\n", updates, ms,
+           1e6 * ms / ((double)TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_W * TERRAIN_CLIP_W));
+
+    /* 8-10. A walk: strolls, sprints, flights, dithering across a snap line and
+     *       jumps, under full and starved budgets. After each update: the budget
+     *       held, ready levels are contiguous from the coarsest, every move that
+     *       started and finished in the update wrote exactly what it exposed,
+     *       and idle levels wrote nothing. At checkpoints, the clipmap matches
+     *       one filled from scratch at the same camera. */
+    double x = cx, z = cz, heading = 0.0, line = 0.0;
+    int mode = 0, budget = TERRAIN_CLIP_BUDGET, maxSpent = 0, steadyMisses = 0, steadyUpdates = 0, compared = 0, jumps = 0, worstRecovery = 0;
+    int catching = 0, timing = 0, since = 0, moves = 0;
+    for (int step = 0; step < WALK_STEPS; ++step) {
+        if (step % 250 == 0) {
+            mode = rng_int(r, 0, 4);
+            int b = rng_int(r, 0, 3);
+            budget = b == 0 ? TERRAIN_CLIP_W : b == 1 ? 2500 : TERRAIN_CLIP_BUDGET;
+            /* Every level snaps at multiples of 512 m (2 x the coarsest spacing);
+             * going there is a jump of up to 256 m. */
+            line = 512.0 * floor(x / 512.0 + 0.5);
+            if (mode == 3) catching = 1;
+            if (mode == 4) {   /* jump 3 to 40 km, kept within 30 km of the city */
+                float a = rng_float(r);
+                float d = rng_float(r);
+                x += cos(a * 2.0 * PI_F) * (3000.0 + 37000.0 * d);
+                z += sin(a * 2.0 * PI_F) * (3000.0 + 37000.0 * d);
+                if (hypot(x - c0.x, z - c0.z) > 30000.0) { x = c0.x + (x - c0.x) * 0.25; z = c0.z + (z - c0.z) * 0.25; }
+                jumps++;
+                timing = budget == TERRAIN_CLIP_BUDGET && clip.finest == 0;   /* time jumps from a settled clipmap */
+                catching = 1;
+                since = 0;
+            }
+        }
+        float u = rng_float(r);
+        heading += (u - 0.5) * 0.3;
+        double speed = mode == 0 ? 0.03 : mode == 1 ? 0.3 : mode == 2 ? 5.0 : 0.0;
+        x += cos(heading) * speed;
+        z += sin(heading) * speed;
+        if (mode == 3) x = line + (step & 1 ? 0.6 : -0.6);   /* across every level's snap line each step */
+
+        int wasFilled[TERRAIN_CLIP_LEVELS], wasIdle[TERRAIN_CLIP_LEVELS];
+        int64_t was[TERRAIN_CLIP_LEVELS][2];
+        for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
+            wasFilled[l] = clip.level[l].filled;
+            wasIdle[l] = clip.level[l].n_pending == 0;
+            was[l][0] = clip.level[l].origin[0];
+            was[l][1] = clip.level[l].origin[1];
+        }
+        int spent = terrain_clip_update(&clip, x, z, budget);
+        CHECK(spent <= (budget > TERRAIN_CLIP_W ? budget : TERRAIN_CLIP_W), "update filled %d samples on a budget of %d", spent, budget);
+        if (spent > maxSpent) maxSpent = spent;
+        for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
+            const TerrainClipLevel *lv = &clip.level[l];
+            if (l >= clip.finest) CHECK(lv->ready, "level %d is not ready but finest is %d", l, clip.finest);
+            int moved = !wasFilled[l] || was[l][0] != lv->origin[0] || was[l][1] != lv->origin[1];
+            if (wasIdle[l] && lv->filled && moved) { check_dirty(lv, l, wasFilled[l], was[l]); moves++; }
+            if (wasIdle[l] && wasFilled[l] && lv->filled && !moved) CHECK(lv->n_dirty == 0, "level %d wrote %d rectangles without moving", l, lv->n_dirty);
+        }
+        if (clip.finest > 0) CHECK(!clip.level[clip.finest - 1].ready, "finest %d is not the finest ready level", clip.finest);
+        /* A starved budget lets levels fall behind; on the full budget they
+         * catch up, and then must keep up with any motion short of a jump. */
+        if (budget != TERRAIN_CLIP_BUDGET) {
+            catching = 1;
+            timing = 0;
+        } else if (catching) {
+            since++;
+            if (clip.finest == 0) {
+                if (timing && since > worstRecovery) worstRecovery = since;
+                catching = timing = 0;
+            }
+        } else {
+            steadyUpdates++;
+            if (clip.finest != 0) steadyMisses++;
+        }
+
+        if ((step + 1) % (WALK_STEPS / CHECKPOINTS) == 0) {
+            fill_all(&clip, x, z);   /* let a starved budget catch up */
+            terrain_clip_free(&fresh);
+            terrain_clip_init(&fresh);
+            fill_all(&fresh, x, z);
+            CHECK(same_clipmaps(&clip, &fresh), "after %d steps the clipmap differs from one filled from scratch at (%.1f, %.1f)", step + 1, x, z);
+            check_nesting_and_morph(&clip, &mMin, &mMax);
+            catching = timing = 0;
+            compared++;
+        }
+    }
+    CHECK(worstRecovery <= TERRAIN_CLIP_LEVELS, "a jump took %d updates to fill in on the full budget", worstRecovery);
+    CHECK(steadyMisses == 0, "%d of %d updates while moving on the full budget left a level not ready", steadyMisses, steadyUpdates);
+    printf("  walk: %d updates, %d moves checked, %d jumps (filled in within %d updates), %d steady updates all ready,\n"
+           "        at most %d samples an update, %d comparisons with a fresh fill; children sit %d-%d parent samples in\n",
+           WALK_STEPS, moves, jumps, worstRecovery, steadyUpdates, maxSpent, compared, mMin, mMax);
+    terrain_clip_free(&clip);
+    terrain_clip_free(&fresh);
+}
+
 static int fingerprint(void) {
     DVec2 c = plan_town_centre(0, 0);
     uint64_t hh = 0xcbf29ce484222325ULL, he = hh;
@@ -55,9 +366,20 @@ static int fingerprint(void) {
         hh = fnv(&h, sizeof(h), hh);
         he = fnv(&e, sizeof(e), he);
     }
-    printf("fingerprint over %d points\n", n);
+    /* Clipmaps filled at the centre, the edge and out on the land. */
+    uint64_t hc = 0xcbf29ce484222325ULL;
+    const double cams[3][2] = { { 0.0, 0.0 }, { 9300.0, -2100.0 }, { -21000.0, 14500.0 } };
+    for (int k = 0; k < 3; ++k) {
+        TerrainClipmap clip;
+        terrain_clip_init(&clip);
+        fill_all(&clip, c.x + cams[k][0], c.z + cams[k][1]);
+        hc = hash_clipmap(&clip, hc);
+        terrain_clip_free(&clip);
+    }
+    printf("fingerprint over %d points and 3 clipmaps\n", n);
     printf("  height     %016llx\n", (unsigned long long)hh);
     printf("  edge       %016llx\n", (unsigned long long)he);
+    printf("  clipmap    %016llx\n", (unsigned long long)hc);
     return 0;
 }
 
@@ -184,6 +506,9 @@ int main(int argc, char **argv) {
     }
     printf("edge measure changes by at most %.2f m/m (bound %.2f)\n", rateMax, CITY_EDGE_RATE);
     CHECK(rateMax <= CITY_EDGE_RATE, "edge measure changes faster than CITY_EDGE_RATE: %.3f", rateMax);
+
+    test_lod_heights();
+    test_clipmap(&r);
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all terrain tests passed (%d points)\n", N_POINTS);

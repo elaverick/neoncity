@@ -126,8 +126,9 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/dr
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
                 src/gen/interior_fixtures.c src/gen/interior_validate.c
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c)
-# Terrain (src/terrain): the ground everywhere, a pure function of position. Not in the game yet.
-set(TERRAIN_SOURCES src/terrain/terrain_height.c)
+# Terrain (src/terrain): the ground everywhere, a pure function of position, and the clipmap that
+# samples it round the camera. Not in the game yet.
+set(TERRAIN_SOURCES src/terrain/terrain_height.c src/terrain/terrain_lod.c src/terrain/terrain_mesh.c)
 
 # --- Tests: generator determinism ------------------------------------------------
 enable_testing()
@@ -148,7 +149,8 @@ target_include_directories(interior_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # (plant_lab [seeds] [out_dir]).
 add_executable(plant_lab tests/plant_lab.c src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c)
 target_include_directories(plant_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
-# Terrain determinism, bounds, slopes and the city footprint (terrain_test [--fingerprint]).
+# Terrain determinism, bounds, slopes, the city footprint, levels of detail and the clipmap
+# (terrain_test [--fingerprint]).
 add_executable(terrain_test tests/terrain_test.c ${TERRAIN_SOURCES} ${GEN_SOURCES})
 target_include_directories(terrain_test PRIVATE ${SRC_DIRS})
 foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test)

@@ -26,17 +26,30 @@ static inline float noise_value2(uint32_t seed, double x, double z) {
 }
 
 /* Signed fractal sum in [-1, 1]: octave k has wavelength 2^-k (lattice units)
- * and weight 2^-k, normalised by the total weight, so the octave count of a
- * call site fixes its scale and must not vary with level of detail. Each
- * octave has its own seed and a fixed offset, so their lattices don't line up. */
-static inline float noise_fbm2(uint32_t seed, double x, double z, int octaves) {
+ * and weight 2^-k, normalised by the total weight of `octaves` octaves, so the
+ * octave count of a call site fixes its scale and must not vary with level of
+ * detail. Each octave has its own seed and a fixed offset, so their lattices
+ * don't line up.
+ *
+ * Only the first `used` octaves (used <= octaves) are summed: a level of
+ * detail filters out the finer ones while the coarse ones keep their
+ * amplitude, so the large-scale field is never reshaped. noise_fbm2 sums them
+ * all, with the same arithmetic as before the band existed (check
+ * terrain_test --fingerprint). */
+static inline float noise_fbm2_band(uint32_t seed, double x, double z, int octaves, int used) {
     double sum = 0.0, wsum = 0.0, w = 1.0, f = 1.0;
     for (int k = 0; k < octaves; ++k) {
-        float v = noise_value2(hash_combine(seed, (uint32_t)k), x * f + 17.31 * k, z * f - 41.77 * k);
-        sum += w * (2.0 * v - 1.0);
+        if (k < used) {
+            float v = noise_value2(hash_combine(seed, (uint32_t)k), x * f + 17.31 * k, z * f - 41.77 * k);
+            sum += w * (2.0 * v - 1.0);
+        }
         wsum += w;
         w *= 0.5;
         f *= 2.0;
     }
     return (float)(sum / wsum);
+}
+
+static inline float noise_fbm2(uint32_t seed, double x, double z, int octaves) {
+    return noise_fbm2_band(seed, x, z, octaves, octaves);
 }
