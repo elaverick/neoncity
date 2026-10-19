@@ -59,9 +59,10 @@ struct TerrainGpu {
     TerrainPush    push[TERRAIN_CLIP_LEVELS];
     struct { int level; uint32_t first, count; } draw[MAX_DRAWS];
     int            ndraw;
-    /* the last update, and the slowest so far (--shot prints them) */
+    /* the last update, and the slowest so far (--shot prints them): the fill
+     * (with the blocks' bounds), the draw plan, the staging copy, and in all */
     int            filled, drawn, tilesDrawn, tilesTotal;
-    double         updateMs, slowestMs;
+    double         fillMs, planMs, stageMs, updateMs, slowestMs;
 };
 
 /* A triangle facing up (+y) seen from above, as the city's ground does
@@ -261,9 +262,9 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
     TerrainGpu *t = r->terrain;
     double t0 = glfwGetTime();
     t->filled = terrain_clip_update(&t->clip, cam[0], cam[2], TERRAIN_CLIP_BUDGET);
+    double t1 = glfwGetTime();
     plan_draws(t, cam, viewProj, r->vk->extent.height);
-    t->updateMs = (glfwGetTime() - t0) * 1000.0;
-    if (t->updateMs > t->slowestMs) t->slowestMs = t->updateMs;
+    double t2 = glfwGetTime();
 
     uint8_t *dst = (uint8_t *)t->staging[slot].mapped;
     VkDeviceSize used = 0;
@@ -281,6 +282,12 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
             }
         }
     }
+    double t3 = glfwGetTime();
+    t->fillMs = (t1 - t0) * 1000.0;
+    t->planMs = (t2 - t1) * 1000.0;
+    t->stageMs = (t3 - t2) * 1000.0;
+    t->updateMs = (t3 - t0) * 1000.0;
+    if (t->updateMs > t->slowestMs) t->slowestMs = t->updateMs;
     if (n == 0) return;
     vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
     vkCmdCopyBuffer(cmd, t->staging[slot].buf, t->samples.buf, n, t->copies);
@@ -308,7 +315,7 @@ void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
 void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
     const TerrainGpu *t = r->terrain;
     snprintf(buf, n, "terrain: levels %d-%d drawn (finest ready %d, screen-space error asks for %d), %d of %d tiles in view in %d draws,\n"
-             "         last update filled %d samples in %.2f ms (slowest %.2f ms)",
+             "         last update filled %d samples in %.2f ms (fill %.2f, plan %.2f, staging %.2f; slowest %.2f ms)",
              t->drawn, TERRAIN_CLIP_LEVELS - 1, t->clip.finest, t->clip.want, t->tilesDrawn, t->tilesTotal, t->ndraw,
-             t->filled, t->updateMs, t->slowestMs);
+             t->filled, t->updateMs, t->fillMs, t->planMs, t->stageMs, t->slowestMs);
 }

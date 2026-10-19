@@ -44,8 +44,10 @@ typedef struct TerrainPush {
 } TerrainPush;
 typedef struct TerrainGpu TerrainGpu;
 typedef struct ProxyGpu ProxyGpu;
-/* GPU timestamps between the frame's passes (renderer_gpu_times). */
-enum { GT_START = 0, GT_STREAM, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_SCENE, GT_POST, GT_COUNT };
+/* GPU timestamps between the frame's passes (renderer_gpu_times). The scene
+ * pass is stamped inside: the city, plants and proxies (GT_SCENE), the terrain
+ * (GT_TERRAIN), then the sky and the resolve (GT_SKY). */
+enum { GT_START = 0, GT_STREAM, GT_TERRAIN_UPLOAD, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_SCENE, GT_TERRAIN, GT_SKY, GT_POST, GT_COUNT };
 struct Renderer {
     VkCore      *vk;
     ChunkSystem *chunks;

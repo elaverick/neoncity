@@ -1,6 +1,7 @@
 #include "renderer_internal.h"
 
-static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "shelter", "prepass", "shadow rays", "shadow filter", "scene", "post" };
+static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "terrain upload", "shelter", "prepass", "shadow rays", "shadow filter",
+                                                "scene", "terrain", "sky", "post" };
 
 void renderer_set_shadows(Renderer *r, bool on) { r->shadowsOn = on && r->rt; }
 bool renderer_shadows(Renderer *r) { return r->shadowsOn; }
@@ -297,9 +298,10 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     timestamp(r, cmd, slot, GT_START);
     chunks_update(r->chunks, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     chunks_sky_lights(r->chunks, cam, (SkyGrid *)r->skyBuf[slot].mapped);
-    terrain_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
     proxy_gpu_update(r, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_STREAM);
+    terrain_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
+    timestamp(r, cmd, slot, GT_TERRAIN_UPLOAD);
     record_shelter(r, cmd, slot, &topDown);
     timestamp(r, cmd, slot, GT_SHELTER);
     if (shadows) record_prepass(r, cmd, slot);
@@ -311,8 +313,8 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
         timestamp(r, cmd, slot, GT_DENOISE);
     }
 
-    record_scene(r, cmd, slot, shadows);
-    timestamp(r, cmd, slot, GT_SCENE);
+    record_scene(r, cmd, slot, shadows);   /* stamps GT_SCENE, GT_TERRAIN */
+    timestamp(r, cmd, slot, GT_SKY);
 
     /* ---- screen-space reflections, then clouds, blended into r->hdr ---- */
     record_reflections(r, cmd, slot);
