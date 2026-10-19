@@ -153,10 +153,12 @@ static bool floor_height(double x, double z, float *y) {
     return false;
 }
 
-/* What the feet stand on: a building's floor, or the street's ground and its kerbs. */
+/* What the feet stand on: a building's floor, or the street's ground and its
+ * kerbs. A tread of an entrance's steps is level, and where the street slopes
+ * along a wide entrance it dips into the sidewalk at the uphill end. */
 static float ground_height(double x, double z) {
-    float f;
-    return floor_height(x, z, &f) ? f : base_ground(x, z) + kerb_height(x, z);
+    float f, street = base_ground(x, z) + kerb_height(x, z);
+    return floor_height(x, z, &f) ? maxf(f, street) : street;
 }
 
 /* Buildings belong to the chunk holding their centre and overhang by less

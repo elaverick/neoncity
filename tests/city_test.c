@@ -664,7 +664,7 @@ int main(int argc, char **argv) {
      *    sidewalks clear of buildings; geometry stays under the culling bound. */
     DVec2 home = plan_town_centre(0, 0);
     int hx = (int)floor(home.x / CHUNK_SIZE), hz = (int)floor(home.z / CHUNK_SIZE);
-    int buildings = 0, lamps = 0, drops = 0, slabs = 0, floors = 0, kinds[3] = { 0 }, zones[ZONE_COUNT] = { 0 }, megaX = 0, megaZ = 0, foundMega = 0;
+    int buildings = 0, lamps = 0, drops = 0, slabs = 0, floors = 0, treads = 0, kinds[3] = { 0 }, zones[ZONE_COUNT] = { 0 }, megaX = 0, megaZ = 0, foundMega = 0;
     float floorStep = 0.0f;
     uint32_t coreLights = 0, coreVerts = 0, litterMax = 0;
     double litterSum = 0;
@@ -704,21 +704,33 @@ int main(int argc, char **argv) {
                 lamps++;
             }
             /* Lobby and concourse floors lie on their blocks, at their building's
-             * base: a step up from the sidewalk of no more than the plot falls. */
+             * base: a step up from the sidewalk of no more than the plot falls
+             * (0.6 m at the megacity's 10 m of relief). The treads of the steps
+             * up to them lie between the two, above the sidewalk at its lowest. */
             for (int i = 0; i < L.nfloor; ++i) {
                 const FloorPoly *f = &L.floor[i];
-                int base = 0;
+                const double *v0 = L.collv[f->at.first];
+                float fall = 0.6f * (float)(plan_settlement(plan_settlement_near(v0[0], v0[1])).relief_m / PLAN_RELIEF_MEGA_M);
+                int base = 0, tread = 0;
                 for (int j = 0; j < L.nbuild && !base; ++j) base = f->y == L.build[j].base + SIDEWALK_HEIGHT;   /* G0 */
-                CHECK(base, "chunk (%d,%d) floor %d (%.2f m) isn't at a building's base", cx, cz, i, f->y);
+                for (int j = 0; j < L.nbuild && !base && !tread; ++j) {
+                    float fy = L.build[j].base + SIDEWALK_HEIGHT;
+                    tread = f->at.holeN == 0 && f->at.n == 4 && f->y < fy && f->y > fy - fall;
+                }
+                CHECK(base || tread, "chunk (%d,%d) floor %d (%.2f m) isn't at a building's base or on the steps up to it", cx, cz, i, f->y);
+                float low = 1e30f;
+                for (int k = 0; k < f->at.n; ++k) low = minf(low, city_ground_y(L.collv[f->at.first + k][0], L.collv[f->at.first + k][1]) + SIDEWALK_HEIGHT);
+                CHECK(!tread || f->y > low, "chunk (%d,%d) tread %d (%.2f m) is under the sidewalk (%.2f m)", cx, cz, i, f->y, low);
                 for (int k = 0; k < f->at.n; ++k) {
                     const double *v = L.collv[f->at.first + k];
                     int ok = 0;
                     for (int j = 0; j < L.ncurbs && !ok; ++j) ok = in_curb(&L.curb[j], v[0], v[1]);
                     float step = f->y - (city_ground_y(v[0], v[1]) + SIDEWALK_HEIGHT);
-                    CHECK(ok && step >= 0.0f && step <= 0.6f, "chunk (%d,%d) floor %d corner %d is off its block or %.2f m off the sidewalk", cx, cz, i, k, step);
-                    floorStep = maxf(floorStep, step);
+                    CHECK(ok && (tread || (step >= 0.0f && step <= fall)), "chunk (%d,%d) floor %d corner %d is off its block or %.2f m off the sidewalk", cx, cz, i, k, step);
+                    if (!tread) floorStep = maxf(floorStep, step);
                 }
-                floors++;
+                floors += base;
+                treads += tread;
             }
             /* Drop kerbs lie on their blocks, keep a lowered kerb wide enough to
              * cross by, and don't run into each other (bar a shared corner). */
@@ -783,7 +795,7 @@ int main(int argc, char **argv) {
     printf("%d chunks around the spawn: %.1f buildings and %.1f lamps per chunk\n", n, (double)buildings / n, (double)lamps / n);
     printf("  busiest chunk: %u vertices, %u light records\n", coreVerts, coreLights);
     printf("  %.1f drop kerbs per chunk, %.1f tactile slabs each\n", (double)drops / n, drops ? (double)slabs / drops : 0.0);
-    printf("  %d lobby and concourse floors, at most %.2f m above the sidewalk\n", floors, floorStep);
+    printf("  %d lobby and concourse floors, at most %.2f m above the sidewalk; %d treads of steps up to them\n", floors, floorStep, treads);
     printf("  litter near the spawn: avg %.0f, max %u vertices per chunk\n", litterSum / litterChunks, litterMax);
     printf("  kinds: %d blocks, %d towers, %d arcologies\n", kinds[0], kinds[1], kinds[2]);
     printf("  zones: %d core, %d centre, %d estate, %d industrial\n", zones[0], zones[1], zones[2], zones[3]);

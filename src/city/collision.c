@@ -77,7 +77,30 @@ static void coll_frame_box(BlockLayout *BL, const Building *b, const ILayout *L,
     coll_vertex(BL, b, lx0, lz0); coll_vertex(BL, b, lx0, lz1); coll_vertex(BL, b, lx1, lz1); coll_vertex(BL, b, lx1, lz0);
 }
 
-/* A planned ground floor's envelope: solid 0.3 m in from the facade, open at its openings. */
+/* The treads of the steps up to an opening from u0 to u1 along edge e of
+ * grounded section s, as floors, where the sill is too high a step from the
+ * sidewalk (entrance_risers; emit_walls draws them). */
+static void add_steps(BlockLayout *BL, const Building *b, const BSection *s, const EdgeInfo *e, float u0, float u1) {
+    DVec2 wa = to_world(b, e->ax + e->ex * u0, e->az + e->ez * u0), wc = to_world(b, e->ax + e->ex * u1, e->az + e->ez * u1);
+    float ga = city_ground_y(wa.x, wa.z) - building_base(b) + SIDEWALK_HEIGHT, gc = city_ground_y(wc.x, wc.z) - building_base(b) + SIDEWALK_HEIGHT;
+    float rise = s->y0 - minf(ga, gc);
+    int nr = entrance_risers(rise);
+    float ox = -e->ez, oz = e->ex;   /* out of the building */
+    for (int t = 1; t < nr; ++t) {
+        if (BL->nfloor >= MAX_FLOORS || BL->ncollv + 4 > MAX_COLL_VERTS) return;
+        FloorPoly *f = &BL->floor[BL->nfloor++];
+        f->y = building_base(b) + s->y0 - rise * (float)t / (float)nr;
+        f->at.first = BL->ncollv; f->at.n = 4; f->at.holeFirst = 0; f->at.holeN = 0;
+        float d0 = (float)(t - 1) * STEP_TREAD, d1 = (float)t * STEP_TREAD;
+        coll_vertex(BL, b, e->ax + e->ex * u0 + ox * d0, e->az + e->ez * u0 + oz * d0);
+        coll_vertex(BL, b, e->ax + e->ex * u1 + ox * d0, e->az + e->ez * u1 + oz * d0);
+        coll_vertex(BL, b, e->ax + e->ex * u1 + ox * d1, e->az + e->ez * u1 + oz * d1);
+        coll_vertex(BL, b, e->ax + e->ex * u0 + ox * d1, e->az + e->ez * u0 + oz * d1);
+    }
+}
+
+/* A planned ground floor's envelope: solid 0.3 m in from the facade, open at
+ * its openings, with the steps up to them where they need steps. */
 static void collide_envelope(BlockLayout *BL, const Building *b, const BGraph *g, const Behind *bh) {
     const BSection *s = &g->sec[bh->si];
     const BLoop *loops[2] = { &s->foot.outer, &s->foot.hole };
@@ -88,6 +111,10 @@ static void collide_envelope(BlockLayout *BL, const Building *b, const BGraph *g
             int nop = face_openings(g, bh, li, k, op, 8);
             for (int i = 0; i < nop; ++i)
                 for (int j = i; j > 0 && op[j][0] < op[j - 1][0]; --j) { float t[3]; memcpy(t, op[j], sizeof(t)); memcpy(op[j], op[j - 1], sizeof(t)); memcpy(op[j - 1], t, sizeof(t)); }
+            for (int i = 0; i < nop && bsec_grounded(s); ++i) {
+                float u0 = maxf(0.0f, op[i][0]), u1 = minf(e.len, op[i][1]);
+                if (u1 - u0 >= 1e-3f) add_steps(BL, b, s, &e, u0, u1);
+            }
             float cur = 0.0f;
             for (int o = 0; o <= nop; ++o) {
                 float u0 = cur, u1 = o < nop ? op[o][0] : e.len;

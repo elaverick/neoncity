@@ -14,6 +14,8 @@ void mesh_begin(Mesh *m, int cx, int cz) {
     m->footing = 0;
     m->grounded = 0;
     m->ox = cx * (double)CHUNK_SIZE; m->oz = cz * (double)CHUNK_SIZE;
+    m->cell = city_drape_cell(m->ox + 0.5 * CHUNK_SIZE, m->oz + 0.5 * CHUNK_SIZE);
+    m->sink = city_footing_sink(m->ox + 0.5 * CHUNK_SIZE, m->oz + 0.5 * CHUNK_SIZE);
     m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
     m->mx[0] = m->mx[1] = m->mx[2] = -1e30f;
     free(m->lights);
@@ -47,7 +49,7 @@ void mesh_push_w(Mesh *m, vec3 p, vec3 n, int8_t w, float u, float v, uint32_t s
         n.z = m->xs * x + m->xc * z;
         p.y += m->xy;
     }
-    if (foot) p.y = minf(p.y, city_ground_y(m->ox + p.x, m->oz + p.z) + (SIDEWALK_HEIGHT - FOOTING_SINK));
+    if (foot) p.y = minf(p.y, city_ground_y(m->ox + p.x, m->oz + p.z) + (SIDEWALK_HEIGHT - m->sink));
     float base = m->xf ? m->xy : m->grounded ? m->ground : city_ground_y(m->ox + p.x, m->oz + p.z);
     if (m->drape) {
         p.y += base;
@@ -77,7 +79,7 @@ void mesh_push_w(Mesh *m, vec3 p, vec3 n, int8_t w, float u, float v, uint32_t s
 /* ---------------------------------------------------------------------------
  * Draping (Mesh.drape): a vertex is raised by the ground under it, but a
  * triangle is flat between its vertices, so a draped polygon is first cut
- * along a grid of DRAPE_CELL squares. Each piece then follows the ground's
+ * along a grid of squares (Mesh.cell, city_drape_cell). Each piece then follows the ground's
  * gentle curve to about a millimetre, and polygons that share an edge, cut by
  * the same lines, share the vertices along it.
  * ------------------------------------------------------------------------- */
@@ -113,7 +115,7 @@ static int drape_clip(const DrapeV *in, int n, int axis, float sign, float lim, 
 
 /* Convex polygon p (wound to face along nrm) cut along the drape grid and fanned. */
 static void emit_draped(Mesh *m, const DrapeV *p, int n, vec3 nrm, Mat mt) {
-    const float c = DRAPE_CELL;
+    const float c = m->cell;
     float x0 = 1e30f, x1 = -1e30f, z0 = 1e30f, z1 = -1e30f;
     for (int i = 0; i < n; ++i) {
         x0 = minf(x0, p[i].p.x); x1 = maxf(x1, p[i].p.x);

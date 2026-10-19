@@ -191,16 +191,26 @@ static void emit_walls(Mesh *m, const Building *b, const BGraph *g, int si, cons
                         float uv[4][2] = { { pa, pw }, { pc, pw }, { pc, pw }, { pa, pw } };
                         emit_quad(m, v3(pa, y0, 0), v3(pc, y0, 0), v3(pc, y1, 0), v3(pa, y1, 0), v3(0, 0, 1), uv, mq);
                     }
-                    /* the step up to the opening: from its sill (the floor) down to the ground */
+                    /* the step up to the opening: from its sill (the floor) down to the ground,
+                     * or a flight of steps out over the sidewalk where that is too high a step */
                     if (o < nop && bsec_grounded(s)) {
                         float pa = maxf(sa, op[o][0]), pc = minf(sb, op[o][1]);
                         float ga = mesh_ground_local(m, pa, 0.0f) + SIDEWALK_HEIGHT, gc = mesh_ground_local(m, pc, 0.0f) + SIDEWALK_HEIGHT;
                         if (pc - pa >= 1e-3f && minf(ga, gc) < s->y0 - 0.005f) {
                             float uv[4][2] = { { pa, pw }, { pc, pw }, { pc, pw }, { pa, pw } };
-                            int ft = m->footing;
+                            float g = minf(ga, gc), rise = s->y0 - g;
+                            int ft = m->footing, nr = entrance_risers(rise);
                             m->footing = 0;
-                            emit_quad(m, v3(pa, minf(ga, s->y0) - FOOTING_SINK, 0), v3(pc, minf(gc, s->y0) - FOOTING_SINK, 0),
-                                      v3(pc, s->y0, 0), v3(pa, s->y0, 0), v3(0, 0, 1), uv, mq);
+                            if (nr == 1)
+                                emit_quad(m, v3(pa, minf(ga, s->y0) - m->sink, 0), v3(pc, minf(gc, s->y0) - m->sink, 0),
+                                          v3(pc, s->y0, 0), v3(pa, s->y0, 0), v3(0, 0, 1), uv, mq);
+                            else {
+                                float y1 = s->y0 - rise / (float)nr;
+                                emit_quad(m, v3(pa, y1, 0), v3(pc, y1, 0), v3(pc, s->y0, 0), v3(pa, s->y0, 0), v3(0, 0, 1), uv, mq);
+                                for (int t = 1; t < nr; ++t)   /* tread t, the riser below it at its front */
+                                    emit_box(m, v3(pa, g - m->sink, (float)(t - 1) * STEP_TREAD), v3(pc, s->y0 - rise * (float)t / (float)nr, (float)t * STEP_TREAD),
+                                             F_NX | F_PX | F_PZ | F_TOP, mat(MAT_CURB, 0, 0, 0, 0), UV_FACADE);
+                            }
                             m->footing = ft;
                         }
                     }

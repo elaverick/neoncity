@@ -25,6 +25,21 @@ float city_height_cap(int cx, int cz) {
 
 float city_ground_y(double x, double z) { return (float)terrain_urban_height(x, z); }
 
+/* The relief of the ground at (x, z): its settlement's (m). */
+static double ground_relief(double x, double z) { return plan_settlement(plan_settlement_near(x, z)).relief_m; }
+
+float city_drape_cell(double x, double z) {
+    const float widest = CHUNK_SIZE / 2.0f;
+    double r = ground_relief(x, z), most = PLAN_RELIEF_MEGA_M * widest * widest * 1.0001;   /* rounding */
+    float c = widest;
+    while (c > CHUNK_SIZE / 16.0f && r * c * c > most) c *= 0.5f;
+    return c;
+}
+
+float city_footing_sink(double x, double z) {
+    return 0.05f * maxf(1.0f, (float)(ground_relief(x, z) / PLAN_RELIEF_MEGA_M));
+}
+
 void city_ground_range(int cx, int cz, float *lo, float *hi) {
     const double P = CHUNK_SIZE, o = CITY_OVERHANG;
     double l, h;
@@ -37,9 +52,9 @@ void city_ground_range(int cx, int cz, float *lo, float *hi) {
  * gentle curve, so nothing of the ground floor is buried: where the ground
  * falls away the walls reach down to it (Mesh.footing). Where the ground
  * varies, a little more for the draped lot under the building, which can
- * stand up to about a centimetre proud of the ground (DRAPE_CELL). */
+ * stand up to about a centimetre proud of the ground (city_drape_cell). */
 float plot_base(const Building *b) {
-    const float step = DRAPE_CELL * 0.5f;
+    const float step = city_drape_cell(b->ox, b->oz) * 0.5f;
     float w = b->foot.x1 - b->foot.x0, d = b->foot.z1 - b->foot.z0;
     int nu = 2 + (int)(w / step), nv = 2 + (int)(d / step);
     float lo = 1e30f, hi = -1e30f;

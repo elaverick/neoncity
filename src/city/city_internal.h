@@ -140,18 +140,33 @@ float drop_y(double d);
  * city_ground_y; marked carriageways sit at 0, sidewalks at SIDEWALK_HEIGHT. */
 #define BASE_Y (-0.03f)
 
+/* mesh_building.c, collision.c */
+/* An entrance whose sill stands more than STEPS_FROM above the sidewalk gets a
+ * flight of steps out over it, not one riser: entrance_risers risers of at
+ * most STEP_RISE, all alike, with treads STEP_TREAD deep between them. The
+ * mesh draws them and the collision layout walks them (BlockLayout.floor). */
+#define STEPS_FROM 0.3f
+#define STEP_RISE  0.17f
+#define STEP_TREAD 0.3f
+static inline int entrance_risers(float rise) { return rise > STEPS_FROM ? (int)ceilf(rise / STEP_RISE) : 1; }
+
 /* mesh_emit.c */
-/* How far a footing (Mesh.footing) reaches into the ground: under the draped
- * sidewalk or lot, which can stand that much proud of the ground between the
- * drape's cuts, and under a long wall's straight foot. */
-#define FOOTING_SINK 0.05f
+/* How far a footing (Mesh.footing) reaches into the ground at (x, z): under
+ * the draped sidewalk or lot, which can stand about a centimetre proud of the
+ * ground between the drape's cuts, and under a long wall's straight foot,
+ * which strays from the ground in proportion to its relief: 5 cm at the
+ * megacity's 10 m, never less. */
+float city_footing_sink(double x, double z);
 /* Draped surfaces (Mesh.drape) are cut into squares this wide (chunk-local, so
- * the cuts line up across chunks) to follow the ground's curve. At the urban
- * relief's 10 m a straight 55 m span strays at most 13 mm from the ground
- * (27.5 m: 3 mm); finer cuts cost every chunk's street mesh vertices. Hillier
- * settlements will want finer ones. */
-#define DRAPE_CELL (CHUNK_SIZE / 2.0f)
-/* Empties m for chunk (cx, cz)'s layer: no vertices, lights or transform, bounds reset. */
+ * the cuts line up across chunks) to follow the ground's curve. A straight
+ * span strays from the ground by its curvature, which grows with the relief,
+ * times the span squared: at the megacity's 10 m a 55 m span strays at most
+ * 13 mm (27.5 m: 3 mm). The cell at (x, z) is the widest CHUNK_SIZE / 2^k that
+ * strays no further over its settlement's relief (27.5 m at 40 m); finer cuts
+ * cost every chunk's street mesh vertices. */
+float city_drape_cell(double x, double z);
+/* Empties m for chunk (cx, cz)'s layer: no vertices, lights or transform, bounds
+ * reset; its drape cell and footing sink for the chunk's ground. */
 void mesh_begin(Mesh *m, int cx, int cz);
 /* The ground under point (x, z) of the current emission frame, as a height in that frame. */
 float mesh_ground_local(const Mesh *m, float x, float z);

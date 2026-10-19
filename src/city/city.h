@@ -26,7 +26,7 @@
 #define MAX_DROP_PV     16
 #define MAX_COLL        4096
 #define MAX_COLL_VERTS  20480
-#define MAX_FLOORS      64
+#define MAX_FLOORS      128
 #define CITY_OVERHANG   70.0f
 
 typedef struct Rect { float x0, z0, x1, z1; } Rect;
@@ -84,9 +84,10 @@ typedef struct DropKerb {
 
 /* Solid ground-level outline (world coordinates in BlockLayout.collv), with an optional courtyard. */
 typedef struct CollPoly { int first, n, holeFirst, holeN; } CollPoly;
-/* A floor walked on inside a building at street level, a lobby or an arcology's
- * concourse: its outline (in collv, as CollPoly), at world height y. It lies at
- * the building's base, above the street's ground by as much as the plot falls. */
+/* A floor walked on at a building at street level, a lobby or an arcology's
+ * concourse, or a tread of the steps up to it: its outline (in collv, as
+ * CollPoly), at world height y. A floor lies at the building's base, above the
+ * street's ground by as much as the plot falls. */
 typedef struct FloorPoly { CollPoly at; float y; } FloorPoly;
 
 /* Everything the player collides with in one chunk (world coordinates). */
@@ -132,6 +133,8 @@ typedef struct Mesh {
                           * one plant's), not from the ground looked up under it */
     float     ground;
     double    ox, oz;    /* the chunk's origin in the world, for the ground under a vertex */
+    float     cell;      /* the drape's cuts (city_drape_cell) and how far a footing reaches */
+    float     sink;      /* into the ground (city_footing_sink), for the chunk's ground */
 } Mesh;
 
 float    city_height_cap(int cx, int cz);       /* conservative upper bound of anything in the chunk, above its ground */

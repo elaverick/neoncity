@@ -78,12 +78,16 @@ the terrain roadmap.
     spikes in the `--shot` timings, move the fill to a worker.
   - **City and building detail.** The design doc wants the same perceptual rule applied to the city's levels of
     detail, independently of the terrain's: see "Level of detail" under the distant proxies.
-- **The graded city** stands on `city_ground_y` (10 m of relief, grades up to about 1.1%): the streets are draped onto
-  it in `DRAPE_CELL` squares, and each building stands on the highest ground under its plot, its walls reaching down
-  to the street (`Mesh.footing`, drawn as a plinth) and a riser under each entrance. Across a plot the ground falls
-  6 cm on average and at most about 0.4 m, so for now:
-  - Entrances get a riser, not steps or a ramp; an arcology's portals too.
-  - `DRAPE_CELL` (55 m) and the footing's 5 cm are sized for this relief; hillier ground wants finer cuts.
+- **The graded city** stands on `city_ground_y`, its settlement's relief (`PlanSettlement.relief_m`: the megacity's
+  10 m, grades up to about 1.1%; smaller settlements up to 40 m). The streets are draped onto it in squares sized for
+  the relief (`city_drape_cell`: 55 m here, 27.5 m at 40 m), and each building stands on the highest ground under its
+  plot, its walls reaching down to the street (`Mesh.footing`, drawn as a plinth, as deep as `city_footing_sink`).
+  Its lobby floors are in the collision layout. An entrance gets a riser, or steps out over the sidewalk once its
+  sill stands more than 0.3 m up (`entrance_risers`; none in the megacity's sampled chunks, 364 treads round the
+  spawn when its relief is set to 40 m for a test). Left over:
+  - Steps, not ramps; an arcology's wide portals get one flight across, whose uphill end dips into the sidewalk
+    where the street slopes along it (the player stands on whichever is higher).
+  - A proxy box reaches 1 m into the ground (`src/city/proxy.c`); in a hilly town a plot can fall further.
   - The haze thins with height above one datum, the city's ground at its centre (`haze_datum`, `src/app/main.c`).
     With more settlements it should be the ground of the one the camera is in or nearest, blended between them.
 - **The city's edge** (`plan_town_built`, `plan_fringe`, `PlanArea.ground`/`edges`; see the README). The city is
