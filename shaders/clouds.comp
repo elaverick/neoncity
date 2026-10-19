@@ -48,6 +48,10 @@ const float SCUD_SCALE = 1.0 / 480.0;
 const float SIGMA = 0.012;                 // extinction per metre at density 1
 const vec3 WIND = vec3(1.5, 0.0, 0.55);    // deck drift, m/s; the scud below runs faster
 const float GLOW = 1.3;                    // city light reaching the cloud base
+// How far the deck is marched. At the deck's height the city's haze
+// (fogAmount) has taken about 97% of its light by here.
+const float CLOUD_REACH = 9000.0;
+const float FAR_STEP = 80.0;               // step past VIEW_DISTANCE (m), without the eroded detail
 
 float gTime;
 
@@ -207,6 +211,28 @@ vec3 mistLight(vec3 dir, float tEnd, float rain) {
     return sum * (MIST * rain);
 }
 
+// Marches the ray from ro along dir over [ta, tb] in `steps` jittered steps,
+// adding the light scattered toward the eye to L and dimming T.
+void march(vec3 ro, vec3 dir, float ta, float tb, int steps, bool detail, float jitter, vec3 haze, inout vec3 L, inout float T) {
+    float ds = (tb - ta) / float(steps);
+    vec3 drift = WIND * gTime;
+    for (int i = 0; i < steps; ++i) {
+        float t = ta + (float(i) + jitter) * ds;
+        vec3 pw = ro + dir * t;          // world position: the city glow stays put...
+        vec3 p = pw + drift;             // ...while the clouds drift over it
+        Column c = column(p.xz);
+        float d = density(p, c, detail);
+        if (d <= 0.002) continue;
+        float Ts = exp(-d * SIGMA * ds);
+        vec3 lit = lightAt(p, c, cityGlow(pw.xz)) + signLight(dir * t);
+        // seen through the haze between the eye and this step
+        vec3 s = mix(lit, haze, fogAmount(dir * t, t));
+        L += T * (1.0 - Ts) * s;
+        T *= Ts;
+        if (T < 0.01) { T = 0.0; return; }
+    }
+}
+
 void main() {
     ivec2 hp = ivec2(gl_GlobalInvocationID.xy);
     ivec2 hs = imageSize(cloudOut);
@@ -231,9 +257,11 @@ void main() {
     vec3 ro = frame.camPos.xyz;
     imageStore(mistOut, hp, vec4(mistLight(dir, tScene, frame.weather.x), 1.0));
 
-    // The ray's span inside the cloud layer, up to the scene and the view
-    // distance. Terrain is drawn further, but the deck's own haze (fogAmount
-    // below) is total by the view distance, so marching on would add nothing.
+    // The ray's span inside the cloud layer, up to the scene and CLOUD_REACH:
+    // the distant proxies stand into the deck far beyond the chunks' view
+    // distance, so it must cover them there too. Within VIEW_DISTANCE every
+    // 5 m or so with the eroded detail; beyond it, where the haze has taken
+    // most of the deck, every FAR_STEP metres without.
     float lo = SCUD_LO, hi = CLOUD_TOP, t0, t1;
     if (abs(dir.y) < 1e-5) {
         t0 = 0.0;
@@ -243,30 +271,22 @@ void main() {
         t0 = max(min(ta, tb), 0.0);
         t1 = max(ta, tb);
     }
-    t1 = min(t1, min(tScene, frame.camFwd.w));
+    t1 = min(t1, min(tScene, CLOUD_REACH));
     if (t1 <= t0) { imageStore(cloudOut, hp, vec4(0.0, 0.0, 0.0, 1.0)); return; }
 
-    int steps = int(clamp((t1 - t0) / 5.0, 16.0, 80.0));
-    float ds = (t1 - t0) / float(steps);
     float jitter = ign(vec2(hp));
     vec3 haze = hazeColor(dir);
-    vec3 drift = WIND * gTime;
     float T = 1.0;
     vec3 L = vec3(0.0);
-    for (int i = 0; i < steps; ++i) {
-        float t = t0 + (float(i) + jitter) * ds;
-        vec3 pw = ro + dir * t;          // world position: the city glow stays put...
-        vec3 p = pw + drift;             // ...while the clouds drift over it
-        Column c = column(p.xz);
-        float d = density(p, c, true);
-        if (d <= 0.002) continue;
-        float Ts = exp(-d * SIGMA * ds);
-        vec3 lit = lightAt(p, c, cityGlow(pw.xz)) + signLight(dir * t);
-        // seen through the haze between the eye and this step
-        vec3 s = mix(lit, haze, fogAmount(dir * t, t));
-        L += T * (1.0 - Ts) * s;
-        T *= Ts;
-        if (T < 0.01) { T = 0.0; break; }
+    float tNear = min(t1, frame.camFwd.w);
+    if (tNear > t0) {
+        int steps = int(clamp((tNear - t0) / 5.0, 16.0, 80.0));
+        march(ro, dir, t0, tNear, steps, true, jitter, haze, L, T);
+    }
+    float tFar = max(t0, tNear);
+    if (t1 > tFar && T > 0.0) {
+        int steps = int(clamp((t1 - tFar) / FAR_STEP, 4.0, 64.0));
+        march(ro, dir, tFar, t1, steps, false, jitter, haze, L, T);
     }
     imageStore(cloudOut, hp, vec4(L, T));
 }

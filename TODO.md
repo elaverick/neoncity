@@ -51,8 +51,8 @@ the terrain roadmap.
     (drawn as plain facades), and courtyards (the box fills them).
   - **Distant streets** are the terrain under the city with a flat sodium glow (`terrain.frag`); no street grid,
     lamps or traffic. Seen from high up the blocks read, but the streets between them don't.
-  - **Clouds** are marched only to `VIEW_DISTANCE` (`clouds.comp`), so the deck stops there; towers beyond rise
-    into the cloud base as soft streaks.
+  - **Clouds** are marched to 9 km (`CLOUD_REACH`, `clouds.comp`), past `VIEW_DISTANCE` in 80 m steps without
+    the eroded detail, so the deck covers the distant towers. They are hazed by the city's air even over the land.
   - **Level of detail:** every box in view is drawn, down to subpixel podiums (about 0.1 ms for 230k boxes on an
     RTX 4080 Super). Far tiles could keep only each building's tallest sections.
   - **Startup:** one worker fills the city's tiles in about a second, nearest first, so the far skyline fills in;
