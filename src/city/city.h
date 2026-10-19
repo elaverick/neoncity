@@ -26,6 +26,7 @@
 #define MAX_DROP_PV     16
 #define MAX_COLL        4096
 #define MAX_COLL_VERTS  20480
+#define MAX_FLOORS      64
 #define CITY_OVERHANG   70.0f
 
 typedef struct Rect { float x0, z0, x1, z1; } Rect;
@@ -83,6 +84,10 @@ typedef struct DropKerb {
 
 /* Solid ground-level outline (world coordinates in BlockLayout.collv), with an optional courtyard. */
 typedef struct CollPoly { int first, n, holeFirst, holeN; } CollPoly;
+/* A floor walked on inside a building at street level, a lobby or an arcology's
+ * concourse: its outline (in collv, as CollPoly), at world height y. It lies at
+ * the building's base, above the street's ground by as much as the plot falls. */
+typedef struct FloorPoly { CollPoly at; float y; } FloorPoly;
 
 /* Everything the player collides with in one chunk (world coordinates). */
 typedef struct BlockLayout {
@@ -100,6 +105,8 @@ typedef struct BlockLayout {
     DropKerb drop[MAX_DROPS];       /* drop kerbs cut into them, touching this chunk */
     int      ncoll, ncollv;         /* what stands at street level: walls, piers, cores, columns */
     CollPoly coll[MAX_COLL];
+    int      nfloor;                /* floors inside them, of the buildings in this chunk */
+    FloorPoly floor[MAX_FLOORS];
     double   collv[MAX_COLL_VERTS][2];
 } BlockLayout;
 

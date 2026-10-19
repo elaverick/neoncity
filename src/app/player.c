@@ -69,8 +69,6 @@ static float base_ground(double x, double z) {
     return maxf(land, city_ground_y(x, z) + city_verge_height((float)d));
 }
 
-static float ground_height(double x, double z) { return base_ground(x, z) + kerb_height(x, z); }
-
 /* Push a circle out of an axis-aligned rectangle. */
 static void push_out(float *px, float *pz, Rect r) {
     float cx = clampf(*px, r.x0, r.x1), cz = clampf(*pz, r.z0, r.z1);
@@ -133,6 +131,32 @@ static void push_out_poly(double *x, double *z, const BlockLayout *L, const Coll
     double k = inside ? -1.0 / d : 1.0 / d;      /* inside: leave through the nearest wall */
     *x = qx + dx * k * RADIUS;
     *z = qz + dz * k * RADIUS;
+}
+
+/* Whether (x, z) is on a building's floor at street level (a lobby, an
+ * arcology's concourse), and its height. Buildings belong to the chunk holding
+ * their centre and overhang by less than a chunk, so the 3x3 chunks around
+ * the point hold every floor that can be under it. */
+static bool floor_height(double x, double z, float *y) {
+    int ccx = (int)floor(x / CHUNK_SIZE), ccz = (int)floor(z / CHUNK_SIZE);
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dx = -1; dx <= 1; ++dx) {
+            const BlockLayout *L = layouts_get(ccx + dx, ccz + dz);
+            for (int i = 0; i < L->nfloor; ++i) {
+                const CollPoly *c = &L->floor[i].at;
+                if (!ring_inside((const double (*)[2])L->collv[c->first], c->n, x, z)) continue;
+                if (c->holeN && ring_inside((const double (*)[2])L->collv[c->holeFirst], c->holeN, x, z)) continue;
+                *y = L->floor[i].y;
+                return true;
+            }
+        }
+    return false;
+}
+
+/* What the feet stand on: a building's floor, or the street's ground and its kerbs. */
+static float ground_height(double x, double z) {
+    float f;
+    return floor_height(x, z, &f) ? f : base_ground(x, z) + kerb_height(x, z);
 }
 
 /* Buildings belong to the chunk holding their centre and overhang by less
@@ -210,8 +234,11 @@ static void move_walk(Player *p, const PlayerInput *in, vec3 flatFwd, vec3 flatR
     /* Recover velocity actually achieved so sliding along walls feels right. */
     p->vel[0] = (float)((nx - p->feet[0]) / dt);
     p->vel[2] = (float)((nz - p->feet[2]) / dt);
-    /* On the ground the feet ride the street's grade; only kerbs and steps snap them (and dip the eye). */
-    if (p->onGround) p->feet[1] += base_ground(nx, nz) - base_ground(p->feet[0], p->feet[2]);
+    /* On the ground the feet ride the street's grade; only kerbs and steps snap them (and dip the eye).
+     * A floor is level, and the step onto it is a step. */
+    float f;
+    if (p->onGround && !floor_height(nx, nz, &f) && !floor_height(p->feet[0], p->feet[2], &f))
+        p->feet[1] += base_ground(nx, nz) - base_ground(p->feet[0], p->feet[2]);
     p->feet[0] = nx; p->feet[2] = nz;
 
     float prevY = (float)p->feet[1];

@@ -83,8 +83,6 @@ the terrain roadmap.
   to the street (`Mesh.footing`, drawn as a plinth) and a riser under each entrance. Across a plot the ground falls
   6 cm on average and at most about 0.4 m, so for now:
   - Entrances get a riser, not steps or a ramp; an arcology's portals too.
-  - Inside a lobby the player walks on the street's ground carried in, not on the lobby's floor at the building's base:
-    below it by as much as the plot falls. Hillier settlements want the floors in the collision layout.
   - `DRAPE_CELL` (55 m) and the footing's 5 cm are sized for this relief; hillier ground wants finer cuts.
   - The haze thins with height above one datum, the city's ground at its centre (`haze_datum`, `src/app/main.c`).
     With more settlements it should be the ground of the one the camera is in or nearest, blended between them.

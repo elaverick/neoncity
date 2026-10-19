@@ -175,7 +175,20 @@ static void collide_interior(BlockLayout *BL, const Building *b, const BGraph *g
     free(rc);
 }
 
-/* Ground floors, piers, cores and columns are solid; a planned lobby is walked into. */
+/* Section s's outline as a floor at frame height y (a lobby's or concourse's floor). */
+static void add_floor(BlockLayout *L, const Building *b, const BSection *s, float y) {
+    const BLoop *loops[2] = { &s->foot.outer, &s->foot.hole };
+    if (L->nfloor >= MAX_FLOORS || L->ncollv + loops[0]->n + loops[1]->n > MAX_COLL_VERTS) return;
+    FloorPoly *f = &L->floor[L->nfloor++];
+    f->y = building_base(b) + y;
+    f->at.first = L->ncollv; f->at.n = loops[0]->n;
+    for (int k = 0; k < loops[0]->n; ++k) coll_vertex(L, b, loops[0]->x[k], loops[0]->z[k]);
+    f->at.holeFirst = L->ncollv; f->at.holeN = loops[1]->n;
+    for (int k = 0; k < loops[1]->n; ++k) coll_vertex(L, b, loops[1]->x[k], loops[1]->z[k]);
+}
+
+/* Ground floors, piers, cores and columns are solid; a planned lobby is walked
+ * into, on its own floor. */
 static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg) {
     Interiors in;
     interiors_plan(b, bg, &in);
@@ -183,8 +196,8 @@ static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg
         const BSection *s = &bg->sec[si];
         if (s->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
         const ILayout *il = interior_of(&in, si);
-        if (il) { collide_interior(L, b, bg, il); continue; }
-        if (in.arc && in.arc->tier[0].section == si) { collide_arcology(L, b, bg, in.arc); continue; }
+        if (il) { collide_interior(L, b, bg, il); add_floor(L, b, s, il->floorY); continue; }
+        if (in.arc && in.arc->tier[0].section == si) { collide_arcology(L, b, bg, in.arc); add_floor(L, b, s, in.arc->floorY); continue; }
         const BLoop *loops[2] = { &s->foot.outer, &s->foot.hole };
         if (!coll_begin(L, loops[0]->n + loops[1]->n)) break;
         CollPoly *c = &L->coll[L->ncoll - 1];
