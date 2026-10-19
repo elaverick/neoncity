@@ -14,7 +14,8 @@ float terrainFog(vec3 rel, float dist, float urban) {
     return mix(hazeAmount(rel, dist, density), fogAmount(rel, dist), urban);
 }
 
-vec3 shadeGround(vec3 rel, vec3 n, float urban) {
+// The land lit, before the haze.
+vec3 groundLit(vec3 rel, vec3 n, float urban) {
     vec2 wp = frame.camPos.xz + rel.xz;
     // dark scrub and earth, patchy; bare rock where it is steep; darker wet
     float patches = 0.6 * vnoise(wp / 37.0, 0x7E21u) + 0.4 * vnoise(wp / 211.0, 0x7E22u);
@@ -26,11 +27,16 @@ vec3 shadeGround(vec3 rel, vec3 n, float urban) {
     // Under the city, where its chunks aren't drawn (beyond their view
     // distance, between the distant proxies), the streets: dark wet asphalt
     // under the sodium lamps, seen from afar as their average glow.
-    col = mix(col, vec3(0.02, 0.018, 0.017) * CLOUD_DECK * 2.0 + vec3(1.0, 0.55, 0.25) * 0.012, urban);
+    return mix(col, vec3(0.02, 0.018, 0.017) * CLOUD_DECK * 2.0 + vec3(1.0, 0.55, 0.25) * 0.012, urban);
+}
 
+// What is lit at rel, seen through the haze.
+vec3 groundHazed(vec3 col, vec3 rel, float urban) {
     float dist = length(rel);
     float fog = terrainFog(rel, dist, urban);
     return mix(col, hazeColor(rel / max(dist, 1e-4)), fog);
 }
+
+vec3 shadeGround(vec3 rel, vec3 n, float urban) { return groundHazed(groundLit(rel, n, urban), rel, urban); }
 
 #endif

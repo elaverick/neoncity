@@ -201,6 +201,28 @@ static void test_roads(void) {
     CHECK(colossalNoFw == 0, "%d colossal cities without a freeway", colossalNoFw);
     CHECK(freeway > 0.25 * total && freeway < 0.7 * total, "freeways %.0f%% of the network", 100.0 * freeway / total);
     CHECK(deg[0] >= 2, "only %d roads out of the megacity", deg[0]);
+    /* views out along the megacity's roads, for NeonCity --cam: from the boulevard, and from 150 m up behind it */
+    for (int r = 0; r < nr; ++r)
+        for (int end = 0; end < 2; ++end) {
+            const PlanRoad *R = plan_road(r);
+            if (!R->gate[end] || plan_node(end ? R->to : R->from).settlement != 0) continue;
+            PlanGate g = plan_road_gate(r, end);
+            double yaw = atan2(g.n.x, -g.n.z) * 57.29577951;
+            if (yaw < 0.0) yaw += 360.0;
+            printf("  road %d out of the megacity (%s): --cam %.0f %.0f %.0f 0 4 / --cam %.0f %.0f %.0f -12 150\n", r,
+                   R->cls == PLAN_ROAD_FREEWAY ? "freeway" : "trunk road", g.p.x - 20.0 * g.n.x, g.p.z - 20.0 * g.n.z, yaw,
+                   g.p.x - 600.0 * g.n.x, g.p.z - 600.0 * g.n.z, yaw);
+            /* and 15 km out along it, beside it, looking on along it */
+            double s = end ? R->s[R->npts - 1] - 15000.0 : 15000.0, dir = end ? -1.0 : 1.0;
+            int sg = 0;
+            while (sg + 2 < R->npts && R->s[sg + 1] < s) sg++;
+            DVec2 a = R->pts[sg], d = dsub(R->pts[sg + 1], a);
+            double t = (s - R->s[sg]) / fmax(R->s[sg + 1] - R->s[sg], 1e-9);
+            DVec2 p = dadd(a, dscale(d, t)), u = dscale(dnorm(d), dir);
+            double ay = atan2(u.x, -u.z) * 57.29577951;
+            printf("    15 km out: --cam %.0f %.0f %.0f -8 %.0f\n", p.x - 30.0 * u.z, p.z + 30.0 * u.x, ay < 0.0 ? ay + 360.0 : ay,
+                   plan_road_height(r, s) + 40.0);
+        }
     free(parent);
     free(deg);
 }

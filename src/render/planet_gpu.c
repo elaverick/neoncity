@@ -173,7 +173,7 @@ void planet_gpu_create(Renderer *r) {
 
     VkDescriptorPoolSize sizes[2] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = MAX_FRAMES;
@@ -184,10 +184,13 @@ void planet_gpu_create(Renderer *r) {
         VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
         ai.descriptorPool = p->pool;
         ai.descriptorSetCount = 1;
-        ai.pSetLayouts = &r->terrainLayout;   /* the same bindings as the clipmap's: frame, vertices */
+        ai.pSetLayouts = &r->terrainLayout;   /* the same bindings as the clipmap's: frame, vertices, roads (unused here) */
         VK_CHECK(vkAllocateDescriptorSets(vk->device, &ai, &p->set[i]));
         write_buf_set(vk, p->set[i], 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, r->ubo[i].buf, sizeof(FrameUBO));
         write_buf_set(vk, p->set[i], 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, p->verts.buf, vertBytes);
+        VkDeviceSize roadBytes;
+        VkBuffer roads = road_gpu_buffer(r, i, &roadBytes);
+        write_buf_set(vk, p->set[i], 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, roads, roadBytes);
     }
     mutex_init(&p->lock);
     cond_init(&p->wake);

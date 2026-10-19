@@ -55,6 +55,7 @@ typedef struct PlanetPush {
 } PlanetPush;
 typedef struct PlanetGpu PlanetGpu;
 typedef struct ProxyGpu ProxyGpu;
+typedef struct RoadGpu RoadGpu;
 /* GPU timestamps between the frame's passes (renderer_gpu_times). The scene
  * pass is stamped inside: the city, plants and proxies (GT_SCENE), the terrain
  * (GT_TERRAIN), then the sky and the resolve (GT_SKY). */
@@ -93,6 +94,7 @@ struct Renderer {
     VkDescriptorSetLayout terrainLayout;
     VkPipelineLayout      terrainPL;
     VkPipeline            terrainPipe;
+    RoadGpu     *roads;     /* road_gpu.c: the roads the clipmap paints (its binding 2) */
     PlanetGpu   *planet;    /* planet_gpu.c; the clipmap's descriptor set layout */
     VkPipelineLayout      planetPL;
     VkPipeline            planetPipe;
@@ -171,6 +173,14 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
 void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
 /* The coarsest drawn level's window, world x0, z0, x1, z1; 0 if none is drawn. */
 int  terrain_gpu_window(Renderer *r, double win[4]);
+
+/* road_gpu.c. Update (each frame, before the scene pass) moves the window of
+ * roads round the camera when it has strayed and writes the frame slot's. */
+void     road_gpu_create(Renderer *r);
+void     road_gpu_destroy(Renderer *r);
+void     road_gpu_update(Renderer *r, int slot, const double cam[3]);
+VkBuffer road_gpu_buffer(Renderer *r, int slot, VkDeviceSize *size);
+void     road_gpu_stats(Renderer *r, char *buf, size_t n);
 
 /* planet_gpu.c. Update (after terrain_gpu_update, outside any rendering) takes
  * in filled patches, uploads them, selects and asks for more; draw records

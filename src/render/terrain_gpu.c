@@ -222,7 +222,7 @@ void terrain_gpu_create(Renderer *r) {
 
     VkDescriptorPoolSize sizes[2] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = MAX_FRAMES;
@@ -237,6 +237,9 @@ void terrain_gpu_create(Renderer *r) {
         VK_CHECK(vkAllocateDescriptorSets(vk->device, &ai, &t->set[i]));
         write_buf_set(vk, t->set[i], 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, r->ubo[i].buf, sizeof(FrameUBO));
         write_buf_set(vk, t->set[i], 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, t->samples.buf, sampleBytes);
+        VkDeviceSize roadBytes;
+        VkBuffer roads = road_gpu_buffer(r, i, &roadBytes);
+        write_buf_set(vk, t->set[i], 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, roads, roadBytes);
     }
 
     mutex_init(&t->lock);
@@ -450,5 +453,10 @@ void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
     if (used + 2 < n) {
         buf[used++] = '\n';
         planet_gpu_stats(r, buf + used, n - used);
+    }
+    used = strlen(buf);
+    if (used + 2 < n) {
+        buf[used++] = '\n';
+        road_gpu_stats(r, buf + used, n - used);
     }
 }

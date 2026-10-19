@@ -96,6 +96,7 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
                           VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
     create_layouts(r);
     create_pipelines(r);
+    road_gpu_create(r);   /* before the terrain, whose descriptor sets bind it */
     terrain_gpu_create(r);
     planet_gpu_create(r);
     proxy_gpu_create(r);
@@ -109,6 +110,7 @@ void renderer_destroy(Renderer *r) {
     vkDeviceWaitIdle(vk->device);
     destroy_targets(r);
     terrain_gpu_destroy(r);
+    road_gpu_destroy(r);
     planet_gpu_destroy(r);
     proxy_gpu_destroy(r);
     vk_buffer_destroy(vk, &r->shotBuf);
@@ -304,6 +306,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     proxy_gpu_update(r, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_STREAM);
     terrain_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
+    road_gpu_update(r, slot, cam);
     planet_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_TERRAIN_UPLOAD);
     record_shelter(r, cmd, slot, &topDown);
