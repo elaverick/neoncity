@@ -68,6 +68,7 @@ These are proposed boundaries, not a requirement to create every file immediatel
 | `terrain_world.c` (world addressing) | As proposed (M9): world X/Z is an azimuthal-equidistant chart of the planet about world (0, 0); the cube-sphere's equal-angle faces and patches, the ground over the whole sphere (blended into an antipode chart far off), the bend the shaders mirror, horizon culling. |
 | (not proposed) | `terrain_patch.c`: the planet's patches beyond the clipmap (meshes, a cache, the quadtree selection by screen-space error), drawn by `src/render/planet_gpu.c`. |
 | `src/render/terrain.c` | `src/render/terrain_gpu.c`. |
+| (not proposed) | Settlements and roads (2026-10): `src/plan/plan_world.c` places the 223 cities over the planet's land (the sea to come is `terrain_sea_margin`, in `terrain_world.c`); `src/plan/plan_roads.c` designs, routes and grades the roads between them. The terrain takes the roads (`plan_road_ground` in `terrain_height.c`); `src/render/road_gpu.c` and `shaders/terrain/roads.glsl` paint them. |
 
 Decisions taken differently from the original plan, and kept because they proved simpler or exact:
 
@@ -80,6 +81,11 @@ Decisions taken differently from the original plan, and kept because they proved
   drawn. The city's chunks are left flat (their drop within the view distance is a tenth of a pixel), so shadows,
   reflections and collision stay exact.
 - **Distant city representations** are each building section as a box (`src/city/proxy.c`), sorted largest first per chunk for a screen-size level of detail, and cross-faded with the full chunks by a shared dither.
+- **Plan and terrain read each other** (as section 4.2 of the design guide asks): the terrain reads the plan's
+  edge measure, settlements and roads; the plan reads the terrain's landforms, heights and future sea to place
+  cities and route roads. No call goes round in a loop because plan_world_init builds in stages: the settlements
+  are placed on the land as the megacity alone leaves it, the roads routed over the land with the settlements but
+  no roads, and only then does the terrain take the roads.
 
 ### Likely first implementation
 

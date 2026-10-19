@@ -39,8 +39,9 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   it, the city's chunks flat. Left over:
   - **One chart.** The clipmap's bend is exact for a camera at the chart's origin and drifts with distance from it
     (0.7 m at 32 km for a camera 50 km off, 7 m for one 200 km off); there the clipmap and the patches no longer
-    quite meet at the window's edge (the skirts and the hole's overlap hide it so far). Other settlements want their
-    own charts, and the camera's chart should follow it between them.
+    quite meet at the window's edge (the skirts and the hole's overlap hide it so far). The other settlements (see
+    Settlements and roads) want their own charts, and the camera's chart should follow it between them; until then
+    `--cam` to one works, with that drift.
   - **Horizon culling** is the patches' alone. Against the lowest ground anywhere (about 2 km below the sphere,
     `terrain_planet_lowest`) the horizon from the street lies about 160 km out, beyond every clipmap tile and proxy,
     so it would cull none of them. A local occluder (the lowest ground within the sight line's reach of the camera)
@@ -128,7 +129,8 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     towns actually stop, so where the outline lies deep inside the contour the step is short. A measure of the
     distance to the built outline (from the unbuilt neighbouring towns' bisectors) would fix that, if it can be made
     cheap enough for `city_height_cap`.
-  - No road leads out of the city into the region; the perimeter boulevards close it.
+  - Roads leave the city at gates on the perimeter boulevards (see Settlements and roads); the boulevard has no
+    junction markings there, and the gate is plain asphalt down the verge.
   - Beyond the 1.5 m asphalt shoulder a 4 m grass verge slopes down to the land (`city_verge_height`; strips along
     the outline, cones at its corners, a skirt underneath), and the player walks down it. There is no barrier on the
     shoulder: one would want a collision outline too. The verge is the parks' dark grass, which hardly reads at night.
@@ -145,8 +147,37 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     them a fall. Canyons don't yet join into systems.
   - **Value noise's lattice** still shows faintly in the mountains' finer octaves as rounded bumps; a gradient noise
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
-  - **Settlements** don't yet read the landforms (`terrain_landform`); placing towns on level ground comes with roads
-    out.
+
+## Settlements and roads
+223 cities over the planet's land and the freeways and trunk roads between them (`src/plan/plan_world.c`,
+`src/plan/plan_roads.c`, `src/render/road_gpu.c`, `shaders/terrain/roads.glsl`; see the README, `world_test --map`).
+Left over:
+- **Normal cities and towns** (the user's next step): smaller settlements fit the same machinery (a footprint, a
+  relief, gates); the network would want local roads under the trunk roads, and placement round the megacities.
+- **Bridges, viaducts and tunnels.** Where the land is too rough for the grade, a road's cutting or embankment is
+  deep: over 30 m on 3% of the length, up to about 530 m, in mountain belts and up plateau escarpments
+  (`world_test` reports it). There the batter stops at 80 m wide, so the walls are steep. Raised roads and bridges
+  would take the deepest; canyons are already avoided (crossed only where shallow).
+- **Only the near ground is graded.** The roads are in the terrain at spacings up to 64 m (`PLAN_ROAD_LOD_SPACING`),
+  so beyond about 4 km the paint lies on the bare ground's coarse levels, and the planet's patches don't draw roads
+  at all. Lamp heads, poles, barriers, signs and traffic aren't modelled: the freeways' light is pools on the
+  asphalt. Freeway junctions are level, without slip roads or interchanges.
+- **The far side** of the planet is reserved for a world ocean, because the world chart is only true near its
+  origin (`PLAN_WORLD_REACH`, 0.38 pi R). Per-settlement charts (The planet, One chart) would let cities go anywhere.
+  The sea itself isn't in the terrain yet: the basins it will fill are only low ground.
+- **Roads out of a city bundle.** Every colossal city keeps three links in the design, but links leaving it in one
+  direction share a road (Steiner junctions, roads beside each other joined), so it may have fewer gates; the
+  megacity has three (two freeways and a trunk road). Small changes to the routing's costs reshuffle which.
+- **Clouds sit on the hills.** The deck's underside is at a fixed height (about 200 m), so a road climbing into the
+  hills runs into it (see Landforms, Seen from the city).
+- **Start-up.** Building the world costs about 15 s of one core's time (2.4 s on 8 threads, 2 s on 32): the coarse
+  cost grid, candidate and fine routes, profiles and the index; every test and the game pay it. Profiles and fine routes could be made lazily for the roads near the
+  camera, or the world cached on disk by a hash of its inputs.
+- **Determinism across compilers.** Scores and costs are quantised so the game's `/fp:fast` and the tests agree,
+  but a value on a quantum's edge could still tip a different way; `world_test --fingerprint` from both would tell.
+- **Routing:** costs are first guesses (mountains 4, plateaus 1.5 and hills 0.6 times a metre on the coarse grid;
+  grades over 3% and steeply over 8% on the fine one). Roads beside each other within 1.5 km are joined, further
+  apart they stay two (some parallel freeways 20-50 km apart are real alternatives).
 
 ## Office lobbies (next)
 Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/mesh_lobby.c`).

@@ -21,6 +21,7 @@ build/building_lab 3000 5      # building archetypes, retries and rejections; 5 
 build/interior_lab 3000 12 out # office lobbies: pass rate, attempts, rejections; 12 plan renders and cameras
 build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders, cameras
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
+build/world_test --map world.ppm         # the settlements and roads over the world (--local out.ppm km [x z]: round a point)
 ```
 
 CMake fetches its dependencies at configure time: Vulkan-Headers, volk, GLFW and stb.
@@ -85,11 +86,49 @@ generated as a pure function of world position:
   wobbled so they don't ring the city: industry and logistics, then parks and allotments,
   then open land; town and neighbourhood centres keep their high streets. The outermost boulevards are
   its perimeter road; the asphalt reaches a shoulder beyond them, and a grass verge slopes
-  from it down to the land.
+  from it down to the land (asphalt where a road leaves for another city: see below).
 
 Junction geometry is resolved from the plan itself. Each carriageway is trimmed back to clear
 every road meeting it, which leaves room for the crossings, so a road comes out identical
 whichever area it is requested through.
+
+### Settlements and roads (`src/plan/plan_world.c`, `src/plan/plan_roads.c`)
+The megacity is one of 223 cities placed over the planet's land once at startup (`plan_world_init`,
+on every core, two or three seconds), a pure function of the world's seed:
+
+- **Where the sea will be.** There is no water yet, but the planet's broad basins below a sea level to
+  come, and the whole far side beyond about 7,000 km from the megacity, are reserved for it
+  (`terrain_sea_margin`). Cities keep 100 m above it (in the basins' height), roads 20 m. The rest is
+  the land, told apart into continents on a 20 km grid; `world_test --map` draws them.
+- **The cities.** 50 colossal ones the megacity's size (it is one of them: a 25 km footprint, about
+  20 km built) at least 450 km apart, then 173 megacities built from 12 km down to 7 km across, the best
+  sites the largest. Sites score for level land (the region's plains, against mountains, hills and
+  plateaus), no canyon, and the lowlands near the coast to come, where cities gather; any two footprints
+  stay 90 km apart. Each is a warped disc like the megacity's, built of whole towns of the same lattice,
+  its core a regional centre; its ground rises and falls by its own relief on the planet's highlands.
+  The plan of every city is in the world's chart, which is near enough true to the sphere within the
+  cities' reach (0.38 pi R) for a city to look right.
+- **The roads.** On each continent: candidate links between the Delaunay neighbours, each costed by a
+  route over a 4 km grid of the landforms; their minimum spanning tree; then links a gravity model
+  (traffic as the cities' sizes' product over the square of their distance) finds the network makes go
+  round, preferring cities that already have links and are big (every colossal city keeps three); then
+  Steiner junctions where two links leave a city or junction close together. Each link is routed by A*
+  over a 1 km grid in a corridor round its coarse route, round mountains, plateau escarpments and
+  canyons (tested against their centre lines), other cities and the sea, and pulled straight wherever a
+  straight line costs no more. Roads that run beside a longer one join it at junctions; crossings
+  become junctions. The gravity model's traffic on the cheapest routes picks the freeways (about half
+  the length); the rest are trunk roads. About 860 roads, 400 junctions and 160,000 km in all.
+- **Into the ground.** A road ends at each city where it leaves the built towns, on the perimeter
+  boulevard (a gate: the verge there is asphalt). Its height runs every 50 m along it: the ground
+  smoothed, held to 6% (freeways) or 9% (trunk roads), meeting the city's ground at a gate and one height
+  at a junction. The terrain takes it (`plan_road_ground`): level across its width and shoulders, then a
+  batter twice as wide as the cut or fill. Where the land is too rough for the grade the cutting or
+  embankment can be deep (3% of the length is over 30 m); bridges and tunnels are to come.
+- **Drawn** by the terrain shader (`shaders/terrain/roads.glsl`, `src/render/road_gpu.c`): asphalt,
+  lane lines and freeways' sodium lamps every 60 m, from the segments within 16 km of the camera.
+
+`world_test` checks them; `world_test --threads 1 --fingerprint` hashes what was placed and built, the
+same on any number of threads, and prints `--cam` views out along the megacity's roads.
 
 ### Plots (`src/city/lots.c`)
 Blocks are divided into plots that conform to the plan:
