@@ -97,8 +97,9 @@ the terrain roadmap.
     distance to the built outline (from the unbuilt neighbouring towns' bisectors) would fix that, if it can be made
     cheap enough for `city_height_cap`.
   - No road leads out of the city into the region; the perimeter boulevards close it.
-  - The edge is a 1 m kerb-stone face below a 1.5 m asphalt shoulder; a verge, a barrier or an embankment would
-    read better. Walking off it, the player's feet ride the 0.5 m drop down (or up) instead of stepping.
+  - Beyond the 1.5 m asphalt shoulder a 4 m grass verge slopes down to the land (`city_verge_height`; strips along
+    the outline, cones at its corners, a skirt underneath), and the player walks down it. There is no barrier on the
+    shoulder: one would want a collision outline too. The verge is the parks' dark grass, which hardly reads at night.
   - Fields (`ZONE_RURAL`) reuse the parks' grass; neither has trees.
 
 ## Office lobbies (next)

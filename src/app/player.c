@@ -41,13 +41,32 @@ static float kerb_height(double x, double z) {
     return 0.0f;
 }
 
-/* The ground under the city's surfaces, or beyond its edge the land's. */
+/* Distance from (x, z) to the nearest edge of an outline (m). */
+static double curb_distance(const CurbPoly *c, double x, double z) {
+    double best = 1e30;
+    for (int i = 0; i < c->n; ++i) {
+        const double *a = c->v[i], *b = c->v[(i + 1) % c->n];
+        double ex = b[0] - a[0], ez = b[1] - a[1], l2 = ex * ex + ez * ez;
+        double t = l2 > 0.0 ? ((x - a[0]) * ex + (z - a[1]) * ez) / l2 : 0.0;
+        t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
+        best = fmin(best, hypot(x - a[0] - t * ex, z - a[1] - t * ez));
+    }
+    return best;
+}
+
+/* The ground under the city's surfaces; beyond its edge the verge sloping
+ * down from them (city_verge_height) until it meets the land, then the land's. */
 static float base_ground(double x, double z) {
     const BlockLayout *L = layouts_get((int)floor(x / CHUNK_SIZE), (int)floor(z / CHUNK_SIZE));
     if (!L->bounded) return city_ground_y(x, z);
-    for (int i = 0; i < L->nground; ++i)
+    double d = 1e30;
+    for (int i = 0; i < L->nground; ++i) {
         if (in_curb(&L->ground[i], x, z)) return city_ground_y(x, z);
-    return (float)terrain_surface(x, z);
+        d = fmin(d, curb_distance(&L->ground[i], x, z));
+    }
+    float land = (float)terrain_surface(x, z);
+    if (d >= CITY_VERGE_W) return land;
+    return maxf(land, city_ground_y(x, z) + city_verge_height((float)d));
 }
 
 static float ground_height(double x, double z) { return base_ground(x, z) + kerb_height(x, z); }

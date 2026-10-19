@@ -84,8 +84,8 @@ generated as a pure function of world position:
   steps down (`city_height_cap` falls from 800 m to 60 m), and the land is zoned in bands,
   wobbled so they don't ring the city: industry and logistics, then parks and allotments,
   then open land; town and neighbourhood centres keep their high streets. The outermost boulevards are
-  its perimeter road; the asphalt reaches a shoulder beyond them and ends in a low face onto
-  the land.
+  its perimeter road; the asphalt reaches a shoulder beyond them, and a grass verge slopes
+  from it down to the land.
 
 Junction geometry is resolved from the plan itself. Each carriageway is trimmed back to clear
 every road meeting it, which leaves room for the crossings, so a road comes out identical

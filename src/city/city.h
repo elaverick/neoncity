@@ -168,6 +168,15 @@ void     city_spawn(double *x, double *z, float *yaw);
  * raised by it at the building's base. It is the terrain's urban ground
  * (terrain_urban_height in src/terrain). */
 float    city_ground_y(double x, double z);
+/* Round the city's outline (where it ends, PlanArea.bounded) a grass verge
+ * slopes from the asphalt down to the land over CITY_VERGE_W, to
+ * CITY_VERGE_DROP under the city's ground: a little under the land there,
+ * which the terrain sinks 0.5 m under it (src/terrain). city_verge_height is
+ * its height over city_ground_y at `dist` metres beyond the outline (src/city
+ * streets.c draws it; the player walks on it). */
+#define CITY_VERGE_W    4.0f
+#define CITY_VERGE_DROP 0.55f
+float    city_verge_height(float dist);
 
 /* Distant proxies (src/city/proxy.c). Beyond the chunks' VIEW_DISTANCE the
  * city is drawn as boxes: one for each section of every building (src/gen

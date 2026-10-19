@@ -81,9 +81,23 @@ static int clip_segment(DVec2 *a, DVec2 *b) {
 }
 
 /* Where the city ends (PlanArea.bounded): the plain asphalt only over the
- * city's ground, and along its outline a face down past the land beyond,
- * which lies TERRAIN_URBAN_SINK_M below the city's ground there. */
-#define EDGE_DROP 1.0f
+ * city's ground, and round its outline a grass verge sloping down to the land:
+ * at distance d beyond the outline it stands city_verge_height(d) over the
+ * city's ground. A strip along each outline piece (from a little under the
+ * asphalt's edge) covers what lies beside the piece, and a cone round each
+ * corner, the piece's start, covers the wedge between two strips; where they
+ * overlap the strip is the higher, so the surface is the verge's height at the
+ * distance to the outline. Under its foot a skirt hangs to SKIRT_BOTTOM: the
+ * coarse terrain levels, drawn from far off, sink further than the land
+ * (src/terrain: terrain_urban_sink). */
+#define VERGE_TUCK   0.1f    /* m the verge starts inside the outline, under the asphalt */
+#define SKIRT_BOTTOM (-1.0f) /* m below the city's ground */
+#define CONE_SEGS    16
+
+float city_verge_height(float dist) {
+    float t = clampf(dist / CITY_VERGE_W, 0.0f, 1.0f);
+    return BASE_Y + (-CITY_VERGE_DROP - BASE_Y) * t;
+}
 
 static void build_city_edge(Mesh *m, const ChunkGen *g) {
     const PlanArea *pa = g->pa;
@@ -95,17 +109,37 @@ static void build_city_edge(Mesh *m, const ChunkGen *g) {
         int k = clip_chunk(l, gp->n, cl);
         if (k) emit_flat(m, cl, k, BASE_Y, (const float (*)[2])buv, mat(MAT_ROAD, 0, 0, 0, 0));
     }
+    const float W = CITY_VERGE_W, top = city_verge_height(0.0f) - 0.01f, foot = city_verge_height(W);
+    const Mat grass = mat(MAT_LOT, 0, 1, 0, 0);   /* the parks' grass (emit_lot) */
+    const float vuv3[3][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 } };
     for (int i = 0; i < pa->nedges; ++i) {
         const PlanEdge *e = &pa->edges[i];
-        DVec2 a = dv(e->a.x - g->ox, e->a.z - g->oz), b = dv(e->b.x - g->ox, e->b.z - g->oz), a0 = a;
+        DVec2 en = dv(e->n.x, e->n.z), v = dv(e->a.x - g->ox, e->a.z - g->oz);
+        /* the corner at the piece's start, by the chunk holding it (every corner starts one piece) */
+        if (v.x >= 0.0 && v.x < CHUNK_SIZE && v.z >= 0.0 && v.z < CHUNK_SIZE) {
+            vec3 apex = v3((float)v.x, top, (float)v.z);
+            for (int k = 0; k < CONE_SEGS; ++k) {
+                float t0 = 2.0f * PI_F * k / CONE_SEGS, t1 = 2.0f * PI_F * (k + 1) / CONE_SEGS, tm = 0.5f * (t0 + t1);
+                vec3 r0 = v3((float)v.x + W * cosf(t0), foot, (float)v.z + W * sinf(t0));
+                vec3 r1 = v3((float)v.x + W * cosf(t1), foot, (float)v.z + W * sinf(t1));
+                float slope = (top - foot) / W;
+                emit_tri(m, apex, r0, r1, v3_norm(v3(cosf(tm) * slope, 1.0f, sinf(tm) * slope)), vuv3, grass);
+                float suv[4][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } };
+                emit_quad(m, r0, r1, v3(r1.x, SKIRT_BOTTOM, r1.z), v3(r0.x, SKIRT_BOTTOM, r0.z), v3(cosf(tm), 0, sinf(tm)), suv, grass);
+            }
+        }
+        DVec2 a = v, b = dv(e->b.x - g->ox, e->b.z - g->oz);
         if (!clip_segment(&a, &b)) continue;
-        DVec2 eh = dnorm(dsub(e->b, e->a));
-        vec3 nn = v3((float)e->n.x, 0, (float)e->n.z);
-        float u0 = (float)dlen(dsub(a, a0)), u1 = (float)dlen(dsub(b, a0)), y0 = BASE_Y - EDGE_DROP;
-        if (eh.x * nn.z - eh.z * nn.x < 0) { u0 = -u0; u1 = -u1; }   /* as kerb_face */
-        float quv[4][2] = { { u0, y0 }, { u1, y0 }, { u1, BASE_Y }, { u0, BASE_Y } };
-        emit_quad(m, v3((float)a.x, y0, (float)a.z), v3((float)b.x, y0, (float)b.z),
-                  v3((float)b.x, BASE_Y, (float)b.z), v3((float)a.x, BASE_Y, (float)a.z), nn, quv, mat(MAT_CURB, 0, 0, 0, 0));
+        DVec2 ai = dsub(a, dscale(en, VERGE_TUCK)), bi = dsub(b, dscale(en, VERGE_TUCK));
+        DVec2 ao = dadd(a, dscale(en, W)), bo = dadd(b, dscale(en, W));
+        float slope = (top - foot) / (W + VERGE_TUCK);
+        vec3 up = v3_norm(v3((float)en.x * slope, 1.0f, (float)en.z * slope));
+        float vuv[4][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } };
+        emit_quad(m, v3((float)ai.x, top, (float)ai.z), v3((float)bi.x, top, (float)bi.z),
+                  v3((float)bo.x, foot, (float)bo.z), v3((float)ao.x, foot, (float)ao.z), up, vuv, grass);
+        emit_quad(m, v3((float)ao.x, foot, (float)ao.z), v3((float)bo.x, foot, (float)bo.z),
+                  v3((float)bo.x, SKIRT_BOTTOM, (float)bo.z), v3((float)ao.x, SKIRT_BOTTOM, (float)ao.z),
+                  v3((float)en.x, 0, (float)en.z), vuv, grass);
     }
 }
 
