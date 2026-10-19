@@ -524,22 +524,38 @@ static int64_t coarse_route(const Net *net, int a, int b, double limitFactor, in
     return cost;
 }
 
-/* Pulls the fine route straight: from each kept point, on to the farthest
- * later point (within PULL_REACH) the straight line to which costs no more
- * than the route between them, and no more than PULL_SLACK over it. */
-#define PULL_REACH 60
+/* Pulls the fine route straight: from each kept point, on to a later point
+ * (within PULL_REACH) the straight line to which costs no more than the
+ * route between them, and no more than PULL_SLACK over it: as far as
+ * doubling the reach keeps finding such points, then bisecting between the
+ * last that did and the first that didn't. */
+#define PULL_REACH 64
 #define PULL_SLACK 1.03
+static int pull_ok(Fine *f, const DVec2 *p, const int64_t *g, int i, int j) {
+    int64_t c = line_cost(f, p[i], p[j]);
+    return c >= 0 && (double)c <= PULL_SLACK * (double)(g[j] - g[i]) + 1.0;
+}
+
 static int pull_straight(Fine *f, const DVec2 *p, const int64_t *g, int n, DVec2 *out) {
     int m = 0, i = 0;
     out[m++] = p[0];
     while (i < n - 1) {
-        int best = i + 1;
-        for (int j = (i + PULL_REACH < n - 1 ? i + PULL_REACH : n - 1); j > i + 1; --j) {
-            int64_t c = line_cost(f, p[i], p[j]);
-            if (c >= 0 && (double)c <= PULL_SLACK * (double)(g[j] - g[i]) + 1.0) { best = j; break; }
+        int hi = i + PULL_REACH < n - 1 ? i + PULL_REACH : n - 1, good = i + 1, bad = hi + 1;
+        for (int span = 2; i + span <= hi; span *= 2) {
+            if (pull_ok(f, p, g, i, i + span)) good = i + span;
+            else { bad = i + span; break; }
         }
-        out[m++] = p[best];
-        i = best;
+        if (bad == hi + 1 && good < hi) {
+            if (pull_ok(f, p, g, i, hi)) good = hi;
+            else bad = hi;
+        }
+        while (bad - good > 1) {
+            int mid = (good + bad) / 2;
+            if (pull_ok(f, p, g, i, mid)) good = mid;
+            else bad = mid;
+        }
+        out[m++] = p[good];
+        i = good;
     }
     return m;
 }
@@ -571,7 +587,7 @@ static void route_link(Net *net, Link *L) {
                 for (int di = -r; di <= r; ++di) imap_put(&f.corridor, cell_key(ci[k] + di, cj[k] + dj), 1);
         file_canyons(&f, ci, cj, nc);
         int *pi, *pj, np;
-        int64_t cost = astar(f.si, f.sj, f.gi, f.gj, FINE_CELL, 1.15, INT64_MAX / 4, fine_step, &f, &pi, &pj, &np);
+        int64_t cost = astar(f.si, f.sj, f.gi, f.gj, FINE_CELL, 1.5, INT64_MAX / 4, fine_step, &f, &pi, &pj, &np);
         if (cost >= 0) {
             DVec2 *p = (DVec2 *)malloc(sizeof(DVec2) * (size_t)(np + 2));
             int64_t *g = (int64_t *)malloc(sizeof(int64_t) * (size_t)(np + 2));
@@ -1641,14 +1657,21 @@ static void build_index(Net *net) {
         for (int sg = 0; sg + 1 < L->npts; ++sg) {
             DVec2 a = L->pts[sg], b = L->pts[sg + 1];
             int steps = (int)ceil(dlen(dsub(b, a)) / (0.5 * ROAD_CELL)) + 1;
+            int64_t recent[16];   /* the squares this segment was last filed in: the next steps mostly reach them again */
+            int nrecent = 0, wr = 0;
             for (int k = 0; k <= steps; ++k) {
                 DVec2 q = dadd(a, dscale(dsub(b, a), (double)k / steps));
                 int i0 = (int)floor((q.x - ROAD_REACH) / ROAD_CELL), i1 = (int)floor((q.x + ROAD_REACH) / ROAD_CELL);
                 int j0 = (int)floor((q.z - ROAD_REACH) / ROAD_CELL), j1 = (int)floor((q.z + ROAD_REACH) / ROAD_CELL);
                 for (int j = j0; j <= j1; ++j)
                     for (int i = i0; i <= i1; ++i) {
+                        int64_t key = cell_key(i, j), seen = 0;
+                        for (int t = 0; t < nrecent && !seen; ++t) seen = recent[t] == key;
+                        if (seen) continue;
+                        recent[wr++ & 15] = key;
+                        if (nrecent < 16) nrecent++;
                         e = (IdxEntry *)grow(e, &ce, ne + 1, sizeof(IdxEntry));
-                        e[ne++] = (IdxEntry){ cell_key(i, j), r, sg };
+                        e[ne++] = (IdxEntry){ key, r, sg };
                     }
             }
         }
