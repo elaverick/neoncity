@@ -74,10 +74,11 @@ the terrain roadmap.
   - **Undrawn levels wait.** The update keeps the levels down to one finer than the error asks for; finer ones
     keep their old window until it asks for them, then catch up a level at a time (a few updates each), so coming
     down fast from high up refines over a fraction of a second. The budget counts heights evaluated
-    (`TERRAIN_CLIP_BUDGET`); the fill still runs on the render thread. Since the landforms (M8) a height costs
-    250-500 ns over them (90 ns under the city), so a full update takes up to 7 ms and the slowest update in a
-    `--shot` over the mountains is 6-9 ms (2 ms before): a hitch when the camera jumps or starts. Halving the budget
-    instead leaves levels unready in steady motion (the walk test fails). Next: move the fill to a worker.
+    (`TERRAIN_CLIP_BUDGET`). Since the landforms (M8) a height costs 250-500 ns over them (90 ns under the city),
+    so a full update takes up to about 9 ms; it runs on a worker (`terrain_gpu.c`), and the frame's part is 0.1-0.3
+    ms. The windows can trail the camera by a frame or more while a big update runs; the coarser levels cover
+    meanwhile, and nothing has shown it yet. A second worker, or splitting an update by level, would shorten a jump's
+    fill if it ever shows.
   - **City and building detail.** The design doc wants the same perceptual rule applied to the city's levels of
     detail, independently of the terrain's: see "Level of detail" under the distant proxies.
 - **The graded city** stands on `city_ground_y`, its settlement's relief (`PlanSettlement.relief_m`: the megacity's

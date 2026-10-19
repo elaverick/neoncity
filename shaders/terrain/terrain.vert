@@ -17,6 +17,7 @@ layout(std430, set = 0, binding = 1) readonly buffer Samples { float samples[]; 
 // TerrainPush (src/render/renderer_internal.h)
 layout(push_constant) uniform Level {
     vec2  anchor;    // camera-relative x, z of the coarsest window's corner: the same for every level
+    vec2  morph;     // the same corner relative to the camera of the windows' update (it can trail the frame's)
     vec2  offset;    // this window's corner less the anchor (m; exact in float)
     float spacing;   // metres between samples
     int   level;
@@ -47,9 +48,11 @@ void main() {
     // gets the same position from both.
     precise vec2 xz = lv.anchor + (lv.offset + vec2(g) * lv.spacing);
 
-    // terrain_clip_morph: Chebyshev distance from the camera, in samples
+    // terrain_clip_morph: Chebyshev distance from the camera the windows
+    // were centred on, in samples (exact at sample positions, as on the CPU)
+    precise vec2 mxz = lv.morph + (lv.offset + vec2(g) * lv.spacing);
     const float END = float((W - 1) / 2 - 1);
-    float d = max(abs(xz.x), abs(xz.y)) / lv.spacing;
+    float d = max(abs(mxz.x), abs(mxz.y)) / lv.spacing;
     float morph = clamp((d - (END - float(TERRAIN_CLIP_MORPH))) / float(TERRAIN_CLIP_MORPH), 0.0, 1.0);
     morph = max(morph, lv.fade);
 

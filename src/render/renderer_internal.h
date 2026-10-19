@@ -35,6 +35,7 @@ typedef struct CloudPush { float zn, zf; } CloudPush;
 /* One terrain level's draw (shaders/terrain/terrain.vert: Level). */
 typedef struct TerrainPush {
     float   anchor[2];   /* camera-relative x, z of the coarsest window's corner */
+    float   morph[2];    /* ...and relative to the camera of the update the windows are for */
     float   offset[2];   /* this window's corner less the anchor (m) */
     float   spacing;
     int32_t level;
@@ -149,8 +150,9 @@ void record_reflections(Renderer *r, VkCommandBuffer cmd, int slot);
 void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows);
 void record_composite(Renderer *r, VkCommandBuffer cmd, uint32_t imageIndex, const FrameUBO *ubo);
 
-/* terrain_gpu.c. Update moves the clipmap to the camera and records the
- * uploads (outside any rendering); draw records the rings into the scene pass. */
+/* terrain_gpu.c. Update takes the clipmap's last move from its worker, records
+ * its uploads (outside any rendering) and asks for the next, at the camera;
+ * draw records the rings into the scene pass. */
 void terrain_gpu_create(Renderer *r);
 void terrain_gpu_destroy(Renderer *r);
 void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);

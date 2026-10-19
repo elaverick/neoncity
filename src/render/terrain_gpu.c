@@ -1,5 +1,6 @@
 #include "renderer_internal.h"
 #include "terrain.h"
+#include "thread.h"
 
 /* The terrain's GPU side. It draws the clipmap src/terrain keeps round the
  * camera and never generates terrain itself.
@@ -29,7 +30,21 @@
  *
  * The camera-relative positions are built from doubles on the CPU (see
  * TerrainPush) and the heights are world Y, so the terrain stays exact
- * however far the camera goes. */
+ * however far the camera goes.
+ *
+ * Fill: a worker thread owns the clipmap and runs terrain_clip_update, which
+ * evaluates up to TERRAIN_CLIP_BUDGET heights (several milliseconds over
+ * mountains), so the frame never waits for it. The render thread keeps
+ * `shown`, the levels as the last finished update left them, without their
+ * samples, to choose and cull what is drawn. Each frame, if the worker is
+ * idle, it takes the finished update: the levels into `shown` and their dirty
+ * rows into the frame's upload, read from the worker's samples while it waits.
+ * Then it asks for the next update, at this frame's camera and with the
+ * selection's level (TerrainClipmap.want). An update is taken whole, in one
+ * frame, so the samples uploaded and the levels drawn always agree. The
+ * windows can then trail the camera by a frame or more: each level blends
+ * into its parent round the camera of its update (TerrainPush.morph), as
+ * terrain_clip_morph does, while it is drawn round the camera of the frame. */
 
 #define CLIP_N TERRAIN_CLIP_N
 #define CLIP_W TERRAIN_CLIP_W
@@ -47,7 +62,15 @@ _Static_assert(TERRAIN_DISTANCE <= ((TERRAIN_CLIP_W - 1) / 2 - 1) * TERRAIN_CLIP
 _Static_assert(TERRAIN_CLIP_W * TERRAIN_CLIP_W <= 65536, "the grid's vertices don't fit 16-bit indices");
 
 struct TerrainGpu {
-    TerrainClipmap clip;
+    TerrainClipmap clip;                  /* the worker's while it is busy; the render thread's while it is idle */
+    TerrainClipmap shown;                 /* the last update taken: levels and their blocks, no samples */
+    Thread        *worker;
+    Mutex          lock;                  /* guards busy .. fillMs */
+    CondVar        wake;
+    int            busy, done, quit;      /* an update asked for and running; finished and not yet taken */
+    double         ask[2];                /* the camera (x, z) it was asked for at */
+    int            evaluated;             /* the last finished update's heights, and its time on the worker */
+    double         fillMs;
     TerrainFade    fade;                  /* which levels are drawn, blending as they change */
     double         lastTime;              /* of the last update (s) */
     Buffer         samples;              /* device local: LEVELS * N * N TerrainSamples */
@@ -61,11 +84,45 @@ struct TerrainGpu {
     TerrainPush    push[TERRAIN_CLIP_LEVELS];
     struct { int level; uint32_t first, count; } draw[MAX_DRAWS];
     int            ndraw;
-    /* the last update, and the slowest so far (--shot prints them): the fill
-     * (with the blocks' bounds), the draw plan, the staging copy, and in all */
-    int            evaluated, drawn, tilesDrawn, tilesTotal;
-    double         fillMs, planMs, stageMs, updateMs, slowestMs;
+    /* the last frame's share, and the slowest so far (--shot prints them):
+     * taking the update and staging its rows, the draw plan, in all; and the
+     * slowest fill on the worker */
+    int            drawn, tilesDrawn, tilesTotal;
+    double         stageMs, planMs, updateMs, slowestMs, slowestFillMs;
 };
+
+static int terrain_worker(void *arg) {
+    TerrainGpu *t = (TerrainGpu *)arg;
+    mutex_lock(&t->lock);
+    for (;;) {
+        while (!t->quit && !t->busy) cond_wait(&t->wake, &t->lock);
+        if (t->quit) break;
+        double x = t->ask[0], z = t->ask[1];
+        mutex_unlock(&t->lock);
+        double t0 = glfwGetTime();
+        int n = terrain_clip_update(&t->clip, x, z, TERRAIN_CLIP_BUDGET);
+        double ms = (glfwGetTime() - t0) * 1000.0;
+        mutex_lock(&t->lock);
+        t->evaluated = n;
+        t->fillMs = ms;
+        t->busy = 0;
+        t->done = 1;
+    }
+    mutex_unlock(&t->lock);
+    return 0;
+}
+
+/* The clipmap's levels as the update just finished left them, without its
+ * samples (the worker's), keeping the render thread's selection. */
+static void take_levels(TerrainGpu *t) {
+    int want = t->shown.want;
+    t->shown = t->clip;
+    t->shown.want = want;
+    t->shown.storage = NULL;
+    t->shown.scratch_h = NULL;
+    t->shown.scratch_p = NULL;
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) t->shown.level[l].samples = NULL;
+}
 
 /* A triangle facing up (+y) seen from above, as the city's ground does
  * (emit_flat: counter-clockwise on screen), from grid vertices. */
@@ -148,6 +205,7 @@ void terrain_gpu_create(Renderer *r) {
     if (!t) fatal("out of memory allocating the terrain");
     r->terrain = t;
     terrain_clip_init(&t->clip);
+    take_levels(t);
     terrain_fade_init(&t->fade);
     const VkDeviceSize sampleBytes = (VkDeviceSize)TERRAIN_CLIP_LEVELS * CLIP_N * CLIP_N * sizeof(TerrainSample);
     t->samples = vk_buffer(vk, sampleBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -180,12 +238,23 @@ void terrain_gpu_create(Renderer *r) {
         write_buf_set(vk, t->set[i], 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, r->ubo[i].buf, sizeof(FrameUBO));
         write_buf_set(vk, t->set[i], 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, t->samples.buf, sampleBytes);
     }
+
+    mutex_init(&t->lock);
+    cond_init(&t->wake);
+    t->worker = thread_create(terrain_worker, t);
 }
 
 void terrain_gpu_destroy(Renderer *r) {
     VkCore *vk = r->vk;
     TerrainGpu *t = r->terrain;
     if (!t) return;
+    mutex_lock(&t->lock);
+    t->quit = 1;
+    cond_broadcast(&t->wake);
+    mutex_unlock(&t->lock);
+    thread_join(t->worker);
+    mutex_destroy(&t->lock);
+    cond_destroy(&t->wake);
     vkDestroyDescriptorPool(vk->device, t->pool, NULL);
     vk_buffer_destroy(vk, &t->indices);
     for (int i = 0; i < MAX_FRAMES; ++i) vk_buffer_destroy(vk, &t->staging[i]);
@@ -200,17 +269,18 @@ void terrain_gpu_destroy(Renderer *r) {
  * for (or the finest ready, if coarser), reached a level at a time as the
  * finest blends in or out (terrain_fade_step), the finest as a whole window,
  * each coarser one as the ring round its finer neighbour; of each, the tiles
- * in view. Positions are relative to the camera of this update. K comes from
- * viewProj's second row, the projection's 1 / tan(fovy / 2) times the view's
- * unit up axis. */
+ * in view. Positions are relative to this frame's camera, the blend into each
+ * parent to the camera of the update the levels come from (c->cam). K comes
+ * from viewProj's second row, the projection's 1 / tan(fovy / 2) times the
+ * view's unit up axis. */
 static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj, uint32_t height, double dt) {
-    const TerrainClipmap *c = &t->clip;
+    TerrainClipmap *c = &t->shown;
     t->ndraw = t->tilesDrawn = t->tilesTotal = 0;
     t->drawn = TERRAIN_CLIP_LEVELS;
     if (c->finest >= TERRAIN_CLIP_LEVELS) return;
     const float *m = viewProj->m;
     double K = 0.5 * height * sqrt((double)m[1] * m[1] + (double)m[5] * m[5] + (double)m[9] * m[9]);
-    terrain_fade_step(&t->fade, c, terrain_clip_select(&t->clip, cam[1], K), dt);
+    terrain_fade_step(&t->fade, c, terrain_clip_select(c, cam[1], K), dt);
     t->drawn = t->fade.shown;
     Frustum fr = frustum_from_matrix(*viewProj);
     /* Every level's corner is a whole number of its samples from the anchor,
@@ -220,8 +290,10 @@ static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj,
     for (int l = t->drawn; l < TERRAIN_CLIP_LEVELS; ++l) {
         const TerrainClipLevel *lv = &c->level[l];
         TerrainPush *pc = &t->push[l];
-        pc->anchor[0] = (float)(ax - c->cam[0]);
-        pc->anchor[1] = (float)(az - c->cam[1]);
+        pc->anchor[0] = (float)(ax - cam[0]);
+        pc->anchor[1] = (float)(az - cam[2]);
+        pc->morph[0] = (float)(ax - c->cam[0]);
+        pc->morph[1] = (float)(az - c->cam[1]);
         pc->offset[0] = (float)((double)lv->origin[0] * lv->spacing - ax);
         pc->offset[1] = (float)((double)lv->origin[1] * lv->spacing - az);
         pc->spacing = (float)lv->spacing;
@@ -265,37 +337,54 @@ static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj,
 
 /* The slot's last frame has finished (frame_acquire waited on its fence), so
  * its staging buffer is free. Earlier frames may still be drawing from the
- * slots this overwrites: the copy waits for their vertex shaders. */
+ * slots this overwrites: the copy waits for their vertex shaders. One update's
+ * rows fit the staging buffer: an update writes no more samples than the
+ * heights it evaluates. */
 void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj) {
     TerrainGpu *t = r->terrain;
     double t0 = glfwGetTime();
-    t->evaluated = terrain_clip_update(&t->clip, cam[0], cam[2], TERRAIN_CLIP_BUDGET);
-    double t1 = glfwGetTime();
-    plan_draws(t, cam, viewProj, r->vk->extent.height, t->lastTime > 0.0 ? t0 - t->lastTime : 0.0);
-    t->lastTime = t0;
-    double t2 = glfwGetTime();
+    mutex_lock(&t->lock);
+    int idle = !t->busy, take = t->done;
+    t->done = 0;
+    mutex_unlock(&t->lock);
 
-    uint8_t *dst = (uint8_t *)t->staging[slot].mapped;
-    VkDeviceSize used = 0;
+    /* The worker is idle, so its clipmap holds still while it is read. */
     uint32_t n = 0;
-    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
-        const TerrainClipLevel *lv = &t->clip.level[l];
-        for (int k = 0; k < lv->n_dirty; ++k) {
-            TerrainRect d = lv->dirty[k];
-            VkDeviceSize row = (VkDeviceSize)(d.x1 - d.x0) * sizeof(TerrainSample);
-            for (int z = d.z0; z < d.z1; ++z) {
-                if (used + row > t->staging[slot].size || n >= TERRAIN_CLIP_BUDGET) fatal("terrain: an update overflowed its staging buffer");
-                memcpy(dst + used, &lv->samples[z * CLIP_N + d.x0], (size_t)row);
-                t->copies[n++] = (VkBufferCopy){ used, (((VkDeviceSize)l * CLIP_N + z) * CLIP_N + d.x0) * sizeof(TerrainSample), row };
-                used += row;
+    if (take) {
+        take_levels(t);
+        uint8_t *dst = (uint8_t *)t->staging[slot].mapped;
+        VkDeviceSize used = 0;
+        for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
+            const TerrainClipLevel *lv = &t->clip.level[l];
+            for (int k = 0; k < lv->n_dirty; ++k) {
+                TerrainRect d = lv->dirty[k];
+                VkDeviceSize row = (VkDeviceSize)(d.x1 - d.x0) * sizeof(TerrainSample);
+                for (int z = d.z0; z < d.z1; ++z) {
+                    if (used + row > t->staging[slot].size || n >= TERRAIN_CLIP_BUDGET) fatal("terrain: an update overflowed its staging buffer");
+                    memcpy(dst + used, &lv->samples[z * CLIP_N + d.x0], (size_t)row);
+                    t->copies[n++] = (VkBufferCopy){ used, (((VkDeviceSize)l * CLIP_N + z) * CLIP_N + d.x0) * sizeof(TerrainSample), row };
+                    used += row;
+                }
             }
         }
     }
-    double t3 = glfwGetTime();
-    t->fillMs = (t1 - t0) * 1000.0;
+    double t1 = glfwGetTime();
+    plan_draws(t, cam, viewProj, r->vk->extent.height, t->lastTime > 0.0 ? t0 - t->lastTime : 0.0);
+    t->lastTime = t0;
+    if (idle) {   /* the next update, at this frame's camera, for the level just selected */
+        t->clip.want = t->shown.want;
+        mutex_lock(&t->lock);
+        t->ask[0] = cam[0];
+        t->ask[1] = cam[2];
+        t->busy = 1;
+        if (take && t->fillMs > t->slowestFillMs) t->slowestFillMs = t->fillMs;
+        cond_signal(&t->wake);
+        mutex_unlock(&t->lock);
+    }
+    double t2 = glfwGetTime();
+    t->stageMs = (t1 - t0) * 1000.0;
     t->planMs = (t2 - t1) * 1000.0;
-    t->stageMs = (t3 - t2) * 1000.0;
-    t->updateMs = (t3 - t0) * 1000.0;
+    t->updateMs = (t2 - t0) * 1000.0;
     if (t->updateMs > t->slowestMs) t->slowestMs = t->updateMs;
     if (n == 0) return;
     vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
@@ -321,17 +410,27 @@ void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     }
 }
 
+/* Settled once the last update taken had nothing left to fill (and the levels
+ * drawn are the ones asked for). */
 bool renderer_terrain_settled(Renderer *r) {
-    const TerrainGpu *t = r->terrain;
-    return t->clip.finest <= t->clip.want && t->drawn == t->clip.want && t->fade.level < 0;
+    TerrainGpu *t = r->terrain;
+    mutex_lock(&t->lock);
+    int evaluated = t->evaluated;
+    mutex_unlock(&t->lock);
+    return evaluated == 0 && t->shown.finest <= t->shown.want && t->drawn == t->shown.want && t->fade.level < 0;
 }
 
 void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
-    const TerrainGpu *t = r->terrain;
+    TerrainGpu *t = r->terrain;
     char fading[48] = "";
     if (t->fade.level >= 0) snprintf(fading, sizeof(fading), ", level %d fading %s", t->fade.level, t->fade.in ? "in" : "out");
+    mutex_lock(&t->lock);
+    int evaluated = t->evaluated;
+    double fillMs = t->fillMs, slowestFill = t->slowestFillMs;
+    mutex_unlock(&t->lock);
     snprintf(buf, n, "terrain: levels %d-%d drawn (finest ready %d, screen-space error asks for %d%s), %d of %d tiles in view in %d draws,\n"
-             "         last update evaluated %d heights in %.2f ms (fill %.2f, plan %.2f, staging %.2f; slowest %.2f ms)",
-             t->drawn, TERRAIN_CLIP_LEVELS - 1, t->clip.finest, t->clip.want, fading, t->tilesDrawn, t->tilesTotal, t->ndraw,
-             t->evaluated, t->updateMs, t->fillMs, t->planMs, t->stageMs, t->slowestMs);
+             "         last fill evaluated %d heights in %.2f ms on its worker (slowest %.2f ms); the frame's part %.2f ms\n"
+             "         (taking an update %.2f, plan %.2f; slowest %.2f ms)",
+             t->drawn, TERRAIN_CLIP_LEVELS - 1, t->shown.finest, t->shown.want, fading, t->tilesDrawn, t->tilesTotal, t->ndraw,
+             evaluated, fillMs, slowestFill, t->updateMs, t->stageMs, t->planMs, t->slowestMs);
 }

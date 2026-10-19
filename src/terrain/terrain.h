@@ -75,8 +75,8 @@ void   terrain_landform(double x, double z, TerrainLandform *out);
  * (terrain_clip_fill_cost), so a thin strip costs about 2.5 times the samples
  * it writes and a whole window about 1.3 times. A height takes about 90 ns
  * under the city and 250-500 ns over the region's landforms (the mountains
- * most), so a full update takes 1-7 ms: on the render thread, a hitch when the
- * camera jumps (TODO: Terrain). Walking spends a few hundred; the most steady motion asks
+ * most), so a full update takes 1-9 ms, on the renderer's worker thread
+ * (src/render/terrain_gpu.c). Walking spends a few hundred; the most steady motion asks
  * for is a camera dithering across a snap line of every level at once (every
  * 1024 m), each level moving a sample pair each way: about 1,280 a level, 1,020
  * for the coarsest, 12,560 in all. A jump fills in over about 17 updates,

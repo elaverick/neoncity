@@ -63,7 +63,7 @@ These are proposed boundaries, not a requirement to create every file immediatel
 |---|---|
 | `terrain.h`, `terrain_internal.h`, `terrain_height.c`, `terrain_lod.c`, `terrain_mesh.c`, `tests/terrain_test.c` | As proposed. `terrain_clip.h` holds the clipmap's shape as `#define`s shared with the shaders. |
 | (not proposed) | `terrain_land.c`: the land beyond the city, its regional landforms and canyons (M8), apart from `terrain_height.c`, which blends it with the city's ground. |
-| `terrain.c` (orchestration), `terrain_stream.c` (work queues) | Not needed so far. The clipmap updates within a per-update budget of heights evaluated (`terrain_clip_update`); the renderer calls it directly. Since the landforms made heights dearer, the slowest updates show as spikes (6-9 ms over the mountains), so the fill should move to a worker. |
+| `terrain.c` (orchestration), `terrain_stream.c` (work queues) | Not needed. The clipmap updates within a per-update budget of heights evaluated (`terrain_clip_update`). Since the landforms made heights dearer (an update up to about 9 ms over the mountains), `terrain_gpu.c` runs it on a worker thread of its own and takes each finished update whole at the start of a frame; the frame's part is a few tenths of a millisecond. |
 | `terrain_world.c` (world addressing) | Deferred to the cube-sphere milestone. |
 | `src/render/terrain.c` | `src/render/terrain_gpu.c`. |
 
