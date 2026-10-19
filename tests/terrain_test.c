@@ -51,7 +51,9 @@ static double slope_of(double (*f)(double, double), double x, double z) {
     return sqrt(gx * gx + gz * gz);
 }
 
-static double urban_graded(double x, double z) { return TERRAIN_URBAN_RELIEF_M * terrain_urban_shape(x, z); }
+/* The urban relief's amplitude at a point: its settlement's (m). */
+static double relief_at(double x, double z) { return TERRAIN_URBAN_GRADED ? plan_settlement(plan_settlement_near(x, z)).relief_m : 0.0; }
+static double urban_graded(double x, double z) { return relief_at(x, z) * terrain_urban_shape(x, z); }
 
 /* --- Levels of detail and the clipmap -------------------------------------- */
 
@@ -78,9 +80,9 @@ static int same_octaves(double s0, double s1) {
 /* 6. Coarse spacings leave out fine detail only: within the range bounds, and
  *    no further from full detail than the dropped octaves can reach. */
 static void test_lod_heights(void) {
-    double worst[TERRAIN_CLIP_LEVELS] = { 0 }, relief = TERRAIN_URBAN_GRADED ? TERRAIN_URBAN_RELIEF_M : 0.0;
+    double worst[TERRAIN_CLIP_LEVELS] = { 0 };
     for (int i = 0; i < N_POINTS; i += 4) {
-        double x = g_x[i], z = g_z[i], h = terrain_height(x, z), h0 = terrain_height_lod(x, z, 0.0), rlo, rhi;
+        double x = g_x[i], z = g_z[i], h = terrain_height(x, z), h0 = terrain_height_lod(x, z, 0.0), rlo, rhi, relief = relief_at(x, z);
         CHECK(memcmp(&h, &h0, sizeof(h)) == 0, "terrain_height_lod at spacing 0 differs from terrain_height at (%.1f, %.1f)", x, z);
         double amp = terrain_land_amplitude(plan_city_edge(x, z));
         terrain_height_range(x, z, x, z, &rlo, &rhi);
@@ -671,7 +673,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
 
     /* 1. Reference pass, in order: finite and within the amplitudes. */
-    double amax = fmax(TERRAIN_URBAN_RELIEF_M, TERRAIN_LAND_FAR_M) + 1e-3, lo = 1e9, hi = -1e9;
+    double amax = fmax(PLAN_RELIEF_MAX_M, TERRAIN_LAND_FAR_M) + 1e-3, lo = 1e9, hi = -1e9;
     for (int i = 0; i < N_POINTS; ++i) {
         double h = terrain_height(g_x[i], g_z[i]);
         g_ref[i] = h;
@@ -714,7 +716,7 @@ int main(int argc, char **argv) {
     {   /* ...and is tight under the city: a chunk at the centre gets only the urban relief. */
         double rlo, rhi;
         terrain_height_range(c.x, c.z, c.x + CHUNK_SIZE, c.z + CHUNK_SIZE, &rlo, &rhi);
-        CHECK(rhi <= (TERRAIN_URBAN_GRADED ? TERRAIN_URBAN_RELIEF_M : 0.0) + 0.01, "range at the centre is loose: [%.2f, %.2f]", rlo, rhi);
+        CHECK(rhi <= relief_at(c.x, c.z) + 0.01, "range at the centre is loose: [%.2f, %.2f]", rlo, rhi);
         printf("range of %d rectangles checked; a chunk at the centre: [%.3f, %.3f] m\n", rects, rlo, rhi);
     }
 
@@ -783,6 +785,15 @@ int main(int argc, char **argv) {
     }
     printf("edge measure changes by at most %.2f m/m (bound %.2f)\n", rateMax, CITY_EDGE_RATE);
     CHECK(rateMax <= CITY_EDGE_RATE, "edge measure changes faster than CITY_EDGE_RATE: %.3f", rateMax);
+
+    /* The settlements' relief: the megacity's exactly, more for smaller ones, never past the most. */
+    CHECK(plan_settlement_relief(CITY_RADIUS) == PLAN_RELIEF_MEGA_M, "a settlement of CITY_RADIUS has %.3f m of relief", plan_settlement_relief(CITY_RADIUS));
+    for (double rad = 250.0, prev = 1e9; rad <= 4.0 * CITY_RADIUS; rad *= 1.25) {
+        double rl = plan_settlement_relief(rad);
+        CHECK(rl <= prev && rl <= PLAN_RELIEF_MAX_M && rl > 0.0, "relief %.2f m at radius %.0f m: not falling with size, or past the most", rl, rad);
+        prev = rl;
+    }
+    CHECK(plan_settlement_near(c.x, c.z) == 0 && plan_settlement(0).relief_m == PLAN_RELIEF_MEGA_M, "the megacity isn't settlement 0, of PLAN_RELIEF_MEGA_M");
 
     test_lod_heights();
     test_clipmap(&r);

@@ -64,6 +64,29 @@
 /* Inside the built edge, the depth of the fringe over which the city thins out (m). */
 #define CITY_FRINGE      3000.0
 
+/* Settlements: the cities and towns on the land, each with a footprint and
+ * ground of its own. For now the plan holds one, the megacity, whose
+ * footprint is plan_city_edge's; more come with roads out of it. The ground
+ * under a settlement rises and falls gently by its relief, larger the smaller
+ * the settlement: a megacity is kept nearly flat, a small city can be
+ * moderately hilly (plan_settlement_relief). */
+#define PLAN_SETTLEMENTS   1
+#define PLAN_RELIEF_MEGA_M 10.0    /* relief of a settlement of CITY_RADIUS (m) */
+#define PLAN_RELIEF_MAX_M  40.0    /* the most relief any settlement has (m) */
+typedef struct PlanSettlement {
+    DVec2  centre;     /* world (x, z) of its footprint's centre (m) */
+    double radius;     /* its footprint's radius before the warp (m) */
+    double relief_m;   /* amplitude of its ground's relief (m) */
+} PlanSettlement;
+/* Settlement k, 0 <= k < PLAN_SETTLEMENTS. */
+PlanSettlement plan_settlement(int k);
+/* The settlement whose footprint lies nearest (x, z). */
+int    plan_settlement_near(double x, double z);
+/* Ground relief of a settlement of this radius: PLAN_RELIEF_MEGA_M at
+ * CITY_RADIUS exactly, rising as sqrt(CITY_RADIUS / radius) for smaller ones,
+ * to at most PLAN_RELIEF_MAX_M. */
+double plan_settlement_relief(double radius);
+
 enum { ROAD_NONE = 0, ROAD_LOCAL, ROAD_ARTERIAL, ROAD_BOULEVARD };
 enum { ZONE_CORE = 0, ZONE_CENTRE, ZONE_RESIDENTIAL, ZONE_INDUSTRIAL, ZONE_PARK, ZONE_RURAL, ZONE_COUNT };
 

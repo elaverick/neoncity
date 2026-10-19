@@ -93,6 +93,31 @@ float plan_affluence(double x, double z) {
  * The city's footprint
  * ========================================================================= */
 
+double plan_settlement_relief(double radius) {
+    return fmin(PLAN_RELIEF_MAX_M, PLAN_RELIEF_MEGA_M * sqrt(CITY_RADIUS / radius));
+}
+
+PlanSettlement plan_settlement(int k) {
+    (void)k;   /* the megacity */
+    PlanSettlement s;
+    s.centre = plan_town_centre(0, 0);
+    s.radius = CITY_RADIUS;
+    s.relief_m = plan_settlement_relief(s.radius);
+    return s;
+}
+
+int plan_settlement_near(double x, double z) {
+    int best = 0;
+    double bd = 1e300;
+    for (int k = 0; k < PLAN_SETTLEMENTS; ++k) {
+        PlanSettlement s = plan_settlement(k);
+        double d = hypot(x - s.centre.x, z - s.centre.z) - s.radius;
+        if (d < bd) { bd = d; best = k; }
+    }
+    return best;
+}
+
+/* The megacity's footprint, settlement 0's. */
 double plan_city_edge(double x, double z) {
     DVec2 c = plan_town_centre(0, 0);
     double wx = CITY_WARP1_M * (2.0 * vnoise(x / CITY_WARP1_WAVE, z / CITY_WARP1_WAVE, 0xED61u) - 1.0)

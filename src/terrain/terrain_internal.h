@@ -22,18 +22,17 @@
  * streets are draped onto it and its buildings stand on it. 0 flattens the
  * urban relief (the city on a datum at y = 0). */
 #define TERRAIN_URBAN_GRADED   1
-/* Urban relief amplitude when graded (m). Megacities are kept nearly flat;
- * once the plan has more than one settlement, this becomes the settlement's
- * own, larger for small towns. */
-#define TERRAIN_URBAN_RELIEF_M 10.0
+/* The urban relief's amplitude is the settlement's own (PlanSettlement.relief_m:
+ * 10 m for the megacity, more for smaller ones). */
 #define TERRAIN_URBAN_WAVE     3000.0   /* its longest wavelength (m) */
 /* How far the drawn surface (TerrainSample) sits under terrain_height where
  * plan_urban is 1, in proportion to it elsewhere: the city's lowest ground,
  * the asphalt at y = -0.03 under its streets, then always wins the depth
  * test, wherever the city's chunks happen to be loaded. A coarse level whose
- * spacing can't follow the urban relief that closely (terrain_urban_lod_error:
- * 0.16 m at level 7, 0.66 m at level 8, 4.2 m at level 9, which leaves out the
- * shorter urban octave) sinks by that error plus TERRAIN_URBAN_SINK_CLEAR_M
+ * spacing can't follow the urban relief that closely (terrain_urban_lod_error,
+ * for the megacity's 10 m: 0.16 m at level 7, 0.66 m at level 8, 4.2 m at
+ * level 9, which leaves out the shorter urban octave; in proportion to the
+ * relief elsewhere) sinks by that error plus TERRAIN_URBAN_SINK_CLEAR_M
  * instead (terrain_urban_sink): levels 8 and 9, only drawn from far off or high
  * up. The finer levels all sink alike, so the sink adds nothing to the
  * screen-space error of dropping one for its parent. */
@@ -65,11 +64,12 @@ int terrain_octaves(double wave, int octaves, double spacing);
 /* The drawn surface: terrain_height_lod less the urban sink. *urban, if not
  * NULL, gets plan_urban at the point. */
 double terrain_surface_lod(double x, double z, double spacing, float *urban);
-/* A bound on how far the urban relief drawn at `spacing` strays from the
- * city's ground (m); 0 at spacing 0. */
-double terrain_urban_lod_error(double spacing);
-/* How far the surface drawn at `spacing` sinks where plan_urban is 1 (m). */
-double terrain_urban_sink(double spacing);
+/* A bound on how far urban relief of amplitude `relief` (m) drawn at
+ * `spacing` strays from the city's ground (m); 0 at spacing 0. */
+double terrain_urban_lod_error(double spacing, double relief);
+/* How far the surface drawn at `spacing` sinks where plan_urban is 1, over
+ * ground of that relief (m). */
+double terrain_urban_sink(double spacing, double relief);
 
 /* Scratch sizes for a fill: a span (at most W a side) with a one-sample apron
  * for normals, and the parent samples under it. */
