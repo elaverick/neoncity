@@ -14,7 +14,7 @@
  * must lie inside the coarsest clipmap level's window (src/render/terrain_gpu.c
  * checks). The far plane follows it. */
 #define VIEW_DISTANCE     1900.0f
-#define TERRAIN_DISTANCE  15000.0f
+#define TERRAIN_DISTANCE  20000.0f
 #define NEAR_PLANE        0.08f
 #define FAR_PLANE         (TERRAIN_DISTANCE * 1.05f)
 

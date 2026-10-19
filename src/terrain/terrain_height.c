@@ -57,10 +57,33 @@ void terrain_urban_height_range(double x0, double z0, double x1, double z1, doub
     *hi = urban_relief() + 1e-3;
 }
 
+/* How far the urban relief drawn at `spacing` (interpolated linearly over the
+ * level's triangles) can stray from the full relief, the city's ground. An
+ * octave left out counts in full. A kept one, of amplitude a and lattice
+ * wavelength L, is value noise eased by a smoothstep, whose second derivative
+ * is at most 12 a / L^2; linear interpolation over a cell of diagonal D strays
+ * by at most that times D^2 / 8. Half as much again, for the bilinear easing's
+ * cross terms. */
+double terrain_urban_lod_error(double spacing) {
+    if (spacing <= 0.0 || urban_relief() <= 0.0) return 0.0;
+    int used = terrain_octaves(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, spacing);
+    double wsum = 0.0, err = 0.0, D2 = 2.0 * spacing * spacing;
+    for (int k = 0; k < TERRAIN_URBAN_OCTAVES; ++k) wsum += ldexp(1.0, -k);
+    for (int k = 0; k < TERRAIN_URBAN_OCTAVES; ++k) {
+        double a = urban_relief() * ldexp(1.0, -k) / wsum, L = ldexp(TERRAIN_URBAN_WAVE, -k);
+        err += k < used ? 1.5 * 12.0 * a / (L * L) * D2 / 8.0 : a;
+    }
+    return err;
+}
+
 double terrain_surface_lod(double x, double z, double spacing, float *urban) {
     double w, h = height_lod(x, z, spacing, &w);
     if (urban) *urban = (float)w;
-    return h - TERRAIN_URBAN_SINK_M * w;
+    return h - terrain_urban_sink(spacing) * w;
+}
+
+double terrain_urban_sink(double spacing) {
+    return fmax(TERRAIN_URBAN_SINK_M, terrain_urban_lod_error(spacing) + TERRAIN_URBAN_SINK_CLEAR_M);
 }
 
 double terrain_surface(double x, double z) { return terrain_surface_lod(x, z, 0.0, NULL); }

@@ -67,9 +67,10 @@ void   terrain_height_range(double x0, double z0, double x1, double z1, double *
  * it writes and a whole window about 1.3 times. At about 140 ns a height this
  * is under 2 ms. Walking spends a few hundred; the most steady motion asks
  * for is a camera dithering across a snap line of every level at once (every
- * 512 m), each level moving a sample pair each way, about 11,700. A jump fills
- * in over about 16 updates, coarsest level first. */
-#define TERRAIN_CLIP_BUDGET   12288
+ * 1024 m), each level moving a sample pair each way: about 1,280 a level, 1,020
+ * for the coarsest, 12,560 in all. A jump fills in over about 17 updates,
+ * coarsest level first. */
+#define TERRAIN_CLIP_BUDGET   13312
 #define TERRAIN_CLIP_MAX_SPANS 8                      /* pieces of one level's update (see terrain_lod.c) */
 #define TERRAIN_CLIP_MAX_DIRTY (2 * TERRAIN_CLIP_MAX_SPANS)
 

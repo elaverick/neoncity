@@ -86,13 +86,9 @@ the terrain roadmap.
   - The haze thins with height above one datum, the city's ground at its centre (`haze_datum`, `src/app/main.c`).
     With more settlements it should be the ground of the one the camera is in or nearest, blended between them.
 - **The city's edge** (`plan_town_built`, `plan_fringe`, `PlanArea.ground`/`edges`; see the README). The city is
-  the towns whose ground provably lies where `plan_urban` is 1: 78 towns, about 15 km across, in a footprint 20 km
-  across. So:
-  - **Decision pending: the city's radius.** The goal is a city about 20 km across, but only 15 km is built.
-    Raising `CITY_RADIUS` from 10 km to about 12.5 km would bring the built city near 20 km. It also moves the
-    belt and the hills outward, so `terrain_test` and the city fingerprint's scattered chunks would need
-    re-baselining (the spawn 9×9 and the arcology should stay unchanged). The proxies' pool (768k boxes) holds the
-    larger city too (about 500k boxes).
+  the towns whose ground provably lies where `plan_urban` is 1: 142 towns, about 20 km across, in a footprint 25 km
+  across (`CITY_RADIUS` 12.5 km). The proxies hold about 590k boxes in their 768k pool when the whole city is in range.
+  So:
   - Between the perimeter road and the belt lies up to 2 km of flat land at the city's height before the hills
     begin.
   - The fringe thins density, so a regional core 2 km in still keeps its towers: a skyline cliff seen from outside

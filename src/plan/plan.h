@@ -42,7 +42,7 @@
 /* The city is finite: a disc round town (0,0)'s centre, its edge warped by two
  * octaves of value noise so it doesn't read as a circle. Inside the edge, a
  * belt where the city gives way to the land around it. Metres. */
-#define CITY_RADIUS     10000.0
+#define CITY_RADIUS     12500.0
 #define CITY_BELT        1500.0
 #define CITY_WARP1_M     1800.0   /* warp amplitude and wavelength, first octave */
 #define CITY_WARP1_WAVE  6000.0

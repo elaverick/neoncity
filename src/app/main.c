@@ -204,17 +204,19 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
                          float emaDt, uint64_t totalFrames) {
     if (!c->path) return;
     ChunkStats s = chunks_stats(chunks);
-    c->settledFrames = (s.queued + s.ready == 0 && renderer_proxies_ready(renderer) && renderer_terrain_settled(renderer) && totalFrames > 10)
-                     ? c->settledFrames + 1 : 0;
+    bool distant = renderer_proxies_ready(renderer) && renderer_terrain_settled(renderer);
+    c->settledFrames = (s.queued + s.ready == 0 && distant && totalFrames > 10) ? c->settledFrames + 1 : 0;
     if (c->walkSeconds <= 0.0f) c->framesAfterWalk++;
     else if (c->walkStarted) {
         c->missingSum += s.inViewMissing;
         c->missingFrames++;
         if (s.inViewMissing > c->missingMost) c->missingMost = s.inViewMissing;
     }
-    /* Capture once streaming has settled (or after a timeout under memory pressure). */
+    /* Capture once streaming has settled. The chunks may never settle when
+     * their pool is full, so after 900 frames they are let off; the proxies
+     * and the terrain still have to be ready (bar a last timeout). */
     if (c->shotTaken) glfwSetWindowShouldClose(win, GLFW_TRUE);
-    else if (c->walkSeconds <= 0.0f && (c->settledFrames > 60 || c->framesAfterWalk > 900)) {
+    else if (c->walkSeconds <= 0.0f && (c->settledFrames > 60 || (c->framesAfterWalk > 900 && distant) || c->framesAfterWalk > 20000)) {
         renderer_request_screenshot(renderer, c->path);
         c->shotTaken = true;
         printf("frame time %.2f ms (avg), drawn chunks %d, draws %d, resident %d, pool %d/%d pages\n",

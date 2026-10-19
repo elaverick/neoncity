@@ -76,11 +76,11 @@ generated as a pure function of world position:
   - industrial: low sheds
   - park: more likely along the boulevards, as green buffers between towns
   - rural: open land with the odd farmstead, towards the city's edge
-- **The city's edge.** The city is finite. Its footprint is a warped disc 20 km across
+- **The city's edge.** The city is finite. Its footprint is a warped disc 25 km across
   (`plan_city_edge`), whose outer 1.5 km belt gives way to the land. It is built of whole
   towns, each only where its ground provably lies inside that belt (`plan_town_built`), so the
-  city's ground and the terrain's agree wherever they meet; that leaves about 80 towns, some
-  15 km across. Over the last 3 km the city thins (`plan_fringe`):
+  city's ground and the terrain's agree wherever they meet; that leaves 142 towns, about
+  20 km across. Over the last 3 km the city thins (`plan_fringe`):
   density falls, and industry, parks and open land take over. The outermost boulevards are
   its perimeter road; the asphalt reaches a shoulder beyond them and ends in a low face onto
   the land.
@@ -345,11 +345,11 @@ far off, where their proxies stand in for them. An evicted chunk is simply regen
 comes back into view, and it comes back identical.
 
 Chunks are drawn in full out to the view distance (1.9 km). Beyond it the city goes on as distant
-proxies (`src/city/proxy.c`, `src/render/proxy_gpu.c`, `shaders/proxy/`), out to the terrain's 15 km:
+proxies (`src/city/proxy.c`, `src/render/proxy_gpu.c`, `shaders/proxy/`), out to the terrain's 20 km:
 every building as a box round each section of its graph, the same buildings the chunks build, with
 the facade's far shading from the same seeds (wall and glass, floor and bay rhythm, the share and
 colour of lit rooms, LED crowns). They come in tiles of 4 x 4 chunks, generated round the camera on
-a worker thread of their own (the whole city, about 320,000 boxes, takes about a second) into a 24 MB
+a worker thread of their own (the whole city, about 590,000 boxes, takes about two seconds) into a 24 MB
 pool, and drawn by one indirect draw list that leaves out every chunk the streamer draws in full that
 frame. So a chunk still streaming in, or one turned towards, shows as its proxies rather than a gap,
 and the haze is only the city's air (a 1.1 km mean free path at street level, thinning with height),
@@ -358,7 +358,7 @@ mesh; at that distance and in that haze it is slight. Rendering is camera-relati
 per-chunk origins computed in doubles, so precision holds up thousands of kilometres from the origin.
 
 The ground under and beyond the city is a terrain clipmap (`src/terrain/`, `src/render/terrain_gpu.c`,
-`shaders/terrain/`): nine nested grids of 127 x 127 samples round the camera, 1 m to 256 m apart, each
+`shaders/terrain/`): ten nested grids of 127 x 127 samples round the camera, 1 m to 512 m apart, each
 blending into the next towards its edge. Which levels are drawn is set by their screen-space error. A
 level is dropped while dropping it, and every finer level, would move the ground by under half a pixel on
 screen, and it comes back once that passes a pixel. So the city's nearly flat ground and high cameras

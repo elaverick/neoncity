@@ -125,9 +125,12 @@ static void check_contents(const TerrainClipmap *c, int l) {
                 else if (ox && !oz) hc = 0.5f * (p00 + terrain_clip_sample(pv, a + 1, b)->h);
                 else if (!ox && oz) hc = 0.5f * (p00 + terrain_clip_sample(pv, a, b + 1)->h);
                 else                hc = 0.5f * (p00 + terrain_clip_sample(pv, a + 1, b + 1)->h);
-                /* Where both levels keep the same octaves, the shared samples are the same ground. */
-                if (same && !ox && !oz && memcmp(&t->h, &hc, sizeof(float)) != 0 && bad++ < 5)
-                    CHECK(0, "level %d sample (%lld, %lld) is %.6f, its parent's %.6f", l, (long long)i, (long long)j, t->h, hc);
+                /* Where both levels keep the same octaves, the shared samples are
+                 * the same ground (each level then sinks it under the city by its own
+                 * terrain_urban_lod_error, so the drawn heights may differ there). */
+                double gl = terrain_height_lod((double)i * s, (double)j * s, s), gp = terrain_height_lod((double)i * s, (double)j * s, pv->spacing);
+                if (same && !ox && !oz && gl != gp && bad++ < 5)
+                    CHECK(0, "level %d sample (%lld, %lld) is ground %.6f, its parent's %.6f", l, (long long)i, (long long)j, gl, gp);
             }
             double gx = (terrain_surface_lod((double)(i + 1) * s, (double)j * s, s, NULL) - terrain_surface_lod((double)(i - 1) * s, (double)j * s, s, NULL)) / (2.0 * s);
             double gz = (terrain_surface_lod((double)i * s, (double)(j + 1) * s, s, NULL) - terrain_surface_lod((double)i * s, (double)(j - 1) * s, s, NULL)) / (2.0 * s);
@@ -313,9 +316,10 @@ static void test_clipmap(Rng *r) {
             mode = rng_int(r, 0, 4);
             int b = rng_int(r, 0, 3);
             budget = b == 0 ? TERRAIN_CLIP_W : b == 1 ? 2500 : TERRAIN_CLIP_BUDGET;
-            /* Every level snaps at multiples of 512 m (2 x the coarsest spacing);
-             * going there is a jump of up to 256 m. */
-            line = 512.0 * floor(x / 512.0 + 0.5);
+            /* Every level snaps at multiples of twice the coarsest spacing;
+             * going there is a jump of up to one coarsest spacing. */
+            const double snap = 2.0 * terrain_clip_spacing(TERRAIN_CLIP_LEVELS - 1);
+            line = snap * floor(x / snap + 0.5);
             if (mode == 3) catching = 1;
             if (mode == 4) {   /* jump 3 to 40 km, kept within 30 km of the city */
                 float a = rng_float(r);
