@@ -1,6 +1,9 @@
 # Code Structure and Terrain Integration Guidelines
 
-Status: working architecture guidance for future changes, not a claim that the terrain system already exists.
+Status: working architecture guidance for future changes. The terrain subsystem now exists (a height field,
+a ten-level clipmap with screen-space error and level blending, a GPU pass) and the city is finite; section 3
+records which of the proposed files were built and where the implementation chose differently from the
+original proposal.
 
 This document records the boundaries emerging from the current codebase and the decisions to preserve when terrain is introduced. It should guide file placement and prevent terrain work from becoming another broad restructuring of the city, generator, or renderer.
 
@@ -52,6 +55,23 @@ The exact API and data structures should be settled when the first terrain slice
 | `tests/terrain_test.c` | Terrain coordinate, determinism, LOD/edge and continuity tests | No Vulkan window required for tests of pure CPU algorithms |
 
 These are proposed boundaries, not a requirement to create every file immediately. Start with the smallest coherent slice. If two proposed files would be tiny wrappers with no independent responsibility, keep them together until the split earns its keep.
+
+### What was built (2026-10)
+
+| Proposed | Built |
+|---|---|
+| `terrain.h`, `terrain_internal.h`, `terrain_height.c`, `terrain_lod.c`, `terrain_mesh.c`, `tests/terrain_test.c` | As proposed. `terrain_clip.h` holds the clipmap's shape as `#define`s shared with the shaders. |
+| `terrain.c` (orchestration), `terrain_stream.c` (work queues) | Not needed. The clipmap updates within a per-update budget of heights evaluated (`terrain_clip_update`); the renderer calls it directly. Move the fill to a worker only if update spikes show. |
+| `terrain_world.c` (world addressing) | Deferred to the cube-sphere milestone. |
+| `src/render/terrain.c` | `src/render/terrain_gpu.c`. |
+
+Decisions taken differently from the original plan, and kept because they proved simpler or exact:
+
+- **Heights on the GPU** are one storage buffer laid out as the clipmap's toroidal storage, with dirty rows copied in, rather than per-level height textures.
+- **Heights above the ground in the city's shaders** come from a per-vertex base (`Vertex.base`, the building's or the street's ground), not from a camera-centred ground-height texture. Only the haze uses a single datum (`haze_datum`).
+- **The terrain under the city** sinks below the city's ground by a fixed 0.5 m at fine levels and by a bound on what the level can't follow of the urban relief at coarse ones (`terrain_urban_sink`), so the city's ground always wins the depth test without either surface knowing which chunks are loaded.
+- **Level changes** blend over time (`TerrainFade`) on top of the geomorph, one level at a time.
+- **Distant city representations** are each building section as a box (`src/city/proxy.c`), sorted largest first per chunk for a screen-size level of detail, and cross-faded with the full chunks by a shared dither.
 
 ### Likely first implementation
 
