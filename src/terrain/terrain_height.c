@@ -62,11 +62,31 @@ double terrain_urban_height(double x, double z) {
     return relief > 0.0 ? relief * urban_shape_lod(x, z, 0.0) : 0.0;
 }
 
-/* urban_shape is a fractal sum of unit amplitude: |shape| <= 1 everywhere. */
+/* A bound on urban_shape's slope (per metre): value noise of lattice
+ * wavelength L, mapped to [-1, 1], changes by at most 3 / L per metre along
+ * each axis (noise_value2), so by 3 sqrt(2) / L in any direction; each octave
+ * adds that times its weight. */
+static double urban_shape_slope(void) {
+    double wsum = 0.0, g = 0.0;
+    for (int k = 0; k < TERRAIN_URBAN_OCTAVES; ++k) wsum += ldexp(1.0, -k);
+    for (int k = 0; k < TERRAIN_URBAN_OCTAVES; ++k) g += 3.0 * sqrt(2.0) * ldexp(1.0, -k) / wsum / ldexp(TERRAIN_URBAN_WAVE, -k);
+    return g;
+}
+
+/* urban_shape over the rectangle lies within its slope bound times the
+ * half-diagonal of its value at the centre, and in [-1, 1] (a fractal sum of
+ * unit amplitude). The height is a relief between the least and the most of
+ * any settlement times that, so it lies between the extreme products. */
 void terrain_urban_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
-    (void)x0; (void)z0; (void)x1; (void)z1;
-    *lo = -urban_relief_max() - 1e-3;
-    *hi = urban_relief_max() + 1e-3;
+    double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0);
+    double sc = terrain_urban_shape(cx, cz), reach = urban_shape_slope() * half;
+    double slo = fmax(-1.0, sc - reach), shi = fmin(1.0, sc + reach), rlo = 1e300, rhi = 0.0;
+    for (int k = 0; k < PLAN_SETTLEMENTS; ++k) {
+        double r = TERRAIN_URBAN_GRADED ? plan_settlement(k).relief_m : 0.0;
+        rlo = fmin(rlo, r); rhi = fmax(rhi, r);
+    }
+    *lo = fmin(rlo * slo, rhi * slo) - 1e-3;   /* rounding: the shape is a float */
+    *hi = fmax(rlo * shi, rhi * shi) + 1e-3;
 }
 
 /* How far the urban relief drawn at `spacing` (interpolated linearly over the

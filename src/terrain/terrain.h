@@ -25,7 +25,8 @@ double terrain_surface(double x, double z);
 double terrain_urban_height(double x, double z);
 
 /* Conservative bounds on terrain_urban_height over the rectangle [x0,x1] x
- * [z0,z1], as terrain_height_range. */
+ * [z0,z1], as terrain_height_range: from its height at the centre and how
+ * steep it can be, so a chunk's are a metre or two apart. */
 void   terrain_urban_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi);
 
 /* The same ground as sampled every `spacing` metres: detail too fine for that

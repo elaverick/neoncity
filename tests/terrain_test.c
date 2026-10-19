@@ -719,6 +719,30 @@ int main(int argc, char **argv) {
         CHECK(rhi <= relief_at(c.x, c.z) + 0.01, "range at the centre is loose: [%.2f, %.2f]", rlo, rhi);
         printf("range of %d rectangles checked; a chunk at the centre: [%.3f, %.3f] m\n", rects, rlo, rhi);
     }
+    {   /* The city's ground has its own range, bounding it at every size and tight at a chunk's. */
+        double widest = 0.0;
+        for (int k = 0; k < 2000; ++k) {
+            int i = rng_int(&r, 0, N_POINTS - 1);
+            float sz = rng_float(&r);
+            double w = pow(10.0, 5.0 * sz);   /* 1 m .. 100 km */
+            double x0 = g_x[i], z0 = g_z[i], x1 = x0 + w, z1 = z0 + w * 0.7, rlo, rhi;
+            terrain_urban_height_range(x0, z0, x1, z1, &rlo, &rhi);
+            for (int sj = 0; sj <= 8; ++sj)
+                for (int si = 0; si <= 8; ++si) {
+                    double x = x0 + (x1 - x0) * si / 8.0, z = z0 + (z1 - z0) * sj / 8.0, h = terrain_urban_height(x, z);
+                    CHECK(h >= rlo && h <= rhi, "city ground %.3f at (%.1f, %.1f) outside its range [%.3f, %.3f]", h, x, z, rlo, rhi);
+                }
+        }
+        for (int k = 0; k < 400; ++k) {
+            int i = rng_int(&r, 0, N_POINTS - 1);
+            double x0 = floor(g_x[i] / CHUNK_SIZE) * CHUNK_SIZE, z0 = floor(g_z[i] / CHUNK_SIZE) * CHUNK_SIZE, rlo, rhi;
+            terrain_urban_height_range(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, &rlo, &rhi);
+            widest = fmax(widest, rhi - rlo);
+        }
+        printf("city ground's range over a chunk: at most %.2f m wide\n", widest);
+        /* With the megacity's 10 m of relief: its slope bound, 1.9%, across a chunk's diagonal, against 20 m for +-relief. */
+        CHECK(widest <= 3.0, "city ground's range over a chunk is loose: %.2f m", widest);
+    }
 
     /* 4. Slopes: gentle under the city, no cliff across the belt, bounded on the land. */
     double urbanMax = 0.0, beltMax = 0.0, landMax = 0.0;
