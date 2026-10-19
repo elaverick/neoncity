@@ -7,9 +7,16 @@
  * mountains, apart from the others, inside the world's reach; the edge
  * measure finds each, and each is built about as big as it was placed.
  *
+ * Roads: every settlement on a continent joined to the rest of it; every road
+ * between nodes, on land, clear of the other cities; junctions only where
+ * three or more roads meet; freeways about FREEWAY_SHARE of the length, and
+ * at every colossal city.
+ *
  * world_test --fingerprint prints a hash of what was placed and built, to
- * compare two builds (or the game's floating point against the tests');
- * world_test --map out.ppm [px] draws the world (see world_map). */
+ * compare two builds (or the game's floating point against the tests', or
+ * world_test --threads 1 --fingerprint against any other number of threads);
+ * world_test --map out.ppm [px] draws the world, world_test --local out.ppm
+ * [km [x z]] the land and roads round a point (the megacity by default). */
 #include "plan.h"
 #include "terrain.h"
 #include "city.h"
@@ -113,6 +120,68 @@ static void test_settlements(void) {
     CHECK(rateMax <= CITY_EDGE_RATE, "edge measure changes faster than CITY_EDGE_RATE: %.3f", rateMax);
 }
 
+static int uf_find(int *p, int x) { while (p[x] != x) { p[x] = p[p[x]]; x = p[x]; } return x; }
+
+static void test_roads(void) {
+    int nr = plan_road_count(), nn = plan_node_count();
+    int *parent = (int *)malloc(sizeof(int) * (size_t)nn), *deg = (int *)calloc((size_t)nn, sizeof(int));
+    int fwAt[PLAN_SETTLEMENTS] = { 0 };
+    for (int k = 0; k < nn; ++k) parent[k] = k;
+    double total = 0.0, freeway = 0.0, detourMax = 0.0, seaMin = 1e300;
+    int offLand = 0, inCity = 0, badEnds = 0;
+    for (int r = 0; r < nr; ++r) {
+        const PlanRoad *R = plan_road(r);
+        PlanNode a = plan_node(R->from), b = plan_node(R->to);
+        deg[R->from]++; deg[R->to]++;
+        parent[uf_find(parent, R->from)] = uf_find(parent, R->to);
+        double len = R->s[R->npts - 1];
+        total += len;
+        if (R->cls == PLAN_ROAD_FREEWAY) {
+            freeway += len;
+            if (a.settlement >= 0) fwAt[a.settlement] = 1;
+            if (b.settlement >= 0) fwAt[b.settlement] = 1;
+        }
+        if (dlen(dsub(R->pts[0], a.p)) > 1.0 || dlen(dsub(R->pts[R->npts - 1], b.p)) > 1.0) badEnds++;
+        double straight = dlen(dsub(b.p, a.p));
+        if (straight > 50000.0) detourMax = fmax(detourMax, len / straight);
+        for (int k = 0; k + 1 < R->npts; ++k)
+            for (int q = 0; q < 4; ++q) {
+                DVec2 p = dadd(R->pts[k], dscale(dsub(R->pts[k + 1], R->pts[k]), q / 4.0));
+                double sea = plan_world_sea(p.x, p.z);
+                seaMin = fmin(seaMin, sea);
+                if (sea <= 0.0) offLand++;
+                if (plan_city_edge(p.x, p.z) < 0.0) {
+                    int near = plan_settlement_near(p.x, p.z);
+                    if (near != a.settlement && near != b.settlement) inCity++;
+                }
+            }
+    }
+    int junctions = 0, deadJunctions = 0, splitContinents = 0, colossalNoFw = 0;
+    for (int k = 0; k < nn; ++k)
+        if (plan_node(k).settlement < 0) {
+            junctions++;
+            if (deg[k] < 3) deadJunctions++;
+        }
+    for (int s = 0; s < PLAN_SETTLEMENTS; ++s) {
+        for (int t = s + 1; t < PLAN_SETTLEMENTS; ++t)
+            if (plan_settlement(s).continent == plan_settlement(t).continent && uf_find(parent, s) != uf_find(parent, t)) { splitContinents++; break; }
+        if (plan_settlement(s).colossal && !fwAt[s]) colossalNoFw++;
+    }
+    printf("roads: %d between %d nodes (%d junctions), %.0f km in all, %.0f%% freeway; the worst detour %.2f times the straight line\n",
+           nr, nn, junctions, total / 1000.0, 100.0 * freeway / total, detourMax);
+    printf("  the lowest point %.0f m above the sea to come; settlement 0 has %d roads out\n", seaMin, deg[0]);
+    CHECK(splitContinents == 0, "%d settlements not joined to the rest of their continent", splitContinents);
+    CHECK(offLand == 0, "%d points of road where the sea will be", offLand);
+    CHECK(inCity == 0, "%d points of road inside other settlements", inCity);
+    CHECK(badEnds == 0, "%d roads not ending at their nodes", badEnds);
+    CHECK(deadJunctions == 0, "%d junctions where fewer than three roads meet", deadJunctions);
+    CHECK(colossalNoFw == 0, "%d colossal cities without a freeway", colossalNoFw);
+    CHECK(freeway > 0.25 * total && freeway < 0.7 * total, "freeways %.0f%% of the network", 100.0 * freeway / total);
+    CHECK(deg[0] >= 2, "only %d roads out of the megacity", deg[0]);
+    free(parent);
+    free(deg);
+}
+
 static int fingerprint(void) {
     uint64_t hs = 0xcbf29ce484222325ULL;
     for (int k = 0; k < PLAN_SETTLEMENTS; ++k) {
@@ -122,8 +191,16 @@ static int fingerprint(void) {
         hs = fnv(v, sizeof(v), hs);
         hs = fnv(iv, sizeof(iv), hs);
     }
+    uint64_t hr = 0xcbf29ce484222325ULL;
+    for (int r = 0; r < plan_road_count(); ++r) {
+        const PlanRoad *R = plan_road(r);
+        int iv[3] = { R->from, R->to, R->cls };
+        hr = fnv(iv, sizeof(iv), hr);
+        hr = fnv(R->pts, sizeof(DVec2) * (size_t)R->npts, hr);
+    }
     printf("world fingerprint\n");
     printf("  settlements %016llx\n", (unsigned long long)hs);
+    printf("  roads       %016llx\n", (unsigned long long)hr);
     return 0;
 }
 
@@ -142,6 +219,12 @@ static void disc(Image *im, double cx, double cy, double r, const float c[3]) {
             if ((x + 0.5 - cx) * (x + 0.5 - cx) + (y + 0.5 - cy) * (y + 0.5 - cy) <= r * r) put(im, x, y, c);
 }
 
+static void line(Image *im, double x0, double y0, double x1, double y1, double r, const float c[3]) {
+    if (fmax(x0, x1) < -r || fmax(y0, y1) < -r || fmin(x0, x1) > im->w + r || fmin(y0, y1) > im->h + r) return;
+    int n = (int)ceil(hypot(x1 - x0, y1 - y0) * 2.0) + 1;
+    for (int k = 0; k <= n; ++k) disc(im, x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n, r, c);
+}
+
 static int save(const Image *im, const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) return 1;
@@ -151,7 +234,7 @@ static int save(const Image *im, const char *path) {
     return 0;
 }
 
-typedef struct MapCtx { Image *im; double x0, z0, m; } MapCtx;
+typedef struct MapCtx { Image *im; double x0, z0, m; int relief; } MapCtx;
 
 /* The land, tinted by its leading landform and shaded by its height; the sea to come blue. */
 static void map_row(void *ctx, int j) {
@@ -170,6 +253,11 @@ static void map_row(void *ctx, int j) {
             terrain_landform(x, z, &lf);
             double h = terrain_height_lod(x, z, mc->m);
             float k = 0.55f + 0.5f * clampf((float)(h / 2000.0), -0.3f, 1.0f);
+            if (mc->relief) {   /* lit from the north-west */
+                double gx = (terrain_height_lod(x + mc->m, z, mc->m) - h) / mc->m, gz = (terrain_height_lod(x, z + mc->m, mc->m) - h) / mc->m;
+                k *= clampf(0.85f - (float)(1.2 * (gx + gz) / sqrt(1.0 + gx * gx + gz * gz)), 0.25f, 1.4f);
+                if (lf.canyon > 20.0f) k *= 0.6f;
+            }
             for (int q = 0; q < 3; ++q) {
                 col[q] = 0.0f;
                 for (int t = 0; t < TERRAIN_TYPES; ++t) col[q] += lf.w[t] * tint[t][q];
@@ -181,36 +269,63 @@ static void map_row(void *ctx, int j) {
     }
 }
 
-/* world_test --map out.ppm [px]: the world's reach, px square (1600 by
- * default), north (-z) up: the land and the sea to come, the settlements
- * (colossal in red, the megacities orange, the megacity white). */
-static int world_map(const char *path, int W, int threads) {
+/* The square of side `ext` * 2 round (cx, cz), W px square, north (-z) up:
+ * the land and the sea to come, the roads (freeways red, trunk roads yellow,
+ * junctions white), the settlements (colossal red, the megacities orange, the
+ * megacity white), each as its footprint where that is bigger than a dot. */
+static int draw_map(const char *path, int W, double cx, double cz, double ext, int relief, int threads) {
     Image im = { W, W, (uint8_t *)calloc((size_t)W * W * 3, 1) };
     if (!im.px) return 1;
-    double ext = PLAN_WORLD_REACH * 1.08;
-    MapCtx mc = { &im, -ext, -ext, 2.0 * ext / W };
+    MapCtx mc = { &im, cx - ext, cz - ext, 2.0 * ext / W, relief };
     thread_parallel_for(W, threads, map_row, &mc);
+    const float red[3] = { 0.95f, 0.15f, 0.1f }, orange[3] = { 1.0f, 0.65f, 0.1f }, white[3] = { 1.0f, 1.0f, 1.0f };
+    const float fw[3] = { 0.9f, 0.1f, 0.1f }, trunk[3] = { 1.0f, 0.9f, 0.2f };
+    double scale = W / 1600.0;
+    for (int pass = 0; pass < 2; ++pass)
+        for (int r = 0; r < plan_road_count(); ++r) {
+            const PlanRoad *R = plan_road(r);
+            if ((R->cls == PLAN_ROAD_FREEWAY) != pass) continue;
+            double w = fmax((R->cls == PLAN_ROAD_FREEWAY ? 1.3 : 0.7) * fmin(scale, 1.5), R->half / mc.m);
+            for (int k = 0; k + 1 < R->npts; ++k)
+                line(&im, (R->pts[k].x - mc.x0) / mc.m, (R->pts[k].z - mc.z0) / mc.m, (R->pts[k + 1].x - mc.x0) / mc.m,
+                     (R->pts[k + 1].z - mc.z0) / mc.m, w, pass ? fw : trunk);
+        }
+    for (int k = 0; k < plan_node_count(); ++k) {
+        PlanNode n = plan_node(k);
+        if (n.settlement < 0) disc(&im, (n.p.x - mc.x0) / mc.m, (n.p.z - mc.z0) / mc.m, 1.6 * fmin(scale, 1.5), white);
+    }
     for (int k = PLAN_SETTLEMENTS - 1; k >= 0; --k) {
         PlanSettlement s = plan_settlement(k);
-        const float red[3] = { 0.95f, 0.15f, 0.1f }, orange[3] = { 1.0f, 0.65f, 0.1f }, white[3] = { 1.0f, 1.0f, 1.0f };
         double px = (s.centre.x - mc.x0) / mc.m, py = (s.centre.z - mc.z0) / mc.m;
-        disc(&im, px, py, (s.colossal ? 4.0 : 2.5) * W / 1600.0 + 0.5, k == 0 ? white : s.colossal ? red : orange);
+        disc(&im, px, py, fmax((s.colossal ? 4.0 : 2.5) * fmin(scale, 1.5) + 0.5, s.radius / mc.m), k == 0 ? white : s.colossal ? red : orange);
     }
     int rc = save(&im, path);
-    printf("world map, %d px, %.1f km a pixel\n", W, mc.m / 1000.0);
+    printf("map, %d px, %.2f km a pixel\n", W, mc.m / 1000.0);
     free(im.px);
     return rc;
 }
 
 int main(int argc, char **argv) {
     int threads = cpu_count();
+    if (argc > 2 && strcmp(argv[1], "--threads") == 0) {   /* the world must come out the same on any number */
+        threads = atoi(argv[2]);
+        argv += 2;
+        argc -= 2;
+    }
     clock_t t0 = clock();
     plan_world_init(threads);
     printf("world built on %d threads in %.2f s\n", threads, (double)(clock() - t0) / CLOCKS_PER_SEC);
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
-    if (argc > 2 && strcmp(argv[1], "--map") == 0) return world_map(argv[2], argc > 3 ? atoi(argv[3]) : 1600, threads);
+    if (argc > 2 && strcmp(argv[1], "--map") == 0) return draw_map(argv[2], argc > 3 ? atoi(argv[3]) : 1600, 0.0, 0.0, PLAN_WORLD_REACH * 1.08, 0, threads);
+    if (argc > 2 && strcmp(argv[1], "--local") == 0) {
+        DVec2 c = plan_town_centre(0, 0);
+        double km = argc > 3 ? atof(argv[3]) : 300.0;
+        if (argc > 5) c = dv(atof(argv[4]), atof(argv[5]));
+        return draw_map(argv[2], 1200, c.x, c.z, km * 500.0, 1, threads);
+    }
 
     test_settlements();
+    test_roads();
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all world tests passed\n");

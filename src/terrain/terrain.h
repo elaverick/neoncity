@@ -49,6 +49,22 @@ enum { TERRAIN_PLAINS = 0, TERRAIN_HILLS, TERRAIN_MOUNTAINS, TERRAIN_PLATEAU, TE
 typedef struct TerrainLandform { float w[TERRAIN_TYPES]; float canyon; } TerrainLandform;
 void   terrain_landform(double x, double z, TerrainLandform *out);
 
+/* The canyons, as their centre lines: TERRAIN_CANYON_POINTS points from one
+ * end to the other, how deep the canyon is at each (it tapers to 0 at both
+ * ends; between points, linearly near enough), and how far from the line its
+ * cut reaches at most (its rim, m). Its id names it among all canyons. The
+ * depth is the canyon's own, before the city keeps canyons away from it. */
+#define TERRAIN_CANYON_POINTS 17
+typedef struct TerrainCanyon {
+    double   x[TERRAIN_CANYON_POINTS], z[TERRAIN_CANYON_POINTS];
+    float    depth[TERRAIN_CANYON_POINTS];
+    float    rim;
+    uint32_t id;
+} TerrainCanyon;
+/* The canyons whose cut can reach the square of half-width r round (x, z),
+ * at most max of them; returns how many it wrote. */
+int    terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, int max);
+
 /* --- The planet (src/terrain/terrain_world.c) ----------------------------------
  * The world is a sphere of PLANET_RADIUS, and world X/Z is a chart of it: the
  * azimuthal-equidistant projection about the chart's origin, world (0, 0), so

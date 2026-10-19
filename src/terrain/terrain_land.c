@@ -166,6 +166,7 @@ static double canyon_rise(double edge) {
  * (CANYON_REACH), so the 3x3 cells round a point hold every canyon that can
  * cut it. */
 #define CANYON_SEGS 16
+_Static_assert(CANYON_SEGS + 1 == TERRAIN_CANYON_POINTS, "a canyon's centre line has a point at each end of each segment");
 
 typedef struct Canyon {
     double cx, cz, dx, dz, half;   /* the chord: centre, unit direction, half its length */
@@ -222,6 +223,41 @@ static double canyon_cut(const Canyon *c, double x, double z) {
         px = qx; pz = qz;
     }
     return cut;
+}
+
+/* Canyon c's centre line, as canyon_cut walks it. */
+static void canyon_line(const Canyon *c, TerrainCanyon *out) {
+    double d1 = 2.0 * PI_F * c->f1 / CANYON_SEGS, d2 = 2.0 * PI_F * c->f2 / CANYON_SEGS;
+    double s1 = sin(c->p1), c1 = cos(c->p1), sd1 = sin(d1), cd1 = cos(d1);
+    double s2 = sin(c->p2), c2 = cos(c->p2), sd2 = sin(d2), cd2 = cos(d2);
+    for (int k = 0; k <= CANYON_SEGS; ++k) {
+        double t = (double)k / CANYON_SEGS, sg = 2.0 * t - 1.0, off = c->m1 * s1 + c->m2 * s2, n;
+        n = s1 * cd1 + c1 * sd1; c1 = c1 * cd1 - s1 * sd1; s1 = n;
+        n = s2 * cd2 + c2 * sd2; c2 = c2 * cd2 - s2 * sd2; s2 = n;
+        out->x[k] = c->cx + c->dx * c->half * sg - c->dz * off;
+        out->z[k] = c->cz + c->dz * c->half * sg + c->dx * off;
+        out->depth[k] = (float)(c->depth * smoothstepf(0.0f, 0.18f, (float)t) * smoothstepf(1.0f, 0.82f, (float)t));
+    }
+    out->rim = (float)(c->floor + c->depth / TERRAIN_CANYON_WALL);
+}
+
+int terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, int max) {
+    const double C = TERRAIN_CANYON_CELL, reach = r * 1.4142135623730951 + CANYON_REACH;
+    int i0 = (int)floor((x - r - 0.6 * C) / C), i1 = (int)floor((x + r + 0.6 * C) / C);
+    int j0 = (int)floor((z - r - 0.6 * C) / C), j1 = (int)floor((z + r + 0.6 * C) / C);
+    int n = 0;
+    Canyon c;
+    for (int j = j0; j <= j1; ++j)
+        for (int i = i0; i <= i1 && n < max; ++i) {
+            uint32_t h = hash2i(WORLD_SEED ^ 0x7E51u, i, j);
+            if (hf(h, 0) >= (float)TERRAIN_CANYON_CHANCE) continue;
+            double cx = (i + 0.3 + 0.4 * hf(h, 1)) * C, cz = (j + 0.3 + 0.4 * hf(h, 2)) * C;
+            if (hypot(x - cx, z - cz) >= reach) continue;
+            canyon_of(i, j, cx, cz, &c);   /* asked at its own centre, it is always found */
+            canyon_line(&c, &out[n]);
+            out[n++].id = h;
+        }
+    return n;
 }
 
 double terrain_canyon_depth(double x, double z) {

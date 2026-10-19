@@ -125,6 +125,33 @@ int    plan_world_continent(double x, double z);
  * beyond the world's reach (m). */
 double plan_world_sea(double x, double z);
 
+/* Roads between the settlements (src/plan/plan_roads.c): on each continent
+ * a network joins every settlement, designed once at plan_world_init. Its
+ * links run between nodes, the settlements (node k is settlement k) and the
+ * junctions where roads branch or cross, each a freeway where the gravity
+ * model sends the most traffic, a trunk road elsewhere. A road's centre line
+ * runs round mountains, canyons, other cities and the sea to come. */
+enum { PLAN_ROAD_TRUNK = 1, PLAN_ROAD_FREEWAY };
+#define PLAN_FREEWAY_HALF 16.0f   /* half the paved width (m): two carriageways of three lanes, a median, shoulders */
+#define PLAN_TRUNK_HALF    6.0f   /* two lanes and shoulders */
+typedef struct PlanNode {
+    DVec2 p;            /* world (x, z): a settlement's centre, or the junction */
+    int   settlement;   /* its settlement, or -1 for a junction */
+} PlanNode;
+typedef struct PlanRoad {
+    int           from, to;   /* nodes */
+    int           cls;        /* PLAN_ROAD_* */
+    float         half;       /* half the paved width (m) */
+    double        flow;       /* the traffic the gravity model sends along it (relative) */
+    int           npts;
+    const DVec2  *pts;        /* its centre line, world (x, z), from `from` to `to` */
+    const double *s;          /* distance along it at each point (m) */
+} PlanRoad;
+int             plan_node_count(void);
+PlanNode        plan_node(int k);
+int             plan_road_count(void);
+const PlanRoad *plan_road(int k);
+
 enum { ROAD_NONE = 0, ROAD_LOCAL, ROAD_ARTERIAL, ROAD_BOULEVARD };
 enum { ZONE_CORE = 0, ZONE_CENTRE, ZONE_RESIDENTIAL, ZONE_INDUSTRIAL, ZONE_PARK, ZONE_RURAL, ZONE_COUNT };
 
