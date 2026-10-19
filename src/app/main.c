@@ -205,7 +205,7 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
     if (!c->path) return;
     ChunkStats s = chunks_stats(chunks);
     bool distant = renderer_proxies_ready(renderer) && renderer_terrain_settled(renderer);
-    c->settledFrames = (s.queued + s.ready == 0 && distant && totalFrames > 10) ? c->settledFrames + 1 : 0;
+    c->settledFrames = (s.queued + s.ready + s.fading == 0 && distant && totalFrames > 10) ? c->settledFrames + 1 : 0;
     if (c->walkSeconds <= 0.0f) c->framesAfterWalk++;
     else if (c->walkStarted) {
         c->missingSum += s.inViewMissing;
@@ -219,6 +219,8 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
     else if (c->walkSeconds <= 0.0f && (c->settledFrames > 60 || (c->framesAfterWalk > 900 && distant) || c->framesAfterWalk > 20000)) {
         renderer_request_screenshot(renderer, c->path);
         c->shotTaken = true;
+        printf("shot at frame %llu (%s), %d chunks fading in\n", (unsigned long long)totalFrames,
+               c->settledFrames > 60 ? "settled" : "timed out", s.fading);
         printf("frame time %.2f ms (avg), drawn chunks %d, draws %d, resident %d, pool %d/%d pages\n",
                emaDt * 1000.0f, s.drawnChunks, s.drawCalls, s.resident, s.pagesUsed, s.pagesTotal);
         if (c->missingFrames > 0)

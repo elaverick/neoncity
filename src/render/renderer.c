@@ -110,7 +110,7 @@ void renderer_destroy(Renderer *r) {
     terrain_gpu_destroy(r);
     proxy_gpu_destroy(r);
     vk_buffer_destroy(vk, &r->shotBuf);
-    VkPipeline pipes[] = { r->cityPipe, r->plantPipe, r->terrainPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
+    VkPipeline pipes[] = { r->cityPipe, r->plantPipe, r->terrainPipe, r->proxyPipe, r->proxyFadePipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
                            r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);

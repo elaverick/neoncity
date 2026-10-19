@@ -231,6 +231,11 @@ vec3 octDecode(uint u) {
 // Interleaved gradient noise (Jimenez): neighbouring pixels well spread over [0,1).
 float ign(vec2 px) { return fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715)))); }
 
+// A chunk fading in over its distant proxies (src/render/chunks.c: CHUNK_FADE_TIME):
+// at fade level f (0 .. 255) the chunk keeps the pixels whose dither is under
+// f and its proxies the rest, so between them each pixel is drawn once.
+bool fadeKeepsChunk(vec2 fragCoord, uint f) { return ign(fragCoord) * 255.0 < float(f); }
+
 vec3 lampColor(int type) {
     return type == 0 ? vec3(1.0, 0.42, 0.10) * 1.0   // sodium: deep amber
                      : vec3(0.55, 0.80, 1.0) * 0.9;  // cold LED

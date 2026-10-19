@@ -17,6 +17,7 @@ layout(location = 2) flat in vec3 vNrm;
 layout(location = 3) flat in uint vSeed;
 layout(location = 4) flat in uint vInfo;
 layout(location = 5) flat in vec2 vSize;
+layout(location = 6) flat in uint vFade;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outRefl;   // nothing for the screen-space reflections (city.frag)
 
@@ -138,6 +139,9 @@ vec3 shadeProxy(vec3 n, vec3 V) {
 }
 
 void main() {
+#ifdef FADE   // proxy_fade.frag: tiles with a chunk fading in over them (src/render/proxy_gpu.c)
+    if (fadeKeepsChunk(gl_FragCoord.xy, vFade)) discard;   // the chunk draws this pixel
+#endif
     vec3 n = normalize(vNrm);
     float dist = length(vRel);
     vec3 V = -vRel / max(dist, 1e-4);

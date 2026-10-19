@@ -29,6 +29,10 @@ enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
 #define MOTION_MAX     400.0f   /* m/s: faster is a jump */
 #define GUARD_DISTANCE 700.0f
 #define GUARD_SLOPE    0.18f
+/* A chunk fades in over its proxies this long after it becomes resident (s):
+ * its pixels and its proxies' are complementary halves of one dither
+ * (fadeDither in shaders/common.glsl), the chunk's share growing. */
+#define CHUNK_FADE_TIME 0.5
 /* In-view chunks this near and not drawn yet count as missing (ChunkStats). */
 #define MISSING_DISTANCE 700.0f
 typedef struct Entry {
@@ -37,6 +41,8 @@ typedef struct Entry {
     int      next;          /* hash chain */
     uint64_t lastSeen;
     uint64_t drawn;         /* 1 + the last frame the view drew it in */
+    double   residentAt;    /* when it became resident (s): it fades in from its proxies */
+    uint8_t  shown;         /* the fade it was last drawn with, 0 .. 255 (chunks_shown) */
     Mesh     mesh;          /* CPU mesh while READY */
     uint16_t pages[MAX_CHUNK_PAGES];
     int      npages;
@@ -114,6 +120,7 @@ struct ChunkSystem {
     double   motionCam[2], motionTime;
     float    vel[2];
     int      inViewMissing;
+    int      fading;          /* chunks drawn this frame still fading in */
     int      ready[MAX_ENTRIES];
     int      readyCount;
 
@@ -705,6 +712,7 @@ static int upload_ready(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t
         e->mesh.air = NULL;
         mesh_free(&e->mesh);
         e->state = CS_RESIDENT;
+        e->residentAt = glfwGetTime();
         uploads++;
     }
     memmove(cs->ready, cs->ready + r, sizeof(int) * (cs->readyCount - r));
@@ -737,6 +745,8 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
     VkDrawIndirectCommand *cmds = (VkDrawIndirectCommand *)cs->indirect[slot].mapped;
     ChunkGPU *gpu = (ChunkGPU *)cs->chunkData[slot].mapped;
     uint32_t ndraw = 0, nchunk = 0;
+    const double now = glfwGetTime();
+    cs->fading = 0;
     cs->plantFirst[slot] = UINT32_MAX;
     for (int k = 0; k < 2 * cs->wantCount && nchunk < MAX_DRAW_CHUNKS; ++k) {
         if (k == cs->wantCount) cs->plantFirst[slot] = ndraw;
@@ -761,7 +771,11 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
             lp = base >= 0 && cs->entries[base].state == CS_RESIDENT ? cs->entries[base].lightPage : -1;
         }
         g->info[2] = lp >= 0 ? lp * LIGHT_PAGE_RECS : -1;
-        g->info[3] = 0;
+        /* A chunk fades in over its proxies (fadeDither): its lobbies, plants and litter don't */
+        float f = e->layer == 0 ? clampf((float)((now - e->residentAt) / CHUNK_FADE_TIME), 0.0f, 1.0f) : 1.0f;
+        e->shown = (uint8_t)(f * 255.0f + 0.5f);
+        if (e->layer == 0 && e->shown < 255) cs->fading++;
+        g->info[3] = e->shown;
         for (int p = 0; p < e->npages; ++p) {
             uint32_t first = p * PAGE_VERTS;
             VkDrawIndirectCommand *c = &cmds[ndraw++];
@@ -841,6 +855,7 @@ static void update_stats(ChunkSystem *cs, int slot, int queued, uint32_t viewChu
     cs->stats.pagesUsed = POOL_PAGES - cs->freePageCount - cs->pendingFreeCount;
     cs->stats.uploadsThisFrame = uploads;
     cs->stats.inViewMissing = cs->inViewMissing;
+    cs->stats.fading = cs->fading;
     RtStats rs = rt_stats(cs->rt);
     cs->stats.blas = rs.blas;
     cs->stats.blasBuilds = rs.builds;
@@ -984,9 +999,9 @@ static void draw_range(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint32_t 
     }
 }
 
-bool chunks_drawn(ChunkSystem *cs, int cx, int cz) {
+int chunks_shown(ChunkSystem *cs, int cx, int cz) {
     int idx = table_find(cs, cx, cz, 0);
-    return idx >= 0 && cs->entries[idx].drawn == cs->frame + 1;
+    return idx >= 0 && cs->entries[idx].drawn == cs->frame + 1 ? cs->entries[idx].shown : 0;
 }
 
 void chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot) { draw_range(cs, cmd, slot, 0, cs->plantFirst[slot]); }

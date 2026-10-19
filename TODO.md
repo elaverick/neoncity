@@ -41,9 +41,10 @@ the terrain roadmap.
   at 250-300 m, the cloud hides everything), looking out past the city's edge and across the city from its fringe,
   in drizzle and downpour.
 - **Distant proxies** (`src/city/proxy.c`, `src/render/proxy_gpu.c`, `shaders/proxy/`; see the README). Next:
-  - **The handover pops.** A chunk replaces its boxes the frame it is first drawn. A dithered cross-fade per chunk
-    (a fade in `ChunkGPU.info[3]` and per proxy draw, the city's prepass and scene passes discarding the same
-    pattern) would hide it; worth it if the haze comes down further.
+  - **The handover** fades over `CHUNK_FADE_TIME` (0.5 s) once a chunk is resident (`ChunkGPU.info[3]`, the
+    proxies' per-tile fade bytes, `fadeKeepsChunk`). Its lobbies, plants and litter don't fade, and its shadows and
+    shelter are there in full from the start. The dither is a fixed screen pattern; a moving camera shows it as a
+    brief shimmer rather than a blend.
   - **Rooms** are lit with the facade's odds, floor by floor, but not the very rooms its faces light (a box's faces
     aren't the section's faces), so the lit pattern changes at the handover.
   - **What a box leaves out:** masts, spires and aircraft warning lights (the skyline's red blink), signs and

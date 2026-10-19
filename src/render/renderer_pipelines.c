@@ -68,6 +68,9 @@ static const uint32_t SPV_proxy_vert[] = {
 static const uint32_t SPV_proxy_frag[] = {
 #include "proxy/proxy.frag.inc"
 };
+static const uint32_t SPV_proxy_fade_frag[] = {
+#include "proxy/proxy_fade.frag.inc"
+};
 
 /* ------------------------------------------------------------ layouts --- */
 
@@ -395,6 +398,9 @@ void create_pipelines(Renderer *r) {
                       r->proxyPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
     proxy.colorFormat2 = HDR_FORMAT;
     r->proxyPipe = make_graphics(vk, &proxy);
+    proxy.fs = SPV_proxy_fade_frag;
+    proxy.fsBytes = sizeof(SPV_proxy_fade_frag);
+    r->proxyFadePipe = make_graphics(vk, &proxy);
     GfxDesc comp = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_composite_frag, sizeof(SPV_composite_frag),
                      r->compositePL, vk->swapFormat, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false };
     r->compositePipe = make_graphics(vk, &comp);

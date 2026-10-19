@@ -355,8 +355,8 @@ a worker thread of their own (the whole city, about 590,000 boxes, takes about t
 pool, and drawn by one indirect draw list that leaves out every chunk the streamer draws in full that
 frame. So a chunk still streaming in, or one turned towards, shows as its proxies rather than a gap,
 and the haze is only the city's air (a 1.1 km mean free path at street level, thinning with height),
-not a wall hiding where the chunks end. A chunk replacing its proxies pops from boxes to the full
-mesh; at that distance and in that haze it is slight. Rendering is camera-relative, with reverse-Z and
+not a wall hiding where the chunks end. A chunk replacing its proxies fades in over them for half a
+second once it is resident, the two sharing each pixel through one dither. Rendering is camera-relative, with reverse-Z and
 per-chunk origins computed in doubles, so precision holds up thousands of kilometres from the origin.
 
 The ground under and beyond the city is a terrain clipmap (`src/terrain/`, `src/render/terrain_gpu.c`,

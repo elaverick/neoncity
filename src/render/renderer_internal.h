@@ -86,7 +86,7 @@ struct Renderer {
     ProxyGpu    *proxies;   /* proxy_gpu.c */
     VkDescriptorSetLayout proxyLayout;
     VkPipelineLayout      proxyPL;
-    VkPipeline            proxyPipe;
+    VkPipeline            proxyPipe, proxyFadePipe;   /* the second with the chunks' fade in (proxy_fade.frag) */
     VkDescriptorPool      staticPool;
     VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout, cloudLayout, cloudCompLayout, ssrLayout, ssrApplyLayout;
     VkDescriptorSet       sceneSet[MAX_FRAMES];
