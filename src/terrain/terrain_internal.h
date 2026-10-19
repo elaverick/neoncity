@@ -168,6 +168,11 @@ void   terrain_land_range(double edge, double home, double *lo, double *hi);
 /* A bound on how far the land at `spacing` strays from the land at full detail
  * at (x, z) (m): the octaves left out, through each field's weight and slope. */
 double terrain_land_lod_error(double x, double z, double spacing);
+/* The ground without the roads between the settlements (terrain_height_lod
+ * less plan_road_ground's blend), and a bound on how far the roads alone move
+ * terrain_height_lod at `spacing` from full detail (m). */
+double terrain_height_bare(double x, double z, double spacing);
+double terrain_road_lod_error(double x, double z, double spacing);
 /* How deep the canyons cut at (x, z) before C keeps them from the city (m). */
 double terrain_canyon_depth(double x, double z);
 /* Which octaves every fractal sum keeps at `spacing`, as one number: two

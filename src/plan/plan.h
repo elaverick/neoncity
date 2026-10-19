@@ -138,19 +138,58 @@ typedef struct PlanNode {
     DVec2 p;            /* world (x, z): a settlement's centre, or the junction */
     int   settlement;   /* its settlement, or -1 for a junction */
 } PlanNode;
+/* Where a road meets its settlement: on the perimeter boulevard's centre line,
+ * the road's last stretch square to it. */
+typedef struct PlanGate {
+    DVec2 p;            /* on the boulevard's centre line */
+    DVec2 n;            /* the way out of the settlement, square to the boulevard (unit) */
+    float half;         /* the road's half-width */
+    int   road;         /* which road */
+} PlanGate;
+/* A road's surface height is its profile, every `ds` metres along it
+ * (PLAN_ROAD_STATION, a little less to fit), interpolated linearly: the
+ * ground along it smoothed, its grade held to PLAN_FREEWAY_GRADE or
+ * PLAN_TRUNK_GRADE, meeting its city's ground at a gate and every road's at
+ * a junction. */
+#define PLAN_ROAD_STATION  50.0
+#define PLAN_FREEWAY_GRADE 0.06
+#define PLAN_TRUNK_GRADE   0.09
 typedef struct PlanRoad {
     int           from, to;   /* nodes */
     int           cls;        /* PLAN_ROAD_* */
     float         half;       /* half the paved width (m) */
     double        flow;       /* the traffic the gravity model sends along it (relative) */
     int           npts;
-    const DVec2  *pts;        /* its centre line, world (x, z), from `from` to `to` */
+    const DVec2  *pts;        /* its centre line, world (x, z): from `from` (its gate, at a settlement) to `to` */
     const double *s;          /* distance along it at each point (m) */
+    int           gate[2];    /* whether it ends at a gate at `from`, `to` (then pts begins or ends there) */
+    int           nprof;
+    double        ds;
+    const float  *prof;       /* nprof heights, the first at s = 0, the last at its length (world Y, m) */
 } PlanRoad;
 int             plan_node_count(void);
 PlanNode        plan_node(int k);
 int             plan_road_count(void);
 const PlanRoad *plan_road(int k);
+/* Road k's gate at its from (end 0) or to (end 1) end; only if it has one. */
+PlanGate        plan_road_gate(int k, int end);
+/* Road k's surface height s metres along it. */
+double          plan_road_height(int k, double s);
+/* The roads as the ground takes them (terrain_height): where the nearest
+ * road's surface reaches out to over (x, z), the weight in (0, 1] the
+ * ground there takes it with (1 on the road and its shoulders, falling away
+ * over a batter as wide as twice the cut or fill), its height into *road_h.
+ * `ground` is the ground there without the road, `spacing` how coarsely it
+ * is sampled (the batter widens to cover it; past PLAN_ROAD_LOD_SPACING
+ * the roads are left out, 0). */
+#define PLAN_ROAD_LOD_SPACING 64.0
+#define PLAN_ROAD_SHOULDER    2.0    /* m of level ground beyond the paved width */
+#define PLAN_ROAD_BATTER_MIN  6.0    /* the batter's least and greatest width (m) */
+#define PLAN_ROAD_BATTER_MAX  80.0
+double          plan_road_ground(double x, double z, double ground, double spacing, double *road_h);
+/* Bounds on the road heights plan_road_ground can give in the rectangle
+ * [x0, x1] x [z0, z1]; 0 if it gives none there. */
+int             plan_road_range(double x0, double z0, double x1, double z1, double *lo, double *hi);
 
 enum { ROAD_NONE = 0, ROAD_LOCAL, ROAD_ARTERIAL, ROAD_BOULEVARD };
 enum { ZONE_CORE = 0, ZONE_CENTRE, ZONE_RESIDENTIAL, ZONE_INDUSTRIAL, ZONE_PARK, ZONE_RURAL, ZONE_COUNT };

@@ -201,7 +201,8 @@ static void test_lod_heights(void) {
         for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
             double s = terrain_clip_spacing(l), hl = terrain_height_lod(x, z, s);
             /* 1e-3 m: each fractal sum is rounded to float before scaling. */
-            double bound = terrain_land_lod_error(x, z, s) + relief * terrain_dropped(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s) + 1e-3;
+            double bound = terrain_land_lod_error(x, z, s) + relief * terrain_dropped(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s) +
+                           terrain_road_lod_error(x, z, s) + 1e-3;
             CHECK(hl >= rlo && hl <= rhi, "height %.3f at spacing %.0f m at (%.1f, %.1f) outside its range", hl, s, x, z);
             CHECK(fabs(hl - h) <= bound, "height at spacing %.0f m at (%.1f, %.1f) is %.3f m from full detail (bound %.3f)", s, x, z, fabs(hl - h), bound);
             if (fabs(hl - h) > worst[l]) worst[l] = fabs(hl - h);

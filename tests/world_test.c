@@ -10,7 +10,10 @@
  * Roads: every settlement on a continent joined to the rest of it; every road
  * between nodes, on land, clear of the other cities; junctions only where
  * three or more roads meet; freeways about FREEWAY_SHARE of the length, and
- * at every colossal city.
+ * at every colossal city. Each ends at its settlements at a gate on the
+ * boundary of the built towns; its profile keeps to its grade and meets the
+ * city's ground there; the ground is the road along its centre and falls
+ * away from it no steeper than a batter.
  *
  * world_test --fingerprint prints a hash of what was placed and built, to
  * compare two builds (or the game's floating point against the tests', or
@@ -18,7 +21,7 @@
  * world_test --map out.ppm [px] draws the world, world_test --local out.ppm
  * [km [x z]] the land and roads round a point (the megacity by default). */
 #include "plan.h"
-#include "terrain.h"
+#include "terrain_internal.h"
 #include "city.h"
 #include "hash.h"
 #include "thread.h"
@@ -128,7 +131,8 @@ static void test_roads(void) {
     int fwAt[PLAN_SETTLEMENTS] = { 0 };
     for (int k = 0; k < nn; ++k) parent[k] = k;
     double total = 0.0, freeway = 0.0, detourMax = 0.0, seaMin = 1e300;
-    int offLand = 0, inCity = 0, badEnds = 0;
+    int offLand = 0, inCity = 0, badEnds = 0, gates = 0, badGates = 0;
+    double gradeOver = 0.0;
     for (int r = 0; r < nr; ++r) {
         const PlanRoad *R = plan_road(r);
         PlanNode a = plan_node(R->from), b = plan_node(R->to);
@@ -141,7 +145,23 @@ static void test_roads(void) {
             if (a.settlement >= 0) fwAt[a.settlement] = 1;
             if (b.settlement >= 0) fwAt[b.settlement] = 1;
         }
-        if (dlen(dsub(R->pts[0], a.p)) > 1.0 || dlen(dsub(R->pts[R->npts - 1], b.p)) > 1.0) badEnds++;
+        for (int end = 0; end < 2; ++end) {
+            PlanNode nd = end ? b : a;
+            DVec2 e = R->pts[end ? R->npts - 1 : 0];
+            if (nd.settlement < 0) { badEnds += dlen(dsub(e, nd.p)) > 1.0 || R->gate[end]; continue; }
+            PlanGate g = plan_road_gate(r, end);
+            if (!R->gate[end] || dlen(dsub(e, g.p)) > 1e-6) { badEnds++; continue; }
+            /* on the boundary: built towns behind it, not in front */
+            int ii, ij, oi, oj;
+            DVec2 in = dsub(g.p, dscale(g.n, 2.0)), out = dadd(g.p, dscale(g.n, 2.0));
+            plan_town_at(in.x, in.z, &ii, &ij);
+            plan_town_at(out.x, out.z, &oi, &oj);
+            gates++;
+            if (!plan_town_built(ii, ij) || plan_town_built(oi, oj)) badGates++;
+            if (fabs(R->prof[end ? R->nprof - 1 : 0] - terrain_height(g.p.x, g.p.z)) > 1e-3) badGates++;
+        }
+        double G = R->cls == PLAN_ROAD_FREEWAY ? PLAN_FREEWAY_GRADE : PLAN_TRUNK_GRADE;
+        for (int k = 0; k + 1 < R->nprof; ++k) gradeOver = fmax(gradeOver, fabs(R->prof[k + 1] - R->prof[k]) / R->ds / G);
         double straight = dlen(dsub(b.p, a.p));
         if (straight > 50000.0) detourMax = fmax(detourMax, len / straight);
         for (int k = 0; k + 1 < R->npts; ++k)
@@ -170,6 +190,9 @@ static void test_roads(void) {
     printf("roads: %d between %d nodes (%d junctions), %.0f km in all, %.0f%% freeway; the worst detour %.2f times the straight line\n",
            nr, nn, junctions, total / 1000.0, 100.0 * freeway / total, detourMax);
     printf("  the lowest point %.0f m above the sea to come; settlement 0 has %d roads out\n", seaMin, deg[0]);
+    printf("  %d gates; the steepest grade %.2f of its class's\n", gates, gradeOver);
+    CHECK(badGates == 0, "%d gates off the built towns' boundary or the city's ground", badGates);
+    CHECK(gradeOver <= 1.01, "a road %.2f times as steep as its class allows", gradeOver);
     CHECK(splitContinents == 0, "%d settlements not joined to the rest of their continent", splitContinents);
     CHECK(offLand == 0, "%d points of road where the sea will be", offLand);
     CHECK(inCity == 0, "%d points of road inside other settlements", inCity);
@@ -305,6 +328,56 @@ static int draw_map(const char *path, int W, double cx, double cz, double ext, i
     return rc;
 }
 
+/* The ground with the roads in it: the road's surface along its centre, and
+ * a slope no steeper than a batter across it. */
+static void test_road_ground(void) {
+    Rng r = rng_make(99);
+    double offCentre = 0.0, steepest = 0.0;
+    int n = 0;
+    for (int k = 0; k < 4000; ++k) {
+        const PlanRoad *R = plan_road(rng_int(&r, 0, plan_road_count() - 1));
+        float u = rng_float(&r), v = rng_float(&r);
+        double s = u * R->s[R->npts - 1];
+        int sg = 0;
+        while (sg + 2 < R->npts && R->s[sg + 1] < s) sg++;
+        double t = (s - R->s[sg]) / fmax(R->s[sg + 1] - R->s[sg], 1e-9);
+        DVec2 a = R->pts[sg], d = dsub(R->pts[sg + 1], a), p = dadd(a, dscale(d, t)), nrm = dnorm(dv(-d.z, d.x));
+        if (plan_urban(p.x, p.z) > 0.0f) continue;   /* the city's ground stands there */
+        double h = terrain_height(p.x, p.z), rh = plan_road_height((int)(R - plan_road(0)), s);
+        /* where two roads' reaches overlap the higher weight wins; skip near junctions */
+        int nearNode = 0;
+        for (int e = 0; e < 2; ++e) nearNode |= dlen(dsub(p, plan_node(e ? R->to : R->from).p)) < 2000.0 || s < 2000.0 || s > R->s[R->npts - 1] - 2000.0;
+        if (nearNode) continue;
+        offCentre = fmax(offCentre, fabs(h - rh));
+        /* across: out to the batter's farthest */
+        double off = (2.0 * v - 1.0) * (R->half + PLAN_ROAD_SHOULDER + PLAN_ROAD_BATTER_MAX);
+        DVec2 q = dadd(p, dscale(nrm, off)), q2 = dadd(q, dscale(nrm, 0.5));
+        steepest = fmax(steepest, fabs(terrain_height(q2.x, q2.z) - terrain_height(q.x, q.z)) / 0.5);
+        n++;
+    }
+    printf("  the ground on %d points along the roads: within %.3f m of the road's surface; across, at most %.2f m/m\n", n, offCentre, steepest);
+    /* How far the roads stand above or below the bare land: the cuttings and embankments (bridges and tunnels to come) */
+    double total = 0.0, over10 = 0.0, over30 = 0.0, deepest = 0.0;
+    for (int r = 0; r < plan_road_count(); ++r) {
+        const PlanRoad *R = plan_road(r);
+        for (int k = 0; k < R->nprof; k += 4) {
+            double s = k * R->ds;
+            int sg = 0;
+            while (sg + 2 < R->npts && R->s[sg + 1] < s) sg++;
+            double t = (s - R->s[sg]) / fmax(R->s[sg + 1] - R->s[sg], 1e-9);
+            DVec2 p = dadd(R->pts[sg], dscale(dsub(R->pts[sg + 1], R->pts[sg]), fmin(fmax(t, 0.0), 1.0)));
+            if (plan_urban(p.x, p.z) > 0.0f) continue;
+            double d = fabs(R->prof[k] - terrain_height_bare(p.x, p.z, 0.0)), step = 4.0 * R->ds;
+            total += step;
+            if (d > 10.0) over10 += step;
+            if (d > 30.0) over30 += step;
+            deepest = fmax(deepest, d);
+        }
+    }
+    printf("  cut or fill: over 10 m on %.1f%% of the roads, over 30 m on %.2f%%, at most %.0f m\n", 100.0 * over10 / total, 100.0 * over30 / total, deepest);
+    CHECK(offCentre <= 0.01, "the ground strays %.3f m from a road's surface", offCentre);
+}
+
 int main(int argc, char **argv) {
     int threads = cpu_count();
     if (argc > 2 && strcmp(argv[1], "--threads") == 0) {   /* the world must come out the same on any number */
@@ -326,6 +399,7 @@ int main(int argc, char **argv) {
 
     test_settlements();
     test_roads();
+    test_road_ground();
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all world tests passed\n");

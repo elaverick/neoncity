@@ -48,7 +48,7 @@ double terrain_urban_shape(double x, double z) { return urban_shape_lod(x, z, 0.
  * highlands (lift) are under the settlement's ground as under the land; round
  * the megacity they are 0, and there the sum is as it was before settlements
  * had them, operation for operation. */
-static double height_lod(double x, double z, double spacing, double *w, double *relief) {
+static double height_lod(double x, double z, double spacing, double *w, double *relief, int roads) {
     double home, edge = plan_city_edges(x, z, &home), h = 0.0, lift = 0.0;
     *w = plan_urban_weight(edge);
     *relief = *w > 0.0 ? urban_relief(x, z) : 0.0;
@@ -58,12 +58,18 @@ static double height_lod(double x, double z, double spacing, double *w, double *
         if (lift == 0.0) { if (*relief > 0.0) h += *w * *relief * urban_shape_lod(x, z, spacing); }
         else h += *w * ((*relief > 0.0 ? *relief * urban_shape_lod(x, z, spacing) : 0.0) + lift);
     }
+    /* The roads between the settlements: the ground takes them where the
+     * land does, never under the city's own ground. */
+    if (roads && *w < 1.0 && spacing <= PLAN_ROAD_LOD_SPACING) {
+        double rh, wr = plan_road_ground(x, z, h, spacing, &rh);
+        if (wr > 0.0) h += wr * (1.0 - *w) * (rh - h);
+    }
     return h;
 }
 
 double terrain_height_lod(double x, double z, double spacing) {
     double w, relief;
-    return height_lod(x, z, spacing, &w, &relief);
+    return height_lod(x, z, spacing, &w, &relief, 1);
 }
 
 double terrain_height(double x, double z) { return terrain_height_lod(x, z, 0.0); }
@@ -130,7 +136,7 @@ double terrain_urban_lod_error(double spacing, double relief) {
 }
 
 double terrain_surface_lod(double x, double z, double spacing, float *urban) {
-    double w, relief, h = height_lod(x, z, spacing, &w, &relief);
+    double w, relief, h = height_lod(x, z, spacing, &w, &relief, 1);
     if (urban) *urban = (float)w;
     return h - terrain_urban_sink(spacing, relief) * w;
 }
@@ -146,7 +152,8 @@ double terrain_surface(double x, double z) { return terrain_surface_lod(x, z, 0.
  * it is bounded by whichever of the two can reach into the rectangle. The
  * edge measures over the rectangle are bounded from its centre by
  * CITY_EDGE_RATE. Leaving octaves out (terrain_height_lod) only shrinks each
- * fractal sum, so the bound holds at every level of detail. */
+ * fractal sum, so the bound holds at every level of detail. A road blends the
+ * ground towards its own height, which the plan bounds (plan_road_range). */
 void terrain_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
     double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0), home;
     double e = plan_city_edges(cx, cz, &home), emin = e - CITY_EDGE_RATE * half, emax = e + CITY_EDGE_RATE * half;
@@ -160,7 +167,27 @@ void terrain_height_range(double x0, double z0, double x1, double z1, double *lo
         double ll, lh;
         terrain_land_range(emax, hmax, &ll, &lh);
         l = fmin(l, ll); h = fmax(h, lh);
+        if (plan_road_range(x0, z0, x1, z1, &ll, &lh)) { l = fmin(l, ll); h = fmax(h, lh); }
     }
     *lo = l - 1e-3;                                                          /* rounding */
     *hi = h + 1e-3;
+}
+
+double terrain_height_bare(double x, double z, double spacing) {
+    double w, relief;
+    return height_lod(x, z, spacing, &w, &relief, 0);
+}
+
+/* The roads move the ground at a spacing by wr (1 - w) (rh - g) from the bare
+ * ground g there; the difference from full detail is the bare grounds'
+ * difference (terrain_land_lod_error's) and at most the two moves. */
+double terrain_road_lod_error(double x, double z, double spacing) {
+    double e = 0.0;
+    for (int k = 0; k < 2; ++k) {
+        double sp = k ? spacing : 0.0, w, relief, rh, g = height_lod(x, z, sp, &w, &relief, 0);
+        if (w >= 1.0 || sp > PLAN_ROAD_LOD_SPACING) continue;
+        double wr = plan_road_ground(x, z, g, sp, &rh);
+        e += wr * (1.0 - w) * fabs(rh - g);
+    }
+    return e;
 }
