@@ -36,6 +36,7 @@
 #include "city.h"
 #include "hash.h"
 #include "mathlib.h"
+#include "thread.h"
 #include <float.h>
 #include <time.h>
 
@@ -64,7 +65,12 @@ static double slope_of(double (*f)(double, double), double x, double z) {
 
 /* The urban relief's amplitude at a point: its settlement's (m). */
 static double relief_at(double x, double z) { return TERRAIN_URBAN_GRADED ? plan_settlement(plan_settlement_near(x, z)).relief_m : 0.0; }
-static double urban_graded(double x, double z) { return relief_at(x, z) * terrain_urban_shape(x, z); }
+/* The city's ground: its settlement's relief, on the planet's highlands (0 round the megacity). */
+static double urban_graded(double x, double z) {
+    double h = relief_at(x, z) * terrain_urban_shape(x, z), lift = terrain_urban_lift(x, z);
+    if (lift != 0.0) h += lift;
+    return h;
+}
 
 /* --- Landforms -------------------------------------------------------------- */
 
@@ -1338,6 +1344,7 @@ static void test_planet_patches(Rng *r) {
 }
 
 int main(int argc, char **argv) {
+    plan_world_init(cpu_count());
     /* Points round the city and its surroundings, plus some far away. */
     DVec2 c = plan_town_centre(0, 0);
     Rng r = rng_make(4321);
@@ -1418,9 +1425,11 @@ int main(int argc, char **argv) {
             int i = rng_int(&r, 0, N_POINTS - 1);
             double x0 = floor(g_x[i] / CHUNK_SIZE) * CHUNK_SIZE, z0 = floor(g_z[i] / CHUNK_SIZE) * CHUNK_SIZE, rlo, rhi;
             terrain_urban_height_range(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, &rlo, &rhi);
+            /* far off, the planet's highlands under it, by their slope bound */
+            if (terrain_urban_lift(x0, z0) != 0.0) rhi -= 2.0 * TERRAIN_LIFT_SLOPE * 0.5 * hypot(CHUNK_SIZE, CHUNK_SIZE);
             widest = fmax(widest, rhi - rlo);
         }
-        printf("city ground's range over a chunk: at most %.2f m wide\n", widest);
+        printf("city ground's range over a chunk: at most %.2f m wide (less the highlands' slope bound far off)\n", widest);
         /* With the megacity's 10 m of relief: its slope bound, 1.9%, across a chunk's diagonal, against 20 m for +-relief. */
         CHECK(widest <= 3.0, "city ground's range over a chunk is loose: %.2f m", widest);
     }

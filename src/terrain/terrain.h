@@ -127,6 +127,13 @@ double terrain_planet_surface_lod(TerrainDir p, double spacing);
 /* No ground anywhere on the planet lies lower than this (m, world Y). */
 double terrain_planet_lowest(void);
 
+/* Where the sea will be, at world (x, z): there is no water yet, but when it
+ * comes it will cover only where this is at most 0. It is the macro field's
+ * height above the sea level to come (m), less the world ocean's fall beyond
+ * the settlements' reach. A pure function, slow (scales of 100s of km): the
+ * plan keeps a grid of it (plan_world_sea). */
+double terrain_sea_margin(double x, double z);
+
 /* Horizon culling: whether a ball (centre, radius; planet frame, m) is wholly
  * hidden from a camera (planet frame) by a sphere of radius `occluder` round
  * the planet's centre, the planet's lowest ground (terrain_planet_lowest)

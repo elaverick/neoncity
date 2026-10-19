@@ -2,6 +2,7 @@
 #include "common.h"
 #include "geom2d.h"
 #include "mathlib.h"
+#include "terrain_planet.h"   /* PLANET_RADIUS */
 
 /* The city plan: a polycentric, cellular layout in the spirit of Singapore's
  * new towns, generated as a pure function of world position.
@@ -64,28 +65,65 @@
 /* Inside the built edge, the depth of the fringe over which the city thins out (m). */
 #define CITY_FRINGE      3000.0
 
-/* Settlements: the cities and towns on the land, each with a footprint and
- * ground of its own. For now the plan holds one, the megacity, whose
- * footprint is plan_city_edge's; more come with roads out of it. The ground
- * under a settlement rises and falls gently by its relief, larger the smaller
- * the settlement: a megacity is kept nearly flat, a small city can be
- * moderately hilly (plan_settlement_relief). */
-#define PLAN_SETTLEMENTS   1
+/* Settlements: the cities on the land, each with a footprint and ground of
+ * its own (src/plan/plan_world.c). Settlement 0 is the megacity the player
+ * starts in, round town (0, 0); the rest are placed over the planet's land
+ * once, at plan_world_init: PLAN_COLOSSAL cities of its size in all (it
+ * included), then megacities built PLAN_MEGA_MIN_KM to PLAN_MEGA_MAX_KM
+ * across. Each footprint is a disc warped like the megacity's, the warp
+ * scaled with the radius. The ground under a settlement rises and falls
+ * gently by its relief, larger the smaller the settlement: a megacity is kept
+ * nearly flat, a small city can be moderately hilly (plan_settlement_relief).
+ *
+ * Every settlement lies within PLAN_WORLD_REACH of the world's origin, where
+ * the chart world X/Z is (terrain.h, "The planet") is near enough true to the
+ * sphere for a city's plan; and where the sea can't come (terrain_sea_margin). */
+#define PLAN_SETTLEMENTS   223
+#define PLAN_COLOSSAL      50
+#define PLAN_MEGA_MAX_KM   12.0    /* the megacities' built size, across (km) */
+#define PLAN_MEGA_MIN_KM   7.0
 #define PLAN_RELIEF_MEGA_M 10.0    /* relief of a settlement of CITY_RADIUS (m) */
 #define PLAN_RELIEF_MAX_M  40.0    /* the most relief any settlement has (m) */
+#define PLAN_WORLD_REACH   (0.38 * 3.14159265358979323846 * PLANET_RADIUS)   /* m */
 typedef struct PlanSettlement {
-    DVec2  centre;     /* world (x, z) of its footprint's centre (m) */
+    DVec2  centre;     /* world (x, z) of its footprint's centre: a town's centre (m) */
     double radius;     /* its footprint's radius before the warp (m) */
     double relief_m;   /* amplitude of its ground's relief (m) */
+    int    town[2];    /* the town (i, j) at its centre, a regional centre */
+    int    colossal;   /* one of the PLAN_COLOSSAL */
+    int    continent;  /* which land it stands on (plan_world_continent) */
+    double size_km;    /* its built size across, as placed (km) */
 } PlanSettlement;
+/* Places the settlements and builds the roads between them (plan_roads.c),
+ * on up to `threads` threads; a pure function of WORLD_SEED. Call it once,
+ * before anything else asks the plan or the terrain for anything from more
+ * than one thread: until it has run, the first such call runs it on one. */
+void   plan_world_init(int threads);
 /* Settlement k, 0 <= k < PLAN_SETTLEMENTS. */
 PlanSettlement plan_settlement(int k);
-/* The settlement whose footprint lies nearest (x, z). */
+/* The settlement whose footprint lies nearest (x, z), among those within
+ * PLAN_EDGE_CAP of it; the megacity, 0, where none is. */
 int    plan_settlement_near(double x, double z);
 /* Ground relief of a settlement of this radius: PLAN_RELIEF_MEGA_M at
  * CITY_RADIUS exactly, rising as sqrt(CITY_RADIUS / radius) for smaller ones,
  * to at most PLAN_RELIEF_MAX_M. */
 double plan_settlement_relief(double radius);
+/* The least and the most relief of any settlement (m). */
+void   plan_settlement_relief_range(double *lo, double *hi);
+/* The least and the most relief of the settlements plan_settlement_near can
+ * give anywhere in the rectangle [x0, x1] x [z0, z1] (m). */
+void   plan_settlement_relief_in(double x0, double z0, double x1, double z1, double *lo, double *hi);
+/* The footprint's radius for a settlement built `km` across: CITY_RADIUS for
+ * the megacity's 20 km, as much less as half the difference. */
+double plan_settlement_radius(double km);
+/* Which land (x, z) stands on: a continent's number, from 1, or 0 for where
+ * the sea will be (terrain_sea_margin <= 0) and beyond the world's reach.
+ * Continents are told apart on a grid of PLAN_SEA_CELL. */
+#define PLAN_SEA_CELL 20000.0
+int    plan_world_continent(double x, double z);
+/* terrain_sea_margin at (x, z), read from that grid: interpolated, and -1e9
+ * beyond the world's reach (m). */
+double plan_world_sea(double x, double z);
 
 enum { ROAD_NONE = 0, ROAD_LOCAL, ROAD_ARTERIAL, ROAD_BOULEVARD };
 enum { ZONE_CORE = 0, ZONE_CENTRE, ZONE_RESIDENTIAL, ZONE_INDUSTRIAL, ZONE_PARK, ZONE_RURAL, ZONE_COUNT };
@@ -152,10 +190,18 @@ float plan_fringe(double x, double z);
 /* Affluence 0 (poor) .. 1 (wealthy): highest in the regional cores, with whole
  * districts and neighbourhoods better or worse off than their density says. */
 float plan_affluence(double x, double z);
-/* Signed distance-like measure to the city's edge, metres: negative inside,
- * positive outside, continuous, changing by at most CITY_EDGE_RATE per metre
- * (it is a distance in the warped frame, not the true distance). */
+/* Signed distance-like measure to the nearest settlement's edge, metres:
+ * negative inside, positive outside, continuous, changing by at most
+ * CITY_EDGE_RATE per metre (it is a distance in the warped frame, not the
+ * true distance), and never more than PLAN_EDGE_CAP: nothing reads it further
+ * out. */
+#define PLAN_EDGE_CAP 20000.0
 double plan_city_edge(double x, double z);
+/* The same, and *home the megacity's own measure, uncapped (the planet's
+ * highlands rise with distance from it: terrain_land.c). */
+double plan_city_edges(double x, double z, double *home);
+/* The megacity's measure alone, uncapped. */
+double plan_home_edge(double x, double z);
 /* Urban weight: 1 inside the city, falling smoothly to 0 across the belt and
  * 0 beyond the edge. Terrain reads it to keep the ground under the city gentle. */
 float  plan_urban(double x, double z);
@@ -170,9 +216,12 @@ static inline float plan_urban_weight(double edge) {
  * large; allocate it on the heap. */
 void  plan_area(double x0, double z0, double x1, double z1, PlanArea *out);
 
-/* Centre of town (i, j) on the town lattice; town (0,0) is a regional centre. */
+/* Centre of town (i, j) on the town lattice; town (0,0) is a regional centre,
+ * and so is every settlement's centre town. */
 DVec2 plan_town_centre(int i, int j);
 int   plan_town_regional(int i, int j);
+/* The town (i, j) whose cell holds (x, z). */
+void  plan_town_at(double x, double z, int *i, int *j);
 /* Whether town (i, j) is part of the city: its cell, and CITY_GROUND_PAD
  * round it, provably lie at or inside CITY_BUILT_EDGE. */
 int   plan_town_built(int i, int j);

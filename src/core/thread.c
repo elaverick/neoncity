@@ -66,3 +66,36 @@ void cond_wait(CondVar *c, Mutex *m) { pthread_cond_wait((pthread_cond_t *)c->im
 void cond_signal(CondVar *c) { pthread_cond_signal((pthread_cond_t *)c->impl); }
 void cond_broadcast(CondVar *c) { pthread_cond_broadcast((pthread_cond_t *)c->impl); }
 #endif
+
+/* --- thread_parallel_for ------------------------------------------------------ */
+
+typedef struct ParallelJob { Mutex lock; int next, n; ParallelFn fn; void *ctx; } ParallelJob;
+
+static int parallel_worker(void *arg) {
+    ParallelJob *j = (ParallelJob *)arg;
+    for (;;) {
+        mutex_lock(&j->lock);
+        int i = j->next < j->n ? j->next++ : -1;
+        mutex_unlock(&j->lock);
+        if (i < 0) return 0;
+        j->fn(j->ctx, i);
+    }
+}
+
+void thread_parallel_for(int n, int threads, ParallelFn fn, void *ctx) {
+    if (threads > n) threads = n;
+    if (threads <= 1) {
+        for (int i = 0; i < n; ++i) fn(ctx, i);
+        return;
+    }
+    ParallelJob j;
+    mutex_init(&j.lock);
+    j.next = 0; j.n = n; j.fn = fn; j.ctx = ctx;
+    Thread **t = (Thread **)malloc(sizeof(Thread *) * (size_t)(threads - 1));
+    int started = 0;
+    for (int k = 0; t && k < threads - 1; ++k) t[started++] = thread_create(parallel_worker, &j);
+    parallel_worker(&j);
+    for (int k = 0; k < started; ++k) thread_join(t[k]);
+    free(t);
+    mutex_destroy(&j.lock);
+}

@@ -8,6 +8,8 @@
 #include "chunks.h"
 #include "player.h"
 #include "layouts.h"
+#include "plan.h"
+#include "thread.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -338,6 +340,7 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
 int main(int argc, char **argv) {
     Options opt;
     if (!parse_args(argc, argv, &opt)) { usage(); return 1; }
+    plan_world_init(cpu_count());   /* the settlements and roads, before any worker asks for them */
     GLFWwindow *win = create_window();
 
     VkCore vk;

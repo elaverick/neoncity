@@ -1,4 +1,4 @@
-#include "plan.h"
+#include "plan_internal.h"
 #include "hash.h"
 #include "mathlib.h"
 #include "noise.h"
@@ -37,15 +37,31 @@ static Site nbhd_site(int i, int j) {
     return s;
 }
 
+/* Whether town (i, j) is the centre of a settlement (the megacity's, town
+ * (0, 0), included): every settlement's core is a regional centre at its strongest. */
+static int settlement_core(int i, int j) { return (i == 0 && j == 0) || plan_world_core_town(i, j); }
+
 int plan_town_regional(int i, int j) {
-    if (i == 0 && j == 0) return 1;   /* the player starts in a regional centre */
+    if (settlement_core(i, j)) return 1;   /* the player starts in a regional centre */
     return hf(hash2i(WORLD_SEED ^ 0x70A1u, i, j), 3u) < 0.15f;
 }
 
 DVec2 plan_town_centre(int i, int j) { return town_site(i, j).p; }
 
+void plan_town_at(double x, double z, int *i, int *j) {
+    int ci = (int)floor(x / TOWN_SIZE), cj = (int)floor(z / TOWN_SIZE);
+    double best = 1e300;
+    *i = ci; *j = cj;
+    for (int dj = -1; dj <= 1; ++dj)
+        for (int di = -1; di <= 1; ++di) {
+            Site t = town_site(ci + di, cj + dj);
+            double d = (x - t.p.x) * (x - t.p.x) + (z - t.p.z) * (z - t.p.z);
+            if (d < best) { best = d; *i = t.i; *j = t.j; }
+        }
+}
+
 static void town_strength(Site t, float *intensity, float *sigma) {
-    float r = (t.i == 0 && t.j == 0) ? 1.0f : hf(t.h, 4u);
+    float r = settlement_core(t.i, t.j) ? 1.0f : hf(t.h, 4u);
     if (plan_town_regional(t.i, t.j)) { *intensity = 1.0f + 0.25f * r; *sigma = 640.0f; }
     else                              { *intensity = 0.5f + 0.3f * r;  *sigma = 400.0f; }
 }
@@ -90,42 +106,8 @@ float plan_affluence(double x, double z) {
 }
 
 /* ===========================================================================
- * The city's footprint
+ * The city's footprint (the settlements' edges are plan_world.c's)
  * ========================================================================= */
-
-double plan_settlement_relief(double radius) {
-    return fmin(PLAN_RELIEF_MAX_M, PLAN_RELIEF_MEGA_M * sqrt(CITY_RADIUS / radius));
-}
-
-PlanSettlement plan_settlement(int k) {
-    (void)k;   /* the megacity */
-    PlanSettlement s;
-    s.centre = plan_town_centre(0, 0);
-    s.radius = CITY_RADIUS;
-    s.relief_m = plan_settlement_relief(s.radius);
-    return s;
-}
-
-int plan_settlement_near(double x, double z) {
-    int best = 0;
-    double bd = 1e300;
-    for (int k = 0; k < PLAN_SETTLEMENTS; ++k) {
-        PlanSettlement s = plan_settlement(k);
-        double d = hypot(x - s.centre.x, z - s.centre.z) - s.radius;
-        if (d < bd) { bd = d; best = k; }
-    }
-    return best;
-}
-
-/* The megacity's footprint, settlement 0's. */
-double plan_city_edge(double x, double z) {
-    DVec2 c = plan_town_centre(0, 0);
-    double wx = CITY_WARP1_M * (2.0 * vnoise(x / CITY_WARP1_WAVE, z / CITY_WARP1_WAVE, 0xED61u) - 1.0)
-              + CITY_WARP2_M * (2.0 * vnoise(x / CITY_WARP2_WAVE, z / CITY_WARP2_WAVE, 0xED63u) - 1.0);
-    double wz = CITY_WARP1_M * (2.0 * vnoise(x / CITY_WARP1_WAVE, z / CITY_WARP1_WAVE, 0xED62u) - 1.0)
-              + CITY_WARP2_M * (2.0 * vnoise(x / CITY_WARP2_WAVE, z / CITY_WARP2_WAVE, 0xED64u) - 1.0);
-    return hypot(x - c.x + wx, z - c.z + wz) - CITY_RADIUS;
-}
 
 float plan_urban(double x, double z) { return plan_urban_weight(plan_city_edge(x, z)); }
 

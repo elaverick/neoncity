@@ -20,3 +20,10 @@ void cond_destroy(CondVar *c);
 void cond_wait(CondVar *c, Mutex *m);
 void cond_signal(CondVar *c);
 void cond_broadcast(CondVar *c);
+
+/* Calls fn(ctx, i) for every i in [0, n), on up to `threads` threads (this
+ * one among them), and returns once all have returned. Which thread runs
+ * which i, and in what order, is unspecified: fn must write only what
+ * belongs to its i. */
+typedef void (*ParallelFn)(void *ctx, int i);
+void thread_parallel_for(int n, int threads, ParallelFn fn, void *ctx);

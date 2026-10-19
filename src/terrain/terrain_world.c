@@ -223,10 +223,31 @@ double terrain_planet_surface_lod(TerrainDir p, double spacing) { return planet_
  * relief down, sunk by at most that relief again and the clearance
  * (terrain_urban_sink, every octave left out). */
 double terrain_planet_lowest(void) {
-    double lo, hi, relief = 0.0;
-    terrain_land_range(1e9, &lo, &hi);
-    for (int k = 0; k < PLAN_SETTLEMENTS; ++k) relief = fmax(relief, plan_settlement(k).relief_m);
-    return fmin(lo, -2.0 * relief - TERRAIN_URBAN_SINK_CLEAR_M) - 1.0;
+    double lo, hi, rlo, relief;
+    terrain_land_range(1e9, 1e9, &lo, &hi);
+    plan_settlement_relief_range(&rlo, &relief);
+    return fmin(lo, -2.0 * relief - TERRAIN_URBAN_SINK_CLEAR_M - terrain_lift_bound(1e9)) - 1.0;
+}
+
+/* --- Where the sea will be ----------------------------------------------------------
+ * The planet has no water yet. When it does, the sea will fill the basins of
+ * the macro field below SEA_LEVEL_MACRO, and the whole far side of the planet
+ * from the chart's origin, beyond SEA_OUTER_FROM: the world ocean, until a
+ * settlement there can have a chart of its own (plan.h, PLAN_WORLD_REACH). */
+#define SEA_LEVEL_MACRO (-0.12)
+#define SEA_OUTER_FROM  (0.35 * PI)
+#define SEA_OUTER_TO    (0.39 * PI)
+#define SEA_OUTER_M     4000.0
+
+double terrain_sea_margin(double x, double z) {
+    double th = hypot(x, z) / PLANET_RADIUS;
+    if (th >= SEA_OUTER_TO) return -SEA_OUTER_M;
+    double m = TERRAIN_MACRO_M * (terrain_macro(terrain_chart_dir(x, z), 0.0) - SEA_LEVEL_MACRO);
+    if (th > SEA_OUTER_FROM) {
+        double t = (th - SEA_OUTER_FROM) / (SEA_OUTER_TO - SEA_OUTER_FROM);
+        m -= SEA_OUTER_M * t * t * (3.0 - 2.0 * t);
+    }
+    return m;
 }
 
 /* --- The horizon ------------------------------------------------------------------- */

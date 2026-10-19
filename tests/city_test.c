@@ -601,6 +601,7 @@ static int proxy_survey(void) {
 }
 
 int main(int argc, char **argv) {
+    plan_world_init(cpu_count());   /* before the workers below ask the plan */
     /* A scattered set of chunks, including far-away and negative coordinates. */
     Rng r = rng_make(1234);
     for (int i = 0; i < N_CHUNKS; ++i) {

@@ -54,8 +54,10 @@
  *           has no seam anywhere). Where it is high the mountains and
  *           plateaus gain affinity and the plains lose it, by
  *           TERRAIN_MACRO_BIAS a unit; low, the reverse. M is 0 out to
- *           TERRAIN_MACRO_FROM beyond the city's edge, rising to 1 at
- *           TERRAIN_MACRO_FULL, so the city's region is as it was.
+ *           TERRAIN_MACRO_FROM beyond the megacity's edge, rising to 1 at
+ *           TERRAIN_MACRO_FULL, so its region is as it was. The other
+ *           settlements' ground rises and falls with M * macro (slowly:
+ *           TERRAIN_LIFT_SLOPE), so they stand on their highlands.
  *   F_t     each landform type's heights (TERRAIN_PLAINS ... ; terrain.h):
  *           plains, low swells; hills, rolling relief; mountain belts, an uplift
  *           under ridged relief whose ridges run along the belt's strike;
@@ -82,6 +84,14 @@
 #define TERRAIN_MACRO_FROM     40000.0
 #define TERRAIN_MACRO_FULL     400000.0
 #define TERRAIN_MACRO_BIAS     0.25
+/* A bound on how steep M * macro is (m/m): M rises over FULL - FROM as a
+ * smoothstep (1.5 / (FULL - FROM) at its steepest) of an edge measure that
+ * changes by at most CITY_EDGE_RATE a metre, times |macro| <= 1; and the
+ * macro's fractal sum of value noise over the sphere changes by at most
+ * 3 sqrt(3) / L per metre an octave of wavelength L, times its weight (the
+ * chart's distances are never shorter than the sphere's). */
+#define TERRAIN_LIFT_SLOPE (TERRAIN_MACRO_M * (1.5 * CITY_EDGE_RATE / (TERRAIN_MACRO_FULL - TERRAIN_MACRO_FROM) + \
+                            3.0 * 1.7320508075688772 * TERRAIN_MACRO_OCTAVES / (1.875 * TERRAIN_MACRO_WAVE)) + 1e-4)
 #define TERRAIN_BASE_WAVE      4000.0   /* longest wavelength (m) */
 #define TERRAIN_BASE_OCTAVES   6
 #define TERRAIN_REGION_FROM    1000.0
@@ -131,15 +141,30 @@
  * land is in metres. */
 double terrain_urban_shape(double x, double z);
 double terrain_land(double x, double z);
-/* The land at `spacing`, given plan_city_edge at the point (terrain_height_lod's). */
-double terrain_land_lod(double x, double z, double edge, double spacing);
+/* The land at `spacing`, given plan_city_edges at the point (terrain_height_lod's):
+ * the edge measure, and the megacity's own. */
+double terrain_land_lod(double x, double z, double edge, double home, double spacing);
+/* The same, and M * macro in it in *lift: the planet's highlands, which a
+ * settlement's ground rises and falls with too (terrain_height.c). */
+double terrain_land_parts(double x, double z, double edge, double home, double spacing, double *lift);
+/* M * macro alone, at `spacing`, for the megacity's edge measure `home`: 0
+ * within TERRAIN_MACRO_FROM of the megacity. */
+double terrain_lift(double x, double z, double home, double spacing);
+/* The macro field itself over the sphere, in [-1, 1]. */
+double terrain_macro(TerrainDir p, double spacing);
+/* |M * macro| is at most this where the megacity's edge measure is at most `home`. */
+double terrain_lift_bound(double home);
+/* The lift under a settlement's ground at (x, z): terrain_lift at full detail,
+ * for the megacity's measure there. terrain_urban_height is it plus the relief. */
+double terrain_urban_lift(double x, double z);
 /* The same at a point of some chart, (x, z) in it and p its direction on the
  * planet: the macro field reads p, the rest (x, z). terrain_land_lod is this
  * in the world's chart (terrain_chart_dir); terrain_world.c's second chart
  * passes its own. */
 double terrain_land_at(double x, double z, TerrainDir p, double edge, double spacing);
-/* Bounds on the land wherever plan_city_edge is at most `edge` (m). */
-void   terrain_land_range(double edge, double *lo, double *hi);
+/* Bounds on the land wherever plan_city_edge is at most `edge` and the
+ * megacity's own measure at most `home` (m). */
+void   terrain_land_range(double edge, double home, double *lo, double *hi);
 /* A bound on how far the land at `spacing` strays from the land at full detail
  * at (x, z) (m): the octaves left out, through each field's weight and slope. */
 double terrain_land_lod_error(double x, double z, double spacing);

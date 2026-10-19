@@ -128,7 +128,8 @@ set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/render src/app)
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_lobby.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
-                src/city/litter.c src/city/proxy.c src/plan/plan.c src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c
+                src/city/litter.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c
+                src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/core/thread.c
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
@@ -142,7 +143,7 @@ set(TERRAIN_SOURCES src/terrain/terrain_lod.c src/terrain/terrain_mesh.c src/ter
 
 # --- Tests: generator determinism ------------------------------------------------
 enable_testing()
-add_executable(city_test tests/city_test.c ${GEN_SOURCES} src/core/thread.c)
+add_executable(city_test tests/city_test.c ${GEN_SOURCES})
 target_include_directories(city_test PRIVATE ${SRC_DIRS})
 # Top-down map of the generated plan (city_map out.bmp [x z] [size] [m/px]).
 add_executable(city_map tests/city_map.c ${GEN_SOURCES})
@@ -163,7 +164,11 @@ target_include_directories(plant_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # (terrain_test [--fingerprint]).
 add_executable(terrain_test tests/terrain_test.c ${TERRAIN_SOURCES} ${GEN_SOURCES})
 target_include_directories(terrain_test PRIVATE ${SRC_DIRS})
-foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test)
+# The settlements over the planet and the roads between them (src/plan/plan_world.c, plan_roads.c):
+# world_test [--fingerprint | --map out.ppm [px] | --local out.ppm [km [x z]]].
+add_executable(world_test tests/world_test.c ${GEN_SOURCES})
+target_include_directories(world_test PRIVATE ${SRC_DIRS})
+foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test world_test)
   if(MSVC)
     target_compile_options(${T} PRIVATE /W3 /wd4996)
   else()
@@ -180,6 +185,7 @@ add_test(NAME plant_rules COMMAND plant_lab 12)
 # Arcology interiors over a wide area (only mega plots are generated, so it is quick).
 add_test(NAME arcology_rules COMMAND interior_lab arcology 12000)
 add_test(NAME terrain_rules COMMAND terrain_test)
+add_test(NAME world_rules COMMAND world_test)
 
 # --- Tools: PBR texture packer --------------------------------------------------
 # Converts an ambientCG-style download into assets/textures/<name>/ (see README).
@@ -201,7 +207,7 @@ endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/textures.c ${GEN_SOURCES} ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c src/core/thread.c)
+  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/textures.c ${GEN_SOURCES} ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

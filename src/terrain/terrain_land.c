@@ -30,12 +30,19 @@ static double macro_at(TerrainDir p, double spacing) {
                            terrain_octaves(TERRAIN_MACRO_WAVE, TERRAIN_MACRO_OCTAVES, spacing));
 }
 
+double terrain_macro(TerrainDir p, double spacing) { return macro_at(p, spacing); }
+
+/* M grows with the megacity's measure, and |macro| <= 1. */
+double terrain_lift_bound(double home) { return macro_weight(home) * TERRAIN_MACRO_M; }
+_Static_assert(TERRAIN_MACRO_OCTAVES == 4, "TERRAIN_LIFT_SLOPE takes the macro's octave weights to sum to 1.875");
+
 /* M * macro at a point of the world's chart (p NULL) or of another chart;
  * its affinity bias uses the full sum, whatever the spacing, so the region's
- * weights don't depend on the level of detail. */
-static void macro_of(double x, double z, const TerrainDir *p, double edge, double spacing, double *lift, double *bias) {
+ * weights don't depend on the level of detail. M reads the megacity's own
+ * edge measure, `home` (plan_city_edges). */
+static void macro_of(double x, double z, const TerrainDir *p, double home, double spacing, double *lift, double *bias) {
     *lift = *bias = 0.0;
-    double mw = macro_weight(edge);
+    double mw = macro_weight(home);
     if (mw <= 0.0) return;
     TerrainDir d = p ? *p : terrain_chart_dir(x, z);
     double full = macro_at(d, 0.0);
@@ -229,11 +236,12 @@ double terrain_canyon_depth(double x, double z) {
 
 /* --- The land -------------------------------------------------------------- */
 
-static double land_lod(double x, double z, const TerrainDir *p, double edge, double spacing) {
+/* The land, and M * macro in it in *lift. */
+static double land_parts(double x, double z, const TerrainDir *p, double edge, double home, double spacing, double *lift) {
     double h = TERRAIN_BASE_M * fbm_lod(WORLD_SEED ^ 0x7E12u, x, z, TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
-    double e = region_rise(edge), c = canyon_rise(edge), lift, bias;
-    macro_of(x, z, p, edge, spacing, &lift, &bias);
-    h += lift;
+    double e = region_rise(edge), c = canyon_rise(edge), bias;
+    macro_of(x, z, p, home, spacing, lift, &bias);
+    h += *lift;
     if (e > 0.0) {
         Region r;
         region_at(x, z, bias, &r);
@@ -246,15 +254,32 @@ static double land_lod(double x, double z, const TerrainDir *p, double edge, dou
     return h;
 }
 
-double terrain_land_lod(double x, double z, double edge, double spacing) { return land_lod(x, z, NULL, edge, spacing); }
-double terrain_land_at(double x, double z, TerrainDir p, double edge, double spacing) { return land_lod(x, z, &p, edge, spacing); }
+static double land_lod(double x, double z, const TerrainDir *p, double edge, double home, double spacing) {
+    double lift;
+    return land_parts(x, z, p, edge, home, spacing, &lift);
+}
 
-double terrain_land(double x, double z) { return terrain_land_lod(x, z, plan_city_edge(x, z), 0.0); }
+double terrain_land_parts(double x, double z, double edge, double home, double spacing, double *lift) {
+    return land_parts(x, z, NULL, edge, home, spacing, lift);
+}
+double terrain_land_lod(double x, double z, double edge, double home, double spacing) { return land_lod(x, z, NULL, edge, home, spacing); }
+double terrain_land_at(double x, double z, TerrainDir p, double edge, double spacing) { return land_lod(x, z, &p, edge, edge, spacing); }
+
+double terrain_land(double x, double z) {
+    double home, edge = plan_city_edges(x, z, &home);
+    return terrain_land_lod(x, z, edge, home, 0.0);
+}
+
+double terrain_lift(double x, double z, double home, double spacing) {
+    double lift, bias;
+    macro_of(x, z, NULL, home, spacing, &lift, &bias);
+    return lift;
+}
 
 void terrain_landform(double x, double z, TerrainLandform *out) {
     Region r;
     double lift, bias;
-    macro_of(x, z, NULL, plan_city_edge(x, z), 0.0, &lift, &bias);
+    macro_of(x, z, NULL, plan_home_edge(x, z), 0.0, &lift, &bias);
     region_at(x, z, bias, &r);
     for (int t = 0; t < TERRAIN_TYPES; ++t) out->w[t] = r.w[t];
     out->canyon = (float)terrain_canyon_depth(x, z);
@@ -262,9 +287,9 @@ void terrain_landform(double x, double z, TerrainLandform *out) {
 
 /* Base, macro, the types and canyons each within their reach: the hills
  * reach lowest, the mountains highest, the canyons cut at most their deepest;
- * M, E and C only grow with the edge measure. */
-void terrain_land_range(double edge, double *lo, double *hi) {
-    double e = region_rise(edge), m = macro_weight(edge) * TERRAIN_MACRO_M;
+ * E and C only grow with the edge measure, M with the megacity's. */
+void terrain_land_range(double edge, double home, double *lo, double *hi) {
+    double e = region_rise(edge), m = macro_weight(home) * TERRAIN_MACRO_M;
     *lo = -(TERRAIN_BASE_M + m + e * TERRAIN_HILLS_M + canyon_rise(edge) * TERRAIN_CANYON_DEEP_M);
     *hi = TERRAIN_BASE_M + m + e * (TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M);
 }
@@ -276,11 +301,11 @@ void terrain_land_range(double edge, double *lo, double *hi) {
  * the canyons don't depend on the spacing. */
 double terrain_land_lod_error(double x, double z, double spacing) {
     double err = TERRAIN_BASE_M * terrain_dropped(TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
-    double edge = plan_city_edge(x, z), e = region_rise(edge), lift, bias;
-    err += macro_weight(edge) * TERRAIN_MACRO_M * terrain_dropped(TERRAIN_MACRO_WAVE, TERRAIN_MACRO_OCTAVES, spacing);
+    double home, edge = plan_city_edges(x, z, &home), e = region_rise(edge), lift, bias;
+    err += macro_weight(home) * TERRAIN_MACRO_M * terrain_dropped(TERRAIN_MACRO_WAVE, TERRAIN_MACRO_OCTAVES, spacing);
     if (e > 0.0) {
         Region r;
-        macro_of(x, z, NULL, edge, 0.0, &lift, &bias);
+        macro_of(x, z, NULL, home, 0.0, &lift, &bias);
         region_at(x, z, bias, &r);
         double t[TERRAIN_TYPES];
         t[TERRAIN_PLAINS] = TERRAIN_PLAINS_M * terrain_dropped(TERRAIN_PLAINS_WAVE, TERRAIN_PLAINS_OCTAVES, spacing);
