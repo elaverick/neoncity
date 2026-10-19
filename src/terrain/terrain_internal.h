@@ -9,6 +9,8 @@
  *                      a move exposes, the per-update budget, readiness, morph,
  *                      block bounds and the screen-space error's choice of levels
  *   terrain_mesh.c     filling a strip of a level: heights, parent heights, normals
+ *   terrain_world.c    the planet: the chart world X/Z is, the cube-sphere and its
+ *                      patches, the ground over the whole sphere, the bend and the horizon
  *
  * height = w * urban + (1 - w) * land, w = plan_urban(x, z):
  *   urban  slow relief under the city, wavelengths no shorter than

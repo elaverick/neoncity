@@ -22,6 +22,9 @@
  * and from high up, steady at a threshold, and never letting the terrain
  * through the city's ground.
  *
+ * Then the planet: the chart, the cube-sphere's patches and their seams, the
+ * ground over the whole sphere, the bend and horizon culling.
+ *
  * terrain_test --fingerprint prints a hash of the heights, the footprint and
  * some filled clipmaps instead, to compare what two builds generate;
  * terrain_test --map out.ppm [km] draws the land round the city (see map). */
@@ -837,6 +840,249 @@ static int fingerprint(void) {
     return 0;
 }
 
+/* --- The planet --------------------------------------------------------------- */
+
+static double pdot(TerrainDir a, TerrainDir b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+static TerrainDir psub(TerrainDir a, TerrainDir b) { TerrainDir r = { a.x - b.x, a.y - b.y, a.z - b.z }; return r; }
+static double pdist(TerrainDir a, TerrainDir b) { TerrainDir d = psub(a, b); return sqrt(pdot(d, d)); }
+static int psame(TerrainDir a, TerrainDir b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+static int pcmp(const void *pa, const void *pb) {
+    const TerrainDir *a = (const TerrainDir *)pa, *b = (const TerrainDir *)pb;
+    if (a->x != b->x) return a->x < b->x ? -1 : 1;
+    if (a->y != b->y) return a->y < b->y ? -1 : 1;
+    return a->z < b->z ? -1 : a->z > b->z;
+}
+static TerrainDir prand(Rng *r) {   /* uniform on the sphere */
+    float u = rng_float(r);
+    float v = rng_float(r);
+    double z = 2.0 * u - 1.0, a = 2.0 * 3.14159265358979323846 * v, s = sqrt(fmax(0.0, 1.0 - z * z));
+    TerrainDir p = { s * cos(a), s * sin(a), z };
+    return p;
+}
+static int same_patch(TerrainPatch a, TerrainPatch b) { return a.face == b.face && a.level == b.level && a.i == b.i && a.j == b.j; }
+
+/* Whether the segment from a to b passes through the ball of radius rad round the origin. */
+static int segment_blocked(TerrainDir a, TerrainDir b, double rad) {
+    TerrainDir d = psub(b, a);
+    double t = -pdot(a, d) / pdot(d, d);
+    t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
+    TerrainDir q = { a.x + t * d.x, a.y + t * d.y, a.z + t * d.z };
+    return pdot(q, q) < rad * rad;
+}
+
+/* 9. The planet: the chart is a true azimuthal-equidistant projection that
+ *    round-trips; the cube-sphere round-trips, its patches nest and meet across
+ *    every seam bit for bit, and their neighbours are mutual; the ground on the
+ *    planet is the chart's round the city and continuous out to the antipode;
+ *    the bend matches the exact geometry; horizon culling only hides what is
+ *    hidden. */
+static void test_planet(Rng *r) {
+    const double R = PLANET_RADIUS, PI_D = 3.14159265358979323846;
+    TerrainDir o = terrain_chart_dir(0.0, 0.0);
+
+    /* The chart: distance from the origin is arc length, and back again. */
+    double chartErr = 0.0, arcErr = 0.0;
+    for (int k = 0; k < 20000; ++k) {
+        float u = rng_float(r);
+        float v = rng_float(r);
+        double s = (k % 4 == 0 ? 0.999 * PI_D * R : 2.0e5) * u, a = 2.0 * PI_D * v;
+        double x = s * cos(a), z = s * sin(a), bx, bz;
+        TerrainDir p = terrain_chart_dir(x, z);
+        terrain_dir_chart(p, &bx, &bz);
+        double tol = 1e-9 * s + 1e-5;
+        chartErr = fmax(chartErr, hypot(bx - x, bz - z) / fmax(1.0, s));
+        CHECK(fabs(pdot(p, p) - 1.0) < 1e-14, "chart direction at (%.0f, %.0f) isn't unit", x, z);
+        CHECK(hypot(bx - x, bz - z) <= tol, "chart at (%.1f, %.1f) comes back as (%.6f, %.6f)", x, z, bx, bz);
+        double arc = acos(fmin(1.0, pdot(p, o))) * R;
+        if (s > 1000.0) arcErr = fmax(arcErr, fabs(arc - s) / s);
+    }
+    printf("planet: chart round trip within %.1e of the distance, arc length within %.1e\n", chartErr, arcErr);
+    CHECK(arcErr < 1e-7, "chart distance isn't arc length (%.2e)", arcErr);
+
+    /* The chart's local frame is orthonormal, right-handed, and up is the direction. */
+    for (int k = 0; k < 200; ++k) {
+        float u = rng_float(r);
+        float v = rng_float(r);
+        double s = 3.0e6 * u, a = 2.0 * PI_D * v, x = s * cos(a), z = s * sin(a);
+        TerrainDir ax, up, az, cr;
+        terrain_chart_frame(x, z, &ax, &up, &az);
+        cr.x = ax.y * up.z - ax.z * up.y; cr.y = ax.z * up.x - ax.x * up.z; cr.z = ax.x * up.y - ax.y * up.x;
+        CHECK(fabs(pdot(ax, up)) < 1e-12 && fabs(pdot(az, up)) < 1e-12 && fabs(pdot(ax, az)) < 1e-12 && pdist(cr, az) < 1e-12 &&
+              pdist(up, terrain_chart_dir(x, z)) < 1e-15, "chart frame at (%.0f, %.0f) isn't orthonormal", x, z);
+        /* x along the chart's x: a metre's step there moves the direction along ax */
+        TerrainDir d = psub(terrain_chart_dir(x + 1.0, z), terrain_chart_dir(x - 1.0, z));
+        double along = pdot(d, ax) / sqrt(pdot(d, d));
+        CHECK(along > 1.0 - 1e-6, "chart frame's x at (%.0f, %.0f) isn't the chart's x (cos %.9f)", x, z, along);
+    }
+
+    /* The cube-sphere round-trips. */
+    for (int k = 0; k < 20000; ++k) {
+        TerrainDir p = prand(r);
+        double u, v;
+        int f = terrain_dir_face(p, &u, &v);
+        TerrainDir q = terrain_face_dir(f, u, v);
+        CHECK(f >= 0 && f < 6 && fabs(u) <= 1.0 && fabs(v) <= 1.0 && pdist(p, q) < 1e-14, "face round trip: face %d (%.6f, %.6f) is %.2e away", f, u, v, pdist(p, q));
+        TerrainPatch t = terrain_patch_at(p, 12);
+        CHECK(t.face == f, "patch_at put a direction on face %d, not %d", t.face, f);
+    }
+
+    /* Patches nest: a vertex of a patch is the same direction through its children. */
+    const int G = 8;
+    for (int k = 0; k < 2000; ++k) {
+        TerrainPatch t = terrain_patch_at(prand(r), k % 10);
+        int gi = rng_int(r, 0, G), gj = rng_int(r, 0, G), ck = (gi * 2 > G) + 2 * (gj * 2 > G);
+        TerrainPatch c = terrain_patch_child(t, ck);
+        TerrainDir a = terrain_patch_dir(t, G, gi, gj), b = terrain_patch_dir(c, G, 2 * gi - (ck & 1) * G, 2 * gj - (ck >> 1) * G);
+        CHECK(psame(a, b), "vertex (%d, %d) of patch %d/%d/%lld,%lld differs through its child", gi, gj, t.face, t.level,
+              (long long)t.i, (long long)t.j);
+        CHECK(same_patch(terrain_patch_parent(c), t), "a child's parent isn't the patch");
+        /* the same grid line at another cell count */
+        CHECK(psame(a, terrain_patch_dir(t, 2 * G, 2 * gi, 2 * gj)), "vertex of patch differs at twice the cells");
+    }
+
+    /* Seams: every edge vertex of every patch at a level is the same direction,
+     * bit for bit, as the vertex of the patch across the edge; nothing lands
+     * nearly, but not exactly, on another. */
+    for (int level = 0; level <= 3; ++level) {
+        int per = 1 << level, n = 6 * per * per * 4 * (G + 1), m = 0;
+        TerrainDir *pts = (TerrainDir *)malloc(sizeof(TerrainDir) * (size_t)n);
+        for (int f = 0; f < 6; ++f)
+            for (int j = 0; j < per; ++j)
+                for (int i = 0; i < per; ++i) {
+                    TerrainPatch t = { f, level, i, j };
+                    for (int g = 0; g <= G; ++g) {
+                        pts[m++] = terrain_patch_dir(t, G, g, 0);
+                        pts[m++] = terrain_patch_dir(t, G, g, G);
+                        pts[m++] = terrain_patch_dir(t, G, 0, g);
+                        pts[m++] = terrain_patch_dir(t, G, G, g);
+                    }
+                }
+        qsort(pts, (size_t)m, sizeof(TerrainDir), pcmp);
+        int alone = 0, near = 0;
+        for (int a = 0; a < m;) {
+            int b = a + 1;
+            while (b < m && psame(pts[a], pts[b])) b++;
+            if (b - a < 2) alone++;
+            if (b < m && pdist(pts[a], pts[b]) < 1e-9) near++;
+            a = b;
+        }
+        CHECK(alone == 0 && near == 0, "level %d seams: %d edge vertices with no twin, %d near misses", level, alone, near);
+        free(pts);
+    }
+
+    /* Neighbours: same level, never the patch itself, and mutual. */
+    for (int k = 0; k < 4000; ++k) {
+        TerrainPatch t = terrain_patch_at(prand(r), k % 12);
+        for (int side = 0; side < 4; ++side) {
+            TerrainPatch nb = terrain_patch_neighbour(t, side);
+            int back = 0;
+            for (int s2 = 0; s2 < 4; ++s2) back |= same_patch(terrain_patch_neighbour(nb, s2), t);
+            CHECK(nb.level == t.level && !same_patch(nb, t) && back, "patch %d/%d/%lld,%lld side %d: neighbour %d/%lld,%lld isn't mutual",
+                  t.face, t.level, (long long)t.i, (long long)t.j, side, nb.face, (long long)nb.i, (long long)nb.j);
+        }
+    }
+
+    /* The ground on the planet: the chart's round the city, bit for bit, and
+     * continuous everywhere, through the blend and at the antipode. */
+    const double spacings[3] = { 0.0, 64.0, 4096.0 };
+    double lowest = terrain_planet_lowest(), seen = 1e9, jump = 0.0;
+    for (int k = 0; k < 6000; ++k) {
+        TerrainDir p = prand(r);
+        double sp = spacings[k % 3], x, z;
+        if (k % 5 == 0) {   /* near the city */
+            float u = rng_float(r);
+            float v = rng_float(r);
+            p = terrain_chart_dir((2.0 * u - 1.0) * 40000.0, (2.0 * v - 1.0) * 40000.0);
+        }
+        terrain_dir_chart(p, &x, &z);
+        double h = terrain_planet_height_lod(p, sp), sf = terrain_planet_surface_lod(p, sp);
+        if (acos(fmin(1.0, pdot(p, o))) <= 0.4 * PI_D) {
+            double hc = terrain_height_lod(x, z, sp), sc = terrain_surface_lod(x, z, sp, NULL);
+            CHECK(memcmp(&h, &hc, sizeof(h)) == 0 && memcmp(&sf, &sc, sizeof(sf)) == 0, "planet ground at chart (%.0f, %.0f) isn't the chart's", x, z);
+        }
+        CHECK(isfinite(h) && h >= lowest && sf >= lowest, "planet ground %.1f (surface %.1f) under the lowest, %.1f", h, sf, lowest);
+        seen = fmin(seen, fmin(h, sf));
+        /* a step of 2 m over the sphere moves it by no more than the land's steepest */
+        TerrainDir ax, up, az;
+        terrain_chart_frame(x, z, &ax, &up, &az);
+        (void)up;
+        TerrainDir q = { p.x + ax.x * 2.0 / R, p.y + ax.y * 2.0 / R, p.z + ax.z * 2.0 / R };
+        double len = sqrt(pdot(q, q));
+        q.x /= len; q.y /= len; q.z /= len;
+        jump = fmax(jump, fabs(terrain_planet_height_lod(q, sp) - h) / 2.0);
+    }
+    for (int k = 0; k < 2000; ++k) {   /* round the antipode, where the chart's polar */
+        float u = rng_float(r);
+        float v = rng_float(r);
+        double s = PI_D * R - 50.0 * u, a = 2.0 * PI_D * v, b = a + 0.5 * PI_D;
+        TerrainDir p = terrain_chart_dir(s * cos(a), s * sin(a)), q = terrain_chart_dir(s * cos(b), s * sin(b));
+        double d = pdist(p, q) * R;
+        if (d > 1e-3) jump = fmax(jump, fabs(terrain_planet_height_lod(p, 0.0) - terrain_planet_height_lod(q, 0.0)) / d);
+    }
+    printf("planet ground: lowest %.1f m (bound %.1f), steepest step %.2f\n", seen, lowest, jump);
+    CHECK(jump <= LAND_SLOPE, "planet ground jumps: slope %.2f", jump);
+
+    /* The bend against the exact geometry: exact from the chart's origin, and
+     * from a camera off it, the chart's distortion. */
+    const double offs[4] = { 0.0, 10000.0, 50000.0, 200000.0 };
+    for (int oc = 0; oc < 4; ++oc) {
+        double cx = offs[oc] * 0.6, cz = -offs[oc] * 0.8, worst = 0.0, worstNear = 0.0;
+        for (int k = 0; k < 4000; ++k) {
+            float u = rng_float(r);
+            float v = rng_float(r);
+            float w = rng_float(r);
+            float y = rng_float(r);
+            double s = (k % 2 ? 32000.0 : 500000.0) * u, a = 2.0 * PI_D * v, h = -500.0 + 3000.0 * w, cy = 1.7 + 20000.0 * y;
+            double dx = s * cos(a), dz = s * sin(a);
+            TerrainDir ax, up, az;
+            terrain_chart_frame(cx, cz, &ax, &up, &az);
+            TerrainDir rel = psub(terrain_chart_point(cx + dx, h, cz + dz), terrain_chart_point(cx, cy, cz));
+            float b[3];
+            terrain_bend((float)dx, (float)dz, (float)h, (float)cy, b);
+            double e = sqrt((b[0] - pdot(rel, ax)) * (b[0] - pdot(rel, ax)) + (b[1] - pdot(rel, up)) * (b[1] - pdot(rel, up)) +
+                            (b[2] - pdot(rel, az)) * (b[2] - pdot(rel, az)));
+            if (s <= 32000.0) worstNear = fmax(worstNear, e);
+            else worst = fmax(worst, e / s);
+        }
+        printf("bend from %3.0f km off the origin: within %.4f m to 32 km, %.1e of the distance to 500 km\n", offs[oc] / 1000.0, worstNear, worst);
+        /* Measured: 6 mm, 9 cm, 0.7 m and 7.4 m to 32 km; at 32 km a pixel is about 40 m. */
+        const double nearBound[4] = { 0.01, 0.15, 1.0, 10.0 };
+        CHECK(worstNear < nearBound[oc], "bend from %.0f km off the chart's origin strays %.4f m", offs[oc] / 1000.0, worstNear);
+        if (oc == 0) CHECK(worst < 1e-6, "bend from the chart's origin strays %.2e of the distance far off", worst);
+    }
+
+    /* Horizon culling hides only what's behind the planet, and does hide the
+     * far side of it. */
+    double occ = R + lowest;
+    int hidden = 0, farHidden = 0, farN = 0;
+    for (int k = 0; k < 20000; ++k) {
+        float u = rng_float(r);
+        float v = rng_float(r);
+        float w = rng_float(r);
+        float y = rng_float(r);
+        float q = rng_float(r);
+        double cs = 300000.0 * u, ca = 2.0 * PI_D * v, alt = 2.0 + 20000.0 * w * w;
+        TerrainDir cam = terrain_chart_point(cs * cos(ca), alt, cs * sin(ca));
+        double bs = cs + 2.0e6 * y, ba = ca + (q - 0.5), rad = 10.0 + 50000.0 * u * w;
+        float hh = rng_float(r);
+        TerrainDir centre = terrain_chart_point(bs * cos(ba), -500.0 + 4000.0 * hh, bs * sin(ba));
+        int hid = terrain_horizon_hidden(cam, centre, rad, occ);
+        if (hid) {
+            hidden++;
+            for (int s = 0; s < 32; ++s) {   /* the centre, and points on its surface */
+                TerrainDir d = s ? prand(r) : (TerrainDir){ 0.0, 0.0, 0.0 };
+                TerrainDir pt = { centre.x + d.x * rad, centre.y + d.y * rad, centre.z + d.z * rad };
+                CHECK(segment_blocked(cam, pt, occ), "a ball reported hidden can be seen (camera %.0f m up, ball %.0f km off)", alt, pdist(cam, centre) / 1000.0);
+            }
+        }
+        /* a small ball on the ground well past the horizon must be hidden */
+        double horizon = sqrt(2.0 * R * (alt - lowest)) + sqrt(2.0 * R * (4000.0 - lowest));
+        if (rad < 200.0 && pdist(cam, centre) > 1.5 * horizon) { farN++; farHidden += hid; }
+    }
+    printf("horizon: %d of 20000 balls hidden, %d of %d well past the horizon\n", hidden, farHidden, farN);
+    CHECK(farN > 0 && farHidden == farN, "horizon culling missed %d of %d balls well past the horizon", farN - farHidden, farN);
+}
+
 int main(int argc, char **argv) {
     /* Points round the city and its surroundings, plus some far away. */
     DVec2 c = plan_town_centre(0, 0);
@@ -1004,6 +1250,7 @@ int main(int argc, char **argv) {
     test_clipmap(&r);
     test_select();
     test_fade();
+    test_planet(&r);
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all terrain tests passed (%d points)\n", N_POINTS);

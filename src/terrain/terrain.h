@@ -48,6 +48,86 @@ enum { TERRAIN_PLAINS = 0, TERRAIN_HILLS, TERRAIN_MOUNTAINS, TERRAIN_PLATEAU, TE
 typedef struct TerrainLandform { float w[TERRAIN_TYPES]; float canyon; } TerrainLandform;
 void   terrain_landform(double x, double z, TerrainLandform *out);
 
+/* --- The planet (src/terrain/terrain_world.c) ----------------------------------
+ * The world is a sphere of PLANET_RADIUS, and world X/Z is a chart of it: the
+ * azimuthal-equidistant projection about the chart's origin, world (0, 0), so
+ * a point's distance from the origin in X/Z is its distance over the sphere.
+ * Y is height above the sphere. The city, the plan and the clipmap all work
+ * in the chart; over the 20 km round the city it is the sphere's tangent plane
+ * to within a millimetre in a kilometre or two (terrain_bend).
+ *
+ * The planet frame has its origin at the planet's centre, +Z through the
+ * north pole; a TerrainDir in it is a direction (unit) or a point (metres).
+ * The chart's origin is at a fixed place on the planet, and world +x points
+ * east there, +y up and +z south.
+ *
+ * The planet's surface is addressed as a cube-sphere: the six faces of a cube,
+ * each a square [-1, 1]^2 of (u, v) projected out onto the sphere. Its
+ * projection is equal-angle (u = atan(cube coordinate) * 4 / pi), so patches
+ * at a level are near enough the same size everywhere. Face f's normal is
+ * axis f / 2 of the planet frame, positive for even f; u and v run along the
+ * other two axes in increasing order, both positive, so two faces sharing an
+ * edge parametrise it alike and evaluate its points bit for bit the same. */
+#include "terrain_planet.h"   /* PLANET_RADIUS: shared with the shaders */
+
+typedef struct TerrainDir { double x, y, z; } TerrainDir;
+
+/* The direction of world (x, z), in the planet frame, and back. The chart
+ * covers the sphere but for the origin's antipode, at distance pi R. */
+TerrainDir terrain_chart_dir(double x, double z);
+void       terrain_dir_chart(TerrainDir p, double *x, double *z);
+/* World (x, y, z) as a point in the planet frame (m). */
+TerrainDir terrain_chart_point(double x, double y, double z);
+/* The local frame at world (x, z): up along the sphere's normal, and x and z
+ * along the chart's x and z there, orthogonal to it and to each other. */
+void       terrain_chart_frame(double x, double z, TerrainDir *ax, TerrainDir *up, TerrainDir *az);
+
+/* A point at world (cam_x + dx, h, cam_z + dz) as seen from a camera at world
+ * (cam_x, cam_y, cam_z), in the camera's local frame (terrain_chart_frame):
+ * the ground curving down away from it. In float, as the shaders compute it
+ * (planetBend in shaders/common.glsl); exact for a camera at the chart's
+ * origin, and for any camera close to it the chart's distortion is small
+ * (terrain_test measures it). */
+void       terrain_bend(float dx, float dz, float h, float cam_y, float out[3]);
+
+/* Cube-sphere addressing. A direction for face coordinates (u, v), which may
+ * reach a little past the face's edge; the face holding a direction and its
+ * (u, v) there. */
+TerrainDir terrain_face_dir(int face, double u, double v);
+int        terrain_dir_face(TerrainDir p, double *u, double *v);
+
+/* A patch: the square of face `face` at quadtree level `level`, whose (u, v)
+ * runs over cells (i, j) of 2^level a side. Its identity is these four
+ * numbers, never where it sits in a list. */
+#define TERRAIN_PATCH_MAX_LEVEL 24
+typedef struct TerrainPatch { int face, level; int64_t i, j; } TerrainPatch;
+/* Vertex (gi, gj) of a patch's grid of `cells` cells a side, gi and gj in
+ * [0, cells]: the same direction, bit for bit, as the same point asked for
+ * through any other patch, level or face that has it. */
+TerrainDir   terrain_patch_dir(TerrainPatch t, int cells, int gi, int gj);
+TerrainPatch terrain_patch_at(TerrainDir p, int level);
+TerrainPatch terrain_patch_parent(TerrainPatch t);
+TerrainPatch terrain_patch_child(TerrainPatch t, int k);          /* k = 0..3: i + 2 j of the quarter */
+/* The patch of the same level across side `side` (0 -u, 1 +u, 2 -v, 3 +v),
+ * on this face or the next. */
+TerrainPatch terrain_patch_neighbour(TerrainPatch t, int side);
+
+/* The ground on the planet: terrain_height_lod / terrain_surface_lod at the
+ * chart's position for p over the hemisphere round the city, bit for bit.
+ * Towards the antipode, where the chart stretches, the land is blended into
+ * the land of a second chart centred on the antipode. */
+double terrain_planet_height_lod(TerrainDir p, double spacing);
+double terrain_planet_surface_lod(TerrainDir p, double spacing);
+/* No ground anywhere on the planet lies lower than this (m, world Y). */
+double terrain_planet_lowest(void);
+
+/* Horizon culling: whether a ball (centre, radius; planet frame, m) is wholly
+ * hidden from a camera (planet frame) by a sphere of radius `occluder` round
+ * the planet's centre, the planet's lowest ground (terrain_planet_lowest)
+ * making a sphere nothing can be seen through. Conservative: a ball it
+ * reports hidden is hidden. */
+int        terrain_horizon_hidden(TerrainDir cam, TerrainDir centre, double radius, double occluder);
+
 /* --- Clipmap -----------------------------------------------------------------
  * Nested square grids of terrain samples round the camera, for drawing the
  * ground out to the horizon (Losasso and Hoppe's geometry clipmaps). Level l
