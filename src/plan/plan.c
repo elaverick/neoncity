@@ -73,6 +73,9 @@ float plan_density(double x, double z) {
             sum += I * exp(-r2 / (2.0 * sg * sg)) * w * w;
         }
     sum += 0.16 * (vnoise(x / 850.0, z / 850.0, 0xDE45u) - 0.5);
+    /* Through the fringe the whole field falls to a fifth: suburbs, then open land. */
+    float f = plan_fringe(x, z);
+    if (f > 0.0f) sum *= 1.0 - 0.8 * f;
     return clampf((float)sum, 0.0f, 1.0f);
 }
 
@@ -100,6 +103,10 @@ double plan_city_edge(double x, double z) {
 }
 
 float plan_urban(double x, double z) { return plan_urban_weight(plan_city_edge(x, z)); }
+
+float plan_fringe(double x, double z) {
+    return smoothstepf((float)(CITY_BUILT_EDGE - CITY_FRINGE), (float)CITY_BUILT_EDGE, (float)plan_city_edge(x, z));
+}
 
 /* ===========================================================================
  * Convex polygons with per-edge road attributes
@@ -254,7 +261,24 @@ static RoadAttr arterial_attr(Site a, Site b) {
  * Towns and their neighbourhood pieces
  * ========================================================================= */
 
-typedef struct TownEntry { int64_t key; Site s; Poly poly; double x0, z0, x1, z1; } TownEntry;
+/* A town's neighbours are the 5 x 5 lattice cells round it, numbered
+ * (dj + 2) * 5 + (di + 2); the town itself is NB_SELF, and neighbour k's
+ * neighbour back is 24 - k. */
+#define NB_SELF 12
+static int nb_di(int k) { return k % 5 - 2; }
+static int nb_dj(int k) { return k / 5 - 2; }
+
+typedef struct TownEntry {
+    int64_t key;
+    Site    s;
+    Poly    poly;                 /* the town's Voronoi cell; every edge is a boulevard */
+    int8_t  nb[PLAN_MAX_PV];      /* the neighbour across each edge */
+    double  x0, z0, x1, z1;
+    int8_t  built;                /* plan_town_built; -1 until asked */
+    int8_t  hasGround;
+    Poly    ground;               /* built towns: the cell widened across its perimeter boulevards */
+    int8_t  gnb[PLAN_MAX_PV];     /* the neighbour whose bisector each ground edge lies on */
+} TownEntry;
 typedef struct Piece { Site nb; Poly poly; double x0, z0, x1, z1; } Piece;
 typedef struct TownPlan { Site t; Poly poly; int n; Piece pc[MAX_TOWN_SEEDS]; } TownPlan;
 
@@ -267,23 +291,68 @@ typedef struct PlanCtx {
     double    A[4];      /* query rectangle */
 } PlanCtx;
 
-static void town_poly(Site t, Poly *p) {
+/* The town's cell: a square cut by the bisector with each neighbour, moved
+ * out by push[k] (metres) where push is given. nb gets each edge's neighbour. */
+static void town_cut(Site t, const double *push, Poly *p, int8_t *nb) {
     const double R = 2.0 * TOWN_SIZE;
+    uint32_t ids[25];
     p->n = 4;
     p->v[0] = dv(t.p.x - R, t.p.z - R); p->v[1] = dv(t.p.x + R, t.p.z - R);
     p->v[2] = dv(t.p.x + R, t.p.z + R); p->v[3] = dv(t.p.x - R, t.p.z + R);
     for (int k = 0; k < 4; ++k) p->e[k] = no_road();
-    for (int dj = -2; dj <= 2; ++dj)
-        for (int di = -2; di <= 2; ++di) {
-            if (!di && !dj) continue;
-            Site o = town_site(t.i + di, t.j + dj);
-            DVec2 n = dsub(o.p, t.p), q = dv((o.p.x + t.p.x) * 0.5, (o.p.z + t.p.z) * 0.5);
-            poly_clip(p, q, n, boulevard_attr(t, o), p);
-        }
+    for (int k = 0; k < 25; ++k) {
+        ids[k] = 0;
+        if (k == NB_SELF) continue;
+        Site o = town_site(t.i + nb_di(k), t.j + nb_dj(k));
+        RoadAttr a = boulevard_attr(t, o);
+        DVec2 n = dsub(o.p, t.p), q = dv((o.p.x + t.p.x) * 0.5, (o.p.z + t.p.z) * 0.5);
+        if (push && push[k] > 0.0) q = dadd(q, dscale(dnorm(n), push[k]));
+        poly_clip(p, q, n, a, p);
+        ids[k] = a.id;
+    }
+    for (int e = 0; e < p->n; ++e) {
+        nb[e] = -1;
+        for (int k = 0; k < 25 && nb[e] < 0; ++k)
+            if (ids[k] && p->e[e].id == ids[k]) nb[e] = (int8_t)k;
+    }
 }
 
-/* The returned pointer is valid until the next town_get call. */
-static const TownEntry *town_get(PlanCtx *c, int i, int j) {
+/* Whether every point within CITY_GROUND_PAD of convex p that lies in the
+ * square of half-width h round (cx, cz) is at or inside CITY_BUILT_EDGE.
+ * Proven square by square: no point of a square has an edge measure more
+ * than CITY_EDGE_RATE times its half-diagonal above the measure at its
+ * centre. A square still unsettled at the last depth counts as failing, so a
+ * town is never built on a guess. */
+static int ground_inside(const Poly *p, double cx, double cz, double h, int depth) {
+    double r = h * 1.4142135623730951;
+    if (!poly_contains(p, cx, cz, r + CITY_GROUND_PAD)) return 1;   /* the square misses the padded cell */
+    double e = plan_city_edge(cx, cz);
+    if (e + CITY_EDGE_RATE * r <= CITY_BUILT_EDGE) return 1;
+    if (depth == 0 || (e > CITY_BUILT_EDGE && poly_contains(p, cx, cz, CITY_GROUND_PAD))) return 0;
+    h *= 0.5;
+    return ground_inside(p, cx - h, cz - h, h, depth - 1) && ground_inside(p, cx + h, cz - h, h, depth - 1) &&
+           ground_inside(p, cx - h, cz + h, h, depth - 1) && ground_inside(p, cx + h, cz + h, h, depth - 1);
+}
+
+static int cell_built(Site s, const Poly *p, double x0, double z0, double x1, double z1) {
+    if (plan_city_edge(s.p.x, s.p.z) > CITY_BUILT_EDGE) return 0;   /* the site is in its own cell */
+    double h = 0.5 * fmax(x1 - x0, z1 - z0) + CITY_GROUND_PAD;
+    return ground_inside(p, 0.5 * (x0 + x1), 0.5 * (z0 + z1), h, 7);
+}
+
+int plan_town_built(int i, int j) {
+    Site s = town_site(i, j);
+    Poly p;
+    int8_t nb[PLAN_MAX_PV];
+    double x0, z0, x1, z1;
+    town_cut(s, NULL, &p, nb);
+    poly_bounds(&p, &x0, &z0, &x1, &z1);
+    return cell_built(s, &p, x0, z0, x1, z1);
+}
+
+/* The returned pointer is valid until the next town_get call (or anything
+ * that makes one: town_built, town_ground). */
+static TownEntry *town_get(PlanCtx *c, int i, int j) {
     Site s = town_site(i, j);
     int64_t key = site_key(s);
     for (int k = 0; k < c->ntowns; ++k)
@@ -291,18 +360,55 @@ static const TownEntry *town_get(PlanCtx *c, int i, int j) {
     TownEntry *e = c->ntowns < TOWN_CACHE ? &c->towns[c->ntowns++] : &c->scratch;
     e->key = key;
     e->s = s;
-    town_poly(s, &e->poly);
+    town_cut(s, NULL, &e->poly, e->nb);
     poly_bounds(&e->poly, &e->x0, &e->z0, &e->x1, &e->z1);
+    e->built = -1;
+    e->hasGround = 0;
+    return e;
+}
+
+static int town_built(PlanCtx *c, int i, int j) {
+    TownEntry *e = town_get(c, i, j);
+    if (e->built < 0) e->built = (int8_t)cell_built(e->s, &e->poly, e->x0, e->z0, e->x1, e->z1);
+    return e->built;
+}
+
+/* A built town's ground: its cell, with each edge to a town that isn't built
+ * moved out across that boulevard to the shoulder beyond its carriageway.
+ * Edges to built towns stay where they are, so neighbouring grounds meet
+ * without overlapping. Its edges carry no roads. */
+static const TownEntry *town_ground(PlanCtx *c, int i, int j) {
+    TownEntry *e = town_get(c, i, j);
+    if (e->hasGround) return e;
+    int8_t nb[PLAN_MAX_PV];
+    int n = e->poly.n;
+    memcpy(nb, e->nb, sizeof(nb));
+    Site s = e->s;
+    double push[25] = { 0 };
+    for (int k = 0; k < n; ++k)
+        if (nb[k] >= 0 && !town_built(c, i + nb_di(nb[k]), j + nb_dj(nb[k])))
+            push[nb[k]] = boulevard_attr(s, town_site(i + nb_di(nb[k]), j + nb_dj(nb[k]))).half + CITY_SHOULDER;
+    e = town_get(c, i, j);   /* the neighbours' lookups may have reused its slot */
+    town_cut(s, push, &e->ground, e->gnb);
+    for (int k = 0; k < e->ground.n; ++k) e->ground.e[k] = no_road();
+    e->hasGround = 1;
     return e;
 }
 
 /* A town's neighbourhoods: Voronoi cells of the neighbourhood sites that fall
- * inside the town, computed among those sites only and clipped to the town. */
+ * inside the town, computed among those sites only and clipped to the town.
+ * A boulevard to a town that isn't built is the city's perimeter road, and
+ * this side of it, the only side there is, owns it. */
 static void town_plan(PlanCtx *c, Site t, TownPlan *tp) {
     const TownEntry *te = town_get(c, t.i, t.j);
+    int8_t nb[PLAN_MAX_PV];
+    memcpy(nb, te->nb, sizeof(nb));
     tp->t = t;
     tp->poly = te->poly;
     tp->n = 0;
+    for (int k = 0; k < tp->poly.n; ++k)
+        if (nb[k] >= 0 && !town_built(c, t.i + nb_di(nb[k]), t.j + nb_dj(nb[k]))) tp->poly.e[k].own = 1;
+    te = town_get(c, t.i, t.j);
     double x0 = te->x0, z0 = te->z0, x1 = te->x1, z1 = te->z1;
     Site seeds[MAX_TOWN_SEEDS];
     int ns = 0;
@@ -376,7 +482,9 @@ static double t_trim(DVec2 dir, float half, DVec2 edge, float edgeHalf) {
     return minf((float)((edgeHalf + half * c) / (s > 0.15 ? s : 0.15) + 0.3), 80.0f);
 }
 
-/* Boulevards end at town Voronoi vertices, where three towns meet. */
+/* Boulevards end at town Voronoi vertices, where three towns meet. Only the
+ * built towns' boulevards are there: between two towns beyond the city's
+ * edge there is none. */
 static double town_vertex_trim(PlanCtx *c, DVec2 P, DVec2 dir, float half) {
     int ci = (int)floor(P.x / TOWN_SIZE), cj = (int)floor(P.z / TOWN_SIZE);
     double dist[9], best = 1e300;
@@ -388,7 +496,8 @@ static double town_vertex_trim(PlanCtx *c, DVec2 P, DVec2 dir, float half) {
     JDir d[MAX_JDIRS];
     int n = 0;
     for (int k = 0; k < 9; ++k)
-        if (dist[k] <= best + VERT_EPS) gather_dirs(&town_get(c, ci + k % 3 - 1, cj + k / 3 - 1)->poly, P, d, &n);
+        if (dist[k] <= best + VERT_EPS && town_built(c, ci + k % 3 - 1, cj + k / 3 - 1))
+            gather_dirs(&town_get(c, ci + k % 3 - 1, cj + k / 3 - 1)->poly, P, d, &n);
     return clearance(dir, half, d, n);
 }
 
@@ -438,10 +547,13 @@ typedef struct SplitCtx {
 static int zone_for(const SplitCtx *sc, const Block *b, DVec2 cen, float d) {
     if (d > 0.62f) return ZONE_CORE;
     if (dlen(dsub(cen, sc->pc->nb.p)) < 110.0 || dlen(dsub(cen, sc->tp->t.p)) < 170.0) return ZONE_CENTRE;
+    /* Towards the edge: open land, and more of the parks and industry. */
+    float f = plan_fringe(cen.x, cen.z);
+    if (f > 0.0f && hf(b->seed, 3u) < 0.75f * smoothstepf(0.4f, 1.0f, f)) return ZONE_RURAL;
     int boulevard = 0;
     for (int i = 0; i < b->curb.n; ++i) if (b->curb.e[i].cls == ROAD_BOULEVARD) boulevard = 1;
-    if (hf(b->seed, 1u) < (boulevard ? 0.22f : 0.07f)) return ZONE_PARK;   /* green buffers along the boulevards */
-    if (d < 0.32f && hf(b->seed, 2u) < 0.25f) return ZONE_INDUSTRIAL;
+    if (hf(b->seed, 1u) < (boulevard ? 0.22f : 0.07f) + 0.2f * f) return ZONE_PARK;   /* green buffers along the boulevards */
+    if (d < 0.32f && hf(b->seed, 2u) < 0.25f + 0.3f * f) return ZONE_INDUSTRIAL;
     return ZONE_RESIDENTIAL;
 }
 
@@ -578,21 +690,85 @@ static void process_town(PlanCtx *c, const TownPlan *tp) {
     }
 }
 
+/* ===========================================================================
+ * The city's ground and its outline
+ * ========================================================================= */
+
+static void add_edge(PlanCtx *c, DVec2 a, DVec2 b, DVec2 n) {
+    PlanArea *o = c->out;
+    if (dlen(dsub(b, a)) < 1e-3 || o->nedges >= PLAN_MAX_EDGES) return;
+    if (!box_overlaps(c->A, fmin(a.x, b.x), fmin(a.z, b.z), fmax(a.x, b.x), fmax(a.z, b.z), 2.0)) return;
+    PlanEdge *e = &o->edges[o->nedges++];
+    e->a = a; e->b = b; e->n = n;
+}
+
+/* Built town (i, j)'s ground, and its part of the outline: every edge facing
+ * a town that isn't built, and where an edge is shared with a built town's
+ * ground, whatever of it that ground doesn't also reach (the jog where two
+ * perimeter roads meet at an inward corner). */
+static void town_outline(PlanCtx *c, int i, int j) {
+    PlanArea *out = c->out;
+    const TownEntry *te = town_ground(c, i, j);
+    Poly g = te->ground;
+    int8_t gnb[PLAN_MAX_PV];
+    memcpy(gnb, te->gnb, sizeof(gnb));
+    double gx0, gz0, gx1, gz1;
+    poly_bounds(&g, &gx0, &gz0, &gx1, &gz1);
+    if (!box_overlaps(c->A, gx0, gz0, gx1, gz1, 2.0)) return;
+    if (out->ntowns < PLAN_MAX_TOWNS) out->ground[out->ntowns++] = g;
+    for (int k = 0; k < g.n; ++k) {
+        DVec2 a = g.v[k], b = g.v[(k + 1) % g.n];
+        double len = dlen(dsub(b, a));
+        if (len < 1e-3) continue;
+        DVec2 u = dscale(dsub(b, a), 1.0 / len), n = dv(u.z, -u.x);   /* the cut square winds so this points out */
+        if (!box_overlaps(c->A, fmin(a.x, b.x), fmin(a.z, b.z), fmax(a.x, b.x), fmax(a.z, b.z), 2.0)) continue;
+        int on = gnb[k];
+        int oi = on >= 0 ? i + nb_di(on) : 0, oj = on >= 0 ? j + nb_dj(on) : 0;
+        if (on < 0 || !town_built(c, oi, oj)) { add_edge(c, a, b, n); continue; }
+        /* Shared: the other ground's edge on the same bisector, as an interval along this one. */
+        const TownEntry *oe = town_ground(c, oi, oj);
+        double s0 = 0.0, s1 = 0.0;
+        int found = 0;
+        for (int q = 0; q < oe->ground.n && !found; ++q) {
+            if (oe->gnb[q] != 24 - on) continue;
+            DVec2 p0 = oe->ground.v[q], p1 = oe->ground.v[(q + 1) % oe->ground.n];
+            double t0 = ddot(dsub(p0, a), u), t1 = ddot(dsub(p1, a), u);
+            s0 = fmin(t0, t1); s1 = fmax(t0, t1);
+            found = 1;
+        }
+        if (!found || s1 <= 0.0 || s0 >= len) { add_edge(c, a, b, n); continue; }
+        if (s0 > 1e-6) add_edge(c, a, dadd(a, dscale(u, s0)), n);
+        if (s1 < len - 1e-6) add_edge(c, dadd(a, dscale(u, s1)), b, n);
+    }
+}
+
 void plan_area(double x0, double z0, double x1, double z1, PlanArea *out) {
     out->x0 = x0; out->z0 = z0; out->x1 = x1; out->z1 = z1;
     out->nroads = out->nblocks = 0;
+    out->bounded = out->ntowns = out->nedges = 0;
     PlanCtx *c = (PlanCtx *)calloc(1, sizeof(PlanCtx));
     if (!c) fatal("out of memory in plan_area");
     c->out = out;
     c->A[0] = x0; c->A[1] = z0; c->A[2] = x1; c->A[3] = z1;
     const double m = 1.2 * TOWN_SIZE;
-    for (int tj = (int)floor((z0 - m) / TOWN_SIZE); tj <= (int)floor((z1 + m) / TOWN_SIZE); ++tj)
-        for (int ti = (int)floor((x0 - m) / TOWN_SIZE); ti <= (int)floor((x1 + m) / TOWN_SIZE); ++ti) {
+    int ti0 = (int)floor((x0 - m) / TOWN_SIZE), ti1 = (int)floor((x1 + m) / TOWN_SIZE);
+    int tj0 = (int)floor((z0 - m) / TOWN_SIZE), tj1 = (int)floor((z1 + m) / TOWN_SIZE);
+    for (int tj = tj0; tj <= tj1; ++tj)
+        for (int ti = ti0; ti <= ti1; ++ti) {
             const TownEntry *te = town_get(c, ti, tj);
             if (!box_overlaps(c->A, te->x0, te->z0, te->x1, te->z1, 30.0)) continue;
             Site t = te->s;
+            if (!town_built(c, ti, tj)) { out->bounded = 1; continue; }
             town_plan(c, t, &c->plan);
             process_town(c, &c->plan);
         }
+    /* When every cell near the rectangle is built they tile it, and the ground
+     * covers it all. Otherwise: the built towns' ground, and its outline. */
+    if (out->bounded)
+        for (int tj = tj0; tj <= tj1; ++tj)
+            for (int ti = ti0; ti <= ti1; ++ti) {
+                const TownEntry *te = town_get(c, ti, tj);
+                if (box_overlaps(c->A, te->x0, te->z0, te->x1, te->z1, 30.0) && town_built(c, ti, tj)) town_outline(c, ti, tj);
+            }
     free(c);
 }

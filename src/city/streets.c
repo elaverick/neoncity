@@ -82,15 +82,48 @@ static int clip_segment(DVec2 *a, DVec2 *b) {
     return 1;
 }
 
+/* Where the city ends (PlanArea.bounded): the plain asphalt only over the
+ * city's ground, and along its outline a face down past the land beyond,
+ * which lies TERRAIN_URBAN_SINK_M below the city's ground there. */
+#define EDGE_DROP 1.0f
+
+static void build_city_edge(Mesh *m, const ChunkGen *g) {
+    const PlanArea *pa = g->pa;
+    float buv[48][2] = { { 0 } };
+    for (int t = 0; t < pa->ntowns; ++t) {
+        const Poly *gp = &pa->ground[t];
+        DVec2 l[PLAN_MAX_PV], cl[48];
+        for (int i = 0; i < gp->n; ++i) l[i] = dv(gp->v[i].x - g->ox, gp->v[i].z - g->oz);
+        int k = clip_chunk(l, gp->n, cl);
+        if (k) emit_flat(m, cl, k, BASE_Y, (const float (*)[2])buv, mat(MAT_ROAD, 0, 0, 0, 0));
+    }
+    for (int i = 0; i < pa->nedges; ++i) {
+        const PlanEdge *e = &pa->edges[i];
+        DVec2 a = dv(e->a.x - g->ox, e->a.z - g->oz), b = dv(e->b.x - g->ox, e->b.z - g->oz), a0 = a;
+        if (!clip_segment(&a, &b)) continue;
+        DVec2 eh = dnorm(dsub(e->b, e->a));
+        vec3 nn = v3((float)e->n.x, 0, (float)e->n.z);
+        float u0 = (float)dlen(dsub(a, a0)), u1 = (float)dlen(dsub(b, a0)), y0 = BASE_Y - EDGE_DROP;
+        if (eh.x * nn.z - eh.z * nn.x < 0) { u0 = -u0; u1 = -u1; }   /* as kerb_face */
+        float quv[4][2] = { { u0, y0 }, { u1, y0 }, { u1, BASE_Y }, { u0, BASE_Y } };
+        emit_quad(m, v3((float)a.x, y0, (float)a.z), v3((float)b.x, y0, (float)b.z),
+                  v3((float)b.x, BASE_Y, (float)b.z), v3((float)a.x, BASE_Y, (float)a.z), nn, quv, mat(MAT_CURB, 0, 0, 0, 0));
+    }
+}
+
 /* Carriageways, cut back at junctions so markings never overlap. uv = (offset
  * from the centre line, distance along); seed carries the length for the
  * crossings at each end, params the half-width (quarter metres), crossings |
  * squalor (0..127) << 1, and class. */
 void build_roads(Mesh *m, const ChunkGen *g) {
     const double P = CHUNK_SIZE;
-    DVec2 base[4] = { {0, 0}, {P, 0}, {P, P}, {0, P} };
-    float buv[4][2] = { {0, 0}, {0, 0}, {0, 0}, {0, 0} };
-    emit_flat(m, base, 4, BASE_Y, buv, mat(MAT_ROAD, 0, 0, 0, 0));
+    if (!g->pa->bounded) {
+        DVec2 base[4] = { {0, 0}, {P, 0}, {P, P}, {0, P} };
+        float buv[4][2] = { {0, 0}, {0, 0}, {0, 0}, {0, 0} };
+        emit_flat(m, base, 4, BASE_Y, buv, mat(MAT_ROAD, 0, 0, 0, 0));
+    } else {
+        build_city_edge(m, g);
+    }
 
     for (int ri = 0; ri < g->pa->nroads; ++ri) {
         const Road *r = &g->pa->roads[ri];
@@ -444,7 +477,8 @@ static void emit_lot(Mesh *m, const ChunkGen *g, const BlockFrame *F) {
     for (int i = 0; i < bk->lot.n; ++i) l[i] = dv(bk->lot.v[i].x - g->ox, bk->lot.v[i].z - g->oz);
     int k = clip_chunk(l, bk->lot.n, cl);
     pave_uv(F, cl, k, uv);
-    if (k) emit_flat(m, cl, k, SIDEWALK_HEIGHT + 0.006f, (const float (*)[2])uv, mat(MAT_LOT, 0, (uint8_t)(bk->zone == ZONE_PARK), F->sq, 0));
+    uint8_t green = bk->zone == ZONE_PARK || bk->zone == ZONE_RURAL;   /* open land is grass, as a park is */
+    if (k) emit_flat(m, cl, k, SIDEWALK_HEIGHT + 0.006f, (const float (*)[2])uv, mat(MAT_LOT, 0, green, F->sq, 0));
 }
 
 /* Raised blocks: sidewalk, kerb stones, kerb faces, drop kerbs and the lot

@@ -19,6 +19,7 @@
 #define MAX_BUILDINGS   128
 #define MAX_LAMPS       96
 #define MAX_CURBS       48
+#define MAX_GROUND       8
 #define MAX_CURB_PV     PLAN_MAX_PV
 #define MAX_DROPS       64
 #define MAX_BLOCK_DROPS 24
@@ -93,6 +94,8 @@ typedef struct BlockLayout {
     Lamp     lamp[MAX_LAMPS];       /* lamp poles standing in this chunk */
     int      ncurbs;
     CurbPoly curb[MAX_CURBS];       /* raised kerb outlines touching this chunk */
+    int      bounded, nground;      /* the city ends near here (PlanArea.bounded): its ground is */
+    CurbPoly ground[MAX_GROUND];    /* these outlines, and beyond them the land's (terrain_surface) */
     int      ndrops;
     DropKerb drop[MAX_DROPS];       /* drop kerbs cut into them, touching this chunk */
     int      ncoll, ncollv;         /* what stands at street level: walls, piers, cores, columns */

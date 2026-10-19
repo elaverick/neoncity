@@ -1,6 +1,6 @@
 # NeonCity
 
-An infinite, deterministic, Blade Runner-style night city you can walk through, written in C11 with Vulkan 1.3.
+A vast, deterministic, Blade Runner-style night city you can walk through, written in C11 with Vulkan 1.3.
 
 ## Building
 
@@ -75,6 +75,15 @@ generated as a pure function of world position:
   - estate: HDB-style slab or point blocks, set back behind a verge
   - industrial: low sheds
   - park: more likely along the boulevards, as green buffers between towns
+  - rural: open land with the odd farmstead, towards the city's edge
+- **The city's edge.** The city is finite. Its footprint is a warped disc 20 km across
+  (`plan_city_edge`), whose outer 1.5 km belt gives way to the land. It is built of whole
+  towns, each only where its ground provably lies inside that belt (`plan_town_built`), so the
+  city's ground and the terrain's agree wherever they meet; that leaves about 80 towns, some
+  15 km across. Over the last 3 km the city thins (`plan_fringe`):
+  density falls, and industry, parks and open land take over. The outermost boulevards are
+  its perimeter road; the asphalt reaches a shoulder beyond them and ends in a low face onto
+  the land.
 
 Junction geometry is resolved from the plan itself. Each carriageway is trimmed back to clear
 every road meeting it, which leaves room for the crossings, so a road comes out identical
@@ -296,7 +305,7 @@ rates over a wide area and writes plan renders and the architectural section vie
 canyon.
 
 ### Chunks
-The world is streamed as an infinite grid of 110 m square chunks. These are only tiles: a
+The world is streamed as an unbounded grid of 110 m square chunks (empty beyond the city). These are only tiles: a
 chunk holds the ground, roads, kerbs and lamps inside it, plus the buildings whose centres
 fall in it. Those buildings may overhang the chunk by up to 70 m.
 

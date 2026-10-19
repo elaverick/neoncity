@@ -10,8 +10,9 @@
 /* ---------------------------------------------------------------------------
  * World layout. The city plan (src/plan/plan.c) is a polycentric network of towns,
  * neighbourhoods and blocks generated as a pure function of position; it is
- * streamed as an infinite grid of square chunks, each holding the ground
- * inside it and the buildings centred in it. Everything inside a chunk is a
+ * finite, but streamed as an unbounded grid of square chunks (empty beyond the
+ * city's edge), each holding the ground inside it and the buildings centred
+ * in it. Everything inside a chunk is a
  * pure function of (WORLD_SEED, cx, cz), so an area is identical no matter
  * when, or from which direction, it is visited.
  * ------------------------------------------------------------------------- */

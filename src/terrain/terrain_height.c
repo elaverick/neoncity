@@ -63,6 +63,8 @@ double terrain_surface_lod(double x, double z, double spacing, float *urban) {
     return h - TERRAIN_URBAN_SINK_M * w;
 }
 
+double terrain_surface(double x, double z) { return terrain_surface_lod(x, z, 0.0, NULL); }
+
 /* The height is a blend of urban (|h| <= its relief) and land (|h| <= its
  * amplitude, which grows with the edge measure), so it is bounded by whichever
  * of the two can reach into the rectangle. The edge measure over the

@@ -102,10 +102,10 @@ static void lgen_free(LGen *g) {
     memset(g, 0, sizeof(*g));
 }
 
-/* Industrial land and the estates start dirtier than the cores and parks;
- * poorer districts are dirtier still. */
+/* Industrial land and the estates start dirtier than the cores, parks and
+ * open land; poorer districts are dirtier still. */
 float city_squalor(int zone, double x, double z) {
-    static const float base[6] = { 0.42f, 0.22f, 0.5f, 0.42f, 0.66f, 0.3f };   /* a road, core, centre, estate, industrial, park */
+    static const float base[ZONE_COUNT + 1] = { 0.42f, 0.22f, 0.5f, 0.42f, 0.66f, 0.3f, 0.3f };   /* a road, core, centre, estate, industrial, park, rural */
     return clampf(base[zone + 1] + 1.1f * (0.5f - plan_affluence(x, z)), 0.04f, 1.0f);
 }
 
@@ -144,7 +144,7 @@ static Ground ground_at(LGen *g, double x, double z) {
         if (x < bk->x0 || x > bk->x1 || z < bk->z0 || z > bk->z1 || !poly_contains(&bk->curb, x, z, 0.0)) continue;
         gr.block = k;
         if (bk->lot.n && poly_contains(&bk->lot, x, z, 0.0)) {
-            gr.type = bk->zone == ZONE_PARK ? G_PARK : G_LOT;
+            gr.type = bk->zone == ZONE_PARK || bk->zone == ZONE_RURAL ? G_PARK : G_LOT;
             gr.y = SIDEWALK_HEIGHT + 0.006f;
         } else {
             gr.type = G_SIDEWALK;

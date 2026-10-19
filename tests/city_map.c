@@ -1,10 +1,12 @@
 /* Renders a top-down map of the generated plan to a BMP, for eyeballing the
  * layout without the renderer:
  *
- *   city_map [out.bmp] [centreX centreZ] [sizeMetres] [metresPerPixel]
+ *   city_map [out.bmp] [centreX centreZ] [sizeMetres] [metresPerPixel] [buildings 0|1]
  *
  * Defaults to a 6 km square around the central regional centre at 3 m/px.
- * Roads are coloured by class, blocks by zone, building sections by height. */
+ * Roads are coloured by class, blocks by zone, building sections by height;
+ * the city's ground is dark asphalt, and the land beyond it black. A map of
+ * the whole city (30 km at 20 m/px, say) is quicker without the buildings. */
 #include "building.h"
 #include "hash.h"
 #include "mathlib.h"
@@ -86,13 +88,14 @@ int main(int argc, char **argv) {
     if (argc > 3) { c.x = atof(argv[2]); c.z = atof(argv[3]); }
     if (argc > 4) size = atof(argv[4]);
     if (argc > 5) mpp = atof(argv[5]);
+    int withBuildings = argc > 6 ? atoi(argv[6]) : 1;
     g_mpp = mpp;
     g_w = g_h = (int)(size / mpp);
     g_x0 = c.x - size * 0.5; g_z0 = c.z - size * 0.5;
     g_px = (uint8_t *)malloc((size_t)g_w * g_h * 3);
     memset(g_px, 0, (size_t)g_w * g_h * 3);
 
-    static const uint32_t zoneCol[5] = { 0x3a2f3f, 0x4a3a28, 0x2c3440, 0x343434, 0x1f3a22 };
+    static const uint32_t zoneCol[ZONE_COUNT] = { 0x3a2f3f, 0x4a3a28, 0x2c3440, 0x343434, 0x1f3a22, 0x3a4a1c };
     PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
     Building *bl = (Building *)malloc(sizeof(Building) * 256);
     BGraph *bg = (BGraph *)malloc(sizeof(BGraph));
@@ -102,7 +105,18 @@ int main(int argc, char **argv) {
         for (int tx = 0; tx < tiles; ++tx) {
             double clip[4] = { g_x0 + tx * T, g_z0 + ty * T, g_x0 + (tx + 1) * T, g_z0 + (ty + 1) * T };
             plan_area(clip[0], clip[1], clip[2], clip[3], pa);
-            /* Asphalt everywhere, then carriageways by class. */
+            /* Asphalt over the city's ground, then carriageways by class. */
+            if (!pa->bounded) {
+                Poly q; memset(&q, 0, sizeof(q)); q.n = 4;
+                q.v[0].x = clip[0]; q.v[0].z = clip[1]; q.v[1].x = clip[2]; q.v[1].z = clip[1];
+                q.v[2].x = clip[2]; q.v[2].z = clip[3]; q.v[3].x = clip[0]; q.v[3].z = clip[3];
+                fill(&q, in_poly, clip[0], clip[1], clip[2], clip[3], clip, 0x1c1c20);
+            }
+            for (int i = 0; i < pa->ntowns; ++i) {
+                double x0, z0, x1, z1;
+                poly_bounds(&pa->ground[i], &x0, &z0, &x1, &z1);
+                fill(&pa->ground[i], in_poly, x0, z0, x1, z1, clip, 0x1c1c20);
+            }
             for (int i = 0; i < pa->nroads; ++i) {
                 const Road *r = &pa->roads[i];
                 DVec2 d = { r->b.x - r->a.x, r->b.z - r->a.z };
@@ -128,7 +142,7 @@ int main(int argc, char **argv) {
                 double x0, z0, x1, z1;
                 poly_bounds(&bk->lot, &x0, &z0, &x1, &z1);
                 fill(&bk->lot, in_poly, x0, z0, x1, z1, clip, zoneCol[bk->zone]);
-                int n = city_block_buildings(bk, bl, 256);
+                int n = withBuildings ? city_block_buildings(bk, bl, 256) : 0;
                 for (int k = 0; k < n; ++k) {
                     const Building *b = &bl[k];
                     double r0 = b->foot.x1 - b->foot.x0 + b->foot.z1 - b->foot.z0;
@@ -150,9 +164,10 @@ int main(int argc, char **argv) {
                 buildings += n;
             }
         }
-    /* Town centres: regional ones larger. */
+    /* The city's town centres: regional ones larger. */
     for (int j = (int)floor(g_z0 / TOWN_SIZE) - 1; j <= (int)floor((g_z0 + size) / TOWN_SIZE) + 1; ++j)
         for (int i = (int)floor(g_x0 / TOWN_SIZE) - 1; i <= (int)floor((g_x0 + size) / TOWN_SIZE) + 1; ++i) {
+            if (!plan_town_built(i, j)) continue;
             DVec2 t = plan_town_centre(i, j);
             int reg = plan_town_regional(i, j);
             int px = (int)((t.x - g_x0) / g_mpp), py = (int)((t.z - g_z0) / g_mpp), rr = reg ? 9 : 5;

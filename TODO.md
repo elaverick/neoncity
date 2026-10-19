@@ -52,6 +52,17 @@ the terrain roadmap.
     below it by as much as the plot falls. Hillier settlements want the floors in the collision layout.
   - `DRAPE_CELL` (55 m) and the footing's 5 cm are sized for this relief; hillier ground wants finer cuts.
   - The haze still thins with height above y = 0, not above the ground.
+- **The city's edge** (`plan_town_built`, `plan_fringe`, `PlanArea.ground`/`edges`; see the README). The city is
+  the towns whose ground provably lies where `plan_urban` is 1: 78 towns, about 15 km across, in a footprint 20 km
+  across. So:
+  - Between the perimeter road and the belt lies up to 2 km of flat land at the city's height before the hills
+    begin. A larger `CITY_RADIUS` would bring the built city nearer 20 km (and move the terrain with it).
+  - The fringe thins density, so a regional core 2 km in still keeps its towers: a skyline cliff seen from outside,
+    until the distant proxies (M6), or a fringe that caps heights too.
+  - No road leads out of the city into the region; the perimeter boulevards close it.
+  - The edge is a 1 m kerb-stone face below a 1.5 m asphalt shoulder; a verge, a barrier or an embankment would
+    read better. Walking off it, the player's feet ride the 0.5 m drop down (or up) instead of stepping.
+  - Fields (`ZONE_RURAL`) reuse the parks' grass; neither has trees.
 
 ## Office lobbies (next)
 Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/mesh_lobby.c`).

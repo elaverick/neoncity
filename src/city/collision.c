@@ -21,6 +21,16 @@ void city_layout(int cx, int cz, BlockLayout *L) {
     }
     for (int i = 0; i < g.nl && L->nlamps < MAX_LAMPS; ++i)
         if (chunk_gen_owns(&g, g.lamp[i].x, g.lamp[i].z)) L->lamp[L->nlamps++] = g.lamp[i];
+    L->bounded = g.pa->bounded;
+    for (int i = 0; i < g.pa->ntowns && L->nground < MAX_GROUND; ++i) {
+        const Poly *gp = &g.pa->ground[i];
+        double x0, z0, x1, z1;
+        poly_bounds(gp, &x0, &z0, &x1, &z1);
+        if (x1 < g.ox || x0 > g.ox + P || z1 < g.oz || z0 > g.oz + P) continue;
+        CurbPoly *c = &L->ground[L->nground++];
+        c->n = gp->n;
+        for (int k = 0; k < c->n; ++k) { c->v[k][0] = gp->v[k].x; c->v[k][1] = gp->v[k].z; }
+    }
     for (int i = 0; i < g.pa->nblocks && L->ncurbs < MAX_CURBS; ++i) {
         const Block *bk = &g.pa->blocks[i];
         if (bk->x1 < g.ox || bk->x0 > g.ox + P || bk->z1 < g.oz || bk->z0 > g.oz + P) continue;

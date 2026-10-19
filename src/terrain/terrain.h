@@ -14,11 +14,14 @@
 /* Ground height at a point. */
 double terrain_height(double x, double z);
 
+/* The ground as drawn, at full detail: terrain_height, sunk a little under
+ * the city (see TerrainSample). What stands beyond the city's edge stands on it. */
+double terrain_surface(double x, double z);
+
 /* The ground the city builds on (city_ground_y in src/city): the urban relief
  * alone, never blended into the land, so it stays gentle everywhere. Where
- * plan_urban is 1 it is terrain_height, bit for bit. Until the plan is
- * bounded the city also stands beyond its footprint, on this same ground,
- * while the land drawn there rises past it. */
+ * plan_urban is 1 it is terrain_height, bit for bit, and the city is only
+ * ever built there (CITY_BUILT_EDGE). */
 double terrain_urban_height(double x, double z);
 
 /* Conservative bounds on terrain_urban_height over the rectangle [x0,x1] x

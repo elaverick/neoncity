@@ -161,6 +161,13 @@ static uint64_t fnv_layout(const BlockLayout *L, uint64_t h) {
         FNV_FIELD(h, d->tc); FNV_FIELD(h, d->tu); FNV_FIELD(h, d->nopen);
         h = fnv(d->open, sizeof(d->open[0]) * (size_t)d->nopen, h);
     }
+    if (L->bounded) {   /* only where the city ends, so the chunks inside it hash as they always did */
+        FNV_FIELD(h, L->nground);
+        for (int i = 0; i < L->nground; ++i) {
+            FNV_FIELD(h, L->ground[i].n);
+            h = fnv(L->ground[i].v, sizeof(L->ground[i].v[0]) * (size_t)L->ground[i].n, h);
+        }
+    }
     FNV_FIELD(h, L->ncoll); FNV_FIELD(h, L->ncollv);
     h = fnv(L->coll, sizeof(L->coll[0]) * (size_t)L->ncoll, h);
     h = fnv(L->collv, sizeof(L->collv[0]) * (size_t)L->ncollv, h);
@@ -202,6 +209,7 @@ static int fingerprint(void) {
     int n = 0;
     for (int cz = hz - 4; cz <= hz + 4; ++cz)
         for (int cx = hx - 4; cx <= hx + 4; ++cx) { fingerprint_chunk(cx, cz, fp); n++; }
+    uint64_t afterHome = fnv(fp, sizeof(fp), 0xcbf29ce484222325ULL);
 
     static BlockLayout L;
     int megaCx = 0, megaCz = 0, found = 0;
@@ -216,12 +224,162 @@ static int fingerprint(void) {
     if (found)
         for (int cz = megaCz - 1; cz <= megaCz + 1; ++cz)
             for (int cx = megaCx - 1; cx <= megaCx + 1; ++cx) { fingerprint_chunk(cx, cz, fp); n++; }
+    uint64_t afterMega = fnv(fp, sizeof(fp), 0xcbf29ce484222325ULL);
 
     for (int i = 0; i < 100; ++i) { fingerprint_chunk(g_cx[i], g_cz[i], fp); n++; }
 
     printf("fingerprint over %d chunks (arcology chunk %s (%d, %d))\n", n, found ? "at" : "not found near", megaCx, megaCz);
     for (int k = 0; k < FP_COUNT; ++k) printf("  %-10s %016llx\n", FP_NAMES[k], (unsigned long long)fp[k]);
+    /* Every layer folded together after the 9 x 9, then after the arcology's 3 x 3: a change
+     * that only reaches the scattered chunks leaves both alone. */
+    printf("  %-10s %016llx\n  %-10s %016llx\n", "home", (unsigned long long)afterHome, "+arcology", (unsigned long long)afterMega);
     return 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * The city's edge: the city is its built towns, all where plan_urban is 1;
+ * its ground is the union of their grounds, which don't overlap, inside a
+ * closed outline; everything the plan lays out lies on that ground; the
+ * perimeter boulevards are drawn; and beyond the city there is nothing.
+ * ------------------------------------------------------------------------- */
+
+static int on_ground(const PlanArea *pa, double x, double z, double margin) {
+    if (!pa->bounded) return 1;
+    for (int t = 0; t < pa->ntowns; ++t)
+        if (poly_contains(&pa->ground[t], x, z, margin)) return 1;
+    return 0;
+}
+
+/* Checks the plan round one point near the edge; returns the outline pieces it holds. */
+static int check_edge_area(PlanArea *pa, double x, double z) {
+    const double H = 150.0;
+    plan_area(x - H, z - H, x + H, z + H, pa);
+    CHECK(pa->bounded, "the plan at (%.0f, %.0f), where the city ends, is not bounded", x, z);
+    for (int t = 0; t < pa->ntowns; ++t)
+        for (int k = 0; k < pa->ground[t].n; ++k) {
+            DVec2 v = pa->ground[t].v[k];
+            CHECK(plan_urban(v.x, v.z) == 1.0f, "ground corner (%.1f, %.1f) is where plan_urban is %.3f", v.x, v.z, plan_urban(v.x, v.z));
+        }
+    /* No point is on two towns' ground. */
+    for (double sz = z - H; sz <= z + H; sz += 7.0)
+        for (double sx = x - H; sx <= x + H; sx += 7.0) {
+            int n = 0;
+            for (int t = 0; t < pa->ntowns; ++t) n += poly_contains(&pa->ground[t], sx, sz, -0.01);
+            CHECK(n <= 1, "(%.1f, %.1f) lies on %d towns' ground", sx, sz, n);
+        }
+    /* Roads and blocks lie on the ground, within the area (ground[] covers no more):
+     * both sides of each carriageway between its trims, and each kerb, every 2 m. */
+    for (int i = 0; i < pa->nroads; ++i) {
+        const Road *r = &pa->roads[i];
+        DVec2 d = dsub(r->b, r->a);
+        double len = dlen(d);
+        if (len < 1.0) continue;
+        DVec2 u = dscale(d, 1.0 / len), nrm = dv(-u.z, u.x);
+        for (double t = r->trimA; t <= len - r->trimB; t += 2.0)
+            for (int side = -1; side <= 1; side += 2) {
+                DVec2 p = dadd(dadd(r->a, dscale(u, t)), dscale(nrm, side * r->at.half));
+                if (p.x < x - H || p.x > x + H || p.z < z - H || p.z > z + H) continue;
+                CHECK(on_ground(pa, p.x, p.z, 0.01), "road %08x's carriageway at (%.1f, %.1f) is off the city's ground", r->at.id, p.x, p.z);
+            }
+    }
+    for (int i = 0; i < pa->nblocks; ++i) {
+        const Poly *cb = &pa->blocks[i].curb;
+        for (int k = 0; k < cb->n; ++k) {
+            DVec2 a = cb->v[k], b = cb->v[(k + 1) % cb->n];
+            double len = dlen(dsub(b, a));
+            for (double t = 0.0; t <= len; t += 2.0) {
+                DVec2 p = dadd(a, dscale(dsub(b, a), len > 0.0 ? t / len : 0.0));
+                if (p.x < x - H || p.x > x + H || p.z < z - H || p.z > z + H) continue;
+                CHECK(on_ground(pa, p.x, p.z, 0.01), "block %d's kerb at (%.1f, %.1f) is off the city's ground", i, p.x, p.z);
+            }
+        }
+    }
+    for (int i = 0; i < pa->nedges; ++i) {
+        const PlanEdge *e = &pa->edges[i];
+        /* The outline is closed: inside the area every end meets another piece's other end. */
+        for (int end = 0; end < 2; ++end) {
+            DVec2 p = end ? e->b : e->a;
+            if (p.x < x - H + 1.0 || p.x > x + H - 1.0 || p.z < z - H + 1.0 || p.z > z + H - 1.0) continue;
+            int met = 0;
+            for (int j = 0; j < pa->nedges && !met; ++j) {
+                DVec2 q = end ? pa->edges[j].a : pa->edges[j].b;
+                met = j != i && dlen(dsub(p, q)) < 1e-4;
+            }
+            CHECK(met, "the city's outline is open at (%.2f, %.2f)", p.x, p.z);
+        }
+        /* The ground on its inner side, the land on its outer. */
+        double len = dlen(dsub(e->b, e->a));
+        DVec2 m = dscale(dadd(e->a, e->b), 0.5);
+        if (len > 1.0) {
+            CHECK(on_ground(pa, m.x - e->n.x * 0.2, m.z - e->n.z * 0.2, 0.0), "inside the outline at (%.1f, %.1f) is off the ground", m.x, m.z);
+            CHECK(!on_ground(pa, m.x + e->n.x * 0.2, m.z + e->n.z * 0.2, 0.0), "outside the outline at (%.1f, %.1f) is on the ground", m.x, m.z);
+        }
+        /* A long piece runs along a perimeter boulevard, a shoulder beyond its carriageway. */
+        if (len > 60.0 && m.x > x - H && m.x < x + H && m.z > z - H && m.z < z + H) {
+            int found = 0;
+            for (int r = 0; r < pa->nroads && !found; ++r) {
+                const Road *rd = &pa->roads[r];
+                if (rd->at.cls == ROAD_BOULEVARD) found = fabs(seg_dist(m, rd->a, rd->b) - (rd->at.half + CITY_SHOULDER)) < 0.01;
+            }
+            CHECK(found, "no perimeter boulevard along the city's edge at (%.1f, %.1f)", m.x, m.z);
+        }
+    }
+    return pa->nedges;
+}
+
+static void check_edge(void) {
+    /* The towns of the city, each built over nothing but plan_urban 1. */
+    int built = 0, i0 = 99, i1 = -99, j0 = 99, j1 = -99;
+    for (int j = -12; j <= 12; ++j)
+        for (int i = -12; i <= 12; ++i) {
+            if (!plan_town_built(i, j)) continue;
+            built++;
+            if (i < i0) i0 = i;
+            if (i > i1) i1 = i;
+            if (j < j0) j0 = j;
+            if (j > j1) j1 = j;
+            DVec2 c = plan_town_centre(i, j);
+            for (double dz = -1500.0; dz <= 1500.0; dz += 50.0)
+                for (double dx = -1500.0; dx <= 1500.0; dx += 50.0) {
+                    double x = c.x + dx, z = c.z + dz, best = hypot(dx, dz);
+                    int mine = 1;   /* in (i, j)'s cell: no other site nearer */
+                    for (int q = 0; q < 9 && mine; ++q) {
+                        int oi = (int)floor(x / TOWN_SIZE) + q % 3 - 1, oj = (int)floor(z / TOWN_SIZE) + q / 3 - 1;
+                        if (oi != i || oj != j) mine = dlen(dsub(dv(x, z), plan_town_centre(oi, oj))) >= best;
+                    }
+                    if (mine) CHECK(plan_urban(x, z) == 1.0f, "town (%d,%d) is built over (%.0f, %.0f), where plan_urban is %.3f", i, j, x, z, plan_urban(x, z));
+                }
+        }
+    CHECK(i0 > -12 && i1 < 12 && j0 > -12 && j1 < 12, "the search for built towns doesn't reach past the city");
+    CHECK(plan_town_built(0, 0), "the home town is not built");
+    CHECK(built >= 40, "the city has only %d towns", built);
+    printf("the city: %d towns, lattice %d..%d x %d..%d (%.1f x %.1f km)\n", built, i0, i1, j0, j1,
+           (i1 - i0 + 1) * TOWN_SIZE / 1000.0, (j1 - j0 + 1) * TOWN_SIZE / 1000.0);
+
+    /* Along rays from the centre, the plan where the city ends. */
+    PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
+    if (!pa) fatal("out of memory checking the city's edge");
+    DVec2 c = plan_town_centre(0, 0);
+    int areas = 0, edges = 0, rural = 0, blocks = 0;
+    for (int ray = 0; ray < 48; ++ray) {
+        double th = ray * 2.0 * 3.14159265358979 / 48.0, dx = cos(th), dz = sin(th);
+        double rad = 4000.0;
+        for (; rad < 20000.0; rad += 100.0) {
+            plan_area(c.x + rad * dx - 1.0, c.z + rad * dz - 1.0, c.x + rad * dx + 1.0, c.z + rad * dz + 1.0, pa);
+            if (pa->bounded) break;
+        }
+        CHECK(rad < 20000.0, "the city doesn't end along %.1f deg", th * 57.2958);
+        edges += check_edge_area(pa, c.x + rad * dx, c.z + rad * dz);
+        areas++;
+        for (int b = 0; b < pa->nblocks; ++b) { blocks++; rural += pa->blocks[b].zone == ZONE_RURAL; }
+    }
+    printf("  %d areas where it ends: %d outline pieces, %d blocks (%d rural)\n", areas, edges, blocks, rural);
+    CHECK(edges >= areas, "too little of the city's outline found");
+    /* Beyond the city: nothing at all. */
+    plan_area(c.x + 18000.0, c.z, c.x + 18300.0, c.z + 300.0, pa);
+    CHECK(pa->bounded && pa->nroads == 0 && pa->nblocks == 0 && pa->ntowns == 0 && pa->nedges == 0,
+          "18 km out the plan still lays out %d roads, %d blocks, %d towns' ground", pa->nroads, pa->nblocks, pa->ntowns);
+    free(pa);
 }
 
 int main(int argc, char **argv) {
@@ -287,7 +445,7 @@ int main(int argc, char **argv) {
      *    sidewalks clear of buildings; geometry stays under the culling bound. */
     DVec2 home = plan_town_centre(0, 0);
     int hx = (int)floor(home.x / CHUNK_SIZE), hz = (int)floor(home.z / CHUNK_SIZE);
-    int buildings = 0, lamps = 0, drops = 0, slabs = 0, kinds[3] = { 0 }, zones[5] = { 0 }, megaX = 0, megaZ = 0, foundMega = 0;
+    int buildings = 0, lamps = 0, drops = 0, slabs = 0, kinds[3] = { 0 }, zones[ZONE_COUNT] = { 0 }, megaX = 0, megaZ = 0, foundMega = 0;
     uint32_t coreLights = 0, coreVerts = 0, litterMax = 0;
     double litterSum = 0;
     int litterChunks = 0;
@@ -408,6 +566,9 @@ int main(int argc, char **argv) {
         CHECK(ok, "spawn (%.1f, %.1f) is not on a sidewalk", sx, sz);
         printf("spawn at (%.1f, %.1f) yaw %.0f deg, plan density %.2f\n", sx, sz, yaw * 57.2958f, plan_density(sx, sz));
     }
+
+    /* 6. The city's edge. */
+    check_edge();
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all city tests passed (%d chunks x %d orders/threads)\n", N_CHUNKS, THREADS + 2);

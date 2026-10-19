@@ -1,4 +1,4 @@
-/* NeonCity - an infinite, deterministic, cyberpunk city walk in C + Vulkan.
+/* NeonCity - a vast, deterministic, cyberpunk city walk in C + Vulkan.
  *
  * Controls: mouse look, WASD move, Shift sprint, Space jump,
  *           F toggle fly (debug: Space/Ctrl up/down), F9 toggle shadows, F10 shadow debug view,

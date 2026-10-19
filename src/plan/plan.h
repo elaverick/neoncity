@@ -17,7 +17,15 @@
  *                  by local streets, giving staggered T-junctions rather than a
  *                  through grid. Leaves are inset by the road and sidewalk
  *                  widths of their edges and zoned (core, centre, estate,
- *                  industrial, park) from density and distance to the centres.
+ *                  industrial, park, rural) from density, distance to the
+ *                  centres and nearness to the city's edge.
+ *
+ * The city is finite (plan_city_edge). It is built of whole towns: a town is
+ * built when all of its ground lies where plan_urban is 1, so the city's
+ * ground and the terrain beyond agree wherever the two meet. Towards the edge
+ * the city thins (plan_fringe): lower, with more industry, parks and open
+ * land. Its outermost boulevards are the city's perimeter road; the ground
+ * reaches across them and ends a shoulder beyond, where the land begins.
  *
  * Nothing here depends on query order or region: a road or block comes out
  * identical whichever area it is requested through. Coordinates are world
@@ -28,6 +36,8 @@
 #define PLAN_MAX_PV        24
 #define PLAN_MAX_ROADS    512
 #define PLAN_MAX_BLOCKS   384
+#define PLAN_MAX_TOWNS     24
+#define PLAN_MAX_EDGES     96
 
 /* The city is finite: a disc round town (0,0)'s centre, its edge warped by two
  * octaves of value noise so it doesn't read as a circle. Inside the edge, a
@@ -44,9 +54,18 @@
  * most 6*(...), and the edge (a length through it) changes by at most 1 plus
  * that. A little over, for float rounding. */
 #define CITY_EDGE_RATE  (1.0 + 6.0 * (CITY_WARP1_M / CITY_WARP1_WAVE + CITY_WARP2_M / CITY_WARP2_WAVE) + 0.01)
+/* A built town's ground stays at or inside this edge measure, where
+ * plan_urban is exactly 1 (and terrain_height is the city's ground). */
+#define CITY_BUILT_EDGE  (-CITY_BELT)
+/* The ground reaches across a perimeter boulevard to this far beyond its
+ * carriageway (m); every town's ground lies within CITY_GROUND_PAD of its cell. */
+#define CITY_SHOULDER      1.5
+#define CITY_GROUND_PAD   (13.0 + CITY_SHOULDER)   /* the widest boulevard's half-width, plus the shoulder */
+/* Inside the built edge, the depth of the fringe over which the city thins out (m). */
+#define CITY_FRINGE      3000.0
 
 enum { ROAD_NONE = 0, ROAD_LOCAL, ROAD_ARTERIAL, ROAD_BOULEVARD };
-enum { ZONE_CORE = 0, ZONE_CENTRE, ZONE_RESIDENTIAL, ZONE_INDUSTRIAL, ZONE_PARK };
+enum { ZONE_CORE = 0, ZONE_CENTRE, ZONE_RESIDENTIAL, ZONE_INDUSTRIAL, ZONE_PARK, ZONE_RURAL, ZONE_COUNT };
 
 /* Attributes of a polygon edge: the road (if any) running along it. */
 typedef struct RoadAttr {
@@ -82,15 +101,31 @@ typedef struct Block {
     double   x0, z0, x1, z1; /* curb bounds */
 } Block;
 
+/* A piece of the outline of the city's ground: the ground lies on the inner
+ * side of a -> b, the land beyond on the side of the unit normal n. */
+typedef struct PlanEdge { DVec2 a, b, n; } PlanEdge;
+
 typedef struct PlanArea {
     double x0, z0, x1, z1;
     int    nroads, nblocks;
     Road   roads[PLAN_MAX_ROADS];
     Block  blocks[PLAN_MAX_BLOCKS];
+    /* bounded 0: the city's ground covers the whole rectangle (ntowns and
+     * nedges are 0). bounded 1: it covers exactly the union of ground[],
+     * the ground of every built town near the rectangle (convex, edges
+     * without roads; they meet without overlapping), and edges[] is its
+     * outline wherever that comes near the rectangle. */
+    int      bounded, ntowns, nedges;
+    Poly     ground[PLAN_MAX_TOWNS];
+    PlanEdge edges[PLAN_MAX_EDGES];
 } PlanArea;
 
-/* Development density 0..1 (polycentric: peaks at town and regional centres). */
+/* Development density 0..1 (polycentric: peaks at town and regional centres,
+ * falling away through the fringe). */
 float plan_density(double x, double z);
+/* How far into the city's fringe a point is: exactly 0 more than CITY_FRINGE
+ * inside the built edge, rising smoothly to 1 at it (and beyond). */
+float plan_fringe(double x, double z);
 /* Affluence 0 (poor) .. 1 (wealthy): highest in the regional cores, with whole
  * districts and neighbourhoods better or worse off than their density says. */
 float plan_affluence(double x, double z);
@@ -115,6 +150,9 @@ void  plan_area(double x0, double z0, double x1, double z1, PlanArea *out);
 /* Centre of town (i, j) on the town lattice; town (0,0) is a regional centre. */
 DVec2 plan_town_centre(int i, int j);
 int   plan_town_regional(int i, int j);
+/* Whether town (i, j) is part of the city: its cell, and CITY_GROUND_PAD
+ * round it, provably lie at or inside CITY_BUILT_EDGE. */
+int   plan_town_built(int i, int j);
 
 /* Convex polygon helpers (also used for lots and building placement). */
 int    poly_clip(const Poly *in, DVec2 q, DVec2 n, RoadAttr cut, Poly *out);   /* keeps (p - q).n <= 0 */

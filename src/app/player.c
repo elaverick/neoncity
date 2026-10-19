@@ -1,5 +1,6 @@
 #include "player.h"
 #include "city.h"
+#include "terrain.h"
 
 #define EYE_HEIGHT    1.68f
 #define RADIUS        0.32f
@@ -59,7 +60,16 @@ static float kerb_height(double x, double z) {
     return 0.0f;
 }
 
-static float ground_height(double x, double z) { return city_ground_y(x, z) + kerb_height(x, z); }
+/* The ground under the city's surfaces, or beyond its edge the land's. */
+static float base_ground(double x, double z) {
+    const BlockLayout *L = layout_get((int)floor(x / CHUNK_SIZE), (int)floor(z / CHUNK_SIZE));
+    if (!L->bounded) return city_ground_y(x, z);
+    for (int i = 0; i < L->nground; ++i)
+        if (in_curb(&L->ground[i], x, z)) return city_ground_y(x, z);
+    return (float)terrain_surface(x, z);
+}
+
+static float ground_height(double x, double z) { return base_ground(x, z) + kerb_height(x, z); }
 
 /* Push a circle out of an axis-aligned rectangle. */
 static void push_out(float *px, float *pz, Rect r) {
@@ -201,7 +211,7 @@ static void move_walk(Player *p, const PlayerInput *in, vec3 flatFwd, vec3 flatR
     p->vel[0] = (float)((nx - p->feet[0]) / dt);
     p->vel[2] = (float)((nz - p->feet[2]) / dt);
     /* On the ground the feet ride the street's grade; only kerbs and steps snap them (and dip the eye). */
-    if (p->onGround) p->feet[1] += city_ground_y(nx, nz) - city_ground_y(p->feet[0], p->feet[2]);
+    if (p->onGround) p->feet[1] += base_ground(nx, nz) - base_ground(p->feet[0], p->feet[2]);
     p->feet[0] = nx; p->feet[2] = nz;
 
     float prevY = (float)p->feet[1];

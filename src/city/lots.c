@@ -171,7 +171,7 @@ static int street_frame(const Poly *lot, DVec2 grain, Frame *F) {
     return best >= 0;
 }
 
-/* Downtown, neighbourhood centres and industry: lots split off the street. */
+/* Downtown, neighbourhood centres, industry and the odd farmstead: lots split off the street. */
 static void fill_lots(Filler *f, const Poly *land, float maxLot, DVec2 grain) {
     const Block *bk = f->bk;
     float d = bk->density;
@@ -181,9 +181,11 @@ static void fill_lots(Filler *f, const Poly *land, float maxLot, DVec2 grain) {
     split_lots(f, land, 0, maxLot, grain, L);
     for (int i = 0; i < L->n; ++i) {
         Frame F;
+        if (bk->zone == ZONE_RURAL && hash_float(hash_combine(bk->seed ^ 0x3A21u, (uint32_t)i)) < 0.65f) continue;   /* mostly open land */
         int street = street_frame(&L->p[i], grain, &F);
         double front, side, maxDepth;
-        if (bk->zone == ZONE_INDUSTRIAL) { front = rng_range(&f->rng, 3.0f, 6.0f); side = rng_range(&f->rng, 2.0f, 4.0f); maxDepth = 60.0; }
+        if (bk->zone == ZONE_RURAL) { front = rng_range(&f->rng, 6.0f, 14.0f); side = rng_range(&f->rng, 4.0f, 10.0f); maxDepth = 22.0; }
+        else if (bk->zone == ZONE_INDUSTRIAL) { front = rng_range(&f->rng, 3.0f, 6.0f); side = rng_range(&f->rng, 2.0f, 4.0f); maxDepth = 60.0; }
         else if (bk->zone == ZONE_CENTRE) { front = 0.0; side = 0.0; maxDepth = 24.0; }
         else { front = rng_float(&f->rng) < 0.25f ? rng_range(&f->rng, 0.5f, 3.0f) : 0.0; side = rng_range(&f->rng, 0.0f, 0.6f); maxDepth = 42.0; }
         double r[4];
@@ -192,7 +194,10 @@ static void fill_lots(Filler *f, const Poly *land, float maxLot, DVec2 grain) {
         if (!b) continue;
         float minDim = minf(b->foot.x1 - b->foot.x0, b->foot.z1 - b->foot.z0);
         float H;
-        if (bk->zone == ZONE_INDUSTRIAL) {
+        if (bk->zone == ZONE_RURAL) {
+            b->kind = BK_BLOCK; b->shop = 0;
+            H = rng_range(&f->rng, 9.0f, 13.0f);
+        } else if (bk->zone == ZONE_INDUSTRIAL) {
             b->kind = BK_BLOCK; b->shop = 0;
             H = rng_range(&f->rng, 8.0f, 20.0f);
         } else if (bk->zone == ZONE_CENTRE) {
@@ -293,6 +298,11 @@ int city_block_buildings(const Block *bk, Building *out, int max) {
     case ZONE_INDUSTRIAL: {
         Poly land;
         if (poly_inset(&bk->lot, 2, 3.0, &land)) fill_lots(&f, &land, rng_range(&f.rng, 40.0f, 65.0f), grain);
+        break;
+    }
+    case ZONE_RURAL: {
+        Poly land;
+        if (poly_inset(&bk->lot, 2, 6.0, &land)) fill_lots(&f, &land, rng_range(&f.rng, 55.0f, 80.0f), grain);
         break;
     }
     default:
