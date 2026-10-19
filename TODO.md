@@ -32,10 +32,34 @@ same city; screenshots of the same `--cam` with `--rain 0` show the renderer's r
   needs a deliberate re-baseline of the fingerprint.
 
 ## Terrain
-The clipmap is drawn out to `TERRAIN_DISTANCE` (`src/render/terrain_gpu.c`, `shaders/terrain/`); the milestones are in
-the terrain roadmap.
+The clipmap is drawn out to its coarsest window (about 32 km; `src/render/terrain_gpu.c`, `shaders/terrain/`), the
+planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the milestones are in the terrain roadmap.
+- **The planet** (M9: `src/terrain/terrain_world.c`, `terrain_patch.c`; `terrain_test --planet-map`, `--patches`).
+  World X/Z is an azimuthal-equidistant chart of an Earth-size sphere; the terrain and proxies are drawn bent over
+  it, the city's chunks flat. Left over:
+  - **One chart.** The clipmap's bend is exact for a camera at the chart's origin and drifts with distance from it
+    (0.7 m at 32 km for a camera 50 km off, 7 m for one 200 km off); there the clipmap and the patches no longer
+    quite meet at the window's edge (the skirts and the hole's overlap hide it so far). Other settlements want their
+    own charts, and the camera's chart should follow it between them.
+  - **Horizon culling** is the patches' alone. Against the lowest ground anywhere (about 2 km below the sphere,
+    `terrain_planet_lowest`) the horizon from the street lies about 160 km out, beyond every clipmap tile and proxy,
+    so it would cull none of them. A local occluder (the lowest ground within the sight line's reach of the camera)
+    would be tighter, but near the city canyons still put it 0.5 km down: the street's real horizon is the ground and
+    the towers, which only occlusion culling would use.
+  - **From the air:** the city's proxies stop at `TERRAIN_DISTANCE` (20 km), so from high over one edge the far side
+    of the city is bare ground; the city's ground takes the city's smoggier haze, which from above reads as a pale dome
+    with the belt's edge; the cloud deck is marched only within `CLOUD_REACH` across the ground, so from above it is a
+    disc of cloud round the camera's footprint fading out, not a deck to the horizon. The planet's patches have no
+    city glow under them and no detail in their shading beyond the land's tone.
+  - **Patch thresholds** are 2 px to split, 1 px to merge (`TERRAIN_PLANET_REFINE`/`_COARSEN`), weighted by the haze's
+    contrast floored at 5%: 84-132 patches from 10 km, a handful from the street. Canyon walls and escarpments are
+    unfiltered cliffs at every level, so clear air would draw about three times as many. Tune with the haze.
+  - **Face seams** meet bit for bit in position; their normals come from each face's own apron, so lighting may differ
+    by a hair across the 12 seams. The chart's origin sits about 250 km from face 0's seam with face 4, in sight from
+    altitude, to look at.
 - **Haze tuning.** The city's air is `CITY_HAZE` (1100 m at street level, `common.glsl`), the land's beyond it
-  `TERRAIN_HAZE` (4000 m, `terrain.frag`). Both are first guesses: the distant ridges barely show yet, the land's
+  `TERRAIN_HAZE` (4000 m, `distances.h`), both thinning with height through a 110 m and a 2 km layer
+  (`HAZE_LOW_H`, `HAZE_HIGH_H`). Both are first guesses: the distant ridges barely show yet, the land's
   colour (dark scrub and rock under the lit cloud deck) is untuned, and from outside the city the proxies are hazed
   by the city's air all the way, not just over the city. Judge from about 100 m up, below the cloud deck (inside it,
   at 250-300 m, the cloud hides everything), looking out past the city's edge and across the city from its fringe,

@@ -375,6 +375,16 @@ cut through whatever they cross. The city's surroundings stay gentle: the landfo
 its edge over the next 6 km, and the canyons keep 2.5 km away. `terrain_test --map out.ppm` draws them as
 a relief map.
 
+The world is an Earth-size planet (`src/terrain/terrain_world.c`). World X/Z is a chart of it, the
+azimuthal-equidistant projection about the origin, so the city and its plan stay flat while the terrain and
+the distant proxies are drawn curving away over the sphere (31 m down at 20 km). Its surface is addressed as
+a cube-sphere. Far from the city, broad highlands and basins up to 1.5 km high and low, thousands of
+kilometres across, raise the mountains and settle the plains (`terrain_test --planet-map out.ppm` draws all
+six faces). Beyond the clipmap's window the ground is the cube-sphere's patches (`src/terrain/terrain_patch.c`,
+`src/render/planet_gpu.c`): 33 x 33 grids refined as a quadtree by their screen-space error through the haze,
+filled on a worker, each blending onto its parent's surface towards the distance it would merge at. They carry
+the ground out to the horizon, which from fly mode's ceiling of 20 km is 500 km off.
+
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the
 arcologies' sodium lamps; so do the lobbies' ceilings, indoors. (An arcology's crown lights stand for the cold light falling down the canyon from its glazed
