@@ -5,6 +5,7 @@
 typedef struct PlayerInput {
     float moveX, moveZ;      /* strafe (-1..1), forward (-1..1) */
     float lookDX, lookDY;    /* mouse delta in pixels */
+    float turn;              /* radians added to the yaw (a scripted turn: --turn) */
     bool  sprint, jump, down;
     bool  toggleFly;
 } PlayerInput;

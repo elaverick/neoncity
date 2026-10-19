@@ -18,6 +18,19 @@ enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
  * chunk's own light table, 3 the lobbies' plants (city_build_plants), wanted
  * with the lobbies and drawn last, without back-face culling. */
 #define LAYER_PLANTS 3
+
+/* Prefetching (want_chunks). Ahead of a moving camera chunks are queued
+ * sooner: their priority is cut by up to LEAD_GAIN straight ahead, in full
+ * from LEAD_SPEED. Just outside the frustum's sides, within GUARD_DISTANCE,
+ * chunks are queued too (after those in view), so turning finds them built:
+ * the guard band widens the view by about GUARD_SLOPE (a tangent) each side. */
+#define LEAD_GAIN      0.4f
+#define LEAD_SPEED     10.0f    /* m/s */
+#define MOTION_MAX     400.0f   /* m/s: faster is a jump */
+#define GUARD_DISTANCE 700.0f
+#define GUARD_SLOPE    0.18f
+/* In-view chunks this near and not drawn yet count as missing (ChunkStats). */
+#define MISSING_DISTANCE 700.0f
 typedef struct Entry {
     int      cx, cz, layer;
     int      state;
@@ -47,7 +60,8 @@ typedef struct Job { int cx, cz, layer; } Job;
 typedef struct KnownBounds { int cx, cz, used; float mn[3], mx[3]; } KnownBounds;
 typedef struct Result { int cx, cz, layer; Mesh mesh; } Result;
 typedef struct PendingFree { uint16_t page; uint64_t frame; } PendingFree;
-typedef struct Want { int cx, cz, layer; float key; int inView; } Want;
+/* key orders the draws (front to back); prio, the jobs (want_chunks). */
+typedef struct Want { int cx, cz, layer; float key, prio; int inView; } Want;
 
 struct ChunkSystem {
     VkCore *vk;
@@ -94,7 +108,12 @@ struct ChunkSystem {
 
     /* scratch */
     Want    *want;
+    int     *wantOrder;              /* want indices by prio (queue_wanted) */
     int      wantCount, wantCap;
+    /* the camera's motion (track_motion) */
+    double   motionCam[2], motionTime;
+    float    vel[2];
+    int      inViewMissing;
     int      ready[MAX_ENTRIES];
     int      readyCount;
 
@@ -256,6 +275,7 @@ void chunks_destroy(ChunkSystem *cs) {
     free(cs->pendingFree);
     free(cs->pendingLight);
     free(cs->want);
+    free(cs->wantOrder);
     free(cs);
 }
 
@@ -451,13 +471,36 @@ static int cmp_want(const void *a, const void *b) {
     return ka < kb ? -1 : ka > kb ? 1 : 0;
 }
 
-static void push_want(ChunkSystem *cs, int cx, int cz, int layer, float key, int inView) {
+static void push_want(ChunkSystem *cs, int cx, int cz, int layer, float key, float prio, int inView) {
     if (cs->wantCount == cs->wantCap) {
         cs->wantCap = cs->wantCap ? cs->wantCap * 2 : 4096;
         cs->want = (Want *)realloc(cs->want, sizeof(Want) * cs->wantCap);
+        cs->wantOrder = (int *)realloc(cs->wantOrder, sizeof(int) * cs->wantCap);
+        if (!cs->want || !cs->wantOrder) fatal("out of memory growing the chunk wants");
     }
     Want *w = &cs->want[cs->wantCount++];
-    w->cx = cx; w->cz = cz; w->layer = layer; w->key = key; w->inView = inView;
+    w->cx = cx; w->cz = cz; w->layer = layer; w->key = key; w->prio = prio; w->inView = inView;
+}
+
+static const Want *g_prioWant;
+static int cmp_prio(const void *a, const void *b) {
+    float pa = g_prioWant[*(const int *)a].prio, pb = g_prioWant[*(const int *)b].prio;
+    return pa < pb ? -1 : pa > pb ? 1 : *(const int *)a - *(const int *)b;
+}
+
+/* The camera's ground velocity (m/s), measured over a quarter second or so:
+ * the lead want_chunks gives the chunks ahead. A jump (or the first frame)
+ * reads as standing still. */
+static void track_motion(ChunkSystem *cs, const double cam[3]) {
+    double now = glfwGetTime(), dt = now - cs->motionTime;
+    if (cs->motionTime > 0.0 && dt < 0.25) return;
+    double vx = (cam[0] - cs->motionCam[0]) / dt, vz = (cam[2] - cs->motionCam[1]) / dt;
+    int moved = cs->motionTime > 0.0 && dt < 1.0 && vx * vx + vz * vz < MOTION_MAX * MOTION_MAX;
+    cs->vel[0] = moved ? (float)vx : 0.0f;
+    cs->vel[1] = moved ? (float)vz : 0.0f;
+    cs->motionCam[0] = cam[0];
+    cs->motionCam[1] = cam[2];
+    cs->motionTime = now;
 }
 
 static const double *g_sortCam;
@@ -500,13 +543,18 @@ static void withdraw_jobs(ChunkSystem *cs) {
 }
 
 /* 3. Frustum fill: every chunk inside the view distance whose conservative
- *    bounds touch the frustum, plus a ring around the player; and the
- *    lobbies and litter of the chunks near the camera, just behind the
- *    chunks themselves. */
+ *    bounds touch the frustum, plus a ring around the player and a guard
+ *    band beside the frustum; and the lobbies and litter of the chunks near
+ *    the camera, just behind the chunks themselves. Their priority leads a
+ *    moving camera (see LEAD_GAIN). */
 static void want_chunks(ChunkSystem *cs, const Frustum *frp, const double cam[3]) {
     const float P = CHUNK_SIZE;
     const Frustum fr = *frp;
     cs->wantCount = 0;
+    cs->inViewMissing = 0;
+    track_motion(cs, cam);
+    float speed = sqrtf(cs->vel[0] * cs->vel[0] + cs->vel[1] * cs->vel[1]);
+    float lead = LEAD_GAIN * minf(speed / LEAD_SPEED, 1.0f);
     int ccx = (int)floor(cam[0] / P), ccz = (int)floor(cam[2] / P);
     int rad = (int)ceilf(VIEW_DISTANCE / P) + 1;
     for (int dz = -rad; dz <= rad; ++dz) {
@@ -541,25 +589,37 @@ static void want_chunks(ChunkSystem *cs, const Frustum *frp, const double cam[3]
             const float R = SHADOW_REACH;
             int casts = !inView && cs->rt && d < RT_RANGE &&
                         frustum_test_aabb(&fr, v3(mn.x - R, mn.y - R, mn.z - R), v3(mx.x + R, mx.y + R, mx.z + R));
-            if (inView) push_want(cs, cx, cz, 0, d, 1);
-            else if (casts) push_want(cs, cx, cz, 0, d + 40.0f, 0);
-            else if (d < NEAR_RING_DIST) push_want(cs, cx, cz, 0, d * 3.0f + 200.0f, 0);
-            if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, 1, d + 60.0f + (inView ? 0.0f : d * 2.0f), inView);
-            if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, LAYER_PLANTS, d + 70.0f + (inView ? 0.0f : d * 2.0f), inView);
-            if (d < LITTER_DISTANCE) push_want(cs, cx, cz, 2, d + 30.0f + (inView ? 0.0f : d * 2.0f), inView);
+            const float G = GUARD_SLOPE * d;
+            int guard = !inView && !casts && d < GUARD_DISTANCE &&
+                        frustum_test_aabb(&fr, v3(mn.x - G, mn.y, mn.z - G), v3(mx.x + G, mx.y, mx.z + G));
+            /* ahead of the camera's motion: the cosine to the chunk's nearest point */
+            float ahead = d > 0.0f && speed > 0.0f ? maxf((nx * cs->vel[0] + nz * cs->vel[1]) / (d * speed), 0.0f) : 0.0f;
+            float f = 1.0f - lead * ahead;
+            if (inView) push_want(cs, cx, cz, 0, d, d * f, 1);
+            else if (casts) push_want(cs, cx, cz, 0, d + 40.0f, (d + 40.0f) * f, 0);
+            else if (d < NEAR_RING_DIST) push_want(cs, cx, cz, 0, d * 3.0f + 200.0f, (d * 3.0f + 200.0f) * f, 0);
+            else if (guard) push_want(cs, cx, cz, 0, d * 1.3f + 100.0f, (d * 1.3f + 100.0f) * f, 0);
+            if (inView && d < MISSING_DISTANCE && (idx < 0 || cs->entries[idx].state != CS_RESIDENT)) cs->inViewMissing++;
+            float kl = d + 60.0f + (inView ? 0.0f : d * 2.0f), kp = d + 70.0f + (inView ? 0.0f : d * 2.0f), kt = d + 30.0f + (inView ? 0.0f : d * 2.0f);
+            if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, 1, kl, kl * f, inView);
+            if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, LAYER_PLANTS, kp, kp * f, inView);
+            if (d < LITTER_DISTANCE) push_want(cs, cx, cz, 2, kt, kt * f, inView);
         }
     }
     qsort(cs->want, cs->wantCount, sizeof(Want), cmp_want);
 
 }
 
-/* Queues the wanted chunks not yet known, nearest first, for the workers.
+/* Queues the wanted chunks not yet known, by priority, for the workers.
  * Returns how many wanted chunks are queued. */
 static int queue_wanted(ChunkSystem *cs, uint64_t frame) {
     Job newJobs[MAX_JOBS];
     int nj = 0, queued = 0;
+    for (int i = 0; i < cs->wantCount; ++i) cs->wantOrder[i] = i;
+    g_prioWant = cs->want;
+    qsort(cs->wantOrder, (size_t)cs->wantCount, sizeof(int), cmp_prio);
     for (int i = 0; i < cs->wantCount; ++i) {
-        Want *w = &cs->want[i];
+        Want *w = &cs->want[cs->wantOrder[i]];
         int idx = table_find(cs, w->cx, w->cz, w->layer);
         if (idx < 0) {
             if (nj >= MAX_JOBS || cs->freeEntryCount < 64) continue;
@@ -780,6 +840,7 @@ static void update_stats(ChunkSystem *cs, int slot, int queued, uint32_t viewChu
     cs->stats.pagesTotal = POOL_PAGES;
     cs->stats.pagesUsed = POOL_PAGES - cs->freePageCount - cs->pendingFreeCount;
     cs->stats.uploadsThisFrame = uploads;
+    cs->stats.inViewMissing = cs->inViewMissing;
     RtStats rs = rt_stats(cs->rt);
     cs->stats.blas = rs.blas;
     cs->stats.blasBuilds = rs.builds;

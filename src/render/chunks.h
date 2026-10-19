@@ -18,6 +18,7 @@ typedef struct ChunkStats {
     int resident, queued, ready, drawnChunks, drawCalls, pagesUsed, pagesTotal, uploadsThisFrame;
     int blas, instances, blasMB;   /* ray-traced shadows: bottom-level structures, TLAS instances, arena use */
     int blasBuilds;                /* bottom-level structures built since the start */
+    int inViewMissing;             /* chunks in view within 700 m not resident yet: proxies stand in for them */
 } ChunkStats;
 
 ChunkSystem *chunks_create(VkCore *vk);

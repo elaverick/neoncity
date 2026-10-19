@@ -46,7 +46,7 @@ procedural look.
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
-Command line: `--cam X Z YAW PITCH [HEIGHT]` sets the start position (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot`, `--rain 0..1` pins the rain intensity
+Command line: `--cam X Z YAW PITCH [HEIGHT]` sets the start position (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity
 (otherwise it drifts between drizzle and downpour), `--noshadows` runs without ray-traced shadows (and without the
 ray-query device features they need), `--shadowdebug` starts in the shadow debug view, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.

@@ -147,7 +147,7 @@ void player_init(Player *p) {
 
 /* Yaw and pitch from the mouse. */
 static void update_look(Player *p, const PlayerInput *in) {
-    p->yaw += in->lookDX * MOUSE_SENS;
+    p->yaw += in->lookDX * MOUSE_SENS + in->turn;
     p->pitch -= in->lookDY * MOUSE_SENS;
     p->pitch = clampf(p->pitch, -1.53f, 1.53f);
     if (p->yaw > PI_F) p->yaw -= 2 * PI_F;

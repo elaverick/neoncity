@@ -83,11 +83,12 @@ static void weather_update(Weather *w, double t, float dt, float fixedRain) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS] [--rain 0..1] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --cam   start position (world metres); a HEIGHT starts in fly mode at that altitude\n"
            "  --walk  hold W for this many seconds before a --shot\n"
+           "  --turn  and turn this fast while walking (degrees a second, + to the right)\n"
            "  --rain  fix the rain intensity (0 drizzle .. 1 downpour); otherwise it drifts\n"
            "  --shot  wait for streaming to settle, save a screenshot and exit\n");
 }
@@ -98,7 +99,7 @@ typedef struct Options {
     const char *shotPath;
     bool        haveCam;
     double      cam[5];          /* x, z, yaw, pitch (degrees), height (< 0: walking) */
-    float       walkSeconds, fixedRain;
+    float       walkSeconds, turnRate, fixedRain;   /* turnRate: degrees a second while walking */
 } Options;
 
 static bool parse_args(int argc, char **argv, Options *o) {
@@ -112,6 +113,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--shadowdebug") == 0) o->shadowDebug = true;
         else if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) o->shotPath = argv[++i];
         else if (strcmp(argv[i], "--walk") == 0 && i + 1 < argc) o->walkSeconds = (float)atof(argv[++i]);
+        else if (strcmp(argv[i], "--turn") == 0 && i + 1 < argc) o->turnRate = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--rain") == 0 && i + 1 < argc) o->fixedRain = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--cam") == 0 && i + 4 < argc) {
             o->haveCam = true;
@@ -181,15 +183,19 @@ static void handle_toggles(Renderer *renderer, int *shotCount) {
  * after a timeout, when the pool is too full for all of it to fit). */
 typedef struct Capture {
     const char *path;
-    float       walkSeconds;
+    float       walkSeconds, turnRate;
     int         settledFrames, framesAfterWalk;
     bool        walkStarted, shotTaken;
+    /* during the walk: in-view chunks near enough to miss (ChunkStats.inViewMissing), summed over frames, and the most */
+    long        missingSum;
+    int         missingFrames, missingMost;
 } Capture;
 
 static void capture_walk(Capture *c, PlayerInput *in, float dt, uint64_t totalFrames) {
     if (c->path && c->walkSeconds > 0.0f && (c->walkStarted || c->settledFrames > 30 || totalFrames > 900)) {
         c->walkStarted = true;
         in->moveZ = 1.0f;
+        in->turn = c->turnRate * dt * PI_F / 180.0f;
         c->walkSeconds -= dt;
     }
 }
@@ -201,6 +207,11 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
     c->settledFrames = (s.queued + s.ready == 0 && renderer_proxies_ready(renderer) && renderer_terrain_settled(renderer) && totalFrames > 10)
                      ? c->settledFrames + 1 : 0;
     if (c->walkSeconds <= 0.0f) c->framesAfterWalk++;
+    else if (c->walkStarted) {
+        c->missingSum += s.inViewMissing;
+        c->missingFrames++;
+        if (s.inViewMissing > c->missingMost) c->missingMost = s.inViewMissing;
+    }
     /* Capture once streaming has settled (or after a timeout under memory pressure). */
     if (c->shotTaken) glfwSetWindowShouldClose(win, GLFW_TRUE);
     else if (c->walkSeconds <= 0.0f && (c->settledFrames > 60 || c->framesAfterWalk > 900)) {
@@ -208,6 +219,9 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
         c->shotTaken = true;
         printf("frame time %.2f ms (avg), drawn chunks %d, draws %d, resident %d, pool %d/%d pages\n",
                emaDt * 1000.0f, s.drawnChunks, s.drawCalls, s.resident, s.pagesUsed, s.pagesTotal);
+        if (c->missingFrames > 0)
+            printf("walk: %d frames, in-view chunks within 700 m not yet drawn: %.1f on average, %d at most\n",
+                   c->missingFrames, (double)c->missingSum / c->missingFrames, c->missingMost);
         if (renderer_shadows(renderer))
             printf("shadows: %d bottom-level structures (%d MB, %d built so far), %d TLAS instances\n",
                    s.blas, s.blasMB, s.blasBuilds, s.instances);
@@ -284,7 +298,7 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
     int frames = 0, shotCount = 0;
     uint64_t totalFrames = 0;
     float emaDt = 0.0f;
-    Capture cap = { opt->shotPath, opt->walkSeconds, 0, 0, false, false };
+    Capture cap = { .path = opt->shotPath, .walkSeconds = opt->walkSeconds, .turnRate = opt->turnRate };
     Weather weather = { 0.0f, -1.0f };
     while (!glfwWindowShouldClose(win)) {
         glfwPollEvents();
