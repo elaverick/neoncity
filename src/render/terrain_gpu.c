@@ -61,7 +61,7 @@ struct TerrainGpu {
     int            ndraw;
     /* the last update, and the slowest so far (--shot prints them): the fill
      * (with the blocks' bounds), the draw plan, the staging copy, and in all */
-    int            filled, drawn, tilesDrawn, tilesTotal;
+    int            evaluated, drawn, tilesDrawn, tilesTotal;
     double         fillMs, planMs, stageMs, updateMs, slowestMs;
 };
 
@@ -149,7 +149,9 @@ void terrain_gpu_create(Renderer *r) {
     const VkDeviceSize sampleBytes = (VkDeviceSize)TERRAIN_CLIP_LEVELS * CLIP_N * CLIP_N * sizeof(TerrainSample);
     t->samples = vk_buffer(vk, sampleBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    /* An update fills at most its budget of samples (terrain_clip_update) */
+    /* An update writes no more samples than the heights it evaluates, at most
+     * its budget, or a row when it can't afford one (terrain_clip_update) */
+    _Static_assert(TERRAIN_CLIP_BUDGET >= TERRAIN_CLIP_W, "a terrain update's staging must hold at least a row");
     for (int i = 0; i < MAX_FRAMES; ++i)
         t->staging[i] = vk_buffer(vk, (VkDeviceSize)TERRAIN_CLIP_BUDGET * sizeof(TerrainSample), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -261,7 +263,7 @@ static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj,
 void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj) {
     TerrainGpu *t = r->terrain;
     double t0 = glfwGetTime();
-    t->filled = terrain_clip_update(&t->clip, cam[0], cam[2], TERRAIN_CLIP_BUDGET);
+    t->evaluated = terrain_clip_update(&t->clip, cam[0], cam[2], TERRAIN_CLIP_BUDGET);
     double t1 = glfwGetTime();
     plan_draws(t, cam, viewProj, r->vk->extent.height);
     double t2 = glfwGetTime();
@@ -315,7 +317,7 @@ void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
 void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
     const TerrainGpu *t = r->terrain;
     snprintf(buf, n, "terrain: levels %d-%d drawn (finest ready %d, screen-space error asks for %d), %d of %d tiles in view in %d draws,\n"
-             "         last update filled %d samples in %.2f ms (fill %.2f, plan %.2f, staging %.2f; slowest %.2f ms)",
+             "         last update evaluated %d heights in %.2f ms (fill %.2f, plan %.2f, staging %.2f; slowest %.2f ms)",
              t->drawn, TERRAIN_CLIP_LEVELS - 1, t->clip.finest, t->clip.want, t->tilesDrawn, t->tilesTotal, t->ndraw,
-             t->filled, t->updateMs, t->fillMs, t->planMs, t->stageMs, t->slowestMs);
+             t->evaluated, t->updateMs, t->fillMs, t->planMs, t->stageMs, t->slowestMs);
 }

@@ -12,7 +12,7 @@ static int64_t parent_below(int64_t i) { return (i - is_odd(i)) / 2; }
  * own samples come with them). Then the parent's samples under the span, at the parent's
  * spacing, from which hc is interpolated in float exactly as from the
  * parent's own stored heights. */
-void terrain_mesh_fill(TerrainClipmap *c, int level, TerrainSpan sp) {
+int terrain_mesh_fill(TerrainClipmap *c, int level, TerrainSpan sp) {
     TerrainClipLevel *lv = &c->level[level];
     double s = lv->spacing, ps = 2.0 * s;
     int top = level == TERRAIN_CLIP_LEVELS - 1;
@@ -55,4 +55,5 @@ void terrain_mesh_fill(TerrainClipmap *c, int level, TerrainSpan sp) {
             else                o->hc = 0.5f * (p[0] + p[pw + 1]);   /* the cell's diagonal */
         }
     }
+    return hw * (sp.d + 2) + (top ? 0 : pw * pd);
 }

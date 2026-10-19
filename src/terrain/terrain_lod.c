@@ -141,9 +141,10 @@ void terrain_clip_free(TerrainClipmap *c) {
 }
 
 /* Coarsest level first. Once a level can't finish within the budget, finer
- * levels get no work this update: they couldn't be drawn inside it anyway. */
+ * levels get no work this update: they couldn't be drawn inside it anyway.
+ * Levels finer than c->want - 1 get none either (see terrain.h). */
 int terrain_clip_update(TerrainClipmap *c, double cam_x, double cam_z, int budget) {
-    int left = budget < TERRAIN_CLIP_W ? TERRAIN_CLIP_W : budget, spent = 0, stalled = 0;
+    int spent = 0, stalled = 0, lazy = c->want - 1;
     c->cam[0] = cam_x;
     c->cam[1] = cam_z;
     c->finest = TERRAIN_CLIP_LEVELS;
@@ -151,21 +152,21 @@ int terrain_clip_update(TerrainClipmap *c, double cam_x, double cam_z, int budge
         TerrainClipLevel *lv = &c->level[l];
         int64_t want[2] = { want_origin(cam_x, lv->spacing), want_origin(cam_z, lv->spacing) };
         lv->n_dirty = 0;
-        while (!stalled) {
+        while (!stalled && l >= lazy) {
             if (lv->n_pending == 0) {
                 if (lv->filled && lv->origin[0] == want[0] && lv->origin[1] == want[1]) break;
                 plan_move(lv, want);
             }
             TerrainSpan *sp = &lv->pending[lv->n_pending - 1];
-            int rows = left / sp->w < sp->d ? left / sp->w : sp->d;
+            int rows = sp->d;
+            while (rows > 0 && spent + terrain_clip_fill_cost(l, sp->w, rows) > budget) rows--;
+            if (rows == 0 && spent == 0) rows = 1;   /* always progress */
             if (rows == 0) { stalled = 1; break; }
             TerrainSpan band = *sp;
             band.d = rows;
-            terrain_mesh_fill(c, l, band);
+            spent += terrain_mesh_fill(c, l, band);
             add_dirty(lv, band);
             refresh_band(lv, band);
-            left -= rows * sp->w;
-            spent += rows * sp->w;
             sp->j0 += rows;
             sp->d -= rows;
             if (sp->d == 0 && --lv->n_pending == 0) {

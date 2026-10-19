@@ -61,9 +61,15 @@ void   terrain_height_range(double x0, double z0, double x1, double z1, double *
  * rings meet without cracks or pops. */
 
 #include "terrain_clip.h"   /* TERRAIN_CLIP_LEVELS, _N, _W, _SPACING0, _MORPH: shared with the shaders */
-/* Samples filled per update when the camera has jumped: the whole clipmap is
- * about 9 levels' worth, so a jump takes about 9 updates to fill in. */
-#define TERRAIN_CLIP_BUDGET   (TERRAIN_CLIP_W * TERRAIN_CLIP_W)
+/* Heights evaluated per update, at most: a fill evaluates its band, a
+ * one-sample apron for the normals and the parent's samples under it
+ * (terrain_clip_fill_cost), so a thin strip costs about 2.5 times the samples
+ * it writes and a whole window about 1.3 times. At about 140 ns a height this
+ * is under 2 ms. Walking spends a few hundred; the most steady motion asks
+ * for is a camera dithering across a snap line of every level at once (every
+ * 512 m), each level moving a sample pair each way, about 11,700. A jump fills
+ * in over about 16 updates, coarsest level first. */
+#define TERRAIN_CLIP_BUDGET   12288
 #define TERRAIN_CLIP_MAX_SPANS 8                      /* pieces of one level's update (see terrain_lod.c) */
 #define TERRAIN_CLIP_MAX_DIRTY (2 * TERRAIN_CLIP_MAX_SPANS)
 
@@ -131,12 +137,25 @@ typedef struct TerrainClipmap {
 /* Allocates the levels, all empty; free with terrain_clip_free. */
 void   terrain_clip_init(TerrainClipmap *c);
 void   terrain_clip_free(TerrainClipmap *c);
-/* Moves the levels to follow the camera, filling at most `budget` samples
- * (whole rows; a budget under one row is raised to a row so work always
- * progresses). Levels are filled coarsest first: a finer level is only worth
- * drawing inside a ready coarser one. Returns the samples filled. Clears and
- * refills each level's dirty list. */
+/* Moves the levels to follow the camera, evaluating at most `budget` heights
+ * (whole rows; an update that can't afford a row fills one anyway, so work
+ * always progresses). Levels are filled coarsest first: a finer level is only
+ * worth drawing inside a ready coarser one. Levels more than one finer than
+ * c->want (terrain_clip_select) are left as they are, filled or part filled:
+ * nothing draws them, and a fast camera high up would spend most of each
+ * update on them. The one just finer than c->want is kept, so the selection
+ * can refine at once; finer still follow a level at a time as it asks.
+ * Returns the heights evaluated. Clears and refills each level's dirty list. */
 int    terrain_clip_update(TerrainClipmap *c, double cam_x, double cam_z, int budget);
+/* An upper bound on the heights terrain_mesh_fill evaluates for a span of
+ * w x d samples of a level: the span and its apron, and below the coarsest
+ * level the parent samples under it. One row of the window costs at most
+ * terrain_clip_fill_cost(0, TERRAIN_CLIP_W, 1). */
+static inline int terrain_clip_fill_cost(int level, int w, int d) {
+    int cost = (w + 2) * (d + 2);
+    if (level < TERRAIN_CLIP_LEVELS - 1) cost += ((w + 1) / 2 + 1) * ((d + 1) / 2 + 1);
+    return cost;
+}
 /* Blend weight of level l into its parent at world (x, z), for the camera of
  * the last update: 0 over most of the window, rising to exactly 1 at and
  * beyond its edge, and 0 wherever its child level is drawn. The drawn height
@@ -164,9 +183,10 @@ void   terrain_clip_bounds(const TerrainClipLevel *lv, int64_t i0, int64_t j0, i
  * threshold, a pixel or less, which is the transition between whole levels;
  * the geomorph still joins the levels drawn.
  *
- * The update still fills every level, drawn or not (cheap while the camera
- * moves smoothly), so a level asked for again is ready at once and the
- * selection's errors are its own. */
+ * The update keeps the levels down to one finer than the selection filled
+ * (terrain_clip_update), so refining a level is ready at once; finer levels
+ * keep the window they last had, and their errors are from it until the
+ * selection reaches them and they catch up. */
 #define TERRAIN_SSE_REFINE  1.0
 #define TERRAIN_SSE_COARSEN 0.5
 #define TERRAIN_SSE_NEAR    1.0      /* nearer than this (m) counts as this */

@@ -228,6 +228,15 @@ static void check_blocks(const TerrainClipLevel *lv, int l) {
                   lv->blocks[k].lo, lv->blocks[k].hi, lv->blocks[k].err, want[k].lo, want[k].hi, want[k].err);
 }
 
+/* Updates a fill from scratch (or a jump) may take on the full budget: the
+ * whole clipmap's heights, plus a quarter for the bands' aprons and the rows
+ * that don't fit what an update has left. */
+static int jump_bound(void) {
+    int total = 0;
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) total += terrain_clip_fill_cost(l, TERRAIN_CLIP_W, TERRAIN_CLIP_W);
+    return (int)ceil(1.25 * total / TERRAIN_CLIP_BUDGET) + 1;
+}
+
 static int fill_all(TerrainClipmap *c, double x, double z) {
     int updates = 0;
     do {
@@ -278,7 +287,7 @@ static void test_clipmap(Rng *r) {
     clock_t t0 = clock();
     int updates = fill_all(&clip, cx, cz);
     double ms = 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC;
-    CHECK(clip.finest == 0 && updates <= TERRAIN_CLIP_LEVELS, "fill from scratch took %d updates (finest ready level %d)", updates, clip.finest);
+    CHECK(clip.finest == 0 && updates <= jump_bound(), "fill from scratch took %d updates (finest ready level %d)", updates, clip.finest);
     for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
         check_contents(&clip, l);
         check_blocks(&clip.level[l], l);
@@ -336,7 +345,8 @@ static void test_clipmap(Rng *r) {
             was[l][1] = clip.level[l].origin[1];
         }
         int spent = terrain_clip_update(&clip, x, z, budget);
-        CHECK(spent <= (budget > TERRAIN_CLIP_W ? budget : TERRAIN_CLIP_W), "update filled %d samples on a budget of %d", spent, budget);
+        const int row = terrain_clip_fill_cost(0, TERRAIN_CLIP_W, 1);
+        CHECK(spent <= (budget > row ? budget : row), "update evaluated %d heights on a budget of %d", spent, budget);
         if (spent > maxSpent) maxSpent = spent;
         for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
             const TerrainClipLevel *lv = &clip.level[l];
@@ -374,11 +384,44 @@ static void test_clipmap(Rng *r) {
             compared++;
         }
     }
-    CHECK(worstRecovery <= TERRAIN_CLIP_LEVELS, "a jump took %d updates to fill in on the full budget", worstRecovery);
+    CHECK(worstRecovery <= jump_bound(), "a jump took %d updates to fill in on the full budget (bound %d)", worstRecovery, jump_bound());
     CHECK(steadyMisses == 0, "%d of %d updates while moving on the full budget left a level not ready", steadyMisses, steadyUpdates);
     printf("  walk: %d updates, %d moves checked, %d jumps (filled in within %d updates), %d steady updates all ready,\n"
-           "        at most %d samples an update, %d comparisons with a fresh fill; children sit %d-%d parent samples in\n",
+           "        at most %d heights an update, %d comparisons with a fresh fill; children sit %d-%d parent samples in\n",
            WALK_STEPS, moves, jumps, worstRecovery, steadyUpdates, maxSpent, compared, mMin, mMax);
+
+    /* 10b. Levels the selection won't draw soon are left alone: with want at
+     *      LAZY_WANT, a flight leaves the levels finer than LAZY_WANT - 1 where
+     *      they were, writing nothing, while the rest keep up. Asked for again,
+     *      they catch up to what a fresh fill holds. */
+    enum { LAZY_WANT = 4 };
+    fill_all(&clip, x, z);
+    int64_t kept[TERRAIN_CLIP_LEVELS][2];
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) { kept[l][0] = clip.level[l].origin[0]; kept[l][1] = clip.level[l].origin[1]; }
+    int lazyWrites = 0, lazyMisses = 0;
+    clip.want = LAZY_WANT;
+    for (int step = 0; step < 200; ++step) {
+        x += 6.0;
+        terrain_clip_update(&clip, x, z, TERRAIN_CLIP_BUDGET);
+        for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
+            if (l < LAZY_WANT - 1) lazyWrites += clip.level[l].n_dirty;
+            else lazyMisses += !clip.level[l].ready;
+        }
+    }
+    int lazyKept = 1;
+    for (int l = 0; l < LAZY_WANT - 1; ++l) lazyKept &= clip.level[l].origin[0] == kept[l][0] && clip.level[l].origin[1] == kept[l][1];
+    CHECK(lazyWrites == 0 && lazyKept, "levels finer than %d moved (%d rectangles written) while want was %d", LAZY_WANT - 1, lazyWrites, LAZY_WANT);
+    CHECK(lazyMisses == 0, "levels %d and coarser fell behind %d times while finer ones were left", LAZY_WANT - 1, lazyMisses);
+    CHECK(clip.finest == LAZY_WANT - 1, "with want %d the finest ready level is %d", LAZY_WANT, clip.finest);
+    clip.want = 0;
+    int caught = fill_all(&clip, x, z);
+    terrain_clip_free(&fresh);
+    terrain_clip_init(&fresh);
+    fill_all(&fresh, x, z);
+    CHECK(same_clipmaps(&clip, &fresh), "the levels left alone didn't catch up to a fresh fill");
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) check_blocks(&clip.level[l], l);
+    printf("  a 1.2 km flight with level %d wanted left levels 0-%d alone; asked for again, they caught up in %d updates\n",
+           LAZY_WANT, LAZY_WANT - 2, caught);
     terrain_clip_free(&clip);
     terrain_clip_free(&fresh);
 }

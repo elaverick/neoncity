@@ -68,9 +68,11 @@ the terrain roadmap.
     where it can't be seen. Over the land a time-based blend would hide it if it ever shows.
   - **Hidden ground still counts.** Within the view distance the city's own ground covers the terrain, but its
     error is still counted. A level whose window lies wholly under built towns could be dropped outright.
-  - **Every level is still filled**, drawn or not. That is cheap while the camera moves smoothly, and it means a
-    level the error asks for again is ready at once. A fast flight high up spends most of each update on levels it
-    doesn't draw; if that ever shows, fill the undrawn levels last and lazily.
+  - **Undrawn levels wait.** The update keeps the levels down to one finer than the error asks for; finer ones
+    keep their old window until it asks for them, then catch up a level at a time (a few updates each), so coming
+    down fast from high up refines over a fraction of a second. The budget counts heights evaluated
+    (`TERRAIN_CLIP_BUDGET`, about 2 ms at most); the fill still runs on the render thread. If a fast flight shows
+    spikes in the `--shot` timings, move the fill to a worker.
   - **City and building detail.** The design doc wants the same perceptual rule applied to the city's levels of
     detail, independently of the terrain's: see "Level of detail" under the distant proxies.
 - **The graded city** stands on `city_ground_y` (10 m of relief, grades up to about 1.1%): the streets are draped onto

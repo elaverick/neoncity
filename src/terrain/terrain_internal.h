@@ -67,5 +67,6 @@ double terrain_surface_lod(double x, double z, double spacing, float *urban);
 /* Fills the samples of `span` (which must not wrap in storage; see
  * terrain_lod.c) on level `level` of c: heights at the level's spacing, the
  * parent's surface (hc), normals and urban weights. Every value written is a pure function of
- * the level and the world sample. */
-void terrain_mesh_fill(TerrainClipmap *c, int level, TerrainSpan span);
+ * the level and the world sample. Returns the heights it evaluated (at most
+ * terrain_clip_fill_cost). */
+int  terrain_mesh_fill(TerrainClipmap *c, int level, TerrainSpan span);
