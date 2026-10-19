@@ -23,7 +23,9 @@
  * through the city's ground.
  *
  * Then the planet: the chart, the cube-sphere's patches and their seams, the
- * ground over the whole sphere, the bend and horizon culling.
+ * ground over the whole sphere, the bend and horizon culling; then the
+ * patches' meshes and the selection of which to draw (terrain_test --patches
+ * runs only those).
  *
  * terrain_test --fingerprint prints a hash of the heights, the footprint and
  * some filled clipmaps instead, to compare what two builds generate;
@@ -1150,6 +1152,191 @@ static void test_planet(Rng *r) {
     CHECK(farN > 0 && farHidden == farN, "horizon culling missed %d of %d balls well past the horizon", farN - farHidden, farN);
 }
 
+/* --- Planet patches ----------------------------------------------------------------- */
+
+static TerrainDir vabs(const TerrainPatchMesh *m, int k, int morphed) {
+    const TerrainPatchVertex *v = &m->v[k];
+    TerrainDir p = { m->info.centre.x + v->pos[0], m->info.centre.y + v->pos[1], m->info.centre.z + v->pos[2] };
+    if (morphed) { p.x += v->morph[0]; p.y += v->morph[1]; p.z += v->morph[2]; }
+    return p;
+}
+
+/* A view for the selection: a camera at world (x, y, z) looking along yaw and
+ * pitch (degrees, as the player's), 1600 x 900 at 72 degrees, far plane far
+ * enough for the horizon. */
+static TerrainPlanetView planet_view(double x, double y, double z, float yawDeg, float pitchDeg) {
+    TerrainPlanetView v;
+    memset(&v, 0, sizeof(v));
+    v.cam[0] = x; v.cam[1] = y; v.cam[2] = z;
+    float yaw = yawDeg * PI_F / 180.0f, pitch = pitchDeg * PI_F / 180.0f, fovy = 72.0f * PI_F / 180.0f;
+    vec3 fwd = v3(cosf(pitch) * sinf(yaw), sinf(pitch), -cosf(pitch) * cosf(yaw));
+    vec3 right = v3_norm(v3_cross(fwd, v3(0.0f, 1.0f, 0.0f)));
+    vec3 up = v3_cross(right, fwd);
+    mat4 vp = mat4_mul(mat4_perspective_rz(fovy, 16.0f / 9.0f, 0.08f, 1.0e6f), mat4_view_rot(right, up, fwd));
+    v.frustum = frustum_from_matrix(vp);
+    v.K = 900.0 / (2.0 * tan(0.5 * fovy));
+    return v;
+}
+
+/* Selects and fills until nothing more is wanted (or `rounds` run out), as
+ * the renderer would over frames. Returns the rounds taken; *fills gets the
+ * patches filled. */
+static int settle(TerrainPlanet *tp, const TerrainPlanetView *v, TerrainPatchMesh *scratch, int rounds, int *fills) {
+    int k = 0;
+    for (; k < rounds; ++k) {
+        terrain_planet_select(tp, v);
+        if (tp->nwant == 0) break;
+        for (int w = 0; w < tp->nwant; ++w) {
+            terrain_patch_fill(tp->want[w], scratch);
+            if (terrain_planet_insert(tp, &scratch->info) >= 0 && fills) (*fills)++;
+        }
+    }
+    return k;
+}
+
+static uint64_t hash_draws(const TerrainPlanet *tp) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (int k = 0; k < tp->ndraw; ++k) {
+        TerrainPatch id = tp->slot[tp->draw[k].slot].info.id;
+        h = fnv(&id, sizeof(id), h);
+    }
+    return h;
+}
+
+/* 10. The planet's patches: meshes are pure functions of the patch, meet
+ *     their neighbours across every seam, morph onto their parent exactly, and
+ *     their err bounds where their children's vertices leave them; the
+ *     selection is bounded, steady, never draws a patch with its ancestor, and
+ *     refines where it matters. */
+static void test_planet_patches(Rng *r) {
+    TerrainPatchMesh *a = (TerrainPatchMesh *)malloc(sizeof(TerrainPatchMesh) * 8);
+    TerrainPatchMesh *top = (TerrainPatchMesh *)malloc(sizeof(TerrainPatchMesh) * 6);
+    TerrainPlanet *tp = (TerrainPlanet *)malloc(sizeof(TerrainPlanet));
+    if (!a || !top || !tp) { CHECK(0, "out of memory"); return; }
+    const int PSIDE = TERRAIN_PATCH_SIDE, PCELL = TERRAIN_PATCH_CELLS;
+
+    /* Patches near the city and elsewhere, some across a face seam. */
+    TerrainPatch picks[12];
+    for (int k = 0; k < 12; ++k) {
+        TerrainDir p = k < 6 ? terrain_chart_dir((k - 3) * 30000.0, (k % 3 - 1) * 40000.0) : prand(r);
+        picks[k] = terrain_patch_at(p, 4 + k % 7);
+    }
+    picks[11] = terrain_patch_at(terrain_face_dir(0, 0.3, 0.99999), 9);   /* on face 0 against face 4 */
+    double seamWorst = 0.0, morphWorst = 0.0, errSlack = 1e30;
+    clock_t t0 = clock();
+    int evals = 0, nfill = 0;
+    for (int k = 0; k < 12; ++k) {
+        TerrainPatch t = picks[k];
+        evals += terrain_patch_fill(t, &a[0]);
+        terrain_patch_fill(t, &a[1]);
+        nfill++;
+        /* (the info and the vertices; the struct's tail padding is never written) */
+        CHECK(memcmp(&a[0].info, &a[1].info, sizeof(TerrainPatchInfo)) == 0 && memcmp(a[0].v, a[1].v, sizeof(a[0].v)) == 0, "patch %d/%d/%lld,%lld fills differently twice", t.face, t.level, (long long)t.i, (long long)t.j);
+        CHECK(isfinite(a[0].info.err) && a[0].info.err >= 0.0f && a[0].info.radius > 0.0f, "patch err %.3f radius %.1f", a[0].info.err, a[0].info.radius);
+        /* every vertex within the radius */
+        for (int v = 0; v < TERRAIN_PATCH_VERTS; ++v) {
+            TerrainDir q = vabs(&a[0], v, 0);
+            CHECK(pdist(q, a[0].info.centre) <= a[0].info.radius, "a vertex lies outside its patch's radius");
+        }
+        /* seams: each edge vertex is a vertex of the neighbour across it */
+        for (int side = 0; side < 4; ++side) {
+            TerrainPatch nb = terrain_patch_neighbour(t, side);
+            terrain_patch_fill(nb, &a[2]);
+            for (int e = 0; e < PSIDE; ++e) {
+                int gi = side < 2 ? (side == 0 ? 0 : PCELL) : e, gj = side < 2 ? e : (side == 2 ? 0 : PCELL);
+                TerrainDir q = vabs(&a[0], gj * PSIDE + gi, 0);
+                double best = 1e30;
+                for (int s2 = 0; s2 < 4; ++s2)
+                    for (int e2 = 0; e2 < PSIDE; ++e2) {
+                        int hi = s2 < 2 ? (s2 == 0 ? 0 : PCELL) : e2, hj = s2 < 2 ? e2 : (s2 == 2 ? 0 : PCELL);
+                        best = fmin(best, pdist(q, vabs(&a[2], hj * PSIDE + hi, 0)));
+                    }
+                seamWorst = fmax(seamWorst, best / a[0].info.radius);
+            }
+        }
+        /* children: at full morph each is its parent's surface; and its vertices
+         * at the parent's cell centres are within the parent's err */
+        for (int c = 0; c < 4; ++c) {
+            TerrainPatchMesh *ch = &a[3 + c];
+            terrain_patch_fill(terrain_patch_child(t, c), ch);
+            int oi = (c & 1) * PCELL / 2, oj = (c >> 1) * PCELL / 2;
+            for (int gj = 0; gj <= PCELL; ++gj)
+                for (int gi = 0; gi <= PCELL; ++gi) {
+                    int pi = oi + gi / 2, pj = oj + gj / 2, di = gi & 1, dj = gj & 1;
+                    TerrainDir pa = vabs(&a[0], pj * PSIDE + pi, 0), pb = vabs(&a[0], (pj + dj) * PSIDE + pi + di, 0);
+                    TerrainDir want = { 0.5 * (pa.x + pb.x), 0.5 * (pa.y + pb.y), 0.5 * (pa.z + pb.z) };
+                    TerrainDir got = vabs(ch, gj * PSIDE + gi, 1);
+                    morphWorst = fmax(morphWorst, pdist(got, want) / a[0].info.radius);
+                    if (di && dj) errSlack = fmin(errSlack, a[0].info.err - pdist(vabs(ch, gj * PSIDE + gi, 0), want));
+                }
+        }
+    }
+    double ms = 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC / (nfill * 26);
+    printf("planet patches: %d heights a fill, about %.2f ms; seams within %.1e of the radius, morph %.1e; err's least slack %.3f m\n",
+           evals / 12, ms, seamWorst, morphWorst, errSlack);
+    CHECK(seamWorst < 1e-6, "patch seams open by %.2e of the radius", seamWorst);
+    CHECK(morphWorst < 1e-6, "a child fully morphed is %.2e of the radius off its parent's surface", morphWorst);
+    CHECK(errSlack > -0.01, "a child's vertex leaves its parent's surface by more than the parent's err (%.3f m)", -errSlack);
+
+    /* The selection, from the street, a tower, and aircraft height. */
+    terrain_planet_init(tp, top);
+    TerrainPlanetView v0 = planet_view(0.0, 2.0, 0.0, 90.0f, 0.0f);
+    terrain_planet_select(tp, &v0);
+    CHECK(tp->ndraw > 0 && tp->ndraw <= 6, "with only the top patches filled, %d are drawn", tp->ndraw);
+    const struct { double x, y, z; float yaw, pitch; const char *name; double win; } views[] = {
+        { 0.0, 2.0, 0.0, 90.0f, 0.0f, "street", 1 }, { 12500.0, 300.0, 0.0, 90.0f, -2.0f, "edge, 300 m", 1 },
+        { 30000.0, 2000.0, -20000.0, 45.0f, -10.0f, "land, 2 km", 1 }, { 0.0, 10000.0, 0.0, 120.0f, -20.0f, "10 km", 1 },
+        { 0.0, 20000.0, 0.0, 300.0f, -45.0f, "20 km, down", 1 }, { 0.0, 20000.0, 0.0, 30.0f, 0.0f, "20 km, level", 0 },
+    };
+    for (int k = 0; k < (int)(sizeof(views) / sizeof(views[0])); ++k) {
+        TerrainPlanetView v = planet_view(views[k].x, views[k].y, views[k].z, views[k].yaw, views[k].pitch);
+        if (views[k].win) {   /* a clipmap window as the renderer's: 64.5 km round the camera */
+            v.window = 1;
+            v.win[0] = views[k].x - 32000.0; v.win[1] = views[k].z - 32000.0;
+            v.win[2] = views[k].x + 32000.0; v.win[3] = views[k].z + 32000.0;
+        }
+        int fills = 0;
+        int rounds = settle(tp, &v, &a[0], 400, &fills);
+        CHECK(tp->nwant == 0, "%s: still wanting %d patches after %d rounds", views[k].name, tp->nwant, rounds);
+        CHECK(tp->ndraw < TERRAIN_PLANET_MAX_DRAWS, "%s: %d patches drawn, the most there's room for", views[k].name, tp->ndraw);
+        int lv[TERRAIN_PATCH_LEVELS] = { 0 }, hole = 0, lmin = 99, lmax = 0;
+        for (int d = 0; d < tp->ndraw; ++d) {
+            const TerrainPlanetSlot *sl = &tp->slot[tp->draw[d].slot];
+            CHECK(sl->used, "a drawn patch's slot is empty");
+            int L = sl->info.id.level;
+            lv[L]++; lmin = L < lmin ? L : lmin; lmax = L > lmax ? L : lmax;
+            hole += tp->draw[d].hole;
+            /* no ancestor drawn too */
+            for (TerrainPatch p = sl->info.id; p.level > 0;) {
+                p = terrain_patch_parent(p);
+                for (int e = 0; e < tp->ndraw; ++e)
+                    CHECK(!same_patch(tp->slot[tp->draw[e].slot].info.id, p), "%s: a patch is drawn with its ancestor", views[k].name);
+            }
+        }
+        /* steady: the same view again draws the same, and a camera dithering
+         * by half a metre each frame changes it at most once */
+        uint64_t h0 = hash_draws(tp);
+        terrain_planet_select(tp, &v);
+        CHECK(hash_draws(tp) == h0 && tp->nwant == 0, "%s: the same view selects differently", views[k].name);
+        int changes = 0;
+        uint64_t prev = h0;
+        for (int f = 0; f < 40; ++f) {
+            TerrainPlanetView vd = v;
+            vd.cam[0] += f & 1 ? 0.5 : -0.5;
+            settle(tp, &vd, &a[0], 10, NULL);
+            uint64_t hd = hash_draws(tp);
+            changes += hd != prev;
+            prev = hd;
+        }
+        CHECK(changes <= 2, "%s: a dithering camera changes the patches %d times", views[k].name, changes);
+        printf("  %-13s %4d drawn (levels %d-%d, %d cut by the window), %d culled, %d past the horizon, %d inside; %d filled in %d rounds\n",
+               views[k].name, tp->ndraw, lmin, lmax, hole, tp->culled, tp->hidden, tp->inside, fills, rounds);
+    }
+    free(a);
+    free(top);
+    free(tp);
+}
+
 int main(int argc, char **argv) {
     /* Points round the city and its surroundings, plus some far away. */
     DVec2 c = plan_town_centre(0, 0);
@@ -1162,6 +1349,7 @@ int main(int argc, char **argv) {
         g_z[i] = c.z + (2.0 * v - 1.0) * span;
     }
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
+    if (argc > 1 && strcmp(argv[1], "--patches") == 0) { test_planet_patches(&r); return g_failures != 0; }
     if (argc > 2 && strcmp(argv[1], "--map") == 0) return map(argv[2], argc > 3 ? atof(argv[3]) : 60.0);
     if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
 
@@ -1319,6 +1507,7 @@ int main(int argc, char **argv) {
     test_select();
     test_fade();
     test_planet(&r);
+    test_planet_patches(&r);
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all terrain tests passed (%d points)\n", N_POINTS);

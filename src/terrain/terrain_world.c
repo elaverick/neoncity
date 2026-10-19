@@ -24,14 +24,6 @@
 #define CHART_BLEND_TO    (0.60 * PI)
 #define ANTIPODE_OFFSET_M 3.1e6
 
-static double dot3(TerrainDir a, TerrainDir b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-static TerrainDir cross3(TerrainDir a, TerrainDir b) {
-    TerrainDir r = { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
-    return r;
-}
-static TerrainDir scale3(TerrainDir a, double s) { TerrainDir r = { a.x * s, a.y * s, a.z * s }; return r; }
-static TerrainDir add3(TerrainDir a, TerrainDir b) { TerrainDir r = { a.x + b.x, a.y + b.y, a.z + b.z }; return r; }
-static TerrainDir unit3(TerrainDir a) { return scale3(a, 1.0 / sqrt(dot3(a, a))); }
 static double comp(TerrainDir a, int k) { return k == 0 ? a.x : k == 1 ? a.y : a.z; }
 
 /* --- The cube-sphere ------------------------------------------------------------ */

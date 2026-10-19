@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "mathlib.h"   /* Frustum */
 
 /* Terrain: the ground surface of the world, everywhere, independent of the
  * city chunks and of the camera. Heights are world Y in metres; X and Z are
@@ -132,6 +133,131 @@ double terrain_planet_lowest(void);
  * making a sphere nothing can be seen through. Conservative: a ball it
  * reports hidden is hidden. */
 int        terrain_horizon_hidden(TerrainDir cam, TerrainDir centre, double radius, double occluder);
+
+/* --- Planet patches (src/terrain/terrain_patch.c) -------------------------------
+ * Beyond the clipmap's coarsest window the ground is drawn as cube-sphere
+ * patches: each a grid of TERRAIN_PATCH_CELLS cells a side over its square of
+ * face, sampled at its cell size (terrain_patch_spacing), refined by
+ * screen-space error as a quadtree from the six faces down.
+ *
+ * A patch's mesh is a pure function of its identity. Its vertices are the
+ * grid's (TERRAIN_PATCH_SIDE^2, row by row, (gi, gj) at gi + gj * SIDE), then
+ * a skirt: each edge's vertices again, hanging down out of sight below any
+ * crack between it and a neighbour of another level (4 * SIDE: the gj = 0
+ * edge, gj = C, gi = 0, gi = C, each in order of the other index). The grid
+ * is triangulated along each cell's diagonal from (gi, gj) to (gi + 1,
+ * gj + 1), as the clipmap's, so that a patch's four children, all morphed
+ * fully, are their parent's surface exactly:
+ *   pos    the vertex less the patch's centre, in the planet frame (m);
+ *   morph  where it moves to on the parent's surface, less pos (0 on the
+ *          six top patches);
+ *   n      the unit normal, in the planet frame;
+ *   chart  its world (x, z) less the patch's centre's (m; for cutting the
+ *          clipmap's window out; garbage round the antipode, never seen).
+ * err is how far the surface strays from its children's, at the cells'
+ * centres: what drawing it in their place costs. */
+#define TERRAIN_PATCH_CELLS 32
+#define TERRAIN_PATCH_SIDE  (TERRAIN_PATCH_CELLS + 1)
+#define TERRAIN_PATCH_VERTS (TERRAIN_PATCH_SIDE * TERRAIN_PATCH_SIDE + 4 * TERRAIN_PATCH_SIDE)
+#define TERRAIN_PATCH_LEVELS 15   /* the finest the selection goes: level 14, cells about 76 m */
+
+typedef struct TerrainPatchVertex { float pos[3], morph[3], n[3], chart[2]; } TerrainPatchVertex;
+typedef struct TerrainPatchInfo {
+    TerrainPatch id;
+    TerrainDir   centre;           /* planet frame (m): on the sphere, under the patch's middle */
+    double       chart[2];         /* world (x, z) of the centre */
+    double       chart_lo[2], chart_hi[2];   /* world (x, z) bounds of its vertices */
+    float        radius;           /* every vertex, skirt too, lies within this of the centre (m) */
+    float        err;              /* m; see above */
+    float        lo, hi;           /* its heights (m, world Y) */
+} TerrainPatchInfo;
+typedef struct TerrainPatchMesh { TerrainPatchInfo info; TerrainPatchVertex v[TERRAIN_PATCH_VERTS]; } TerrainPatchMesh;
+
+/* Metres between a patch's samples at a level: its cells' size where they're
+ * largest (the face's middle lines), the spacing its heights are evaluated
+ * at, so no detail finer than its cells reaches it. */
+double terrain_patch_spacing(int level);
+/* Fills a patch's mesh. Pure; returns the heights it evaluated. */
+int    terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m);
+
+/* The selection: which patches to draw for a camera, from a cache of the
+ * patches filled so far (their TerrainPatchInfo; the caller keeps their
+ * meshes, by cache slot). A patch is split into its children when its err
+ * would show (err * K / distance over TERRAIN_PLANET_REFINE pixels, through
+ * the haze) and they are all ready, and merged back once under
+ * TERRAIN_PLANET_COARSEN; until children
+ * are ready it is drawn itself, so a coarse surface always covers the view
+ * (the six top patches are filled at init). Patches hidden by the horizon,
+ * outside the frustum or wholly inside the clipmap's window aren't drawn.
+ *
+ * Between whole patches the change is a morph: a child's vertex is on its
+ * parent's surface from the distance its parent splits at (where the err
+ * reaches TERRAIN_PLANET_REFINE pixels), blending to its own by
+ * TERRAIN_PLANET_MORPH_IN of that distance. Splitting and merging happen where
+ * every vertex of the children is still on the parent's surface, so neither
+ * pops. */
+/* The patches are all far off, mostly under haze, and their canyon walls and
+ * escarpments are cliffs that only cells of about distance / K would follow
+ * to the pixel: twice the clipmap's thresholds. */
+#define TERRAIN_PLANET_REFINE    2.0
+#define TERRAIN_PLANET_COARSEN   1.0
+#define TERRAIN_PLANET_SLOTS     1536
+#define TERRAIN_PLANET_MAX_DRAWS 1024
+#define TERRAIN_PLANET_MAX_WANTS 64
+#define TERRAIN_PLANET_MORPH_IN  0.5
+#define TERRAIN_PLANET_HOLE_M    1024.0   /* the clipmap's window, less this, is cut out of the patches */
+
+typedef struct TerrainPlanetView {
+    double  cam[3];     /* world (x, y, z) */
+    double  K;          /* the viewport's pixels per unit of tangent (as terrain_clip_select) */
+    Frustum frustum;    /* in the camera's local frame (terrain_chart_frame), camera-relative */
+    double  haze;       /* how far the haze takes all but 1/e of a patch's contrast (m); 0 for clear air */
+    int     window;     /* whether the clipmap's window below is drawn */
+    double  win[4];     /* its world x0, z0, x1, z1 */
+} TerrainPlanetView;
+
+/* A patch to draw: its cache slot, the distances its morph runs between
+ * (from morph_hi, all on the parent's surface, in to morph_lo, all its own;
+ * 0 and 0 for no morph), and whether it reaches into the clipmap's window. */
+typedef struct TerrainPlanetDraw { int slot; float morph_lo, morph_hi; int hole; } TerrainPlanetDraw;
+
+typedef struct TerrainPlanetSlot {
+    TerrainPatchInfo info;
+    int              used;      /* holds a patch */
+    int              split;     /* drawn as its children last time */
+    uint32_t         seen;      /* the selection's count when last wanted or drawn */
+    int              next;      /* the hash chain */
+} TerrainPlanetSlot;
+
+typedef struct TerrainPlanet {
+    TerrainPlanetSlot slot[TERRAIN_PLANET_SLOTS];
+    int               head[4096];   /* hash of a patch's identity -> its slot chain */
+    uint32_t          count;        /* selections made */
+    /* The last selection: the patches to draw, and those it wanted and
+     * hadn't, the most needed first (fill them, then terrain_planet_insert). */
+    TerrainPlanetDraw draw[TERRAIN_PLANET_MAX_DRAWS];
+    int               ndraw;
+    TerrainPatch      want[TERRAIN_PLANET_MAX_WANTS];
+    int               nwant;
+    /* Its camera, in the planet frame, and its local frame: where a patch's
+     * centre c is drawn is (c - cam) . (ax, up, az). */
+    TerrainDir        cam, ax, up, az;
+    /* Bookkeeping for the selection's pass. */
+    float             want_pri[TERRAIN_PLANET_MAX_WANTS];
+    int               culled, hidden, inside;
+} TerrainPlanet;
+
+/* Allocates nothing; fills the six top patches into *top (6 meshes, the
+ * caller's), inserting them. Returns the heights evaluated. */
+int  terrain_planet_init(TerrainPlanet *tp, TerrainPatchMesh top[6]);
+/* Puts a filled patch in the cache, in a slot not used by the last selection,
+ * and returns the slot (the caller uploads the mesh there), or -1 if every
+ * slot is in use (or it is there already). The top patches are never evicted. */
+int  terrain_planet_insert(TerrainPlanet *tp, const TerrainPatchInfo *info);
+/* Chooses the patches to draw for a view (tp->draw) and those wanted (tp->want). */
+void terrain_planet_select(TerrainPlanet *tp, const TerrainPlanetView *view);
+/* The slot holding a patch, or -1. */
+int  terrain_planet_find(const TerrainPlanet *tp, TerrainPatch t);
 
 /* --- Clipmap -----------------------------------------------------------------
  * Nested square grids of terrain samples round the camera, for drawing the

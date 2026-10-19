@@ -11,6 +11,8 @@
  *   terrain_mesh.c     filling a strip of a level: heights, parent heights, normals
  *   terrain_world.c    the planet: the chart world X/Z is, the cube-sphere and its
  *                      patches, the ground over the whole sphere, the bend and the horizon
+ *   terrain_patch.c    the planet's patches: their meshes, the cache of them and the
+ *                      quadtree selection of which to draw
  *
  * height = w * urban + (1 - w) * land, w = plan_urban(x, z):
  *   urban  slow relief under the city, wavelengths no shorter than
@@ -167,6 +169,17 @@ double terrain_urban_lod_error(double spacing, double relief);
 /* How far the surface drawn at `spacing` sinks where plan_urban is 1, over
  * ground of that relief (m). */
 double terrain_urban_sink(double spacing, double relief);
+
+/* Vector arithmetic on planet-frame directions and points (double). */
+static inline double dot3(TerrainDir a, TerrainDir b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+static inline TerrainDir cross3(TerrainDir a, TerrainDir b) {
+    TerrainDir r = { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
+    return r;
+}
+static inline TerrainDir scale3(TerrainDir a, double s) { TerrainDir r = { a.x * s, a.y * s, a.z * s }; return r; }
+static inline TerrainDir add3(TerrainDir a, TerrainDir b) { TerrainDir r = { a.x + b.x, a.y + b.y, a.z + b.z }; return r; }
+static inline TerrainDir sub3(TerrainDir a, TerrainDir b) { TerrainDir r = { a.x - b.x, a.y - b.y, a.z - b.z }; return r; }
+static inline TerrainDir unit3(TerrainDir a) { return scale3(a, 1.0 / sqrt(dot3(a, a))); }
 
 /* Scratch sizes for a fill: a span (at most W a side) with a one-sample apron
  * for normals, and the parent samples under it. */

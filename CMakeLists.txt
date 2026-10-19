@@ -135,8 +135,9 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/dr
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c)
 # Terrain (src/terrain): the ground everywhere, a pure function of position over the planet the world's
 # X/Z is a chart of (terrain_height.c, terrain_land.c and terrain_world.c, in GEN_SOURCES: the city
-# builds on them), and the clipmap that samples it round the camera (drawn by src/render/terrain_gpu.c).
-set(TERRAIN_SOURCES src/terrain/terrain_lod.c src/terrain/terrain_mesh.c)
+# builds on them), the clipmap that samples it round the camera (drawn by src/render/terrain_gpu.c) and
+# the planet's patches beyond it (terrain_patch.c).
+set(TERRAIN_SOURCES src/terrain/terrain_lod.c src/terrain/terrain_mesh.c src/terrain/terrain_patch.c)
 
 # --- Tests: generator determinism ------------------------------------------------
 enable_testing()
