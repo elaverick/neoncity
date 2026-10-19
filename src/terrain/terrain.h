@@ -80,6 +80,20 @@ void   terrain_height_range(double x0, double z0, double x1, double z1, double *
  * its belt (the renderer hazes the two differently). */
 typedef struct TerrainSample { float h, hc, nx, nz, urban; } TerrainSample;
 
+/* Bounds over a block of a level's storage: the TERRAIN_CLIP_BLOCK^2 slots
+ * from (bx, bz) * BLOCK. Storage blocks are world-aligned: world sample (i, j)
+ * lies in world block (i, j) / BLOCK (rounding down), stored in block
+ * (that mod TERRAIN_CLIP_NB), so a block holds one world block's samples,
+ * except the block at the window's seam, which holds a piece of each end of
+ * the window and bounds both. Only the window's samples count. lo and hi
+ * bound the drawn height whatever its morph (h and hc); err is the largest
+ * |h - hc|: how far the surface moves there if the level is dropped for its
+ * parent. Both surfaces are linear over each of the level's triangles (each
+ * lies in one of the parent's), so between samples the move is no larger. */
+#define TERRAIN_CLIP_BLOCK 8
+#define TERRAIN_CLIP_NB    (TERRAIN_CLIP_N / TERRAIN_CLIP_BLOCK)
+typedef struct TerrainBlock { float lo, hi, err; } TerrainBlock;
+
 /* A rectangle of storage slots, [x0, x1) x [z0, z1); never wraps. */
 typedef struct TerrainRect { int x0, z0, x1, z1; } TerrainRect;
 
@@ -94,6 +108,9 @@ typedef struct TerrainClipLevel {
     /* Slots written by the last update, for the renderer to upload. */
     int            n_dirty;
     TerrainRect    dirty[TERRAIN_CLIP_MAX_DIRTY];
+    /* Bounds of each storage block, exact for the window once filled (they
+     * then depend only on the window, never on the camera's path). */
+    TerrainBlock   blocks[TERRAIN_CLIP_NB * TERRAIN_CLIP_NB];
     /* terrain_lod.c's bookkeeping. */
     int            filled;     /* every slot of the window at origin holds its sample */
     int64_t        target[2];  /* origin being moved to while spans are pending */
@@ -104,6 +121,7 @@ typedef struct TerrainClipLevel {
 typedef struct TerrainClipmap {
     TerrainClipLevel level[TERRAIN_CLIP_LEVELS];
     int              finest;   /* levels finest .. LEVELS - 1 are ready; LEVELS if none is */
+    int              want;     /* the finest level worth drawing (terrain_clip_select) */
     double           cam[2];   /* camera (x, z) at the last update (m) */
     TerrainSample   *storage;  /* every level's samples, one allocation */
     double          *scratch_h;
@@ -124,6 +142,39 @@ int    terrain_clip_update(TerrainClipmap *c, double cam_x, double cam_z, int bu
  * beyond its edge, and 0 wherever its child level is drawn. The drawn height
  * is h + morph * (hc - h). The renderer's shader must compute the same. */
 float  terrain_clip_morph(const TerrainClipmap *c, int level, double x, double z);
+/* Bounds on level l's drawn height (any morph) over world samples
+ * [i0, i1] x [j0, j1] of its window, from its blocks: conservative, and
+ * exact to the block. */
+void   terrain_clip_bounds(const TerrainClipLevel *lv, int64_t i0, int64_t j0, int64_t i1, int64_t j1, float *lo, float *hi);
+
+/* --- Screen-space error --------------------------------------------------------
+ * Which levels are worth drawing. Level m's error is the most, in pixels, its
+ * surface would move on screen were it dropped for its parent's:
+ *   rho(m) = max over its blocks of err * K / distance(camera, block),
+ * K the viewport's pixels per unit of tangent, height / (2 tan(fovy / 2)),
+ * and the distance at least TERRAIN_SSE_NEAR. Drawing level k + 1 in place of
+ * levels 0 .. k moves the surface by at most rho(0) + ... + rho(k) pixels:
+ * that sum decides the finest level drawn, so flat ground (the city's) and
+ * high cameras drop the fine levels and rough ground nearby keeps them.
+ *
+ * Hysteresis: the finest level refines once the sum for the level below it
+ * exceeds TERRAIN_SSE_REFINE pixels, and coarsens only once its own sum is
+ * under TERRAIN_SSE_COARSEN, so a camera hovering at a threshold doesn't flip
+ * levels back and forth. Either switch moves the surface by at most its
+ * threshold, a pixel or less, which is the transition between whole levels;
+ * the geomorph still joins the levels drawn.
+ *
+ * The update still fills every level, drawn or not (cheap while the camera
+ * moves smoothly), so a level asked for again is ready at once and the
+ * selection's errors are its own. */
+#define TERRAIN_SSE_REFINE  1.0
+#define TERRAIN_SSE_COARSEN 0.5
+#define TERRAIN_SSE_NEAR    1.0      /* nearer than this (m) counts as this */
+/* rho(level) for a camera at (c->cam, cam_y). */
+double terrain_clip_error(const TerrainClipmap *c, int level, double cam_y, double K);
+/* Moves c->want by the rules above and returns the finest level to draw:
+ * c->want, or the finest ready level if that is coarser. */
+int    terrain_clip_select(TerrainClipmap *c, double cam_y, double K);
 
 static inline double terrain_clip_spacing(int level) { return ldexp(TERRAIN_CLIP_SPACING0, level); }
 static inline int    terrain_clip_slot(int64_t i) { return (int)(((i % TERRAIN_CLIP_N) + TERRAIN_CLIP_N) % TERRAIN_CLIP_N); }

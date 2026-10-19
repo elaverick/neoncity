@@ -297,7 +297,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     timestamp(r, cmd, slot, GT_START);
     chunks_update(r->chunks, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     chunks_sky_lights(r->chunks, cam, (SkyGrid *)r->skyBuf[slot].mapped);
-    terrain_gpu_update(r, cmd, slot, cam);
+    terrain_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
     proxy_gpu_update(r, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_STREAM);
     record_shelter(r, cmd, slot, &topDown);

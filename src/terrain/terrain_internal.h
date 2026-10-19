@@ -5,7 +5,8 @@
  *
  *   terrain_height.c   the height field: urban ground blended into the land
  *   terrain_lod.c      the clipmap: where each level's window goes, the strips
- *                      a move exposes, the per-update budget, readiness, morph
+ *                      a move exposes, the per-update budget, readiness, morph,
+ *                      block bounds and the screen-space error's choice of levels
  *   terrain_mesh.c     filling a strip of a level: heights, parent heights, normals
  *
  * height = w * urban + (1 - w) * land, w = plan_urban(x, z):

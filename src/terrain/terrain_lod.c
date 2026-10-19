@@ -1,5 +1,6 @@
 #include "terrain_internal.h"
 #include "mathlib.h"
+#include <float.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -70,6 +71,49 @@ static void plan_move(TerrainClipLevel *lv, const int64_t want[2]) {
     lv->filled = 0;
 }
 
+/* World block of sample i (rounding down), and the storage block holding it. */
+static int64_t block_of(int64_t i) { return (i >= 0 ? i : i - (TERRAIN_CLIP_BLOCK - 1)) / TERRAIN_CLIP_BLOCK; }
+static int     block_slot(int64_t b) { return (int)(((b % TERRAIN_CLIP_NB) + TERRAIN_CLIP_NB) % TERRAIN_CLIP_NB); }
+
+/* Recomputes storage block (bx, bz) from the slots holding the window at o:
+ * every slot but the one row and column the window leaves free. */
+static void refresh_block(TerrainClipLevel *lv, const int64_t o[2], int bx, int bz) {
+    const int B = TERRAIN_CLIP_BLOCK;
+    int fx = terrain_clip_slot(o[0] - 1), fz = terrain_clip_slot(o[1] - 1);
+    TerrainBlock b = { FLT_MAX, -FLT_MAX, 0.0f };
+    for (int z = bz * B; z < bz * B + B; ++z) {
+        if (z == fz) continue;
+        for (int x = bx * B; x < bx * B + B; ++x) {
+            if (x == fx) continue;
+            const TerrainSample *t = &lv->samples[z * TERRAIN_CLIP_N + x];
+            b.lo = fminf(b.lo, fminf(t->h, t->hc));
+            b.hi = fmaxf(b.hi, fmaxf(t->h, t->hc));
+            b.err = fmaxf(b.err, fabsf(t->h - t->hc));
+        }
+    }
+    lv->blocks[bz * TERRAIN_CLIP_NB + bx] = b;
+}
+
+/* After a band is filled: the blocks it wrote into, for the window being moved to. */
+static void refresh_band(TerrainClipLevel *lv, TerrainSpan sp) {
+    for (int64_t bj = block_of(sp.j0); bj <= block_of(sp.j0 + sp.d - 1); ++bj)
+        for (int64_t bi = block_of(sp.i0); bi <= block_of(sp.i0 + sp.w - 1); ++bi)
+            refresh_block(lv, lv->target, block_slot(bi), block_slot(bj));
+}
+
+/* After a move completes: the blocks holding the free row and column, whose
+ * slots may hold samples that have just left the window. Every other slot
+ * that joined or left the window was refilled, and its block refreshed after
+ * its last write, so each block is now exactly the window's, whatever path
+ * the camera took. */
+static void refresh_free(TerrainClipLevel *lv) {
+    int fx = terrain_clip_slot(lv->origin[0] - 1) / TERRAIN_CLIP_BLOCK, fz = terrain_clip_slot(lv->origin[1] - 1) / TERRAIN_CLIP_BLOCK;
+    for (int k = 0; k < TERRAIN_CLIP_NB; ++k) {
+        refresh_block(lv, lv->origin, fx, k);
+        refresh_block(lv, lv->origin, k, fz);
+    }
+}
+
 static void add_dirty(TerrainClipLevel *lv, TerrainSpan sp) {
     if (lv->n_dirty >= TERRAIN_CLIP_MAX_DIRTY) fatal("terrain clipmap: too many dirty rectangles in one update");
     int x0 = terrain_clip_slot(sp.i0), z0 = terrain_clip_slot(sp.j0);
@@ -119,6 +163,7 @@ int terrain_clip_update(TerrainClipmap *c, double cam_x, double cam_z, int budge
             band.d = rows;
             terrain_mesh_fill(c, l, band);
             add_dirty(lv, band);
+            refresh_band(lv, band);
             left -= rows * sp->w;
             spent += rows * sp->w;
             sp->j0 += rows;
@@ -127,6 +172,7 @@ int terrain_clip_update(TerrainClipmap *c, double cam_x, double cam_z, int budge
                 lv->origin[0] = lv->target[0];
                 lv->origin[1] = lv->target[1];
                 lv->filled = 1;
+                refresh_free(lv);
             }
         }
         lv->ready = lv->filled && lv->origin[0] == want[0] && lv->origin[1] == want[1];
@@ -146,4 +192,49 @@ float terrain_clip_morph(const TerrainClipmap *c, int level, double x, double z)
     double d = fmax(fabs(x - c->cam[0]), fabs(z - c->cam[1])) / s;
     double end = (TERRAIN_CLIP_W - 1) / 2 - 1;
     return clampf((float)((d - (end - TERRAIN_CLIP_MORPH)) / TERRAIN_CLIP_MORPH), 0.0f, 1.0f);
+}
+
+void terrain_clip_bounds(const TerrainClipLevel *lv, int64_t i0, int64_t j0, int64_t i1, int64_t j1, float *lo, float *hi) {
+    *lo = FLT_MAX;
+    *hi = -FLT_MAX;
+    for (int64_t bj = block_of(j0); bj <= block_of(j1); ++bj)
+        for (int64_t bi = block_of(i0); bi <= block_of(i1); ++bi) {
+            const TerrainBlock *b = &lv->blocks[block_slot(bj) * TERRAIN_CLIP_NB + block_slot(bi)];
+            *lo = fminf(*lo, b->lo);
+            *hi = fmaxf(*hi, b->hi);
+        }
+}
+
+/* Each world block of the window, as a box: its samples clipped to the
+ * window, and the next block's first (the triangles between the two), with
+ * its storage block's heights. */
+double terrain_clip_error(const TerrainClipmap *c, int level, double cam_y, double K) {
+    const TerrainClipLevel *lv = &c->level[level];
+    const int B = TERRAIN_CLIP_BLOCK;
+    double s = lv->spacing, worst = 0.0;
+    int64_t e0 = lv->origin[0] + TERRAIN_CLIP_W - 1, e1 = lv->origin[1] + TERRAIN_CLIP_W - 1;
+    for (int64_t bj = block_of(lv->origin[1]); bj <= block_of(e1); ++bj) {
+        double z0 = (double)(bj * B > lv->origin[1] ? bj * B : lv->origin[1]) * s, z1 = (double)(bj * B + B < e1 ? bj * B + B : e1) * s;
+        double dz = fmax(0.0, fmax(z0 - c->cam[1], c->cam[1] - z1));
+        for (int64_t bi = block_of(lv->origin[0]); bi <= block_of(e0); ++bi) {
+            const TerrainBlock *b = &lv->blocks[block_slot(bj) * TERRAIN_CLIP_NB + block_slot(bi)];
+            if (b->err <= 0.0f) continue;
+            double x0 = (double)(bi * B > lv->origin[0] ? bi * B : lv->origin[0]) * s, x1 = (double)(bi * B + B < e0 ? bi * B + B : e0) * s;
+            double dx = fmax(0.0, fmax(x0 - c->cam[0], c->cam[0] - x1));
+            double dy = fmax(0.0, fmax(b->lo - cam_y, cam_y - b->hi));
+            double rho = b->err * K / fmax(sqrt(dx * dx + dy * dy + dz * dz), TERRAIN_SSE_NEAR);
+            if (rho > worst) worst = rho;
+        }
+    }
+    return worst;
+}
+
+/* The sums only grow with the level, so after refining the coarsening test
+ * fails (its sum is over the refining threshold). */
+int terrain_clip_select(TerrainClipmap *c, double cam_y, double K) {
+    double sum[TERRAIN_CLIP_LEVELS], acc = 0.0;
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) sum[l] = acc += terrain_clip_error(c, l, cam_y, K);
+    while (c->want > 0 && sum[c->want - 1] > TERRAIN_SSE_REFINE) c->want--;
+    while (c->want < TERRAIN_CLIP_LEVELS - 1 && sum[c->want] < TERRAIN_SSE_COARSEN) c->want++;
+    return c->want > c->finest ? c->want : c->finest;
 }

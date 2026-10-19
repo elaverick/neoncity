@@ -57,10 +57,22 @@ the terrain roadmap.
     RTX 4080 Super). Far tiles could keep only each building's tallest sections.
   - **Startup:** one worker fills the city's tiles in about a second, nearest first, so the far skyline fills in;
     `--shot` waits for it.
-- **Frustum culling.** All nine rings are drawn every frame, whole (about 100k triangles each), whatever the camera
-  faces. Testing each ring, or blocks of it, against the frustum with bounds from `terrain_height_range` would skip
-  most of them; worth it once terrain shows in the GPU timings, or with the screen-space-error work (M7). It must only
-  choose what is drawn, never what the clipmap holds.
+- **Screen-space error** (`terrain_clip_select`, `terrain_gpu.c`'s `plan_draws`; M7). The finest level drawn is the
+  coarsest whose dropped levels would move the ground by under a pixel, with hysteresis. The tiles of each level are
+  culled against the frustum. At the spawn this draws levels 6-8, 54 of 129 tiles; out on the land, levels 1-8.
+  The GPU barely notices (the terrain was a few hundredths of a millisecond of the scene pass), but its triangle
+  count no longer grows with what is hidden. Left over:
+  - **Thresholds** (refine over 1 px, coarsen under 0.5 px, `TERRAIN_SSE_*`) are first guesses. Tune them by eye,
+    with the drizzle and haze on.
+  - **Level switches** move the ground by up to the threshold in one frame. Most of this happens under the city,
+    where it can't be seen. Over the land a time-based blend would hide it if it ever shows.
+  - **Hidden ground still counts.** Within the view distance the city's own ground covers the terrain, but its
+    error is still counted. A level whose window lies wholly under built towns could be dropped outright.
+  - **Every level is still filled**, drawn or not. That is cheap while the camera moves smoothly, and it means a
+    level the error asks for again is ready at once. A fast flight high up spends most of each update on levels it
+    doesn't draw; if that ever shows, fill the undrawn levels last and lazily.
+  - **City and building detail.** The design doc wants the same perceptual rule applied to the city's levels of
+    detail, independently of the terrain's: see "Level of detail" under the distant proxies.
 - **The graded city** stands on `city_ground_y` (10 m of relief, grades up to about 1.1%): the streets are draped onto
   it in `DRAPE_CELL` squares, and each building stands on the highest ground under its plot, its walls reaching down
   to the street (`Mesh.footing`, drawn as a plinth) and a riser under each entrance. Across a plot the ground falls

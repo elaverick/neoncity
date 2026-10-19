@@ -11,7 +11,12 @@
  * heights are its parent's own samples, windows nest, the blend into the
  * parent ends exactly at each window's edge, a move fills exactly the newly
  * exposed samples within its budget, and a clipmap that followed any camera
- * path holds what one filled from scratch at the same camera holds.
+ * path holds what one filled from scratch at the same camera holds, block
+ * bounds included.
+ *
+ * Then the screen-space error's choice of levels: coarser over flat ground
+ * and from high up, steady at a threshold, and never letting the terrain
+ * through the city's ground.
  *
  * terrain_test --fingerprint prints a hash of the heights, the footprint and
  * some filled clipmaps instead, to compare what two builds generate. */
@@ -20,6 +25,7 @@
 #include "city.h"
 #include "hash.h"
 #include "mathlib.h"
+#include <float.h>
 #include <time.h>
 
 #define N_POINTS     20000
@@ -202,6 +208,26 @@ static void check_dirty(const TerrainClipLevel *lv, int l, int wasFilled, const 
           (long long)was[0], (long long)was[1], (long long)lv->origin[0], (long long)lv->origin[1], written);
 }
 
+/* Each storage block of a filled level bounds exactly the window's samples
+ * in its slots, however the level got there. */
+static void check_blocks(const TerrainClipLevel *lv, int l) {
+    static TerrainBlock want[TERRAIN_CLIP_NB * TERRAIN_CLIP_NB];
+    for (int k = 0; k < TERRAIN_CLIP_NB * TERRAIN_CLIP_NB; ++k) want[k] = (TerrainBlock){ FLT_MAX, -FLT_MAX, 0.0f };
+    for (int64_t j = lv->origin[1]; j < lv->origin[1] + TERRAIN_CLIP_W; ++j)
+        for (int64_t i = lv->origin[0]; i < lv->origin[0] + TERRAIN_CLIP_W; ++i) {
+            const TerrainSample *t = terrain_clip_sample(lv, i, j);
+            TerrainBlock *b = &want[(terrain_clip_slot(j) / TERRAIN_CLIP_BLOCK) * TERRAIN_CLIP_NB + terrain_clip_slot(i) / TERRAIN_CLIP_BLOCK];
+            b->lo = fminf(b->lo, fminf(t->h, t->hc));
+            b->hi = fmaxf(b->hi, fmaxf(t->h, t->hc));
+            b->err = fmaxf(b->err, fabsf(t->h - t->hc));
+        }
+    int bad = 0;
+    for (int k = 0; k < TERRAIN_CLIP_NB * TERRAIN_CLIP_NB; ++k)
+        if (memcmp(&want[k], &lv->blocks[k], sizeof(TerrainBlock)) != 0 && bad++ < 3)
+            CHECK(0, "level %d block %d bounds [%.4f, %.4f] err %.5f, its samples [%.4f, %.4f] err %.5f", l, k,
+                  lv->blocks[k].lo, lv->blocks[k].hi, lv->blocks[k].err, want[k].lo, want[k].hi, want[k].err);
+}
+
 static int fill_all(TerrainClipmap *c, double x, double z) {
     int updates = 0;
     do {
@@ -253,7 +279,10 @@ static void test_clipmap(Rng *r) {
     int updates = fill_all(&clip, cx, cz);
     double ms = 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC;
     CHECK(clip.finest == 0 && updates <= TERRAIN_CLIP_LEVELS, "fill from scratch took %d updates (finest ready level %d)", updates, clip.finest);
-    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) check_contents(&clip, l);
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
+        check_contents(&clip, l);
+        check_blocks(&clip.level[l], l);
+    }
     int mMin = 1 << 30, mMax = 0;
     check_nesting_and_morph(&clip, &mMin, &mMax);
     printf("clipmap: %d levels of %d^2 samples, %.0f m to %.0f m apart, %.1f km across\n", TERRAIN_CLIP_LEVELS, TERRAIN_CLIP_W,
@@ -339,6 +368,7 @@ static void test_clipmap(Rng *r) {
             terrain_clip_init(&fresh);
             fill_all(&fresh, x, z);
             CHECK(same_clipmaps(&clip, &fresh), "after %d steps the clipmap differs from one filled from scratch at (%.1f, %.1f)", step + 1, x, z);
+            for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) check_blocks(&clip.level[l], l);
             check_nesting_and_morph(&clip, &mMin, &mMax);
             catching = timing = 0;
             compared++;
@@ -351,6 +381,98 @@ static void test_clipmap(Rng *r) {
            WALK_STEPS, moves, jumps, worstRecovery, steadyUpdates, maxSpent, compared, mMin, mMax);
     terrain_clip_free(&clip);
     terrain_clip_free(&fresh);
+}
+
+/* --- Screen-space error --------------------------------------------------- */
+
+/* The game's view: 1080 rows, fovy 72 degrees. */
+static double sse_k(void) { return 1080.0 / (2.0 * tan(36.0 * PI_F / 180.0)); }
+
+/* Cameras the selection is checked at, round the city centre (m). */
+static const double SSE_CAMS[3][2] = { { 0.0, 0.0 }, { 9300.0, -2100.0 }, { -21000.0, 14500.0 } };
+static const char  *SSE_NAMES[3] = { "centre", "edge", "land" };
+static const double SSE_HEIGHTS[5] = { 1.7, 10.0, 60.0, 300.0, 1500.0 };   /* above the ground */
+
+/* The finest level drawn for a camera at height y over a filled clipmap,
+ * from a selection that starts from the finest level. */
+static int select_fresh(TerrainClipmap *c, double y) {
+    c->want = 0;
+    return terrain_clip_select(c, y, sse_k());
+}
+
+/* Where the city stands (plan_urban 1), the drawn terrain at every level must
+ * stay under its lowest ground, the asphalt 3 cm under city_ground_y,
+ * whatever the morph: the samples (h and hc) and the middles of the cells'
+ * diagonals, where the triangles bend. Returns the least clearance (m). */
+static double urban_clearance(const TerrainClipLevel *lv) {
+    double s = lv->spacing, least = 1e9;
+    for (int64_t j = lv->origin[1]; j + 1 < lv->origin[1] + TERRAIN_CLIP_W; ++j)
+        for (int64_t i = lv->origin[0]; i + 1 < lv->origin[0] + TERRAIN_CLIP_W; ++i) {
+            const TerrainSample *a = terrain_clip_sample(lv, i, j), *b = terrain_clip_sample(lv, i + 1, j + 1);
+            if (a->urban < 1.0f || b->urban < 1.0f) continue;
+            double x = (double)i * s, z = (double)j * s;
+            least = fmin(least, terrain_urban_height(x, z) - 0.03 - fmax(a->h, a->hc));
+            least = fmin(least, terrain_urban_height(x + 0.5 * s, z + 0.5 * s) - 0.03 - 0.5 * ((double)a->h + b->h));
+            least = fmin(least, terrain_urban_height(x + 0.5 * s, z + 0.5 * s) - 0.03 - 0.5 * ((double)a->hc + b->hc));
+        }
+    return least;
+}
+
+/* 11. Which levels the screen-space error draws: fine levels dropped over the
+ *     city's flat ground and from high cameras; the city's ground over the
+ *     terrain whichever level is drawn under it; and the hysteresis holding
+ *     the choice while the camera hovers at a threshold. */
+static void test_select(void) {
+    DVec2 c0 = plan_town_centre(0, 0);
+    TerrainClipmap clip;
+    double clear[TERRAIN_CLIP_LEVELS];
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) clear[l] = 1e9;
+    printf("screen-space error (K %.0f px, refine over %.1f px, coarsen under %.1f px): finest level drawn\n", sse_k(), TERRAIN_SSE_REFINE, TERRAIN_SSE_COARSEN);
+    printf("          ");
+    for (int h = 0; h < 5; ++h) printf("  %6.1f m", SSE_HEIGHTS[h]);
+    printf("\n");
+    for (int k = 0; k < 3; ++k) {
+        double x = c0.x + SSE_CAMS[k][0], z = c0.z + SSE_CAMS[k][1], ground = terrain_height(x, z);
+        terrain_clip_init(&clip);
+        fill_all(&clip, x, z);
+        for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) clear[l] = fmin(clear[l], urban_clearance(&clip.level[l]));
+        int want[5];
+        printf("  %-7s ", SSE_NAMES[k]);
+        for (int h = 0; h < 5; ++h) {
+            want[h] = select_fresh(&clip, ground + SSE_HEIGHTS[h]);
+            printf("  %8d", want[h]);
+            /* Selecting again from where it settled changes nothing. */
+            CHECK(terrain_clip_select(&clip, ground + SSE_HEIGHTS[h], sse_k()) == want[h], "%s at %.1f m: a second selection moved", SSE_NAMES[k], SSE_HEIGHTS[h]);
+        }
+        printf("\n");
+        CHECK(want[4] > want[0], "%s: a camera %.0f m up draws level %d, as fine as at street level", SSE_NAMES[k], SSE_HEIGHTS[4], want[4]);
+        if (k == 0) CHECK(want[0] >= 2, "the city centre at street level draws level %d: its flat ground needs no metre-scale levels", want[0]);
+
+        /* Hysteresis: climb in 2% steps to the first switch, then hover
+         * either side of it. */
+        double y = SSE_HEIGHTS[0];
+        int w0 = select_fresh(&clip, ground + y), w = w0;
+        while (w == w0 && y < 5000.0) {
+            y *= 1.02;
+            w = terrain_clip_select(&clip, ground + y, sse_k());
+        }
+        CHECK(w > w0, "%s: climbing to %.0f m never coarsened from level %d", SSE_NAMES[k], y, w0);
+        int flips = 0;
+        for (int step = 0; step < 50; ++step) {
+            int now = terrain_clip_select(&clip, ground + (step & 1 ? y : y / 1.02), sse_k());
+            flips += now != w;
+            w = now;
+        }
+        CHECK(flips == 0, "%s: hovering at %.1f m, the level switched %d times", SSE_NAMES[k], y, flips);
+        printf("          level %d to %d at %.1f m up, held while hovering 2%% either side\n", w0, w, y);
+        terrain_clip_free(&clip);
+    }
+    printf("  the city's ground over the drawn terrain by at least:");
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
+        printf(" %.2f", clear[l]);
+        CHECK(clear[l] > 0.0, "level %d's terrain pokes %.3f m through the city's ground", l, -clear[l]);
+    }
+    printf(" m\n");
 }
 
 static int fingerprint(void) {
@@ -515,6 +637,7 @@ int main(int argc, char **argv) {
 
     test_lod_heights();
     test_clipmap(&r);
+    test_select();
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all terrain tests passed (%d points)\n", N_POINTS);

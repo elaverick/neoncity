@@ -357,6 +357,14 @@ not a wall hiding where the chunks end. A chunk replacing its proxies pops from 
 mesh; at that distance and in that haze it is slight. Rendering is camera-relative, with reverse-Z and
 per-chunk origins computed in doubles, so precision holds up thousands of kilometres from the origin.
 
+The ground under and beyond the city is a terrain clipmap (`src/terrain/`, `src/render/terrain_gpu.c`,
+`shaders/terrain/`): nine nested grids of 127 x 127 samples round the camera, 1 m to 256 m apart, each
+blending into the next towards its edge. Which levels are drawn is set by their screen-space error. A
+level is dropped while dropping it, and every finer level, would move the ground by under half a pixel on
+screen, and it comes back once that passes a pixel. So the city's nearly flat ground and high cameras
+draw only the coarse levels, and rough land nearby keeps them all. Each level is drawn in tiles, and
+only the tiles whose height bounds touch the view frustum are drawn.
+
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the
 arcologies' sodium lamps; so do the lobbies' ceilings, indoors. (An arcology's crown lights stand for the cold light falling down the canyon from its glazed

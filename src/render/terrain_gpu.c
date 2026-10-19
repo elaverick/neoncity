@@ -15,10 +15,17 @@
  * finer level is drawn. The finer window's corner lies 31 or 32 cells in from
  * this one's on each axis (the camera's side of its parent sample), so there
  * are four rings. Cells are split along the (i, j)-(i + 1, j + 1) diagonal,
- * as terrain_mesh_fill's hc assumes. Every list ends with zero-area triangles
- * along the window's edge: there the level has blended into its parent, so
- * each odd vertex lies on the parent's edge, and these fill the hairline
- * cracks rounding can open at the T-junctions.
+ * as terrain_mesh_fill's hc assumes. Zero-area triangles line the window's
+ * edge: there the level has blended into its parent, so each odd vertex lies
+ * on the parent's edge, and these fill the hairline cracks rounding can open
+ * at the T-junctions.
+ *
+ * Each list is cut into TILES x TILES tiles of the grid, one after another,
+ * each tile's cells then its stretch of the edge. A frame draws the tiles of
+ * each level whose bounds (terrain_clip_bounds) touch the view frustum, runs
+ * of neighbours as one draw, from the finest level the screen-space error
+ * asks for (terrain_clip_select) outwards. Culling only chooses what is drawn,
+ * never what the clipmap holds.
  *
  * The camera-relative positions are built from doubles on the CPU (see
  * TerrainPush) and the heights are world Y, so the terrain stays exact
@@ -28,7 +35,13 @@
 #define CLIP_W TERRAIN_CLIP_W
 #define HOLE   ((CLIP_W - 1) / 2)     /* the finer window's side, in this level's cells */
 #define LIST_WINDOW 4                 /* index lists 0-3: rings (hole offset 31 or 32 on x, + 2 * on z) */
+#define TILE   18                     /* a tile's side, cells */
+#define TILES  ((CLIP_W - 1) / TILE)
+#define MAX_DRAWS (TERRAIN_CLIP_LEVELS * TILES * TILES)
+/* Bounds round a tile's box, for the float positions the shader builds (m). */
+#define TILE_MARGIN 0.5f
 
+_Static_assert(TILES * TILE == CLIP_W - 1 && TILE % 2 == 0, "terrain tiles must cut the window evenly, along its edge's pairs of cells");
 _Static_assert(TERRAIN_DISTANCE <= ((TERRAIN_CLIP_W - 1) / 2 - 1) * TERRAIN_CLIP_SPACING0 * (1 << (TERRAIN_CLIP_LEVELS - 1)),
                "TERRAIN_DISTANCE reaches past the coarsest clipmap window");
 _Static_assert(TERRAIN_CLIP_W * TERRAIN_CLIP_W <= 65536, "the grid's vertices don't fit 16-bit indices");
@@ -39,11 +52,15 @@ struct TerrainGpu {
     Buffer         staging[MAX_FRAMES];   /* host visible: one update's worth */
     VkBufferCopy  *copies;                /* one per uploaded row */
     Buffer         indices;               /* device local, uint16 */
-    uint32_t       first[LIST_WINDOW + 1], count[LIST_WINDOW + 1];
+    uint32_t       first[LIST_WINDOW + 1][TILES * TILES], count[LIST_WINDOW + 1][TILES * TILES];
     VkDescriptorPool pool;
     VkDescriptorSet  set[MAX_FRAMES];
+    /* this frame's draws (plan_draws), each a run of one level's tiles */
+    TerrainPush    push[TERRAIN_CLIP_LEVELS];
+    struct { int level; uint32_t first, count; } draw[MAX_DRAWS];
+    int            ndraw;
     /* the last update, and the slowest so far (--shot prints them) */
-    int            filled;
+    int            filled, drawn, tilesDrawn, tilesTotal;
     double         updateMs, slowestMs;
 };
 
@@ -56,28 +73,29 @@ static uint16_t *tri(uint16_t *o, int ai, int aj, int bi, int bj, int ci, int cj
     return o + 3;
 }
 
-/* The cells of the window outside [hx, hx + HOLE) x [hz, hz + HOLE) (no hole
- * if hx < 0), then the edge's zero-area triangles. For those the middle
- * vertex is taken as nudged inwards, where a crack would open, to wind them
- * facing up. */
-static uint16_t *build_list(uint16_t *o, int hx, int hz) {
-    for (int j = 0; j < CLIP_W - 1; ++j)
-        for (int i = 0; i < CLIP_W - 1; ++i) {
+/* Tile (tx, tz)'s cells outside [hx, hx + HOLE) x [hz, hz + HOLE) (no hole
+ * if hx < 0), then its stretch of the edge's zero-area triangles: those whose
+ * pair of cells it holds. For those the middle vertex is taken as nudged
+ * inwards, where a crack would open, to wind them facing up. */
+static uint16_t *build_tile(uint16_t *o, int hx, int hz, int tx, int tz) {
+    for (int j = tz * TILE; j < tz * TILE + TILE; ++j)
+        for (int i = tx * TILE; i < tx * TILE + TILE; ++i) {
             if (hx >= 0 && i >= hx && i < hx + HOLE && j >= hz && j < hz + HOLE) continue;
             o = tri(o, i, j, i + 1, j + 1, i + 1, j);
             o = tri(o, i, j, i, j + 1, i + 1, j + 1);
         }
     const int E = CLIP_W - 1;
     for (int k = 0; k + 2 <= E; k += 2) {
-        o = tri(o, k, 0, k + 1, 0, k + 2, 0);     /* low z edge, inwards is +z */
-        o = tri(o, k, E, k + 2, E, k + 1, E);     /* high z edge */
-        o = tri(o, 0, k, 0, k + 2, 0, k + 1);     /* low x edge, inwards is +x */
-        o = tri(o, E, k, E, k + 1, E, k + 2);     /* high x edge */
+        int t = k / TILE;
+        if (tz == 0 && tx == t)         o = tri(o, k, 0, k + 1, 0, k + 2, 0);     /* low z edge, inwards is +z */
+        if (tz == TILES - 1 && tx == t) o = tri(o, k, E, k + 2, E, k + 1, E);     /* high z edge */
+        if (tx == 0 && tz == t)         o = tri(o, 0, k, 0, k + 2, 0, k + 1);     /* low x edge, inwards is +x */
+        if (tx == TILES - 1 && tz == t) o = tri(o, E, k, E, k + 1, E, k + 2);     /* high x edge */
     }
     return o;
 }
 
-/* Builds the five index lists and uploads them, waiting for the copy. */
+/* Builds the five index lists, tile by tile, and uploads them, waiting for the copy. */
 static void upload_indices(Renderer *r, TerrainGpu *t) {
     VkCore *vk = r->vk;
     const size_t cells = (size_t)(CLIP_W - 1) * (CLIP_W - 1), edge = 4 * ((CLIP_W - 1) / 2);
@@ -88,10 +106,14 @@ static void upload_indices(Renderer *r, TerrainGpu *t) {
     uint16_t *base = (uint16_t *)staging.mapped, *o = base;
     for (int k = 0; k <= LIST_WINDOW; ++k) {
         uint16_t *start = o;
-        o = k == LIST_WINDOW ? build_list(o, -1, -1) : build_list(o, HOLE / 2 + (k & 1), HOLE / 2 + (k >> 1));
-        t->first[k] = (uint32_t)(start - base);
-        t->count[k] = (uint32_t)(o - start);
-        if (t->count[k] != (k == LIST_WINDOW ? windowIdx : ringIdx)) fatal("terrain: an index list came out the wrong length");
+        int hx = k == LIST_WINDOW ? -1 : HOLE / 2 + (k & 1), hz = k == LIST_WINDOW ? -1 : HOLE / 2 + (k >> 1);
+        for (int tile = 0; tile < TILES * TILES; ++tile) {
+            uint16_t *tileStart = o;
+            o = build_tile(o, hx, hz, tile % TILES, tile / TILES);
+            t->first[k][tile] = (uint32_t)(tileStart - base);
+            t->count[k][tile] = (uint32_t)(o - tileStart);
+        }
+        if ((size_t)(o - start) != (k == LIST_WINDOW ? windowIdx : ringIdx)) fatal("terrain: an index list came out the wrong length");
     }
     t->indices = vk_buffer(vk, total * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -168,13 +190,78 @@ void terrain_gpu_destroy(Renderer *r) {
     r->terrain = NULL;
 }
 
+/* This frame's draws: the levels from the finest the screen-space error asks
+ * for (or the finest ready, if coarser), the finest as a whole window, each
+ * coarser one as the ring round its finer neighbour; of each, the tiles in
+ * view. Positions are relative to the camera of this update. K comes from
+ * viewProj's second row, the projection's 1 / tan(fovy / 2) times the view's
+ * unit up axis. */
+static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj, uint32_t height) {
+    const TerrainClipmap *c = &t->clip;
+    t->ndraw = t->tilesDrawn = t->tilesTotal = 0;
+    t->drawn = TERRAIN_CLIP_LEVELS;
+    if (c->finest >= TERRAIN_CLIP_LEVELS) return;
+    const float *m = viewProj->m;
+    double K = 0.5 * height * sqrt((double)m[1] * m[1] + (double)m[5] * m[5] + (double)m[9] * m[9]);
+    t->drawn = terrain_clip_select(&t->clip, cam[1], K);
+    Frustum fr = frustum_from_matrix(*viewProj);
+    /* Every level's corner is a whole number of its samples from the anchor,
+     * a few tens of km at most, so its offset is exact in float. */
+    const TerrainClipLevel *top = &c->level[TERRAIN_CLIP_LEVELS - 1];
+    double ax = (double)top->origin[0] * top->spacing, az = (double)top->origin[1] * top->spacing;
+    for (int l = t->drawn; l < TERRAIN_CLIP_LEVELS; ++l) {
+        const TerrainClipLevel *lv = &c->level[l];
+        TerrainPush *pc = &t->push[l];
+        pc->anchor[0] = (float)(ax - c->cam[0]);
+        pc->anchor[1] = (float)(az - c->cam[1]);
+        pc->offset[0] = (float)((double)lv->origin[0] * lv->spacing - ax);
+        pc->offset[1] = (float)((double)lv->origin[1] * lv->spacing - az);
+        pc->spacing = (float)lv->spacing;
+        pc->level = l;
+        pc->slot[0] = terrain_clip_slot(lv->origin[0]);
+        pc->slot[1] = terrain_clip_slot(lv->origin[1]);
+        pc->pslot[0] = terrain_clip_slot(lv->origin[0] / 2);   /* origins are even */
+        pc->pslot[1] = terrain_clip_slot(lv->origin[1] / 2);
+        pc->top = l == TERRAIN_CLIP_LEVELS - 1;
+        int list = LIST_WINDOW;
+        if (l > t->drawn) {
+            const TerrainClipLevel *fine = &c->level[l - 1];
+            int64_t hx = fine->origin[0] / 2 - lv->origin[0] - HOLE / 2, hz = fine->origin[1] / 2 - lv->origin[1] - HOLE / 2;
+            if (hx < 0 || hx > 1 || hz < 0 || hz > 1) fatal("terrain: a clipmap window is off its parent's centre");
+            list = (int)(hx + 2 * hz);
+        }
+        for (int tile = 0; tile < TILES * TILES; ++tile) {
+            if (t->count[list][tile] == 0) continue;
+            t->tilesTotal++;
+            int64_t i0 = lv->origin[0] + (tile % TILES) * TILE, j0 = lv->origin[1] + (tile / TILES) * TILE;
+            float lo, hi;
+            terrain_clip_bounds(lv, i0, j0, i0 + TILE, j0 + TILE, &lo, &hi);
+            vec3 mn = v3((float)((double)i0 * lv->spacing - cam[0]) - TILE_MARGIN, (float)(lo - cam[1]) - TILE_MARGIN,
+                         (float)((double)j0 * lv->spacing - cam[2]) - TILE_MARGIN);
+            vec3 mx = v3((float)((double)(i0 + TILE) * lv->spacing - cam[0]) + TILE_MARGIN, (float)(hi - cam[1]) + TILE_MARGIN,
+                         (float)((double)(j0 + TILE) * lv->spacing - cam[2]) + TILE_MARGIN);
+            if (!frustum_test_aabb(&fr, mn, mx)) continue;
+            t->tilesDrawn++;
+            if (t->ndraw > 0 && t->draw[t->ndraw - 1].level == l && t->draw[t->ndraw - 1].first + t->draw[t->ndraw - 1].count == t->first[list][tile]) {
+                t->draw[t->ndraw - 1].count += t->count[list][tile];
+            } else {
+                t->draw[t->ndraw].level = l;
+                t->draw[t->ndraw].first = t->first[list][tile];
+                t->draw[t->ndraw].count = t->count[list][tile];
+                t->ndraw++;
+            }
+        }
+    }
+}
+
 /* The slot's last frame has finished (frame_acquire waited on its fence), so
  * its staging buffer is free. Earlier frames may still be drawing from the
  * slots this overwrites: the copy waits for their vertex shaders. */
-void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3]) {
+void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj) {
     TerrainGpu *t = r->terrain;
     double t0 = glfwGetTime();
     t->filled = terrain_clip_update(&t->clip, cam[0], cam[2], TERRAIN_CLIP_BUDGET);
+    plan_draws(t, cam, viewProj, r->vk->extent.height);
     t->updateMs = (glfwGetTime() - t0) * 1000.0;
     if (t->updateMs > t->slowestMs) t->slowestMs = t->updateMs;
 
@@ -201,48 +288,27 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
                       VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
 }
 
-/* The ready levels, finest first: the finest as a whole window, each coarser
- * one as the ring round its finer neighbour. Positions are relative to the
- * camera of the last update, which is this frame's. */
+/* The update's plan (plan_draws), a push per level drawn. */
 void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     TerrainGpu *t = r->terrain;
-    const TerrainClipmap *c = &t->clip;
-    if (c->finest >= TERRAIN_CLIP_LEVELS) return;
+    if (t->ndraw == 0) return;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->terrainPipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->terrainPL, 0, 1, &t->set[slot], 0, NULL);
     vkCmdBindIndexBuffer(cmd, t->indices.buf, 0, VK_INDEX_TYPE_UINT16);
-    /* Every level's corner is a whole number of its samples from the anchor,
-     * a few tens of km at most, so its offset is exact in float. */
-    const TerrainClipLevel *top = &c->level[TERRAIN_CLIP_LEVELS - 1];
-    double ax = (double)top->origin[0] * top->spacing, az = (double)top->origin[1] * top->spacing;
-    TerrainPush pc;
-    pc.anchor[0] = (float)(ax - c->cam[0]);
-    pc.anchor[1] = (float)(az - c->cam[1]);
-    for (int l = c->finest; l < TERRAIN_CLIP_LEVELS; ++l) {
-        const TerrainClipLevel *lv = &c->level[l];
-        pc.offset[0] = (float)((double)lv->origin[0] * lv->spacing - ax);
-        pc.offset[1] = (float)((double)lv->origin[1] * lv->spacing - az);
-        pc.spacing = (float)lv->spacing;
-        pc.level = l;
-        pc.slot[0] = terrain_clip_slot(lv->origin[0]);
-        pc.slot[1] = terrain_clip_slot(lv->origin[1]);
-        pc.pslot[0] = terrain_clip_slot(lv->origin[0] / 2);   /* origins are even */
-        pc.pslot[1] = terrain_clip_slot(lv->origin[1] / 2);
-        pc.top = l == TERRAIN_CLIP_LEVELS - 1;
-        int list = LIST_WINDOW;
-        if (l > c->finest) {
-            const TerrainClipLevel *fine = &c->level[l - 1];
-            int64_t hx = fine->origin[0] / 2 - lv->origin[0] - HOLE / 2, hz = fine->origin[1] / 2 - lv->origin[1] - HOLE / 2;
-            if (hx < 0 || hx > 1 || hz < 0 || hz > 1) fatal("terrain: a clipmap window is off its parent's centre");
-            list = (int)(hx + 2 * hz);
+    int pushed = -1;
+    for (int k = 0; k < t->ndraw; ++k) {
+        if (t->draw[k].level != pushed) {
+            pushed = t->draw[k].level;
+            vkCmdPushConstants(cmd, r->terrainPL, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(TerrainPush), &t->push[pushed]);
         }
-        vkCmdPushConstants(cmd, r->terrainPL, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
-        vkCmdDrawIndexed(cmd, t->count[list], 1, t->first[list], 0, 0);
+        vkCmdDrawIndexed(cmd, t->draw[k].count, 1, t->draw[k].first, 0, 0);
     }
 }
 
 void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
     const TerrainGpu *t = r->terrain;
-    snprintf(buf, n, "terrain: levels %d-%d drawn, last update filled %d samples in %.2f ms (slowest %.2f ms)",
-             t->clip.finest, TERRAIN_CLIP_LEVELS - 1, t->filled, t->updateMs, t->slowestMs);
+    snprintf(buf, n, "terrain: levels %d-%d drawn (finest ready %d, screen-space error asks for %d), %d of %d tiles in view in %d draws,\n"
+             "         last update filled %d samples in %.2f ms (slowest %.2f ms)",
+             t->drawn, TERRAIN_CLIP_LEVELS - 1, t->clip.finest, t->clip.want, t->tilesDrawn, t->tilesTotal, t->ndraw,
+             t->filled, t->updateMs, t->slowestMs);
 }

@@ -150,7 +150,7 @@ void record_composite(Renderer *r, VkCommandBuffer cmd, uint32_t imageIndex, con
  * uploads (outside any rendering); draw records the rings into the scene pass. */
 void terrain_gpu_create(Renderer *r);
 void terrain_gpu_destroy(Renderer *r);
-void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3]);
+void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);
 void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
 
 /* proxy_gpu.c. Update (after chunks_update, outside any rendering) takes in
