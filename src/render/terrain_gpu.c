@@ -412,14 +412,25 @@ void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     }
 }
 
+int terrain_gpu_window(Renderer *r, double win[4]) {
+    TerrainGpu *t = r->terrain;
+    if (t->ndraw == 0) return 0;
+    const TerrainClipLevel *lv = &t->shown.level[TERRAIN_CLIP_LEVELS - 1];
+    win[0] = (double)lv->origin[0] * lv->spacing;
+    win[1] = (double)lv->origin[1] * lv->spacing;
+    win[2] = (double)(lv->origin[0] + CLIP_W - 1) * lv->spacing;
+    win[3] = (double)(lv->origin[1] + CLIP_W - 1) * lv->spacing;
+    return 1;
+}
+
 /* Settled once the last update taken had nothing left to fill (and the levels
- * drawn are the ones asked for). */
+ * drawn are the ones asked for), and the planet's patches beyond want none. */
 bool renderer_terrain_settled(Renderer *r) {
     TerrainGpu *t = r->terrain;
     mutex_lock(&t->lock);
     int evaluated = t->evaluated;
     mutex_unlock(&t->lock);
-    return evaluated == 0 && t->shown.finest <= t->shown.want && t->drawn == t->shown.want && t->fade.level < 0;
+    return evaluated == 0 && t->shown.finest <= t->shown.want && t->drawn == t->shown.want && t->fade.level < 0 && planet_gpu_settled(r);
 }
 
 void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
@@ -435,4 +446,9 @@ void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
              "         (taking an update %.2f, plan %.2f; slowest %.2f ms)",
              t->drawn, TERRAIN_CLIP_LEVELS - 1, t->shown.finest, t->shown.want, fading, t->tilesDrawn, t->tilesTotal, t->ndraw,
              evaluated, fillMs, slowestFill, t->updateMs, t->stageMs, t->planMs, t->slowestMs);
+    size_t used = strlen(buf);
+    if (used + 2 < n) {
+        buf[used++] = '\n';
+        planet_gpu_stats(r, buf + used, n - used);
+    }
 }

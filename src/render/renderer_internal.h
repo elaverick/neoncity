@@ -11,7 +11,8 @@
  *   renderer_targets.c    size-dependent render targets, the cloud noise volume, swapchain recreation
  *   renderer_passes.c     recording each pass: shelter map, prepass, shadows, reflections, clouds, bloom
  *   terrain_gpu.c         the terrain clipmap's GPU side: its samples' buffer and uploads, the ring meshes, drawing
- *   proxy_gpu.c           the distant proxies: tiles generated round the camera, their box pool, drawing */
+ *   proxy_gpu.c           the distant proxies: tiles generated round the camera, their box pool, drawing
+ *   planet_gpu.c          the planet's patches beyond the clipmap: their fill worker, vertex slots, drawing */
 
 #define HDR_FORMAT   VK_FORMAT_R16G16B16A16_SFLOAT
 #define DEPTH_FORMAT VK_FORMAT_D32_SFLOAT
@@ -45,6 +46,14 @@ typedef struct TerrainPush {
     float   fade;        /* the least morph: a level blending in or out (terrain_fade_morph) */
 } TerrainPush;
 typedef struct TerrainGpu TerrainGpu;
+/* One planet patch's draw (shaders/terrain/planet.vert: Patch). */
+typedef struct PlanetPush {
+    float ax[4], up[4], az[4];   /* the camera's local axes in the planet frame */
+    float centre[4];             /* the patch's centre, camera-relative in that frame; w its sink in the window (m) */
+    float morph[4];              /* the morph's inner and outer distances; the patch's chart centre less the camera's */
+    float window[4];             /* the clipmap's window, camera-relative chart x0, z0, x1, z1; zeros for none */
+} PlanetPush;
+typedef struct PlanetGpu PlanetGpu;
 typedef struct ProxyGpu ProxyGpu;
 /* GPU timestamps between the frame's passes (renderer_gpu_times). The scene
  * pass is stamped inside: the city, plants and proxies (GT_SCENE), the terrain
@@ -84,6 +93,9 @@ struct Renderer {
     VkDescriptorSetLayout terrainLayout;
     VkPipelineLayout      terrainPL;
     VkPipeline            terrainPipe;
+    PlanetGpu   *planet;    /* planet_gpu.c; the clipmap's descriptor set layout */
+    VkPipelineLayout      planetPL;
+    VkPipeline            planetPipe;
     ProxyGpu    *proxies;   /* proxy_gpu.c */
     VkDescriptorSetLayout proxyLayout;
     VkPipelineLayout      proxyPL;
@@ -157,6 +169,18 @@ void terrain_gpu_create(Renderer *r);
 void terrain_gpu_destroy(Renderer *r);
 void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);
 void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
+/* The coarsest drawn level's window, world x0, z0, x1, z1; 0 if none is drawn. */
+int  terrain_gpu_window(Renderer *r, double win[4]);
+
+/* planet_gpu.c. Update (after terrain_gpu_update, outside any rendering) takes
+ * in filled patches, uploads them, selects and asks for more; draw records
+ * them into the scene pass after the clipmap. */
+void planet_gpu_create(Renderer *r);
+void planet_gpu_destroy(Renderer *r);
+void planet_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);
+void planet_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
+bool planet_gpu_settled(Renderer *r);
+void planet_gpu_stats(Renderer *r, char *buf, size_t n);
 
 /* proxy_gpu.c. Update (after chunks_update, outside any rendering) takes in
  * generated tiles, asks for missing ones and builds the frame's draws; draw

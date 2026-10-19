@@ -85,6 +85,7 @@ file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain ${SHADER_OUT_DIR
 set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp
             cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
             prepass.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag
+            terrain/planet.vert terrain/planet.frag
             proxy/proxy.vert proxy/proxy.frag)
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
@@ -200,7 +201,7 @@ endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/proxy_gpu.c src/render/textures.c ${GEN_SOURCES} ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c src/core/thread.c)
+  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/textures.c ${GEN_SOURCES} ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c src/core/thread.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

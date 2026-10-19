@@ -97,6 +97,7 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
     create_layouts(r);
     create_pipelines(r);
     terrain_gpu_create(r);
+    planet_gpu_create(r);
     proxy_gpu_create(r);
     build_cloud_noise(r);
     create_targets(r);
@@ -108,9 +109,10 @@ void renderer_destroy(Renderer *r) {
     vkDeviceWaitIdle(vk->device);
     destroy_targets(r);
     terrain_gpu_destroy(r);
+    planet_gpu_destroy(r);
     proxy_gpu_destroy(r);
     vk_buffer_destroy(vk, &r->shotBuf);
-    VkPipeline pipes[] = { r->cityPipe, r->plantPipe, r->terrainPipe, r->proxyPipe, r->proxyFadePipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
+    VkPipeline pipes[] = { r->cityPipe, r->plantPipe, r->terrainPipe, r->planetPipe, r->proxyPipe, r->proxyFadePipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
                            r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
@@ -123,6 +125,7 @@ void renderer_destroy(Renderer *r) {
     vkDestroyPipelineLayout(vk->device, r->shelterPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->shadowPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->terrainPL, NULL);
+    vkDestroyPipelineLayout(vk->device, r->planetPL, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->terrainLayout, NULL);
     vkDestroyPipelineLayout(vk->device, r->proxyPL, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->proxyLayout, NULL);
@@ -301,6 +304,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     proxy_gpu_update(r, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_STREAM);
     terrain_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
+    planet_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_TERRAIN_UPLOAD);
     record_shelter(r, cmd, slot, &topDown);
     timestamp(r, cmd, slot, GT_SHELTER);

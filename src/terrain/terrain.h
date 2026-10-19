@@ -153,7 +153,8 @@ int        terrain_horizon_hidden(TerrainDir cam, TerrainDir centre, double radi
  *          six top patches);
  *   n      the unit normal, in the planet frame;
  *   chart  its world (x, z) less the patch's centre's (m; for cutting the
- *          clipmap's window out; garbage round the antipode, never seen).
+ *          clipmap's window out; garbage round the antipode, never seen);
+ *   urban  plan_urban there (1 in the city, 0 beyond its belt).
  * err is how far the surface strays from its children's, at the cells'
  * centres: what drawing it in their place costs. */
 #define TERRAIN_PATCH_CELLS 32
@@ -161,7 +162,7 @@ int        terrain_horizon_hidden(TerrainDir cam, TerrainDir centre, double radi
 #define TERRAIN_PATCH_VERTS (TERRAIN_PATCH_SIDE * TERRAIN_PATCH_SIDE + 4 * TERRAIN_PATCH_SIDE)
 #define TERRAIN_PATCH_LEVELS 15   /* the finest the selection goes: level 14, cells about 76 m */
 
-typedef struct TerrainPatchVertex { float pos[3], morph[3], n[3], chart[2]; } TerrainPatchVertex;
+typedef struct TerrainPatchVertex { float pos[3], morph[3], n[3], chart[2], urban; } TerrainPatchVertex;
 typedef struct TerrainPatchInfo {
     TerrainPatch id;
     TerrainDir   centre;           /* planet frame (m): on the sphere, under the patch's middle */
@@ -201,11 +202,11 @@ int    terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m);
  * to the pixel: twice the clipmap's thresholds. */
 #define TERRAIN_PLANET_REFINE    2.0
 #define TERRAIN_PLANET_COARSEN   1.0
+#define TERRAIN_PLANET_HAZE_FLOOR 0.05
 #define TERRAIN_PLANET_SLOTS     1536
 #define TERRAIN_PLANET_MAX_DRAWS 1024
 #define TERRAIN_PLANET_MAX_WANTS 64
 #define TERRAIN_PLANET_MORPH_IN  0.5
-#define TERRAIN_PLANET_HOLE_M    1024.0   /* the clipmap's window, less this, is cut out of the patches */
 
 typedef struct TerrainPlanetView {
     double  cam[3];     /* world (x, y, z) */

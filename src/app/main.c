@@ -229,7 +229,7 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
         if (renderer_shadows(renderer))
             printf("shadows: %d bottom-level structures (%d MB, %d built so far), %d TLAS instances\n",
                    s.blas, s.blasMB, s.blasBuilds, s.instances);
-        char gpu[512];
+        char gpu[1024];
         renderer_gpu_times(renderer, gpu, sizeof(gpu));
         printf("%s\n", gpu);
         renderer_terrain_stats(renderer, gpu, sizeof(gpu));

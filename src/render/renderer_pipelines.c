@@ -62,6 +62,12 @@ static const uint32_t SPV_terrain_vert[] = {
 static const uint32_t SPV_terrain_frag[] = {
 #include "terrain/terrain.frag.inc"
 };
+static const uint32_t SPV_planet_vert[] = {
+#include "terrain/planet.vert.inc"
+};
+static const uint32_t SPV_planet_frag[] = {
+#include "terrain/planet.frag.inc"
+};
 static const uint32_t SPV_proxy_vert[] = {
 #include "proxy/proxy.vert.inc"
 };
@@ -212,6 +218,7 @@ void create_layouts(Renderer *r) {
     r->ssrApplyPL = make_pipeline_layout(vk, r->ssrApplyLayout, 0, 0);
     r->shelterPL = make_pipeline_layout(vk, r->sceneLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
     r->terrainPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(TerrainPush), VK_SHADER_STAGE_VERTEX_BIT);
+    r->planetPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(PlanetPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
     r->proxyPL = make_pipeline_layout(vk, r->proxyLayout, 0, 0);
 
     VkDescriptorPoolSize sizes[4] = {
@@ -394,6 +401,11 @@ void create_pipelines(Renderer *r) {
                         r->terrainPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
     terrain.colorFormat2 = HDR_FORMAT;
     r->terrainPipe = make_graphics(vk, &terrain);
+    GfxDesc planet = terrain;
+    planet.vs = SPV_planet_vert; planet.vsBytes = sizeof(SPV_planet_vert);
+    planet.fs = SPV_planet_frag; planet.fsBytes = sizeof(SPV_planet_frag);
+    planet.layout = r->planetPL;
+    r->planetPipe = make_graphics(vk, &planet);
     GfxDesc proxy = { SPV_proxy_vert, sizeof(SPV_proxy_vert), SPV_proxy_frag, sizeof(SPV_proxy_frag),
                       r->proxyPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
     proxy.colorFormat2 = HDR_FORMAT;

@@ -48,8 +48,8 @@ const float SCUD_SCALE = 1.0 / 480.0;
 const float SIGMA = 0.012;                 // extinction per metre at density 1
 const vec3 WIND = vec3(1.5, 0.0, 0.55);    // deck drift, m/s; the scud below runs faster
 const float GLOW = 1.3;                    // city light reaching the cloud base
-// How far the deck is marched. At the deck's height the city's haze
-// (fogAmount) has taken about 97% of its light by here.
+// How far the deck is marched, across the ground. At the deck's height the
+// city's haze (fogAmount) has taken about 97% of its light by here.
 const float CLOUD_REACH = 9000.0;
 const float FAR_STEP = 80.0;               // step past VIEW_DISTANCE (m), without the eroded detail
 
@@ -222,7 +222,9 @@ void march(vec3 ro, vec3 dir, float ta, float tb, int steps, bool detail, float 
         pw.y += planetDrop(dir.xz * t);  // (its height above the planet's curved ground)
         vec3 p = pw + drift;             // ...while the clouds drift over it
         Column c = column(p.xz);
-        float d = density(p, c, detail);
+        // the deck thins out towards CLOUD_REACH, measured across the ground,
+        // so seen from high above it fades rather than ends on a line
+        float d = density(p, c, detail) * (1.0 - smoothstep(0.6 * CLOUD_REACH, CLOUD_REACH, length(dir.xz) * t));
         if (d <= 0.002) continue;
         float Ts = exp(-d * SIGMA * ds);
         vec3 lit = lightAt(p, c, cityGlow(pw.xz)) + signLight(dir * t);
@@ -272,7 +274,7 @@ void main() {
         t0 = max(min(ta, tb), 0.0);
         t1 = max(ta, tb);
     }
-    t1 = min(t1, min(tScene, CLOUD_REACH));
+    t1 = min(t1, min(tScene, CLOUD_REACH / max(length(dir.xz), CLOUD_REACH / 1e6)));
     if (t1 <= t0) { imageStore(cloudOut, hp, vec4(0.0, 0.0, 0.0, 1.0)); return; }
 
     float jitter = ign(vec2(hp));

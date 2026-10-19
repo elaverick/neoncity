@@ -1,5 +1,6 @@
 #include "terrain_internal.h"
 #include "hash.h"
+#include "plan.h"
 
 /* The planet's patches (see terrain.h): filling a patch's mesh, the cache of
  * filled patches and the quadtree selection of which to draw. Meshes are pure
@@ -11,6 +12,9 @@
 #define PS TERRAIN_PATCH_SIDE
 #define AS (PC + 3)        /* the grid with a one-sample apron, for normals */
 #define PP (PC / 2 + 1)    /* the parent's samples under a patch */
+/* plan_urban is 0 this far from the chart's origin and beyond (m): well past
+ * the city's edge and belt. */
+#define URBAN_REACH_M (3.0 * (CITY_RADIUS + CITY_BELT))
 
 double terrain_patch_spacing(int level) {
     return 0.5 * PI * PLANET_RADIUS / (double)((int64_t)PC << level);
@@ -93,6 +97,7 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
             terrain_dir_chart(dir[gj * PS + gi], &x, &z);
             v->chart[0] = (float)(x - in->chart[0]);
             v->chart[1] = (float)(z - in->chart[1]);
+            v->urban = hypot(x, z) < URBAN_REACH_M ? plan_urban(x, z) : 0.0f;
             lox = fmin(lox, x); hix = fmax(hix, x); loz = fmin(loz, z); hiz = fmax(hiz, z);
             r2 = fmax(r2, dot3(rel, rel));
         }
@@ -231,10 +236,12 @@ static void visit(Select *x, int s, double parentSplit) {
      * where the window takes the rest. */
     double dist = fmax(sqrt(lx * lx + ly * ly + lz * lz) - r, TERRAIN_SSE_NEAR);
     if (hole) dist = fmax(dist, x->clear);
-    /* Through the haze an error shows as much less as the contrast left. The
-     * morph's distances leave it out: a child's surface still reaches its
-     * own before the camera gets to it. */
-    double fade = vw->haze > 0.0 ? exp(-dist / vw->haze) : 1.0;
+    /* Through the haze an error shows as much less as the contrast left, but
+     * never less than TERRAIN_PLANET_HAZE_FLOOR of it: a silhouette against
+     * the sky still shows in the haze's colour. The morph's distances leave
+     * it out: a child's surface still reaches its own before the camera gets
+     * to it. */
+    double fade = vw->haze > 0.0 ? fmax(exp(-dist / vw->haze), TERRAIN_PLANET_HAZE_FLOOR) : 1.0;
     double rho = in->err * vw->K / dist * fade, split = in->err * vw->K / TERRAIN_PLANET_REFINE;
     if (in->id.level + 1 < TERRAIN_PATCH_LEVELS && rho > (sl->split ? TERRAIN_PLANET_COARSEN : TERRAIN_PLANET_REFINE)) {
         int cs[4], ready = 1;

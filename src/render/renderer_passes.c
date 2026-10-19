@@ -332,6 +332,7 @@ void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows) {
     proxy_gpu_draw(r, cmd, slot);
     timestamp(r, cmd, slot, GT_SCENE);
     terrain_gpu_draw(r, cmd, slot);
+    planet_gpu_draw(r, cmd, slot);
     timestamp(r, cmd, slot, GT_TERRAIN);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->scenePL, 0, 1, &r->sceneSet[slot], 0, NULL);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->skyPipe);

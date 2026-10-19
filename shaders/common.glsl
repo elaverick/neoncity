@@ -345,19 +345,26 @@ vec3 hazeColor(vec3 dir) {
     return c;
 }
 
+// The mean of exp(-h / H) along a straight sight line from height h0 to h1.
+float hazeMean(float h0, float h1, float H) {
+    float dh = h1 - h0;
+    return abs(dh) > 1.0 ? H * (exp(-h0 / H) - exp(-h1 / H)) / dh : exp(-h0 / H);
+}
+
 // How much of the light from rel (camera-relative, dist away) the haze takes,
 // for air of the given density (per metre) at street level, thinning with
-// height to a quarter of that. Heights count from the haze datum
-// (frame.weather.z): the ground of the settlement, not y = 0, so a town on
-// raised ground lies in its own street-level haze. They are heights above the
-// planet's sphere, so ground bent down out of sight stays in the street's haze.
+// height: three quarters of it within HAZE_LOW_H or so of the ground, the
+// rest within HAZE_HIGH_H, clear air above (distances.h). Heights count from
+// the haze datum (frame.weather.z): the ground of the settlement, not y = 0,
+// so a town on raised ground lies in its own street-level haze. They are
+// heights above the planet's sphere, so ground bent down out of sight stays
+// in the street's haze. The C mirror for the planet's patches is
+// planet_haze (src/render/planet_gpu.c).
 float hazeAmount(vec3 rel, float dist, float density) {
-    const float H = 110.0;                       // haze scale height
     float h0 = max(frame.camPos.y - frame.weather.z, 0.0);
     float h1 = max(frame.camPos.y + rel.y + planetDrop(rel.xz) - frame.weather.z, 0.0);
-    float dh = h1 - h0;
-    float avg = abs(dh) > 1.0 ? H * (exp(-h0 / H) - exp(-h1 / H)) / dh : exp(-h0 / H);
-    return 1.0 - exp(-dist * density * (0.25 + 0.75 * avg));
+    float low = hazeMean(h0, h1, HAZE_LOW_H), high = hazeMean(h0, h1, HAZE_HIGH_H);
+    return 1.0 - exp(-dist * density * (0.25 * high + 0.75 * low));
 }
 
 // The city's haze: a street-level mean free path of CITY_HAZE metres, which
