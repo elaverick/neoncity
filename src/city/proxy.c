@@ -19,7 +19,28 @@ static uint32_t f16(float f) {
 
 static uint32_t pack2(float a, float b) { return f16(a) | f16(b) << 16; }
 
-typedef struct Pending { int chunk; float reach; ProxyBox b; } Pending;
+typedef struct Pending { int chunk, order; float reach, size; ProxyBox b; } Pending;
+
+/* IEEE half to float (normal values and zero: what f16 makes of a box). */
+static float h16(uint32_t h) {
+    uint32_t e = (h >> 10) & 0x1Fu;
+    if (e == 0) return 0.0f;
+    union { float f; uint32_t u; } v;
+    v.u = (h & 0x8000u) << 16 | (e - 15 + 127) << 23 | (h & 0x3FFu) << 13;
+    return v.f;
+}
+
+float proxy_box_size(const ProxyBox *b) {
+    return maxf(b->y1 - b->y0, 2.0f * maxf(h16(b->half & 0xFFFFu), h16(b->half >> 16)));
+}
+
+/* By chunk, then largest first, then in the order generated. */
+static int cmp_pending(const void *a, const void *b) {
+    const Pending *p = (const Pending *)a, *q = (const Pending *)b;
+    if (p->chunk != q->chunk) return p->chunk - q->chunk;
+    if (p->size != q->size) return p->size > q->size ? -1 : 1;
+    return p->order - q->order;
+}
 
 /* The boxes of building b, owned by the tile's chunk k. */
 static int building_boxes(const Building *b, const BGraph *g, int k, double ox, double oz, Pending *out, int max) {
@@ -88,24 +109,28 @@ void city_proxy_tile(int tx, int tz, ProxyTile *t) {
         }
     }
 
-    /* Grouped by chunk, in the order generated within each. */
+    /* Grouped by chunk, largest first within each (see PROXY_LOD_BINS). */
     if (npend > t->cap) {
         t->cap = npend;
         t->box = (ProxyBox *)realloc(t->box, sizeof(ProxyBox) * t->cap);
         if (!t->box) fatal("out of memory generating proxies");
     }
-    int count[PROXY_TILE_CELLS] = { 0 };
-    for (int i = 0; i < npend; ++i) count[pend[i].chunk]++;
-    t->first[0] = 0;
-    for (int k = 0; k < PROXY_TILE_CELLS; ++k) t->first[k + 1] = t->first[k] + count[k];
-    int at[PROXY_TILE_CELLS];
-    memcpy(at, t->first, sizeof(at));
+    for (int i = 0; i < npend; ++i) { pend[i].order = i; pend[i].size = proxy_box_size(&pend[i].b); }
+    qsort(pend, (size_t)npend, sizeof(Pending), cmp_pending);
+    memset(t->first, 0, sizeof(t->first));
+    memset(t->lod, 0, sizeof(t->lod));
+    for (int i = 0; i < npend; ++i) {
+        int k = pend[i].chunk;
+        t->first[k + 1]++;
+        for (int b = 0; b < PROXY_LOD_BINS && pend[i].size >= PROXY_LOD_SIZE(b); ++b) t->lod[k][b]++;
+    }
+    for (int k = 0; k < PROXY_TILE_CELLS; ++k) t->first[k + 1] += t->first[k];
     t->n = npend;
     t->mn[0] = t->mn[1] = t->mn[2] = 1e30f;
     t->mx[0] = t->mx[1] = t->mx[2] = -1e30f;
     for (int i = 0; i < npend; ++i) {
         ProxyBox b = pend[i].b;
-        t->box[at[pend[i].chunk]++] = b;
+        t->box[i] = b;
         /* a box's reach on the ground plane is at most its half diagonal */
         float r = pend[i].reach;
         t->mn[0] = minf(t->mn[0], b.x - r); t->mx[0] = maxf(t->mx[0], b.x + r);
@@ -113,6 +138,14 @@ void city_proxy_tile(int tx, int tz, ProxyTile *t) {
         t->mn[1] = minf(t->mn[1], b.y0); t->mx[1] = maxf(t->mx[1], b.y1);
     }
     free(pend); free(g); free(bl); free(pa);
+}
+
+/* Buildings stand only on built towns' ground, where plan_city_edge is at most
+ * CITY_BUILT_EDGE, and the edge measure changes by at most CITY_EDGE_RATE a
+ * metre, so from the tile's centre it bounds the whole tile. */
+int city_proxy_tile_empty(int tx, int tz) {
+    double h = 0.5 * PROXY_TILE, r = h * 1.4142135623730951;
+    return plan_city_edge(tx * PROXY_TILE + h, tz * PROXY_TILE + h) - CITY_EDGE_RATE * r > CITY_BUILT_EDGE;
 }
 
 void proxy_tile_free(ProxyTile *t) { free(t->box); memset(t, 0, sizeof(*t)); }

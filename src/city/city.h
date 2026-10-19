@@ -221,17 +221,30 @@ typedef struct ProxyBox {
 #define PX_FLOOR_SHIFT    18   /* 11 */
 #define PX_ARCOLOGY       (1u << 29)
 
+/* Level of detail: within each chunk's run the boxes come largest first (by
+ * their largest side), and lod[k][b] counts chunk k's boxes at least
+ * PROXY_LOD_SIZE(b) metres, so a renderer drawing a far tile can draw each
+ * chunk's first few, leaving out those too small to see. */
+#define PROXY_LOD_BINS    8
+#define PROXY_LOD_SIZE(b) ((float)(1 << (b)))   /* 1, 2, 4 ... 128 m */
+
 typedef struct ProxyTile {
     int       tx, tz;                      /* the tile; its origin is (tx, tz) * PROXY_TILE */
     int       n, cap;
     ProxyBox *box;                         /* chunk k's boxes are box[first[k]] .. box[first[k + 1] - 1] */
     int       first[PROXY_TILE_CELLS + 1];
+    uint16_t  lod[PROXY_TILE_CELLS][PROXY_LOD_BINS];
     int       nbuild;
     float     mn[3], mx[3];                /* bounds (n > 0): x and z relative to the origin, world Y */
 } ProxyTile;
+/* A box's size for its level of detail: its largest side (m). */
+float    proxy_box_size(const ProxyBox *b);
 
 /* Fills t with tile (tx, tz)'s proxies, reusing its storage. */
 void     city_proxy_tile(int tx, int tz, ProxyTile *t);
+/* Whether tile (tx, tz) provably holds no proxies (it lies beyond the city):
+ * cheap, conservative. */
+int      city_proxy_tile_empty(int tx, int tz);
 void     proxy_tile_free(ProxyTile *t);
 
 /* Facade rhythm shared with the shader (shaders/common.glsl: facadeFloorH/facadeGroundH). */

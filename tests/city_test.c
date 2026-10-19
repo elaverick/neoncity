@@ -466,6 +466,7 @@ static float h2f(uint32_t h) {
 static uint64_t fnv_tile(const ProxyTile *t, uint64_t h) {
     h = fnv(&t->n, sizeof(t->n), h);
     h = fnv(t->box, sizeof(ProxyBox) * (size_t)t->n, h);
+    h = fnv(t->lod, sizeof(t->lod), h);
     return fnv(t->first, sizeof(t->first), h);
 }
 
@@ -503,6 +504,14 @@ static void check_proxy_tile(int tx, int tz, ProxyTile *t, int *boxes, int *buil
             CHECK(p->x >= t->mn[0] && p->x <= t->mx[0] && p->z >= t->mn[2] && p->z <= t->mx[2] && p->y0 >= t->mn[1] && p->y1 <= t->mx[1],
                   "proxy %d of tile (%d,%d) is outside the tile's bounds", j, tx, tz);
         }
+        /* level of detail: largest first, and the bins count them */
+        for (int b = 0; b < PROXY_LOD_BINS; ++b) {
+            int n = 0;
+            for (int j = t->first[k]; j < t->first[k + 1]; ++j) n += proxy_box_size(&t->box[j]) >= PROXY_LOD_SIZE(b);
+            CHECK(n == t->lod[k][b], "tile (%d,%d) chunk %d counts %d boxes of %.0f m or more, holds %d", tx, tz, k, t->lod[k][b], PROXY_LOD_SIZE(b), n);
+        }
+        for (int j = t->first[k] + 1; j < t->first[k + 1]; ++j)
+            CHECK(proxy_box_size(&t->box[j]) <= proxy_box_size(&t->box[j - 1]), "tile (%d,%d) chunk %d's boxes are not largest first", tx, tz, k);
     }
     CHECK(found == t->nbuild, "tile (%d,%d) holds %d buildings, its chunks %d", tx, tz, t->nbuild, found);
     *boxes += t->n;
@@ -521,6 +530,19 @@ static void check_proxies(void) {
         check_proxy_tile((int)floor((home.x - r * 0.6) / PROXY_TILE), (int)floor((home.z + r * 0.8) / PROXY_TILE), &t, &boxes, &builds);
         tiles++;
     }
+    /* tiles called empty hold nothing: across the edge along 16 rays */
+    int empties = 0;
+    for (int ray = 0; ray < 16; ++ray) {
+        double th = ray * 2.0 * 3.14159265358979 / 16.0;
+        for (double r = 9000.0; r <= 16000.0; r += PROXY_TILE) {
+            int tx = (int)floor((home.x + r * cos(th)) / PROXY_TILE), tz = (int)floor((home.z + r * sin(th)) / PROXY_TILE);
+            if (!city_proxy_tile_empty(tx, tz)) continue;
+            city_proxy_tile(tx, tz, &t);
+            CHECK(t.n == 0, "tile (%d,%d) is called empty but holds %d boxes", tx, tz, t.n);
+            empties++;
+        }
+    }
+    CHECK(empties > 16, "only %d tiles across the edge are called empty", empties);
     /* the same tile after others, and whichever way it is reached */
     city_proxy_tile(htx, htz, &t);
     uint64_t h = fnv_tile(&t, 0xcbf29ce484222325ULL);

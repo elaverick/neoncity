@@ -25,14 +25,16 @@
 #define POOL_PAGES_P    6144                         /* 768k boxes, 24 MB (the city: about 320k in 985 tiles) */
 #define TILE_PAGES      16                           /* at most 2048 boxes a tile (the city's largest: about 820) */
 #define UPLOAD_BOXES    (64 * PAGE_BOXES)            /* uploaded a frame, at most (bar one large tile) */
-#define MAX_DRAWS       16384
+#define MAX_DRAWS       32768                        /* a tile drawn in part takes a draw per chunk run */
+#define PROXY_LOD_PX    1.0f                         /* boxes smaller than this on screen (pixels) are left out */
 #define MAX_JOBS_P      64                           /* tiles queued, or generated and not yet taken */
 #define BOX_VERTS       30
 #define RETRY_FRAMES    120                          /* a tile the pool had no room for waits this long to be generated again */
 
 _Static_assert(PT_SIDE > 2.0 * PROXY_DISTANCE / PROXY_TILE + 2.0, "the proxy table is too small for the range");
 
-enum { PT_FREE = 0, PT_QUEUED, PT_READY };
+/* PT_EMPTY: a tile that can hold none of the city (tile_empty), never generated. */
+enum { PT_FREE = 0, PT_QUEUED, PT_READY, PT_EMPTY };
 
 typedef struct PTile {
     int      tx, tz, state;
@@ -40,6 +42,7 @@ typedef struct PTile {
     int      n, npages;
     uint16_t page[TILE_PAGES];
     int      first[PROXY_TILE_CELLS + 1];
+    uint16_t lod[PROXY_TILE_CELLS][PROXY_LOD_BINS];
     float    mn[3], mx[3];
 } PTile;
 
@@ -209,6 +212,7 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
         t->n = j->t.n;
         t->npages = pages;
         memcpy(t->first, j->t.first, sizeof(t->first));
+        memcpy(t->lod, j->t.lod, sizeof(t->lod));
         memcpy(t->mn, j->t.mn, sizeof(t->mn));
         memcpy(t->mx, j->t.mx, sizeof(t->mx));
         for (int k = 0; k < pages; ++k) {
@@ -245,9 +249,13 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
                 if (t->state == PT_READY) p->residentBoxes -= t->n;
                 free_tile(p, t, frame);   /* a queued job for it is simply not taken up */
             }
-            if (t->state == PT_FREE && (t->tx != tx || t->tz != tz)) t->retry = 0;   /* another tile's wait */
-            if (t->state == PT_FREE && frame >= t->retry) { p->cand[ncand].slot = s; p->cand[ncand].d = d; ncand++; t->tx = tx; t->tz = tz; }
-            else if (t->state == PT_READY) p->readyTiles++;
+            if (t->state == PT_FREE && (t->tx != tx || t->tz != tz)) {   /* another tile's slot */
+                t->retry = 0;
+                t->tx = tx; t->tz = tz;
+                if (city_proxy_tile_empty(tx, tz)) t->state = PT_EMPTY;
+            }
+            if (t->state == PT_FREE && frame >= t->retry) { p->cand[ncand].slot = s; p->cand[ncand].d = d; ncand++; }
+            else if (t->state == PT_READY || t->state == PT_EMPTY) p->readyTiles++;
         }
     if (p->filled == 0.0 && p->readyTiles == p->inRange) p->filled = glfwGetTime() - p->created;
     if (ncand) {
@@ -264,8 +272,11 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
         mutex_unlock(&p->lock);
     }
 
-    /* 3. Draws: the tiles in view, less the chunks drawn in full. */
+    /* 3. Draws: the tiles in view, less the chunks drawn in full. K is the
+     *    viewport's pixels per unit of tangent (as terrain_gpu.c's). */
     Frustum fr = frustum_from_matrix(*viewProj);
+    const float *vm = viewProj->m;
+    float K = 0.5f * (float)r->vk->extent.height * sqrtf(vm[1] * vm[1] + vm[5] * vm[5] + vm[9] * vm[9]);
     VkDrawIndirectCommand *cmds = (VkDrawIndirectCommand *)p->indirect[slot].mapped;
     float (*org)[4] = (float (*)[4])p->origins[slot].mapped;
     uint32_t nd = 0;
@@ -277,24 +288,33 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
         if (!frustum_test_aabb(&fr, v3(ox + t->mn[0], t->mn[1] - (float)cam[1], oz + t->mn[2]),
                                v3(ox + t->mx[0], t->mx[1] - (float)cam[1], oz + t->mx[2]))) continue;
         org[s][0] = ox; org[s][1] = oz; org[s][2] = 0.0f; org[s][3] = 0.0f;
-        int run0 = -1;
+        /* Level of detail: each chunk's boxes at least `need` metres (a pixel
+         * or so at the tile's nearest), counted by the largest bin under it. */
+        float need = PROXY_LOD_PX * tile_dist(t->tx, t->tz, cam) / K;
+        int bin = -1;
+        while (bin + 1 < PROXY_LOD_BINS && PROXY_LOD_SIZE(bin + 1) <= need) bin++;
+        int run0 = -1, run1 = -1;
         for (int k = 0; k <= PROXY_TILE_CELLS; ++k) {
             int keep = k < PROXY_TILE_CELLS && !chunks_drawn(r->chunks, t->tx * PROXY_TILE_CHUNKS + k % PROXY_TILE_CHUNKS,
                                                              t->tz * PROXY_TILE_CHUNKS + k / PROXY_TILE_CHUNKS);
-            if (keep && run0 < 0) run0 = t->first[k];
-            if (keep || run0 < 0) continue;
-            /* boxes [run0, first[k]), split where they cross from one page to the next */
-            for (int b = run0, e = t->first[k]; b < e && nd < MAX_DRAWS;) {
-                int pg = b / PAGE_BOXES, end = (pg + 1) * PAGE_BOXES < e ? (pg + 1) * PAGE_BOXES : e;
-                VkDrawIndirectCommand *c = &cmds[nd++];
-                c->vertexCount = (uint32_t)(end - b) * BOX_VERTS;
-                c->instanceCount = 1;
-                c->firstVertex = ((uint32_t)t->page[pg] * PAGE_BOXES + (uint32_t)(b - pg * PAGE_BOXES)) * BOX_VERTS;
-                c->firstInstance = (uint32_t)s;
-                p->drawnBoxes += end - b;
-                b = end;
+            int end = keep ? t->first[k] + (bin < 0 ? t->first[k + 1] - t->first[k] : t->lod[k][bin]) : 0;
+            if (keep && end == t->first[k]) keep = 0;   /* nothing big enough */
+            if (keep && run0 >= 0 && run1 == t->first[k]) { run1 = end; continue; }   /* runs on from the last chunk */
+            if (run0 >= 0) {
+                /* boxes [run0, run1), split where they cross from one page to the next */
+                for (int b = run0, e = run1; b < e && nd < MAX_DRAWS;) {
+                    int pg = b / PAGE_BOXES, pe = (pg + 1) * PAGE_BOXES < e ? (pg + 1) * PAGE_BOXES : e;
+                    VkDrawIndirectCommand *c = &cmds[nd++];
+                    c->vertexCount = (uint32_t)(pe - b) * BOX_VERTS;
+                    c->instanceCount = 1;
+                    c->firstVertex = ((uint32_t)t->page[pg] * PAGE_BOXES + (uint32_t)(b - pg * PAGE_BOXES)) * BOX_VERTS;
+                    c->firstInstance = (uint32_t)s;
+                    p->drawnBoxes += pe - b;
+                    b = pe;
+                }
+                run0 = -1;
             }
-            run0 = -1;
+            if (keep) { run0 = t->first[k]; run1 = end; }
         }
         p->drawnTiles++;
     }

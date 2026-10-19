@@ -53,10 +53,12 @@ the terrain roadmap.
     lamps or traffic. Seen from high up the blocks read, but the streets between them don't.
   - **Clouds** are marched to 9 km (`CLOUD_REACH`, `clouds.comp`), past `VIEW_DISTANCE` in 80 m steps without
     the eroded detail, so the deck covers the distant towers. They are hazed by the city's air even over the land.
-  - **Level of detail:** every box in view is drawn, down to subpixel podiums (about 0.1 ms for 230k boxes on an
-    RTX 4080 Super). Far tiles could keep only each building's tallest sections.
-  - **Startup:** one worker fills the city's tiles in about a second, nearest first, so the far skyline fills in;
-    `--shot` waits for it.
+  - **Level of detail:** each chunk's boxes come largest first, and a tile draws only those at least a pixel across
+    at its distance (`PROXY_LOD_PX`, `ProxyTile.lod`). From the edge that leaves 418k of 550k boxes, but a chunk
+    drawn in part is a draw of its own: 15.8k draws there. A per-tile run order (whole chunks first) or a GPU cull
+    would bring the draws down if they ever cost.
+  - **Startup:** one worker fills the city's tiles in about two seconds, nearest first, so the far skyline fills in;
+    tiles beyond the city are known empty without a job (`city_proxy_tile_empty`); `--shot` waits for it.
 - **Screen-space error** (`terrain_clip_select`, `terrain_gpu.c`'s `plan_draws`; M7). The finest level drawn is the
   coarsest whose dropped levels would move the ground by under a pixel, with hysteresis. The tiles of each level are
   culled against the frustum. At the spawn this draws levels 6-8, 54 of 129 tiles; out on the land, levels 1-8.
