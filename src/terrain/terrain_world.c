@@ -206,7 +206,7 @@ static double planet_lod(TerrainDir p, double spacing, int surface) {
         xb = c.a * k;
         zb = -c.b * k;
     }
-    double far = terrain_land_lod(xb + ANTIPODE_OFFSET_M, zb + ANTIPODE_OFFSET_M, 1e9, spacing);
+    double far = terrain_land_at(xb + ANTIPODE_OFFSET_M, zb + ANTIPODE_OFFSET_M, p, 1e9, spacing);
     if (c.th >= CHART_BLEND_TO) return far;
     double t = (c.th - CHART_BLEND_FROM) / (CHART_BLEND_TO - CHART_BLEND_FROM), w = t * t * (3.0 - 2.0 * t);
     return near + w * (far - near);

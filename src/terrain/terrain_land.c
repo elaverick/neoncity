@@ -15,7 +15,36 @@ typedef struct Region {
     float  w[TERRAIN_TYPES];
 } Region;
 
-static void region_at(double x, double z, Region *r) {
+/* --- The planet's highlands and basins ------------------------------------------
+ * A fractal sum over the sphere, in [-1, 1], and how much of it the land
+ * takes at an edge measure (M). */
+static double macro_weight(double edge) {
+    double t = (edge - TERRAIN_MACRO_FROM) / (TERRAIN_MACRO_FULL - TERRAIN_MACRO_FROM);
+    t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
+    return t * t * (3.0 - 2.0 * t);
+}
+
+static double macro_at(TerrainDir p, double spacing) {
+    double k = PLANET_RADIUS / TERRAIN_MACRO_WAVE;
+    return noise_fbm3_band(WORLD_SEED ^ 0x7E61u, p.x * k, p.y * k, p.z * k, TERRAIN_MACRO_OCTAVES,
+                           terrain_octaves(TERRAIN_MACRO_WAVE, TERRAIN_MACRO_OCTAVES, spacing));
+}
+
+/* M * macro at a point of the world's chart (p NULL) or of another chart;
+ * its affinity bias uses the full sum, whatever the spacing, so the region's
+ * weights don't depend on the level of detail. */
+static void macro_of(double x, double z, const TerrainDir *p, double edge, double spacing, double *lift, double *bias) {
+    *lift = *bias = 0.0;
+    double mw = macro_weight(edge);
+    if (mw <= 0.0) return;
+    TerrainDir d = p ? *p : terrain_chart_dir(x, z);
+    double full = macro_at(d, 0.0);
+    int all = terrain_octaves(TERRAIN_MACRO_WAVE, TERRAIN_MACRO_OCTAVES, spacing) == TERRAIN_MACRO_OCTAVES;
+    *lift = mw * TERRAIN_MACRO_M * (all ? full : macro_at(d, spacing));
+    *bias = mw * TERRAIN_MACRO_BIAS * full;
+}
+
+static void region_at(double x, double z, double bias, Region *r) {
     double ww = TERRAIN_WARP_WAVE;
     r->wx = x + TERRAIN_WARP_M * (2.0 * noise_value2(WORLD_SEED ^ 0x7E31u, x / ww, z / ww) - 1.0);
     r->wz = z + TERRAIN_WARP_M * (2.0 * noise_value2(WORLD_SEED ^ 0x7E32u, x / ww, z / ww) - 1.0);
@@ -27,6 +56,11 @@ static void region_at(double x, double z, Region *r) {
     a[TERRAIN_HILLS] = noise_value2(WORLD_SEED ^ 0x7E33u, r->wx / rw, r->wz / rw);
     a[TERRAIN_MOUNTAINS] = noise_value2(WORLD_SEED ^ 0x7E34u, r->u / (rw * TERRAIN_BELT_ALONG), r->v / (rw * TERRAIN_BELT_ACROSS));
     a[TERRAIN_PLATEAU] = noise_value2(WORLD_SEED ^ 0x7E35u, r->wx / rw, r->wz / rw);
+    if (bias != 0.0) {   /* highlands raise the mountains and plateaus, basins the plains */
+        a[TERRAIN_PLAINS] -= (float)bias;
+        a[TERRAIN_MOUNTAINS] += (float)bias;
+        a[TERRAIN_PLATEAU] += (float)(0.5 * bias);
+    }
     /* Each type's lead over the margin below the best, cubed: continuous, and
      * smooth where a type's weight reaches 0. The best always has the full
      * margin, so the sum never vanishes. */
@@ -81,7 +115,7 @@ static double fbm_lod(uint32_t seed, double x, double z, double wave, int octave
 }
 
 /* The plateau's step: 0 below the mask's level, 1 a step above it; its
- * steepest, 0.75 / TERRAIN_MASK_STEP per unit of mask, in the middle. */
+ * steepest, 1.5 / TERRAIN_MASK_STEP per unit of mask, in the middle. */
 static double plateau_step(double mask) {
     return smoothstepf(0.0f, 1.0f, (float)((mask - TERRAIN_MASK_LEVEL) / TERRAIN_MASK_STEP));
 }
@@ -195,12 +229,14 @@ double terrain_canyon_depth(double x, double z) {
 
 /* --- The land -------------------------------------------------------------- */
 
-double terrain_land_lod(double x, double z, double edge, double spacing) {
+static double land_lod(double x, double z, const TerrainDir *p, double edge, double spacing) {
     double h = TERRAIN_BASE_M * fbm_lod(WORLD_SEED ^ 0x7E12u, x, z, TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
-    double e = region_rise(edge), c = canyon_rise(edge);
+    double e = region_rise(edge), c = canyon_rise(edge), lift, bias;
+    macro_of(x, z, p, edge, spacing, &lift, &bias);
+    h += lift;
     if (e > 0.0) {
         Region r;
-        region_at(x, z, &r);
+        region_at(x, z, bias, &r);
         double sum = 0.0;
         for (int t = 0; t < TERRAIN_TYPES; ++t)
             if (r.w[t] > 0.0f) sum += r.w[t] * type_height(t, x, z, &r, spacing);
@@ -210,22 +246,27 @@ double terrain_land_lod(double x, double z, double edge, double spacing) {
     return h;
 }
 
+double terrain_land_lod(double x, double z, double edge, double spacing) { return land_lod(x, z, NULL, edge, spacing); }
+double terrain_land_at(double x, double z, TerrainDir p, double edge, double spacing) { return land_lod(x, z, &p, edge, spacing); }
+
 double terrain_land(double x, double z) { return terrain_land_lod(x, z, plan_city_edge(x, z), 0.0); }
 
 void terrain_landform(double x, double z, TerrainLandform *out) {
     Region r;
-    region_at(x, z, &r);
+    double lift, bias;
+    macro_of(x, z, NULL, plan_city_edge(x, z), 0.0, &lift, &bias);
+    region_at(x, z, bias, &r);
     for (int t = 0; t < TERRAIN_TYPES; ++t) out->w[t] = r.w[t];
     out->canyon = (float)terrain_canyon_depth(x, z);
 }
 
-/* Base, the types and canyons each within their reach: the hills reach
- * lowest, the mountains highest, the canyons cut at most their deepest; E and
- * C only grow with the edge measure. */
+/* Base, macro, the types and canyons each within their reach: the hills
+ * reach lowest, the mountains highest, the canyons cut at most their deepest;
+ * M, E and C only grow with the edge measure. */
 void terrain_land_range(double edge, double *lo, double *hi) {
-    double e = region_rise(edge);
-    *lo = -(TERRAIN_BASE_M + e * TERRAIN_HILLS_M + canyon_rise(edge) * TERRAIN_CANYON_DEEP_M);
-    *hi = TERRAIN_BASE_M + e * (TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M);
+    double e = region_rise(edge), m = macro_weight(edge) * TERRAIN_MACRO_M;
+    *lo = -(TERRAIN_BASE_M + m + e * TERRAIN_HILLS_M + canyon_rise(edge) * TERRAIN_CANYON_DEEP_M);
+    *hi = TERRAIN_BASE_M + m + e * (TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M);
 }
 
 /* Leaving octaves out of a fractal sum moves it by at most their share of its
@@ -235,15 +276,17 @@ void terrain_land_range(double edge, double *lo, double *hi) {
  * the canyons don't depend on the spacing. */
 double terrain_land_lod_error(double x, double z, double spacing) {
     double err = TERRAIN_BASE_M * terrain_dropped(TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
-    double e = region_rise(plan_city_edge(x, z));
+    double edge = plan_city_edge(x, z), e = region_rise(edge), lift, bias;
+    err += macro_weight(edge) * TERRAIN_MACRO_M * terrain_dropped(TERRAIN_MACRO_WAVE, TERRAIN_MACRO_OCTAVES, spacing);
     if (e > 0.0) {
         Region r;
-        region_at(x, z, &r);
+        macro_of(x, z, NULL, edge, 0.0, &lift, &bias);
+        region_at(x, z, bias, &r);
         double t[TERRAIN_TYPES];
         t[TERRAIN_PLAINS] = TERRAIN_PLAINS_M * terrain_dropped(TERRAIN_PLAINS_WAVE, TERRAIN_PLAINS_OCTAVES, spacing);
         t[TERRAIN_HILLS] = TERRAIN_HILLS_M * terrain_dropped(TERRAIN_HILLS_WAVE, TERRAIN_HILLS_OCTAVES, spacing);
         t[TERRAIN_MOUNTAINS] = TERRAIN_RIDGE_M * terrain_dropped(TERRAIN_RIDGE_WAVE, TERRAIN_RIDGE_OCTAVES, spacing);
-        t[TERRAIN_PLATEAU] = TERRAIN_PLATEAU_M * 0.75 / TERRAIN_MASK_STEP * terrain_dropped(TERRAIN_MASK_WAVE, TERRAIN_MASK_OCTAVES, spacing) +
+        t[TERRAIN_PLATEAU] = TERRAIN_PLATEAU_M * 1.5 / TERRAIN_MASK_STEP * terrain_dropped(TERRAIN_MASK_WAVE, TERRAIN_MASK_OCTAVES, spacing) +
                              TERRAIN_TOP_M * terrain_dropped(TERRAIN_TOP_WAVE, TERRAIN_TOP_OCTAVES, spacing);
         for (int k = 0; k < TERRAIN_TYPES; ++k) err += e * r.w[k] * t[k];
     }
@@ -265,7 +308,7 @@ uint32_t terrain_lod_key(double spacing) {
         { TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES }, { TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES },
         { TERRAIN_PLAINS_WAVE, TERRAIN_PLAINS_OCTAVES }, { TERRAIN_HILLS_WAVE, TERRAIN_HILLS_OCTAVES },
         { TERRAIN_RIDGE_WAVE, TERRAIN_RIDGE_OCTAVES }, { TERRAIN_MASK_WAVE, TERRAIN_MASK_OCTAVES },
-        { TERRAIN_TOP_WAVE, TERRAIN_TOP_OCTAVES },
+        { TERRAIN_TOP_WAVE, TERRAIN_TOP_OCTAVES }, { TERRAIN_MACRO_WAVE, TERRAIN_MACRO_OCTAVES },
     };
     uint32_t key = 0;
     for (size_t k = 0; k < sizeof(sums) / sizeof(sums[0]); ++k) key = key * 16u + (uint32_t)terrain_octaves(sums[k].wave, sums[k].octaves, spacing);

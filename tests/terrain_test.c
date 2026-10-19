@@ -27,7 +27,8 @@
  *
  * terrain_test --fingerprint prints a hash of the heights, the footprint and
  * some filled clipmaps instead, to compare what two builds generate;
- * terrain_test --map out.ppm [km] draws the land round the city (see map). */
+ * terrain_test --map out.ppm [km] draws the land round the city (see map);
+ * terrain_test --planet-map out.ppm [px] the whole planet (see planet_map). */
 #include "terrain_internal.h"
 #include "plan.h"
 #include "city.h"
@@ -786,7 +787,7 @@ static int map(const char *path, double km) {
                 for (int q = 0; q < 3; ++q) col[q] += lf.w[t] * tint[t][q];
             float e = (float)plan_city_edge(x, z), city = e < 0.0f ? 1.0f : 0.0f;
             float wet = clampf(lf.canyon / 100.0f, 0.0f, 1.0f) * smoothstepf((float)TERRAIN_CANYON_FROM, (float)TERRAIN_CANYON_FULL, e);
-            float hgt = 0.7f + 0.6f * clampf((float)(h / TERRAIN_LAND_TOP_M), -0.5f, 1.0f);
+            float hgt = 0.7f + 0.6f * clampf((float)(h / (TERRAIN_LAND_TOP_M - TERRAIN_MACRO_M)), -0.5f, 1.0f);
             for (int q = 0; q < 3; ++q) {
                 float v = col[q] * shade * hgt;
                 v = v * (1.0f - wet) + (q == 2 ? 0.8f : 0.3f) * shade * wet;
@@ -804,6 +805,48 @@ static int map(const char *path, double km) {
     printf("map of %.0f km round the centre: heights %.0f .. %.0f m\n", km, lo, hi);
     free(img);
     free(row);
+    return 0;
+}
+
+/* terrain_test --planet-map out.ppm [px]: the whole planet as six faces of
+ * px a side (3 across, 2 down: faces 0-2 then 3-5), each pixel the ground
+ * at the pixel's spacing, shaded from the north-west; the city in red. */
+static int planet_map(const char *path, int F) {
+    const int W = 3 * F, H = 2 * F;
+    double sp = 0.5 * 3.14159265358979323846 / F * PLANET_RADIUS, lo = 1e9, hi = -1e9;
+    uint8_t *img = (uint8_t *)calloc((size_t)W * H * 3, 1);
+    double *hgt = (double *)malloc(sizeof(double) * (size_t)(F + 1) * (F + 1));
+    if (!img || !hgt) return 1;
+    double cu, cv;
+    int cf = terrain_dir_face(terrain_chart_dir(0.0, 0.0), &cu, &cv);
+    for (int f = 0; f < 6; ++f) {
+        for (int j = 0; j <= F; ++j)
+            for (int i = 0; i <= F; ++i) {
+                double h = terrain_planet_height_lod(terrain_face_dir(f, -1.0 + 2.0 * (i + 0.5) / F, -1.0 + 2.0 * (j + 0.5) / F), sp);
+                hgt[j * (F + 1) + i] = h;
+                lo = fmin(lo, h); hi = fmax(hi, h);
+            }
+        for (int j = 0; j < F; ++j)
+            for (int i = 0; i < F; ++i) {
+                double h = hgt[j * (F + 1) + i], gx = (hgt[j * (F + 1) + i + 1] - h) / sp, gz = (hgt[(j + 1) * (F + 1) + i] - h) / sp;
+                float shade = clampf(1.0f - (float)(40.0 * (gx + gz)), 0.4f, 1.4f);
+                float t = clampf((float)((h + 1500.0) / 4000.0), 0.0f, 1.0f);
+                float col[3] = { 0.35f + 0.5f * t, 0.5f + 0.25f * t - 0.2f * t * t, 0.3f + 0.3f * t * t };
+                if (f == cf && fabs(-1.0 + 2.0 * (i + 0.5) / F - cu) < 3.0 / F && fabs(-1.0 + 2.0 * (j + 0.5) / F - cv) < 3.0 / F) {
+                    col[0] = 1.0f; col[1] = col[2] = 0.1f; shade = 1.0f;
+                }
+                size_t px = ((size_t)((f / 3) * F + (F - 1 - j)) * W + (size_t)((f % 3) * F + i)) * 3;
+                for (int q = 0; q < 3; ++q) img[px + q] = (uint8_t)clampf(col[q] * shade * 255.0f, 0.0f, 255.0f);
+            }
+    }
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return 1;
+    fprintf(fp, "P6\n%d %d\n255\n", W, H);
+    fwrite(img, 1, (size_t)W * H * 3, fp);
+    fclose(fp);
+    printf("planet map, %d px a face (%.0f km a pixel): heights %.0f .. %.0f m; the city on face %d\n", F, sp / 1000.0, lo, hi, cf);
+    free(img);
+    free(hgt);
     return 0;
 }
 
@@ -1096,6 +1139,7 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
     if (argc > 2 && strcmp(argv[1], "--map") == 0) return map(argv[2], argc > 3 ? atof(argv[3]) : 60.0);
+    if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
 
     /* 1. Reference pass, in order: finite and within the amplitudes. */
     double amax = fmax(PLAN_RELIEF_MAX_M, fmax(TERRAIN_LAND_TOP_M, TERRAIN_LAND_DEEP_M)) + 1e-3, lo = 1e9, hi = -1e9;

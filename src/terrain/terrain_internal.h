@@ -45,8 +45,15 @@
 #define TERRAIN_URBAN_OCTAVES  2
 
 /* --- The land (terrain_land.c) ------------------------------------------------
- * land = base + E * sum over types t of w_t * F_t - C * canyon
+ * land = base + M * macro + E * sum over types t of w_t * F_t - C * canyon
  *   base    rolling ground everywhere, TERRAIN_BASE_M high.
+ *   macro   the planet's broad highlands and basins, TERRAIN_MACRO_M high, a
+ *           fractal sum over the sphere itself (the point's direction, so it
+ *           has no seam anywhere). Where it is high the mountains and
+ *           plateaus gain affinity and the plains lose it, by
+ *           TERRAIN_MACRO_BIAS a unit; low, the reverse. M is 0 out to
+ *           TERRAIN_MACRO_FROM beyond the city's edge, rising to 1 at
+ *           TERRAIN_MACRO_FULL, so the city's region is as it was.
  *   F_t     each landform type's heights (TERRAIN_PLAINS ... ; terrain.h):
  *           plains, low swells; hills, rolling relief; mountain belts, an uplift
  *           under ridged relief whose ridges run along the belt's strike;
@@ -67,6 +74,12 @@
  *           the city's edge.
  * Every length is world metres; every height, metres above y = 0. */
 #define TERRAIN_BASE_M         12.0
+#define TERRAIN_MACRO_M        1500.0
+#define TERRAIN_MACRO_WAVE     3.0e6    /* longest wavelength over the sphere (m) */
+#define TERRAIN_MACRO_OCTAVES  4
+#define TERRAIN_MACRO_FROM     40000.0
+#define TERRAIN_MACRO_FULL     400000.0
+#define TERRAIN_MACRO_BIAS     0.25
 #define TERRAIN_BASE_WAVE      4000.0   /* longest wavelength (m) */
 #define TERRAIN_BASE_OCTAVES   6
 #define TERRAIN_REGION_FROM    1000.0
@@ -109,8 +122,8 @@
 #define TERRAIN_CANYON_FROM    2500.0   /* none nearer the city's edge than this... */
 #define TERRAIN_CANYON_FULL    6000.0   /* ...nor at full depth nearer than this */
 /* How high and how deep the land can reach (m). */
-#define TERRAIN_LAND_TOP_M  (TERRAIN_BASE_M + TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M)
-#define TERRAIN_LAND_DEEP_M (TERRAIN_BASE_M + TERRAIN_HILLS_M + TERRAIN_CANYON_DEEP_M)
+#define TERRAIN_LAND_TOP_M  (TERRAIN_BASE_M + TERRAIN_MACRO_M + TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M)
+#define TERRAIN_LAND_DEEP_M (TERRAIN_BASE_M + TERRAIN_MACRO_M + TERRAIN_HILLS_M + TERRAIN_CANYON_DEEP_M)
 
 /* The two fields before blending. urban_shape is unit amplitude, [-1, 1];
  * land is in metres. */
@@ -118,6 +131,11 @@ double terrain_urban_shape(double x, double z);
 double terrain_land(double x, double z);
 /* The land at `spacing`, given plan_city_edge at the point (terrain_height_lod's). */
 double terrain_land_lod(double x, double z, double edge, double spacing);
+/* The same at a point of some chart, (x, z) in it and p its direction on the
+ * planet: the macro field reads p, the rest (x, z). terrain_land_lod is this
+ * in the world's chart (terrain_chart_dir); terrain_world.c's second chart
+ * passes its own. */
+double terrain_land_at(double x, double z, TerrainDir p, double edge, double spacing);
 /* Bounds on the land wherever plan_city_edge is at most `edge` (m). */
 void   terrain_land_range(double edge, double *lo, double *hi);
 /* A bound on how far the land at `spacing` strays from the land at full detail
