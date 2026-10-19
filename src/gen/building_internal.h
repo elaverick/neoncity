@@ -16,7 +16,6 @@
  * Shared definitions
  * ------------------------------------------------------------------------- */
 
-#define G0          SIDEWALK_HEIGHT
 enum { FAM_RECT = 0, FAM_CHAMFER, FAM_L, FAM_T, FAM_U, FAM_CROSS, FAM_DRUM, FAM_COURT, FAM_COUNT };
 /* p1/p2 are proportions of w/d, so scaling a spec keeps its shape. quarter
  * turns the feature (notch, bar, opening) towards another side; w and d are

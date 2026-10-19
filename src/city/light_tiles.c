@@ -82,7 +82,7 @@ void build_lights(Mesh *m, ChunkGen *g) {
         if (retail && !b->shop) continue;
         for (int si = 0; si < bg->nsec; ++si) {
             const BSection *s = &bg->sec[si];
-            if (s->y0 > SIDEWALK_HEIGHT + 0.01f) continue;
+            if (!bsec_grounded(s)) continue;
             const BLoop *l = &s->foot.outer;
             for (int k = 0; k < l->n; ++k) {
                 FaceKey fk = face_key(l, k, 0);

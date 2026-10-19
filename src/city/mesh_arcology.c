@@ -894,7 +894,7 @@ void emit_arcology(Mesh *m, const BGraph *g, const ALayout *A) {
  * surrounds, a light frame, a sign over each, a canopy over the main one. */
 void emit_arc_portals(Mesh *m, const BGraph *g, const ALayout *A) {
     const BLoop *l = &g->sec[A->tier[0].section].foot.outer;
-    const float gy = SIDEWALK_HEIGHT;
+    const float gy = G0;
     for (int p = 0; p < A->nportal; ++p) {
         const APortal *pt = &A->portal[p];
         Xf sv = xf_save(m);

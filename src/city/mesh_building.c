@@ -64,13 +64,13 @@ int face_openings(const BGraph *g, const Behind *bh, int li, int k, float (*op)[
         for (int d = 0; d < g->ndoor && n < max; ++d)
             if (g->door[d].section == bh->si && g->door[d].face == k && g->door[d].type == DOOR_PRIMARY) {
                 op[n][0] = g->door[d].u - g->door[d].width * 0.5f; op[n][1] = g->door[d].u + g->door[d].width * 0.5f;
-                op[n][2] = SIDEWALK_HEIGHT + g->door[d].height; n++;
+                op[n][2] = G0 + g->door[d].height; n++;
             }
     if (bh->A)
         for (int p = 0; p < bh->A->nportal && n < max; ++p)
             if (bh->A->portal[p].face == k) {
                 const APortal *pt = &bh->A->portal[p];
-                op[n][0] = pt->u - pt->width * 0.5f; op[n][1] = pt->u + pt->width * 0.5f; op[n][2] = SIDEWALK_HEIGHT + pt->height; n++;
+                op[n][0] = pt->u - pt->width * 0.5f; op[n][1] = pt->u + pt->width * 0.5f; op[n][2] = G0 + pt->height; n++;
             }
     return n;
 }
@@ -139,7 +139,7 @@ int envelope_spans(const BGraph *g, const Behind *bh, const BLoop *l, int li, in
 static Mat facade_mat(const Building *b, const BGraph *g, int si, const FaceKey *fk, int real, float *packW) {
     const BSection *s = &g->sec[si];
     Mat mt = mat(MAT_FACADE, g->seed, (uint8_t)si,
-                 (uint8_t)((s->y0 <= SIDEWALK_HEIGHT + 0.01f ? 1 : 0) | (g->groundMode << 1) | (s->win << 3) | (s->bands ? 32 : 0) |
+                 (uint8_t)((bsec_grounded(s) ? 1 : 0) | (g->groundMode << 1) | (s->win << 3) | (s->bands ? 32 : 0) |
                            (g->fine ? 64 : 0) | (real ? 128 : 0)),
                  (uint8_t)(s->palette | (b->shop << 3)));
     mt.aux = w16(fk->prevLen) | (uint32_t)fk->face << 12 | (uint32_t)fk->next << 18 |
@@ -192,7 +192,7 @@ static void emit_walls(Mesh *m, const Building *b, const BGraph *g, int si, cons
                         emit_quad(m, v3(pa, y0, 0), v3(pc, y0, 0), v3(pc, y1, 0), v3(pa, y1, 0), v3(0, 0, 1), uv, mq);
                     }
                     /* the step up to the opening: from its sill (the floor) down to the ground */
-                    if (o < nop && s->y0 <= SIDEWALK_HEIGHT + 0.01f) {
+                    if (o < nop && bsec_grounded(s)) {
                         float pa = maxf(sa, op[o][0]), pc = minf(sb, op[o][1]);
                         float ga = mesh_ground_local(m, pa, 0.0f) + SIDEWALK_HEIGHT, gc = mesh_ground_local(m, pc, 0.0f) + SIDEWALK_HEIGHT;
                         if (pc - pa >= 1e-3f && minf(ga, gc) < s->y0 - 0.005f) {
@@ -474,7 +474,7 @@ static int face_toward(const Building *b, const EdgeInfo *e) {
 
 /* Street-level signs on one ground-floor face (in the face's frame). */
 static void face_signs(Mesh *m, const Building *b, const BGraph *g, int si, const FaceKey *fk, float top, Rng *r) {
-    const float gy = SIDEWALK_HEIGHT;
+    const float gy = G0;
     float gh = g->groundH, fh = g->floorH;
     Face f = face_local(fk->len);
     int retail = g->groundMode == GF_RETAIL;
@@ -537,7 +537,7 @@ static void face_signs(Mesh *m, const Building *b, const BGraph *g, int si, cons
 
 /* One large element on a tall section face: a giant video screen or a tall neon banner. */
 static void face_feature(Mesh *m, const BGraph *g, const BSection *s, float width, Rng *r) {
-    const float gy = SIDEWALK_HEIGHT;
+    const float gy = G0;
     float th = s->y1 - s->y0;
     if (th < 30.0f || width < 10.0f) return;
     Face tf = face_local(width);
@@ -565,7 +565,7 @@ static void face_feature(Mesh *m, const BGraph *g, const BSection *s, float widt
 }
 
 static void emit_doors(Mesh *m, const BGraph *g, const Interiors *in) {
-    const float gy = SIDEWALK_HEIGHT;
+    const float gy = G0;
     Mat metal = mat(MAT_METAL, g->seed, 3, 0, 0);
     for (int d = 0; d < g->ndoor; ++d) {
         const BDoor *dr = &g->door[d];
@@ -601,7 +601,7 @@ static void emit_doors(Mesh *m, const BGraph *g, const Interiors *in) {
  * then a red status lamp on the fascia above. Their own random stream, so the
  * signs drawn after them are unchanged. */
 static void lobby_lights(Mesh *m, const BGraph *g, int si, int k, float len) {
-    const float gy = SIDEWALK_HEIGHT;
+    const float gy = G0;
     Rng r = rng_make(hash2i(g->seed ^ 0x0B1Eu, si, k));
     Mat up = mat(MAT_EMISSIVE, 0, 3, 0, 0);
     for (float u = 0.75f; u < len - 0.5f; u += 3.0f) {
@@ -618,7 +618,7 @@ static void lobby_lights(Mesh *m, const BGraph *g, int si, int k, float len) {
 
 /* Section si's roof slab and its underside (round an arcology's canyon or a podium atrium's void). */
 static void emit_section_caps(Mesh *m, const BGraph *g, int si, const Interiors *in) {
-    const float gy = SIDEWALK_HEIGHT;
+    const float gy = G0;
     const BSection *s = &g->sec[si];
     /* an arcology's canyon rises through the slabs between the tiers it passes */
     int tier = -1;
@@ -643,7 +643,7 @@ static void emit_section_caps(Mesh *m, const BGraph *g, int si, const Interiors 
 
 /* Trim on section si's faces: LED strips, accent bands, fins on the bay lines, parapets. */
 static void emit_face_trims(Mesh *m, const BGraph *g, int si, float bay, int *fins) {
-    const float gy = SIDEWALK_HEIGHT;
+    const float gy = G0;
     const BSection *s = &g->sec[si];
     const BLoop *l = &s->foot.outer;
     uint8_t ledCol = (uint8_t)(hash_combine(g->seed, (uint32_t)si) & 7);
@@ -684,7 +684,7 @@ static void emit_face_trims(Mesh *m, const BGraph *g, int si, float bay, int *fi
 
 /* Masts, spires and aircraft warning lights on top of section si (nothing stands on it). */
 static void emit_tops(Mesh *m, const BGraph *g, int si, Rng *rp) {
-    const float gy = SIDEWALK_HEIGHT;
+    const float gy = G0;
     const BSection *s = &g->sec[si];
     const BLoop *l = &s->foot.outer;
     float cx, cz;
@@ -726,7 +726,7 @@ static void emit_supports(Mesh *m, const BGraph *g) {
 
 /* Street-level signs on faces onto the street, and big elements on tall faces. */
 static void emit_street_signs(Mesh *m, const Building *b, const BGraph *g, Rng *rp) {
-    const float gy = SIDEWALK_HEIGHT;
+    const float gy = G0;
     for (int si = 0; si < g->nsec; ++si) {
         const BSection *s = &g->sec[si];
         const BLoop *l = &s->foot.outer;
@@ -749,7 +749,7 @@ static void emit_street_signs(Mesh *m, const Building *b, const BGraph *g, Rng *
 
 /* A rooftop billboard on a low building, facing a street. */
 static void emit_billboards(Mesh *m, const Building *b, const BGraph *g, Rng *rp) {
-    const float gy = SIDEWALK_HEIGHT;
+    const float gy = G0;
     for (int si = 0; si < g->nsec; ++si) {
         const BSection *s = &g->sec[si];
         if (has_above(g, si) || s->y1 - gy > 70.0f || s->roof == ROOF_HIP || s->roof == ROOF_PYRAMID || s->roof == ROOF_HELIPAD) continue;

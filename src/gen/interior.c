@@ -3,8 +3,6 @@
 /* Office-lobby planner (docs/procedural-office-atrium-generation.md). Section
  * numbers in the comments refer to that document. */
 
-#define G0    SIDEWALK_HEIGHT
-
 const char *interior_region_name(int t) { return t >= 0 && t < IR_COUNT ? REG_NAMES[t] : "?"; }
 
 int interior_kind(int t) {

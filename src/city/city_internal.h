@@ -135,6 +135,11 @@ int clip_hp(const DVec2 *in, const uint8_t *li, int n, DVec2 nr, double c, uint8
 double area2(const DVec2 *p, int n);
 float drop_y(double d);
 
+/* streets.c */
+/* The plain asphalt under everything (junctions, the city's edge), above
+ * city_ground_y; marked carriageways sit at 0, sidewalks at SIDEWALK_HEIGHT. */
+#define BASE_Y (-0.03f)
+
 /* mesh_emit.c */
 /* How far a footing (Mesh.footing) reaches into the ground: under the draped
  * sidewalk or lot, which can stand that much proud of the ground between the

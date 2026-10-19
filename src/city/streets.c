@@ -4,8 +4,6 @@
  * Streets
  * ========================================================================= */
 
-#define BASE_Y (-0.03f)   /* plain asphalt under everything; marked carriageways sit at 0 */
-
 /* Now and then a street lamp is failing (lampState in shaders/common.glsl):
  * about one in 250 is dead, one in 250 cycles on and off as a worn sodium
  * lamp does, and one in 250 burns dim and red. State in the low 2 bits, a

@@ -21,7 +21,6 @@
  * Shared definitions
  * ------------------------------------------------------------------------- */
 
-#define G0    SIDEWALK_HEIGHT
 #define CELL  AR_CELL
 #define NONE  255
 #define IDX(A, i, j) ((j) * (A)->nx + (i))

@@ -675,7 +675,7 @@ void emit_interior(Mesh *m, const BGraph *g, const ILayout *L) {
 /* Steel doors the building graph does not hold: a synthesised service
  * entrance, and the escape stair's fire exits. */
 static void emit_steel_door(Mesh *m, const BGraph *g, const BLoop *l, int face, float u, float w, uint32_t seed) {
-    const float gy = SIDEWALK_HEIGHT;
+    const float gy = G0;
     Xf sv = xf_save(m);
     float len = enter_face(m, l, face);
     Face f = face_local(len);

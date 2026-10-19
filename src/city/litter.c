@@ -43,7 +43,6 @@
  *            x and z 11-bit signed in 2 mm, y 10-bit in 1 mm
  * ========================================================================= */
 
-#define BASE_Y   (-0.03f)   /* plain asphalt filling the junctions (src/city/streets.c) */
 #define CELL     2.5        /* area scatter grid; divides CHUNK_SIZE */
 #define MAX_LV   768
 #define TAU      6.2831853f

@@ -36,7 +36,7 @@ static int building_boxes(const Building *b, const BGraph *g, int k, double ox, 
         int top = 1;
         for (int j = 0; j < g->nsec && top; ++j)
             for (int q = 0; q < g->sec[j].nbelow; ++q) top &= g->sec[j].below[q] != i;
-        int grounded = s->y0 <= SIDEWALK_HEIGHT + 0.01f;   /* src/gen's G0: the ground floor */
+        int grounded = bsec_grounded(s);
         DVec2 c = to_world(b, 0.5 * (x0 + x1), 0.5 * (z0 + z1));
         Pending *p = &out[n++];
         p->chunk = k;

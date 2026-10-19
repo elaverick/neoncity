@@ -55,6 +55,13 @@ typedef struct BSection {
     uint8_t win, palette, bands, fins, plant, roof, spire, accent, ledTop;
 } BSection;
 
+/* The ground floor in a building's own frame, whose y = 0 is the street: the
+ * sidewalk's height. The generators (buildings, lobbies, arcologies) build up
+ * from it, and src/city raises the frame by the ground under the plot. */
+#define G0 SIDEWALK_HEIGHT
+/* A section standing on the ground floor (its y0 is G0, give or take rounding). */
+static inline int bsec_grounded(const BSection *s) { return s->y0 <= G0 + 0.01f; }
+
 /* Column or strut: centre line from (x0,y0,z0) to (x1,y1,z1), square of side `size`.
  * Transfer structure / core: box x0..x1, y0..y1, z0..z1. */
 typedef struct BSupport { int type, section; float x0, y0, z0, x1, y1, z1, size; } BSupport;

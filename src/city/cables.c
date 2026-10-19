@@ -140,7 +140,7 @@ static Rhythm rhythm(const BGraph *bg, int si, float faceW) {
     r.glassTop = r.base - (retail ? 1.5f : bg->groundMode == GF_DOUBLE ? 1.2f : 0.7f);
     r.step = retail ? 6.0f : 1.5f;
     r.edge = retail ? 0.3f : 0.06f;
-    r.atGround = s->y0 <= SIDEWALK_HEIGHT + 0.01f;
+    r.atGround = bsec_grounded(s);
     r.cladding = (s->palette == 4 || s->palette == 7) && s->win != WIN_CURTAIN;
     return r;
 }
