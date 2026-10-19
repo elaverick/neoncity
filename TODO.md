@@ -83,7 +83,8 @@ the terrain roadmap.
   - Inside a lobby the player walks on the street's ground carried in, not on the lobby's floor at the building's base:
     below it by as much as the plot falls. Hillier settlements want the floors in the collision layout.
   - `DRAPE_CELL` (55 m) and the footing's 5 cm are sized for this relief; hillier ground wants finer cuts.
-  - The haze still thins with height above y = 0, not above the ground.
+  - The haze thins with height above one datum, the city's ground at its centre (`haze_datum`, `src/app/main.c`).
+    With more settlements it should be the ground of the one the camera is in or nearest, blended between them.
 - **The city's edge** (`plan_town_built`, `plan_fringe`, `PlanArea.ground`/`edges`; see the README). The city is
   the towns whose ground provably lies where `plan_urban` is 1: 78 towns, about 15 km across, in a footprint 20 km
   across. So:

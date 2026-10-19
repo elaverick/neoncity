@@ -7,6 +7,7 @@
 #include "renderer.h"
 #include "chunks.h"
 #include "player.h"
+#include "city.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -224,6 +225,20 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
 /* The frame's camera, time and weather. Camera-relative rendering: the camera
  * sits at the origin and every chunk is offset by (chunk origin - camera)
  * computed in doubles. */
+/* The height the haze thins above (hazeAmount in shaders/common.glsl): the
+ * city's ground at its centre. There is one settlement for now; with more,
+ * this becomes the ground of the one the camera is in or nearest. */
+static float haze_datum(void) {
+    static float datum;
+    static bool known;
+    if (!known) {
+        DVec2 c = plan_town_centre(0, 0);
+        datum = city_ground_y(c.x, c.z);
+        known = true;
+    }
+    return datum;
+}
+
 static void frame_ubo(const Player *player, const VkCore *vk, double t, const Weather *weather, FrameUBO *ubo) {
     float aspect = (float)vk->extent.width / (float)(vk->extent.height ? vk->extent.height : 1);
     mat4 proj = mat4_perspective_rz(player->fovY, aspect, NEAR_PLANE, FAR_PLANE);
@@ -243,6 +258,7 @@ static void frame_ubo(const Player *player, const VkCore *vk, double t, const We
     ubo->camFwd[3] = VIEW_DISTANCE;
     ubo->weather[0] = weather->rain;
     ubo->weather[1] = weather->wet;
+    ubo->weather[2] = haze_datum();
 }
 
 /* The window title: frame rate, the --cam that reproduces the view, streaming state. */
