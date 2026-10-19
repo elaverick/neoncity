@@ -1,7 +1,8 @@
 # Code Structure and Terrain Integration Guidelines
 
-Status: working architecture guidance for future changes. The terrain subsystem now exists (a height field,
-a ten-level clipmap with screen-space error and level blending, a GPU pass) and the city is finite; section 3
+Status: working architecture guidance for future changes. The terrain subsystem now exists (a height field
+with regional landforms, a ten-level clipmap with screen-space error and level blending, a GPU pass) and the
+city is finite, with its ground relief set per settlement (`PlanSettlement`); section 3
 records which of the proposed files were built and where the implementation chose differently from the
 original proposal.
 
@@ -61,7 +62,8 @@ These are proposed boundaries, not a requirement to create every file immediatel
 | Proposed | Built |
 |---|---|
 | `terrain.h`, `terrain_internal.h`, `terrain_height.c`, `terrain_lod.c`, `terrain_mesh.c`, `tests/terrain_test.c` | As proposed. `terrain_clip.h` holds the clipmap's shape as `#define`s shared with the shaders. |
-| `terrain.c` (orchestration), `terrain_stream.c` (work queues) | Not needed. The clipmap updates within a per-update budget of heights evaluated (`terrain_clip_update`); the renderer calls it directly. Move the fill to a worker only if update spikes show. |
+| (not proposed) | `terrain_land.c`: the land beyond the city, its regional landforms and canyons (M8), apart from `terrain_height.c`, which blends it with the city's ground. |
+| `terrain.c` (orchestration), `terrain_stream.c` (work queues) | Not needed so far. The clipmap updates within a per-update budget of heights evaluated (`terrain_clip_update`); the renderer calls it directly. Since the landforms made heights dearer, the slowest updates show as spikes (6-9 ms over the mountains), so the fill should move to a worker. |
 | `terrain_world.c` (world addressing) | Deferred to the cube-sphere milestone. |
 | `src/render/terrain.c` | `src/render/terrain_gpu.c`. |
 

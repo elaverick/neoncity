@@ -153,6 +153,24 @@ static void test_landforms(Rng *r) {
     CHECK(deepest > 150.0 && deepest <= TERRAIN_CANYON_DEEP_M, "canyons cut %.0f m at most round the city", deepest);
 }
 
+/* The first point, scanning out from the city centre, where landform `type`
+ * holds the land alone at full height, no canyon cuts, and the ground is at
+ * least `slope` steep. */
+static int find_landform(int type, double slope, double *ox, double *oz) {
+    DVec2 c = plan_town_centre(0, 0);
+    for (double r = 8000.0; r <= LF_SPAN; r += 500.0)
+        for (int a = 0; a < 360; a += 3) {
+            double x = c.x + r * cos(a * (PI_F / 180.0)), z = c.z + r * sin(a * (PI_F / 180.0));
+            if (plan_city_edge(x, z) < TERRAIN_REGION_FROM + TERRAIN_LAND_RISE) continue;
+            TerrainLandform lf;
+            terrain_landform(x, z, &lf);
+            if (lf.w[type] < 0.98f || lf.canyon > 0.0f || slope_of(terrain_height, x, z) < slope) continue;
+            *ox = x; *oz = z;
+            return 1;
+        }
+    return 0;
+}
+
 /* --- Levels of detail and the clipmap -------------------------------------- */
 
 #define WALK_STEPS   6000
@@ -636,6 +654,32 @@ static void test_select(void) {
         CHECK(flips == 0, "%s: hovering at %.1f m, the level switched %d times", SSE_NAMES[k], y, flips);
         printf("          level %d to %d at %.1f m up, held while hovering 2%% either side\n", w0, w, y);
         terrain_clip_free(&clip);
+    }
+    /* 11c. Different landforms get different detail (design doc 6.1): over
+     *      mountains and at an escarpment the selection keeps finer levels
+     *      than over plains, the camera as high above each. */
+    {
+        static const char *names[3] = { "plains", "ridges", "escarpment" };
+        static const double heights[2] = { 60.0, 300.0 };
+        int want[3][2];
+        for (int k = 0; k < 3; ++k) {
+            double x, z;
+            if (!find_landform(k == 0 ? TERRAIN_PLAINS : k == 1 ? TERRAIN_MOUNTAINS : TERRAIN_PLATEAU, k == 2 ? 1.0 : 0.0, &x, &z)) {
+                CHECK(0, "no %s found round the city", names[k]);
+                return;
+            }
+            double ground = terrain_height(x, z);
+            terrain_clip_init(&clip);
+            fill_all(&clip, x, z);
+            for (int h = 0; h < 2; ++h) want[k][h] = select_fresh(&clip, ground + heights[h]);
+            terrain_clip_free(&clip);
+        }
+        printf("  by landform, %.0f m and %.0f m up:", heights[0], heights[1]);
+        for (int k = 0; k < 3; ++k) printf(" %s %d, %d;", names[k], want[k][0], want[k][1]);
+        printf("\n");
+        for (int h = 0; h < 2; ++h)
+            CHECK(want[1][h] < want[0][h] && want[2][h] < want[0][h], "%.0f m up, ridges (level %d) and an escarpment (%d) aren't drawn finer than plains (%d)",
+                  heights[h], want[1][h], want[2][h], want[0][h]);
     }
     printf("  the city's ground over the drawn terrain by at least:");
     for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
