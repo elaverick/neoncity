@@ -219,6 +219,7 @@ void march(vec3 ro, vec3 dir, float ta, float tb, int steps, bool detail, float 
     for (int i = 0; i < steps; ++i) {
         float t = ta + (float(i) + jitter) * ds;
         vec3 pw = ro + dir * t;          // world position: the city glow stays put...
+        pw.y += planetDrop(dir.xz * t);  // (its height above the planet's curved ground)
         vec3 p = pw + drift;             // ...while the clouds drift over it
         Column c = column(p.xz);
         float d = density(p, c, detail);

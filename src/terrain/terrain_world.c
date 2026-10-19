@@ -188,6 +188,18 @@ void terrain_bend(float dx, float dz, float h, float cam_y, float out[3]) {
     out[2] = dz * k;
 }
 
+/* The farthest corner off sets the most the box can fall and spread: the
+ * drop (R + h) 2 sin^2(theta / 2) is under s^2 (1 + h / R) / 2R, and across, k
+ * strays from 1 by under theta^2 / 6 + h / R; h / R < 0.001 for h < 6 km. */
+void terrain_bend_bounds(float mn[3], float mx[3]) {
+    const double R = PLANET_RADIUS;
+    double sx = fmax(fabs(mn[0]), fabs(mx[0])), sz = fmax(fabs(mn[2]), fabs(mx[2])), s = hypot(sx, sz);
+    double drop = s * s / (2.0 * R) * 1.001 + 0.01, grow = s * (s * s / (6.0 * R * R) + 0.001) + 0.01;
+    mn[1] -= (float)drop;
+    mn[0] -= (float)grow; mx[0] += (float)grow;
+    mn[2] -= (float)grow; mx[2] += (float)grow;
+}
+
 /* --- The ground on the planet ----------------------------------------------------- */
 
 static double planet_lod(TerrainDir p, double spacing, int surface) {

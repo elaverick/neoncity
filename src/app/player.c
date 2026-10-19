@@ -7,6 +7,7 @@
 #define WALK_SPEED    1.9f
 #define SPRINT_SPEED  5.4f
 #define FLY_SPEED     30.0f
+#define FLY_SPEED_HEIGHT 150.0f   /* above this (m) fly speed grows with height */
 #define GRAVITY       9.81f
 #define JUMP_SPEED    3.9f
 #define MOUSE_SENS    0.0022f
@@ -200,9 +201,11 @@ static void update_look(Player *p, const PlayerInput *in) {
 
 }
 
-/* Fly mode: free movement along the view, never below 1 m over the ground. */
+/* Fly mode: free movement along the view, never below 1 m over the ground nor
+ * above MAX_ALTITUDE, faster the higher it goes (FLY_SPEED to 150 m up, then
+ * in proportion: 2 km/s at 10 km), so aircraft height is a few seconds' climb. */
 static void move_fly(Player *p, const PlayerInput *in, vec3 look, vec3 flatRight, float mx, float mz, float dt) {
-    float sp = FLY_SPEED * (in->sprint ? 5.0f : 1.0f);
+    float sp = FLY_SPEED * (in->sprint ? 5.0f : 1.0f) * maxf(1.0f, (float)p->feet[1] / FLY_SPEED_HEIGHT);
     vec3 t = v3_add(v3_scale(look, mz * sp), v3_scale(flatRight, mx * sp));
     if (in->jump) t.y += sp;
     if (in->down) t.y -= sp;
@@ -213,6 +216,7 @@ static void move_fly(Player *p, const PlayerInput *in, vec3 look, vec3 flatRight
     for (int i = 0; i < 3; ++i) p->feet[i] += p->vel[i] * dt;
     float gh = ground_height(p->feet[0], p->feet[2]) + 1.0f;
     if (p->feet[1] < gh) p->feet[1] = gh;
+    if (p->feet[1] > MAX_ALTITUDE) { p->feet[1] = MAX_ALTITUDE; p->vel[1] = minf(p->vel[1], 0.0f); }
     p->bobWeight = damp(p->bobWeight, 0, 8.0f, dt);
 }
 

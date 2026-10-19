@@ -1094,6 +1094,30 @@ static void test_planet(Rng *r) {
         if (oc == 0) CHECK(worst < 1e-6, "bend from the chart's origin strays %.2e of the distance far off", worst);
     }
 
+    /* The bent image of a box lies inside its widened bounds. */
+    for (int k = 0; k < 4000; ++k) {
+        float u = rng_float(r);
+        float v = rng_float(r);
+        float w = rng_float(r);
+        float y = rng_float(r);
+        double s = 40000.0 * u, a = 2.0 * PI_D * v, cy = 1.7 + 20000.0 * y;
+        float mn[3] = { (float)(s * cos(a)), (float)(-600.0 + 3000.0 * w - cy), (float)(s * sin(a)) }, mx[3];
+        float ext = (float)(1.0 + 4000.0 * u * w);
+        mx[0] = mn[0] + ext; mx[1] = mn[1] + 0.3f * ext; mx[2] = mn[2] + 0.7f * ext;
+        float bmn[3] = { mn[0], mn[1], mn[2] }, bmx[3] = { mx[0], mx[1], mx[2] };
+        terrain_bend_bounds(bmn, bmx);
+        for (int q = 0; q < 16; ++q) {
+            float fx = rng_float(r);
+            float fy = rng_float(r);
+            float fz = rng_float(r);
+            float px = mn[0] + fx * (mx[0] - mn[0]), py = mn[1] + fy * (mx[1] - mn[1]), pz = mn[2] + fz * (mx[2] - mn[2]), b[3];
+            if (q < 8) { px = q & 1 ? mx[0] : mn[0]; py = q & 2 ? mx[1] : mn[1]; pz = q & 4 ? mx[2] : mn[2]; }
+            terrain_bend(px, pz, py + (float)cy, (float)cy, b);
+            CHECK(b[0] >= bmn[0] && b[0] <= bmx[0] && b[1] >= bmn[1] && b[1] <= bmx[1] && b[2] >= bmn[2] && b[2] <= bmx[2],
+                  "bent point (%.1f, %.1f, %.1f) outside its box's bent bounds", b[0], b[1], b[2]);
+        }
+    }
+
     /* Horizon culling hides only what's behind the planet, and does hide the
      * far side of it. */
     double occ = R + lowest;

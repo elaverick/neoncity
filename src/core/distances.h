@@ -12,9 +12,11 @@
  * TERRAIN_DISTANCE: how far the terrain is drawn, under a lighter haze of its
  * own beyond the city (shaders/terrain/terrain.frag) that is total here. It
  * must lie inside the coarsest clipmap level's window (src/render/terrain_gpu.c
- * checks). The far plane follows it. */
+ * checks). The far plane follows it.
+ * MAX_ALTITUDE: how high the camera can go (fly mode): aircraft height. */
 #define VIEW_DISTANCE     1900.0f
 #define TERRAIN_DISTANCE  20000.0f
+#define MAX_ALTITUDE      20000.0f
 #define NEAR_PLANE        0.08f
 #define FAR_PLANE         (TERRAIN_DISTANCE * 1.05f)
 

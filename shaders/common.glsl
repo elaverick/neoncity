@@ -3,6 +3,8 @@
 
 // VIEW_DISTANCE, TERRAIN_DISTANCE, NEAR_PLANE, FAR_PLANE: shared with C
 #include "distances.h"
+// PLANET_RADIUS: shared with C
+#include "terrain_planet.h"
 
 /* Must match src/core/common.h */
 const float CHUNK_SIZE      = 110.0;
@@ -293,6 +295,42 @@ float neonFlicker(uint seed, uint mode, float t) {
 // Video screens change advert every 9 s; the advert's hash picks its scene and colours.
 uint screenAdvert(uint seed, float t) { return hash_combine(seed, uint(floor((t + hfloat(seed) * 30.0) / 9.0))); }
 
+/* ---------------- the planet ----------------
+ * The world is a sphere of PLANET_RADIUS and world X/Z a chart of it (see
+ * src/terrain/terrain.h, "The planet"). The terrain, the distant proxies and
+ * the planet's patches are drawn curving away from the camera; the city's
+ * chunks are not (within VIEW_DISTANCE the ground falls 0.28 m at most, a
+ * tenth of a pixel there), so their shadows and reflections stay exact. */
+
+// A point at camera-relative chart offset d (m) and world height h, in the
+// camera's local frame. terrain_bend (src/terrain/terrain_world.c) is its C
+// mirror and explains the arithmetic.
+vec3 planetBend(vec2 d, float h) {
+    const float R = PLANET_RADIUS;
+    float s = length(d), th = s / R;
+    float sinc = th > 1e-3 ? sin(th) / th : 1.0 - th * th / 6.0;
+    float k = (1.0 + h / R) * sinc, hs = sin(0.5 * th);
+    return vec3(d.x * k, (h - frame.camPos.y) - (R + h) * 2.0 * hs * hs, d.y * k);
+}
+
+// A direction at d turned as planetBend turns the ground there: up tips away
+// from the camera by the angle d subtends at the planet's centre.
+vec3 planetTilt(vec2 d, vec3 n) {
+    float s = length(d);
+    if (s < 1.0) return n;
+    vec2 r = d / s;
+    float th = s / PLANET_RADIUS, c = cos(th), sn = sin(th);
+    float nr = dot(n.xz, r);
+    vec2 nt = n.xz - nr * r;
+    float nr2 = nr * c + n.y * sn;
+    return vec3(nt.x + nr2 * r.x, n.y * c - nr * sn, nt.y + nr2 * r.y);
+}
+
+// How far the ground at camera-relative horizontal offset d has fallen below
+// the camera's level (m): what to add back to a camera-frame height for the
+// height above the ground beneath.
+float planetDrop(vec2 d) { return dot(d, d) * (0.5 / PLANET_RADIUS); }
+
 /* ---------------- atmosphere ----------------
  * A smoggy night: warm city-lit haze near the horizon, cold dark zenith.
  * Fog uses the same colour as the sky at the horizon so the finite view
@@ -311,11 +349,12 @@ vec3 hazeColor(vec3 dir) {
 // for air of the given density (per metre) at street level, thinning with
 // height to a quarter of that. Heights count from the haze datum
 // (frame.weather.z): the ground of the settlement, not y = 0, so a town on
-// raised ground lies in its own street-level haze.
+// raised ground lies in its own street-level haze. They are heights above the
+// planet's sphere, so ground bent down out of sight stays in the street's haze.
 float hazeAmount(vec3 rel, float dist, float density) {
     const float H = 110.0;                       // haze scale height
     float h0 = max(frame.camPos.y - frame.weather.z, 0.0);
-    float h1 = max(frame.camPos.y + rel.y - frame.weather.z, 0.0);
+    float h1 = max(frame.camPos.y + rel.y + planetDrop(rel.xz) - frame.weather.z, 0.0);
     float dh = h1 - h0;
     float avg = abs(dh) > 1.0 ? H * (exp(-h0 / H) - exp(-h1 / H)) / dh : exp(-h0 / H);
     return 1.0 - exp(-dist * density * (0.25 + 0.75 * avg));

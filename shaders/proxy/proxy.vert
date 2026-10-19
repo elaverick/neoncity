@@ -23,7 +23,7 @@ layout(std430, set = 0, binding = 1) readonly buffer Boxes { ProxyBox boxes[]; }
 struct Tile { vec4 origin; uvec4 fade; };
 layout(std430, set = 0, binding = 2) readonly buffer Tiles { Tile tiles[]; };
 
-layout(location = 0) out vec3 vRel;          // camera-relative position
+layout(location = 0) out vec3 vRel;          // camera-relative position, bent over the planet (planetBend)
 layout(location = 1) out vec2 vFace;         // metres along the face from its left corner; height above the building's base
 layout(location = 2) flat out vec3 vNrm;
 layout(location = 3) flat out uint vSeed;
@@ -72,9 +72,9 @@ void main() {
         u = o.x;
         w = 2.0 * h.x;
     }
-    vRel = vec3(p.x, p.y - frame.camPos.y, p.z);
+    vRel = planetBend(p.xz, p.y);
     vFace = vec2(u, p.y - base);
-    vNrm = n;
+    vNrm = planetTilt(p.xz, n);
     vSeed = b.seed;
     vInfo = b.info;
     vSize = vec2(w, b.y.y - base);

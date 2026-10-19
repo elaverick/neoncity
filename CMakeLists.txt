@@ -91,7 +91,8 @@ set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_do
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS
                     proxy/proxy_fade.frag:proxy/proxy.frag:FADE)
 # Shaders also include the #define-only headers they share with C.
-set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_clip.h)
+set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_clip.h
+                          ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_planet.h)
 set(SHADER_SHARED_INC -I${CMAKE_CURRENT_SOURCE_DIR}/src/core -I${CMAKE_CURRENT_SOURCE_DIR}/src/terrain)
 file(GLOB_RECURSE SHADER_INCLUDES ${SHADER_SRC_DIR}/*.glsl)
 list(APPEND SHADER_INCLUDES ${SHADER_SHARED_HEADERS})

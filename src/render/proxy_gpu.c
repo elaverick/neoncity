@@ -1,5 +1,6 @@
 #include "renderer_internal.h"
 #include "city.h"
+#include "terrain.h"
 #include "thread.h"
 
 /* The distant proxies' GPU side (src/city/proxy.c makes them). Every tile
@@ -293,8 +294,10 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
         const PTile *t = &p->tiles[s];
         if (t->state != PT_READY || t->n == 0) continue;
         float ox = (float)(t->tx * PROXY_TILE - cam[0]), oz = (float)(t->tz * PROXY_TILE - cam[2]);
-        if (!frustum_test_aabb(&fr, v3(ox + t->mn[0], t->mn[1] - (float)cam[1], oz + t->mn[2]),
-                               v3(ox + t->mx[0], t->mx[1] - (float)cam[1], oz + t->mx[2]))) continue;
+        float bmn[3] = { ox + t->mn[0], t->mn[1] - (float)cam[1], oz + t->mn[2] };
+        float bmx[3] = { ox + t->mx[0], t->mx[1] - (float)cam[1], oz + t->mx[2] };
+        terrain_bend_bounds(bmn, bmx);   /* proxy.vert bends the boxes over the planet */
+        if (!frustum_test_aabb(&fr, v3(bmn[0], bmn[1], bmn[2]), v3(bmx[0], bmx[1], bmx[2]))) continue;
         int shownK[PROXY_TILE_CELLS + 1], fading = 0;
         for (int k = 0; k < PROXY_TILE_CELLS; ++k) {
             shownK[k] = chunks_shown(r->chunks, t->tx * PROXY_TILE_CHUNKS + k % PROXY_TILE_CHUNKS, t->tz * PROXY_TILE_CHUNKS + k / PROXY_TILE_CHUNKS);

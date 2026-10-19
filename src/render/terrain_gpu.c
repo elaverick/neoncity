@@ -321,7 +321,9 @@ static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj,
                          (float)((double)j0 * lv->spacing - cam[2]) - TILE_MARGIN);
             vec3 mx = v3((float)((double)(i0 + TILE) * lv->spacing - cam[0]) + TILE_MARGIN, (float)(hi - cam[1]) + TILE_MARGIN,
                          (float)((double)(j0 + TILE) * lv->spacing - cam[2]) + TILE_MARGIN);
-            if (!frustum_test_aabb(&fr, mn, mx)) continue;
+            float bmn[3] = { mn.x, mn.y, mn.z }, bmx[3] = { mx.x, mx.y, mx.z };
+            terrain_bend_bounds(bmn, bmx);   /* terrain.vert bends the ground over the planet */
+            if (!frustum_test_aabb(&fr, v3(bmn[0], bmn[1], bmn[2]), v3(bmx[0], bmx[1], bmx[2]))) continue;
             t->tilesDrawn++;
             if (t->ndraw > 0 && t->draw[t->ndraw - 1].level == l && t->draw[t->ndraw - 1].first + t->draw[t->ndraw - 1].count == t->first[list][tile]) {
                 t->draw[t->ndraw - 1].count += t->count[list][tile];

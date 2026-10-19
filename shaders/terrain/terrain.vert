@@ -27,7 +27,7 @@ layout(push_constant) uniform Level {
     float fade;      // the least morph: the finest level blending in or out (terrain_fade_morph)
 } lv;
 
-layout(location = 0) out vec3  vRel;     // camera-relative position
+layout(location = 0) out vec3  vRel;     // camera-relative position, bent over the planet (planetBend)
 layout(location = 1) out vec3  vNrm;
 layout(location = 2) out float vUrban;   // plan_urban: 1 in the city, 0 beyond its belt
 
@@ -65,8 +65,8 @@ void main() {
         n = normalize(mix(n, normalize(pn), morph));
     }
 
-    vRel = vec3(xz.x, h + morph * (hc - h) - frame.camPos.y, xz.y);
-    vNrm = n;
+    vRel = planetBend(xz, h + morph * (hc - h));
+    vNrm = planetTilt(xz, n);
     vUrban = samples[base + 4];
     gl_Position = frame.viewProj * vec4(vRel, 1.0);
 }

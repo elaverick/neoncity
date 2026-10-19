@@ -89,6 +89,11 @@ void       terrain_chart_frame(double x, double z, TerrainDir *ax, TerrainDir *u
  * origin, and for any camera close to it the chart's distortion is small
  * (terrain_test measures it). */
 void       terrain_bend(float dx, float dz, float h, float cam_y, float out[3]);
+/* Widens a camera-relative box (world heights less the camera's, as for a
+ * flat world) to hold its bent image, for frustum culling what the shaders
+ * bend: the bend only lowers, by up to s^2 / 2R at s off, and moves across by
+ * a part in a thousand at most, for ground lower than 6 km. */
+void       terrain_bend_bounds(float mn[3], float mx[3]);
 
 /* Cube-sphere addressing. A direction for face coordinates (u, v), which may
  * reach a little past the face's edge; the face holding a direction and its
