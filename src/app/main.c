@@ -198,7 +198,8 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
                          float emaDt, uint64_t totalFrames) {
     if (!c->path) return;
     ChunkStats s = chunks_stats(chunks);
-    c->settledFrames = (s.queued + s.ready == 0 && renderer_proxies_ready(renderer) && totalFrames > 10) ? c->settledFrames + 1 : 0;
+    c->settledFrames = (s.queued + s.ready == 0 && renderer_proxies_ready(renderer) && renderer_terrain_settled(renderer) && totalFrames > 10)
+                     ? c->settledFrames + 1 : 0;
     if (c->walkSeconds <= 0.0f) c->framesAfterWalk++;
     /* Capture once streaming has settled (or after a timeout under memory pressure). */
     if (c->shotTaken) glfwSetWindowShouldClose(win, GLFW_TRUE);

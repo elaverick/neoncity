@@ -230,6 +230,47 @@ double terrain_clip_error(const TerrainClipmap *c, int level, double cam_y, doub
     return worst;
 }
 
+void terrain_fade_init(TerrainFade *f) {
+    f->shown = TERRAIN_CLIP_LEVELS;
+    f->level = -1;
+    f->in = 0;
+    f->progress = 0.0;
+}
+
+/* A fade that the selection reverses mid-way turns round where it is: a level
+ * fading in at progress p shows the same surface as one fading out at 1 - p. */
+void terrain_fade_step(TerrainFade *f, const TerrainClipmap *c, int target, double dt) {
+    if (f->shown >= TERRAIN_CLIP_LEVELS || f->shown < c->finest) {   /* the first step, or a jump */
+        f->shown = target;
+        f->level = -1;
+        return;
+    }
+    if (f->level >= 0) {
+        if (f->in && target > f->shown) { f->in = 0; f->progress = 1.0 - f->progress; }
+        else if (!f->in && target <= f->shown) { f->in = 1; f->progress = 1.0 - f->progress; }
+        int behind = f->in ? f->shown - target + 1 : target - f->shown;   /* levels to go, this one included: at least 1 */
+        f->progress += dt * behind / TERRAIN_FADE_TIME;
+        if (f->progress < 1.0) return;
+        if (!f->in) f->shown++;
+        f->level = -1;
+    }
+    if (target < f->shown) {   /* ready: target >= c->finest */
+        f->shown--;
+        f->level = f->shown;
+        f->in = 1;
+        f->progress = 0.0;
+    } else if (target > f->shown) {
+        f->level = f->shown;
+        f->in = 0;
+        f->progress = 0.0;
+    }
+}
+
+float terrain_fade_morph(const TerrainFade *f, int level) {
+    if (level != f->level) return 0.0f;
+    return clampf((float)(f->in ? 1.0 - f->progress : f->progress), 0.0f, 1.0f);
+}
+
 /* The sums only grow with the level, so after refining the coarsening test
  * fails (its sum is over the refining threshold). */
 int terrain_clip_select(TerrainClipmap *c, double cam_y, double K) {

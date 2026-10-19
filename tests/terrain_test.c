@@ -556,6 +556,70 @@ static void test_select(void) {
     printf(" m\n");
 }
 
+/* --- Level transitions ------------------------------------------------------ */
+
+/* The finest surface drawn as a fractional level: level l with its morph at
+ * least m shows a surface between its own (l) and its parent's (l + 1). */
+static double fade_surface(const TerrainFade *f) { return f->shown + terrain_fade_morph(f, f->shown); }
+
+/* Steps f towards target at 60 frames a second until it draws it, up to
+ * `limit` frames. Checks every frame that the surface moves the target's way,
+ * by no more than the fastest blend allows, and is never finer than the
+ * finest ready level. Returns the frames taken. */
+static int fade_to(TerrainFade *f, const TerrainClipmap *c, int target, int limit, const char *what) {
+    const double dt = 1.0 / 60.0, fastest = (double)TERRAIN_CLIP_LEVELS / TERRAIN_FADE_TIME * dt + 1e-9;
+    int frames = 0, bad = 0;
+    double was = fade_surface(f);
+    while ((f->shown != target || f->level >= 0) && frames < limit) {
+        terrain_fade_step(f, c, target, dt);
+        frames++;
+        double now = fade_surface(f), step = now - was;
+        if (fabs(step) > fastest || (target < was ? step > 1e-9 : step < -1e-9) || f->shown < c->finest) bad++;
+        was = now;
+    }
+    CHECK(bad == 0, "%s: the drawn surface jumped, turned back or went finer than ready on %d frames", what, bad);
+    CHECK(f->shown == target && f->level < 0, "%s: after %d frames level %d is drawn (fading %d), not %d", what, frames, f->shown, f->level, target);
+    return frames;
+}
+
+/* 12. Level transitions: the drawn level follows the selection a level at a
+ *     time, each blend starting and ending on the surface drawn before and
+ *     after it, faster the further behind it is; a blend the selection
+ *     reverses turns round where it is; and a jump goes straight to it. */
+static void test_fade(void) {
+    DVec2 c0 = plan_town_centre(0, 0);
+    TerrainClipmap clip;
+    terrain_clip_init(&clip);
+    fill_all(&clip, c0.x + SSE_CAMS[2][0], c0.z + SSE_CAMS[2][1]);
+    TerrainFade f;
+    terrain_fade_init(&f);
+    terrain_fade_step(&f, &clip, TERRAIN_CLIP_LEVELS - 1, 0.0);
+    CHECK(f.shown == TERRAIN_CLIP_LEVELS - 1 && f.level < 0, "the first step draws level %d (fading %d)", f.shown, f.level);
+
+    /* A fast descent: the selection drops from the coarsest level to level 1. */
+    int down = fade_to(&f, &clip, 1, 600, "descending");
+    int up = fade_to(&f, &clip, TERRAIN_CLIP_LEVELS - 1, 600, "climbing");
+    double bound = 0.0;
+    for (int b = 1; b < TERRAIN_CLIP_LEVELS - 1; ++b) bound += TERRAIN_FADE_TIME / b;
+    CHECK(down <= (int)(bound * 60.0) + TERRAIN_CLIP_LEVELS, "descending 7 levels took %d frames", down);
+
+    /* Turning round: half way into level 7, the selection wants 8 again. */
+    for (int k = 0; k < 9; ++k) terrain_fade_step(&f, &clip, TERRAIN_CLIP_LEVELS - 2, 1.0 / 60.0);
+    double before = fade_surface(&f);
+    terrain_fade_step(&f, &clip, TERRAIN_CLIP_LEVELS - 1, 0.0);
+    CHECK(fabs(fade_surface(&f) - before) < 1e-9, "a reversed blend jumped from %.3f to %.3f", before, fade_surface(&f));
+    int back = fade_to(&f, &clip, TERRAIN_CLIP_LEVELS - 1, 600, "turning round");
+
+    /* A jump: the levels drawn are no longer ready. */
+    fade_to(&f, &clip, 2, 600, "descending again");
+    clip.finest = 5;
+    terrain_fade_step(&f, &clip, 5, 1.0 / 60.0);
+    CHECK(f.shown == 5 && f.level < 0, "after a jump level %d is drawn (fading %d), not the ready 5", f.shown, f.level);
+    printf("level transitions (%.1f s a level): 8 to 1 in %d frames, back in %d, a reversal half way in %d\n",
+           TERRAIN_FADE_TIME, down, up, back);
+    terrain_clip_free(&clip);
+}
+
 static int fingerprint(void) {
     DVec2 c = plan_town_centre(0, 0);
     uint64_t hh = 0xcbf29ce484222325ULL, he = hh;
@@ -719,6 +783,7 @@ int main(int argc, char **argv) {
     test_lod_heights();
     test_clipmap(&r);
     test_select();
+    test_fade();
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all terrain tests passed (%d points)\n", N_POINTS);

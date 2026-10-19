@@ -41,6 +41,7 @@ typedef struct TerrainPush {
     int32_t slot[2];     /* storage slot of the window's corner */
     int32_t pslot[2];    /* the parent's slot of the parent sample there */
     int32_t top;
+    float   fade;        /* the least morph: a level blending in or out (terrain_fade_morph) */
 } TerrainPush;
 typedef struct TerrainGpu TerrainGpu;
 typedef struct ProxyGpu ProxyGpu;

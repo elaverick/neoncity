@@ -48,7 +48,9 @@ _Static_assert(TERRAIN_CLIP_W * TERRAIN_CLIP_W <= 65536, "the grid's vertices do
 
 struct TerrainGpu {
     TerrainClipmap clip;
-    Buffer         samples;               /* device local: LEVELS * N * N TerrainSamples */
+    TerrainFade    fade;                  /* which levels are drawn, blending as they change */
+    double         lastTime;              /* of the last update (s) */
+    Buffer         samples;              /* device local: LEVELS * N * N TerrainSamples */
     Buffer         staging[MAX_FRAMES];   /* host visible: one update's worth */
     VkBufferCopy  *copies;                /* one per uploaded row */
     Buffer         indices;               /* device local, uint16 */
@@ -146,6 +148,7 @@ void terrain_gpu_create(Renderer *r) {
     if (!t) fatal("out of memory allocating the terrain");
     r->terrain = t;
     terrain_clip_init(&t->clip);
+    terrain_fade_init(&t->fade);
     const VkDeviceSize sampleBytes = (VkDeviceSize)TERRAIN_CLIP_LEVELS * CLIP_N * CLIP_N * sizeof(TerrainSample);
     t->samples = vk_buffer(vk, sampleBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -194,19 +197,21 @@ void terrain_gpu_destroy(Renderer *r) {
 }
 
 /* This frame's draws: the levels from the finest the screen-space error asks
- * for (or the finest ready, if coarser), the finest as a whole window, each
- * coarser one as the ring round its finer neighbour; of each, the tiles in
- * view. Positions are relative to the camera of this update. K comes from
+ * for (or the finest ready, if coarser), reached a level at a time as the
+ * finest blends in or out (terrain_fade_step), the finest as a whole window,
+ * each coarser one as the ring round its finer neighbour; of each, the tiles
+ * in view. Positions are relative to the camera of this update. K comes from
  * viewProj's second row, the projection's 1 / tan(fovy / 2) times the view's
  * unit up axis. */
-static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj, uint32_t height) {
+static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj, uint32_t height, double dt) {
     const TerrainClipmap *c = &t->clip;
     t->ndraw = t->tilesDrawn = t->tilesTotal = 0;
     t->drawn = TERRAIN_CLIP_LEVELS;
     if (c->finest >= TERRAIN_CLIP_LEVELS) return;
     const float *m = viewProj->m;
     double K = 0.5 * height * sqrt((double)m[1] * m[1] + (double)m[5] * m[5] + (double)m[9] * m[9]);
-    t->drawn = terrain_clip_select(&t->clip, cam[1], K);
+    terrain_fade_step(&t->fade, c, terrain_clip_select(&t->clip, cam[1], K), dt);
+    t->drawn = t->fade.shown;
     Frustum fr = frustum_from_matrix(*viewProj);
     /* Every level's corner is a whole number of its samples from the anchor,
      * a few tens of km at most, so its offset is exact in float. */
@@ -226,6 +231,7 @@ static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj,
         pc->pslot[0] = terrain_clip_slot(lv->origin[0] / 2);   /* origins are even */
         pc->pslot[1] = terrain_clip_slot(lv->origin[1] / 2);
         pc->top = l == TERRAIN_CLIP_LEVELS - 1;
+        pc->fade = terrain_fade_morph(&t->fade, l);
         int list = LIST_WINDOW;
         if (l > t->drawn) {
             const TerrainClipLevel *fine = &c->level[l - 1];
@@ -265,7 +271,8 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
     double t0 = glfwGetTime();
     t->evaluated = terrain_clip_update(&t->clip, cam[0], cam[2], TERRAIN_CLIP_BUDGET);
     double t1 = glfwGetTime();
-    plan_draws(t, cam, viewProj, r->vk->extent.height);
+    plan_draws(t, cam, viewProj, r->vk->extent.height, t->lastTime > 0.0 ? t0 - t->lastTime : 0.0);
+    t->lastTime = t0;
     double t2 = glfwGetTime();
 
     uint8_t *dst = (uint8_t *)t->staging[slot].mapped;
@@ -314,10 +321,17 @@ void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     }
 }
 
+bool renderer_terrain_settled(Renderer *r) {
+    const TerrainGpu *t = r->terrain;
+    return t->clip.finest <= t->clip.want && t->drawn == t->clip.want && t->fade.level < 0;
+}
+
 void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
     const TerrainGpu *t = r->terrain;
-    snprintf(buf, n, "terrain: levels %d-%d drawn (finest ready %d, screen-space error asks for %d), %d of %d tiles in view in %d draws,\n"
+    char fading[48] = "";
+    if (t->fade.level >= 0) snprintf(fading, sizeof(fading), ", level %d fading %s", t->fade.level, t->fade.in ? "in" : "out");
+    snprintf(buf, n, "terrain: levels %d-%d drawn (finest ready %d, screen-space error asks for %d%s), %d of %d tiles in view in %d draws,\n"
              "         last update evaluated %d heights in %.2f ms (fill %.2f, plan %.2f, staging %.2f; slowest %.2f ms)",
-             t->drawn, TERRAIN_CLIP_LEVELS - 1, t->clip.finest, t->clip.want, t->tilesDrawn, t->tilesTotal, t->ndraw,
+             t->drawn, TERRAIN_CLIP_LEVELS - 1, t->clip.finest, t->clip.want, fading, t->tilesDrawn, t->tilesTotal, t->ndraw,
              t->evaluated, t->updateMs, t->fillMs, t->planMs, t->stageMs, t->slowestMs);
 }

@@ -31,6 +31,9 @@ void      renderer_set_shadow_debug(Renderer *r, bool on);
 bool      renderer_shadow_debug(Renderer *r);
 /* How long the GPU spends on each pass, smoothed over recent frames (one line of text). */
 void      renderer_gpu_times(Renderer *r, char *buf, size_t n);
+/* Whether the terrain draws the levels its screen-space error asks for, filled
+ * and done blending. */
+bool      renderer_terrain_settled(Renderer *r);
 /* The terrain clipmap's state and update cost (one line of text). */
 void      renderer_terrain_stats(Renderer *r, char *buf, size_t n);
 /* Whether every distant proxy tile in range is ready to draw. */

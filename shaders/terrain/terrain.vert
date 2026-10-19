@@ -23,6 +23,7 @@ layout(push_constant) uniform Level {
     ivec2 slot;      // storage slot of the window's corner sample
     ivec2 pslot;     // the parent's storage slot of the parent sample at the corner
     int   top;       // the coarsest level: no parent
+    float fade;      // the least morph: the finest level blending in or out (terrain_fade_morph)
 } lv;
 
 layout(location = 0) out vec3  vRel;     // camera-relative position
@@ -50,6 +51,7 @@ void main() {
     const float END = float((W - 1) / 2 - 1);
     float d = max(abs(xz.x), abs(xz.y)) / lv.spacing;
     float morph = clamp((d - (END - float(TERRAIN_CLIP_MORPH))) / float(TERRAIN_CLIP_MORPH), 0.0, 1.0);
+    morph = max(morph, lv.fade);
 
     vec3 n = normalAt(base);
     if (morph > 0.0 && lv.top == 0) {

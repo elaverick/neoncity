@@ -196,6 +196,30 @@ double terrain_clip_error(const TerrainClipmap *c, int level, double cam_y, doub
  * c->want, or the finest ready level if that is coarser. */
 int    terrain_clip_select(TerrainClipmap *c, double cam_y, double K);
 
+/* --- Level transitions ---------------------------------------------------------
+ * When the selection's level changes, the drawn surface doesn't jump to it:
+ * levels are added or dropped one at a time, each blended over
+ * TERRAIN_FADE_TIME seconds (shortened by how many levels behind the
+ * selection the drawing is, so a fast descent still catches up). A level
+ * fading in is drawn with its morph at least 1 - progress, so it starts as its
+ * parent's surface exactly; one fading out with its morph at least progress,
+ * ending as its parent's, and is then dropped. Only the finest level drawn
+ * ever fades, so the rings outside it meet it as before. If the levels drawn
+ * stop being ready (a jump), the drawing goes straight to the selection. */
+#define TERRAIN_FADE_TIME 0.3
+typedef struct TerrainFade {
+    int    shown;      /* the finest level drawn; TERRAIN_CLIP_LEVELS before the first step */
+    int    level;      /* the level fading in or out (always shown), or -1 */
+    int    in;         /* fading in (1) or out (0) */
+    double progress;   /* 0 .. 1 */
+} TerrainFade;
+void  terrain_fade_init(TerrainFade *f);
+/* Advances dt seconds towards drawing `target` (terrain_clip_select's level),
+ * never drawing a level finer than c->finest. */
+void  terrain_fade_step(TerrainFade *f, const TerrainClipmap *c, int target, double dt);
+/* The least morph level l is drawn with: 0 unless it is fading. */
+float terrain_fade_morph(const TerrainFade *f, int level);
+
 static inline double terrain_clip_spacing(int level) { return ldexp(TERRAIN_CLIP_SPACING0, level); }
 static inline int    terrain_clip_slot(int64_t i) { return (int)(((i % TERRAIN_CLIP_N) + TERRAIN_CLIP_N) % TERRAIN_CLIP_N); }
 /* The slot holding world sample (i, j) of a level (valid inside a filled window). */

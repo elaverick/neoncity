@@ -64,8 +64,8 @@ the terrain roadmap.
   count no longer grows with what is hidden. Left over:
   - **Thresholds** (refine over 1 px, coarsen under 0.5 px, `TERRAIN_SSE_*`) are first guesses. Tune them by eye,
     with the drizzle and haze on.
-  - **Level switches** move the ground by up to the threshold in one frame. Most of this happens under the city,
-    where it can't be seen. Over the land a time-based blend would hide it if it ever shows.
+  - **Level switches** blend over `TERRAIN_FADE_TIME` (0.3 s a level, faster when several behind; `TerrainFade`), a
+    level at a time. Normals blend with the morph, but the lighting's other inputs don't change with the level.
   - **Hidden ground still counts.** Within the view distance the city's own ground covers the terrain, but its
     error is still counted. A level whose window lies wholly under built towns could be dropped outright.
   - **Undrawn levels wait.** The update keeps the levels down to one finer than the error asks for; finer ones
