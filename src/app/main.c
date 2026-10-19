@@ -7,7 +7,7 @@
 #include "renderer.h"
 #include "chunks.h"
 #include "player.h"
-#include "city.h"
+#include "layouts.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -218,6 +218,8 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
         printf("%s\n", gpu);
         renderer_proxy_stats(renderer, gpu, sizeof(gpu));
         printf("%s\n", gpu);
+        layouts_stats(gpu, sizeof(gpu));
+        printf("%s\n", gpu);
         printf("camera (%.1f, %.1f, %.1f) yaw %.1f pitch %.1f\n", player->eye[0], player->eye[1], player->eye[2],
                player->yaw * 180.0f / PI_F, player->pitch * 180.0f / PI_F);
     }
@@ -337,6 +339,7 @@ int main(int argc, char **argv) {
     }
 
     run(win, &vk, chunks, renderer, &player, &opt);
+    layouts_shutdown();
 
     vkDeviceWaitIdle(vk.device);
     renderer_destroy(renderer);

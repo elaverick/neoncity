@@ -1,5 +1,5 @@
 #include "player.h"
-#include "city.h"
+#include "layouts.h"
 #include "terrain.h"
 
 #define EYE_HEIGHT    1.68f
@@ -14,28 +14,9 @@
 
 /* ------------------------------------------------------------------------
  * Collision world: block layouts are a pure function of chunk coordinates,
- * so collision just regenerates (and caches) the layouts around the player.
+ * so collision just regenerates (and caches) the layouts around the player,
+ * built ahead of it on a worker (layouts.c).
  * ---------------------------------------------------------------------- */
-
-#define LAYOUT_CACHE 16
-static BlockLayout g_layouts[LAYOUT_CACHE];
-static int g_layoutValid[LAYOUT_CACHE];
-static uint32_t g_layoutUse[LAYOUT_CACHE], g_useClock;
-
-static const BlockLayout *layout_get(int cx, int cz) {
-    int lru = 0;
-    for (int i = 0; i < LAYOUT_CACHE; ++i) {
-        if (g_layoutValid[i] && g_layouts[i].cx == cx && g_layouts[i].cz == cz) {
-            g_layoutUse[i] = ++g_useClock;
-            return &g_layouts[i];
-        }
-        if (!g_layoutValid[i] || g_layoutUse[i] < g_layoutUse[lru]) lru = i;
-    }
-    city_layout(cx, cz, &g_layouts[lru]);
-    g_layoutValid[lru] = 1;
-    g_layoutUse[lru] = ++g_useClock;
-    return &g_layouts[lru];
-}
 
 static bool in_curb(const CurbPoly *c, double x, double z) {
     double sgn = 0.0;
@@ -52,7 +33,7 @@ static bool in_curb(const CurbPoly *c, double x, double z) {
 /* Height of what is underfoot above the city's ground: a drop kerb, a sidewalk or the road. */
 static float kerb_height(double x, double z) {
     int cx = (int)floor(x / CHUNK_SIZE), cz = (int)floor(z / CHUNK_SIZE);
-    const BlockLayout *L = layout_get(cx, cz);
+    const BlockLayout *L = layouts_get(cx, cz);
     for (int i = 0; i < L->ndrops; ++i)
         if (city_drop_contains(&L->drop[i], x, z, 0.0)) return city_drop_height(&L->drop[i], x, z);
     for (int i = 0; i < L->ncurbs; ++i)
@@ -62,7 +43,7 @@ static float kerb_height(double x, double z) {
 
 /* The ground under the city's surfaces, or beyond its edge the land's. */
 static float base_ground(double x, double z) {
-    const BlockLayout *L = layout_get((int)floor(x / CHUNK_SIZE), (int)floor(z / CHUNK_SIZE));
+    const BlockLayout *L = layouts_get((int)floor(x / CHUNK_SIZE), (int)floor(z / CHUNK_SIZE));
     if (!L->bounded) return city_ground_y(x, z);
     for (int i = 0; i < L->nground; ++i)
         if (in_curb(&L->ground[i], x, z)) return city_ground_y(x, z);
@@ -145,7 +126,7 @@ static void collide(double *x, double *z) {
     for (int iter = 0; iter < 3; ++iter) {
         for (int dz = -1; dz <= 1; ++dz)
             for (int dx = -1; dx <= 1; ++dx) {
-                const BlockLayout *L = layout_get(ccx + dx, ccz + dz);
+                const BlockLayout *L = layouts_get(ccx + dx, ccz + dz);
                 for (int i = 0; i < L->ncoll; ++i) push_out_poly(x, z, L, &L->coll[i]);
                 for (int i = 0; i < L->nlamps; ++i) push_out_frame(x, z, L->lamp[i].x, L->lamp[i].z, 1.0f, 0.0f, pole);
             }
@@ -296,6 +277,7 @@ static void set_camera(Player *p, float sy, float cy, vec3 flatRight, float dt) 
 }
 
 void player_update(Player *p, const PlayerInput *in, float dt) {
+    layouts_prefetch((int)floor(p->feet[0] / CHUNK_SIZE), (int)floor(p->feet[2] / CHUNK_SIZE));
     if (dt > 0.05f) dt = 0.05f;
     p->time += dt;
     if (in->toggleFly) { p->fly = !p->fly; p->vel[0] = p->vel[1] = p->vel[2] = 0; }

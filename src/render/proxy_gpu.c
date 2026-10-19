@@ -28,6 +28,7 @@
 #define MAX_DRAWS       16384
 #define MAX_JOBS_P      64                           /* tiles queued, or generated and not yet taken */
 #define BOX_VERTS       30
+#define RETRY_FRAMES    120                          /* a tile the pool had no room for waits this long to be generated again */
 
 _Static_assert(PT_SIDE > 2.0 * PROXY_DISTANCE / PROXY_TILE + 2.0, "the proxy table is too small for the range");
 
@@ -35,6 +36,7 @@ enum { PT_FREE = 0, PT_QUEUED, PT_READY };
 
 typedef struct PTile {
     int      tx, tz, state;
+    uint64_t retry;      /* the pool had no room for it: not queued again before this frame */
     int      n, npages;
     uint16_t page[TILE_PAGES];
     int      first[PROXY_TILE_CELLS + 1];
@@ -72,6 +74,7 @@ struct ProxyGpu {
     PCand    cand[PT_SLOTS];
 
     int      inRange, readyTiles, drawnTiles, drawnBoxes, residentBoxes;
+    int      starved;           /* tiles generated that the pool had no room for, so far */
     double   created, filled;   /* when, and how long after it every tile in range was first ready (s) */
 };
 
@@ -201,7 +204,7 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
         int pages = (j->t.n + PAGE_BOXES - 1) / PAGE_BOXES;
         if (want && pages > TILE_PAGES) fatal("proxies: a tile has more boxes than it can hold");
         if (want && staged > 0 && staged + (uint32_t)j->t.n > UPLOAD_BOXES) break;   /* the rest next frame */
-        if (want && pages > p->nfree) { t->state = PT_FREE; want = 0; }             /* asked for again later */
+        if (want && pages > p->nfree) { t->state = PT_FREE; t->retry = frame + RETRY_FRAMES; want = 0; p->starved++; }   /* asked for again later */
         if (!want) continue;
         t->n = j->t.n;
         t->npages = pages;
@@ -242,7 +245,8 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
                 if (t->state == PT_READY) p->residentBoxes -= t->n;
                 free_tile(p, t, frame);   /* a queued job for it is simply not taken up */
             }
-            if (t->state == PT_FREE) { p->cand[ncand].slot = s; p->cand[ncand].d = d; ncand++; t->tx = tx; t->tz = tz; }
+            if (t->state == PT_FREE && (t->tx != tx || t->tz != tz)) t->retry = 0;   /* another tile's wait */
+            if (t->state == PT_FREE && frame >= t->retry) { p->cand[ncand].slot = s; p->cand[ncand].d = d; ncand++; t->tx = tx; t->tz = tz; }
             else if (t->state == PT_READY) p->readyTiles++;
         }
     if (p->filled == 0.0 && p->readyTiles == p->inRange) p->filled = glfwGetTime() - p->created;
@@ -320,7 +324,9 @@ void renderer_proxy_stats(Renderer *r, char *buf, size_t n) {
     const ProxyGpu *p = r->proxies;
     char filled[48] = "";
     if (p->filled > 0.0) snprintf(filled, sizeof(filled), ", all first ready after %.2f s", p->filled);
-    snprintf(buf, n, "proxies: %d of %d tiles in range ready%s (%d boxes, %d of %d pages), %d tiles and %d boxes drawn in %u draws",
-             p->readyTiles, p->inRange, filled, p->residentBoxes, POOL_PAGES_P - p->nfree - p->npending, POOL_PAGES_P, p->drawnTiles, p->drawnBoxes,
-             p->ndraw[(r->frameIndex + MAX_FRAMES - 1) % MAX_FRAMES]);
+    char starved[48] = "";
+    if (p->starved > 0) snprintf(starved, sizeof(starved), ", %d turned away by a full pool", p->starved);
+    snprintf(buf, n, "proxies: %d of %d tiles in range ready%s (%d boxes, %d of %d pages%s), %d tiles and %d boxes drawn in %u draws",
+             p->readyTiles, p->inRange, filled, p->residentBoxes, POOL_PAGES_P - p->nfree - p->npending, POOL_PAGES_P, starved,
+             p->drawnTiles, p->drawnBoxes, p->ndraw[(r->frameIndex + MAX_FRAMES - 1) % MAX_FRAMES]);
 }
