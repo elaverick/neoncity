@@ -40,6 +40,14 @@ double terrain_height_lod(double x, double z, double spacing);
  * [*lo, *hi]. Cheap; not tight. */
 void   terrain_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi);
 
+/* The region's landforms (src/terrain/terrain_land.c): the mix of landform
+ * types at a point, weights in [0, 1] summing to 1, and how deep a canyon cuts
+ * there (m). Near the city the land stays gentle whatever the mix. A pure
+ * function of position, for finding level ground for towns and for the tests. */
+enum { TERRAIN_PLAINS = 0, TERRAIN_HILLS, TERRAIN_MOUNTAINS, TERRAIN_PLATEAU, TERRAIN_TYPES };
+typedef struct TerrainLandform { float w[TERRAIN_TYPES]; float canyon; } TerrainLandform;
+void   terrain_landform(double x, double z, TerrainLandform *out);
+
 /* --- Clipmap -----------------------------------------------------------------
  * Nested square grids of terrain samples round the camera, for drawing the
  * ground out to the horizon (Losasso and Hoppe's geometry clipmaps). Level l
@@ -65,8 +73,10 @@ void   terrain_height_range(double x0, double z0, double x1, double z1, double *
 /* Heights evaluated per update, at most: a fill evaluates its band, a
  * one-sample apron for the normals and the parent's samples under it
  * (terrain_clip_fill_cost), so a thin strip costs about 2.5 times the samples
- * it writes and a whole window about 1.3 times. At about 140 ns a height this
- * is under 2 ms. Walking spends a few hundred; the most steady motion asks
+ * it writes and a whole window about 1.3 times. A height takes about 90 ns
+ * under the city and 250-500 ns over the region's landforms (the mountains
+ * most), so a full update takes 1-7 ms: on the render thread, a hitch when the
+ * camera jumps (TODO: Terrain). Walking spends a few hundred; the most steady motion asks
  * for is a camera dithering across a snap line of every level at once (every
  * 1024 m), each level moving a sample pair each way: about 1,280 a level, 1,020
  * for the coarsest, 12,560 in all. A jump fills in over about 17 updates,

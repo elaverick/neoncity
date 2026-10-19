@@ -6,6 +6,10 @@
  * really bounds them, the ground under the city stays gentle, the belt joins
  * city and land without a cliff, and the footprint is where it should be.
  *
+ * Then the region's landforms: weights that blend, every type present, each
+ * with its own character, belts along their strike, sharp escarpments, and
+ * continuous canyons.
+ *
  * Then levels of detail and the clipmap: coarse spacings drop only fine
  * detail; filled samples are the ground at their level, each level's parent
  * heights are its parent's own samples, windows nest, the blend into the
@@ -19,7 +23,8 @@
  * through the city's ground.
  *
  * terrain_test --fingerprint prints a hash of the heights, the footprint and
- * some filled clipmaps instead, to compare what two builds generate. */
+ * some filled clipmaps instead, to compare what two builds generate;
+ * terrain_test --map out.ppm [km] draws the land round the city (see map). */
 #include "terrain_internal.h"
 #include "plan.h"
 #include "city.h"
@@ -32,7 +37,7 @@
 #define REGION       25000.0   /* points scattered this far round the city centre (m) */
 #define URBAN_SLOPE  0.03      /* steepest urban grade allowed */
 #define BELT_SLOPE   0.12      /* steepest ground in the belt */
-#define LAND_SLOPE   1.25      /* steepest land: the bound the amplitudes and wavelengths allow */
+#define LAND_SLOPE   3.0       /* steepest land: escarpments and canyon walls are cliffs, up to about 70 deg */
 
 static double g_x[N_POINTS], g_z[N_POINTS], g_ref[N_POINTS];
 static int g_failures;
@@ -55,27 +60,105 @@ static double slope_of(double (*f)(double, double), double x, double z) {
 static double relief_at(double x, double z) { return TERRAIN_URBAN_GRADED ? plan_settlement(plan_settlement_near(x, z)).relief_m : 0.0; }
 static double urban_graded(double x, double z) { return relief_at(x, z) * terrain_urban_shape(x, z); }
 
+/* --- Landforms -------------------------------------------------------------- */
+
+#define LF_SPAN 60000.0   /* landforms surveyed this far round the city centre (m) */
+
+/* 5b. The region's landforms: weights that blend, every type present round
+ *     the city, each with its own character where it holds the land alone,
+ *     mountain belts running along their strike, plateaus with sharp
+ *     escarpments, and canyons cut continuously, no deeper than their deepest. */
+static void test_landforms(Rng *r) {
+    DVec2 c = plan_town_centre(0, 0);
+    const double full = TERRAIN_REGION_FROM + TERRAIN_LAND_RISE;   /* the region's landforms at full height beyond this edge measure */
+    int lead[TERRAIN_TYPES] = { 0 }, n = 0, badW = 0;
+    double slopeSum[TERRAIN_TYPES] = { 0 }, slopeMax[TERRAIN_TYPES] = { 0 };
+    int slopeN[TERRAIN_TYPES] = { 0 };
+    for (double z = c.z - LF_SPAN; z <= c.z + LF_SPAN; z += 500.0)
+        for (double x = c.x - LF_SPAN; x <= c.x + LF_SPAN; x += 500.0) {
+            TerrainLandform lf;
+            terrain_landform(x, z, &lf);
+            double sum = 0.0;
+            for (int t = 0; t < TERRAIN_TYPES; ++t) {
+                if (lf.w[t] < 0.0f || lf.w[t] > 1.0f) badW++;
+                sum += lf.w[t];
+                if (lf.w[t] > 0.5f) lead[t]++;
+            }
+            if (fabs(sum - 1.0) > 1e-5 || lf.canyon < 0.0f || lf.canyon > TERRAIN_CANYON_DEEP_M) badW++;
+            n++;
+            if (plan_city_edge(x, z) < full || lf.canyon > 0.0f) continue;
+            for (int t = 0; t < TERRAIN_TYPES; ++t)
+                if (lf.w[t] > 0.95f) {
+                    double s = slope_of(terrain_height, x, z);
+                    slopeSum[t] += s; slopeN[t]++;
+                    slopeMax[t] = fmax(slopeMax[t], s);
+                }
+        }
+    static const char *names[TERRAIN_TYPES] = { "plains", "hills", "mountains", "plateaus" };
+    printf("landforms over %.0f km square round the centre: leading", 2.0 * LF_SPAN / 1000.0);
+    for (int t = 0; t < TERRAIN_TYPES; ++t) printf(" %s %.0f%%", names[t], 100.0 * lead[t] / n);
+    printf("\n  mean (steepest) slope where each holds the land alone:");
+    for (int t = 0; t < TERRAIN_TYPES; ++t) printf(" %s %.1f%% (%.0f%%)", names[t], 100.0 * slopeSum[t] / fmax(slopeN[t], 1), 100.0 * slopeMax[t]);
+    printf("\n");
+    CHECK(badW == 0, "%d landform weights out of [0, 1], not summing to 1, or canyons out of depth", badW);
+    for (int t = 0; t < TERRAIN_TYPES; ++t) {
+        CHECK(lead[t] > n / 20, "%s lead only %d of %d points round the city", names[t], lead[t], n);
+        CHECK(slopeN[t] > 20, "%s hold the land alone at only %d points", names[t], slopeN[t]);
+    }
+    double mean[TERRAIN_TYPES];
+    for (int t = 0; t < TERRAIN_TYPES; ++t) mean[t] = slopeSum[t] / fmax(slopeN[t], 1);
+    CHECK(mean[TERRAIN_PLAINS] < 0.03 && mean[TERRAIN_PLAINS] < mean[TERRAIN_HILLS] && mean[TERRAIN_HILLS] < mean[TERRAIN_MOUNTAINS],
+          "slopes don't rise from plains (%.1f%%) through hills (%.1f%%) to mountains (%.1f%%)", 100.0 * mean[0], 100.0 * mean[1], 100.0 * mean[2]);
+    CHECK(slopeMax[TERRAIN_PLATEAU] > 1.0, "the plateaus' escarpments are smoothed away: steepest %.0f%%", 100.0 * slopeMax[TERRAIN_PLATEAU]);
+
+    /* Belts: the mountains' weight holds about as long along the strike as across it, times the stretch. */
+    double along = 0.0, across = 0.0;
+    int runsA = 0, runsC = 0;
+    for (int k = 0; k < 200; ++k) {
+        float u0 = rng_float(r);
+        float v0 = rng_float(r);
+        double ox = c.x + (2.0 * u0 - 1.0) * LF_SPAN, oz = c.z + (2.0 * v0 - 1.0) * LF_SPAN;
+        for (int dir = 0; dir < 2; ++dir) {
+            double dx = dir ? -TERRAIN_STRIKE_Z : TERRAIN_STRIKE_X, dz = dir ? TERRAIN_STRIKE_X : TERRAIN_STRIKE_Z;
+            int in = 0, len = 0;
+            for (int s = 0; s <= 400; ++s) {
+                TerrainLandform lf;
+                terrain_landform(ox + dx * s * 250.0, oz + dz * s * 250.0, &lf);
+                int now = lf.w[TERRAIN_MOUNTAINS] > 0.5f;
+                if (now) len++;
+                if (in && (!now || s == 400)) { if (dir) { across += len; runsC++; } else { along += len; runsA++; } len = 0; }
+                in = now;
+            }
+        }
+    }
+    along /= fmax(runsA, 1); across /= fmax(runsC, 1);
+    printf("  mountain belts run %.1f km along the strike, %.1f km across it\n", along * 0.25, across * 0.25);
+    CHECK(along > 1.5 * across, "mountain belts don't run along their strike: %.1f km along, %.1f km across", along * 0.25, across * 0.25);
+
+    /* Canyons: continuous (their cut changes no faster than their walls climb), and present. */
+    double worst = 0.0, deepest = 0.0;
+    for (int k = 0; k < 40000; ++k) {
+        float u0 = rng_float(r);
+        float v0 = rng_float(r);
+        float a = rng_float(r);
+        double x = c.x + (2.0 * u0 - 1.0) * LF_SPAN, z = c.z + (2.0 * v0 - 1.0) * LF_SPAN;
+        double d0 = terrain_canyon_depth(x, z), d1 = terrain_canyon_depth(x + cos(6.2832 * a), z + sin(6.2832 * a));
+        worst = fmax(worst, fabs(d1 - d0));
+        deepest = fmax(deepest, d0);
+    }
+    for (double z = c.z - LF_SPAN; z <= c.z + LF_SPAN; z += 100.0)   /* along lines, to find the floors */
+        deepest = fmax(deepest, terrain_canyon_depth(c.x + 0.37 * LF_SPAN, z));
+    printf("  canyons cut up to %.0f m deep, changing by at most %.2f m per metre\n", deepest, worst);
+    CHECK(worst <= 1.5 * TERRAIN_CANYON_WALL + 0.01, "a canyon's cut jumps by %.2f m over a metre", worst);
+    CHECK(deepest > 150.0 && deepest <= TERRAIN_CANYON_DEEP_M, "canyons cut %.0f m at most round the city", deepest);
+}
+
 /* --- Levels of detail and the clipmap -------------------------------------- */
 
 #define WALK_STEPS   6000
 #define CHECKPOINTS  12
 
-/* Share of a fractal sum's amplitude a spacing leaves out: the dropped
- * octaves' weight over the total. */
-static double dropped_fraction(double wave, int octaves, double spacing) {
-    int used = terrain_octaves(wave, octaves, spacing);
-    double drop = 0.0, total = 0.0;
-    for (int k = 0; k < octaves; ++k) {
-        total += ldexp(1.0, -k);
-        if (k >= used) drop += ldexp(1.0, -k);
-    }
-    return drop / total;
-}
-
-static int same_octaves(double s0, double s1) {
-    return terrain_octaves(TERRAIN_LAND_WAVE, TERRAIN_LAND_OCTAVES, s0) == terrain_octaves(TERRAIN_LAND_WAVE, TERRAIN_LAND_OCTAVES, s1) &&
-           terrain_octaves(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s0) == terrain_octaves(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s1);
-}
+static int same_octaves(double s0, double s1) { return terrain_lod_key(s0) == terrain_lod_key(s1); }
 
 /* 6. Coarse spacings leave out fine detail only: within the range bounds, and
  *    no further from full detail than the dropped octaves can reach. */
@@ -84,23 +167,23 @@ static void test_lod_heights(void) {
     for (int i = 0; i < N_POINTS; i += 4) {
         double x = g_x[i], z = g_z[i], h = terrain_height(x, z), h0 = terrain_height_lod(x, z, 0.0), rlo, rhi, relief = relief_at(x, z);
         CHECK(memcmp(&h, &h0, sizeof(h)) == 0, "terrain_height_lod at spacing 0 differs from terrain_height at (%.1f, %.1f)", x, z);
-        double amp = terrain_land_amplitude(plan_city_edge(x, z));
         terrain_height_range(x, z, x, z, &rlo, &rhi);
         for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
             double s = terrain_clip_spacing(l), hl = terrain_height_lod(x, z, s);
-            /* 1e-4 m: each fractal sum is rounded to float before scaling. */
-            double bound = amp * dropped_fraction(TERRAIN_LAND_WAVE, TERRAIN_LAND_OCTAVES, s) +
-                           relief * dropped_fraction(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s) + 1e-4;
+            /* 1e-3 m: each fractal sum is rounded to float before scaling. */
+            double bound = terrain_land_lod_error(x, z, s) + relief * terrain_dropped(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s) + 1e-3;
             CHECK(hl >= rlo && hl <= rhi, "height %.3f at spacing %.0f m at (%.1f, %.1f) outside its range", hl, s, x, z);
             CHECK(fabs(hl - h) <= bound, "height at spacing %.0f m at (%.1f, %.1f) is %.3f m from full detail (bound %.3f)", s, x, z, fabs(hl - h), bound);
             if (fabs(hl - h) > worst[l]) worst[l] = fabs(hl - h);
         }
     }
-    printf("levels of detail (octaves kept of land %d, urban %d; largest change from full detail):\n", TERRAIN_LAND_OCTAVES, TERRAIN_URBAN_OCTAVES);
+    printf("levels of detail (octaves kept of urban %d, base %d, hills %d, ridges %d; largest change from full detail):\n",
+           TERRAIN_URBAN_OCTAVES, TERRAIN_BASE_OCTAVES, TERRAIN_HILLS_OCTAVES, TERRAIN_RIDGE_OCTAVES);
     for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
         double s = terrain_clip_spacing(l);
-        printf("  level %d  %4.0f m  land %d  urban %d  %6.2f m\n", l, s, terrain_octaves(TERRAIN_LAND_WAVE, TERRAIN_LAND_OCTAVES, s),
-               terrain_octaves(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s), worst[l]);
+        printf("  level %d  %4.0f m  urban %d  base %d  hills %d  ridges %d  %6.2f m\n", l, s, terrain_octaves(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s),
+               terrain_octaves(TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, s), terrain_octaves(TERRAIN_HILLS_WAVE, TERRAIN_HILLS_OCTAVES, s),
+               terrain_octaves(TERRAIN_RIDGE_WAVE, TERRAIN_RIDGE_OCTAVES, s), worst[l]);
     }
 }
 
@@ -626,6 +709,57 @@ static void test_fade(void) {
     terrain_clip_free(&clip);
 }
 
+/* terrain_test --map out.ppm [km]: the land round the city centre, `km` across
+ * (60 by default), as a relief map 800 pixels square: lit from the north-west,
+ * tinted by the leading landform (plains green, hills ochre, mountains grey,
+ * plateaus red), canyons blue, the city dark. North (-z) is up. */
+static int map(const char *path, double km) {
+    const int W = 800;
+    DVec2 c = plan_town_centre(0, 0);
+    double px = km * 1000.0 / W;
+    uint8_t *img = (uint8_t *)malloc((size_t)W * W * 3);
+    double *row = (double *)malloc(sizeof(double) * (W + 1) * 2);
+    if (!img || !row) return 1;
+    static const float tint[TERRAIN_TYPES][3] = { { 0.55f, 0.75f, 0.45f }, { 0.85f, 0.72f, 0.45f }, { 0.75f, 0.75f, 0.8f }, { 0.9f, 0.5f, 0.4f } };
+    double lo = 1e9, hi = -1e9;
+    for (int j = 0; j < W; ++j) {
+        for (int k = 0; k <= W; ++k) {
+            double x = c.x + (k - W / 2) * px;
+            row[k] = terrain_height(x, c.z + (j - W / 2) * px);
+            row[W + 1 + k] = terrain_height(x, c.z + (j + 1 - W / 2) * px);
+        }
+        for (int i = 0; i < W; ++i) {
+            double x = c.x + (i - W / 2) * px, z = c.z + (j - W / 2) * px, h = row[i];
+            double gx = (row[i + 1] - h) / px, gz = (row[W + 1 + i] - h) / px;
+            float shade = clampf(0.75f + (float)(0.7 * (gx + gz) / sqrt(1.0 + gx * gx + gz * gz)) * -1.0f, 0.15f, 1.3f);
+            TerrainLandform lf;
+            terrain_landform(x, z, &lf);
+            float col[3] = { 0.0f, 0.0f, 0.0f };
+            for (int t = 0; t < TERRAIN_TYPES; ++t)
+                for (int q = 0; q < 3; ++q) col[q] += lf.w[t] * tint[t][q];
+            float e = (float)plan_city_edge(x, z), city = e < 0.0f ? 1.0f : 0.0f;
+            float wet = clampf(lf.canyon / 100.0f, 0.0f, 1.0f) * smoothstepf((float)TERRAIN_CANYON_FROM, (float)TERRAIN_CANYON_FULL, e);
+            float hgt = 0.7f + 0.6f * clampf((float)(h / TERRAIN_LAND_TOP_M), -0.5f, 1.0f);
+            for (int q = 0; q < 3; ++q) {
+                float v = col[q] * shade * hgt;
+                v = v * (1.0f - wet) + (q == 2 ? 0.8f : 0.3f) * shade * wet;
+                v = v * (1.0f - 0.7f * city);
+                img[((size_t)j * W + i) * 3 + q] = (uint8_t)clampf(v * 255.0f, 0.0f, 255.0f);
+            }
+            lo = fmin(lo, h); hi = fmax(hi, h);
+        }
+    }
+    FILE *f = fopen(path, "wb");
+    if (!f) return 1;
+    fprintf(f, "P6\n%d %d\n255\n", W, W);
+    fwrite(img, 1, (size_t)W * W * 3, f);
+    fclose(f);
+    printf("map of %.0f km round the centre: heights %.0f .. %.0f m\n", km, lo, hi);
+    free(img);
+    free(row);
+    return 0;
+}
+
 static int fingerprint(void) {
     DVec2 c = plan_town_centre(0, 0);
     uint64_t hh = 0xcbf29ce484222325ULL, he = hh;
@@ -671,9 +805,10 @@ int main(int argc, char **argv) {
         g_z[i] = c.z + (2.0 * v - 1.0) * span;
     }
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
+    if (argc > 2 && strcmp(argv[1], "--map") == 0) return map(argv[2], argc > 3 ? atof(argv[3]) : 60.0);
 
     /* 1. Reference pass, in order: finite and within the amplitudes. */
-    double amax = fmax(PLAN_RELIEF_MAX_M, TERRAIN_LAND_FAR_M) + 1e-3, lo = 1e9, hi = -1e9;
+    double amax = fmax(PLAN_RELIEF_MAX_M, fmax(TERRAIN_LAND_TOP_M, TERRAIN_LAND_DEEP_M)) + 1e-3, lo = 1e9, hi = -1e9;
     for (int i = 0; i < N_POINTS; ++i) {
         double h = terrain_height(g_x[i], g_z[i]);
         g_ref[i] = h;
@@ -759,15 +894,16 @@ int main(int argc, char **argv) {
         /* The city's ground is the urban relief everywhere, even where the land rises past it. */
         CHECK(terrain_urban_height(x, z) == (TERRAIN_URBAN_GRADED ? urban_graded(x, z) : 0.0), "the city's ground at (%.1f, %.1f) isn't the urban relief", x, z);
         double s = slope_of(terrain_height, x, z);
-        if (e > -CITY_BELT && e < 2000.0) { if (s > beltMax) beltMax = s; nBelt++; }
+        if (e > -CITY_BELT && e < TERRAIN_REGION_FROM) { if (s > beltMax) beltMax = s; nBelt++; }
         if (s > landMax) landMax = s;
     }
-    /* Points scattered over 50 km rarely land in the belt: walk across it too. */
+    /* Points scattered over 50 km rarely land in the belt: walk across it too,
+     * out to where the region's landforms begin. */
     for (int a = 0; a < 720; ++a) {
         double th = a * (2.0 * PI_F / 720.0);
         for (double rad = 5000.0; rad <= 16000.0; rad += 25.0) {
             double x = c.x + rad * cos(th), z = c.z + rad * sin(th), e = plan_city_edge(x, z);
-            if (e <= -CITY_BELT || e >= 2000.0) continue;
+            if (e <= -CITY_BELT || e >= TERRAIN_REGION_FROM) continue;
             double s = slope_of(terrain_height, x, z);
             if (s > beltMax) beltMax = s;
             nBelt++;
@@ -819,6 +955,7 @@ int main(int argc, char **argv) {
     }
     CHECK(plan_settlement_near(c.x, c.z) == 0 && plan_settlement(0).relief_m == PLAN_RELIEF_MEGA_M, "the megacity isn't settlement 0, of PLAN_RELIEF_MEGA_M");
 
+    test_landforms(&r);
     test_lod_heights();
     test_clipmap(&r);
     test_select();

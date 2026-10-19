@@ -74,8 +74,10 @@ the terrain roadmap.
   - **Undrawn levels wait.** The update keeps the levels down to one finer than the error asks for; finer ones
     keep their old window until it asks for them, then catch up a level at a time (a few updates each), so coming
     down fast from high up refines over a fraction of a second. The budget counts heights evaluated
-    (`TERRAIN_CLIP_BUDGET`, about 2 ms at most); the fill still runs on the render thread. If a fast flight shows
-    spikes in the `--shot` timings, move the fill to a worker.
+    (`TERRAIN_CLIP_BUDGET`); the fill still runs on the render thread. Since the landforms (M8) a height costs
+    250-500 ns over them (90 ns under the city), so a full update takes up to 7 ms and the slowest update in a
+    `--shot` over the mountains is 6-9 ms (2 ms before): a hitch when the camera jumps or starts. Halving the budget
+    instead leaves levels unready in steady motion (the walk test fails). Next: move the fill to a worker.
   - **City and building detail.** The design doc wants the same perceptual rule applied to the city's levels of
     detail, independently of the terrain's: see "Level of detail" under the distant proxies.
 - **The graded city** stands on `city_ground_y`, its settlement's relief (`PlanSettlement.relief_m`: the megacity's
@@ -106,6 +108,20 @@ the terrain roadmap.
     the outline, cones at its corners, a skirt underneath), and the player walks down it. There is no barrier on the
     shoulder: one would want a collision outline too. The verge is the parks' dark grass, which hardly reads at night.
   - Fields (`ZONE_RURAL`) reuse the parks' grass; neither has trees.
+- **Landforms** (`src/terrain/terrain_land.c`, M8; see the README and `terrain_test --map`). Plains, hills, mountain
+  belts and plateaus blend by region; canyons are explicit paths. Left over:
+  - **Seen from the city** the mountains mostly vanish: the cloud deck's underside is at about 200 m
+    (`CLOUD_BASE`, `shaders/clouds.comp`), so from street level anything above it beyond a few kilometres is behind
+    cloud. From above the deck the ridgelines stand out against the sky. A higher or broken deck over the land would
+    show them; that is a look to decide.
+  - **Night shading** makes the land's relief hard to read: the cloud deck's glow is its only light, so slopes and
+    escarpments differ only slightly in tone.
+  - **Canyon floors** follow the land they cut, so they rise and fall with it; rivers and drainage (M10) would give
+    them a fall. Canyons don't yet join into systems.
+  - **Value noise's lattice** still shows faintly in the mountains' finer octaves as rounded bumps; a gradient noise
+    would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
+  - **Settlements** don't yet read the landforms (`terrain_landform`); placing towns on level ground comes with roads
+    out.
 
 ## Office lobbies (next)
 Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/mesh_lobby.c`).

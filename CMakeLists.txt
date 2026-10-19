@@ -126,15 +126,15 @@ set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/render src/app)
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_lobby.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
-                src/city/litter.c src/city/proxy.c src/plan/plan.c src/terrain/terrain_height.c
+                src/city/litter.c src/city/proxy.c src/plan/plan.c src/terrain/terrain_height.c src/terrain/terrain_land.c
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
                 src/gen/interior_fixtures.c src/gen/interior_validate.c
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c)
-# Terrain (src/terrain): the ground everywhere, a pure function of position (terrain_height.c, in
-# GEN_SOURCES: the city builds on it), and the clipmap that samples it round the camera (drawn by
-# src/render/terrain_gpu.c).
+# Terrain (src/terrain): the ground everywhere, a pure function of position (terrain_height.c and
+# terrain_land.c, in GEN_SOURCES: the city builds on them), and the clipmap that samples it round the
+# camera (drawn by src/render/terrain_gpu.c).
 set(TERRAIN_SOURCES src/terrain/terrain_lod.c src/terrain/terrain_mesh.c)
 
 # --- Tests: generator determinism ------------------------------------------------

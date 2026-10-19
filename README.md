@@ -367,6 +367,14 @@ screen, and it comes back once that passes a pixel. So the city's nearly flat gr
 draw only the coarse levels, and rough land nearby keeps them all. Each level is drawn in tiles, and
 only the tiles whose height bounds touch the view frustum are drawn.
 
+Beyond the city the land is the region's (`src/terrain/terrain_land.c`), a pure function of position like
+the rest: plains, rolling hills, mountain belts and plateaus, blended where one region gives way to the
+next. The belts run as long ranges along one strike, their main ridges along it and the spurs off them
+every way; plateaus stand on sharp escarpments; canyons, explicit meandering paths up to about 300 m deep,
+cut through whatever they cross. The city's surroundings stay gentle: the landforms rise from 1 km beyond
+its edge over the next 6 km, and the canyons keep 2.5 km away. `terrain_test --map out.ppm` draws them as
+a relief map.
+
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the
 arcologies' sodium lamps; so do the lobbies' ceilings, indoors. (An arcology's crown lights stand for the cold light falling down the canyon from its glazed

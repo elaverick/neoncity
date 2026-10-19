@@ -27,24 +27,13 @@ static double urban_shape_lod(double x, double z, double spacing) {
 
 double terrain_urban_shape(double x, double z) { return urban_shape_lod(x, z, 0.0); }
 
-double terrain_land_amplitude(double edge) {
-    return TERRAIN_LAND_NEAR_M + (TERRAIN_LAND_FAR_M - TERRAIN_LAND_NEAR_M) * smoothstepf(0.0f, (float)TERRAIN_LAND_RISE, (float)edge);
-}
-
-static double land_at(double x, double z, double edge, double spacing) {
-    return terrain_land_amplitude(edge) * noise_fbm2_band(WORLD_SEED ^ 0x7E12u, x / TERRAIN_LAND_WAVE, z / TERRAIN_LAND_WAVE, TERRAIN_LAND_OCTAVES,
-                                                          terrain_octaves(TERRAIN_LAND_WAVE, TERRAIN_LAND_OCTAVES, spacing));
-}
-
-double terrain_land(double x, double z) { return land_at(x, z, plan_city_edge(x, z), 0.0); }
-
 /* Each field is evaluated only where its weight is non-zero; that skips work
  * without changing any height. *w gets the urban weight. */
 static double height_lod(double x, double z, double spacing, double *w, double *relief) {
     double edge = plan_city_edge(x, z), h = 0.0;
     *w = plan_urban_weight(edge);
     *relief = *w > 0.0 ? urban_relief(x, z) : 0.0;
-    if (*w < 1.0) h += (1.0 - *w) * land_at(x, z, edge, spacing);
+    if (*w < 1.0) h += (1.0 - *w) * terrain_land_lod(x, z, edge, spacing);
     if (*w > 0.0 && *relief > 0.0) h += *w * *relief * urban_shape_lod(x, z, spacing);
     return h;
 }
@@ -120,19 +109,22 @@ double terrain_urban_sink(double spacing, double relief) {
 
 double terrain_surface(double x, double z) { return terrain_surface_lod(x, z, 0.0, NULL); }
 
-/* The height is a blend of urban (|h| <= its relief) and land (|h| <= its
- * amplitude, which grows with the edge measure), so it is bounded by whichever
- * of the two can reach into the rectangle. The edge measure over the
- * rectangle is bounded from its centre by CITY_EDGE_RATE. Leaving octaves out
- * (terrain_height_lod) only shrinks each fractal sum, so the bound holds at
- * every level of detail. */
+/* The height is a blend of urban (|h| <= its relief) and land (within
+ * terrain_land_range, which only widens with the edge measure), so it is
+ * bounded by whichever of the two can reach into the rectangle. The edge
+ * measure over the rectangle is bounded from its centre by CITY_EDGE_RATE.
+ * Leaving octaves out (terrain_height_lod) only shrinks each fractal sum, so
+ * the bound holds at every level of detail. */
 void terrain_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
     double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0);
     double e = plan_city_edge(cx, cz), emin = e - CITY_EDGE_RATE * half, emax = e + CITY_EDGE_RATE * half;
-    double a = 0.0;
-    if (emin < 0.0) a = urban_relief_max();                                   /* somewhere w > 0 */
-    if (emax > -CITY_BELT) a = fmax(a, terrain_land_amplitude(emax));         /* somewhere w < 1 */
-    a += 1e-3;                                                                /* rounding */
-    *lo = -a;
-    *hi = a;
+    double l = 0.0, h = 0.0;
+    if (emin < 0.0) { l = -urban_relief_max(); h = urban_relief_max(); }     /* somewhere w > 0 */
+    if (emax > -CITY_BELT) {                                                 /* somewhere w < 1 */
+        double ll, lh;
+        terrain_land_range(emax, &ll, &lh);
+        l = fmin(l, ll); h = fmax(h, lh);
+    }
+    *lo = l - 1e-3;                                                          /* rounding */
+    *hi = h + 1e-3;
 }
