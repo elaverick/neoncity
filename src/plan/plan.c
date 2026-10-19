@@ -763,7 +763,7 @@ static void town_outline(PlanCtx *c, int i, int j) {
 void plan_area(double x0, double z0, double x1, double z1, PlanArea *out) {
     out->x0 = x0; out->z0 = z0; out->x1 = x1; out->z1 = z1;
     out->nroads = out->nblocks = 0;
-    out->bounded = out->ntowns = out->nedges = 0;
+    out->bounded = out->ntowns = out->nedges = out->ngates = 0;
     PlanCtx *c = (PlanCtx *)calloc(1, sizeof(PlanCtx));
     if (!c) fatal("out of memory in plan_area");
     c->out = out;
@@ -782,11 +782,20 @@ void plan_area(double x0, double z0, double x1, double z1, PlanArea *out) {
         }
     /* When every cell near the rectangle is built they tile it, and the ground
      * covers it all. Otherwise: the built towns' ground, and its outline. */
-    if (out->bounded)
+    if (out->bounded) {
         for (int tj = tj0; tj <= tj1; ++tj)
             for (int ti = ti0; ti <= ti1; ++ti) {
                 const TownEntry *te = town_get(c, ti, tj);
                 if (box_overlaps(c->A, te->x0, te->z0, te->x1, te->z1, 30.0) && town_built(c, ti, tj)) town_outline(c, ti, tj);
             }
+        /* the roads out, in road order: a gate reaches its road's half-width along the outline */
+        for (int r = 0; r < plan_road_count() && out->ngates < PLAN_MAX_GATES; ++r)
+            for (int end = 0; end < 2 && out->ngates < PLAN_MAX_GATES; ++end) {
+                if (!plan_road(r)->gate[end]) continue;
+                PlanGate g = plan_road_gate(r, end);
+                double pad = g.half + 60.0;
+                if (box_overlaps(c->A, g.p.x, g.p.z, g.p.x, g.p.z, pad)) out->gates[out->ngates++] = g;
+            }
+    }
     free(c);
 }

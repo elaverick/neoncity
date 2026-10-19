@@ -39,6 +39,7 @@
 #define PLAN_MAX_BLOCKS   384
 #define PLAN_MAX_TOWNS     24
 #define PLAN_MAX_EDGES     96
+#define PLAN_MAX_GATES      8
 
 /* The city is finite: a disc round town (0,0)'s centre, its edge warped by two
  * octaves of value noise so it doesn't read as a circle. Inside the edge, a
@@ -241,10 +242,12 @@ typedef struct PlanArea {
      * nedges are 0). bounded 1: it covers exactly the union of ground[],
      * the ground of every built town near the rectangle (convex, edges
      * without roads; they meet without overlapping), and edges[] is its
-     * outline wherever that comes near the rectangle. */
-    int      bounded, ntowns, nedges;
+     * outline wherever that comes near the rectangle, and gates[] where a
+     * road between the settlements leaves it near the rectangle. */
+    int      bounded, ntowns, nedges, ngates;
     Poly     ground[PLAN_MAX_TOWNS];
     PlanEdge edges[PLAN_MAX_EDGES];
+    PlanGate gates[PLAN_MAX_GATES];
 } PlanArea;
 
 /* Development density 0..1 (polycentric: peaks at town and regional centres,

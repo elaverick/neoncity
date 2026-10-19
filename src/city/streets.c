@@ -91,12 +91,33 @@ static int clip_segment(DVec2 *a, DVec2 *b) {
  * coarse terrain levels, drawn from far off, sink further than the land
  * (src/terrain: terrain_urban_sink). */
 #define VERGE_TUCK   0.1f    /* m the verge starts inside the outline, under the asphalt */
+#define GATE_FLARE   3.0     /* m a gate's asphalt reaches past its road's paved width, each side */
 #define SKIRT_BOTTOM (-1.0f) /* m below the city's ground */
 #define CONE_SEGS    16
 
 float city_verge_height(float dist) {
     float t = clampf(dist / CITY_VERGE_W, 0.0f, 1.0f);
     return BASE_Y + (-CITY_VERGE_DROP - BASE_Y) * t;
+}
+
+/* Where roads between the settlements leave the city across outline piece
+ * e (PlanArea.gates): intervals of it, metres from e->a, in order. A gate is
+ * on the boulevard's centre line, inside the outline, square to it. */
+static int gate_spans(const PlanArea *pa, const PlanEdge *e, double (*span)[2], int max) {
+    DVec2 u = dsub(e->b, e->a);
+    double len = dlen(u);
+    u = dscale(u, 1.0 / len);
+    int n = 0;
+    for (int k = 0; k < pa->ngates && n < max; ++k) {
+        const PlanGate *gt = &pa->gates[k];
+        double off = ddot(dsub(gt->p, e->a), e->n), t = ddot(dsub(gt->p, e->a), u), w = gt->half + GATE_FLARE;
+        if (ddot(gt->n, e->n) < 0.9 || off > 0.5 || off < -40.0 || t + w <= 0.0 || t - w >= len) continue;
+        int q = n++;
+        for (; q > 0 && span[q - 1][0] > t - w; --q) { span[q][0] = span[q - 1][0]; span[q][1] = span[q - 1][1]; }
+        span[q][0] = fmax(0.0, t - w);
+        span[q][1] = fmin(len, t + w);
+    }
+    return n;
 }
 
 static void build_city_edge(Mesh *m, const ChunkGen *g) {
@@ -111,6 +132,7 @@ static void build_city_edge(Mesh *m, const ChunkGen *g) {
     }
     const float W = CITY_VERGE_W, top = city_verge_height(0.0f) - 0.01f, foot = city_verge_height(W);
     const Mat grass = mat(MAT_LOT, 0, 1, 0, 0);   /* the parks' grass (emit_lot) */
+    const Mat asphalt = mat(MAT_ROAD, 0, 0, 0, 0); /* a gate: the road out, as the city's plain asphalt */
     const float vuv3[3][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 } };
     for (int i = 0; i < pa->nedges; ++i) {
         const PlanEdge *e = &pa->edges[i];
@@ -128,18 +150,29 @@ static void build_city_edge(Mesh *m, const ChunkGen *g) {
                 emit_quad(m, r0, r1, v3(r1.x, SKIRT_BOTTOM, r1.z), v3(r0.x, SKIRT_BOTTOM, r0.z), v3(cosf(tm), 0, sinf(tm)), suv, grass);
             }
         }
-        DVec2 a = v, b = dv(e->b.x - g->ox, e->b.z - g->oz);
-        if (!clip_segment(&a, &b)) continue;
-        DVec2 ai = dsub(a, dscale(en, VERGE_TUCK)), bi = dsub(b, dscale(en, VERGE_TUCK));
-        DVec2 ao = dadd(a, dscale(en, W)), bo = dadd(b, dscale(en, W));
-        float slope = (top - foot) / (W + VERGE_TUCK);
-        vec3 up = v3_norm(v3((float)en.x * slope, 1.0f, (float)en.z * slope));
-        float vuv[4][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } };
-        emit_quad(m, v3((float)ai.x, top, (float)ai.z), v3((float)bi.x, top, (float)bi.z),
-                  v3((float)bo.x, foot, (float)bo.z), v3((float)ao.x, foot, (float)ao.z), up, vuv, grass);
-        emit_quad(m, v3((float)ao.x, foot, (float)ao.z), v3((float)bo.x, foot, (float)bo.z),
-                  v3((float)bo.x, SKIRT_BOTTOM, (float)bo.z), v3((float)ao.x, SKIRT_BOTTOM, (float)ao.z),
-                  v3((float)en.x, 0, (float)en.z), vuv, grass);
+        /* the strip in pieces: grass, and asphalt across each gate */
+        double span[PLAN_MAX_GATES][2], elen = dlen(dsub(e->b, e->a));
+        int ns = gate_spans(pa, e, span, PLAN_MAX_GATES);
+        DVec2 eu = dscale(dsub(e->b, e->a), 1.0 / elen), e0 = v;
+        double t = 0.0;
+        for (int q = 0; q <= 2 * ns; ++q) {
+            double t1 = q == 2 * ns ? elen : span[q / 2][q & 1];
+            if (t1 <= t) continue;
+            int gate = q & 1;   /* from a span's start to its end */
+            DVec2 a = dadd(e0, dscale(eu, t)), b = dadd(e0, dscale(eu, t1));
+            t = t1;
+            if (!clip_segment(&a, &b)) continue;
+            DVec2 ai = dsub(a, dscale(en, VERGE_TUCK)), bi = dsub(b, dscale(en, VERGE_TUCK));
+            DVec2 ao = dadd(a, dscale(en, W)), bo = dadd(b, dscale(en, W));
+            float slope = (top - foot) / (W + VERGE_TUCK);
+            vec3 up = v3_norm(v3((float)en.x * slope, 1.0f, (float)en.z * slope));
+            float vuv[4][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } };
+            emit_quad(m, v3((float)ai.x, top, (float)ai.z), v3((float)bi.x, top, (float)bi.z),
+                      v3((float)bo.x, foot, (float)bo.z), v3((float)ao.x, foot, (float)ao.z), up, vuv, gate ? asphalt : grass);
+            emit_quad(m, v3((float)ao.x, foot, (float)ao.z), v3((float)bo.x, foot, (float)bo.z),
+                      v3((float)bo.x, SKIRT_BOTTOM, (float)bo.z), v3((float)ao.x, SKIRT_BOTTOM, (float)ao.z),
+                      v3((float)en.x, 0, (float)en.z), vuv, grass);
+        }
     }
 }
 
