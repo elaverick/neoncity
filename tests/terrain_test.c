@@ -461,6 +461,38 @@ static double urban_clearance(const TerrainClipLevel *lv) {
     return least;
 }
 
+/* The drawn surface of level l at world (x, z): its samples, each blended into
+ * its parent by the morph as the vertex shader does, interpolated over the
+ * triangle holding the point (cells split along (i, j)-(i + 1, j + 1)). */
+static double drawn_height(const TerrainClipmap *c, int l, double x, double z) {
+    const TerrainClipLevel *lv = &c->level[l];
+    double s = lv->spacing, fi = x / s, fj = z / s;
+    int64_t i = (int64_t)floor(fi), j = (int64_t)floor(fj);
+    double u = fi - (double)i, v = fj - (double)j, d[2][2];
+    for (int b = 0; b < 2; ++b)
+        for (int a = 0; a < 2; ++a) {
+            const TerrainSample *t = terrain_clip_sample(lv, i + a, j + b);
+            double m = terrain_clip_morph(c, l, (double)(i + a) * s, (double)(j + b) * s);
+            d[b][a] = t->h + m * ((double)t->hc - t->h);
+        }
+    return u >= v ? d[0][0] * (1.0 - u) + d[0][1] * (u - v) + d[1][1] * v
+                  : d[0][0] * (1.0 - v) + d[1][0] * (v - u) + d[1][1] * u;
+}
+
+/* How far the drawn ground strays from what the player stands on beyond the
+ * city (terrain_surface, full detail) within a few metres of the camera, for
+ * the level the screen-space error draws at street level. */
+static double feet_error(const TerrainClipmap *c, int l, double x, double z) {
+    double worst = 0.0;
+    for (int b = -6; b <= 6; ++b)
+        for (int a = -6; a <= 6; ++a) {
+            double px = x + 0.5 * a, pz = z + 0.5 * b;
+            worst = fmax(worst, fabs(drawn_height(c, l, px, pz) - terrain_surface(px, pz)));
+        }
+    return worst;
+}
+#define FEET_TOLERANCE 0.03   /* m: what the drawn ground may stray from the feet's */
+
 /* 11. Which levels the screen-space error draws: fine levels dropped over the
  *     city's flat ground and from high cameras; the city's ground over the
  *     terrain whichever level is drawn under it; and the hysteresis holding
@@ -490,6 +522,12 @@ static void test_select(void) {
         printf("\n");
         CHECK(want[4] > want[0], "%s: a camera %.0f m up draws level %d, as fine as at street level", SSE_NAMES[k], SSE_HEIGHTS[4], want[4]);
         if (k == 0) CHECK(want[0] >= 2, "the city centre at street level draws level %d: its flat ground needs no metre-scale levels", want[0]);
+        /* 11b. The ground under the feet: at street level the drawn level stays
+         *      within FEET_TOLERANCE of what the player walks on, 3 m round. */
+        int street = select_fresh(&clip, ground + SSE_HEIGHTS[0]);
+        double feet = feet_error(&clip, street, x, z);
+        CHECK(feet <= FEET_TOLERANCE, "%s: the drawn ground (level %d) strays %.3f m from the feet's", SSE_NAMES[k], street, feet);
+        printf("          at street level the drawn ground is within %.1f mm of the feet's\n", 1000.0 * feet);
 
         /* Hysteresis: climb in 2% steps to the first switch, then hover
          * either side of it. */
