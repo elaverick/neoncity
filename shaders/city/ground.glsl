@@ -47,6 +47,15 @@ const float PAINT_H = 0.003;
 const float SLAB = 0.4, STUD_PITCH = SLAB / 7.0, STUD_R = 0.015, STUD_H = 0.005;
 const float STUD_COVER = 3.14159265 * STUD_R * STUD_R / (STUD_PITCH * STUD_PITCH);
 
+// Where a view ray (V, towards the eye) crosses the top of something standing
+// h proud of a surface with normal nG, as a world x/z offset from where it
+// meets the surface: along the surface towards the viewer, by h over the
+// cosine of the view to the normal. On level ground that is V.xz * h / V.y.
+vec2 paintLift(vec3 V, vec3 nG, float h) {
+    float c = dot(V, nG);
+    return (V.xz - c * nG.xz) * (h / max(c, 0.02));
+}
+
 // Offset (metres) of uv from the centre of the stud whose square it is in.
 vec2 studOffset(vec2 uv) { return (fract(uv / STUD_PITCH) - 0.5) * STUD_PITCH; }
 
@@ -61,7 +70,7 @@ void tactileStuds(vec3 p, vec3 V, vec2 uv, vec3 T, vec3 B, vec3 nGeom, float aa,
                   inout float relH, inout float sink) {
     mat2 Juv = mat2(dFdx(uv), dFdy(uv)), Jw = mat2(dFdx(p.xz), dFdy(p.xz));
     mat2 toUV = abs(determinant(Jw)) > 1e-12 ? Juv * inverse(Jw) : mat2(0.0);
-    vec2 lift = V.xz * (STUD_H / max(V.y, 0.02));
+    vec2 lift = paintLift(V, nGeom, STUD_H);
     lift *= min(1.0, 0.03 / max(length(lift), 1e-6));
     vec2 uvTop = uv + toUV * lift;
     vec2 oTop = studOffset(uvTop), oBase = studOffset(uv);
@@ -210,7 +219,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
             // metres; the screen derivatives map world offsets into them.
             mat2 Juv = mat2(dFdx(uv), dFdy(uv)), Jw = mat2(dFdx(p.xz), dFdy(p.xz));
             mat2 toUV = abs(determinant(Jw)) > 1e-12 ? Juv * inverse(Jw) : mat2(0.0);
-            vec2 lift = V.xz * (PAINT_H / max(V.y, 0.02));
+            vec2 lift = paintLift(V, nGeom, PAINT_H);
             lift *= min(1.0, 0.15 / max(length(lift), 1e-6));
             vec2 uvTop = uv + toUV * lift;
             vec2 mTop = roadPaint(uvTop, half_, len, xing, aa);
