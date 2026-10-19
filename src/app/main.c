@@ -197,7 +197,7 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
                          float emaDt, uint64_t totalFrames) {
     if (!c->path) return;
     ChunkStats s = chunks_stats(chunks);
-    c->settledFrames = (s.queued + s.ready == 0 && totalFrames > 10) ? c->settledFrames + 1 : 0;
+    c->settledFrames = (s.queued + s.ready == 0 && renderer_proxies_ready(renderer) && totalFrames > 10) ? c->settledFrames + 1 : 0;
     if (c->walkSeconds <= 0.0f) c->framesAfterWalk++;
     /* Capture once streaming has settled (or after a timeout under memory pressure). */
     if (c->shotTaken) glfwSetWindowShouldClose(win, GLFW_TRUE);
@@ -213,6 +213,8 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
         renderer_gpu_times(renderer, gpu, sizeof(gpu));
         printf("%s\n", gpu);
         renderer_terrain_stats(renderer, gpu, sizeof(gpu));
+        printf("%s\n", gpu);
+        renderer_proxy_stats(renderer, gpu, sizeof(gpu));
         printf("%s\n", gpu);
         printf("camera (%.1f, %.1f, %.1f) yaw %.1f pitch %.1f\n", player->eye[0], player->eye[1], player->eye[2],
                player->yaw * 180.0f / PI_F, player->pitch * 180.0f / PI_F);

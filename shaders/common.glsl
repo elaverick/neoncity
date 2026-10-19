@@ -314,12 +314,14 @@ float hazeAmount(vec3 rel, float dist, float density) {
     return 1.0 - exp(-dist * density * (0.25 + 0.75 * avg));
 }
 
-// The city's haze: total by the view distance, so chunks streaming in at the
-// edge never show.
+// The city's haze: a street-level mean free path of CITY_HAZE metres, which
+// rain shortens. Past the chunks' view distance the city goes on as its
+// distant proxies (src/render/proxy_gpu.c), so the haze needn't hide where
+// the chunks end.
+const float CITY_HAZE = 1100.0;
 float fogAmount(vec3 rel, float dist) {
-    float viewDist = frame.camFwd.w;
-    float density = (1.0 + 1.2 * frame.weather.x) / 380.0;   // rain thickens the air
-    return max(hazeAmount(rel, dist, density), smoothstep(viewDist * 0.72, viewDist * 0.98, dist));
+    float density = (1.0 + 1.2 * frame.weather.x) / CITY_HAZE;
+    return hazeAmount(rel, dist, density);
 }
 
 // The rain-cloud deck (clouds.comp) as reflections see it: an overcast lit

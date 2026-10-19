@@ -341,13 +341,21 @@ evict it and want it again, over and over).
 
 When the pool runs low, chunks you haven't seen for the longest time are evicted first.
 If a nearer chunk is still waiting for space, the farthest visible chunks go next; those are
-already deep in the haze. An evicted chunk is simply regenerated when it comes back into
-view, and it comes back identical.
+far off, where their proxies stand in for them. An evicted chunk is simply regenerated when it
+comes back into view, and it comes back identical.
 
-The render distance is long but finite. Haze reaches 100% exactly at the view distance, so
-chunks that stream in at the edge fade in instead of popping. Rendering is camera-relative,
-with reverse-Z and per-chunk origins computed in doubles, so precision holds up thousands of
-kilometres from the origin.
+Chunks are drawn in full out to the view distance (1.9 km). Beyond it the city goes on as distant
+proxies (`src/city/proxy.c`, `src/render/proxy_gpu.c`, `shaders/proxy/`), out to the terrain's 15 km:
+every building as a box round each section of its graph, the same buildings the chunks build, with
+the facade's far shading from the same seeds (wall and glass, floor and bay rhythm, the share and
+colour of lit rooms, LED crowns). They come in tiles of 4 x 4 chunks, generated round the camera on
+a worker thread of their own (the whole city, about 320,000 boxes, takes about a second) into a 24 MB
+pool, and drawn by one indirect draw list that leaves out every chunk the streamer draws in full that
+frame. So a chunk still streaming in, or one turned towards, shows as its proxies rather than a gap,
+and the haze is only the city's air (a 1.1 km mean free path at street level, thinning with height),
+not a wall hiding where the chunks end. A chunk replacing its proxies pops from boxes to the full
+mesh; at that distance and in that haze it is slight. Rendering is camera-relative, with reverse-Z and
+per-chunk origins computed in doubles, so precision holds up thousands of kilometres from the origin.
 
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the

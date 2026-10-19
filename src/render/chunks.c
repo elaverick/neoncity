@@ -23,6 +23,7 @@ typedef struct Entry {
     int      state;
     int      next;          /* hash chain */
     uint64_t lastSeen;
+    uint64_t drawn;         /* 1 + the last frame the view drew it in */
     Mesh     mesh;          /* CPU mesh while READY */
     uint16_t pages[MAX_CHUNK_PAGES];
     int      npages;
@@ -105,6 +106,7 @@ struct ChunkSystem {
     KnownBounds known[KNOWN_BOUNDS];
     int        uploaded[MAX_ENTRIES];
 
+    uint64_t   frame;   /* this frame's index (chunks_update) */
     ChunkStats stats;
     SkyGrid    sky;     /* built here, then copied out: the destination is write-combined GPU memory */
     SkyLight   airCand[16384];
@@ -689,6 +691,7 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
         vec3 mx = v3(x0 + e->mx[0], y0 + e->mx[1], z0 + e->mx[2]);
         if (!frustum_test_aabb(&fr, mn, mx)) continue;
 
+        e->drawn = cs->frame + 1;
         ChunkGPU *g = &gpu[nchunk];
         g->origin[0] = x0; g->origin[1] = y0; g->origin[2] = z0; g->origin[3] = 0;
         g->info[0] = e->cx; g->info[1] = e->cz;
@@ -787,6 +790,7 @@ static void update_stats(ChunkSystem *cs, int slot, int queued, uint32_t viewChu
 void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t frame,
                    const double cam[3], const mat4 *viewProj) {
     Frustum fr = frustum_from_matrix(*viewProj);
+    cs->frame = frame;
     reclaim_pages(cs, frame);
     if (cs->rt) rt_begin_frame(cs->rt, cmd, slot, frame);
     collect_finished(cs);
@@ -917,6 +921,11 @@ static void draw_range(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint32_t 
         for (uint32_t i = 0; i < n; ++i)
             vkCmdDraw(cmd, c[i].vertexCount, 1, c[i].firstVertex, c[i].firstInstance);
     }
+}
+
+bool chunks_drawn(ChunkSystem *cs, int cx, int cz) {
+    int idx = table_find(cs, cx, cz, 0);
+    return idx >= 0 && cs->entries[idx].drawn == cs->frame + 1;
 }
 
 void chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot) { draw_range(cs, cmd, slot, 0, cs->plantFirst[slot]); }

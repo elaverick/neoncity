@@ -33,5 +33,9 @@ bool      renderer_shadow_debug(Renderer *r);
 void      renderer_gpu_times(Renderer *r, char *buf, size_t n);
 /* The terrain clipmap's state and update cost (one line of text). */
 void      renderer_terrain_stats(Renderer *r, char *buf, size_t n);
+/* Whether every distant proxy tile in range is ready to draw. */
+bool      renderer_proxies_ready(Renderer *r);
+/* The distant proxies' tiles and draws (one line of text). */
+void      renderer_proxy_stats(Renderer *r, char *buf, size_t n);
 /* Saves the next presented frame as a 24-bit BMP. */
 void      renderer_request_screenshot(Renderer *r, const char *path);

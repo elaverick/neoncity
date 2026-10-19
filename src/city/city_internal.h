@@ -25,7 +25,8 @@
  *   streets.c        roads, sidewalks, kerbs, drop-kerb slopes, lamp posts
  *   light_tiles.c    each chunk's light table
  *   cables.c         overhead cables
- *   litter.c         the litter layer */
+ *   litter.c         the litter layer
+ *   proxy.c          distant proxies: boxes round the buildings' sections */
 
 /* ---------------------------------------------------------------------------
  * Everything near one chunk (chunk_gen.c): the plan round it, the buildings

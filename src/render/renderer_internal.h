@@ -10,7 +10,8 @@
  *   renderer_pipelines.c  descriptor set and pipeline layouts, the pipelines and their shaders
  *   renderer_targets.c    size-dependent render targets, the cloud noise volume, swapchain recreation
  *   renderer_passes.c     recording each pass: shelter map, prepass, shadows, reflections, clouds, bloom
- *   terrain_gpu.c         the terrain clipmap's GPU side: its samples' buffer and uploads, the ring meshes, drawing */
+ *   terrain_gpu.c         the terrain clipmap's GPU side: its samples' buffer and uploads, the ring meshes, drawing
+ *   proxy_gpu.c           the distant proxies: tiles generated round the camera, their box pool, drawing */
 
 #define HDR_FORMAT   VK_FORMAT_R16G16B16A16_SFLOAT
 #define DEPTH_FORMAT VK_FORMAT_D32_SFLOAT
@@ -42,6 +43,7 @@ typedef struct TerrainPush {
     int32_t top;
 } TerrainPush;
 typedef struct TerrainGpu TerrainGpu;
+typedef struct ProxyGpu ProxyGpu;
 /* GPU timestamps between the frame's passes (renderer_gpu_times). */
 enum { GT_START = 0, GT_STREAM, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_SCENE, GT_POST, GT_COUNT };
 struct Renderer {
@@ -78,6 +80,10 @@ struct Renderer {
     VkDescriptorSetLayout terrainLayout;
     VkPipelineLayout      terrainPL;
     VkPipeline            terrainPipe;
+    ProxyGpu    *proxies;   /* proxy_gpu.c */
+    VkDescriptorSetLayout proxyLayout;
+    VkPipelineLayout      proxyPL;
+    VkPipeline            proxyPipe;
     VkDescriptorPool      staticPool;
     VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout, cloudLayout, cloudCompLayout, ssrLayout, ssrApplyLayout;
     VkDescriptorSet       sceneSet[MAX_FRAMES];
@@ -146,3 +152,11 @@ void terrain_gpu_create(Renderer *r);
 void terrain_gpu_destroy(Renderer *r);
 void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3]);
 void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
+
+/* proxy_gpu.c. Update (after chunks_update, outside any rendering) takes in
+ * generated tiles, asks for missing ones and builds the frame's draws; draw
+ * records them into the scene pass. */
+void proxy_gpu_create(Renderer *r);
+void proxy_gpu_destroy(Renderer *r);
+void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame, const double cam[3], const mat4 *viewProj);
+void proxy_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);

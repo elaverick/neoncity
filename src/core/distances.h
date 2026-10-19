@@ -5,10 +5,10 @@
  * one definition, shared by C (src/core/common.h) and GLSL
  * (shaders/common.glsl): #defines only, in syntax both languages accept.
  *
- * VIEW_DISTANCE: how far the city is drawn. Long, but deliberately finite:
- * its haze reaches 100% exactly here so chunks streaming in at the edge are
- * never visible popping. It also sizes the city's chunk streaming, so it
- * can't simply grow.
+ * VIEW_DISTANCE: how far the city's chunks are drawn in full. Beyond it, and
+ * wherever a chunk hasn't streamed in yet, the city stands as its distant
+ * proxies (src/render/proxy_gpu.c), out to TERRAIN_DISTANCE. It also sizes
+ * the city's chunk streaming, so it can't simply grow.
  * TERRAIN_DISTANCE: how far the terrain is drawn, under a lighter haze of its
  * own beyond the city (shaders/terrain/terrain.frag) that is total here. It
  * must lie inside the coarsest clipmap level's window (src/render/terrain_gpu.c

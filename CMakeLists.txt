@@ -81,10 +81,11 @@ endif()
 # the executable, so the game is a single self-contained binary.
 set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/spv)
-file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain)
+file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain ${SHADER_OUT_DIR}/proxy)
 set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp
             cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
-            prepass.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag)
+            prepass.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag
+            proxy/proxy.vert proxy/proxy.frag)
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)
@@ -124,7 +125,7 @@ set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/render src/app)
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_lobby.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
-                src/city/litter.c src/plan/plan.c src/terrain/terrain_height.c
+                src/city/litter.c src/city/proxy.c src/plan/plan.c src/terrain/terrain_height.c
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
@@ -196,7 +197,7 @@ endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/textures.c ${GEN_SOURCES} ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/core/thread.c)
+  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/proxy_gpu.c src/render/textures.c ${GEN_SOURCES} ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/core/thread.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

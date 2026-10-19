@@ -34,11 +34,29 @@ same city; screenshots of the same `--cam` with `--rain 0` show the renderer's r
 ## Terrain
 The clipmap is drawn out to `TERRAIN_DISTANCE` (`src/render/terrain_gpu.c`, `shaders/terrain/`); the milestones are in
 the terrain roadmap.
-- **Haze tuning.** Beyond the city the terrain takes a lighter haze of its own (`TERRAIN_HAZE`, 4000 m against the
-  city's 380, in `terrain.frag`), and within about 1.6 × `VIEW_DISTANCE` it takes the city's, so the fading city doesn't
-  stand out against it. Both are first guesses: the distant ridges barely show yet, and the land's colour (dark scrub
-  and rock under the lit cloud deck) is untuned. Judge from about 100 m up, below the cloud deck (inside it, at
-  250-300 m, the cloud hides everything), looking out past the city's edge, in drizzle and downpour.
+- **Haze tuning.** The city's air is `CITY_HAZE` (1100 m at street level, `common.glsl`), the land's beyond it
+  `TERRAIN_HAZE` (4000 m, `terrain.frag`). Both are first guesses: the distant ridges barely show yet, the land's
+  colour (dark scrub and rock under the lit cloud deck) is untuned, and from outside the city the proxies are hazed
+  by the city's air all the way, not just over the city. Judge from about 100 m up, below the cloud deck (inside it,
+  at 250-300 m, the cloud hides everything), looking out past the city's edge and across the city from its fringe,
+  in drizzle and downpour.
+- **Distant proxies** (`src/city/proxy.c`, `src/render/proxy_gpu.c`, `shaders/proxy/`; see the README). Next:
+  - **The handover pops.** A chunk replaces its boxes the frame it is first drawn. A dithered cross-fade per chunk
+    (a fade in `ChunkGPU.info[3]` and per proxy draw, the city's prepass and scene passes discarding the same
+    pattern) would hide it; worth it if the haze comes down further.
+  - **Rooms** are lit with the facade's odds, floor by floor, but not the very rooms its faces light (a box's faces
+    aren't the section's faces), so the lit pattern changes at the handover.
+  - **What a box leaves out:** masts, spires and aircraft warning lights (the skyline's red blink), signs and
+    screens, the roofs' plant and gardens, the shopfronts' real lit share (`Building.shop`), arcologies' own look
+    (drawn as plain facades), and courtyards (the box fills them).
+  - **Distant streets** are the terrain under the city with a flat sodium glow (`terrain.frag`); no street grid,
+    lamps or traffic. Seen from high up the blocks read, but the streets between them don't.
+  - **Clouds** are marched only to `VIEW_DISTANCE` (`clouds.comp`), so the deck stops there; towers beyond rise
+    into the cloud base as soft streaks.
+  - **Level of detail:** every box in view is drawn, down to subpixel podiums (about 0.1 ms for 230k boxes on an
+    RTX 4080 Super). Far tiles could keep only each building's tallest sections.
+  - **Startup:** one worker fills the city's tiles in about a second, nearest first, so the far skyline fills in;
+    `--shot` waits for it.
 - **Frustum culling.** All nine rings are drawn every frame, whole (about 100k triangles each), whatever the camera
   faces. Testing each ring, or blocks of it, against the frustum with bounds from `terrain_height_range` would skip
   most of them; worth it once terrain shows in the GPU timings, or with the screen-space-error work (M7). It must only
@@ -55,10 +73,15 @@ the terrain roadmap.
 - **The city's edge** (`plan_town_built`, `plan_fringe`, `PlanArea.ground`/`edges`; see the README). The city is
   the towns whose ground provably lies where `plan_urban` is 1: 78 towns, about 15 km across, in a footprint 20 km
   across. So:
+  - **Decision pending: the city's radius.** The goal is a city about 20 km across, but only 15 km is built.
+    Raising `CITY_RADIUS` from 10 km to about 12.5 km would bring the built city near 20 km. It also moves the
+    belt and the hills outward, so `terrain_test` and the city fingerprint's scattered chunks would need
+    re-baselining (the spawn 9×9 and the arcology should stay unchanged). The proxies' pool (768k boxes) holds the
+    larger city too (about 500k boxes).
   - Between the perimeter road and the belt lies up to 2 km of flat land at the city's height before the hills
-    begin. A larger `CITY_RADIUS` would bring the built city nearer 20 km (and move the terrain with it).
-  - The fringe thins density, so a regional core 2 km in still keeps its towers: a skyline cliff seen from outside,
-    until the distant proxies (M6), or a fringe that caps heights too.
+    begin.
+  - The fringe thins density, so a regional core 2 km in still keeps its towers: a skyline cliff seen from outside
+    (the proxies now show it), unless the fringe caps heights too.
   - No road leads out of the city into the region; the perimeter boulevards close it.
   - The edge is a 1 m kerb-stone face below a 1.5 m asphalt shoulder; a verge, a barrier or an embankment would
     read better. Walking off it, the player's feet ride the 0.5 m drop down (or up) instead of stepping.

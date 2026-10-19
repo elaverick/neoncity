@@ -62,6 +62,12 @@ static const uint32_t SPV_terrain_vert[] = {
 static const uint32_t SPV_terrain_frag[] = {
 #include "terrain/terrain.frag.inc"
 };
+static const uint32_t SPV_proxy_vert[] = {
+#include "proxy/proxy.vert.inc"
+};
+static const uint32_t SPV_proxy_frag[] = {
+#include "proxy/proxy.frag.inc"
+};
 
 /* ------------------------------------------------------------ layouts --- */
 
@@ -187,6 +193,12 @@ void create_layouts(Renderer *r) {
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* clipmap samples */
     };
     r->terrainLayout = make_set_layout(vk, terrain, 2);
+    VkDescriptorSetLayoutBinding proxy[3] = {
+        { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
+        { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* boxes */
+        { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* tile origins */
+    };
+    r->proxyLayout = make_set_layout(vk, proxy, 3);
 
     r->scenePL = make_pipeline_layout(vk, r->sceneLayout, 0, 0);
     r->compositePL = make_pipeline_layout(vk, r->texLayout, sizeof(CompositePush), VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -197,6 +209,7 @@ void create_layouts(Renderer *r) {
     r->ssrApplyPL = make_pipeline_layout(vk, r->ssrApplyLayout, 0, 0);
     r->shelterPL = make_pipeline_layout(vk, r->sceneLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
     r->terrainPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(TerrainPush), VK_SHADER_STAGE_VERTEX_BIT);
+    r->proxyPL = make_pipeline_layout(vk, r->proxyLayout, 0, 0);
 
     VkDescriptorPoolSize sizes[4] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
@@ -378,6 +391,10 @@ void create_pipelines(Renderer *r) {
                         r->terrainPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
     terrain.colorFormat2 = HDR_FORMAT;
     r->terrainPipe = make_graphics(vk, &terrain);
+    GfxDesc proxy = { SPV_proxy_vert, sizeof(SPV_proxy_vert), SPV_proxy_frag, sizeof(SPV_proxy_frag),
+                      r->proxyPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
+    proxy.colorFormat2 = HDR_FORMAT;
+    r->proxyPipe = make_graphics(vk, &proxy);
     GfxDesc comp = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_composite_frag, sizeof(SPV_composite_frag),
                      r->compositePL, vk->swapFormat, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false };
     r->compositePipe = make_graphics(vk, &comp);

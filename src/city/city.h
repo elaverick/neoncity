@@ -169,6 +169,62 @@ void     city_spawn(double *x, double *z, float *yaw);
  * (terrain_urban_height in src/terrain). */
 float    city_ground_y(double x, double z);
 
+/* Distant proxies (src/city/proxy.c). Beyond the chunks' VIEW_DISTANCE the
+ * city is drawn as boxes: one for each section of every building (src/gen
+ * building.c's graph), the box round its footprint in the building's frame,
+ * from its bottom to its top. They are the same buildings the chunks build,
+ * where the chunks build them, so a building handed from its proxy to its
+ * full mesh keeps its place, orientation, height and identity.
+ *
+ * Proxies are generated in tiles of PROXY_TILE_CHUNKS x PROXY_TILE_CHUNKS
+ * chunks. A building belongs to the chunk holding its centre (as in
+ * city_layout), and its boxes to that chunk's run of the tile, so a renderer
+ * can leave out a chunk it draws in full. Like the chunks, a tile is a pure
+ * function of its coordinates. */
+#define PROXY_TILE_CHUNKS 4
+#define PROXY_TILE        (PROXY_TILE_CHUNKS * (double)CHUNK_SIZE)
+#define PROXY_TILE_CELLS  (PROXY_TILE_CHUNKS * PROXY_TILE_CHUNKS)
+
+/* One box, std430 (shaders/proxy/: must match). half and axis hold two halves
+ * each (packHalf2x16). */
+typedef struct ProxyBox {
+    float    x, z;     /* centre, relative to the tile's origin */
+    float    y0, y1;   /* bottom and top, world Y */
+    uint32_t half;     /* half extents along the box's own x and z */
+    uint32_t axis;     /* its own +x axis in the world (the building's) */
+    uint32_t seed;     /* the building's */
+    uint32_t info;     /* PX_* fields */
+} ProxyBox;
+
+/* ProxyBox.info: which chunk of the tile owns it (x + PROXY_TILE_CHUNKS * z);
+ * its section's window type, wall palette, bands and fine bays (as the facade's
+ * vertex params: shaders/city/facade.glsl); whether its top is lit (ledTop) and
+ * open (nothing stands on it); its section's index; the section's bottom above
+ * the building's base, in half metres; whether it is an arcology's. */
+#define PX_CHUNK_SHIFT    0    /* 4 bits */
+#define PX_WIN_SHIFT      4    /* 2 */
+#define PX_PALETTE_SHIFT  6    /* 3 */
+#define PX_BANDS          (1u << 9)
+#define PX_FINE           (1u << 10)
+#define PX_LEDTOP         (1u << 11)
+#define PX_TOP            (1u << 12)
+#define PX_SECTION_SHIFT  13   /* 5 */
+#define PX_FLOOR_SHIFT    18   /* 11 */
+#define PX_ARCOLOGY       (1u << 29)
+
+typedef struct ProxyTile {
+    int       tx, tz;                      /* the tile; its origin is (tx, tz) * PROXY_TILE */
+    int       n, cap;
+    ProxyBox *box;                         /* chunk k's boxes are box[first[k]] .. box[first[k + 1] - 1] */
+    int       first[PROXY_TILE_CELLS + 1];
+    int       nbuild;
+    float     mn[3], mx[3];                /* bounds (n > 0): x and z relative to the origin, world Y */
+} ProxyTile;
+
+/* Fills t with tile (tx, tz)'s proxies, reusing its storage. */
+void     city_proxy_tile(int tx, int tz, ProxyTile *t);
+void     proxy_tile_free(ProxyTile *t);
+
 /* Facade rhythm shared with the shader (shaders/common.glsl: facadeFloorH/facadeGroundH). */
 float    city_floor_height(uint32_t seed);
 float    city_ground_height(uint32_t seed);

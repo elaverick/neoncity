@@ -13,20 +13,14 @@ layout(location = 1) out vec4 outRefl;   // nothing reflective (city.frag)
 
 // Beyond the city the air is clearer than over its streets, so far ridges
 // stand out above the haze: a street-level mean free path of this many
-// metres, against the city's 380 (fogAmount), and total by TERRAIN_DISTANCE.
-// Under the city the terrain takes the city's haze, which hides the bare
-// ground beyond the city's chunks. So does any terrain within the city's view
-// distance, and a little past it: the city fading into the haze there may
-// stand in front of it, and against clearer land behind, its fading towers
-// would show as pale ghosts.
+// metres, against the city's CITY_HAZE (fogAmount), and total by
+// TERRAIN_DISTANCE. Under the city the terrain takes the city's haze.
 const float TERRAIN_HAZE = 4000.0;
 
 float terrainFog(vec3 rel, float dist, float urban) {
     float density = (1.0 + 1.2 * frame.weather.x) / TERRAIN_HAZE;
     float clear = max(hazeAmount(rel, dist, density), smoothstep(TERRAIN_DISTANCE * 0.72, TERRAIN_DISTANCE * 0.98, dist));
-    float viewDist = frame.camFwd.w;
-    float city = max(urban, 1.0 - smoothstep(viewDist * 0.98, viewDist * 1.6, dist));
-    return mix(clear, fogAmount(rel, dist), city);
+    return mix(clear, fogAmount(rel, dist), urban);
 }
 
 void main() {
@@ -39,6 +33,10 @@ void main() {
     albedo *= 1.0 - 0.35 * frame.weather.y;
     // the cloud deck overhead, glowing sodium-orange, is the only light
     vec3 col = albedo * CLOUD_DECK * (0.6 + 1.4 * max(n.y, 0.0));
+    // Under the city, where its chunks aren't drawn (beyond their view
+    // distance, between the distant proxies), the streets: dark wet asphalt
+    // under the sodium lamps, seen from afar as their average glow.
+    col = mix(col, vec3(0.02, 0.018, 0.017) * CLOUD_DECK * 2.0 + vec3(1.0, 0.55, 0.25) * 0.012, vUrban);
 
     float dist = length(vRel);
     float fog = terrainFog(vRel, dist, vUrban);

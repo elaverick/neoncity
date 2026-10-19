@@ -38,6 +38,9 @@ VkDeviceSize chunks_gpu_buffer_size(void);
 VkBuffer     chunks_light_buffer(ChunkSystem *cs);   /* light tables of resident chunks (device local) */
 VkDeviceSize chunks_light_buffer_size(void);
 ChunkStats   chunks_stats(ChunkSystem *cs);
+/* Whether this frame's view draws chunk (cx, cz)'s city layer (after
+ * chunks_update): the distant proxies leave out the buildings of such a chunk. */
+bool         chunks_drawn(ChunkSystem *cs, int cx, int cz);
 /* Acceleration structures for ray-traced shadows (src/render/rt.c); NULL without ray queries. */
 struct Rt   *chunks_rt(ChunkSystem *cs);
 /* Sky lights (src/core/common.h) of resident chunks around the camera, camera-relative and gridded. */

@@ -6,11 +6,13 @@
  * the plan-driven layout is physically sensible.
  *
  * city_test --fingerprint prints a hash of each layer over a fixed set of
- * chunks instead, to compare what two builds generate. */
+ * chunks instead, to compare what two builds generate; city_test --proxies
+ * surveys the distant proxies of the whole city. */
 #include "city.h"
 #include "hash.h"
 #include "mathlib.h"
 #include "thread.h"
+#include <time.h>
 
 #define N_CHUNKS 400
 #define THREADS  8
@@ -199,6 +201,8 @@ static void fingerprint_chunk(int cx, int cz, uint64_t fp[FP_COUNT]) {
     fp[FP_LAYOUT] = fnv_layout(&L, fp[FP_LAYOUT]);
 }
 
+static uint64_t fnv_tile(const ProxyTile *t, uint64_t h);
+
 /* The 9 x 9 chunks round the home town centre, the 3 x 3 round the nearest
  * arcology to it, and the first 100 scattered chunks of the tests. */
 static int fingerprint(void) {
@@ -233,6 +237,14 @@ static int fingerprint(void) {
     /* Every layer folded together after the 9 x 9, then after the arcology's 3 x 3: a change
      * that only reaches the scattered chunks leaves both alone. */
     printf("  %-10s %016llx\n  %-10s %016llx\n", "home", (unsigned long long)afterHome, "+arcology", (unsigned long long)afterMega);
+    /* The proxies of the 3 x 3 tiles round the home town's centre, apart from the layers above. */
+    ProxyTile pt = { 0 };
+    uint64_t px = 0xcbf29ce484222325ULL;
+    int htx = (int)floor(home.x / PROXY_TILE), htz = (int)floor(home.z / PROXY_TILE);
+    for (int tz = htz - 1; tz <= htz + 1; ++tz)
+        for (int tx = htx - 1; tx <= htx + 1; ++tx) { city_proxy_tile(tx, tz, &pt); px = fnv_tile(&pt, px); }
+    proxy_tile_free(&pt);
+    printf("  %-10s %016llx\n", "proxies", (unsigned long long)px);
     return 0;
 }
 
@@ -382,6 +394,132 @@ static void check_edge(void) {
     free(pa);
 }
 
+/* ---------------------------------------------------------------------------
+ * Distant proxies: a tile holds exactly the buildings city_layout puts in each
+ * of its chunks, every box inside its building's plot and under its chunk's
+ * culling bound; a tile comes out the same whenever it is generated.
+ * ------------------------------------------------------------------------- */
+
+static float h2f(uint32_t h) {
+    uint32_t s = (h & 0x8000u) << 16, e = (h >> 10) & 31u, m = h & 1023u;
+    union { uint32_t u; float f; } v;
+    v.u = e == 0 ? s : s | (e - 15 + 127) << 23 | m << 13;
+    return v.f;
+}
+
+static uint64_t fnv_tile(const ProxyTile *t, uint64_t h) {
+    h = fnv(&t->n, sizeof(t->n), h);
+    h = fnv(t->box, sizeof(ProxyBox) * (size_t)t->n, h);
+    return fnv(t->first, sizeof(t->first), h);
+}
+
+static void check_proxy_tile(int tx, int tz, ProxyTile *t, int *boxes, int *builds) {
+    static BlockLayout L;
+    city_proxy_tile(tx, tz, t);
+    const double ox = tx * PROXY_TILE, oz = tz * PROXY_TILE;
+    int found = 0;
+    for (int k = 0; k < PROXY_TILE_CELLS; ++k) {
+        int cx = tx * PROXY_TILE_CHUNKS + k % PROXY_TILE_CHUNKS, cz = tz * PROXY_TILE_CHUNKS + k / PROXY_TILE_CHUNKS;
+        city_layout(cx, cz, &L);
+        float g0, g1;
+        city_ground_range(cx, cz, &g0, &g1);
+        for (int i = 0; i < L.nbuild; ++i) {
+            int has = 0;
+            for (int j = t->first[k]; j < t->first[k + 1] && !has; ++j) has = t->box[j].seed == L.build[i].seed;
+            CHECK(has, "chunk (%d,%d) building %08x has no proxy", cx, cz, L.build[i].seed);
+            found += has;
+        }
+        for (int j = t->first[k]; j < t->first[k + 1]; ++j) {
+            const ProxyBox *p = &t->box[j];
+            const Building *b = NULL;
+            for (int i = 0; i < L.nbuild && !b; ++i) if (L.build[i].seed == p->seed) b = &L.build[i];
+            CHECK(b, "proxy %d of tile (%d,%d) belongs to no building of chunk (%d,%d)", j, tx, tz, cx, cz);
+            CHECK((int)((p->info >> PX_CHUNK_SHIFT) & 15u) == k, "proxy %d of tile (%d,%d) is labelled with the wrong chunk", j, tx, tz);
+            if (!b) continue;
+            float hx = h2f(p->half & 0xFFFFu), hz = h2f(p->half >> 16), c = h2f(p->axis & 0xFFFFu), s = h2f(p->axis >> 16);
+            CHECK(fabsf(c - b->c) < 1e-3f && fabsf(s - b->s) < 1e-3f, "proxy %d of building %08x is turned from it", j, b->seed);
+            double dx = ox + p->x - b->ox, dz = oz + p->z - b->oz;
+            double lx = b->c * dx + b->s * dz, lz = -b->s * dx + b->c * dz;
+            CHECK(lx - hx >= b->foot.x0 - 0.05 && lx + hx <= b->foot.x1 + 0.05 && lz - hz >= b->foot.z0 - 0.05 && lz + hz <= b->foot.z1 + 0.05,
+                  "proxy %d of building %08x reaches out of its plot", j, b->seed);
+            CHECK(p->y0 < p->y1 && p->y0 >= g0 - 1.5f && p->y1 <= g1 + city_height_cap(cx, cz),
+                  "proxy %d of building %08x (%.1f..%.1f m) is outside chunk (%d,%d)'s culling bounds", j, b->seed, p->y0, p->y1, cx, cz);
+            CHECK(p->x >= t->mn[0] && p->x <= t->mx[0] && p->z >= t->mn[2] && p->z <= t->mx[2] && p->y0 >= t->mn[1] && p->y1 <= t->mx[1],
+                  "proxy %d of tile (%d,%d) is outside the tile's bounds", j, tx, tz);
+        }
+    }
+    CHECK(found == t->nbuild, "tile (%d,%d) holds %d buildings, its chunks %d", tx, tz, t->nbuild, found);
+    *boxes += t->n;
+    *builds += t->nbuild;
+}
+
+static void check_proxies(void) {
+    DVec2 home = plan_town_centre(0, 0);
+    int htx = (int)floor(home.x / PROXY_TILE), htz = (int)floor(home.z / PROXY_TILE);
+    ProxyTile t = { 0 }, again = { 0 };
+    int tiles = 0, boxes = 0, builds = 0;
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dx = -1; dx <= 1; ++dx) { check_proxy_tile(htx + dx, htz + dz, &t, &boxes, &builds); tiles++; }
+    /* outwards across the fringe and the city's edge */
+    for (double r = 4000.0; r <= 13000.0; r += 1500.0) {
+        check_proxy_tile((int)floor((home.x - r * 0.6) / PROXY_TILE), (int)floor((home.z + r * 0.8) / PROXY_TILE), &t, &boxes, &builds);
+        tiles++;
+    }
+    /* the same tile after others, and whichever way it is reached */
+    city_proxy_tile(htx, htz, &t);
+    uint64_t h = fnv_tile(&t, 0xcbf29ce484222325ULL);
+    city_proxy_tile(htx + 5, htz - 3, &again);
+    city_proxy_tile(htx, htz, &again);
+    CHECK(fnv_tile(&again, 0xcbf29ce484222325ULL) == h, "proxy tile (%d,%d) differs when generated again", htx, htz);
+    printf("proxies: %d tiles, %d buildings, %d boxes (%.1f a building)\n", tiles, builds, boxes, builds ? (double)boxes / builds : 0.0);
+    CHECK(builds > tiles * 40, "too few buildings in the proxy tiles");
+    proxy_tile_free(&t);
+    proxy_tile_free(&again);
+}
+
+/* city_test --proxies: every tile of the city, on THREADS threads, for the
+ * proxies' totals, the largest tile and the time they take. */
+typedef struct ProxyWork { int tx0, tz0, nx, nz, k; int tiles, builds, boxes, maxBoxes; } ProxyWork;
+
+static int proxy_worker(void *arg) {
+    ProxyWork *w = (ProxyWork *)arg;
+    ProxyTile t = { 0 };
+    for (int i = w->k; i < w->nx * w->nz; i += THREADS) {
+        city_proxy_tile(w->tx0 + i % w->nx, w->tz0 + i / w->nx, &t);
+        if (t.n == 0) continue;
+        w->tiles++;
+        w->builds += t.nbuild;
+        w->boxes += t.n;
+        if (t.n > w->maxBoxes) w->maxBoxes = t.n;
+    }
+    proxy_tile_free(&t);
+    return 0;
+}
+
+static int proxy_survey(void) {
+    DVec2 home = plan_town_centre(0, 0);
+    const double R = CITY_RADIUS + CITY_WARP1_M + CITY_WARP2_M;
+    static ProxyWork w[THREADS];
+    Thread *th[THREADS];
+    clock_t t0 = clock();
+    for (int k = 0; k < THREADS; ++k) {
+        w[k].tx0 = (int)floor((home.x - R) / PROXY_TILE); w[k].tz0 = (int)floor((home.z - R) / PROXY_TILE);
+        w[k].nx = w[k].nz = (int)ceil(2.0 * R / PROXY_TILE) + 1;
+        w[k].k = k;
+        th[k] = thread_create(proxy_worker, &w[k]);
+    }
+    int tiles = 0, builds = 0, boxes = 0, maxBoxes = 0;
+    for (int k = 0; k < THREADS; ++k) {
+        thread_join(th[k]);
+        tiles += w[k].tiles; builds += w[k].builds; boxes += w[k].boxes;
+        if (w[k].maxBoxes > maxBoxes) maxBoxes = w[k].maxBoxes;
+    }
+    double secs = (double)(clock() - t0) / CLOCKS_PER_SEC;
+    printf("the city's proxies: %d tiles of %.0f m (of %d searched), %d buildings, %d boxes (%.1f MB), at most %d in a tile; %.1f s on %d threads\n",
+           tiles, PROXY_TILE, w[0].nx * w[0].nz, builds, boxes, boxes * (double)sizeof(ProxyBox) / 1048576.0, maxBoxes, secs, THREADS);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     /* A scattered set of chunks, including far-away and negative coordinates. */
     Rng r = rng_make(1234);
@@ -391,6 +529,7 @@ int main(int argc, char **argv) {
         g_cz[i] = rng_int(&r, -far, far);
     }
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
+    if (argc > 1 && strcmp(argv[1], "--proxies") == 0) return proxy_survey();
 
     /* 1. Reference pass, in order. Track mesh sizes against the GPU page budget. */
     uint32_t maxVerts = 0, maxLights = 0, maxInterior = 0, maxLitter = 0, maxPlants = 0;
@@ -569,6 +708,9 @@ int main(int argc, char **argv) {
 
     /* 6. The city's edge. */
     check_edge();
+
+    /* 7. Distant proxies. */
+    check_proxies();
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all city tests passed (%d chunks x %d orders/threads)\n", N_CHUNKS, THREADS + 2);
