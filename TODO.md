@@ -91,8 +91,11 @@ the terrain roadmap.
   So:
   - Between the perimeter road and the belt lies up to 2 km of flat land at the city's height before the hills
     begin.
-  - The fringe thins density, so a regional core 2 km in still keeps its towers: a skyline cliff seen from outside
-    (the proxies now show it), unless the fringe caps heights too.
+  - The skyline steps down through the fringe (the city test's profile, tallest per 600 m from the edge inwards:
+    105, 193, 215, 250 ... 291 m). The fringe is measured from the footprint's noise contour, not from where the
+    towns actually stop, so where the outline lies deep inside the contour the step is short. A measure of the
+    distance to the built outline (from the unbuilt neighbouring towns' bisectors) would fix that, if it can be made
+    cheap enough for `city_height_cap`.
   - No road leads out of the city into the region; the perimeter boulevards close it.
   - The edge is a 1 m kerb-stone face below a 1.5 m asphalt shoulder; a verge, a barrier or an embankment would
     read better. Walking off it, the player's feet ride the 0.5 m drop down (or up) instead of stepping.

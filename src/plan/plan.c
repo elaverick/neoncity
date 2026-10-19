@@ -544,12 +544,23 @@ typedef struct SplitCtx {
     uint8_t         lamp;
 } SplitCtx;
 
+/* Towards the edge the city gives way in bands of the fringe (plan_fringe,
+ * wobbled by a slow field so they don't ring the city): industry and
+ * logistics, then parks and allotments, then open land with the odd
+ * farmstead. A town's or neighbourhood's centre keeps its high street
+ * wherever it stands; the core has thinned out with the density. */
+#define FRINGE_INDUSTRY 0.35f
+#define FRINGE_PARKS    0.6f
+#define FRINGE_RURAL    0.8f
 static int zone_for(const SplitCtx *sc, const Block *b, DVec2 cen, float d) {
     if (d > 0.62f) return ZONE_CORE;
     if (dlen(dsub(cen, sc->pc->nb.p)) < 110.0 || dlen(dsub(cen, sc->tp->t.p)) < 170.0) return ZONE_CENTRE;
-    /* Towards the edge: open land, and more of the parks and industry. */
     float f = plan_fringe(cen.x, cen.z);
-    if (f > 0.0f && hf(b->seed, 3u) < 0.75f * smoothstepf(0.4f, 1.0f, f)) return ZONE_RURAL;
+    if (f > 0.0f) f = clampf(f + 0.3f * (vnoise(cen.x / 1100.0, cen.z / 1100.0, 0xF41Bu) - 0.5f), 0.0f, 1.0f);
+    float r = hf(b->seed, 3u);
+    if (f >= FRINGE_RURAL) return r < 0.8f ? ZONE_RURAL : r < 0.9f ? ZONE_PARK : ZONE_RESIDENTIAL;
+    if (f >= FRINGE_PARKS) return r < 0.45f ? ZONE_PARK : r < 0.6f ? ZONE_RURAL : ZONE_RESIDENTIAL;
+    if (f >= FRINGE_INDUSTRY) return r < 0.55f ? ZONE_INDUSTRIAL : r < 0.65f ? ZONE_PARK : ZONE_RESIDENTIAL;
     int boulevard = 0;
     for (int i = 0; i < b->curb.n; ++i) if (b->curb.e[i].cls == ROAD_BOULEVARD) boulevard = 1;
     if (hf(b->seed, 1u) < (boulevard ? 0.22f : 0.07f) + 0.2f * f) return ZONE_PARK;   /* green buffers along the boulevards */

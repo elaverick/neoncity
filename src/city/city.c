@@ -10,11 +10,17 @@
  * ========================================================================= */
 
 /* Conservative: density can rise by at most ~0.2 between the chunk centre and
- * any building centre in it, and buildings are clamped to this anyway. */
+ * any building centre in it, and buildings are clamped to this anyway. Towards
+ * the city's edge the skyline steps down whatever the density (a regional
+ * core near the edge would otherwise end the city in a cliff of towers):
+ * through the fringe the cap falls from 800 m to 60 m, which still leaves the
+ * lowest building (9 m) room for its roof. */
 float city_height_cap(int cx, int cz) {
-    float d = plan_density((cx + 0.5) * (double)CHUNK_SIZE, (cz + 0.5) * (double)CHUNK_SIZE) + 0.22f;
-    if (d >= 0.92f) return 800.0f;
-    return 140.0f + 420.0f * minf(d, 1.0f);
+    double x = (cx + 0.5) * (double)CHUNK_SIZE, z = (cz + 0.5) * (double)CHUNK_SIZE;
+    float d = plan_density(x, z) + 0.22f;
+    float cap = d >= 0.92f ? 800.0f : 140.0f + 420.0f * minf(d, 1.0f);
+    float s = smoothstepf(0.0f, 0.7f, plan_fringe(x, z));
+    return minf(cap, 60.0f + 740.0f * (1.0f - s) * (1.0f - s));
 }
 
 float city_ground_y(double x, double z) { return (float)terrain_urban_height(x, z); }

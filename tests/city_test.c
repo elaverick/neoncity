@@ -245,6 +245,24 @@ static int fingerprint(void) {
         for (int tx = htx - 1; tx <= htx + 1; ++tx) { city_proxy_tile(tx, tz, &pt); px = fnv_tile(&pt, px); }
     proxy_tile_free(&pt);
     printf("  %-10s %016llx\n", "proxies", (unsigned long long)px);
+    /* The city's edge, apart from the layers above: every layer of the 3 x 3
+     * chunks where the city ends along 8 rays from the centre, folded together. */
+    uint64_t efp[FP_COUNT];
+    for (int k = 0; k < FP_COUNT; ++k) efp[k] = 0xcbf29ce484222325ULL;
+    PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
+    if (!pa) fatal("out of memory fingerprinting the edge");
+    for (int ray = 0; ray < 8; ++ray) {
+        double th = (ray + 0.25) * 2.0 * 3.14159265358979 / 8.0, dx = cos(th), dz = sin(th), rad = 4000.0;
+        for (; rad < 20000.0; rad += 100.0) {
+            plan_area(home.x + rad * dx - 1.0, home.z + rad * dz - 1.0, home.x + rad * dx + 1.0, home.z + rad * dz + 1.0, pa);
+            if (pa->bounded && pa->nblocks == 0) break;
+        }
+        int ex = (int)floor((home.x + (rad - 150.0) * dx) / CHUNK_SIZE), ez = (int)floor((home.z + (rad - 150.0) * dz) / CHUNK_SIZE);
+        for (int cz = ez - 1; cz <= ez + 1; ++cz)
+            for (int cx = ex - 1; cx <= ex + 1; ++cx) fingerprint_chunk(cx, cz, efp);
+    }
+    free(pa);
+    printf("  %-10s %016llx\n", "edge", (unsigned long long)fnv(efp, sizeof(efp), 0xcbf29ce484222325ULL));
     return 0;
 }
 
@@ -391,6 +409,44 @@ static void check_edge(void) {
     plan_area(c.x + 18000.0, c.z, c.x + 18300.0, c.z + 300.0, pa);
     CHECK(pa->bounded && pa->nroads == 0 && pa->nblocks == 0 && pa->ntowns == 0 && pa->nedges == 0,
           "18 km out the plan still lays out %d roads, %d blocks, %d towns' ground", pa->nroads, pa->nblocks, pa->ntowns);
+    free(pa);
+}
+
+/* The skyline steps down towards the edge rather than ending in a cliff.
+ * Along rays from the centre, the tallest building in 600 m squares centred
+ * every 600 m in from where the city ends, averaged over the rays: no band
+ * may stand more than a margin taller than the band inside it, and the band
+ * at the edge stays well under the city's inner bands. */
+static void check_skyline(void) {
+    enum { RAYS = 24, BANDS = 8, MAX_B = 4096 };
+    DVec2 c = plan_town_centre(0, 0);
+    PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
+    Building *bs = (Building *)malloc(sizeof(Building) * MAX_B);
+    if (!pa || !bs) fatal("out of memory checking the skyline");
+    double tall[BANDS] = { 0 };
+    for (int ray = 0; ray < RAYS; ++ray) {
+        double th = (ray + 0.5) * 2.0 * 3.14159265358979 / RAYS, dx = cos(th), dz = sin(th), rad = 4000.0;
+        for (; rad < 20000.0; rad += 100.0) {
+            plan_area(c.x + rad * dx - 1.0, c.z + rad * dz - 1.0, c.x + rad * dx + 1.0, c.z + rad * dz + 1.0, pa);
+            if (pa->bounded && pa->nblocks == 0) break;   /* past the last block */
+        }
+        for (int k = 0; k < BANDS; ++k) {
+            double r = rad - 300.0 - 600.0 * k, x = c.x + r * dx, z = c.z + r * dz, top = 0.0;
+            plan_area(x - 300.0, z - 300.0, x + 300.0, z + 300.0, pa);
+            for (int b = 0; b < pa->nblocks; ++b) {
+                int n = city_block_buildings(&pa->blocks[b], bs, MAX_B);
+                for (int i = 0; i < n; ++i) top = fmax(top, bs[i].height);
+            }
+            tall[k] += top / RAYS;
+        }
+    }
+    printf("  skyline in from the edge, tallest per 600 m (mean of %d rays):", RAYS);
+    for (int k = 0; k < BANDS; ++k) printf(" %.0f", tall[k]);
+    printf(" m\n");
+    for (int k = 0; k + 1 < BANDS; ++k)
+        CHECK(tall[k] <= tall[k + 1] * 1.15 + 10.0, "the skyline rises towards the edge: %.0f m at band %d, %.0f m inside it", tall[k], k, tall[k + 1]);
+    CHECK(tall[0] < 0.4 * tall[BANDS - 1], "the edge's skyline (%.0f m) is no lower than %.1f km in (%.0f m)", tall[0], 0.6 * (BANDS - 1), tall[BANDS - 1]);
+    free(bs);
     free(pa);
 }
 
@@ -708,6 +764,7 @@ int main(int argc, char **argv) {
 
     /* 6. The city's edge. */
     check_edge();
+    check_skyline();
 
     /* 7. Distant proxies. */
     check_proxies();

@@ -80,8 +80,10 @@ generated as a pure function of world position:
   (`plan_city_edge`), whose outer 1.5 km belt gives way to the land. It is built of whole
   towns, each only where its ground provably lies inside that belt (`plan_town_built`), so the
   city's ground and the terrain's agree wherever they meet; that leaves 142 towns, about
-  20 km across. Over the last 3 km the city thins (`plan_fringe`):
-  density falls, and industry, parks and open land take over. The outermost boulevards are
+  20 km across. Over the last 3 km the city thins (`plan_fringe`): density falls, the skyline
+  steps down (`city_height_cap` falls from 800 m to 60 m), and the land is zoned in bands,
+  wobbled so they don't ring the city: industry and logistics, then parks and allotments,
+  then open land; town and neighbourhood centres keep their high streets. The outermost boulevards are
   its perimeter road; the asphalt reaches a shoulder beyond them and ends in a low face onto
   the land.
 
