@@ -102,10 +102,17 @@ static void lgen_free(LGen *g) {
 }
 
 /* Industrial land and the estates start dirtier than the cores, parks and
- * open land; poorer districts are dirtier still. */
+ * open land; poorer districts are dirtier still. Out at the city's borders,
+ * the outer part of its fringe (plan_fringe), everything is squalid whatever
+ * its zone: rubbish dumped where nobody comes to clear it. (The last towns
+ * end at a fringe of about 0.7 to 0.85, so this is their outer 500 m or so.)
+ * It rises to 0.85, not 1: the densest border chunks would otherwise outrun
+ * the litter's vertex BUDGET and lose their doorways and lamp posts. */
 float city_squalor(int zone, double x, double z) {
     static const float base[ZONE_COUNT + 1] = { 0.42f, 0.22f, 0.5f, 0.42f, 0.66f, 0.3f, 0.3f };   /* a road, core, centre, estate, industrial, park, rural */
-    return clampf(base[zone + 1] + 1.1f * (0.5f - plan_affluence(x, z)), 0.04f, 1.0f);
+    float sq = clampf(base[zone + 1] + 1.1f * (0.5f - plan_affluence(x, z)), 0.04f, 1.0f);
+    float border = smoothstepf(0.4f, 0.65f, plan_fringe(x, z));
+    return sq + maxf(0.85f - sq, 0.0f) * border;
 }
 
 static float squalor(LGen *g, int bi) {
