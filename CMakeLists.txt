@@ -91,7 +91,8 @@ set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_do
 # shadows need ray queries in the scene pass, and a depth prepass.
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)
 # Shaders also include the #define-only headers they share with C.
-set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_clip.h
+set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/core/clouds.h
+                          ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_clip.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_planet.h)
 set(SHADER_SHARED_INC -I${CMAKE_CURRENT_SOURCE_DIR}/src/core -I${CMAKE_CURRENT_SOURCE_DIR}/src/terrain)
 file(GLOB_RECURSE SHADER_INCLUDES ${SHADER_SRC_DIR}/*.glsl)
@@ -206,7 +207,7 @@ endif()
 
 # --- Game ---------------------------------------------------------------------
 add_executable(NeonCity
-  src/app/main.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/road_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/textures.c ${GEN_SOURCES} ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c)
+  src/app/main.c src/app/weather.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/road_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/textures.c ${GEN_SOURCES} ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

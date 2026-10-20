@@ -49,8 +49,8 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     the towers, which only occlusion culling would use.
   - **From the air:** the city's proxies stop at `TERRAIN_DISTANCE` (20 km), so from high over one edge the far side
     of the city is bare ground; the city's ground takes the city's smoggier haze, which from above reads as a pale dome
-    with the belt's edge; the cloud deck is marched only within `CLOUD_REACH` across the ground, so from above it is a
-    disc of cloud round the camera's footprint fading out, not a deck to the horizon. The planet's patches have no
+    with the belt's edge; the cloud deck is marched only within `CLOUD_REACH` (30 km) across the ground and over
+    the cities' cloud, so from high up a far city's clouds thin out with distance rather than reaching the horizon. The planet's patches have no
     city glow under them and no detail in their shading beyond the land's tone.
   - **Patch thresholds** are 2 px to split, 1 px to merge (`TERRAIN_PLANET_REFINE`/`_COARSEN`), weighted by the haze's
     contrast floored at 5%: 84-132 patches from 10 km, a handful from the street. Canyon walls and escarpments are
@@ -171,8 +171,8 @@ Left over:
 - **Roads out of a city bundle.** Every colossal city keeps three links in the design, but links leaving it in one
   direction share a road (Steiner junctions, roads beside each other joined), so it may have fewer gates; the
   megacity has three (two freeways and a trunk road). Small changes to the routing's costs reshuffle which.
-- **Clouds sit on the hills.** The deck's underside is at a fixed height (about 200 m), so a road climbing into the
-  hills runs into it (see Landforms, Seen from the city).
+- **Clouds sit on the hills.** The deck's underside is at a fixed height (about 200 m), so within a city's cloud
+  border a road climbing into the hills runs into it (see Landforms, Seen from the city, and Weather).
 - **Start-up.** Building the world costs about 15 s of one core's time (2.4 s on 8 threads, 2 s on 32): the coarse
   cost grid, candidate and fine routes, profiles and the index; every test and the game pay it. Profiles and fine routes could be made lazily for the roads near the
   camera, or the world cached on disk by a hash of its inputs.
@@ -181,6 +181,28 @@ Left over:
 - **Routing:** costs are first guesses (mountains 4, plateaus 1.5 and hills 0.6 times a metre on the coarse grid;
   grades over 3% and steeply over 8% on the fine one). Roads beside each other within 1.5 km are joined, further
   apart they stay two (some parallel freeways 20-50 km apart are real alternatives).
+
+## Weather
+The start of a weather system (`src/core/clouds.h`, `src/app/weather.c`, `shaders/sky.frag`, `cloudCover` in
+`shaders/common.glsl`; see the README). The rain clouds gather over the cities and a border round them. The
+countryside has a clear sky with stars and a moon, whose light faintly lights the land. Left over:
+- **The deck's height is absolute** (world Y 115-670 m), not over each city's own ground: a city on raised ground
+  (`terrain_lift`) would have its clouds in its streets or under them. From hills near a city the deck is at eye
+  level. The deck should hang over each settlement's datum, as the haze will (`haze_datum` in `main.c` is still the
+  megacity's).
+- **The field is static.** The clouds drift through it, but it doesn't move: no fronts, no clouds forming and
+  clearing, no rain out in the country. Rain intensity still drifts on one global clock, scaled by the cover over
+  the camera.
+- **The moon and stars are fixed in the camera's frame:** they don't wheel through the night or change with where
+  on the planet the camera is (`MOON_DIR` and the star cube would want the planet's frame and a clock). The moon
+  casts no shadows (hills don't shade the land behind them), and its phase is fixed.
+- **No light dome from afar.** From the countryside a city shows as its clouds, lit sodium-orange underneath near
+  it, and its proxies; the haze itself doesn't glow over it, because the haze's colour is one per frame
+  (`frame.sky.x`, the air round the camera). A glow in `hazeColor` towards each nearby city would add the dome.
+- **Seen from the countryside** the proxies and the land still take the band at the chunks' edge (`edgeFog`), as
+  everything does; the clouds alone leave it off out there (`cloudFog`). The moonlit haze, `MOON_LIGHT` and
+  the star brightness are first guesses, tuned by eye from a few `--cam` views.
+- **Star field:** a uniform scatter; no Milky Way band or constellations.
 
 ## Office lobbies (next)
 Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/mesh_lobby.c`).

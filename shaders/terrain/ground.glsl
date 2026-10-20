@@ -2,9 +2,21 @@
 #define GROUND_GLSL
 
 /* The bare land, as the clipmap (terrain.frag) and the planet's patches
- * (planet.frag) both draw it: lit only by the overcast the city lights from
- * below, and seen through the haze. rel is the camera-relative position (as
- * drawn, bent over the planet), n the normal, urban plan_urban there. */
+ * (planet.frag) both draw it: lit by the overcast the city lights from below
+ * where the cities' clouds hang, by the moon and the stars beyond them, and
+ * seen through the haze. rel is the camera-relative position (as drawn, bent
+ * over the planet), n the normal, urban plan_urban there. */
+
+// The light falling on ground at rel facing n. Under the cities' cloud
+// (cloudCover) it is the deck's glow, sodium-orange over a city and dying
+// away over the border beyond it (cityLight), where only a little moonlight
+// gets through. Under a clear sky it is the moon, and the stars' faint glow.
+vec3 groundLight(vec3 rel, vec3 n) {
+    float edge = cityEdge(rel.xz), cover = cloudCover(rel.xz, edge);
+    vec3 deck = CLOUD_DECK * cityLight(edge) * (0.6 + 1.4 * max(n.y, 0.0));
+    vec3 clear = MOON_LIGHT * max(dot(n, MOON_DIR), 0.0) + STARLIGHT * (0.5 + 0.5 * n.y);
+    return deck * cover + clear * (1.0 - 0.9 * cover);
+}
 
 // Beyond the city the air is clearer than over its streets, so far ridges
 // stand out above the haze: TERRAIN_HAZE (distances.h) against the city's
@@ -24,8 +36,7 @@ vec3 groundLit(vec3 rel, vec3 n, float urban) {
     vec3 albedo = mix(vec3(0.050, 0.046, 0.040), vec3(0.085, 0.076, 0.060), patches);
     albedo = mix(albedo, vec3(0.11, 0.105, 0.10), smoothstep(0.82, 0.65, n.y));
     albedo *= 1.0 - 0.35 * frame.weather.y;
-    // the cloud deck overhead, glowing sodium-orange, is the only light
-    vec3 col = albedo * CLOUD_DECK * (0.6 + 1.4 * max(n.y, 0.0));
+    vec3 col = albedo * groundLight(rel, n);
     // Under the city, where its chunks aren't drawn (beyond their view
     // distance, between the distant proxies), the streets: dark wet asphalt
     // under the sodium lamps, seen from afar as their average glow.

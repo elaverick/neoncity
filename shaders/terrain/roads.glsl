@@ -1,5 +1,6 @@
 #ifndef ROADS_GLSL
 #define ROADS_GLSL
+#include "ground.glsl"
 
 /* The roads between the settlements (src/plan/plan_roads.c), painted onto the
  * clipmap's ground, which already follows their graded surfaces
@@ -92,7 +93,7 @@ vec3 shadeRoad(vec3 col, vec3 rel, vec3 n, RoadHit r) {
     paint = clamp(paint, 0.0, 1.0);
     albedo = mix(albedo, 0.11, barrier);
     albedo = mix(albedo, 0.45 * (1.0 - 0.3 * wet), paint * (1.0 - barrier));
-    vec3 light = CLOUD_DECK * (0.6 + 1.4 * max(n.y, 0.0));
+    vec3 light = groundLight(rel, n);
     if (r.cls == 2) {
         // the median's lamps: a pool round each, longer along the road
         float ds = r.s - FREEWAY_LAMP_SPACING * floor(r.s / FREEWAY_LAMP_SPACING + 0.5);

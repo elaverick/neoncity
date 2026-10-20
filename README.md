@@ -741,8 +741,28 @@ sprinting:
 
 `Player.footsteps` counts footfalls, ready for footstep audio.
 
+### Weather (`src/core/clouds.h`, `src/app/weather.c`)
+The cities draw the weather to them as mountains do. Over each settlement's footprint and a
+3 km border round it (`CLOUD_BORDER`), the rain-cloud deck is whole. Beyond that it breaks up
+over 2.5 km (`CLOUD_FADE`) along a ragged line into the clear sky over the countryside.
+- **The field:** each frame `weather_frame` passes the `CLOUD_CITIES` (8) settlements
+  nearest the camera to the shaders (`FrameUBO.cities`). `cloudCover` and `cityLight` in
+  `common.glsl` read them. The city's light reaches the deck only over the city and dies away
+  across the border, so the border is the darkest ground of all.
+- **The air round the camera:** `FrameUBO.sky` says how much city light the air holds. It
+  blends the haze from sodium-lit smog to thin moonlit mist and the haze's density from the
+  city's to the land's. It also gives the cloud cover over the camera. Rain and wet streets
+  only come from that cover, so it is dry out in the countryside.
+- **Moon and stars** (`sky.frag`): a single moon, a waning gibbous disc low in the sky
+  (`MOON_DIR`), with an aureole in clear air. It is a directional light infinitely far off, and
+  it faintly lights the land and roads beyond the clouds (`groundLight` in
+  `terrain/ground.glsl`). It also silvers the clouds from above. Behind it is a procedural star
+  field: a jittered grid over a cube, with power-law brightness, colours from blue-white to
+  orange, and twinkling near the horizon. Both are dimmed by the haze they shine through.
+  For now the moon stays put in the camera's frame wherever the camera is on the planet.
+
 ### Clouds (`shaders/clouds.comp`)
-Rain clouds hang over the city: a nimbostratus deck whose underside sits around 200 m, with
+Rain clouds hang over the cities: a nimbostratus deck whose underside sits around 200 m, with
 torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
 - **Noise:** a tileable 128³ Perlin-Worley/Worley noise volume, built once on the GPU at
   startup (`cloud_noise.comp`). It shapes the deck's billows and erodes their edges.
@@ -759,7 +779,11 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
   building the chunk. Each frame `chunks_sky_lights` gathers those near the camera into a
   grid of 100 m cells, so each march step only tests the few signs around it.
 - **Haze:** each step is fogged by its own distance, so the deck dissolves into the haze at
-  range.
+  range. Out in the countryside the band at the chunks' edge is left off the clouds, so a
+  city's clouds stand on the skyline.
+- **Extent:** each ray is marched only over the cities' cloud (`cloudSpan`), out to
+  `CLOUD_REACH` (30 km) across the ground. Past 9 km it takes 40 coarse steps, and only while
+  the haze leaves something to see.
 - **Rendering:** the march runs at half resolution against the scene depth (a sample-zero
   resolve of the MSAA depth). A depth-aware upsample (`cloud_composite.frag`) then blends it
   over the HDR scene, so cloud never smears across a tower's silhouette.
@@ -769,16 +793,17 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
 2. Shelter map: the city round the camera rendered from above, depth only.
 3. With shadows: the depth prepass, then the shadow rays and their filter (compute).
 4. MSAA x4 HDR scene and reflection G-buffer, resolved (colour averaged, depth sample zero).
-5. Sky, drawn into the empty depth.
+5. Sky, drawn into the empty depth: the haze, the stars and the moon.
 6. Screen-space reflections on the wet streets: a compute trace, then a streaked additive blend.
-7. Clouds and rain mist: half-resolution compute ray march, blended into the HDR target with a depth-aware upsample.
+7. Clouds and rain mist: half-resolution compute ray march over the cities' cloud, blended into the HDR target with a depth-aware upsample.
 8. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
 9. Composite: falling rain, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
 
 ## Extending
 - **Environment** (rain, wet streets, fog volumes, weather): the atmosphere lives in
   `hazeColor` / `fogAmount` in `shaders/common.glsl`. The cloud deck's height, cover,
-  wind and glow are the constants at the top of `shaders/clouds.comp`. The procedural road's slickness is
+  wind and glow are the constants at the top of `shaders/clouds.comp`. Where the clouds
+  gather is `src/core/clouds.h`. The moon (`MOON_DIR`, `MOON_LIGHT`) is in `common.glsl`. The procedural road's slickness is
   the `specK` term in `shadeGround`. The textured road's sheen follows its roughness map under
   GGX; wet streets are the next step (`TODO.md`).
 - **Pool size and view distance**: `POOL_PAGES` and `VIEW_DISTANCE` in `src/core/common.h`.

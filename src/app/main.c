@@ -10,6 +10,7 @@
 #include "layouts.h"
 #include "plan.h"
 #include "thread.h"
+#include "weather.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -67,21 +68,6 @@ static void on_key(GLFWwindow *w, int key, int sc, int action, int mods) {
 
 static void on_click(GLFWwindow *w, int button, int action, int mods) {
     if (action == GLFW_PRESS && !g_captured) set_capture(w, true);
-}
-
-/* Weather: steady rain whose intensity drifts between drizzle and downpour
- * over minutes, never quite stopping. The streets wet quickly as it
- * strengthens and dry slowly as it eases. fixedRain >= 0 pins the intensity. */
-typedef struct Weather { float rain, wet; } Weather;
-
-static void weather_update(Weather *w, double t, float dt, float fixedRain) {
-    float rain = fixedRain >= 0.0f ? fixedRain
-               : (float)(0.6 + 0.25 * sin(t / 53.0) + 0.15 * sin(t / 31.0 + 1.7));
-    float target = 0.55f + 0.45f * rain;
-    if (w->wet < 0.0f) w->wet = target;   /* first frame: it has already been raining for a while */
-    float tau = target > w->wet ? 15.0f : 120.0f;
-    w->wet += (target - w->wet) * (1.0f - expf(-dt / tau));
-    w->rain = rain;
 }
 
 static void usage(void) {
@@ -277,10 +263,9 @@ static void frame_ubo(const Player *player, const VkCore *vk, double t, const We
     ubo->camPos[3] = (float)t;
     ubo->camFwd[0] = player->fwd.x; ubo->camFwd[1] = player->fwd.y; ubo->camFwd[2] = player->fwd.z;
     ubo->camFwd[3] = VIEW_DISTANCE;
-    ubo->weather[0] = weather->rain;
-    ubo->weather[1] = weather->wet;
     ubo->weather[2] = haze_datum();
     ubo->weather[3] = edge;
+    weather_frame(weather, player->eye, ubo);
 }
 
 /* Where the chunks hand over to their proxies (edgeFog in shaders/common.glsl):

@@ -5,6 +5,8 @@
 #include "distances.h"
 // PLANET_RADIUS: shared with C
 #include "terrain_planet.h"
+// CLOUD_CITIES, CLOUD_BORDER, CLOUD_FADE, CLOUD_RAGGED, CLOUD_REACH: shared with C
+#include "clouds.h"
 
 /* Must match src/core/common.h */
 const float CHUNK_SIZE      = 110.0;
@@ -58,6 +60,8 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 shelter;    // shelter map: camera-relative centre x, z; half-width
     vec4 shadow;     // ray-traced shadows: x frame number, y SHADOWS_ON | SHADOWS_DEBUG, zw where sample 0 lies in a pixel
     mat4 prevViewProj;   // the previous frame's viewProj, taking this frame's camera-relative positions
+    vec4 sky;        // x the city's light in the air round the camera (0 countryside .. 1 city), y how many cities[], z cloud cover over the camera (src/app/weather.c)
+    vec4 cities[CLOUD_CITIES];   // the settlements whose clouds are drawn: camera-relative centre x, z; footprint radius (clouds.h)
 } frame;
 
 struct ChunkGPU {
@@ -326,18 +330,59 @@ vec3 planetTilt(vec2 d, vec3 n) {
 // height above the ground beneath.
 float planetDrop(vec2 d) { return dot(d, d) * (0.5 / PLANET_RADIUS); }
 
+/* ---------------- the weather ----------------
+ * The rain clouds gather over the cities (src/core/clouds.h), and under them
+ * the city lights the night: the deck's underside and the smog glow
+ * sodium-orange. Out in the countryside the sky is clear. The moon lights
+ * the land there, faintly, and the stars are out (sky.frag). */
+
+// How far camera-relative ground point rel lies beyond the footprint of the
+// nearest city drawn (m; < 0 inside it).
+float cityEdge(vec2 rel) {
+    float e = 1e9;
+    for (int i = 0; i < int(frame.sky.y); ++i) e = min(e, length(rel - frame.cities[i].xy) - frame.cities[i].z);
+    return e;
+}
+
+// The cities' cloud over rel, edge = cityEdge(rel) there: 1 over a city and
+// its border, falling to 0 over the countryside along a ragged line. The C
+// mirror, at the camera, is in src/app/weather.c.
+float cloudCover(vec2 rel, float edge) {
+    if (edge < CLOUD_BORDER - CLOUD_RAGGED) return 1.0;
+    if (edge > CLOUD_BORDER + CLOUD_FADE + CLOUD_RAGGED) return 0.0;
+    vec2 w = frame.camPos.xz + rel;
+    float e = edge + CLOUD_RAGGED * (2.0 * fbm(w / 5000.0, 0xC1A0u) - 1.0);
+    return 1.0 - smoothstep(CLOUD_BORDER, CLOUD_BORDER + CLOUD_FADE, e);
+}
+
+// How much of a city's light reaches the air and the cloud over ground
+// `edge` beyond the city (cityEdge): all of it over the city, none past the
+// border's outer line.
+float cityLight(float edge) { return 1.0 - smoothstep(0.0, CLOUD_BORDER, edge); }
+
+// The moon, low in the sky and so far off that its light falls the same way
+// everywhere. It stays put in the camera's frame for now, wherever on the
+// planet the camera is.
+const vec3  MOON_DIR = vec3(0.8547, 0.4223, -0.3017);   // unit: towards the moon
+const float MOON_RADIUS = 0.014;                         // its disc's angular radius (rad), about three times the real moon's
+const vec3  MOON_LIGHT = vec3(0.50, 0.58, 0.80) * 0.60;  // the light it throws on ground square to it
+const vec3  STARLIGHT = vec3(0.0016, 0.0020, 0.0032);    // the clear night sky's own glow, from above
+
 /* ---------------- atmosphere ----------------
  * A smoggy night: warm city-lit haze near the horizon, cold dark zenith.
- * Fog uses the same colour as the sky at the horizon so the finite view
- * distance dissolves seamlessly into the haze. (Weather comes later.) */
+ * Out in the countryside (frame.sky.x towards 0) the haze is thin moonlit
+ * mist instead, with the moon's aureole round it under a clear sky. Fog uses
+ * the same colour as the sky at the horizon so the finite view distance
+ * dissolves seamlessly into the haze. */
 vec3 hazeColor(vec3 dir) {
-    float y = dir.y;
-    vec3 low  = vec3(0.095, 0.050, 0.036);   // sodium-lit smog
-    vec3 mid  = vec3(0.034, 0.026, 0.040);
-    vec3 high = vec3(0.005, 0.007, 0.014);
+    float y = dir.y, g = frame.sky.x;
+    vec3 low  = mix(vec3(0.015, 0.018, 0.027), vec3(0.095, 0.050, 0.036), g);     // moonlit mist .. sodium-lit smog
+    vec3 mid  = mix(vec3(0.0075, 0.009, 0.016), vec3(0.034, 0.026, 0.040), g);
+    vec3 high = mix(vec3(0.0025, 0.0032, 0.007), vec3(0.005, 0.007, 0.014), g);
     vec3 c = mix(low, mid, smoothstep(-0.02, 0.22, y));
     c = mix(c, high, smoothstep(0.18, 0.75, y));
-    return c;
+    float m = max(dot(dir, MOON_DIR), 0.0);
+    return c + MOON_LIGHT * (0.03 * pow(m, 400.0) + 0.005 * pow(m, 12.0)) * (1.0 - frame.sky.z);
 }
 
 // The mean of exp(-h / H) along a straight sight line from height h0 to h1.
@@ -383,6 +428,11 @@ float cityHaze(vec3 rel, float dist) {
     return hazeAmount(rel, dist, density);
 }
 float fogAmount(vec3 rel, float dist) { return edgeFog(cityHaze(rel, dist), dist); }
+
+// The haze's density at street level (per metre) in the air round the camera:
+// the city's (CITY_HAZE) near a city, the land's clearer air (TERRAIN_HAZE)
+// out in the countryside.
+float airDensity() { return (1.0 + 1.2 * frame.weather.x) / mix(TERRAIN_HAZE, CITY_HAZE, frame.sky.x); }
 
 // The rain-cloud deck (clouds.comp) as reflections see it: an overcast lit
 // sodium-orange from below, filling the upper sky.

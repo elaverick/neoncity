@@ -3,14 +3,18 @@
 #include "common.glsl"
 
 /* Rain clouds: a low nimbostratus deck with torn scud drifting beneath it,
- * ray marched at half resolution.
+ * ray marched at half resolution. The deck hangs over the cities and a
+ * border round them (cloudCover, src/core/clouds.h) and breaks up beyond, so
+ * each ray is marched only where it passes over a city's cloud.
  *
  * Each half-res pixel marches its view ray through the cloud layer, stopping
  * at the nearest scene depth in its 2x2 block, so the deck swallows the tops
  * of the tallest towers. At night the deck is lit from below by the city:
  * every step looks down through the cloud toward the street (a short light
  * march) and adds a few multiple-scattering octaves, so the underside glows
- * sodium-orange while the body above stays dark and heavy. Neon signs and
+ * sodium-orange while the body above stays dark and heavy; past the city's
+ * edge that glow dies away (cityLight), and the moon silvers the cloud from
+ * above. Neon signs and
  * video screens high on the towers (sky lights, src/core/common.h) also light the
  * cloud around them in their own colour, flickering and changing with them,
  * found through a coarse grid around the camera. Each step is also
@@ -48,22 +52,28 @@ const float SCUD_SCALE = 1.0 / 480.0;
 const float SIGMA = 0.012;                 // extinction per metre at density 1
 const vec3 WIND = vec3(1.5, 0.0, 0.55);    // deck drift, m/s; the scud below runs faster
 const float GLOW = 1.3;                    // city light reaching the cloud base
-// How far the deck is marched, across the ground. At the deck's height the
-// city's haze (fogAmount) has taken about 97% of its light by here.
-const float CLOUD_REACH = 9000.0;
-const float FAR_STEP = 80.0;               // step past VIEW_DISTANCE (m), without the eroded detail
+// Past VIEW_DISTANCE the deck is marched every FAR_STEP metres without the
+// eroded detail, out to MID_REACH across the ground. At the deck's height
+// the city's haze has taken about 97% of its light by there; under the
+// countryside's clearer air it is marched on to CLOUD_REACH (clouds.h) in
+// DISTANT_STEPS, so a city's clouds stand on the skyline.
+const float FAR_STEP = 80.0;
+const float MID_REACH = 9000.0;
+const int   DISTANT_STEPS = 40;
 
 float gTime;
 
 float remap(float x, float a, float b, float c, float d) { return c + (x - a) * (d - c) / (b - a); }
 
 // Per-column cloud state: cover (mostly overcast, with slow-moving thinner
-// patches and breaks) and the height of the deck's underside, which sags
+// patches and breaks, and breaking up as the cities' cloud thins out:
+// field, cloudCover) and the height of the deck's underside, which sags
 // lower where the deck is heaviest and undulates on its own.
-struct Column { float cov; float base; };
-Column column(vec2 xz) {
+struct Column { float cov; float base; float field; };
+Column column(vec2 xz, float field) {
     Column c;
-    c.cov = mix(0.25, 0.85, smoothstep(0.2, 0.8, fbm(xz / 1800.0, 0xC10Du)));
+    c.field = field;
+    c.cov = mix(0.25, 0.85, smoothstep(0.2, 0.8, fbm(xz / 1800.0, 0xC10Du))) * field;
     c.base = CLOUD_BASE + 80.0 * (fbm(xz / 650.0, 0xC111u) - 0.5) - 50.0 * (c.cov - 0.55);
     return c;
 }
@@ -110,26 +120,29 @@ float scud(vec3 p, Column c, bool detail) {
     float shape = remap(n.r, wfbm - 1.0, 1.0, 0.0, 1.0) * smoothstep(0.0, 0.6, hs) * smoothstep(1.0, 0.85, hs);
     float d = clamp(remap(shape, 0.66 - 0.25 * c.cov, 1.0, 0.0, 1.0), 0.0, 1.0);
     if (detail && d > 0.0) d = clamp(remap(d, (1.0 - erodeBy(q * 1.7)) * 0.6, 1.0, 0.0, 1.0), 0.0, 1.0);
-    return d;
+    return d * c.field;
 }
 
 // Density at world point p (deck drift already applied).
 float density(vec3 p, Column c, bool detail) { return max(deck(p, c, detail), scud(p, c, detail)); }
 
 // Light scattered toward the eye at p: city glow from below through the cloud
-// between p and the street, plus a trace of night sky from above.
-vec3 lightAt(vec3 p, Column c, vec3 glow) {
+// between p and the street, plus the moon and a trace of night sky from
+// above through the deck towards the moon, brightest looking towards it
+// (mu: the cosine between the ray and the moon).
+vec3 lightAt(vec3 p, Column c, vec3 glow, float mu) {
     float below = max(p.y - SCUD_LO, 1.0);
     float od = 0.0;
     for (int i = 0; i < 4; ++i) od += density(p - vec3(0.0, below * (float(i) + 0.5) * 0.25, 0.0), c, false);
     od *= below * 0.25 * SIGMA;
     // multiple scattering: light diffuses deep into the deck rather than dying out
     float ms = exp(-od) + 0.3 * exp(-od * 0.25) + 0.1 * exp(-od * 0.06);
-    float above = max(CLOUD_TOP - p.y, 1.0);
-    float odUp = deck(p + vec3(0.0, above * 0.35, 0.0), c, false) * above * SIGMA * 0.5;
+    float above = max(CLOUD_TOP - p.y, 1.0) / MOON_DIR.y;
+    float odUp = deck(p + MOON_DIR * (above * 0.35), c, false) * above * SIGMA * 0.5;
     // the city's light spreads as it rises: the lowest scud and bulges catch the most
     float fall = exp(-(p.y - SCUD_LO) / 80.0);
-    return glow * GLOW * ms * fall + vec3(0.008, 0.010, 0.018) * exp(-odUp);
+    vec3 moon = MOON_LIGHT * (0.175 + 0.5 * pow(max(mu, 0.0), 8.0)) * (exp(-odUp) + 0.15 * exp(-odUp * 0.25));
+    return glow * GLOW * ms * fall + vec3(0.008, 0.010, 0.018) * exp(-odUp) + moon;
 }
 
 // What a sky light is showing now: a neon sign's colour through its flicker,
@@ -211,29 +224,70 @@ vec3 mistLight(vec3 dir, float tEnd, float rain) {
     return sum * (MIST * rain);
 }
 
+// The haze between the eye and cloud at rel, dist away, through air of the
+// given density. The band at the chunks' edge (edgeFog) hides their
+// handover to the proxies, which clouds take no part in: they take it as
+// far as the camera is in a city's air, as everything there does, and out
+// in the countryside not at all, so a city's clouds stand out on the skyline.
+float cloudFog(vec3 rel, float dist, float density) {
+    float haze = hazeAmount(rel, dist, density);
+    return mix(haze, edgeFog(haze, dist), frame.sky.x);
+}
+
 // Marches the ray from ro along dir over [ta, tb] in `steps` jittered steps,
 // adding the light scattered toward the eye to L and dimming T.
 void march(vec3 ro, vec3 dir, float ta, float tb, int steps, bool detail, float jitter, vec3 haze, inout vec3 L, inout float T) {
     float ds = (tb - ta) / float(steps);
     vec3 drift = WIND * gTime;
+    float mu = dot(dir, MOON_DIR), air = airDensity();
     for (int i = 0; i < steps; ++i) {
         float t = ta + (float(i) + jitter) * ds;
-        vec3 pw = ro + dir * t;          // world position: the city glow stays put...
-        pw.y += planetDrop(dir.xz * t);  // (its height above the planet's curved ground)
+        vec3 rel = dir * t;
+        // the cities' cloud stays over them, while the clouds drift through it
+        float edge = cityEdge(rel.xz), field = cloudCover(rel.xz, edge);
+        if (field <= 0.001) continue;
+        vec3 pw = ro + rel;              // world position: the city glow stays put...
+        pw.y += planetDrop(rel.xz);      // (its height above the planet's curved ground)
         vec3 p = pw + drift;             // ...while the clouds drift over it
-        Column c = column(p.xz);
+        Column c = column(p.xz, field);
         // the deck thins out towards CLOUD_REACH, measured across the ground,
         // so seen from high above it fades rather than ends on a line
-        float d = density(p, c, detail) * (1.0 - smoothstep(0.6 * CLOUD_REACH, CLOUD_REACH, length(dir.xz) * t));
+        float d = density(p, c, detail) * (1.0 - smoothstep(0.6 * CLOUD_REACH, CLOUD_REACH, length(rel.xz)));
         if (d <= 0.002) continue;
         float Ts = exp(-d * SIGMA * ds);
-        vec3 lit = lightAt(p, c, cityGlow(pw.xz)) + signLight(dir * t);
-        // seen through the haze between the eye and this step
-        vec3 s = mix(lit, haze, fogAmount(dir * t, t));
+        vec3 lit = lightAt(p, c, cityGlow(pw.xz) * cityLight(edge), mu) + signLight(rel);
+        // seen through the haze of the air round the camera (the city's, as
+        // fogAmount, or the countryside's) between the eye and this step
+        vec3 s = mix(lit, haze, cloudFog(rel, t, air));
         L += T * (1.0 - Ts) * s;
         T *= Ts;
         if (T < 0.01) { T = 0.0; return; }
     }
+}
+
+// The stretch [ta, tb] of the ray along dir (from the camera) that passes
+// over ground some city's cloud can reach; false if none does.
+bool cloudSpan(vec3 dir, out float ta, out float tb) {
+    const float FRINGE = CLOUD_BORDER + CLOUD_FADE + CLOUD_RAGGED;
+    vec2 d = dir.xz;
+    float dd = dot(d, d);
+    ta = 1e30; tb = -1e30;
+    for (int i = 0; i < int(frame.sky.y); ++i) {
+        vec2 c = frame.cities[i].xy;
+        float R = frame.cities[i].z + FRINGE;
+        if (dd < 1e-10) {   // straight up or down: over the camera's spot
+            if (dot(c, c) < R * R) { ta = 0.0; tb = 1e30; }
+            continue;
+        }
+        // |d t - c| = R
+        float b = dot(d, c), disc = b * b - dd * (dot(c, c) - R * R);
+        if (disc < 0.0) continue;
+        float s = sqrt(disc);
+        ta = min(ta, (b - s) / dd);
+        tb = max(tb, (b + s) / dd);
+    }
+    ta = max(ta, 0.0);
+    return tb > ta;
 }
 
 void main() {
@@ -260,11 +314,12 @@ void main() {
     vec3 ro = frame.camPos.xyz;
     imageStore(mistOut, hp, vec4(mistLight(dir, tScene, frame.weather.x), 1.0));
 
-    // The ray's span inside the cloud layer, up to the scene and CLOUD_REACH:
-    // the distant proxies stand into the deck far beyond the chunks' view
-    // distance, so it must cover them there too. Within VIEW_DISTANCE every
-    // 5 m or so with the eroded detail; beyond it, where the haze has taken
-    // most of the deck, every FAR_STEP metres without.
+    // The ray's span inside the cloud layer, up to the scene and CLOUD_REACH,
+    // over the cities' cloud: the distant proxies stand into the deck far
+    // beyond the chunks' view distance, so it must cover them there too.
+    // Within VIEW_DISTANCE every 5 m or so with the eroded detail; beyond it,
+    // where the haze has taken most of the deck, every FAR_STEP metres
+    // without, and past MID_REACH coarser still while the haze leaves any.
     float lo = SCUD_LO, hi = CLOUD_TOP, t0, t1;
     if (abs(dir.y) < 1e-5) {
         t0 = 0.0;
@@ -274,7 +329,12 @@ void main() {
         t0 = max(min(ta, tb), 0.0);
         t1 = max(ta, tb);
     }
-    t1 = min(t1, min(tScene, CLOUD_REACH / max(length(dir.xz), CLOUD_REACH / 1e6)));
+    float hz = max(length(dir.xz), 1e-6);
+    t1 = min(t1, min(tScene, CLOUD_REACH / max(hz, CLOUD_REACH / 1e6)));
+    float sa, sb;
+    if (!cloudSpan(dir, sa, sb)) t1 = -1.0;
+    t0 = max(t0, sa);
+    t1 = min(t1, sb);
     if (t1 <= t0) { imageStore(cloudOut, hp, vec4(0.0, 0.0, 0.0, 1.0)); return; }
 
     float jitter = ign(vec2(hp));
@@ -286,10 +346,12 @@ void main() {
         int steps = int(clamp((tNear - t0) / 5.0, 16.0, 80.0));
         march(ro, dir, t0, tNear, steps, true, jitter, haze, L, T);
     }
-    float tFar = max(t0, tNear);
-    if (t1 > tFar && T > 0.0) {
-        int steps = int(clamp((t1 - tFar) / FAR_STEP, 4.0, 64.0));
-        march(ro, dir, tFar, t1, steps, false, jitter, haze, L, T);
+    float tFar = max(t0, tNear), tMid = min(t1, max(tFar, MID_REACH / hz));
+    if (tMid > tFar && T > 0.0) {
+        int steps = int(clamp((tMid - tFar) / FAR_STEP, 4.0, 64.0));
+        march(ro, dir, tFar, tMid, steps, false, jitter, haze, L, T);
     }
+    if (t1 > tMid && T > 0.0 && 1.0 - cloudFog(dir * tMid, tMid, airDensity()) > 0.02)
+        march(ro, dir, tMid, t1, DISTANT_STEPS, false, jitter, haze, L, T);
     imageStore(cloudOut, hp, vec4(L, T));
 }
