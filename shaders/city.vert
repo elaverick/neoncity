@@ -33,17 +33,14 @@ layout(set = 0, binding = 4) uniform sampler2D shelterMap;
  * gust passes. uv.x is this vertex's drop below the chord, uv.y the cable's
  * sag, aux the horizontal direction across it. The swing rotates the drop
  * about the chord, so a taut cable, with little drop, barely stirs, and like
- * a pendulum hanging its sag it swings slower the slacker it hangs. Gusts are
- * a slow noise field blowing across the city with the cloud deck's wind:
- * occasional, and shared by cables near each other, which stir together.
- * Cables across the wind take it most; along it, hardly at all. */
-const vec2 GUST_WIND = vec2(0.94, 0.34);   // clouds.comp WIND, normalised
+ * a pendulum hanging its sag it swings slower the slacker it hangs, when a
+ * gust passes (gustAt in common.glsl). Cables across the wind take it most;
+ * along it, hardly at all. */
 
 vec3 cableSway(vec3 world, float drop, float sag, uint aux, uint seed, float t) {
     float a = (float(aux & 0xFFFFu) / 65535.0 - 0.5) * 6.2831853;
     vec2 across = vec2(cos(a), sin(a));
-    vec2 g = world.xz / 70.0 - GUST_WIND * t * 0.09;   // gusts drift at ~6 m/s
-    float gust = smoothstep(0.45, 0.75, vnoise(g, 0x6057u));
+    float gust = gustAt(world.xz, t);
     float facing = 0.25 + 0.75 * abs(dot(across, GUST_WIND));
     float w = clamp(sqrt(9.81 / max(sag, 0.1)), 2.0, 9.0);
     // pushed over by the gust, rocking about that while it lasts
@@ -86,8 +83,7 @@ void litter(inout vec3 rel, inout vec3 nrm, out vec2 lit) {
     float flex = float(inParams.z) / 255.0 * (1.0 - smoothstep(0.25, 0.5, soak)) * (1.0 - flat_);
     if (flex > 0.0) {
         float t = frame.camPos.w;
-        vec2 g = (anchor.xz + frame.camPos.xz) / 70.0 - GUST_WIND * t * 0.09;
-        float gust = smoothstep(0.45, 0.75, vnoise(g, 0x6057u));
+        float gust = gustAt(anchor.xz + frame.camPos.xz, t);
         float stir = flex * (0.15 + 0.85 * gust);                   // a breath of air always stirs a dry sheet
         float wave = sin(t * 11.0 - dot(off.xz, GUST_WIND) * 18.0 + hfloat(inSeed) * 6.2831853);
         if (kind == LK_BAG) off *= 1.0 + stir * (0.22 + 0.12 * wave);

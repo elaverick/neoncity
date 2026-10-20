@@ -4,7 +4,7 @@
  * Mesh emission helpers
  * ========================================================================= */
 
-void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); free(m->air); free(m->flame); memset(m, 0, sizeof(*m)); }
+void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); free(m->air); free(m->flame); free(m->plume); memset(m, 0, sizeof(*m)); }
 
 void mesh_begin(Mesh *m, int cx, int cz) {
     m->count = 0;
@@ -321,6 +321,26 @@ void push_flame(Mesh *m, vec3 c, float reach, float radius, uint32_t id) {
     L.power = 900.0f;
     float r = sky_light_range(L.power);
     if (L.pos[1] + r >= CLOUD_LOW && L.pos[1] - r <= CLOUD_HIGH) push_light(&m->sky, &m->nsky, &m->capsky, &L);
+}
+
+/* A stack's plume, its mouth at c (through the emission transform, as
+ * mesh_push): the volume the smoke pass marches (shaders/smoke.frag). */
+void push_plume(Mesh *m, vec3 c, float radius, float rise, uint32_t seed, uint32_t kind) {
+    if (m->xf) {
+        float x = c.x, z = c.z;
+        c.x = m->xx + m->xc * x - m->xs * z;
+        c.z = m->xz + m->xs * x + m->xc * z;
+        c.y += m->xy;
+    }
+    if (m->nplume == m->capplume) {
+        m->capplume = m->capplume ? m->capplume * 2 : 4;
+        m->plume = (Plume *)realloc(m->plume, m->capplume * sizeof(Plume));
+        if (!m->plume) fatal("out of memory building chunk plumes");
+    }
+    Plume *p = &m->plume[m->nplume++];
+    memset(p, 0, sizeof(*p));
+    p->pos[0] = c.x; p->pos[1] = c.y; p->pos[2] = c.z;
+    p->radius = radius; p->rise = rise; p->seed = seed; p->kind = kind;
 }
 
 /* Flat quad parallel to a face: u in [u0,u1], y in [y0,y1], offset `out`. uv normalised 0..1. */

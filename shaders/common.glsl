@@ -99,6 +99,15 @@ float fbm(vec2 p, uint salt) {
     return 0.5 * vnoise(p, salt) + 0.3 * vnoise(p * 2.03, salt + 17u) + 0.2 * vnoise(p * 4.11, salt + 31u);
 }
 
+/* Gusts: a slow noise field blowing across the city with the cloud deck's
+ * wind, occasional and shared by things near each other, which stir together:
+ * 0 still air .. 1 a full gust, at world xz w. Cables swing and litter stirs in
+ * them (shaders/city.vert); the stacks' plumes bend over and roil (smoke.frag). */
+const vec2 GUST_WIND = vec2(0.94, 0.34);   // clouds.comp WIND, normalised
+float gustAt(vec2 w, float t) {
+    return smoothstep(0.45, 0.75, vnoise(w / 70.0 - GUST_WIND * t * 0.09, 0x6057u));   // gusts drift at ~6 m/s
+}
+
 /* Facade rhythm: must match city_floor_height / city_ground_height in src/city/city.c */
 uint  styleHash(uint seed)      { return hash_u32(seed ^ 0x5f3759dfu); }
 float facadeFloorH(uint seed)  { return 3.3 + 0.9 * hfloat(hash_combine(styleHash(seed), 1u)); }

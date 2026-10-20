@@ -238,15 +238,15 @@ vessels pass through decks by, are lists of their own.
 - **Styles.** A gas plant (pale vessels, mint stacks with red and white marker bands, yellow
   pipework, galvanised steel), a gothic refinery (domed vessels banded orange, cream and red,
   cowled chimneys, cream decks on black legs, a hoist and claw beneath) and a night refinery
-  (soot-black steel, lamps on every level, several flares, steam off its stacks). Halls get
+  (soot-black steel, lamps on every level, several flares, smoke off its stacks). Halls get
   gable or saw-tooth roofs, the teeth glazed and lit amber (green in the gothic refinery).
 - **Substations** (section 11.8) are a fenced pad on the street: a switch house and a kiosk
   either side of the gate, one to three transformers in their oil bunds (5 m apart at least,
   with a firewall between any closer than 10 m) and a busbar gantry of 12 m bays behind them,
   each transformer wired to it in three phases.
 - **Rendering.** `MAT_INDUSTRY` (`shaders/city/industry.glsl`): sixteen paints with weathering,
-  hoops and cladding ribs, open gratings, glazing lit from within, and steam and chain-link
-  fences as veils over one MSAA sample. A plant's lamps go into the chunk's light table and
+  hoops and cladding ribs, open gratings, glazing lit from within, and chain-link fences as
+  veils over one MSAA sample. A plant's lamps go into the chunk's light table and
   light the rain mist. Distant proxies draw its units as plain painted boxes. You walk under
   racks, frames and gantries (their legs collide) and around the rest.
 - **Fire.** A flare's flame is a volume, ray-marched in a pass of its own (`shaders/flame.frag`)
@@ -263,6 +263,21 @@ vessels pass through decks by, are lists of their own.
   (`LE_FLAME`: it rises with the burning column), the rain mist and the cloud base, so the
   street and the sky flare with the fire. `--time SECONDS` holds the clock to catch a gout in a
   capture.
+- **Smoke and steam.** A plume rises off each of the night refinery's stacks (dark smoke) and
+  some of the gas plant's (white steam, which rises less far before it evaporates). Each is a
+  volume ray-marched in the same pass, before the fire (`shaders/smoke.frag`), and blended over
+  the scene by its transmittance, the 48 nearest farthest first (`chunks_plumes`). Its density
+  is noise carried through a velocity field. The gas leaves the mouth fast and slows as its
+  buoyancy is spent, while the wind carries it off: the wind's history at the stack over the
+  gas's life, taken from the same gusts that swing the cables (`gustAt`), says how far each
+  height has drifted, so a gust bends the plume over and the kink climbs away with the gas
+  that felt it. About that bent line, billows scaled to the plume's width and finer eddies
+  carried by the local flow (rise, wind and a swirl) shape it. Both are flow maps, two phases
+  of advection cross-faded so the noise never smears, and a passing gust speeds and roughens
+  them. It spreads, thins, and is eaten from the edges as it climbs. The overcast and the moon
+  light it from above (one tap towards them for its own shadow), the city glows on it from
+  below, nearby flares light it as they gout, and the flue's fire glows in a refinery
+  stack's throat.
 
 `building_lab industry [size]` surveys the industrial fringe: styles, tiers, units, pipes and
 rejections, with a camera for a few of each kind, and measures the mesh and litter of the chunks
@@ -621,7 +636,7 @@ from 5.5 m but never sag below 5 m, and never pass a lamp below its head; alley 
 sag below 3.4 m. Stations are spaced by streams seeded from the road or wall alone, so a
 cable comes out the same from whichever chunk builds it.
 
-Cables sway when a gust passes (`cableSway` in `city.vert`). Each one swings about the line
+Cables sway when a gust passes (`cableSway` in `city.vert`; `gustAt` in `common.glsl`, which the stacks' plumes feel too). Each one swings about the line
 between its ends, so a taut cable barely stirs, and like a pendulum it swings slower the
 slacker it hangs. Gusts are a slow noise field blowing across the city with the cloud deck's
 wind. They come only occasionally, cables near each other feel the same gust together, and

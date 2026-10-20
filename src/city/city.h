@@ -123,6 +123,8 @@ typedef struct Mesh {
     uint32_t  nair, capair;
     Flame    *flame;     /* flares' fire in this chunk (chunk-local) */
     uint32_t  nflame, capflame;
+    Plume    *plume;     /* stacks' smoke and steam in this chunk (chunk-local) */
+    uint32_t  nplume, capplume;
     int       xf;        /* emission transform: local frame -> chunk-local */
     float     xc, xs, xx, xz;
     float     xy;        /* ...raised this far: a building's or a lamp's base on the ground (city_ground_y),

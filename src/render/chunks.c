@@ -59,6 +59,8 @@ typedef struct Entry {
     uint32_t  nair;
     Flame    *flame;        /* kept while RESIDENT (chunks_flames) */
     uint32_t  nflame;
+    Plume    *plume;        /* kept while RESIDENT (chunks_plumes) */
+    uint32_t  nplume;
     /* ray-traced shadows (src/render/rt.c): the casting triangles of each page, as
      * page-local vertex indices, kept while resident so the BLAS can be
      * rebuilt whenever the chunk comes back within RT_RANGE */
@@ -184,11 +186,13 @@ static void table_remove(ChunkSystem *cs, int idx) {
     free(e->sky);
     free(e->air);
     free(e->flame);
+    free(e->plume);
     free(e->rtIdx);
     e->rtIdx = NULL;
     e->sky = e->air = NULL;
     e->flame = NULL;
-    e->nsky = e->nair = e->nflame = 0;
+    e->plume = NULL;
+    e->nsky = e->nair = e->nflame = e->nplume = 0;
     e->state = 0;
     cs->freeEntries[cs->freeEntryCount++] = idx;
 }
@@ -276,7 +280,7 @@ void chunks_destroy(ChunkSystem *cs) {
     for (int i = 0; i < cs->doneCount; ++i) mesh_free(&cs->done[i].mesh);
     free(cs->done);
     for (int i = 0; i < MAX_ENTRIES; ++i) {
-        mesh_free(&cs->entries[i].mesh); free(cs->entries[i].sky); free(cs->entries[i].air); free(cs->entries[i].flame); free(cs->entries[i].rtIdx);
+        mesh_free(&cs->entries[i].mesh); free(cs->entries[i].sky); free(cs->entries[i].air); free(cs->entries[i].flame); free(cs->entries[i].plume); free(cs->entries[i].rtIdx);
     }
     rt_destroy(cs->rt);
     for (int i = 0; i < MAX_FRAMES; ++i) {
@@ -753,6 +757,9 @@ static int upload_ready(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t
         e->flame = e->mesh.flame;
         e->nflame = e->mesh.nflame;
         e->mesh.flame = NULL;
+        e->plume = e->mesh.plume;
+        e->nplume = e->mesh.nplume;
+        e->mesh.plume = NULL;
         mesh_free(&e->mesh);
         e->state = CS_RESIDENT;
         uploads++;
@@ -1046,6 +1053,38 @@ uint32_t chunks_flames(ChunkSystem *cs, const double cam[3], FlameSet *dst) {
     }
     dst->count = n;
     memcpy(dst->flames, near, n * sizeof(Flame));
+    return n;
+}
+
+uint32_t chunks_plumes(ChunkSystem *cs, const double cam[3], PlumeSet *dst) {
+    const double P = CHUNK_SIZE;
+    Plume near[PLUME_MAX];
+    float d2s[PLUME_MAX];
+    uint32_t n = 0;
+    for (int i = 0; i < MAX_ENTRIES; ++i) {
+        const Entry *e = &cs->entries[i];
+        if (e->state != CS_RESIDENT || !e->nplume) continue;
+        double ox = e->cx * P - cam[0], oz = e->cz * P - cam[2];
+        for (uint32_t k = 0; k < e->nplume; ++k) {
+            Plume p = e->plume[k];
+            p.pos[0] = (float)(ox + p.pos[0]);
+            p.pos[1] = (float)(p.pos[1] - cam[1]);
+            p.pos[2] = (float)(oz + p.pos[2]);
+            float d2 = p.pos[0] * p.pos[0] + p.pos[1] * p.pos[1] + p.pos[2] * p.pos[2];
+            if (d2 > PLUME_RANGE * PLUME_RANGE) continue;
+            /* the nearest PLUME_MAX: insertion into a sorted list */
+            uint32_t at = n < PLUME_MAX ? n : PLUME_MAX;
+            while (at > 0 && d2s[at - 1] > d2) at--;
+            if (at >= PLUME_MAX) continue;
+            uint32_t last = n < PLUME_MAX ? n : PLUME_MAX - 1;
+            for (uint32_t j = last; j > at; --j) { near[j] = near[j - 1]; d2s[j] = d2s[j - 1]; }
+            near[at] = p; d2s[at] = d2;
+            if (n < PLUME_MAX) n++;
+        }
+    }
+    /* farthest first: the pass blends them back to front */
+    dst->count = n;
+    for (uint32_t k = 0; k < n; ++k) dst->plumes[k] = near[n - 1 - k];
     return n;
 }
 

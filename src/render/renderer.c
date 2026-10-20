@@ -98,6 +98,8 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         r->flameBuf[i] = vk_buffer(vk, sizeof(FlameSet), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        r->plumeBuf[i] = vk_buffer(vk, sizeof(PlumeSet), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         VkQueryPoolCreateInfo qi = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
         qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
         qi.queryCount = GT_COUNT;
@@ -128,7 +130,7 @@ void renderer_destroy(Renderer *r) {
     proxy_gpu_destroy(r);
     vk_buffer_destroy(vk, &r->shotBuf);
     VkPipeline pipes[] = { r->cityPipe, r->plantPipe, r->terrainPipe, r->planetPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
-                           r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->flamePipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
+                           r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->flamePipe, r->smokePipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
     vkDestroyPipelineLayout(vk->device, r->compositePL, NULL);
@@ -167,6 +169,7 @@ void renderer_destroy(Renderer *r) {
         vk_buffer_destroy(vk, &r->ubo[i]);
         vk_buffer_destroy(vk, &r->skyBuf[i]);
         vk_buffer_destroy(vk, &r->flameBuf[i]);
+        vk_buffer_destroy(vk, &r->plumeBuf[i]);
         vkDestroyQueryPool(vk->device, r->timeQ[i], NULL);
     }
     vkDestroyCommandPool(vk->device, r->cmdPool, NULL);
@@ -320,6 +323,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     chunks_update(r->chunks, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     chunks_sky_lights(r->chunks, cam, (SkyGrid *)r->skyBuf[slot].mapped);
     r->flameCount[slot] = chunks_flames(r->chunks, cam, (FlameSet *)r->flameBuf[slot].mapped);
+    r->plumeCount[slot] = chunks_plumes(r->chunks, cam, (PlumeSet *)r->plumeBuf[slot].mapped);
     proxy_gpu_update(r, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_STREAM);
     terrain_gpu_update(r, cmd, slot, cam, &ubo.viewProj);

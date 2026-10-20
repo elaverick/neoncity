@@ -4,12 +4,13 @@
  * Industrial plants and substations (src/gen/building_industry.c) as
  * geometry, in the building's frame: vessels, stacks, flares, gasholders,
  * frames, racks and decks, transformers and gantries, pipes and conductors,
- * ladders and stairs, the fence and the lamps. The buildings among them
- * (control buildings, halls, warehouses, offices, switch houses) are facades,
+ * ladders and stairs, the fence and the lamps. Stacks' plumes and flares'
+ * fire are volumes of their own (push_plume, push_flame). The buildings
+ * among them (control buildings, halls, warehouses, offices, switch houses) are facades,
  * emitted with every other building's (emit_building).
  *
  * MAT_INDUSTRY vertices (shaders/city/industry.glsl): params y the surface
- * (IND_*), z the paint (PA_*) | pattern, w a flame's or plume's phase; uv
+ * (IND_*), z the paint (PA_*) | pattern; uv
  * metres round or along a surface, and height.
  * ========================================================================= */
 
@@ -118,20 +119,12 @@ static void tube(Mesh *m, vec3 a, vec3 b, float r, int n, int caps, Mat mt) {
     }
 }
 
-/* A flat quad facing both ways (two quads back to back): veils, flames, mesh. */
+/* A flat quad facing both ways (two quads back to back): the fences' mesh. */
 static void sheet(Mesh *m, vec3 a, vec3 b, vec3 c, vec3 d, float u1, float v1, Mat mt) {
     vec3 n = v3_norm(v3_cross(v3_sub(b, a), v3_sub(d, a)));
     float uv[4][2] = { { 0, 0 }, { u1, 0 }, { u1, v1 }, { 0, v1 } };
     emit_quad(m, a, b, c, d, n, uv, mt);
     emit_quad(m, a, b, c, d, v3_scale(n, -1.0f), uv, mt);
-}
-
-/* Crossed sheets standing at (x, y, z), w wide and h tall: a flame or a plume. */
-static void crossed(Mesh *m, float x, float y, float z, float w, float h, Mat mt) {
-    for (int k = 0; k < 2; ++k) {
-        float dx = k ? w * 0.5f : 0.0f, dz = k ? 0.0f : w * 0.5f;
-        sheet(m, v3(x - dx, y, z - dz), v3(x + dx, y, z + dz), v3(x + dx, y + h, z + dz), v3(x - dx, y + h, z - dz), 1.0f, 1.0f, mt);
-    }
 }
 
 /* A railing: a wire-mesh panel and a top rail from a to b, standing h. */
@@ -361,11 +354,12 @@ static void stack(Mesh *m, const BGraph *g, int si, Rng *rr) {
         frustum(m, cx, cz, r1 - 0.25f, r1 - 0.25f, top - 2.0f, top, n, -1.0f, top_);   /* the flue's soot-black throat */
         ring(m, cx, cz, 0.0f, r1 - 0.25f, top - 2.0f, 1, n, mat(MAT_METAL, g->seed, 4, 0, 0));
     }
-    /* a plume off the night refinery's stacks and some of the gas plants' */
+    /* a plume off the night refinery's stacks (smoke) and some of the gas plants' (steam) */
     if (g->style == PST_NIGHT || (g->style == PST_GAS && rng_float(rr) < 0.5f)) {
-        Mat st = imat(IND_STEAM, PA_WHITE, 0, hash_combine(g->seed, (uint32_t)si));
-        st.p[3] = (uint8_t)(rng_u32(rr) & 255u);
-        crossed(m, cx, s->y1 + 0.2f, cz, r1 * 5.0f + 3.0f, r1 * 8.0f + 8.0f, st);
+        uint32_t seed = hash_combine(g->seed, (uint32_t)si) ^ rng_u32(rr);
+        int smoke = g->style == PST_NIGHT;
+        float rise = smoke ? 55.0f + r1 * 12.0f : 22.0f + r1 * 8.0f;   /* steam evaporates; smoke drifts on and thins */
+        push_plume(m, v3(cx, s->y1, cz), r1 - 0.25f, rise, seed, smoke ? PLUME_SMOKE : PLUME_STEAM);
     }
     if (s->y1 - G0 > 45.0f) obstruction(m, g, si, cx, cz, r1, s->y1 + 0.4f);
 }

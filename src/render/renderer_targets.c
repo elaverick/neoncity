@@ -206,6 +206,7 @@ void create_targets(Renderer *r) {
         VkDescriptorSet set = r->flameSet[i] = alloc_set(r, r->flameLayout);
         write_buf_set(vk, set, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, r->ubo[i].buf, sizeof(FrameUBO));
         write_buf_set(vk, set, 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, r->flameBuf[i].buf, sizeof(FlameSet));
+        write_buf_set(vk, set, 6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, r->plumeBuf[i].buf, sizeof(PlumeSet));
         write_tex_set(vk, set, 4, CIS, r->nearestClamp, sceneDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         write_tex_set(vk, set, 5, CIS, r->linearRepeat, r->cloudNoise.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }

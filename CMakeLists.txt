@@ -86,7 +86,7 @@ set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_do
             cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
             prepass.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag
             terrain/planet.vert terrain/planet.frag
-            proxy/proxy.vert proxy/proxy.frag flame.vert flame.frag)
+            proxy/proxy.vert proxy/proxy.frag flame.vert flame.frag smoke.vert smoke.frag)
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)

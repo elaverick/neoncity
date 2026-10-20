@@ -80,6 +80,12 @@ static const uint32_t SPV_flame_vert[] = {
 static const uint32_t SPV_flame_frag[] = {
 #include "flame.frag.inc"
 };
+static const uint32_t SPV_smoke_vert[] = {
+#include "smoke.vert.inc"
+};
+static const uint32_t SPV_smoke_frag[] = {
+#include "smoke.frag.inc"
+};
 
 /* ------------------------------------------------------------ layouts --- */
 
@@ -200,13 +206,14 @@ void create_layouts(Renderer *r) {
         { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },  /* reflection G-buffer */
     };
     r->ssrApplyLayout = make_set_layout(vk, ssrApply, 3);
-    VkDescriptorSetLayoutBinding flame[4] = {
+    VkDescriptorSetLayoutBinding flame[5] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* FlameSet */
         { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },                        /* scene depth */
         { 5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },                        /* noise volume */
+        { 6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* PlumeSet */
     };
-    r->flameLayout = make_set_layout(vk, flame, 4);
+    r->flameLayout = make_set_layout(vk, flame, 5);
     VkDescriptorSetLayoutBinding terrain[3] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },     /* clipmap samples */
@@ -445,6 +452,10 @@ void create_pipelines(Renderer *r) {
                    r->flamePL, HDR_FORMAT, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false };
     fl.additive = true;
     r->flamePipe = make_graphics(vk, &fl);
+    /* smoke: the same, blended over the scene by its transmittance (smoke.frag) */
+    GfxDesc sm = { SPV_smoke_vert, sizeof(SPV_smoke_vert), SPV_smoke_frag, sizeof(SPV_smoke_frag),
+                   r->flamePL, HDR_FORMAT, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false, true };
+    r->smokePipe = make_graphics(vk, &sm);
     if (r->rt) {
         GfxDesc pre = { SPV_city_pre_vert, sizeof(SPV_city_pre_vert), SPV_prepass_frag, sizeof(SPV_prepass_frag),
                         r->scenePL, GBUF_FORMAT, DEPTH_FORMAT, vk->msaa, true, true, true, true };

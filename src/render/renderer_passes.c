@@ -40,9 +40,10 @@ void record_bloom(Renderer *r, VkCommandBuffer cmd) {
 
 /* Clouds: march at half resolution against the scene depth (clouds.comp), then
  * blend into the HDR target with a depth-aware upsample (cloud_composite.frag).
- * Then the flares' fire: a box round each flame near the camera, marched
- * against the same depth and added on top (flame.frag), so the clouds and the
- * mist don't veil it and the bloom catches it. */
+ * Then the stacks' plumes, each a box marched against the same depth and
+ * blended over the scene back to front (smoke.frag), and the flares' fire: a
+ * box round each flame near the camera, added on top (flame.frag), so the
+ * clouds and the mist don't veil it and the bloom catches it. */
 void record_clouds(Renderer *r, VkCommandBuffer cmd, int slot) {
     VkCore *vk = r->vk;
     const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, FS = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
@@ -77,9 +78,14 @@ void record_clouds(Renderer *r, VkCommandBuffer cmd, int slot) {
     vkCmdPushConstants(cmd, r->cloudCompPL, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cp), &cp);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     timestamp(r, cmd, slot, GT_CLOUDS);
+    if (r->plumeCount[slot] || r->flameCount[slot])
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->flamePL, 0, 1, &r->flameSet[slot], 0, NULL);
+    if (r->plumeCount[slot]) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->smokePipe);
+        vkCmdDraw(cmd, 36, r->plumeCount[slot], 0, 0);
+    }
     if (r->flameCount[slot]) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->flamePipe);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->flamePL, 0, 1, &r->flameSet[slot], 0, NULL);
         vkCmdDraw(cmd, 36, r->flameCount[slot], 0, 0);
     }
     vkCmdEndRendering(cmd);

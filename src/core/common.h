@@ -194,6 +194,24 @@ typedef struct Flame {
 } Flame;
 typedef struct FlameSet { uint32_t count, pad[3]; Flame flames[FLAME_MAX]; } FlameSet;
 
+/* Stacks' smoke and steam (src/city/mesh_industry.c), a volume ray-marched by
+ * the flame pass before the fire (shaders/smoke.frag). Each frame the
+ * PLUME_MAX plumes nearest the camera, within PLUME_RANGE, are gathered
+ * camera-relative, farthest first so they blend back to front
+ * (chunks_plumes). std430: must match shaders/smoke.glsl. */
+#define PLUME_MAX         48
+#define PLUME_RANGE       1500.0f
+enum { PLUME_SMOKE = 0, PLUME_STEAM = 1 };
+typedef struct Plume {
+    float    pos[3];   /* the stack's mouth (chunk-local in a Mesh, camera-relative on the GPU) */
+    float    radius;   /* the mouth's (m) */
+    float    rise;     /* how high it climbs before it has thinned away (m) */
+    uint32_t seed;
+    uint32_t kind;     /* PLUME_* */
+    float    pad;
+} Plume;
+typedef struct PlumeSet { uint32_t count, pad[3]; Plume plumes[PLUME_MAX]; } PlumeSet;
+
 /* Distance beyond which a sky light adds too little to see. */
 static inline float sky_light_range(float power) {
     float r = sqrtf(power * SKY_GAIN / 0.04f);

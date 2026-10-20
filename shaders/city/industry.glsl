@@ -4,10 +4,10 @@
  * Industrial plants and substations (src/city/mesh_industry.c). params y
  * surface (IND_* in src/core/common.h), z paint (low 4 bits; PA_* in
  * src/gen/building.h) | pattern << 4 (1 hoops, 2 cladding ribs, 4 heavy
- * grime), w a plume's phase. Paint, gratings and
- * glazing are lit like the facades (wallLighting); steam and the fences' wire
- * mesh are veils over one MSAA sample (veil, arcology.glsl). A flare's fire is
- * a volume of its own (shaders/flame.frag).
+ * grime). Paint, gratings and glazing are lit like the facades
+ * (wallLighting); the fences' wire mesh is a veil over one MSAA sample (veil,
+ * arcology.glsl). A stack's plume and a flare's fire are volumes of their own
+ * (shaders/smoke.frag, shaders/flame.frag); IND_STEAM is no longer emitted.
  * ==================================================================== */
 
 const uint IND_PAINT = 0u, IND_GRATING = 1u, IND_STEAM = 2u, IND_GLOW = 3u, IND_MESH = 4u;
@@ -37,15 +37,6 @@ vec3 shadeIndustry(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 V = -normalize(rel);
     uint surf = prm.y;
     float y = p.y - gBase;
-    if (surf == IND_STEAM) {
-        // a plume rising off a stack, lit from below by the plant's lamps and flares
-        veil();
-        float rise = gTime * 0.35 + float(prm.w) * 0.1;
-        float puff = fbm(vec2(uv.x * 2.2 + hf(seed, 1u) * 9.0, uv.y * 1.6 - rise), seed & 0xFFFFu);
-        float I = smoothstep(0.32, 0.72, puff) * band(uv.x, 0.1, 0.9, 0.2) * (1.0 - uv.y) * smoothstep(0.0, 0.1, uv.y);
-        if (I < 0.03) discard;
-        return (vec3(0.18, 0.17, 0.165) + neonBounce(gWorld, y) * 6.0 + vec3(0.5, 0.22, 0.06) * exp(-uv.y * 2.5)) * I * 3.5;
-    }
     if (surf == IND_GLOW) {
         // glazing lit from within: amber saw-tooth roofs, the refinery's green windows
         vec3 c = (prm.z & 15u) == 11u ? vec3(0.35, 1.0, 0.45) : vec3(1.0, 0.6, 0.22);

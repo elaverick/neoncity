@@ -286,13 +286,16 @@ Section 11 of `docs/procedural-building-generation.md` (`src/gen/building_indust
   one yard would give more of them plants.
 - **Fences** have no collision; the player walks through them. A thin outline per panel run
   (and the gate) would do.
-- **Smoke and steam** are two crossed sheets of scrolling noise over each stack (`IND_STEAM`),
-  only on night refineries and some gas plants, and faint against the lit cloud deck. They want
-  real plumes: billowing, rising and spreading with height, bent over by the wind (the weather's
-  gusts), drifting into the cloud deck, dark smoke from the refinery's stacks and white steam from
-  the gas plant's, lit from below by the plant's lamps and flares (the light table) and glowing
-  orange over a flare. A volume (marched like the clouds, or a few stacked soft sprites) rather
-  than two flat sheets.
+- **Smoke and steam** (`shaders/smoke.frag`; see the README) are ray-marched plumes on night
+  refineries' stacks and some gas plants'. Left over:
+  - **Lit by the flares and a flat city glow,** not the plant's own lamps (the light table).
+  - **Grain:** one jittered march a frame with no temporal accumulation, so the edges sparkle.
+  - **Cost:** about 1.2 ms more with one plume filling much of the screen. A half-resolution
+    march with a depth-aware upsample (as the clouds') would cap it, as for the fire.
+  - **In front of the clouds,** as the fire is; a plume never reaches the deck or mixes into it.
+  - **Bent by the wind at the stack only:** the gust history is sampled at the mouth, not along
+    the path the gas has taken, and a strong gust shears the top of a tall plume into a sheet.
+  - **Not reflected** in the wet streets, as the fire isn't, and casts no shadow.
 - **Fire** (`shaders/flame.frag`, `flameGout` in `shaders/common.glsl`; see the README) is a
   ray-marched volume on each flare, in gouts or steady. Left over:
   - **Only flares burn.** Venting fire on the night and gothic refineries' stack tops and

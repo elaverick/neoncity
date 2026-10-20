@@ -188,6 +188,7 @@ Face face_local(float width);
 void push_light(SkyLight **arr, uint32_t *n, uint32_t *cap, const SkyLight *L);
 void sign_lights(Mesh *m, vec3 c, vec3 n, float area, Mat mt);
 void push_flame(Mesh *m, vec3 c, float reach, float radius, uint32_t id);
+void push_plume(Mesh *m, vec3 c, float radius, float rise, uint32_t seed, uint32_t kind);
 /* A flare's fire: how high its gouts climb and how wide, from the flare's height (both the mesh's and the light table's). */
 static inline float flare_reach(float h) { return h * 0.7f < 12.0f ? 12.0f : h * 0.7f > 90.0f ? 90.0f : h * 0.7f; }
 void emit_face_panel(Mesh *m, const Face *f, float u0, float u1, float y0, float y1, float out, Mat mt);
