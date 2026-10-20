@@ -74,7 +74,7 @@ static int building_boxes(const Building *b, const BGraph *g, int k, double ox, 
                     (uint32_t)(s->palette & 7u) << PX_PALETTE_SHIFT | (s->bands ? PX_BANDS : 0u) |
                     (g->fine ? PX_FINE : 0u) | (s->ledTop ? PX_LEDTOP : 0u) | (top ? PX_TOP : 0u) |
                     (uint32_t)i << PX_SECTION_SHIFT | floor0 << PX_FLOOR_SHIFT |
-                    (g->archetype == ARCH_ARCOLOGY ? PX_ARCOLOGY : 0u);
+                    (g->archetype == ARCH_ARCOLOGY ? PX_ARCOLOGY : 0u) | (bsec_facade(s) ? 0u : PX_PLAIN);
     }
     return n;
 }

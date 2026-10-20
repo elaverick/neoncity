@@ -22,6 +22,7 @@
  *   mesh_lobby.c     office lobbies (src/gen/interior.c) realised as geometry
  *   mesh_planting.c  the lobbies' planters and the plants grown in them
  *   mesh_arcology.c  arcology concourse levels (src/gen/arcology.c)
+ *   mesh_industry.c  industrial plants and substations (src/gen/building_industry.c)
  *   streets.c        roads, sidewalks, kerbs, drop-kerb slopes, lamp posts
  *   light_tiles.c    each chunk's light table
  *   cables.c         overhead cables
@@ -186,6 +187,9 @@ void emit_box(Mesh *m, vec3 mn, vec3 mx, int faces, Mat mt, int uvmode);
 Face face_local(float width);
 void push_light(SkyLight **arr, uint32_t *n, uint32_t *cap, const SkyLight *L);
 void sign_lights(Mesh *m, vec3 c, vec3 n, float area, Mat mt);
+void push_flame(Mesh *m, vec3 c, float reach, float radius, uint32_t id);
+/* A flare's fire: how high its gouts climb and how wide, from the flare's height (both the mesh's and the light table's). */
+static inline float flare_reach(float h) { return h * 0.7f < 12.0f ? 12.0f : h * 0.7f > 90.0f ? 90.0f : h * 0.7f; }
 void emit_face_panel(Mesh *m, const Face *f, float u0, float u1, float y0, float y1, float out, Mat mt);
 uint8_t q_half(float metres);
 void emit_emissive_box(Mesh *m, vec3 c, float half, uint8_t color, uint8_t mode, uint8_t phase);
@@ -224,6 +228,17 @@ void emit_arcology(Mesh *m, const BGraph *g, const ALayout *A);
 void emit_arc_portals(Mesh *m, const BGraph *g, const ALayout *A);
 void emit_arc_frontage(Mesh *m, const BGraph *g, const ALayout *A);
 void emit_arc_terraces(Mesh *m, const BGraph *g, const ALayout *A);
+
+/* mesh_industry.c */
+/* A plant's lamps, in the building's frame: sodium lamps on its decks, frames
+ * and racks, floodlights on masts and gantries, and its flares' fire. The
+ * mesh draws them and the light tables (light_tiles.c) light with them. */
+enum { ILAMP_SODIUM = 0, ILAMP_FLOOD, ILAMP_MAST, ILAMP_FLARE };
+typedef struct ILamp { float x, y, z; int kind; float reach; uint32_t id; } ILamp;   /* reach, id: a flare's (ILAMP_FLARE) */
+#define INDUSTRY_MAX_LAMPS 40
+int industry_lamps(const BGraph *g, ILamp *out, int max);
+/* Everything of a plant or substation but its buildings' facades. */
+void emit_industry(Mesh *m, const Building *b, const BGraph *g);
 
 /* streets.c */
 uint32_t lamp_fault(const Lamp *L);

@@ -86,7 +86,7 @@ set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_do
             cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
             prepass.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag
             terrain/planet.vert terrain/planet.frag
-            proxy/proxy.vert proxy/proxy.frag)
+            proxy/proxy.vert proxy/proxy.frag flame.vert flame.frag)
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)
@@ -127,10 +127,10 @@ add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/render src/app)
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_lobby.c src/city/mesh_planting.c
-                src/city/mesh_arcology.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
+                src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
                 src/city/litter.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c
                 src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/core/thread.c
-                src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c
+                src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
                 src/gen/interior_fixtures.c src/gen/interior_validate.c
@@ -180,6 +180,8 @@ foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test wo
 endforeach()
 add_test(NAME city_determinism COMMAND city_test)
 add_test(NAME building_rules COMMAND building_lab 2000)
+# Industrial plants and substations, over the fringe where the industrial zones lie.
+add_test(NAME industry_rules COMMAND building_lab industry 14000)
 add_test(NAME interior_rules COMMAND interior_lab 1500)
 add_test(NAME plant_rules COMMAND plant_lab 12)
 # Arcology interiors over a wide area (only mega plots are generated, so it is quick).

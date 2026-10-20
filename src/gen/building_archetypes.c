@@ -98,6 +98,31 @@ static int spec_ok(const FootSpec *s) {
     }
 }
 
+/* Section 4.2's minimum width: whether a spec's footprint is at least
+ * c->minW across in every direction (its narrowest calliper width). */
+static int spec_wide(const Ctx *c, const FootSpec *s) {
+    BFoot f;
+    make_foot(s, &f);
+    return bloop_width(&f.outer) >= c->minW - 0.01f;
+}
+
+/* A tower's spec grown about its centre until it is wide enough, if that
+ * keeps it within w by d (what it stands on). */
+static int widen_spec(Ctx *c, FootSpec *s, float w, float d) {
+    if (spec_wide(c, s)) return 1;
+    BFoot f;
+    make_foot(s, &f);
+    float have = bloop_width(&f.outer);
+    if (have <= 0.0f) return 0;
+    FootSpec g = spec_scale(*s, c->minW / have * 1.002f);
+    if (g.w > w + 0.01f || g.d > d + 0.01f || !spec_wide(c, &g)) {
+        blog_printf(c->log, "  rejected: tower %.1f m across, under four bays (%.1f m), with no room to widen\n", have, c->minW);
+        return 0;
+    }
+    *s = g;
+    return 1;
+}
+
 /* ===========================================================================
  * Building grammar
  * ========================================================================= */
@@ -126,12 +151,13 @@ int add_sec(Ctx *c, int type, float y0, float y1, const BFoot *f, int b0, int b1
     return g->nsec++;
 }
 
-static void add_support(Ctx *c, int type, int sec, float x0, float y0, float z0, float x1, float y1, float z1, float size) {
+int add_support(Ctx *c, int type, int sec, float x0, float y0, float z0, float x1, float y1, float z1, float size) {
     BGraph *g = c->g;
-    if (g->nsup >= BG_MAX_SUPP) return;
-    BSupport *s = &g->sup[g->nsup++];
+    if (g->nsup >= BG_MAX_SUPP) return -1;
+    BSupport *s = &g->sup[g->nsup];
     s->type = type; s->section = sec;
     s->x0 = x0; s->y0 = y0; s->z0 = z0; s->x1 = x1; s->y1 = y1; s->z1 = z1; s->size = size;
+    return g->nsup++;
 }
 
 /* Columns under the outer edges of section `sec`, inset from its edge, on
@@ -244,6 +270,13 @@ static int build_tower(Ctx *c, FootSpec ts, int on, int k0, int kTop, int allowP
     static const char *PROF[] = { "straight", "tapered", "waisted", "flared", "twisted" };
     float pw[5] = { 0.5f, 0.15f, 0.1f, 0.1f, 0.15f };
     int prof = allowProfile && kTop - k0 >= 10 ? pick(&c->rf, pw, 5) : 0;
+    if (prof == 1 || prof == 2 || prof == 3) {
+        FootSpec thin = spec_scale(ts, prof == 1 ? 0.65f : 0.72f);   /* its narrowest slice */
+        if (!spec_wide(c, &thin)) {
+            blog_printf(c->log, "  rejected: %s profile would narrow under four bays (%.1f m); straight instead\n", PROF[prof], c->minW);
+            prof = 0;
+        }
+    }
     blog_printf(c->log, "  tower: %s %s %.0fx%.0f m, floors %d-%d\n", PROF[prof], FAM_NAMES[ts.fam], ts.w, ts.d, k0, kTop);
     int below = on;
     if (prof == 0) {
@@ -260,7 +293,7 @@ static int build_tower(Ctx *c, FootSpec ts, int on, int k0, int kTop, int allowP
             below = si;
             k = kEnd;
             FootSpec nx = spec_inset(cur, rng_range(&c->rf, 2.0f, 4.0f));
-            if (!spec_ok(&nx)) { c->g->sec[si].y1 = lvl(c, kTop); break; }
+            if (!spec_ok(&nx) || !spec_wide(c, &nx)) { c->g->sec[si].y1 = lvl(c, kTop); break; }
             cur = nx;
         }
         return below;
@@ -291,7 +324,7 @@ static int build_tower(Ctx *c, FootSpec ts, int on, int k0, int kTop, int allowP
 static int add_crown(Ctx *c, int top, FootSpec base, int kFrom, int kTo, int spire) {
     if (kTo <= kFrom) return top;
     FootSpec cs = spec_inset(base, rng_range(&c->rf, 1.5f, 3.0f));
-    if (!spec_ok(&cs)) return top;
+    if (!spec_ok(&cs) || !spec_wide(c, &cs)) return top;
     BFoot f;
     make_foot(&cs, &f);
     int si = add_sec(c, SEC_CROWN, lvl(c, kFrom), lvl(c, kTo), &f, top, -1);
@@ -305,7 +338,7 @@ int arch_office(Ctx *c) {
     float fw[FAM_COUNT] = { 0.35f, 0.2f, 0.15f, 0.05f, 0.1f, 0.0f, 0.0f, 0.15f };
     int fam = pick(&c->rf, fw, FAM_COUNT);
     FootSpec s = site_spec(c, fam, rng_range(&c->rf, 0.0f, 1.2f));
-    if (!spec_ok(&s)) s = site_spec(c, FAM_RECT, 0.5f);
+    if (!spec_ok(&s) || !spec_wide(c, &s)) s = site_spec(c, FAM_RECT, 0.5f);
     blog_printf(c->log, "  footprint: %s %.0fx%.0f m\n", FAM_NAMES[s.fam], s.w, s.d);
     int arcade = (s.fam == FAM_RECT || s.fam == FAM_CHAMFER) && rng_float(&c->rf) < 0.12f;
     int setback = c->N >= 6 && rng_float(&c->rf) < 0.35f;
@@ -314,7 +347,7 @@ int arch_office(Ctx *c) {
     if (body < 0) return 0;
     if (setback && kLow < c->N) {
         FootSpec u = spec_inset(s, rng_range(&c->rf, 2.5f, 5.0f));
-        if (spec_ok(&u)) {
+        if (spec_ok(&u) && spec_wide(c, &u)) {
             BFoot f;
             make_foot(&u, &f);
             add_sec(c, SEC_SETBACK, lvl(c, kLow), lvl(c, c->N), &f, body, -1);
@@ -351,7 +384,9 @@ int arch_skyscraper(Ctx *c) {
         ts.ang = rng_range(&c->rf, 0.17f, 0.7f);
         ts = spec_scale(ts, 0.8f);
     }
-    if (!spec_ok(&ts)) return 0;
+    if (!spec_ok(&ts) || !widen_spec(c, &ts, ps.w, ps.d)) return 0;
+    ts.cx = clampf(ts.cx, ps.cx - (ps.w - ts.w) * 0.5f, ps.cx + (ps.w - ts.w) * 0.5f);
+    ts.cz = clampf(ts.cz, ps.cz - (ps.d - ts.d) * 0.5f, ps.cz + (ps.d - ts.d) * 0.5f);
     int crown = rng_float(&c->rf) < 0.55f && N - P >= 12 ? rng_int(&c->rf, 2, 4) : 0;
     int top = build_tower(c, ts, pod, P, N - crown, 1);
     if (crown) {
@@ -402,6 +437,7 @@ int arch_projection(Ctx *c) {
     FootSpec bs = blk;
     bs.w = x1 - x0; bs.d = z1 - z0; bs.cx = (x0 + x1) * 0.5f; bs.cz = (z0 + z1) * 0.5f;
     if (!spec_ok(&bs)) return 0;
+    if (!spec_wide(c, &bs)) { blog_printf(c->log, "  rejected: base %.1f m across behind the projection, under four bays\n", minf(bs.w, bs.d)); return 0; }
     int k0 = rng_int(&c->rf, 1, N - 3 < 4 ? N - 3 : 4);
     int k1 = k0 + rng_int(&c->rf, 2, 6);
     if (k1 > N) k1 = N;
@@ -446,7 +482,7 @@ int arch_projection(Ctx *c) {
             ts = spec_scale(ts, rng_range(&c->rf, 0.6f, 0.85f));
             ts.fam = rng_float(&c->rf) < 0.5f ? FAM_RECT : FAM_CHAMFER;
             ts.p1 = rng_range(&c->rf, 0.08f, 0.2f);
-            if (spec_ok(&ts)) build_tower(c, ts, pb, k1, N, 0);
+            if (spec_ok(&ts) && widen_spec(c, &ts, bs.w, bs.d)) build_tower(c, ts, pb, k1, N, 0);
         } else {
             add_sec(c, SEC_BODY, lvl(c, k1), lvl(c, N), &bf, pb, -1);
         }
@@ -461,7 +497,7 @@ int arch_twin(Ctx *c) {
     float gap = rng_range(&c->rf, 9.0f, 14.0f);
     float tl = (L - 2.0f * m - gap) * 0.5f * rng_range(&c->rf, 0.85f, 1.0f);
     float tsd = (S - 2.0f * m) * rng_range(&c->rf, 0.6f, 0.9f);
-    if (tl < 10.0f || tsd < 10.0f || c->N < 12) return 0;
+    if (tl < maxf(10.0f, c->minW) || tsd < maxf(10.0f, c->minW) || c->N < 12) return 0;
     int P = rng_int(&c->rf, 1, 3);
     FootSpec ps = site_spec(c, FAM_RECT, m);
     int gi, pod = build_base(c, &ps, P, rng_float(&c->rf) < 0.15f, 0, SEC_PODIUM, &gi);
@@ -553,7 +589,7 @@ int arch_gateway(Ctx *c) {
         FootSpec ts = spec_scale(sp, rng_range(&c->rf, 0.5f, 0.75f));
         ts.fam = FAM_CHAMFER;
         ts.p1 = rng_range(&c->rf, 0.08f, 0.2f);
-        if (spec_ok(&ts)) build_tower(c, ts, span, ke, c->N, 1);
+        if (spec_ok(&ts) && widen_spec(c, &ts, sp.w, sp.d)) build_tower(c, ts, span, ke, c->N, 1);
     }
     return 1;
 }

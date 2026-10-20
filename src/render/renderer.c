@@ -1,7 +1,7 @@
 #include "renderer_internal.h"
 
 static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "terrain upload", "shelter", "prepass", "shadow rays", "shadow filter",
-                                                "city", "plants", "proxies", "terrain", "sky", "post" };
+                                                "city", "plants", "proxies", "terrain", "sky", "clouds", "flames", "post" };
 
 void renderer_set_shadows(Renderer *r, bool on) { r->shadowsOn = on && r->rt; }
 bool renderer_shadows(Renderer *r) { return r->shadowsOn; }
@@ -96,6 +96,8 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         r->skyBuf[i] = vk_buffer(vk, sizeof(SkyGrid), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        r->flameBuf[i] = vk_buffer(vk, sizeof(FlameSet), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         VkQueryPoolCreateInfo qi = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
         qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
         qi.queryCount = GT_COUNT;
@@ -126,7 +128,7 @@ void renderer_destroy(Renderer *r) {
     proxy_gpu_destroy(r);
     vk_buffer_destroy(vk, &r->shotBuf);
     VkPipeline pipes[] = { r->cityPipe, r->plantPipe, r->terrainPipe, r->planetPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
-                           r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
+                           r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->flamePipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
     vkDestroyPipelineLayout(vk->device, r->compositePL, NULL);
@@ -136,6 +138,7 @@ void renderer_destroy(Renderer *r) {
     vkDestroyPipelineLayout(vk->device, r->ssrPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->ssrApplyPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->shelterPL, NULL);
+    vkDestroyPipelineLayout(vk->device, r->flamePL, NULL);
     vkDestroyPipelineLayout(vk->device, r->shadowPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->terrainPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->planetPL, NULL);
@@ -150,6 +153,7 @@ void renderer_destroy(Renderer *r) {
     vkDestroyDescriptorSetLayout(vk->device, r->cloudCompLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->ssrLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->ssrApplyLayout, NULL);
+    vkDestroyDescriptorSetLayout(vk->device, r->flameLayout, NULL);
     vkDestroyDescriptorPool(vk->device, r->staticPool, NULL);
     vkDestroySampler(vk->device, r->linearClamp, NULL);
     vkDestroySampler(vk->device, r->nearestClamp, NULL);
@@ -162,6 +166,7 @@ void renderer_destroy(Renderer *r) {
         vkDestroySemaphore(vk->device, r->imageReady[i], NULL);
         vk_buffer_destroy(vk, &r->ubo[i]);
         vk_buffer_destroy(vk, &r->skyBuf[i]);
+        vk_buffer_destroy(vk, &r->flameBuf[i]);
         vkDestroyQueryPool(vk->device, r->timeQ[i], NULL);
     }
     vkDestroyCommandPool(vk->device, r->cmdPool, NULL);
@@ -314,6 +319,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     timestamp(r, cmd, slot, GT_START);
     chunks_update(r->chunks, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     chunks_sky_lights(r->chunks, cam, (SkyGrid *)r->skyBuf[slot].mapped);
+    r->flameCount[slot] = chunks_flames(r->chunks, cam, (FlameSet *)r->flameBuf[slot].mapped);
     proxy_gpu_update(r, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_STREAM);
     terrain_gpu_update(r, cmd, slot, cam, &ubo.viewProj);

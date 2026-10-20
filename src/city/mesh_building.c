@@ -138,10 +138,11 @@ int envelope_spans(const BGraph *g, const Behind *bh, const BLoop *l, int li, in
  *          market block (lightboxes in the glass) << 7 (both set by emit_walls) */
 static Mat facade_mat(const Building *b, const BGraph *g, int si, const FaceKey *fk, int real, float *packW) {
     const BSection *s = &g->sec[si];
+    int shop = bgen_industrial(g) ? 0 : b->shop;   /* a plant's buildings have no shopfronts */
     Mat mt = mat(MAT_FACADE, g->seed, (uint8_t)si,
                  (uint8_t)((bsec_grounded(s) ? 1 : 0) | (g->groundMode << 1) | (s->win << 3) | (s->bands ? 32 : 0) |
                            (g->fine ? 64 : 0) | (real ? 128 : 0)),
-                 (uint8_t)(s->palette | (b->shop << 3)));
+                 (uint8_t)(s->palette | (shop << 3)));
     mt.aux = w16(fk->prevLen) | (uint32_t)fk->face << 12 | (uint32_t)fk->next << 18 |
              (uint32_t)(fk->startConvex | fk->endConvex << 1 | fk->start90 << 2 | fk->end90 << 3) << 24 |
              (uint32_t)(s->plant & 15) << 28;
@@ -452,8 +453,60 @@ static void roof_pitched(Mesh *m, const BGraph *g, int si, Rng *r) {
     }
 }
 
+/* An industrial shed's roof: a shallow gable along its length, or saw teeth
+ * across it, their steep faces glazed and lit from within. */
+static void roof_shed(Mesh *m, const BGraph *g, int si) {
+    const BSection *s = &g->sec[si];
+    float x0, z0, x1, z1;
+    loop_box(&s->foot.outer, &x0, &z0, &x1, &z1);
+    int alongX = x1 - x0 >= z1 - z0;
+    float L = alongX ? x1 - x0 : z1 - z0, W = alongX ? z1 - z0 : x1 - x0, y = s->y1;
+    int clad = g->style == PST_GAS ? PA_CLAD : g->style == PST_GOTHIC ? PA_RUST : PA_SOOT;
+    Mat roof = mat(MAT_INDUSTRY, g->seed, IND_PAINT, (uint8_t)(clad | 32), 0);
+    /* (a, b): along and across the shed, to the frame */
+#define P(a, h, b) (alongX ? v3(x0 + (a), y + (h), z0 + (b)) : v3(x0 + (b), y + (h), z0 + (a)))
+    float uv4[4][2] = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } }, uv3[3][2] = { { 0, 0 }, { 1, 0 }, { 0.5f, 1 } };
+    if (s->roof == ROOF_GABLE) {
+        float h = minf(W * 0.18f, 3.0f), o = 0.35f;
+        for (int sd = 0; sd < 2; ++sd) {
+            float b0 = sd ? W + o : -o, rise = h + o * h / (W * 0.5f);
+            vec3 a = P(-o, h - rise, b0), b = P(L + o, h - rise, b0), c = P(L + o, h, W * 0.5f), d = P(-o, h, W * 0.5f);
+            vec3 n = v3_norm(v3_cross(v3_sub(b, a), v3_sub(d, a)));
+            if (n.y < 0.0f) n = v3_scale(n, -1.0f);
+            emit_quad(m, a, b, c, d, n, uv4, roof);
+            emit_quad(m, a, b, c, d, v3_scale(n, -1.0f), uv4, roof);   /* the eaves' underside */
+        }
+        for (int e = 0; e < 2; ++e) {   /* the gable ends */
+            float a = e ? L : 0.0f;
+            vec3 n = alongX ? v3(e ? 1.0f : -1.0f, 0, 0) : v3(0, 0, e ? 1.0f : -1.0f);
+            emit_tri(m, P(a, 0.0f, 0.0f), P(a, 0.0f, W), P(a, h, W * 0.5f), n, uv3, roof);
+        }
+    } else {
+        int teeth = (int)maxf(2.0f, floorf(L / 5.0f));
+        float t = L / (float)teeth, h = minf(t * 0.45f, 2.6f);
+        Mat glass = mat(MAT_INDUSTRY, g->seed, IND_GLOW, (uint8_t)(g->style == PST_GOTHIC ? PA_GREEN : PA_ORANGE), 0);
+        for (int k = 0; k < teeth; ++k) {
+            float a0 = (float)k * t, a1 = a0 + t;
+            vec3 p0 = P(a0, 0.0f, 0.0f), p1 = P(a1, h, 0.0f), p2 = P(a1, h, W), p3 = P(a0, 0.0f, W);
+            vec3 n = v3_norm(v3_cross(v3_sub(p1, p0), v3_sub(p3, p0)));
+            if (n.y < 0.0f) n = v3_scale(n, -1.0f);
+            emit_quad(m, p0, p1, p2, p3, n, uv4, roof);
+            vec3 gn = alongX ? v3(1, 0, 0) : v3(0, 0, 1);
+            float guv[4][2] = { { 0, 0 }, { W, 0 }, { W, h }, { 0, h } };
+            emit_quad(m, P(a1, 0.0f, 0.0f), P(a1, 0.0f, W), P(a1, h, W), P(a1, h, 0.0f), gn, guv, glass);
+            for (int sd = 0; sd < 2; ++sd) {
+                vec3 sn = alongX ? v3(0, 0, sd ? 1.0f : -1.0f) : v3(sd ? 1.0f : -1.0f, 0, 0);
+                float b = sd ? W : 0.0f;
+                emit_tri(m, P(a0, 0.0f, b), P(a1, 0.0f, b), P(a1, h, b), sn, uv3, roof);
+            }
+        }
+    }
+#undef P
+}
+
 static void dress_roof(Mesh *m, const BGraph *g, int si, Rng *r) {
     switch (g->sec[si].roof) {
+    case ROOF_GABLE: case ROOF_SAWTOOTH: roof_shed(m, g, si); break;
     case ROOF_PLANT:   roof_plant(m, g, si, r); break;
     case ROOF_TANKS:   roof_tanks(m, g, si, r); break;
     case ROOF_SOLAR:   roof_solar(m, g, si, r); break;
@@ -590,7 +643,9 @@ static void emit_doors(Mesh *m, const BGraph *g, const Interiors *in) {
             emit_box(m, v3(u0, y1, -0.12f), v3(u1, y1 + 0.15f, 0.08f), F_NOBOT | F_BOT, metal, UV_FACADE);
         } else {
             emit_box(m, v3(u0 - 0.15f, gy, 0.0f), v3(u1 + 0.15f, y1 + 0.15f, 0.08f), F_NOBOT, metal, UV_FACADE);
-            emit_face_panel(m, &f, u0, u1, gy, y1, 0.1f, mat(MAT_DOOR, hash_combine(g->seed, (uint32_t)d), (uint8_t)dr->type, q_half(dr->width), q_half(dr->height)));
+            /* a plant's front door is a steel one, like its others */
+            uint8_t look = (uint8_t)(bgen_industrial(g) && dr->type == DOOR_PRIMARY ? DOOR_SERVICE : dr->type);
+            emit_face_panel(m, &f, u0, u1, gy, y1, 0.1f, mat(MAT_DOOR, hash_combine(g->seed, (uint32_t)d), look, q_half(dr->width), q_half(dr->height)));
         }
         if (dr->canopy) {
             emit_box(m, v3(u0 - 0.8f, y1 + 0.3f, 0.0f), v3(u1 + 0.8f, y1 + 0.55f, 1.8f), F_NOBOT | F_BOT, metal, UV_FACADE);
@@ -661,7 +716,8 @@ static void emit_face_trims(Mesh *m, const BGraph *g, int si, float bay, int *fi
         Xf sv = xf_save(m);
         float len = enter_face(m, l, k);
         /* LED strip under the top edge, and an accent band where a tower meets its base */
-        if (s->ledTop && s->roof != ROOF_HIP && s->roof != ROOF_PYRAMID) {
+        int pitched = s->roof == ROOF_HIP || s->roof == ROOF_PYRAMID || s->roof == ROOF_GABLE || s->roof == ROOF_SAWTOOTH;
+        if (s->ledTop && !pitched) {
             float uv[4][2] = { { 0, 0 }, { len, 0 }, { len, 1 }, { 0, 1 } };
             emit_quad(m, v3(0, s->y1 - 0.75f, 0.06f), v3(len, s->y1 - 0.75f, 0.06f), v3(len, s->y1 - 0.45f, 0.06f),
                       v3(0, s->y1 - 0.45f, 0.06f), v3(0, 0, 1), uv, mat(MAT_LEDSTRIP, g->seed, ledCol, (uint8_t)(ledCol & 1), 0));
@@ -682,7 +738,7 @@ static void emit_face_trims(Mesh *m, const BGraph *g, int si, float bay, int *fi
             }
         }
         /* parapet where the roof edge is open */
-        if (s->roof != ROOF_HIP && s->roof != ROOF_PYRAMID) {
+        if (!pitched) {
             EdgeInfo e = edge_of(l, k);
             float mx = e.ax + e.ex * len * 0.5f + e.ez * 0.6f, mz = e.az + e.ez * len * 0.5f - e.ex * 0.6f;
             if (roof_free(g, si, mx, mz, 0.0f))
@@ -803,15 +859,21 @@ static void emit_billboards(Mesh *m, const Building *b, const BGraph *g, Rng *rp
  * then signs, then billboards. */
 void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors *in) {
     Rng r = rng_make(b->seed ^ 0x77u);
-    int fins = 0;
+    int fins = 0, plant = bgen_industrial(g);
     float bay = bgen_bay_width(g->seed, g->fine);
     for (int si = 0; si < g->nsec; ++si) {
+        if (!bsec_facade(&g->sec[si])) continue;   /* a plant's units and decks: emit_industry */
         Behind bh;
         emit_walls(m, b, g, si, behind_of(in, si, &bh) ? &bh : NULL);
         emit_section_caps(m, g, si, in);
         emit_face_trims(m, g, si, bay, &fins);
         dress_roof(m, g, si, &r);
-        if (!has_above(g, si)) emit_tops(m, g, si, &r);
+        if (!has_above(g, si) && !plant) emit_tops(m, g, si, &r);
+    }
+    if (plant) {   /* no shop signs or billboards: its doors, then the plant itself */
+        emit_doors(m, g, in);
+        emit_industry(m, b, g);
+        return;
     }
     emit_supports(m, g);
     if (in->arc) {   /* the portals replace the graph's doors */

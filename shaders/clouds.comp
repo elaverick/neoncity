@@ -148,11 +148,23 @@ vec3 lightAt(vec3 p, Column c, vec3 glow, float mu) {
 // What a sky light is showing now: a neon sign's colour through its flicker,
 // or the average of a video screen's current advert colours (city.frag).
 vec3 skyLightColor(SkyLight L) {
+    if ((L.kind >> 8u) == AIR_FLAME) return fireColor(0.6) * flameGout(L.seed, gTime).power;   // a flare lighting the cloud base
     if ((L.kind & SKY_KIND_SCREEN) != 0u) {
         uint h = screenAdvert(L.seed, gTime);
         return mix(neonColor(h >> 4), neonColor(h >> 8), 0.5);
     }
     return neonColor(L.kind & 7u) * neonFlicker(L.seed, (L.kind >> 3) & 3u, gTime);
+}
+
+// A flare's light (AIR_FLAME: push_flame in src/city/mesh_emit.c) stands where its
+// fire is: from the nozzle it rises with the burning column (n.x carries the
+// gout's reach), and airColor dims it with the gout.
+SkyLight flameAt(SkyLight L) {
+    if ((L.kind >> 8u) != AIR_FLAME) return L;
+    Gout g = flameGout(L.seed, gTime);
+    L.pos.y += 0.4 * (g.head + g.tail) * L.n.x;
+    L.n = vec2(0.0);
+    return L;
 }
 
 // Light from nearby signs scattered at camera-relative point q: inverse-square,
@@ -165,7 +177,7 @@ vec3 signLight(vec3 q) {
     uint first = cell >> 8u, n = cell & 255u;
     vec3 sum = vec3(0.0);
     for (uint i = 0u; i < n; ++i) {
-        SkyLight L = skyLight[skyIndex[first + i]];
+        SkyLight L = flameAt(skyLight[skyIndex[first + i]]);
         vec3 d = q - L.pos;
         float r2 = dot(d, d), reach = skyLightRange(L.power);
         if (r2 >= reach * reach) continue;
@@ -194,6 +206,7 @@ vec3 airColor(SkyLight L) {
     if (cls == AIR_LAMP_LED) return lampColor(1) * lampState(L.seed, gTime);
     if (cls == AIR_SHOP) return shopColor(L.seed);
     if (cls == AIR_LOBBY) return LOBBY_SPILL;
+    if (cls == AIR_FLAME) return fireColor(0.6) * flameGout(L.seed, gTime).power;
     return skyLightColor(L);
 }
 
@@ -201,20 +214,23 @@ vec3 mistLight(vec3 dir, float tEnd, float rain) {
     float T = min(tEnd, AIR_RANGE);
     vec3 sum = vec3(0.0);
     for (uint i = 0u; i < airCount; ++i) {
-        SkyLight L = airLight[i];
+        SkyLight L = flameAt(airLight[i]);
         float t0 = dot(L.pos, dir);
         vec3 q = dir * clamp(t0, 0.0, T) - L.pos;      // nearest point on the ray, from the light
         uint cls = L.kind >> 8u;
         // A lamp is a bright head the halo gathers round. A shopfront is a pane
         // metres wide: as a point it glowed as a ball floating in front of the
-        // glass, so it is spread over a soft 2.5 m radius with no core.
+        // glass, so it is spread over a soft 2.5 m radius with no core; a
+        // flare's fire, metres across, over 3 m.
         float hl = length(dir * t0 - L.pos);
-        float h = (cls == AIR_SHOP || cls == AIR_LOBBY) ? sqrt(hl * hl + 6.25) : max(hl, 0.25);
+        float h = (cls == AIR_SHOP || cls == AIR_LOBBY) ? sqrt(hl * hl + 6.25) : cls == AIR_FLAME ? sqrt(hl * hl + 9.0) : max(hl, 0.25);
         float I = (atan((T - t0) / h) + atan(t0 / h)) / h;
         float lq = max(length(q), 1e-3);
         float shape;
         if (cls == AIR_LAMP_SODIUM || cls == AIR_LAMP_LED)
             shape = mix(0.12, 1.0, smoothstep(0.05, 0.6, -q.y / lq));         // the cone under the lamp head
+        else if (cls == AIR_FLAME)
+            shape = 1.0;                                                        // fire, all round
         else
             shape = 0.3 + 0.7 * clamp(0.5 + 0.5 * dot(q.xz, L.n) / lq, 0.0, 1.0);   // in front of the sign
         float c = dot(dir, L.pos) / max(length(L.pos), 1e-3);

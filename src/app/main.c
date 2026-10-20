@@ -71,13 +71,14 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--time SECONDS] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --cam   start position (world metres); a HEIGHT starts in fly mode at that altitude\n"
            "  --walk  hold W for this many seconds before a --shot\n"
            "  --turn  and turn this fast while walking (degrees a second, + to the right)\n"
            "  --rain  fix the rain intensity (0 drizzle .. 1 downpour); otherwise it drifts\n"
+           "  --time  hold the shaders' clock at this many seconds (flames, signs, steam: for captures)\n"
            "  --shot  wait for streaming to settle, save a screenshot and exit\n");
 }
 
@@ -88,6 +89,7 @@ typedef struct Options {
     bool        haveCam;
     double      cam[5];          /* x, z, yaw, pitch (degrees), height (< 0: walking) */
     float       walkSeconds, turnRate, fixedRain;   /* turnRate: degrees a second while walking */
+    double      fixedTime;       /* the shaders' clock held here (< 0: running) */
 } Options;
 
 static bool parse_args(int argc, char **argv, Options *o) {
@@ -95,6 +97,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
     o->shadows = true;
     o->cam[4] = -1;
     o->fixedRain = -1.0f;
+    o->fixedTime = -1.0;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--validation") == 0) o->validation = true;
         else if (strcmp(argv[i], "--noshadows") == 0) o->shadows = false;
@@ -103,6 +106,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--walk") == 0 && i + 1 < argc) o->walkSeconds = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--turn") == 0 && i + 1 < argc) o->turnRate = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--rain") == 0 && i + 1 < argc) o->fixedRain = (float)atof(argv[++i]);
+        else if (strcmp(argv[i], "--time") == 0 && i + 1 < argc) o->fixedTime = atof(argv[++i]);
         else if (strcmp(argv[i], "--cam") == 0 && i + 4 < argc) {
             o->haveCam = true;
             for (int k = 0; k < 4; ++k) o->cam[k] = atof(argv[++i]);
@@ -337,7 +341,7 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
         weather_update(&weather, now - startTime, dt, opt->fixedRain);
         FrameUBO ubo;
         edge = chunk_edge(chunks, edge, dt);
-        frame_ubo(player, vk, now - startTime, &weather, edge, &ubo);
+        frame_ubo(player, vk, opt->fixedTime >= 0.0 ? opt->fixedTime : now - startTime, &weather, edge, &ubo);
         bool resized = g_resized;
         g_resized = false;
         renderer_frame(renderer, &ubo, player->eye, resized);

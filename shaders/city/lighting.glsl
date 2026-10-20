@@ -72,6 +72,18 @@ void addLamp(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, vec3 
     spec += lcol * att * specLobe(n, L, V, shin, specK, rough, ndl);
 }
 
+// A flare's fire (flameFalloff): all round it, no beam or pool.
+void addFlame(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, vec3 lpos, vec3 lcol,
+              inout vec3 diff, inout vec3 spec) {
+    vec3 l = lpos - p;
+    float att = flameFalloff(l);
+    if (att <= 0.0) return;
+    vec3 L = normalize(l);
+    float ndl = max(dot(n, L), 0.0);
+    diff += lcol * att * ndl;
+    spec += lcol * att * specLobe(n, L, V, shin, specK, rough, ndl);
+}
+
 // Coloured light thrown onto the sidewalk and street by a lit shopfront. The
 // storefront is a large source: for GGX its size widens the lobe (alpha grows
 // by its ~1.5 m half-width over twice the distance, as for a sphere light), so
@@ -202,7 +214,7 @@ float ceilingVis() {
 // rough < 0: procedural Blinn-Phong (shin, specK); rough >= 0: GGX with F0 = specK.
 void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, inout vec3 diff, inout vec3 spec) {
     int base = gC.info.z;
-    if (base < 0 || p.y - gBase > CITY_LIGHTS_TOP) return;
+    if (!lightsReach(base, p.y, p.y - gBase)) return;
     vec4 hdr = uintBitsToFloat(lightRec[base]);
     ivec2 t = clamp(ivec2(floor((p.xz - hdr.xy) * hdr.zw)), ivec2(0), ivec2(3));
     int ti = t.y * 4 + t.x;
@@ -212,11 +224,14 @@ void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, in
         uvec4 r = lightRec[first + i];
         vec3 lp = uintBitsToFloat(r.xyz);
         uint type = r.w & 3u;
+        bool flame = isFlame(r.w);
         vec3 l = lp - p;
-        if (dot(l, l) > (type < 2u ? 34.0 * 34.0 : 12.0 * 12.0)) continue;   // out of its reach (addLamp, addShop)
+        float reach = flame ? FLAME_REACH : type < 2u ? 34.0 : 12.0;
+        if (dot(l, l) > reach * reach) continue;   // out of its reach (addLamp, addShop, addFlame)
         float vis = shadowVis(p, n, V, lp, r.w);
         if (vis <= 0.0) continue;
-        if (type < 2u) addLamp(p, n, V, shin, specK, rough, lp, lampColor(int(type)) * lampState(r.w >> 2, gTime) * vis, diff, spec);
+        if (flame) addFlame(p, n, V, shin, specK, rough, flameLightPos(lp, r.w, gTime), flameLightColor(r.w, gTime) * vis, diff, spec);
+        else if (type < 2u) addLamp(p, n, V, shin, specK, rough, lp, lampColor(int(type)) * lampState(r.w >> 2, gTime) * vis, diff, spec);
         else addShop(p, n, V, specK, rough, lp, (type == 2u ? shopColor(r.w) : LOBBY_SPILL) * vis, diff, spec);
     }
 }
@@ -270,7 +285,7 @@ vec3 paneSheen(vec3 p, vec3 n, vec3 V) {
             // of light floating at chest height.
             uint type = r.w & 3u;
             if (type >= 2u) continue;
-            vec3 lc = lampColor(int(type)) * lampState(r.w >> 2, gTime);
+            vec3 lc = isFlame(r.w) ? flameLightColor(r.w, gTime) : lampColor(int(type)) * lampState(r.w >> 2, gTime);
             float k = max(dot(R, l / d), 0.0);
             float bloom = pow(k, 40.0) * 3.0 + pow(k, 6.0) * 0.25;   // a soft core in a wide halo
             c += lc * bloom * 30.0 / (d * d + 30.0);

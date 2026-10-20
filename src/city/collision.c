@@ -221,7 +221,7 @@ static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg
     interiors_plan(b, bg, &in);
     for (int si = 0; si < bg->nsec; ++si) {
         const BSection *s = &bg->sec[si];
-        if (s->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
+        if (s->y0 > SIDEWALK_HEIGHT + 0.5f || bsec_open(s)) continue;   /* under a rack or frame: its legs */
         const ILayout *il = interior_of(&in, si);
         if (il) { collide_interior(L, b, bg, il); add_floor(L, b, s, il->floorY); continue; }
         if (in.arc && in.arc->tier[0].section == si) { collide_arcology(L, b, bg, in.arc); add_floor(L, b, s, in.arc->floorY); continue; }
@@ -236,7 +236,7 @@ static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg
     interiors_free(&in);
     for (int k = 0; k < bg->nsup; ++k) {
         const BSupport *sp = &bg->sup[k];
-        if (sp->type != SUP_COLUMN || sp->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
+        if ((sp->type != SUP_COLUMN && sp->type != SUP_LEG) || sp->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
         if (!coll_begin(L, 4)) break;
         float h = sp->size * 0.5f;
         float cx[4] = { -h, -h, h, h }, cz[4] = { -h, h, h, -h };   /* negative turn, like every outer loop */

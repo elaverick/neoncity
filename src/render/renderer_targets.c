@@ -138,14 +138,14 @@ void create_targets(Renderer *r) {
     }
 
     VkDescriptorPoolSize sizes[5] = {
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 7 + 2 * MAX_FRAMES + 4 + 5 * MAX_FRAMES + 4 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 7 + 2 * MAX_FRAMES + 4 + 5 * MAX_FRAMES + 4 * MAX_FRAMES + 2 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * BLOOM_MIPS + 3 * MAX_FRAMES + MAX_FRAMES + 3 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES + MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES + 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES + MAX_FRAMES + MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES + 2 * MAX_FRAMES + MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-    pci.maxSets = 2 * BLOOM_MIPS + 2 + MAX_FRAMES + 1 + 2 * MAX_FRAMES + MAX_FRAMES;
+    pci.maxSets = 2 * BLOOM_MIPS + 2 + MAX_FRAMES + 1 + 2 * MAX_FRAMES + MAX_FRAMES + MAX_FRAMES;
     pci.poolSizeCount = r->rt ? 5 : 4;
     pci.pPoolSizes = sizes;
     VK_CHECK(vkCreateDescriptorPool(vk->device, &pci, NULL, &r->targetPool));
@@ -201,6 +201,13 @@ void create_targets(Renderer *r) {
         write_tex_set(vk, r->ssrSet[i], 6, SI, VK_NULL_HANDLE, r->ssr.view, VK_IMAGE_LAYOUT_GENERAL);
         write_tex_set(vk, r->ssrApplySet[i], 3, CIS, r->nearestClamp, r->ssr.view, VK_IMAGE_LAYOUT_GENERAL);
         write_tex_set(vk, r->ssrApplySet[i], 4, CIS, r->nearestClamp, r->refl.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    for (int i = 0; i < MAX_FRAMES; ++i) {
+        VkDescriptorSet set = r->flameSet[i] = alloc_set(r, r->flameLayout);
+        write_buf_set(vk, set, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, r->ubo[i].buf, sizeof(FrameUBO));
+        write_buf_set(vk, set, 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, r->flameBuf[i].buf, sizeof(FlameSet));
+        write_tex_set(vk, set, 4, CIS, r->nearestClamp, sceneDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        write_tex_set(vk, set, 5, CIS, r->linearRepeat, r->cloudNoise.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
     r->cloudCompSet = alloc_set(r, r->cloudCompLayout);
     write_tex_set(vk, r->cloudCompSet, 0, CIS, r->nearestClamp, r->cloud.view, VK_IMAGE_LAYOUT_GENERAL);

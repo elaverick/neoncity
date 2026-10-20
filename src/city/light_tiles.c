@@ -9,19 +9,25 @@
  * can reach it. Record layout (4 x uint32 each):
  *   0      bounds x0, z0 (chunk-local) and 4/width, 4/depth (floats)
  *   1..4   16 tile words: first record << 16 | count
- *   5..    lights: x, y, z (floats), w = type | data
+ *   5      x: the highest a light here reaches, world Y (float): a flare's fire,
+ *          over its mast and its gout; else -1e30. Street lamps and shopfronts
+ *          reach no higher than CITY_LIGHTS_TOP over the ground anyway
+ *          (shaders/common.glsl: lightsReach); yzw unused
+ *   6..    lights: x, y, z (floats), w = type | data
  *          type 0/1: sodium/LED street lamp, w >> 2 its fault (lamp_fault, 24
  *          bits), w >> 26 its emitter (LE_*: how large a source it is, for
  *          soft shadows); an arcology's lights (LE_ARC_*) have no fault, and
  *          bits 8..23 hold their height above its base (1/16 m: where their
  *          pool of light lies, emitterPoint); type 2: shop (bits 4..6: the shop hash's colour);
- *          type 3: office or estate lobby (white). Shops and lobbies stand 1 m
+ *          type 3: office or estate lobby (white). A flare's fire (LE_FLAME) is lamp
+ *          class too: bits 2..7 its timing id, 8..23 its gout's reach (1/16 m), its
+ *          colour and brightness from flameGout in shaders/common.glsl. Shops and lobbies stand 1 m
  *          out from their glass: bits 16..23 are the way it faces (256ths of a
  *          turn from +x towards +z) and bits 24..29 the bay's width (quarter
  *          metres), so shadows can be cast from the whole pane.
  * ========================================================================= */
 
-enum { LE_LAMP = 0, LE_ARC_SODIUM = 1, LE_ARC_CROWN = 2 };   /* must match emitterPoint in shaders/common.glsl */
+enum { LE_LAMP = 0, LE_ARC_SODIUM = 1, LE_ARC_CROWN = 2, LE_FLAME = 3 };   /* must match emitterPoint in shaders/common.glsl */
 
 typedef struct LightSrc { float x, y, z, range; uint32_t w; } LightSrc;
 
@@ -38,6 +44,7 @@ void build_lights(Mesh *m, ChunkGen *g) {
     if (!m->count) return;
     float bx0 = m->mn[0], bz0 = m->mn[2], bx1 = m->mx[0], bz1 = m->mx[2];
     int cap = 1024, ns = 0;
+    float top = -1e30f;   /* record 5: how high the fire's light reaches */
     LightSrc *src = (LightSrc *)malloc(sizeof(LightSrc) * cap);
     if (!src) fatal("out of memory building chunk lights");
 #define ADD_LIGHT(X, Y, Z, R, W) do { if (ns == cap) { cap *= 2; src = (LightSrc *)realloc(src, sizeof(LightSrc) * cap); \
@@ -77,6 +84,30 @@ void build_lights(Mesh *m, ChunkGen *g) {
                 ADD_LIGHT(x, base + al->y, z, 34.0f, (uint32_t)al->type | up << 8 | (uint32_t)(al->type == AL_COLD ? LE_ARC_CROWN : LE_ARC_SODIUM) << 26);
             }
             interiors_free(&in);
+        }
+        if (bgen_industrial(bg)) {
+            /* a plant's lamps and flares (mesh_industry.c), the arcology's encoding: no fault, their height */
+            ILamp il[INDUSTRY_MAX_LAMPS];
+            int nl = industry_lamps(bg, il, INDUSTRY_MAX_LAMPS);
+            for (int k = 0; k < nl; ++k) {
+                DVec2 w = to_world(b, il[k].x, il[k].z);
+                float x = (float)(w.x - g->ox), z = (float)(w.z - g->oz);
+                if (il[k].kind == ILAMP_FLARE) {   /* its mist and cloud light are the mesh's (push_flame) */
+                    const float range = 80.0f;     /* FLAME_REACH in shaders/common.glsl */
+                    if (x < bx0 - range || x > bx1 + range || z < bz0 - range || z > bz1 + range) continue;
+                    uint32_t reach = (uint32_t)clampf(il[k].reach * 16.0f + 0.5f, 0.0f, 65535.0f);
+                    ADD_LIGHT(x, base + il[k].y, z, range, (il[k].id & 63u) << 2 | reach << 8 | (uint32_t)LE_FLAME << 26);
+                    /* its light climbs with the gout (flameLightPos: up to 1.16 of the reach) and falls off over FLAME_REACH */
+                    top = maxf(top, base + il[k].y + 1.2f * il[k].reach + range);
+                    continue;
+                }
+                const float range = 24.0f;
+                if (x < bx0 - range || x > bx1 + range || z < bz0 - range || z > bz1 + range) continue;
+                uint32_t up = (uint32_t)clampf(il[k].y * 16.0f + 0.5f, 0.0f, 65535.0f), type = il[k].kind == ILAMP_FLOOD || il[k].kind == ILAMP_MAST;
+                ADD_LIGHT(x, base + il[k].y, z, range, type | up << 8 | (uint32_t)LE_ARC_SODIUM << 26);
+                air_light(m, x, base + il[k].y, z, 40.0f, 0.0f, 0.0f, 0u, (type ? AIR_LAMP_LED : AIR_LAMP_SODIUM) << 8);
+            }
+            continue;
         }
         int retail = bg->groundMode == GF_RETAIL;
         if (retail && !b->shop) continue;
@@ -121,7 +152,8 @@ void build_lights(Mesh *m, ChunkGen *g) {
     float sx = maxf((bx1 - bx0) * 0.25f, 0.25f), sz = maxf((bz1 - bz0) * 0.25f, 0.25f);
     float hdr[4] = { bx0, bz0, 1.0f / sx, 1.0f / sz };
     memcpy(rec, hdr, sizeof(hdr));
-    uint32_t next = 5;
+    memcpy(&rec[5 * 4], &top, 4);
+    uint32_t next = 6;
     for (int t = 0; t < 16; ++t) {
         float tx0 = bx0 + (t & 3) * sx, tz0 = bz0 + (t >> 2) * sz, tx1 = tx0 + sx, tz1 = tz0 + sz;
         uint32_t start = next, count = 0;

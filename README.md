@@ -47,7 +47,7 @@ procedural look.
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
-Command line: `--cam X Z YAW PITCH [HEIGHT]` sets the start position (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity
+Command line: `--cam X Z YAW PITCH [HEIGHT]` sets the start position (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity, `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
 (otherwise it drifts between drizzle and downpour), `--noshadows` runs without ray-traced shadows (and without the
 ray-query device features they need), `--shadowdebug` starts in the shadow debug view, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
@@ -74,7 +74,7 @@ generated as a pure function of world position:
   - core: towers and perimeter blocks
   - centre: shophouse rows around each neighbourhood and town centre
   - estate: HDB-style slab or point blocks, set back behind a verge
-  - industrial: low sheds
+  - industrial: process plants and substations, sheds on the smallest plots
   - park: more likely along the boulevards, as green buffers between towns
   - rural: open land with the odd farmstead, towards the city's edge
 - **The city's edge.** The city is finite. Its footprint is a warped disc 25 km across
@@ -137,6 +137,9 @@ Blocks are divided into plots that conform to the plan:
   towers have room for podiums, twins and gateways.
 - **Estates** are filled with rows of slab plots or a grid of point-block plots.
 - **Rare whole-block arcologies** appear in the densest regional cores.
+- **Industrial plots** have a limit of 45-70 m for a plant's stacks and flares, or, on about a
+  third of them inside the city, 150-240 m for the colossal tier. The industrial belt round the
+  city's edge keeps to the lower limit, so the skyline still steps down there.
 
 Each plot is an oriented site rectangle with a seed, a height limit and the faces that look onto
 the street. The building on it is generated inside that rectangle and never leaves it.
@@ -151,9 +154,10 @@ Buildings follow the rule-based method in `docs/procedural-building-generation.m
 
 **Grammar.** The building grammar picks an archetype using the district's biases: office block,
 skyscraper, podium with a projection, twin towers with a sky bridge, gateway, arcology,
-shophouse row, housing slab, point block or shed. Downtown favours glass towers and twins, the
-midrise favours stone and bronze, the centres shophouses, and the estates slabs and point
-blocks. The footprint grammar builds every footprint from parameters, using a small family of
+shophouse row, housing slab, point block, shed, industrial plant or electrical substation.
+Downtown favours glass towers and twins, the midrise favours stone and bronze, the centres
+shophouses, the estates slabs and point blocks, and industrial land plants (see below). Every
+district has the odd substation where a plot has room for its pad. The footprint grammar builds every footprint from parameters, using a small family of
 shapes: rectangle, chamfered, L, T, U, cross, faceted drum and courtyard. Because footprints
 are always regenerated from parameters, setbacks, crowns and the slices of tapered, waisted,
 flared and twisted towers are always valid polygons. Separate random streams for archetype,
@@ -169,6 +173,12 @@ footprint, height, surfaces, roof and doors keep each decision independent.
 - Each slice of a profiled tower may step out only a little.
 - Gateway spans and sky bridges must bear on both supports, within a clear span, and a gateway
   needs a transfer girder.
+- Nothing above the ground floor may be narrower than four bays across its narrowest calliper
+  width (`bloop_width`): 10-14 m, from the building's bay width held to 2.5-3.6 m. A plot too
+  narrow for that only needs its upper floors as wide as it leaves room for (its narrow side
+  less 2.5 m); sky bridges are exempt. The grammar widens a tower that would be too thin when
+  its podium has room, and falls back to a straight profile, fewer setbacks or no crown when a
+  taper, waist, flare or setback would breach it.
 
 On top of that, sections side by side must not collide and nothing may leave the plot. Doors
 must fit their faces, sit between arcade columns and include a primary entrance. A failed
@@ -198,6 +208,65 @@ the tubes slide across the board, apart from the tight pool of light each throws
 A building is a pure function of its plot, so revisiting an area regenerates exactly the same
 building. The tests regenerate every building in a 2 km area twice and compare the results
 byte for byte.
+
+### Industrial plants and substations (`src/gen/building_industry.c`, `src/city/mesh_industry.c`)
+Section 11 of the design. A plant uses the same graph: its vessels, stacks, flares, gasholders,
+steel frames and pipe racks are sections of type `SEC_UNIT`, standing on the ground as polygons
+with a height, and an elevated deck is a `SEC_DECK`. Its control building, halls, warehouses and
+office block are ordinary sections with facades. Pipes, ladders and stairs, and the holes
+vessels pass through decks by, are lists of their own.
+
+- **Layout.** A fenced yard. The control building stands on the fence line at one end of the
+  street side, its door to the street, with the gate beside it and the gate's lane kept clear.
+  Then, rarely, a gasholder in the largest free circle (into a corner if it can be), then the
+  core: a pipe rack down the middle with a row of units along each side, or an elevated deck
+  carried by legs and by the vessels that pass through it, with smaller vessels underneath.
+  Then works buildings (two to four on a heavy site, none or one on a light one), a stack,
+  perhaps flares, more units round the core, a ladder or stair up to every elevated level, and
+  pipes from every process unit to the rack or its nearest neighbour.
+- **Rules.** Each unit is proposed, checked and adjusted before it is dropped: a column too
+  slender (over 7.5 times its diameter) is tied to a steel frame (up to 14) or shortened; a
+  stack is widened, then shortened (13); a tank is no taller than 1.3 times across; a flare's
+  base is a tenth of its height and it keeps clear of everything else; a gasholder's posts are
+  no more than 9 m apart. A deck must have every point within 10 m of a leg or vessel collar,
+  overhang the hull of its supports by at most 3 m and keep its weight inside it. Pipes route
+  orthogonally, clear of every unit, with a post (on the ground or a deck) at least every 9 m
+  unless a rack or frame carries them. Halls span at most 22 m; an office block is at least
+  three bays across (four over 40 m) and no taller than 4.5 times its narrow side.
+- **Scale.** On the colossal tier every tall unit's rise is multiplied by 2.6-3.9, up to 235 m,
+  with the same rules, so a taller unit is a wider one: columns are widened first there.
+- **Styles.** A gas plant (pale vessels, mint stacks with red and white marker bands, yellow
+  pipework, galvanised steel), a gothic refinery (domed vessels banded orange, cream and red,
+  cowled chimneys, cream decks on black legs, a hoist and claw beneath) and a night refinery
+  (soot-black steel, lamps on every level, several flares, steam off its stacks). Halls get
+  gable or saw-tooth roofs, the teeth glazed and lit amber (green in the gothic refinery).
+- **Substations** (section 11.8) are a fenced pad on the street: a switch house and a kiosk
+  either side of the gate, one to three transformers in their oil bunds (5 m apart at least,
+  with a firewall between any closer than 10 m) and a busbar gantry of 12 m bays behind them,
+  each transformer wired to it in three phases.
+- **Rendering.** `MAT_INDUSTRY` (`shaders/city/industry.glsl`): sixteen paints with weathering,
+  hoops and cladding ribs, open gratings, glazing lit from within, and steam and chain-link
+  fences as veils over one MSAA sample. A plant's lamps go into the chunk's light table and
+  light the rain mist. Distant proxies draw its units as plain painted boxes. You walk under
+  racks, frames and gantries (their legs collide) and around the rest.
+- **Fire.** A flare's flame is a volume, ray-marched in a pass of its own (`shaders/flame.frag`)
+  after the clouds and before the bloom: one box per flame, the 64 nearest within 1.5 km
+  (`chunks_flames`), marched against the scene depth with fewer steps far off. Inside, a column
+  tapering to the nozzle and widening as it climbs, its edges and ends torn into tongues by two
+  fetches of the clouds' tiling noise volume scrolling up with the gas; each sample's
+  temperature (hottest in the dense core and low down) picks its colour from a blackbody-like
+  ramp, deep red through orange to yellow-white (`fireColor`). Most flares burn in gouts, as in
+  the opening of Blade Runner: a jet shoots up, the valve shuts, and the column climbs on,
+  swelling and breaking up as it burns away from the bottom, leaving a pilot flame until the
+  next, every 7 to 16 s. About one in four burns steadily. `flameGout` (`shaders/common.glsl`)
+  times them all, and the same timing drives each flare's light in the chunks' light tables
+  (`LE_FLAME`: it rises with the burning column), the rain mist and the cloud base, so the
+  street and the sky flare with the fire. `--time SECONDS` holds the clock to catch a gout in a
+  capture.
+
+`building_lab industry [size]` surveys the industrial fringe: styles, tiers, units, pipes and
+rejections, with a camera for a few of each kind, and measures the mesh and litter of the chunks
+holding the largest plants against the page budget.
 
 ### Office lobbies (`src/gen/interior.c`)
 The ground floors of office buildings with a lobby are real interiors, planned by the method in
@@ -584,7 +653,8 @@ everything else, as a pure function of the plan. The CPU does nothing per frame.
   walls), parks, and the carriageway, run flat. Every kerb edge, door, lamp and 2.5 m cell of
   ground has its own random stream, and an item belongs to the chunk it lies in.
 - **How much:** each block has a squalor (`city_squalor`) from its zone (industrial land and the
-  estates start dirtier than the cores and parks) and the district's affluence
+  estates start dirtier than the cores and parks, and industrial land counts as poorer than the
+  district round it) and the district's affluence
   (`plan_affluence`: highest near the regional cores, with whole districts and neighbourhoods
   better or worse off). Rubbish grows with the square of squalor, so every street has a little
   and the poorest have several times as much.

@@ -10,7 +10,8 @@
  *
  *   building.c             names, districts, roofs and doors, validation, the driver (bgen_build)
  *   building_poly.c        simple polygons: area, containment, distance, triangulation
- *   building_archetypes.c  the footprint grammar and the building grammar's archetypes */
+ *   building_archetypes.c  the footprint grammar and the building grammar's archetypes
+ *   building_industry.c    industrial plants and electrical substations: their grammar and rules */
 
 /* ---------------------------------------------------------------------------
  * Shared definitions
@@ -27,6 +28,7 @@ typedef struct Ctx {
     BLog   *log;
     float   W, D;          /* site extents */
     float   H;             /* target height above the sidewalk */
+    float   minW;          /* no section above the ground floor narrower (bgen_min_width) */
     int     N;             /* floors above the ground floor */
     int     frontage;
     Rng     ra, rf, rh, rs, rr, rd;   /* archetype, footprint, heights, surfaces, roofs, doors */
@@ -63,3 +65,12 @@ int arch_arcology(Ctx *c);
 int arch_shophouse(Ctx *c);
 int arch_housing(Ctx *c, int point);
 int arch_shed(Ctx *c);
+int add_support(Ctx *c, int type, int sec, float x0, float y0, float z0, float x1, float y1, float z1, float size);
+
+/* building_industry.c */
+int arch_plant(Ctx *c, int simplify);
+int arch_substation(Ctx *c, int simplify);
+/* A plant's or substation's own rules (section 11), after the general ones. */
+int industry_validate(const BGraph *g, const Building *b, BLog *log);
+/* Sections that may touch: a vessel and the frame bracing it, a deck and a vessel through it. */
+int industry_tied(const BGraph *g, int i, int j);

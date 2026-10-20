@@ -29,9 +29,10 @@ void main() {
         float yy = vLocal.y - vBase - SIDEWALK_HEIGHT, fs = fract(vUV.x / 1.5);
         if (yy > 0.08 && yy < groundH - (groundMode == 2u ? 1.2 : 0.7) && fs > 0.04 && fs < 0.96) discard;
     }
-    // the materials whose shading calls cityLights (city.frag), low enough for the lights to reach (cityLights)
+    // the materials whose shading calls cityLights (city.frag), where the lights can reach (lightsReach)
     float above = vLocal.y - vBase;
-    bool lit = (m <= MAT_ROOF || m == MAT_METAL || m == MAT_DOOR || m == MAT_LITTER || m == MAT_ARCOLOGY) && above <= CITY_LIGHTS_TOP;
+    bool lit = (m <= MAT_ROOF || m == MAT_METAL || m == MAT_DOOR || m == MAT_LITTER || m == MAT_ARCOLOGY || m == MAT_INDUSTRY) &&
+               lightsReach(chunks[vChunk].info.z, vLocal.y, above);
     // lobby surfaces the ceiling's panels light (not its lights, screens, signs, skylight or the offices above)
     uint is = vParams.y;
     bool lobby = m == MAT_INTERIOR && is != 9u && (is < 15u || is > 18u);

@@ -105,7 +105,8 @@ void litter(inout vec3 rel, inout vec3 nrm, out vec2 lit) {
 #ifdef PREPASS
 /* The prepass leaves out what city.frag draws over only some of a pixel's
  * samples, or discards: glass over real interiors (paneCoverage), veils of
- * light (veil), puddles, and litter's contact shadows. (The glazed ground
+ * light (veil), puddles, litter's contact shadows, and a plant's steam and
+ * wire mesh. (The glazed ground
  * floors of facades with a real lobby behind are cut out by prepass.frag.) */
 bool partialCoverage() {
     uint m = inParams.x, y = inParams.y;
@@ -113,6 +114,7 @@ bool partialCoverage() {
     if (m == MAT_LITTER) return y == LK_SHADOW;
     if (m == MAT_ARCOLOGY)                                     // ARS_SHAFT, ARS_SEARCH, ARS_PUDDLE, ARS_STEAM; ARS_RAIL's glass
         return (y >= 22u && y <= 25u) || (y == 19u && (inParams.z == 0u || inParams.z == 3u));
+    if (m == MAT_INDUSTRY) return y == 2u || y == 4u;   // IND_STEAM, IND_MESH
     return false;
 }
 #endif

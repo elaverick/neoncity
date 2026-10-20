@@ -21,7 +21,7 @@ layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outRefl;   // nothing for the screen-space reflections (city.frag)
 
 // PX_* (src/city/city.h)
-const uint PX_BANDS = 1u << 9, PX_FINE = 1u << 10, PX_LEDTOP = 1u << 11;
+const uint PX_BANDS = 1u << 9, PX_FINE = 1u << 10, PX_LEDTOP = 1u << 11, PX_PLAIN = 1u << 30;
 
 // As shaders/city.frag's helpers and city/lighting.glsl's and city/rooms.glsl's
 // (which need a chunk's state, so can't be included here).
@@ -78,6 +78,7 @@ vec3 shadeProxy(vec3 n, vec3 V) {
                                    vec3(0.014, 0.024, 0.040);
     wallAlb *= (0.7 + 0.6 * hf(sh, 10u)) * 1.4;
     if (n.y > 0.5) return wallAlb * 0.6 * wdiff;   // the roof
+    if ((info & PX_PLAIN) != 0u) return wallAlb * 0.8 * wdiff;   // a plant's vessel, stack or deck: painted steel
 
     bool glassWall = palette == 4u || palette == 7u || type == 1;
     vec3 glassT = palette == 7u ? vec3(0.72, 0.79, 0.86) : palette == 4u ? vec3(0.58, 0.59, 0.60) :

@@ -4,9 +4,9 @@
 
 static const char *const ARCH_NAMES[ARCH_COUNT] = {
     "office block", "skyscraper", "podium with projection", "twin towers", "gateway",
-    "arcology", "shophouse row", "slab block", "point block", "shed" };
+    "arcology", "shophouse row", "slab block", "point block", "shed", "industrial plant", "substation" };
 static const char *const DIST_NAMES[DIST_COUNT] = { "downtown", "midrise", "centre", "estate", "industrial" };
-static const char *const ARR_NAMES[] = { "ground", "stack", "arcade", "projection", "step-out", "span", "sky bridge" };
+static const char *const ARR_NAMES[] = { "ground", "stack", "arcade", "projection", "step-out", "span", "sky bridge", "deck" };
 
 const char *bgen_archetype_name(int a) { return a >= 0 && a < ARCH_COUNT ? ARCH_NAMES[a] : "?"; }
 const char *bgen_district_name(int d) { return d >= 0 && d < DIST_COUNT ? DIST_NAMES[d] : "?"; }
@@ -14,6 +14,13 @@ const char *bgen_district_name(int d) { return d >= 0 && d < DIST_COUNT ? DIST_N
 float bgen_bay_width(uint32_t seed, int fine) {
     float h = hash_float(hash_combine(hash_u32(seed ^ 0x5f3759dfu), 4u));
     return fine ? 1.6f + 0.8f * h : 2.4f + 2.6f * h;
+}
+
+/* Four bays (of 2.5 to 3.6 m: the facade's own, held to that range), but on a
+ * plot too narrow for that, as wide as the plot leaves room for. */
+float bgen_min_width(const BGraph *g, const Building *b) {
+    float four = 4.0f * clampf(bgen_bay_width(g->seed, g->fine), 2.5f, 3.6f);
+    return minf(four, minf(b->foot.x1 - b->foot.x0, b->foot.z1 - b->foot.z0) - 2.5f);
 }
 
 /* ===========================================================================
@@ -36,6 +43,9 @@ static int choose_archetype(Ctx *c, Rng *r) {
     float L = maxf(c->W, c->D), S = minf(c->W, c->D);
     int twinOk = L >= 42.0f && S >= 18.0f, gateOk = L >= 40.0f && S >= 16.0f;
     int tower = b->kind == BK_TOWER;
+    /* a substation's pad fits almost anywhere, so every district has a few (section 11.8) */
+    int padOk = L >= 34.0f && S >= 27.0f, plantOk = L >= 24.0f && S >= 21.0f;
+    w[ARCH_SUBSTATION] = padOk ? 0.03f : 0.0f;
     switch (c->g->district) {
     case DIST_DOWNTOWN:
         if (tower) { w[ARCH_SKYSCRAPER] = 0.5f; w[ARCH_TWIN] = twinOk ? 0.18f : 0; w[ARCH_PROJECTION] = 0.14f; w[ARCH_GATEWAY] = gateOk ? 0.08f : 0; }
@@ -50,7 +60,9 @@ static int choose_archetype(Ctx *c, Rng *r) {
         else       { w[ARCH_SHOPHOUSE] = 0.8f; w[ARCH_OFFICE] = 0.2f; }
         break;
     case DIST_INDUSTRIAL:
-        w[ARCH_SHED] = 0.9f; w[ARCH_OFFICE] = 0.1f;
+        /* only plants; a plot too small for one takes a shed, the plant's works on its own */
+        if (plantOk) { w[ARCH_PLANT] = 0.8f; w[ARCH_SUBSTATION] = padOk ? 0.2f : 0.0f; }
+        else w[ARCH_SHED] = 1.0f;
         break;
     default:
         w[tower ? ARCH_POINT : ARCH_SLAB] = 1.0f;
@@ -87,7 +99,7 @@ static int choose_ground(Ctx *c) {
     float w[4] = { 1, 0, 0, 0 };
     switch (c->g->archetype) {
     case ARCH_ARCOLOGY: return GF_DOUBLE;
-    case ARCH_SHOPHOUSE: case ARCH_SHED: case ARCH_SLAB: case ARCH_POINT: return GF_RETAIL;
+    case ARCH_SHOPHOUSE: case ARCH_SHED: case ARCH_SLAB: case ARCH_POINT: case ARCH_PLANT: case ARCH_SUBSTATION: return GF_RETAIL;
     default:
         if (c->g->district == DIST_DOWNTOWN) { w[0] = 0.3f; w[1] = 0.35f; w[2] = 0.35f; }
         else if (c->g->district == DIST_MIDRISE) { w[0] = 0.5f; w[1] = 0.3f; w[2] = 0.2f; }
@@ -324,7 +336,9 @@ static int check_section_shape(const BGraph *g, const Building *b, int i, BLog *
     int ok = 1;
     const BSection *s = &g->sec[i];
     const BLoop *l = &s->foot.outer;
-    if (l->n < 3 || !loop_simple(l) || loop_min_edge(l) < 0.9f || bloop_area(l) > -20.0f) { REJECT("section %d: invalid footprint", i); return 0; }
+    /* a plant's units and kiosks are small, and a slim vessel's facets short */
+    int ind = bgen_industrial(g);
+    if (l->n < 3 || !loop_simple(l) || loop_min_edge(l) < (ind ? 0.25f : 0.9f) || bloop_area(l) > (ind ? -1.5f : -20.0f)) { REJECT("section %d: invalid footprint", i); return 0; }
     if (s->foot.hole.n) {
         const BLoop *h = &s->foot.hole;
         if (!loop_simple(h) || bloop_area(h) <= 0.0f) { REJECT("section %d: invalid courtyard", i); return 0; }
@@ -337,6 +351,11 @@ static int check_section_shape(const BGraph *g, const Building *b, int i, BLog *
             REJECT("section %d: outside its plot", i);
     if (!ok) return 0;
     if (s->y1 < s->y0 + 1.0f) { REJECT("section %d: too thin", i); return 0; }
+    /* section 4.2: nothing above the ground floor narrower than four bays (a plant has rules of its own) */
+    if (!bgen_industrial(g) && s->y0 > G0 + 0.01f && s->type != SEC_BRIDGE) {
+        float w = bloop_width(l), least = bgen_min_width(g, b);
+        if (w < least - 0.02f) { REJECT("section %d: %.1f m across, under four bays (%.1f m)", i, w, least); return 0; }
+    }
     return ok;
 }
 
@@ -344,6 +363,7 @@ static int check_section_shape(const BGraph *g, const Building *b, int i, BLog *
 static int check_section_support(const BGraph *g, int i, BLog *log) {
     int ok = 1;
     const BSection *s = &g->sec[i];
+    if (s->arr == ARR_DECK) return s->type == SEC_DECK;   /* legs and vessel collars: industry_validate */
     if (s->nbelow == 0) {
         if (s->y0 > G0 + 0.01f) REJECT("section %d: floating %.1f m above the ground", i, s->y0 - G0);
         return ok;
@@ -414,6 +434,7 @@ static int check_collisions(const BGraph *g, BLog *log) {
             int related = 0;
             for (int k = 0; k < a->nbelow; ++k) if (a->below[k] == j) related = 1;
             for (int k = 0; k < c2->nbelow; ++k) if (c2->below[k] == i) related = 1;
+            if (bgen_industrial(g) && industry_tied(g, i, j)) related = 1;
             if (!related && loops_intersect(&a->foot.outer, &c2->foot.outer)) REJECT("sections %d and %d intersect", i, j);
         }
     return ok;
@@ -425,7 +446,7 @@ static int check_supports(const BGraph *g, const Building *b, BLog *log) {
     for (int k = 0; k < g->nsup && ok; ++k) {
         const BSupport *s = &g->sup[k];
         if (s->x0 < b->foot.x0 || s->x0 > b->foot.x1 || s->z0 < b->foot.z0 || s->z0 > b->foot.z1) REJECT("support %d outside its plot", k);
-        else if (s->type == SUP_COLUMN && s->y0 > G0 + 0.01f) REJECT("column %d does not reach the ground", k);
+        else if ((s->type == SUP_COLUMN || s->type == SUP_LEG) && s->y0 > G0 + 0.01f) REJECT("column %d does not reach the ground", k);
         else if (s->type == SUP_STRUT) {
             int on = 0;
             for (int i = 0; i < g->nsec && !on; ++i)
@@ -469,6 +490,7 @@ int bgen_validate(const BGraph *g, const Building *b, BLog *log) {
     if (ok) ok = check_doors(g, log, &primary);
     if (ok && !primary) REJECT("no primary entrance");
     if (ok && top > G0 + b->height + 0.05f) REJECT("top %.1f m above the %.1f m height limit", top - G0, b->height);
+    if (ok && bgen_industrial(g)) ok = industry_validate(g, b, log);
     return ok;
 }
 #undef REJECT
@@ -495,6 +517,7 @@ static void init_ctx(Ctx *c, const Building *b, BGraph *g, BLog *log, int attemp
     g->seed = s;
     g->district = district_of(b);
     g->floorH = city_floor_height(s);
+    g->rise = 1.0f;
 }
 
 static void set_floors(Ctx *c) {
@@ -531,6 +554,7 @@ void bgen_build(const Building *b, BGraph *g, BLog *log) {
         choose_surfaces(&c);
         g->groundMode = choose_ground(&c);
         g->fine = g->archetype == ARCH_ARCOLOGY;
+        c.minW = bgen_min_width(g, b);
         set_floors(&c);
         blog_printf(log, " attempt %d: %s, %d floors\n", attempt + 1, ARCH_NAMES[g->archetype], c.N);
         int built = 0;
@@ -544,12 +568,16 @@ void bgen_build(const Building *b, BGraph *g, BLog *log) {
         case ARCH_SHOPHOUSE:  built = arch_shophouse(&c); break;
         case ARCH_SLAB:       built = arch_housing(&c, 0); break;
         case ARCH_POINT:      built = arch_housing(&c, 1); break;
+        case ARCH_PLANT:      built = arch_plant(&c, attempt / 2); break;
+        case ARCH_SUBSTATION: built = arch_substation(&c, attempt / 2); break;
         default:              built = arch_shed(&c); break;
         }
         if (!built) { blog_printf(log, "  rejected: proposal does not fit the plot\n"); continue; }
         if (g->groundMode == GF_VOID) g->groundH = city_ground_height(g->seed);
-        choose_roofs(&c);
-        place_doors(&c);
+        if (!bgen_industrial(g)) {   /* a plant places its own roofs and doors */
+            choose_roofs(&c);
+            place_doors(&c);
+        }
         if (bgen_validate(g, b, log)) {
             g->attempts = attempt + 1;
             blog_printf(log, " accepted: %d sections, %d supports, %d doors\n", g->nsec, g->nsup, g->ndoor);
@@ -557,6 +585,7 @@ void bgen_build(const Building *b, BGraph *g, BLog *log) {
         }
     }
     init_ctx(&c, b, g, log, MAX_ATTEMPTS);
+    c.minW = bgen_min_width(g, b);
     choose_surfaces(&c);
     build_simple(&c);
     choose_roofs(&c);

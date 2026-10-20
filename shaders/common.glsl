@@ -30,14 +30,14 @@ const uint  SKY_KIND_SCREEN = 32u;
 // Air lights (src/core/common.h): what lights the rain mist
 const int   AIR_MAX_LIGHTS  = 256;
 const float AIR_RANGE       = 140.0;
-const uint  AIR_SIGN = 0u, AIR_LAMP_SODIUM = 1u, AIR_LAMP_LED = 2u, AIR_SHOP = 3u, AIR_LOBBY = 4u;
+const uint  AIR_SIGN = 0u, AIR_LAMP_SODIUM = 1u, AIR_LAMP_LED = 2u, AIR_SHOP = 3u, AIR_LOBBY = 4u, AIR_FLAME = 5u;
 float skyLightRange(float power) { return min(sqrt(power * SKY_GAIN / 0.04), SKY_RANGE_MAX); }
 const uint  WORLD_SEED      = 0xC1B3A7u;
 
 const uint MAT_ROAD = 0u, MAT_SIDEWALK = 1u, MAT_CURB = 2u, MAT_LOT = 3u,
            MAT_FACADE = 4u, MAT_ROOF = 5u, MAT_NEON = 6u, MAT_METAL = 7u,
            MAT_EMISSIVE = 8u, MAT_SCREEN = 9u, MAT_LEDSTRIP = 10u, MAT_DOOR = 11u,
-           MAT_INTERIOR = 12u, MAT_LITTER = 13u, MAT_ARCOLOGY = 14u;
+           MAT_INTERIOR = 12u, MAT_LITTER = 13u, MAT_ARCOLOGY = 14u, MAT_INDUSTRY = 15u;
 // Litter kinds (src/core/common.h)
 const uint LK_SHADOW = 0u, LK_NEWS = 1u, LK_FLYER = 2u, LK_SCRAP = 3u, LK_CARDBOARD = 4u, LK_WAD = 5u, LK_CAN = 6u,
            LK_BOTTLE = 7u, LK_BUTT = 8u, LK_CUP = 9u, LK_BOX = 10u, LK_BAG = 11u, LK_BINBAG = 12u;
@@ -141,6 +141,14 @@ const float LIGHT_NEGLIGIBLE = 0.002;                    // a light this faint s
 const uint  PG_LIT = 1u << 30, PG_LITTER = 1u << 29, PG_LOBBY = 1u << 28, PG_CHUNK = 0xFFFu;
 // Higher than this above their ground no street lamp or shopfront reaches (cityLights).
 const float CITY_LIGHTS_TOP = 32.0;
+/* Whether any light in the chunk's table (at record base; -1: none) can reach a
+ * surface at height y, `above` its ground: street lamps and shopfronts no
+ * higher than CITY_LIGHTS_TOP, a flare's fire as high as its table says
+ * (record 5: build_lights in src/city/light_tiles.c). The rest of the skyline
+ * skips the light walk, and the shadow passes leave it out. */
+bool lightsReach(int base, float y, float above) {
+    return base >= 0 && (above <= CITY_LIGHTS_TOP || y <= uintBitsToFloat(lightRec[base + 5].x));
+}
 /* A lobby is lit by the panels in its ceiling (city.frag: shadeInterior), not
  * by the light table, so its pixels' slots hold the ceiling instead: CEIL_SLOTS
  * rays, one into each quarter of the sky above the surface, under ids no light
@@ -169,6 +177,67 @@ float lampBeamShare(vec3 lp, vec3 p) {
     return 0.88 * t / (0.12 + 0.88 * t);
 }
 const float POOL_RADIUS = 4.0, POOL_HEIGHT = 0.5;   // the lit pool a lamp's spill comes from, just above the street
+/* Flares' fire (src/city/mesh_industry.c; shaders/flame.frag marches it). Most
+ * flares burn in gouts, as in the opening of Blade Runner: a jet shoots up out
+ * of the nozzle, the valve shuts, and the column it fed climbs on and burns
+ * away from the bottom up, leaving only a pilot flame until the next. About one
+ * in four burns steadily instead. id (0..63) picks the timing. head and tail
+ * are the burning column's top and bottom as shares of the gout's reach; power
+ * how much light it throws, 0..1. The march, the light tables (cityLights) and
+ * the rain mist and clouds (clouds.comp) all call it, so they flare together. */
+struct Gout { float head, tail, power; bool steady; };
+Gout flameGout(uint id, float t) {
+    uint h = hash_combine(id, 0xF1A3E5u);
+    Gout g;
+    g.steady = hfloat(h) < 0.25;
+    float flick = vnoise(vec2(t * 6.0, float(id) * 3.7), 0xF1A4u);
+    if (g.steady) { g.head = 0.55 + 0.08 * flick; g.tail = 0.0; g.power = 0.55 + 0.25 * flick; return g; }
+    float period = 7.0 + 9.0 * hfloat(hash_combine(h, 1u));
+    float s = fract(t / period + hfloat(hash_combine(h, 2u))) * period;   // seconds into this cycle
+    const float SHOOT = 0.6, CUT = 1.5, BURN = 2.4;                         // it shoots up, the valve shuts, it burns away
+    if (s < SHOOT) {
+        float k = s / SHOOT;
+        g.head = 0.1 + 0.9 * (1.0 - (1.0 - k) * (1.0 - k)); g.tail = 0.0; g.power = 0.3 + 0.7 * k;
+    } else if (s < CUT) {
+        g.head = 1.0 + 0.1 * (s - SHOOT) / (CUT - SHOOT); g.tail = 0.0; g.power = 1.0;
+    } else if (s < CUT + BURN) {
+        float k = (s - CUT) / BURN;
+        g.head = 1.1 + 0.35 * k;            // still climbing
+        g.tail = g.head * pow(k, 1.5);      // burning away from the bottom up
+        g.power = (1.0 - k) * (1.0 - k);    // dark as the last of it burns out (the pilot's glimmer is the pilot phase's)
+    } else {
+        g.head = 0.1; g.tail = 0.0; g.power = 0.06;   // the pilot
+    }
+    g.power *= 0.85 + 0.3 * flick;
+    return g;
+}
+
+// Fire's colour by its temperature: 0 a dull red (about 900 K) .. 1 yellow-white (about 1900 K).
+vec3 fireColor(float T) {
+    T = clamp(T, 0.0, 1.0);
+    vec3 c = mix(vec3(0.45, 0.03, 0.0), vec3(1.0, 0.28, 0.02), smoothstep(0.0, 0.35, T));
+    c = mix(c, vec3(1.0, 0.62, 0.14), smoothstep(0.3, 0.7, T));
+    return mix(c, vec3(1.0, 0.92, 0.72), smoothstep(0.7, 1.0, T));
+}
+
+// A flare's light (LE_FLAME in src/city/light_tiles.c: lamp class, bits 2..7 its
+// timing id, 8..23 its gout's reach in 1/16 m): how far it reaches, and its falloff.
+const float FLAME_REACH = 80.0;
+bool isFlame(uint w) { return (w & 3u) < 2u && ((w >> 26) & 3u) == 3u; }
+float flameFalloff(vec3 l) {
+    float d2 = dot(l, l);
+    return 260.0 / (d2 + 30.0) * smoothstep(FLAME_REACH, FLAME_REACH * 0.45, sqrt(d2));
+}
+// Its light now: from the middle of the burning column, as bright as the gout.
+vec3 flameLightPos(vec3 lp, uint w, float t) {
+    Gout g = flameGout((w >> 2) & 63u, t);
+    return lp + vec3(0.0, 0.4 * (g.head + g.tail) * float((w >> 8) & 0xFFFFu) / 16.0, 0.0);
+}
+vec3 flameLightColor(uint w, float t) {
+    Gout g = flameGout((w >> 2) & 63u, t);
+    return fireColor(0.5 + 0.25 * g.power) * g.power;
+}
+
 // The ground under light record w's lamp at lp: a street lamp's light hangs LAMP_HEIGHT - 0.4
 // above it (build_lights in src/city/light_tiles.c), an arcology's light holds its own height.
 float lampGround(vec3 lp, uint w) {
@@ -183,6 +252,10 @@ float lampGround(vec3 lp, uint w) {
  * A shop or lobby light stands 1 m out from its pane, which glows over the
  * bay's width from knee height to over the door. */
 vec3 emitterPoint(vec3 lp, uint w, vec3 xi, vec3 p, out float size) {
+    if (isFlame(w)) {   // a ball of fire a third of the way up a gout
+        size = 3.0;
+        return lp + vec3(0.0, 0.35 * float((w >> 8) & 0xFFFFu) / 16.0, 0.0) + (xi - 0.5) * 3.0;
+    }
     if ((w & 3u) < 2u) {
         uint cls = (w >> 26) & 3u;
         float R = cls == 0u ? 0.25 : cls == 1u ? 0.4 : 1.5;
@@ -207,6 +280,7 @@ bool castsShadow(uint w) { return (w & 3u) >= 2u || ((w >> 26) & 3u) != 2u; }
 
 // The middle of the emitter, as seen from p: where city.frag aims a hard shadow ray.
 vec3 emitterCentre(vec3 lp, uint w, vec3 p) {
+    if (isFlame(w)) return lp + vec3(0.0, 0.35 * float((w >> 8) & 0xFFFFu) / 16.0, 0.0);
     if ((w & 3u) < 2u) return lampBeamShare(lp, p) >= 0.5 ? lp : vec3(lp.x, lampGround(lp, w) + POOL_HEIGHT, lp.z);
     float ang = float((w >> 16) & 255u) * (6.2831853 / 256.0);
     return lp - vec3(cos(ang), 0.0, sin(ang)) * 0.8 + vec3(0.0, 0.35, 0.0);
@@ -274,6 +348,7 @@ float lightImportance(vec3 p, vec3 n, vec3 V, vec3 lp, uint w) {
     float ndl = dot(n, L);
     float glint = ndl > 0.0 ? 4.0 * pow(max(dot(reflect(-V, n), L), 0.0), 24.0) : 0.0;
     uint type = w & 3u;
+    if (isFlame(w)) return flameFalloff(l) * luma(fireColor(0.6)) * (max(ndl, 0.0) + 0.05 + glint);
     if (type < 2u) return lampFalloff(l) * luma(lampColor(int(type))) * (max(ndl, 0.0) + 0.05 + glint);
     return shopFalloff(d) * 0.6 * (0.35 + 0.65 * max(ndl, 0.0) + glint);
 }

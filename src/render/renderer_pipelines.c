@@ -74,6 +74,12 @@ static const uint32_t SPV_proxy_vert[] = {
 static const uint32_t SPV_proxy_frag[] = {
 #include "proxy/proxy.frag.inc"
 };
+static const uint32_t SPV_flame_vert[] = {
+#include "flame.vert.inc"
+};
+static const uint32_t SPV_flame_frag[] = {
+#include "flame.frag.inc"
+};
 
 /* ------------------------------------------------------------ layouts --- */
 
@@ -194,6 +200,13 @@ void create_layouts(Renderer *r) {
         { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },  /* reflection G-buffer */
     };
     r->ssrApplyLayout = make_set_layout(vk, ssrApply, 3);
+    VkDescriptorSetLayoutBinding flame[4] = {
+        { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
+        { 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* FlameSet */
+        { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },                        /* scene depth */
+        { 5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },                        /* noise volume */
+    };
+    r->flameLayout = make_set_layout(vk, flame, 4);
     VkDescriptorSetLayoutBinding terrain[3] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },     /* clipmap samples */
@@ -214,6 +227,7 @@ void create_layouts(Renderer *r) {
     r->cloudCompPL = make_pipeline_layout(vk, r->cloudCompLayout, sizeof(CloudPush), VK_SHADER_STAGE_FRAGMENT_BIT);
     r->ssrPL = make_pipeline_layout(vk, r->ssrLayout, 0, 0);
     r->ssrApplyPL = make_pipeline_layout(vk, r->ssrApplyLayout, 0, 0);
+    r->flamePL = make_pipeline_layout(vk, r->flameLayout, 0, 0);
     r->shelterPL = make_pipeline_layout(vk, r->sceneLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
     r->terrainPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(TerrainPush), VK_SHADER_STAGE_VERTEX_BIT);
     r->planetPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(PlanetPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -426,6 +440,11 @@ void create_pipelines(Renderer *r) {
                    r->shelterPL, VK_FORMAT_UNDEFINED, DEPTH_FORMAT, VK_SAMPLE_COUNT_1_BIT, true, true, true, false };
     sh.positionOnly = true;
     r->shelterPipe = make_graphics(vk, &sh);
+    /* flames: boxes added to the HDR target, no depth attachment (flame.frag reads the depth) */
+    GfxDesc fl = { SPV_flame_vert, sizeof(SPV_flame_vert), SPV_flame_frag, sizeof(SPV_flame_frag),
+                   r->flamePL, HDR_FORMAT, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false };
+    fl.additive = true;
+    r->flamePipe = make_graphics(vk, &fl);
     if (r->rt) {
         GfxDesc pre = { SPV_city_pre_vert, sizeof(SPV_city_pre_vert), SPV_prepass_frag, sizeof(SPV_prepass_frag),
                         r->scenePL, GBUF_FORMAT, DEPTH_FORMAT, vk->msaa, true, true, true, true };

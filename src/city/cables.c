@@ -62,7 +62,7 @@ static WallHit facade_ray(ChunkGen *g, DVec2 p, DVec2 dir, float y, double maxT)
         const BGraph *bg = chunk_gen_graph(g, i);
         for (int si = 0; si < bg->nsec; ++si) {
             const BSection *s = &bg->sec[si];
-            if (by < s->y0 || by > s->y1) continue;
+            if (by < s->y0 || by > s->y1 || !bsec_facade(s)) continue;
             const BLoop *loops[2] = { &s->foot.outer, &s->foot.hole };
             for (int li = 0; li < 2; ++li) {
                 const BLoop *l = loops[li];
@@ -497,7 +497,7 @@ static void build_alley_cables(Mesh *m, ChunkGen *g) {
         float pCable = 0.3f + 0.45f * b->density, base = building_base(b);
         for (int si = 0; si < bg->nsec; ++si) {
             const BSection *s = &bg->sec[si];
-            if (s->y0 > 14.0f || s->y1 < 5.0f) continue;
+            if (s->y0 > 14.0f || s->y1 < 5.0f || !bsec_facade(s)) continue;
             const BLoop *loops[2] = { &s->foot.outer, &s->foot.hole };
             for (int li = 0; li < 2; ++li) {
                 const BLoop *l = loops[li];

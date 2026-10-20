@@ -47,3 +47,6 @@ bool         chunks_drawn(ChunkSystem *cs, int cx, int cz);
 struct Rt   *chunks_rt(ChunkSystem *cs);
 /* Sky lights (src/core/common.h) of resident chunks around the camera, camera-relative and gridded. */
 void         chunks_sky_lights(ChunkSystem *cs, const double cam[3], SkyGrid *out);
+/* Flares' fire (src/core/common.h) of resident chunks, the FLAME_MAX nearest within FLAME_RANGE,
+ * camera-relative; returns how many. */
+uint32_t     chunks_flames(ChunkSystem *cs, const double cam[3], FlameSet *out);

@@ -198,8 +198,13 @@ static void fill_lots(Filler *f, const Poly *land, float maxLot, DVec2 grain) {
             b->kind = BK_BLOCK; b->shop = 0;
             H = rng_range(&f->rng, 9.0f, 13.0f);
         } else if (bk->zone == ZONE_INDUSTRIAL) {
+            /* a limit: a plant's stacks and flares reach 30-60 m; on about a third of the
+             * plots inside the city its units may rise to the colossal tier's, among the
+             * towers (src/gen/building_industry.c), but not in the industrial belt round
+             * its edge, where the skyline steps down */
             b->kind = BK_BLOCK; b->shop = 0;
-            H = rng_range(&f->rng, 8.0f, 20.0f);
+            float tall = rng_float(&f->rng), h = rng_float(&f->rng);
+            H = tall < 0.33f && plan_fringe(b->ox, b->oz) < 0.2f ? 150.0f + 90.0f * h : 45.0f + 25.0f * h;
         } else if (bk->zone == ZONE_CENTRE) {
             b->shop = 7;
             if (minDim >= 16.0f && rng_float(&f->rng) < 0.12f) { b->kind = BK_TOWER; H = lerpf(60.0f, 120.0f + 200.0f * d, rng_float(&f->rng)); }

@@ -102,15 +102,20 @@ static void lgen_free(LGen *g) {
 }
 
 /* Industrial land and the estates start dirtier than the cores, parks and
- * open land; poorer districts are dirtier still. Out at the city's borders,
+ * open land; poorer districts are dirtier still, and industrial land is
+ * poorer than the district round it: its works and yards are a long way down
+ * from the affluence of the streets nearby. Out at the city's borders,
  * the outer part of its fringe (plan_fringe), everything is squalid whatever
  * its zone: rubbish dumped where nobody comes to clear it. (The last towns
  * end at a fringe of about 0.7 to 0.85, so this is their outer 500 m or so.)
  * It rises to 0.85, not 1: the densest border chunks would otherwise outrun
- * the litter's vertex BUDGET and lose their doorways and lamp posts. */
+ * the litter's vertex BUDGET and lose their doorways and lamp posts. For the
+ * same reason industrial land stops at 0.9: its yards are wide open ground. */
 float city_squalor(int zone, double x, double z) {
     static const float base[ZONE_COUNT + 1] = { 0.42f, 0.22f, 0.5f, 0.42f, 0.66f, 0.3f, 0.3f };   /* a road, core, centre, estate, industrial, park, rural */
-    float sq = clampf(base[zone + 1] + 1.1f * (0.5f - plan_affluence(x, z)), 0.04f, 1.0f);
+    float aff = plan_affluence(x, z), most = 1.0f;
+    if (zone == ZONE_INDUSTRIAL) { aff *= 0.6f; most = 0.9f; }
+    float sq = clampf(base[zone + 1] + 1.1f * (0.5f - aff), 0.04f, most);
     float border = smoothstepf(0.4f, 0.65f, plan_fringe(x, z));
     return sq + maxf(0.85f - sq, 0.0f) * border;
 }
@@ -200,12 +205,12 @@ static int blocked(LGen *g, double x, double z, float rad) {
         const BGraph *bg = chunk_gen_graph(&g->c, i);
         for (int si = 0; si < bg->nsec; ++si) {
             const BSection *s = &bg->sec[si];
-            if (s->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
+            if (s->y0 > SIDEWALK_HEIGHT + 0.5f || bsec_open(s)) continue;
             if (bfoot_contains(&s->foot, lx, lz) || bfoot_boundary_dist(&s->foot, lx, lz, NULL, NULL) < rad) return 1;
         }
         for (int k = 0; k < bg->nsup; ++k) {
             const BSupport *sp = &bg->sup[k];
-            if (sp->type != SUP_COLUMN && sp->type != SUP_STRUT) continue;
+            if (sp->type != SUP_COLUMN && sp->type != SUP_STRUT && sp->type != SUP_LEG) continue;
             float h = sp->size * 0.5f + rad;
             if (sp->y0 <= SIDEWALK_HEIGHT + 0.5f && fabsf(sp->x0 - lx) < h && fabsf(sp->z0 - lz) < h) return 1;
             if (sp->y1 <= SIDEWALK_HEIGHT + 0.5f && fabsf(sp->x1 - lx) < h && fabsf(sp->z1 - lz) < h) return 1;
@@ -214,16 +219,24 @@ static int blocked(LGen *g, double x, double z, float rad) {
     return 0;
 }
 
-/* Distance to the nearest wall standing at street level, up to maxD. */
+/* Distance to the nearest wall standing at street level, or a plant's fence
+ * (rubbish drifts against both sides of it), up to maxD. */
 static float wall_dist(LGen *g, double x, double z, float maxD) {
     float best = maxD;
     for (int i = 0; i < g->c.nb; ++i) {
         float lx, lz;
         if (!in_plot(&g->c.bld[i], x, z, maxD, &lx, &lz)) continue;
         const BGraph *bg = chunk_gen_graph(&g->c, i);
+        if (bgen_industrial(bg)) {
+            const float *f = bg->fence;
+            float dx = maxf(f[0] - lx, lx - f[2]), dz = maxf(f[1] - lz, lz - f[3]);
+            float d = dx > 0.0f || dz > 0.0f ? sqrtf(maxf(dx, 0.0f) * maxf(dx, 0.0f) + maxf(dz, 0.0f) * maxf(dz, 0.0f))
+                                             : minf(minf(lx - f[0], f[2] - lx), minf(lz - f[1], f[3] - lz));
+            best = minf(best, d);
+        }
         for (int si = 0; si < bg->nsec; ++si) {
             const BSection *s = &bg->sec[si];
-            if (s->y0 > SIDEWALK_HEIGHT + 0.5f) continue;
+            if (s->y0 > SIDEWALK_HEIGHT + 0.5f || bsec_open(s)) continue;
             best = minf(best, bfoot_boundary_dist(&s->foot, lx, lz, NULL, NULL));
         }
     }

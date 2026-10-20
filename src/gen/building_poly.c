@@ -131,6 +131,38 @@ int loops_intersect(const BLoop *a, const BLoop *b) {
     return 0;
 }
 
+/* The narrowest calliper width: the least extent across any direction, which
+ * is the least over the convex hull's edges of the farthest vertex from it. */
+float bloop_width(const BLoop *l) {
+    int h[BG_MAX_PV + 1], n = 0, ord[BG_MAX_PV];
+    for (int i = 0; i < l->n; ++i) ord[i] = i;
+    for (int i = 1; i < l->n; ++i)            /* by x, then z */
+        for (int j = i; j > 0 && (l->x[ord[j]] < l->x[ord[j - 1]] || (l->x[ord[j]] == l->x[ord[j - 1]] && l->z[ord[j]] < l->z[ord[j - 1]])); --j) {
+            int t = ord[j]; ord[j] = ord[j - 1]; ord[j - 1] = t;
+        }
+    for (int pass = 0; pass < 2; ++pass) {     /* monotone chain: lower hull, then upper */
+        int start = n;
+        for (int k = 0; k < l->n; ++k) {
+            int i = pass ? ord[l->n - 1 - k] : ord[k];
+            while (n - start >= 2 && orient2(l->x[h[n - 2]], l->z[h[n - 2]], l->x[h[n - 1]], l->z[h[n - 1]], l->x[i], l->z[i]) <= 0.0f) n--;
+            h[n++] = i;
+        }
+        n--;                                    /* the last point starts the other chain */
+    }
+    if (n < 3) return 0.0f;
+    float best = 1e30f;
+    for (int e = 0; e < n; ++e) {
+        int a = h[e], b = h[(e + 1) % n];
+        float ex = l->x[b] - l->x[a], ez = l->z[b] - l->z[a], len = sqrtf(ex * ex + ez * ez);
+        if (len < 1e-5f) continue;
+        float far = 0.0f;
+        for (int k = 0; k < n; ++k)
+            far = maxf(far, fabsf(orient2(l->x[a], l->z[a], l->x[b], l->z[b], l->x[h[k]], l->z[h[k]])) / len);
+        best = minf(best, far);
+    }
+    return best;
+}
+
 int loop_convex(const BLoop *l) {
     for (int i = 0; i < l->n; ++i) {
         int j = (i + 1) % l->n, k = (i + 2) % l->n;

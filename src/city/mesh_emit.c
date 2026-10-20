@@ -4,7 +4,7 @@
  * Mesh emission helpers
  * ========================================================================= */
 
-void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); free(m->air); memset(m, 0, sizeof(*m)); }
+void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); free(m->air); free(m->flame); memset(m, 0, sizeof(*m)); }
 
 void mesh_begin(Mesh *m, int cx, int cz) {
     m->count = 0;
@@ -293,6 +293,34 @@ void sign_lights(Mesh *m, vec3 c, vec3 n, float area, Mat mt) {
     L.kind |= AIR_SIGN << 8;
     push_light(&m->air, &m->nair, &m->capair, &L);
     if (c.y + reach >= CLOUD_LOW && c.y - reach <= CLOUD_HIGH) push_light(&m->sky, &m->nsky, &m->capsky, &L);
+}
+
+/* A flare's fire, its nozzle at c (through the emission transform, as
+ * mesh_push): the volume the flame pass marches, a light for the rain mist and,
+ * if it can reach them, the clouds, all with timing id (shaders/common.glsl:
+ * flameGout). Its light in the chunks' light tables is light_tiles.c's. */
+void push_flame(Mesh *m, vec3 c, float reach, float radius, uint32_t id) {
+    if (m->xf) {
+        float x = c.x, z = c.z;
+        c.x = m->xx + m->xc * x - m->xs * z;
+        c.z = m->xz + m->xs * x + m->xc * z;
+        c.y += m->xy;
+    }
+    if (m->nflame == m->capflame) {
+        m->capflame = m->capflame ? m->capflame * 2 : 4;
+        m->flame = (Flame *)realloc(m->flame, m->capflame * sizeof(Flame));
+        if (!m->flame) fatal("out of memory building chunk flames");
+    }
+    Flame *f = &m->flame[m->nflame++];
+    memset(f, 0, sizeof(*f));
+    f->pos[0] = c.x; f->pos[1] = c.y; f->pos[2] = c.z;
+    f->reach = reach; f->radius = radius; f->id = id & 63u;
+    /* at the nozzle: clouds.comp's flameAt raises it with the fire (nx carries the reach) */
+    SkyLight L = { { c.x, c.y, c.z }, 260.0f, reach, 0.0f, id & 63u, AIR_FLAME << 8 };
+    push_light(&m->air, &m->nair, &m->capair, &L);
+    L.power = 900.0f;
+    float r = sky_light_range(L.power);
+    if (L.pos[1] + r >= CLOUD_LOW && L.pos[1] - r <= CLOUD_HIGH) push_light(&m->sky, &m->nsky, &m->capsky, &L);
 }
 
 /* Flat quad parallel to a face: u in [u0,u1], y in [y0,y1], offset `out`. uv normalised 0..1. */

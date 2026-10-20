@@ -121,6 +121,8 @@ typedef struct Mesh {
     uint32_t  nsky, capsky;
     SkyLight *air;       /* lamps, shopfronts and signs in this chunk, for the rain mist (chunk-local) */
     uint32_t  nair, capair;
+    Flame    *flame;     /* flares' fire in this chunk (chunk-local) */
+    uint32_t  nflame, capflame;
     int       xf;        /* emission transform: local frame -> chunk-local */
     float     xc, xs, xx, xz;
     float     xy;        /* ...raised this far: a building's or a lamp's base on the ground (city_ground_y),
@@ -219,7 +221,8 @@ typedef struct ProxyBox {
  * its section's window type, wall palette, bands and fine bays (as the facade's
  * vertex params: shaders/city/facade.glsl); whether its top is lit (ledTop) and
  * open (nothing stands on it); its section's index; the section's bottom above
- * the building's base, in half metres; whether it is an arcology's. */
+ * the building's base, in half metres; whether it is an arcology's; whether it
+ * is a plant's unit, without windows. */
 #define PX_CHUNK_SHIFT    0    /* 4 bits */
 #define PX_WIN_SHIFT      4    /* 2 */
 #define PX_PALETTE_SHIFT  6    /* 3 */
@@ -230,6 +233,7 @@ typedef struct ProxyBox {
 #define PX_SECTION_SHIFT  13   /* 5 */
 #define PX_FLOOR_SHIFT    18   /* 11 */
 #define PX_ARCOLOGY       (1u << 29)
+#define PX_PLAIN          (1u << 30)   /* a plant's unit or deck: painted steel, no windows */
 
 /* Level of detail: within each chunk's run the boxes come largest first (by
  * their largest side), and lod[k][b] counts chunk k's boxes at least

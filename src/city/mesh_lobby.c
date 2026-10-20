@@ -53,6 +53,8 @@ int city_casts_shadow(const Vertex *v) {
     case MAT_ARCOLOGY:
         if (p[1] == ARS_RAIL) return p[2] != 0 && p[2] != 3;   /* glass balustrades */
         return p[1] != ARS_SHAFT && p[1] != ARS_SEARCH && p[1] != ARS_STEAM && p[1] != ARS_PUDDLE;
+    case MAT_INDUSTRY:   /* not steam or the see-through wire mesh */
+        return p[1] != IND_STEAM && p[1] != IND_MESH;
     case MAT_LITTER:   /* the rigid things: soaked paper slumps, dry paper and bags stir (city.vert: litter) */
         return p[1] == LK_CAN || p[1] == LK_BOTTLE || p[1] == LK_CUP || p[1] == LK_BOX || p[1] == LK_BINBAG;
     default:

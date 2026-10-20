@@ -60,7 +60,7 @@ typedef struct RoadGpu RoadGpu;
  * pass is stamped inside: the city (GT_CITY), plants (GT_PLANTS) and proxies
  * (GT_SCENE), the terrain (GT_TERRAIN), then the sky and the resolve (GT_SKY). */
 enum { GT_START = 0, GT_STREAM, GT_TERRAIN_UPLOAD, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_CITY, GT_PLANTS, GT_SCENE, GT_TERRAIN, GT_SKY,
-       GT_POST, GT_COUNT };
+       GT_CLOUDS, GT_FLAMES, GT_POST, GT_COUNT };   /* GT_CLOUDS: the reflections and the clouds; GT_FLAMES: the flame pass */
 struct Renderer {
     VkCore      *vk;
     ChunkSystem *chunks;
@@ -72,6 +72,8 @@ struct Renderer {
     VkSemaphore     imageReady[MAX_FRAMES];
     Buffer          ubo[MAX_FRAMES];
     Buffer          skyBuf[MAX_FRAMES];   /* SkyGrid: signs lighting the clouds */
+    Buffer          flameBuf[MAX_FRAMES]; /* FlameSet: the flames the flame pass marches */
+    uint32_t        flameCount[MAX_FRAMES];
 
     /* size-dependent targets. depthResolve is the single-sample copy of the MSAA
      * depth the clouds read (without MSAA they read depth itself); cloud and
@@ -84,7 +86,7 @@ struct Renderer {
     uint32_t     bloomMips;
     VkDescriptorPool targetPool;
     VkDescriptorSet  bloomDownSet[BLOOM_MIPS], bloomUpSet[BLOOM_MIPS], compositeSet;
-    VkDescriptorSet  cloudSet[MAX_FRAMES], cloudCompSet;
+    VkDescriptorSet  cloudSet[MAX_FRAMES], cloudCompSet, flameSet[MAX_FRAMES];
     VkDescriptorSet  ssrSet[MAX_FRAMES], ssrApplySet[MAX_FRAMES];
 
     VkSampler    linearClamp, nearestClamp, linearRepeat;
@@ -104,11 +106,11 @@ struct Renderer {
     VkPipelineLayout      proxyPL;
     VkPipeline            proxyPipe;
     VkDescriptorPool      staticPool;
-    VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout, cloudLayout, cloudCompLayout, ssrLayout, ssrApplyLayout;
+    VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout, cloudLayout, cloudCompLayout, ssrLayout, ssrApplyLayout, flameLayout;
     VkDescriptorSet       sceneSet[MAX_FRAMES];
-    VkPipelineLayout      scenePL, compositePL, bloomPL, cloudPL, cloudCompPL, ssrPL, ssrApplyPL, shelterPL;
+    VkPipelineLayout      scenePL, compositePL, bloomPL, cloudPL, cloudCompPL, ssrPL, ssrApplyPL, shelterPL, flamePL;
     VkPipeline            cityPipe, plantPipe, skyPipe, compositePipe, bloomDownPipe, bloomUpPipe, cloudPipe, cloudCompPipe, ssrPipe, ssrApplyPipe,
-                          shelterPipe;
+                          shelterPipe, flamePipe;
 
     /* Ray-traced shadows (rt: NULL without ray queries). The depth prepass
      * writes the MSAA G-buffer, resolved into gbuf (sample 0, as is the depth

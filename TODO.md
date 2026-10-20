@@ -278,6 +278,49 @@ debris drawn by the ground shader (`debris`). See the README.
 - **Litter bins and dumpsters** to anchor the piles, and the odd heap where a bin overflowed.
 - **Light:** void decks and alleys are lit only by the ambient, so rubbish there is hard to see.
 
+## Industrial plants and substations
+Section 11 of `docs/procedural-building-generation.md` (`src/gen/building_industry.c`,
+`src/city/mesh_industry.c`, `building_lab industry`). Left over:
+- **Small industrial plots** (under about 24 by 21 m) still take a shed, a plant's works on its
+  own, rather than a plant: about half the industrial plots. Merging neighbouring lots into
+  one yard would give more of them plants.
+- **Fences** have no collision; the player walks through them. A thin outline per panel run
+  (and the gate) would do.
+- **Smoke and steam** are two crossed sheets of scrolling noise over each stack (`IND_STEAM`),
+  only on night refineries and some gas plants, and faint against the lit cloud deck. They want
+  real plumes: billowing, rising and spreading with height, bent over by the wind (the weather's
+  gusts), drifting into the cloud deck, dark smoke from the refinery's stacks and white steam from
+  the gas plant's, lit from below by the plant's lamps and flares (the light table) and glowing
+  orange over a flare. A volume (marched like the clouds, or a few stacked soft sprites) rather
+  than two flat sheets.
+- **Fire** (`shaders/flame.frag`, `flameGout` in `shaders/common.glsl`; see the README) is a
+  ray-marched volume on each flare, in gouts or steady. Left over:
+  - **Only flares burn.** Venting fire on the night and gothic refineries' stack tops and
+    relief vents (a flame with a `push_flame` of its own), now and then a flare-up, and heat
+    shimmer above them.
+  - **No wind:** the column rises straight; the weather's gusts could bend it and the
+    fireball as it burns away.
+  - **No smoke** after a gout burns away, and nothing dark in the fire: it is all emission.
+  - **Not reflected:** the wet streets' screen-space reflections are taken before the flame
+    pass, so the fire is missing from them (its light on the ground is there).
+  - **In front of the clouds:** the pass comes after the cloud and mist composite, so a
+    colossal flare inside the cloud deck isn't veiled by it.
+  - **Cost** grows with the screen the fire covers (0.07-0.25 ms for a flare or two in
+    view); with the camera right inside a gout it could reach a few milliseconds. A
+    half-resolution march with a depth-aware upsample (as the clouds') would cap it.
+  - **The timing's period** comes from a hash of the flare; the gouts of neighbouring
+    flares don't answer each other.
+- **The gothic refinery's green-lit windows** are only in its saw-tooth glazing; its buildings'
+  facades use the ordinary window shading (palette and window type only).
+- **Pipes** don't avoid ladders and stairs, and their posts may stand in a door's apron or the
+  gate's lane (only legs are checked there).
+- **Distant proxies** draw a flare's lattice and a rack as solid boxes.
+- **Roads** past industrial land take the road's squalor, not the zone's; only the sidewalks
+  and yards are dirtier.
+- **The colossal tier** is kept out of the industrial belt round the city's edge (where the
+  skyline steps down, `check_skyline` in `tests/city_test.c`), so it appears only on
+  industrial blocks inside the city.
+
 ## Corner rooms and corner shops (parked)
 Interior mapping for rooms and shops that wrap a building corner is still not right.
 

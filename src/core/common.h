@@ -90,6 +90,7 @@
 #define AIR_LAMP_LED      2u
 #define AIR_SHOP          3u            /* seed: the shop hash (its colour) */
 #define AIR_LOBBY         4u
+#define AIR_FLAME         5u            /* seed: the flame's timing id (flameGout in shaders/common.glsl) */
 
 /* Ray-traced shadows (src/render/rt.c, shaders/shadow_trace.comp). Every light in a
  * chunk's table (street lamps, shopfronts, lobby spill, arcology lights) is
@@ -112,8 +113,13 @@ enum {
     MAT_ROAD = 0, MAT_SIDEWALK, MAT_CURB, MAT_LOT,
     MAT_FACADE, MAT_ROOF, MAT_NEON, MAT_METAL,
     MAT_EMISSIVE, MAT_SCREEN, MAT_LEDSTRIP, MAT_DOOR,
-    MAT_INTERIOR, MAT_LITTER, MAT_ARCOLOGY
+    MAT_INTERIOR, MAT_LITTER, MAT_ARCOLOGY, MAT_INDUSTRY
 };
+
+/* Industrial plants' surfaces (MAT_INDUSTRY params.y; src/city/mesh_industry.c):
+ * paint, open grating, steam, glazing lit from within, wire mesh. Must match
+ * shaders/city/industry.glsl. */
+enum { IND_PAINT = 0, IND_GRATING, IND_STEAM, IND_GLOW, IND_MESH };
 
 /* Litter kinds (MAT_LITTER params.y; src/city/litter.c). LK_SHADOW is the contact
  * shadow under an item. Must match shaders/common.glsl. */
@@ -171,6 +177,22 @@ typedef struct SkyGrid {
     uint32_t airCount, airPad[3];
     SkyLight air[AIR_MAX_LIGHTS];         /* camera-relative */
 } SkyGrid;
+
+/* Flares' fire (src/city/mesh_industry.c), a volume ray-marched by its own pass
+ * (shaders/flame.frag). Each frame the FLAME_MAX flames nearest the camera,
+ * within FLAME_RANGE, are gathered camera-relative (chunks_flames). std430:
+ * must match shaders/flame.glsl. The same flames light the chunks' light
+ * tables, the rain mist and the cloud base, with the same timing. */
+#define FLAME_MAX         64
+#define FLAME_RANGE       1500.0f
+typedef struct Flame {
+    float    pos[3];   /* the nozzle (chunk-local in a Mesh, camera-relative on the GPU) */
+    float    reach;    /* how high a gout climbs (m) */
+    float    radius;   /* the column's widest (m) */
+    uint32_t id;       /* its timing: 0..63 */
+    float    pad[2];
+} Flame;
+typedef struct FlameSet { uint32_t count, pad[3]; Flame flames[FLAME_MAX]; } FlameSet;
 
 /* Distance beyond which a sky light adds too little to see. */
 static inline float sky_light_range(float power) {
