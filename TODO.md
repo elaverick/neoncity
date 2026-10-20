@@ -296,6 +296,9 @@ Section 11 of `docs/procedural-building-generation.md` (`src/gen/building_indust
   - **Bent by the wind at the stack only:** the gust history is sampled at the mouth, not along
     the path the gas has taken, and a strong gust shears the top of a tall plume into a sheet.
   - **Not reflected** in the wet streets, as the fire isn't, and casts no shadow.
+  - **Manhole steam** comes only from covers out in a road's carriageway (not in junctions),
+    found by repeating the ground shader's hash; the covers themselves look no different, and
+    nothing makes the steam heavier in the rain or the cold.
 - **Fire** (`shaders/flame.frag`, `flameGout` in `shaders/common.glsl`; see the README) is a
   ray-marched volume on each flare, in gouts or steady. Left over:
   - **Only flares burn.** Venting fire on the night and gothic refineries' stack tops and

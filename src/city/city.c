@@ -117,6 +117,7 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
     build_roads(m, &g);
     build_blocks(m, &g);
     m->drape = 0;
+    build_vents(m, &g);
     for (int i = 0; i < g.nl; ++i)
         if (chunk_gen_owns(&g, g.lamp[i].x, g.lamp[i].z)) build_lamp(m, &g, &g.lamp[i], (uint32_t)i);
     for (int i = 0; i < g.nb; ++i) {

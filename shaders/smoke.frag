@@ -34,7 +34,7 @@ layout(location = 1) flat in uint vIdx;
 layout(location = 0) out vec4 outColor;
 
 const int   KNOTS  = 8;     // the wind's history over a parcel's life, sampled this many times
-const float FLOW_T = 2.0;   // seconds each phase of the advected noise runs before it fades out and restarts
+const float FLOW_T = 2.0;   // seconds each phase of the advected noise runs before it fades out and restarts (a vent's: 4)
 
 Plume P;
 float gTime, gTop;          // gTop: the age of the gas at the top of the rise
@@ -66,37 +66,42 @@ float plumeSigma(vec3 p, out float r, out float near) {
     vec2 q = vec2(dot(off, GUST_WIND) / sqrt(1.0 + slope * slope), dot(off, vec2(-GUST_WIND.y, GUST_WIND.x))) / r;
     if (k > 1.1 || dot(q, q) > 2.6 || p.y < -0.6) return 0.0;   // beyond the turbulence's reach
 
+    bool vent = P.kind == PLUME_VENT;
     float gust = gustAt(gMouth + p.xz, gTime);   // the gust here now
-    float turb = 0.35 + 0.65 * gust;
+    float turb = 0.35 + (vent ? 0.25 : 0.65) * gust;   // down in the street a gust only stirs a wisp
     // Both layers are flow maps: each of two phases carries its noise along the
-    // flow for FLOW_T seconds, fading in and out so the other covers its restart
-    // and nothing is stretched further than one phase's worth of the flow.
-    float ph = fract(gTime / FLOW_T), w0 = 1.0 - abs(2.0 * ph - 1.0);
+    // flow for flowT seconds, fading in and out so the other covers its restart
+    // and nothing is stretched further than one phase's worth of the flow. Each
+    // plume keeps its own clock, and along a wisp it runs later the further the
+    // steam has come, so its fades never come all at once (a pulse).
+    float flowT = vent ? 4.0 : FLOW_T;
+    float ph = fract(gTime / flowT + gSeed.x + (vent ? 0.12 * path : 0.0)), w0 = 1.0 - abs(2.0 * ph - 1.0);
     float ph1 = fract(ph + 0.5), keep = 1.0 / sqrt(w0 * w0 + (1.0 - w0) * (1.0 - w0));   // keeps its contrast through the fade
     // billows, the size of the plume where they are: across it, and along its path as the gas goes
     float w = plumeRiseSpeed(P, h), speed = length(vec2(w, u));
-    vec4 n0 = texture(noiseTex, vec3(q.x, (path - speed * ph * FLOW_T) / r, q.y) * 0.35 + gSeed);
-    vec4 n1 = texture(noiseTex, vec3(q.x, (path - speed * ph1 * FLOW_T) / r, q.y) * 0.35 + gSeed + 0.37);
+    vec4 n0 = texture(noiseTex, vec3(q.x, (path - speed * ph * flowT) / r, q.y) * 0.35 + gSeed);
+    vec4 n1 = texture(noiseTex, vec3(q.x, (path - speed * ph1 * flowT) / r, q.y) * 0.35 + gSeed + 0.37);
     vec4 nz = n0 * w0 + n1 * (1.0 - w0);
     float billow = (nz.r - 0.5) * keep + 0.5;
     vec3 warp = (nz.gba - 0.5) * 2.0;
     q += warp.xz * 0.3 * turb;
     // eddies a couple of metres across, carried by the local velocity: the rise, the wind, and a swirl
-    vec3 vel = vec3(GUST_WIND.x, 0.0, GUST_WIND.y) * (PLUME_BREEZE + PLUME_GUST * gust) + vec3(0.0, w, 0.0)
-             + warp * (1.0 + 2.5 * turb);
-    float f0 = texture(noiseTex, (p - vel * ph * FLOW_T) * 0.07 + gSeed.zxy).g;
-    float f1 = texture(noiseTex, (p - vel * ph1 * FLOW_T) * 0.07 + gSeed.zxy + 0.5).g;
+    vec3 vel = vec3(GUST_WIND.x, 0.0, GUST_WIND.y) * (PLUME_BREEZE + PLUME_GUST * gust) * plumeWind(P) + vec3(0.0, w, 0.0)
+             + warp * (1.0 + 2.5 * turb) * (vent ? 0.25 : 1.0);   // a wisp only drifts and curls
+    float eddy = vent ? 0.16 : 0.07;   // a wisp's eddies are under a metre, not a couple of metres
+    float f0 = texture(noiseTex, (p - vel * ph * flowT) * eddy + gSeed.zxy).g;
+    float f1 = texture(noiseTex, (p - vel * ph1 * flowT) * eddy + gSeed.zxy + 0.5).g;
     float fine = (f0 * w0 + f1 * (1.0 - w0) - 0.5) * keep + 0.5;
-    float shape = 0.5 + (0.6 * billow + 0.4 * fine - 0.5) * (1.4 + 0.6 * turb);
+    float shape = 0.5 + (0.6 * billow + 0.4 * fine - 0.5) * ((vent ? 2.0 : 1.4) + 0.6 * turb);
 
     // the billows decide where it is (as the clouds' coverage does): solid in the
-    // core, lumps and holes towards its edges
-    float cover = 1.0 - smoothstep(0.0, 1.25, length(q));
+    // core, lumps and holes towards its edges; a manhole's steam only in torn wisps
+    float cover = 1.0 - smoothstep(0.0, 1.25, length(q)) - (vent ? 0.08 : 0.0);
     float dens = clamp((shape - 1.0 + cover) * 2.5, 0.0, 1.0);
     dens *= smoothstep(k * 0.6 - 0.1, k * 0.6 + 0.2, shape);          // eaten from the edges as it climbs
     dens *= 1.0 - smoothstep(0.6, 1.0, k + (shape - 0.5) * 0.3);      // gone by the top
     dens *= smoothstep(-0.6, 0.3, p.y);
-    float sigma = P.kind == PLUME_SMOKE ? 0.9 : 0.6;
+    float sigma = P.kind == PLUME_SMOKE ? 0.9 : vent ? 0.9 : 0.6;
     return sigma * dens * sqrt(P.radius * 1.3 / r) * (1.0 - 0.4 * k);   // thinned as it spreads
 }
 
@@ -123,10 +128,10 @@ void main() {
     // the wind's history at the mouth: how far it has carried the gas of each age
     gTop = plumeAge(P, P.rise);
     float da = gTop / float(KNOTS - 1);
-    gWind[0] = PLUME_BREEZE + PLUME_GUST * gustAt(gMouth, gTime);
+    gWind[0] = (PLUME_BREEZE + PLUME_GUST * gustAt(gMouth, gTime)) * plumeWind(P);
     gDrift[0] = 0.0;
     for (int k = 1; k < KNOTS; ++k) {
-        gWind[k] = PLUME_BREEZE + PLUME_GUST * gustAt(gMouth, gTime - float(k) * da);
+        gWind[k] = (PLUME_BREEZE + PLUME_GUST * gustAt(gMouth, gTime - float(k) * da)) * plumeWind(P);
         gDrift[k] = gDrift[k - 1] + 0.5 * (gWind[k - 1] + gWind[k]) * da;
     }
 
@@ -135,7 +140,7 @@ void main() {
     float city = frame.sky.x;
     vec3 above = CLOUD_DECK * (1.0 + 1.5 * city) + MOON_LIGHT * 0.35 * (1.0 - frame.sky.z);
     vec3 below = vec3(1.0, 0.55, 0.3) * (0.1 + 0.5 * city);
-    vec3 albedo = P.kind == PLUME_SMOKE ? vec3(0.45, 0.42, 0.40) : vec3(0.80, 0.82, 0.85);
+    vec3 albedo = P.kind == PLUME_SMOKE ? vec3(0.45, 0.42, 0.40) : vec3(0.80, 0.82, 0.85);   // smoke; steam
     vec3 flp[2], flc[2];
     int nf = 0;
     for (uint i = 0u; i < flameCount && nf < 2; ++i) {
@@ -148,9 +153,11 @@ void main() {
         nf++;
     }
 
-    // fewer steps far off, where the plume is a few pixels across; no shadow tap there
-    int N = int(mix(48.0, 12.0, smoothstep(150.0, 1000.0, t0)));
-    bool tap = t0 < 350.0;
+    // fewer steps far off, where the plume is a few pixels across; no shadow tap there,
+    // nor in a manhole's thin wisp
+    int N = P.kind == PLUME_VENT ? int(mix(48.0, 10.0, smoothstep(30.0, 200.0, t0)))
+                                 : int(mix(48.0, 12.0, smoothstep(150.0, 1000.0, t0)));
+    bool tap = t0 < 350.0 && P.kind != PLUME_VENT;
     float dt = (t1 - t0) / float(N), jit = ign(gl_FragCoord.xy + vec2(fract(gTime * 13.7) * 64.0, 0.0));
     vec3 acc = vec3(0.0);
     float T = 1.0;

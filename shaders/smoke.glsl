@@ -11,26 +11,29 @@ struct Plume {
 };
 layout(std430, set = 0, binding = 6) readonly buffer Plumes { uint plumeCount, plumePad0, plumePad1, plumePad2; Plume plumes[]; };
 
-const uint PLUME_SMOKE = 0u, PLUME_STEAM = 1u;
+const uint PLUME_SMOKE = 0u, PLUME_STEAM = 1u, PLUME_VENT = 2u;   // a stack's smoke or steam; a manhole's wisp
 
 /* The flow a plume rides. The gas leaves the mouth at plumeExit and slows as
  * its buoyancy is spent, w(h) = exit / (1 + h / plumeSlow), so a parcel of it
  * reaches height h at age plumeAge(h). Meanwhile the wind carries it downwind
  * (GUST_WIND) at PLUME_BREEZE, and up to PLUME_GUST faster in a gust (gustAt),
- * which bends the plume over. */
+ * which bends the plume over. A manhole's steam only seeps out, and down in
+ * the street the buildings keep most of the wind off it (plumeWind). */
 const float PLUME_BREEZE = 1.5, PLUME_GUST = 3.5;   // m/s
-float plumeExit(Plume p) { return p.kind == PLUME_SMOKE ? 8.0 + p.radius : 5.0 + 0.5 * p.radius; }   // hot flue gas leaves faster
-float plumeSlow(Plume p) { return 30.0 + 8.0 * p.radius; }
+float plumeExit(Plume p) { return p.kind == PLUME_SMOKE ? 8.0 + p.radius : p.kind == PLUME_STEAM ? 5.0 + 0.5 * p.radius : 0.5; }   // hot flue gas leaves faster
+float plumeSlow(Plume p) { return p.kind == PLUME_VENT ? 6.0 : 30.0 + 8.0 * p.radius; }
+float plumeWind(Plume p) { return p.kind == PLUME_VENT ? 0.08 : 1.0; }
 float plumeAge(Plume p, float h) { return (h + h * h / (2.0 * plumeSlow(p))) / plumeExit(p); }
 float plumeRiseSpeed(Plume p, float h) { return plumeExit(p) / (1.0 + h / plumeSlow(p)); }
 // How wide it has spread at height h, d downwind of the mouth: entraining air as it goes.
 float plumeRadius(Plume p, float h, float d) { return p.radius * 1.3 + 0.16 * h + 0.12 * d; }
 
 // The box a plume drifts in: from just under the mouth to the top of its rise,
-// and downwind as far as the strongest gust can carry it, with room for the
+// and downwind as far as the strongest gust can carry it before it is gone
+// (smoke.frag: it thins away over its path's length, rise), with room for the
 // turbulence to throw it about.
 void plumeBox(Plume p, out vec3 lo, out vec3 hi) {
-    float dmax = plumeAge(p, p.rise) * (PLUME_BREEZE + PLUME_GUST);
+    float dmax = min(plumeAge(p, p.rise) * (PLUME_BREEZE + PLUME_GUST) * plumeWind(p), p.rise * 1.1);
     float r = plumeRadius(p, p.rise, dmax) * 1.4;
     vec2 d = GUST_WIND * dmax;
     lo = p.pos + vec3(min(d.x, 0.0) - r, -1.0, min(d.y, 0.0) - r);

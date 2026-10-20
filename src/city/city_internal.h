@@ -246,6 +246,7 @@ uint32_t lamp_fault(const Lamp *L);
 void build_lamp(Mesh *m, const ChunkGen *g, const Lamp *L, uint32_t idx);
 void build_roads(Mesh *m, const ChunkGen *g);
 void build_blocks(Mesh *m, const ChunkGen *g);
+void build_vents(Mesh *m, const ChunkGen *g);
 
 /* light_tiles.c */
 void build_lights(Mesh *m, ChunkGen *g);

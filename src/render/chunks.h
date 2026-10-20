@@ -50,6 +50,6 @@ void         chunks_sky_lights(ChunkSystem *cs, const double cam[3], SkyGrid *ou
 /* Flares' fire (src/core/common.h) of resident chunks, the FLAME_MAX nearest within FLAME_RANGE,
  * camera-relative; returns how many. */
 uint32_t     chunks_flames(ChunkSystem *cs, const double cam[3], FlameSet *out);
-/* Stacks' plumes (src/core/common.h) of resident chunks, the PLUME_MAX nearest within PLUME_RANGE,
- * camera-relative and farthest first; returns how many. */
+/* Plumes (src/core/common.h) of resident chunks: the PLUME_STACKS stacks' nearest within PLUME_RANGE
+ * and the PLUME_VENTS manholes' within VENT_RANGE, camera-relative and farthest first; returns how many. */
 uint32_t     chunks_plumes(ChunkSystem *cs, const double cam[3], PlumeSet *out);

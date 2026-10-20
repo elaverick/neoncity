@@ -194,14 +194,19 @@ typedef struct Flame {
 } Flame;
 typedef struct FlameSet { uint32_t count, pad[3]; Flame flames[FLAME_MAX]; } FlameSet;
 
-/* Stacks' smoke and steam (src/city/mesh_industry.c), a volume ray-marched by
- * the flame pass before the fire (shaders/smoke.frag). Each frame the
- * PLUME_MAX plumes nearest the camera, within PLUME_RANGE, are gathered
- * camera-relative, farthest first so they blend back to front
- * (chunks_plumes). std430: must match shaders/smoke.glsl. */
-#define PLUME_MAX         48
+/* Stacks' smoke and steam (src/city/mesh_industry.c) and the steam off manhole
+ * covers (build_vents in src/city/streets.c), volumes ray-marched by the flame
+ * pass before the fire (shaders/smoke.frag). Each frame the PLUME_STACKS
+ * stacks' plumes nearest the camera within PLUME_RANGE, and the PLUME_VENTS
+ * covers' within VENT_RANGE, are gathered camera-relative, farthest first so
+ * they blend back to front (chunks_plumes). std430: must match
+ * shaders/smoke.glsl. */
+#define PLUME_STACKS      48
+#define PLUME_VENTS       32
+#define PLUME_MAX         (PLUME_STACKS + PLUME_VENTS)
 #define PLUME_RANGE       1500.0f
-enum { PLUME_SMOKE = 0, PLUME_STEAM = 1 };
+#define VENT_RANGE        250.0f
+enum { PLUME_SMOKE = 0, PLUME_STEAM = 1, PLUME_VENT = 2 };
 typedef struct Plume {
     float    pos[3];   /* the stack's mouth (chunk-local in a Mesh, camera-relative on the GPU) */
     float    radius;   /* the mouth's (m) */

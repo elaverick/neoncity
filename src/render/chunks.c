@@ -1056,11 +1056,23 @@ uint32_t chunks_flames(ChunkSystem *cs, const double cam[3], FlameSet *dst) {
     return n;
 }
 
+/* Inserts p (at squared distance d2) into the max nearest so far, near[] sorted nearest first. */
+static void keep_nearest(Plume *near, float *d2s, uint32_t *n, uint32_t max, const Plume *p, float d2) {
+    uint32_t at = *n < max ? *n : max;
+    while (at > 0 && d2s[at - 1] > d2) at--;
+    if (at >= max) return;
+    uint32_t last = *n < max ? *n : max - 1;
+    for (uint32_t j = last; j > at; --j) { near[j] = near[j - 1]; d2s[j] = d2s[j - 1]; }
+    near[at] = *p; d2s[at] = d2;
+    if (*n < max) (*n)++;
+}
+
 uint32_t chunks_plumes(ChunkSystem *cs, const double cam[3], PlumeSet *dst) {
     const double P = CHUNK_SIZE;
-    Plume near[PLUME_MAX];
-    float d2s[PLUME_MAX];
-    uint32_t n = 0;
+    /* stacks and vents kept apart, so the street's many wisps never crowd out a refinery */
+    Plume stack[PLUME_STACKS], vent[PLUME_VENTS];
+    float sd2[PLUME_STACKS], vd2[PLUME_VENTS];
+    uint32_t ns = 0, nv = 0;
     for (int i = 0; i < MAX_ENTRIES; ++i) {
         const Entry *e = &cs->entries[i];
         if (e->state != CS_RESIDENT || !e->nplume) continue;
@@ -1071,20 +1083,18 @@ uint32_t chunks_plumes(ChunkSystem *cs, const double cam[3], PlumeSet *dst) {
             p.pos[1] = (float)(p.pos[1] - cam[1]);
             p.pos[2] = (float)(oz + p.pos[2]);
             float d2 = p.pos[0] * p.pos[0] + p.pos[1] * p.pos[1] + p.pos[2] * p.pos[2];
-            if (d2 > PLUME_RANGE * PLUME_RANGE) continue;
-            /* the nearest PLUME_MAX: insertion into a sorted list */
-            uint32_t at = n < PLUME_MAX ? n : PLUME_MAX;
-            while (at > 0 && d2s[at - 1] > d2) at--;
-            if (at >= PLUME_MAX) continue;
-            uint32_t last = n < PLUME_MAX ? n : PLUME_MAX - 1;
-            for (uint32_t j = last; j > at; --j) { near[j] = near[j - 1]; d2s[j] = d2s[j - 1]; }
-            near[at] = p; d2s[at] = d2;
-            if (n < PLUME_MAX) n++;
+            if (p.kind == PLUME_VENT) {
+                if (d2 <= VENT_RANGE * VENT_RANGE) keep_nearest(vent, vd2, &nv, PLUME_VENTS, &p, d2);
+            } else if (d2 <= PLUME_RANGE * PLUME_RANGE) keep_nearest(stack, sd2, &ns, PLUME_STACKS, &p, d2);
         }
     }
-    /* farthest first: the pass blends them back to front */
+    /* farthest first, merging the two: the pass blends them back to front */
+    uint32_t n = 0, a = ns, b = nv;
+    while (a || b) {
+        if (b == 0 || (a && sd2[a - 1] >= vd2[b - 1])) dst->plumes[n++] = stack[--a];
+        else dst->plumes[n++] = vent[--b];
+    }
     dst->count = n;
-    for (uint32_t k = 0; k < n; ++k) dst->plumes[k] = near[n - 1 - k];
     return n;
 }
 

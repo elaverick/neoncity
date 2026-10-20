@@ -218,6 +218,46 @@ void build_roads(Mesh *m, const ChunkGen *g) {
     }
 }
 
+/* Steam off the manhole covers. The covers are the ground shader's
+ * (shaders/city/ground.glsl): one in four cells of a 13 m grid, at a hashed
+ * spot in it, by the position it shades with (gWorld: chunk-local plus the
+ * chunk's index & 63 times its size). This finds the same covers. Those lying
+ * well inside a road's carriageway (clear of its gutters, not in a junction),
+ * one in three, vent a wisp of steam (PLUME_VENT; shaders/smoke.frag). */
+#define COVER_CELL 13.0
+void build_vents(Mesh *m, const ChunkGen *g) {
+    const double P = CHUNK_SIZE;
+    double wx0 = (double)(g->cx & 63) * P, wz0 = (double)(g->cz & 63) * P;
+    int i0 = (int)floor(wx0 / COVER_CELL), i1 = (int)floor((wx0 + P) / COVER_CELL);
+    int j0 = (int)floor(wz0 / COVER_CELL), j1 = (int)floor((wz0 + P) / COVER_CELL);
+    for (int j = j0; j <= j1; ++j)
+        for (int i = i0; i <= i1; ++i) {
+            uint32_t h = hash2i(0xA9u, i, j);
+            if (hash_float(h) >= 0.25f) continue;
+            /* float, as the shader works it out */
+            float lx = ((float)i + 0.3f + 0.4f * hash_float(hash_combine(h, 1u))) * (float)COVER_CELL - (float)wx0;
+            float lz = ((float)j + 0.3f + 0.4f * hash_float(hash_combine(h, 2u))) * (float)COVER_CELL - (float)wz0;
+            if (lx < 0.0f || lx >= (float)P || lz < 0.0f || lz >= (float)P) continue;   /* another chunk's */
+            uint32_t vh = hash_combine(h, 0x57EAu);
+            if (hash_float(vh) >= 1.0f / 3.0f) continue;
+            DVec2 c = dv(lx, lz);
+            int onRoad = 0;
+            for (int ri = 0; ri < g->pa->nroads && !onRoad; ++ri) {
+                const Road *r = &g->pa->roads[ri];
+                DVec2 a = dv(r->a.x - g->ox, r->a.z - g->oz), b = dv(r->b.x - g->ox, r->b.z - g->oz);
+                double len = dlen(dsub(b, a));
+                if (len < 1.0) continue;
+                DVec2 dir = dscale(dsub(b, a), 1.0 / len), d = dsub(c, a);
+                double along = ddot(d, dir), across = fabs(ddot(d, dv(-dir.z, dir.x)));
+                onRoad = along > r->trimA + 1.0 && along < len - r->trimB - 1.0 && across < r->at.half - 0.9;
+            }
+            if (!onRoad) continue;
+            float y = city_ground_y(g->ox + lx, g->oz + lz);
+            float rise = 4.5f + 2.5f * hash_float(hash_combine(vh, 1u));
+            push_plume(m, v3(lx, y, lz), 0.3f, rise, hash_combine(vh, 2u), PLUME_VENT);
+        }
+}
+
 /* Pieces of convex polygons cut round other convex polygons (the sidewalk
  * round its drop kerbs, a slope round its tactile slabs). */
 #define MAX_SHARDS 96

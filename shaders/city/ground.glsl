@@ -255,7 +255,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         sink += 1.0 * rim - 1.2 * paintC;
         s.albedo *= 1.0 - 0.35 * rim;
 
-        // manhole covers
+        // manhole covers (build_vents in src/city/streets.c finds the same ones to steam: must match)
         vec2 mc = floor(w.xz / 13.0);
         uint mh = hash2i(0xA9u, int(mc.x), int(mc.y));
         if (hfloat(mh) < 0.25) {

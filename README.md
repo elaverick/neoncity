@@ -278,6 +278,12 @@ vessels pass through decks by, are lists of their own.
   light it from above (one tap towards them for its own shadow), the city glows on it from
   below, nearby flares light it as they gout, and the flue's fire glows in a refinery
   stack's throat.
+- **Manhole steam.** About one manhole cover in three that lies out in a carriageway seeps a
+  wisp of steam, a few metres tall, through the same pass (`PLUME_VENT`). `build_vents`
+  (`src/city/streets.c`) finds the ground shader's covers by the same hash. The steam seeps out
+  slowly, the street keeps most of the wind off it, and it tears into thin wisps with finer
+  eddies. The 32 nearest within 250 m are drawn, counted apart from the stacks' 48 so the
+  street's many vents never crowd out a refinery.
 
 `building_lab industry [size]` surveys the industrial fringe: styles, tiers, units, pipes and
 rejections, with a camera for a few of each kind, and measures the mesh and litter of the chunks
