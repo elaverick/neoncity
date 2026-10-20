@@ -66,10 +66,13 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   at 250-300 m, the cloud hides everything), looking out past the city's edge and across the city from its fringe,
   in drizzle and downpour.
 - **Distant proxies** (`src/city/proxy.c`, `src/render/proxy_gpu.c`, `shaders/proxy/`; see the README). Next:
-  - **The handover** fades over `CHUNK_FADE_TIME` (0.5 s) once a chunk is resident (`ChunkGPU.info[3]`, the
-    proxies' per-tile fade bytes, `fadeKeepsChunk`). Its lobbies, plants and litter don't fade, and its shadows and
-    shelter are there in full from the start. The dither is a fixed screen pattern; a moving camera shows it as a
-    brief shimmer rather than a blend.
+  - **The handover pops**, behind the band of haze at the chunks' edge (`edgeFog`). A dithered cross-fade was tried
+    (93507df) and reverted: discarding in the proxy shader cost the early depth test, about 280 ms a frame behind a
+    dense view. Another fade would have to keep the proxies' early depth test (no discard, or no depth writes).
+    Nearer pops, of chunks still streaming in, aren't hidden by it.
+  - **The pool's reach** (`relax_reach` in `chunks.c`): a pool too small for the view stops building chunks beyond
+    the nearest wanted one it had to evict, so they stay as boxes rather than being rebuilt and evicted over and over.
+    A larger pool, or chunks weighed by what they show, would let the city build farther.
   - **Rooms** are lit with the facade's odds, floor by floor, but not the very rooms its faces light (a box's faces
     aren't the section's faces), so the lit pattern changes at the handover.
   - **What a box leaves out:** masts, spires and aircraft warning lights (the skyline's red blink), signs and

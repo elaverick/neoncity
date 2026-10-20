@@ -10,7 +10,7 @@ typedef struct FrameUBO {
     float   camPos[4];     /* xyz world (approximate), w = time in seconds */
     float   camFwd[4];     /* xyz forward, w = view distance */
     float   screen[4];     /* width, height, 1/width, 1/height */
-    float   weather[4];    /* rain intensity (0 drizzle .. 1 downpour), street wetness, haze datum (world Y the haze thins above), unused */
+    float   weather[4];    /* rain intensity (0 drizzle .. 1 downpour), street wetness, haze datum (world Y the haze thins above), the chunks' edge (m: edgeFog) */
     float   shelter[4];    /* shelter map: camera-relative centre x, z; half-width; unused (renderer.c) */
     float   shadow[4];     /* ray-traced shadows: frame number, on (1) / off (0), where sample 0 lies in a pixel (renderer.c) */
     mat4    prevViewProj;  /* the previous frame's viewProj for this frame's camera-relative positions (renderer.c) */
@@ -31,6 +31,8 @@ void      renderer_set_shadow_debug(Renderer *r, bool on);
 bool      renderer_shadow_debug(Renderer *r);
 /* How long the GPU spends on each pass, smoothed over recent frames (one line of text). */
 void      renderer_gpu_times(Renderer *r, char *buf, size_t n);
+/* The same for the latest frame the GPU has finished alone (two frames behind). */
+void      renderer_gpu_last(Renderer *r, char *buf, size_t n);
 /* Whether the terrain draws the levels its screen-space error asks for, filled
  * and done blending. */
 bool      renderer_terrain_settled(Renderer *r);

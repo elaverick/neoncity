@@ -18,10 +18,8 @@ struct ProxyBox {
     uint info;   // PX_* fields
 };
 layout(std430, set = 0, binding = 1) readonly buffer Boxes { ProxyBox boxes[]; };
-// Each tile, by its table slot: its origin, camera-relative (x, z), and how far
-// each of its 16 chunks has faded in over it (a byte each, chunks_shown)
-struct Tile { vec4 origin; uvec4 fade; };
-layout(std430, set = 0, binding = 2) readonly buffer Tiles { Tile tiles[]; };
+// Each tile's origin, camera-relative (x, z), by its table slot
+layout(std430, set = 0, binding = 2) readonly buffer Tiles { vec4 tileOrigin[]; };
 
 layout(location = 0) out vec3 vRel;          // camera-relative position, bent over the planet (planetBend)
 layout(location = 1) out vec2 vFace;         // metres along the face from its left corner; height above the building's base
@@ -29,7 +27,6 @@ layout(location = 2) flat out vec3 vNrm;
 layout(location = 3) flat out uint vSeed;
 layout(location = 4) flat out uint vInfo;
 layout(location = 5) flat out vec2 vSize;    // the face's width; the box's top above the building's base
-layout(location = 6) flat out uint vFade;    // its chunk's fade in (proxy.frag leaves those pixels to it)
 
 // The corners of a face's two triangles: (along, up) from its bottom left.
 const vec2 QUAD[6] = vec2[6](vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 0), vec2(1, 1), vec2(0, 1));
@@ -42,10 +39,7 @@ void main() {
     vec2 q = QUAD[k % 6];
     vec2 h = unpackHalf2x16(b.half_), ax = unpackHalf2x16(b.axis);
     vec2 az = vec2(-ax.y, ax.x);   // its own +z axis in the world
-    Tile t = tiles[gl_InstanceIndex];
-    vec3 c = vec3(t.origin.x + b.xz.x, 0.0, t.origin.y + b.xz.y);
-    uint chunk = b.info & 15u;   // PX_CHUNK_SHIFT
-    vFade = t.fade[chunk >> 2] >> ((chunk & 3u) * 8u) & 255u;
+    vec3 c = vec3(tileOrigin[gl_InstanceIndex].x + b.xz.x, 0.0, tileOrigin[gl_InstanceIndex].y + b.xz.y);
     // where the building's heights count from (src/city/proxy.c: a section on the ground reaches 1 m into it)
     float floor0 = float(b.info >> 18 & 2047u) * 0.5;
     float base = floor0 <= SIDEWALK_HEIGHT + 0.01 ? b.y.x + 1.0 : b.y.x - floor0;

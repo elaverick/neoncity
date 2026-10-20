@@ -29,20 +29,24 @@ enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
 #define MOTION_MAX     400.0f   /* m/s: faster is a jump */
 #define GUARD_DISTANCE 700.0f
 #define GUARD_SLOPE    0.18f
-/* A chunk fades in over its proxies this long after it becomes resident (s):
- * its pixels and its proxies' are complementary halves of one dither
- * (fadeDither in shaders/common.glsl), the chunk's share growing. */
-#define CHUNK_FADE_TIME 0.5
 /* In-view chunks this near and not drawn yet count as missing (ChunkStats). */
 #define MISSING_DISTANCE 700.0f
+/* The pool's reach (relax_reach): when it has to evict chunks still wanted,
+ * chunks are not queued again beyond the nearest of them, so they stay as
+ * their proxies instead of being built, uploaded, drawn and evicted over
+ * and over. It grows back at REACH_GROW while the pool has REACH_ROOM of its
+ * pages free or held by chunks no longer wanted, and never falls under
+ * REACH_MIN. */
+#define REACH_MIN      500.0f
+#define REACH_GROW     150.0f   /* m/s */
+#define REACH_ROOM     0.4f
+#define REACH_ALL      1e30f
 typedef struct Entry {
     int      cx, cz, layer;
     int      state;
     int      next;          /* hash chain */
     uint64_t lastSeen;
     uint64_t drawn;         /* 1 + the last frame the view drew it in */
-    double   residentAt;    /* when it became resident (s): it fades in from its proxies */
-    uint8_t  shown;         /* the fade it was last drawn with, 0 .. 255 (chunks_shown) */
     Mesh     mesh;          /* CPU mesh while READY */
     uint16_t pages[MAX_CHUNK_PAGES];
     int      npages;
@@ -120,7 +124,8 @@ struct ChunkSystem {
     double   motionCam[2], motionTime;
     float    vel[2];
     int      inViewMissing;
-    int      fading;          /* chunks drawn this frame still fading in */
+    float    reach;           /* chunks are queued only this near (m; relax_reach) */
+    double   reachTime;
     int      ready[MAX_ENTRIES];
     int      readyCount;
 
@@ -223,6 +228,7 @@ ChunkSystem *chunks_create(VkCore *vk) {
     for (int i = 0; i < HASH_BUCKETS; ++i) cs->buckets[i] = -1;
     for (int i = 0; i < MAX_ENTRIES; ++i) cs->freeEntries[i] = MAX_ENTRIES - 1 - i;
     cs->freeEntryCount = MAX_ENTRIES;
+    cs->reach = REACH_ALL;
     for (int i = 0; i < POOL_PAGES; ++i) cs->freePages[i] = (uint16_t)(POOL_PAGES - 1 - i);
     cs->freePageCount = POOL_PAGES;
     cs->pendingFree = (PendingFree *)malloc(sizeof(PendingFree) * POOL_PAGES);
@@ -365,9 +371,36 @@ static void evict_to_watermark(ChunkSystem *cs, uint64_t frame, const double cam
         }
     }
     qsort(cand, n, sizeof(EvictCand), cmp_evict);
-    for (int i = 0; i < n && !POOLS_HIGH(); ++i) evict(cs, cand[i].idx, frame);
+    for (int i = 0; i < n && !POOLS_HIGH(); ++i) {
+        Entry *e = &cs->entries[cand[i].idx];
+        if (e->lastSeen >= frame) {   /* still wanted: the pool can't hold this far out (relax_reach) */
+            float d = sqrtf(entry_dist2(e, cam)) - CHUNK_SIZE;
+            cs->reach = fminf(cs->reach, fmaxf(d, REACH_MIN));
+        }
+        evict(cs, cand[i].idx, frame);
+    }
 #undef POOLS_LOW
 #undef POOLS_HIGH
+}
+
+/* Lets the reach grow back while the pool has room for more: REACH_ROOM of its
+ * pages free, waiting to be, or held by chunks not wanted this frame (which
+ * evict_to_watermark takes first). After an eviction of wanted chunks the pool
+ * is full of wanted ones, so the reach stays where that left it until the view
+ * changes. Called after queue_wanted, which marks this frame's wanted chunks. */
+static void relax_reach(ChunkSystem *cs, uint64_t frame) {
+    double now = glfwGetTime();
+    float dt = (float)fmin(now - cs->reachTime, 0.1);
+    cs->reachTime = now;
+    if (cs->reach >= REACH_ALL) return;
+    int room = cs->freePageCount + cs->pendingFreeCount;
+    for (int i = 0; i < MAX_ENTRIES; ++i) {
+        const Entry *e = &cs->entries[i];
+        if (e->state == CS_RESIDENT && e->lastSeen < frame) room += e->npages;
+    }
+    if (room < (int)(REACH_ROOM * POOL_PAGES)) return;
+    cs->reach += REACH_GROW * dt;
+    if (cs->reach > VIEW_DISTANCE + 2.0f * CHUNK_SIZE) cs->reach = REACH_ALL;
 }
 
 static void reclaim_pages(ChunkSystem *cs, uint64_t frame) {
@@ -617,9 +650,10 @@ static void want_chunks(ChunkSystem *cs, const Frustum *frp, const double cam[3]
 
 }
 
-/* Queues the wanted chunks not yet known, by priority, for the workers.
- * Returns how many wanted chunks are queued. */
-static int queue_wanted(ChunkSystem *cs, uint64_t frame) {
+/* Queues the wanted chunks not yet known and within the pool's reach, by
+ * priority, for the workers. Returns how many wanted chunks are queued. */
+static int queue_wanted(ChunkSystem *cs, uint64_t frame, const double cam[3]) {
+    const double P = CHUNK_SIZE, reach2 = (double)cs->reach * cs->reach;
     Job newJobs[MAX_JOBS];
     int nj = 0, queued = 0;
     for (int i = 0; i < cs->wantCount; ++i) cs->wantOrder[i] = i;
@@ -630,6 +664,8 @@ static int queue_wanted(ChunkSystem *cs, uint64_t frame) {
         int idx = table_find(cs, w->cx, w->cz, w->layer);
         if (idx < 0) {
             if (nj >= MAX_JOBS || cs->freeEntryCount < 64) continue;
+            double x = (w->cx + 0.5) * P - cam[0], z = (w->cz + 0.5) * P - cam[2];
+            if (x * x + z * z > reach2) continue;   /* its proxies stand in (relax_reach) */
             idx = table_insert(cs, w->cx, w->cz, w->layer);
             if (idx < 0) continue;
             cs->entries[idx].state = CS_QUEUED;
@@ -712,7 +748,6 @@ static int upload_ready(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t
         e->mesh.air = NULL;
         mesh_free(&e->mesh);
         e->state = CS_RESIDENT;
-        e->residentAt = glfwGetTime();
         uploads++;
     }
     memmove(cs->ready, cs->ready + r, sizeof(int) * (cs->readyCount - r));
@@ -745,8 +780,6 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
     VkDrawIndirectCommand *cmds = (VkDrawIndirectCommand *)cs->indirect[slot].mapped;
     ChunkGPU *gpu = (ChunkGPU *)cs->chunkData[slot].mapped;
     uint32_t ndraw = 0, nchunk = 0;
-    const double now = glfwGetTime();
-    cs->fading = 0;
     cs->plantFirst[slot] = UINT32_MAX;
     for (int k = 0; k < 2 * cs->wantCount && nchunk < MAX_DRAW_CHUNKS; ++k) {
         if (k == cs->wantCount) cs->plantFirst[slot] = ndraw;
@@ -771,11 +804,7 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
             lp = base >= 0 && cs->entries[base].state == CS_RESIDENT ? cs->entries[base].lightPage : -1;
         }
         g->info[2] = lp >= 0 ? lp * LIGHT_PAGE_RECS : -1;
-        /* A chunk fades in over its proxies (fadeDither): its lobbies, plants and litter don't */
-        float f = e->layer == 0 ? clampf((float)((now - e->residentAt) / CHUNK_FADE_TIME), 0.0f, 1.0f) : 1.0f;
-        e->shown = (uint8_t)(f * 255.0f + 0.5f);
-        if (e->layer == 0 && e->shown < 255) cs->fading++;
-        g->info[3] = e->shown;
+        g->info[3] = 0;
         for (int p = 0; p < e->npages; ++p) {
             uint32_t first = p * PAGE_VERTS;
             VkDrawIndirectCommand *c = &cmds[ndraw++];
@@ -855,7 +884,7 @@ static void update_stats(ChunkSystem *cs, int slot, int queued, uint32_t viewChu
     cs->stats.pagesUsed = POOL_PAGES - cs->freePageCount - cs->pendingFreeCount;
     cs->stats.uploadsThisFrame = uploads;
     cs->stats.inViewMissing = cs->inViewMissing;
-    cs->stats.fading = cs->fading;
+    cs->stats.reach = cs->reach < REACH_ALL ? cs->reach : 0.0f;
     RtStats rs = rt_stats(cs->rt);
     cs->stats.blas = rs.blas;
     cs->stats.blasBuilds = rs.builds;
@@ -872,7 +901,8 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     collect_finished(cs);
     withdraw_jobs(cs);
     want_chunks(cs, &fr, cam);
-    int queued = queue_wanted(cs, frame);
+    int queued = queue_wanted(cs, frame, cam);
+    relax_reach(cs, frame);
     int uploads = upload_ready(cs, cmd, slot, frame, cam);
     uint32_t viewChunks;
     uint32_t ndraw = build_draw_list(cs, slot, &fr, cam, &viewChunks);
@@ -999,9 +1029,9 @@ static void draw_range(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint32_t 
     }
 }
 
-int chunks_shown(ChunkSystem *cs, int cx, int cz) {
+bool chunks_drawn(ChunkSystem *cs, int cx, int cz) {
     int idx = table_find(cs, cx, cz, 0);
-    return idx >= 0 && cs->entries[idx].drawn == cs->frame + 1 ? cs->entries[idx].shown : 0;
+    return idx >= 0 && cs->entries[idx].drawn == cs->frame + 1;
 }
 
 void chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot) { draw_range(cs, cmd, slot, 0, cs->plantFirst[slot]); }

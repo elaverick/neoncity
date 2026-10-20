@@ -17,7 +17,6 @@ layout(location = 10) in float vBase;
 layout(location = 0) out uvec2 outG;
 
 void main() {
-    if (!fadeKeepsChunk(gl_FragCoord.xy, uint(chunks[vChunk].info.w))) discard;   // as city.frag
     uint m = vParams.x;
     // The panes of a lobby's glazed ground floor, near enough to cover only part
     // of a pixel: what stands behind them gets the prepass instead. As city.frag

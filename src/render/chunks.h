@@ -19,7 +19,7 @@ typedef struct ChunkStats {
     int blas, instances, blasMB;   /* ray-traced shadows: bottom-level structures, TLAS instances, arena use */
     int blasBuilds;                /* bottom-level structures built since the start */
     int inViewMissing;             /* chunks in view within 700 m not resident yet: proxies stand in for them */
-    int fading;                    /* chunks drawn still fading in over their proxies */
+    float reach;                   /* m: chunks are built only this near, the pool being full (0: everywhere) */
 } ChunkStats;
 
 ChunkSystem *chunks_create(VkCore *vk);
@@ -40,11 +40,9 @@ VkDeviceSize chunks_gpu_buffer_size(void);
 VkBuffer     chunks_light_buffer(ChunkSystem *cs);   /* light tables of resident chunks (device local) */
 VkDeviceSize chunks_light_buffer_size(void);
 ChunkStats   chunks_stats(ChunkSystem *cs);
-/* How much of chunk (cx, cz)'s city layer this frame's view draws (after
- * chunks_update): 0 if none, up to 255 as it fades in once resident. The
- * distant proxies draw the rest of the same dither, and leave out the
- * buildings of a chunk drawn in full. */
-int          chunks_shown(ChunkSystem *cs, int cx, int cz);
+/* Whether this frame's view draws chunk (cx, cz)'s city layer (after
+ * chunks_update): the distant proxies leave out the buildings of such a chunk. */
+bool         chunks_drawn(ChunkSystem *cs, int cx, int cz);
 /* Acceleration structures for ray-traced shadows (src/render/rt.c); NULL without ray queries. */
 struct Rt   *chunks_rt(ChunkSystem *cs);
 /* Sky lights (src/core/common.h) of resident chunks around the camera, camera-relative and gridded. */

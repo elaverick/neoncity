@@ -1,7 +1,7 @@
 #include "renderer_internal.h"
 
 static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "terrain upload", "shelter", "prepass", "shadow rays", "shadow filter",
-                                                "scene", "terrain", "sky", "post" };
+                                                "city", "plants", "proxies", "terrain", "sky", "post" };
 
 void renderer_set_shadows(Renderer *r, bool on) { r->shadowsOn = on && r->rt; }
 bool renderer_shadows(Renderer *r) { return r->shadowsOn; }
@@ -21,6 +21,17 @@ void renderer_gpu_times(Renderer *r, char *buf, size_t n) {
         k += snprintf(buf + k, n - k, "%s %s %.2f", i == 1 ? "" : ",", GT_NAMES[i], ms);
     }
     if (k > 0 && (size_t)k < n) snprintf(buf + k, n - k, " = %.2f ms", total);
+}
+
+void renderer_gpu_last(Renderer *r, char *buf, size_t n) {
+    const float *ms = r->gpuMs[(r->gpuFrames ? r->gpuFrames - 1 : 0) % 64];
+    float total = 0.0f;
+    int k = snprintf(buf, n, "GPU's latest frame");
+    for (int i = 1; i < GT_COUNT && k > 0 && (size_t)k < n; ++i) {
+        total += ms[i];
+        k += snprintf(buf + k, n - k, "%s %s %.1f", i == 1 ? "" : ",", GT_NAMES[i], ms[i]);
+    }
+    if (k > 0 && (size_t)k < n) snprintf(buf + k, n - k, " = %.1f ms", total);
 }
 
 void timestamp(Renderer *r, VkCommandBuffer cmd, int slot, int which) {
@@ -114,7 +125,7 @@ void renderer_destroy(Renderer *r) {
     planet_gpu_destroy(r);
     proxy_gpu_destroy(r);
     vk_buffer_destroy(vk, &r->shotBuf);
-    VkPipeline pipes[] = { r->cityPipe, r->plantPipe, r->terrainPipe, r->planetPipe, r->proxyPipe, r->proxyFadePipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
+    VkPipeline pipes[] = { r->cityPipe, r->plantPipe, r->terrainPipe, r->planetPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
                            r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
@@ -320,7 +331,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
         timestamp(r, cmd, slot, GT_DENOISE);
     }
 
-    record_scene(r, cmd, slot, shadows);   /* stamps GT_SCENE, GT_TERRAIN */
+    record_scene(r, cmd, slot, shadows);   /* stamps GT_CITY, GT_PLANTS, GT_SCENE, GT_TERRAIN */
     timestamp(r, cmd, slot, GT_SKY);
 
     /* ---- screen-space reflections, then clouds, blended into r->hdr ---- */

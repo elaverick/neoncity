@@ -9,9 +9,11 @@
 // Beyond the city the air is clearer than over its streets, so far ridges
 // stand out above the haze: TERRAIN_HAZE (distances.h) against the city's
 // CITY_HAZE (fogAmount). Under the city the terrain takes the city's haze.
+// Both take the band at the chunks' edge (edgeFog), so the city there isn't
+// hazier than the land round it.
 float terrainFog(vec3 rel, float dist, float urban) {
     float density = (1.0 + 1.2 * frame.weather.x) / TERRAIN_HAZE;
-    return mix(hazeAmount(rel, dist, density), fogAmount(rel, dist), urban);
+    return edgeFog(mix(hazeAmount(rel, dist, density), cityHaze(rel, dist), urban), dist);
 }
 
 // The land lit, before the haze.

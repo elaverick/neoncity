@@ -327,8 +327,10 @@ void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows) {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->scenePL, 0, 1, &r->sceneSet[slot], 0, NULL);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->cityPipe);
     chunks_draw(r->chunks, cmd, slot);
+    timestamp(r, cmd, slot, GT_CITY);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->plantPipe);
     chunks_draw_plants(r->chunks, cmd, slot);
+    timestamp(r, cmd, slot, GT_PLANTS);
     proxy_gpu_draw(r, cmd, slot);
     timestamp(r, cmd, slot, GT_SCENE);
     terrain_gpu_draw(r, cmd, slot);

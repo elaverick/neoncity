@@ -54,7 +54,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 camPos;     // xyz world (approx), w = time
     vec4 camFwd;     // xyz forward, w = view distance
     vec4 screen;
-    vec4 weather;    // x rain intensity, y street wetness (src/app/main.c: weather_update), z haze datum (hazeAmount)
+    vec4 weather;    // x rain intensity, y street wetness (src/app/main.c: weather_update), z haze datum (hazeAmount), w the chunks' edge (edgeFog)
     vec4 shelter;    // shelter map: camera-relative centre x, z; half-width
     vec4 shadow;     // ray-traced shadows: x frame number, y SHADOWS_ON | SHADOWS_DEBUG, zw where sample 0 lies in a pixel
     mat4 prevViewProj;   // the previous frame's viewProj, taking this frame's camera-relative positions
@@ -233,11 +233,6 @@ vec3 octDecode(uint u) {
 // Interleaved gradient noise (Jimenez): neighbouring pixels well spread over [0,1).
 float ign(vec2 px) { return fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715)))); }
 
-// A chunk fading in over its distant proxies (src/render/chunks.c: CHUNK_FADE_TIME):
-// at fade level f (0 .. 255) the chunk keeps the pixels whose dither is under
-// f and its proxies the rest, so between them each pixel is drawn once.
-bool fadeKeepsChunk(vec2 fragCoord, uint f) { return ign(fragCoord) * 255.0 < float(f); }
-
 vec3 lampColor(int type) {
     return type == 0 ? vec3(1.0, 0.42, 0.10) * 1.0   // sodium: deep amber
                      : vec3(0.55, 0.80, 1.0) * 0.9;  // cold LED
@@ -367,15 +362,27 @@ float hazeAmount(vec3 rel, float dist, float density) {
     return 1.0 - exp(-dist * density * (0.25 * high + 0.75 * low));
 }
 
+// The chunks' edge (frame.weather.w: VIEW_DISTANCE, or nearer while the
+// chunk pool is full; src/app/main.c), where a chunk replaces its distant
+// proxies with a pop: a band of haze that takes EDGE_FOG of what is left
+// there, rising over EDGE_FOG_WIDTH before it and held beyond, so the pop
+// happens behind it. By distance alone, not thinned with height as
+// hazeAmount is, so it hides the handover from the air too.
+const float EDGE_FOG = 0.7, EDGE_FOG_WIDTH = 500.0;
+float edgeFog(float haze, float dist) {
+    float band = EDGE_FOG * smoothstep(frame.weather.w - EDGE_FOG_WIDTH, frame.weather.w, dist);
+    return 1.0 - (1.0 - haze) * (1.0 - band);
+}
+
 // The city's haze: a street-level mean free path of CITY_HAZE metres, which
-// rain shortens. Past the chunks' view distance the city goes on as its
-// distant proxies (src/render/proxy_gpu.c), so the haze needn't hide where
-// the chunks end.
+// rain shortens, and the band at the chunks' edge. Past it the city goes on
+// as its distant proxies (src/render/proxy_gpu.c).
 const float CITY_HAZE = 1100.0;
-float fogAmount(vec3 rel, float dist) {
+float cityHaze(vec3 rel, float dist) {
     float density = (1.0 + 1.2 * frame.weather.x) / CITY_HAZE;
     return hazeAmount(rel, dist, density);
 }
+float fogAmount(vec3 rel, float dist) { return edgeFog(cityHaze(rel, dist), dist); }
 
 // The rain-cloud deck (clouds.comp) as reflections see it: an overcast lit
 // sodium-orange from below, filling the upper sky.

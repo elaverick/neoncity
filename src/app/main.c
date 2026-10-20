@@ -207,7 +207,7 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
     if (!c->path) return;
     ChunkStats s = chunks_stats(chunks);
     bool distant = renderer_proxies_ready(renderer) && renderer_terrain_settled(renderer);
-    c->settledFrames = (s.queued + s.ready + s.fading == 0 && distant && totalFrames > 10) ? c->settledFrames + 1 : 0;
+    c->settledFrames = (s.queued + s.ready == 0 && distant && totalFrames > 10) ? c->settledFrames + 1 : 0;
     if (c->walkSeconds <= 0.0f) c->framesAfterWalk++;
     else if (c->walkStarted) {
         c->missingSum += s.inViewMissing;
@@ -221,8 +221,6 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
     else if (c->walkSeconds <= 0.0f && (c->settledFrames > 60 || (c->framesAfterWalk > 900 && distant) || c->framesAfterWalk > 20000)) {
         renderer_request_screenshot(renderer, c->path);
         c->shotTaken = true;
-        printf("shot at frame %llu (%s), %d chunks fading in\n", (unsigned long long)totalFrames,
-               c->settledFrames > 60 ? "settled" : "timed out", s.fading);
         printf("frame time %.2f ms (avg), drawn chunks %d, draws %d, resident %d, pool %d/%d pages\n",
                emaDt * 1000.0f, s.drawnChunks, s.drawCalls, s.resident, s.pagesUsed, s.pagesTotal);
         if (c->missingFrames > 0)
@@ -262,7 +260,7 @@ static float haze_datum(void) {
     return datum;
 }
 
-static void frame_ubo(const Player *player, const VkCore *vk, double t, const Weather *weather, FrameUBO *ubo) {
+static void frame_ubo(const Player *player, const VkCore *vk, double t, const Weather *weather, float edge, FrameUBO *ubo) {
     float aspect = (float)vk->extent.width / (float)(vk->extent.height ? vk->extent.height : 1);
     mat4 proj = mat4_perspective_rz(player->fovY, aspect, NEAR_PLANE, FAR_PLANE);
     mat4 view = mat4_view_rot(player->right, player->up, player->fwd);
@@ -282,28 +280,58 @@ static void frame_ubo(const Player *player, const VkCore *vk, double t, const We
     ubo->weather[0] = weather->rain;
     ubo->weather[1] = weather->wet;
     ubo->weather[2] = haze_datum();
+    ubo->weather[3] = edge;
 }
 
-/* The window title: frame rate, the --cam that reproduces the view, streaming state. */
-static void update_title(GLFWwindow *win, ChunkSystem *chunks, Renderer *renderer, const Player *player, float fps) {
+/* Where the chunks hand over to their proxies (edgeFog in shaders/common.glsl):
+ * the view distance, or the chunk pool's reach while that is nearer, eased at
+ * EDGE_SPEED so the band doesn't jump when the reach does. */
+#define EDGE_SPEED 400.0f   /* m/s */
+static float chunk_edge(ChunkSystem *chunks, float edge, float dt) {
     ChunkStats s = chunks_stats(chunks);
-    char title[320];
+    float target = s.reach > 0.0f && s.reach < VIEW_DISTANCE ? s.reach : VIEW_DISTANCE;
+    if (edge <= 0.0f) return target;
+    float step = EDGE_SPEED * fminf(dt, 0.1f);
+    return edge + fmaxf(-step, fminf(step, target - edge));
+}
+
+/* The window title: frame rate and the slowest frame (a hitch the average
+ * hides), the --cam that reproduces the view, streaming state. */
+static void update_title(GLFWwindow *win, ChunkSystem *chunks, Renderer *renderer, const Player *player, float fps, float worstMs) {
+    ChunkStats s = chunks_stats(chunks);
+    char reach[32] = "";
+    if (s.reach > 0.0f) snprintf(reach, sizeof(reach), " (to %.1f km)", s.reach / 1000.0f);
+    char title[360];
     snprintf(title, sizeof(title),
-             "NeonCity | %.0f fps | --cam %.1f %.1f %.0f %.0f | chunk (%d,%d) | drawn %d (%d draws) | resident %d | queued %d | pool %d%%%s%s",
-             fps, player->eye[0], player->eye[2],
+             "NeonCity | %.0f fps, worst %.0f ms | --cam %.1f %.1f %.0f %.0f | chunk (%d,%d) | drawn %d (%d draws) | resident %d | queued %d | pool %d%%%s%s%s",
+             fps, worstMs, player->eye[0], player->eye[2],
              player->yaw * 180.0f / PI_F, player->pitch * 180.0f / PI_F,
              (int)floor(player->feet[0] / CHUNK_SIZE), (int)floor(player->feet[2] / CHUNK_SIZE),
              s.drawnChunks, s.drawCalls, s.resident, s.queued + s.ready,
-             s.pagesUsed * 100 / (s.pagesTotal ? s.pagesTotal : 1), player->fly ? " | FLY" : "",
+             s.pagesUsed * 100 / (s.pagesTotal ? s.pagesTotal : 1), reach, player->fly ? " | FLY" : "",
              renderer_shadows(renderer) ? "" : " | shadows off");
     glfwSetWindowTitle(win, title);
 }
 
+/* A frame over HITCH_SECONDS, on the console: the GPU's passes for the latest
+ * frame it has finished (two frames behind: if they don't add up to the hitch,
+ * the CPU took the time), and the streaming state. */
+#define HITCH_SECONDS 0.1
+static void report_hitch(ChunkSystem *chunks, Renderer *renderer, const Player *player, float dt, uint64_t frame) {
+    ChunkStats s = chunks_stats(chunks);
+    char gpu[400];
+    renderer_gpu_last(renderer, gpu, sizeof(gpu));
+    printf("hitch %.0f ms at frame %llu, --cam %.1f %.1f %.0f %.0f: drawn %d, resident %d, queued %d, pool %d%%, reach %.0f m; %s\n",
+           dt * 1000.0f, (unsigned long long)frame, player->eye[0], player->eye[2], player->yaw * 180.0f / PI_F, player->pitch * 180.0f / PI_F,
+           s.drawnChunks, s.resident, s.queued + s.ready, s.pagesUsed * 100 / (s.pagesTotal ? s.pagesTotal : 1), s.reach, gpu);
+    fflush(stdout);
+}
+
 static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *renderer, Player *player, const Options *opt) {
-    double startTime = glfwGetTime(), last = startTime, titleTimer = 0;
+    double startTime = glfwGetTime(), last = startTime, titleTimer = 0, worstDt = 0;
     int frames = 0, shotCount = 0;
     uint64_t totalFrames = 0;
-    float emaDt = 0.0f;
+    float emaDt = 0.0f, edge = 0.0f;
     Capture cap = { .path = opt->shotPath, .walkSeconds = opt->walkSeconds, .turnRate = opt->turnRate };
     Weather weather = { 0.0f, -1.0f };
     while (!glfwWindowShouldClose(win)) {
@@ -312,6 +340,7 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
         float dt = (float)(now - last);
         last = now;
         emaDt = emaDt == 0.0f ? dt : emaDt * 0.95f + dt * 0.05f;
+        if (dt > HITCH_SECONDS && totalFrames > 60) report_hitch(chunks, renderer, player, dt, totalFrames);
 
         PlayerInput in = read_input(win, player, opt->shotPath != NULL);
         capture_walk(&cap, &in, dt, totalFrames);
@@ -322,16 +351,19 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
 
         weather_update(&weather, now - startTime, dt, opt->fixedRain);
         FrameUBO ubo;
-        frame_ubo(player, vk, now - startTime, &weather, &ubo);
+        edge = chunk_edge(chunks, edge, dt);
+        frame_ubo(player, vk, now - startTime, &weather, edge, &ubo);
         bool resized = g_resized;
         g_resized = false;
         renderer_frame(renderer, &ubo, player->eye, resized);
 
         frames++;
         titleTimer += dt;
+        if (dt > worstDt) worstDt = dt;
         if (titleTimer > 0.5) {
-            update_title(win, chunks, renderer, player, (float)(frames / titleTimer));
+            update_title(win, chunks, renderer, player, (float)(frames / titleTimer), (float)(worstDt * 1000.0));
             titleTimer = 0;
+            worstDt = 0;
             frames = 0;
         }
     }

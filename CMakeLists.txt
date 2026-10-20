@@ -89,8 +89,7 @@ set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_do
             proxy/proxy.vert proxy/proxy.frag)
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
-set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS
-                    proxy/proxy_fade.frag:proxy/proxy.frag:FADE)
+set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)
 # Shaders also include the #define-only headers they share with C.
 set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_clip.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_planet.h)

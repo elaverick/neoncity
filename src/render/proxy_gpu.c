@@ -8,8 +8,7 @@
  * own and its boxes uploaded into one device-local pool, in pages; tiles that
  * fall out of range give their pages back. Each frame the tiles in view are
  * drawn by one indirect draw list, leaving out the chunks the chunk streamer
- * draws in full this frame (chunks_shown; a chunk fading in shares its pixels
- * with them through a dither): whatever of the city isn't built
+ * draws in full this frame (chunks_drawn): whatever of the city isn't built
  * in full, beyond VIEW_DISTANCE or still streaming in, stands there as boxes.
  *
  * Tiles live in a table indexed by their coordinates modulo PT_SIDE, wider
@@ -51,9 +50,6 @@ typedef struct PTile {
 /* A job: the tile to generate, then the tile generated (its storage reused). */
 typedef struct PJob { int tx, tz; ProxyTile t; } PJob;
 typedef struct PFree { uint16_t page; uint64_t frame; } PFree;
-/* A tile as the shader reads it (shaders/proxy/proxy.vert: Tile): its origin,
- * camera-relative (x, z), and each chunk's fade in a byte (chunks_shown). */
-typedef struct PTileGPU { float origin[4]; uint32_t fade[4]; } PTileGPU;
 typedef struct PCand { int slot; float d; } PCand;
 
 struct ProxyGpu {
@@ -65,7 +61,7 @@ struct ProxyGpu {
     int      npending;
     Buffer   staging[MAX_FRAMES], indirect[MAX_FRAMES], origins[MAX_FRAMES];
     VkBufferCopy copies[MAX_JOBS_P * TILE_PAGES];   /* one per page uploaded */
-    uint32_t ndraw[MAX_FRAMES], nplain[MAX_FRAMES];   /* draws; those of tiles with no chunk fading in, first */
+    uint32_t ndraw[MAX_FRAMES];
     VkDescriptorPool pool;
     VkDescriptorSet  set[MAX_FRAMES];
 
@@ -122,7 +118,7 @@ void proxy_gpu_create(Renderer *r) {
     for (int i = 0; i < MAX_FRAMES; ++i) {
         p->staging[i] = vk_buffer(vk, (VkDeviceSize)(UPLOAD_BOXES + TILE_PAGES * PAGE_BOXES) * sizeof(ProxyBox), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host);
         p->indirect[i] = vk_buffer(vk, sizeof(VkDrawIndirectCommand) * MAX_DRAWS, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, host);
-        p->origins[i] = vk_buffer(vk, sizeof(PTileGPU) * PT_SLOTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, host);
+        p->origins[i] = vk_buffer(vk, sizeof(float) * 4 * PT_SLOTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, host);
     }
 
     VkDescriptorPoolSize sizes[2] = {
@@ -283,13 +279,9 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
     const float *vm = viewProj->m;
     float K = 0.5f * (float)r->vk->extent.height * sqrtf(vm[1] * vm[1] + vm[5] * vm[5] + vm[9] * vm[9]);
     VkDrawIndirectCommand *cmds = (VkDrawIndirectCommand *)p->indirect[slot].mapped;
-    PTileGPU *org = (PTileGPU *)p->origins[slot].mapped;
+    float (*org)[4] = (float (*)[4])p->origins[slot].mapped;
     uint32_t nd = 0;
     p->drawnTiles = p->drawnBoxes = 0;
-    /* Tiles with no chunk fading in first, drawn without the fade's discard
-     * (which costs the early depth test); then those with one (proxy_gpu_draw). */
-    for (int pass = 0; pass < 2; ++pass) {
-    if (pass == 1) p->nplain[slot] = nd;
     for (int s = 0; s < PT_SLOTS; ++s) {
         const PTile *t = &p->tiles[s];
         if (t->state != PT_READY || t->n == 0) continue;
@@ -298,16 +290,7 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
         float bmx[3] = { ox + t->mx[0], t->mx[1] - (float)cam[1], oz + t->mx[2] };
         terrain_bend_bounds(bmn, bmx);   /* proxy.vert bends the boxes over the planet */
         if (!frustum_test_aabb(&fr, v3(bmn[0], bmn[1], bmn[2]), v3(bmx[0], bmx[1], bmx[2]))) continue;
-        int shownK[PROXY_TILE_CELLS + 1], fading = 0;
-        for (int k = 0; k < PROXY_TILE_CELLS; ++k) {
-            shownK[k] = chunks_shown(r->chunks, t->tx * PROXY_TILE_CHUNKS + k % PROXY_TILE_CHUNKS, t->tz * PROXY_TILE_CHUNKS + k / PROXY_TILE_CHUNKS);
-            fading |= shownK[k] > 0 && shownK[k] < 255;
-        }
-        shownK[PROXY_TILE_CELLS] = 255;
-        if (fading != pass) continue;
-        PTileGPU *tg = &org[s];
-        tg->origin[0] = ox; tg->origin[1] = oz; tg->origin[2] = 0.0f; tg->origin[3] = 0.0f;
-        memset(tg->fade, 0, sizeof(tg->fade));
+        org[s][0] = ox; org[s][1] = oz; org[s][2] = 0.0f; org[s][3] = 0.0f;
         /* Level of detail: each chunk's boxes at least `need` metres (a pixel
          * or so at the tile's nearest), counted by the largest bin under it. */
         float need = PROXY_LOD_PX * tile_dist(t->tx, t->tz, cam) / K;
@@ -315,9 +298,8 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
         while (bin + 1 < PROXY_LOD_BINS && PROXY_LOD_SIZE(bin + 1) <= need) bin++;
         int run0 = -1, run1 = -1;
         for (int k = 0; k <= PROXY_TILE_CELLS; ++k) {
-            int shown = shownK[k];
-            int keep = shown < 255;
-            if (keep) tg->fade[k >> 2] |= (uint32_t)shown << ((k & 3) * 8);
+            int keep = k < PROXY_TILE_CELLS && !chunks_drawn(r->chunks, t->tx * PROXY_TILE_CHUNKS + k % PROXY_TILE_CHUNKS,
+                                                             t->tz * PROXY_TILE_CHUNKS + k / PROXY_TILE_CHUNKS);
             int end = keep ? t->first[k] + (bin < 0 ? t->first[k + 1] - t->first[k] : t->lod[k][bin]) : 0;
             if (keep && end == t->first[k]) keep = 0;   /* nothing big enough */
             if (keep && run0 >= 0 && run1 == t->first[k]) { run1 = end; continue; }   /* runs on from the last chunk */
@@ -339,37 +321,23 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
         }
         p->drawnTiles++;
     }
-    }
     p->ndraw[slot] = nd;
 }
 
-/* Draws [start, end) of the slot's list. */
-static void draw_range(Renderer *r, VkCommandBuffer cmd, int slot, uint32_t start, uint32_t end) {
+void proxy_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     ProxyGpu *p = r->proxies;
+    uint32_t n = p->ndraw[slot];
+    if (!n) return;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->proxyPipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->proxyPL, 0, 1, &p->set[slot], 0, NULL);
     if (r->vk->mdi) {
         uint32_t maxCount = r->vk->props.limits.maxDrawIndirectCount;
-        for (uint32_t first = start; first < end; first += maxCount)
-            vkCmdDrawIndirect(cmd, p->indirect[slot].buf, first * sizeof(VkDrawIndirectCommand), end - first < maxCount ? end - first : maxCount,
+        for (uint32_t first = 0; first < n; first += maxCount)
+            vkCmdDrawIndirect(cmd, p->indirect[slot].buf, first * sizeof(VkDrawIndirectCommand), n - first < maxCount ? n - first : maxCount,
                               sizeof(VkDrawIndirectCommand));
     } else {
         const VkDrawIndirectCommand *c = (const VkDrawIndirectCommand *)p->indirect[slot].mapped;
-        for (uint32_t i = start; i < end; ++i) vkCmdDraw(cmd, c[i].vertexCount, 1, c[i].firstVertex, c[i].firstInstance);
-    }
-}
-
-/* The tiles without a chunk fading in, then (with the fade's discard) those with one. */
-void proxy_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
-    ProxyGpu *p = r->proxies;
-    uint32_t n = p->ndraw[slot], plain = p->nplain[slot];
-    if (!n) return;
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->proxyPL, 0, 1, &p->set[slot], 0, NULL);
-    if (plain) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->proxyPipe);
-        draw_range(r, cmd, slot, 0, plain);
-    }
-    if (n > plain) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->proxyFadePipe);
-        draw_range(r, cmd, slot, plain, n);
+        for (uint32_t i = 0; i < n; ++i) vkCmdDraw(cmd, c[i].vertexCount, 1, c[i].firstVertex, c[i].firstInstance);
     }
 }
 

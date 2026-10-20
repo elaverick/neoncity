@@ -57,9 +57,10 @@ typedef struct PlanetGpu PlanetGpu;
 typedef struct ProxyGpu ProxyGpu;
 typedef struct RoadGpu RoadGpu;
 /* GPU timestamps between the frame's passes (renderer_gpu_times). The scene
- * pass is stamped inside: the city, plants and proxies (GT_SCENE), the terrain
- * (GT_TERRAIN), then the sky and the resolve (GT_SKY). */
-enum { GT_START = 0, GT_STREAM, GT_TERRAIN_UPLOAD, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_SCENE, GT_TERRAIN, GT_SKY, GT_POST, GT_COUNT };
+ * pass is stamped inside: the city (GT_CITY), plants (GT_PLANTS) and proxies
+ * (GT_SCENE), the terrain (GT_TERRAIN), then the sky and the resolve (GT_SKY). */
+enum { GT_START = 0, GT_STREAM, GT_TERRAIN_UPLOAD, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_CITY, GT_PLANTS, GT_SCENE, GT_TERRAIN, GT_SKY,
+       GT_POST, GT_COUNT };
 struct Renderer {
     VkCore      *vk;
     ChunkSystem *chunks;
@@ -101,7 +102,7 @@ struct Renderer {
     ProxyGpu    *proxies;   /* proxy_gpu.c */
     VkDescriptorSetLayout proxyLayout;
     VkPipelineLayout      proxyPL;
-    VkPipeline            proxyPipe, proxyFadePipe;   /* the second with the chunks' fade in (proxy_fade.frag) */
+    VkPipeline            proxyPipe;
     VkDescriptorPool      staticPool;
     VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout, cloudLayout, cloudCompLayout, ssrLayout, ssrApplyLayout;
     VkDescriptorSet       sceneSet[MAX_FRAMES];
