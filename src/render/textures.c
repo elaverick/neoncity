@@ -21,16 +21,20 @@ static const char *const MATERIAL_DIRS[PBR_MATERIAL_COUNT] = {
     [PBR_WOOD_MID]      = "wood_066",
     [PBR_WOOD_LIGHT]    = "wood_095",
     [PBR_LEAF]          = "leaf",
+    [PBR_LIGHT_FIXTURE] = "light_fixture",
+    [PBR_LIGHT_DIFFUSER] = "light_diffuser",
 };
 
 static const struct {
     const char *file;
     VkFormat    fmt;
     uint8_t     placeholder[4];
+    bool        optional;   /* absent: the placeholder, and the material still loads */
 } MAPS[PBR_MAPS_PER_MATERIAL] = {
-    [PBR_ALBEDO] = { "albedo.png", VK_FORMAT_R8G8B8A8_SRGB,  { 128, 128, 128, 255 } },
-    [PBR_NORMAL] = { "normal.png", VK_FORMAT_R8G8B8A8_UNORM, { 128, 128, 255, 255 } },
-    [PBR_ORM]    = { "orm.png",    VK_FORMAT_R8G8B8A8_UNORM, { 255, 204, 128, 255 } },
+    [PBR_ALBEDO]   = { "albedo.png",   VK_FORMAT_R8G8B8A8_SRGB,  { 128, 128, 128, 255 }, false },
+    [PBR_NORMAL]   = { "normal.png",   VK_FORMAT_R8G8B8A8_UNORM, { 128, 128, 255, 255 }, false },
+    [PBR_ORM]      = { "orm.png",      VK_FORMAT_R8G8B8A8_UNORM, { 255, 204, 128, 255 }, false },
+    [PBR_EMISSIVE] = { "emissive.png", VK_FORMAT_R8G8B8A8_SRGB,  {   0,   0,   0, 255 }, true  },
 };
 
 struct Textures {
@@ -137,13 +141,13 @@ Textures *textures_create(VkCore *vk) {
     size_t gpuBytes = 0;
     int loaded = 0;
     for (int m = 0; m < PBR_MATERIAL_COUNT; ++m) {
-        /* All of a material's maps or none: the shader tests only the albedo. */
+        /* All of a material's required maps or none: the shader tests only the albedo. */
         uint8_t *px[PBR_MAPS_PER_MATERIAL] = { 0 };
         int w[PBR_MAPS_PER_MATERIAL], h[PBR_MAPS_PER_MATERIAL];
         bool ok = true;
         for (int k = 0; k < PBR_MAPS_PER_MATERIAL && ok; ++k) {
             px[k] = load_rgba(roots, nRoots, MATERIAL_DIRS[m], MAPS[k].file, &w[k], &h[k]);
-            if (!px[k]) {
+            if (!px[k] && !MAPS[k].optional) {
                 fprintf(stderr, "Texture %s/%s not found under %s or %s; keeping the procedural look\n",
                         MATERIAL_DIRS[m], MAPS[k].file, roots[0], roots[nRoots - 1]);
                 ok = false;
@@ -151,7 +155,7 @@ Textures *textures_create(VkCore *vk) {
         }
         for (int k = 0; k < PBR_MAPS_PER_MATERIAL; ++k) {
             int i = m * PBR_MAPS_PER_MATERIAL + k;
-            if (ok) {
+            if (ok && px[k]) {
                 t->maps[i] = upload(vk, cmd, &staging[i], px[k], (uint32_t)w[k], (uint32_t)h[k], MAPS[k].fmt);
                 gpuBytes += (size_t)w[k] * h[k] * 4 * 4 / 3;
             } else {

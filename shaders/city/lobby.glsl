@@ -53,10 +53,90 @@ vec3 lobbyAccent(uint seed) {
     return neonColor(a < 0.55 ? 1u : a < 0.7 ? 6u : a < 0.85 ? 4u : 3u);
 }
 
-// Light panels: 1.2 m squares on a 3 m grid in the building's frame.
-float ceilingPanel(vec2 q, float aa) {
-    vec2 d = abs(fract(q / 3.0) - 0.5) * 3.0;
+// The ceiling's light fittings (src/gen/interior_lights.c): 1.2 m squares on
+// grids FIT_PITCH apart in the building's frame, kept where they fit in the
+// room. A floor knows only the open floor's grid (its aux: fitting centres at
+// off + k * FIT_PITCH), so its mirror of them is the whole grid's.
+const float FIT_PITCH = 3.6;
+float ceilingPanel(vec2 q, vec2 off, float aa) {
+    vec2 d = abs(fract((q - off) / FIT_PITCH + 0.5) - 0.5) * FIT_PITCH;
     return (1.0 - smoothstep(0.6 - aa, 0.6 + aa, d.x)) * (1.0 - smoothstep(0.6 - aa, 0.6 + aa, d.y));
+}
+
+/* The fittings, where their authored textures are loaded: a recessed troffer
+ * of three tubes (PBR_LIGHT_FIXTURE) behind a prismatic diffuser
+ * (PBR_LIGHT_DIFFUSER), one image per fitting. The troffer's tray is steep
+ * parallax mapped from its height map, so the tubes and their tray shift
+ * behind the frame as the viewer moves. The diffuser lies flat in the frame's
+ * opening and stays put, letting part of what is behind it through and
+ * glowing with the tubes' light scattered in it. */
+const float FIXTURE_DEPTH = 0.16;      // metres from the frame's face (the ceiling's plane) down to height 0
+const float DIFFUSER_OPACITY = 0.7;
+// The height map's frame face: at least 0.79 all round, and nothing inside the
+// opening above 0.70. The frame lies in the ceiling's plane, so a ray that meets
+// it stops there; were it below the plane, rays would slide over its inner
+// edge onto the tubes, which then showed through the frame, undiffused.
+const float FIXTURE_FRAME = 0.8;
+
+// The troffer's height at st in its panel, 1 at the frame and the ceiling round it.
+float fixtureHeight(vec2 st, vec2 gx, vec2 gy) {
+    if (any(lessThan(st, vec2(0.0))) || any(greaterThan(st, vec2(1.0)))) return 1.0;
+    return min(textureGrad(pbrMaps[PBR_LIGHT_FIXTURE * PBR_MAPS_PER_MATERIAL + PBR_ORM], st, gx, gy).b / FIXTURE_FRAME, 1.0);
+}
+
+// Steep parallax: steps the view ray into the troffer in even layers of depth
+// until it passes under the height field, then puts the hit between the last
+// two layers by where the ray crossed it. dir: st's shift along the ray per
+// unit of depth (height 1 -> 0).
+vec2 fixtureParallax(vec2 st, vec2 dir, float layers, vec2 gx, vec2 gy) {
+    float inc = 1.0 / layers, depth = 0.0;
+    float gap = 1.0 - fixtureHeight(st, gx, gy), prev = gap;   // how far the height field lies below the ray
+    if (gap <= 0.0) return st;
+    vec2 q = st;
+    for (int i = 0; i < 64; ++i) {
+        prev = gap;
+        q += dir * inc;
+        depth += inc;
+        gap = 1.0 - fixtureHeight(q, gx, gy) - depth;
+        if (gap <= 0.0) break;
+    }
+    return q - dir * inc * (-gap / (prev - gap));
+}
+
+// A fitting's radiance at st (0..1 across it, along the building's x and z):
+// gx and gy st's screen derivatives, V toward the eye, Lc the lobby's light,
+// diff the room's light on the ceiling.
+vec3 ceilingFixture(vec2 st, vec2 gx, vec2 gy, vec3 V, mat2 toFrame, vec3 Lc, vec3 diff) {
+    const int F = PBR_LIGHT_FIXTURE * PBR_MAPS_PER_MATERIAL, D = PBR_LIGHT_DIFFUSER * PBR_MAPS_PER_MATERIAL;
+    // the image's right and down in the world (the ceiling faces down)
+    vec2 rx = vec2(1.0, 0.0) * toFrame, dz = vec2(0.0, 1.0) * toFrame;
+    vec3 T = vec3(rx.x, 0.0, rx.y), Bd = vec3(dz.x, 0.0, dz.y), N = vec3(0.0, -1.0, 0.0);
+
+    // the tray, as the ray into it finds it: shallow looks need more layers
+    vec3 r = -V;
+    float up = max(r.y, 0.12);
+    vec2 dir = toFrame * (r.xz / up) * (FIXTURE_DEPTH / 1.2);
+    vec2 sp = clamp(fixtureParallax(st, dir, mix(64.0, 16.0, up), gx, gy), 0.0, 1.0);
+    vec3 alb = textureGrad(pbrMaps[F + PBR_ALBEDO], sp, gx, gy).rgb;
+    vec3 orm = textureGrad(pbrMaps[F + PBR_ORM], sp, gx, gy).rgb;
+    float tube = textureGrad(pbrMaps[F + PBR_EMISSIVE], sp, gx, gy).r;
+    vec3 tn = textureGrad(pbrMaps[F + PBR_NORMAL], sp, gx, gy).xyz * 2.0 - 1.0;
+    vec3 nf = normalize(T * tn.x - Bd * tn.y + N * tn.z);
+    float tray = 1.0 - smoothstep(0.72, 0.78, orm.b);           // below the frame: lit by the tubes
+    vec3 fix = alb * (diff * (0.6 + 0.4 * max(-nf.y, 0.0)) + Lc * 0.9 * orm.r * tray) + Lc * 6.0 * tube;
+
+    // the diffuser, across the frame's opening where the eye meets the ceiling
+    float opening = 1.0 - smoothstep(0.72, 0.78, fixtureHeight(st, gx, gy) * FIXTURE_FRAME);
+    vec3 dAlb = textureGrad(pbrMaps[D + PBR_ALBEDO], st, gx, gy).rgb;
+    vec3 dn = textureGrad(pbrMaps[D + PBR_NORMAL], st, gx, gy).xyz * 2.0 - 1.0;
+    float dAo = textureGrad(pbrMaps[D + PBR_ORM], st, gx, gy).r;
+    vec3 nd = normalize(T * dn.x - Bd * dn.y + N * dn.z);
+    // the tubes' light spread through the sheet (the emissive map's broad mips), and its prisms
+    // catching it as they turn to the eye
+    float spread = textureLod(pbrMaps[F + PBR_EMISSIVE], st, 5.5).r * 0.7 + textureLod(pbrMaps[F + PBR_EMISSIVE], st, 9.0).r * 0.6;
+    float prism = mix(0.7, 1.3, smoothstep(0.85, 1.0, dot(nd, V)));
+    vec3 sheet = dAlb * (diff + Lc * 3.5 * spread * prism * dAo);
+    return mix(fix, sheet, DIFFUSER_OPACITY * opening);
 }
 
 // Polished stone (q in metres): a base broken by soft clouding and thin wandering veins.
@@ -455,8 +535,12 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             else if (y < 0.1) alb *= 0.3;              // skirting
         }
     } else if (surf == IS_CEILING) {
+        // sub 2: a light fitting, its uv 0..1 across it
         alb = vec3(0.045, 0.044, 0.042);
-        emit = Lc * 2.6 * ceilingPanel(uv, aa);
+        if (sub == 2u) {
+            if (pbrLoaded(PBR_LIGHT_FIXTURE) && pbrLoaded(PBR_LIGHT_DIFFUSER)) return ceilingFixture(uv, uvx, uvy, V, toFrame, Lc, diff);
+            emit = Lc * 2.6;
+        }
     } else if (surf == IS_CORE || surf == IS_EMBLEM) {
         // dark stone cladding (now and then pale marble or bronze) in 1.2 m by 3 m panels
         float pick = hf(sh, 22u);
@@ -591,8 +675,8 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         vec3 R = reflect(-V, n);
         if (R.y > 0.05) {
             float t = (ceilH - y) / R.y;
-            vec2 q = uv + toFrame * (R.xz * t);
-            col += (Lc * 0.8 * ceilingPanel(q, aa + 0.12 * t + 0.1) * F * gloss + Lc * 0.02 * F) * panels;
+            vec2 q = uv + toFrame * (R.xz * t), off = vec2(float((vAux >> 16) & 255u), float(vAux >> 24)) * (FIT_PITCH / 256.0);
+            col += (Lc * 0.8 * ceilingPanel(q, off, aa + 0.12 * t + 0.1) * F * gloss + Lc * 0.02 * F) * panels;
         }
         gRefl = vec4(n.x, n.z, INDOOR_ROUGH, min((F * 1.5 + 0.08) * gloss, 0.9));
     }

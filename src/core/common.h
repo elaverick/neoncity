@@ -129,14 +129,15 @@ enum {
 };
 
 /* Authored PBR materials, loaded from assets/textures/ (src/render/textures.c). Each
- * has three maps, bound at material * PBR_MAPS_PER_MATERIAL + map. Surfaces
- * opt in per material in the shader; the rest stay procedural. Must match
- * shaders/common.glsl. */
+ * has three maps and an optional emissive one (black where absent), bound at
+ * material * PBR_MAPS_PER_MATERIAL + map. Surfaces opt in per material in the
+ * shader; the rest stay procedural. Must match shaders/common.glsl. */
 enum { PBR_PAVING_STONES = 0, PBR_ROAD, PBR_KERB, PBR_TACTILE,
        PBR_MARBLE_DARK, PBR_MARBLE_WHITE, PBR_LIMESTONE, PBR_WOOD_DARK, PBR_WOOD_MID, PBR_WOOD_LIGHT,   /* lobby finishes */
        PBR_LEAF,                                                                                         /* lobby plants */
+       PBR_LIGHT_FIXTURE, PBR_LIGHT_DIFFUSER,                                                            /* lobby ceiling lights */
        PBR_MATERIAL_COUNT };
-enum { PBR_ALBEDO = 0, PBR_NORMAL, PBR_ORM, PBR_MAPS_PER_MATERIAL };
+enum { PBR_ALBEDO = 0, PBR_NORMAL, PBR_ORM, PBR_EMISSIVE, PBR_MAPS_PER_MATERIAL };
 #define PBR_TEXTURE_COUNT (PBR_MATERIAL_COUNT * PBR_MAPS_PER_MATERIAL)
 
 typedef struct Vertex {

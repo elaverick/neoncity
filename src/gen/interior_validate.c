@@ -244,5 +244,6 @@ int validate(Gen *G) {
 
     /* every use zone can be walked to */
     if (G->nneed && !access_ok(G, NULL, NULL, 0)) return fail(G, "a fixture's use zone is cut off");
+    if (!interior_lobby_lit(L)) return fail(G, "no ceiling light fits the lobby");
     return 1;
 }

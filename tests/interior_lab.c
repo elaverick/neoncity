@@ -111,6 +111,17 @@ static void render(const ILayout *L, const char *path) {
     }
     for (int z = 0; z < L->nzone; ++z)
         outline(&im, mx_(L, L->zone[z].x0), my_(L, L->zone[z].z1), mx_(L, L->zone[z].x1), my_(L, L->zone[z].z0), 120, 60, 160, 1);
+    /* ceiling lights: the ceiling's filled, a gallery's underside's outlined */
+    static ILight lt[IL_MAX];
+    int nl = interior_lights(L, lt, IL_MAX);
+    for (int k = 0; k < nl; ++k) {
+        float ax, az, bx, bz;
+        interior_to_frame(L, lt[k].x0, lt[k].z0, &ax, &az);
+        interior_to_frame(L, lt[k].x1, lt[k].z1, &bx, &bz);
+        float x0 = mx_(L, minf(ax, bx)), x1 = mx_(L, maxf(ax, bx)), y0 = my_(L, maxf(az, bz)), y1 = my_(L, minf(az, bz));
+        if (lt[k].level == 0) rectf(&im, x0 + 1, y0 + 1, x1 - 1, y1 - 1, 255, 230, 120);
+        outline(&im, x0, y0, x1, y1, 190, 150, 30, 0);
+    }
     static IWall w[2048];
     int nw = interior_walls(L, w, 2048);
     for (int k = 0; k < nw; ++k) {
@@ -475,7 +486,8 @@ int main(int argc, char **argv) {
     ILayout *L = (ILayout *)calloc(1, sizeof(ILayout)), *L2 = (ILayout *)calloc(1, sizeof(ILayout));
     char *buf = (char *)malloc(1 << 17);
     int planned = 0, passed = 0, first = 0, plates = 0, failures = 0, gated = 0, vest = 0, rooms = 0, fixtures = 0, cores = 0, services = 0;
-    int attempts[IN_ATTEMPTS + 1] = { 0 }, atrium[4] = { 0 }, rendered = 0, seen = 0, moved = 0;
+    int attempts[IN_ATTEMPTS + 1] = { 0 }, atrium[4] = { 0 }, rendered = 0, seen = 0, moved = 0, lights = 0, unlit = 0, darkPlates = 0, darkRooms[IR_COUNT] = { 0 }, allRooms[IR_COUNT] = { 0 };
+    ILight *lt = (ILight *)malloc(sizeof(ILight) * IL_MAX);
     double worst = 0.0, total = 0.0;
     const double T = 300.0;
     for (double tz = c.z - size * 0.5; tz < c.z + size * 0.5; tz += T)
@@ -508,7 +520,7 @@ int main(int argc, char **argv) {
                         total += dt;
                         if (dt > worst) worst = dt;
                         if (L->grammar == IG_SERVICE) services++;
-                        if (!L->ok) { plates++; if (verbose > 0) { printf("%s\n", buf); verbose--; } continue; }
+                        if (!L->ok) { plates++; darkPlates += !interior_lobby_lit(L); if (verbose > 0) { printf("%s\n", buf); verbose--; } continue; }
                         passed++;
                         first += L->attempts == 1;
                         attempts[L->attempts]++;
@@ -517,6 +529,28 @@ int main(int argc, char **argv) {
                         for (int q = 0; q < L->ncore; ++q) gated += L->core[q].gated;
                         for (int r = 0; r < L->nreg; ++r) { rooms += L->reg[r].kind == IK_ROOM; vest += L->reg[r].type == IR_VESTIBULE; }
                         fixtures += L->nfix;
+                        /* ceiling lights: on one grid, never closer than its gap; the rooms left without one */
+                        int nl = interior_lights(L, lt, IL_MAX);
+                        lights += nl;
+                        unlit += nl == 0;
+                        for (int r = 0; r < L->nreg; ++r) {
+                            if (L->reg[r].kind != IK_ROOM || !L->reg[r].cells) continue;
+                            int lit = 0;
+                            for (int a = 0; a < nl && !lit; ++a) lit = lt[a].region == r;
+                            darkRooms[L->reg[r].type] += !lit;
+                            allRooms[L->reg[r].type]++;
+                        }
+                        for (int a = 0; a < nl; ++a)
+                            for (int e = a + 1; e < nl; ++e) {
+                                if (lt[a].level != lt[e].level || lt[a].region != lt[e].region) continue;
+                                float gap = maxf(maxf(lt[e].x0 - lt[a].x1, lt[a].x0 - lt[e].x1), maxf(lt[e].z0 - lt[a].z1, lt[a].z0 - lt[e].z1));
+                                if (gap < IL_PITCH - IL_TILE - 1e-3f) {
+                                    printf("FAIL: interior of %08x section %d has ceiling lights %.2f m apart\n", b->seed, secs[k], gap);
+                                    failures++;
+                                    a = nl;
+                                    break;
+                                }
+                            }
                         moved += strstr(buf, "keep the floor connected") != NULL || strstr(buf, "would be cut off") != NULL;
                         if (verbose > 0 && (L->attempts > 1 || L->atrium.mode >= IA_GALLERY)) { printf("%s\n", buf); verbose--; }
                         if (at && verbose > 0 && L->attempts == 1 && L->atrium.mode < IA_GALLERY) { printf("%s\n", buf); verbose--; }
@@ -581,11 +615,14 @@ int main(int argc, char **argv) {
     printf("  %.2f cores, %d gated halls, %d vestibules, %.1f rooms and %.1f fixtures per layout\n", passed ? (double)cores / passed : 0.0, gated, vest,
            passed ? (double)rooms / passed : 0.0, passed ? (double)fixtures / passed : 0.0);
     printf("  %d layouts moved a fixture group so the desk, bays and doors stay reachable\n", moved);
+    printf("  %.1f ceiling lights per layout, %d layouts and %d open plates with none; rooms without one:", passed ? (double)lights / passed : 0.0, unlit, darkPlates);
+    for (int t = 0; t < IR_COUNT; ++t) if (darkRooms[t]) printf(" %d of %d %s,", darkRooms[t], allRooms[t], interior_region_name(t));
+    printf("\n");
     printf("  time: average %.1f ms, worst %.1f ms\n", planned ? 1000.0 * total / planned : 0.0, 1000.0 * worst);
     printf("rejections:\n");
     for (int k = 0; k < g_nreasons; ++k) printf("  %6d  %s\n", g_reasons[k].count, g_reasons[k].text);
     if (planned && plates * 50 > planned) { printf("FAIL: more than 2%% of ground floors fell back to an open plate\n"); failures++; }
-    free(pa); free(bl); free(g); free(L); free(L2); free(buf);
+    free(pa); free(bl); free(g); free(L); free(L2); free(buf); free(lt);
     if (failures) { printf("%d failure(s)\n", failures); return 1; }
     printf("all interiors valid and repeatable\n");
     return 0;

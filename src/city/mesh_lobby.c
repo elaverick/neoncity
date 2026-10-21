@@ -609,20 +609,43 @@ static void emit_emblem(Mesh *m, const BGraph *g, const ILayout *L) {
     iwall(m, L, cx - w * 0.5f, bz - 0.02f, cx + w * 0.5f, bz - 0.02f, L->floorY, wall_top(L), 0, -1, mt);
 }
 
+/* The ceiling's light fittings (interior_lights): a quad each, just under the
+ * ceiling or the gallery's underside, its uv running 0..1 across the fitting. */
+static void emit_ceiling_lights(Mesh *m, const BGraph *g, const ILayout *L) {
+    ILight *lt = (ILight *)malloc(sizeof(ILight) * IL_MAX);
+    if (!lt) fatal("out of memory realising an interior");
+    int n = interior_lights(L, lt, IL_MAX);
+    Mat mt = iframe(m, imat(g, L, IS_CEILING, 2));
+    static const float uv[4][2] = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } };
+    for (int k = 0; k < n; ++k) {
+        const ILight *l = &lt[k];
+        float y = l->level ? L->atrium.galleryY - 0.355f : L->ceilY - 0.035f;
+        emit_quad(m, v3(l->x0, y, l->z0), v3(l->x1, y, l->z0), v3(l->x1, y, l->z1), v3(l->x0, y, l->z1), v3(0, -1.0f, 0), uv, mt);
+    }
+    free(lt);
+}
+
 void emit_interior(Mesh *m, const BGraph *g, const ILayout *L) {
     const BSection *s = &g->sec[L->section];
     const IAtrium *A = &L->atrium;
     int hasVoid = A->x1 > A->x0 && (A->mode == IA_GALLERY || A->mode == IA_PODIUM);
     float vx0 = L->gx0 + A->x0 * IN_CELL, vx1 = L->gx0 + A->x1 * IN_CELL, vz0 = L->gz0 + A->z0 * IN_CELL, vz1 = L->gz0 + A->z1 * IN_CELL;
 
-    /* floor: the true footprint, with region finishes laid over it in whole cells */
-    emit_cap(m, &s->foot, L->floorY + 0.01f, 0, iframe(m, imat(g, L, IS_FLOOR, 0)));
+    /* floor: the true footprint, with region finishes laid over it in whole cells; floors
+     * carry the open floor's light grid in aux, for their mirror of the fittings */
+    uint8_t grid[2];
+    interior_light_grid(L, grid);
+    uint32_t gridAux = (uint32_t)grid[0] << 16 | (uint32_t)grid[1] << 24;
+    Mat floor = iframe(m, imat(g, L, IS_FLOOR, 0));
+    floor.aux |= gridAux;
+    emit_cap(m, &s->foot, L->floorY + 0.01f, 0, floor);
     int16_t (*rc)[4] = (int16_t (*)[4])malloc(sizeof(int16_t) * 4 * 1024);
     if (!rc) fatal("out of memory realising an interior");
     for (int r = 1; r < L->nreg; ++r) {
         if (L->reg[r].kind == IK_SOLID || !L->reg[r].cells) continue;
         int n = region_rects(L, r, 1, rc, 1024);
         Mat mt = iframe(m, imat(g, L, IS_ROOMFLOOR, L->reg[r].type));
+        mt.aux |= gridAux;
         for (int k = 0; k < n; ++k)
             iflat(m, L, L->gx0 + rc[k][0] * IN_CELL, L->gz0 + rc[k][1] * IN_CELL, L->gx0 + rc[k][2] * IN_CELL, L->gz0 + rc[k][3] * IN_CELL, L->floorY + 0.02f, 0, mt);
     }
@@ -632,6 +655,7 @@ void emit_interior(Mesh *m, const BGraph *g, const ILayout *L) {
     Mat ceiling = iframe(m, imat(g, L, IS_CEILING, 0));
     if (A->mode == IA_PODIUM && hasVoid) emit_cap_minus(m, L, &s->foot.outer, vx0, vz0, vx1, vz1, L->ceilY - 0.03f, 1, ceiling);
     else emit_cap(m, &s->foot, L->ceilY - 0.03f, 1, ceiling);
+    emit_ceiling_lights(m, g, L);
 
     emit_envelope_inside(m, g, L, s, L->section);
     emit_partitions(m, g, L);

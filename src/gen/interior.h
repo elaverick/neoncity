@@ -132,6 +132,20 @@ const char *interior_region_name(int type);
 int         interior_boundary(const ILayout *L, int a, int b);   /* region indices, -1 outside */
 /* Merged partition runs, doorways and gates. Returns the count. */
 int         interior_walls(const ILayout *L, IWall *out, int max);
+/* Ceiling lights (src/gen/interior_lights.c): square fittings on grids in the
+ * building frame, kept where a whole tile and a tile's border round it fit in
+ * the room. Rectangles in building-frame metres; level 0 the ceiling, 1 a
+ * gallery's underside; region the room whose grid it is on (-1: the open floor's). */
+#define IL_TILE       1.2f           /* a fitting's side (m) */
+#define IL_PITCH      3.6f           /* fittings' spacing on a grid, centre to centre (m) */
+#define IL_SMALL_BORDER 0.6f         /* the border round a small room's single fitting (m) */
+#define IL_MAX        2048
+typedef struct ILight { uint8_t level; int16_t region; float x0, z0, x1, z1; } ILight;
+int         interior_lights(const ILayout *L, ILight *out, int max);
+/* Whether the open floor (lobby, vestibule, halls) keeps at least one fitting. */
+int         interior_lobby_lit(const ILayout *L);
+/* The open floor's grid: fitting centres at q * IL_PITCH / 256 + k * IL_PITCH along x and z. */
+void        interior_light_grid(const ILayout *L, uint8_t q[2]);
 /* Frame <-> building frame. */
 void        interior_to_local(const ILayout *L, float fx, float fz, float *x, float *z);
 void        interior_to_frame(const ILayout *L, float x, float z, float *fx, float *fz);

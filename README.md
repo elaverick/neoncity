@@ -340,7 +340,8 @@ limestone) that mirrors the room through screen-space reflections, walls of dark
 bronze, walnut or charcoal plaster, and cores clad in dark stone. The marbles (book-matched on
 walls and cores, each floor slab its own piece of stone), limestone and wood veneers are authored
 textures (`assets/textures/marble_*`, `tiles_139`, `wood_*`, packed with `pbr_pack`); without them
-the procedural finishes stand in. Warm 2700-3000 K panels in a dark ceiling light it low, and
+the procedural finishes stand in. Warm 2700-3000 K light fittings in a dark ceiling, set out per room
+clear of the walls, light it low (each a textured troffer behind a diffuser; see Textures), and
 the rest of the light is built in: a slot at the ceiling washes down the walls, coves glow at
 their feet, slots run up the cores' joints and the reception desk floats on a lit toe-kick. The core face the entrance looks at carries the building's emblem on a stone
 panel (`emit_emblem`), drawn by a small grammar of marks (`emblemDist`: bars, chevrons, rings,
@@ -699,13 +700,15 @@ everything else, as a pure function of the plan. The CPU does nothing per frame.
 
 ### Textures (`src/render/textures.c`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual materials can opt in to authored PBR
-textures instead. Each material is a folder under `assets/textures/` with three maps:
+textures instead. Each material is a folder under `assets/textures/` with three maps, and
+optionally a fourth:
 
 | File | Contents | Format |
 |---|---|---|
 | `albedo.png` | base colour | sRGB |
 | `normal.png` | tangent-space normal, OpenGL convention (+Y green) | linear |
 | `orm.png` | R = ambient occlusion, G = roughness, B = height | linear |
+| `emissive.png` | optional: emitted colour (black where absent) | sRGB |
 
 They are uploaded with full mip chains and sampled with anisotropic filtering. Textured
 surfaces are lit with GGX:
@@ -796,6 +799,42 @@ parallax. Four materials use textures so far; the first three are CC0 from ambie
   along the blade, at the same scale both ways. The tangent frame comes from screen
   derivatives. The albedo is divided by the image's mean and multiplied by each species' own
   green.
+- **Ceiling lights:** `light_fixture` and `light_diffuser`, one image per 1.2 m lobby light
+  fitting (`ceilingFixture` in `shaders/city/lobby.glsl`). The fittings are placed by
+  `interior_lights` (`src/gen/interior_lights.c`) and drawn as a quad each just under the
+  ceiling, or under a gallery's slab:
+  - **Grids:** fittings sit on grids with a 3.6 m pitch (a 2.4 m gap between them). The open
+    floor (lobby, vestibule, halls) shares one grid, centred on the lobby. Each enclosed room
+    has its own grid, centred in it.
+  - **Fit rule:** a fitting is kept only if its whole tile, and a tile's width of border
+    all round, lies over usable floor. No wall, glass, core or envelope, and (under a gallery or
+    a podium's open ceiling) no atrium void, may lie between them. The open edges and
+    barriers between the lobby and its halls don't count. No column may stand under the tile.
+  - **Small rooms:** a room whose grid keeps no fitting gets one, as near its middle as fits,
+    with a 0.6 m border. The border is measured to the nearest half-metre planning cell, so it
+    can fall short by a quarter metre. In practice every enclosed room gets at least one.
+  - **Lobbies:** a layout whose open floor keeps no fitting is rejected (`validate`), and the
+    planner moves on to its next, simpler attempt. If all six fail, it falls back to the open
+    floor plate as before; every plate in the test area has fittings. Over a 3 km square this
+    moved 45 layouts off their first attempt and added 2 open plates (22 of 1453).
+  - **Floor reflections:** polished floors mirror the open floor's grid. Its offset is
+    carried in the floors' `aux` (bits 16-31), so the mirror lines up with the fittings.
+    It also mirrors the grid's places that were left out, near walls.
+  - **Tests:** `interior_lab` checks that no two fittings on one grid are closer than the gap,
+    reports the rooms left without one, and draws the fittings on its plan renders.
+
+  The fixture is a recessed troffer of
+  three tubes, with an emissive map for the tubes. Its tray is steep-parallax mapped from
+  the ORM's height (16 cm from black up to the frame's face): the view ray steps down
+  through the recess in 16 to 64 layers (more at shallow angles) and is interpolated
+  between the last two. The tubes and tray therefore shift behind the frame as you move.
+  The frame's face (height 0.8, not 1) is taken as the ceiling's plane. Otherwise rays
+  that meet the frame slide over its inner edge, and the tubes show through it. The prismatic
+  diffuser lies flat in the frame's opening (where the fixture's height is below the
+  frame's), unshifted, at 70% opacity. It glows with the tubes' light, taken from the
+  emissive map's broad mips, and its prisms brighten as they turn toward the eye. Both sets
+  were resampled to 1024² and had their normals' green flipped from DirectX to OpenGL.
+  Without them, the procedural panels stand in.
 
 The lobby stone and wood finishes are covered under Office lobbies. Everything else stays
 procedural.

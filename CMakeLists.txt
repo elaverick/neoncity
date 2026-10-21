@@ -133,7 +133,7 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/dr
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
-                src/gen/interior_fixtures.c src/gen/interior_validate.c
+                src/gen/interior_fixtures.c src/gen/interior_validate.c src/gen/interior_lights.c
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c)
 # Terrain (src/terrain): the ground everywhere, a pure function of position over the planet the world's
 # X/Z is a chart of (terrain_height.c, terrain_land.c and terrain_world.c, in GEN_SOURCES: the city
