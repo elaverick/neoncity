@@ -242,4 +242,16 @@ static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg
         float cx[4] = { -h, -h, h, h }, cz[4] = { -h, h, h, -h };   /* negative turn, like every outer loop */
         for (int q = 0; q < 4; ++q) coll_vertex(L, b, sp->x0 + cx[q], sp->z0 + cz[q]);
     }
+    if (bgen_industrial(bg)) {   /* a plant's fence and its (shut) gate: a thin strip along each run */
+        FenceRun run[INDUSTRY_MAX_FENCE];
+        int nr = industry_fence(bg, run, INDUSTRY_MAX_FENCE);
+        for (int i = 0; i < nr && coll_begin(L, 4); ++i) {
+            const FenceRun *r = &run[i];
+            float len = sqrtf((r->x1 - r->x0) * (r->x1 - r->x0) + (r->z1 - r->z0) * (r->z1 - r->z0));
+            float ox = (r->z1 - r->z0) / len * 0.08f, oz = -(r->x1 - r->x0) / len * 0.08f;
+            if ((r->x1 - r->x0) * oz - (r->z1 - r->z0) * ox < 0.0f) { ox = -ox; oz = -oz; }   /* a negative turn, like every outer loop */
+            coll_vertex(L, b, r->x0 + ox, r->z0 + oz); coll_vertex(L, b, r->x1 + ox, r->z1 + oz);
+            coll_vertex(L, b, r->x1 - ox, r->z1 - oz); coll_vertex(L, b, r->x0 - ox, r->z0 - oz);
+        }
+    }
 }

@@ -23,6 +23,8 @@ static const char *const MATERIAL_DIRS[PBR_MATERIAL_COUNT] = {
     [PBR_LEAF]          = "leaf",
     [PBR_LIGHT_FIXTURE] = "light_fixture",
     [PBR_LIGHT_DIFFUSER] = "light_diffuser",
+    [PBR_FENCE_NET]     = "fence_003",
+    [PBR_FENCE_WELD]    = "fence_008a",
 };
 
 static const struct {

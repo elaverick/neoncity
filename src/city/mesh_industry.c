@@ -795,45 +795,106 @@ static void stair(Mesh *m, const BGraph *g, const BAccess *a) {
     emit_box(m, v3(lx0, a->y1 - 0.12f, lz0), v3(lx1, a->y1, lz1), F_NOBOT | F_BOT, gr, UV_UNIT);
 }
 
-/* The fence round the yard, but where a building stands on its line, and the gate. */
-static void fence(Mesh *m, const BGraph *g) {
+/* Whether the fence line at (x, z) runs into one of the buildings `on` (n of them) standing on it. */
+static int fence_blocked(const BGraph *g, const int *on, int n, float x, float z) {
+    for (int i = 0; i < n; ++i) {
+        const BFoot *f = &g->sec[on[i]].foot;
+        if (bfoot_contains(f, x, z) || bfoot_boundary_dist(f, x, z, NULL, NULL) < 0.05f) return 1;
+    }
+    return 0;
+}
+
+static void fence_push(FenceRun *out, int *n, int max, float ax, float az, float dx, float dz, float u0, float u1, float base, int gate) {
+    if (u1 - u0 < 0.05f || *n >= max) return;
+    FenceRun *r = &out[(*n)++];
+    r->x0 = ax + dx * u0; r->z0 = az + dz * u0; r->x1 = ax + dx * u1; r->z1 = az + dz * u1;
+    r->u = base + u0; r->gate = gate;
+}
+
+int industry_fence(const BGraph *g, FenceRun *out, int max) {
     float x0 = g->fence[0], z0 = g->fence[1], x1 = g->fence[2], z1 = g->fence[3];
-    float h = g->archetype == ARCH_SUBSTATION ? 2.6f : g->style == PST_GOTHIC ? 3.0f : 2.4f;
-    Mat st = imat(IND_PAINT, steel_of(g), 0, g->seed), mesh = imat(IND_MESH, steel_of(g), 0, g->seed);
     /* the sides as the gate's frame runs them: S along +x, E along +z, N along -x, W along -z */
     float cx[4] = { x0, x1, x1, x0 }, cz[4] = { z0, z0, z1, z1 };
     int sides[4] = { SIDE_S, SIDE_E, SIDE_N, SIDE_W };
+    int n = 0;
+    float base = 0.0f;
     for (int e = 0; e < 4; ++e) {
         float ax = cx[e], az = cz[e], bx = cx[(e + 1) & 3], bz = cz[(e + 1) & 3];
-        float len = sqrtf((bx - ax) * (bx - ax) + (bz - az) * (bz - az));
-        int n = (int)ceilf(len / 3.0f);
-        /* where along this side the gate is, as the generator measured it (from its own frame's origin) */
-        float g0 = -1.0f, g1 = -1.0f;
-        if (sides[e] == g->gateSide) { g0 = g->gateU - g->gateW * 0.5f; g1 = g->gateU + g->gateW * 0.5f; }
-        for (int k = 0; k < n; ++k) {
-            float t0 = (float)k / (float)n, t1 = (float)(k + 1) / (float)n, um = (t0 + t1) * 0.5f * len;
-            vec3 a = v3(ax + (bx - ax) * t0, G0, az + (bz - az) * t0), b = v3(ax + (bx - ax) * t1, G0, az + (bz - az) * t1);
-            float mx = (a.x + b.x) * 0.5f, mz = (a.z + b.z) * 0.5f;
-            int skip = 0;
-            for (int i = 0; i < g->nsec && !skip; ++i)
-                skip = g->sec[i].y0 <= G0 + 0.01f && bsec_facade(&g->sec[i]) &&
-                       (bfoot_contains(&g->sec[i].foot, mx, mz) || bfoot_boundary_dist(&g->sec[i].foot, mx, mz, NULL, NULL) < 0.6f);
-            if (skip) continue;
-            int gate = g0 >= 0.0f && um > g0 - 0.01f && um < g1 + 0.01f;
-            if (gate) {
-                /* a sliding gate across the opening: a frame round mesh */
-                float ua = maxf(t0 * len, g0), ub = minf(t1 * len, g1);
-                vec3 p = v3(ax + (bx - ax) * ua / len, G0, az + (bz - az) * ua / len), q = v3(ax + (bx - ax) * ub / len, G0, az + (bz - az) * ub / len);
-                sheet(m, v3(p.x, G0 + 0.1f, p.z), v3(q.x, G0 + 0.1f, q.z), v3(q.x, G0 + h - 0.3f, q.z), v3(p.x, G0 + h - 0.3f, p.z), ub - ua, h, mesh);
-                emit_beam(m, v3(p.x, G0 + 0.1f, p.z), v3(q.x, G0 + 0.1f, q.z), 0.08f, st);
-                emit_beam(m, v3(p.x, G0 + h - 0.3f, p.z), v3(q.x, G0 + h - 0.3f, q.z), 0.08f, st);
-                continue;
-            }
-            sheet(m, a, b, v3(b.x, G0 + h, b.z), v3(a.x, G0 + h, a.z), (t1 - t0) * len, h, mesh);
-            emit_box(m, v3(a.x - 0.05f, G0, a.z - 0.05f), v3(a.x + 0.05f, G0 + h + 0.2f, a.z + 0.05f), F_SIDES | F_TOP, st, UV_FACADE);
-            emit_beam(m, v3(a.x, G0 + h, a.z), v3(b.x, G0 + h, b.z), 0.05f, st);
+        float len = fabsf(bx - ax) + fabsf(bz - az);
+        if (len < 0.05f) continue;
+        float dx = (bx - ax) / len, dz = (bz - az) / len;
+        /* the buildings standing at street level whose boxes reach this side */
+        int on[BG_MAX_SECT], non = 0;
+        for (int i = 0; i < g->nsec; ++i) {
+            const BSection *s = &g->sec[i];
+            if (s->y0 > G0 + 0.01f || !bsec_facade(s)) continue;
+            float sx0, sz0, sx1, sz1;
+            box_of(&s->foot.outer, &sx0, &sz0, &sx1, &sz1);
+            if (sx0 < maxf(ax, bx) + 0.1f && sx1 > minf(ax, bx) - 0.1f && sz0 < maxf(az, bz) + 0.1f && sz1 > minf(az, bz) - 0.1f) on[non++] = i;
         }
+        /* where along this side the gate is, as the generator measured it (from its own frame's origin) */
+        float g0 = len + 1.0f, g1 = len + 1.0f;
+        if (sides[e] == g->gateSide) {
+            g0 = maxf(g->gateU - g->gateW * 0.5f, 0.0f); g1 = minf(g->gateU + g->gateW * 0.5f, len);
+            if (!fence_blocked(g, on, non, ax + dx * g->gateU, az + dz * g->gateU)) fence_push(out, &n, max, ax, az, dx, dz, g0, g1, base, 1);
+        }
+        /* the side in 5 cm steps, its open stretches either side of the gate */
+        int steps = (int)ceilf(len / 0.05f), open = 0;
+        float start = 0.0f;
+        for (int k = 0; k <= steps; ++k) {
+            float u = minf(((float)k + 0.5f) * len / (float)steps, len);
+            int now = k < steps && !fence_blocked(g, on, non, ax + dx * u, az + dz * u);
+            if (now == open) continue;
+            float at = len * (float)k / (float)steps;
+            if (now) start = at;
+            else {
+                fence_push(out, &n, max, ax, az, dx, dz, start, minf(at, g0), base, 0);
+                fence_push(out, &n, max, ax, az, dx, dz, maxf(start, g1), at, base, 0);
+            }
+            open = now;
+        }
+        base += len;
     }
+    return n;
+}
+
+/* Which texture set the plant's fence wears (MAT_INDUSTRY params w: 1 the net, 2 the welded mesh); the gate's the same. */
+static int fence_kind(const BGraph *g) { return 1 + (int)(hash_combine(g->seed, 0xFE4Cu) & 1u); }
+
+/* The fence round the yard: a run of mesh between posts at most 3 m apart and
+ * at both its ends, a rail along its top, and a sliding gate framed top and
+ * bottom between heavier posts. */
+static void fence(Mesh *m, const BGraph *g) {
+    float h = g->archetype == ARCH_SUBSTATION ? 2.6f : g->style == PST_GOTHIC ? 3.0f : 2.4f;
+    Mat st = imat(IND_PAINT, steel_of(g), 0, g->seed), mesh = mat(MAT_INDUSTRY, g->seed, IND_MESH, (uint8_t)steel_of(g), (uint8_t)fence_kind(g));
+    FenceRun run[INDUSTRY_MAX_FENCE];
+    int nr = industry_fence(g, run, INDUSTRY_MAX_FENCE);
+    float post[INDUSTRY_MAX_FENCE * 8][2];
+    int np = 0;
+    for (int pass = 0; pass < 2; ++pass)   /* the gates first, so their posts win where a run meets one */
+        for (int i = 0; i < nr; ++i) {
+            const FenceRun *r = &run[i];
+            if (r->gate != (pass == 0)) continue;
+            float len = sqrtf((r->x1 - r->x0) * (r->x1 - r->x0) + (r->z1 - r->z0) * (r->z1 - r->z0));
+            float y0 = G0 + (r->gate ? 0.1f : 0.0f);
+            vec3 n = v3((r->z1 - r->z0) / len, 0.0f, -(r->x1 - r->x0) / len);
+            float uv[4][2] = { { r->u, y0 - G0 }, { r->u + len, y0 - G0 }, { r->u + len, h }, { r->u, h } };
+            vec3 a = v3(r->x0, y0, r->z0), b = v3(r->x1, y0, r->z1), c = v3(r->x1, G0 + h, r->z1), d = v3(r->x0, G0 + h, r->z0);
+            emit_quad(m, a, b, c, d, n, uv, mesh);
+            emit_quad(m, a, b, c, d, v3_scale(n, -1.0f), uv, mesh);
+            emit_beam(m, d, c, r->gate ? 0.08f : 0.05f, st);
+            if (r->gate) emit_beam(m, a, b, 0.08f, st);
+            int k = r->gate ? 1 : (int)ceilf(len / 3.0f);
+            for (int q = 0; q <= k; ++q) {
+                float t = (float)q / (float)k, px = r->x0 + (r->x1 - r->x0) * t, pz = r->z0 + (r->z1 - r->z0) * t;
+                int dup = 0;
+                for (int j = 0; j < np && !dup; ++j) dup = fabsf(post[j][0] - px) < 0.05f && fabsf(post[j][1] - pz) < 0.05f;
+                if (dup || np >= INDUSTRY_MAX_FENCE * 8) continue;
+                post[np][0] = px; post[np][1] = pz; np++;
+                float s = r->gate ? 0.08f : 0.05f;
+                emit_box(m, v3(px - s, G0, pz - s), v3(px + s, G0 + h + 0.08f, pz + s), F_SIDES | F_TOP, st, UV_FACADE);
+            }
+        }
 }
 
 /* A neon name board over the control building's door. */

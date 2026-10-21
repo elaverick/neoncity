@@ -238,6 +238,13 @@ enum { ILAMP_SODIUM = 0, ILAMP_FLOOD, ILAMP_MAST, ILAMP_FLARE };
 typedef struct ILamp { float x, y, z; int kind; float reach; uint32_t id; } ILamp;   /* reach, id: a flare's (ILAMP_FLARE) */
 #define INDUSTRY_MAX_LAMPS 40
 int industry_lamps(const BGraph *g, ILamp *out, int max);
+/* A plant's fence, in the building's frame, as straight runs along the yard's
+ * sides: stopped where a building stands on its line, the gate a run of its
+ * own. u is the distance round the fence to (x0, z0), so the mesh carries on
+ * round the corners. The mesh draws them and collision stops the walker at them. */
+typedef struct FenceRun { float x0, z0, x1, z1, u; int gate; } FenceRun;
+#define INDUSTRY_MAX_FENCE 32
+int industry_fence(const BGraph *g, FenceRun *out, int max);
 /* Everything of a plant or substation but its buildings' facades. */
 void emit_industry(Mesh *m, const Building *b, const BGraph *g);
 

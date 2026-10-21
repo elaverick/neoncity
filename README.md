@@ -245,10 +245,16 @@ vessels pass through decks by, are lists of their own.
   with a firewall between any closer than 10 m) and a busbar gantry of 12 m bays behind them,
   each transformer wired to it in three phases.
 - **Rendering.** `MAT_INDUSTRY` (`shaders/city/industry.glsl`): sixteen paints with weathering,
-  hoops and cladding ribs, open gratings, glazing lit from within, and chain-link fences as
+  hoops and cladding ribs, open gratings, glazing lit from within, and chain-link railings as
   veils over one MSAA sample. A plant's lamps go into the chunk's light table and
   light the rain mist. Distant proxies draw its units as plain painted boxes. You walk under
   racks, frames and gantries (their legs collide) and around the rest.
+- **Fence.** `industry_fence` (`src/city/mesh_industry.c`) lays the fence out as straight runs
+  along the yard's sides. A run stops at a building standing on the fence line (the side is
+  tested in 5 cm steps), and the gate is a run of its own. The mesh draws each run with
+  posts at most 3 m apart and at both ends, a rail along the top, and the gate as a framed
+  sliding panel between heavier posts. Collision gives each run, gate included, a 16 cm strip.
+  Each plot wears one of two authored wire meshes all the way round (see Textures).
 - **Fire.** A flare's flame is a volume, ray-marched in a pass of its own (`shaders/flame.frag`)
   after the clouds and before the bloom: one box per flame, the 64 nearest within 1.5 km
   (`chunks_flames`), marched against the scene depth with fewer steps far off. Inside, a column
@@ -835,6 +841,14 @@ parallax. Four materials use textures so far; the first three are CC0 from ambie
   emissive map's broad mips, and its prisms brighten as they turn toward the eye. Both sets
   were resampled to 1024² and had their normals' green flipped from DirectX to OpenGL.
   Without them, the procedural panels stand in.
+- **Fences:** `fence_003` (a wavy wire net, 1 m to the image) and `fence_008a` (a welded square
+  mesh, 1.5 m), packed at 1024 with the opacity map in the albedo's alpha. A plot's seed picks
+  one for its whole fence and gate (`fence_kind`; MAT_INDUSTRY params w). `shadeFence`
+  (`shaders/city/industry.glsl`) covers as many of a pixel's samples as the wire's coverage
+  there, with an ordered dither, and never sample 0. Near, the wire is crisp; far off, where
+  the mips have blurred it to grey, it thins to a haze. It is lit as bare metal (as litter's
+  cans), the albedo tinting the specular. The metalness map is not used. Without the
+  textures, the procedural chain-link stands in.
 
 The lobby stone and wood finishes are covered under Office lobbies. Everything else stays
 procedural.
@@ -846,8 +860,9 @@ asphalt's relief. Any future decal (kerb paint, stains, puddles) can follow the 
 
 To add a material from an ambientCG download (any resolution):
 1. Pack it: `build/pbr_pack <download>/<Name>_4K-PNG assets/textures/<name> 2048`. This
-   reads `_Color`, `_NormalGL`, `_Roughness`, and `_AmbientOcclusion` / `_Displacement`
-   when present. It box-filters them down to the given width and writes the three maps.
+   reads `_Color`, `_NormalGL`, `_Roughness`, and `_AmbientOcclusion` / `_Displacement` /
+   `_Opacity` when present (the opacity goes into the albedo's alpha). It box-filters them
+   down to the given width and writes the three maps.
    The `.blend`, `.mtlx`, `.tres`, `.usdc`, `_NormalDX` and preview files are not needed.
 2. Add an entry to the `PBR_*` enum in `src/core/common.h` and the matching constant in
    `shaders/common.glsl`. Add its folder name to `MATERIAL_DIRS` in `src/render/textures.c`.

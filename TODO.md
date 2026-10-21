@@ -284,8 +284,9 @@ Section 11 of `docs/procedural-building-generation.md` (`src/gen/building_indust
 - **Small industrial plots** (under about 24 by 21 m) still take a shed, a plant's works on its
   own, rather than a plant: about half the industrial plots. Merging neighbouring lots into
   one yard would give more of them plants.
-- **Fences** have no collision; the player walks through them. A thin outline per panel run
-  (and the gate) would do.
+- **Railings** on decks and tank roofs are still the procedural chain-link veil, not the
+  plot's fence texture.
+- **The gate is always shut,** so a yard can't be walked into.
 - **Smoke and steam** (`shaders/smoke.frag`; see the README) are ray-marched plumes on night
   refineries' stacks and some gas plants'. Left over:
   - **Lit by the flares and a flat city glow,** not the plant's own lamps (the light table).

@@ -5,14 +5,15 @@
  * The prefix is the download's common file stem, e.g.
  *   Downloads/PavingStones/PavingStones111_4K-PNG
  * from which <prefix>_Color.png, _NormalGL.png and _Roughness.png are read, and
- * _AmbientOcclusion.png and _Displacement.png if present (8- or 16-bit PNG).
+ * _AmbientOcclusion.png, _Displacement.png and _Opacity.png if present (8- or
+ * 16-bit PNG).
  * Maps are box-filtered down to `size` (default 2048; the source must be an
  * integer multiple of it) and written to the output directory as:
- *   albedo.png  colour, sRGB
+ *   albedo.png  colour, sRGB; alpha the opacity (RGB without an opacity map)
  *   normal.png  tangent-space normal, OpenGL convention (+Y green = image up)
  *   orm.png     R = ambient occlusion, G = roughness, B = height
- * Nothing else in the download (.blend, .mtlx, .tres, .usdc, NormalDX, the
- * preview sphere) is needed. */
+ * Nothing else in the download (.blend, .mtlx, .tres, .usdc, NormalDX,
+ * Metalness, the preview sphere) is needed. */
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #include <stb_image.h>
@@ -87,10 +88,10 @@ static unsigned char to8(float v) {
     return (unsigned char)(v * 255.0f + 0.5f);
 }
 
-static int write_png(const char *dir, const char *name, int w, int h, const unsigned char *px) {
+static int write_png(const char *dir, const char *name, int w, int h, int c, const unsigned char *px) {
     char path[1024];
     snprintf(path, sizeof(path), "%s/%s", dir, name);
-    if (!stbi_write_png(path, w, h, 3, px, w * 3)) { fprintf(stderr, "cannot write %s\n", path); return 0; }
+    if (!stbi_write_png(path, w, h, c, px, w * c)) { fprintf(stderr, "cannot write %s\n", path); return 0; }
     printf("  wrote %s\n", path);
     return 1;
 }
@@ -104,7 +105,7 @@ int main(int argc, char **argv) {
     const char *prefix = argv[1], *outDir = argv[2];
     int size = argc > 3 ? atoi(argv[3]) : 2048;
 
-    Map color = { 0 }, normal = { 0 }, rough = { 0 }, ao = { 0 }, height = { 0 };
+    Map color = { 0 }, normal = { 0 }, rough = { 0 }, ao = { 0 }, height = { 0 }, opacity = { 0 };
     printf("Reading %s_*\n", prefix);
     if (!load_map(prefix, "Color", 3, &color) || !load_map(prefix, "NormalGL", 3, &normal) ||
         !load_map(prefix, "Roughness", 1, &rough)) {
@@ -113,9 +114,10 @@ int main(int argc, char **argv) {
     }
     int haveAO = load_map(prefix, "AmbientOcclusion", 1, &ao);
     int haveHeight = load_map(prefix, "Displacement", 1, &height);
+    int haveOpacity = load_map(prefix, "Opacity", 1, &opacity);
 
-    Map *all[5] = { &color, &normal, &rough, haveAO ? &ao : NULL, haveHeight ? &height : NULL };
-    for (int i = 0; i < 5; ++i) {
+    Map *all[6] = { &color, &normal, &rough, haveAO ? &ao : NULL, haveHeight ? &height : NULL, haveOpacity ? &opacity : NULL };
+    for (int i = 0; i < 6; ++i) {
         if (!all[i]) continue;
         if (all[i]->w != color.w || all[i]->h != color.h) { fprintf(stderr, "maps differ in size\n"); return 1; }
     }
@@ -128,20 +130,25 @@ int main(int argc, char **argv) {
     size_t n = (size_t)color.w * color.h;
     for (size_t i = 0; i < n * 3; ++i) color.px[i] = srgb_to_linear(color.px[i]);
     for (size_t i = 0; i < n * 3; ++i) normal.px[i] = normal.px[i] * 2.0f - 1.0f;
-    for (int i = 0; i < 5; ++i) if (all[i]) downsample(all[i], size);
+    for (int i = 0; i < 6; ++i) if (all[i]) downsample(all[i], size);
 
     int w = color.w, h = color.h;
     n = (size_t)w * h;
-    unsigned char *px = (unsigned char *)malloc(n * 3);
-    double meanAlb = 0.0, meanRough = 0.0;
+    unsigned char *px = (unsigned char *)malloc(n * 4);
+    double meanAlb = 0.0, meanRough = 0.0, cover = 0.0;
 
+    /* With an opacity map the mean albedo is over what is there, weighted by its opacity. */
     make_dir(outDir);
+    int ca = haveOpacity ? 4 : 3;
     for (size_t i = 0; i < n; ++i) {
         const float *c = &color.px[i * 3];
-        meanAlb += 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-        for (int k = 0; k < 3; ++k) px[i * 3 + k] = to8(linear_to_srgb(c[k]));
+        float a = haveOpacity ? opacity.px[i] : 1.0f;
+        meanAlb += a * (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]);
+        cover += a;
+        for (int k = 0; k < 3; ++k) px[i * ca + k] = to8(linear_to_srgb(c[k]));
+        if (haveOpacity) px[i * ca + 3] = to8(a);
     }
-    if (!write_png(outDir, "albedo.png", w, h, px)) return 1;
+    if (!write_png(outDir, "albedo.png", w, h, ca, px)) return 1;
 
     for (size_t i = 0; i < n; ++i) {
         float *v = &normal.px[i * 3];
@@ -149,7 +156,7 @@ int main(int argc, char **argv) {
         if (l < 1e-6f) { v[0] = v[1] = 0.0f; v[2] = l = 1.0f; }
         for (int k = 0; k < 3; ++k) px[i * 3 + k] = to8(v[k] / l * 0.5f + 0.5f);
     }
-    if (!write_png(outDir, "normal.png", w, h, px)) return 1;
+    if (!write_png(outDir, "normal.png", w, h, 3, px)) return 1;
 
     for (size_t i = 0; i < n; ++i) {
         meanRough += rough.px[i];
@@ -157,9 +164,11 @@ int main(int argc, char **argv) {
         px[i * 3 + 1] = to8(rough.px[i]);
         px[i * 3 + 2] = haveHeight ? to8(height.px[i]) : 128;
     }
-    if (!write_png(outDir, "orm.png", w, h, px)) return 1;
+    if (!write_png(outDir, "orm.png", w, h, 3, px)) return 1;
 
-    printf("%dx%d, mean linear albedo %.3f, mean roughness %.3f%s%s\n", w, h, meanAlb / n, meanRough / n,
+    printf("%dx%d, mean linear albedo %.3f, mean roughness %.3f%s%s", w, h, meanAlb / (cover > 0.0 ? cover : 1.0), meanRough / n,
            haveAO ? "" : ", no AO (white)", haveHeight ? "" : ", no height (flat)");
+    if (haveOpacity) printf(", opacity %.3f", cover / n);
+    printf("\n");
     return 0;
 }
