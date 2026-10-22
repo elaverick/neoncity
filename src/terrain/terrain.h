@@ -154,12 +154,13 @@ TerrainPatch terrain_patch_child(TerrainPatch t, int k);          /* k = 0..3: i
  * on this face or the next. */
 TerrainPatch terrain_patch_neighbour(TerrainPatch t, int side);
 
-/* The ground on the planet: terrain_height_lod / terrain_surface_lod at the
- * chart's position for p over the hemisphere round the city, bit for bit.
- * Towards the antipode, where the chart stretches, the land is blended into
- * the land of a second chart centred on the antipode. */
-double terrain_planet_height_lod(TerrainDir p, double spacing);
-double terrain_planet_surface_lod(TerrainDir p, double spacing);
+/* The ground at a direction: terrain_height_lod / terrain_surface_lod, the
+ * main entry. The land is a function of the direction alone, the same
+ * through any chart and seamless over the whole planet; the settlements,
+ * their ground and the roads between them are read at p's place in the
+ * world's chart. */
+double terrain_height_dir(TerrainDir p, double spacing);
+double terrain_surface_dir(TerrainDir p, double spacing);
 /* No ground anywhere on the planet lies lower than this (m, world Y). */
 double terrain_planet_lowest(void);
 

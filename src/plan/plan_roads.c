@@ -1565,14 +1565,27 @@ static void hold_grade(float *r, int n, double ds, double G, double h0, double h
     r[n - 1] = (float)h1;
 }
 
+/* hold_grade from the end, when `back`: the pass follows the ground until
+ * the grade won't let it, so the end it starts from keeps to the ground. */
+static void hold_grade_from(float *r, int n, double ds, double G, double h0, double h1, int back) {
+    if (!back) { hold_grade(r, n, ds, G, h0, h1); return; }
+    for (int k = 0; k < n / 2; ++k) { float t = r[k]; r[k] = r[n - 1 - k]; r[n - 1 - k] = t; }
+    hold_grade(r, n, ds, G, h1, h0);
+    for (int k = 0; k < n / 2; ++k) { float t = r[k]; r[k] = r[n - 1 - k]; r[n - 1 - k] = t; }
+}
+
 /* Second pass: pinned to its ends' heights, its grade held, then short
- * vertical curves (an average, its grade held again). */
+ * vertical curves (an average, its grade held again). The grade is held
+ * from a gate outwards: beyond its city a hill too steep for the grade is
+ * climbed in a cutting, not come down from onto the city's belt on an
+ * embankment. */
 static void profile_grade_job(void *ctx, int l) {
     Net *net = (Net *)ctx;
     Link *L = &net->link[l];
     float *r = L->prof;
     int n = L->nprof;
     double ds = L->ds, len = ds * (n - 1), G = link_grade(L);
+    int back = L->gate[1] && !L->gate[0];
     double h0 = L->gate[0] ? terrain_height(L->pts[0].x, L->pts[0].z) : net->nodeH[L->a];
     double h1 = L->gate[1] ? terrain_height(L->pts[L->npts - 1].x, L->pts[L->npts - 1].z) : net->nodeH[L->b];
     /* drawn to the ends' heights over as long as half the grade takes */
@@ -1582,7 +1595,7 @@ static void profile_grade_job(void *ctx, int l) {
         double s = k * ds;
         r[k] += (float)(e0 * fmax(0.0, 1.0 - s / l0) + e1 * fmax(0.0, 1.0 - (len - s) / l1));
     }
-    hold_grade(r, n, ds, G, h0, h1);
+    hold_grade_from(r, n, ds, G, h0, h1, back);
     int V = (int)ceil(100.0 / ds);
     float *g = (float *)malloc(sizeof(float) * (size_t)n);
     if (!g) fatal("out of memory grading the roads");
@@ -1595,7 +1608,7 @@ static void profile_grade_job(void *ctx, int l) {
         r[k] = (float)(sum / (2 * w + 1));
     }
     free(g);
-    hold_grade(r, n, ds, G, h0, h1);
+    hold_grade_from(r, n, ds, G, h0, h1, back);
 }
 
 /* Where roads meet at a junction they meet at one height: the mean of their

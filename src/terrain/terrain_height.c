@@ -47,13 +47,17 @@ double terrain_urban_shape(double x, double z) { return urban_shape_lod(x, z, 0.
  * without changing any height. *w gets the urban weight. The planet's
  * highlands (lift) are under the settlement's ground as under the land; round
  * the megacity they are 0, and there the sum is as it was before settlements
- * had them, operation for operation. */
-static double height_lod(double x, double z, double spacing, double *w, double *relief, int roads) {
+ * had them, operation for operation. The land reads the direction p, or
+ * without one the chart's at (x, z). */
+static double height_lod(double x, double z, const TerrainDir *p, double spacing, double *w, double *relief, int roads) {
     double home, edge = plan_city_edges(x, z, &home), h = 0.0, lift = 0.0;
     *w = plan_urban_weight(edge);
     *relief = *w > 0.0 ? urban_relief(x, z) : 0.0;
-    if (*w < 1.0) h += (1.0 - *w) * terrain_land_parts(x, z, edge, home, spacing, &lift);
-    else lift = terrain_lift(x, z, home, spacing);
+    if (*w < 1.0) {
+        TerrainChart wc = terrain_world_chart();
+        TerrainDir d = p ? *p : terrain_chart_dir(&wc, x, z);
+        h += (1.0 - *w) * terrain_land_parts(d, edge, home, spacing, &lift);
+    } else lift = terrain_lift(x, z, home, spacing);
     if (*w > 0.0) {
         if (lift == 0.0) { if (*relief > 0.0) h += *w * *relief * urban_shape_lod(x, z, spacing); }
         else h += *w * ((*relief > 0.0 ? *relief * urban_shape_lod(x, z, spacing) : 0.0) + lift);
@@ -69,7 +73,7 @@ static double height_lod(double x, double z, double spacing, double *w, double *
 
 double terrain_height_lod(double x, double z, double spacing) {
     double w, relief;
-    return height_lod(x, z, spacing, &w, &relief, 1);
+    return height_lod(x, z, NULL, spacing, &w, &relief, 1);
 }
 
 double terrain_height(double x, double z) { return terrain_height_lod(x, z, 0.0); }
@@ -135,10 +139,28 @@ double terrain_urban_lod_error(double spacing, double relief) {
     return err;
 }
 
-double terrain_surface_lod(double x, double z, double spacing, float *urban) {
-    double w, relief, h = height_lod(x, z, spacing, &w, &relief, 1);
+static double surface_lod(double x, double z, const TerrainDir *p, double spacing, float *urban) {
+    double w, relief, h = height_lod(x, z, p, spacing, &w, &relief, 1);
     if (urban) *urban = (float)w;
     return h - terrain_urban_sink(spacing, relief) * w;
+}
+
+double terrain_surface_lod(double x, double z, double spacing, float *urban) { return surface_lod(x, z, NULL, spacing, urban); }
+
+/* The land at p itself; the settlements, their ground and the roads at its
+ * place in the world's chart. */
+double terrain_height_dir(TerrainDir p, double spacing) {
+    TerrainChart wc = terrain_world_chart();
+    double x, z, w, relief;
+    terrain_dir_chart(&wc, p, &x, &z);
+    return height_lod(x, z, &p, spacing, &w, &relief, 1);
+}
+
+double terrain_surface_dir(TerrainDir p, double spacing) {
+    TerrainChart wc = terrain_world_chart();
+    double x, z;
+    terrain_dir_chart(&wc, p, &x, &z);
+    return surface_lod(x, z, &p, spacing, NULL);
 }
 
 double terrain_urban_sink(double spacing, double relief) {
@@ -175,7 +197,7 @@ void terrain_height_range(double x0, double z0, double x1, double z1, double *lo
 
 double terrain_height_bare(double x, double z, double spacing) {
     double w, relief;
-    return height_lod(x, z, spacing, &w, &relief, 0);
+    return height_lod(x, z, NULL, spacing, &w, &relief, 0);
 }
 
 /* The roads move the ground at a spacing by wr (1 - w) (rh - g) from the bare
@@ -184,7 +206,7 @@ double terrain_height_bare(double x, double z, double spacing) {
 double terrain_road_lod_error(double x, double z, double spacing) {
     double e = 0.0;
     for (int k = 0; k < 2; ++k) {
-        double sp = k ? spacing : 0.0, w, relief, rh, g = height_lod(x, z, sp, &w, &relief, 0);
+        double sp = k ? spacing : 0.0, w, relief, rh, g = height_lod(x, z, NULL, sp, &w, &relief, 0);
         if (w >= 1.0 || sp > PLAN_ROAD_LOD_SPACING) continue;
         double wr = plan_road_ground(x, z, g, sp, &rh);
         e += wr * (1.0 - w) * fabs(rh - g);

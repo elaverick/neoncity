@@ -43,7 +43,7 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
     for (int gj = -1; gj <= PC + 1; ++gj)
         for (int gi = -1; gi <= PC + 1; ++gi) {
             TerrainDir d = terrain_patch_dir(t, PC, gi, gj);
-            double h = terrain_planet_surface_lod(d, sp);
+            double h = terrain_surface_dir(d, sp);
             evals++;
             pt[(gj + 1) * AS + gi + 1] = point_at(d, h);
             if (gi >= 0 && gi <= PC && gj >= 0 && gj <= PC) {
@@ -57,7 +57,7 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
         for (int pj = 0; pj < PP; ++pj)
             for (int pi = 0; pi < PP; ++pi) {
                 TerrainDir d = dir[(2 * pj) * PS + 2 * pi];
-                par[pj * PP + pi] = point_at(d, terrain_planet_surface_lod(d, 2.0 * sp));
+                par[pj * PP + pi] = point_at(d, terrain_surface_dir(d, 2.0 * sp));
                 evals++;
             }
 
@@ -67,7 +67,7 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
     for (int cj = 0; cj < PC; ++cj)
         for (int ci = 0; ci < PC; ++ci) {
             TerrainDir d = terrain_patch_dir(t, 2 * PC, 2 * ci + 1, 2 * cj + 1);
-            TerrainDir truth = point_at(d, terrain_planet_surface_lod(d, 0.5 * sp));
+            TerrainDir truth = point_at(d, terrain_surface_dir(d, 0.5 * sp));
             evals++;
             TerrainDir mid = scale3(add3(pt[(cj + 1) * AS + ci + 1], pt[(cj + 2) * AS + ci + 2]), 0.5);
             TerrainDir e = sub3(truth, mid);

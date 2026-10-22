@@ -9,8 +9,8 @@
  *                      a move exposes, the per-update budget, readiness, morph,
  *                      block bounds and the screen-space error's choice of levels
  *   terrain_mesh.c     filling a strip of a level: heights, parent heights, normals
- *   terrain_world.c    the planet: the chart world X/Z is, the cube-sphere and its
- *                      patches, the ground over the whole sphere, the bend and the horizon
+ *   terrain_world.c    the planet: the chart world X/Z is, the bend, the horizon and
+ *                      the lowest ground (the cube-sphere is terrain_cube.c)
  *   terrain_patch.c    the planet's patches: their meshes, the cache of them and the
  *                      quadtree selection of which to draw
  *
@@ -91,11 +91,17 @@
  *           escarpments inside stay sharp.
  *   E       0 out to TERRAIN_REGION_FROM beyond the city's edge, rising to 1
  *           over TERRAIN_LAND_RISE: the city's surroundings stay gentle.
- *   canyon  explicit meandering paths, one or none per TERRAIN_CANYON_CELL
- *           square, cut into whatever they cross: a level floor, steep walls,
+ *   canyon  explicit meandering paths, one or none per cell of a lattice
+ *           on each cube face, TERRAIN_CANYON_CELL across at the face's
+ *           middle, cut into whatever they cross: a level floor, steep walls,
  *           tapering at both ends. C keeps them TERRAIN_CANYON_FROM clear of
  *           the city's edge.
- * Every length is world metres; every height, metres above y = 0. */
+ * The land is a function of the direction on the planet: base, the region
+ * and the types are value noise in three dimensions at R times the
+ * direction, and the belts and ridges are drawn in fixed frames, one per
+ * tile of the cube's faces, blended across the tiles' edges
+ * (terrain_land.c). Only E, C and M read the world's chart, through the
+ * edge measures. Every length is metres; every height, metres above y = 0. */
 #define TERRAIN_BASE_M         12.0
 #define TERRAIN_MACRO_M        1500.0
 #define TERRAIN_MACRO_WAVE     3.0e6    /* longest wavelength over the sphere (m) */
@@ -158,16 +164,13 @@
 #define TERRAIN_LAND_TOP_M  (TERRAIN_BASE_M + TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M)
 #define TERRAIN_LAND_DEEP_M (TERRAIN_BASE_M + TERRAIN_HILLS_M + TERRAIN_CANYON_DEEP_M)
 
-/* The two fields before blending. urban_shape is unit amplitude, [-1, 1];
- * land is in metres. */
+/* The urban field before blending, unit amplitude, [-1, 1]. */
 double terrain_urban_shape(double x, double z);
-double terrain_land(double x, double z);
-/* The land at `spacing`, given plan_city_edges at the point (terrain_height_lod's):
- * the edge measure, and the megacity's own. */
-double terrain_land_lod(double x, double z, double edge, double home, double spacing);
-/* The same, and M * macro in it in *lift: the planet's highlands, which a
- * settlement's ground rises and falls with too (terrain_height.c). */
-double terrain_land_parts(double x, double z, double edge, double home, double spacing, double *lift);
+/* The land at direction d and `spacing`, given plan_city_edges at its place
+ * (terrain_height_lod's): the edge measure, and the megacity's own; and
+ * M * macro in it in *lift: the planet's highlands, which a settlement's
+ * ground rises and falls with too (terrain_height.c). */
+double terrain_land_parts(TerrainDir d, double edge, double home, double spacing, double *lift);
 /* M * macro alone, at `spacing`, for the megacity's edge measure `home`, as
  * it is wherever plan_urban is above 0 (the Earth's detail is left out
  * there): 0 within TERRAIN_MACRO_FROM of the megacity. */
@@ -197,11 +200,9 @@ uint32_t terrain_earth_lod_key(double spacing);
 int      terrain_earth_forms(TerrainDir p, float a[TERRAIN_TYPES]);
 /* terrain_earth_range over only the mips `spacing` itself reads. */
 void     terrain_earth_range_at(TerrainDir p, double radius, double spacing, double *lo, double *hi);
-/* The same at a point of some chart, (x, z) in it and p its direction on the
- * planet: the macro field reads p, the rest (x, z). terrain_land_lod is this
- * in the world's chart (terrain_world_chart); terrain_world.c's second chart
- * passes its own. */
-double terrain_land_at(double x, double z, TerrainDir p, double edge, double spacing);
+/* The default strike of the mountain belts at p, along the sphere: the
+ * frame's that leads there (terrain_land.c). */
+TerrainDir terrain_frame_strike(TerrainDir p);
 /* Bounds on the land wherever plan_city_edge is at most `edge` and the
  * megacity's own measure at most `home` (m). */
 void   terrain_land_range(double edge, double home, double *lo, double *hi);

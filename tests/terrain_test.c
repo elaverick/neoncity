@@ -132,15 +132,25 @@ static void test_landforms(Rng *r) {
     CHECK(slopeMax[TERRAIN_PLATEAU] > 1.0, "the plateaus' escarpments are smoothed away: steepest %.0f%%", 100.0 * slopeMax[TERRAIN_PLATEAU]);
 
     /* Belts: the mountains' weight holds about as long along the strike as across it, times the stretch,
-     * where the region is its own (M is 0; beyond, the Earth's landforms take their share). */
-    double along = 0.0, across = 0.0;
+     * where the region is its own (M is 0; beyond, the Earth's landforms take their share). The strike is
+     * the frame's round the city, turned into the chart there. */
+    double along = 0.0, across = 0.0, sx, sz;
     int runsA = 0, runsC = 0;
+    {
+        TerrainChart wc = terrain_world_chart();
+        TerrainDir ax, up, az, st = terrain_frame_strike(terrain_chart_dir(&wc, c.x, c.z));
+        terrain_chart_frame(&wc, c.x, c.z, &ax, &up, &az);
+        sx = st.x * ax.x + st.y * ax.y + st.z * ax.z;
+        sz = st.x * az.x + st.y * az.y + st.z * az.z;
+        double l = hypot(sx, sz);
+        sx /= l; sz /= l;
+    }
     for (int k = 0; k < 200; ++k) {
         float u0 = rng_float(r);
         float v0 = rng_float(r);
         double ox = c.x + (2.0 * u0 - 1.0) * LF_SPAN, oz = c.z + (2.0 * v0 - 1.0) * LF_SPAN;
         for (int dir = 0; dir < 2; ++dir) {
-            double dx = dir ? -TERRAIN_STRIKE_Z : TERRAIN_STRIKE_X, dz = dir ? TERRAIN_STRIKE_X : TERRAIN_STRIKE_Z;
+            double dx = dir ? -sz : sx, dz = dir ? sx : sz;
             int in = 0, len = 0;
             for (int s = 0; s <= 400; ++s) {
                 TerrainLandform lf;
@@ -849,7 +859,7 @@ static int planet_map(const char *path, int F) {
     for (int f = 0; f < 6; ++f) {
         for (int j = 0; j <= F; ++j)
             for (int i = 0; i <= F; ++i) {
-                double h = terrain_planet_height_lod(terrain_face_dir(f, -1.0 + 2.0 * (i + 0.5) / F, -1.0 + 2.0 * (j + 0.5) / F), sp);
+                double h = terrain_height_dir(terrain_face_dir(f, -1.0 + 2.0 * (i + 0.5) / F, -1.0 + 2.0 * (j + 0.5) / F), sp);
                 hgt[j * (F + 1) + i] = h;
                 lo = fmin(lo, h); hi = fmax(hi, h);
             }
@@ -1123,23 +1133,36 @@ static void test_planet(Rng *r) {
         }
     }
 
-    /* The ground on the planet: the chart's round the city, bit for bit, and
-     * continuous everywhere, through the blend and at the antipode. */
+    /* The ground on the planet: the chart's round the city, to within the
+     * round trip through it; the land the same through any chart; and
+     * continuous everywhere, at the chart's antipode too. */
     const double spacings[3] = { 0.0, 64.0, 4096.0 };
-    double lowest = terrain_planet_lowest(), seen = 1e9, jump = 0.0;
+    TerrainChart other[4];
+    for (int c = 0; c < 4; ++c) {
+        TerrainDir oc = prand(r);
+        other[c] = terrain_chart_about(oc, 360.0 * rng_float(r));
+    }
+    double lowest = terrain_planet_lowest(), seen = 1e9, jump = 0.0, viaChart = 0.0, viaOther = 0.0;
     for (int k = 0; k < 6000; ++k) {
         TerrainDir p = prand(r);
-        double sp = spacings[k % 3], x, z;
+        double sp = spacings[k % 3], x, z, lift;
         if (k % 5 == 0) {   /* near the city */
             float u = rng_float(r);
             float v = rng_float(r);
             p = terrain_chart_dir(&wc, (2.0 * u - 1.0) * 40000.0, (2.0 * v - 1.0) * 40000.0);
         }
         terrain_dir_chart(&wc, p, &x, &z);
-        double h = terrain_planet_height_lod(p, sp), sf = terrain_planet_surface_lod(p, sp);
+        double h = terrain_height_dir(p, sp), sf = terrain_surface_dir(p, sp);
         if (acos(fmin(1.0, pdot(p, o))) <= 0.4 * PI_D) {
             double hc = terrain_height_lod(x, z, sp), sc = terrain_surface_lod(x, z, sp, NULL);
-            CHECK(memcmp(&h, &hc, sizeof(h)) == 0 && memcmp(&sf, &sc, sizeof(sf)) == 0, "planet ground at chart (%.0f, %.0f) isn't the chart's", x, z);
+            viaChart = fmax(viaChart, fmax(fabs(h - hc), fabs(sf - sc)));
+        }
+        const TerrainChart *oc = &other[k % 4];
+        if (pdot(p, oc->o) > 0.0) {   /* the other chart's hemisphere, where its round trip is good */
+            double ox, oz;
+            terrain_dir_chart(oc, p, &ox, &oz);
+            TerrainDir q = terrain_chart_dir(oc, ox, oz);
+            viaOther = fmax(viaOther, fabs(terrain_land_parts(q, 1e9, 1e9, sp, &lift) - terrain_land_parts(p, 1e9, 1e9, sp, &lift)));
         }
         CHECK(isfinite(h) && h >= lowest && sf >= lowest, "planet ground %.1f (surface %.1f) under the lowest, %.1f", h, sf, lowest);
         seen = fmin(seen, fmin(h, sf));
@@ -1150,7 +1173,7 @@ static void test_planet(Rng *r) {
         TerrainDir q = { p.x + ax.x * 2.0 / R, p.y + ax.y * 2.0 / R, p.z + ax.z * 2.0 / R };
         double len = sqrt(pdot(q, q));
         q.x /= len; q.y /= len; q.z /= len;
-        jump = fmax(jump, fabs(terrain_planet_height_lod(q, sp) - h) / 2.0);
+        jump = fmax(jump, fabs(terrain_height_dir(q, sp) - h) / 2.0);
     }
     for (int k = 0; k < 2000; ++k) {   /* round the antipode, where the chart's polar */
         float u = rng_float(r);
@@ -1158,10 +1181,32 @@ static void test_planet(Rng *r) {
         double s = PI_D * R - 50.0 * u, a = 2.0 * PI_D * v, b = a + 0.5 * PI_D;
         TerrainDir p = terrain_chart_dir(&wc, s * cos(a), s * sin(a)), q = terrain_chart_dir(&wc, s * cos(b), s * sin(b));
         double d = pdist(p, q) * R;
-        if (d > 1e-3) jump = fmax(jump, fabs(terrain_planet_height_lod(p, 0.0) - terrain_planet_height_lod(q, 0.0)) / d);
+        if (d > 1e-3) jump = fmax(jump, fabs(terrain_height_dir(p, 0.0) - terrain_height_dir(q, 0.0)) / d);
     }
-    printf("planet ground: lowest %.1f m (bound %.1f), steepest step %.2f\n", seen, lowest, jump);
-    CHECK(jump <= LAND_SLOPE, "planet ground jumps: slope %.2f", jump);
+    /* Across the landforms' seams: the cube's edges, where the faces' frames
+     * and canyon lattices meet, and the edges of the frames' tiles; a step of
+     * 1 m each way. */
+    double seam = 0.0;
+    for (int k = 0; k < 4000; ++k) {
+        static const double edges[5] = { -1.0, -0.5, 0.0, 0.5, 1.0 };
+        int f = k % 6, e = (k / 6) % 5, swap = (k / 30) % 2;
+        float w = rng_float(r);
+        float t = rng_float(r);
+        double a = edges[e] + (2.0 * w - 1.0) * 0.003, b = 2.0 * t - 1.0, lift;
+        TerrainDir p = swap ? terrain_face_dir(f, b, a) : terrain_face_dir(f, a, b), d = prand(r);
+        TerrainDir tang = { p.y * d.z - p.z * d.y, p.z * d.x - p.x * d.z, p.x * d.y - p.y * d.x };
+        double tl = sqrt(pdot(tang, tang));
+        TerrainDir q = { p.x + tang.x / (tl * R), p.y + tang.y / (tl * R), p.z + tang.z / (tl * R) };
+        double len = sqrt(pdot(q, q));
+        q.x /= len; q.y /= len; q.z /= len;
+        double step = pdist(p, q) * R;
+        seam = fmax(seam, fabs(terrain_land_parts(q, 1e9, 1e9, 0.0, &lift) - terrain_land_parts(p, 1e9, 1e9, 0.0, &lift)) / step);
+    }
+    printf("planet ground: lowest %.1f m (bound %.1f), steepest step %.2f, %.2f across the landforms' seams;\n"
+           "  through the chart within %.1e m, the land through other charts within %.1e m\n", seen, lowest, jump, seam, viaChart, viaOther);
+    CHECK(jump <= LAND_SLOPE && seam <= LAND_SLOPE, "planet ground jumps: slope %.2f, %.2f across the landforms' seams", jump, seam);
+    CHECK(viaChart < 1e-3, "the ground at a direction strays %.2e m from the chart's at its place", viaChart);
+    CHECK(viaOther < 1e-3, "the land at a direction strays %.2e m through another chart", viaOther);
 
     /* The bend against the exact geometry: exact from the chart's origin, and
      * from a camera off it, the chart's distortion. */
@@ -1750,7 +1795,7 @@ static void test_earth(Rng *r, const char *path) {
         double a = 2.0 * PI_D * rng_float(r), s = 5.0e5 + 3.0e6 * rng_float(r), x = s * cos(a), z = s * sin(a);
         TerrainDir d = terrain_chart_dir(&wc, x, z);
         double want = terrain_earth_height(d, 0.0) - e0, lift;
-        terrain_land_parts(x, z, 1e9, 1e9, 0.0, &lift);
+        terrain_land_parts(d, 1e9, 1e9, 0.0, &lift);
         CHECK(fabs(lift - want) < 1e-6, "the lift at (%.0f, %.0f) is %.3f, not the Earth less the datum %.3f", x, z, lift, want);
         if (s < 0.3 * PI_D * R) {
             double sea = terrain_sea_margin(x, z), e = terrain_earth_height(d, TERRAIN_LIFT_SPACING);

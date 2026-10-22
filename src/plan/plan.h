@@ -188,7 +188,7 @@ double          plan_road_height(int k, double s);
 #define PLAN_ROAD_LOD_SPACING 64.0
 #define PLAN_ROAD_SHOULDER    2.0    /* m of level ground beyond the paved width */
 #define PLAN_ROAD_BATTER_MIN  6.0    /* the batter's least and greatest width (m) */
-#define PLAN_ROAD_BATTER_MAX  80.0
+#define PLAN_ROAD_BATTER_MAX  200.0  /* a cutting or embankment 100 m deep or more still slopes no steeper than 1.5 / 2 a metre */
 double          plan_road_ground(double x, double z, double ground, double spacing, double *road_h);
 /* Bounds on the road heights plan_road_ground can give in the rectangle
  * [x0, x1] x [z0, z1]; 0 if it gives none there. */

@@ -55,7 +55,8 @@ static inline float noise_fbm2(uint32_t seed, double x, double z, int octaves) {
 }
 
 /* The same in three dimensions, for fields over the planet's sphere (the
- * terrain's continents), which no chart can carry without a seam. */
+ * terrain's landforms, the stand-in's continents), which no chart can carry
+ * without a seam. */
 static inline float noise_value3(uint32_t seed, double x, double y, double z) {
     double fx0 = floor(x), fy0 = floor(y), fz0 = floor(z);
     int32_t ix = (int32_t)fx0, iy = (int32_t)fy0, iz = (int32_t)fz0;

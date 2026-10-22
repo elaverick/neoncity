@@ -2,7 +2,7 @@
 #include "plan.h"
 
 /* The planet (see terrain.h): the chart that world X/Z is, the cube-sphere
- * that addresses the surface, and the ground and horizon over it. Every
+ * that addresses the surface, the bend and the horizon over it. Every
  * function is pure; directions are computed in double. */
 
 /* Where the chart's origin lies: the Earth bake's origin, the megacity's
@@ -15,15 +15,6 @@
 #define CHART_FACE 0
 #define CHART_U    0.31
 #define CHART_V    0.95
-
-/* Over the hemisphere round the origin the ground is the chart's own. From
- * CHART_BLEND_FROM radians out to CHART_BLEND_TO it blends into a second
- * chart's, centred on the antipode, where the first chart's singularity is.
- * The second chart's land is offset by ANTIPODE_OFFSET_M so it isn't the
- * first's land mirrored. */
-#define CHART_BLEND_FROM  (0.40 * PI)
-#define CHART_BLEND_TO    (0.60 * PI)
-#define ANTIPODE_OFFSET_M 3.1e6
 
 /* The cube-sphere that addresses the surface, its patches, and latitude and
  * longitude live in terrain_cube.c, which the Earth bake links on its own. */
@@ -57,27 +48,16 @@ TerrainDir terrain_chart_dir(const TerrainChart *c, double x, double z) {
     return add3(scale3(c->o, cos(th)), scale3(add3(scale3(c->ex, x), scale3(c->ez, z)), k));
 }
 
-/* p in the chart: (a, b) its components along the chart's x and z, st their
- * length (the sine of its angle th from the origin). The one computation of
- * it, so the planet's ground asks the chart for exactly the point
- * terrain_dir_chart gives. */
-typedef struct ChartPos { double x, z, a, b, st, th; } ChartPos;
-static ChartPos chart_pos(const TerrainChart *ch, TerrainDir p) {
-    ChartPos c = { 0.0, 0.0, dot3(p, ch->ex), dot3(p, ch->ez), 0.0, 0.0 };
-    c.st = hypot(c.a, c.b);
-    c.th = atan2(c.st, dot3(p, ch->o));
-    if (c.st > 0.0) {
-        double k = PLANET_RADIUS * c.th / c.st;
-        c.x = c.a * k;
-        c.z = c.b * k;
-    }
-    return c;
-}
-
+/* p's components along the chart's x and z, (a, b), have length st, the
+ * sine of its angle th from the origin; its place is (a, b) times th R / st. */
 void terrain_dir_chart(const TerrainChart *c, TerrainDir p, double *x, double *z) {
-    ChartPos cp = chart_pos(c, p);
-    *x = cp.x;
-    *z = cp.z;
+    double a = dot3(p, c->ex), b = dot3(p, c->ez), st = hypot(a, b), th = atan2(st, dot3(p, c->o));
+    *x = *z = 0.0;
+    if (st > 0.0) {
+        double k = PLANET_RADIUS * th / st;
+        *x = a * k;
+        *z = b * k;
+    }
 }
 
 TerrainDir terrain_chart_point(const TerrainChart *c, double x, double y, double z) {
@@ -130,33 +110,7 @@ void terrain_bend_bounds(float mn[3], float mx[3]) {
     mn[2] -= (float)grow; mx[2] += (float)grow;
 }
 
-/* --- The ground on the planet ----------------------------------------------------- */
-
-static double planet_lod(TerrainDir p, double spacing, int surface) {
-    TerrainChart wc = terrain_world_chart();
-    ChartPos c = chart_pos(&wc, p);
-    double near = 0.0;
-    if (c.th < CHART_BLEND_TO) {
-        if (surface) near = terrain_surface_lod(c.x, c.z, spacing, NULL);
-        else near = terrain_height_lod(c.x, c.z, spacing);
-        if (c.th <= CHART_BLEND_FROM) return near;
-    }
-    /* The antipode's chart: centred on -o, with x along ex and z along -ez
-     * (a right-handed frame there). Nothing of the city reaches this far. */
-    double xb = 0.0, zb = 0.0;
-    if (c.st > 0.0) {
-        double k = PLANET_RADIUS * (PI - c.th) / c.st;
-        xb = c.a * k;
-        zb = -c.b * k;
-    }
-    double far = terrain_land_at(xb + ANTIPODE_OFFSET_M, zb + ANTIPODE_OFFSET_M, p, 1e9, spacing);
-    if (c.th >= CHART_BLEND_TO) return far;
-    double t = (c.th - CHART_BLEND_FROM) / (CHART_BLEND_TO - CHART_BLEND_FROM), w = t * t * (3.0 - 2.0 * t);
-    return near + w * (far - near);
-}
-
-double terrain_planet_height_lod(TerrainDir p, double spacing) { return planet_lod(p, spacing, 0); }
-double terrain_planet_surface_lod(TerrainDir p, double spacing) { return planet_lod(p, spacing, 1); }
+/* --- The lowest ground ------------------------------------------------------------ */
 
 /* The land's own bound, and the city's ground at its lowest: a settlement's
  * relief down, sunk by at most that relief again and the clearance

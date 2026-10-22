@@ -3,36 +3,153 @@
 #include "plan.h"
 
 /* The land beyond the city (see terrain_internal.h): rolling ground, the
- * region's landforms and canyons, as pure functions of position. */
+ * region's landforms and canyons, as pure functions of the direction on the
+ * planet. Only the edge measures, which read the settlements, are taken in
+ * the world's chart. */
 
 static float hf(uint32_t h, uint32_t k) { return hash_float(hash_combine(h, k)); }
 
 #define PI_D 3.14159265358979323846
 
-/* --- The region ---------------------------------------------------------------
- * A warped frame, so neither the regions nor the belts run straight, and in it
- * the strike frame: u along the mountain belts, v across them. */
+static double comp(TerrainDir a, int k) { return k == 0 ? a.x : k == 1 ? a.y : a.z; }
+
+static TerrainDir axis_dir(int k) {
+    TerrainDir e = { k == 0, k == 1, k == 2 };
+    return e;
+}
+
+/* p along cube face f's outward normal: the face is where this is largest. */
+static double face_comp(TerrainDir p, int f) {
+    double c = comp(p, f / 2);
+    return (f & 1) ? -c : c;
+}
+
+/* p's equal-angle coordinate on face f (terrain_dir_face) along its u (k 1)
+ * or v (k 2), given c = face_comp(p, f) > 0; past the face's edges too. */
+static double face_coord(TerrainDir p, int f, int k, double c) {
+    return atan(comp(p, (f / 2 + k) % 3) / c) * (4.0 / PI_D);
+}
+
+/* 0 at t <= -1 to 1 at t >= 1, smoothly. */
+static double blend11(double t) {
+    t = 0.5 + 0.5 * t;
+    t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
+    return t * t * (3.0 - 2.0 * t);
+}
+
+/* --- The frames --------------------------------------------------------------
+ * The landforms are noise in three dimensions at the point R p (m), so they
+ * need no chart, and the isotropic fields read it as it is. The mountains run
+ * along a strike, which only a fixed frame can carry: a frame turning with
+ * the point would shear the noise by R times its turn. So each cube face is
+ * cut into FRAME_TILES x FRAME_TILES tiles, each with the tangent frame at
+ * its centre (n up, u along the face's u, v = n x u), and the belts and
+ * ridges are drawn in the frames of the tiles round a point, blended over
+ * FRAME_BLEND_M either side of the tiles' edges and of the faces' seams. A
+ * tile's plane strays at most 16 degrees from the sphere under it, which
+ * shortens a belt's stretch a little there but never turns it. */
+#define FRAME_TILES   4
+#define FRAME_BLEND_M 8000.0
+#define FRAME_MAX     12   /* three faces, two by two tiles each: more than ever meet */
+
+typedef struct Frame {
+    TerrainDir n, u, v;       /* the tile's frame */
+    double wt;                /* its weight at the point; the frames' weights sum to 1 */
+    double wu, wv, wn;        /* the region's warped point in it (m) */
+    int    k0, k1;            /* the ridges' frames either side of the strike... */
+    double kt;                /* ...and the blend between them */
+    float  w[TERRAIN_TYPES];  /* the region's weights in it */
+} Frame;
+
+static void tile_frame(int f, int i, int j, Frame *fr) {
+    double w = 2.0 / FRAME_TILES;
+    fr->n = terrain_face_dir(f, -1.0 + (i + 0.5) * w, -1.0 + (j + 0.5) * w);
+    TerrainDir e = axis_dir((f / 2 + 1) % 3);
+    fr->u = unit3(sub3(e, scale3(fr->n, dot3(e, fr->n))));
+    fr->v = cross3(fr->n, fr->u);
+}
+
+/* The tiles along one of a face's axes at coordinate u, with their weights:
+ * one, or two within hw tiles of the edge between them. Past the face's own
+ * edges the last tile stands (the faces' seams blend the faces). */
+static int tile_axis(double u, double hw, int idx[2], double w[2]) {
+    double t = (u + 1.0) * 0.5 * FRAME_TILES;
+    int i = (int)floor(t), k = (int)floor(t + 0.5);
+    idx[0] = i < 0 ? 0 : i >= FRAME_TILES ? FRAME_TILES - 1 : i;
+    w[0] = 1.0;
+    if (k < 1 || k >= FRAME_TILES || fabs(t - k) >= hw) return 1;
+    double s = blend11((t - k) / hw);
+    idx[0] = k - 1; w[0] = 1.0 - s;
+    idx[1] = k;     w[1] = s;
+    return 2;
+}
+
+/* The frames round p, their weights summing to 1. A face's weight is the
+ * product of its lead over each other face's component, blended over
+ * FRAME_BLEND_M (across a seam the two components part at sqrt 2 / R a
+ * metre); the face p is on leads every other, so its weight is never 0. */
+static int frames_at(TerrainDir p, Frame out[FRAME_MAX]) {
+    const double fb = 1.4142135623730951 * FRAME_BLEND_M / PLANET_RADIUS;
+    const double tb = FRAME_BLEND_M / PLANET_RADIUS * (4.0 / PI_D) * 0.5 * FRAME_TILES;
+    double c[6], sum = 0.0;
+    for (int f = 0; f < 6; ++f) c[f] = face_comp(p, f);
+    int n = 0;
+    for (int f = 0; f < 6; ++f) {
+        if (c[f] <= 0.0) continue;
+        double wf = 1.0;
+        for (int g = 0; g < 6 && wf > 0.0; ++g)
+            if (g != f) wf *= blend11((c[f] - c[g]) / fb);
+        if (wf <= 0.0) continue;
+        int ti[2], tj[2];
+        double wi[2], wj[2];
+        int ni = tile_axis(face_coord(p, f, 1, c[f]), tb, ti, wi), nj = tile_axis(face_coord(p, f, 2, c[f]), tb, tj, wj);
+        for (int b = 0; b < nj; ++b)
+            for (int a = 0; a < ni; ++a) {
+                Frame *fr = &out[n++];
+                tile_frame(f, ti[a], tj[b], fr);
+                fr->wt = wf * wi[a] * wj[b];
+                sum += fr->wt;
+            }
+    }
+    for (int k = 0; k < n; ++k) out[k].wt /= sum;
+    return n;
+}
+
+/* The default strike at p, in the frame leading there, along the sphere. */
+TerrainDir terrain_frame_strike(TerrainDir p) {
+    Frame fr[FRAME_MAX];
+    int n = frames_at(p, fr), best = 0;
+    for (int k = 1; k < n; ++k)
+        if (fr[k].wt > fr[best].wt) best = k;
+    TerrainDir s = add3(scale3(fr[best].u, TERRAIN_STRIKE_X), scale3(fr[best].v, TERRAIN_STRIKE_Z));
+    return unit3(sub3(s, scale3(p, dot3(s, p))));
+}
+
+/* --- The region ----------------------------------------------------------------
+ * A warped place for the point, so neither the regions nor the belts run
+ * straight; in each frame the strike's: u along the mountain belts, v across
+ * them. */
 typedef struct Region {
-    double wx, wz, u, v;
-    float  w[TERRAIN_TYPES];
+    TerrainDir P, W;         /* the point, R p, and its warped place (m) */
+    float hills, plateau;    /* the isotropic affinities */
 } Region;
 
 /* What the planet gives the land at a point (macro_of): the lift, M * macro;
  * and for the landforms, the stand-in's affinity bias (without a bake), or
- * the Earth's own affinities and their share of the region's, the ridges'
- * two frames either side of the strike and the blend between them, how much
+ * the Earth's own affinities and their share of the region's, the data's
+ * strike along the sphere and its weight (M times its coherence), how much
  * of the mountains' height the data leaves them, the roughness, and how much
  * of the canyons' cut the sea floor leaves. Where M is 0 the landforms are
- * the region's own: no bias, no share, frame 0 alone and every scale 1. */
+ * the region's own: no bias, no share, no strike and every scale 1. */
 typedef struct Macro {
     double lift, bias, share;
     float  a[TERRAIN_TYPES];
-    int    k0, k1;
-    double kt, amp, rough, canyon;
+    TerrainDir strike;
+    double sw, amp, rough, canyon;
 } Macro;
 
 /* The ridges' frames: the default strike (TERRAIN_STRIKE_*) turned towards
- * +z by k pi / TERRAIN_STRIKES, as (cos, sin) of the turn. */
+ * +v by k pi / TERRAIN_STRIKES, as (cos, sin) of the turn. */
 static const double STRIKE_TURN[TERRAIN_STRIKES][2] = {
     { 1.0, 0.0 }, { 0.9238795325112867, 0.3826834323650898 }, { 0.7071067811865476, 0.7071067811865476 },
     { 0.3826834323650898, 0.9238795325112867 }, { 0.0, 1.0 }, { -0.3826834323650898, 0.9238795325112867 },
@@ -92,48 +209,52 @@ int terrain_earth_forms(TerrainDir p, float a[TERRAIN_TYPES]) {
     return 1;
 }
 
-/* The ridges' strike at (x, z) of the world's chart, direction d: the
- * data's, turned from east and north into the chart's x and z there, blended
- * with the default strike by M times its coherence as doubled angles (a
- * strike has no sense); then the two frames either side of it. */
-static void strike_frames(double x, double z, TerrainDir d, double mw, const TerrainEarthLand *el, Macro *m) {
+/* The data's strike at d, from its east and north, along the sphere, and
+ * its weight, M times its coherence (none at a pole). */
+static void data_strike(TerrainDir d, double mw, const TerrainEarthLand *el, Macro *m) {
     double w = mw * hypot(el->strike_e, el->strike_n), l = hypot(d.x, d.y);
-    if (w <= 0.0 || l < 1e-9) return;   /* no strike, or at a pole */
-    TerrainDir ax, up, az, east = { -d.y / l, d.x / l, 0.0 }, north = cross3(d, east);
-    TerrainChart wc = terrain_world_chart();
-    terrain_chart_frame(&wc, x, z, &ax, &up, &az);
+    if (w <= 0.0 || l < 1e-9) return;
+    TerrainDir east = { -d.y / l, d.x / l, 0.0 }, north = cross3(d, east);
     double half = 0.5 * atan2(el->strike_n, el->strike_e);
-    TerrainDir s = add3(scale3(east, cos(half)), scale3(north, sin(half)));
-    double a = 2.0 * atan2(dot3(s, az), dot3(s, ax)), a0 = 2.0 * atan2(TERRAIN_STRIKE_Z, TERRAIN_STRIKE_X);
-    double cx = w * cos(a) + (1.0 - w) * cos(a0), cz = w * sin(a) + (1.0 - w) * sin(a0);
-    if (cx == 0.0 && cz == 0.0) return;
-    double turn = fmod(0.5 * (atan2(cz, cx) - a0), PI_D);   /* from the default strike towards +z */
-    if (turn < 0.0) turn += PI_D;
-    double q = turn * (TERRAIN_STRIKES / PI_D);
-    int k = (int)floor(q);
-    if (k >= TERRAIN_STRIKES) return;
-    m->k0 = k;
-    m->k1 = (k + 1) % TERRAIN_STRIKES;
-    m->kt = smoothstepf(0.0f, 1.0f, (float)(q - k));
+    m->strike = add3(scale3(east, cos(half)), scale3(north, sin(half)));
+    m->sw = w;
 }
 
-/* M * macro at a point of the world's chart (p NULL) or of another chart:
- * the Earth at TERRAIN_LIFT_SPACING (or coarser, at a coarser spacing), and
- * by the detail's rise at the edge measure `edge` the Earth at the spacing
- * itself. M reads the megacity's own edge measure, `home` (plan_city_edges).
- * With `forms`, the landforms' part too (see Macro): it reads the Earth at
- * the lift's spacing and the landform grid, whatever the spacing, so the
- * region's weights and scales don't depend on the level of detail. The data's
- * strike is read in the world's chart only; another chart keeps the default. */
-static void macro_of(double x, double z, const TerrainDir *p, double edge, double home, double spacing, int forms, Macro *m) {
-    m->lift = m->bias = m->share = 0.0;
-    m->k0 = m->k1 = 0;
-    m->kt = 0.0;
+/* The ridges' two frames either side of the strike in frame f, and the
+ * blend between them: the data's strike carried along p into the frame's
+ * plane, blended with the default by its weight as doubled angles (a strike
+ * has no sense). Without data, frame 0, the default. */
+static void frame_strike(Frame *f, TerrainDir p, const Macro *m) {
+    f->k0 = f->k1 = 0;
+    f->kt = 0.0;
+    double w = m->sw;
+    if (w <= 0.0) return;
+    TerrainDir q = sub3(m->strike, scale3(p, dot3(m->strike, f->n) / dot3(p, f->n)));
+    double a = 2.0 * atan2(dot3(q, f->v), dot3(q, f->u)), a0 = 2.0 * atan2(TERRAIN_STRIKE_Z, TERRAIN_STRIKE_X);
+    double cx = w * cos(a) + (1.0 - w) * cos(a0), cz = w * sin(a) + (1.0 - w) * sin(a0);
+    if (cx == 0.0 && cz == 0.0) return;
+    double turn = fmod(0.5 * (atan2(cz, cx) - a0), PI_D);   /* from the default strike towards +v */
+    if (turn < 0.0) turn += PI_D;
+    double q8 = turn * (TERRAIN_STRIKES / PI_D);
+    int k = (int)floor(q8);
+    if (k >= TERRAIN_STRIKES) return;
+    f->k0 = k;
+    f->k1 = (k + 1) % TERRAIN_STRIKES;
+    f->kt = smoothstepf(0.0f, 1.0f, (float)(q8 - k));
+}
+
+/* M * macro at direction d: the Earth at TERRAIN_LIFT_SPACING (or coarser,
+ * at a coarser spacing), and by the detail's rise at the edge measure `edge`
+ * the Earth at the spacing itself. M reads the megacity's own edge measure,
+ * `home` (plan_city_edges). With `forms`, the landforms' part too (see
+ * Macro): it reads the Earth at the lift's spacing and the landform grid,
+ * whatever the spacing, so the region's weights and scales don't depend on
+ * the level of detail. */
+static void macro_of(TerrainDir d, double edge, double home, double spacing, int forms, Macro *m) {
+    m->lift = m->bias = m->share = m->sw = 0.0;
     m->amp = m->rough = m->canyon = 1.0;
     double mw = macro_weight(home);
     if (mw <= 0.0) return;
-    TerrainChart wc = terrain_world_chart();
-    TerrainDir d = p ? *p : terrain_chart_dir(&wc, x, z);
     double coarse = terrain_earth_height(d, fmax(spacing, TERRAIN_LIFT_SPACING)), r = detail_rise(edge);
     double l = coarse - terrain_earth_datum();
     if (r > 0.0) l += r * (terrain_earth_height(d, spacing) - coarse);
@@ -150,21 +271,34 @@ static void macro_of(double x, double z, const TerrainDir *p, double edge, doubl
     m->amp = 1.0 - mw * (1.0 - TERRAIN_RIDGE_KEEP) * smoothstepf((float)TERRAIN_KEEP_FROM_M, (float)TERRAIN_KEEP_FULL_M, (float)el.relief);
     m->rough = 1.0 + mw * (el.rough - 1.0);
     m->canyon = 1.0 - mw * (1.0 - smoothstepf((float)TERRAIN_SEA_FLOOR_M, 0.0f, (float)elev));
-    if (!p) strike_frames(x, z, d, mw, &el, m);
+    data_strike(d, mw, &el, m);
 }
 
-static void region_at(double x, double z, const Macro *m, Region *r) {
-    double ww = TERRAIN_WARP_WAVE;
-    r->wx = x + TERRAIN_WARP_M * (2.0 * noise_value2(WORLD_SEED ^ 0x7E31u, x / ww, z / ww) - 1.0);
-    r->wz = z + TERRAIN_WARP_M * (2.0 * noise_value2(WORLD_SEED ^ 0x7E32u, x / ww, z / ww) - 1.0);
-    r->u = TERRAIN_STRIKE_X * r->wx + TERRAIN_STRIKE_Z * r->wz;
-    r->v = -TERRAIN_STRIKE_Z * r->wx + TERRAIN_STRIKE_X * r->wz;
+static void region_at(TerrainDir p, Region *r) {
+    const double ww = TERRAIN_WARP_WAVE, rw = TERRAIN_REGION_WAVE;
+    r->P = scale3(p, PLANET_RADIUS);
+    double x = r->P.x / ww, y = r->P.y / ww, z = r->P.z / ww;
+    r->W.x = r->P.x + TERRAIN_WARP_M * (2.0 * noise_value3(WORLD_SEED ^ 0x7E31u, x, y, z) - 1.0);
+    r->W.y = r->P.y + TERRAIN_WARP_M * (2.0 * noise_value3(WORLD_SEED ^ 0x7E32u, x, y, z) - 1.0);
+    r->W.z = r->P.z + TERRAIN_WARP_M * (2.0 * noise_value3(WORLD_SEED ^ 0x7E36u, x, y, z) - 1.0);
+    r->hills = noise_value3(WORLD_SEED ^ 0x7E33u, r->W.x / rw, r->W.y / rw, r->W.z / rw);
+    r->plateau = noise_value3(WORLD_SEED ^ 0x7E35u, r->W.x / rw, r->W.y / rw, r->W.z / rw);
+}
+
+/* The region's weights in frame f: the mountains' affinity stretched along
+ * the default strike there, the rest the same in every frame. */
+static void region_in(const Region *r, const Macro *m, TerrainDir p, Frame *f) {
     const double rw = TERRAIN_REGION_WAVE;
+    f->wu = dot3(r->W, f->u);
+    f->wv = dot3(r->W, f->v);
+    f->wn = dot3(r->W, f->n);
+    frame_strike(f, p, m);
+    double su = TERRAIN_STRIKE_X * f->wu + TERRAIN_STRIKE_Z * f->wv, sv = -TERRAIN_STRIKE_Z * f->wu + TERRAIN_STRIKE_X * f->wv;
     float a[TERRAIN_TYPES];
     a[TERRAIN_PLAINS] = (float)TERRAIN_PLAINS_BIAS;
-    a[TERRAIN_HILLS] = noise_value2(WORLD_SEED ^ 0x7E33u, r->wx / rw, r->wz / rw);
-    a[TERRAIN_MOUNTAINS] = noise_value2(WORLD_SEED ^ 0x7E34u, r->u / (rw * TERRAIN_BELT_ALONG), r->v / (rw * TERRAIN_BELT_ACROSS));
-    a[TERRAIN_PLATEAU] = noise_value2(WORLD_SEED ^ 0x7E35u, r->wx / rw, r->wz / rw);
+    a[TERRAIN_HILLS] = r->hills;
+    a[TERRAIN_MOUNTAINS] = noise_value3(WORLD_SEED ^ 0x7E34u, su / (rw * TERRAIN_BELT_ALONG), f->wn / rw, sv / (rw * TERRAIN_BELT_ACROSS));
+    a[TERRAIN_PLATEAU] = r->plateau;
     if (m->share > 0.0) {   /* the Earth's landforms take their share */
         for (int t = 0; t < TERRAIN_TYPES; ++t) a[t] = (float)((1.0 - m->share) * a[t] + m->share * m->a[t]);
     } else if (m->bias != 0.0) {   /* the stand-in's highlands raise the mountains and plateaus, basins the plains */
@@ -182,17 +316,25 @@ static void region_at(double x, double z, const Macro *m, Region *r) {
         k[t] = lead * lead * lead;
         sum += k[t];
     }
-    for (int t = 0; t < TERRAIN_TYPES; ++t) r->w[t] = k[t] / sum;
+    for (int t = 0; t < TERRAIN_TYPES; ++t) f->w[t] = k[t] / sum;
+}
+
+/* The frames round p and the region's weights in each. */
+static int region_frames(TerrainDir p, const Macro *m, Region *r, Frame fr[FRAME_MAX]) {
+    region_at(p, r);
+    int n = frames_at(p, fr);
+    for (int k = 0; k < n; ++k) region_in(r, m, p, &fr[k]);
+    return n;
 }
 
 /* Ridged fractal sum in [0, 1] over the strike frame (u along the belt, v
- * across, in units of TERRAIN_RIDGE_WAVE): each octave's value noise folded
- * about its middle and squared, so its crests are sharp, and weighted by the
- * octave before, so the fine ridges stand on the coarse ones and the valleys
- * stay smoother. The first two octaves, the main ridges, are stretched along
- * the strike; each finer one is turned a little further, so the spurs off
- * them run every way. Octave weights as noise_fbm2_band; only the first
- * `used` count. */
+ * across, n up the tile, in units of TERRAIN_RIDGE_WAVE): each octave's value
+ * noise folded about its middle and squared, so its crests are sharp, and
+ * weighted by the octave before, so the fine ridges stand on the coarse ones
+ * and the valleys stay smoother. The first two octaves, the main ridges, are
+ * stretched along the strike; each finer one is turned a little further about
+ * n, so the spurs off them run every way. Octave weights as
+ * noise_fbm3_band; only the first `used` count. */
 static const double RIDGE_TURN[8][2] = {   /* (cos, sin) of 0.9 k radians */
     { 1.0, 0.0 }, { 0.0, 0.0 }, { -0.2272020946930871, 0.9738476308781951 }, { -0.9040721420170612, 0.4273798802338298 },
     { -0.896758416334147, -0.44252044329485246 }, { -0.2107957994307797, -0.977530117665097 },
@@ -200,7 +342,7 @@ static const double RIDGE_TURN[8][2] = {   /* (cos, sin) of 0.9 k radians */
 };
 _Static_assert(TERRAIN_RIDGE_OCTAVES <= 8, "RIDGE_TURN holds 8 octaves' turns");
 
-static double ridged(uint32_t seed, double u, double v, int octaves, int used) {
+static double ridged(uint32_t seed, double u, double n, double v, int octaves, int used) {
     double sum = 0.0, wsum = 0.0, a = 1.0, f = 1.0, carry = 1.0;
     for (int k = 0; k < octaves; ++k) {
         if (k < used) {
@@ -209,10 +351,10 @@ static double ridged(uint32_t seed, double u, double v, int octaves, int used) {
                 double c = RIDGE_TURN[k][0], s = RIDGE_TURN[k][1];
                 x = c * u - s * v; z = s * u + c * v;
             }
-            double n = 1.0 - fabs(2.0 * noise_value2(hash_combine(seed, (uint32_t)k), x * f + 17.31 * k, z * f - 41.77 * k) - 1.0);
-            n *= n * carry;
-            carry = fmin(1.0, 2.0 * n);
-            sum += a * n;
+            double q = 1.0 - fabs(2.0 * noise_value3(hash_combine(seed, (uint32_t)k), x * f + 17.31 * k, n * f + 29.53 * k, z * f - 41.77 * k) - 1.0);
+            q *= q * carry;
+            carry = fmin(1.0, 2.0 * q);
+            sum += a * q;
         }
         wsum += a;
         a *= 0.5;
@@ -221,8 +363,8 @@ static double ridged(uint32_t seed, double u, double v, int octaves, int used) {
     return sum / wsum;
 }
 
-static double fbm_lod(uint32_t seed, double x, double z, double wave, int octaves, double spacing) {
-    return noise_fbm2_band(seed, x / wave, z / wave, octaves, terrain_octaves(wave, octaves, spacing));
+static double fbm_lod(uint32_t seed, TerrainDir P, double wave, int octaves, double spacing) {
+    return noise_fbm3_band(seed, P.x / wave, P.y / wave, P.z / wave, octaves, terrain_octaves(wave, octaves, spacing));
 }
 
 /* The plateau's step: 0 below the mask's level, 1 a step above it; its
@@ -231,37 +373,64 @@ static double plateau_step(double mask) {
     return smoothstepf(0.0f, 1.0f, (float)((mask - TERRAIN_MASK_LEVEL) / TERRAIN_MASK_STEP));
 }
 
-/* A mountain belt's heights in ridge frame k: the region's warped frame
- * turned to that strike (frame 0 is the region's own u, v). */
-static double belt_height(const Region *r, int k, double spacing) {
+/* A mountain belt's heights in ridge frame k of tile frame f: the region's
+ * warped point turned to that strike (k 0 is the default strike). */
+static double belt_height(const Frame *f, int k, double spacing) {
     double c = TERRAIN_STRIKE_X * STRIKE_TURN[k][0] - TERRAIN_STRIKE_Z * STRIKE_TURN[k][1];
     double s = TERRAIN_STRIKE_Z * STRIKE_TURN[k][0] + TERRAIN_STRIKE_X * STRIKE_TURN[k][1];
-    double ru = c * r->wx + s * r->wz, rv = -s * r->wx + c * r->wz;
+    double ru = c * f->wu + s * f->wv, rv = -s * f->wu + c * f->wv, rn = f->wn;
     int used = terrain_octaves(TERRAIN_RIDGE_WAVE, TERRAIN_RIDGE_OCTAVES, spacing);
     double ww = TERRAIN_RIDGE_WARP_WAVE;
-    double u = ru + TERRAIN_RIDGE_WARP_M * (2.0 * noise_value2(WORLD_SEED ^ 0x7E46u, ru / ww, rv / ww) - 1.0);
-    double v = rv + TERRAIN_RIDGE_WARP_M * (2.0 * noise_value2(WORLD_SEED ^ 0x7E47u, ru / ww, rv / ww) - 1.0);
-    return TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M * ridged(WORLD_SEED ^ 0x7E43u, u / TERRAIN_RIDGE_WAVE, v / TERRAIN_RIDGE_WAVE, TERRAIN_RIDGE_OCTAVES, used);
+    double u = ru + TERRAIN_RIDGE_WARP_M * (2.0 * noise_value3(WORLD_SEED ^ 0x7E46u, ru / ww, rn / ww, rv / ww) - 1.0);
+    double v = rv + TERRAIN_RIDGE_WARP_M * (2.0 * noise_value3(WORLD_SEED ^ 0x7E47u, ru / ww, rn / ww, rv / ww) - 1.0);
+    return TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M * ridged(WORLD_SEED ^ 0x7E43u, u / TERRAIN_RIDGE_WAVE, rn / TERRAIN_RIDGE_WAVE, v / TERRAIN_RIDGE_WAVE,
+                                                       TERRAIN_RIDGE_OCTAVES, used);
 }
 
-/* Type t's heights at the point (m). The mountains blend the ridge frames
- * either side of the strike, scaled by what the data leaves them. */
-static double type_height(int t, double x, double z, const Region *r, const Macro *m, double spacing) {
+/* The mountains in frame f: the ridge frames either side of the strike
+ * blended, scaled by what the data leaves them. */
+static double mountain_height(const Frame *f, const Macro *m, double spacing) {
+    double h = (1.0 - f->kt) * belt_height(f, f->k0, spacing);
+    if (f->kt > 0.0) h += f->kt * belt_height(f, f->k1, spacing);
+    return m->amp * h;
+}
+
+/* Type t's heights at the point (m), for every type but the mountains: the
+ * same in every frame. */
+static double type_height(int t, TerrainDir P, double spacing) {
     switch (t) {
     case TERRAIN_PLAINS:
-        return TERRAIN_PLAINS_M * fbm_lod(WORLD_SEED ^ 0x7E41u, x, z, TERRAIN_PLAINS_WAVE, TERRAIN_PLAINS_OCTAVES, spacing);
+        return TERRAIN_PLAINS_M * fbm_lod(WORLD_SEED ^ 0x7E41u, P, TERRAIN_PLAINS_WAVE, TERRAIN_PLAINS_OCTAVES, spacing);
     case TERRAIN_HILLS:
-        return TERRAIN_HILLS_M * fbm_lod(WORLD_SEED ^ 0x7E42u, x, z, TERRAIN_HILLS_WAVE, TERRAIN_HILLS_OCTAVES, spacing);
-    case TERRAIN_MOUNTAINS: {
-        double h = (1.0 - m->kt) * belt_height(r, m->k0, spacing);
-        if (m->kt > 0.0) h += m->kt * belt_height(r, m->k1, spacing);
-        return m->amp * h;
-    }
+        return TERRAIN_HILLS_M * fbm_lod(WORLD_SEED ^ 0x7E42u, P, TERRAIN_HILLS_WAVE, TERRAIN_HILLS_OCTAVES, spacing);
     default: {
-        double mask = fbm_lod(WORLD_SEED ^ 0x7E44u, x, z, TERRAIN_MASK_WAVE, TERRAIN_MASK_OCTAVES, spacing);
-        return TERRAIN_PLATEAU_M * plateau_step(mask) + TERRAIN_TOP_M * fbm_lod(WORLD_SEED ^ 0x7E45u, x, z, TERRAIN_TOP_WAVE, TERRAIN_TOP_OCTAVES, spacing);
+        double mask = fbm_lod(WORLD_SEED ^ 0x7E44u, P, TERRAIN_MASK_WAVE, TERRAIN_MASK_OCTAVES, spacing);
+        return TERRAIN_PLATEAU_M * plateau_step(mask) + TERRAIN_TOP_M * fbm_lod(WORLD_SEED ^ 0x7E45u, P, TERRAIN_TOP_WAVE, TERRAIN_TOP_OCTAVES, spacing);
     }
     }
+}
+
+/* The landforms' height: in each frame the types blended by the region's
+ * weights there, the frames by theirs. Only a type with weight is
+ * evaluated, and the isotropic ones once. */
+static double forms_height(const Region *r, const Frame *fr, int n, const Macro *m, double spacing) {
+    double iso[TERRAIN_TYPES], sum = 0.0;
+    int have = 0;
+    for (int k = 0; k < n; ++k) {
+        double s = 0.0;
+        for (int t = 0; t < TERRAIN_TYPES; ++t) {
+            if (fr[k].w[t] <= 0.0f) continue;
+            double h;
+            if (t == TERRAIN_MOUNTAINS) h = mountain_height(&fr[k], m, spacing);
+            else {
+                if (!(have >> t & 1)) { iso[t] = type_height(t, r->P, spacing); have |= 1 << t; }
+                h = iso[t];
+            }
+            s += fr[k].w[t] * h;
+        }
+        sum += fr[k].wt * s;
+    }
+    return sum;
 }
 
 static double region_rise(double edge) {
@@ -273,34 +442,69 @@ static double canyon_rise(double edge) {
 }
 
 /* --- Canyons ------------------------------------------------------------------
- * Cell (i, j) of the canyon lattice holds one canyon or none: a meandering
- * centre line of CANYON_SEGS segments about a straight chord through a point
- * in the middle of the cell, two sine meanders across it. Its depth tapers to
- * nothing at both ends. Across the line: a level floor, then walls climbing
- * at TERRAIN_CANYON_WALL on average to the rim. A canyon's centre lies in
- * the middle 0.4 of its cell and it reaches less than 0.6 of a cell from it
- * (CANYON_REACH), so the 3x3 cells round a point hold every canyon that can
- * cut it. */
+ * Each cube face is cut into CANYON_SIDE x CANYON_SIDE cells, equal in angle,
+ * TERRAIN_CANYON_CELL across at the face's middle, and cell (f, i, j) holds
+ * one canyon or none. It is drawn in its own chart, about a point in the
+ * middle 0.4 of the cell with x along the face's u (over a canyon's reach the
+ * chart is the sphere to a micrometre): a meandering centre line of
+ * CANYON_SEGS segments about a straight chord through the chart's origin, two
+ * sine meanders across it. Its depth tapers to nothing at both ends. Across
+ * the line: a level floor, then walls climbing at TERRAIN_CANYON_WALL on
+ * average to the rim. A lookup checks every cell, on every face, whose
+ * canyon's centre can lie within CANYON_REACH. */
 #define CANYON_SEGS 16
+#define CANYON_SIDE ((int)(0.5 * PI_D * PLANET_RADIUS / TERRAIN_CANYON_CELL + 0.5))
 _Static_assert(CANYON_SEGS + 1 == TERRAIN_CANYON_POINTS, "a canyon's centre line has a point at each end of each segment");
 
 typedef struct Canyon {
-    double cx, cz, dx, dz, half;   /* the chord: centre, unit direction, half its length */
+    TerrainChart chart;            /* about its centre */
+    double dx, dz, half;           /* the chord: unit direction, half its length */
     double depth, floor;           /* deepest (m), the floor's half-width (m) */
     double m1, f1, p1, m2, f2, p2; /* meanders: amplitude (m), cycles along the chord, phase */
 } Canyon;
 
 /* The farthest any canyon reaches from its centre: chord, meanders, floor and walls. */
 #define CANYON_REACH (10000.0 + 1200.0 + 300.0 + 90.0 + TERRAIN_CANYON_DEEP_M / TERRAIN_CANYON_WALL)
-_Static_assert(CANYON_REACH < 0.6 * TERRAIN_CANYON_CELL, "a canyon must stay within its cell's neighbours");
 
-/* Cell (i, j)'s canyon, if it has one that can reach (x, z). */
-static int canyon_of(int i, int j, double x, double z, Canyon *c) {
-    uint32_t h = hash2i(WORLD_SEED ^ 0x7E51u, i, j);
+/* The cells of face f whose canyons' centres can lie within `reach` (m) of
+ * p. A centre on the face has its component at least 1 / sqrt 3, so p is
+ * within reach only if its own is that less the reach's angle m; and along
+ * the way the face's coordinates change by at most 4 / (pi R c) a metre,
+ * with c the least component on the way. */
+static int canyon_cells(TerrainDir p, int f, double reach, int *i0, int *i1, int *j0, int *j1) {
+    double c = face_comp(p, f), m = reach / PLANET_RADIUS;
+    if (c < 0.5773502691896258 - m) return 0;
+    double du = (4.0 / PI_D) * m / (c - m) * 1.001, u = face_coord(p, f, 1, c), v = face_coord(p, f, 2, c);
+    const int N = CANYON_SIDE;
+    *i0 = (int)floor((u - du + 1.0) * 0.5 * N); *i1 = (int)floor((u + du + 1.0) * 0.5 * N);
+    *j0 = (int)floor((v - du + 1.0) * 0.5 * N); *j1 = (int)floor((v + du + 1.0) * 0.5 * N);
+    *i0 = *i0 < 0 ? 0 : *i0; *i1 = *i1 >= N ? N - 1 : *i1;
+    *j0 = *j0 < 0 ? 0 : *j0; *j1 = *j1 >= N ? N - 1 : *j1;
+    return *i0 <= *i1 && *j0 <= *j1;
+}
+
+static uint32_t canyon_hash(int f, int i, int j) { return hash3i(WORLD_SEED ^ 0x7E51u, f, i, j); }
+
+/* Cell (f, i, j)'s canyon's centre, given its hash. */
+static TerrainDir canyon_centre(int f, int i, int j, uint32_t h) {
+    double w = 2.0 / CANYON_SIDE;
+    return terrain_face_dir(f, -1.0 + (i + 0.3 + 0.4 * hf(h, 1)) * w, -1.0 + (j + 0.3 + 0.4 * hf(h, 2)) * w);
+}
+
+/* Cell (f, i, j)'s canyon, if it has one that can reach p, and p in its
+ * chart at (*x, *z). */
+static int canyon_of(int f, int i, int j, TerrainDir p, Canyon *c, double *x, double *z) {
+    uint32_t h = canyon_hash(f, i, j);
     if (hf(h, 0) >= (float)TERRAIN_CANYON_CHANCE) return 0;
-    c->cx = (i + 0.3 + 0.4 * hf(h, 1)) * TERRAIN_CANYON_CELL;
-    c->cz = (j + 0.3 + 0.4 * hf(h, 2)) * TERRAIN_CANYON_CELL;
-    if ((x - c->cx) * (x - c->cx) + (z - c->cz) * (z - c->cz) >= CANYON_REACH * CANYON_REACH) return 0;
+    TerrainDir o = canyon_centre(f, i, j, h);
+    const double m = CANYON_REACH / PLANET_RADIUS;
+    if (dot3(p, o) < 1.0 - 0.5 * m * m) return 0;   /* beyond the reach: cos m is more */
+    TerrainDir e = axis_dir((f / 2 + 1) % 3);
+    c->chart.o = o;
+    c->chart.ex = unit3(sub3(e, scale3(o, dot3(e, o))));
+    c->chart.ez = cross3(c->chart.ex, o);
+    terrain_dir_chart(&c->chart, p, x, z);
+    if (*x * *x + *z * *z >= CANYON_REACH * CANYON_REACH) return 0;
     double a = 2.0 * PI_F * hf(h, 3);
     c->dx = cos(a); c->dz = sin(a);
     c->half = 6000.0 + 4000.0 * hf(h, 4);
@@ -311,12 +515,12 @@ static int canyon_of(int i, int j, double x, double z, Canyon *c) {
     return 1;
 }
 
-/* How deep canyon c cuts at (x, z): the deepest of its segments' cuts, each
- * from the nearest point on the segment, so the cut is continuous. */
+/* How deep canyon c cuts at (x, z) of its chart: the deepest of its
+ * segments' cuts, each from the nearest point on the segment, so the cut is
+ * continuous. */
 static double canyon_cut(const Canyon *c, double x, double z) {
     double reach = c->half + c->m1 + c->m2 + c->floor + c->depth / TERRAIN_CANYON_WALL;
-    double rx = x - c->cx, rz = z - c->cz;
-    if (rx * rx + rz * rz >= reach * reach) return 0.0;
+    if (x * x + z * z >= reach * reach) return 0.0;
     /* the meanders' sines along the vertices, by turning each a step at a time */
     double d1 = 2.0 * PI_F * c->f1 / CANYON_SEGS, d2 = 2.0 * PI_F * c->f2 / CANYON_SEGS;
     double s1 = sin(c->p1), c1 = cos(c->p1), sd1 = sin(d1), cd1 = cos(d1);
@@ -326,7 +530,7 @@ static double canyon_cut(const Canyon *c, double x, double z) {
         double t = (double)k / CANYON_SEGS, s = 2.0 * t - 1.0, off = c->m1 * s1 + c->m2 * s2, n;
         n = s1 * cd1 + c1 * sd1; c1 = c1 * cd1 - s1 * sd1; s1 = n;
         n = s2 * cd2 + c2 * sd2; c2 = c2 * cd2 - s2 * sd2; s2 = n;
-        double qx = c->cx + c->dx * c->half * s - c->dz * off, qz = c->cz + c->dz * c->half * s + c->dx * off;
+        double qx = c->dx * c->half * s - c->dz * off, qz = c->dz * c->half * s + c->dx * off;
         if (k > 0) {
             double ex = qx - px, ez = qz - pz, l2 = ex * ex + ez * ez;
             double u = l2 > 0.0 ? ((x - px) * ex + (z - pz) * ez) / l2 : 0.0;
@@ -341,8 +545,8 @@ static double canyon_cut(const Canyon *c, double x, double z) {
     return cut;
 }
 
-/* Canyon c's centre line, as canyon_cut walks it. */
-static void canyon_line(const Canyon *c, TerrainCanyon *out) {
+/* Canyon c's centre line, as canyon_cut walks it, in the chart wc. */
+static void canyon_line(const Canyon *c, const TerrainChart *wc, TerrainCanyon *out) {
     double d1 = 2.0 * PI_F * c->f1 / CANYON_SEGS, d2 = 2.0 * PI_F * c->f2 / CANYON_SEGS;
     double s1 = sin(c->p1), c1 = cos(c->p1), sd1 = sin(d1), cd1 = cos(d1);
     double s2 = sin(c->p2), c2 = cos(c->p2), sd2 = sin(d2), cd2 = cos(d2);
@@ -350,85 +554,80 @@ static void canyon_line(const Canyon *c, TerrainCanyon *out) {
         double t = (double)k / CANYON_SEGS, sg = 2.0 * t - 1.0, off = c->m1 * s1 + c->m2 * s2, n;
         n = s1 * cd1 + c1 * sd1; c1 = c1 * cd1 - s1 * sd1; s1 = n;
         n = s2 * cd2 + c2 * sd2; c2 = c2 * cd2 - s2 * sd2; s2 = n;
-        out->x[k] = c->cx + c->dx * c->half * sg - c->dz * off;
-        out->z[k] = c->cz + c->dz * c->half * sg + c->dx * off;
+        TerrainDir q = terrain_chart_dir(&c->chart, c->dx * c->half * sg - c->dz * off, c->dz * c->half * sg + c->dx * off);
+        terrain_dir_chart(wc, q, &out->x[k], &out->z[k]);
         out->depth[k] = (float)(c->depth * smoothstepf(0.0f, 0.18f, (float)t) * smoothstepf(1.0f, 0.82f, (float)t));
     }
     out->rim = (float)(c->floor + c->depth / TERRAIN_CANYON_WALL);
 }
 
 int terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, int max) {
-    const double C = TERRAIN_CANYON_CELL, reach = r * 1.4142135623730951 + CANYON_REACH;
-    int i0 = (int)floor((x - r - 0.6 * C) / C), i1 = (int)floor((x + r + 0.6 * C) / C);
-    int j0 = (int)floor((z - r - 0.6 * C) / C), j1 = (int)floor((z + r + 0.6 * C) / C);
-    int n = 0;
+    TerrainChart wc = terrain_world_chart();
+    TerrainDir p = terrain_chart_dir(&wc, x, z);
+    double reach = r * 1.4142135623730951 + CANYON_REACH, cx, cz;
+    int n = 0, i0, i1, j0, j1;
     Canyon c;
-    for (int j = j0; j <= j1; ++j)
-        for (int i = i0; i <= i1 && n < max; ++i) {
-            uint32_t h = hash2i(WORLD_SEED ^ 0x7E51u, i, j);
-            if (hf(h, 0) >= (float)TERRAIN_CANYON_CHANCE) continue;
-            double cx = (i + 0.3 + 0.4 * hf(h, 1)) * C, cz = (j + 0.3 + 0.4 * hf(h, 2)) * C;
-            if (hypot(x - cx, z - cz) >= reach) continue;
-            canyon_of(i, j, cx, cz, &c);   /* asked at its own centre, it is always found */
-            canyon_line(&c, &out[n]);
-            out[n++].id = h;
-        }
+    for (int f = 0; f < 6; ++f) {
+        if (!canyon_cells(p, f, reach, &i0, &i1, &j0, &j1)) continue;
+        for (int j = j0; j <= j1; ++j)
+            for (int i = i0; i <= i1 && n < max; ++i) {
+                uint32_t h = canyon_hash(f, i, j);
+                if (hf(h, 0) >= (float)TERRAIN_CANYON_CHANCE) continue;
+                TerrainDir o = canyon_centre(f, i, j, h);
+                double d = dot3(p, o);
+                if (acos(d > 1.0 ? 1.0 : d) * PLANET_RADIUS >= reach) continue;
+                canyon_of(f, i, j, o, &c, &cx, &cz);   /* asked at its own centre, it is always found */
+                canyon_line(&c, &wc, &out[n]);
+                out[n++].id = h;
+            }
+    }
     return n;
 }
 
-double terrain_canyon_depth(double x, double z) {
-    int i0 = (int)floor(x / TERRAIN_CANYON_CELL), j0 = (int)floor(z / TERRAIN_CANYON_CELL);
-    double cut = 0.0;
+static double canyon_depth(TerrainDir p) {
+    double cut = 0.0, x, z;
+    int i0, i1, j0, j1;
     Canyon c;
-    for (int j = j0 - 1; j <= j0 + 1; ++j)
-        for (int i = i0 - 1; i <= i0 + 1; ++i)
-            if (canyon_of(i, j, x, z, &c)) cut = fmax(cut, canyon_cut(&c, x, z));
+    for (int f = 0; f < 6; ++f) {
+        if (!canyon_cells(p, f, CANYON_REACH, &i0, &i1, &j0, &j1)) continue;
+        for (int j = j0; j <= j1; ++j)
+            for (int i = i0; i <= i1; ++i)
+                if (canyon_of(f, i, j, p, &c, &x, &z)) cut = fmax(cut, canyon_cut(&c, x, z));
+    }
     return cut;
+}
+
+double terrain_canyon_depth(double x, double z) {
+    TerrainChart wc = terrain_world_chart();
+    return canyon_depth(terrain_chart_dir(&wc, x, z));
 }
 
 /* --- The land -------------------------------------------------------------- */
 
-/* The land, and M * macro in it in *lift. */
-static double land_parts(double x, double z, const TerrainDir *p, double edge, double home, double spacing, double *lift) {
-    double h = TERRAIN_BASE_M * fbm_lod(WORLD_SEED ^ 0x7E12u, x, z, TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
+double terrain_land_parts(TerrainDir d, double edge, double home, double spacing, double *lift) {
+    double h = TERRAIN_BASE_M * fbm_lod(WORLD_SEED ^ 0x7E12u, scale3(d, PLANET_RADIUS), TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
     double e = region_rise(edge), c = canyon_rise(edge);
     Macro m;
-    macro_of(x, z, p, edge, home, spacing, e > 0.0 || c > 0.0, &m);
+    macro_of(d, edge, home, spacing, e > 0.0 || c > 0.0, &m);
     *lift = m.lift;
     h += *lift;
     if (e > 0.0) {
         Region r;
-        region_at(x, z, &m, &r);
-        double sum = 0.0;
-        for (int t = 0; t < TERRAIN_TYPES; ++t)
-            if (r.w[t] > 0.0f) sum += r.w[t] * type_height(t, x, z, &r, &m, spacing);
-        h += e * m.rough * sum;
+        Frame fr[FRAME_MAX];
+        int n = region_frames(d, &m, &r, fr);
+        h += e * m.rough * forms_height(&r, fr, n, &m, spacing);
     }
-    if (c > 0.0) h -= c * m.canyon * terrain_canyon_depth(x, z);
+    if (c > 0.0) h -= c * m.canyon * canyon_depth(d);
     return h;
-}
-
-static double land_lod(double x, double z, const TerrainDir *p, double edge, double home, double spacing) {
-    double lift;
-    return land_parts(x, z, p, edge, home, spacing, &lift);
-}
-
-double terrain_land_parts(double x, double z, double edge, double home, double spacing, double *lift) {
-    return land_parts(x, z, NULL, edge, home, spacing, lift);
-}
-double terrain_land_lod(double x, double z, double edge, double home, double spacing) { return land_lod(x, z, NULL, edge, home, spacing); }
-double terrain_land_at(double x, double z, TerrainDir p, double edge, double spacing) { return land_lod(x, z, &p, edge, edge, spacing); }
-
-double terrain_land(double x, double z) {
-    double home, edge = plan_city_edges(x, z, &home);
-    return terrain_land_lod(x, z, edge, home, 0.0);
 }
 
 /* Where plan_urban is above 0 the edge measure is below 0, and the detail's
  * rise 0. */
 double terrain_lift(double x, double z, double home, double spacing) {
+    if (macro_weight(home) <= 0.0) return 0.0;
+    TerrainChart wc = terrain_world_chart();
     Macro m;
-    macro_of(x, z, NULL, -CITY_BELT, home, spacing, 0, &m);
+    macro_of(terrain_chart_dir(&wc, x, z), -CITY_BELT, home, spacing, 0, &m);
     return m.lift;
 }
 
@@ -451,12 +650,19 @@ void terrain_urban_lift_range(double x0, double z0, double x1, double z1, double
 }
 
 void terrain_landform(double x, double z, TerrainLandform *out) {
-    Region r;
+    TerrainChart wc = terrain_world_chart();
+    TerrainDir d = terrain_chart_dir(&wc, x, z);
     Macro m;
-    macro_of(x, z, NULL, 0.0, plan_home_edge(x, z), 0.0, 1, &m);
-    region_at(x, z, &m, &r);
-    for (int t = 0; t < TERRAIN_TYPES; ++t) out->w[t] = r.w[t];
-    out->canyon = (float)terrain_canyon_depth(x, z);
+    Region r;
+    Frame fr[FRAME_MAX];
+    macro_of(d, 0.0, plan_home_edge(x, z), 0.0, 1, &m);
+    int n = region_frames(d, &m, &r, fr);
+    for (int t = 0; t < TERRAIN_TYPES; ++t) {
+        double w = 0.0;
+        for (int k = 0; k < n; ++k) w += fr[k].wt * fr[k].w[t];
+        out->w[t] = (float)w;
+    }
+    out->canyon = (float)canyon_depth(d);
 }
 
 /* Base, macro, the types and canyons each within their reach: the hills
@@ -464,7 +670,7 @@ void terrain_landform(double x, double z, TerrainLandform *out) {
  * canyons cut at most their deepest; the roughness scales the types by at
  * most its largest; E and C only grow with the edge measure, M with the
  * megacity's. The lift blends the Earth at two spacings, each within its
- * extremes. */
+ * extremes; the frames blend the landforms, each within the same reach. */
 void terrain_land_range(double edge, double home, double *lo, double *hi) {
     double e = region_rise(edge), m = macro_weight(home), elo, ehi, grade, e0 = terrain_earth_datum(), g = terrain_earth_rough_max();
     terrain_earth_extremes(&elo, &ehi, &grade);
@@ -477,17 +683,18 @@ void terrain_land_range(double edge, double home, double *lo, double *hi) {
  * octave adds 0 .. its weight, and the carry only reaches later octaves), and
  * for a blend of two ridge frames, by at most the larger, times what the data
  * leaves the mountains. The plateau's mask moves the step through its slope.
- * The region's weights, the scales and the canyons don't depend on the
- * spacing. The lift's coarse Earth is its
- * full detail out to TERRAIN_LIFT_SPACING, and beyond within the Earth's
- * bounds at both spacings of the full detail; its fine Earth within the
- * bound at the spacing. */
+ * The region's weights, the frames', the scales and the canyons don't depend
+ * on the spacing. The lift's coarse Earth is its full detail out to
+ * TERRAIN_LIFT_SPACING, and beyond within the Earth's bounds at both
+ * spacings of the full detail; its fine Earth within the bound at the
+ * spacing. */
 double terrain_land_lod_error(double x, double z, double spacing) {
     double err = TERRAIN_BASE_M * terrain_dropped(TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
     double home, edge = plan_city_edges(x, z, &home), e = region_rise(edge), mw = macro_weight(home);
+    if (mw <= 0.0 && e <= 0.0) return err;
+    TerrainChart wc = terrain_world_chart();
+    TerrainDir d = terrain_chart_dir(&wc, x, z);
     if (mw > 0.0) {
-        TerrainChart wc = terrain_world_chart();
-        TerrainDir d = terrain_chart_dir(&wc, x, z);
         double r = detail_rise(edge), fine = terrain_earth_lod_error(d, spacing);
         double coarse = spacing > TERRAIN_LIFT_SPACING ? fine + terrain_earth_lod_error(d, TERRAIN_LIFT_SPACING) : 0.0;
         err += mw * ((1.0 - r) * coarse + r * fine);
@@ -495,15 +702,17 @@ double terrain_land_lod_error(double x, double z, double spacing) {
     if (e > 0.0) {
         Region r;
         Macro m;
-        macro_of(x, z, NULL, edge, home, 0.0, 1, &m);
-        region_at(x, z, &m, &r);
+        Frame fr[FRAME_MAX];
+        macro_of(d, edge, home, 0.0, 1, &m);
+        int n = region_frames(d, &m, &r, fr);
         double t[TERRAIN_TYPES];
         t[TERRAIN_PLAINS] = TERRAIN_PLAINS_M * terrain_dropped(TERRAIN_PLAINS_WAVE, TERRAIN_PLAINS_OCTAVES, spacing);
         t[TERRAIN_HILLS] = TERRAIN_HILLS_M * terrain_dropped(TERRAIN_HILLS_WAVE, TERRAIN_HILLS_OCTAVES, spacing);
         t[TERRAIN_MOUNTAINS] = m.amp * TERRAIN_RIDGE_M * terrain_dropped(TERRAIN_RIDGE_WAVE, TERRAIN_RIDGE_OCTAVES, spacing);
         t[TERRAIN_PLATEAU] = TERRAIN_PLATEAU_M * 1.5 / TERRAIN_MASK_STEP * terrain_dropped(TERRAIN_MASK_WAVE, TERRAIN_MASK_OCTAVES, spacing) +
                              TERRAIN_TOP_M * terrain_dropped(TERRAIN_TOP_WAVE, TERRAIN_TOP_OCTAVES, spacing);
-        for (int k = 0; k < TERRAIN_TYPES; ++k) err += e * m.rough * r.w[k] * t[k];
+        for (int f = 0; f < n; ++f)
+            for (int k = 0; k < TERRAIN_TYPES; ++k) err += e * m.rough * fr[f].wt * fr[f].w[k] * t[k];
     }
     return err;
 }
