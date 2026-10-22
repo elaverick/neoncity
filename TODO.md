@@ -34,6 +34,11 @@ same city; screenshots of the same `--cam` with `--rain 0` show the renderer's r
 ## Terrain
 The clipmap is drawn out to its coarsest window (about 32 km; `src/render/terrain_gpu.c`, `shaders/terrain/`), the
 planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the milestones are in the terrain roadmap.
+- **The Earth** (E2: `tools/earth_bake.c`, `src/terrain/terrain_cube.c`, `data/earth/SOURCE.md`). The real Earth
+  (ETOPO 2022) is baked onto the cube-sphere's faces, but nothing reads the bake yet (E3 in the Earth roadmap).
+  Left over: a face's apron is resampled from the source while the interior of the coarser mips is box-filtered
+  from the finer, so across a seam the two estimates differ (3 m on average at mip 0, 188 m at worst, `--info`
+  prints them); `--dump-face` draws each face in its own (u, v), so north isn't up.
 - **The planet** (M9: `src/terrain/terrain_world.c`, `terrain_patch.c`; `terrain_test --planet-map`, `--patches`).
   World X/Z is an azimuthal-equidistant chart of an Earth-size sphere; the terrain and proxies are drawn bent over
   it, the city's chunks flat. Left over:

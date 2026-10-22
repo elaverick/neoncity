@@ -78,3 +78,28 @@ B no-settlement mask; `extract --layer hints` gives zeros where no hint tile exi
 
 Imported 2026-10-22: minimum −10752 m (23.2°S 174.7°W), maximum 8157 m (28.0°N 86.9°E), 65.9% of
 cells below sea level, and the origin cell at 99 m.
+
+## The bake
+
+The engine reads the project as `earth.bake`, written by `tools/earth_bake.c` (built with the game as
+`build/earth_bake`) from the staged grid. It is a build output, never committed:
+
+```
+py stage data/earth build/earth.r16
+build/earth_bake build/earth.r16 build/earth.bake [--size N] [--threads T]
+```
+
+or, in one step when the venv (or a `python3`) is found at configure time, `cmake --build build --target earth`.
+The bake holds the same ground resampled onto the six equal-angle cube faces the engine addresses the
+planet by (`src/terrain/terrain_cube.c`, which the tool links and nothing else of the engine, so bake and
+engine agree on every direction bit for bit): N = 4096 samples a side at mip 0 (2.44 km at a face's
+centre), halving per mip down to 8, each face with a 2-sample apron resampled past its edges at the
+apron's own directions. Each mip carries per-8×8-block minimum, maximum, steepest grade and the relief
+within about 20 km. Every sample is the area-weighted mean of the source over its cell (the cell is split
+into sub-cells no larger than a source cell; each sub-cell's latitude-longitude box is averaged); mips are
+2×2 means. The file layout is set out at the top of `tools/earth_bake.c`. Baking the same stage at the
+same size gives the same bytes whatever the thread count; the full bake is 294 MB and takes about 6 s
+on 32 threads. `--info <bake>` prints the header, the per-mip table and a seam check (each apron sample
+against the face it lies over); `--dump-face <k|all> <bake> out.png [--mip M]` draws a face, or the six
+as a 3 × 2 net, shaded, the sea floor blue. `tests/data/earth_test.bake` is the real project at
+`--size 256` (1.2 MB), for ctest and the engine's tests.

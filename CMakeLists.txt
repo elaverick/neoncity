@@ -129,16 +129,16 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/dr
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_lobby.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
                 src/city/litter.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c
-                src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/core/thread.c
+                src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/core/thread.c
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
                 src/gen/interior_fixtures.c src/gen/interior_validate.c src/gen/interior_lights.c
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c)
 # Terrain (src/terrain): the ground everywhere, a pure function of position over the planet the world's
-# X/Z is a chart of (terrain_height.c, terrain_land.c and terrain_world.c, in GEN_SOURCES: the city
-# builds on them), the clipmap that samples it round the camera (drawn by src/render/terrain_gpu.c) and
-# the planet's patches beyond it (terrain_patch.c).
+# X/Z is a chart of (terrain_height.c, terrain_land.c, terrain_world.c and terrain_cube.c, in GEN_SOURCES:
+# the city builds on them), the clipmap that samples it round the camera (drawn by src/render/terrain_gpu.c)
+# and the planet's patches beyond it (terrain_patch.c).
 set(TERRAIN_SOURCES src/terrain/terrain_lod.c src/terrain/terrain_mesh.c src/terrain/terrain_patch.c)
 
 # --- Tests: generator determinism ------------------------------------------------
@@ -205,6 +205,46 @@ if(MSVC)
   target_compile_options(stud_pack PRIVATE /W3 /wd4996)
 else()
   target_link_libraries(stud_pack PRIVATE m)
+endif()
+
+# --- Tools: the Earth bake ------------------------------------------------------
+# Bakes the Earth project's staged grid (tools/earth/earth.py stage) onto the six cube
+# faces the engine reads (tools/earth_bake.c, data/earth/SOURCE.md). It links the
+# cube-sphere alone, so its directions are the engine's bit for bit.
+add_executable(earth_bake tools/earth_bake.c src/terrain/terrain_cube.c src/core/thread.c)
+target_include_directories(earth_bake PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
+if(MSVC)
+  target_compile_options(earth_bake PRIVATE /W3 /wd4996)
+else()
+  target_link_libraries(earth_bake PRIVATE m)
+  if(UNIX)
+    target_link_libraries(earth_bake PRIVATE pthread)
+  endif()
+endif()
+# The committed test bake (--size 256, recognisably Earth) reads back whole.
+add_test(NAME earth_bake_reads COMMAND earth_bake --info ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake)
+# `cmake --build build --target earth` stages the project and bakes it to build/earth.bake,
+# with the tool's virtual environment (tools/earth/.venv) or else a python3 on the PATH;
+# without either, run the two steps by hand (SOURCE.md). Not part of the default build.
+set(EARTH_PY ${CMAKE_CURRENT_SOURCE_DIR}/tools/earth/.venv/Scripts/python.exe)
+if(NOT EXISTS ${EARTH_PY})
+  set(EARTH_PY ${CMAKE_CURRENT_SOURCE_DIR}/tools/earth/.venv/bin/python)
+endif()
+if(NOT EXISTS ${EARTH_PY})
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  set(EARTH_PY ${Python3_EXECUTABLE})
+endif()
+if(EARTH_PY)
+  file(GLOB EARTH_TILES ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/height/*.tif)
+  add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/earth.r16 ${CMAKE_BINARY_DIR}/earth.r16.txt
+    COMMAND ${EARTH_PY} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/earth/earth.py stage ${CMAKE_CURRENT_SOURCE_DIR}/data/earth ${CMAKE_BINARY_DIR}/earth.r16
+    DEPENDS ${EARTH_TILES} ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/earth.json ${CMAKE_CURRENT_SOURCE_DIR}/tools/earth/earth.py
+    COMMENT "Staging the Earth project" VERBATIM)
+  add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/earth.bake
+    COMMAND earth_bake ${CMAKE_BINARY_DIR}/earth.r16 ${CMAKE_BINARY_DIR}/earth.bake
+    DEPENDS earth_bake ${CMAKE_BINARY_DIR}/earth.r16
+    COMMENT "Baking the Earth" VERBATIM)
+  add_custom_target(earth DEPENDS ${CMAKE_BINARY_DIR}/earth.bake)
 endif()
 
 # --- Game ---------------------------------------------------------------------

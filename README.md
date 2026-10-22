@@ -22,6 +22,7 @@ build/interior_lab 3000 12 out # office lobbies: pass rate, attempts, rejections
 build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders, cameras
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
 build/world_test --map world.ppm         # the settlements and roads over the world (--local out.ppm km [x z]: round a point)
+cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)
 ```
 
 CMake fetches its dependencies at configure time: Vulkan-Headers, volk, GLFW and stb.
@@ -518,7 +519,9 @@ a relief map.
 The world is an Earth-size planet (`src/terrain/terrain_world.c`). World X/Z is a chart of it, the
 azimuthal-equidistant projection about the origin, so the city and its plan stay flat while the terrain and
 the distant proxies are drawn curving away over the sphere (31 m down at 20 km). Its surface is addressed as
-a cube-sphere. Far from the city, broad highlands and basins up to 1.5 km high and low, thousands of
+a cube-sphere (`src/terrain/terrain_cube.c`, which also turns latitude and longitude into directions; the
+real Earth's ground is baked onto those faces by `tools/earth_bake.c`, see `data/earth/SOURCE.md`, for the
+engine to read next). Far from the city, broad highlands and basins up to 1.5 km high and low, thousands of
 kilometres across, raise the mountains and settle the plains (`terrain_test --planet-map out.ppm` draws all
 six faces). Beyond the clipmap's window the ground is the cube-sphere's patches (`src/terrain/terrain_patch.c`,
 `src/render/planet_gpu.c`): 33 x 33 grids refined as a quadtree by their screen-space error through the haze,

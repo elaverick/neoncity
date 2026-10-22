@@ -967,6 +967,35 @@ static void test_planet(Rng *r) {
         CHECK(along > 1.0 - 1e-6, "chart frame's x at (%.0f, %.0f) isn't the chart's x (cos %.9f)", x, z, along);
     }
 
+    /* The planet frame is geocentric and right-handed: +x through (0, 0), +y
+     * through (0, 90 E), +z through the north pole; latitude and longitude
+     * round-trip; and the chart's x and z at its origin are east and south. */
+    {
+        TerrainDir ex = { 1.0, 0.0, 0.0 }, ey = { 0.0, 1.0, 0.0 }, ez = { 0.0, 0.0, 1.0 };
+        TerrainDir px = terrain_latlon_dir(0.0, 0.0), py = terrain_latlon_dir(0.0, 90.0), pz = terrain_latlon_dir(90.0, 0.0);
+        CHECK(pdist(px, ex) < 1e-15 && pdist(py, ey) < 1e-15 && pdist(pz, ez) < 1e-15,
+              "the planet frame's axes aren't (0, 0), (0, 90 E) and the north pole");
+        TerrainDir xy = { px.y * py.z - px.z * py.y, px.z * py.x - px.x * py.z, px.x * py.y - px.y * py.x };
+        CHECK(pdist(xy, pz) < 1e-15, "the planet frame isn't right-handed");
+        double lat, lon;
+        terrain_dir_latlon(ez, &lat, &lon);
+        CHECK(fabs(lat - 90.0) < 1e-12 && lon == 0.0, "the north pole isn't at latitude 90, longitude 0 (%.9f, %.9f)", lat, lon);
+        for (int k = 0; k < 20000; ++k) {
+            TerrainDir p = prand(r);
+            terrain_dir_latlon(p, &lat, &lon);
+            TerrainDir q = terrain_latlon_dir(lat, lon);
+            CHECK(lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0 && pdist(p, q) < 1e-14,
+                  "latitude and longitude round trip: (%.6f, %.6f) is %.2e away", lat, lon, pdist(p, q));
+        }
+        TerrainDir o = terrain_chart_dir(0.0, 0.0), ax, up, az;
+        terrain_chart_frame(0.0, 0.0, &ax, &up, &az);
+        terrain_dir_latlon(o, &lat, &lon);
+        TerrainDir east = psub(terrain_latlon_dir(lat, lon + 1e-5), terrain_latlon_dir(lat, lon - 1e-5));
+        TerrainDir north = psub(terrain_latlon_dir(lat + 1e-5, lon), terrain_latlon_dir(lat - 1e-5, lon));
+        CHECK(pdot(east, ax) / sqrt(pdot(east, east)) > 1.0 - 1e-8 && pdot(north, az) / sqrt(pdot(north, north)) < -(1.0 - 1e-8),
+              "the chart's x and z at its origin (%.4f, %.4f) aren't east and south", lat, lon);
+    }
+
     /* The cube-sphere round-trips. */
     for (int k = 0; k < 20000; ++k) {
         TerrainDir p = prand(r);

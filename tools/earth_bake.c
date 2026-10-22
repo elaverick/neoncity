@@ -1,0 +1,793 @@
+/* earth_bake: bakes the Earth project (data/earth, staged by tools/earth/earth.py)
+ * into the engine's cube-sphere elevation file.
+ *
+ *   earth_bake <stage.r16> <out.bake> [--size N] [--threads T]
+ *   earth_bake --info <bake>
+ *   earth_bake --dump-face <k|all> <bake> <out.png> [--mip M]
+ *
+ * The stage is the whole equirectangular grid as raw little-endian int16
+ * metres with its <stage.r16>.txt sidecar (`earth.py stage data/earth
+ * build/earth.r16`); its checksum is verified against the sidecar's. The bake
+ * holds the same ground resampled onto the six equal-angle cube faces
+ * (src/terrain/terrain_cube.c, which this tool links and nothing else of the
+ * engine, so the bake and the engine evaluate every direction bit for bit the
+ * same): N samples a side at mip 0 (default 4096, 2.44 km at a face's
+ * centre), halving per mip down to 8. Baking the same stage at the same size
+ * gives the same bytes, whatever the thread count.
+ *
+ * File layout, all little-endian (i16 int16, f32 float, f64 double):
+ *   header, 256 bytes:
+ *      0  char[8] "NCEARTH1"
+ *      8  u32 version (1)      12  u32 size N        16  u32 apron (2)
+ *     20  u32 mips             24  u32 block (8)     28  u32 0
+ *     32  f32 scale (metres per unit, 1)             36  f32 offset (m, 0)
+ *     40  f64 origin latitude  48  f64 origin longitude  56  f64 origin heading (degrees)
+ *     64  char[64] the source's sha256 (hex)        128  char[64] the stage's sha256 (hex)
+ *    192  i16 min, i16 max over the planet (mip 0)  196  f32 steepest grade  200  f32 largest relief
+ *    204  u32 stage width, u32 stage height        212  f64 stage cell (degrees)
+ *    220  zero to 256
+ *   mip table, mips x 16 bytes: i16 min, i16 max, f32 steepest grade, f32 largest relief, u32 0
+ *   then for each mip m (n = N >> m samples a side, g = n + 2 apron, nb = n / block), for each face f:
+ *      i16 grid[g * g]      sample (i, j), i and j in [-apron, n + apron), at [(j + apron) * g + (i + apron)]:
+ *                           the mean elevation (scale * value + offset metres) over the sample's cell, whose
+ *                           centre is terrain_face_dir(f, (2 i + 1) / n - 1, (2 j + 1) / n - 1). The apron's
+ *                           samples lie past the face's edges, over the neighbouring faces, resampled at
+ *                           their own directions (not copied), so a filter can run up to the edge.
+ *      i16 bmin[nb * nb], i16 bmax[nb * nb]   over each block of block x block interior samples
+ *      f32 bslope[nb * nb]  the steepest grade in the block, metres per metre, between each sample
+ *                           and its next along u and along v (the apron supplies the last)
+ *      f32 brelief[nb * nb] the elevation range (m) within about RELIEF_M of the block at mip 0;
+ *                           at coarser mips the mean of the four blocks under it
+ *
+ * Resampling: a sample's cell is split into K x K sub-cells (K such that a
+ * sub-cell is no larger than a stage cell at the equator, at most KMAX);
+ * each sub-cell's corners are taken to latitude and longitude, and the stage
+ * cells within their bounding box are averaged by the area each contributes
+ * (the box over-covers a tilted cell a little, which only blurs). Mip 0 is
+ * built so, every sample; mip m + 1's interior is the 2 x 2 mean of mip m's,
+ * and its apron is resampled from the stage with K doubled. */
+#include "terrain.h"
+#include "thread.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBI_WRITE_NO_STDIO
+#include <stb_image_write.h>
+#undef STBI_WRITE_NO_STDIO
+
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define PI        3.14159265358979323846
+#define APRON     2
+#define BLOCK     8
+#define MAX_MIPS  16
+#define MIN_FACE  8
+#define RELIEF_M  20000.0
+#define KMAX      64
+#define BAND      8         /* sample rows per resampling task */
+#define HEADER    256
+#define MAGIC     "NCEARTH1"
+
+/* --- SHA-256 (FIPS 180-4), to check the stage against its sidecar --------------- */
+
+typedef struct Sha256 { uint32_t h[8]; uint64_t len; unsigned char buf[64]; size_t n; } Sha256;
+
+static const uint32_t SHA_K[64] = {
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2 };
+
+static uint32_t ror(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
+
+static void sha_block(Sha256 *s, const unsigned char *p) {
+    uint32_t w[64], a, b, c, d, e, f, g, h;
+    for (int i = 0; i < 16; ++i) w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 | (uint32_t)p[4 * i + 2] << 8 | p[4 * i + 3];
+    for (int i = 16; i < 64; ++i) {
+        uint32_t s0 = ror(w[i - 15], 7) ^ ror(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        uint32_t s1 = ror(w[i - 2], 17) ^ ror(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    a = s->h[0]; b = s->h[1]; c = s->h[2]; d = s->h[3]; e = s->h[4]; f = s->h[5]; g = s->h[6]; h = s->h[7];
+    for (int i = 0; i < 64; ++i) {
+        uint32_t t1 = h + (ror(e, 6) ^ ror(e, 11) ^ ror(e, 25)) + ((e & f) ^ (~e & g)) + SHA_K[i] + w[i];
+        uint32_t t2 = (ror(a, 2) ^ ror(a, 13) ^ ror(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+        h = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+    }
+    s->h[0] += a; s->h[1] += b; s->h[2] += c; s->h[3] += d; s->h[4] += e; s->h[5] += f; s->h[6] += g; s->h[7] += h;
+}
+
+static void sha_init(Sha256 *s) {
+    static const uint32_t h0[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
+    memcpy(s->h, h0, sizeof h0); s->len = 0; s->n = 0;
+}
+
+static void sha_update(Sha256 *s, const unsigned char *p, size_t n) {
+    s->len += n;
+    while (n > 0) {
+        size_t take = 64 - s->n < n ? 64 - s->n : n;
+        memcpy(s->buf + s->n, p, take); s->n += take; p += take; n -= take;
+        if (s->n == 64) { sha_block(s, s->buf); s->n = 0; }
+    }
+}
+
+static void sha_hex(Sha256 *s, char out[65]) {
+    uint64_t bits = s->len * 8;
+    unsigned char pad = 0x80;
+    sha_update(s, &pad, 1);
+    unsigned char zero = 0;
+    while (s->n != 56) sha_update(s, &zero, 1);
+    unsigned char len[8];
+    for (int i = 0; i < 8; ++i) len[i] = (unsigned char)(bits >> (56 - 8 * i));
+    sha_update(s, len, 8);
+    for (int i = 0; i < 8; ++i) snprintf(out + 8 * i, 9, "%08x", s->h[i]);
+}
+
+/* --- Little-endian output ------------------------------------------------------- */
+
+static void put_u16(unsigned char *p, uint16_t v) { p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); }
+static void put_u32(unsigned char *p, uint32_t v) { for (int i = 0; i < 4; ++i) p[i] = (unsigned char)(v >> (8 * i)); }
+static void put_u64(unsigned char *p, uint64_t v) { for (int i = 0; i < 8; ++i) p[i] = (unsigned char)(v >> (8 * i)); }
+static void put_f32(unsigned char *p, float v) { uint32_t u; memcpy(&u, &v, 4); put_u32(p, u); }
+static void put_f64(unsigned char *p, double v) { uint64_t u; memcpy(&u, &v, 8); put_u64(p, u); }
+static uint16_t get_u16(const unsigned char *p) { return (uint16_t)(p[0] | p[1] << 8); }
+static uint32_t get_u32(const unsigned char *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
+static uint64_t get_u64(const unsigned char *p) { return (uint64_t)get_u32(p) | (uint64_t)get_u32(p + 4) << 32; }
+static float    get_f32(const unsigned char *p) { uint32_t u = get_u32(p); float v; memcpy(&v, &u, 4); return v; }
+static double   get_f64(const unsigned char *p) { uint64_t u = get_u64(p); double v; memcpy(&v, &u, 8); return v; }
+
+static int write_i16s(FILE *f, const int16_t *v, size_t n) {
+    unsigned char buf[8192];
+    while (n > 0) {
+        size_t take = n < sizeof buf / 2 ? n : sizeof buf / 2;
+        for (size_t i = 0; i < take; ++i) put_u16(buf + 2 * i, (uint16_t)v[i]);
+        if (fwrite(buf, 2, take, f) != take) return 0;
+        v += take; n -= take;
+    }
+    return 1;
+}
+
+static int write_f32s(FILE *f, const float *v, size_t n) {
+    unsigned char buf[8192];
+    while (n > 0) {
+        size_t take = n < sizeof buf / 4 ? n : sizeof buf / 4;
+        for (size_t i = 0; i < take; ++i) put_f32(buf + 4 * i, v[i]);
+        if (fwrite(buf, 4, take, f) != take) return 0;
+        v += take; n -= take;
+    }
+    return 1;
+}
+
+static int read_i16s(FILE *f, int16_t *v, size_t n) {
+    unsigned char buf[8192];
+    while (n > 0) {
+        size_t take = n < sizeof buf / 2 ? n : sizeof buf / 2;
+        if (fread(buf, 2, take, f) != take) return 0;
+        for (size_t i = 0; i < take; ++i) v[i] = (int16_t)get_u16(buf + 2 * i);
+        v += take; n -= take;
+    }
+    return 1;
+}
+
+static int read_f32s(FILE *f, float *v, size_t n) {
+    unsigned char buf[8192];
+    while (n > 0) {
+        size_t take = n < sizeof buf / 4 ? n : sizeof buf / 4;
+        if (fread(buf, 4, take, f) != take) return 0;
+        for (size_t i = 0; i < take; ++i) v[i] = get_f32(buf + 4 * i);
+        v += take; n -= take;
+    }
+    return 1;
+}
+
+static double now_s(void) { return (double)clock() / CLOCKS_PER_SEC; }
+
+static void *xmalloc(size_t n) {
+    void *p = malloc(n ? n : 1);
+    if (!p) { fprintf(stderr, "earth_bake: out of memory (%zu bytes)\n", n); exit(1); }
+    return p;
+}
+
+/* --- The stage --------------------------------------------------------------------- */
+
+typedef struct Stage {
+    int      W, H;                 /* columns (longitude) and rows (latitude, north first) */
+    double   lon0, lat0, cell;     /* the north-west corner and the cell size, degrees */
+    double   origin_lat, origin_lon, origin_heading;
+    char     source_sha[65], stage_sha[65];
+    int16_t *h;                    /* W x H metres */
+    double  *sinlat;               /* sin of the H + 1 row edges' latitudes, for areas */
+} Stage;
+
+static int stage_read(Stage *s, const char *path) {
+    char side[1024];
+    snprintf(side, sizeof side, "%s.txt", path);
+    FILE *f = fopen(side, "r");
+    if (!f) { fprintf(stderr, "earth_bake: cannot open %s\n", side); return 0; }
+    memset(s, 0, sizeof *s);
+    s->lat0 = 90.0; s->lon0 = -180.0;
+    int format = 0, dtype = 0, order = 0, rows = 0, pixel = 0;
+    char line[1024], key[64], val[960];
+    while (fgets(line, sizeof line, f)) {
+        if (sscanf(line, "%63s %959s", key, val) != 2) continue;
+        if (!strcmp(key, "format")) format = !strcmp(val, "earth-stage-1");
+        else if (!strcmp(key, "dtype")) dtype = !strcmp(val, "int16");
+        else if (!strcmp(key, "byte_order")) order = !strcmp(val, "little");
+        else if (!strcmp(key, "row_order")) rows = !strcmp(val, "north_to_south");
+        else if (!strcmp(key, "pixel")) pixel = !strcmp(val, "area");
+        else if (!strcmp(key, "width")) s->W = atoi(val);
+        else if (!strcmp(key, "height")) s->H = atoi(val);
+        else if (!strcmp(key, "lon0")) s->lon0 = atof(val);
+        else if (!strcmp(key, "lat0")) s->lat0 = atof(val);
+        else if (!strcmp(key, "cell_deg")) s->cell = atof(val);
+        else if (!strcmp(key, "origin_lat")) s->origin_lat = atof(val);
+        else if (!strcmp(key, "origin_lon")) s->origin_lon = atof(val);
+        else if (!strcmp(key, "origin_heading_deg")) s->origin_heading = atof(val);
+        else if (!strcmp(key, "source_sha256")) snprintf(s->source_sha, sizeof s->source_sha, "%s", val);
+        else if (!strcmp(key, "stage_sha256")) snprintf(s->stage_sha, sizeof s->stage_sha, "%s", val);
+    }
+    fclose(f);
+    if (!format || !dtype || !order || !rows || !pixel) { fprintf(stderr, "earth_bake: %s isn't an earth-stage-1 sidecar (little-endian int16, rows north to south, pixel-is-area)\n", side); return 0; }
+    if (s->W <= 0 || s->H <= 0 || s->cell <= 0.0 || fabs(s->W * s->cell - 360.0) > 1e-6 || fabs(s->H * s->cell - 180.0) > 1e-6 ||
+        fabs(s->lon0 + 180.0) > 1e-9 || fabs(s->lat0 - 90.0) > 1e-9) {
+        fprintf(stderr, "earth_bake: the stage must cover the globe from 90 N 180 W (%d x %d cells of %g degrees from %g, %g)\n", s->W, s->H, s->cell, s->lat0, s->lon0);
+        return 0;
+    }
+    if (strlen(s->stage_sha) != 64) { fprintf(stderr, "earth_bake: %s carries no stage_sha256\n", side); return 0; }
+
+    f = fopen(path, "rb");
+    if (!f) { fprintf(stderr, "earth_bake: cannot open %s\n", path); return 0; }
+    size_t cells = (size_t)s->W * (size_t)s->H;
+    unsigned char *raw = (unsigned char *)xmalloc(cells * 2);
+    size_t got = fread(raw, 1, cells * 2, f);
+    int more = fgetc(f) != EOF;
+    fclose(f);
+    if (got != cells * 2 || more) { fprintf(stderr, "earth_bake: %s should be exactly %zu bytes\n", path, cells * 2); free(raw); return 0; }
+    Sha256 sha; char hex[65];
+    sha_init(&sha); sha_update(&sha, raw, cells * 2); sha_hex(&sha, hex);
+    if (strcmp(hex, s->stage_sha) != 0) { fprintf(stderr, "earth_bake: %s doesn't match its sidecar's stage_sha256 (%s, not %s): stage it again\n", path, hex, s->stage_sha); free(raw); return 0; }
+    s->h = (int16_t *)xmalloc(cells * 2);
+    for (size_t i = 0; i < cells; ++i) s->h[i] = (int16_t)get_u16(raw + 2 * i);
+    free(raw);
+    s->sinlat = (double *)xmalloc(sizeof(double) * (size_t)(s->H + 1));
+    for (int r = 0; r <= s->H; ++r) s->sinlat[r] = sin((s->lat0 - r * s->cell) * (PI / 180.0));
+    return 1;
+}
+
+/* Adds the stage's cells within the box of latitudes [lat_lo, lat_hi] and
+ * longitudes [lon_lo, lon_hi] (degrees; the longitudes may run past 180 and
+ * wrap), each weighted by the area of its overlap, to sum and wsum. */
+static void box_sum(const Stage *s, double lat_lo, double lat_hi, double lon_lo, double lon_hi, double *sum, double *wsum) {
+    double y0 = (s->lat0 - lat_hi) / s->cell, y1 = (s->lat0 - lat_lo) / s->cell;
+    if (y0 < 0.0) y0 = 0.0;
+    if (y1 > (double)s->H) y1 = (double)s->H;
+    if (y1 <= y0) return;
+    double x0, x1;
+    if (lon_hi - lon_lo >= 360.0) { x0 = 0.0; x1 = (double)s->W; }
+    else { x0 = (lon_lo - s->lon0) / s->cell; x1 = (lon_hi - s->lon0) / s->cell; }
+    if (x1 <= x0) return;
+    int r0 = (int)floor(y0), r1 = (int)ceil(y1) - 1;
+    long c0 = (long)floor(x0), c1 = (long)ceil(x1) - 1;
+    if (r1 > s->H - 1) r1 = s->H - 1;
+    for (int r = r0; r <= r1; ++r) {
+        double a = (double)r > y0 ? (double)r : y0, b = (double)(r + 1) < y1 ? (double)(r + 1) : y1;
+        double wl;
+        if (a == (double)r && b == (double)(r + 1)) wl = s->sinlat[r] - s->sinlat[r + 1];
+        else wl = sin((s->lat0 - a * s->cell) * (PI / 180.0)) - sin((s->lat0 - b * s->cell) * (PI / 180.0));
+        const int16_t *row = s->h + (size_t)r * (size_t)s->W;
+        for (long c = c0; c <= c1; ++c) {
+            double ca = (double)c > x0 ? (double)c : x0, cb = (double)(c + 1) < x1 ? (double)(c + 1) : x1;
+            double w = wl * (cb - ca);
+            long cc = c % s->W;
+            if (cc < 0) cc += s->W;
+            *sum += w * (double)row[cc];
+            *wsum += w;
+        }
+    }
+}
+
+/* --- Resampling a face ------------------------------------------------------------- */
+
+typedef struct LL { double lat, lon; } LL;
+
+/* Sub-cell corner (si, sj) of a face of n samples with K sub-cells a sample,
+ * counted from the apron's outer edge, to latitude and longitude. */
+static LL corner_ll(int face, int K, int n, int si, int sj) {
+    double kn = (double)(K * n);
+    double u = (double)(2 * (si - K * APRON) - K * n) / kn;
+    double v = (double)(2 * (sj - K * APRON) - K * n) / kn;
+    LL r;
+    terrain_dir_latlon(terrain_face_dir(face, u, v), &r.lat, &r.lon);
+    return r;
+}
+
+/* The mean elevation over the sample whose sub-cell corners start at c
+ * (rows of `stride` corners, K + 1 of them), from the stage. */
+static double sample_mean(const Stage *s, const LL *c, int stride, int K) {
+    double sum = 0.0, wsum = 0.0;
+    for (int sj = 0; sj < K; ++sj) {
+        for (int si = 0; si < K; ++si) {
+            const LL *q[4] = { c + sj * stride + si, c + sj * stride + si + 1, c + (sj + 1) * stride + si, c + (sj + 1) * stride + si + 1 };
+            double lat_lo = 90.0, lat_hi = -90.0, lon_lo = 0.0, lon_hi = 0.0, ref = 0.0;
+            int have = 0;
+            for (int k = 0; k < 4; ++k) {
+                if (q[k]->lat < lat_lo) lat_lo = q[k]->lat;
+                if (q[k]->lat > lat_hi) lat_hi = q[k]->lat;
+                if (fabs(q[k]->lat) > 90.0 - 1e-9) continue;   /* a pole has no longitude */
+                double lon = q[k]->lon;
+                if (!have) { ref = lon; lon_lo = lon_hi = lon; have = 1; continue; }
+                while (lon - ref > 180.0) lon -= 360.0;
+                while (lon - ref < -180.0) lon += 360.0;
+                if (lon < lon_lo) lon_lo = lon;
+                if (lon > lon_hi) lon_hi = lon;
+            }
+            if (!have) { lon_lo = -180.0; lon_hi = 180.0; }
+            box_sum(s, lat_lo, lat_hi, lon_lo, lon_hi, &sum, &wsum);
+        }
+    }
+    return wsum > 0.0 ? sum / wsum : 0.0;
+}
+
+typedef struct Resample {
+    const Stage *s;
+    int    n, g, K, bands, apron_only;
+    float *out[6];
+} Resample;
+
+/* One band of BAND sample rows of one face: every sample, or the apron's
+ * alone (the interior then comes from the finer mip). */
+static void resample_task(void *ctx, int t) {
+    Resample *r = (Resample *)ctx;
+    int face = t / r->bands, band = t % r->bands;
+    int n = r->n, g = r->g, K = r->K;
+    int j0 = -APRON + band * BAND, j1 = j0 + BAND < n + APRON ? j0 + BAND : n + APRON;
+    int rows = K * (j1 - j0) + 1, stride = K * g + 1;
+    int edge_rows = j0 < 0 || j1 > n;
+    LL *c = (LL *)xmalloc(sizeof(LL) * (size_t)rows * (size_t)stride);
+    for (int sj = 0; sj < rows; ++sj) {
+        int gj = K * (j0 + APRON) + sj;
+        if (!r->apron_only || edge_rows) {
+            for (int si = 0; si < stride; ++si) c[sj * stride + si] = corner_ll(face, K, n, si, gj);
+        } else {
+            for (int si = 0; si <= K * APRON; ++si) c[sj * stride + si] = corner_ll(face, K, n, si, gj);
+            for (int si = K * (n + APRON); si < stride; ++si) c[sj * stride + si] = corner_ll(face, K, n, si, gj);
+        }
+    }
+    for (int j = j0; j < j1; ++j) {
+        for (int i = -APRON; i < n + APRON; ++i) {
+            if (r->apron_only && i >= 0 && i < n && j >= 0 && j < n) continue;
+            const LL *corner = c + (size_t)(K * (j - j0)) * stride + K * (i + APRON);
+            r->out[face][(size_t)(j + APRON) * g + (i + APRON)] = (float)sample_mean(r->s, corner, stride, K);
+        }
+    }
+    free(c);
+}
+
+/* --- The mips and their blocks ------------------------------------------------------- */
+
+typedef struct Mip {
+    int      n, g, nb;
+    float   *f[6];                  /* the resampled heights, g x g */
+    int16_t *q[6];                  /* quantised, as written */
+    int16_t *bmin[6], *bmax[6];
+    float   *bslope[6], *brelief[6];
+    int16_t  lo, hi;
+    float    slope_max, relief_max;
+} Mip;
+
+typedef struct Bake {
+    int      N, mips, W, H;
+    double   cell, origin_lat, origin_lon, origin_heading;
+    float    scale, offset;
+    char     source_sha[65], stage_sha[65];
+    Mip      mip[MAX_MIPS];
+} Bake;
+
+typedef struct Downsample { const Mip *from; Mip *to; } Downsample;
+
+static void downsample_task(void *ctx, int t) {
+    Downsample *d = (Downsample *)ctx;
+    int face = t / d->to->n, j = t % d->to->n;
+    const float *src = d->from->f[face];
+    float *dst = d->to->f[face];
+    int gs = d->from->g, gd = d->to->g;
+    for (int i = 0; i < d->to->n; ++i) {
+        const float *p = src + (size_t)(2 * j + APRON) * gs + (2 * i + APRON);
+        dst[(size_t)(j + APRON) * gd + (i + APRON)] = (float)(0.25 * (((double)p[0] + (double)p[1]) + ((double)p[gs] + (double)p[gs + 1])));
+    }
+}
+
+typedef struct Quantise { Mip *m; } Quantise;
+
+static void quantise_task(void *ctx, int t) {
+    Mip *m = ((Quantise *)ctx)->m;
+    int face = t / m->g, j = t % m->g;
+    const float *f = m->f[face] + (size_t)j * m->g;
+    int16_t *q = m->q[face] + (size_t)j * m->g;
+    for (int i = 0; i < m->g; ++i) {
+        long v = lrintf(f[i]);
+        q[i] = (int16_t)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
+    }
+}
+
+typedef struct Blocks { Mip *m; const Mip *finer; int window; } Blocks;
+
+/* The blocks of one block row of one face: min and max, the steepest grade
+ * between neighbouring samples, and the relief (at mip 0, the range within
+ * `window` samples round the block; coarser, the mean of the finer mip's). */
+static void blocks_task(void *ctx, int t) {
+    Blocks *b = (Blocks *)ctx;
+    Mip *m = b->m;
+    int n = m->n, g = m->g, nb = m->nb;
+    int face = t / nb, bj = t % nb;
+    const int16_t *q = m->q[face];
+    TerrainDir *dir = (TerrainDir *)xmalloc(sizeof(TerrainDir) * (size_t)(BLOCK + 1) * (size_t)g);
+    for (int jj = 0; jj <= BLOCK; ++jj) {
+        int j = bj * BLOCK + jj;
+        for (int i = -APRON; i < n + APRON; ++i)
+            dir[(size_t)jj * g + (i + APRON)] = terrain_face_dir(face, (double)(2 * i + 1) / n - 1.0, (double)(2 * j + 1) / n - 1.0);
+    }
+    for (int bi = 0; bi < nb; ++bi) {
+        int lo = 32767, hi = -32768;
+        double slope = 0.0;
+        for (int jj = 0; jj < BLOCK; ++jj) {
+            int j = bj * BLOCK + jj;
+            for (int ii = 0; ii < BLOCK; ++ii) {
+                int i = bi * BLOCK + ii;
+                int h = q[(size_t)(j + APRON) * g + (i + APRON)];
+                int hu = q[(size_t)(j + APRON) * g + (i + 1 + APRON)];
+                int hv = q[(size_t)(j + 1 + APRON) * g + (i + APRON)];
+                if (h < lo) lo = h;
+                if (h > hi) hi = h;
+                TerrainDir p = dir[(size_t)jj * g + (i + APRON)];
+                TerrainDir pu = dir[(size_t)jj * g + (i + 1 + APRON)], pv = dir[(size_t)(jj + 1) * g + (i + APRON)];
+                TerrainDir du = { pu.x - p.x, pu.y - p.y, pu.z - p.z }, dv = { pv.x - p.x, pv.y - p.y, pv.z - p.z };
+                double lu = sqrt(du.x * du.x + du.y * du.y + du.z * du.z), lv = sqrt(dv.x * dv.x + dv.y * dv.y + dv.z * dv.z);
+                double c = (du.x * dv.x + du.y * dv.y + du.z * dv.z) / (lu * lv);
+                double gu = (double)(hu - h) / (PLANET_RADIUS * lu), gv = (double)(hv - h) / (PLANET_RADIUS * lv);
+                /* the gradient from two directional derivatives along axes meeting at angle acos(c) */
+                double g2 = (gu * gu + gv * gv - 2.0 * gu * gv * c) / (1.0 - c * c);
+                if (g2 > slope) slope = g2;
+            }
+        }
+        m->bmin[face][(size_t)bj * nb + bi] = (int16_t)lo;
+        m->bmax[face][(size_t)bj * nb + bi] = (int16_t)hi;
+        m->bslope[face][(size_t)bj * nb + bi] = (float)sqrt(slope);
+        float relief;
+        if (b->finer) {
+            const float *fr = b->finer->brelief[face];
+            int fnb = b->finer->nb;
+            relief = (float)(0.25 * (((double)fr[(size_t)(2 * bj) * fnb + 2 * bi] + (double)fr[(size_t)(2 * bj) * fnb + 2 * bi + 1]) +
+                                     ((double)fr[(size_t)(2 * bj + 1) * fnb + 2 * bi] + (double)fr[(size_t)(2 * bj + 1) * fnb + 2 * bi + 1])));
+        } else {
+            int w = b->window, rlo = 32767, rhi = -32768;
+            int i0 = bi * BLOCK - w, i1 = bi * BLOCK + BLOCK + w, j0 = bj * BLOCK - w, j1 = bj * BLOCK + BLOCK + w;
+            if (i0 < -APRON) i0 = -APRON;
+            if (j0 < -APRON) j0 = -APRON;
+            if (i1 > n + APRON) i1 = n + APRON;
+            if (j1 > n + APRON) j1 = n + APRON;
+            for (int j = j0; j < j1; ++j) {
+                const int16_t *row = q + (size_t)(j + APRON) * g + APRON;
+                for (int i = i0; i < i1; ++i) {
+                    int h = row[i];
+                    if (h < rlo) rlo = h;
+                    if (h > rhi) rhi = h;
+                }
+            }
+            relief = (float)(rhi - rlo);
+        }
+        m->brelief[face][(size_t)bj * nb + bi] = relief;
+    }
+    free(dir);
+}
+
+static void mip_alloc(Mip *m, int n, int with_floats) {
+    m->n = n; m->g = n + 2 * APRON; m->nb = n / BLOCK;
+    size_t cells = (size_t)m->g * (size_t)m->g, blocks = (size_t)m->nb * (size_t)m->nb;
+    for (int f = 0; f < 6; ++f) {
+        m->f[f] = with_floats ? (float *)xmalloc(cells * sizeof(float)) : NULL;
+        m->q[f] = (int16_t *)xmalloc(cells * sizeof(int16_t));
+        m->bmin[f] = (int16_t *)xmalloc(blocks * sizeof(int16_t));
+        m->bmax[f] = (int16_t *)xmalloc(blocks * sizeof(int16_t));
+        m->bslope[f] = (float *)xmalloc(blocks * sizeof(float));
+        m->brelief[f] = (float *)xmalloc(blocks * sizeof(float));
+    }
+}
+
+static void mip_summary(Mip *m) {
+    m->lo = 32767; m->hi = -32768; m->slope_max = 0.0f; m->relief_max = 0.0f;
+    for (int f = 0; f < 6; ++f) {
+        for (size_t k = 0; k < (size_t)m->nb * m->nb; ++k) {
+            if (m->bmin[f][k] < m->lo) m->lo = m->bmin[f][k];
+            if (m->bmax[f][k] > m->hi) m->hi = m->bmax[f][k];
+            if (m->bslope[f][k] > m->slope_max) m->slope_max = m->bslope[f][k];
+            if (m->brelief[f][k] > m->relief_max) m->relief_max = m->brelief[f][k];
+        }
+    }
+}
+
+/* How finely to split a sample of n a side: sub-cells no larger than a stage
+ * cell at the equator, allowing for the equal-angle grid's stretch, up to KMAX. */
+static int sub_cells(int n, double cell_deg) {
+    double sample_rad = (PI / 2.0) / n, cell_rad = cell_deg * (PI / 180.0);
+    int K = (int)ceil(1.5 * sample_rad / cell_rad);
+    return K < 1 ? 1 : K > KMAX ? KMAX : K;
+}
+
+/* --- The seams ---------------------------------------------------------------------- */
+
+/* Each apron sample against the face it lies over, interpolated between that
+ * face's samples: the mean and largest difference over a mip. The two aren't
+ * the same estimate (an area average against an interpolation), so this
+ * measures the seam's roughness, not an error. */
+static void seam_check(const Mip *m, double *mean, double *worst, int *worst_face) {
+    int n = m->n, g = m->g;
+    double sum = 0.0, big = 0.0;
+    long count = 0;
+    *worst_face = 0;
+    for (int f = 0; f < 6; ++f) {
+        for (int j = -APRON; j < n + APRON; ++j) {
+            for (int i = -APRON; i < n + APRON; ++i) {
+                if (i >= 0 && i < n && j >= 0 && j < n) continue;
+                TerrainDir p = terrain_face_dir(f, (double)(2 * i + 1) / n - 1.0, (double)(2 * j + 1) / n - 1.0);
+                double u, v;
+                int nf = terrain_dir_face(p, &u, &v);
+                double x = (u + 1.0) * 0.5 * n - 0.5, y = (v + 1.0) * 0.5 * n - 0.5;
+                int x0 = (int)floor(x), y0 = (int)floor(y);
+                double fx = x - x0, fy = y - y0;
+                if (x0 < -APRON) { x0 = -APRON; fx = 0.0; }
+                if (y0 < -APRON) { y0 = -APRON; fy = 0.0; }
+                if (x0 > n + APRON - 2) { x0 = n + APRON - 2; fx = 1.0; }
+                if (y0 > n + APRON - 2) { y0 = n + APRON - 2; fy = 1.0; }
+                const int16_t *q = m->q[nf] + (size_t)(y0 + APRON) * g + (x0 + APRON);
+                double h = (1.0 - fy) * ((1.0 - fx) * q[0] + fx * q[1]) + fy * ((1.0 - fx) * q[g] + fx * q[g + 1]);
+                double d = fabs(h - m->q[f][(size_t)(j + APRON) * g + (i + APRON)]);
+                sum += d; ++count;
+                if (d > big) { big = d; *worst_face = f; }
+            }
+        }
+    }
+    *mean = count ? sum / count : 0.0;
+    *worst = big;
+}
+
+/* --- Writing and reading --------------------------------------------------------------- */
+
+static int bake_write(const Bake *b, const char *path) {
+    FILE *f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "earth_bake: cannot write %s\n", path); return 0; }
+    unsigned char hd[HEADER];
+    memset(hd, 0, sizeof hd);
+    memcpy(hd, MAGIC, 8);
+    put_u32(hd + 8, 1); put_u32(hd + 12, (uint32_t)b->N); put_u32(hd + 16, APRON); put_u32(hd + 20, (uint32_t)b->mips); put_u32(hd + 24, BLOCK);
+    put_f32(hd + 32, b->scale); put_f32(hd + 36, b->offset);
+    put_f64(hd + 40, b->origin_lat); put_f64(hd + 48, b->origin_lon); put_f64(hd + 56, b->origin_heading);
+    memcpy(hd + 64, b->source_sha, 64); memcpy(hd + 128, b->stage_sha, 64);
+    put_u16(hd + 192, (uint16_t)b->mip[0].lo); put_u16(hd + 194, (uint16_t)b->mip[0].hi);
+    put_f32(hd + 196, b->mip[0].slope_max); put_f32(hd + 200, b->mip[0].relief_max);
+    put_u32(hd + 204, (uint32_t)b->W); put_u32(hd + 208, (uint32_t)b->H); put_f64(hd + 212, b->cell);
+    int ok = fwrite(hd, 1, HEADER, f) == HEADER;
+    for (int m = 0; m < b->mips && ok; ++m) {
+        unsigned char row[16];
+        memset(row, 0, sizeof row);
+        put_u16(row, (uint16_t)b->mip[m].lo); put_u16(row + 2, (uint16_t)b->mip[m].hi);
+        put_f32(row + 4, b->mip[m].slope_max); put_f32(row + 8, b->mip[m].relief_max);
+        ok = fwrite(row, 1, 16, f) == 16;
+    }
+    for (int m = 0; m < b->mips && ok; ++m) {
+        const Mip *mp = &b->mip[m];
+        size_t cells = (size_t)mp->g * mp->g, blocks = (size_t)mp->nb * mp->nb;
+        for (int face = 0; face < 6 && ok; ++face) {
+            ok = write_i16s(f, mp->q[face], cells) && write_i16s(f, mp->bmin[face], blocks) && write_i16s(f, mp->bmax[face], blocks) &&
+                 write_f32s(f, mp->bslope[face], blocks) && write_f32s(f, mp->brelief[face], blocks);
+        }
+    }
+    if (fclose(f) != 0) ok = 0;
+    if (!ok) fprintf(stderr, "earth_bake: writing %s failed\n", path);
+    return ok;
+}
+
+static int bake_read(Bake *b, const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { fprintf(stderr, "earth_bake: cannot open %s\n", path); return 0; }
+    memset(b, 0, sizeof *b);
+    unsigned char hd[HEADER];
+    if (fread(hd, 1, HEADER, f) != HEADER || memcmp(hd, MAGIC, 8) != 0 || get_u32(hd + 8) != 1) { fprintf(stderr, "earth_bake: %s isn't an earth bake (version 1)\n", path); fclose(f); return 0; }
+    b->N = (int)get_u32(hd + 12); b->mips = (int)get_u32(hd + 20);
+    if (get_u32(hd + 16) != APRON || get_u32(hd + 24) != BLOCK || b->mips < 1 || b->mips > MAX_MIPS || b->N < MIN_FACE || (b->N >> (b->mips - 1)) % BLOCK != 0) {
+        fprintf(stderr, "earth_bake: %s has an apron, block or mip count this tool can't read\n", path); fclose(f); return 0;
+    }
+    b->scale = get_f32(hd + 32); b->offset = get_f32(hd + 36);
+    b->origin_lat = get_f64(hd + 40); b->origin_lon = get_f64(hd + 48); b->origin_heading = get_f64(hd + 56);
+    memcpy(b->source_sha, hd + 64, 64); memcpy(b->stage_sha, hd + 128, 64);
+    b->W = (int)get_u32(hd + 204); b->H = (int)get_u32(hd + 208); b->cell = get_f64(hd + 212);
+    int ok = 1;
+    for (int m = 0; m < b->mips && ok; ++m) {
+        unsigned char row[16];
+        ok = fread(row, 1, 16, f) == 16;
+        b->mip[m].lo = (int16_t)get_u16(row); b->mip[m].hi = (int16_t)get_u16(row + 2);
+        b->mip[m].slope_max = get_f32(row + 4); b->mip[m].relief_max = get_f32(row + 8);
+    }
+    for (int m = 0; m < b->mips && ok; ++m) {
+        Mip *mp = &b->mip[m];
+        mip_alloc(mp, b->N >> m, 0);
+        size_t cells = (size_t)mp->g * mp->g, blocks = (size_t)mp->nb * mp->nb;
+        for (int face = 0; face < 6 && ok; ++face) {
+            ok = read_i16s(f, mp->q[face], cells) && read_i16s(f, mp->bmin[face], blocks) && read_i16s(f, mp->bmax[face], blocks) &&
+                 read_f32s(f, mp->bslope[face], blocks) && read_f32s(f, mp->brelief[face], blocks);
+        }
+    }
+    if (ok && fgetc(f) != EOF) ok = 0;
+    fclose(f);
+    if (!ok) fprintf(stderr, "earth_bake: %s is truncated or overlong\n", path);
+    return ok;
+}
+
+static void bake_print(const Bake *b, int seams) {
+    printf("size %d, %d mips, apron %d, block %d; scale %g m, offset %g m\n", b->N, b->mips, APRON, BLOCK, b->scale, b->offset);
+    printf("origin %.6f %.6f, heading %.2f; stage %d x %d cells of %g degrees\n", b->origin_lat, b->origin_lon, b->origin_heading, b->W, b->H, b->cell);
+    printf("source sha256 %.64s\nstage  sha256 %.64s\n", b->source_sha, b->stage_sha);
+    printf("%4s %6s %9s %7s %7s %9s %9s", "mip", "n", "m/sample", "min", "max", "grade", "relief");
+    if (seams) printf(" %10s %10s %5s", "seam mean", "seam max", "face");
+    printf("\n");
+    for (int m = 0; m < b->mips; ++m) {
+        const Mip *mp = &b->mip[m];
+        printf("%4d %6d %9.0f %7d %7d %9.4f %9.0f", m, mp->n, PLANET_RADIUS * (PI / 2.0) / mp->n, mp->lo, mp->hi, mp->slope_max, mp->relief_max);
+        if (seams) {
+            double mean, worst; int face;
+            seam_check(mp, &mean, &worst, &face);
+            printf(" %10.2f %10.1f %5d", mean, worst, face);
+        }
+        printf("\n");
+    }
+}
+
+/* --- Baking -------------------------------------------------------------------------- */
+
+static int bake(const char *stage_path, const char *out_path, int N, int threads) {
+    if (N < MIN_FACE || (N & (N - 1)) != 0) { fprintf(stderr, "earth_bake: --size must be a power of two, at least %d\n", MIN_FACE); return 0; }
+    double t0 = now_s();
+    Stage s;
+    if (!stage_read(&s, stage_path)) return 0;
+    printf("stage %d x %d (%s), checksum verified, %.1f s\n", s.W, s.H, stage_path, now_s() - t0);
+
+    Bake *b = (Bake *)xmalloc(sizeof(Bake));
+    memset(b, 0, sizeof *b);
+    b->N = N; b->W = s.W; b->H = s.H; b->cell = s.cell;
+    b->origin_lat = s.origin_lat; b->origin_lon = s.origin_lon; b->origin_heading = s.origin_heading;
+    b->scale = 1.0f; b->offset = 0.0f;
+    memcpy(b->source_sha, s.source_sha, 64); memcpy(b->stage_sha, s.stage_sha, 64);
+    for (int n = N; n >= MIN_FACE; n >>= 1) ++b->mips;
+
+    for (int m = 0; m < b->mips; ++m) {
+        Mip *mp = &b->mip[m];
+        double t1 = now_s();
+        mip_alloc(mp, N >> m, 1);
+        Resample r;
+        r.s = &s; r.n = mp->n; r.g = mp->g; r.K = sub_cells(mp->n, s.cell);
+        r.bands = (mp->g + BAND - 1) / BAND; r.apron_only = m > 0;
+        for (int f = 0; f < 6; ++f) r.out[f] = mp->f[f];
+        if (m > 0) {
+            Downsample d = { &b->mip[m - 1], mp };
+            thread_parallel_for(6 * mp->n, threads, downsample_task, &d);
+        }
+        thread_parallel_for(6 * r.bands, threads, resample_task, &r);
+        Quantise qz = { mp };
+        thread_parallel_for(6 * mp->g, threads, quantise_task, &qz);
+        Blocks bl = { mp, m > 0 ? &b->mip[m - 1] : NULL, (int)floor(RELIEF_M / (PLANET_RADIUS * (PI / 2.0) / N) + 0.5) };
+        thread_parallel_for(6 * mp->nb, threads, blocks_task, &bl);
+        mip_summary(mp);
+        printf("mip %d: %d a side, %d x %d sub-cells%s, %.1f s\n", m, mp->n, r.K, r.K, m > 0 ? " for the apron" : "", now_s() - t1);
+        if (m > 0) { for (int f = 0; f < 6; ++f) { free(b->mip[m - 1].f[f]); b->mip[m - 1].f[f] = NULL; } }
+    }
+    free(s.h); free(s.sinlat);
+    if (!bake_write(b, out_path)) return 0;
+    printf("wrote %s, %.1f s in all\n", out_path, now_s() - t0);
+    bake_print(b, 1);
+    return 1;
+}
+
+/* --- Dumping a face ----------------------------------------------------------------- */
+
+static void png_sink(void *ctx, void *data, int size) { fwrite(data, 1, (size_t)size, (FILE *)ctx); }
+
+static unsigned char ramp(double a, double b, double t) { double v = a + (b - a) * t; return (unsigned char)(v < 0 ? 0 : v > 255 ? 255 : v + 0.5); }
+
+/* The land's colour by height, the sea floor's by depth, lit from the upper left. */
+static void shade(double h, double gx, double gy, double exaggerate, unsigned char *rgb) {
+    double r, g, b;
+    if (h < 0.0) {
+        double t = -h / 8000.0; if (t > 1.0) t = 1.0;
+        r = ramp(130, 10, t); g = ramp(180, 25, t); b = ramp(225, 80, t);
+    } else {
+        static const double stop[5][4] = { { 0, 90, 140, 70 }, { 800, 175, 165, 85 }, { 2000, 135, 95, 60 }, { 3500, 205, 205, 200 }, { 5500, 255, 255, 255 } };
+        int k = 0;
+        while (k < 3 && h > stop[k + 1][0]) ++k;
+        double t = (h - stop[k][0]) / (stop[k + 1][0] - stop[k][0]); if (t > 1.0) t = 1.0;
+        r = ramp(stop[k][1], stop[k + 1][1], t); g = ramp(stop[k][2], stop[k + 1][2], t); b = ramp(stop[k][3], stop[k + 1][3], t);
+    }
+    double nx = -gx * exaggerate, ny = -gy * exaggerate, nz = 1.0, len = sqrt(nx * nx + ny * ny + nz * nz);
+    double lx = -0.5, ly = -0.5, lz = 0.7071;
+    double lit = (nx * lx + ny * ly + nz * lz) / len;
+    double k = 0.55 + 0.45 * (lit < 0.0 ? 0.0 : lit);
+    rgb[0] = (unsigned char)(r * k); rgb[1] = (unsigned char)(g * k); rgb[2] = (unsigned char)(b * k);
+}
+
+static int dump(const char *bake_path, const char *png_path, int face, int mip) {
+    Bake *b = (Bake *)xmalloc(sizeof(Bake));
+    if (!bake_read(b, bake_path)) return 0;
+    if (mip < 0) { mip = 0; while (mip + 1 < b->mips && (b->N >> mip) > 1024) ++mip; }
+    if (mip >= b->mips) { fprintf(stderr, "earth_bake: %s has %d mips\n", bake_path, b->mips); return 0; }
+    const Mip *m = &b->mip[mip];
+    int g = m->g, gap = 4;
+    int cols = face < 0 ? 3 : 1, rows = face < 0 ? 2 : 1;
+    int W = cols * g + (cols - 1) * gap, H = rows * g + (rows - 1) * gap;
+    unsigned char *img = (unsigned char *)xmalloc((size_t)W * H * 3);
+    memset(img, 0, (size_t)W * H * 3);
+    double spacing = PLANET_RADIUS * (PI / 2.0) / m->n;
+    for (int k = 0; k < cols * rows; ++k) {
+        int f = face < 0 ? k : face, ox = (k % cols) * (g + gap), oy = (k / cols) * (g + gap);
+        const int16_t *q = m->q[f];
+        for (int j = 0; j < g; ++j) {
+            for (int i = 0; i < g; ++i) {
+                double h = b->scale * q[(size_t)j * g + i] + b->offset;
+                int i0 = i > 0 ? i - 1 : i, i1 = i < g - 1 ? i + 1 : i, j0 = j > 0 ? j - 1 : j, j1 = j < g - 1 ? j + 1 : j;
+                double gx = (double)(q[(size_t)j * g + i1] - q[(size_t)j * g + i0]) * b->scale / ((i1 - i0) * spacing);
+                double gy = (double)(q[(size_t)j1 * g + i] - q[(size_t)j0 * g + i]) * b->scale / ((j1 - j0) * spacing);
+                shade(h, gx, gy, 3.0, img + ((size_t)(oy + j) * W + (ox + i)) * 3);
+            }
+        }
+    }
+    FILE *out = fopen(png_path, "wb");
+    if (!out) { fprintf(stderr, "earth_bake: cannot write %s\n", png_path); return 0; }
+    int ok = stbi_write_png_to_func(png_sink, out, W, H, 3, img, W * 3);
+    fclose(out);
+    free(img);
+    if (!ok) { fprintf(stderr, "earth_bake: writing %s failed\n", png_path); return 0; }
+    printf("wrote %s: mip %d, %d x %d (the outer %d samples of each face are its apron)\n", png_path, mip, W, H, APRON);
+    return 1;
+}
+
+/* --- main ----------------------------------------------------------------------------- */
+
+static void usage(void) {
+    fprintf(stderr,
+        "usage: earth_bake <stage.r16> <out.bake> [--size N] [--threads T]\n"
+        "       earth_bake --info <bake>\n"
+        "       earth_bake --dump-face <k|all> <bake> <out.png> [--mip M]\n");
+}
+
+int main(int argc, char **argv) {
+    if (argc >= 3 && !strcmp(argv[1], "--info")) {
+        Bake *b = (Bake *)xmalloc(sizeof(Bake));
+        if (!bake_read(b, argv[2])) return 1;
+        bake_print(b, 1);
+        return 0;
+    }
+    if (argc >= 5 && !strcmp(argv[1], "--dump-face")) {
+        int face = !strcmp(argv[2], "all") ? -1 : atoi(argv[2]), mip = -1;
+        if (face < -1 || face > 5) { usage(); return 1; }
+        for (int i = 5; i + 1 < argc; i += 2) {
+            if (!strcmp(argv[i], "--mip")) mip = atoi(argv[i + 1]);
+            else { usage(); return 1; }
+        }
+        return dump(argv[3], argv[4], face, mip) ? 0 : 1;
+    }
+    if (argc < 3) { usage(); return 1; }
+    int N = 4096, threads = cpu_count();
+    for (int i = 3; i < argc; i += 2) {
+        if (i + 1 >= argc) { usage(); return 1; }
+        if (!strcmp(argv[i], "--size")) N = atoi(argv[i + 1]);
+        else if (!strcmp(argv[i], "--threads")) threads = atoi(argv[i + 1]);
+        else { usage(); return 1; }
+    }
+    if (threads < 1) threads = 1;
+    return bake(argv[1], argv[2], N, threads) ? 0 : 1;
+}

@@ -65,7 +65,7 @@ typedef struct TerrainCanyon {
  * at most max of them; returns how many it wrote. */
 int    terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, int max);
 
-/* --- The planet (src/terrain/terrain_world.c) ----------------------------------
+/* --- The planet (src/terrain/terrain_world.c, terrain_cube.c) --------------------
  * The world is a sphere of PLANET_RADIUS, and world X/Z is a chart of it: the
  * azimuthal-equidistant projection about the chart's origin, world (0, 0), so
  * a point's distance from the origin in X/Z is its distance over the sphere.
@@ -73,10 +73,12 @@ int    terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, in
  * in the chart; over the 20 km round the city it is the sphere's tangent plane
  * to within a millimetre in a kilometre or two (terrain_bend).
  *
- * The planet frame has its origin at the planet's centre, +Z through the
- * north pole; a TerrainDir in it is a direction (unit) or a point (metres).
- * The chart's origin is at a fixed place on the planet, and world +x points
- * east there, +y up and +z south.
+ * The planet frame has its origin at the planet's centre and is geocentric
+ * and right-handed, as the Earth's is: +Z through the north pole, +X through
+ * latitude 0, longitude 0, and +Y through latitude 0, longitude 90 E
+ * (terrain_latlon_dir). A TerrainDir in it is a direction (unit) or a point
+ * (metres). The chart's origin is at a fixed place on the planet, and world
+ * +x points east there, +y up and +z south.
  *
  * The planet's surface is addressed as a cube-sphere: the six faces of a cube,
  * each a square [-1, 1]^2 of (u, v) projected out onto the sphere. Its
@@ -117,6 +119,11 @@ void       terrain_bend_bounds(float mn[3], float mx[3]);
  * (u, v) there. */
 TerrainDir terrain_face_dir(int face, double u, double v);
 int        terrain_dir_face(TerrainDir p, double *u, double *v);
+/* Latitude and longitude (degrees, north and east positive) to a direction in
+ * the planet frame, and a direction (or point) to its latitude in [-90, 90]
+ * and longitude in [-180, 180]; a pole's longitude is 0. */
+TerrainDir terrain_latlon_dir(double lat_deg, double lon_deg);
+void       terrain_dir_latlon(TerrainDir p, double *lat_deg, double *lon_deg);
 
 /* A patch: the square of face `face` at quadtree level `level`, whose (u, v)
  * runs over cells (i, j) of 2^level a side. Its identity is these four
