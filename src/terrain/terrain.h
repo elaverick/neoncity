@@ -77,8 +77,10 @@ int    terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, in
  * and right-handed, as the Earth's is: +Z through the north pole, +X through
  * latitude 0, longitude 0, and +Y through latitude 0, longitude 90 E
  * (terrain_latlon_dir). A TerrainDir in it is a direction (unit) or a point
- * (metres). The chart's origin is at a fixed place on the planet, and world
- * +x points east there, +y up and +z south.
+ * (metres). The chart's origin is at a fixed place on the planet, the Earth
+ * bake's origin (the megacity's latitude and longitude) or without a bake a
+ * place on face 0, and world +x points east there, +y up and +z south (both
+ * turned by the bake's heading).
  *
  * The planet's surface is addressed as a cube-sphere: the six faces of a cube,
  * each a square [-1, 1]^2 of (u, v) projected out onto the sphere. Its
@@ -111,7 +113,7 @@ void       terrain_bend(float dx, float dz, float h, float cam_y, float out[3]);
 /* Widens a camera-relative box (world heights less the camera's, as for a
  * flat world) to hold its bent image, for frustum culling what the shaders
  * bend: the bend only lowers, by up to s^2 / 2R at s off, and moves across by
- * a part in a thousand at most, for ground lower than 6 km. */
+ * two parts in a thousand at most, for ground within 12.7 km of y = 0. */
 void       terrain_bend_bounds(float mn[3], float mx[3]);
 
 /* Cube-sphere addressing. A direction for face coordinates (u, v), which may
@@ -154,8 +156,10 @@ double terrain_planet_lowest(void);
  * The real planet's ground, baked onto the cube-sphere's faces by
  * tools/earth_bake.c from the editable project in data/earth (see
  * data/earth/SOURCE.md): elevation in metres above sea level, the sea floor
- * negative, at mip 0 about 2.4 km a sample. Nothing reads it into the land
- * yet (Earth roadmap E4); the procedural macro field stands in for it. */
+ * negative, at mip 0 about 2.4 km a sample. It is the land's lift (the
+ * planet's highlands and basins, terrain_internal.h) less the datum, its
+ * height under the megacity, so world Y = elevation - datum; the bake's
+ * origin is the chart's (terrain_chart_dir). */
 
 /* Loads a bake: the file at `path`, or with NULL the first of $NEONCITY_EARTH,
  * earth.bake beside the executable, earth.bake here and build/earth.bake.
@@ -183,9 +187,10 @@ void   terrain_earth_range(TerrainDir p, double radius, double spacing, double *
 double terrain_earth_lod_error(TerrainDir p, double spacing);
 
 /* Where the sea will be, at world (x, z): there is no water yet, but when it
- * comes it will cover only where this is at most 0. It is the macro field's
- * height above the sea level to come (m), less the world ocean's fall beyond
- * the settlements' reach. A pure function, slow (scales of 100s of km): the
+ * comes it will cover only where this is at most 0. It is the Earth's
+ * elevation (the stand-in's without a bake) above the sea level to come (m),
+ * less the world ocean's fall beyond the settlements' reach. A pure
+ * function, slow (scales of tens of km and more): the
  * plan keeps a grid of it (plan_world_sea). */
 double terrain_sea_margin(double x, double z);
 

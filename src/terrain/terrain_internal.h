@@ -49,15 +49,21 @@
 /* --- The land (terrain_land.c) ------------------------------------------------
  * land = base + M * macro + E * sum over types t of w_t * F_t - C * canyon
  *   base    rolling ground everywhere, TERRAIN_BASE_M high.
- *   macro   the planet's broad highlands and basins, TERRAIN_MACRO_M high, a
- *           fractal sum over the sphere itself (the point's direction, so it
- *           has no seam anywhere). Where it is high the mountains and
- *           plateaus gain affinity and the plains lose it, by
- *           TERRAIN_MACRO_BIAS a unit; low, the reverse. M is 0 out to
- *           TERRAIN_MACRO_FROM beyond the megacity's edge, rising to 1 at
- *           TERRAIN_MACRO_FULL, so its region is as it was. The other
- *           settlements' ground rises and falls with M * macro (slowly:
- *           TERRAIN_LIFT_SLOPE), so they stand on their highlands.
+ *   macro   the planet's broad highlands and basins: the Earth
+ *           (terrain_earth_height) less the datum E0, its height under the
+ *           megacity, so world Y = elevation - E0 and the sea will stand at
+ *           Y = -E0. Under the settlements and their belts it is read at
+ *           TERRAIN_LIFT_SPACING, so a city's grade stays tiny; out on the
+ *           land the data's own detail blends in from TERRAIN_DETAIL_FROM
+ *           beyond the nearest edge to TERRAIN_DETAIL_FULL. Without a bake
+ *           the procedural stand-in, TERRAIN_MACRO_M times a fractal sum
+ *           over the sphere, takes its place with E0 = 0. Where the land is
+ *           high the mountains and plateaus gain affinity and the plains
+ *           lose it, by TERRAIN_MACRO_BIAS a unit of terrain_earth_highland;
+ *           low, the reverse. M is 0 out to TERRAIN_MACRO_FROM beyond the
+ *           megacity's edge, rising to 1 at TERRAIN_MACRO_FULL, so its region
+ *           is as it was. The other settlements' ground rises and falls with
+ *           M * macro, so they stand on their highlands.
  *   F_t     each landform type's heights (TERRAIN_PLAINS ... ; terrain.h):
  *           plains, low swells; hills, rolling relief; mountain belts, an uplift
  *           under ridged relief whose ridges run along the belt's strike;
@@ -84,14 +90,9 @@
 #define TERRAIN_MACRO_FROM     40000.0
 #define TERRAIN_MACRO_FULL     400000.0
 #define TERRAIN_MACRO_BIAS     0.25
-/* A bound on how steep M * macro is (m/m): M rises over FULL - FROM as a
- * smoothstep (1.5 / (FULL - FROM) at its steepest) of an edge measure that
- * changes by at most CITY_EDGE_RATE a metre, times |macro| <= 1; and the
- * macro's fractal sum of value noise over the sphere changes by at most
- * 3 sqrt(3) / L per metre an octave of wavelength L, times its weight (the
- * chart's distances are never shorter than the sphere's). */
-#define TERRAIN_LIFT_SLOPE (TERRAIN_MACRO_M * (1.5 * CITY_EDGE_RATE / (TERRAIN_MACRO_FULL - TERRAIN_MACRO_FROM) + \
-                            3.0 * 1.7320508075688772 * TERRAIN_MACRO_OCTAVES / (1.875 * TERRAIN_MACRO_WAVE)) + 1e-4)
+#define TERRAIN_LIFT_SPACING   20000.0  /* the Earth under the settlements, read this coarsely (m) */
+#define TERRAIN_DETAIL_FROM    2000.0   /* the Earth's own detail: none nearer an edge than this... */
+#define TERRAIN_DETAIL_FULL    15000.0  /* ...and all of it from here (within PLAN_EDGE_CAP) */
 #define TERRAIN_BASE_WAVE      4000.0   /* longest wavelength (m) */
 #define TERRAIN_BASE_OCTAVES   6
 #define TERRAIN_REGION_FROM    1000.0
@@ -133,9 +134,10 @@
 #define TERRAIN_CANYON_WALL    1.6      /* walls' mean slope: depth over run */
 #define TERRAIN_CANYON_FROM    2500.0   /* none nearer the city's edge than this... */
 #define TERRAIN_CANYON_FULL    6000.0   /* ...nor at full depth nearer than this */
-/* How high and how deep the land can reach (m). */
-#define TERRAIN_LAND_TOP_M  (TERRAIN_BASE_M + TERRAIN_MACRO_M + TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M)
-#define TERRAIN_LAND_DEEP_M (TERRAIN_BASE_M + TERRAIN_MACRO_M + TERRAIN_HILLS_M + TERRAIN_CANYON_DEEP_M)
+/* How high and how deep the land can reach above and below its lift (m;
+ * terrain_lift_bound is the lift's own reach). */
+#define TERRAIN_LAND_TOP_M  (TERRAIN_BASE_M + TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M)
+#define TERRAIN_LAND_DEEP_M (TERRAIN_BASE_M + TERRAIN_HILLS_M + TERRAIN_CANYON_DEEP_M)
 
 /* The two fields before blending. urban_shape is unit amplitude, [-1, 1];
  * land is in metres. */
@@ -147,16 +149,33 @@ double terrain_land_lod(double x, double z, double edge, double home, double spa
 /* The same, and M * macro in it in *lift: the planet's highlands, which a
  * settlement's ground rises and falls with too (terrain_height.c). */
 double terrain_land_parts(double x, double z, double edge, double home, double spacing, double *lift);
-/* M * macro alone, at `spacing`, for the megacity's edge measure `home`: 0
- * within TERRAIN_MACRO_FROM of the megacity. */
+/* M * macro alone, at `spacing`, for the megacity's edge measure `home`, as
+ * it is wherever plan_urban is above 0 (the Earth's detail is left out
+ * there): 0 within TERRAIN_MACRO_FROM of the megacity. */
 double terrain_lift(double x, double z, double home, double spacing);
-/* The macro field itself over the sphere, in [-1, 1]. */
+/* The procedural stand-in for the Earth over the sphere, in [-1, 1]. */
 double terrain_macro(TerrainDir p, double spacing);
 /* |M * macro| is at most this where the megacity's edge measure is at most `home`. */
 double terrain_lift_bound(double home);
 /* The lift under a settlement's ground at (x, z): terrain_lift at full detail,
  * for the megacity's measure there. terrain_urban_height is it plus the relief. */
 double terrain_urban_lift(double x, double z);
+/* Bounds on terrain_urban_lift over the rectangle (m). */
+void   terrain_urban_lift_range(double x0, double z0, double x1, double z1, double *lo, double *hi);
+
+/* The Earth's part in the chart and the land (terrain_earth.c), fixed at
+ * load: the chart's basis about the bake's origin, x east and z south turned
+ * by the heading (0 without a bake, and the procedural chart stands); the
+ * datum E0, the Earth at the origin at TERRAIN_LIFT_SPACING (0 without a
+ * bake); the elevation scaled for the landforms' affinity, in [-1, 1] (the
+ * stand-in's own value without a bake); and the Earth's part of
+ * terrain_lod_key (0 wherever it reads mip 0 alone, or has no bake). */
+int      terrain_earth_chart(TerrainDir *ex, TerrainDir *o, TerrainDir *ez);
+double   terrain_earth_datum(void);
+double   terrain_earth_highland(TerrainDir p);
+uint32_t terrain_earth_lod_key(double spacing);
+/* terrain_earth_range over only the mips `spacing` itself reads. */
+void     terrain_earth_range_at(TerrainDir p, double radius, double spacing, double *lo, double *hi);
 /* The same at a point of some chart, (x, z) in it and p its direction on the
  * planet: the macro field reads p, the rest (x, z). terrain_land_lod is this
  * in the world's chart (terrain_chart_dir); terrain_world.c's second chart
@@ -175,9 +194,9 @@ double terrain_height_bare(double x, double z, double spacing);
 double terrain_road_lod_error(double x, double z, double spacing);
 /* How deep the canyons cut at (x, z) before C keeps them from the city (m). */
 double terrain_canyon_depth(double x, double z);
-/* Which octaves every fractal sum keeps at `spacing`, as one number: two
- * spacings with the same key evaluate the same heights. */
-uint32_t terrain_lod_key(double spacing);
+/* Which octaves every fractal sum keeps at `spacing`, and the Earth's mips,
+ * as one number: two spacings with the same key evaluate the same heights. */
+uint64_t terrain_lod_key(double spacing);
 /* Of a fractal sum of `octaves` octaves whose longest wavelength is `wave`,
  * the share of its weight left out at `spacing`. */
 double terrain_dropped(double wave, int octaves, double spacing);

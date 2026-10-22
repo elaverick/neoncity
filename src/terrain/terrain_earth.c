@@ -59,11 +59,13 @@ typedef struct EarthMip {
 } EarthMip;
 
 static struct Earth {
-    int      loaded, mips, N;
-    double   scale, offset;
-    double   origin_lat, origin_lon, origin_heading;
-    char     path[1024];
-    EarthMip mip[MAX_MIPS];
+    int        loaded, mips, N;
+    double     scale, offset;
+    double     origin_lat, origin_lon, origin_heading;
+    TerrainDir ex, o, ez;       /* the chart's basis about the origin */
+    double     datum;           /* E0: the Earth at the origin at TERRAIN_LIFT_SPACING (m) */
+    char       path[1024];
+    EarthMip   mip[MAX_MIPS];
 } g_earth;
 
 /* --- Reading the file ------------------------------------------------------------ */
@@ -215,6 +217,19 @@ static int load_file(const char *path) {
 #include <unistd.h>
 #endif
 
+/* The chart about the origin: o its direction, ex east and ez south there
+ * (as the procedural chart's, ez = ex x o), both turned clockwise by the
+ * heading, so the chart's -z points along it. */
+static void set_chart(void) {
+    TerrainDir o = terrain_latlon_dir(g_earth.origin_lat, g_earth.origin_lon);
+    TerrainDir east = unit3((TerrainDir){ -o.y, o.x, 0.0 });   /* the pole (+z) cross o */
+    TerrainDir north = cross3(o, east);
+    double h = g_earth.origin_heading * (PI / 180.0), c = cos(h), s = sin(h);
+    g_earth.o = o;
+    g_earth.ex = add3(scale3(east, c), scale3(north, -s));
+    g_earth.ez = cross3(g_earth.ex, o);
+}
+
 /* The bake beside the executable, in the working directory, or in build/ under it. */
 static int exe_dir(char *out, size_t cap) {
     char exe[1024] = "";
@@ -246,9 +261,12 @@ int terrain_earth_load(const char *path) {
         if (!ok) ok = load_file("build/earth.bake");
     }
     if (ok) {
+        set_chart();
+        g_earth.datum = terrain_earth_height(g_earth.o, TERRAIN_LIFT_SPACING);
         const EarthMip *m0 = &g_earth.mip[0];
-        printf("earth: %s, %d a side (%.0f m), %d mips, %.0f to %.0f m, grade %.2f; origin %.4f %.4f heading %.1f\n",
-               g_earth.path, g_earth.N, m0->step, g_earth.mips, m0->lo, m0->hi, m0->grade, g_earth.origin_lat, g_earth.origin_lon, g_earth.origin_heading);
+        printf("earth: %s, %d a side (%.0f m), %d mips, %.0f to %.0f m, grade %.2f; origin %.4f %.4f heading %.1f, datum %.1f m\n",
+               g_earth.path, g_earth.N, m0->step, g_earth.mips, m0->lo, m0->hi, m0->grade, g_earth.origin_lat, g_earth.origin_lon, g_earth.origin_heading,
+               g_earth.datum);
     } else {
         fprintf(stderr, "earth: no bake %s (cmake --build build --target earth makes build/earth.bake, see data/earth/SOURCE.md); the procedural macro field stands in\n",
                 path ? path : "found (NEONCITY_EARTH, earth.bake by the executable or here, build/earth.bake)");
@@ -258,16 +276,34 @@ int terrain_earth_load(const char *path) {
 
 int terrain_earth_loaded(void) { return g_earth.loaded; }
 
+int terrain_earth_chart(TerrainDir *ex, TerrainDir *o, TerrainDir *ez) {
+    if (!g_earth.loaded) return 0;
+    *ex = g_earth.ex; *o = g_earth.o; *ez = g_earth.ez;
+    return 1;
+}
+
+double terrain_earth_datum(void) { return g_earth.loaded ? g_earth.datum : 0.0; }
+
+/* For now the elevation at the lift's spacing over TERRAIN_MACRO_M, clamped,
+ * so the stand-in's range; E5 reads the bake's relief instead. */
+double terrain_earth_highland(TerrainDir p) {
+    if (!g_earth.loaded) return terrain_macro(p, 0.0);
+    double h = terrain_earth_height(p, TERRAIN_LIFT_SPACING) / TERRAIN_MACRO_M;
+    return h < -1.0 ? -1.0 : h > 1.0 ? 1.0 : h;
+}
+
 void terrain_earth_origin(double *lat, double *lon, double *heading) {
     if (g_earth.loaded) { *lat = g_earth.origin_lat; *lon = g_earth.origin_lon; *heading = g_earth.origin_heading; return; }
     terrain_dir_latlon(terrain_chart_dir(0.0, 0.0), lat, lon);
     *heading = 0.0;
 }
 
+_Static_assert(TERRAIN_MACRO_OCTAVES == 4, "the stand-in's grade takes its octave weights to sum to 1.875");
+
 void terrain_earth_extremes(double *lo, double *hi, double *grade) {
     if (g_earth.loaded) { *lo = g_earth.mip[0].lo; *hi = g_earth.mip[0].hi; *grade = g_earth.mip[0].grade; return; }
     *lo = -TERRAIN_MACRO_M; *hi = TERRAIN_MACRO_M;
-    *grade = TERRAIN_MACRO_M * 3.0 * 1.7320508075688772 * TERRAIN_MACRO_OCTAVES / (1.875 * TERRAIN_MACRO_WAVE);   /* as TERRAIN_LIFT_SLOPE's macro term */
+    *grade = TERRAIN_MACRO_M * 3.0 * 1.7320508075688772 * TERRAIN_MACRO_OCTAVES / (1.875 * TERRAIN_MACRO_WAVE);   /* value noise of wavelength L: 3 sqrt(3) / L a metre an octave */
 }
 
 /* --- Sampling ------------------------------------------------------------------------ */
@@ -284,6 +320,16 @@ static void mips_for(double spacing, int *m, double *t) {
 
 /* The coarsest mip read at `spacing` or any finer one. */
 static int mip_to(double spacing) { int m; double t; mips_for(spacing, &m, &t); return t > 0.0 ? m + 1 : m; }
+
+/* The mip and the blend, t in 2^-24ths: spacings that share them read the
+ * same heights (and two that differ by less than that are never asked for). */
+uint32_t terrain_earth_lod_key(double spacing) {
+    if (!g_earth.loaded) return 0;
+    int m; double t;
+    mips_for(spacing, &m, &t);
+    if (m == 0 && t == 0.0) return 0;
+    return (uint32_t)(m + 1) << 24 | (uint32_t)(t * 16777216.0);
+}
 
 static double comp(TerrainDir a, int k) { return k == 0 ? a.x : k == 1 ? a.y : a.z; }
 
@@ -479,6 +525,19 @@ void terrain_earth_range(TerrainDir p, double radius, double spacing, double *lo
     double alpha = radius / PLANET_RADIUS;
     Bound b = { 1e30, -1e30, 0.0 };
     for (int m = 0, last = mip_to(spacing); m <= last; ++m) cap_bound(&g_earth.mip[m], p, alpha, &b);
+    bound_out(&b, lo, hi);
+}
+
+/* The height at a spacing blends its two mips' heights, so lies between
+ * their bounds. */
+void terrain_earth_range_at(TerrainDir p, double radius, double spacing, double *lo, double *hi) {
+    if (!g_earth.loaded) { *lo = -TERRAIN_MACRO_M; *hi = TERRAIN_MACRO_M; return; }
+    double alpha = radius / PLANET_RADIUS;
+    Bound b = { 1e30, -1e30, 0.0 };
+    int m; double t;
+    mips_for(spacing, &m, &t);
+    cap_bound(&g_earth.mip[m], p, alpha, &b);
+    if (t > 0.0) cap_bound(&g_earth.mip[m + 1], p, alpha, &b);
     bound_out(&b, lo, hi);
 }
 

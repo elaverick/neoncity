@@ -16,12 +16,18 @@ typedef struct Region {
 } Region;
 
 /* --- The planet's highlands and basins ------------------------------------------
- * A fractal sum over the sphere, in [-1, 1], and how much of it the land
- * takes at an edge measure (M). */
+ * The Earth less the datum (terrain_internal.h), how much of it the land
+ * takes at the megacity's edge measure (M), and how much of the Earth's own
+ * detail at the nearest edge measure. The procedural stand-in is a fractal
+ * sum over the sphere, in [-1, 1]. */
 static double macro_weight(double edge) {
     double t = (edge - TERRAIN_MACRO_FROM) / (TERRAIN_MACRO_FULL - TERRAIN_MACRO_FROM);
     t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
     return t * t * (3.0 - 2.0 * t);
+}
+
+static double detail_rise(double edge) {
+    return smoothstepf((float)TERRAIN_DETAIL_FROM, (float)TERRAIN_DETAIL_FULL, (float)edge);
 }
 
 static double macro_at(TerrainDir p, double spacing) {
@@ -32,23 +38,31 @@ static double macro_at(TerrainDir p, double spacing) {
 
 double terrain_macro(TerrainDir p, double spacing) { return macro_at(p, spacing); }
 
-/* M grows with the megacity's measure, and |macro| <= 1. */
-double terrain_lift_bound(double home) { return macro_weight(home) * TERRAIN_MACRO_M; }
-_Static_assert(TERRAIN_MACRO_OCTAVES == 4, "TERRAIN_LIFT_SLOPE takes the macro's octave weights to sum to 1.875");
+/* M grows with the megacity's measure, and the Earth lies within its extremes. */
+double terrain_lift_bound(double home) {
+    double lo, hi, grade, e0 = terrain_earth_datum();
+    terrain_earth_extremes(&lo, &hi, &grade);
+    return macro_weight(home) * fmax(hi - e0, e0 - lo);
+}
 
-/* M * macro at a point of the world's chart (p NULL) or of another chart;
- * its affinity bias uses the full sum, whatever the spacing, so the region's
- * weights don't depend on the level of detail. M reads the megacity's own
- * edge measure, `home` (plan_city_edges). */
-static void macro_of(double x, double z, const TerrainDir *p, double home, double spacing, double *lift, double *bias) {
-    *lift = *bias = 0.0;
+/* M * macro at a point of the world's chart (p NULL) or of another chart:
+ * the Earth at TERRAIN_LIFT_SPACING (or coarser, at a coarser spacing), and
+ * by the detail's rise at the edge measure `edge` the Earth at the spacing
+ * itself. Its affinity bias reads the elevation at the lift's spacing,
+ * whatever the spacing, so the region's weights don't depend on the level of
+ * detail. M reads the megacity's own edge measure, `home` (plan_city_edges).
+ * bias may be NULL. */
+static void macro_of(double x, double z, const TerrainDir *p, double edge, double home, double spacing, double *lift, double *bias) {
+    *lift = 0.0;
+    if (bias) *bias = 0.0;
     double mw = macro_weight(home);
     if (mw <= 0.0) return;
     TerrainDir d = p ? *p : terrain_chart_dir(x, z);
-    double full = macro_at(d, 0.0);
-    int all = terrain_octaves(TERRAIN_MACRO_WAVE, TERRAIN_MACRO_OCTAVES, spacing) == TERRAIN_MACRO_OCTAVES;
-    *lift = mw * TERRAIN_MACRO_M * (all ? full : macro_at(d, spacing));
-    *bias = mw * TERRAIN_MACRO_BIAS * full;
+    double coarse = terrain_earth_height(d, fmax(spacing, TERRAIN_LIFT_SPACING)), r = detail_rise(edge);
+    double l = coarse - terrain_earth_datum();
+    if (r > 0.0) l += r * (terrain_earth_height(d, spacing) - coarse);
+    *lift = mw * l;
+    if (bias) *bias = mw * TERRAIN_MACRO_BIAS * terrain_earth_highland(d);
 }
 
 static void region_at(double x, double z, double bias, Region *r) {
@@ -276,7 +290,7 @@ double terrain_canyon_depth(double x, double z) {
 static double land_parts(double x, double z, const TerrainDir *p, double edge, double home, double spacing, double *lift) {
     double h = TERRAIN_BASE_M * fbm_lod(WORLD_SEED ^ 0x7E12u, x, z, TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
     double e = region_rise(edge), c = canyon_rise(edge), bias;
-    macro_of(x, z, p, home, spacing, lift, &bias);
+    macro_of(x, z, p, edge, home, spacing, lift, &bias);
     h += *lift;
     if (e > 0.0) {
         Region r;
@@ -306,16 +320,35 @@ double terrain_land(double x, double z) {
     return terrain_land_lod(x, z, edge, home, 0.0);
 }
 
+/* Where plan_urban is above 0 the edge measure is below 0, and the detail's
+ * rise 0. */
 double terrain_lift(double x, double z, double home, double spacing) {
-    double lift, bias;
-    macro_of(x, z, NULL, home, spacing, &lift, &bias);
+    double lift;
+    macro_of(x, z, NULL, -CITY_BELT, home, spacing, &lift, NULL);
     return lift;
+}
+
+/* Over the rectangle the megacity's measure strays from its value at the
+ * centre by at most CITY_EDGE_RATE times the half-diagonal, and no point of
+ * it is further from the centre on the sphere than in the chart (whose
+ * scale is never under 1), so the Earth there lies within its range over
+ * that cap; M is at least 0, so the lift lies between the extreme products. */
+void terrain_urban_lift_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
+    double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0), h = plan_home_edge(cx, cz);
+    double wlo = macro_weight(h - CITY_EDGE_RATE * half), whi = macro_weight(h + CITY_EDGE_RATE * half), elo, ehi;
+    *lo = *hi = 0.0;
+    if (whi <= 0.0) return;
+    terrain_earth_range_at(terrain_chart_dir(cx, cz), half, TERRAIN_LIFT_SPACING, &elo, &ehi);
+    elo -= terrain_earth_datum();
+    ehi -= terrain_earth_datum();
+    *lo = fmin(wlo * elo, whi * elo) - 1e-6;   /* rounding */
+    *hi = fmax(wlo * ehi, whi * ehi) + 1e-6;
 }
 
 void terrain_landform(double x, double z, TerrainLandform *out) {
     Region r;
     double lift, bias;
-    macro_of(x, z, NULL, plan_home_edge(x, z), 0.0, &lift, &bias);
+    macro_of(x, z, NULL, 0.0, plan_home_edge(x, z), 0.0, &lift, &bias);
     region_at(x, z, bias, &r);
     for (int t = 0; t < TERRAIN_TYPES; ++t) out->w[t] = r.w[t];
     out->canyon = (float)terrain_canyon_depth(x, z);
@@ -323,25 +356,35 @@ void terrain_landform(double x, double z, TerrainLandform *out) {
 
 /* Base, macro, the types and canyons each within their reach: the hills
  * reach lowest, the mountains highest, the canyons cut at most their deepest;
- * E and C only grow with the edge measure, M with the megacity's. */
+ * E and C only grow with the edge measure, M with the megacity's. The lift
+ * blends the Earth at two spacings, each within its extremes. */
 void terrain_land_range(double edge, double home, double *lo, double *hi) {
-    double e = region_rise(edge), m = macro_weight(home) * TERRAIN_MACRO_M;
-    *lo = -(TERRAIN_BASE_M + m + e * TERRAIN_HILLS_M + canyon_rise(edge) * TERRAIN_CANYON_DEEP_M);
-    *hi = TERRAIN_BASE_M + m + e * (TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M);
+    double e = region_rise(edge), m = macro_weight(home), elo, ehi, grade, e0 = terrain_earth_datum();
+    terrain_earth_extremes(&elo, &ehi, &grade);
+    *lo = m * fmin(0.0, elo - e0) - (TERRAIN_BASE_M + e * TERRAIN_HILLS_M + canyon_rise(edge) * TERRAIN_CANYON_DEEP_M);
+    *hi = m * fmax(0.0, ehi - e0) + TERRAIN_BASE_M + e * (TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M);
 }
 
 /* Leaving octaves out of a fractal sum moves it by at most their share of its
  * weight (each octave's noise is bounded), the same for the ridged sum (each
  * octave adds 0 .. its weight, and the carry only reaches later octaves). The
  * plateau's mask moves the step through its slope. The region's weights and
- * the canyons don't depend on the spacing. */
+ * the canyons don't depend on the spacing. The lift's coarse Earth is its
+ * full detail out to TERRAIN_LIFT_SPACING, and beyond within the Earth's
+ * bounds at both spacings of the full detail; its fine Earth within the
+ * bound at the spacing. */
 double terrain_land_lod_error(double x, double z, double spacing) {
     double err = TERRAIN_BASE_M * terrain_dropped(TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
-    double home, edge = plan_city_edges(x, z, &home), e = region_rise(edge), lift, bias;
-    err += macro_weight(home) * TERRAIN_MACRO_M * terrain_dropped(TERRAIN_MACRO_WAVE, TERRAIN_MACRO_OCTAVES, spacing);
+    double home, edge = plan_city_edges(x, z, &home), e = region_rise(edge), mw = macro_weight(home), lift, bias;
+    if (mw > 0.0) {
+        TerrainDir d = terrain_chart_dir(x, z);
+        double r = detail_rise(edge), fine = terrain_earth_lod_error(d, spacing);
+        double coarse = spacing > TERRAIN_LIFT_SPACING ? fine + terrain_earth_lod_error(d, TERRAIN_LIFT_SPACING) : 0.0;
+        err += mw * ((1.0 - r) * coarse + r * fine);
+    }
     if (e > 0.0) {
         Region r;
-        macro_of(x, z, NULL, home, 0.0, &lift, &bias);
+        macro_of(x, z, NULL, edge, home, 0.0, &lift, &bias);
         region_at(x, z, bias, &r);
         double t[TERRAIN_TYPES];
         t[TERRAIN_PLAINS] = TERRAIN_PLAINS_M * terrain_dropped(TERRAIN_PLAINS_WAVE, TERRAIN_PLAINS_OCTAVES, spacing);
@@ -364,14 +407,14 @@ double terrain_dropped(double wave, int octaves, double spacing) {
     return drop / total;
 }
 
-uint32_t terrain_lod_key(double spacing) {
+uint64_t terrain_lod_key(double spacing) {
     static const struct { double wave; int octaves; } sums[] = {
         { TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES }, { TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES },
         { TERRAIN_PLAINS_WAVE, TERRAIN_PLAINS_OCTAVES }, { TERRAIN_HILLS_WAVE, TERRAIN_HILLS_OCTAVES },
         { TERRAIN_RIDGE_WAVE, TERRAIN_RIDGE_OCTAVES }, { TERRAIN_MASK_WAVE, TERRAIN_MASK_OCTAVES },
         { TERRAIN_TOP_WAVE, TERRAIN_TOP_OCTAVES }, { TERRAIN_MACRO_WAVE, TERRAIN_MACRO_OCTAVES },
     };
-    uint32_t key = 0;
-    for (size_t k = 0; k < sizeof(sums) / sizeof(sums[0]); ++k) key = key * 16u + (uint32_t)terrain_octaves(sums[k].wave, sums[k].octaves, spacing);
-    return key;
+    uint64_t key = 0;
+    for (size_t k = 0; k < sizeof(sums) / sizeof(sums[0]); ++k) key = key * 16u + (uint64_t)terrain_octaves(sums[k].wave, sums[k].octaves, spacing);
+    return key << 32 | terrain_earth_lod_key(spacing);
 }

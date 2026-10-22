@@ -5,10 +5,11 @@
  * that addresses the surface, and the ground and horizon over it. Every
  * function is pure; directions are computed in double. */
 
-/* Where the chart's origin lies: face 0 (+x), at equal-angle (u, v) =
- * (0.31, 0.95). That puts the face's +v edge (the seam with face 4, +z)
- * about 250 km from the city, within sight from aircraft height, so the
- * seams get looked at. */
+/* Where the chart's origin lies: the Earth bake's origin, the megacity's
+ * place on the Earth (terrain_earth_chart). Without a bake, face 0 (+x), at
+ * equal-angle (u, v) = (0.31, 0.95). That puts the face's +v edge (the seam
+ * with face 4, +z) about 250 km from the city, within sight from aircraft
+ * height, so the seams get looked at. */
 #define PI 3.14159265358979323846
 
 #define CHART_FACE 0
@@ -31,6 +32,7 @@
 
 /* The chart's origin o and its x and z directions there: x east, z south. */
 static void chart_basis(TerrainDir *ex, TerrainDir *o, TerrainDir *ez) {
+    if (terrain_earth_chart(ex, o, ez)) return;
     *o = terrain_face_dir(CHART_FACE, CHART_U, CHART_V);
     TerrainDir east = { -o->y, o->x, 0.0 };   /* the pole (+z) cross o */
     *ex = unit3(east);
@@ -112,11 +114,12 @@ void terrain_bend(float dx, float dz, float h, float cam_y, float out[3]) {
 
 /* The farthest corner off sets the most the box can fall and spread: the
  * drop (R + h) 2 sin^2(theta / 2) is under s^2 (1 + h / R) / 2R, and across, k
- * strays from 1 by under theta^2 / 6 + h / R; h / R < 0.001 for h < 6 km. */
+ * strays from 1 by under theta^2 / 6 + |h| / R; |h| / R < 0.002 for |h| under
+ * 12.7 km, the Earth's deepest trench and highest peak less any datum. */
 void terrain_bend_bounds(float mn[3], float mx[3]) {
     const double R = PLANET_RADIUS;
     double sx = fmax(fabs(mn[0]), fabs(mx[0])), sz = fmax(fabs(mn[2]), fabs(mx[2])), s = hypot(sx, sz);
-    double drop = s * s / (2.0 * R) * 1.001 + 0.01, grow = s * (s * s / (6.0 * R * R) + 0.001) + 0.01;
+    double drop = s * s / (2.0 * R) * 1.002 + 0.01, grow = s * (s * s / (6.0 * R * R) + 0.002) + 0.01;
     mn[1] -= (float)drop;
     mn[0] -= (float)grow; mx[0] += (float)grow;
     mn[2] -= (float)grow; mx[2] += (float)grow;
@@ -160,10 +163,14 @@ double terrain_planet_lowest(void) {
 }
 
 /* --- Where the sea will be ----------------------------------------------------------
- * The planet has no water yet. When it does, the sea will fill the basins of
- * the macro field below SEA_LEVEL_MACRO, and the whole far side of the planet
- * from the chart's origin, beyond SEA_OUTER_FROM: the world ocean, until a
- * settlement there can have a chart of its own (plan.h, PLAN_WORLD_REACH). */
+ * The planet has no water yet. When it does, the sea will fill the Earth's
+ * own oceans, up to SEA_MARGIN_M above sea level (without a bake, the basins
+ * of the stand-in below SEA_LEVEL_MACRO), and the whole far side of the
+ * planet from the chart's origin, beyond SEA_OUTER_FROM: the world ocean,
+ * until a settlement there can have a chart of its own (plan.h,
+ * PLAN_WORLD_REACH). The Earth is read at the lift's spacing, as coarse as
+ * the plan's sea grid. */
+#define SEA_MARGIN_M    20.0
 #define SEA_LEVEL_MACRO (-0.12)
 #define SEA_OUTER_FROM  (0.35 * PI)
 #define SEA_OUTER_TO    (0.39 * PI)
@@ -172,7 +179,9 @@ double terrain_planet_lowest(void) {
 double terrain_sea_margin(double x, double z) {
     double th = hypot(x, z) / PLANET_RADIUS;
     if (th >= SEA_OUTER_TO) return -SEA_OUTER_M;
-    double m = TERRAIN_MACRO_M * (terrain_macro(terrain_chart_dir(x, z), 0.0) - SEA_LEVEL_MACRO);
+    TerrainDir d = terrain_chart_dir(x, z);
+    double m = terrain_earth_loaded() ? terrain_earth_height(d, TERRAIN_LIFT_SPACING) - SEA_MARGIN_M
+                                      : TERRAIN_MACRO_M * (terrain_macro(d, 0.0) - SEA_LEVEL_MACRO);
     if (th > SEA_OUTER_FROM) {
         double t = (th - SEA_OUTER_FROM) / (SEA_OUTER_TO - SEA_OUTER_FROM);
         m -= SEA_OUTER_M * t * t * (3.0 - 2.0 * t);

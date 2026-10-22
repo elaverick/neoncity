@@ -803,9 +803,13 @@ static int map(const char *path, double km) {
                 for (int q = 0; q < 3; ++q) col[q] += lf.w[t] * tint[t][q];
             float e = (float)plan_city_edge(x, z), city = e < 0.0f ? 1.0f : 0.0f;
             float wet = clampf(lf.canyon / 100.0f, 0.0f, 1.0f) * smoothstepf((float)TERRAIN_CANYON_FROM, (float)TERRAIN_CANYON_FULL, e);
-            float hgt = 0.7f + 0.6f * clampf((float)(h / (TERRAIN_LAND_TOP_M - TERRAIN_MACRO_M)), -0.5f, 1.0f);
+            /* heights over the landforms' reach, or the Earth's at the larger scales; the sea to come in blue */
+            float hgt = 0.7f + 0.6f * clampf((float)(h / fmax(TERRAIN_LAND_TOP_M, 0.4 * km)), -0.5f, 1.0f);
+            float sea = terrain_sea_margin(x, z) <= 0.0 ? 1.0f : 0.0f;
+            static const float deep[3] = { 0.15f, 0.3f, 0.6f };
             for (int q = 0; q < 3; ++q) {
                 float v = col[q] * shade * hgt;
+                v = v * (1.0f - 0.75f * sea) + 0.75f * sea * deep[q] * shade * hgt;
                 v = v * (1.0f - wet) + (q == 2 ? 0.8f : 0.3f) * shade * wet;
                 v = v * (1.0f - 0.7f * city);
                 img[((size_t)j * W + i) * 3 + q] = (uint8_t)clampf(v * 255.0f, 0.0f, 255.0f);
@@ -1570,6 +1574,38 @@ static void test_earth(Rng *r, const char *path) {
     terrain_earth_range(terrain_latlon_dir(0.0, 0.0), PI_D * R, 1.0e9, &eLo, &eHi);
     terrain_earth_extremes(&lo, &hi, &grade);
     CHECK(eLo <= lo && eHi >= hi, "the whole planet's range %.0f .. %.0f doesn't hold the extremes %.0f .. %.0f", eLo, eHi, lo, hi);
+
+    /* In the land: the chart about the origin, east along x and south along
+     * z; the datum the Earth there at the lift's spacing; the lift far out
+     * on the land the Earth less the datum; the sea to come the Earth's own
+     * oceans; and the single-spacing range bounding the Earth at it. */
+    double olat, olon, e0 = terrain_earth_datum();
+    terrain_dir_latlon(terrain_chart_dir(0.0, 0.0), &olat, &olon);
+    CHECK(fabs(olat - lat) < 1e-9 && fabs(olon - lon) < 1e-9, "the chart's origin (%.6f, %.6f) isn't the bake's (%.6f, %.6f)", olat, olon, lat, lon);
+    double nlat, nlon, elat, elon;
+    terrain_dir_latlon(terrain_chart_dir(0.0, -10000.0), &nlat, &nlon);
+    terrain_dir_latlon(terrain_chart_dir(10000.0, 0.0), &elat, &elon);
+    CHECK(nlat > lat + 0.08 && fabs(nlon - lon) < 1e-6 && elon > lon + 0.08 && fabs(elat - lat) < 1e-3,
+          "the chart's -z isn't north (%.4f, %.4f) or its +x east (%.4f, %.4f)", nlat, nlon, elat, elon);
+    CHECK(e0 == terrain_earth_height(terrain_latlon_dir(lat, lon), TERRAIN_LIFT_SPACING), "the datum %.3f isn't the Earth at the origin", e0);
+    printf("earth: datum %.1f m\n", e0);
+    for (int k = 0; k < 200; ++k) {
+        double a = 2.0 * PI_D * rng_float(r), s = 5.0e5 + 3.0e6 * rng_float(r), x = s * cos(a), z = s * sin(a);
+        TerrainDir d = terrain_chart_dir(x, z);
+        double want = terrain_earth_height(d, 0.0) - e0, lift;
+        terrain_land_parts(x, z, 1e9, 1e9, 0.0, &lift);
+        CHECK(fabs(lift - want) < 1e-6, "the lift at (%.0f, %.0f) is %.3f, not the Earth less the datum %.3f", x, z, lift, want);
+        if (s < 0.3 * PI_D * R) {
+            double sea = terrain_sea_margin(x, z), e = terrain_earth_height(d, TERRAIN_LIFT_SPACING);
+            CHECK(fabs(sea - (e - 20.0)) < 1e-6, "the sea margin at (%.0f, %.0f) is %.3f, the Earth there %.3f", x, z, sea, e);
+        }
+        double rad = pow(10.0, 2.0 + 4.0 * rng_float(r)), rlo, rhi;
+        terrain_earth_range_at(d, rad, TERRAIN_LIFT_SPACING, &rlo, &rhi);
+        for (int q = 0; q < 8; ++q) {
+            double hq = terrain_earth_height(pnudge(r, d, rad * rng_float(r)), TERRAIN_LIFT_SPACING);
+            CHECK(hq >= rlo && hq <= rhi, "the Earth at the lift's spacing, %.1f m, is outside its range %.1f .. %.1f", hq, rlo, rhi);
+        }
+    }
 }
 
 int main(int argc, char **argv) {
@@ -1607,7 +1643,7 @@ int main(int argc, char **argv) {
     if (argc > 2 && strcmp(argv[1], "--earth-map") == 0) return earth_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
 
     /* 1. Reference pass, in order: finite and within the amplitudes. */
-    double amax = fmax(PLAN_RELIEF_MAX_M, fmax(TERRAIN_LAND_TOP_M, TERRAIN_LAND_DEEP_M)) + 1e-3, lo = 1e9, hi = -1e9;
+    double amax = fmax(PLAN_RELIEF_MAX_M, fmax(TERRAIN_LAND_TOP_M, TERRAIN_LAND_DEEP_M)) + terrain_lift_bound(1e9) + 1e-3, lo = 1e9, hi = -1e9;
     for (int i = 0; i < N_POINTS; ++i) {
         double h = terrain_height(g_x[i], g_z[i]);
         g_ref[i] = h;
@@ -1671,11 +1707,15 @@ int main(int argc, char **argv) {
             int i = rng_int(&r, 0, N_POINTS - 1);
             double x0 = floor(g_x[i] / CHUNK_SIZE) * CHUNK_SIZE, z0 = floor(g_z[i] / CHUNK_SIZE) * CHUNK_SIZE, rlo, rhi;
             terrain_urban_height_range(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, &rlo, &rhi);
-            /* far off, the planet's highlands under it, by their slope bound */
-            if (terrain_urban_lift(x0, z0) != 0.0) rhi -= 2.0 * TERRAIN_LIFT_SLOPE * 0.5 * hypot(CHUNK_SIZE, CHUNK_SIZE);
+            /* far off, the planet's highlands under it, by their own range */
+            if (terrain_urban_lift(x0, z0) != 0.0) {
+                double llo, lhi;
+                terrain_urban_lift_range(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, &llo, &lhi);
+                rhi -= lhi - llo;
+            }
             widest = fmax(widest, rhi - rlo);
         }
-        printf("city ground's range over a chunk: at most %.2f m wide (less the highlands' slope bound far off)\n", widest);
+        printf("city ground's range over a chunk: at most %.2f m wide (less the highlands' own range far off)\n", widest);
         /* With the megacity's 10 m of relief: its slope bound, 1.9%, across a chunk's diagonal, against 20 m for +-relief. */
         CHECK(widest <= 3.0, "city ground's range over a chunk is loose: %.2f m", widest);
     }

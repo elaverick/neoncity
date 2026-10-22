@@ -99,8 +99,7 @@ static double urban_shape_slope(void) {
  * half-diagonal of its value at the centre, and in [-1, 1] (a fractal sum of
  * unit amplitude). The height is a relief between the least and the most of
  * any settlement times that, so it lies between the extreme products; and
- * the lift within TERRAIN_LIFT_SLOPE times the half-diagonal of its value at
- * the centre (0 near the megacity). */
+ * the lift within its own range (0 near the megacity). */
 void terrain_urban_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
     double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0);
     double sc = terrain_urban_shape(cx, cz), reach = urban_shape_slope() * half;
@@ -109,10 +108,11 @@ void terrain_urban_height_range(double x0, double z0, double x1, double z1, doub
     if (!TERRAIN_URBAN_GRADED) rlo = rhi = 0.0;
     *lo = fmin(rlo * slo, rhi * slo) - 1e-3;   /* rounding: the shape is a float */
     *hi = fmax(rlo * shi, rhi * shi) + 1e-3;
-    if (home_distance(cx, cz) + half > LIFT_CLEAR) {   /* the lift is continuous, 0 inside LIFT_CLEAR */
-        double lc = urban_lift(cx, cz), lr = TERRAIN_LIFT_SLOPE * half;
-        *lo += lc - lr;
-        *hi += lc + lr;
+    if (home_distance(cx, cz) + half > LIFT_CLEAR) {   /* 0 inside LIFT_CLEAR */
+        double llo, lhi;
+        terrain_urban_lift_range(x0, z0, x1, z1, &llo, &lhi);
+        *lo += llo;
+        *hi += lhi;
     }
 }
 

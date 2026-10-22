@@ -16,7 +16,8 @@
  * MAX_ALTITUDE: how high the camera can go (fly mode): aircraft height.
  * HORIZON_DISTANCE: how far the ground can be seen from there: the horizon
  * over the sphere from MAX_ALTITUDE, sqrt(2 R h), and as far again as the
- * highest land (about 2.6 km) stands up above it. The far plane follows it.
+ * highest land (the Earth's peaks, under 8.8 km) stands up above it: 505 km
+ * and 335 km. The far plane follows it.
  * TERRAIN_HAZE: the terrain's haze, clearer than the city's (CITY_HAZE in
  * shaders/common.glsl): its mean free path at street level (m), thinning with
  * height (hazeAmount) through a low layer HAZE_LOW_H metres deep and a high
@@ -24,7 +25,7 @@
 #define VIEW_DISTANCE     1900.0f
 #define TERRAIN_DISTANCE  20000.0f
 #define MAX_ALTITUDE      20000.0f
-#define HORIZON_DISTANCE  700000.0f
+#define HORIZON_DISTANCE  840000.0f
 #define NEAR_PLANE        0.08f
 #define FAR_PLANE         (HORIZON_DISTANCE * 1.05f)
 #define TERRAIN_HAZE      4000.0f
