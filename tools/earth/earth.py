@@ -11,7 +11,7 @@ and the whole project is staged as one raw grid for the engine's bake tool (tool
     earth.py insert  <project> <edited.tif> [--feather N] [--layer height|hints] [--rewrite]
     earth.py check   <project>
     earth.py preview <project> <out.png> [--region lon0 lat0 lon1 lat1] [--width W]
-    earth.py stage   <project> <out.r16>
+    earth.py stage   <project> <out.r16>     (and <out.r16>.hints, if the project has hint tiles)
 
 The grid is fixed: EPSG:4326, 60" cells, pixel-is-area, 21600 x 10800, the north-west corner at
 90N 180W. Tiles are named by their south-west corner (height/N30_W120.tif spans 30N..60N,
@@ -609,6 +609,18 @@ def cmd_stage(args):
             b = np.ascontiguousarray(strip, dtype="<i2").tobytes()
             h.update(b)
             f.write(b)
+    # The hints, if any tile exists: the same grid at 8 bits, three bands interleaved per cell.
+    hints = None
+    folder = os.path.join(project.root, "hints")
+    if os.path.isdir(folder) and any(n.endswith(".tif") for n in os.listdir(folder)):
+        hints = args.out + ".hints"
+        hh = hashlib.sha256()
+        with open(hints, "wb") as f:
+            for tj in range(TILES_Y):
+                strip = project.read_region("hints", 0, tj * TILE_PX, WIDTH, TILE_PX)
+                b = np.ascontiguousarray(np.moveaxis(strip, 0, -1), dtype="u1").tobytes()
+                hh.update(b)
+                f.write(b)
     origin = m["origin"]
     lines = [
         "format earth-stage-1",
@@ -632,9 +644,12 @@ def cmd_stage(args):
         "source_sha256 %s" % m["source"]["sha256"],
         "stage_sha256 %s" % h.hexdigest(),
     ]
+    if hints:
+        lines += ["hints_file %s" % os.path.basename(hints), "hints_sha256 %s" % hh.hexdigest()]
     with open(args.out + ".txt", "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
-    print("wrote %s (%d bytes) and %s.txt" % (args.out, WIDTH * HEIGHT * 2, args.out))
+    print("wrote %s (%d bytes)%s and %s.txt" % (args.out, WIDTH * HEIGHT * 2,
+                                             ", %s (%d bytes)" % (hints, WIDTH * HEIGHT * 3) if hints else "", args.out))
 
 
 # ----------------------------------------------------------------------------- main

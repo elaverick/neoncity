@@ -235,7 +235,7 @@ if(NOT EXISTS ${EARTH_PY})
   set(EARTH_PY ${Python3_EXECUTABLE})
 endif()
 if(EARTH_PY)
-  file(GLOB EARTH_TILES ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/height/*.tif)
+  file(GLOB EARTH_TILES ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/height/*.tif ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/hints/*.tif)
   add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/earth.r16 ${CMAKE_BINARY_DIR}/earth.r16.txt
     COMMAND ${EARTH_PY} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/earth/earth.py stage ${CMAKE_CURRENT_SOURCE_DIR}/data/earth ${CMAKE_BINARY_DIR}/earth.r16
     DEPENDS ${EARTH_TILES} ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/earth.json ${CMAKE_CURRENT_SOURCE_DIR}/tools/earth/earth.py

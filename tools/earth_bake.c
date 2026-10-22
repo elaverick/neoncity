@@ -7,7 +7,9 @@
  *
  * The stage is the whole equirectangular grid as raw little-endian int16
  * metres with its <stage.r16>.txt sidecar (`earth.py stage data/earth
- * build/earth.r16`); its checksum is verified against the sidecar's. The bake
+ * build/earth.r16`); its checksum is verified against the sidecar's, and the
+ * hints' too if the sidecar names a hints file (the project's optional hints
+ * layer, staged beside it as uint8 x 3 per cell). The bake
  * holds the same ground resampled onto the six equal-angle cube faces
  * (src/terrain/terrain_cube.c, which this tool links and nothing else of the
  * engine, so the bake and the engine evaluate every direction bit for bit the
@@ -18,14 +20,15 @@
  * File layout, all little-endian (i16 int16, f32 float, f64 double):
  *   header, 256 bytes:
  *      0  char[8] "NCEARTH1"
- *      8  u32 version (1)      12  u32 size N        16  u32 apron (2)
+ *      8  u32 version (2)      12  u32 size N        16  u32 apron (2)
  *     20  u32 mips             24  u32 block (8)     28  u32 0
  *     32  f32 scale (metres per unit, 1)             36  f32 offset (m, 0)
  *     40  f64 origin latitude  48  f64 origin longitude  56  f64 origin heading (degrees)
  *     64  char[64] the source's sha256 (hex)        128  char[64] the stage's sha256 (hex)
  *    192  i16 min, i16 max over the planet (mip 0)  196  f32 steepest grade  200  f32 largest relief
  *    204  u32 stage width, u32 stage height        212  f64 stage cell (degrees)
- *    220  zero to 256
+ *    220  u32 the landform grid's mip L               224  u32 flags (1: it carries the hints)
+ *    228  f32 the landform grid's largest relief      232  zero to 256
  *   mip table, mips x 16 bytes: i16 min, i16 max, f32 steepest grade, f32 largest relief, u32 0
  *   then for each mip m (n = N >> m samples a side, g = n + 2 apron, nb = n / block), for each face f:
  *      i16 grid[g * g]      sample (i, j), i and j in [-apron, n + apron), at [(j + apron) * g + (i + apron)]:
@@ -38,6 +41,18 @@
  *                           and its next along u and along v (the apron supplies the last)
  *      f32 brelief[nb * nb] the elevation range (m) within about RELIEF_M of the block at mip 0;
  *                           at coarser mips the mean of the four blocks under it
+ *   then the landform grid, the first mip at least LAND_STEP_M a sample (or the coarsest), n = N >> L,
+ *   with the same apron and sample directions, for each face f:
+ *      i16 relief[g * g]    the range of the elevation (m) within LAND_RELIEF_M of the sample
+ *      i8  strike_e[g * g], i8 strike_n[g * g]   the ridges' strike there, as a doubled angle from
+ *                           east towards north (cos 2a, sin 2a) times its coherence, times 127: from
+ *                           the structure of the gradients within LAND_STRIKE_M of the stage averaged
+ *                           over LAND_COARSE cells a side (the strike runs
+ *                           across the dominant gradient); 0 where the ground is level
+ *      with the hints only:
+ *      u8  override[g * g]  the hints' landform under the sample (0 none, 1 plains .. 4 plateau)
+ *      u8  rough[g * g]     the hints' roughness, its mean within LAND_RELIEF_M (128 is 1; 0 reads as 128)
+ *      u8  nosettle[g * g]  the hints' no-settlement mask, its largest within LAND_RELIEF_M
  *
  * Resampling: a sample's cell is split into K x K sub-cells (K such that a
  * sub-cell is no larger than a stage cell at the equator, at most KMAX);
@@ -45,7 +60,9 @@
  * cells within their bounding box are averaged by the area each contributes
  * (the box over-covers a tilted cell a little, which only blurs). Mip 0 is
  * built so, every sample; mip m + 1's interior is the 2 x 2 mean of mip m's,
- * and its apron is resampled from the stage with K doubled. */
+ * and its apron is resampled from the stage with K doubled. The landform
+ * grid reads the stage directly, bilinearly between its cells' centres, on
+ * stencils laid out along east and north round each sample. */
 #include "terrain.h"
 #include "thread.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -70,6 +87,14 @@
 #define BAND      8         /* sample rows per resampling task */
 #define HEADER    256
 #define MAGIC     "NCEARTH1"
+#define VERSION   2
+#define LAND_STEP_M     8000.0    /* the landform grid: the first mip at least this coarse */
+#define LAND_RELIEF_M   20000.0   /* relief and the hints: within this of a sample... */
+#define LAND_RELIEF_N   8         /* ...on a stencil of this many steps each way */
+#define LAND_COARSE     8         /* strike: the stage averaged over this many cells a side (15') */
+#define LAND_STRIKE_M   100000.0  /* ...its gradients within this... */
+#define LAND_STRIKE_N   10        /* ...on a stencil of this many steps each way... */
+#define LAND_STRIKE_SIGMA 40000.0 /* ...weighted by a Gaussian this wide */
 
 /* --- SHA-256 (FIPS 180-4), to check the stage against its sidecar --------------- */
 
@@ -204,7 +229,25 @@ typedef struct Stage {
     char     source_sha[65], stage_sha[65];
     int16_t *h;                    /* W x H metres */
     double  *sinlat;               /* sin of the H + 1 row edges' latitudes, for areas */
+    char     hints_file[960], hints_sha[65];
+    uint8_t *hints;                /* W x H x 3 (landform, roughness, nosettle), or NULL */
+    float   *coarse;               /* (W / LAND_COARSE) x (H / LAND_COARSE) cell means, for the strike */
 } Stage;
+
+/* Reads a whole file of exactly `bytes` bytes and checks it against a sha256. */
+static unsigned char *read_checked(const char *path, size_t bytes, const char *sha, const char *what) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { fprintf(stderr, "earth_bake: cannot open %s\n", path); return NULL; }
+    unsigned char *raw = (unsigned char *)xmalloc(bytes);
+    size_t got = fread(raw, 1, bytes, f);
+    int more = fgetc(f) != EOF;
+    fclose(f);
+    if (got != bytes || more) { fprintf(stderr, "earth_bake: %s should be exactly %zu bytes\n", path, bytes); free(raw); return NULL; }
+    Sha256 h; char hex[65];
+    sha_init(&h); sha_update(&h, raw, bytes); sha_hex(&h, hex);
+    if (strcmp(hex, sha) != 0) { fprintf(stderr, "earth_bake: %s doesn't match its sidecar's %s (%s, not %s): stage it again\n", path, what, hex, sha); free(raw); return NULL; }
+    return raw;
+}
 
 static int stage_read(Stage *s, const char *path) {
     char side[1024];
@@ -232,6 +275,8 @@ static int stage_read(Stage *s, const char *path) {
         else if (!strcmp(key, "origin_heading_deg")) s->origin_heading = atof(val);
         else if (!strcmp(key, "source_sha256")) snprintf(s->source_sha, sizeof s->source_sha, "%s", val);
         else if (!strcmp(key, "stage_sha256")) snprintf(s->stage_sha, sizeof s->stage_sha, "%s", val);
+        else if (!strcmp(key, "hints_file")) snprintf(s->hints_file, sizeof s->hints_file, "%s", val);
+        else if (!strcmp(key, "hints_sha256")) snprintf(s->hints_sha, sizeof s->hints_sha, "%s", val);
     }
     fclose(f);
     if (!format || !dtype || !order || !rows || !pixel) { fprintf(stderr, "earth_bake: %s isn't an earth-stage-1 sidecar (little-endian int16, rows north to south, pixel-is-area)\n", side); return 0; }
@@ -242,17 +287,18 @@ static int stage_read(Stage *s, const char *path) {
     }
     if (strlen(s->stage_sha) != 64) { fprintf(stderr, "earth_bake: %s carries no stage_sha256\n", side); return 0; }
 
-    f = fopen(path, "rb");
-    if (!f) { fprintf(stderr, "earth_bake: cannot open %s\n", path); return 0; }
+    if (s->hints_file[0] && strlen(s->hints_sha) != 64) { fprintf(stderr, "earth_bake: %s names a hints file but no hints_sha256\n", side); return 0; }
     size_t cells = (size_t)s->W * (size_t)s->H;
-    unsigned char *raw = (unsigned char *)xmalloc(cells * 2);
-    size_t got = fread(raw, 1, cells * 2, f);
-    int more = fgetc(f) != EOF;
-    fclose(f);
-    if (got != cells * 2 || more) { fprintf(stderr, "earth_bake: %s should be exactly %zu bytes\n", path, cells * 2); free(raw); return 0; }
-    Sha256 sha; char hex[65];
-    sha_init(&sha); sha_update(&sha, raw, cells * 2); sha_hex(&sha, hex);
-    if (strcmp(hex, s->stage_sha) != 0) { fprintf(stderr, "earth_bake: %s doesn't match its sidecar's stage_sha256 (%s, not %s): stage it again\n", path, hex, s->stage_sha); free(raw); return 0; }
+    unsigned char *raw = read_checked(path, cells * 2, s->stage_sha, "stage_sha256");
+    if (!raw) return 0;
+    if (s->hints_file[0]) {   /* beside the stage */
+        char hp[2048];
+        const char *slash = strrchr(path, '/'), *bs = strrchr(path, '\\');
+        if (bs > slash) slash = bs;
+        snprintf(hp, sizeof hp, "%.*s%s", slash ? (int)(slash - path + 1) : 0, path, s->hints_file);
+        s->hints = read_checked(hp, cells * 3, s->hints_sha, "hints_sha256");
+        if (!s->hints) { free(raw); return 0; }
+    }
     s->h = (int16_t *)xmalloc(cells * 2);
     for (size_t i = 0; i < cells; ++i) s->h[i] = (int16_t)get_u16(raw + 2 * i);
     free(raw);
@@ -382,12 +428,22 @@ typedef struct Mip {
     float    slope_max, relief_max;
 } Mip;
 
+/* The landform grid (see the file layout). */
+typedef struct Land {
+    int      mip, n, g, hints;
+    int16_t *relief[6];
+    int8_t  *se[6], *sn[6];
+    uint8_t *override[6], *rough[6], *nosettle[6];
+    float    relief_max;
+} Land;
+
 typedef struct Bake {
     int      N, mips, W, H;
     double   cell, origin_lat, origin_lon, origin_heading;
     float    scale, offset;
     char     source_sha[65], stage_sha[65];
     Mip      mip[MAX_MIPS];
+    Land     land;
 } Bake;
 
 typedef struct Downsample { const Mip *from; Mip *to; } Downsample;
@@ -521,6 +577,162 @@ static int sub_cells(int n, double cell_deg) {
     return K < 1 ? 1 : K > KMAX ? KMAX : K;
 }
 
+/* --- The landform grid ------------------------------------------------------------- */
+
+/* The stage's elevation at a latitude and longitude (degrees): bilinear
+ * between its cells' centres, round the globe in longitude. */
+static double stage_at(const Stage *s, double lat, double lon) {
+    double y = (s->lat0 - lat) / s->cell - 0.5, x = (lon - s->lon0) / s->cell - 0.5;
+    y = y < 0.0 ? 0.0 : y > s->H - 1 ? (double)(s->H - 1) : y;
+    double fy = floor(y), fx = floor(x), ty = y - fy, tx = x - fx;
+    int r0 = (int)fy, r1 = r0 + 1 < s->H ? r0 + 1 : r0;
+    long c0 = (long)fx % s->W;
+    if (c0 < 0) c0 += s->W;
+    long c1 = c0 + 1 == s->W ? 0 : c0 + 1;
+    const int16_t *a = s->h + (size_t)r0 * s->W, *b = s->h + (size_t)r1 * s->W;
+    return (1.0 - ty) * ((1.0 - tx) * a[c0] + tx * a[c1]) + ty * ((1.0 - tx) * b[c0] + tx * b[c1]);
+}
+
+/* The coarse grid's elevation at a latitude and longitude: as stage_at. */
+static double coarse_at(const Stage *s, double lat, double lon) {
+    int W = s->W / LAND_COARSE, H = s->H / LAND_COARSE;
+    double cell = s->cell * LAND_COARSE;
+    double y = (s->lat0 - lat) / cell - 0.5, x = (lon - s->lon0) / cell - 0.5;
+    y = y < 0.0 ? 0.0 : y > H - 1 ? (double)(H - 1) : y;
+    double fy = floor(y), fx = floor(x), ty = y - fy, tx = x - fx;
+    int r0 = (int)fy, r1 = r0 + 1 < H ? r0 + 1 : r0;
+    long c0 = (long)fx % W;
+    if (c0 < 0) c0 += W;
+    long c1 = c0 + 1 == W ? 0 : c0 + 1;
+    const float *a = s->coarse + (size_t)r0 * W, *b = s->coarse + (size_t)r1 * W;
+    return (1.0 - ty) * ((1.0 - tx) * a[c0] + tx * a[c1]) + ty * ((1.0 - tx) * b[c0] + tx * b[c1]);
+}
+
+/* The coarse grid: each LAND_COARSE x LAND_COARSE block of the stage's cells, averaged. */
+static void coarse_build(Stage *s) {
+    int W = s->W / LAND_COARSE, H = s->H / LAND_COARSE;
+    s->coarse = (float *)xmalloc(sizeof(float) * (size_t)W * H);
+    for (int r = 0; r < H; ++r)
+        for (int c = 0; c < W; ++c) {
+            double sum = 0.0;
+            for (int rr = 0; rr < LAND_COARSE; ++rr) {
+                const int16_t *row = s->h + (size_t)(r * LAND_COARSE + rr) * s->W + (size_t)c * LAND_COARSE;
+                for (int cc = 0; cc < LAND_COARSE; ++cc) sum += row[cc];
+            }
+            s->coarse[(size_t)r * W + c] = (float)(sum / (LAND_COARSE * LAND_COARSE));
+        }
+}
+
+/* The stage's cell under a latitude and longitude. */
+static size_t stage_cell(const Stage *s, double lat, double lon) {
+    long r = (long)floor((s->lat0 - lat) / s->cell), c = (long)floor((lon - s->lon0) / s->cell) % s->W;
+    r = r < 0 ? 0 : r >= s->H ? s->H - 1 : r;
+    if (c < 0) c += s->W;
+    return (size_t)r * s->W + (size_t)c;
+}
+
+/* East and north at p (at a pole, east is taken along +y). */
+static void tangent(TerrainDir p, TerrainDir *e, TerrainDir *nn) {
+    double l = hypot(p.x, p.y);
+    if (l < 1e-12) { e->x = 0.0; e->y = 1.0; e->z = 0.0; }
+    else { e->x = -p.y / l; e->y = p.x / l; e->z = 0.0; }
+    nn->x = p.y * e->z - p.z * e->y; nn->y = p.z * e->x - p.x * e->z; nn->z = p.x * e->y - p.y * e->x;
+}
+
+/* p moved de metres east and dn north in its tangent plane, back onto the
+ * sphere, in latitude and longitude. */
+static void offset_ll(TerrainDir p, TerrainDir e, TerrainDir nn, double de, double dn, double *lat, double *lon) {
+    double a = de / PLANET_RADIUS, b = dn / PLANET_RADIUS;
+    TerrainDir q = { p.x + a * e.x + b * nn.x, p.y + a * e.y + b * nn.y, p.z + a * e.z + b * nn.z };
+    terrain_dir_latlon(q, lat, lon);
+}
+
+typedef struct LandTask { const Stage *s; Land *l; } LandTask;
+
+/* One sample row of one face of the landform grid: the relief and the hints
+ * over a disc of LAND_RELIEF_M, and the strike from the gradients' structure
+ * tensor (each gradient's doubled angle, weighted by its square and the
+ * Gaussian) over a disc of LAND_STRIKE_M of the coarse grid, turned a
+ * quarter turn. */
+static void land_task(void *ctx, int t) {
+    const LandTask *lt = (const LandTask *)ctx;
+    const Stage *s = lt->s;
+    Land *l = lt->l;
+    enum { RN = LAND_RELIEF_N, SN = LAND_STRIKE_N, SW = 2 * LAND_STRIKE_N + 1 };
+    const double rstep = LAND_RELIEF_M / RN, sstep = LAND_STRIKE_M / SN;
+    int n = l->n, g = l->g, face = t / g, j = t % g - APRON;
+    double hs[SW][SW];
+    for (int i = -APRON; i < n + APRON; ++i) {
+        TerrainDir p = terrain_face_dir(face, (double)(2 * i + 1) / n - 1.0, (double)(2 * j + 1) / n - 1.0), e, nn;
+        tangent(p, &e, &nn);
+        double lo = 1e30, hi = -1e30, rough = 0.0, lat, lon;
+        int nosettle = 0, count = 0;
+        for (int b = -RN; b <= RN; ++b)
+            for (int a = -RN; a <= RN; ++a) {
+                if (a * a + b * b > RN * RN) continue;
+                offset_ll(p, e, nn, a * rstep, b * rstep, &lat, &lon);
+                double h = stage_at(s, lat, lon);
+                if (h < lo) lo = h;
+                if (h > hi) hi = h;
+                if (s->hints) {
+                    const uint8_t *c = s->hints + 3 * stage_cell(s, lat, lon);
+                    rough += c[1] ? c[1] : 128;
+                    if (c[2] > nosettle) nosettle = c[2];
+                    ++count;
+                }
+            }
+        for (int b = -SN; b <= SN; ++b)
+            for (int a = -SN; a <= SN; ++a) {
+                offset_ll(p, e, nn, a * sstep, b * sstep, &lat, &lon);
+                hs[b + SN][a + SN] = coarse_at(s, lat, lon);
+            }
+        double jxx = 0.0, jyy = 0.0, jxy = 0.0;
+        for (int b = 1 - SN; b < SN; ++b)
+            for (int a = 1 - SN; a < SN; ++a) {
+                if (a * a + b * b > (SN - 1) * (SN - 1)) continue;
+                double gx = (hs[b + SN][a + SN + 1] - hs[b + SN][a + SN - 1]) / (2.0 * sstep);
+                double gy = (hs[b + SN + 1][a + SN] - hs[b + SN - 1][a + SN]) / (2.0 * sstep);
+                double w = exp(-(a * a + b * b) * sstep * sstep / (2.0 * LAND_STRIKE_SIGMA * LAND_STRIKE_SIGMA));
+                jxx += w * gx * gx; jyy += w * gy * gy; jxy += w * gx * gy;
+            }
+        /* The gradients' doubled angle is (jxx - jyy, 2 jxy) / (jxx + jyy), no
+         * longer than 1; the strike's is a half turn on, so its negative. */
+        double tr = jxx + jyy, ce = tr > 1e-12 ? -(jxx - jyy) / tr : 0.0, cn = tr > 1e-12 ? -2.0 * jxy / tr : 0.0;
+        size_t k = (size_t)(j + APRON) * g + (i + APRON);
+        long rv = lrint(hi - lo);
+        l->relief[face][k] = (int16_t)(rv > 32767 ? 32767 : rv);
+        l->se[face][k] = (int8_t)lrint(127.0 * ce);
+        l->sn[face][k] = (int8_t)lrint(127.0 * cn);
+        if (s->hints) {
+            offset_ll(p, e, nn, 0.0, 0.0, &lat, &lon);
+            const uint8_t *c = s->hints + 3 * stage_cell(s, lat, lon);
+            l->override[face][k] = (uint8_t)(c[0] <= 4 ? c[0] : 0);
+            l->rough[face][k] = (uint8_t)lrint(rough / count);
+            l->nosettle[face][k] = (uint8_t)nosettle;
+        }
+    }
+}
+
+static void land_alloc(Land *l, int mip, int n, int hints) {
+    l->mip = mip; l->n = n; l->g = n + 2 * APRON; l->hints = hints;
+    size_t cells = (size_t)l->g * (size_t)l->g;
+    for (int f = 0; f < 6; ++f) {
+        l->relief[f] = (int16_t *)xmalloc(cells * sizeof(int16_t));
+        l->se[f] = (int8_t *)xmalloc(cells);
+        l->sn[f] = (int8_t *)xmalloc(cells);
+        l->override[f] = hints ? (uint8_t *)xmalloc(cells) : NULL;
+        l->rough[f] = hints ? (uint8_t *)xmalloc(cells) : NULL;
+        l->nosettle[f] = hints ? (uint8_t *)xmalloc(cells) : NULL;
+    }
+}
+
+static void land_summary(Land *l) {
+    l->relief_max = 0.0f;
+    for (int f = 0; f < 6; ++f)
+        for (size_t k = 0; k < (size_t)l->g * l->g; ++k)
+            if (l->relief[f][k] > l->relief_max) l->relief_max = l->relief[f][k];
+}
+
 /* --- The seams ---------------------------------------------------------------------- */
 
 /* Each apron sample against the face it lies over, interpolated between that
@@ -566,13 +778,14 @@ static int bake_write(const Bake *b, const char *path) {
     unsigned char hd[HEADER];
     memset(hd, 0, sizeof hd);
     memcpy(hd, MAGIC, 8);
-    put_u32(hd + 8, 1); put_u32(hd + 12, (uint32_t)b->N); put_u32(hd + 16, APRON); put_u32(hd + 20, (uint32_t)b->mips); put_u32(hd + 24, BLOCK);
+    put_u32(hd + 8, VERSION); put_u32(hd + 12, (uint32_t)b->N); put_u32(hd + 16, APRON); put_u32(hd + 20, (uint32_t)b->mips); put_u32(hd + 24, BLOCK);
     put_f32(hd + 32, b->scale); put_f32(hd + 36, b->offset);
     put_f64(hd + 40, b->origin_lat); put_f64(hd + 48, b->origin_lon); put_f64(hd + 56, b->origin_heading);
     memcpy(hd + 64, b->source_sha, 64); memcpy(hd + 128, b->stage_sha, 64);
     put_u16(hd + 192, (uint16_t)b->mip[0].lo); put_u16(hd + 194, (uint16_t)b->mip[0].hi);
     put_f32(hd + 196, b->mip[0].slope_max); put_f32(hd + 200, b->mip[0].relief_max);
     put_u32(hd + 204, (uint32_t)b->W); put_u32(hd + 208, (uint32_t)b->H); put_f64(hd + 212, b->cell);
+    put_u32(hd + 220, (uint32_t)b->land.mip); put_u32(hd + 224, b->land.hints ? 1u : 0u); put_f32(hd + 228, b->land.relief_max);
     int ok = fwrite(hd, 1, HEADER, f) == HEADER;
     for (int m = 0; m < b->mips && ok; ++m) {
         unsigned char row[16];
@@ -589,6 +802,13 @@ static int bake_write(const Bake *b, const char *path) {
                  write_f32s(f, mp->bslope[face], blocks) && write_f32s(f, mp->brelief[face], blocks);
         }
     }
+    const Land *l = &b->land;
+    size_t lcells = (size_t)l->g * l->g;
+    for (int face = 0; face < 6 && ok; ++face) {
+        ok = write_i16s(f, l->relief[face], lcells) && fwrite(l->se[face], 1, lcells, f) == lcells && fwrite(l->sn[face], 1, lcells, f) == lcells;
+        if (ok && l->hints)
+            ok = fwrite(l->override[face], 1, lcells, f) == lcells && fwrite(l->rough[face], 1, lcells, f) == lcells && fwrite(l->nosettle[face], 1, lcells, f) == lcells;
+    }
     if (fclose(f) != 0) ok = 0;
     if (!ok) fprintf(stderr, "earth_bake: writing %s failed\n", path);
     return ok;
@@ -599,7 +819,7 @@ static int bake_read(Bake *b, const char *path) {
     if (!f) { fprintf(stderr, "earth_bake: cannot open %s\n", path); return 0; }
     memset(b, 0, sizeof *b);
     unsigned char hd[HEADER];
-    if (fread(hd, 1, HEADER, f) != HEADER || memcmp(hd, MAGIC, 8) != 0 || get_u32(hd + 8) != 1) { fprintf(stderr, "earth_bake: %s isn't an earth bake (version 1)\n", path); fclose(f); return 0; }
+    if (fread(hd, 1, HEADER, f) != HEADER || memcmp(hd, MAGIC, 8) != 0 || get_u32(hd + 8) != VERSION) { fprintf(stderr, "earth_bake: %s isn't an earth bake (version %d)\n", path, VERSION); fclose(f); return 0; }
     b->N = (int)get_u32(hd + 12); b->mips = (int)get_u32(hd + 20);
     if (get_u32(hd + 16) != APRON || get_u32(hd + 24) != BLOCK || b->mips < 1 || b->mips > MAX_MIPS || b->N < MIN_FACE || (b->N >> (b->mips - 1)) % BLOCK != 0) {
         fprintf(stderr, "earth_bake: %s has an apron, block or mip count this tool can't read\n", path); fclose(f); return 0;
@@ -608,6 +828,9 @@ static int bake_read(Bake *b, const char *path) {
     b->origin_lat = get_f64(hd + 40); b->origin_lon = get_f64(hd + 48); b->origin_heading = get_f64(hd + 56);
     memcpy(b->source_sha, hd + 64, 64); memcpy(b->stage_sha, hd + 128, 64);
     b->W = (int)get_u32(hd + 204); b->H = (int)get_u32(hd + 208); b->cell = get_f64(hd + 212);
+    int lmip = (int)get_u32(hd + 220);
+    if (lmip >= b->mips) { fprintf(stderr, "earth_bake: %s puts its landform grid at mip %d of %d\n", path, lmip, b->mips); fclose(f); return 0; }
+    b->land.relief_max = get_f32(hd + 228);
     int ok = 1;
     for (int m = 0; m < b->mips && ok; ++m) {
         unsigned char row[16];
@@ -623,6 +846,14 @@ static int bake_read(Bake *b, const char *path) {
             ok = read_i16s(f, mp->q[face], cells) && read_i16s(f, mp->bmin[face], blocks) && read_i16s(f, mp->bmax[face], blocks) &&
                  read_f32s(f, mp->bslope[face], blocks) && read_f32s(f, mp->brelief[face], blocks);
         }
+    }
+    Land *l = &b->land;
+    land_alloc(l, lmip, b->N >> lmip, (get_u32(hd + 224) & 1u) != 0);
+    size_t lcells = (size_t)l->g * l->g;
+    for (int face = 0; face < 6 && ok; ++face) {
+        ok = read_i16s(f, l->relief[face], lcells) && fread(l->se[face], 1, lcells, f) == lcells && fread(l->sn[face], 1, lcells, f) == lcells;
+        if (ok && l->hints)
+            ok = fread(l->override[face], 1, lcells, f) == lcells && fread(l->rough[face], 1, lcells, f) == lcells && fread(l->nosettle[face], 1, lcells, f) == lcells;
     }
     if (ok && fgetc(f) != EOF) ok = 0;
     fclose(f);
@@ -647,6 +878,8 @@ static void bake_print(const Bake *b, int seams) {
         }
         printf("\n");
     }
+    printf("landform grid: mip %d, %d a side (%.0f m a sample), relief up to %.0f m within %.0f km; %s\n", b->land.mip, b->land.n,
+           PLANET_RADIUS * (PI / 2.0) / (b->land.n ? b->land.n : 1), b->land.relief_max, LAND_RELIEF_M / 1000.0, b->land.hints ? "with the hints" : "no hints");
 }
 
 /* --- Baking -------------------------------------------------------------------------- */
@@ -656,7 +889,7 @@ static int bake(const char *stage_path, const char *out_path, int N, int threads
     double t0 = now_s();
     Stage s;
     if (!stage_read(&s, stage_path)) return 0;
-    printf("stage %d x %d (%s), checksum verified, %.1f s\n", s.W, s.H, stage_path, now_s() - t0);
+    printf("stage %d x %d (%s)%s, checksum verified, %.1f s\n", s.W, s.H, stage_path, s.hints ? " with hints" : "", now_s() - t0);
 
     Bake *b = (Bake *)xmalloc(sizeof(Bake));
     memset(b, 0, sizeof *b);
@@ -687,7 +920,16 @@ static int bake(const char *stage_path, const char *out_path, int N, int threads
         printf("mip %d: %d a side, %d x %d sub-cells%s, %.1f s\n", m, mp->n, r.K, r.K, m > 0 ? " for the apron" : "", now_s() - t1);
         if (m > 0) { for (int f = 0; f < 6; ++f) { free(b->mip[m - 1].f[f]); b->mip[m - 1].f[f] = NULL; } }
     }
-    free(s.h); free(s.sinlat);
+    double t2 = now_s();
+    int lmip = 0;
+    while (lmip + 1 < b->mips && PLANET_RADIUS * (PI / 2.0) / (N >> lmip) < LAND_STEP_M) ++lmip;
+    land_alloc(&b->land, lmip, N >> lmip, s.hints != NULL);
+    coarse_build(&s);
+    LandTask lt = { &s, &b->land };
+    thread_parallel_for(6 * b->land.g, threads, land_task, &lt);
+    land_summary(&b->land);
+    printf("landform grid: mip %d, %d a side, %.1f s\n", lmip, b->land.n, now_s() - t2);
+    free(s.h); free(s.sinlat); free(s.hints); free(s.coarse);
     if (!bake_write(b, out_path)) return 0;
     printf("wrote %s, %.1f s in all\n", out_path, now_s() - t0);
     bake_print(b, 1);

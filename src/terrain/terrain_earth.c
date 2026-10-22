@@ -36,11 +36,17 @@
  * Hermite tangent terms peak at 4/27 each way), which the grade times the
  * mip's sample spacing bounds.
  *
+ * The bake's landform grid (terrain_earth_land) holds, per sample of one
+ * coarse mip, the relief round it, the ridges' strike and the hints; it is
+ * read the same way (a Catmull-Rom per face, the faces blended across the
+ * seams) whatever the spacing.
+ *
  * Without a bake the planet's procedural macro field (terrain_macro, in
  * metres) stands in, so a clone without the LFS tiles still runs. */
 
 #define PI          3.14159265358979323846
 #define EARTH_MAGIC "NCEARTH1"
+#define EARTH_VERSION 2
 #define EARTH_HEADER 256
 #define APRON       2
 #define BLOCK       8
@@ -58,6 +64,15 @@ typedef struct EarthMip {
     float   *bslope[6], *brelief[6];
 } EarthMip;
 
+/* The landform grid (tools/earth_bake.c): n samples a side and the apron. */
+typedef struct EarthLand {
+    int      mip, n, g, hints;
+    double   rough_max;         /* the largest roughness, 1 without the hints */
+    int16_t *relief[6];
+    int8_t  *se[6], *sn[6];
+    uint8_t *override[6], *rough[6], *nosettle[6];
+} EarthLand;
+
 static struct Earth {
     int        loaded, mips, N;
     double     scale, offset;
@@ -66,6 +81,7 @@ static struct Earth {
     double     datum;           /* E0: the Earth at the origin at TERRAIN_LIFT_SPACING (m) */
     char       path[1024];
     EarthMip   mip[MAX_MIPS];
+    EarthLand  land;
 } g_earth;
 
 /* --- Reading the file ------------------------------------------------------------ */
@@ -103,8 +119,14 @@ static void mip_free(EarthMip *m) {
     memset(m, 0, sizeof *m);
 }
 
+static void land_free(EarthLand *l) {
+    for (int f = 0; f < 6; ++f) { free(l->relief[f]); free(l->se[f]); free(l->sn[f]); free(l->override[f]); free(l->rough[f]); free(l->nosettle[f]); }
+    memset(l, 0, sizeof *l);
+}
+
 void terrain_earth_unload(void) {
     for (int m = 0; m < g_earth.mips; ++m) mip_free(&g_earth.mip[m]);
+    land_free(&g_earth.land);
     memset(&g_earth, 0, sizeof g_earth);
 }
 
@@ -163,8 +185,9 @@ static int load_file(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
     unsigned char hd[EARTH_HEADER];
-    if (fread(hd, 1, EARTH_HEADER, f) != EARTH_HEADER || memcmp(hd, EARTH_MAGIC, 8) != 0 || get_u32(hd + 8) != 1)
-        return fail(f, path, "not an Earth bake (version 1)");
+    if (fread(hd, 1, EARTH_HEADER, f) != EARTH_HEADER || memcmp(hd, EARTH_MAGIC, 8) != 0)
+        return fail(f, path, "not an Earth bake");
+    if (get_u32(hd + 8) != EARTH_VERSION) return fail(f, path, "an older Earth bake (version 1): bake it again (cmake --build build --target earth)");
     int N = (int)get_u32(hd + 12), mips = (int)get_u32(hd + 20);
     if (get_u32(hd + 16) != APRON || get_u32(hd + 24) != BLOCK || mips < 1 || mips > MAX_MIPS || N < MIN_FACE || (N & (N - 1)) != 0 || (N >> (mips - 1)) % BLOCK != 0)
         return fail(f, path, "an apron, block, size or mip count this build can't read");
@@ -200,6 +223,29 @@ static int load_file(const char *path) {
         m->lo = g_earth.scale * m->lo + g_earth.offset;
         m->hi = g_earth.scale * m->hi + g_earth.offset;
         m->grade *= g_earth.scale;
+    }
+    EarthLand *l = &g_earth.land;
+    l->mip = (int)get_u32(hd + 220); l->hints = (get_u32(hd + 224) & 1u) != 0;
+    if (l->mip >= mips) return fail(f, path, "a landform grid past the mips");
+    l->n = N >> l->mip; l->g = l->n + 2 * APRON;
+    size_t lcells = (size_t)l->g * l->g;
+    l->rough_max = 1.0;
+    for (int face = 0; face < 6; ++face) {
+        l->relief[face] = (int16_t *)malloc(lcells * sizeof(int16_t));
+        l->se[face] = (int8_t *)malloc(lcells);
+        l->sn[face] = (int8_t *)malloc(lcells);
+        if (!l->relief[face] || !l->se[face] || !l->sn[face]) return fail(f, path, "out of memory");
+        if (!read_i16s(f, l->relief[face], lcells) || fread(l->se[face], 1, lcells, f) != lcells || fread(l->sn[face], 1, lcells, f) != lcells)
+            return fail(f, path, "truncated");
+        if (!l->hints) continue;
+        l->override[face] = (uint8_t *)malloc(lcells);
+        l->rough[face] = (uint8_t *)malloc(lcells);
+        l->nosettle[face] = (uint8_t *)malloc(lcells);
+        if (!l->override[face] || !l->rough[face] || !l->nosettle[face]) return fail(f, path, "out of memory");
+        if (fread(l->override[face], 1, lcells, f) != lcells || fread(l->rough[face], 1, lcells, f) != lcells || fread(l->nosettle[face], 1, lcells, f) != lcells)
+            return fail(f, path, "truncated");
+        for (size_t k = 0; k < lcells; ++k)
+            if (l->rough[face][k] / 128.0 > l->rough_max) l->rough_max = l->rough[face][k] / 128.0;
     }
     if (fgetc(f) != EOF) return fail(f, path, "overlong");
     fclose(f);
@@ -264,9 +310,9 @@ int terrain_earth_load(const char *path) {
         set_chart();
         g_earth.datum = terrain_earth_height(g_earth.o, TERRAIN_LIFT_SPACING);
         const EarthMip *m0 = &g_earth.mip[0];
-        printf("earth: %s, %d a side (%.0f m), %d mips, %.0f to %.0f m, grade %.2f; origin %.4f %.4f heading %.1f, datum %.1f m\n",
+        printf("earth: %s, %d a side (%.0f m), %d mips, %.0f to %.0f m, grade %.2f; origin %.4f %.4f heading %.1f, datum %.1f m; landforms %d a side%s\n",
                g_earth.path, g_earth.N, m0->step, g_earth.mips, m0->lo, m0->hi, m0->grade, g_earth.origin_lat, g_earth.origin_lon, g_earth.origin_heading,
-               g_earth.datum);
+               g_earth.datum, g_earth.land.n, g_earth.land.hints ? ", with hints" : "");
     } else {
         fprintf(stderr, "earth: no bake %s (cmake --build build --target earth makes build/earth.bake, see data/earth/SOURCE.md); the procedural macro field stands in\n",
                 path ? path : "found (NEONCITY_EARTH, earth.bake by the executable or here, build/earth.bake)");
@@ -284,13 +330,7 @@ int terrain_earth_chart(TerrainDir *ex, TerrainDir *o, TerrainDir *ez) {
 
 double terrain_earth_datum(void) { return g_earth.loaded ? g_earth.datum : 0.0; }
 
-/* For now the elevation at the lift's spacing over TERRAIN_MACRO_M, clamped,
- * so the stand-in's range; E5 reads the bake's relief instead. */
-double terrain_earth_highland(TerrainDir p) {
-    if (!g_earth.loaded) return terrain_macro(p, 0.0);
-    double h = terrain_earth_height(p, TERRAIN_LIFT_SPACING) / TERRAIN_MACRO_M;
-    return h < -1.0 ? -1.0 : h > 1.0 ? 1.0 : h;
-}
+double terrain_earth_rough_max(void) { return g_earth.loaded ? g_earth.land.rough_max : 1.0; }
 
 void terrain_earth_origin(double *lat, double *lon, double *heading) {
     if (g_earth.loaded) { *lat = g_earth.origin_lat; *lon = g_earth.origin_lon; *heading = g_earth.origin_heading; return; }
@@ -415,6 +455,77 @@ double terrain_earth_height(TerrainDir p, double spacing) {
     double h = mip_height(&g_earth.mip[m], uv);
     if (t > 0.0) h = (1.0 - t) * h + t * mip_height(&g_earth.mip[m + 1], uv);
     return g_earth.scale * h + g_earth.offset;
+}
+
+/* --- The landform grid ------------------------------------------------------------- */
+
+/* The 4 x 4 samples a Catmull-Rom reads round (u, v) on a grid of n a side
+ * (as face_sample), and their weights. */
+typedef struct Taps { size_t at[16]; double w[16]; } Taps;
+
+static void grid_taps(int n, int g, double u, double v, Taps *t) {
+    double x = (u + 1.0) * (0.5 * n) - 0.5, y = (v + 1.0) * (0.5 * n) - 0.5, fx = floor(x), fy = floor(y);
+    int i0 = (int)fx, j0 = (int)fy;
+    i0 = i0 < -1 ? -1 : i0 > n - 1 ? n - 1 : i0;
+    j0 = j0 < -1 ? -1 : j0 > n - 1 ? n - 1 : j0;
+    double wx[4], wy[4];
+    cr_weights(x - fx, wx);
+    cr_weights(y - fy, wy);
+    for (int jj = 0; jj < 4; ++jj)
+        for (int ii = 0; ii < 4; ++ii) {
+            t->at[jj * 4 + ii] = (size_t)(j0 - 1 + jj + APRON) * g + (size_t)(i0 - 1 + ii + APRON);
+            t->w[jj * 4 + ii] = wx[ii] * wy[jj];
+        }
+}
+
+int terrain_earth_land(TerrainDir p, TerrainEarthLand *out) {
+    memset(out, 0, sizeof *out);
+    out->rough = 1.0;
+    if (!g_earth.loaded) return 0;
+    const EarthLand *l = &g_earth.land;
+    FaceUV uv[6];
+    face_uvs(p, uv);
+    double band = 1.0 / l->n, wsum = 0.0, relief = 0.0, se = 0.0, sn = 0.0, rough = 0.0, nosettle = 0.0, hint[TERRAIN_TYPES] = { 0.0 };
+    for (int face = 0; face < 6; ++face) {
+        if (!uv[face].front) continue;
+        double fw = face_weight(uv[face].e, band);
+        if (fw <= 0.0) continue;
+        Taps t;
+        grid_taps(l->n, l->g, uv[face].u, uv[face].v, &t);
+        double r = 0.0, a = 0.0, b = 0.0;
+        for (int k = 0; k < 16; ++k) {
+            r += t.w[k] * l->relief[face][t.at[k]];
+            a += t.w[k] * l->se[face][t.at[k]];
+            b += t.w[k] * l->sn[face][t.at[k]];
+        }
+        relief += fw * r; se += fw * a; sn += fw * b;
+        if (l->hints) {
+            /* the override as each type's share: its samples' weights */
+            double ro = 0.0, no = 0.0;
+            for (int k = 0; k < 16; ++k) {
+                int o = l->override[face][t.at[k]];
+                if (o >= 1 && o <= TERRAIN_TYPES) hint[o - 1] += fw * t.w[k];
+                ro += t.w[k] * l->rough[face][t.at[k]];
+                no += t.w[k] * l->nosettle[face][t.at[k]];
+            }
+            rough += fw * ro; nosettle += fw * no;
+        }
+        wsum += fw;
+    }
+    /* A Catmull-Rom can overshoot its samples, so each is clamped to its range. */
+    out->relief = fmax(0.0, relief / wsum);
+    se /= 127.0 * wsum; sn /= 127.0 * wsum;
+    double len = hypot(se, sn);
+    if (len > 1.0) { se /= len; sn /= len; }
+    out->strike_e = se; out->strike_n = sn;
+    if (l->hints) {
+        double sum = 0.0;
+        for (int t = 0; t < TERRAIN_TYPES; ++t) { hint[t] = fmin(1.0, fmax(0.0, hint[t] / wsum)); sum += hint[t]; }
+        for (int t = 0; t < TERRAIN_TYPES; ++t) out->hint[t] = sum > 1.0 ? hint[t] / sum : hint[t];
+        out->rough = fmin(l->rough_max, fmax(0.0, rough / (128.0 * wsum)));
+        out->nosettle = fmin(1.0, fmax(0.0, nosettle / (255.0 * wsum)));
+    }
+    return 1;
 }
 
 /* --- Bounds ---------------------------------------------------------------------- */

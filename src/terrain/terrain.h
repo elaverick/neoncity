@@ -185,6 +185,20 @@ void   terrain_earth_range(TerrainDir p, double radius, double spacing, double *
 /* A bound on how far terrain_earth_height at `spacing` strays from the full
  * detail at p (m); 0 where the spacing reads the full detail. */
 double terrain_earth_lod_error(TerrainDir p, double spacing);
+/* What the bake knows of the land's forms at a direction, from its landform
+ * grid (about 10 km a sample; the same at every spacing), continuous across
+ * the seams: the relief, the range of the elevation within about 20 km (m);
+ * the ridges' strike, a doubled angle from east towards north whose length,
+ * up to 1, is how clearly the ground has one; and the hints, where the
+ * project has them (data/earth/hints): each landform type's share of the
+ * override (0 without one), the roughness scale (1 without) and the
+ * no-settlement mask (0 .. 1). Returns 0, with no relief, no strike and no
+ * hints, without a bake. */
+typedef struct TerrainEarthLand {
+    double relief, strike_e, strike_n;
+    double hint[TERRAIN_TYPES], rough, nosettle;
+} TerrainEarthLand;
+int    terrain_earth_land(TerrainDir p, TerrainEarthLand *out);
 
 /* Where the sea will be, at world (x, z): there is no water yet, but when it
  * comes it will cover only where this is at most 0. It is the Earth's

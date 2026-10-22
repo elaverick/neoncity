@@ -36,7 +36,8 @@
  * some filled clipmaps instead, to compare what two builds generate;
  * terrain_test --map out.ppm [km] draws the land round the city (see map);
  * terrain_test --planet-map out.ppm [px] the whole planet (see planet_map);
- * terrain_test --earth-map out.ppm [px] the Earth's bake (see earth_map).
+ * terrain_test --earth-map out.ppm [px] the Earth's bake (see earth_map);
+ * terrain_test --landform-map out.ppm [px] its landforms (see landform_map).
  * --earth <bake> names the Earth bake to load (the test bake by default). */
 #include "terrain_internal.h"
 #include "plan.h"
@@ -51,7 +52,7 @@
 #define REGION       25000.0   /* points scattered this far round the city centre (m) */
 #define URBAN_SLOPE  0.03      /* steepest urban grade allowed */
 #define BELT_SLOPE   0.12      /* steepest ground in the belt */
-#define LAND_SLOPE   3.0       /* steepest land: escarpments and canyon walls are cliffs, up to about 70 deg */
+#define LAND_SLOPE   3.5       /* steepest land: escarpments and canyon walls are cliffs, up to about 74 deg where one cuts the other */
 
 static double g_x[N_POINTS], g_z[N_POINTS], g_ref[N_POINTS];
 static int g_failures;
@@ -130,7 +131,8 @@ static void test_landforms(Rng *r) {
           "slopes don't rise from plains (%.1f%%) through hills (%.1f%%) to mountains (%.1f%%)", 100.0 * mean[0], 100.0 * mean[1], 100.0 * mean[2]);
     CHECK(slopeMax[TERRAIN_PLATEAU] > 1.0, "the plateaus' escarpments are smoothed away: steepest %.0f%%", 100.0 * slopeMax[TERRAIN_PLATEAU]);
 
-    /* Belts: the mountains' weight holds about as long along the strike as across it, times the stretch. */
+    /* Belts: the mountains' weight holds about as long along the strike as across it, times the stretch,
+     * where the region is its own (M is 0; beyond, the Earth's landforms take their share). */
     double along = 0.0, across = 0.0;
     int runsA = 0, runsC = 0;
     for (int k = 0; k < 200; ++k) {
@@ -142,10 +144,14 @@ static void test_landforms(Rng *r) {
             int in = 0, len = 0;
             for (int s = 0; s <= 400; ++s) {
                 TerrainLandform lf;
-                terrain_landform(ox + dx * s * 250.0, oz + dz * s * 250.0, &lf);
+                double px = ox + dx * s * 250.0, pz = oz + dz * s * 250.0;
+                int last = s == 400 || plan_home_edge(px, pz) >= TERRAIN_MACRO_FROM;
+                terrain_landform(px, pz, &lf);
                 int now = lf.w[TERRAIN_MOUNTAINS] > 0.5f;
                 if (now) len++;
-                if (in && (!now || s == 400)) { if (dir) { across += len; runsC++; } else { along += len; runsA++; } len = 0; }
+                if (last && !in) break;
+                if (in && (!now || last)) { if (dir) { across += len; runsC++; } else { along += len; runsA++; } len = 0; }
+                if (last) break;
                 in = now;
             }
         }
@@ -1426,6 +1432,54 @@ static int earth_map(const char *path, int W) {
     return 0;
 }
 
+/* terrain_test --landform-map out.ppm [px]: the Earth's landforms as an
+ * equirectangular map, px pixels across: each pixel tinted by the types'
+ * affinities (terrain_earth_forms; plains green, hills ochre, mountains grey,
+ * plateaus red, as --map), shaded by the Earth, the sea to come darkened. */
+static int landform_map(const char *path, int W) {
+    const int H = W / 2;
+    const double PI_D = 3.14159265358979323846;
+    double sp = 2.0 * PI_D * PLANET_RADIUS / W;
+    static const float tint[TERRAIN_TYPES][3] = { { 0.55f, 0.75f, 0.45f }, { 0.85f, 0.72f, 0.45f }, { 0.75f, 0.75f, 0.8f }, { 0.9f, 0.5f, 0.4f } };
+    uint8_t *img = (uint8_t *)malloc((size_t)W * H * 3);
+    double *hgt = (double *)malloc(sizeof(double) * (size_t)(W + 1) * (H + 1));
+    if (!img || !hgt) return 1;
+    for (int j = 0; j <= H; ++j)
+        for (int i = 0; i <= W; ++i)
+            hgt[(size_t)j * (W + 1) + i] = terrain_earth_height(terrain_latlon_dir(90.0 - 180.0 * j / H, -180.0 + 360.0 * i / W), sp);
+    int lead[TERRAIN_TYPES] = { 0 }, land = 0;
+    for (int j = 0; j < H; ++j)
+        for (int i = 0; i < W; ++i) {
+            double lat = 90.0 - 180.0 * (j + 0.5) / H, lon = -180.0 + 360.0 * (i + 0.5) / W;
+            float a[TERRAIN_TYPES], col[3] = { 0.0f, 0.0f, 0.0f }, sum = 0.0f;
+            if (!terrain_earth_forms(terrain_latlon_dir(lat, lon), a)) return 1;
+            int best = 0;
+            for (int t = 0; t < TERRAIN_TYPES; ++t) {
+                if (a[t] > a[best]) best = t;
+                float k = a[t] * a[t] * a[t];
+                for (int q = 0; q < 3; ++q) col[q] += k * tint[t][q];
+                sum += k;
+            }
+            double h = hgt[(size_t)j * (W + 1) + i], gx = (hgt[(size_t)j * (W + 1) + i + 1] - h) / sp, gz = (hgt[(size_t)(j + 1) * (W + 1) + i] - h) / sp;
+            float shade = clampf(1.0f - (float)(60.0 * (gx + gz)), 0.5f, 1.3f) * (h < 0.0 ? 0.45f : 1.0f);
+            if (h >= 0.0) { lead[best]++; land++; }
+            size_t px = ((size_t)j * W + i) * 3;
+            for (int q = 0; q < 3; ++q) img[px + q] = (uint8_t)clampf((sum > 0.0f ? col[q] / sum : 0.2f) * shade * 255.0f, 0.0f, 255.0f);
+        }
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return 1;
+    fprintf(fp, "P6\n%d %d\n255\n", W, H);
+    fwrite(img, 1, (size_t)W * H * 3, fp);
+    fclose(fp);
+    static const char *names[TERRAIN_TYPES] = { "plains", "hills", "mountains", "plateaus" };
+    printf("landform map, %d x %d: of the land's pixels, leading", W, H);
+    for (int t = 0; t < TERRAIN_TYPES; ++t) printf(" %s %.0f%%", names[t], 100.0 * lead[t] / (land ? land : 1));
+    printf("\n");
+    free(img);
+    free(hgt);
+    return 0;
+}
+
 /* A direction about `metres` off p, in a random direction over the sphere. */
 static TerrainDir pnudge(Rng *r, TerrainDir p, double metres) {
     TerrainDir t = prand(r);
@@ -1464,6 +1518,8 @@ static void test_earth(Rng *r, const char *path) {
     double lo, hi, grade;
     terrain_earth_extremes(&lo, &hi, &grade);
     CHECK(lo == -TERRAIN_MACRO_M && hi == TERRAIN_MACRO_M, "without a bake, the extremes aren't the macro field's");
+    TerrainEarthLand none;
+    CHECK(!terrain_earth_land(prand(r), &none) && none.relief == 0.0 && none.rough == 1.0 && terrain_earth_rough_max() == 1.0, "without a bake, the landform grid isn't empty");
 
     if (!terrain_earth_load(path)) { CHECK(0, "the test bake %s didn't load", path ? path : "(none)"); return; }
     double lat, lon, heading;
@@ -1525,6 +1581,62 @@ static void test_earth(Rng *r, const char *path) {
         CHECK(jump < 0.01, "the Earth jumps %.4f m round corner %d, spacing %.0f", jump, c, s);
     }
     printf("earth: across the seams the ground jumps at most %.2f mm, round the corners %.2f mm\n", 1000.0 * seamJump, 1000.0 * cornerJump);
+
+    /* The landform grid: within its ranges everywhere, continuous across the
+     * seams (a millimetre either side of an edge or round a corner), and the
+     * landforms where they are on Earth, the ranges' strikes along them. */
+    double landJump = 0.0;
+    int landBad = 0;
+    for (int k = 0; k < 2400; ++k) {
+        TerrainDir a, b;
+        if (k < 1600) {
+            int f = k % 6, side = (k / 6) % 4;
+            double w = 2.0 * rng_float(r) - 1.0;
+            if (side == 0) { a = terrain_face_dir(f, 1.0 - du, w); b = terrain_face_dir(f, 1.0 + du, w); }
+            else if (side == 1) { a = terrain_face_dir(f, -1.0 + du, w); b = terrain_face_dir(f, -1.0 - du, w); }
+            else if (side == 2) { a = terrain_face_dir(f, w, 1.0 - du); b = terrain_face_dir(f, w, 1.0 + du); }
+            else { a = terrain_face_dir(f, w, -1.0 + du); b = terrain_face_dir(f, w, -1.0 - du); }
+        } else {
+            int c = k % 8;
+            TerrainDir corner = { (c & 1 ? -1.0 : 1.0) / sqrt(3.0), (c & 2 ? -1.0 : 1.0) / sqrt(3.0), (c & 4 ? -1.0 : 1.0) / sqrt(3.0) };
+            a = pnudge(r, corner, 0.5e-3); b = pnudge(r, corner, 0.5e-3);
+        }
+        TerrainEarthLand la, lb;
+        if (!terrain_earth_land(a, &la) || !terrain_earth_land(b, &lb)) { landBad++; continue; }
+        landJump = fmax(landJump, fabs(la.relief - lb.relief));
+        CHECK(fabs(la.relief - lb.relief) < 0.01 && fabs(la.strike_e - lb.strike_e) < 1e-5 && fabs(la.strike_n - lb.strike_n) < 1e-5,
+              "the landform grid jumps across a seam: relief %.4f to %.4f m, strike (%.5f, %.5f) to (%.5f, %.5f)", la.relief, lb.relief, la.strike_e, la.strike_n, lb.strike_e, lb.strike_n);
+    }
+    for (int k = 0; k < 4000; ++k) {
+        TerrainEarthLand l;
+        terrain_earth_land(prand(r), &l);
+        if (!(l.relief >= 0.0 && l.relief < 12000.0 && hypot(l.strike_e, l.strike_n) <= 1.0 + 1e-12 && l.rough == 1.0 && l.nosettle == 0.0)) landBad++;
+        for (int t = 0; t < TERRAIN_TYPES; ++t) if (l.hint[t] != 0.0) landBad++;
+    }
+    CHECK(landBad == 0, "%d landform samples out of range (or hints in a bake without them)", landBad);
+    static const struct { double lat, lon; int type; double strike; const char *name; } forms[] = {
+        { 28.5, 84.0, TERRAIN_MOUNTAINS, 1.0, "the Himalaya" },      /* strike: +1 east-west, -1 north-south, 0 not checked */
+        { 46.5, 9.0, TERRAIN_MOUNTAINS, 0.0, "the Alps" },
+        { -32.6, -70.0, TERRAIN_MOUNTAINS, -1.0, "the Andes" },
+        { 38.5, -98.5, TERRAIN_PLAINS, 0.0, "Kansas" },
+        { -3.0, -60.0, TERRAIN_PLAINS, 0.0, "the Amazon" },
+        { 55.0, 80.0, TERRAIN_PLAINS, 0.0, "the West Siberian plain" },
+        { -80.0, 60.0, TERRAIN_PLATEAU, 0.0, "East Antarctica" },
+    };
+    for (size_t k = 0; k < sizeof forms / sizeof forms[0]; ++k) {
+        TerrainDir p = terrain_latlon_dir(forms[k].lat, forms[k].lon);
+        float a[TERRAIN_TYPES];
+        TerrainEarthLand l;
+        terrain_earth_forms(p, a);
+        terrain_earth_land(p, &l);
+        int best = 0;
+        for (int t = 1; t < TERRAIN_TYPES; ++t) if (a[t] > a[best]) best = t;
+        CHECK(best == forms[k].type, "%s isn't led by landform %d but %d (relief %.0f m; affinities %.2f %.2f %.2f %.2f)", forms[k].name, forms[k].type, best, l.relief,
+              a[0], a[1], a[2], a[3]);
+        CHECK(forms[k].strike == 0.0 || forms[k].strike * l.strike_e > 0.3, "%s's strike (%.2f, %.2f) doesn't run %s", forms[k].name, l.strike_e, l.strike_n,
+              forms[k].strike > 0.0 ? "east-west" : "north-south");
+    }
+    printf("earth: landform grid within a seam by at most %.2f mm of relief; the Himalaya, Alps and Andes mountains, the plains plains\n", 1000.0 * landJump);
 
     /* Levels of detail: within the error bound against full detail, 0 at
      * spacing 0, and the bound itself 0 there. */
@@ -1641,6 +1753,7 @@ int main(int argc, char **argv) {
     if (argc > 2 && strcmp(argv[1], "--map") == 0) return map(argv[2], argc > 3 ? atof(argv[3]) : 60.0);
     if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
     if (argc > 2 && strcmp(argv[1], "--earth-map") == 0) return earth_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
+    if (argc > 2 && strcmp(argv[1], "--landform-map") == 0) return landform_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
 
     /* 1. Reference pass, in order: finite and within the amplitudes. */
     double amax = fmax(PLAN_RELIEF_MAX_M, fmax(TERRAIN_LAND_TOP_M, TERRAIN_LAND_DEEP_M)) + terrain_lift_bound(1e9) + 1e-3, lo = 1e9, hi = -1e9;

@@ -47,7 +47,7 @@
 #define TERRAIN_URBAN_OCTAVES  2
 
 /* --- The land (terrain_land.c) ------------------------------------------------
- * land = base + M * macro + E * sum over types t of w_t * F_t - C * canyon
+ * land = base + M * macro + E * g * sum over types t of w_t * F_t - C * s * canyon
  *   base    rolling ground everywhere, TERRAIN_BASE_M high.
  *   macro   the planet's broad highlands and basins: the Earth
  *           (terrain_earth_height) less the datum E0, its height under the
@@ -57,10 +57,12 @@
  *           land the data's own detail blends in from TERRAIN_DETAIL_FROM
  *           beyond the nearest edge to TERRAIN_DETAIL_FULL. Without a bake
  *           the procedural stand-in, TERRAIN_MACRO_M times a fractal sum
- *           over the sphere, takes its place with E0 = 0. Where the land is
- *           high the mountains and plateaus gain affinity and the plains
- *           lose it, by TERRAIN_MACRO_BIAS a unit of terrain_earth_highland;
- *           low, the reverse. M is 0 out to TERRAIN_MACRO_FROM beyond the
+ *           over the sphere, takes its place with E0 = 0. The landforms
+ *           follow the Earth (terrain_earth_land, below at w_t, F_t, g and
+ *           s), each by M; without a bake, where the stand-in is high the
+ *           mountains and plateaus gain affinity and the plains lose it, by
+ *           TERRAIN_MACRO_BIAS a unit of it; low, the reverse. M is 0 out to
+ *           TERRAIN_MACRO_FROM beyond the
  *           megacity's edge, rising to 1 at TERRAIN_MACRO_FULL, so its region
  *           is as it was. The other settlements' ground rises and falls with
  *           M * macro, so they stand on their highlands.
@@ -68,10 +70,21 @@
  *           plains, low swells; hills, rolling relief; mountain belts, an uplift
  *           under ridged relief whose ridges run along the belt's strike;
  *           plateaus, a level top raised by a steep step on a slow mask, which
- *           gives escarpments where the mask crosses its threshold.
+ *           gives escarpments where the mask crosses its threshold. The
+ *           strike is the Earth's own where its ridges have one (blended by
+ *           M times its coherence with TERRAIN_STRIKE_*): the ridges are
+ *           drawn in TERRAIN_STRIKES frames turned from the default, the two
+ *           either side of the strike blended. Where the data already
+ *           carries the relief the belts are scaled down, to
+ *           TERRAIN_RIDGE_KEEP of their height from TERRAIN_KEEP_FULL_M of
+ *           relief, so the ranges don't double up.
  *   w_t     the region's mix of types (terrain_landform): slow affinity fields
  *           in a warped frame, the mountains' stretched along the strike so
- *           belts run as long ranges. A type more than TERRAIN_REGION_MARGIN
+ *           belts run as long ranges, which give TERRAIN_DATA_SHARE of their
+ *           place (times M) to the Earth's: much relief round a point
+ *           makes mountains, some hills, high and level ground plateaus, low
+ *           and level ground plains, and the hints' override wins where it
+ *           is given. A type more than TERRAIN_REGION_MARGIN
  *           behind the leading one has weight 0 (and isn't evaluated); the
  *           weights change continuously, so types blend into each other, and
  *           a plateau's top falls gently to its region's edge while its
@@ -89,7 +102,12 @@
 #define TERRAIN_MACRO_OCTAVES  4
 #define TERRAIN_MACRO_FROM     40000.0
 #define TERRAIN_MACRO_FULL     400000.0
-#define TERRAIN_MACRO_BIAS     0.25
+#define TERRAIN_MACRO_BIAS     0.25     /* the stand-in's, without a bake */
+#define TERRAIN_DATA_SHARE     0.8      /* the Earth's share of the affinities where M is 1 */
+#define TERRAIN_RIDGE_KEEP     0.35     /* the mountains' height kept where the data has the relief... */
+#define TERRAIN_KEEP_FROM_M    500.0    /* ...none of it taken below this relief (m)... */
+#define TERRAIN_KEEP_FULL_M    2500.0   /* ...and all of it from here */
+#define TERRAIN_SEA_FLOOR_M    -200.0   /* the canyons, none below this elevation, all from sea level (m) */
 #define TERRAIN_LIFT_SPACING   20000.0  /* the Earth under the settlements, read this coarsely (m) */
 #define TERRAIN_DETAIL_FROM    2000.0   /* the Earth's own detail: none nearer an edge than this... */
 #define TERRAIN_DETAIL_FULL    15000.0  /* ...and all of it from here (within PLAN_EDGE_CAP) */
@@ -103,6 +121,7 @@
 #define TERRAIN_WARP_WAVE      20000.0
 #define TERRAIN_STRIKE_X       0.8196480178454796   /* the mountain belts' strike: the unit */
 #define TERRAIN_STRIKE_Z       0.5728674601004813   /* direction 0.61 rad from +x towards +z */
+#define TERRAIN_STRIKES        8        /* the ridges' frames, each pi / 8 on from the last */
 #define TERRAIN_BELT_ALONG     2.5      /* a belt's affinity, stretched along the strike... */
 #define TERRAIN_BELT_ACROSS    0.7      /* ...and squeezed across it */
 #define TERRAIN_PLAINS_BIAS    0.6      /* the plains' affinity: where nothing else rises above it */
@@ -167,13 +186,15 @@ void   terrain_urban_lift_range(double x0, double z0, double x1, double z1, doub
  * load: the chart's basis about the bake's origin, x east and z south turned
  * by the heading (0 without a bake, and the procedural chart stands); the
  * datum E0, the Earth at the origin at TERRAIN_LIFT_SPACING (0 without a
- * bake); the elevation scaled for the landforms' affinity, in [-1, 1] (the
- * stand-in's own value without a bake); and the Earth's part of
- * terrain_lod_key (0 wherever it reads mip 0 alone, or has no bake). */
+ * bake); the hints' largest roughness (1 without them); and the Earth's
+ * part of terrain_lod_key (0 wherever it reads mip 0 alone, or has no bake). */
 int      terrain_earth_chart(TerrainDir *ex, TerrainDir *o, TerrainDir *ez);
 double   terrain_earth_datum(void);
-double   terrain_earth_highland(TerrainDir p);
+double   terrain_earth_rough_max(void);
 uint32_t terrain_earth_lod_key(double spacing);
+/* The Earth's affinity for each landform type at p, each in [0, 1], as the
+ * land takes them where M is 1 (terrain_land.c); 0 without a bake. */
+int      terrain_earth_forms(TerrainDir p, float a[TERRAIN_TYPES]);
 /* terrain_earth_range over only the mips `spacing` itself reads. */
 void     terrain_earth_range_at(TerrainDir p, double radius, double spacing, double *lo, double *hi);
 /* The same at a point of some chart, (x, z) in it and p its direction on the
