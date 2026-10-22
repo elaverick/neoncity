@@ -34,9 +34,13 @@ same city; screenshots of the same `--cam` with `--rain 0` show the renderer's r
 ## Terrain
 The clipmap is drawn out to its coarsest window (about 32 km; `src/render/terrain_gpu.c`, `shaders/terrain/`), the
 planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the milestones are in the terrain roadmap.
-- **The Earth** (E2: `tools/earth_bake.c`, `src/terrain/terrain_cube.c`, `data/earth/SOURCE.md`). The real Earth
-  (ETOPO 2022) is baked onto the cube-sphere's faces, but nothing reads the bake yet (E3 in the Earth roadmap).
-  Left over: a face's apron is resampled from the source while the interior of the coarser mips is box-filtered
+- **The Earth** (E2, E3: `tools/earth_bake.c`, `src/terrain/terrain_cube.c`, `src/terrain/terrain_earth.c`,
+  `data/earth/SOURCE.md`). The real Earth (ETOPO 2022) is baked onto the cube-sphere's faces and the engine reads
+  the bake (`terrain_earth_height`, loaded at start by the app and the tests), but the land doesn't take it yet
+  (E4 in the Earth roadmap). Left over: the LOD error bound (`terrain_earth_lod_error`) is the width of the
+  union of the mips' stencil ranges, so at the coarse mips, whose stencils span thousands of kilometres, it
+  is many times the real difference (0.05 of it on average, 0.37 at worst); the seam blend is half a sample
+  wide either side of an edge, all a 2-sample apron leaves a bicubic, which is 1.2 km at mip 0; a face's apron is resampled from the source while the interior of the coarser mips is box-filtered
   from the finer, so across a seam the two estimates differ (3 m on average at mip 0, 188 m at worst, `--info`
   prints them); `--dump-face` draws each face in its own (u, v), so north isn't up.
 - **The planet** (M9: `src/terrain/terrain_world.c`, `terrain_patch.c`; `terrain_test --planet-map`, `--patches`).

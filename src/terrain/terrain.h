@@ -150,6 +150,38 @@ double terrain_planet_surface_lod(TerrainDir p, double spacing);
 /* No ground anywhere on the planet lies lower than this (m, world Y). */
 double terrain_planet_lowest(void);
 
+/* --- The Earth (src/terrain/terrain_earth.c) ------------------------------------
+ * The real planet's ground, baked onto the cube-sphere's faces by
+ * tools/earth_bake.c from the editable project in data/earth (see
+ * data/earth/SOURCE.md): elevation in metres above sea level, the sea floor
+ * negative, at mip 0 about 2.4 km a sample. Nothing reads it into the land
+ * yet (Earth roadmap E4); the procedural macro field stands in for it. */
+
+/* Loads a bake: the file at `path`, or with NULL the first of $NEONCITY_EARTH,
+ * earth.bake beside the executable, earth.bake here and build/earth.bake.
+ * Call it before plan_world_init. Returns 1 when loaded; otherwise, with one
+ * warning, every function below falls back to the procedural macro field
+ * (TERRAIN_MACRO_M * terrain_macro), so a clone without the bake still runs. */
+int    terrain_earth_load(const char *path);
+void   terrain_earth_unload(void);
+int    terrain_earth_loaded(void);
+/* The megacity's place on the Earth (degrees; the chart's origin without a bake). */
+void   terrain_earth_origin(double *lat, double *lon, double *heading);
+/* The lowest and highest ground on the planet and its steepest grade at full
+ * detail (m, m, m/m), bounds on terrain_earth_height at any spacing. */
+void   terrain_earth_extremes(double *lo, double *hi, double *grade);
+/* The ground at a direction, as sampled every `spacing` metres (m): a
+ * continuous, single-valued function of the direction across every face
+ * seam, as terrain_height_lod's contract: spacing 0 is the full detail and
+ * coarser spacings leave out ever more of the fine relief. */
+double terrain_earth_height(TerrainDir p, double spacing);
+/* Conservative bounds on terrain_earth_height within `radius` metres of p,
+ * at `spacing` or any finer one (down to the full detail at 0). */
+void   terrain_earth_range(TerrainDir p, double radius, double spacing, double *lo, double *hi);
+/* A bound on how far terrain_earth_height at `spacing` strays from the full
+ * detail at p (m); 0 where the spacing reads the full detail. */
+double terrain_earth_lod_error(TerrainDir p, double spacing);
+
 /* Where the sea will be, at world (x, z): there is no water yet, but when it
  * comes it will cover only where this is at most 0. It is the macro field's
  * height above the sea level to come (m), less the world ocean's fall beyond

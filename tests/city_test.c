@@ -9,6 +9,7 @@
  * chunks instead, to compare what two builds generate; city_test --proxies
  * surveys the distant proxies of the whole city. */
 #include "city.h"
+#include "terrain.h"
 #include "hash.h"
 #include "mathlib.h"
 #include "thread.h"
@@ -601,6 +602,7 @@ static int proxy_survey(void) {
 }
 
 int main(int argc, char **argv) {
+    terrain_earth_load(NULL);
     plan_world_init(cpu_count());   /* before the workers below ask the plan */
     /* A scattered set of chunks, including far-away and negative coordinates. */
     Rng r = rng_make(1234);

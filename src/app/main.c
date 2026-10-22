@@ -9,6 +9,7 @@
 #include "player.h"
 #include "layouts.h"
 #include "plan.h"
+#include "terrain.h"
 #include "thread.h"
 #include "weather.h"
 
@@ -361,6 +362,7 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
 int main(int argc, char **argv) {
     Options opt;
     if (!parse_args(argc, argv, &opt)) { usage(); return 1; }
+    terrain_earth_load(NULL);       /* the Earth's bake, if built, before the plan reads the ground */
     plan_world_init(cpu_count());   /* the settlements and roads, before any worker asks for them */
     GLFWwindow *win = create_window();
 

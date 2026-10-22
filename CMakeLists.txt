@@ -129,14 +129,14 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/dr
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_lobby.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
                 src/city/litter.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c
-                src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/core/thread.c
+                src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c src/core/thread.c
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
                 src/gen/interior_fixtures.c src/gen/interior_validate.c src/gen/interior_lights.c
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c)
 # Terrain (src/terrain): the ground everywhere, a pure function of position over the planet the world's
-# X/Z is a chart of (terrain_height.c, terrain_land.c, terrain_world.c and terrain_cube.c, in GEN_SOURCES:
+# X/Z is a chart of (terrain_height.c, terrain_land.c, terrain_world.c, terrain_cube.c and terrain_earth.c, in GEN_SOURCES:
 # the city builds on them), the clipmap that samples it round the camera (drawn by src/render/terrain_gpu.c)
 # and the planet's patches beyond it (terrain_patch.c).
 set(TERRAIN_SOURCES src/terrain/terrain_lod.c src/terrain/terrain_mesh.c src/terrain/terrain_patch.c)
@@ -161,7 +161,7 @@ target_include_directories(interior_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 add_executable(plant_lab tests/plant_lab.c src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c)
 target_include_directories(plant_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # Terrain determinism, bounds, slopes, the city footprint, levels of detail and the clipmap
-# (terrain_test [--fingerprint]).
+# (terrain_test [--earth <test bake>] [--fingerprint]).
 add_executable(terrain_test tests/terrain_test.c ${TERRAIN_SOURCES} ${GEN_SOURCES})
 target_include_directories(terrain_test PRIVATE ${SRC_DIRS})
 # The settlements over the planet and the roads between them (src/plan/plan_world.c, plan_roads.c):
@@ -186,7 +186,7 @@ add_test(NAME interior_rules COMMAND interior_lab 1500)
 add_test(NAME plant_rules COMMAND plant_lab 12)
 # Arcology interiors over a wide area (only mega plots are generated, so it is quick).
 add_test(NAME arcology_rules COMMAND interior_lab arcology 12000)
-add_test(NAME terrain_rules COMMAND terrain_test)
+add_test(NAME terrain_rules COMMAND terrain_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake)
 add_test(NAME world_rules COMMAND world_test)
 
 # --- Tools: PBR texture packer --------------------------------------------------

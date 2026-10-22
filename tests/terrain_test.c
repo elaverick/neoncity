@@ -27,10 +27,17 @@
  * patches' meshes and the selection of which to draw (terrain_test --patches
  * runs only those).
  *
+ * Then the Earth: the bake of the real planet (src/terrain/terrain_earth.c),
+ * against tests/data/earth_test.bake: the stand-in without it, Earth's shape
+ * with it, continuity across every seam, the levels of detail within their
+ * bound, and the range query.
+ *
  * terrain_test --fingerprint prints a hash of the heights, the footprint and
  * some filled clipmaps instead, to compare what two builds generate;
  * terrain_test --map out.ppm [km] draws the land round the city (see map);
- * terrain_test --planet-map out.ppm [px] the whole planet (see planet_map). */
+ * terrain_test --planet-map out.ppm [px] the whole planet (see planet_map);
+ * terrain_test --earth-map out.ppm [px] the Earth's bake (see earth_map).
+ * --earth <bake> names the Earth bake to load (the test bake by default). */
 #include "terrain_internal.h"
 #include "plan.h"
 #include "city.h"
@@ -1373,7 +1380,215 @@ static void test_planet_patches(Rng *r) {
     free(tp);
 }
 
+/* --- The Earth ------------------------------------------------------------------- */
+
+/* terrain_test --earth-map out.ppm [px]: the Earth's bake as an equirectangular
+ * hillshade, px pixels across, at the spacing of a pixel. */
+static int earth_map(const char *path, int W) {
+    const int H = W / 2;
+    const double PI_D = 3.14159265358979323846;
+    double sp = 2.0 * PI_D * PLANET_RADIUS / W, lo = 1e9, hi = -1e9;
+    uint8_t *img = (uint8_t *)malloc((size_t)W * H * 3);
+    double *hgt = (double *)malloc(sizeof(double) * (size_t)(W + 1) * (H + 1));
+    if (!img || !hgt) return 1;
+    for (int j = 0; j <= H; ++j)
+        for (int i = 0; i <= W; ++i) {
+            double h = terrain_earth_height(terrain_latlon_dir(90.0 - 180.0 * j / H, -180.0 + 360.0 * i / W), sp);
+            hgt[(size_t)j * (W + 1) + i] = h;
+            lo = fmin(lo, h); hi = fmax(hi, h);
+        }
+    for (int j = 0; j < H; ++j)
+        for (int i = 0; i < W; ++i) {
+            double h = hgt[(size_t)j * (W + 1) + i], gx = (hgt[(size_t)j * (W + 1) + i + 1] - h) / sp, gz = (hgt[(size_t)(j + 1) * (W + 1) + i] - h) / sp;
+            float shade = clampf(1.0f - (float)(60.0 * (gx + gz)), 0.5f, 1.3f), col[3];
+            if (h < 0.0) {
+                float t = clampf((float)(-h / 8000.0), 0.0f, 1.0f);
+                col[0] = 0.5f - 0.45f * t; col[1] = 0.7f - 0.6f * t; col[2] = 0.9f - 0.55f * t;
+            } else {
+                float t = clampf((float)(h / 4000.0), 0.0f, 1.0f);
+                col[0] = 0.35f + 0.6f * t; col[1] = 0.55f + 0.35f * t * t; col[2] = 0.25f + 0.6f * t * t;
+            }
+            size_t px = ((size_t)j * W + i) * 3;
+            for (int q = 0; q < 3; ++q) img[px + q] = (uint8_t)clampf(col[q] * shade * 255.0f, 0.0f, 255.0f);
+        }
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return 1;
+    fprintf(fp, "P6\n%d %d\n255\n", W, H);
+    fwrite(img, 1, (size_t)W * H * 3, fp);
+    fclose(fp);
+    printf("earth map, %d x %d (%.0f km a pixel): heights %.0f .. %.0f m\n", W, H, sp / 1000.0, lo, hi);
+    free(img);
+    free(hgt);
+    return 0;
+}
+
+/* A direction about `metres` off p, in a random direction over the sphere. */
+static TerrainDir pnudge(Rng *r, TerrainDir p, double metres) {
+    TerrainDir t = prand(r);
+    double d = pdot(t, p);
+    TerrainDir u = { t.x - d * p.x, t.y - d * p.y, t.z - d * p.z };
+    double len = sqrt(pdot(u, u));
+    if (len < 1e-9) return p;
+    double a = metres / PLANET_RADIUS, c = cos(a), s = sin(a) / len;
+    TerrainDir q = { c * p.x + s * u.x, c * p.y + s * u.y, c * p.z + s * u.z };
+    return q;
+}
+
+/* A spacing from 0 (half the time) up to 10,000 km, log-uniform. */
+static double rand_spacing(Rng *r) {
+    float u = rng_float(r);
+    float v = rng_float(r);
+    return u < 0.5f ? 0.0 : pow(10.0, 1.0 + 6.0 * v);
+}
+
+/* 11. The Earth: without a bake the macro field stands in; with the test bake
+ *     (the real project at 256 a side) the ground is recognisably Earth's and
+ *     the same however it is asked, continuous across every face seam and
+ *     corner, within its bound at every level of detail, and the range query
+ *     bounds it everywhere. */
+static void test_earth(Rng *r, const char *path) {
+    const double PI_D = 3.14159265358979323846, R = PLANET_RADIUS;
+
+    /* The stand-in. */
+    terrain_earth_unload();
+    CHECK(!terrain_earth_loaded(), "unloaded, the Earth still says it is loaded");
+    for (int k = 0; k < 200; ++k) {
+        TerrainDir p = prand(r);
+        double s = rand_spacing(r);
+        CHECK(terrain_earth_height(p, s) == TERRAIN_MACRO_M * terrain_macro(p, s), "without a bake, the Earth isn't the macro field");
+    }
+    double lo, hi, grade;
+    terrain_earth_extremes(&lo, &hi, &grade);
+    CHECK(lo == -TERRAIN_MACRO_M && hi == TERRAIN_MACRO_M, "without a bake, the extremes aren't the macro field's");
+
+    if (!terrain_earth_load(path)) { CHECK(0, "the test bake %s didn't load", path ? path : "(none)"); return; }
+    double lat, lon, heading;
+    terrain_earth_extremes(&lo, &hi, &grade);
+    terrain_earth_origin(&lat, &lon, &heading);
+    CHECK(lo < -6000.0 && lo > -11500.0 && hi > 4000.0 && hi < 9000.0 && grade > 0.0 && grade < 3.0, "the test bake's extremes (%.0f .. %.0f m, grade %.3f) aren't Earth's", lo, hi, grade);
+    CHECK(fabs(lat - 34.0522) < 1e-3 && fabs(lon + 118.2440) < 1e-3 && heading == 0.0, "the origin (%.4f, %.4f, %.1f) isn't central Los Angeles", lat, lon, heading);
+
+    /* Places, at 39 km a sample: the means over a sample round each. */
+    static const struct { double lat, lon, lo, hi; const char *name; } places[] = {
+        { 34.0522, -118.2440, -300.0, 1500.0, "Los Angeles" },
+        { 28.0, 86.9, 3000.0, 8000.0, "the Everest massif" },
+        { 11.3, 142.2, -11000.0, -4000.0, "the Mariana trench" },
+        { 0.0, -30.0, -6500.0, -1000.0, "the equatorial Atlantic" },
+        { 52.5, 13.4, 0.0, 200.0, "Berlin" },
+        { -75.0, 100.0, 1500.0, 4200.0, "East Antarctica" },
+    };
+    for (size_t k = 0; k < sizeof places / sizeof places[0]; ++k) {
+        double h = terrain_earth_height(terrain_latlon_dir(places[k].lat, places[k].lon), 0.0);
+        CHECK(h >= places[k].lo && h <= places[k].hi, "%s stands at %.0f m, not %.0f .. %.0f", places[k].name, h, places[k].lo, places[k].hi);
+        if (k < 3) printf("earth: %s %.0f m", places[k].name, h), printf(k == 2 ? "\n" : ", ");
+    }
+
+    /* Deterministic: the same answers in another order, bit for bit. */
+    enum { ND = 3000 };
+    static TerrainDir dp[ND];
+    static double ds[ND], dh[ND];
+    for (int k = 0; k < ND; ++k) { dp[k] = prand(r); ds[k] = rand_spacing(r); }
+    for (int k = 0; k < ND; ++k) dh[k] = terrain_earth_height(dp[k], ds[k]);
+    for (int k = ND - 1; k >= 0; --k) CHECK(terrain_earth_height(dp[k], ds[k]) == dh[k], "the Earth's height at (%.4f, %.4f, %.4f), spacing %.0f, changed between calls", dp[k].x, dp[k].y, dp[k].z, ds[k]);
+
+    /* Continuous across every seam: a millimetre either side of each edge, and
+     * round each corner, the ground differs by under a centimetre, at full
+     * detail and at any spacing. The ground's own grade over a millimetre is
+     * under a millimetre. */
+    double seamJump = 0.0, cornerJump = 0.0, du = 0.5e-3 / (R * PI_D / 4.0);   /* half a millimetre, in u */
+    for (int f = 0; f < 6; ++f) {
+        for (int k = 0; k < 400; ++k) {
+            float t = rng_float(r);
+            double w = 2.0 * t - 1.0, s = k % 2 ? 0.0 : rand_spacing(r);
+            int side = k % 4;
+            TerrainDir a, b;
+            if (side == 0) { a = terrain_face_dir(f, 1.0 - du, w); b = terrain_face_dir(f, 1.0 + du, w); }
+            else if (side == 1) { a = terrain_face_dir(f, -1.0 + du, w); b = terrain_face_dir(f, -1.0 - du, w); }
+            else if (side == 2) { a = terrain_face_dir(f, w, 1.0 - du); b = terrain_face_dir(f, w, 1.0 + du); }
+            else { a = terrain_face_dir(f, w, -1.0 + du); b = terrain_face_dir(f, w, -1.0 - du); }
+            double jump = fabs(terrain_earth_height(a, s) - terrain_earth_height(b, s));
+            seamJump = fmax(seamJump, jump);
+            CHECK(jump < 0.01, "the Earth jumps %.4f m across face %d's edge %d at %.4f, spacing %.0f", jump, f, side, w, s);
+        }
+    }
+    for (int k = 0; k < 400; ++k) {
+        int c = k % 8;
+        TerrainDir corner = { (c & 1 ? -1.0 : 1.0) / sqrt(3.0), (c & 2 ? -1.0 : 1.0) / sqrt(3.0), (c & 4 ? -1.0 : 1.0) / sqrt(3.0) };
+        double s = k % 2 ? 0.0 : rand_spacing(r);
+        TerrainDir a = pnudge(r, corner, 0.5e-3), b = pnudge(r, corner, 0.5e-3);
+        double jump = fabs(terrain_earth_height(a, s) - terrain_earth_height(b, s));
+        cornerJump = fmax(cornerJump, jump);
+        CHECK(jump < 0.01, "the Earth jumps %.4f m round corner %d, spacing %.0f", jump, c, s);
+    }
+    printf("earth: across the seams the ground jumps at most %.2f mm, round the corners %.2f mm\n", 1000.0 * seamJump, 1000.0 * cornerJump);
+
+    /* Levels of detail: within the error bound against full detail, 0 at
+     * spacing 0, and the bound itself 0 there. */
+    double worstRatio = 0.0, sumRatio = 0.0, sumErr = 0.0, sumBound = 0.0;
+    int nLod = 0;
+    for (int k = 0; k < 4000; ++k) {
+        TerrainDir p = prand(r);
+        double s = rand_spacing(r), full = terrain_earth_height(p, 0.0), h = terrain_earth_height(p, s), bound = terrain_earth_lod_error(p, s);
+        CHECK(terrain_earth_lod_error(p, 0.0) == 0.0, "the LOD error at spacing 0 isn't 0");
+        CHECK(bound >= 0.0 && fabs(h - full) <= bound, "the Earth at spacing %.0f is %.2f m from full detail, bound %.2f, at (%.4f, %.4f, %.4f)", s, h - full, bound, p.x, p.y, p.z);
+        if (s > 0.0 && bound > 0.0) {
+            double ratio = fabs(h - full) / bound;
+            worstRatio = fmax(worstRatio, ratio); sumRatio += ratio; sumErr += fabs(h - full); sumBound += bound; ++nLod;
+        }
+    }
+    printf("earth: LOD error %.0f m on average against a bound of %.0f m (ratio %.2f on average, %.2f at worst)\n", sumErr / nLod, sumBound / nLod, sumRatio / nLod, worstRatio);
+    /* Coarser is smoother: the finest and coarsest spacings differ most on average. */
+    double dFine = 0.0, dCoarse = 0.0;
+    for (int k = 0; k < 500; ++k) {
+        TerrainDir p = prand(r), q = pnudge(r, p, 20000.0);
+        dFine += fabs(terrain_earth_height(p, 0.0) - terrain_earth_height(q, 0.0));
+        dCoarse += fabs(terrain_earth_height(p, 1.0e6) - terrain_earth_height(q, 1.0e6));
+    }
+    CHECK(dCoarse < dFine, "the Earth at 1000 km spacing (%.0f m over 20 km) is rougher than at full detail (%.0f m)", dCoarse / 500.0, dFine / 500.0);
+
+    /* The range query bounds the ground within its cap, at its spacing and
+     * finer; and at full detail it is not absurdly wide. */
+    double widthSum = 0.0;
+    int nRange = 0;
+    for (int k = 0; k < 400; ++k) {
+        TerrainDir p = prand(r);
+        float u = rng_float(r);
+        double radius = pow(10.0, 3.0 + 3.5 * u), s = rand_spacing(r);
+        terrain_earth_range(p, radius, s, &lo, &hi);
+        CHECK(lo <= hi && lo > -20000.0 && hi < 20000.0, "the Earth's range round (%.4f, %.4f, %.4f) within %.0f m is %.0f .. %.0f", p.x, p.y, p.z, radius, lo, hi);
+        for (int q = 0; q < 60; ++q) {
+            float v = rng_float(r);
+            TerrainDir d = pnudge(r, p, radius * v);
+            float w = rng_float(r);
+            double sq = q % 3 == 0 ? s : s * w, h = terrain_earth_height(d, sq);
+            CHECK(h >= lo && h <= hi, "the Earth at %.1f m is outside its range %.1f .. %.1f (cap of %.0f m round (%.4f, %.4f, %.4f), spacing %.0f of %.0f)", h, lo, hi, radius, p.x, p.y, p.z, sq, s);
+        }
+        if (radius < 20000.0 && s == 0.0) { widthSum += hi - lo; ++nRange; }
+    }
+    printf("earth: ranges over caps under 20 km at full detail are %.0f m wide on average\n", widthSum / nRange);
+    double eLo, eHi;
+    terrain_earth_range(terrain_latlon_dir(0.0, 0.0), PI_D * R, 1.0e9, &eLo, &eHi);
+    terrain_earth_extremes(&lo, &hi, &grade);
+    CHECK(eLo <= lo && eHi >= hi, "the whole planet's range %.0f .. %.0f doesn't hold the extremes %.0f .. %.0f", eLo, eHi, lo, hi);
+}
+
 int main(int argc, char **argv) {
+    /* The Earth's test bake (tests/data/earth_test.bake: the real project at
+     * 256 a side), from --earth <path> or found from the source or build
+     * directory; the Earth tests run against it. */
+    const char *earth = NULL;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (strcmp(argv[i], "--earth") != 0) continue;
+        earth = argv[i + 1];
+        for (int k = i; k + 2 < argc; ++k) argv[k] = argv[k + 2];
+        argc -= 2;
+        break;
+    }
+    if (!earth) {
+        static const char *const candidates[] = { "tests/data/earth_test.bake", "../tests/data/earth_test.bake" };
+        for (size_t k = 0; k < 2 && !earth; ++k) { FILE *f = fopen(candidates[k], "rb"); if (f) { fclose(f); earth = candidates[k]; } }
+    }
+    if (earth) terrain_earth_load(earth);
     plan_world_init(cpu_count());
     /* Points round the city and its surroundings, plus some far away. */
     DVec2 c = plan_town_centre(0, 0);
@@ -1389,6 +1604,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--patches") == 0) { test_planet_patches(&r); return g_failures != 0; }
     if (argc > 2 && strcmp(argv[1], "--map") == 0) return map(argv[2], argc > 3 ? atof(argv[3]) : 60.0);
     if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
+    if (argc > 2 && strcmp(argv[1], "--earth-map") == 0) return earth_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
 
     /* 1. Reference pass, in order: finite and within the amplitudes. */
     double amax = fmax(PLAN_RELIEF_MAX_M, fmax(TERRAIN_LAND_TOP_M, TERRAIN_LAND_DEEP_M)) + 1e-3, lo = 1e9, hi = -1e9;
@@ -1547,6 +1763,7 @@ int main(int argc, char **argv) {
     test_fade();
     test_planet(&r);
     test_planet_patches(&r);
+    test_earth(&r, earth);
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all terrain tests passed (%d points)\n", N_POINTS);
