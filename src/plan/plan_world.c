@@ -13,7 +13,8 @@
  *
  * The sea: terrain_sea_margin on a grid of PLAN_SEA_CELL over the world's
  * reach, interpolated between its nodes; land is where it is above 0, and
- * the land nodes joined along the grid's lines are one continent.
+ * the nodes a road may reach (PLAN_ROAD_SEA_M above it) joined along the
+ * grid's lines are one continent.
  *
  * Placement. Candidate sites are the jittered centres of a CAND_CELL grid over
  * the world's reach. Each is scored for a city (site_score): level land (the
@@ -22,8 +23,11 @@
  * a little jitter so the best sites don't line up along the fields. Sites are
  * taken best first: the colossal cities, centres at least SEP_COLOSSAL apart,
  * then the megacities, the best sites the largest. Any two footprints keep
- * SEP_EDGE between them, and each must clear the sea, canyons and mountains
- * (footprint_ok). Should the land run out at those spacings they shrink by
+ * SEP_EDGE between them, and each must clear the sea, canyons and mountains,
+ * stand on ground the Earth tilts no more than FOOT_GRADE and keep out of the
+ * Earth's no-settlement mask (footprint_ok). With a bake the land, the sea and
+ * the landforms are the Earth's (terrain_sea_margin, terrain_landform), so the
+ * cities gather on its real lowlands. Should the land run out at those spacings they shrink by
  * SEP_RELAX and the pass goes on. A centre is moved to the centre of its town,
  * so its core is a town as the megacity's is (plan_town_regional).
  *
@@ -44,6 +48,8 @@
 #define SEA_FOOT_M    40.0        /* ...and the ring round its footprint this */
 #define FOOT_PAD      2000.0      /* the ring's distance beyond the footprint's radius (m) */
 #define FOOT_MOUNTAIN 0.35f       /* the most mountain weight a footprint may hold */
+#define FOOT_GRADE    0.02        /* the most the Earth may rise or fall from a footprint's centre to its ring, a metre out */
+#define NOSETTLE_MAX  0.5         /* the hints' no-settlement mask keeps settlements off above this */
 #define SEP_COLOSSAL  450000.0    /* colossal cities' centres at least this far apart (m) */
 #define SEP_EDGE      90000.0     /* any two footprints at least this far apart (m) */
 #define SEP_RELAX     0.85
@@ -213,7 +219,7 @@ double plan_world_sea(double x, double z) {
 
 int plan_world_continent(double x, double z) {
     ensure();
-    if (plan_world_sea(x, z) <= 0.0) return 0;
+    if (plan_world_sea(x, z) < PLAN_ROAD_SEA_M) return 0;
     int i = (int)floor((x + SEA_EXTENT) / PLAN_SEA_CELL), j = (int)floor((z + SEA_EXTENT) / PLAN_SEA_CELL);
     /* the nearest of the four nodes round it that is land */
     int best = 0;
@@ -235,7 +241,7 @@ static void label_continents(void) {
     if (!stack) fatal("out of memory labelling the continents");
     W.continents = 0;
     for (int start = 0; start < n * n; ++start) {
-        if (W.land[start] || W.sea[start] <= 0.0f) continue;
+        if (W.land[start] || W.sea[start] < PLAN_ROAD_SEA_M) continue;
         int label = ++W.continents, top = 0;
         W.land[start] = label;
         stack[top++] = start;
@@ -245,7 +251,7 @@ static void label_continents(void) {
             for (int k = 0; k < 4; ++k) {
                 if (nb[k][0] < 0 || nb[k][1] < 0 || nb[k][0] >= n || nb[k][1] >= n) continue;
                 int q = nb[k][1] * n + nb[k][0];
-                if (W.land[q] || W.sea[q] <= 0.0f) continue;
+                if (W.land[q] || W.sea[q] < PLAN_ROAD_SEA_M) continue;
                 W.land[q] = label;
                 stack[top++] = q;
             }
@@ -264,6 +270,12 @@ typedef struct CandRows {
     Cand *rows;     /* side candidates a row, at most */
     int  *count;    /* how many each row holds */
 } CandRows;
+
+/* Whether the Earth's hints keep settlements off (x, z) (never without a bake). */
+static int nosettle(double x, double z) {
+    TerrainEarthLand el;
+    return terrain_earth_land(terrain_chart_dir(x, z), &el) && el.nosettle > NOSETTLE_MAX;
+}
 
 static double smooth01(double t) { t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t; return t * t * (3.0 - 2.0 * t); }
 
@@ -284,7 +296,7 @@ static void cand_row(void *ctx, int j) {
         double z = -PLAN_WORLD_REACH + (j + 0.2 + 0.6 * hash_float(hash_combine(h, 2u))) * CAND_CELL;
         if (hypot(x, z) > PLAN_WORLD_REACH - CITY_RADIUS) continue;
         double sea = plan_world_sea(x, z);
-        if (sea < SEA_SETTLE_M) continue;
+        if (sea < SEA_SETTLE_M || nosettle(x, z)) continue;
         TerrainLandform lf;
         terrain_landform(x, z, &lf);
         if (lf.canyon > 0.0f || lf.w[TERRAIN_MOUNTAINS] > FOOT_MOUNTAIN) continue;
@@ -311,16 +323,23 @@ static int cand_order(const void *pa, const void *pb) {
 }
 
 /* Whether a footprint of radius r round (x, z) is clear: the ring FOOT_PAD
- * beyond it well above the sea, and neither it, a ring halfway in nor its
- * centre on a canyon or in the mountains. */
+ * beyond it well above the sea and no steeper from the centre than
+ * FOOT_GRADE (the sea's grid is the Earth as coarsely as the land under a
+ * settlement reads it, TERRAIN_LIFT_SPACING), and neither it, a ring halfway
+ * in nor its centre on a canyon, in the mountains or in the hints' mask. */
 static int footprint_ok(double x, double z, double r) {
-    if (plan_world_sea(x, z) < SEA_SETTLE_M) return 0;
+    double sea = plan_world_sea(x, z);
+    if (sea < SEA_SETTLE_M) return 0;
     for (int k = 0; k <= 24; ++k) {   /* 16 round the ring, 8 halfway in, the centre */
         int ring = k < 16;
         double a = ring ? 2.0 * PI * k / 16.0 : 2.0 * PI * (k - 16 + 0.5) / 8.0;
         double rr = ring ? r + FOOT_PAD : k < 24 ? 0.5 * r : 0.0;
         double px = x + rr * cos(a), pz = z + rr * sin(a);
-        if (ring && plan_world_sea(px, pz) < SEA_FOOT_M) return 0;
+        if (ring) {
+            double s = plan_world_sea(px, pz);
+            if (s < SEA_FOOT_M || fabs(s - sea) > FOOT_GRADE * rr) return 0;
+        }
+        if (nosettle(px, pz)) return 0;
         TerrainLandform lf;
         terrain_landform(px, pz, &lf);
         if (lf.canyon > 0.0f || lf.w[TERRAIN_MOUNTAINS] > FOOT_MOUNTAIN) return 0;

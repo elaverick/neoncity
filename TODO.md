@@ -34,15 +34,26 @@ same city; screenshots of the same `--cam` with `--rain 0` show the renderer's r
 ## Terrain
 The clipmap is drawn out to its coarsest window (about 32 km; `src/render/terrain_gpu.c`, `shaders/terrain/`), the
 planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the milestones are in the terrain roadmap.
-- **The Earth** (E2, E3: `tools/earth_bake.c`, `src/terrain/terrain_cube.c`, `src/terrain/terrain_earth.c`,
-  `data/earth/SOURCE.md`). The real Earth (ETOPO 2022) is baked onto the cube-sphere's faces and the engine reads
-  the bake (`terrain_earth_height`, loaded at start by the app and the tests), but the land doesn't take it yet
-  (E4 in the Earth roadmap). Left over: the LOD error bound (`terrain_earth_lod_error`) is the width of the
-  union of the mips' stencil ranges, so at the coarse mips, whose stencils span thousands of kilometres, it
-  is many times the real difference (0.05 of it on average, 0.37 at worst); the seam blend is half a sample
-  wide either side of an edge, all a 2-sample apron leaves a bicubic, which is 1.2 km at mip 0; a face's apron is resampled from the source while the interior of the coarser mips is box-filtered
-  from the finer, so across a seam the two estimates differ (3 m on average at mip 0, 188 m at worst, `--info`
-  prints them); `--dump-face` draws each face in its own (u, v), so north isn't up.
+- **The Earth** (E0-E6: `tools/earth_bake.c`, `src/terrain/terrain_cube.c`, `src/terrain/terrain_earth.c`,
+  `data/earth/SOURCE.md`; the design doc's "Earth data"). The real Earth (ETOPO 2022) is baked onto the cube-sphere's
+  faces; the land's lift, its landforms, the sea to come, the settlements and the roads follow it. Track C of the
+  Earth roadmap (a chart per settlement) is next. Left over:
+  - **From the air at night** the terrain haze hides the far ranges, so a 20 km capture shows haze, not the real
+    mountains on the horizon; the haze at altitude wants retuning (asked, not decided).
+  - **The coast near the megacity.** The Earth's lift fades in from 40 to 400 km out, so the Pacific 25 km from
+    Los Angeles isn't in the near ground.
+  - **The West is nearly empty.** The basins of the American West read as mountains, hills and plateaus, so
+    placement (plains first) puts the 223 cities on the plains and coasts east of the Rockies and in South
+    America. Los Angeles has a neighbour in the Central Valley and its links east cross 1800-2000 km of desert.
+    Smaller towns (Settlements and roads) or a gentler landform reading of the basins would fill it.
+  - **The strike's point defect** (E5): where the data's and the default strikes cancel, the ridges' frame swings
+    round a point.
+  - **The bake's bounds.** The LOD error bound (`terrain_earth_lod_error`) is the width of the
+    union of the mips' stencil ranges, so at the coarse mips, whose stencils span thousands of kilometres, it
+    is many times the real difference (0.05 of it on average, 0.37 at worst); the seam blend is half a sample
+    wide either side of an edge, all a 2-sample apron leaves a bicubic, which is 1.2 km at mip 0; a face's apron is resampled from the source while the interior of the coarser mips is box-filtered
+    from the finer, so across a seam the two estimates differ (3 m on average at mip 0, 188 m at worst, `--info`
+    prints them); `--dump-face` draws each face in its own (u, v), so north isn't up.
 - **The planet** (M9: `src/terrain/terrain_world.c`, `terrain_patch.c`; `terrain_test --planet-map`, `--patches`).
   World X/Z is an azimuthal-equidistant chart of an Earth-size sphere; the terrain and proxies are drawn bent over
   it, the city's chunks flat. Left over:
@@ -179,7 +190,8 @@ Left over:
   The sea itself isn't in the terrain yet: the basins it will fill are only low ground.
 - **Roads out of a city bundle.** Every colossal city keeps three links in the design, but links leaving it in one
   direction share a road (Steiner junctions, roads beside each other joined), so it may have fewer gates; the
-  megacity has three (two freeways and a trunk road). Small changes to the routing's costs reshuffle which.
+  megacity has two on the Earth (north up the Central Valley, a freeway east; one on the test bake, its three
+  links east joined), three on the stand-in. Small changes to the routing's costs reshuffle which.
 - **Clouds sit on the hills.** The deck's underside is at a fixed height (about 200 m), so within a city's cloud
   border a road climbing into the hills runs into it (see Landforms, Seen from the city, and Weather).
 - **Start-up.** Building the world costs about 15 s of one core's time (2.4 s on 8 threads, 2 s on 32): the coarse

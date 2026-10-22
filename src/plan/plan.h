@@ -118,9 +118,11 @@ void   plan_settlement_relief_in(double x0, double z0, double x1, double z1, dou
  * the megacity's 20 km, as much less as half the difference. */
 double plan_settlement_radius(double km);
 /* Which land (x, z) stands on: a continent's number, from 1, or 0 for where
- * the sea will be (terrain_sea_margin <= 0) and beyond the world's reach.
- * Continents are told apart on a grid of PLAN_SEA_CELL. */
+ * the sea will be, the shore within PLAN_ROAD_SEA_M of it, and beyond the
+ * world's reach. Continents are told apart on a grid of PLAN_SEA_CELL, so
+ * land joined only across that shore (a strait a road can't cross) is two. */
 #define PLAN_SEA_CELL 20000.0
+#define PLAN_ROAD_SEA_M 20.0   /* roads stay this far above the sea to come (terrain_sea_margin, m) */
 int    plan_world_continent(double x, double z);
 /* terrain_sea_margin at (x, z), read from that grid: interpolated, and -1e9
  * beyond the world's reach (m). */

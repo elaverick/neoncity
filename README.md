@@ -21,7 +21,7 @@ build/building_lab 3000 5      # building archetypes, retries and rejections; 5 
 build/interior_lab 3000 12 out # office lobbies: pass rate, attempts, rejections; 12 plan renders and cameras
 build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders, cameras
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
-build/world_test --map world.ppm         # the settlements and roads over the world (--local out.ppm km [x z]: round a point)
+build/world_test --map world.ppm         # the settlements and roads over the world (--local out.ppm km [x z]: round a point; --earth <bake> first: on the Earth)
 cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)
 build/terrain_test --earth-map earth.ppm # the bake as the engine reads it (--earth <bake> for another; the tests use tests/data/earth_test.bake)
 ```
@@ -524,10 +524,13 @@ a cube-sphere (`src/terrain/terrain_cube.c`, which also turns latitude and longi
 real Earth's ground (ETOPO 2022, `data/earth/SOURCE.md`) is baked onto those faces by `tools/earth_bake.c`, and
 `src/terrain/terrain_earth.c` reads the bake (`build/earth.bake`, found beside the executable or under `build/`;
 without it the procedural field below stands in): the height at any direction, smoothed to the spacing asked for
-and continuous across the faces' seams, with bounds for culling and levels of detail. The land doesn't take it
-yet (`terrain_test --earth-map out.ppm` draws it). Far from the city, broad highlands and basins up to 1.5 km high and low, thousands of
-kilometres across, raise the mountains and settle the plains (`terrain_test --planet-map out.ppm` draws all
-six faces). Beyond the clipmap's window the ground is the cube-sphere's patches (`src/terrain/terrain_patch.c`,
+and continuous across the faces' seams, with bounds for culling and levels of detail (`terrain_test --earth-map
+out.ppm` draws it). The chart's origin is central Los Angeles. From 40 to 400 km beyond the megacity the land rises
+and falls with the real Earth, and its landforms follow the data: mountains where it has the relief, plains where
+it is low and level, ridges along its ranges (`terrain_test --landform-map out.ppm`). The settlements stand on its
+lowlands and the roads go round its mountains (`world_test --earth build/earth.bake --map out.ppm`). Without a bake,
+broad procedural highlands and basins up to 1.5 km high and low stand in (`terrain_test --planet-map out.ppm` draws all
+six faces). The design is in `docs/neoncity-terrain-and-bounded-city-world-design.md`, "Earth data". Beyond the clipmap's window the ground is the cube-sphere's patches (`src/terrain/terrain_patch.c`,
 `src/render/planet_gpu.c`): 33 x 33 grids refined as a quadtree by their screen-space error through the haze,
 filled on a worker, each blending onto its parent's surface towards the distance it would merge at. They carry
 the ground out to the horizon, which from fly mode's ceiling of 20 km is 500 km off.

@@ -19,7 +19,9 @@
  * compare two builds (or the game's floating point against the tests', or
  * world_test --threads 1 --fingerprint against any other number of threads);
  * world_test --map out.ppm [px] draws the world, world_test --local out.ppm
- * [km [x z]] the land and roads round a point (the megacity by default). */
+ * [km [x z]] the land and roads round a point (the megacity by default).
+ * world_test [--threads n] --earth <bake> ... builds the world on the Earth's
+ * bake (src/terrain/terrain_earth.c); without one, on the procedural stand-in. */
 #include "plan.h"
 #include "terrain_internal.h"
 #include "city.h"
@@ -60,7 +62,7 @@ static void test_settlements(void) {
     CHECK(home.centre.x == c0.x && home.centre.z == c0.z && home.radius == CITY_RADIUS && home.relief_m == PLAN_RELIEF_MEGA_M
           && home.colossal && home.town[0] == 0 && home.town[1] == 0, "settlement 0 isn't the megacity as it was");
     int colossal = 0, continents[64] = { 0 };
-    double gapMin = 1e300, seaMin = 1e300, reachMax = 0.0;
+    double gapMin = 1e300, seaMin = 1e300, reachMax = 0.0, gradeMax = 0.0;
     double kmLo[2] = { 1e9, 1e9 }, kmHi[2] = { 0.0, 0.0 };
     for (int k = 0; k < PLAN_SETTLEMENTS; ++k) {
         PlanSettlement s = plan_settlement(k);
@@ -74,6 +76,10 @@ static void test_settlements(void) {
         double sea = plan_world_sea(s.centre.x, s.centre.z);
         if (k) seaMin = fmin(seaMin, sea);
         CHECK(k == 0 || sea >= 90.0, "settlement %d stands %.0f m above the sea to come", k, sea);
+        for (int q = 0; k && q < 16; ++q) {   /* the Earth's tilt under it, as coarsely as its ground reads it */
+            double rr = s.radius + 2000.0, a = 6.283185307179586 * q / 16.0;
+            gradeMax = fmax(gradeMax, fabs(plan_world_sea(s.centre.x + rr * cos(a), s.centre.z + rr * sin(a)) - sea) / rr);
+        }
         CHECK(s.continent > 0, "settlement %d isn't on a continent", k);
         if (s.continent > 0 && s.continent < 64) continents[s.continent]++;
         reachMax = fmax(reachMax, dlen(s.centre));
@@ -97,11 +103,13 @@ static void test_settlements(void) {
     for (int k = 1; k < 64; ++k) if (continents[k]) { nc++; biggest = continents[k] > biggest ? continents[k] : biggest; }
     printf("settlements: %d colossal, %d megacities on %d continents (the largest holds %d); the farthest %.0f km out\n",
            colossal, PLAN_SETTLEMENTS - colossal, nc, biggest, reachMax / 1000.0);
-    printf("  footprints at least %.0f km apart; centres at least %.0f m above the sea to come\n", gapMin / 1000.0, seaMin);
+    printf("  footprints at least %.0f km apart; centres at least %.0f m above the sea to come, on ground tilted at most %.2f%%\n",
+           gapMin / 1000.0, seaMin, 100.0 * gradeMax);
     printf("  built across (from their towns' area): colossal %.1f .. %.1f km, megacities %.1f .. %.1f km\n",
            kmLo[1], kmHi[1], kmLo[0], kmHi[0]);
     CHECK(colossal == PLAN_COLOSSAL, "%d colossal settlements, not %d", colossal, PLAN_COLOSSAL);
     CHECK(gapMin > 20000.0, "two footprints only %.1f km apart", gapMin / 1000.0);
+    CHECK(gradeMax <= 0.0201, "a settlement stands on ground the Earth tilts by %.2f%%", 100.0 * gradeMax);
     CHECK(kmLo[1] >= 17.0 && kmHi[1] <= 23.0, "colossal cities built %.1f .. %.1f km across", kmLo[1], kmHi[1]);
     CHECK(kmLo[0] >= 5.5 && kmHi[0] <= 13.5, "megacities built %.1f .. %.1f km across", kmLo[0], kmHi[0]);
 
@@ -185,7 +193,7 @@ static void test_roads(void) {
     for (int s = 0; s < PLAN_SETTLEMENTS; ++s) {
         for (int t = s + 1; t < PLAN_SETTLEMENTS; ++t)
             if (plan_settlement(s).continent == plan_settlement(t).continent && uf_find(parent, s) != uf_find(parent, t)) { splitContinents++; break; }
-        if (plan_settlement(s).colossal && !fwAt[s]) colossalNoFw++;
+        if (plan_settlement(s).colossal && deg[s] && !fwAt[s]) colossalNoFw++;   /* alone on its island, it has no roads */
     }
     printf("roads: %d between %d nodes (%d junctions), %.0f km in all, %.0f%% freeway; the worst detour %.2f times the straight line\n",
            nr, nn, junctions, total / 1000.0, 100.0 * freeway / total, detourMax);
@@ -200,7 +208,8 @@ static void test_roads(void) {
     CHECK(deadJunctions == 0, "%d junctions where fewer than three roads meet", deadJunctions);
     CHECK(colossalNoFw == 0, "%d colossal cities without a freeway", colossalNoFw);
     CHECK(freeway > 0.25 * total && freeway < 0.7 * total, "freeways %.0f%% of the network", 100.0 * freeway / total);
-    CHECK(deg[0] >= 2, "only %d roads out of the megacity", deg[0]);
+    /* on the Earth, by the sea with its neighbours all one way, its roads may share one way out */
+    CHECK(deg[0] >= (terrain_earth_loaded() ? 1 : 2), "only %d roads out of the megacity", deg[0]);
     /* views out along the megacity's roads, for NeonCity --cam: from the boulevard, and from 150 m up behind it */
     for (int r = 0; r < nr; ++r)
         for (int end = 0; end < 2; ++end) {
@@ -404,6 +413,11 @@ int main(int argc, char **argv) {
     int threads = cpu_count();
     if (argc > 2 && strcmp(argv[1], "--threads") == 0) {   /* the world must come out the same on any number */
         threads = atoi(argv[2]);
+        argv += 2;
+        argc -= 2;
+    }
+    if (argc > 2 && strcmp(argv[1], "--earth") == 0) {   /* the Earth's bake; without one, the procedural stand-in */
+        if (!terrain_earth_load(argv[2])) { printf("FAIL: the bake %s didn't load\n", argv[2]); return 1; }
         argv += 2;
         argc -= 2;
     }

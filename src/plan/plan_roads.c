@@ -10,8 +10,11 @@
  * settlements are placed, in these steps:
  *
  * 1. Candidates. The Delaunay triangulation of the settlements' centres:
- *    every pair of neighbours on one continent may be linked. Each candidate
- *    is routed over the coarse grid (below) for its cost.
+ *    every pair of neighbours on one continent within CAND_REACH may be
+ *    linked; beyond it, a colossal city's nearest until it has HUB_LINKS,
+ *    and the shortest pair across each gap those leave, so a continent is
+ *    whole however sparsely it is settled. Each candidate is
+ *    routed over the coarse grid (below) for its cost.
  * 2. A minimum spanning tree of the candidates by cost joins each continent.
  * 3. Network design by a gravity model with preferential connection. Traffic
  *    between two settlements is their sizes' product over the square of their
@@ -56,7 +59,6 @@
 #define FINE_CELL      1000.0
 #define FINE_PER       4        /* fine cells along a coarse cell's side */
 #define CORRIDOR       2        /* coarse cells either side of the coarse route the fine route may use */
-#define SEA_ROAD_M     20.0     /* roads stay this far above the sea to come (terrain_sea_margin) */
 #define CITY_CLEAR     1500.0   /* and this far outside other settlements' edges (m) */
 #define CAND_REACH     1600000.0 /* candidates no longer than this (m) */
 #define DETOUR_MIN     1.3      /* a candidate is worth adding where the network's route costs this many times more */
@@ -276,7 +278,7 @@ static int64_t astar(int si, int sj, int gi, int gj, double cell, double eps, in
  * `to` (-1 for a junction): above the sea to come, inside the world's reach,
  * and clear of every other settlement. */
 static int passable(double x, double z, int from, int to) {
-    if (plan_world_sea(x, z) < SEA_ROAD_M) return 0;
+    if (plan_world_sea(x, z) < PLAN_ROAD_SEA_M) return 0;
     if (plan_city_edge(x, z) < CITY_CLEAR) {
         int k = plan_settlement_near(x, z);
         if (k != from && k != to) return 0;
@@ -303,7 +305,7 @@ static void coarse_row(void *ctx, int r) {
     for (int q = 0; q < COARSE_SIDE; ++q) {
         double x = (COARSE_I0 + q + 0.5) * COARSE_CELL, z = (COARSE_I0 + r + 0.5) * COARSE_CELL;
         uint8_t v = COARSE_SEA;
-        if (plan_world_sea(x, z) >= SEA_ROAD_M) {
+        if (plan_world_sea(x, z) >= PLAN_ROAD_SEA_M) {
             if (plan_city_edge(x, z) < CITY_CLEAR) v = COARSE_CITY;
             else {
                 TerrainLandform lf;
@@ -338,7 +340,7 @@ static int64_t coarse_step(void *ctx, int ai, int aj, int bi, int bj) {
     if (fa < 0.0f || fb < 0.0f) return -1;
     double len = (ai != bi && aj != bj ? 1.4142135623730951 : 1.0) * COARSE_CELL;
     /* a diagonal step mustn't jump a strait */
-    if (ai != bi && aj != bj && plan_world_sea((ai + bi + 1) * 0.5 * COARSE_CELL, (aj + bj + 1) * 0.5 * COARSE_CELL) < SEA_ROAD_M) return -1;
+    if (ai != bi && aj != bj && plan_world_sea((ai + bi + 1) * 0.5 * COARSE_CELL, (aj + bj + 1) * 0.5 * COARSE_CELL) < PLAN_ROAD_SEA_M) return -1;
     return (int64_t)(len * 0.5 * (fa + fb) + 0.5);
 }
 
@@ -895,7 +897,7 @@ static void steiner(Net *net) {
                     double save = before - (dlen(dsub(f, pv)) + dlen(dsub(f, pa)) + dlen(dsub(f, pb)));
                     save = floor(save + 0.5);
                     if (save < STEINER_SAVE * before || save <= bestSave) continue;
-                    if (plan_world_sea(f.x, f.z) < SEA_ROAD_M || plan_city_edge(f.x, f.z) < 2.0 * CITY_CLEAR) continue;
+                    if (plan_world_sea(f.x, f.z) < PLAN_ROAD_SEA_M || plan_city_edge(f.x, f.z) < 2.0 * CITY_CLEAR) continue;
                     bestSave = save; bl1 = inc[x]; bl2 = inc[y]; bv = v; bf = f;
                 }
         }
@@ -1740,11 +1742,43 @@ void plan_roads_build(int threads) {
     if (!pairs) fatal("out of memory building the roads");
     int np = delaunay(PLAN_SETTLEMENTS, pairs, 8 * PLAN_SETTLEMENTS), nc = 0;
     Cand *cand = (Cand *)calloc((size_t)np, sizeof(Cand));
-    for (int k = 0; k < np; ++k) {
-        PlanSettlement a = plan_settlement(pairs[k][0]), b = plan_settlement(pairs[k][1]);
-        if (a.continent != b.continent || dlen(dsub(a.centre, b.centre)) > CAND_REACH) continue;
-        int l = add_link(net, pairs[k][0], pairs[k][1]);
-        cand[nc++] = (Cand){ pairs[k][0], pairs[k][1], 0, l };
+    {
+        /* those longer than CAND_REACH only where the shorter leave their ends
+         * apart: the shortest across each gap, until every continent is whole */
+        int *parent = (int *)malloc(sizeof(int) * PLAN_SETTLEMENTS);
+        double *len = (double *)malloc(sizeof(double) * (size_t)np);
+        if (!cand || !parent || !len) fatal("out of memory building the roads");
+        int ncand[PLAN_SETTLEMENTS] = { 0 };
+        for (int v = 0; v < PLAN_SETTLEMENTS; ++v) parent[v] = v;
+        for (int k = 0; k < np; ++k) {
+            PlanSettlement a = plan_settlement(pairs[k][0]), b = plan_settlement(pairs[k][1]);
+            len[k] = a.continent != b.continent ? -1.0 : dlen(dsub(a.centre, b.centre));
+        }
+        /* pass 0 takes every pair within CAND_REACH; pass 1 the shortest
+         * longer one at a colossal city with fewer than HUB_LINKS, again;
+         * pass 2 the shortest longer one across a gap, again */
+        for (int pass = 0; pass < 3; ++pass)
+            for (int k0 = 0; k0 < np; ) {
+                int best = -1;
+                if (pass == 0) { best = len[k0] >= 0.0 && len[k0] <= CAND_REACH ? k0 : -1; k0++; }
+                else {
+                    for (int k = 0; k < np; ++k) {
+                        int a = pairs[k][0], b = pairs[k][1];
+                        if (len[k] < 0.0 || (best >= 0 && len[k] >= len[best])) continue;
+                        if (pass == 1 ? (a < PLAN_COLOSSAL && ncand[a] < HUB_LINKS) || (b < PLAN_COLOSSAL && ncand[b] < HUB_LINKS)
+                                      : uf_find(parent, a) != uf_find(parent, b)) best = k;
+                    }
+                    if (best < 0) break;
+                }
+                if (best < 0) continue;
+                int a = pairs[best][0], b = pairs[best][1];
+                len[best] = -1.0;   /* taken */
+                cand[nc++] = (Cand){ a, b, 0, add_link(net, a, b) };
+                ncand[a]++; ncand[b]++;
+                parent[uf_find(parent, a)] = uf_find(parent, b);
+            }
+        free(parent);
+        free(len);
     }
     {
         int *ls = (int *)malloc(sizeof(int) * (size_t)nc);
