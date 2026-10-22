@@ -33,9 +33,10 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
     TerrainPatchInfo *in = &m->info;
     memset(in, 0, sizeof(*in));
     in->id = t;
+    TerrainChart wc = terrain_world_chart();
     TerrainDir dc = terrain_patch_dir(t, 2, 1, 1);
     in->centre = scale3(dc, PLANET_RADIUS);
-    terrain_dir_chart(dc, &in->chart[0], &in->chart[1]);
+    terrain_dir_chart(&wc, dc, &in->chart[0], &in->chart[1]);
     in->lo = 1e30f; in->hi = -1e30f;
 
     /* The grid and its apron: heights at the patch's spacing. */
@@ -94,7 +95,7 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
             set3(v->morph, sub3(target, P));
             set3(v->n, n);
             double x, z;
-            terrain_dir_chart(dir[gj * PS + gi], &x, &z);
+            terrain_dir_chart(&wc, dir[gj * PS + gi], &x, &z);
             v->chart[0] = (float)(x - in->chart[0]);
             v->chart[1] = (float)(z - in->chart[1]);
             v->urban = hypot(x, z) < URBAN_REACH_M ? plan_urban(x, z) : 0.0f;
@@ -270,8 +271,9 @@ void terrain_planet_select(TerrainPlanet *tp, const TerrainPlanetView *view) {
     tp->count++;
     tp->ndraw = tp->nwant = 0;
     tp->culled = tp->hidden = tp->inside = 0;
-    tp->cam = terrain_chart_point(view->cam[0], view->cam[1], view->cam[2]);
-    terrain_chart_frame(view->cam[0], view->cam[2], &tp->ax, &tp->up, &tp->az);
+    TerrainChart wc = terrain_world_chart();
+    tp->cam = terrain_chart_point(&wc, view->cam[0], view->cam[1], view->cam[2]);
+    terrain_chart_frame(&wc, view->cam[0], view->cam[2], &tp->ax, &tp->up, &tp->az);
     Select x = { tp, view, PLANET_RADIUS + terrain_planet_lowest(), 0.0 };
     if (view->window) {
         const double *w = view->win;

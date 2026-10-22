@@ -838,13 +838,14 @@ static int map(const char *path, double km) {
  * px a side (3 across, 2 down: faces 0-2 then 3-5), each pixel the ground
  * at the pixel's spacing, shaded from the north-west; the city in red. */
 static int planet_map(const char *path, int F) {
+    TerrainChart wc = terrain_world_chart();
     const int W = 3 * F, H = 2 * F;
     double sp = 0.5 * 3.14159265358979323846 / F * PLANET_RADIUS, lo = 1e9, hi = -1e9;
     uint8_t *img = (uint8_t *)calloc((size_t)W * H * 3, 1);
     double *hgt = (double *)malloc(sizeof(double) * (size_t)(F + 1) * (F + 1));
     if (!img || !hgt) return 1;
     double cu, cv;
-    int cf = terrain_dir_face(terrain_chart_dir(0.0, 0.0), &cu, &cv);
+    int cf = terrain_dir_face(terrain_chart_dir(&wc, 0.0, 0.0), &cu, &cv);
     for (int f = 0; f < 6; ++f) {
         for (int j = 0; j <= F; ++j)
             for (int i = 0; i <= F; ++i) {
@@ -945,9 +946,12 @@ static int segment_blocked(TerrainDir a, TerrainDir b, double rad) {
  *    planet is the chart's round the city and continuous out to the antipode;
  *    the bend matches the exact geometry; horizon culling only hides what is
  *    hidden. */
-static void test_planet(Rng *r) {
+/* A chart (the world's, or any other): distance from its origin is arc
+ * length and it round-trips; its local frame is orthonormal, right-handed,
+ * up along the direction and x along the chart's x. */
+static void check_chart(const TerrainChart *wc, Rng *r, const char *what) {
     const double R = PLANET_RADIUS, PI_D = 3.14159265358979323846;
-    TerrainDir o = terrain_chart_dir(0.0, 0.0);
+    TerrainDir o = terrain_chart_dir(wc, 0.0, 0.0);
 
     /* The chart: distance from the origin is arc length, and back again. */
     double chartErr = 0.0, arcErr = 0.0;
@@ -956,8 +960,8 @@ static void test_planet(Rng *r) {
         float v = rng_float(r);
         double s = (k % 4 == 0 ? 0.999 * PI_D * R : 2.0e5) * u, a = 2.0 * PI_D * v;
         double x = s * cos(a), z = s * sin(a), bx, bz;
-        TerrainDir p = terrain_chart_dir(x, z);
-        terrain_dir_chart(p, &bx, &bz);
+        TerrainDir p = terrain_chart_dir(wc, x, z);
+        terrain_dir_chart(wc, p, &bx, &bz);
         double tol = 1e-9 * s + 1e-5;
         chartErr = fmax(chartErr, hypot(bx - x, bz - z) / fmax(1.0, s));
         CHECK(fabs(pdot(p, p) - 1.0) < 1e-14, "chart direction at (%.0f, %.0f) isn't unit", x, z);
@@ -965,8 +969,8 @@ static void test_planet(Rng *r) {
         double arc = acos(fmin(1.0, pdot(p, o))) * R;
         if (s > 1000.0) arcErr = fmax(arcErr, fabs(arc - s) / s);
     }
-    printf("planet: chart round trip within %.1e of the distance, arc length within %.1e\n", chartErr, arcErr);
-    CHECK(arcErr < 1e-7, "chart distance isn't arc length (%.2e)", arcErr);
+    printf("planet: %s chart round trip within %.1e of the distance, arc length within %.1e\n", what, chartErr, arcErr);
+    CHECK(arcErr < 1e-7, "%s chart distance isn't arc length (%.2e)", what, arcErr);
 
     /* The chart's local frame is orthonormal, right-handed, and up is the direction. */
     for (int k = 0; k < 200; ++k) {
@@ -974,14 +978,53 @@ static void test_planet(Rng *r) {
         float v = rng_float(r);
         double s = 3.0e6 * u, a = 2.0 * PI_D * v, x = s * cos(a), z = s * sin(a);
         TerrainDir ax, up, az, cr;
-        terrain_chart_frame(x, z, &ax, &up, &az);
+        terrain_chart_frame(wc, x, z, &ax, &up, &az);
         cr.x = ax.y * up.z - ax.z * up.y; cr.y = ax.z * up.x - ax.x * up.z; cr.z = ax.x * up.y - ax.y * up.x;
         CHECK(fabs(pdot(ax, up)) < 1e-12 && fabs(pdot(az, up)) < 1e-12 && fabs(pdot(ax, az)) < 1e-12 && pdist(cr, az) < 1e-12 &&
-              pdist(up, terrain_chart_dir(x, z)) < 1e-15, "chart frame at (%.0f, %.0f) isn't orthonormal", x, z);
+              pdist(up, terrain_chart_dir(wc, x, z)) < 1e-15, "chart frame at (%.0f, %.0f) isn't orthonormal", x, z);
         /* x along the chart's x: a metre's step there moves the direction along ax */
-        TerrainDir d = psub(terrain_chart_dir(x + 1.0, z), terrain_chart_dir(x - 1.0, z));
+        TerrainDir d = psub(terrain_chart_dir(wc, x + 1.0, z), terrain_chart_dir(wc, x - 1.0, z));
         double along = pdot(d, ax) / sqrt(pdot(d, d));
         CHECK(along > 1.0 - 1e-6, "chart frame's x at (%.0f, %.0f) isn't the chart's x (cos %.9f)", x, z, along);
+    }
+}
+
+static void test_planet(Rng *r) {
+    TerrainChart wc = terrain_world_chart();
+    const double R = PLANET_RADIUS, PI_D = 3.14159265358979323846;
+    TerrainDir o = terrain_chart_dir(&wc, 0.0, 0.0);
+    check_chart(&wc, r, "the world's");
+
+    /* Charts about other places (their own draws, so the rest of the test
+     * sees the same ones): the same properties, and -z along the heading. */
+    {
+        Rng rc = rng_make(2718);
+        int other = 0;
+        for (int k = 0; k < 6; ++k) {
+            TerrainDir p = prand(&rc);
+            float hu = rng_float(&rc);
+            if (fabs(p.z) > 0.99) continue;   /* no chart is centred on a pole */
+            double heading = 360.0 * hu, lat, lon;
+            TerrainChart c = terrain_chart_about(p, heading);
+            check_chart(&c, &rc, "another");
+            TerrainDir ax, up, az;
+            terrain_chart_frame(&c, 0.0, 0.0, &ax, &up, &az);
+            terrain_dir_latlon(p, &lat, &lon);
+            TerrainDir east = psub(terrain_latlon_dir(lat, lon + 1e-5), terrain_latlon_dir(lat, lon - 1e-5));
+            TerrainDir north = psub(terrain_latlon_dir(lat + 1e-5, lon), terrain_latlon_dir(lat - 1e-5, lon));
+            double h = heading * (PI_D / 180.0);
+            double ahead = -(cos(h) * pdot(north, az) / sqrt(pdot(north, north)) + sin(h) * pdot(east, az) / sqrt(pdot(east, east)));
+            CHECK(pdist(c.o, p) == 0.0 && ahead > 1.0 - 1e-8, "a chart's -z at heading %.1f isn't along it (cos %.9f)", heading, ahead);
+            other++;
+        }
+        CHECK(other > 0, "no other chart was checked");
+        /* The world's chart is the chart about the megacity's place, bit for bit. */
+        double lat, lon, heading;
+        terrain_earth_origin(&lat, &lon, &heading);
+        if (terrain_earth_loaded()) {
+            TerrainChart c = terrain_chart_about(terrain_latlon_dir(lat, lon), heading);
+            CHECK(memcmp(&c, &wc, sizeof c) == 0, "the world's chart isn't the chart about the Earth's origin");
+        }
     }
 
     /* The planet frame is geocentric and right-handed: +x through (0, 0), +y
@@ -1004,8 +1047,8 @@ static void test_planet(Rng *r) {
             CHECK(lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0 && pdist(p, q) < 1e-14,
                   "latitude and longitude round trip: (%.6f, %.6f) is %.2e away", lat, lon, pdist(p, q));
         }
-        TerrainDir o = terrain_chart_dir(0.0, 0.0), ax, up, az;
-        terrain_chart_frame(0.0, 0.0, &ax, &up, &az);
+        TerrainDir o = terrain_chart_dir(&wc, 0.0, 0.0), ax, up, az;
+        terrain_chart_frame(&wc, 0.0, 0.0, &ax, &up, &az);
         terrain_dir_latlon(o, &lat, &lon);
         TerrainDir east = psub(terrain_latlon_dir(lat, lon + 1e-5), terrain_latlon_dir(lat, lon - 1e-5));
         TerrainDir north = psub(terrain_latlon_dir(lat + 1e-5, lon), terrain_latlon_dir(lat - 1e-5, lon));
@@ -1090,9 +1133,9 @@ static void test_planet(Rng *r) {
         if (k % 5 == 0) {   /* near the city */
             float u = rng_float(r);
             float v = rng_float(r);
-            p = terrain_chart_dir((2.0 * u - 1.0) * 40000.0, (2.0 * v - 1.0) * 40000.0);
+            p = terrain_chart_dir(&wc, (2.0 * u - 1.0) * 40000.0, (2.0 * v - 1.0) * 40000.0);
         }
-        terrain_dir_chart(p, &x, &z);
+        terrain_dir_chart(&wc, p, &x, &z);
         double h = terrain_planet_height_lod(p, sp), sf = terrain_planet_surface_lod(p, sp);
         if (acos(fmin(1.0, pdot(p, o))) <= 0.4 * PI_D) {
             double hc = terrain_height_lod(x, z, sp), sc = terrain_surface_lod(x, z, sp, NULL);
@@ -1102,7 +1145,7 @@ static void test_planet(Rng *r) {
         seen = fmin(seen, fmin(h, sf));
         /* a step of 2 m over the sphere moves it by no more than the land's steepest */
         TerrainDir ax, up, az;
-        terrain_chart_frame(x, z, &ax, &up, &az);
+        terrain_chart_frame(&wc, x, z, &ax, &up, &az);
         (void)up;
         TerrainDir q = { p.x + ax.x * 2.0 / R, p.y + ax.y * 2.0 / R, p.z + ax.z * 2.0 / R };
         double len = sqrt(pdot(q, q));
@@ -1113,7 +1156,7 @@ static void test_planet(Rng *r) {
         float u = rng_float(r);
         float v = rng_float(r);
         double s = PI_D * R - 50.0 * u, a = 2.0 * PI_D * v, b = a + 0.5 * PI_D;
-        TerrainDir p = terrain_chart_dir(s * cos(a), s * sin(a)), q = terrain_chart_dir(s * cos(b), s * sin(b));
+        TerrainDir p = terrain_chart_dir(&wc, s * cos(a), s * sin(a)), q = terrain_chart_dir(&wc, s * cos(b), s * sin(b));
         double d = pdist(p, q) * R;
         if (d > 1e-3) jump = fmax(jump, fabs(terrain_planet_height_lod(p, 0.0) - terrain_planet_height_lod(q, 0.0)) / d);
     }
@@ -1133,8 +1176,8 @@ static void test_planet(Rng *r) {
             double s = (k % 2 ? 32000.0 : 500000.0) * u, a = 2.0 * PI_D * v, h = -500.0 + 3000.0 * w, cy = 1.7 + 20000.0 * y;
             double dx = s * cos(a), dz = s * sin(a);
             TerrainDir ax, up, az;
-            terrain_chart_frame(cx, cz, &ax, &up, &az);
-            TerrainDir rel = psub(terrain_chart_point(cx + dx, h, cz + dz), terrain_chart_point(cx, cy, cz));
+            terrain_chart_frame(&wc, cx, cz, &ax, &up, &az);
+            TerrainDir rel = psub(terrain_chart_point(&wc, cx + dx, h, cz + dz), terrain_chart_point(&wc, cx, cy, cz));
             float b[3];
             terrain_bend((float)dx, (float)dz, (float)h, (float)cy, b);
             double e = sqrt((b[0] - pdot(rel, ax)) * (b[0] - pdot(rel, ax)) + (b[1] - pdot(rel, up)) * (b[1] - pdot(rel, up)) +
@@ -1184,10 +1227,10 @@ static void test_planet(Rng *r) {
         float y = rng_float(r);
         float q = rng_float(r);
         double cs = 300000.0 * u, ca = 2.0 * PI_D * v, alt = 2.0 + 20000.0 * w * w;
-        TerrainDir cam = terrain_chart_point(cs * cos(ca), alt, cs * sin(ca));
+        TerrainDir cam = terrain_chart_point(&wc, cs * cos(ca), alt, cs * sin(ca));
         double bs = cs + 2.0e6 * y, ba = ca + (q - 0.5), rad = 10.0 + 50000.0 * u * w;
         float hh = rng_float(r);
-        TerrainDir centre = terrain_chart_point(bs * cos(ba), -500.0 + 4000.0 * hh, bs * sin(ba));
+        TerrainDir centre = terrain_chart_point(&wc, bs * cos(ba), -500.0 + 4000.0 * hh, bs * sin(ba));
         int hid = terrain_horizon_hidden(cam, centre, rad, occ);
         if (hid) {
             hidden++;
@@ -1262,6 +1305,7 @@ static uint64_t hash_draws(const TerrainPlanet *tp) {
  *     selection is bounded, steady, never draws a patch with its ancestor, and
  *     refines where it matters. */
 static void test_planet_patches(Rng *r) {
+    TerrainChart wc = terrain_world_chart();
     TerrainPatchMesh *a = (TerrainPatchMesh *)malloc(sizeof(TerrainPatchMesh) * 8);
     TerrainPatchMesh *top = (TerrainPatchMesh *)malloc(sizeof(TerrainPatchMesh) * 6);
     TerrainPlanet *tp = (TerrainPlanet *)malloc(sizeof(TerrainPlanet));
@@ -1271,7 +1315,7 @@ static void test_planet_patches(Rng *r) {
     /* Patches near the city and elsewhere, some across a face seam. */
     TerrainPatch picks[12];
     for (int k = 0; k < 12; ++k) {
-        TerrainDir p = k < 6 ? terrain_chart_dir((k - 3) * 30000.0, (k % 3 - 1) * 40000.0) : prand(r);
+        TerrainDir p = k < 6 ? terrain_chart_dir(&wc, (k - 3) * 30000.0, (k % 3 - 1) * 40000.0) : prand(r);
         picks[k] = terrain_patch_at(p, 4 + k % 7);
     }
     picks[11] = terrain_patch_at(terrain_face_dir(0, 0.3, 0.99999), 9);   /* on face 0 against face 4 */
@@ -1505,6 +1549,7 @@ static double rand_spacing(Rng *r) {
  *     corner, within its bound at every level of detail, and the range query
  *     bounds it everywhere. */
 static void test_earth(Rng *r, const char *path) {
+    TerrainChart wc = terrain_world_chart();
     const double PI_D = 3.14159265358979323846, R = PLANET_RADIUS;
 
     /* The stand-in. */
@@ -1692,18 +1737,18 @@ static void test_earth(Rng *r, const char *path) {
      * on the land the Earth less the datum; the sea to come the Earth's own
      * oceans; and the single-spacing range bounding the Earth at it. */
     double olat, olon, e0 = terrain_earth_datum();
-    terrain_dir_latlon(terrain_chart_dir(0.0, 0.0), &olat, &olon);
+    terrain_dir_latlon(terrain_chart_dir(&wc, 0.0, 0.0), &olat, &olon);
     CHECK(fabs(olat - lat) < 1e-9 && fabs(olon - lon) < 1e-9, "the chart's origin (%.6f, %.6f) isn't the bake's (%.6f, %.6f)", olat, olon, lat, lon);
     double nlat, nlon, elat, elon;
-    terrain_dir_latlon(terrain_chart_dir(0.0, -10000.0), &nlat, &nlon);
-    terrain_dir_latlon(terrain_chart_dir(10000.0, 0.0), &elat, &elon);
+    terrain_dir_latlon(terrain_chart_dir(&wc, 0.0, -10000.0), &nlat, &nlon);
+    terrain_dir_latlon(terrain_chart_dir(&wc, 10000.0, 0.0), &elat, &elon);
     CHECK(nlat > lat + 0.08 && fabs(nlon - lon) < 1e-6 && elon > lon + 0.08 && fabs(elat - lat) < 1e-3,
           "the chart's -z isn't north (%.4f, %.4f) or its +x east (%.4f, %.4f)", nlat, nlon, elat, elon);
     CHECK(e0 == terrain_earth_height(terrain_latlon_dir(lat, lon), TERRAIN_LIFT_SPACING), "the datum %.3f isn't the Earth at the origin", e0);
     printf("earth: datum %.1f m\n", e0);
     for (int k = 0; k < 200; ++k) {
         double a = 2.0 * PI_D * rng_float(r), s = 5.0e5 + 3.0e6 * rng_float(r), x = s * cos(a), z = s * sin(a);
-        TerrainDir d = terrain_chart_dir(x, z);
+        TerrainDir d = terrain_chart_dir(&wc, x, z);
         double want = terrain_earth_height(d, 0.0) - e0, lift;
         terrain_land_parts(x, z, 1e9, 1e9, 0.0, &lift);
         CHECK(fabs(lift - want) < 1e-6, "the lift at (%.0f, %.0f) is %.3f, not the Earth less the datum %.3f", x, z, lift, want);

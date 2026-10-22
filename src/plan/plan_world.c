@@ -274,7 +274,8 @@ typedef struct CandRows {
 /* Whether the Earth's hints keep settlements off (x, z) (never without a bake). */
 static int nosettle(double x, double z) {
     TerrainEarthLand el;
-    return terrain_earth_land(terrain_chart_dir(x, z), &el) && el.nosettle > NOSETTLE_MAX;
+    TerrainChart wc = terrain_world_chart();
+    return terrain_earth_land(terrain_chart_dir(&wc, x, z), &el) && el.nosettle > NOSETTLE_MAX;
 }
 
 static double smooth01(double t) { t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t; return t * t * (3.0 - 2.0 * t); }

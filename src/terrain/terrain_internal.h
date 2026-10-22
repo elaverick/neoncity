@@ -188,7 +188,7 @@ void   terrain_urban_lift_range(double x0, double z0, double x1, double z1, doub
  * datum E0, the Earth at the origin at TERRAIN_LIFT_SPACING (0 without a
  * bake); the hints' largest roughness (1 without them); and the Earth's
  * part of terrain_lod_key (0 wherever it reads mip 0 alone, or has no bake). */
-int      terrain_earth_chart(TerrainDir *ex, TerrainDir *o, TerrainDir *ez);
+int      terrain_earth_chart(TerrainChart *c);
 double   terrain_earth_datum(void);
 double   terrain_earth_rough_max(void);
 uint32_t terrain_earth_lod_key(double spacing);
@@ -199,7 +199,7 @@ int      terrain_earth_forms(TerrainDir p, float a[TERRAIN_TYPES]);
 void     terrain_earth_range_at(TerrainDir p, double radius, double spacing, double *lo, double *hi);
 /* The same at a point of some chart, (x, z) in it and p its direction on the
  * planet: the macro field reads p, the rest (x, z). terrain_land_lod is this
- * in the world's chart (terrain_chart_dir); terrain_world.c's second chart
+ * in the world's chart (terrain_world_chart); terrain_world.c's second chart
  * passes its own. */
 double terrain_land_at(double x, double z, TerrainDir p, double edge, double spacing);
 /* Bounds on the land wherever plan_city_edge is at most `edge` and the

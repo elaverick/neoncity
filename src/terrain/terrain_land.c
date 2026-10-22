@@ -100,7 +100,8 @@ static void strike_frames(double x, double z, TerrainDir d, double mw, const Ter
     double w = mw * hypot(el->strike_e, el->strike_n), l = hypot(d.x, d.y);
     if (w <= 0.0 || l < 1e-9) return;   /* no strike, or at a pole */
     TerrainDir ax, up, az, east = { -d.y / l, d.x / l, 0.0 }, north = cross3(d, east);
-    terrain_chart_frame(x, z, &ax, &up, &az);
+    TerrainChart wc = terrain_world_chart();
+    terrain_chart_frame(&wc, x, z, &ax, &up, &az);
     double half = 0.5 * atan2(el->strike_n, el->strike_e);
     TerrainDir s = add3(scale3(east, cos(half)), scale3(north, sin(half)));
     double a = 2.0 * atan2(dot3(s, az), dot3(s, ax)), a0 = 2.0 * atan2(TERRAIN_STRIKE_Z, TERRAIN_STRIKE_X);
@@ -131,7 +132,8 @@ static void macro_of(double x, double z, const TerrainDir *p, double edge, doubl
     m->amp = m->rough = m->canyon = 1.0;
     double mw = macro_weight(home);
     if (mw <= 0.0) return;
-    TerrainDir d = p ? *p : terrain_chart_dir(x, z);
+    TerrainChart wc = terrain_world_chart();
+    TerrainDir d = p ? *p : terrain_chart_dir(&wc, x, z);
     double coarse = terrain_earth_height(d, fmax(spacing, TERRAIN_LIFT_SPACING)), r = detail_rise(edge);
     double l = coarse - terrain_earth_datum();
     if (r > 0.0) l += r * (terrain_earth_height(d, spacing) - coarse);
@@ -440,7 +442,8 @@ void terrain_urban_lift_range(double x0, double z0, double x1, double z1, double
     double wlo = macro_weight(h - CITY_EDGE_RATE * half), whi = macro_weight(h + CITY_EDGE_RATE * half), elo, ehi;
     *lo = *hi = 0.0;
     if (whi <= 0.0) return;
-    terrain_earth_range_at(terrain_chart_dir(cx, cz), half, TERRAIN_LIFT_SPACING, &elo, &ehi);
+    TerrainChart wc = terrain_world_chart();
+    terrain_earth_range_at(terrain_chart_dir(&wc, cx, cz), half, TERRAIN_LIFT_SPACING, &elo, &ehi);
     elo -= terrain_earth_datum();
     ehi -= terrain_earth_datum();
     *lo = fmin(wlo * elo, whi * elo) - 1e-6;   /* rounding */
@@ -483,7 +486,8 @@ double terrain_land_lod_error(double x, double z, double spacing) {
     double err = TERRAIN_BASE_M * terrain_dropped(TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
     double home, edge = plan_city_edges(x, z, &home), e = region_rise(edge), mw = macro_weight(home);
     if (mw > 0.0) {
-        TerrainDir d = terrain_chart_dir(x, z);
+        TerrainChart wc = terrain_world_chart();
+        TerrainDir d = terrain_chart_dir(&wc, x, z);
         double r = detail_rise(edge), fine = terrain_earth_lod_error(d, spacing);
         double coarse = spacing > TERRAIN_LIFT_SPACING ? fine + terrain_earth_lod_error(d, TERRAIN_LIFT_SPACING) : 0.0;
         err += mw * ((1.0 - r) * coarse + r * fine);

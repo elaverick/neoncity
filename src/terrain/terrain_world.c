@@ -28,24 +28,33 @@
 /* The cube-sphere that addresses the surface, its patches, and latitude and
  * longitude live in terrain_cube.c, which the Earth bake links on its own. */
 
-/* --- The chart -------------------------------------------------------------------- */
+/* --- The charts ------------------------------------------------------------------- */
 
-/* The chart's origin o and its x and z directions there: x east, z south. */
-static void chart_basis(TerrainDir *ex, TerrainDir *o, TerrainDir *ez) {
-    if (terrain_earth_chart(ex, o, ez)) return;
-    *o = terrain_face_dir(CHART_FACE, CHART_U, CHART_V);
-    TerrainDir east = { -o->y, o->x, 0.0 };   /* the pole (+z) cross o */
-    *ex = unit3(east);
-    *ez = cross3(*ex, *o);
+/* East and north at o, both turned clockwise by the heading for x and -z;
+ * z = x cross o makes the frame (x, up, z) right-handed. At a pole east is
+ * undefined: no chart is centred on one. */
+TerrainChart terrain_chart_about(TerrainDir o, double heading_deg) {
+    TerrainDir east = unit3((TerrainDir){ -o.y, o.x, 0.0 });   /* the pole (+z) cross o */
+    TerrainDir north = cross3(o, east);
+    double h = heading_deg * (PI / 180.0), c = cos(h), s = sin(h);
+    TerrainChart ch;
+    ch.o = o;
+    ch.ex = add3(scale3(east, c), scale3(north, -s));
+    ch.ez = cross3(ch.ex, o);
+    return ch;
 }
 
-TerrainDir terrain_chart_dir(double x, double z) {
-    TerrainDir ex, o, ez;
-    chart_basis(&ex, &o, &ez);
+TerrainChart terrain_world_chart(void) {
+    TerrainChart c;
+    if (terrain_earth_chart(&c)) return c;
+    return terrain_chart_about(terrain_face_dir(CHART_FACE, CHART_U, CHART_V), 0.0);
+}
+
+TerrainDir terrain_chart_dir(const TerrainChart *c, double x, double z) {
     double s = hypot(x, z);
-    if (s == 0.0) return o;
+    if (s == 0.0) return c->o;
     double th = s / PLANET_RADIUS, k = sin(th) / s;
-    return add3(scale3(o, cos(th)), scale3(add3(scale3(ex, x), scale3(ez, z)), k));
+    return add3(scale3(c->o, cos(th)), scale3(add3(scale3(c->ex, x), scale3(c->ez, z)), k));
 }
 
 /* p in the chart: (a, b) its components along the chart's x and z, st their
@@ -53,12 +62,10 @@ TerrainDir terrain_chart_dir(double x, double z) {
  * it, so the planet's ground asks the chart for exactly the point
  * terrain_dir_chart gives. */
 typedef struct ChartPos { double x, z, a, b, st, th; } ChartPos;
-static ChartPos chart_pos(TerrainDir p) {
-    TerrainDir ex, o, ez;
-    chart_basis(&ex, &o, &ez);
-    ChartPos c = { 0.0, 0.0, dot3(p, ex), dot3(p, ez), 0.0, 0.0 };
+static ChartPos chart_pos(const TerrainChart *ch, TerrainDir p) {
+    ChartPos c = { 0.0, 0.0, dot3(p, ch->ex), dot3(p, ch->ez), 0.0, 0.0 };
     c.st = hypot(c.a, c.b);
-    c.th = atan2(c.st, dot3(p, o));
+    c.th = atan2(c.st, dot3(p, ch->o));
     if (c.st > 0.0) {
         double k = PLANET_RADIUS * c.th / c.st;
         c.x = c.a * k;
@@ -67,29 +74,27 @@ static ChartPos chart_pos(TerrainDir p) {
     return c;
 }
 
-void terrain_dir_chart(TerrainDir p, double *x, double *z) {
-    ChartPos c = chart_pos(p);
-    *x = c.x;
-    *z = c.z;
+void terrain_dir_chart(const TerrainChart *c, TerrainDir p, double *x, double *z) {
+    ChartPos cp = chart_pos(c, p);
+    *x = cp.x;
+    *z = cp.z;
 }
 
-TerrainDir terrain_chart_point(double x, double y, double z) {
-    return scale3(terrain_chart_dir(x, z), PLANET_RADIUS + y);
+TerrainDir terrain_chart_point(const TerrainChart *c, double x, double y, double z) {
+    return scale3(terrain_chart_dir(c, x, z), PLANET_RADIUS + y);
 }
 
 /* The chart is polar about the origin: moving dr out from it turns the
  * direction by dr / R towards it, and moving across it by ds turns it by
  * ds sin(theta) / (theta R). The chart's x direction mixes the two. */
-void terrain_chart_frame(double x, double z, TerrainDir *ax, TerrainDir *up, TerrainDir *az) {
-    TerrainDir ex, o, ez;
-    chart_basis(&ex, &o, &ez);
-    *up = terrain_chart_dir(x, z);
+void terrain_chart_frame(const TerrainChart *c, double x, double z, TerrainDir *ax, TerrainDir *up, TerrainDir *az) {
+    *up = terrain_chart_dir(c, x, z);
     double s = hypot(x, z);
-    TerrainDir dx = ex;
+    TerrainDir dx = c->ex;
     if (s > 0.0) {
         double ux = x / s, uz = z / s, th = s / PLANET_RADIUS;
-        TerrainDir t = add3(scale3(ex, ux), scale3(ez, uz)), n = add3(scale3(ex, -uz), scale3(ez, ux));
-        TerrainDir radial = add3(scale3(o, -sin(th)), scale3(t, cos(th)));
+        TerrainDir t = add3(scale3(c->ex, ux), scale3(c->ez, uz)), n = add3(scale3(c->ex, -uz), scale3(c->ez, ux));
+        TerrainDir radial = add3(scale3(c->o, -sin(th)), scale3(t, cos(th)));
         dx = add3(scale3(radial, ux), scale3(n, -uz * sin(th) / th));
     }
     dx = add3(dx, scale3(*up, -dot3(dx, *up)));
@@ -128,7 +133,8 @@ void terrain_bend_bounds(float mn[3], float mx[3]) {
 /* --- The ground on the planet ----------------------------------------------------- */
 
 static double planet_lod(TerrainDir p, double spacing, int surface) {
-    ChartPos c = chart_pos(p);
+    TerrainChart wc = terrain_world_chart();
+    ChartPos c = chart_pos(&wc, p);
     double near = 0.0;
     if (c.th < CHART_BLEND_TO) {
         if (surface) near = terrain_surface_lod(c.x, c.z, spacing, NULL);
@@ -179,7 +185,8 @@ double terrain_planet_lowest(void) {
 double terrain_sea_margin(double x, double z) {
     double th = hypot(x, z) / PLANET_RADIUS;
     if (th >= SEA_OUTER_TO) return -SEA_OUTER_M;
-    TerrainDir d = terrain_chart_dir(x, z);
+    TerrainChart wc = terrain_world_chart();
+    TerrainDir d = terrain_chart_dir(&wc, x, z);
     double m = terrain_earth_loaded() ? terrain_earth_height(d, TERRAIN_LIFT_SPACING) - SEA_MARGIN_M
                                       : TERRAIN_MACRO_M * (terrain_macro(d, 0.0) - SEA_LEVEL_MACRO);
     if (th > SEA_OUTER_FROM) {

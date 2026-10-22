@@ -93,15 +93,26 @@ int    terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, in
 
 typedef struct TerrainDir { double x, y, z; } TerrainDir;
 
-/* The direction of world (x, z), in the planet frame, and back. The chart
- * covers the sphere but for the origin's antipode, at distance pi R. */
-TerrainDir terrain_chart_dir(double x, double z);
-void       terrain_dir_chart(TerrainDir p, double *x, double *z);
-/* World (x, y, z) as a point in the planet frame (m). */
-TerrainDir terrain_chart_point(double x, double y, double z);
-/* The local frame at world (x, z): up along the sphere's normal, and x and z
- * along the chart's x and z there, orthogonal to it and to each other. */
-void       terrain_chart_frame(double x, double z, TerrainDir *ax, TerrainDir *up, TerrainDir *az);
+/* A chart: the azimuthal-equidistant projection about its origin o, with
+ * its x along ex and its z along ez there (unit, ez = ex x o). World X/Z is
+ * the world's chart, terrain_world_chart(); any other place can have one of
+ * its own. */
+typedef struct TerrainChart { TerrainDir o, ex, ez; } TerrainChart;
+/* The world's chart: about the Earth bake's origin, or the procedural one. */
+TerrainChart terrain_world_chart(void);
+/* The chart about o, x east and z south there, both turned clockwise by
+ * heading_deg so that its -z points along the heading. */
+TerrainChart terrain_chart_about(TerrainDir o, double heading_deg);
+
+/* The direction of chart c's (x, z), in the planet frame, and back. A chart
+ * covers the sphere but for its origin's antipode, at distance pi R. */
+TerrainDir terrain_chart_dir(const TerrainChart *c, double x, double z);
+void       terrain_dir_chart(const TerrainChart *c, TerrainDir p, double *x, double *z);
+/* Chart c's (x, y, z) as a point in the planet frame (m). */
+TerrainDir terrain_chart_point(const TerrainChart *c, double x, double y, double z);
+/* The local frame at chart c's (x, z): up along the sphere's normal, and x
+ * and z along the chart's x and z there, orthogonal to it and to each other. */
+void       terrain_chart_frame(const TerrainChart *c, double x, double z, TerrainDir *ax, TerrainDir *up, TerrainDir *az);
 
 /* A point at world (cam_x + dx, h, cam_z + dz) as seen from a camera at world
  * (cam_x, cam_y, cam_z), in the camera's local frame (terrain_chart_frame):
@@ -159,7 +170,7 @@ double terrain_planet_lowest(void);
  * negative, at mip 0 about 2.4 km a sample. It is the land's lift (the
  * planet's highlands and basins, terrain_internal.h) less the datum, its
  * height under the megacity, so world Y = elevation - datum; the bake's
- * origin is the chart's (terrain_chart_dir). */
+ * origin is the world chart's (terrain_world_chart). */
 
 /* Loads a bake: the file at `path`, or with NULL the first of $NEONCITY_EARTH,
  * earth.bake beside the executable, earth.bake here and build/earth.bake.

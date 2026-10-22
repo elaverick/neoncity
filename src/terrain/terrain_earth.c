@@ -77,7 +77,7 @@ static struct Earth {
     int        loaded, mips, N;
     double     scale, offset;
     double     origin_lat, origin_lon, origin_heading;
-    TerrainDir ex, o, ez;       /* the chart's basis about the origin */
+    TerrainChart chart;         /* the world's chart, about the origin */
     double     datum;           /* E0: the Earth at the origin at TERRAIN_LIFT_SPACING (m) */
     char       path[1024];
     EarthMip   mip[MAX_MIPS];
@@ -263,17 +263,9 @@ static int load_file(const char *path) {
 #include <unistd.h>
 #endif
 
-/* The chart about the origin: o its direction, ex east and ez south there
- * (as the procedural chart's, ez = ex x o), both turned clockwise by the
- * heading, so the chart's -z points along it. */
+/* The chart about the origin, turned by the heading. */
 static void set_chart(void) {
-    TerrainDir o = terrain_latlon_dir(g_earth.origin_lat, g_earth.origin_lon);
-    TerrainDir east = unit3((TerrainDir){ -o.y, o.x, 0.0 });   /* the pole (+z) cross o */
-    TerrainDir north = cross3(o, east);
-    double h = g_earth.origin_heading * (PI / 180.0), c = cos(h), s = sin(h);
-    g_earth.o = o;
-    g_earth.ex = add3(scale3(east, c), scale3(north, -s));
-    g_earth.ez = cross3(g_earth.ex, o);
+    g_earth.chart = terrain_chart_about(terrain_latlon_dir(g_earth.origin_lat, g_earth.origin_lon), g_earth.origin_heading);
 }
 
 /* The bake beside the executable, in the working directory, or in build/ under it. */
@@ -308,7 +300,7 @@ int terrain_earth_load(const char *path) {
     }
     if (ok) {
         set_chart();
-        g_earth.datum = terrain_earth_height(g_earth.o, TERRAIN_LIFT_SPACING);
+        g_earth.datum = terrain_earth_height(g_earth.chart.o, TERRAIN_LIFT_SPACING);
         const EarthMip *m0 = &g_earth.mip[0];
         printf("earth: %s, %d a side (%.0f m), %d mips, %.0f to %.0f m, grade %.2f; origin %.4f %.4f heading %.1f, datum %.1f m; landforms %d a side%s\n",
                g_earth.path, g_earth.N, m0->step, g_earth.mips, m0->lo, m0->hi, m0->grade, g_earth.origin_lat, g_earth.origin_lon, g_earth.origin_heading,
@@ -322,9 +314,9 @@ int terrain_earth_load(const char *path) {
 
 int terrain_earth_loaded(void) { return g_earth.loaded; }
 
-int terrain_earth_chart(TerrainDir *ex, TerrainDir *o, TerrainDir *ez) {
+int terrain_earth_chart(TerrainChart *c) {
     if (!g_earth.loaded) return 0;
-    *ex = g_earth.ex; *o = g_earth.o; *ez = g_earth.ez;
+    *c = g_earth.chart;
     return 1;
 }
 
@@ -334,7 +326,7 @@ double terrain_earth_rough_max(void) { return g_earth.loaded ? g_earth.land.roug
 
 void terrain_earth_origin(double *lat, double *lon, double *heading) {
     if (g_earth.loaded) { *lat = g_earth.origin_lat; *lon = g_earth.origin_lon; *heading = g_earth.origin_heading; return; }
-    terrain_dir_latlon(terrain_chart_dir(0.0, 0.0), lat, lon);
+    terrain_dir_latlon(terrain_world_chart().o, lat, lon);
     *heading = 0.0;
 }
 
