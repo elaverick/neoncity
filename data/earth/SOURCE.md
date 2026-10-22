@@ -1,6 +1,6 @@
 # Earth source data
 
-The planet's large-scale shape comes from a real elevation model. This folder will hold the
+The planet's large-scale shape comes from a real elevation model. This folder holds the
 editable project (`earth.json`, `height/*.tif` tiles, optional `hints/`) that `tools/earth/earth.py`
 writes from the source below. The `.tif` tiles are stored with Git LFS (`.gitattributes`); the
 engine's bake (`earth.bake`) is a build output and is never committed.
@@ -46,3 +46,35 @@ To fetch it again, download the URL above and check the hash: `sha256sum -c *.sh
 - **Origin:** the megacity sits at **34.0522°N, 118.2440°W** (central Los Angeles), heading 0°
   (north). Note for E4/E6: the Pacific is about 25 km south-west of this point, so the city's
   fringe approaches the coast; the sea-level margin keeps settlements and roads off the sea floor.
+
+## The tool
+
+`tools/earth/earth.py` (Python 3.11+, `tools/earth/requirements.txt`: numpy, rasterio) builds and
+edits the project. Set it up once with a virtual environment, which `.gitignore` leaves out:
+
+```
+python -m venv tools/earth/.venv
+tools/earth/.venv/Scripts/python -m pip install -r tools/earth/requirements.txt
+```
+
+Then, with `py` standing for `tools/earth/.venv/Scripts/python -I tools/earth/earth.py`:
+
+| Command | What it does |
+|---|---|
+| `py import <source.tif> data/earth [--origin LAT LON [HEADING]]` | writes the 72 tiles, `earth.json` and `earth.vrt`; checks the source against its `.sha256` sidecar (30 s) |
+| `py check data/earth` | validates every tile and the manifest, prints the minimum, maximum and highest slope |
+| `py extract data/earth <lon0> <lat0> <lon1> <lat1> out.tif` | one GeoTIFF of a region to edit in QGIS, Photoshop or Gaea (`--layer hints` for the hint layer) |
+| `py insert data/earth edited.tif [--feather N]` | writes the edit back into the tiles it covers; nodata pixels keep their values; only changed tiles are rewritten |
+| `py preview data/earth out.png [--region …] [--width W] [--exaggerate X]` | a hillshade with the sea floor tinted blue |
+| `py stage data/earth out.r16` | the whole grid as raw little-endian int16 plus `out.r16.txt`, the input of `tools/earth_bake.c` |
+
+The grid is fixed at EPSG:4326, 60", pixel-is-area, 21600 × 10800 from 90°N 180°W. A tile is named
+by its south-west corner: `height/N30_W120.tif` spans 30°N..60°N, 120°W..90°W. Elevations are whole
+metres (EGM2008), the sea floor negative, no nodata. An edited region must come back on the same grid
+(the tool refuses anything else), and an unedited `extract` → `insert` leaves the tiles byte-identical.
+`earth.vrt` opens the tiles as one layer in QGIS. The optional `hints/` tiles are 8-bit, three bands:
+R landform override (0 none, 1 plains, 2 hills, 3 mountains, 4 plateau), G detail roughness scale,
+B no-settlement mask; `extract --layer hints` gives zeros where no hint tile exists yet.
+
+Imported 2026-10-22: minimum −10752 m (23.2°S 174.7°W), maximum 8157 m (28.0°N 86.9°E), 65.9% of
+cells below sea level, and the origin cell at 99 m.

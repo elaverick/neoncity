@@ -1,0 +1,511 @@
+<VRTDataset rasterXSize="21600" rasterYSize="10800">
+  <SRS dataAxisToSRSAxisMapping="2,1">GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AXIS["Latitude",NORTH],AXIS["Longitude",EAST],AUTHORITY["EPSG","4326"]]</SRS>
+  <GeoTransform>-180.0, 0.016666666666666666, 0.0, 90.0, 0.0, -0.016666666666666666</GeoTransform>
+  <VRTRasterBand dataType="Int16" band="1">
+    <Description>elevation (m)</Description>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_W180.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_W150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="1800" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_W120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="3600" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_W090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="5400" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_W060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="7200" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_W030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="9000" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_E000.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="10800" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_E030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="12600" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_E060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="14400" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_E090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="16200" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_E120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="18000" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N60_E150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="19800" yOff="0" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_W180.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="0" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_W150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="1800" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_W120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="3600" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_W090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="5400" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_W060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="7200" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_W030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="9000" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_E000.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="10800" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_E030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="12600" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_E060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="14400" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_E090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="16200" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_E120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="18000" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N30_E150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="19800" yOff="1800" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_W180.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="0" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_W150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="1800" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_W120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="3600" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_W090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="5400" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_W060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="7200" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_W030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="9000" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_E000.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="10800" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_E030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="12600" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_E060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="14400" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_E090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="16200" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_E120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="18000" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/N00_E150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="19800" yOff="3600" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_W180.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="0" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_W150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="1800" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_W120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="3600" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_W090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="5400" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_W060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="7200" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_W030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="9000" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_E000.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="10800" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_E030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="12600" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_E060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="14400" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_E090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="16200" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_E120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="18000" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S30_E150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="19800" yOff="5400" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_W180.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="0" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_W150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="1800" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_W120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="3600" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_W090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="5400" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_W060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="7200" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_W030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="9000" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_E000.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="10800" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_E030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="12600" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_E060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="14400" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_E090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="16200" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_E120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="18000" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S60_E150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="19800" yOff="7200" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_W180.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="0" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_W150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="1800" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_W120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="3600" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_W090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="5400" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_W060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="7200" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_W030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="9000" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_E000.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="10800" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_E030.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="12600" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_E060.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="14400" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_E090.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="16200" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_E120.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="18000" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">height/S90_E150.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="1800" RasterYSize="1800" DataType="Int16" BlockXSize="256" BlockYSize="256" />
+      <SrcRect xOff="0" yOff="0" xSize="1800" ySize="1800" />
+      <DstRect xOff="19800" yOff="9000" xSize="1800" ySize="1800" />
+    </SimpleSource>
+  </VRTRasterBand>
+</VRTDataset>
