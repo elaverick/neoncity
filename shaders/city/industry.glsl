@@ -33,17 +33,14 @@ vec3 industryPaint(uint k) {
     return P[k & 15u];
 }
 
-// A plant's fence (mesh_industry.c: fence; params w 1 the wavy wire net, 2 the
-// welded mesh): an authored wire mesh, uv metres round the fence and up, its
-// albedo's alpha the wire. The wire covers as many of a pixel's samples as its
+// A plant's fence (mesh_industry.c: fence; params w 1 + the material it wears,
+// PBR_FENCE_NET or PBR_FENCE_WELD): an authored wire mesh pm, uv metres round
+// the fence and up, its albedo's alpha the wire. The wire covers as many of a pixel's samples as its
 // coverage (with an ordered dither, as litterShadow), so near it is crisp and
 // far off, where the mips have blurred it to grey, it thins to a haze; never
 // sample 0, which depth and reflections read. Bare metal, lit as litter's cans.
-const float FENCE_TILE[2] = float[2](1.0, 1.5);     // metres per image
-const float FENCE_MEAN[2] = float[2](0.385, 0.363); // the wire's mean linear albedo (pbr_pack)
 vec3 shadeFence(vec3 p, vec3 V, vec3 n, vec2 uv, int pm) {
-    int i = pm == PBR_FENCE_NET ? 0 : 1;
-    vec2 st = vec2(uv.x, -uv.y) / FENCE_TILE[i];
+    vec2 st = vec2(uv.x, -uv.y) / pbrTile(pm);
     vec3 dp1 = dFdx(p), dp2 = dFdy(p), q1 = cross(n, dp1), q2 = cross(dp2, n);
     vec2 d1 = dFdx(st), d2 = dFdy(st);
     vec3 T = q2 * d1.x + q1 * d2.x, B = q2 * d1.y + q1 * d2.y;   // the image's right and down
@@ -55,7 +52,7 @@ vec3 shadeFence(vec3 p, vec3 V, vec3 n, vec2 uv, int pm) {
     int k = min(int(cov * 3.0 + (BAYER[f.y * 2 + f.x] + 0.5) * 0.25), 3);
     if (k == 0) discard;
     gl_SampleMask[0] = ((1 << k) - 1) << (4 - k);
-    vec3 tint = sf.albedo / FENCE_MEAN[i];
+    vec3 tint = sf.albedo / pbrAlbedoMean(pm);   // the wire's own mean
     return litterLight(p, sf.n, V, tint * 0.05, sf.rough, 0.6, tint, sf.ao);
 }
 
@@ -69,8 +66,8 @@ vec3 shadeIndustry(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float mull = max(step(0.93, fract(uv.x / 1.2)), step(0.9, fract(uv.y / 1.0)));
         return mix(c * (1.6 + 0.8 * hf(seed, uint(floor(uv.x / 1.2)))), vec3(0.01), mull);
     }
-    if (surf == IND_MESH && prm.w != 0u && pbrLoaded(prm.w == 1u ? PBR_FENCE_NET : PBR_FENCE_WELD))
-        return shadeFence(p, V, n, uv, prm.w == 1u ? PBR_FENCE_NET : PBR_FENCE_WELD);
+    if (surf == IND_MESH && prm.w != 0u && pbrLoaded(int(prm.w) - 1))
+        return shadeFence(p, V, n, uv, int(prm.w) - 1);
     if (surf == IND_MESH) {
         // chain-link: a diamond lattice of galvanised wire, the gaps let the view through
         veil();

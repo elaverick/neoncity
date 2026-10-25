@@ -70,13 +70,14 @@ float ceilingPanel(vec2 q, vec2 off, float aa) {
  * behind the frame as the viewer moves. The diffuser lies flat in the frame's
  * opening and stays put, letting part of what is behind it through and
  * glowing with the tubes' light scattered in it. */
-const float FIXTURE_DEPTH = 0.16;      // metres from the frame's face (the ceiling's plane) down to height 0
-const float DIFFUSER_OPACITY = 0.7;
-// The height map's frame face: at least 0.79 all round, and nothing inside the
-// opening above 0.70. The frame lies in the ceiling's plane, so a ray that meets
-// it stops there; were it below the plane, rays would slide over its inner
-// edge onto the tubes, which then showed through the frame, undiffused.
-const float FIXTURE_FRAME = 0.8;
+// Their properties are their materials' params (light_fixture.json, light_diffuser.json):
+// the tray's depth in metres from the frame's face (the ceiling's plane) down
+// to height 0; the height map's frame face, which lies in the ceiling's plane
+// (were it below, rays would slide over its inner edge onto the tubes, which
+// then showed through the frame, undiffused); the diffuser's opacity.
+#define FIXTURE_DEPTH    (pbrParams(PBR_LIGHT_FIXTURE).x)
+#define FIXTURE_FRAME    (pbrParams(PBR_LIGHT_FIXTURE).y)
+#define DIFFUSER_OPACITY (pbrParams(PBR_LIGHT_DIFFUSER).x)
 
 // The troffer's height at st in its panel, 1 at the frame and the ceiling round it.
 float fixtureHeight(vec2 st, vec2 gx, vec2 gy) {
@@ -148,18 +149,20 @@ vec3 marble(vec2 q, vec3 base, vec3 vein, uint salt, float aa) {
     return mix(base * (0.75 + 0.5 * cloud), vein, v * 0.4);
 }
 
-/* Authored stone and wood (src/render/textures.c, assets/textures/): m a PBR_*
- * material whose image spans `size` metres of q, shifted by off (each slab or
+/* Authored stone and wood (assets/materials/): m a PBR_* material whose image
+ * spans `scale` times its tile in q (metres), shifted by off (each slab or
  * panel its own piece of the stone) and turned a quarter if `turn`. gx, gy:
  * q's screen derivatives, taken where q is continuous, so a slab's offset
- * doesn't upset the filtering at its joints. rough: the map's roughness. */
-vec3 finish(int m, vec2 q, float size, vec2 off, bool turn, vec2 gx, vec2 gy, out float rough) {
+ * doesn't upset the filtering at its joints. Returns the albedo at the
+ * material's scale; rough: the map's roughness. */
+vec3 finish(int m, vec2 q, float scale, vec2 off, bool turn, vec2 gx, vec2 gy, out float rough) {
     int i = m * PBR_MAPS_PER_MATERIAL;
     if (turn) { q = q.yx; gx = gx.yx; gy = gy.yx; }
+    vec2 size = pbrTile(m) * scale;
     vec2 st = q / size + off;
     gx /= size; gy /= size;
     rough = textureGrad(pbrMaps[i + PBR_ORM], st, gx, gy).g;
-    return textureGrad(pbrMaps[i + PBR_ALBEDO], st, gx, gy).rgb;
+    return textureGrad(pbrMaps[i + PBR_ALBEDO], st, gx, gy).rgb * pbrAlbedoScale(m);
 }
 
 // How glossy a polished finish is where its map says it is rough (worn, honed or open-grained).
@@ -192,10 +195,10 @@ vec3 lobbyStone(uint seed, vec2 q, vec2 gx, vec2 gy, float aa, out float joint, 
     if (pick < 0.35) {                // a chequer of black and white marble
         bool dark = mod(cell.x + cell.y, 2.0) > 0.5;
         if (dark && pbrLoaded(PBR_MARBLE_DARK)) {
-            c = finish(PBR_MARBLE_DARK, q, 2.0, off, turn, gx, gy, rough) * 0.8;
+            c = finish(PBR_MARBLE_DARK, q, 1.0, off, turn, gx, gy, rough);
             polish *= polishOf(rough);
         } else if (!dark && pbrLoaded(PBR_MARBLE_WHITE)) {
-            c = finish(PBR_MARBLE_WHITE, q, 2.0, off, turn, gx, gy, rough) * 0.5;
+            c = finish(PBR_MARBLE_WHITE, q, 1.0, off, turn, gx, gy, rough);
             polish *= polishOf(rough);
         } else {
             c = dark ? marble(q, vec3(0.028, 0.028, 0.03), vec3(0.20, 0.19, 0.18), salt, aa)
@@ -206,7 +209,7 @@ vec3 lobbyStone(uint seed, vec2 q, vec2 gx, vec2 gy, float aa, out float joint, 
         c = vec3(0.045, 0.043, 0.042) * (0.6 + 0.8 * speck);
     } else if (pick < 0.8) {          // veined dark marble
         if (pbrLoaded(PBR_MARBLE_DARK)) {
-            c = finish(PBR_MARBLE_DARK, q, 2.0, off, turn, gx, gy, rough);
+            c = finish(PBR_MARBLE_DARK, q, 1.0, off, turn, gx, gy, rough) * 1.25;
             polish *= polishOf(rough);
         } else {
             c = marble(q, vec3(0.05, 0.045, 0.04), vec3(0.32, 0.27, 0.20), salt, aa);
@@ -215,7 +218,7 @@ vec3 lobbyStone(uint seed, vec2 q, vec2 gx, vec2 gy, float aa, out float joint, 
         polish = 0.4;
         if (pbrLoaded(PBR_LIMESTONE)) {
             joint = 0.0;
-            c = finish(PBR_LIMESTONE, q, 3.6, vec2(0.0), false, gx, gy, rough) * 0.75;
+            c = finish(PBR_LIMESTONE, q, 1.0, vec2(0.0), false, gx, gy, rough);
             polish *= polishOf(rough * 0.6);
             return c;
         }
@@ -233,7 +236,7 @@ vec3 lobbyWall(uint seed, vec2 q, vec2 gx, vec2 gy, float aa, out float gloss) {
         gloss = 0.5;
         if (pbrLoaded(PBR_MARBLE_DARK)) {
             float pair, gap = 1.0 - band(fract(q.x / 1.2), 0.003, 0.997, aa / 1.2 + 0.001);
-            vec3 c = finish(PBR_MARBLE_DARK, bookMatch(q, 1.2, pair), 2.4, slabOffset(sh, vec2(pair, 7.0)), false, gx, gy, rough);
+            vec3 c = finish(PBR_MARBLE_DARK, bookMatch(q, 1.2, pair), 1.2, slabOffset(sh, vec2(pair, 7.0)), false, gx, gy, rough) * 1.25;
             gloss *= polishOf(rough);
             return c * (1.0 - 0.7 * gap);
         }
@@ -248,7 +251,7 @@ vec3 lobbyWall(uint seed, vec2 q, vec2 gx, vec2 gy, float aa, out float gloss) {
         gloss = 0.2;
         float slat = mix(band(fract(q.x / 0.12), 0.12, 0.88, aa / 0.12 + 0.01), 0.76, smoothstep(0.3, 0.8, aa / 0.12));
         vec3 c = pbrLoaded(PBR_WOOD_MID)
-               ? finish(PBR_WOOD_MID, q, 1.5, vec2(0.0, floor(q.x / 0.12) * 0.37), true, gx, gy, rough) * 1.2
+               ? finish(PBR_WOOD_MID, q, 1.0, vec2(0.0, floor(q.x / 0.12) * 0.37), true, gx, gy, rough)
                : vec3(0.10, 0.055, 0.03) * (0.8 + 0.3 * sin(q.y * 9.0 + vnoise(q * vec2(8.0, 0.5), salt) * 5.0));
         return c * mix(0.25, 1.0, slat);
     }
@@ -367,9 +370,8 @@ const uint IS_BARK = 20u, IS_SOIL = 21u;
 const uint LS_KENTIA = 0u, LS_LINEAR = 1u, LS_FIDDLE = 2u, LS_ELLIPTIC = 3u, LS_UMBRELLA = 4u, LS_ZZ = 5u;
 const uint WM_PALM = 0u, WM_CANE = 1u, WM_FICUS = 2u, WM_UMBRELLA = 3u, WM_GREEN = 4u, WM_ZZ = 5u, WM_ROOT = 6u;
 
-// The leaf texture (assets/textures/leaf): where its midrib lies across the image, and its mean albedo.
-const float LEAF_MIDRIB = 0.513;
-const vec3 LEAF_MEAN = vec3(0.100, 0.166, 0.047);
+// Where the leaf texture's midrib lies across the image (leaf.json).
+#define LEAF_MIDRIB (pbrParams(PBR_LEAF).x)
 
 // The dracaena blade's width along it (the linear profile in src/gen/plant.c), as a fraction of its widest.
 float linearWidth(float t) {
@@ -409,7 +411,7 @@ vec3 shadePlant(vec3 p, vec3 V, vec3 n, vec2 uv, uint seed, uint surf, uint kind
             vec3 T = q2 * d1.x + q1 * d2.x, B = q2 * d1.y + q1 * d2.y;   // the image's right and down
             float im = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
             Surface sf = samplePBR(PBR_LEAF, st, T * im, -B * im, n);
-            alb = sf.albedo / LEAF_MEAN * base;                         // the species' own green
+            alb = sf.albedo / pbrAlbedoMean(PBR_LEAF) * base;           // the species' own green
             n = sf.n;
             gloss *= clamp((1.0 - sf.rough) / 0.75, 0.3, 1.3);
             occ *= mix(1.0, sf.ao, 0.7);
@@ -551,10 +553,10 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float pair, rough;
         vec2 bq = bookMatch(q, 1.2, pair), boff = slabOffset(sh, vec2(pair, floor(y / 3.0) + 3.0));
         if (pick < 0.7 && pbrLoaded(PBR_MARBLE_DARK)) {
-            alb = finish(PBR_MARBLE_DARK, bq, 2.4, boff, false, wx, wy, rough) * 0.8;
+            alb = finish(PBR_MARBLE_DARK, bq, 1.2, boff, false, wx, wy, rough);
             gloss *= polishOf(rough);
         } else if (pick >= 0.7 && pick < 0.88 && pbrLoaded(PBR_MARBLE_WHITE)) {
-            alb = finish(PBR_MARBLE_WHITE, bq, 2.4, boff, false, wx, wy, rough) * 0.6;
+            alb = finish(PBR_MARBLE_WHITE, bq, 1.2, boff, false, wx, wy, rough) * 1.2;
             gloss *= polishOf(rough);
         } else {
             alb = pick < 0.7 ? marble(q, vec3(0.04, 0.038, 0.036), vec3(0.24, 0.22, 0.20), salt, aa)
@@ -608,10 +610,10 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float rough;
         gloss = 0.25;
         if (pale && pbrLoaded(PBR_WOOD_LIGHT)) {
-            alb = finish(PBR_WOOD_LIGHT, uv, 2.0, vec2(hfloat(h), 0.0), false, uvx, uvy, rough) * 0.9;
+            alb = finish(PBR_WOOD_LIGHT, uv, 1.0, vec2(hfloat(h), 0.0), false, uvx, uvy, rough);
             gloss *= 0.6 + 0.6 * polishOf(rough);
         } else if (!pale && pbrLoaded(PBR_WOOD_DARK)) {
-            alb = finish(PBR_WOOD_DARK, uv, 1.5, vec2(hfloat(h), 0.0), false, uvx, uvy, rough) * 1.4;
+            alb = finish(PBR_WOOD_DARK, uv, 1.0, vec2(hfloat(h), 0.0), false, uvx, uvy, rough);
             gloss *= 0.6 + 0.6 * polishOf(rough);
         } else {
             alb = sub == 1u ? vec3(0.40, 0.30, 0.18) : pale ? vec3(0.45, 0.32, 0.18) : vec3(0.22, 0.12, 0.06);
@@ -643,7 +645,7 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         if (sub == 4u && pbrLoaded(PBR_MARBLE_DARK)) {
             float rough;
             bool top = abs(n.y) > 0.5;   // the top's uv runs over it; the sides' along and up
-            alb = finish(PBR_MARBLE_DARK, top ? uv : vec2(uv.x, y), 1.6, vec2(0.3, 0.6), false, top ? uvx : wx, top ? uvy : wy, rough) * 0.8;
+            alb = finish(PBR_MARBLE_DARK, top ? uv : vec2(uv.x, y), 0.8, vec2(0.3, 0.6), false, top ? uvx : wx, top ? uvy : wy, rough);
             gloss *= polishOf(rough);
         }
     } else if (surf == IS_LIFTDOOR) {

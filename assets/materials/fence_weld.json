@@ -1,0 +1,11 @@
+// A plant's fence, the welded square mesh (shadeFence): Fence008A (ambientCG,
+// CC0), the opacity map in the albedo's alpha.
+{
+  "maps": {
+    "albedo": "../textures/fence_008a/albedo.png",
+    "normal": "../textures/fence_008a/normal.png",
+    "orm":    "../textures/fence_008a/orm.png"
+  },
+  "tile": 1.5,             // metres per image
+  "albedo_mean": 0.363     // the wire's mean linear albedo (pbr_pack)
+}

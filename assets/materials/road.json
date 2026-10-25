@@ -1,0 +1,12 @@
+// The carriageways (shadeGround): Road012A (ambientCG, CC0), mapped in world
+// space so carriageways and the junction fill match across their seams.
+{
+  "maps": {
+    "albedo": "../textures/road_012a/albedo.png",
+    "normal": "../textures/road_012a/normal.png",
+    "orm":    "../textures/road_012a/orm.png"
+  },
+  "tile": 4.0,             // metres per repeat: must divide 64 chunks (7040 m), where the shader's world coordinates wrap
+  "albedo_scale": 1.0,
+  "relief": [0.80, 0.13]   // the height map's median and spread: where water stands
+}

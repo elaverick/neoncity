@@ -105,7 +105,7 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
         qi.queryCount = GT_COUNT;
         VK_CHECK(vkCreateQueryPool(vk->device, &qi, NULL, &r->timeQ[i]));
     }
-    r->textures = textures_create(vk);
+    r->materials = materials_create(vk);
     r->shelter = vk_image(vk, SHELTER_SIZE, SHELTER_SIZE, 1, DEPTH_FORMAT,
                           VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                           VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
@@ -162,7 +162,7 @@ void renderer_destroy(Renderer *r) {
     vkDestroySampler(vk->device, r->linearRepeat, NULL);
     vk_image_destroy(vk, &r->cloudNoise);
     vk_image_destroy(vk, &r->shelter);
-    textures_destroy(r->textures);
+    materials_destroy(r->materials);
     for (int i = 0; i < MAX_FRAMES; ++i) {
         vkDestroyFence(vk->device, r->fence[i], NULL);
         vkDestroySemaphore(vk->device, r->imageReady[i], NULL);

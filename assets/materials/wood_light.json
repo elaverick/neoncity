@@ -1,0 +1,10 @@
+// Pale oak veneer (lobby counters and furniture).
+{
+  "maps": {
+    "albedo": "../textures/wood_095/albedo.png",
+    "normal": "../textures/wood_095/normal.png",
+    "orm":    "../textures/wood_095/orm.png"
+  },
+  "tile": 2.0,
+  "albedo_scale": 0.9
+}

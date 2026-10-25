@@ -1,0 +1,10 @@
+// Dark wood veneer (lobby furniture).
+{
+  "maps": {
+    "albedo": "../textures/wood_051/albedo.png",
+    "normal": "../textures/wood_051/normal.png",
+    "orm":    "../textures/wood_051/orm.png"
+  },
+  "tile": 1.5,
+  "albedo_scale": 1.4
+}

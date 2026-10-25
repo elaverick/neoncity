@@ -29,9 +29,9 @@ build/terrain_test --earth-map earth.ppm # the bake as the engine reads it (--ea
 CMake fetches its dependencies at configure time: Vulkan-Headers, volk, GLFW and stb.
 The Vulkan SDK is optional. If `glslc` or `glslangValidator` is on the PATH (or in
 `$VULKAN_SDK`), CMake uses it. If not, CMake builds glslang from source. Shaders are
-compiled at build time and embedded in the executable. Authored textures are not: the
-build copies `assets/` next to `NeonCity.exe`, and the game reads them at startup. Without
-that folder the game still runs; any surface whose textures are missing keeps its
+compiled at build time and embedded in the executable. Authored materials and their textures
+are not: the build copies `assets/` next to `NeonCity.exe`, and the game reads them at startup.
+Without that folder the game still runs; any surface whose material is missing keeps its
 procedural look.
 
 ## Controls
@@ -714,20 +714,64 @@ everything else, as a pure function of the plan. The CPU does nothing per frame.
   spawn, up to a 180,000 cap in the worst slums). Measured on an RTX 4080 SUPER at 1600x900,
   neither the layer nor the debris shading showed a cost above run-to-run noise (about 0.1 ms).
 
-### Textures (`src/render/textures.c`, `assets/textures/`)
-Most surfaces are shaded procedurally. Individual materials can opt in to authored PBR
-textures instead. Each material is a folder under `assets/textures/` with three maps, and
-optionally a fourth:
+### Textures (`src/render/materials.c`, `assets/materials/`, `assets/textures/`)
+Most surfaces are shaded procedurally. Individual surfaces can opt in to authored PBR
+materials instead. A material is defined once, in its own file,
+`assets/materials/<name>.json`. The file names the material's maps and gives the properties
+its surfaces are shaded with. The images themselves live in folders under `assets/textures/`:
 
-| File | Contents | Format |
+```jsonc
+// The carriageways (shadeGround): Road012A (ambientCG, CC0)
+{
+  "maps": {                                  // relative to the material file
+    "albedo": "../textures/road_012a/albedo.png",
+    "normal": "../textures/road_012a/normal.png",
+    "orm":    "../textures/road_012a/orm.png"
+  },
+  "tile": 4.0,             // metres per repeat
+  "albedo_scale": 1.0,     // what the albedo is multiplied by in the city's palette
+  "relief": [0.80, 0.13]   // the height map's median and spread: where water stands
+}
+```
+
+| Map | Contents | Format |
 |---|---|---|
-| `albedo.png` | base colour | sRGB |
-| `normal.png` | tangent-space normal, OpenGL convention (+Y green) | linear |
-| `orm.png` | R = ambient occlusion, G = roughness, B = height | linear |
-| `emissive.png` | optional: emitted colour (black where absent) | sRGB |
+| `albedo` | base colour; alpha the coverage where the surface is cut out | sRGB |
+| `normal` | tangent-space normal, OpenGL convention (+Y green) | linear |
+| `orm` | R = ambient occlusion, G = roughness, B = height | linear |
+| `emissive` | optional: emitted colour (black where absent) | sRGB |
 
-They are uploaded with full mip chains and sampled with anisotropic filtering. Textured
-surfaces are lit with GGX:
+The files are JSON with `//` and `/* */` comments (`src/core/json.c`). Their format is set out in
+`src/render/material_def.h`. Besides the maps, a file can give:
+- `tile`: metres per repeat.
+- `albedo_scale`: what the albedo is multiplied by in the city's palette.
+- `albedo_mean`: the albedo map's linear mean, which tinted surfaces divide by.
+- `relief`: the height map's median and spread, so water levels mean the same on every material.
+- `params`: up to four numbers of the material's own, read by its shader. For example, the
+  light fixture's tray depth.
+
+Each key has a default. A material shares an image with another by naming the same file, and
+the image is loaded once. So a second material made from the same stone, at another scale or
+tint, costs no texture memory.
+
+- **Ids:** each material's id, `PBR_<NAME>`, is its file's place in name order. CMake writes
+  the ids into a generated header, `pbr_materials.h`, when it configures. C and the shaders
+  share that header through `src/core/pbr.h`, so they can't disagree. Adding or removing a file
+  reconfigures the build.
+- **Loading:** the renderer (`materials.c`) reads each file at startup. It uploads the maps
+  with full mip chains, sampled with anisotropic filtering and bound at
+  `material * PBR_MAPS_PER_MATERIAL + map`. It puts the properties in a uniform table
+  (`MaterialGPU`, scene binding 8), which `shaders/city/surface.glsl` reads through
+  `pbrTile`, `pbrAlbedoScale`, `pbrAlbedoMean`, `pbrRelief` and `pbrParams`.
+- **Missing materials:** a material whose file or required maps can't be read is reported on
+  stderr. It is bound as placeholders and flagged unloaded (`PBR_LOADED`), and `pbrLoaded()`
+  then keeps its surfaces procedural.
+- **Scene objects:** an object can name its material in its vertices. A plant's fence carries
+  `1 + PBR_FENCE_NET` or `1 + PBR_FENCE_WELD` in its params.
+- **Tests:** `material_test` (ctest `material_rules`) reads every file, decodes every map it
+  names and checks the properties.
+
+Textured surfaces are lit with GGX:
 - **Model:** Trowbridge-Reitz distribution, height-correlated Smith visibility, Schlick
   Fresnel, `alpha = roughness^2`, dielectric F0 = 0.04.
 - **Lights:** street lamps use the lobe directly. Shopfront spill widens it by the
@@ -790,7 +834,8 @@ surfaces are lit with GGX:
   takes over. It shows on dark windows and is drowned out by lit rooms.
 - **Procedural materials:** keep their normalised Blinn-Phong lobes. The height
 channel is packed but unused for now: it is reserved for puddles in the joints and for
-parallax. Four materials use textures so far; the first three are CC0 from ambientCG:
+parallax. These are the surfaces that use materials (named by their `assets/textures/`
+folders); those from ambientCG are CC0:
 - **Main sidewalk area:** `paving_stones_111`
   ([PavingStones111](https://ambientcg.com/view?id=PavingStones111)), laid with the block
   grain.
@@ -869,16 +914,20 @@ roughness, and returns the normal and AO to the geometric ones, because paint fi
 asphalt's relief. Any future decal (kerb paint, stains, puddles) can follow the same pattern.
 
 To add a material from an ambientCG download (any resolution):
-1. Pack it: `build/pbr_pack <download>/<Name>_4K-PNG assets/textures/<name> 2048`. This
+1. Pack it: `build/pbr_pack <download>/<Name>_4K-PNG assets/textures/<folder> 2048`. This
    reads `_Color`, `_NormalGL`, `_Roughness`, and `_AmbientOcclusion` / `_Displacement` /
    `_Opacity` when present (the opacity goes into the albedo's alpha). It box-filters them
    down to the given width and writes the three maps.
    The `.blend`, `.mtlx`, `.tres`, `.usdc`, `_NormalDX` and preview files are not needed.
-2. Add an entry to the `PBR_*` enum in `src/core/common.h` and the matching constant in
-   `shaders/common.glsl`. Add its folder name to `MATERIAL_DIRS` in `src/render/textures.c`.
-3. In `shaders/city.frag`, guard the surface with `pbrLoaded(PBR_X)` and call
-   `samplePBR(PBR_X, st, T, B, n)`. `T` and `B` are the world directions of image right and
-   image up. The paving branch in `shadeGround` is the example.
+2. Write `assets/materials/<name>.json`, naming the maps and giving the properties
+   (`paving_stones.json` is an example). Build: CMake picks the file up and defines
+   `PBR_<NAME>`. `material_test` checks the file.
+3. In the shader, guard the surface with `pbrLoaded(PBR_X)` and call
+   `samplePBR(PBR_X, st / pbrTile(PBR_X), T, B, n)`. `T` and `B` are the world directions of
+   image right and image up. The paving branch in `shadeGround` is the example.
+
+To change a material's look (its scale, its brightness, what stands in its puddles), edit
+its file; every surface that uses it follows.
 
 ### Walking (`src/app/player.c`)
 Collision runs against the same deterministic block layouts, using circle-vs-footprint tests

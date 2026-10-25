@@ -193,9 +193,11 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         float big = vnoise(w.xz * 0.045, 0xA6u);
         Surface s;
         if (pbr) {
-            // world-planar: +x is image right, -z image up
-            s = samplePBR(PBR_ROAD, w.xz / ROAD_TILE, vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0), n);
-            s.albedo *= ROAD_ALBEDO;
+            // world-planar, so carriageways and the junction fill match across their seams
+            // (the tile must divide 64 chunks, where the world coordinates wrap: road.json);
+            // +x is image right, -z image up
+            s = samplePBR(PBR_ROAD, w.xz / pbrTile(PBR_ROAD), vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0), n);
+            s.albedo *= pbrAlbedoScale(PBR_ROAD);
         } else {
             float nn = fbm(w.xz * 0.45, 0xA5u);
             s = Surface(vec3(0.030, 0.030, 0.033) * (0.7 + 0.6 * nn) * (0.75 + 0.5 * big), n, 1.0, 0.5, 0.5);
@@ -274,8 +276,8 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         if (pbr) {
             rough = s.rough; specK = 0.04;   // dielectric F0
             wettable = true;
-            relH = mix((s.height - ROAD_RELIEF.x) / ROAD_RELIEF.y, 1.0, paintC);   // the paint fills the relief, and stands above it
-            relBroad = (pbrBroadHeight(PBR_ROAD, w.xz / ROAD_TILE, 5.0) - ROAD_RELIEF.x) / ROAD_RELIEF.y;
+            relH = mix(pbrRelief(PBR_ROAD, s.height), 1.0, paintC);   // the paint fills the relief, and stands above it
+            relBroad = pbrRelief(PBR_ROAD, pbrBroadHeight(PBR_ROAD, w.xz / pbrTile(PBR_ROAD), 5.0));
             jointLevel = -1.0;   // asphalt is too fine-grained for its pits to hold water
         } else {
             shin = 60.0;
@@ -286,14 +288,14 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         // is laid along its kerb instead (uv = along, in from the kerb line)
         vec3 T, B;
         grainFrame(seed, T, B);
-        Surface s = samplePBR(PBR_PAVING_STONES, uv / PAVING_TILE, T, B, n);
-        alb = s.albedo * PAVING_ALBEDO;
+        Surface s = samplePBR(PBR_PAVING_STONES, uv / pbrTile(PBR_PAVING_STONES), T, B, n);
+        alb = s.albedo * pbrAlbedoScale(PBR_PAVING_STONES);
         alb *= 0.6 + 0.4 * smoothstep(0.2, 0.55, fbm(w.xz * 0.15, 0x7114u));  // stains, as below
         n = s.n; ao = s.ao;
         rough = s.rough; specK = 0.04;   // dielectric F0
         wettable = true;
-        relH = (s.height - PAVING_RELIEF.x) / PAVING_RELIEF.y;
-        relBroad = (pbrBroadHeight(PBR_PAVING_STONES, uv / PAVING_TILE, 4.0) - PAVING_RELIEF.x) / PAVING_RELIEF.y;
+        relH = pbrRelief(PBR_PAVING_STONES, s.height);
+        relBroad = pbrRelief(PBR_PAVING_STONES, pbrBroadHeight(PBR_PAVING_STONES, uv / pbrTile(PBR_PAVING_STONES), 4.0));
         jointLevel = -0.3;   // the joints between slabs
         sink += 0.6 * hollow(w.xz, 0.1, 0x7E7Cu);
     } else if (mat == MAT_SIDEWALK && (prm.y == 1u || prm.y == 3u) && pbrLoaded(PBR_KERB)) {
@@ -301,19 +303,19 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         // tactile slabs at a drop kerb (3) are cast in the same concrete
         vec3 T, B;
         grainFrame(seed, T, B);
-        Surface s = samplePBR(PBR_KERB, uv / KERB_TILE, T, B, n);
-        alb = s.albedo * KERB_ALBEDO;
+        Surface s = samplePBR(PBR_KERB, uv / pbrTile(PBR_KERB), T, B, n);
+        alb = s.albedo * pbrAlbedoScale(PBR_KERB);
         alb *= 0.6 + 0.4 * smoothstep(0.2, 0.55, fbm(w.xz * 0.15, 0x7114u));  // stains, as the paving
         n = s.n; ao = s.ao;
         rough = s.rough; specK = 0.04;   // dielectric F0
         wettable = true;
-        relH = (s.height - KERB_RELIEF.x) / KERB_RELIEF.y;
-        relBroad = (pbrBroadHeight(PBR_KERB, uv / KERB_TILE, 4.0) - KERB_RELIEF.x) / KERB_RELIEF.y;
+        relH = pbrRelief(PBR_KERB, s.height);
+        relBroad = pbrRelief(PBR_KERB, pbrBroadHeight(PBR_KERB, uv / pbrTile(PBR_KERB), 4.0));
         jointLevel = -0.4;
     } else if (mat == MAT_CURB && pbrLoaded(PBR_KERB)) {
         // authored kerb face: uv = (metres along cross(up, n), height), so image up is -y
-        Surface s = samplePBR(PBR_KERB, uv / KERB_TILE, normalize(vec3(n.z, 0.0, -n.x)), vec3(0.0, -1.0, 0.0), n);
-        alb = s.albedo * KERB_ALBEDO;
+        Surface s = samplePBR(PBR_KERB, uv / pbrTile(PBR_KERB), normalize(vec3(n.z, 0.0, -n.x)), vec3(0.0, -1.0, 0.0), n);
+        alb = s.albedo * pbrAlbedoScale(PBR_KERB);
         n = s.n; ao = s.ao;
         rough = s.rough; specK = 0.04;   // dielectric F0
         wettable = true;   // vertical: damp, never pooled

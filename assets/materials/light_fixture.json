@@ -1,0 +1,15 @@
+// A lobby ceiling light (ceilingFixture in shaders/city/lobby.glsl): a recessed
+// troffer of three tubes, one image per 1.2 m fitting; the tray is parallax
+// mapped from the height map and the emissive map is the tubes.
+{
+  "maps": {
+    "albedo": "../textures/light_fixture/albedo.png",
+    "normal": "../textures/light_fixture/normal.png",
+    "orm":    "../textures/light_fixture/orm.png",
+    "emissive": "../textures/light_fixture/emissive.png"
+  },
+  "params": [
+    0.16,                  // the tray's depth: metres from the frame's face (the ceiling's plane) down to height 0
+    0.8                    // the height map's frame face: at least 0.79 all round, nothing in the opening above 0.70
+  ]
+}

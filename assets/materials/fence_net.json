@@ -1,0 +1,11 @@
+// A plant's fence, the wavy wire net (shadeFence in shaders/city/industry.glsl):
+// Fence003 (ambientCG, CC0), the opacity map in the albedo's alpha.
+{
+  "maps": {
+    "albedo": "../textures/fence_003/albedo.png",
+    "normal": "../textures/fence_003/normal.png",
+    "orm":    "../textures/fence_003/orm.png"
+  },
+  "tile": 1.0,             // metres per image
+  "albedo_mean": 0.385     // the wire's mean linear albedo (pbr_pack)
+}

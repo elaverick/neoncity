@@ -1,0 +1,11 @@
+// A glossy blade with its midrib up the image (shadePlant in shaders/city/lobby.glsl):
+// it tiles along the midrib, not across it. Tinted to each species' green.
+{
+  "maps": {
+    "albedo": "../textures/leaf/albedo.png",
+    "normal": "../textures/leaf/normal.png",
+    "orm":    "../textures/leaf/orm.png"
+  },
+  "albedo_mean": [0.100, 0.166, 0.047],
+  "params": [0.513]        // where the midrib lies across the image
+}

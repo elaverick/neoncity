@@ -1,0 +1,12 @@
+// The sidewalks' paving (shadeGround), laid with the block grain:
+// PavingStones111 (ambientCG, CC0), slabs about 60 cm.
+{
+  "maps": {
+    "albedo": "../textures/paving_stones_111/albedo.png",
+    "normal": "../textures/paving_stones_111/normal.png",
+    "orm":    "../textures/paving_stones_111/orm.png"
+  },
+  "tile": [9.6, 4.8],      // metres per repeat (a 2:1 image)
+  "albedo_scale": 0.5,     // mean 0.22 -> 0.11, near the procedural kerb stones
+  "relief": [0.59, 0.32]   // the height map's median and spread: where water stands
+}

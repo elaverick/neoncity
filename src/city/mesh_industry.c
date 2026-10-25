@@ -858,8 +858,9 @@ int industry_fence(const BGraph *g, FenceRun *out, int max) {
     return n;
 }
 
-/* Which texture set the plant's fence wears (MAT_INDUSTRY params w: 1 the net, 2 the welded mesh); the gate's the same. */
-static int fence_kind(const BGraph *g) { return 1 + (int)(hash_combine(g->seed, 0xFE4Cu) & 1u); }
+/* Which material the plant's fence wears, the wavy wire net or the welded mesh (MAT_INDUSTRY params w:
+ * 1 + the material; 0 is the procedural chain-link); the gate's the same. */
+static int fence_kind(const BGraph *g) { return 1 + ((hash_combine(g->seed, 0xFE4Cu) & 1u) ? PBR_FENCE_WELD : PBR_FENCE_NET); }
 
 /* The fence round the yard: a run of mesh between posts at most 3 m apart and
  * at both its ends, a rail along its top, and a sliding gate framed top and

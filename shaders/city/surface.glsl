@@ -1,16 +1,40 @@
 // Part of shaders/city.frag, which includes the parts in order: authored PBR materials, wetness, puddles and ripples.
 
 /* ======================================================================
- * Authored PBR materials (src/render/textures.c). Surfaces opt in per material;
- * a material whose maps were not found is bound as 1x1 placeholders and
- * its surfaces keep their procedural look.
+ * Authored PBR materials (src/core/pbr.h): each defined by its file,
+ * assets/materials/<name>.json, and loaded by src/render/materials.c. A
+ * material's maps are bound at m * PBR_MAPS_PER_MATERIAL + map and its
+ * properties are materials[m]. Surfaces opt in per material; one that did
+ * not load (pbrLoaded false) is bound as placeholders, and its surfaces
+ * keep their procedural look.
  * ==================================================================== */
 
-layout(set = 0, binding = 3) uniform sampler2D pbrMaps[PBR_MATERIAL_COUNT * PBR_MAPS_PER_MATERIAL];
+layout(set = 0, binding = 3) uniform sampler2D pbrMaps[PBR_TEXTURE_COUNT];
+
+// MaterialGPU (src/render/materials.h)
+struct Material {
+    vec4  tile;     // xy metres per image repeat
+    vec4  albedo;   // rgb the albedo map's mean (linear), a the albedo's scale
+    vec4  relief;   // x the height map's median, y its spread
+    vec4  params;   // the material's own (its file says what they are)
+    uvec4 info;     // x PBR_LOADED | PBR_HAS_EMISSIVE
+};
+layout(std140, set = 0, binding = 8) uniform Materials { Material materials[PBR_MATERIAL_COUNT]; };
 
 struct Surface { vec3 albedo; vec3 n; float ao; float rough; float height; };
 
-bool pbrLoaded(int m) { return textureSize(pbrMaps[m * PBR_MAPS_PER_MATERIAL + PBR_ALBEDO], 0).x > 1; }
+bool pbrLoaded(int m) { return (materials[m].info.x & PBR_LOADED) != 0u; }
+// Metres of surface per repeat of the material's image.
+vec2 pbrTile(int m) { return materials[m].tile.xy; }
+// What its albedo is scaled by to sit in the city's night palette.
+float pbrAlbedoScale(int m) { return materials[m].albedo.a; }
+// Its albedo map's mean (linear): dividing by it leaves the texture's variation, to tint as a surface needs.
+vec3 pbrAlbedoMean(int m) { return materials[m].albedo.rgb; }
+// A height from its map (orm.b) relative to the map's median, in spreads, so
+// water levels mean the same on each material: from about -0.5 (joints,
+// hollows) to 0.5.
+float pbrRelief(int m, float h) { return (h - materials[m].relief.x) / materials[m].relief.y; }
+vec4 pbrParams(int m) { return materials[m].params; }
 
 // st: texture coordinates. T, B: world directions of image right and image up
 // (normal maps are OpenGL convention, +Y green = up the image).
@@ -40,15 +64,6 @@ Surface layer(Surface s, vec3 nGeom, vec3 col, float rough, float m) {
     s.ao = mix(s.ao, 1.0, m);
     return s;
 }
-
-// PavingStones111 (ambientCG): metres per texture repeat (2:1 image, slabs
-// about 60 cm), and an albedo scale that keeps it in the city's night palette.
-const vec2 PAVING_TILE = vec2(9.6, 4.8);
-const float PAVING_ALBEDO = 0.5;   // mean 0.22 -> 0.11, near the procedural kerb stones
-
-// Ground032 (ambientCG) for the kerb stones: fine aggregate, 2:1 image.
-const vec2 KERB_TILE = vec2(2.0, 1.0);
-const float KERB_ALBEDO = 0.5;   // mean 0.25 -> 0.12, as the procedural kerb stones
 
 // Sidewalk tangent frame from the angle the seed carries (src/city/streets.c): the block
 // grain for paving, the kerb edge for kerb stones. T = +u, B = -v (image up;
@@ -125,15 +140,4 @@ float hollow(vec2 xz, float chance, uint salt) {
     return best;
 }
 
-// Height-map statistics of the authored materials (median and spread of
-// orm.b), so water levels mean the same on each: relative height
-// (h - median) / spread runs from about -0.5 (joints, hollows) to 0.5.
-const vec2 ROAD_RELIEF = vec2(0.80, 0.13);
-const vec2 PAVING_RELIEF = vec2(0.59, 0.32);
-const vec2 KERB_RELIEF = vec2(0.49, 0.19);
 
-// Road012A (ambientCG): mapped in world space so carriageways and the junction
-// fill match across their seams. The repeat must divide 64 chunks (7040 m),
-// where the shader's world coordinates wrap.
-const float ROAD_TILE = 4.0;
-const float ROAD_ALBEDO = 1.0;

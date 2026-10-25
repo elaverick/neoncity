@@ -1,0 +1,12 @@
+// The kerb stones, their top strip and face, and the tactile slabs at drop
+// kerbs (shadeGround): Ground032 (ambientCG, CC0), fine aggregate.
+{
+  "maps": {
+    "albedo": "../textures/ground_032/albedo.png",
+    "normal": "../textures/ground_032/normal.png",
+    "orm":    "../textures/ground_032/orm.png"
+  },
+  "tile": [2.0, 1.0],      // metres per repeat (a 2:1 image)
+  "albedo_scale": 0.5,     // mean 0.25 -> 0.12, as the procedural kerb stones
+  "relief": [0.49, 0.19]   // the height map's median and spread: where water stands
+}

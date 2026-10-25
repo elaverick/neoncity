@@ -1,0 +1,11 @@
+// Dark veined marble (lobby floors, walls, cores and the reception desk):
+// the uses scale its tile and albedo to suit (shaders/city/lobby.glsl, finish()).
+{
+  "maps": {
+    "albedo": "../textures/marble_016/albedo.png",
+    "normal": "../textures/marble_016/normal.png",
+    "orm":    "../textures/marble_016/orm.png"
+  },
+  "tile": 2.0,             // metres per repeat: a floor slab's piece of the stone
+  "albedo_scale": 0.8
+}

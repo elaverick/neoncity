@@ -1,0 +1,10 @@
+// One tactile stud (tactileStuds in shaders/city/ground.glsl), cropped from its set by
+// tools/stud_pack.c; the albedo's alpha is its coverage. The shader repeats it
+// on its own grid, so it has no tile.
+{
+  "maps": {
+    "albedo": "../textures/tactile_stud/albedo.png",
+    "normal": "../textures/tactile_stud/normal.png",
+    "orm":    "../textures/tactile_stud/orm.png"
+  }
+}

@@ -1,0 +1,9 @@
+// The prismatic diffuser across a ceiling light's opening (ceilingFixture).
+{
+  "maps": {
+    "albedo": "../textures/light_diffuser/albedo.png",
+    "normal": "../textures/light_diffuser/normal.png",
+    "orm":    "../textures/light_diffuser/orm.png"
+  },
+  "params": [0.7]          // its opacity
+}

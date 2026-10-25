@@ -1,0 +1,10 @@
+// Warm honed limestone in 0.6 m tiles, with their own joints (lobby floors).
+{
+  "maps": {
+    "albedo": "../textures/tiles_139/albedo.png",
+    "normal": "../textures/tiles_139/normal.png",
+    "orm":    "../textures/tiles_139/orm.png"
+  },
+  "tile": 3.6,             // metres per repeat: six tiles
+  "albedo_scale": 0.75
+}

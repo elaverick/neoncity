@@ -1,0 +1,10 @@
+// Walnut, the grain running up the lobby walls' slats.
+{
+  "maps": {
+    "albedo": "../textures/wood_066/albedo.png",
+    "normal": "../textures/wood_066/normal.png",
+    "orm":    "../textures/wood_066/orm.png"
+  },
+  "tile": 1.5,
+  "albedo_scale": 1.2
+}

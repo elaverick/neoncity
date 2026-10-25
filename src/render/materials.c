@@ -1,47 +1,35 @@
 #ifdef _WIN32
-#include <windows.h>   /* before GLFW (via textures.h), which otherwise defines APIENTRY itself */
+#include <windows.h>   /* before GLFW (via materials.h), which otherwise defines APIENTRY itself */
 #else
 #include <unistd.h>
 #endif
-#include "textures.h"
+#include "materials.h"
+#include "material_def.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #include <stb_image.h>
 
-/* Directory of each PBR material under assets/textures/, indexed by PBR_* (src/core/common.h). */
-static const char *const MATERIAL_DIRS[PBR_MATERIAL_COUNT] = {
-    [PBR_PAVING_STONES] = "paving_stones_111",
-    [PBR_ROAD]          = "road_012a",
-    [PBR_KERB]          = "ground_032",
-    [PBR_TACTILE]       = "tactile_stud",
-    [PBR_MARBLE_DARK]   = "marble_016",
-    [PBR_MARBLE_WHITE]  = "marble_012",
-    [PBR_LIMESTONE]     = "tiles_139",
-    [PBR_WOOD_DARK]     = "wood_051",
-    [PBR_WOOD_MID]      = "wood_066",
-    [PBR_WOOD_LIGHT]    = "wood_095",
-    [PBR_LEAF]          = "leaf",
-    [PBR_LIGHT_FIXTURE] = "light_fixture",
-    [PBR_LIGHT_DIFFUSER] = "light_diffuser",
-    [PBR_FENCE_NET]     = "fence_003",
-    [PBR_FENCE_WELD]    = "fence_008a",
-};
-
+/* How each map is uploaded, and what stands in for it where a material has
+ * none (or didn't load): mid grey, flat, unoccluded half-rough, unlit. */
 static const struct {
-    const char *file;
-    VkFormat    fmt;
-    uint8_t     placeholder[4];
-    bool        optional;   /* absent: the placeholder, and the material still loads */
+    VkFormat fmt;
+    uint8_t  placeholder[4];
 } MAPS[PBR_MAPS_PER_MATERIAL] = {
-    [PBR_ALBEDO]   = { "albedo.png",   VK_FORMAT_R8G8B8A8_SRGB,  { 128, 128, 128, 255 }, false },
-    [PBR_NORMAL]   = { "normal.png",   VK_FORMAT_R8G8B8A8_UNORM, { 128, 128, 255, 255 }, false },
-    [PBR_ORM]      = { "orm.png",      VK_FORMAT_R8G8B8A8_UNORM, { 255, 204, 128, 255 }, false },
-    [PBR_EMISSIVE] = { "emissive.png", VK_FORMAT_R8G8B8A8_SRGB,  {   0,   0,   0, 255 }, true  },
+    [PBR_ALBEDO]   = { VK_FORMAT_R8G8B8A8_SRGB,  { 128, 128, 128, 255 } },
+    [PBR_NORMAL]   = { VK_FORMAT_R8G8B8A8_UNORM, { 128, 128, 255, 255 } },
+    [PBR_ORM]      = { VK_FORMAT_R8G8B8A8_UNORM, { 255, 204, 128, 255 } },
+    [PBR_EMISSIVE] = { VK_FORMAT_R8G8B8A8_SRGB,  {   0,   0,   0, 255 } },
 };
 
-struct Textures {
+/* Every binding its own image, and the placeholders: the most there can be. */
+#define MAX_IMAGES (PBR_TEXTURE_COUNT + PBR_MAPS_PER_MATERIAL)
+
+struct Materials {
     VkCore   *vk;
-    Image     maps[PBR_TEXTURE_COUNT];
+    Image     images[MAX_IMAGES];        /* the placeholders (by map), then each file once */
+    int       nImages;
+    int       slot[PBR_TEXTURE_COUNT];   /* the image at each binding */
+    Buffer    table;                     /* PBR_MATERIAL_COUNT MaterialGPU */
     VkSampler sampler;
 };
 
@@ -61,17 +49,6 @@ static int asset_roots(char roots[2][1024]) {
     if (slash) { slash[1] = 0; snprintf(roots[n++], 1024, "%sassets", exe); }
     snprintf(roots[n++], 1024, "assets");
     return n;
-}
-
-static uint8_t *load_rgba(char roots[2][1024], int nRoots, const char *dir, const char *file, int *w, int *h) {
-    for (int i = 0; i < nRoots; ++i) {
-        char path[1200];
-        snprintf(path, sizeof(path), "%s/textures/%s/%s", roots[i], dir, file);
-        int c;
-        uint8_t *px = stbi_load(path, w, h, &c, 4);
-        if (px) return px;
-    }
-    return NULL;
 }
 
 /* Creates a mipmapped image and records the upload of px into mip 0 and the
@@ -118,8 +95,31 @@ static Image upload(VkCore *vk, VkCommandBuffer cmd, Buffer *staging, const uint
     return im;
 }
 
-Textures *textures_create(VkCore *vk) {
-    Textures *t = (Textures *)calloc(1, sizeof(Textures));
+/* The images already uploaded from files, so a file named again is shared. */
+typedef struct ImageCache {
+    char     path[MAX_IMAGES][1024];
+    VkFormat fmt[MAX_IMAGES];
+    int      image[MAX_IMAGES];
+    int      n;
+} ImageCache;
+
+static int cache_find(const ImageCache *c, const char *path, VkFormat fmt) {
+    for (int i = 0; i < c->n; ++i)
+        if (c->fmt[i] == fmt && strcmp(c->path[i], path) == 0) return c->image[i];
+    return -1;
+}
+
+/* The material file for name under the first root holding one, else under the last. */
+static void material_path(char roots[2][1024], int nRoots, const char *name, char *out, size_t size) {
+    for (int i = 0; i < nRoots; ++i) {
+        snprintf(out, size, "%s/materials/%s.json", roots[i], name);
+        FILE *f = fopen(out, "rb");
+        if (f) { fclose(f); return; }
+    }
+}
+
+Materials *materials_create(VkCore *vk) {
+    Materials *t = (Materials *)calloc(1, sizeof(Materials));
     t->vk = vk;
 
     VkCommandPool pool;
@@ -137,36 +137,70 @@ Textures *textures_create(VkCore *vk) {
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
 
+    Buffer staging[MAX_IMAGES];
+    for (int k = 0; k < PBR_MAPS_PER_MATERIAL; ++k)
+        t->images[t->nImages++] = upload(vk, cmd, &staging[k], MAPS[k].placeholder, 1, 1, MAPS[k].fmt);
+
+    t->table = vk_buffer(vk, sizeof(MaterialGPU) * PBR_MATERIAL_COUNT, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    MaterialGPU *gpu = (MaterialGPU *)t->table.mapped;
+    memset(gpu, 0, sizeof(MaterialGPU) * PBR_MATERIAL_COUNT);
+
     char roots[2][1024];
     int nRoots = asset_roots(roots);
-    Buffer staging[PBR_TEXTURE_COUNT];
+    ImageCache *cache = (ImageCache *)calloc(1, sizeof(ImageCache));
     size_t gpuBytes = 0;
     int loaded = 0;
     for (int m = 0; m < PBR_MATERIAL_COUNT; ++m) {
-        /* All of a material's required maps or none: the shader tests only the albedo. */
+        int *slot = &t->slot[m * PBR_MAPS_PER_MATERIAL];
+        for (int k = 0; k < PBR_MAPS_PER_MATERIAL; ++k) slot[k] = k;   /* the placeholders, unless it loads */
+
+        char path[1100], err[512];
+        material_path(roots, nRoots, PBR_MATERIAL_NAMES[m], path, sizeof(path));
+        MaterialDef def;
+        if (!material_def_load(path, &def, err, sizeof(err))) {
+            fprintf(stderr, "Material %s: %s; keeping the procedural look\n", PBR_MATERIAL_NAMES[m], err);
+            continue;
+        }
+        /* All of its maps or none: read every one it names before uploading any. */
         uint8_t *px[PBR_MAPS_PER_MATERIAL] = { 0 };
-        int w[PBR_MAPS_PER_MATERIAL], h[PBR_MAPS_PER_MATERIAL];
+        int w[PBR_MAPS_PER_MATERIAL], h[PBR_MAPS_PER_MATERIAL], have[PBR_MAPS_PER_MATERIAL];
         bool ok = true;
         for (int k = 0; k < PBR_MAPS_PER_MATERIAL && ok; ++k) {
-            px[k] = load_rgba(roots, nRoots, MATERIAL_DIRS[m], MAPS[k].file, &w[k], &h[k]);
-            if (!px[k] && !MAPS[k].optional) {
-                fprintf(stderr, "Texture %s/%s not found under %s or %s; keeping the procedural look\n",
-                        MATERIAL_DIRS[m], MAPS[k].file, roots[0], roots[nRoots - 1]);
+            have[k] = def.maps[k][0] ? cache_find(cache, def.maps[k], MAPS[k].fmt) : k;
+            if (have[k] >= 0) continue;
+            int c;
+            px[k] = stbi_load(def.maps[k], &w[k], &h[k], &c, 4);
+            if (!px[k]) {
+                fprintf(stderr, "Material %s: can't read its %s map %s; keeping the procedural look\n",
+                        PBR_MATERIAL_NAMES[m], PBR_MAP_KEYS[k], def.maps[k]);
                 ok = false;
             }
         }
         for (int k = 0; k < PBR_MAPS_PER_MATERIAL; ++k) {
-            int i = m * PBR_MAPS_PER_MATERIAL + k;
             if (ok && px[k]) {
-                t->maps[i] = upload(vk, cmd, &staging[i], px[k], (uint32_t)w[k], (uint32_t)h[k], MAPS[k].fmt);
+                int i = t->nImages++;
+                t->images[i] = upload(vk, cmd, &staging[i], px[k], (uint32_t)w[k], (uint32_t)h[k], MAPS[k].fmt);
                 gpuBytes += (size_t)w[k] * h[k] * 4 * 4 / 3;
-            } else {
-                t->maps[i] = upload(vk, cmd, &staging[i], MAPS[k].placeholder, 1, 1, MAPS[k].fmt);
+                snprintf(cache->path[cache->n], sizeof(cache->path[0]), "%s", def.maps[k]);
+                cache->fmt[cache->n] = MAPS[k].fmt;
+                cache->image[cache->n++] = have[k] = i;
             }
             stbi_image_free(px[k]);
         }
-        loaded += ok;
+        if (!ok) continue;
+
+        for (int k = 0; k < PBR_MAPS_PER_MATERIAL; ++k) slot[k] = have[k];
+        MaterialGPU *g = &gpu[m];
+        g->tile[0] = def.tile[0]; g->tile[1] = def.tile[1];
+        memcpy(g->albedo, def.albedoMean, sizeof(def.albedoMean));
+        g->albedo[3] = def.albedoScale;
+        g->relief[0] = def.relief[0]; g->relief[1] = def.relief[1];
+        memcpy(g->params, def.params, sizeof(def.params));
+        g->info[0] = PBR_LOADED | (def.maps[PBR_EMISSIVE][0] ? PBR_HAS_EMISSIVE : 0u);
+        loaded++;
     }
+    free(cache);
 
     VK_CHECK(vkEndCommandBuffer(cmd));
     VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
@@ -175,8 +209,9 @@ Textures *textures_create(VkCore *vk) {
     VK_CHECK(vkQueueSubmit(vk->queue, 1, &si, VK_NULL_HANDLE));
     VK_CHECK(vkQueueWaitIdle(vk->queue));
     vkDestroyCommandPool(vk->device, pool, NULL);
-    for (int i = 0; i < PBR_TEXTURE_COUNT; ++i) vk_buffer_destroy(vk, &staging[i]);
-    printf("Textures: %d/%d PBR materials (%.0f MB)\n", loaded, PBR_MATERIAL_COUNT, gpuBytes / (1024.0 * 1024.0));
+    for (int i = 0; i < t->nImages; ++i) vk_buffer_destroy(vk, &staging[i]);
+    printf("Materials: %d/%d loaded, %d images (%.0f MB)\n", loaded, PBR_MATERIAL_COUNT,
+           t->nImages - PBR_MAPS_PER_MATERIAL, gpuBytes / (1024.0 * 1024.0));
 
     VkPhysicalDeviceFeatures feats;
     vkGetPhysicalDeviceFeatures(vk->phys, &feats);   /* vk_init enables anisotropy when supported */
@@ -191,17 +226,20 @@ Textures *textures_create(VkCore *vk) {
     return t;
 }
 
-void textures_destroy(Textures *t) {
+void materials_destroy(Materials *t) {
     if (!t) return;
-    for (int i = 0; i < PBR_TEXTURE_COUNT; ++i) vk_image_destroy(t->vk, &t->maps[i]);
+    for (int i = 0; i < t->nImages; ++i) vk_image_destroy(t->vk, &t->images[i]);
+    vk_buffer_destroy(t->vk, &t->table);
     vkDestroySampler(t->vk->device, t->sampler, NULL);
     free(t);
 }
 
-void textures_descriptors(const Textures *t, VkDescriptorImageInfo *out) {
+void materials_descriptors(const Materials *t, VkDescriptorImageInfo *out) {
     for (int i = 0; i < PBR_TEXTURE_COUNT; ++i) {
         out[i].sampler = t->sampler;
-        out[i].imageView = t->maps[i].view;
+        out[i].imageView = t->images[t->slot[i]].view;
         out[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 }
+
+VkBuffer materials_table(const Materials *t) { return t->table.buf; }

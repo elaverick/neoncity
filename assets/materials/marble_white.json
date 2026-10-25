@@ -1,0 +1,10 @@
+// White marble (the lobby floors' chequer, pale core cladding).
+{
+  "maps": {
+    "albedo": "../textures/marble_012/albedo.png",
+    "normal": "../textures/marble_012/normal.png",
+    "orm":    "../textures/marble_012/orm.png"
+  },
+  "tile": 2.0,
+  "albedo_scale": 0.5
+}

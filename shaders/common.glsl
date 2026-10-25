@@ -7,6 +7,9 @@
 #include "terrain_planet.h"
 // CLOUD_CITIES, CLOUD_BORDER, CLOUD_FADE, CLOUD_RAGGED, CLOUD_REACH: shared with C
 #include "clouds.h"
+// Authored PBR materials: PBR_<NAME> (one per assets/materials/<name>.json), the maps
+// (PBR_ALBEDO..., PBR_MAPS_PER_MATERIAL), PBR_TEXTURE_COUNT and the flags: shared with C
+#include "pbr.h"
 
 /* Must match src/core/common.h */
 const float CHUNK_SIZE      = 110.0;
@@ -43,13 +46,6 @@ const uint LK_SHADOW = 0u, LK_NEWS = 1u, LK_FLYER = 2u, LK_SCRAP = 3u, LK_CARDBO
            LK_BOTTLE = 7u, LK_BUTT = 8u, LK_CUP = 9u, LK_BOX = 10u, LK_BAG = 11u, LK_BINBAG = 12u;
 // Closer than this, a lobby's glass shows its real interior (src/core/common.h INTERIOR_DISTANCE).
 const float REAL_GLASS_DIST = 150.0;
-
-// Authored PBR materials (src/render/textures.c): maps at material * PBR_MAPS_PER_MATERIAL + map.
-const int PBR_PAVING_STONES = 0, PBR_ROAD = 1, PBR_KERB = 2, PBR_TACTILE = 3,
-          PBR_MARBLE_DARK = 4, PBR_MARBLE_WHITE = 5, PBR_LIMESTONE = 6, PBR_WOOD_DARK = 7, PBR_WOOD_MID = 8, PBR_WOOD_LIGHT = 9,
-          PBR_LEAF = 10, PBR_LIGHT_FIXTURE = 11, PBR_LIGHT_DIFFUSER = 12, PBR_FENCE_NET = 13, PBR_FENCE_WELD = 14,
-          PBR_MATERIAL_COUNT = 15;
-const int PBR_ALBEDO = 0, PBR_NORMAL = 1, PBR_ORM = 2, PBR_EMISSIVE = 3, PBR_MAPS_PER_MATERIAL = 4;
 
 layout(set = 0, binding = 0) uniform Frame {
     mat4 viewProj;

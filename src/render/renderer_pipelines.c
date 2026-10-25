@@ -131,18 +131,19 @@ void write_buf_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkDescript
 
 void create_layouts(Renderer *r) {
     VkCore *vk = r->vk;
-    VkDescriptorSetLayoutBinding scene[8] = {
+    VkDescriptorSetLayoutBinding scene[9] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shelter map (litter: city.vert) */
+        { 8, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' properties (materials.c) */
         /* ray-traced shadows only */
         { 5, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shadow slot ids */
         { 7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shadow slot visibility */
     };
-    r->sceneLayout = make_set_layout(vk, scene, r->rt ? 8 : 5);
+    r->sceneLayout = make_set_layout(vk, scene, r->rt ? 9 : 6);
     if (r->rt) {
         const VkShaderStageFlags C = VK_SHADER_STAGE_COMPUTE_BIT;
         const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -241,7 +242,7 @@ void create_layouts(Renderer *r) {
     r->proxyPL = make_pipeline_layout(vk, r->proxyLayout, 0, 0);
 
     VkDescriptorPoolSize sizes[4] = {
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (PBR_TEXTURE_COUNT + 3) * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES },
@@ -253,7 +254,7 @@ void create_layouts(Renderer *r) {
     VK_CHECK(vkCreateDescriptorPool(vk->device, &pci, NULL, &r->staticPool));
 
     VkDescriptorImageInfo maps[PBR_TEXTURE_COUNT];
-    textures_descriptors(r->textures, maps);
+    materials_descriptors(r->materials, maps);
     for (int i = 0; i < MAX_FRAMES; ++i) {
         VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
         ai.descriptorPool = r->staticPool;
@@ -263,8 +264,10 @@ void create_layouts(Renderer *r) {
         VkDescriptorBufferInfo ub = { r->ubo[i].buf, 0, sizeof(FrameUBO) };
         VkDescriptorBufferInfo sb = { chunks_gpu_buffer(r->chunks, i), 0, chunks_gpu_buffer_size() };
         VkDescriptorBufferInfo lb = { chunks_light_buffer(r->chunks), 0, chunks_light_buffer_size() };
-        VkWriteDescriptorSet w[4] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
-                                      { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
+        VkDescriptorBufferInfo mb = { materials_table(r->materials), 0, sizeof(MaterialGPU) * PBR_MATERIAL_COUNT };
+        VkWriteDescriptorSet w[5] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
+                                      { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
+                                      { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
         w[0].dstSet = r->sceneSet[i]; w[0].dstBinding = 0; w[0].descriptorCount = 1;
         w[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[0].pBufferInfo = &ub;
         w[1].dstSet = r->sceneSet[i]; w[1].dstBinding = 1; w[1].descriptorCount = 1;
@@ -273,7 +276,9 @@ void create_layouts(Renderer *r) {
         w[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w[2].pBufferInfo = &lb;
         w[3].dstSet = r->sceneSet[i]; w[3].dstBinding = 3; w[3].descriptorCount = PBR_TEXTURE_COUNT;
         w[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[3].pImageInfo = maps;
-        vkUpdateDescriptorSets(vk->device, 4, w, 0, NULL);
+        w[4].dstSet = r->sceneSet[i]; w[4].dstBinding = 8; w[4].descriptorCount = 1;
+        w[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[4].pBufferInfo = &mb;
+        vkUpdateDescriptorSets(vk->device, 5, w, 0, NULL);
         if (r->rt) write_as_set(vk, r->sceneSet[i], 5, rt_tlas(r->rt, i));
     }
 
