@@ -49,6 +49,20 @@ Surface samplePBR(int m, vec2 st, vec3 T, vec3 B, vec3 N) {
     return s;
 }
 
+// A baked model's tangent frame (tools/model_pack.c; src/city/props.c): T along
+// +u, B along -v, both square to the interpolated normal n, from dp/du and dp/dv,
+// which the screen derivatives give (a triangle's own: they never cross an edge).
+void modelFrame(vec3 p, vec2 uv, vec3 n, out vec3 T, out vec3 B) {
+    vec3 dpx = dFdx(p), dpy = dFdy(p);
+    vec2 dux = dFdx(uv), duy = dFdy(uv);
+    float det = dux.x * duy.y - dux.y * duy.x;
+    float s = abs(det) < 1e-12 ? 0.0 : 1.0 / det;
+    vec3 dpdu = (dpx * duy.y - dpy * dux.y) * s, dpdv = (dpy * dux.x - dpx * duy.x) * s;
+    vec3 t = dpdu - n * dot(n, dpdu);
+    T = dot(t, t) > 1e-20 ? normalize(t) : normalize(cross(n, abs(n.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+    B = cross(n, T) * (dot(cross(n, T), -dpdv) < 0.0 ? -1.0 : 1.0);
+}
+
 // Broad relief: the height map averaged over many texels (a biased mip), for
 // shapes like puddles that should follow hollows rather than every grain.
 float pbrBroadHeight(int m, vec2 st, float bias) { return texture(pbrMaps[m * PBR_MAPS_PER_MATERIAL + PBR_ORM], st, bias).b; }

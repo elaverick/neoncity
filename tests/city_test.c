@@ -28,8 +28,9 @@ static uint64_t fnv(const void *data, size_t n, uint64_t h) {
     return h;
 }
 
-/* All four layers: the chunk itself, its office lobbies, its litter and the lobbies' plants. */
-static uint64_t chunk_checksum(int cx, int cz, uint32_t *countOut, uint32_t *lightsOut, uint32_t *interiorOut, uint32_t *litterOut, uint32_t *plantOut) {
+/* All five layers: the chunk itself, its office lobbies, its litter, the lobbies' plants and its street furniture. */
+static uint64_t chunk_checksum(int cx, int cz, uint32_t *countOut, uint32_t *lightsOut, uint32_t *interiorOut, uint32_t *litterOut, uint32_t *plantOut,
+                               uint32_t *propsOut) {
     Mesh m = { 0 };
     city_build_mesh(cx, cz, &m);
     uint64_t h = fnv(m.v, (size_t)m.count * sizeof(Vertex), 0xcbf29ce484222325ULL);
@@ -54,6 +55,11 @@ static uint64_t chunk_checksum(int cx, int cz, uint32_t *countOut, uint32_t *lig
     h = fnv(pl.v, (size_t)pl.count * sizeof(Vertex), h);
     if (plantOut) *plantOut = pl.count;
     mesh_free(&pl);
+    Mesh pr = { 0 };
+    city_build_props(cx, cz, &pr);
+    h = fnv(pr.v, (size_t)pr.count * sizeof(Vertex), h);
+    if (propsOut) *propsOut = pr.count;
+    mesh_free(&pr);
     return h;
 }
 
@@ -65,7 +71,7 @@ static int worker(void *arg) {
     for (int k = 0; k < N_CHUNKS; ++k) {
         int j = (w->start + k) % N_CHUNKS;
         int i = w->reverse ? N_CHUNKS - 1 - j : j;
-        w->out[i] = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL, NULL, NULL, NULL);
+        w->out[i] = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL, NULL, NULL, NULL, NULL);
     }
     return 0;
 }
@@ -123,8 +129,8 @@ static int buildings_overlap(const Building *a, const Building *b) {
  * structs are hashed field by field: their padding is not deterministic.
  * ------------------------------------------------------------------------- */
 
-enum { FP_MESH, FP_LIGHTS, FP_SKY, FP_AIR, FP_INTERIORS, FP_PLANTS, FP_LITTER, FP_LAYOUT, FP_COUNT };
-static const char *const FP_NAMES[FP_COUNT] = { "mesh", "lights", "sky", "air", "interiors", "plants", "litter", "layout" };
+enum { FP_MESH, FP_LIGHTS, FP_SKY, FP_AIR, FP_INTERIORS, FP_PLANTS, FP_LITTER, FP_LAYOUT, FP_PROPS, FP_COUNT };
+static const char *const FP_NAMES[FP_COUNT] = { "mesh", "lights", "sky", "air", "interiors", "plants", "litter", "layout", "props" };
 
 #define FNV_FIELD(h, x) ((h) = fnv(&(x), sizeof(x), (h)))
 
@@ -199,6 +205,9 @@ static void fingerprint_chunk(int cx, int cz, uint64_t fp[FP_COUNT]) {
     mesh_free(&m);
     city_build_litter(cx, cz, &m);
     fp[FP_LITTER] = fnv_mesh(&m, fp[FP_LITTER]);
+    mesh_free(&m);
+    city_build_props(cx, cz, &m);
+    fp[FP_PROPS] = fnv_mesh(&m, fp[FP_PROPS]);
     mesh_free(&m);
     city_layout(cx, cz, &L);
     fp[FP_LAYOUT] = fnv_layout(&L, fp[FP_LAYOUT]);
@@ -601,6 +610,122 @@ static int proxy_survey(void) {
     return 0;
 }
 
+/* ---------------------------------------------------------------------------
+ * Street furniture (src/city/props.c) round the spawn: what stands on the
+ * ground stands on a block, clear of every other piece; a crossing's signal
+ * faces the road; and nothing closes a way through: in front of every
+ * dumpster a walker has room to pass, whatever stands nearby. Also how much
+ * of it there is.
+ * ------------------------------------------------------------------------- */
+
+/* Whether (x, z) lies in a convex outline, either winding. */
+static int in_outline(const double (*v)[2], int n, double x, double z) {
+    int pos = 0, neg = 0;
+    for (int i = 0; i < n; ++i) {
+        const double *a = v[i], *b = v[(i + 1) % n];
+        double cr = (b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0]);
+        if (cr > 0.0) pos = 1; else if (cr < 0.0) neg = 1;
+    }
+    return n >= 3 && !(pos && neg);
+}
+
+static void check_props(int hx, int hz) {
+    enum { R = 6, W = 2 * R + 1 };
+    static Prop pr[W][W][MAX_PROPS];
+    static int np[W][W];
+    int kinds[PROP_KINDS] = { 0 }, total = 0;
+    for (int j = 0; j < W; ++j)
+        for (int i = 0; i < W; ++i) {
+            np[j][i] = city_chunk_props(hx - R + i, hz - R + j, pr[j][i], MAX_PROPS);
+            for (int k = 0; k < np[j][i]; ++k) { kinds[pr[j][i][k].kind]++; total++; }
+        }
+    int overlaps = 0, closed = 0, faced = 0;
+    for (int j = 1; j < W - 1; ++j)
+        for (int i = 1; i < W - 1; ++i) {
+            int cx = hx - R + i, cz = hz - R + j;
+            static BlockLayout L;
+            city_layout(cx, cz, &L);
+            for (int k = 0; k < np[j][i]; ++k) {
+                const Prop *p = &pr[j][i][k];
+                if (p->kind == PROP_AIRCON) continue;
+                double v[4][2];
+                int n = prop_outline(p, v);
+                int on = 0;
+                for (int c = 0; c < L.ncurbs && !on; ++c) on = in_curb(&L.curb[c], p->x, p->z);
+                CHECK(on, "chunk (%d,%d): piece %d (kind %d) stands off its block", cx, cz, k, p->kind);
+                if (p->kind == PROP_CROSSING) {
+                    int road = 1;
+                    for (int c = 0; c < L.ncurbs && road; ++c) road = !in_curb(&L.curb[c], p->x + p->fx * 1.2, p->z + p->fz * 1.2);
+                    faced += !road;
+                }
+                /* every other piece in the 3 x 3 chunks round it */
+                for (int dj = -1; dj <= 1; ++dj)
+                    for (int di = -1; di <= 1; ++di)
+                        for (int q = 0; q < np[j + dj][i + di]; ++q) {
+                            const Prop *o = &pr[j + dj][i + di][q];
+                            if (o == p || o->kind == PROP_AIRCON) continue;
+                            double dx = o->x - p->x, dz = o->z - p->z;
+                            if (dx * dx + dz * dz > 25.0) continue;
+                            double w[4][2];
+                            int m = prop_outline(o, w);
+                            int hit = in_outline((const double (*)[2])v, n, o->x, o->z);
+                            for (int c = 0; c < m && !hit; ++c) hit = in_outline((const double (*)[2])v, n, w[c][0], w[c][1]);
+                            overlaps += hit;
+                            CHECK(!hit, "chunk (%d,%d): pieces %d and (%+d,%+d) %d overlap", cx, cz, k, di, dj, q);
+                            if (p->kind != PROP_DUMPSTER) continue;
+                            /* the way past it: across a walker's width and more, the first 1.2 m out from its front */
+                            double hd = 0.5 * sqrt((v[3][0] - v[0][0]) * (v[3][0] - v[0][0]) + (v[3][1] - v[0][1]) * (v[3][1] - v[0][1]));
+                            int shut = 0;
+                            for (int s = 0; s <= 12 && !shut; ++s)
+                                for (int a = -2; a <= 2 && !shut; ++a) {
+                                    double e = hd + 0.05 + s * 0.1, f = a * 0.3;
+                                    shut = in_outline((const double (*)[2])w, m, p->x + p->fx * e + p->fz * f, p->z + p->fz * e - p->fx * f);
+                                }
+                            closed += shut;
+                            CHECK(!shut, "chunk (%d,%d): dumpster %d is closed in by piece (%+d,%+d) %d", cx, cz, k, di, dj, q);
+                        }
+            }
+        }
+    printf("street furniture round the spawn (%d x %d chunks): %d pieces: %d bins, %d bollards, %d post boxes, %d crossings, %d dumpsters, %d condensers\n",
+           W, W, total, kinds[PROP_BIN], kinds[PROP_BOLLARD], kinds[PROP_MAILBOX], kinds[PROP_CROSSING], kinds[PROP_DUMPSTER], kinds[PROP_AIRCON]);
+    printf("  %d overlaps, %d dumpsters closed in, %d signals facing a block (the middle %d x %d chunks)\n", overlaps, closed, faced, W - 2, W - 2);
+    int middle = (W - 2) * (W - 2);
+    CHECK(kinds[PROP_BIN] > middle, "too few litter bins round the spawn");
+    CHECK(kinds[PROP_CROSSING] > middle / 2, "too few crossing signals round the spawn");
+    CHECK(kinds[PROP_DUMPSTER] > 0 && kinds[PROP_AIRCON] > 0 && kinds[PROP_BOLLARD] > 0 && kinds[PROP_MAILBOX] > 0, "a kind of street furniture is missing round the spawn");
+    CHECK(faced == 0, "%d crossing signals face a block, not the road", faced);
+}
+
+/* city_test --props: --cam views of the street furniture nearest the spawn, a
+ * few of each kind, from in front of each piece (a condenser's from the
+ * ground below, looking up at it). */
+static int props_cams(void) {
+    static const char *const NAMES[PROP_KINDS] = { "bollard", "bin", "post box", "dumpster", "crossing", "condenser" };
+    double sx, sz;
+    float yaw;
+    city_spawn(&sx, &sz, &yaw);
+    int hx = (int)floor(sx / CHUNK_SIZE), hz = (int)floor(sz / CHUNK_SIZE), shown[PROP_KINDS] = { 0 };
+    static Prop pr[MAX_PROPS];
+    for (int ring = 0; ring <= 3; ++ring)
+        for (int cz = hz - ring; cz <= hz + ring; ++cz)
+            for (int cx = hx - ring; cx <= hx + ring; ++cx) {
+                if (abs(cx - hx) != ring && abs(cz - hz) != ring) continue;
+                int n = city_chunk_props(cx, cz, pr, MAX_PROPS);
+                for (int i = 0; i < n; ++i) {
+                    const Prop *p = &pr[i];
+                    if (shown[p->kind] >= 3) continue;
+                    shown[p->kind]++;
+                    double d = p->kind == PROP_AIRCON ? 4.0 : p->kind == PROP_CROSSING ? 4.5 : 3.0, side = p->kind == PROP_CROSSING ? 1.5 : 0.8;
+                    double x = p->x + p->fx * d + p->fz * side, z = p->z + p->fz * d - p->fx * side;
+                    double tx = p->x - x, tz = p->z - z;
+                    float pitch = p->kind == PROP_AIRCON ? (float)(atan2(p->y - (city_ground_y(x, z) + 1.7), sqrt(tx * tx + tz * tz)) * 57.2958) : -12.0f;
+                    printf("%-9s at (%.1f, %.1f) y %.1f: --cam %.2f %.2f %.1f %.1f\n", NAMES[p->kind], p->x, p->z, p->y, x, z,
+                           atan2(tx, -tz) * 57.2958, pitch);
+                }
+            }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     terrain_earth_load(NULL);
     plan_world_init(cpu_count());   /* before the workers below ask the plan */
@@ -613,13 +738,16 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
     if (argc > 1 && strcmp(argv[1], "--proxies") == 0) return proxy_survey();
+    if (argc > 1 && strcmp(argv[1], "--props") == 0) return props_cams();
 
     /* 1. Reference pass, in order. Track mesh sizes against the GPU page budget. */
-    uint32_t maxVerts = 0, maxLights = 0, maxInterior = 0, maxLitter = 0, maxPlants = 0;
-    double total = 0, totalLights = 0, totalInterior = 0, totalLitter = 0, totalPlants = 0;
+    uint32_t maxVerts = 0, maxLights = 0, maxInterior = 0, maxLitter = 0, maxPlants = 0, maxProps = 0;
+    double total = 0, totalLights = 0, totalInterior = 0, totalLitter = 0, totalPlants = 0, totalProps = 0;
     for (int i = 0; i < N_CHUNKS; ++i) {
-        uint32_t c, l, in, lt, pv;
-        g_ref[i] = chunk_checksum(g_cx[i], g_cz[i], &c, &l, &in, &lt, &pv);
+        uint32_t c, l, in, lt, pv, pr;
+        g_ref[i] = chunk_checksum(g_cx[i], g_cz[i], &c, &l, &in, &lt, &pv, &pr);
+        if (pr > maxProps) maxProps = pr;
+        totalProps += pr;
         if (pv > maxPlants) maxPlants = pv;
         totalPlants += pv;
         if (c > maxVerts) maxVerts = c;
@@ -636,6 +764,8 @@ int main(int argc, char **argv) {
     printf("lobby vertices per chunk: avg %.0f, max %u (budget %d)\n", totalInterior / N_CHUNKS, maxInterior, MAX_CHUNK_PAGES * PAGE_VERTS);
     CHECK(maxInterior <= (uint32_t)(MAX_CHUNK_PAGES * PAGE_VERTS), "chunk lobbies exceed page budget");
     printf("plant vertices per chunk: avg %.0f, max %u (budget %d)\n", totalPlants / N_CHUNKS, maxPlants, MAX_CHUNK_PAGES * PAGE_VERTS);
+    printf("street furniture vertices per chunk: avg %.0f, max %u (budget %d)\n", totalProps / N_CHUNKS, maxProps, MAX_CHUNK_PAGES * PAGE_VERTS);
+    CHECK(maxProps <= (uint32_t)(MAX_CHUNK_PAGES * PAGE_VERTS), "chunk street furniture exceeds page budget");
     CHECK(maxPlants <= (uint32_t)(MAX_CHUNK_PAGES * PAGE_VERTS), "chunk plants exceed page budget");
     printf("mesh vertices per chunk: avg %.0f, max %u (budget %d)\n", total / N_CHUNKS, maxVerts, MAX_CHUNK_PAGES * PAGE_VERTS);
     printf("light records per chunk: avg %.0f, max %u (page %d)\n", totalLights / N_CHUNKS, maxLights, LIGHT_PAGE_RECS);
@@ -644,8 +774,8 @@ int main(int argc, char **argv) {
 
     /* 2. Reverse order, interleaved with unrelated generation, must match. */
     for (int i = N_CHUNKS - 1; i >= 0; --i) {
-        chunk_checksum(g_cx[i] + 7, g_cz[i] - 3, NULL, NULL, NULL, NULL, NULL);
-        uint64_t h = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL, NULL, NULL, NULL);
+        chunk_checksum(g_cx[i] + 7, g_cz[i] - 3, NULL, NULL, NULL, NULL, NULL, NULL);
+        uint64_t h = chunk_checksum(g_cx[i], g_cz[i], NULL, NULL, NULL, NULL, NULL, NULL);
         CHECK(h == g_ref[i], "chunk (%d,%d) differs when generated in a different order", g_cx[i], g_cz[i]);
     }
 
@@ -827,6 +957,9 @@ int main(int argc, char **argv) {
 
     /* 7. Distant proxies. */
     check_proxies();
+
+    /* 8. Street furniture. */
+    check_props(hx, hz);
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all city tests passed (%d chunks x %d orders/threads)\n", N_CHUNKS, THREADS + 2);

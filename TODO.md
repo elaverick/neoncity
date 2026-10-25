@@ -227,8 +227,8 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
 
 ## Office lobbies (next)
 Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/mesh_lobby.c`).
-- **Furniture** is rough boxes; reception, sofas, cafe and cubicles want real assets. Planters hold
-  real plants now (see Lobby plants below).
+- **Furniture** is rough boxes but for the sofas (a model: see Street furniture below); reception,
+  cafe and cubicles want real assets. Planters hold real plants now (see Lobby plants below).
 - **Vertical circulation:** the gallery, feature stair and escape stairs can't be climbed (collision
   is 2D); lift doors don't open.
 - **Glazed courtyard atria** (the design's fifth atrium mode) and a mezzanine planned as its own level.
@@ -296,8 +296,24 @@ debris drawn by the ground shader (`debris`). See the README.
   shelter map's heights) could send the odd sheet tumbling down the street under cover or on
   the driest nights. It is the one part of litter that a particle system suits.
 - **Floating litter:** rubbish in standing water doesn't drift or bob with the ripples.
-- **Litter bins and dumpsters** to anchor the piles, and the odd heap where a bin overflowed.
+- **Round the bins and dumpsters** (src/city/props.c) the litter only keeps clear: no heap where a
+  bin overflowed, no bin bags piled against a dumpster.
 - **Light:** void decks and alleys are lit only by the ambient, so rubbish there is hard to see.
+
+## Street furniture
+Bins, bollards, post boxes, crossing signals, dumpsters and condensers (`src/city/props.c`, models
+baked by `tools/model_pack.c`). See the README. Left over:
+- **One model of each:** a second post box, bollard and condenser would break up the repetition; the
+  bins and dumpsters have two liveries each, picked by the seed, and nothing else varies (no tint).
+- **Signals:** the poles are plain boxes; the walking man doesn't count down, and the crossing's
+  carriageway has no vehicle signals (there are no vehicles). Crossings with a lamp post in the way on
+  both sides go without.
+- **Condensers** don't drip, hum or run their fans; there are no pipes or cables from them into the wall.
+- **Pop-in:** the layer ends at `PROPS_DISTANCE` (220 m) without a fade; condensers high on a facade
+  can be seen arriving.
+- **Dumpsters** stand only against the walls of a building's own grounded sections; none in the
+  industrial plants' yards or the parks, and none against a boundary wall or fence.
+- **Collision** is a box round each piece (a post box's round its box, not its post).
 
 ## Industrial plants and substations
 Section 11 of `docs/procedural-building-generation.md` (`src/gen/building_industry.c`,

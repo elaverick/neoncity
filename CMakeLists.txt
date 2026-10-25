@@ -168,7 +168,7 @@ set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/render src/app $
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_lobby.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
-                src/city/litter.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c
+                src/city/litter.c src/city/props.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c
                 src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c src/core/thread.c
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
@@ -252,6 +252,42 @@ if(MSVC)
   target_compile_options(stud_pack PRIVATE /W3 /wd4996)
 else()
   target_link_libraries(stud_pack PRIVATE m)
+endif()
+
+# --- Tools: models --------------------------------------------------------------
+# Converts a textured .glb into src/city/models/<name>.inc and assets/textures/<name>/
+# (tools/model_pack.c): cgltf reads it, meshoptimizer simplifies its shape, xatlas
+# unwraps that, and the maps are baked from the original. Only the tool uses them.
+FetchContent_Declare(xatlas
+  URL https://github.com/jpcy/xatlas/archive/f700c7790aaa030e794b52ba7791a05c085faf0c.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR do-not-build)
+FetchContent_MakeAvailable(xatlas)
+FetchContent_Declare(cgltf
+  URL https://github.com/jkuhlmann/cgltf/archive/refs/tags/v1.14.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR do-not-build)
+FetchContent_MakeAvailable(cgltf)
+FetchContent_Declare(meshoptimizer
+  URL https://github.com/zeux/meshoptimizer/archive/refs/tags/v0.25.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR do-not-build)
+FetchContent_MakeAvailable(meshoptimizer)
+file(GLOB MESHOPT_SOURCES ${meshoptimizer_SOURCE_DIR}/src/*.cpp)
+add_executable(model_pack tools/model_pack.c ${MESHOPT_SOURCES} ${xatlas_SOURCE_DIR}/source/xatlas/xatlas.cpp)
+target_include_directories(model_pack PRIVATE ${stb_SOURCE_DIR} ${cgltf_SOURCE_DIR} ${meshoptimizer_SOURCE_DIR}/src ${xatlas_SOURCE_DIR}/source/xatlas)
+target_compile_definitions(model_pack PRIVATE XATLAS_C_API=1)
+find_package(OpenMP COMPONENTS C)
+if(OpenMP_C_FOUND)
+  target_link_libraries(model_pack PRIVATE OpenMP::OpenMP_C)
+endif()
+if(MSVC)
+  target_compile_options(model_pack PRIVATE /W3 /wd4996)
+else()
+  target_link_libraries(model_pack PRIVATE m)
+  if(UNIX)
+    target_link_libraries(model_pack PRIVATE pthread)
+  endif()
 endif()
 
 # --- Tools: the Earth bake ------------------------------------------------------

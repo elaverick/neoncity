@@ -40,7 +40,8 @@ const uint  WORLD_SEED      = 0xC1B3A7u;
 const uint MAT_ROAD = 0u, MAT_SIDEWALK = 1u, MAT_CURB = 2u, MAT_LOT = 3u,
            MAT_FACADE = 4u, MAT_ROOF = 5u, MAT_NEON = 6u, MAT_METAL = 7u,
            MAT_EMISSIVE = 8u, MAT_SCREEN = 9u, MAT_LEDSTRIP = 10u, MAT_DOOR = 11u,
-           MAT_INTERIOR = 12u, MAT_LITTER = 13u, MAT_ARCOLOGY = 14u, MAT_INDUSTRY = 15u;
+           MAT_INTERIOR = 12u, MAT_LITTER = 13u, MAT_ARCOLOGY = 14u, MAT_INDUSTRY = 15u,
+           MAT_PROP = 16u;
 // Litter kinds (src/core/common.h)
 const uint LK_SHADOW = 0u, LK_NEWS = 1u, LK_FLYER = 2u, LK_SCRAP = 3u, LK_CARDBOARD = 4u, LK_WAD = 5u, LK_CAN = 6u,
            LK_BOTTLE = 7u, LK_BUTT = 8u, LK_CUP = 9u, LK_BOX = 10u, LK_BAG = 11u, LK_BINBAG = 12u;

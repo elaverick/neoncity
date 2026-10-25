@@ -1,0 +1,10 @@
+// A street litter bin (a second livery): a model (src/city/models/litter_bin_b.inc), baked with its maps by tools/model_pack.c
+// from a .glb (README, "Models"). orm.b is its metalness, not a height.
+{
+  "maps": {
+    "albedo":   "../textures/litter_bin_b/albedo.png",
+    "normal":   "../textures/litter_bin_b/normal.png",
+    "orm":      "../textures/litter_bin_b/orm.png"
+  },
+  "albedo_scale": 0.5     // into the city's night palette
+}

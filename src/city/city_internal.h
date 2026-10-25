@@ -27,6 +27,7 @@
  *   light_tiles.c    each chunk's light table
  *   cables.c         overhead cables
  *   litter.c         the litter layer
+ *   props.c          the street furniture layer, and the models (src/city/models/)
  *   proxy.c          distant proxies: boxes round the buildings' sections */
 
 /* ---------------------------------------------------------------------------
@@ -99,7 +100,7 @@ typedef struct Interiors { int n; ILayout *lay[2]; ALayout *arc; } Interiors;
 /* MAT_INTERIOR surfaces (params y; shadeInterior in shaders/city.frag). */
 enum { IS_FLOOR = 0, IS_ROOMFLOOR, IS_WALL, IS_CEILING, IS_CORE, IS_METAL, IS_WOOD, IS_FABRIC, IS_GLASS,
        IS_LIGHT, IS_PLANT, IS_LINING, IS_STONE, IS_LIFTDOOR, IS_DOOR, IS_SCREEN, IS_SKYLIGHT, IS_OFFICE, IS_SIGN, IS_EMBLEM,
-       IS_BARK, IS_SOIL };   /* IS_PLANT: leaves; IS_BARK: stems (grow_plants) */
+       IS_BARK, IS_SOIL, IS_MODEL };   /* IS_PLANT: leaves; IS_BARK: stems (grow_plants); IS_MODEL: a model's own maps (emit_model), params z its PBR_* */
 #define POT_HEIGHT 0.55f   /* lobby planters: the pot's rim above the floor */
 #define PLANT_BUDGET 188000   /* plant vertices per chunk, inside MAX_CHUNK_PAGES * PAGE_VERTS */
 
@@ -260,3 +261,21 @@ void build_lights(Mesh *m, ChunkGen *g);
 
 /* cables.c */
 void build_cables(Mesh *m, ChunkGen *g);
+
+/* props.c */
+/* The models (src/city/models/, tools/model_pack.c): standing on y = 0, centred, their fronts to +z. */
+enum { PM_BOLLARD = 0, PM_BIN_A, PM_BIN_B, PM_MAILBOX, PM_DUMPSTER_A, PM_DUMPSTER_B, PM_AIRCON, PM_SIGNAL, PM_BUTTON, PM_SOFA, PM_COUNT };
+void    model_box(int pm, float mn[3], float mx[3]);
+uint8_t model_material(int pm);   /* its PBR_* */
+/* Model pm in the current emission frame, its foot at `at`, its front turned to (fx, fz). */
+void    emit_model(Mesh *m, int pm, vec3 at, float fx, float fz, Mat mt);
+/* The pieces standing in [x0, x1) x [z0, z1), of what stands on the ground (PROPS_GROUND)
+ * and on the walls (PROPS_WALLS). g must reach PROPS_*_PAD round the rectangle's chunk;
+ * the rectangle may reach PROPS_REACH beyond it. */
+#define PROPS_GROUND    1
+#define PROPS_WALLS     2
+#define PROPS_PLAN_PAD  30.0
+#define PROPS_BUILD_PAD 4.0
+#define PROPS_LAMP_PAD  4.0
+#define PROPS_REACH     1.0
+int     city_props(ChunkGen *g, double x0, double z0, double x1, double z1, int mask, Prop *out, int max);

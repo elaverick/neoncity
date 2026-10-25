@@ -345,6 +345,8 @@ float emblemDist(uint h, vec2 q) {
  * and a little bounce, the panels' sheen on glossy leaves, and light through
  * the thin blades seen from below. The pots' top dressing is IS_SOIL. */
 const uint IS_BARK = 20u, IS_SOIL = 21u;
+// A baked model (src/city/props.c: emit_model), a lobby's sofa: sub is its material (PBR_*).
+const uint IS_MODEL = 22u;
 const uint LS_KENTIA = 0u, LS_LINEAR = 1u, LS_FIDDLE = 2u, LS_ELLIPTIC = 3u, LS_UMBRELLA = 4u, LS_ZZ = 5u;
 const uint WM_PALM = 0u, WM_CANE = 1u, WM_FICUS = 2u, WM_UMBRELLA = 3u, WM_GREEN = 4u, WM_ZZ = 5u, WM_ROOT = 6u;
 
@@ -461,6 +463,15 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     // the panels' light, where furniture, plants and walls let it through (ray-traced shadows); the room's bounce fills the shade
     float panels = mix(PANEL_FILL, 1.0, ceilingVis());
     if (surf == IS_PLANT || surf == IS_BARK || surf == IS_SOIL) return shadePlant(p, V, n, uv, seed, surf, sub, y, flipped, panels);
+    // a model's maps, its normal before the panels light it
+    Surface ms;
+    bool model = surf == IS_MODEL && pbrLoaded(int(sub));
+    if (model) {
+        vec3 T, B;
+        modelFrame(p, uv, n, T, B);
+        ms = samplePBR(int(sub), uv, T, B, n);
+        n = ms.n;
+    }
     vec3 Lc = lobbyLight(seed);
     uint sh = styleHash(seed);
     float aa = max(length(fwidth(uv)), 1e-4);
@@ -601,6 +612,9 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float k = hfloat(h);
         alb = sub == 200u ? vec3(0.40, 0.28, 0.15) : k < 0.25 ? vec3(0.06) : k < 0.45 ? vec3(0.03, 0.12, 0.12) : k < 0.65 ? vec3(0.35, 0.25, 0.05) :
               k < 0.8 ? vec3(0.18, 0.03, 0.04) : vec3(0.2);
+    } else if (surf == IS_MODEL) {
+        alb = model ? ms.albedo * pbrAlbedoScale(int(sub)) * ms.ao : vec3(0.05);
+        gloss = model ? (1.0 - ms.rough) * (1.0 - ms.rough) * 0.5 : 0.05;
     } else if (surf == IS_GLASS) {
         float F = glassFresnel(n, V);
         float cov = paneCoverage(F);

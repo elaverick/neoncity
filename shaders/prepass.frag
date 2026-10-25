@@ -31,7 +31,7 @@ void main() {
     }
     // the materials whose shading calls cityLights (city.frag), where the lights can reach (lightsReach)
     float above = vLocal.y - vBase;
-    bool lit = (m <= MAT_ROOF || m == MAT_METAL || m == MAT_DOOR || m == MAT_LITTER || m == MAT_ARCOLOGY || m == MAT_INDUSTRY) &&
+    bool lit = (m <= MAT_ROOF || m == MAT_METAL || m == MAT_DOOR || m == MAT_LITTER || m == MAT_ARCOLOGY || m == MAT_INDUSTRY || m == MAT_PROP) &&
                lightsReach(chunks[vChunk].info.z, vLocal.y, above);
     // lobby surfaces the ceiling's panels light (not its lights, screens, signs, skylight or the offices above)
     uint is = vParams.y;

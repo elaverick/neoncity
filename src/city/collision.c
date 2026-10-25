@@ -5,11 +5,13 @@
  * ========================================================================= */
 
 static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg);
+static int coll_begin(BlockLayout *L, int n);
 
 void city_layout(int cx, int cz, BlockLayout *L) {
     const double P = CHUNK_SIZE;
     ChunkGen g;
-    chunk_gen_init(&g, cx, cz, 25.0, 0.0, 0.0);
+    /* as far round the chunk as its street furniture needs (city_props) */
+    chunk_gen_init(&g, cx, cz, PROPS_PLAN_PAD, PROPS_BUILD_PAD, PROPS_LAMP_PAD);
     memset(L, 0, sizeof(*L));
     L->cx = cx; L->cz = cz;
     L->density = plan_density((cx + 0.5) * P, (cz + 0.5) * P);
@@ -21,6 +23,17 @@ void city_layout(int cx, int cz, BlockLayout *L) {
     }
     for (int i = 0; i < g.nl && L->nlamps < MAX_LAMPS; ++i)
         if (chunk_gen_owns(&g, g.lamp[i].x, g.lamp[i].z)) L->lamp[L->nlamps++] = g.lamp[i];
+    /* the street furniture standing in the chunk: bins, bollards, post boxes, signal poles, dumpsters */
+    Prop *pr = (Prop *)malloc(sizeof(Prop) * MAX_PROPS);
+    if (!pr) fatal("out of memory laying out a chunk");
+    int np = city_props(&g, g.ox, g.oz, g.ox + P, g.oz + P, PROPS_GROUND, pr, MAX_PROPS);
+    for (int i = 0; i < np; ++i) {
+        double v[4][2];
+        int n = prop_outline(&pr[i], v);
+        if (!n || !coll_begin(L, n)) continue;
+        for (int k = 0; k < n; ++k) { L->collv[L->ncollv][0] = v[k][0]; L->collv[L->ncollv][1] = v[k][1]; L->ncollv++; }
+    }
+    free(pr);
     L->bounded = g.pa->bounded;
     for (int i = 0; i < g.pa->ntowns && L->nground < MAX_GROUND; ++i) {
         const Poly *gp = &g.pa->ground[i];

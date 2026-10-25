@@ -1,0 +1,10 @@
+// A steel bollard at a kerb: a model (src/city/models/bollard.inc), baked with its maps by tools/model_pack.c
+// from a .glb (README, "Models"). orm.b is its metalness, not a height.
+{
+  "maps": {
+    "albedo":   "../textures/bollard/albedo.png",
+    "normal":   "../textures/bollard/normal.png",
+    "orm":      "../textures/bollard/orm.png"
+  },
+  "albedo_scale": 0.5     // into the city's night palette
+}

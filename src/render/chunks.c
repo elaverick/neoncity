@@ -16,8 +16,10 @@ enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
  * wanted only within INTERIOR_DISTANCE of the camera, 2 its litter
  * (city_build_litter), wanted only within LITTER_DISTANCE and lit by the
  * chunk's own light table, 3 the lobbies' plants (city_build_plants), wanted
- * with the lobbies and drawn last, without back-face culling. */
+ * with the lobbies and drawn last, without back-face culling, 4 its street
+ * furniture (city_build_props), wanted within PROPS_DISTANCE and lit as the litter. */
 #define LAYER_PLANTS 3
+#define LAYER_PROPS  4
 
 /* Prefetching (want_chunks). Ahead of a moving camera chunks are queued
  * sooner: their priority is cut by up to LEAD_GAIN straight ahead, in full
@@ -214,6 +216,7 @@ static int worker_main(void *arg) {
         if (job.layer == 1) city_build_interiors(job.cx, job.cz, &r.mesh);
         else if (job.layer == 2) city_build_litter(job.cx, job.cz, &r.mesh);
         else if (job.layer == LAYER_PLANTS) city_build_plants(job.cx, job.cz, &r.mesh);
+        else if (job.layer == LAYER_PROPS) city_build_props(job.cx, job.cz, &r.mesh);
         else city_build_mesh(job.cx, job.cz, &r.mesh);
 
         mutex_lock(&cs->doneLock);
@@ -453,7 +456,7 @@ static void caster_indices(Entry *e, const Vertex *v, uint32_t vc) {
     e->rtTotal = n;
 }
 
-static uint32_t rt_mask(int layer) { return layer == 0 ? RT_MASK_CITY : layer == 1 ? RT_MASK_INTERIOR : RT_MASK_LITTER; }
+static uint32_t rt_mask(int layer) { return layer == 0 || layer == LAYER_PROPS ? RT_MASK_CITY : layer == 1 ? RT_MASK_INTERIOR : RT_MASK_LITTER; }
 
 /* Distance from the camera to the chunk's square, horizontally. */
 static float chunk_dist(const Entry *e, const double cam[3]) {
@@ -649,9 +652,11 @@ static void want_chunks(ChunkSystem *cs, const Frustum *frp, const double cam[3]
             else if (guard) push_want(cs, cx, cz, 0, d * 1.3f + 100.0f, (d * 1.3f + 100.0f) * f, 0);
             if (inView && d < MISSING_DISTANCE && (idx < 0 || cs->entries[idx].state != CS_RESIDENT)) cs->inViewMissing++;
             float kl = d + 60.0f + (inView ? 0.0f : d * 2.0f), kp = d + 70.0f + (inView ? 0.0f : d * 2.0f), kt = d + 30.0f + (inView ? 0.0f : d * 2.0f);
+            float kf = d + 40.0f + (inView ? 0.0f : d * 2.0f);
             if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, 1, kl, kl * f, inView);
             if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, LAYER_PLANTS, kp, kp * f, inView);
             if (d < LITTER_DISTANCE) push_want(cs, cx, cz, 2, kt, kt * f, inView);
+            if (d < PROPS_DISTANCE) push_want(cs, cx, cz, LAYER_PROPS, kf, kf * f, inView);
         }
     }
     qsort(cs->want, cs->wantCount, sizeof(Want), cmp_want);

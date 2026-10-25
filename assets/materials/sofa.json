@@ -1,0 +1,10 @@
+// A lobby's sofa (IX_SOFA, IS_MODEL in shaders/city/lobby.glsl): a model (src/city/models/sofa.inc), baked with its maps by tools/model_pack.c
+// from a .glb (README, "Models"). orm.b is its metalness, not a height.
+{
+  "maps": {
+    "albedo":   "../textures/sofa/albedo.png",
+    "normal":   "../textures/sofa/normal.png",
+    "orm":      "../textures/sofa/orm.png"
+  },
+  "albedo_scale": 0.6     // into the city's night palette
+}

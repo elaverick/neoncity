@@ -471,10 +471,12 @@ static void emit_fixture(Mesh *m, const BGraph *g, const ILayout *L, const IFixt
         ibox(m, L, bx0, bz0, bx1, bz1, y0 + 0.46f, y1, F_NOBOT, imat(g, L, IS_FABRIC, var));
         break;
     case IX_SOFA: {
-        Mat fab = imat(g, L, IS_FABRIC, (uint8_t)(L->seed >> 3));
-        ibox(m, L, f->x0, f->z0, f->x1, f->z1, y0, y0 + 0.42f, F_NOBOT, fab);
-        back_strip(f, 0.22f, &bx0, &bz0, &bx1, &bz1);
-        ibox(m, L, bx0, bz0, bx1, bz1, y0 + 0.42f, y1, F_NOBOT, fab);
+        /* the sofa model (src/city/props.c), centred on the fixture, its front the fixture's */
+        static const float FX[4] = { 0, 1, 0, -1 }, FZ[4] = { -1, 0, 1, 0 };
+        float cx = 0.5f * (f->x0 + f->x1), cz = 0.5f * (f->z0 + f->z1), ax, az, bx, bz;
+        interior_to_local(L, cx, cz, &ax, &az);
+        interior_to_local(L, cx + FX[f->facing & 3], cz + FZ[f->facing & 3], &bx, &bz);
+        emit_model(m, PM_SOFA, v3(ax, y0, az), bx - ax, bz - az, imat(g, L, IS_MODEL, model_material(PM_SOFA)));
         break;
     }
     case IX_TABLE: {

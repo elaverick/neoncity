@@ -157,6 +157,28 @@ void     city_build_litter(int cx, int cz, Mesh *m);
 /* How squalid the streets are at (x, z) in a block of `zone` (-1: on a road), 0..1:
  * how much rubbish lies about (src/city/litter.c) and how much fine debris the ground shader draws. */
 float    city_squalor(int zone, double x, double z);
+/* The street furniture layer (src/city/props.c): bins, bollards, post boxes and
+ * crossing signals along the sidewalks, dumpsters in the back alleys, condensers
+ * on the walls. Like the litter it is lit by the chunk's light table. */
+void     city_build_props(int cx, int cz, Mesh *m);
+/* A piece of street furniture. (x, z) is where it stands: its footprint's
+ * centre, a crossing's signal pole, a condenser's back on its wall; y the
+ * world Y of its foot (a condenser's underside), ground what its heights
+ * count from (Vertex.base); (fx, fz) the way its front faces. */
+enum { PROP_BOLLARD = 0, PROP_BIN, PROP_MAILBOX, PROP_DUMPSTER, PROP_CROSSING, PROP_AIRCON, PROP_KINDS };
+/* a condenser hung on brackets; a crossing's button facing back along the kerb, its signal on a lamp post */
+enum { PF_BRACKETS = 1, PF_BUTTON_BACK = 2, PF_ON_LAMP = 4 };
+typedef struct Prop {
+    uint8_t  kind, model, flags;   /* PROP_*, its model (PM_* in city_internal.h), PF_* */
+    double   x, z;
+    float    y, ground, fx, fz;
+    uint32_t seed;
+} Prop;
+#define MAX_PROPS 512   /* in one chunk */
+/* Everything standing in chunk (cx, cz), as its mesh and collision place it. */
+int      city_chunk_props(int cx, int cz, Prop *out, int max);
+/* The outline a piece's collision keeps the walker out of (world), or 0 for one out of reach (a condenser). */
+int      prop_outline(const Prop *p, double (*v)[2]);
 void     mesh_free(Mesh *m);
 /* Whether a triangle with this vertex casts ray-traced shadows (src/render/rt.c).
  * Glass, veils of light, puddles and contact shadows don't; nor does flat or

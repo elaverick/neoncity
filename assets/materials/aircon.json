@@ -1,0 +1,10 @@
+// An air-conditioning condenser hung on a wall, under or on a window: a model (src/city/models/aircon.inc), baked with its maps by tools/model_pack.c
+// from a .glb (README, "Models"). orm.b is its metalness, not a height.
+{
+  "maps": {
+    "albedo":   "../textures/aircon/albedo.png",
+    "normal":   "../textures/aircon/normal.png",
+    "orm":      "../textures/aircon/orm.png"
+  },
+  "albedo_scale": 0.4     // into the city's night palette
+}

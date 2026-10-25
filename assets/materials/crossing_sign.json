@@ -1,0 +1,13 @@
+// A pedestrian signal head on its pole: a model (src/city/models/crossing_sign.inc), baked
+// with its maps by tools/model_pack.c from a .glb (README, "Models"). orm.b is its
+// metalness, not a height. The emissive map is its red hand (R) and green walking man (G),
+// which shadeProp lights in turn.
+{
+  "maps": {
+    "albedo":   "../textures/crossing_sign/albedo.png",
+    "normal":   "../textures/crossing_sign/normal.png",
+    "orm":      "../textures/crossing_sign/orm.png",
+    "emissive": "../textures/crossing_sign/emissive.png"
+  },
+  "albedo_scale": 0.5     // into the city's night palette
+}

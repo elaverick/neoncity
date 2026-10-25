@@ -1,0 +1,10 @@
+// A post box on its post, at the kerb: a model (src/city/models/mailbox.inc), baked with its maps by tools/model_pack.c
+// from a .glb (README, "Models"). orm.b is its metalness, not a height.
+{
+  "maps": {
+    "albedo":   "../textures/mailbox/albedo.png",
+    "normal":   "../textures/mailbox/normal.png",
+    "orm":      "../textures/mailbox/orm.png"
+  },
+  "albedo_scale": 0.5     // into the city's night palette
+}

@@ -36,6 +36,9 @@
  * Each item shrinks away in the vertex shader before its own fade distance
  * (a few metres for a cigarette butt, nearly this far for a bin bag). */
 #define LITTER_DISTANCE   120.0f
+/* Street furniture (src/city/props.c) is a fourth, streamed this close: bins,
+ * bollards, crossing signals, post boxes, dumpsters and the condensers on the walls. */
+#define PROPS_DISTANCE    220.0f
 
 /* GPU geometry pool: chunk meshes live in fixed-size pages of non-indexed
  * triangles so a chunk may occupy any set of free pages (no fragmentation). */
@@ -113,7 +116,8 @@ enum {
     MAT_ROAD = 0, MAT_SIDEWALK, MAT_CURB, MAT_LOT,
     MAT_FACADE, MAT_ROOF, MAT_NEON, MAT_METAL,
     MAT_EMISSIVE, MAT_SCREEN, MAT_LEDSTRIP, MAT_DOOR,
-    MAT_INTERIOR, MAT_LITTER, MAT_ARCOLOGY, MAT_INDUSTRY
+    MAT_INTERIOR, MAT_LITTER, MAT_ARCOLOGY, MAT_INDUSTRY,
+    MAT_PROP
 };
 
 /* Industrial plants' surfaces (MAT_INDUSTRY params.y; src/city/mesh_industry.c):

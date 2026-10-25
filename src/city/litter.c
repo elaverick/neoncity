@@ -78,13 +78,15 @@ typedef struct LGen {
     DropKerb **drops;        /* drop kerbs of each block, found when first asked */
     int      *nd;            /* how many, < 0 until asked */
     Tris     *T;             /* the item being built */
+    Prop     *props;         /* street furniture in reach (city_props) */
+    int       nprops;
     Mesh     *m;
 } LGen;
 
 static void lgen_init(LGen *g, int cx, int cz, Mesh *m) {
     memset(g, 0, sizeof(*g));
-    /* lamps are found within 2 m, which must stay 20 m inside the plan area (chunk_gen_init) */
-    chunk_gen_init(&g->c, cx, cz, 30.0, 8.0, 2.0);
+    /* lamps are found within 4 m (the street furniture's, city_props), which must stay 20 m inside the plan area (chunk_gen_init) */
+    chunk_gen_init(&g->c, cx, cz, PROPS_PLAN_PAD, 8.0, PROPS_LAMP_PAD);
     g->m = m;
     g->T = (Tris *)malloc(sizeof(Tris));
     g->sq = (float *)malloc(sizeof(float) * PLAN_MAX_BLOCKS);
@@ -92,11 +94,16 @@ static void lgen_init(LGen *g, int cx, int cz, Mesh *m) {
     g->nd = (int *)malloc(sizeof(int) * PLAN_MAX_BLOCKS);
     if (!g->T || !g->sq || !g->drops || !g->nd) fatal("out of memory generating litter");
     for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) { g->sq[k] = -1.0f; g->nd[k] = -1; }
+    /* the street furniture standing in the chunk or just beyond it, which rubbish lies clear of */
+    g->props = (Prop *)malloc(sizeof(Prop) * MAX_PROPS);
+    if (!g->props) fatal("out of memory generating litter");
+    const double R = PROPS_REACH;
+    g->nprops = city_props(&g->c, g->c.ox - R, g->c.oz - R, g->c.ox + CHUNK_SIZE + R, g->c.oz + CHUNK_SIZE + R, PROPS_GROUND, g->props, MAX_PROPS);
 }
 
 static void lgen_free(LGen *g) {
     for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) free(g->drops[k]);
-    free(g->sq); free(g->T); free(g->drops); free(g->nd);
+    free(g->sq); free(g->T); free(g->drops); free(g->nd); free(g->props);
     chunk_gen_free(&g->c);
     memset(g, 0, sizeof(*g));
 }
@@ -193,8 +200,22 @@ static int in_plot(const Building *b, double x, double z, double margin, float *
     return px > b->foot.x0 - margin && px < b->foot.x1 + margin && pz > b->foot.z0 - margin && pz < b->foot.z1 + margin;
 }
 
-/* Whether something of radius rad at (x, z) would stand in a wall, a column or a lamp post. */
+/* Whether something of radius rad at (x, z) would stand in a wall, a column, a lamp post or a piece of street furniture. */
 static int blocked(LGen *g, double x, double z, float rad) {
+    for (int i = 0; i < g->nprops; ++i) {
+        const Prop *p = &g->props[i];
+        double dx = x - p->x, dz = z - p->z;
+        if (dx * dx + dz * dz > 4.0) continue;
+        double v[4][2];
+        int n = prop_outline(p, v);
+        /* inside its outline grown by rad: in its own frame, a rectangle */
+        if (n == 4) {
+            double ex = v[1][0] - v[0][0], ez = v[1][1] - v[0][1], fx = v[3][0] - v[0][0], fz = v[3][1] - v[0][1];
+            double le = sqrt(ex * ex + ez * ez), lf = sqrt(fx * fx + fz * fz);
+            double a = ((x - v[0][0]) * ex + (z - v[0][1]) * ez) / le, b = ((x - v[0][0]) * fx + (z - v[0][1]) * fz) / lf;
+            if (a > -rad && a < le + rad && b > -rad && b < lf + rad) return 1;
+        }
+    }
     for (int i = 0; i < g->c.nl; ++i) {
         double dx = x - g->c.lamp[i].x, dz = z - g->c.lamp[i].z, r = 0.22 + rad;
         if (dx * dx + dz * dz < r * r) return 1;

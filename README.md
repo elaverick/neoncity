@@ -21,6 +21,8 @@ build/building_lab 3000 5      # building archetypes, retries and rejections; 5 
 build/interior_lab 3000 12 out # office lobbies: pass rate, attempts, rejections; 12 plan renders and cameras
 build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders, cameras
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
+build/city_test --props        # --cam views of the street furniture near the spawn
+build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
 build/world_test --map world.ppm         # the settlements and roads over the world (--local out.ppm km [x z]: round a point; --earth <bake> first: on the Earth)
 cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)
 build/terrain_test --earth-map earth.ppm # the bake as the engine reads it (--earth <bake> for another; the tests use tests/data/earth_test.bake)
@@ -473,7 +475,8 @@ Office lobbies and arcology interiors are a second layer, keyed by the same coor
 streamer wants it only for chunks within `INTERIOR_DISTANCE`, just behind the chunks themselves,
 and leaves it out of the shelter map. Litter is a third, within `LITTER_DISTANCE`. The lobbies'
 plants are a fourth, wanted with the lobbies and drawn last by a pipeline that doesn't cull back
-faces. All three are drawn with their chunk's light table.
+faces. Street furniture is a fifth, within `PROPS_DISTANCE`. All four are drawn with their chunk's
+light table.
 
 The streamer remembers the true bounds of every chunk it has generated, so a chunk that was evicted is tested
 against them next time rather than the conservative ones (which could want a chunk, generate it, find it out of view,
@@ -714,6 +717,39 @@ everything else, as a pure function of the plan. The CPU does nothing per frame.
   spawn, up to a 180,000 cap in the worst slums). Measured on an RTX 4080 SUPER at 1600x900,
   neither the layer nor the debris shading showed a cost above run-to-run noise (about 0.1 ms).
 
+### Street furniture (`src/city/props.c`)
+Bins, bollards, post boxes, crossing signals, dumpsters and air-conditioning condensers are
+models (see Models below), set down whole in a fifth near-only layer of chunk meshes, streamed
+within `PROPS_DISTANCE` (220 m) and lit, like the litter, by their chunk's light table. Where
+each stands is a pure function of the plan:
+
+- **Along the kerbs:** litter bins (every 45-50 m or so in the cores and centres, sparser in the
+  estates and on industrial land), now and then a post box on its post, and in the cores and
+  centres rows of three to six bollards. Each keeps 3 m off the corners, clear of the crossings'
+  dropped kerbs and the lamp posts, and leaves 1.5 m of sidewalk clear behind it.
+- **At the crossings:** every crossing of an arterial or a boulevard, and half the local ones,
+  has a signal pole just beyond its dropped kerb, on the side away from the corner: the
+  push-button unit at waist height facing the crossing, and at its head the red hand and green
+  man facing across the road to the far kerb. Both kerbs of a crossing share its seed, so their
+  signals change together (`signalLamps` in `shaders/city/props.glsl`). In the cores and centres
+  a bollard stands at each side of the dropped kerb.
+- **In the back alleys and yards:** dumpsters with their backs to a wall, beside the service
+  doors and along the walls that face into the lot, at least 2.5 m in from the sidewalk. None
+  stands in a door's way, and each leaves 2.6 m clear in front of it, so two facing each other
+  across an alley still leave 1.5 m between them.
+- **On the walls:** condensers at the windows the facade shader draws (the same bays, floors,
+  sills and plant floors, from the building's seed), on the walk-ups, shophouses and estate
+  blocks: hung on a pair of steel brackets under a sill, or sat on the sill in front of the
+  lower part of the window. Mostly on the walls facing the lot; on the estates' street fronts
+  too. Never on curtain walls or slit windows, nor where another section or a neighbour stands.
+
+Each source (a kerb edge, a crossing, a building) keeps its own pieces apart, and sources can't
+meet, so a piece comes out the same whichever chunk asks; it belongs to the chunk it stands in.
+What stands on the ground collides (`city_layout`), and the litter lies clear of it.
+`city_test` checks that no two pieces overlap, that every signal faces the road and that
+nothing closes the way past a dumpster; `city_test --props` prints `--cam` views of a few of
+each kind near the spawn. The layer averages about 49,000 vertices a chunk (130,000 at most).
+
 ### Textures (`src/render/materials.c`, `assets/materials/`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual surfaces can opt in to authored PBR
 materials instead. A material is defined once, in its own file,
@@ -928,6 +964,42 @@ To add a material from an ambientCG download (any resolution):
 
 To change a material's look (its scale, its brightness, what stands in its puddles), edit
 its file; every surface that uses it follows.
+
+#### Models (`tools/model_pack.c`, `src/city/models/`)
+The street furniture and the lobbies' sofa are models made from textured `.glb` files. The
+files these came from are scans, or made like them: up to a million triangles in hundreds of
+texture islands, each tessellated on its own, so nothing can simplify them and keep their
+texture coordinates. `model_pack` starts again: it simplifies the shape alone (meshoptimizer),
+unwraps the result into a new atlas (xatlas), and bakes every texel of it from the original,
+casting a ray from the new surface into the old: the base colour, roughness and metalness,
+the normal (the original's normal map included) in the frame the shader rebuilds from the
+surface's derivatives (`modelFrame`), and ambient occlusion. A model of a few hundred
+triangles comes out looking like the original, in one material however many it had:
+
+```
+build/model_pack "<Downloads>/3d assets/litter bin a.glb" litter_bin_a --height 0.95 --tris 600 --tex 1024 --floor
+```
+
+It writes `src/city/models/<name>.inc` (indexed triangles in metres, standing on y = 0, centred,
+front to +z: `--yaw` turns it so) and `assets/textures/<name>/{albedo,normal,orm}.png`, the
+orm's blue the metalness rather than a height. `--height`, `--width` or `--depth` scale it to
+size; `--stretch Y DY` lengthens whatever passes through height Y, as the post box's post was
+(`--stretch 0.15 0.56`) to bring its slot to 1.15 m; `--floor` lets the ground occlude it;
+`--glow` bakes an emissive map of the pale figures on its front (the signal head's hand and
+walking man); `--preview` draws it from four sides. The models' commands:
+
+| Model | Options |
+|---|---|
+| `bollard` | `--height 0.95 --tris 300 --tex 512 --floor` |
+| `litter_bin_a`, `litter_bin_b` | `--height 0.95 --tris 600 --tex 1024 --floor` |
+| `mailbox` | `--width 0.56 --stretch 0.15 0.56 --tris 700 --tex 1024 --floor` |
+| `dumpster_a`, `dumpster_b` | `--width 1.6 --tris 800 --tex 1024 --floor` |
+| `aircon` | `--width 0.8 --tris 450 --tex 512` |
+| `crossing_sign` | `--width 0.56 --tris 250 --tex 512 --glow` |
+| `crossing_button` | `--height 0.3 --tris 200 --tex 512` |
+| `sofa` | `--width 2.2 --tris 1600 --tex 1024 --floor` |
+
+Then add its `assets/materials/<name>.json` and a line to `MODELS` in `src/city/props.c`.
 
 ### Walking (`src/app/player.c`)
 Collision runs against the same deterministic block layouts, using circle-vs-footprint tests
