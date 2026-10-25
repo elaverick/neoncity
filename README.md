@@ -719,7 +719,7 @@ everything else, as a pure function of the plan. The CPU does nothing per frame.
 
 ### Street furniture (`src/city/props.c`)
 Bins, bollards, post boxes, crossing signals, dumpsters and air-conditioning condensers are
-models (see Models below), set down whole in a fifth near-only layer of chunk meshes, streamed
+models (`assets/models/`; see Models below), set down whole in a fifth near-only layer of chunk meshes, streamed
 within `PROPS_DISTANCE` (220 m) and lit, like the litter, by their chunk's light table. Where
 each stands is a pure function of the plan:
 
@@ -965,8 +965,19 @@ To add a material from an ambientCG download (any resolution):
 To change a material's look (its scale, its brightness, what stands in its puddles), edit
 its file; every surface that uses it follows.
 
-#### Models (`tools/model_pack.c`, `src/city/models/`)
-The street furniture and the lobbies' sofa are models made from textured `.glb` files. The
+#### Models (`assets/models/`, `src/city/models.c`, `tools/model_pack.c`)
+Authored content is an asset file read at run time, never data compiled into the code: only
+what the engine generates procedurally lives in the source (see "Assets" in
+`docs/code-structure-and-terrain-guidelines.md`). A model is `assets/models/<name>.glb`, a
+glTF 2.0 binary holding the mesh alone: one indexed triangle primitive with positions, normals
+and texture coordinates, in metres, standing on y = 0, centred, its front to +z. Its one
+material is only a name, the authored material that shades it, `assets/materials/<name>.json`,
+so its textures go through the material pipeline like every other surface's. The models are
+read once at startup (`models_load`), before any chunk is generated; a missing one leaves out
+what would have used it (the lobby sofa falls back to its boxes), and `material_test` checks
+every model reads, stands where it should and has its material.
+
+The street furniture and the lobbies' sofa were made from textured `.glb` files. The
 files these came from are scans, or made like them: up to a million triangles in hundreds of
 texture islands, each tessellated on its own, so nothing can simplify them and keep their
 texture coordinates. `model_pack` starts again: it simplifies the shape alone (meshoptimizer),
@@ -980,9 +991,9 @@ triangles comes out looking like the original, in one material however many it h
 build/model_pack "<Downloads>/3d assets/litter bin a.glb" litter_bin_a --height 0.95 --tris 600 --tex 1024 --floor
 ```
 
-It writes `src/city/models/<name>.inc` (indexed triangles in metres, standing on y = 0, centred,
-front to +z: `--yaw` turns it so) and `assets/textures/<name>/{albedo,normal,orm}.png`, the
-orm's blue the metalness rather than a height. `--height`, `--width` or `--depth` scale it to
+It writes `assets/models/<name>.glb` (`--yaw` turns the model so its front is +z) and
+`assets/textures/<name>/{albedo,normal,orm}.png`, the orm's blue the metalness rather than a
+height. `--height`, `--width` or `--depth` scale it to
 size; `--stretch Y DY` lengthens whatever passes through height Y, as the post box's post was
 (`--stretch 0.15 0.56`) to bring its slot to 1.15 m; `--floor` lets the ground occlude it;
 `--glow` bakes an emissive map of the pale figures on its front (the signal head's hand and
@@ -999,7 +1010,8 @@ walking man); `--preview` draws it from four sides. The models' commands:
 | `crossing_button` | `--height 0.3 --tris 200 --tex 512` |
 | `sofa` | `--width 2.2 --tris 1600 --tex 1024 --floor` |
 
-Then add its `assets/materials/<name>.json` and a line to `MODELS` in `src/city/props.c`.
+Then add its `assets/materials/<name>.json`, and its name to `MODEL_NAMES` and its material to
+`MODEL_PBR` in `src/city/models.c` (and a `PM_` id in `models.h`).
 
 ### Walking (`src/app/player.c`)
 Collision runs against the same deterministic block layouts, using circle-vs-footprint tests
@@ -1084,6 +1096,9 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
   GGX; wet streets are the next step (`TODO.md`).
 - **Pool size and view distance**: `POOL_PAGES` and `VIEW_DISTANCE` in `src/core/common.h`.
   The default pool is 384 MB.
+- **Assets**: authored content (textures, materials, models) is a file in `assets/`, read at run
+  time through its shared pipeline; never compile it into the code. See "Assets" in
+  `docs/code-structure-and-terrain-guidelines.md`.
 - **A different city**: change `WORLD_SEED`. For a different layout, change `TOWN_SIZE` and
   `NBHD_SIZE` in `src/plan/plan.h`, the block sizes in `process_piece`, and the zoning rules in
   `zone_for` (`src/plan/plan.c`). `build/city_map` renders the result from above.

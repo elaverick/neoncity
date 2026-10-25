@@ -47,6 +47,13 @@ FetchContent_Declare(stb
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(stb)
 
+# --- cgltf (glTF reading: the models, src/city/models.c, and tools/model_pack.c; header-only) --
+FetchContent_Declare(cgltf
+  URL https://github.com/jkuhlmann/cgltf/archive/refs/tags/v1.14.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR do-not-build)
+FetchContent_MakeAvailable(cgltf)
+
 # --- Shader compiler: use the Vulkan SDK's if present, otherwise build glslang -
 find_program(GLSLC glslc HINTS $ENV{VULKAN_SDK}/bin $ENV{VULKAN_SDK}/Bin)
 if(GLSLC)
@@ -164,12 +171,12 @@ add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 # builds them with /fp:fast and the static runtime, the tests and labs without.
 # Sources live in src/<module>/; every module directory is on the include path, and the
 # generated headers (the materials' ids).
-set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/render src/app ${GEN_DIR})
+set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/render src/app ${GEN_DIR} ${cgltf_SOURCE_DIR})
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_lobby.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
-                src/city/litter.c src/city/props.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c
-                src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c src/core/thread.c
+                src/city/litter.c src/city/props.c src/city/models.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c
+                src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c src/core/thread.c src/core/assets.c
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
@@ -209,11 +216,14 @@ target_include_directories(terrain_test PRIVATE ${SRC_DIRS})
 add_executable(world_test tests/world_test.c ${GEN_SOURCES})
 target_include_directories(world_test PRIVATE ${SRC_DIRS})
 # Materials (assets/materials/*.json): every file reads, its maps exist and decode, and its
-# properties are sound (material_test [assets dir]).
+# properties are sound; and every model (assets/models/*.glb) reads and has its material
+# (material_test [assets dir]).
 set(MATERIAL_SOURCES src/render/material_def.c src/core/json.c)
-add_executable(material_test tests/material_test.c ${MATERIAL_SOURCES})
+add_executable(material_test tests/material_test.c ${MATERIAL_SOURCES} src/city/models.c src/core/assets.c)
 target_include_directories(material_test PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test world_test material_test)
+  # the assets the tests read (the models: src/city/models.h), from the source tree
+  target_compile_definitions(${T} PRIVATE NEONCITY_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets")
   if(MSVC)
     target_compile_options(${T} PRIVATE /W3 /wd4996)
   else()
@@ -255,19 +265,14 @@ else()
 endif()
 
 # --- Tools: models --------------------------------------------------------------
-# Converts a textured .glb into src/city/models/<name>.inc and assets/textures/<name>/
+# Converts a textured .glb into assets/models/<name>.glb and assets/textures/<name>/
 # (tools/model_pack.c): cgltf reads it, meshoptimizer simplifies its shape, xatlas
-# unwraps that, and the maps are baked from the original. Only the tool uses them.
+# unwraps that, and the maps are baked from the original. Only the tool uses the last two.
 FetchContent_Declare(xatlas
   URL https://github.com/jpcy/xatlas/archive/f700c7790aaa030e794b52ba7791a05c085faf0c.zip
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   SOURCE_SUBDIR do-not-build)
 FetchContent_MakeAvailable(xatlas)
-FetchContent_Declare(cgltf
-  URL https://github.com/jkuhlmann/cgltf/archive/refs/tags/v1.14.zip
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-  SOURCE_SUBDIR do-not-build)
-FetchContent_MakeAvailable(cgltf)
 FetchContent_Declare(meshoptimizer
   URL https://github.com/zeux/meshoptimizer/archive/refs/tags/v0.25.zip
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE

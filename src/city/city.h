@@ -169,7 +169,7 @@ enum { PROP_BOLLARD = 0, PROP_BIN, PROP_MAILBOX, PROP_DUMPSTER, PROP_CROSSING, P
 /* a condenser hung on brackets; a crossing's button facing back along the kerb, its signal on a lamp post */
 enum { PF_BRACKETS = 1, PF_BUTTON_BACK = 2, PF_ON_LAMP = 4 };
 typedef struct Prop {
-    uint8_t  kind, model, flags;   /* PROP_*, its model (PM_* in city_internal.h), PF_* */
+    uint8_t  kind, model, flags;   /* PROP_*, its model (PM_* in models.h), PF_* */
     double   x, z;
     float    y, ground, fx, fz;
     uint32_t seed;

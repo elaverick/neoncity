@@ -16,6 +16,7 @@
 #include "arcology.h"
 #include "hash.h"
 #include "mathlib.h"
+#include "models.h"
 #include <string.h>
 #include <time.h>
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -472,6 +473,7 @@ static int same_layout(const ILayout *a, const ILayout *b) {
 }
 
 int main(int argc, char **argv) {
+    models_load(NEONCITY_ASSETS);   /* the lobbies' sofas */
     if (argc > 1 && !strcmp(argv[1], "arcology")) return arcology_mode(argc, argv);
     double size = argc > 1 ? atof(argv[1]) : 2000.0;
     int renders = argc > 2 ? atoi(argv[2]) : 0;

@@ -1,6 +1,7 @@
 /* model_pack: converts a textured glTF binary (.glb) into one of NeonCity's
- * models: geometry compiled into the generator, maps loaded at run time as an
- * authored PBR material.
+ * models: a mesh-only glTF binary, assets/models/<name>.glb (src/city/models.h),
+ * and the maps of the authored PBR material that shades it, both read at run
+ * time.
  *
  *   model_pack <in.glb> <name> [options]
  *
@@ -14,7 +15,7 @@
  *   --floor          the ground under the model occludes too (it stands on it)
  *   --glow           also bake emissive.png: the pale figures printed on the model's front,
  *                    those on its left half in red, its right in green (a pedestrian signal)
- *   --inc FILE       write the geometry as C (default src/city/models/<name>.inc)
+ *   --out FILE       write the model here (default assets/models/<name>.glb)
  *   --maps DIR       write the maps here (default assets/textures/<name>)
  *   --preview FILE   draw the result from the front, the side, above and three-quarters (PNG)
  *
@@ -31,9 +32,10 @@
  *               derivatives (shaders/city/props.glsl): T along +u, B along -v,
  *               both made square to the interpolated normal
  *   orm.png     R = ambient occlusion, G = roughness, B = metalness
- * The model stands on y = 0, centred on x and z, its front towards +z. The
- * geometry (<name>.inc) is indexed triangles in metres: see src/city/props.c,
- * which includes it. */
+ * The model stands on y = 0, centred on x and z, its front towards +z. Its
+ * file holds the mesh alone: positions, normals and texture coordinates
+ * (floats) and 16-bit indices, in metres, and one material that is only a
+ * name, <name>: assets/materials/<name>.json, which names these maps. */
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 #define STB_IMAGE_IMPLEMENTATION
@@ -750,20 +752,78 @@ static void preview(const char *path, const Low *L, const Out *O, const float mn
     free(rgb); free(zb);
 }
 
+/* ----------------------------------------------------------------- glb --- */
+
+/* The model as a glTF 2.0 binary: one node, one mesh of one indexed triangle
+ * primitive (POSITION and NORMAL float3, TEXCOORD_0 float2, uint16 indices),
+ * its material only a name. Anything that reads glTF opens it. */
+static void write_glb(const char *path, const char *name, const Low *L) {
+    if (L->nv > 65535) die("too many vertices for 16-bit indices", NULL);
+    size_t nv = L->nv, ni = L->ni;
+    size_t offN = nv * 12, offT = nv * 24, offI = nv * 32, binLen = (offI + ni * 2 + 3) & ~(size_t)3;
+    unsigned char *bin = (unsigned char *)calloc(binLen, 1);
+    if (!bin) die("out of memory", NULL);
+    /* the simplified shape lies a little inside the original's bounds: stand it on y = 0, centred, again */
+    float lo[3] = { FLT_MAX, FLT_MAX, FLT_MAX }, hi[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+    for (size_t i = 0; i < nv; ++i) {
+        const float *q = &L->p[i].x;
+        for (int k = 0; k < 3; ++k) { lo[k] = fminf(lo[k], q[k]); hi[k] = fmaxf(hi[k], q[k]); }
+    }
+    float off[3] = { -0.5f * (lo[0] + hi[0]), -lo[1], -0.5f * (lo[2] + hi[2]) };
+    float mn[3] = { FLT_MAX, FLT_MAX, FLT_MAX }, mx[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+    for (size_t i = 0; i < nv; ++i) {
+        float p[3] = { L->p[i].x + off[0], L->p[i].y + off[1], L->p[i].z + off[2] }, n[3] = { L->n[i].x, L->n[i].y, L->n[i].z };
+        memcpy(bin + i * 12, p, 12);
+        memcpy(bin + offN + i * 12, n, 12);
+        memcpy(bin + offT + i * 8, L->uv[i], 8);
+        for (int k = 0; k < 3; ++k) { mn[k] = fminf(mn[k], p[k]); mx[k] = fmaxf(mx[k], p[k]); }
+    }
+    for (size_t i = 0; i < ni; ++i) { uint16_t x = (uint16_t)L->ix[i]; memcpy(bin + offI + i * 2, &x, 2); }
+    char json[4096];
+    int jl = snprintf(json, sizeof(json),
+        "{\"asset\":{\"version\":\"2.0\",\"generator\":\"NeonCity tools/model_pack.c\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
+        "\"nodes\":[{\"mesh\":0,\"name\":\"%s\"}],"
+        "\"meshes\":[{\"name\":\"%s\",\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"material\":0}]}],"
+        "\"materials\":[{\"name\":\"%s\"}],"
+        "\"buffers\":[{\"byteLength\":%zu}],"
+        "\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":%zu,\"target\":34962},"
+        "{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%zu,\"target\":34962},"
+        "{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%zu,\"target\":34962},"
+        "{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%zu,\"target\":34963}],"
+        "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":%zu,\"type\":\"VEC3\",\"min\":[%.9g,%.9g,%.9g],\"max\":[%.9g,%.9g,%.9g]},"
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":%zu,\"type\":\"VEC3\"},"
+        "{\"bufferView\":2,\"componentType\":5126,\"count\":%zu,\"type\":\"VEC2\"},"
+        "{\"bufferView\":3,\"componentType\":5123,\"count\":%zu,\"type\":\"SCALAR\"}]}",
+        name, name, name, binLen, nv * 12, offN, nv * 12, offT, nv * 8, offI, ni * 2,
+        nv, mn[0], mn[1], mn[2], mx[0], mx[1], mx[2], nv, nv, ni);
+    if (jl <= 0 || jl >= (int)sizeof(json) - 4) die("the model's description is too long", NULL);
+    while (jl % 4) json[jl++] = ' ';
+    FILE *f = fopen(path, "wb");
+    if (!f) die("can't write", path);
+    uint32_t hdr[3] = { 0x46546C67u, 2u, (uint32_t)(12 + 8 + jl + 8 + binLen) };
+    uint32_t jh[2] = { (uint32_t)jl, 0x4E4F534Au }, bh[2] = { (uint32_t)binLen, 0x004E4942u };
+    fwrite(hdr, 4, 3, f);
+    fwrite(jh, 4, 2, f); fwrite(json, 1, (size_t)jl, f);
+    fwrite(bh, 4, 2, f); fwrite(bin, 1, binLen, f);
+    fclose(f);
+    free(bin);
+    printf("  wrote %s (%.3f x %.3f x %.3f m, %zu triangles, %zu vertices)\n", path, mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2], ni / 3, nv);
+}
+
 /* ---------------------------------------------------------------- main --- */
 
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "usage: model_pack <in.glb> <name> [--height H | --width W | --depth D] [--yaw DEG] [--stretch Y DY]\n"
-                        "                  [--tris N] [--tex PX] [--ao RAYS] [--floor] [--inc FILE] [--maps DIR] [--preview FILE]\n");
+                        "                  [--tris N] [--tex PX] [--ao RAYS] [--floor] [--glow] [--out FILE] [--maps DIR] [--preview FILE]\n");
         return 1;
     }
     const char *in = argv[1], *name = argv[2];
     int sizeAxis = -1, texSize = 1024, aoRays = 24, floor_ = 0, glowOn = 0;
     float sizeM = 0.0f, yaw = 0.0f, stretchY = 0.0f, stretchD = 0.0f;
     size_t tris = 800;
-    char incPath[1024], mapsDir[1024], prevPath[1024] = "";
-    snprintf(incPath, sizeof(incPath), "src/city/models/%s.inc", name);
+    char outPath[1024], mapsDir[1024], prevPath[1024] = "";
+    snprintf(outPath, sizeof(outPath), "assets/models/%s.glb", name);
     snprintf(mapsDir, sizeof(mapsDir), "assets/textures/%s", name);
     for (int i = 3; i < argc; ++i) {
         const char *a = argv[i];
@@ -778,7 +838,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--ao") && more) aoRays = atoi(argv[++i]);
         else if (!strcmp(a, "--floor")) floor_ = 1;
         else if (!strcmp(a, "--glow")) glowOn = 1;
-        else if (!strcmp(a, "--inc") && more) snprintf(incPath, sizeof(incPath), "%s", argv[++i]);
+        else if (!strcmp(a, "--out") && more) snprintf(outPath, sizeof(outPath), "%s", argv[++i]);
         else if (!strcmp(a, "--maps") && more) snprintf(mapsDir, sizeof(mapsDir), "%s", argv[++i]);
         else if (!strcmp(a, "--preview") && more) snprintf(prevPath, sizeof(prevPath), "%s", argv[++i]);
         else die("unknown option", a);
@@ -842,22 +902,7 @@ int main(int argc, char **argv) {
     write_maps(&O, mapsDir);
     if (prevPath[0]) preview(prevPath, &L, &O, mn, mx);
 
-    FILE *f = fopen(incPath, "w");
-    if (!f) die("can't write", incPath);
-    if (L.nv > 65535) die("too many vertices for 16-bit indices", NULL);
-    const char *base = strrchr(in, '/') ? strrchr(in, '/') + 1 : strrchr(in, '\\') ? strrchr(in, '\\') + 1 : in;
-    fprintf(f, "/* Generated by tools/model_pack.c from %s: don't edit.\n", base);
-    fprintf(f, " * %.3f x %.3f x %.3f m, %zu triangles, %zu vertices. */\n", mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2], L.ni / 3, L.nv);
-    fprintf(f, "static const ModelVertex %s_v[%zu] = {\n", name, L.nv);
-    for (size_t i = 0; i < L.nv; ++i)
-        fprintf(f, "    {{%.4ff,%.4ff,%.4ff},{%d,%d,%d},{%.5ff,%.5ff}},\n", L.p[i].x, L.p[i].y, L.p[i].z,
-                (int)lrintf(L.n[i].x * 127.0f), (int)lrintf(L.n[i].y * 127.0f), (int)lrintf(L.n[i].z * 127.0f), L.uv[i][0], L.uv[i][1]);
-    fprintf(f, "};\nstatic const uint16_t %s_i[%zu] = {\n", name, L.ni);
-    for (size_t i = 0; i < L.ni; ++i)
-        fprintf(f, "%s%u,%s", i % 24 == 0 ? "    " : "", L.ix[i], i % 24 == 23 || i + 1 == L.ni ? "\n" : "");
-    fprintf(f, "};\nstatic const float %s_box[6] = { %.4ff, %.4ff, %.4ff, %.4ff, %.4ff, %.4ff };\n", name, mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]);
-    fclose(f);
-    printf("  wrote %s\n", incPath);
+    write_glb(outPath, name, &L);
     (void)lerpf;
     return 0;
 }

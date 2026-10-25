@@ -12,6 +12,7 @@
 #include "terrain.h"
 #include "thread.h"
 #include "weather.h"
+#include "models.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -364,6 +365,7 @@ int main(int argc, char **argv) {
     if (!parse_args(argc, argv, &opt)) { usage(); return 1; }
     terrain_earth_load(NULL);       /* the Earth's bake, if built, before the plan reads the ground */
     plan_world_init(cpu_count());   /* the settlements and roads, before any worker asks for them */
+    models_load(NULL);              /* the street furniture's and lobbies' models (assets/models), before any chunk */
     GLFWwindow *win = create_window();
 
     VkCore vk;

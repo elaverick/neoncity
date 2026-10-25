@@ -1,10 +1,9 @@
 #ifdef _WIN32
 #include <windows.h>   /* before GLFW (via materials.h), which otherwise defines APIENTRY itself */
-#else
-#include <unistd.h>
 #endif
 #include "materials.h"
 #include "material_def.h"
+#include "assets.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #include <stb_image.h>
@@ -32,24 +31,6 @@ struct Materials {
     Buffer    table;                     /* PBR_MATERIAL_COUNT MaterialGPU */
     VkSampler sampler;
 };
-
-/* Candidate asset roots: beside the executable, then the working directory. */
-static int asset_roots(char roots[2][1024]) {
-    char exe[1024] = "";
-#ifdef _WIN32
-    DWORD len = GetModuleFileNameA(NULL, exe, sizeof(exe));
-    if (len == 0 || len >= sizeof(exe)) exe[0] = 0;
-#else
-    ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-    exe[len > 0 ? len : 0] = 0;
-#endif
-    char *slash = strrchr(exe, '/'), *bs = strrchr(exe, '\\');
-    if (bs > slash) slash = bs;
-    int n = 0;
-    if (slash) { slash[1] = 0; snprintf(roots[n++], 1024, "%sassets", exe); }
-    snprintf(roots[n++], 1024, "assets");
-    return n;
-}
 
 /* Creates a mipmapped image and records the upload of px into mip 0 and the
  * blit chain for the rest; leaves every mip in SHADER_READ_ONLY_OPTIMAL. */

@@ -12,6 +12,7 @@
 #include "material_def.h"
 #include "json.h"
 #include "common.h"
+#include "models.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #include <stb_image.h>
@@ -129,11 +130,38 @@ static void test_files(const char *assets) {
     printf("%d materials, %d maps from %d image files\n", PBR_MATERIAL_COUNT, images, nSeen);
 }
 
+/* Every model (src/city/models.h) reads, is shaded by a material of its name,
+ * stands on y = 0 centred, and is of a size street furniture might be. */
+static void test_models(const char *assets) {
+    int tris = 0;
+    for (int i = 0; i < PM_COUNT; ++i) {
+        const char *name = MODEL_NAMES[i];
+        char path[1100], err[256];
+        snprintf(path, sizeof(path), "%s/models/%s.glb", assets, name);
+        Model m;
+        if (!model_read(path, name, &m, err, sizeof(err))) { CHECK(0, "model %s: %s", name, err); continue; }
+        int mat = -1;
+        for (int k = 0; k < PBR_MATERIAL_COUNT; ++k) if (!strcmp(PBR_MATERIAL_NAMES[k], name)) mat = k;
+        CHECK(mat >= 0, "model %s: no material %s.json shades it", name, name);
+        CHECK(fabsf(m.mn[1]) < 1e-3f, "model %s: its foot is at %g, not 0", name, m.mn[1]);
+        CHECK(fabsf(m.mn[0] + m.mx[0]) < 1e-2f && fabsf(m.mn[2] + m.mx[2]) < 1e-2f, "model %s: not centred", name);
+        for (int k = 0; k < 3; ++k) CHECK(m.mx[k] - m.mn[k] > 0.05f && m.mx[k] - m.mn[k] < 4.0f, "model %s: %g m along axis %d", name, m.mx[k] - m.mn[k], k);
+        for (uint32_t v = 0; v < m.nv; ++v) {
+            float l = sqrtf(m.v[v].n[0] * m.v[v].n[0] + m.v[v].n[1] * m.v[v].n[1] + m.v[v].n[2] * m.v[v].n[2]);
+            if (fabsf(l - 1.0f) > 0.01f) { CHECK(0, "model %s: vertex %u's normal isn't unit", name, v); break; }
+        }
+        tris += (int)(m.ni / 3);
+        model_free(&m);
+    }
+    printf("%d models, %d triangles\n", PM_COUNT, tris);
+}
+
 int main(int argc, char **argv) {
     const char *assets = argc > 1 ? argv[1] : "assets";
     test_json();
     test_def();
     test_files(assets);
+    test_models(assets);
     if (g_failures) { printf("%d failures\n", g_failures); return 1; }
     printf("material_test: ok\n");
     return 0;

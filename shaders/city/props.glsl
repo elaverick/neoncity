@@ -4,7 +4,7 @@
  * Street furniture (src/city/props.c): models baked by tools/model_pack.c,
  * in the near-only props layer, lit by their chunk's lamps and shopfronts as
  * the litter is. params y is the model's material (PBR_*), z the model (PM_*
- * in src/city/city_internal.h), w its flags (PF_* in src/city/city.h); the
+ * in src/city/models.h), w its flags (PF_* in src/city/city.h); the
  * seed is the piece's own (a crossing's, shared by both its kerbs). uv runs
  * over the model's atlas. Its maps are a material's (assets/materials/), but
  * orm.b is the metalness, and the normal map is in the frame the bake used

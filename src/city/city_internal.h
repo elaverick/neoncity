@@ -4,6 +4,7 @@
 #include "interior.h"
 #include "arcology.h"
 #include "plant.h"
+#include "models.h"
 #include "hash.h"
 #include "mathlib.h"
 #include "geom2d.h"
@@ -27,7 +28,8 @@
  *   light_tiles.c    each chunk's light table
  *   cables.c         overhead cables
  *   litter.c         the litter layer
- *   props.c          the street furniture layer, and the models (src/city/models/)
+ *   props.c          the street furniture layer
+ *   models.c         the models it and the lobbies set down (models.h: assets/models/)
  *   proxy.c          distant proxies: boxes round the buildings' sections */
 
 /* ---------------------------------------------------------------------------
@@ -263,8 +265,8 @@ void build_lights(Mesh *m, ChunkGen *g);
 void build_cables(Mesh *m, ChunkGen *g);
 
 /* props.c */
-/* The models (src/city/models/, tools/model_pack.c): standing on y = 0, centred, their fronts to +z. */
-enum { PM_BOLLARD = 0, PM_BIN_A, PM_BIN_B, PM_MAILBOX, PM_DUMPSTER_A, PM_DUMPSTER_B, PM_AIRCON, PM_SIGNAL, PM_BUTTON, PM_SOFA, PM_COUNT };
+/* The models (models.h), standing on y = 0, centred, their fronts to +z; a
+ * missing model's box is empty, and emitting it emits nothing. */
 void    model_box(int pm, float mn[3], float mx[3]);
 uint8_t model_material(int pm);   /* its PBR_* */
 /* Model pm in the current emission frame, its foot at `at`, its front turned to (fx, fz). */

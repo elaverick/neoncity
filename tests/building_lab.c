@@ -12,6 +12,7 @@
 #include "building.h"
 #include "hash.h"
 #include "mathlib.h"
+#include "models.h"
 
 #define MAX_REASONS 64
 
@@ -39,6 +40,7 @@ static void count_reasons(const char *log) {
 
 int main(int argc, char **argv) {
     int industry = argc > 1 && !strcmp(argv[1], "industry");
+    models_load(NEONCITY_ASSETS);   /* the chunks' meshes it measures set the models down */
     if (industry) { argv++; argc--; }
     double size = argc > 1 ? atof(argv[1]) : 3000.0;
     int verbose = argc > 2 ? atoi(argv[2]) : 0;

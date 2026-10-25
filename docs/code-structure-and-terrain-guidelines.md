@@ -18,6 +18,7 @@ This document records the boundaries emerging from the current codebase and the 
 5. **Separate simulation/representation LOD from rendering coverage.** A representation may be selected for visibility without changing the underlying world identity or regenerating city content.
 6. **Make changes measurable.** Prefer small changes with a known regression baseline over broad rewrites. Record generated-world fingerprints, fixed-camera captures and timings before changing algorithms that affect output.
 7. **Do not split files just to make them shorter.** Split when a component has a distinct responsibility, data lifecycle, test surface or reason to change.
+8. **Authored assets are files, not code.** Anything made outside the engine (a texture, a material, a model, real-world data) lives under `assets/` (or `data/` for source data that a build step bakes) and is read at run time; it is never compiled into the source as arrays or tables. Only what the engine generates procedurally belongs in code. See section 6, "Assets".
 
 ## 2. Existing source boundaries
 
@@ -31,6 +32,8 @@ This document records the boundaries emerging from the current codebase and the 
 | `src/app/ ` | Application lifetime, input, player/camera behaviour and coordination | Owning the implementation of terrain generation or rendering |
 | `shaders/` | GPU-side shading and compute logic, organised by purpose | Duplicating world-generation policy that belongs on the CPU without a clear reason |
 | `tests/` and lab executables | Determinism, invariants, grammar validity, diagnostic output and reproducible captures | Runtime responsibilities |
+| `assets/` | Authored content read at run time: materials (`materials/*.json`), their images (`textures/`), models (`models/*.glb`). The build copies it beside the executable | Code, or anything the engine could generate itself |
+| `tools/` | Offline converters that turn outside sources into `assets/` (`pbr_pack`, `stud_pack`, `model_pack`) and bakes of `data/` | Runtime code; their output is never C source |
 
 The current internal-header pattern is intentional. For example, `city_internal.h`, `interior_internal.h` and `renderer_internal.h` describe shared implementation details for a group of source files; they are not public interfaces. Continue that pattern for new multi-file subsystems.
 
@@ -203,6 +206,17 @@ These guidelines reflect patterns already visible in the source. Follow local co
 - Follow local naming patterns for established compact mathematical variables and renderer conventions rather than renaming neighbouring code for uniformity alone.
 - Use comments to capture design constraints that future refactors might otherwise break: why a margin exists, which layer owns an object, when a buffer can be freed, or why two neighbouring tiles must share an exact calculation.
 
+### Assets
+
+Decided 2026-10-25, when the street furniture's meshes were first compiled in as C arrays and then moved out.
+
+- **Authored content is an asset file, read at run time.** Textures, materials and models live in `assets/`; nothing made outside the engine is turned into C source. A converter in `tools/` produces the asset; the asset, not the converter's output pasted into code, is what the engine reads.
+- **One pipeline per kind of content, shared.** Surface appearance goes through the material pipeline: `assets/materials/<name>.json` names its maps under `assets/textures/` (`src/render/material_def.h`). A model file carries geometry only, and names its material rather than embedding textures, so images are shared, uploaded and mipmapped once, scaled into the night palette by the material, and validated by `material_test`. A new kind of asset that needs its own textures should still use materials unless there is a concrete reason the pipeline can't serve it.
+- **Models are mesh-only glTF 2.0 binaries** (`assets/models/<name>.glb`, `src/city/models.h`): one indexed triangle primitive with positions, normals and texture coordinates, its one material only a name, the material that shades it (`<name>.json`). It is a standard format any tool opens; `tools/model_pack.c` writes it.
+- **Generation may read assets, but only ones loaded before it runs**, once, read-only thereafter, so a chunk is still a pure function of its coordinates and the loaded assets (`models_load` in `main` and in the tests that generate, from `NEONCITY_ASSETS`, the source tree's `assets/`).
+- **A missing or malformed asset degrades, never fails.** A missing material leaves its surfaces procedural; a missing model leaves out what would have used it, the same in mesh and collision, or keeps a procedural stand-in (the lobby sofa's boxes). Report it once on stderr.
+- **Each asset kind is validated by a test** that reads the files from the source tree (`material_test` checks materials and models).
+
 ## 7. Build system and tests
 
 - Add new source files to `CMakeLists.txt` alongside the existing module source lists, following their organisation. Do not add a source file without checking how the executable and test/lab targets are composed.
@@ -239,3 +253,4 @@ These guidelines reflect patterns already visible in the source. Follow local co
 - Use persistent clipmaps, bounded update budgets, SSE/hysteresis and explicit transitions to control terrain LOD.
 - Preserve deterministic city output and avoid visible terrain popping at tile, LOD and city-footprint boundaries.
 - Extend tests and diagnostics before attempting broad integration or optimisation.
+- Keep authored assets (textures, materials, models) as files in `assets/`, read at run time through their shared pipelines; only procedurally generated content lives in code (section 6, "Assets").
