@@ -114,6 +114,36 @@ vec3 canPaint(vec2 uv, uint h, vec2 fw, out float metal) {
     return mix(base, accent, max(wave, logo));
 }
 
+/* The authored can (PBR_CAN): one image holding the lid, the base, two rim
+ * strips and the label, at these places in it (fractions of the image). The
+ * can's uv says which part a point is on (can_uv in src/city/litter.c): the
+ * ends carry coordinates across their discs, -1..1, the base's offset by 3 in
+ * u and the lid's by 6; v runs -1..0 up the base's chime, 0..1 up the body
+ * and 1..2 up the shoulder; u runs round it. */
+const vec2 CAN_LID = vec2(0.2043, 0.2244), CAN_LID_R = vec2(0.1973, 0.2170);
+const vec2 CAN_BASE = vec2(0.6339, 0.2250), CAN_BASE_R = vec2(0.2069, 0.2183);
+const vec4 CAN_SHOULDER = vec4(0.851, 0.0, 0.918, 0.43);   // x0, y0, x1, y1: the strip's x runs up the can, y round it
+const vec4 CAN_CHIME = vec4(0.935, 0.0, 0.996, 0.43);
+const float CAN_LABEL_TOP = 0.456;                          // the label fills the image below this, its top to the lid
+
+// Where the can's uv falls in its image, as st = o + A * uv, so the screen
+// derivatives map through A. bare: on the metal rather than the label.
+void canAtlas(vec2 uv, out vec2 o, out mat2 A, out bool bare) {
+    bare = true;
+    if (uv.x >= 4.5) { A = mat2(CAN_LID_R.x, 0.0, 0.0, CAN_LID_R.y); o = CAN_LID - vec2(6.0 * CAN_LID_R.x, 0.0); }
+    else if (uv.x >= 2.0) { A = mat2(CAN_BASE_R.x, 0.0, 0.0, CAN_BASE_R.y); o = CAN_BASE - vec2(3.0 * CAN_BASE_R.x, 0.0); }
+    else if (uv.y < 0.0 || uv.y > 1.0) {
+        vec4 r = uv.y < 0.0 ? CAN_CHIME : CAN_SHOULDER;
+        float v0 = uv.y < 0.0 ? -1.0 : 1.0;   // where its v starts
+        A = mat2(0.0, r.w - r.y, r.z - r.x, 0.0);
+        o = vec2(r.x - v0 * (r.z - r.x), r.y);
+    } else {
+        bare = false;
+        A = mat2(1.0, 0.0, 0.0, CAN_LABEL_TOP - 1.0);
+        o = vec2(0.0, 1.0);
+    }
+}
+
 vec3 shadeLitter(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     uint kind = prm.y;
     if (kind == LK_SHADOW) return litterShadow(uv);
@@ -166,9 +196,25 @@ vec3 shadeLitter(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         else { alb = mix(vec3(0.45, 0.44, 0.42), hf(h, 56u) < 0.5 ? vec3(0.4, 0.03, 0.03) : vec3(0.35, 0.26, 0.06), step(0.5, uv.y)); rough = 0.4; }   // cigarettes
     } else {
         porous = false;
-        if (kind == LK_CAN) {
+        if (kind == LK_CAN && pbrLoaded(PBR_CAN)) {
+            // the authored can: bare aluminium tinted by its image on the ends
+            // and rims, printed label on the body, scuffed through to the metal
+            vec2 o;
+            mat2 A;
+            bool bare;
+            canAtlas(uv, o, A, bare);
+            vec3 c = textureGrad(pbrMaps[PBR_CAN * PBR_MAPS_PER_MATERIAL + PBR_ALBEDO], o + A * uv, A * dFdx(uv), A * dFdy(uv)).rgb;
+            float scuff = bare ? 0.0 : smoothstep(0.62, 0.75, vnoise(uv * vec2(24.0, 10.0), h & 0xFFFFu)) * hf(h, 34u);
+            float metal = bare ? 1.0 : scuff * 0.8;
+            alb = mix(c * pbrAlbedoScale(PBR_CAN), vec3(0.02), metal);
+            f0 = mix(0.06, 0.75, metal);
+            tint = mix(vec3(1.0), bare ? min(c * 2.0, vec3(1.0)) : vec3(0.85, 0.86, 0.88), metal);
+            rough = mix(0.3, 0.22, metal);
+        } else if (kind == LK_CAN) {
+            // procedural liveries; the can's uv (can_uv) folded back to 0..1 up it, its ends bare
             float metal;
-            vec3 paint = canPaint(uv, h, fw, metal);
+            vec3 paint = canPaint(vec2(uv.x, clamp(uv.y * 0.83 + 0.07, 0.0, 1.0)), h, fw, metal);
+            if (uv.x >= 2.0 || uv.y < 0.0 || uv.y > 1.0) metal = 1.0;
             alb = mix(paint, vec3(0.02), metal);
             f0 = mix(0.06, 0.75, metal);
             tint = mix(vec3(1.0), vec3(0.85, 0.86, 0.88), metal);

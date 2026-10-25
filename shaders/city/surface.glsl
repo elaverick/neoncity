@@ -53,6 +53,36 @@ Surface samplePBR(int m, vec2 st, vec3 T, vec3 B, vec3 N) {
 // shapes like puddles that should follow hollows rather than every grain.
 float pbrBroadHeight(int m, vec2 st, float bias) { return texture(pbrMaps[m * PBR_MAPS_PER_MATERIAL + PBR_ORM], st, bias).b; }
 
+// Relief sunk into a surface, one image across it (a light fitting's tray, a
+// gully grate): material m's height map as a depth below the surface's plane,
+// where heights from `face` up lie, to height 0 deepest. Returns 1 in the
+// plane, and round the image (st outside 0..1). gx, gy: st's screen derivatives.
+float sunkHeight(int m, float face, vec2 st, vec2 gx, vec2 gy) {
+    if (any(lessThan(st, vec2(0.0))) || any(greaterThan(st, vec2(1.0)))) return 1.0;
+    return min(textureGrad(pbrMaps[m * PBR_MAPS_PER_MATERIAL + PBR_ORM], st, gx, gy).b / face, 1.0);
+}
+
+// Steep parallax into sunk relief: steps the view ray down in even layers of
+// depth until it passes under the height field, then puts the hit between the
+// last two layers by where the ray crossed it. dir: st's shift along the ray
+// per unit of depth (height 1 -> 0). Returns where the ray meets the relief
+// (xy) and how deep (z, 0 in the plane .. 1).
+vec3 steepParallax(int m, float face, vec2 st, vec2 dir, float layers, vec2 gx, vec2 gy) {
+    float inc = 1.0 / layers, depth = 0.0;
+    float gap = 1.0 - sunkHeight(m, face, st, gx, gy), prev = gap;   // how far the height field lies below the ray
+    if (gap <= 0.0) return vec3(st, 0.0);
+    vec2 q = st;
+    for (int i = 0; i < 64; ++i) {
+        prev = gap;
+        q += dir * inc;
+        depth += inc;
+        gap = 1.0 - sunkHeight(m, face, q, gx, gy) - depth;
+        if (gap <= 0.0) break;
+    }
+    float back = inc * (-gap / (prev - gap));
+    return vec3(q - dir * back, depth - back);
+}
+
 // Paints a flat coat (road paint, a cover plate) over a surface with coverage m.
 // The coat fills the texture's relief, so its normal and occlusion return to
 // the geometric ones; on a procedural surface (n == nGeom, ao == 1) only the

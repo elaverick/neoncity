@@ -170,6 +170,31 @@ void debris(vec2 xz, float sq, float density, float gum, float aa, inout vec3 al
     }
 }
 
+/* Gully grates (PBR_DRAIN): cast iron, set flush in the gutter against the
+ * kerb, where the run-off drains away. One lies just past the stop line at
+ * each end of a carriageway with crossings, upstream of the drop kerbs where
+ * the water would pool, or near each end of one without; more lie between,
+ * no further apart than GULLY_PITCH, now and then one left out. A short
+ * carriageway has one, midway. The slots run across the road, as cyclists'
+ * wheels need. */
+const float GULLY_GAP = 0.02;     // metres from the kerb face to the frame
+const float GULLY_PITCH = 30.0;   // the most metres between grates along a kerb
+
+// The grate at carriageway uv, if one lies there: st across its image (x out
+// from the kerb, y along the road). half_, len: the carriageway's.
+bool gullyAt(vec2 uv, float half_, float len, bool xing, out vec2 st) {
+    float size = pbrTile(PBR_DRAIN).x;
+    float end = xing ? 5.4 : 1.0;   // past the stop line, or clear of the junction
+    float span = len - 2.0 * end - size;
+    float n = span > 0.0 ? ceil(span / GULLY_PITCH) : 0.0;
+    float k = n > 0.0 ? clamp(floor((uv.y - end) / (span / n) + 0.5), 0.0, n) : 0.0;
+    float s0 = n > 0.0 ? end + span * k / n : (len - size) * 0.5;
+    st = vec2(half_ - abs(uv.x) - GULLY_GAP, uv.y - s0) / size;
+    if (len < size + 1.0 || any(lessThan(st, vec2(0.0))) || any(greaterThan(st, vec2(1.0)))) return false;
+    if (k == 0.0 || k == n) return true;   // the ends always have one
+    return hfloat(hash3i(0x6011u ^ floatBitsToUint(len), int(k), uv.x > 0.0 ? 1 : 0, 7)) < 0.75;
+}
+
 // Ground. Carriageway quads carry uv = (offset from the centre line, distance
 // along), their length in the seed and half-width (quarter metres) in params;
 // the plain asphalt underneath (half-width 0) fills junctions and verges.
@@ -212,6 +237,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         float dCurb = 10.0, side = 0.0, rim = 0.0;
         vec3 tilt = vec3(0.0);
         float wear = 0.45 + 0.55 * smoothstep(0.25, 0.6, fbm(w.xz * 1.7, 0xA8u));
+        mat2 Juv = mat2(0.0), toUV = mat2(0.0);   // uv's screen derivatives; world x/z offsets into uv
         if (half_ > 0.0) {
             float len = uintBitsToFloat(seed);
             bool xing = (prm.z & 1u) != 0u;
@@ -219,8 +245,9 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
             // nearer the eye than it meets the asphalt, so the top shows shifted
             // toward the viewer, with the near edge's side wall between. uv are
             // metres; the screen derivatives map world offsets into them.
-            mat2 Juv = mat2(dFdx(uv), dFdy(uv)), Jw = mat2(dFdx(p.xz), dFdy(p.xz));
-            mat2 toUV = abs(determinant(Jw)) > 1e-12 ? Juv * inverse(Jw) : mat2(0.0);
+            mat2 Jw = mat2(dFdx(p.xz), dFdy(p.xz));
+            Juv = mat2(dFdx(uv), dFdy(uv));
+            toUV = abs(determinant(Jw)) > 1e-12 ? Juv * inverse(Jw) : mat2(0.0);
             vec2 lift = paintLift(V, nGeom, PAINT_H);
             lift *= min(1.0, 0.15 / max(length(lift), 1e-6));
             vec2 uvTop = uv + toUV * lift;
@@ -272,6 +299,33 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         // gutter grime along the kerbs, and the debris washed into the gutter
         s.albedo *= mix(0.6, 1.0, smoothstep(0.0, 0.6, dCurb));
         debris(w.xz, float(prm.z >> 1) / 127.0, mix(0.03, 0.55, 1.0 - smoothstep(0.15, 0.7, dCurb)), 0.0, aa, s.albedo, s.rough);
+
+        // a gully grate: its slots steep parallax mapped, the view ray stepping
+        // down past the bars into the dark of the gully below
+        vec2 gst;
+        bool grate = half_ > 0.0 && pbrLoaded(PBR_DRAIN) && gullyAt(uv, half_, uintBitsToFloat(seed), (prm.z & 1u) != 0u, gst);
+        if (grate) {
+            const int G = PBR_DRAIN * PBR_MAPS_PER_MATERIAL;
+            float size = pbrTile(PBR_DRAIN).x, sg = uv.x > 0.0 ? -1.0 : 1.0;   // st.x runs against uv.x's sign, out from the kerb
+            vec2 gx = vec2(sg * Juv[0].x, Juv[0].y) / size, gy = vec2(sg * Juv[1].x, Juv[1].y) / size;
+            // the image's right and up in the world (uv are metres, so toUV's inverse turns them back)
+            mat2 toW = abs(determinant(toUV)) > 1e-12 ? inverse(toUV) : mat2(1.0);
+            vec3 T = vec3(toW[0].x, 0.0, toW[0].y) * sg, B = -vec3(toW[1].x, 0.0, toW[1].y);
+            T = normalize(T - nGeom * dot(T, nGeom)); B = normalize(B - nGeom * dot(B, nGeom));
+            float up = max(V.y, 0.12);
+            vec2 duv = toUV * (-V.xz / up) * pbrParams(PBR_DRAIN).x;
+            vec3 hit = steepParallax(PBR_DRAIN, pbrParams(PBR_DRAIN).y, gst, vec2(sg * duv.x, duv.y) / size, mix(48.0, 16.0, up), gx, gy);
+            vec2 sp = clamp(hit.xy, 0.0, 1.0);
+            vec3 orm = textureGrad(pbrMaps[G + PBR_ORM], sp, gx, gy).rgb;
+            vec3 tn = textureGrad(pbrMaps[G + PBR_NORMAL], sp, gx, gy).xyz * 2.0 - 1.0;
+            // down a slot the bars' walls fall into shadow, darker the deeper,
+            // and face the eye rather than the sky
+            float wall = smoothstep(0.02, 0.1, hit.z), shade = mix(1.0, 0.3 * (1.0 - hit.z) + 0.02, wall);
+            s.albedo = textureGrad(pbrMaps[G + PBR_ALBEDO], sp, gx, gy).rgb * pbrAlbedoScale(PBR_DRAIN) * shade;
+            s.n = normalize(mix(T * tn.x + B * tn.y + nGeom * tn.z, normalize(vec3(V.x, 0.0, V.z) + 1e-4), wall));
+            s.ao = orm.r * shade;
+            s.rough = orm.g;
+        }
         alb = s.albedo; n = s.n; ao = s.ao;
         if (pbr) {
             rough = s.rough; specK = 0.04;   // dielectric F0
@@ -283,6 +337,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
             shin = 60.0;
             specK = (0.25 + 0.5 * big) * (1.0 - 0.6 * mk.x);   // oily, slightly slick asphalt
         }
+        if (grate) { relH = 1.0; sink = -3.0; }   // the water runs away through it: none stands on it
     } else if (mat == MAT_SIDEWALK && (prm.y == 0u || prm.y == 2u) && pbrLoaded(PBR_PAVING_STONES)) {
         // authored paving laid with the block grain (uv); a drop kerb's slope (2)
         // is laid along its kerb instead (uv = along, in from the kerb line)

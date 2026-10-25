@@ -80,29 +80,7 @@ float ceilingPanel(vec2 q, vec2 off, float aa) {
 #define DIFFUSER_OPACITY (pbrParams(PBR_LIGHT_DIFFUSER).x)
 
 // The troffer's height at st in its panel, 1 at the frame and the ceiling round it.
-float fixtureHeight(vec2 st, vec2 gx, vec2 gy) {
-    if (any(lessThan(st, vec2(0.0))) || any(greaterThan(st, vec2(1.0)))) return 1.0;
-    return min(textureGrad(pbrMaps[PBR_LIGHT_FIXTURE * PBR_MAPS_PER_MATERIAL + PBR_ORM], st, gx, gy).b / FIXTURE_FRAME, 1.0);
-}
-
-// Steep parallax: steps the view ray into the troffer in even layers of depth
-// until it passes under the height field, then puts the hit between the last
-// two layers by where the ray crossed it. dir: st's shift along the ray per
-// unit of depth (height 1 -> 0).
-vec2 fixtureParallax(vec2 st, vec2 dir, float layers, vec2 gx, vec2 gy) {
-    float inc = 1.0 / layers, depth = 0.0;
-    float gap = 1.0 - fixtureHeight(st, gx, gy), prev = gap;   // how far the height field lies below the ray
-    if (gap <= 0.0) return st;
-    vec2 q = st;
-    for (int i = 0; i < 64; ++i) {
-        prev = gap;
-        q += dir * inc;
-        depth += inc;
-        gap = 1.0 - fixtureHeight(q, gx, gy) - depth;
-        if (gap <= 0.0) break;
-    }
-    return q - dir * inc * (-gap / (prev - gap));
-}
+float fixtureHeight(vec2 st, vec2 gx, vec2 gy) { return sunkHeight(PBR_LIGHT_FIXTURE, FIXTURE_FRAME, st, gx, gy); }
 
 // A fitting's radiance at st (0..1 across it, along the building's x and z):
 // gx and gy st's screen derivatives, V toward the eye, Lc the lobby's light,
@@ -117,7 +95,7 @@ vec3 ceilingFixture(vec2 st, vec2 gx, vec2 gy, vec3 V, mat2 toFrame, vec3 Lc, ve
     vec3 r = -V;
     float up = max(r.y, 0.12);
     vec2 dir = toFrame * (r.xz / up) * (FIXTURE_DEPTH / 1.2);
-    vec2 sp = clamp(fixtureParallax(st, dir, mix(64.0, 16.0, up), gx, gy), 0.0, 1.0);
+    vec2 sp = clamp(steepParallax(PBR_LIGHT_FIXTURE, FIXTURE_FRAME, st, dir, mix(64.0, 16.0, up), gx, gy).xy, 0.0, 1.0);
     vec3 alb = textureGrad(pbrMaps[F + PBR_ALBEDO], sp, gx, gy).rgb;
     vec3 orm = textureGrad(pbrMaps[F + PBR_ORM], sp, gx, gy).rgb;
     float tube = textureGrad(pbrMaps[F + PBR_EMISSIVE], sp, gx, gy).r;

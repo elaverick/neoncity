@@ -1,0 +1,16 @@
+// A gully grate in the gutter (gully in shaders/city/ground.glsl): cast iron,
+// one image per grate, its slots steep parallax mapped from the height map so
+// the bars stand over the dark of the gully below.
+{
+  "maps": {
+    "albedo": "../textures/drain/albedo.png",
+    "normal": "../textures/drain/normal.png",
+    "orm":    "../textures/drain/orm.png"
+  },
+  "tile": 0.38,            // metres across the grate and its frame (square): inside the edge line, 0.42 m out
+  "albedo_scale": 0.6,     // the bars' mean 0.17 -> 0.1
+  "params": [
+    0.09,                  // the slots' depth: metres from the bars' tops (the road's plane) down to height 0
+    0.95                   // the height map's face: the bars and frame, flush with the road
+  ]
+}

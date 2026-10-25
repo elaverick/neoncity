@@ -342,6 +342,25 @@ static void lathe(Tris *T, const float (*pr)[2], int np, int seg) {
     }
 }
 
+/* Re-maps the uv of a can lathed from `first` (profile: the base, its chime
+ * up to the body at `chime` along, the body, the shoulder from `shoulder` to
+ * L, the lid) to the parts of its image (canAtlas in shaders/city/litter.glsl):
+ * the ends get coordinates across their discs, -1..1, the base's offset by 3
+ * in u and the lid's by 6; v runs -1..0 up the chime, 0..1 up the body and
+ * 1..2 up the shoulder; u still runs round it. The lathe's normals tell the
+ * parts apart: each profile segment's are its own. */
+static void can_uv(Tris *T, int first, float L, float chime, float shoulder, float rBase, float rLid) {
+    for (int i = first; i < T->n; ++i) {
+        LV *v = &T->v[i];
+        float x = v->p.x + L * 0.5f;   /* along, from the base */
+        if (v->n.x < -0.99f) { v->u = 3.0f + v->p.y / rBase; v->v = v->p.z / rBase; }
+        else if (v->n.x > 0.99f) { v->u = 6.0f + v->p.y / rLid; v->v = v->p.z / rLid; }
+        else if (v->n.x < -1e-4f) v->v = x / chime - 1.0f;
+        else if (v->n.x > 1e-4f) v->v = 1.0f + (x - shoulder) / (L - shoulder);
+        else v->v = (x - chime) / (shoulder - chime);
+    }
+}
+
 /* An ellipsoid (radii rx, ry, rz) resting on the ground, its surface pushed in
  * and out by `bump`, the top pole drawn up by `neck` (a bin bag's tied
  * neck). Faceted reads as crumpled (paper balls, carrier bags); smooth as
@@ -553,8 +572,9 @@ static void build_item(LGen *g, const Item *it) {
     }
     case LK_CAN: {
         float L = rng_float(&r) < 0.3f ? 0.168f : 0.122f, R = 0.033f;
-        float pr[5][2] = { { 0, 0 }, { 0, R }, { L - 0.012f, R }, { L, R * 0.82f }, { L, 0 } };   /* the lid's shoulder */
-        lathe(T, pr, 5, 6);
+        float pr[6][2] = { { 0, 0 }, { 0, R * 0.8f }, { 0.006f, R }, { L - 0.012f, R }, { L, R * 0.82f }, { L, 0 } };   /* the base's chime, the lid's shoulder */
+        lathe(T, pr, 6, 8);
+        can_uv(T, 0, L, pr[2][0], pr[3][0], pr[1][1], pr[4][1]);
         float mode = rng_float(&r);
         if (mode < 0.12f) settle(T, 0, roll, 0.5f * PI_F, 0.001f);      /* standing */
         else if (mode < 0.3f) {                                          /* crushed flat */

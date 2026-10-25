@@ -1,0 +1,12 @@
+// A drinks can lying in the street (shadeLitter in shaders/city/litter.glsl):
+// one image holding the lid, the base, two rim strips and the label, whose
+// places in it the shader knows (canAtlas). It has no relief of its own: the
+// normal and orm maps are flat.
+{
+  "maps": {
+    "albedo": "../textures/can/albedo.png",
+    "normal": "../textures/can/normal.png",
+    "orm":    "../textures/can/orm.png"
+  },
+  "albedo_scale": 0.45     // the label's white -> 0.45, as the procedural litter's
+}
