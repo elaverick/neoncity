@@ -1011,7 +1011,7 @@ walking man); `--preview` draws it from four sides. The models' commands:
 | `litter_bin` | `"litter bin a.glb" --material litter_bin_a --livery "litter bin b.glb" litter_bin_b --height 0.95 --tris 600 --tex 1024 --floor` |
 | `mailbox` | `--width 0.56 --stretch 0.15 0.56 --tris 700 --tex 1024 --floor` |
 | `dumpster` | `"dumpster a.glb" --material dumpster_a --livery "dumpster b.glb" dumpster_b --width 1.6 --tris 800 --tex 1024 --floor` |
-| `aircon` | `--width 0.8 --tris 450 --tex 512` |
+| `aircon` | `--width 0.8 --tris 722 --tex 1024` (already low-poly: kept whole) |
 | `crossing_sign` | `--width 0.56 --tris 250 --tex 512 --glow` |
 | `crossing_button` | `--height 0.3 --tris 200 --tex 512` |
 | `sofa` | `--width 2.2 --tris 1600 --tex 1024 --floor` |
