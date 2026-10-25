@@ -15,8 +15,11 @@
  *   --floor          the ground under the model occludes too (it stands on it)
  *   --glow           also bake emissive.png: the pale figures printed on the model's front,
  *                    those on its left half in red, its right in green (a pedestrian signal)
+ *   --material NAME  the material that shades it (default <name>)
+ *   --livery IN NAME another file of the same shape, whose look is baked onto this mesh too, as
+ *                    material NAME (maps in assets/textures/NAME): one mesh, several liveries
  *   --out FILE       write the model here (default assets/models/<name>.glb)
- *   --maps DIR       write the maps here (default assets/textures/<name>)
+ *   --maps DIR       write the maps here (default assets/textures/<material>)
  *   --preview FILE   draw the result from the front, the side, above and three-quarters (PNG)
  *
  * The files this is for are scans, or made like them: a million triangles in
@@ -34,8 +37,13 @@
  *   orm.png     R = ambient occlusion, G = roughness, B = metalness
  * The model stands on y = 0, centred on x and z, its front towards +z. Its
  * file holds the mesh alone: positions, normals and texture coordinates
- * (floats) and 16-bit indices, in metres, and one material that is only a
- * name, <name>: assets/materials/<name>.json, which names these maps. */
+ * (floats) and 16-bit indices, in metres, and materials that are only names
+ * (assets/materials/<material>.json names these maps): its own, then each
+ * livery's, listed as the file's variants (KHR_materials_variants). A
+ * livery's file is placed as the first (turned, scaled, stood, stretched)
+ * and baked by casting into it from this mesh, so it needs to be the same
+ * shape near enough: what it has that this mesh hasn't, a dent or a bent
+ * panel, comes out in its maps alone. */
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 #define STB_IMAGE_IMPLEMENTATION
@@ -756,8 +764,8 @@ static void preview(const char *path, const Low *L, const Out *O, const float mn
 
 /* The model as a glTF 2.0 binary: one node, one mesh of one indexed triangle
  * primitive (POSITION and NORMAL float3, TEXCOORD_0 float2, uint16 indices),
- * its material only a name. Anything that reads glTF opens it. */
-static void write_glb(const char *path, const char *name, const Low *L) {
+ * its materials only names, the first its own. Anything that reads glTF opens it. */
+static void write_glb(const char *path, const char *name, const Low *L, const char *const *mat, int nmat) {
     if (L->nv > 65535) die("too many vertices for 16-bit indices", NULL);
     size_t nv = L->nv, ni = L->ni;
     size_t offN = nv * 12, offT = nv * 24, offI = nv * 32, binLen = (offI + ni * 2 + 3) & ~(size_t)3;
@@ -779,12 +787,27 @@ static void write_glb(const char *path, const char *name, const Low *L) {
         for (int k = 0; k < 3; ++k) { mn[k] = fminf(mn[k], p[k]); mx[k] = fmaxf(mx[k], p[k]); }
     }
     for (size_t i = 0; i < ni; ++i) { uint16_t x = (uint16_t)L->ix[i]; memcpy(bin + offI + i * 2, &x, 2); }
-    char json[4096];
+    /* the materials, and with more than one the liveries (KHR_materials_variants): variant k is material k */
+    char mats[1024] = "", variants[1024] = "", mappings[1024] = "", ext[2400] = "";
+    for (int k = 0; k < nmat; ++k) {
+        size_t a = strlen(mats), b = strlen(variants), c = strlen(mappings);
+        snprintf(mats + a, sizeof(mats) - a, "%s{\"name\":\"%s\"}", k ? "," : "", mat[k]);
+        snprintf(variants + b, sizeof(variants) - b, "%s{\"name\":\"%s\"}", k ? "," : "", mat[k]);
+        snprintf(mappings + c, sizeof(mappings) - c, "%s{\"material\":%d,\"variants\":[%d]}", k ? "," : "", k, k);
+    }
+    const char *used = "";
+    char primExt[1100] = "";
+    if (nmat > 1) {
+        used = "\"extensionsUsed\":[\"KHR_materials_variants\"],";
+        snprintf(ext, sizeof(ext), "\"extensions\":{\"KHR_materials_variants\":{\"variants\":[%s]}},", variants);
+        snprintf(primExt, sizeof(primExt), ",\"extensions\":{\"KHR_materials_variants\":{\"mappings\":[%s]}}", mappings);
+    }
+    char json[8192];
     int jl = snprintf(json, sizeof(json),
-        "{\"asset\":{\"version\":\"2.0\",\"generator\":\"NeonCity tools/model_pack.c\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
+        "{\"asset\":{\"version\":\"2.0\",\"generator\":\"NeonCity tools/model_pack.c\"},%s%s\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
         "\"nodes\":[{\"mesh\":0,\"name\":\"%s\"}],"
-        "\"meshes\":[{\"name\":\"%s\",\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"material\":0}]}],"
-        "\"materials\":[{\"name\":\"%s\"}],"
+        "\"meshes\":[{\"name\":\"%s\",\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"material\":0%s}]}],"
+        "\"materials\":[%s],"
         "\"buffers\":[{\"byteLength\":%zu}],"
         "\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":%zu,\"target\":34962},"
         "{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%zu,\"target\":34962},"
@@ -794,7 +817,7 @@ static void write_glb(const char *path, const char *name, const Low *L) {
         "{\"bufferView\":1,\"componentType\":5126,\"count\":%zu,\"type\":\"VEC3\"},"
         "{\"bufferView\":2,\"componentType\":5126,\"count\":%zu,\"type\":\"VEC2\"},"
         "{\"bufferView\":3,\"componentType\":5123,\"count\":%zu,\"type\":\"SCALAR\"}]}",
-        name, name, name, binLen, nv * 12, offN, nv * 12, offT, nv * 8, offI, ni * 2,
+        used, ext, name, name, primExt, mats, binLen, nv * 12, offN, nv * 12, offT, nv * 8, offI, ni * 2,
         nv, mn[0], mn[1], mn[2], mx[0], mx[1], mx[2], nv, nv, ni);
     if (jl <= 0 || jl >= (int)sizeof(json) - 4) die("the model's description is too long", NULL);
     while (jl % 4) json[jl++] = ' ';
@@ -812,79 +835,39 @@ static void write_glb(const char *path, const char *name, const Low *L) {
 
 /* ---------------------------------------------------------------- main --- */
 
-int main(int argc, char **argv) {
-    if (argc < 3) {
-        fprintf(stderr, "usage: model_pack <in.glb> <name> [--height H | --width W | --depth D] [--yaw DEG] [--stretch Y DY]\n"
-                        "                  [--tris N] [--tex PX] [--ao RAYS] [--floor] [--glow] [--out FILE] [--maps DIR] [--preview FILE]\n");
-        return 1;
-    }
-    const char *in = argv[1], *name = argv[2];
-    int sizeAxis = -1, texSize = 1024, aoRays = 24, floor_ = 0, glowOn = 0;
-    float sizeM = 0.0f, yaw = 0.0f, stretchY = 0.0f, stretchD = 0.0f;
-    size_t tris = 800;
-    char outPath[1024], mapsDir[1024], prevPath[1024] = "";
-    snprintf(outPath, sizeof(outPath), "assets/models/%s.glb", name);
-    snprintf(mapsDir, sizeof(mapsDir), "assets/textures/%s", name);
-    for (int i = 3; i < argc; ++i) {
-        const char *a = argv[i];
-        int more = i + 1 < argc;
-        if (!strcmp(a, "--height") && more) { sizeAxis = 1; sizeM = (float)atof(argv[++i]); }
-        else if (!strcmp(a, "--width") && more) { sizeAxis = 0; sizeM = (float)atof(argv[++i]); }
-        else if (!strcmp(a, "--depth") && more) { sizeAxis = 2; sizeM = (float)atof(argv[++i]); }
-        else if (!strcmp(a, "--yaw") && more) yaw = (float)atof(argv[++i]);
-        else if (!strcmp(a, "--stretch") && i + 2 < argc) { stretchY = (float)atof(argv[++i]); stretchD = (float)atof(argv[++i]); }
-        else if (!strcmp(a, "--tris") && more) tris = (size_t)atol(argv[++i]);
-        else if (!strcmp(a, "--tex") && more) texSize = atoi(argv[++i]);
-        else if (!strcmp(a, "--ao") && more) aoRays = atoi(argv[++i]);
-        else if (!strcmp(a, "--floor")) floor_ = 1;
-        else if (!strcmp(a, "--glow")) glowOn = 1;
-        else if (!strcmp(a, "--out") && more) snprintf(outPath, sizeof(outPath), "%s", argv[++i]);
-        else if (!strcmp(a, "--maps") && more) snprintf(mapsDir, sizeof(mapsDir), "%s", argv[++i]);
-        else if (!strcmp(a, "--preview") && more) snprintf(prevPath, sizeof(prevPath), "%s", argv[++i]);
-        else die("unknown option", a);
-    }
-    for (const char *c = name; *c; ++c)
-        if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_')) die("names are lower case letters, digits and underscores:", name);
+typedef struct Shape { int sizeAxis; float sizeM, yaw, stretchY, stretchD; } Shape;
 
-    printf("%s\n", in);
-    High H;
-    read_file(in, &H);
-    printf("  %zu vertices, %zu triangles, %d material%s\n", H.nv, H.nt, H.nm, H.nm > 1 ? "s" : "");
-
-    /* turn, scale, stand it on y = 0 centred, then stretch */
-    float cs = cosf(yaw * 3.14159265f / 180.0f), sn = sinf(yaw * 3.14159265f / 180.0f);
-    float mn[3] = { FLT_MAX, FLT_MAX, FLT_MAX }, mx[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
-    for (size_t i = 0; i < H.nv; ++i) {
-        v3 p = H.p[i], n = H.n[i];
-        H.p[i] = V3(cs * p.x + sn * p.z, p.y, -sn * p.x + cs * p.z);
-        H.n[i] = V3(cs * n.x + sn * n.z, n.y, -sn * n.x + cs * n.z);
-        const float *q = &H.p[i].x;
+/* Turns, scales, stands on y = 0 centred, then stretches the original; its bounds into mn, mx. */
+static void place(High *H, const Shape *S, float mn[3], float mx[3]) {
+    float cs = cosf(S->yaw * 3.14159265f / 180.0f), sn = sinf(S->yaw * 3.14159265f / 180.0f);
+    for (int k = 0; k < 3; ++k) { mn[k] = FLT_MAX; mx[k] = -FLT_MAX; }
+    for (size_t i = 0; i < H->nv; ++i) {
+        v3 p = H->p[i], n = H->n[i];
+        H->p[i] = V3(cs * p.x + sn * p.z, p.y, -sn * p.x + cs * p.z);
+        H->n[i] = V3(cs * n.x + sn * n.z, n.y, -sn * n.x + cs * n.z);
+        const float *q = &H->p[i].x;
         for (int k = 0; k < 3; ++k) { mn[k] = fminf(mn[k], q[k]); mx[k] = fmaxf(mx[k], q[k]); }
     }
-    float scale = sizeAxis >= 0 ? sizeM / (mx[sizeAxis] - mn[sizeAxis]) : 1.0f;
+    float scale = S->sizeAxis >= 0 ? S->sizeM / (mx[S->sizeAxis] - mn[S->sizeAxis]) : 1.0f;
     v3 off = V3(-0.5f * (mn[0] + mx[0]), -mn[1], -0.5f * (mn[2] + mx[2]));
     for (int k = 0; k < 3; ++k) { mn[k] = FLT_MAX; mx[k] = -FLT_MAX; }
-    for (size_t i = 0; i < H.nv; ++i) {
-        v3 p = mul(add(H.p[i], off), scale);
-        if (stretchD != 0.0f && p.y >= stretchY) p.y += stretchD;
-        H.p[i] = p;
+    for (size_t i = 0; i < H->nv; ++i) {
+        v3 p = mul(add(H->p[i], off), scale);
+        if (S->stretchD != 0.0f && p.y >= S->stretchY) p.y += S->stretchD;
+        H->p[i] = p;
         const float *q = &p.x;
         for (int k = 0; k < 3; ++k) { mn[k] = fminf(mn[k], q[k]); mx[k] = fmaxf(mx[k], q[k]); }
     }
-    float extent = fmaxf(mx[0] - mn[0], fmaxf(mx[1] - mn[1], mx[2] - mn[2]));
     printf("  size %.3f x %.3f x %.3f m (scale %.4f)\n", mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2], scale);
+}
 
-    v3 *sp;
-    size_t snv, sni;
-    unsigned *six;
-    simplify_shape(&H, tris, &sp, &snv, &six, &sni);
-    Low L;
-    crease_normals(sp, snv, six, sni, 40.0f, &L);
-    free(sp); free(six);
-    unwrap(&L, texSize, 4);
-
+/* Bakes one original's maps onto the low mesh into dir (and its preview, if asked). `slack`
+ * widens the search for a livery's surface, which is the low mesh's original's only roughly. */
+static void bake_maps(const Low *L, High *H, int texSize, int aoRays, int floor_, int glowOn, float slack,
+                      const float mn[3], const float mx[3], const char *dir, const char *prevPath) {
+    float extent = fmaxf(mx[0] - mn[0], fmaxf(mx[1] - mn[1], mx[2] - mn[2]));
     Bvh B;
-    bvh_build(&B, &H);
+    bvh_build(&B, H);
     Out O;
     O.size = texSize;
     O.albedo = (float *)calloc((size_t)texSize * texSize * 3, sizeof(float));
@@ -897,12 +880,93 @@ int main(int argc, char **argv) {
     O.glowY0 = mn[1] + 0.14f * (mx[1] - mn[1]);
     O.glowY1 = mx[1] - 0.14f * (mx[1] - mn[1]);
     if (!O.albedo || !O.orm || !O.nrm || !O.mask) die("out of memory", NULL);
-    bake(&L, &H, &B, &O, extent * 0.04f, aoRays, extent * 0.35f, floor_);
+    bake(L, H, &B, &O, extent * 0.04f * slack, aoRays, extent * 0.35f, floor_);
     dilate(&O);
-    write_maps(&O, mapsDir);
-    if (prevPath[0]) preview(prevPath, &L, &O, mn, mx);
+    write_maps(&O, dir);
+    if (prevPath && prevPath[0]) preview(prevPath, L, &O, mn, mx);
+    free(O.albedo); free(O.orm); free(O.nrm); free(O.mask); free(O.emis);
+    free(B.node); free(B.tri);
+}
 
-    write_glb(outPath, name, &L);
+#define MAX_LIVERIES 4
+
+int main(int argc, char **argv) {
+    if (argc < 3) {
+        fprintf(stderr, "usage: model_pack <in.glb> <name> [--height H | --width W | --depth D] [--yaw DEG] [--stretch Y DY]\n"
+                        "                  [--tris N] [--tex PX] [--ao RAYS] [--floor] [--glow] [--material NAME]\n"
+                        "                  [--livery IN.glb NAME]... [--out FILE] [--maps DIR] [--preview FILE]\n");
+        return 1;
+    }
+    const char *in = argv[1], *name = argv[2];
+    int texSize = 1024, aoRays = 24, floor_ = 0, glowOn = 0, nl = 0;
+    Shape S = { -1, 0.0f, 0.0f, 0.0f, 0.0f };
+    size_t tris = 800;
+    const char *mat[MAX_LIVERIES] = { name }, *src[MAX_LIVERIES] = { in };
+    char outPath[1024], mapsDir[1024] = "", prevPath[1024] = "";
+    snprintf(outPath, sizeof(outPath), "assets/models/%s.glb", name);
+    for (int i = 3; i < argc; ++i) {
+        const char *a = argv[i];
+        int more = i + 1 < argc;
+        if (!strcmp(a, "--height") && more) { S.sizeAxis = 1; S.sizeM = (float)atof(argv[++i]); }
+        else if (!strcmp(a, "--width") && more) { S.sizeAxis = 0; S.sizeM = (float)atof(argv[++i]); }
+        else if (!strcmp(a, "--depth") && more) { S.sizeAxis = 2; S.sizeM = (float)atof(argv[++i]); }
+        else if (!strcmp(a, "--yaw") && more) S.yaw = (float)atof(argv[++i]);
+        else if (!strcmp(a, "--stretch") && i + 2 < argc) { S.stretchY = (float)atof(argv[++i]); S.stretchD = (float)atof(argv[++i]); }
+        else if (!strcmp(a, "--tris") && more) tris = (size_t)atol(argv[++i]);
+        else if (!strcmp(a, "--tex") && more) texSize = atoi(argv[++i]);
+        else if (!strcmp(a, "--ao") && more) aoRays = atoi(argv[++i]);
+        else if (!strcmp(a, "--floor")) floor_ = 1;
+        else if (!strcmp(a, "--glow")) glowOn = 1;
+        else if (!strcmp(a, "--material") && more) mat[0] = argv[++i];
+        else if (!strcmp(a, "--livery") && i + 2 < argc) {
+            if (++nl >= MAX_LIVERIES) die("too many liveries", NULL);
+            src[nl] = argv[++i]; mat[nl] = argv[++i];
+        }
+        else if (!strcmp(a, "--out") && more) snprintf(outPath, sizeof(outPath), "%s", argv[++i]);
+        else if (!strcmp(a, "--maps") && more) snprintf(mapsDir, sizeof(mapsDir), "%s", argv[++i]);
+        else if (!strcmp(a, "--preview") && more) snprintf(prevPath, sizeof(prevPath), "%s", argv[++i]);
+        else die("unknown option", a);
+    }
+    for (int k = 0; k <= nl; ++k)
+        for (const char *c = k ? mat[k] : name; *c; ++c)
+            if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_')) die("names are lower case letters, digits and underscores:", k ? mat[k] : name);
+    if (!mapsDir[0]) snprintf(mapsDir, sizeof(mapsDir), "assets/textures/%s", mat[0]);
+
+    printf("%s\n", in);
+    High H;
+    read_file(in, &H);
+    printf("  %zu vertices, %zu triangles, %d material%s\n", H.nv, H.nt, H.nm, H.nm > 1 ? "s" : "");
+    float mn[3], mx[3];
+    place(&H, &S, mn, mx);
+
+    v3 *sp;
+    size_t snv, sni;
+    unsigned *six;
+    simplify_shape(&H, tris, &sp, &snv, &six, &sni);
+    Low L;
+    crease_normals(sp, snv, six, sni, 40.0f, &L);
+    free(sp); free(six);
+    unwrap(&L, texSize, 4);
+    bake_maps(&L, &H, texSize, aoRays, floor_, glowOn, 1.0f, mn, mx, mapsDir, prevPath);
+
+    /* the liveries: other files of (nearly) the same shape, placed alike and baked onto this mesh, its texture coordinates */
+    for (int k = 1; k <= nl; ++k) {
+        char dir[1100], pv[1100] = "";
+        snprintf(dir, sizeof(dir), "assets/textures/%s", mat[k]);
+        if (prevPath[0]) {
+            const char *dot_ = strrchr(prevPath, '.');
+            int stem = dot_ ? (int)(dot_ - prevPath) : (int)strlen(prevPath);
+            snprintf(pv, sizeof(pv), "%.*s_%s%s", stem, prevPath, mat[k], dot_ ? dot_ : ".png");
+        }
+        printf("%s (livery %s)\n", src[k], mat[k]);
+        High V;
+        float vn[3], vx[3];
+        read_file(src[k], &V);
+        place(&V, &S, vn, vx);
+        bake_maps(&L, &V, texSize, aoRays, floor_, glowOn, 2.0f, mn, mx, dir, pv);
+    }
+
+    write_glb(outPath, name, &L, mat, nl + 1);
     (void)lerpf;
     return 0;
 }

@@ -1,4 +1,4 @@
-// A dumpster in a back alley or yard (a second livery): a model (src/city/models/dumpster_b.inc), baked with its maps by tools/model_pack.c
+// A dumpster in a back alley or yard: the second livery of a model (assets/models/dumpster.glb), baked with its maps by tools/model_pack.c
 // from a .glb (README, "Models"). orm.b is its metalness, not a height.
 {
   "maps": {

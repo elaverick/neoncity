@@ -13,7 +13,7 @@
  * turns to light.
  * ==================================================================== */
 
-const uint PM_SIGNAL = 7u;
+const uint PM_SIGNAL = 5u;   // src/city/models.h
 
 // A pedestrian signal's phase (seconds into its cycle of SIGNAL_CYCLE): the
 // green man for SIGNAL_WALK, flashing for SIGNAL_FLASH, then the red hand.

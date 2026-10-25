@@ -130,19 +130,23 @@ static void test_files(const char *assets) {
     printf("%d materials, %d maps from %d image files\n", PBR_MATERIAL_COUNT, images, nSeen);
 }
 
-/* Every model (src/city/models.h) reads, is shaded by a material of its name,
- * stands on y = 0 centred, and is of a size street furniture might be. */
+/* Every model (src/city/models.h) reads, is shaded by authored materials (its
+ * own and its liveries', each once), stands on y = 0 centred, and is of a size
+ * street furniture might be. */
 static void test_models(const char *assets) {
-    int tris = 0;
+    int tris = 0, liveries = 0;
     for (int i = 0; i < PM_COUNT; ++i) {
         const char *name = MODEL_NAMES[i];
         char path[1100], err[256];
         snprintf(path, sizeof(path), "%s/models/%s.glb", assets, name);
         Model m;
-        if (!model_read(path, name, &m, err, sizeof(err))) { CHECK(0, "model %s: %s", name, err); continue; }
-        int mat = -1;
-        for (int k = 0; k < PBR_MATERIAL_COUNT; ++k) if (!strcmp(PBR_MATERIAL_NAMES[k], name)) mat = k;
-        CHECK(mat >= 0, "model %s: no material %s.json shades it", name, name);
+        if (!model_read(path, &m, err, sizeof(err))) { CHECK(0, "model %s: %s", name, err); continue; }
+        CHECK(m.liveries >= 1 && m.liveries <= MODEL_LIVERIES, "model %s: %d liveries", name, m.liveries);
+        for (int k = 0; k < m.liveries; ++k) {
+            CHECK(m.pbr[k] < PBR_MATERIAL_COUNT, "model %s: livery %d's material is %d", name, k, m.pbr[k]);
+            for (int j = 0; j < k; ++j) CHECK(m.pbr[j] != m.pbr[k], "model %s: liveries %d and %d are both %s", name, j, k, PBR_MATERIAL_NAMES[m.pbr[k]]);
+        }
+        liveries += m.liveries;
         CHECK(fabsf(m.mn[1]) < 1e-3f, "model %s: its foot is at %g, not 0", name, m.mn[1]);
         CHECK(fabsf(m.mn[0] + m.mx[0]) < 1e-2f && fabsf(m.mn[2] + m.mx[2]) < 1e-2f, "model %s: not centred", name);
         for (int k = 0; k < 3; ++k) CHECK(m.mx[k] - m.mn[k] > 0.05f && m.mx[k] - m.mn[k] < 4.0f, "model %s: %g m along axis %d", name, m.mx[k] - m.mn[k], k);

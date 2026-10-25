@@ -268,7 +268,7 @@ void build_cables(Mesh *m, ChunkGen *g);
 /* The models (models.h), standing on y = 0, centred, their fronts to +z; a
  * missing model's box is empty, and emitting it emits nothing. */
 void    model_box(int pm, float mn[3], float mx[3]);
-uint8_t model_material(int pm);   /* its PBR_* */
+uint8_t model_material(int pm, int livery);   /* the PBR_* it wears as livery (models.h; its own if it has no such) */
 /* Model pm in the current emission frame, its foot at `at`, its front turned to (fx, fz). */
 void    emit_model(Mesh *m, int pm, vec3 at, float fx, float fz, Mat mt);
 /* The pieces standing in [x0, x1) x [z0, z1), of what stands on the ground (PROPS_GROUND)

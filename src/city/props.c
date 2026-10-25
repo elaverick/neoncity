@@ -44,7 +44,13 @@ void model_box(int pm, float mn[3], float mx[3]) {
     for (int k = 0; k < 3; ++k) { mn[k] = M ? M->mn[k] : 0.0f; mx[k] = M ? M->mx[k] : 0.0f; }
 }
 
-uint8_t model_material(int pm) { const Model *M = model_get(pm); return M ? M->pbr : 0; }
+uint8_t model_material(int pm, int livery) {
+    const Model *M = model_get(pm);
+    return M ? M->pbr[livery >= 0 && livery < M->liveries ? livery : 0] : 0;
+}
+
+/* The livery a piece with this seed wears. */
+static uint8_t pick_livery(int pm, uint32_t seed) { const Model *M = model_get(pm); return M ? (uint8_t)(seed % M->liveries) : 0; }
 
 void emit_model(Mesh *m, int pm, vec3 at, float fx, float fz, Mat mt) {
     const Model *M = model_get(pm);
@@ -289,7 +295,7 @@ static void kerb_edge(PGen *P, int bi, int i) {
         float fx_ = (float)((FACEIN) ? in.x : -in.x), fz_ = (float)((FACEIN) ? in.z : -in.z), y_; \
         if (!footing(P, x_, z_, fx_, fz_, (HW), (HD), GK_SIDEWALK, &y_)) break; \
         Prop *p_ = &list[n++]; \
-        p_->kind = (KIND); p_->model = (PM); p_->flags = 0; p_->x = x_; p_->z = z_; p_->y = y_; \
+        p_->kind = (KIND); p_->model = (PM); p_->livery = pick_livery((PM), (SEED)); p_->flags = 0; p_->x = x_; p_->z = z_; p_->y = y_; \
         p_->ground = city_ground_y(x_, z_); p_->fx = fx_; p_->fz = fz_; p_->seed = (SEED); \
     } while (0)
 
@@ -299,13 +305,11 @@ static void kerb_edge(PGen *P, int bi, int i) {
     static const float BIN_RATE[ZONE_COUNT] = { 1.0f / 45.0f, 1.0f / 50.0f, 1.0f / 90.0f, 1.0f / 150.0f, 1.0f / 70.0f, 0.0f };
     int nb = stations(hash_combine(es, 1u), len, BIN_RATE[zone], u, ss, 64);
     for (int k = 0; k < nb && n < 90; ++k) {
-        int pm = (ss[k] & 1u) ? PM_BIN_B : PM_BIN_A;
-        if (!have(pm)) pm = pm == PM_BIN_A ? PM_BIN_B : PM_BIN_A;
-        if (!have(pm)) break;
+        if (!have(PM_BIN)) break;
         float mn[3], mx[3];
-        model_box(pm, mn, mx);
+        model_box(PM_BIN, mn, mx);
         float hw = 0.5f * (mx[0] - mn[0]), hd = 0.5f * (mx[2] - mn[2]);
-        TRY(PROP_BIN, pm, u[k], KERB_STONE_WIDTH + 0.12f + hd, hw, hd, 1, ss[k]);
+        TRY(PROP_BIN, PM_BIN, u[k], KERB_STONE_WIDTH + 0.12f + hd, hw, hd, 1, ss[k]);
     }
     /* a post box to a block, now and then */
     static const float MAIL_P[ZONE_COUNT] = { 0.3f, 0.45f, 0.45f, 0.1f, 0.15f, 0.05f };
@@ -396,7 +400,7 @@ static void crossing(PGen *P, int bi, const DropKerb *d) {
                 int blk;
                 if (dd < 0.0 || dd > 1.5 || beyond < 0.2 || beyond > 2.5 || ground_kind(P, L->x, L->z, &blk) != GK_SIDEWALK || blk != bi) continue;
                 Prop *p = &list[n++];
-                p->kind = PROP_CROSSING; p->model = PM_SIGNAL;
+                p->kind = PROP_CROSSING; p->model = PM_SIGNAL; p->livery = 0;
                 p->flags = PF_ON_LAMP | (side < 0 ? PF_BUTTON_BACK : 0);
                 p->x = L->x; p->z = L->z;
                 p->ground = city_ground_y(L->x, L->z);
@@ -414,7 +418,7 @@ static void crossing(PGen *P, int bi, const DropKerb *d) {
             SPOT(u, KERB_STONE_WIDTH + 0.25, x, z, ok);
             if (!ok) continue;
             Prop *p = &list[n++];
-            p->kind = PROP_CROSSING; p->model = PM_SIGNAL;
+            p->kind = PROP_CROSSING; p->model = PM_SIGNAL; p->livery = 0;
             p->flags = side < 0 ? PF_BUTTON_BACK : 0;
             p->x = x; p->z = z;
             p->ground = city_ground_y(x, z);
@@ -432,7 +436,7 @@ static void crossing(PGen *P, int bi, const DropKerb *d) {
             float y;
             if (!footing(P, x, z, (float)in.x, (float)in.z, 0.2f, 0.2f, GK_SIDEWALK, &y)) continue;
             Prop *p = &list[n++];
-            p->kind = PROP_BOLLARD; p->model = PM_BOLLARD; p->flags = 0;
+            p->kind = PROP_BOLLARD; p->model = PM_BOLLARD; p->livery = 0; p->flags = 0;
             p->x = x; p->z = z; p->y = y; p->ground = city_ground_y(x, z);
             p->fx = (float)-in.x; p->fz = (float)-in.z;
             p->seed = rng_u32(&r);
@@ -541,7 +545,7 @@ static void aircons(PGen *P, int i) {
                         occupied(P, i, lx + nx * off - ex * aw * 0.5f, y0 + 0.05f, lz + nz * off - ez * aw * 0.5f, si)) continue;
                     DVec2 w = to_world(b, lx, lz);
                     Prop pr;
-                    pr.kind = PROP_AIRCON; pr.model = PM_AIRCON; pr.flags = onSill ? 0 : PF_BRACKETS;
+                    pr.kind = PROP_AIRCON; pr.model = PM_AIRCON; pr.livery = 0; pr.flags = onSill ? 0 : PF_BRACKETS;
                     pr.x = w.x; pr.z = w.z;
                     pr.ground = building_base(b);
                     pr.y = pr.ground + y0;
@@ -561,7 +565,7 @@ static void dumpsters(PGen *P, int i) {
     const Building *b = &g->bld[i];
     const BGraph *bg = chunk_gen_graph(g, i);
     /* behind shophouses, walk-ups and sheds: not against an office lobby's glass, nor under a void deck */
-    if (bgen_industrial(bg) || b->kind == BK_MEGA || bg->groundMode != GF_RETAIL || (!have(PM_DUMPSTER_A) && !have(PM_DUMPSTER_B))) return;
+    if (bgen_industrial(bg) || b->kind == BK_MEGA || bg->groundMode != GF_RETAIL || !have(PM_DUMPSTER)) return;
     static const float RATE[ZONE_COUNT] = { 1.0f / 60.0f, 1.0f / 40.0f, 1.0f / 80.0f, 1.0f / 40.0f, 0.0f, 0.0f };
     if (RATE[b->zone] <= 0.0f) return;
     const Block *bk = &g->pa->blocks[g->bblk[i]];
@@ -570,7 +574,7 @@ static void dumpsters(PGen *P, int i) {
     Prop list[8];
     int n = 0;
     float mn[3], mx[3];
-    model_box(have(PM_DUMPSTER_A) ? PM_DUMPSTER_A : PM_DUMPSTER_B, mn, mx);
+    model_box(PM_DUMPSTER, mn, mx);
     float hw = 0.5f * (mx[0] - mn[0]), hd = 0.5f * (mx[2] - mn[2]);
     /* candidates: (section, face, u) */
     float cu[48];
@@ -624,8 +628,7 @@ static void dumpsters(PGen *P, int i) {
         if (bad) continue;
         uint32_t seed = hash3i(bg->seed ^ 0xD5u, cs[q], cf[q], (int)floorf(u * 4.0f));
         Prop *p = &list[n++];
-        p->kind = PROP_DUMPSTER; p->model = (seed & 1u) ? PM_DUMPSTER_B : PM_DUMPSTER_A; p->flags = 0;
-        if (!have(p->model)) p->model = p->model == PM_DUMPSTER_A ? PM_DUMPSTER_B : PM_DUMPSTER_A;
+        p->kind = PROP_DUMPSTER; p->model = PM_DUMPSTER; p->livery = pick_livery(PM_DUMPSTER, seed); p->flags = 0;
         p->x = c.x; p->z = c.z; p->y = y; p->ground = city_ground_y(c.x, c.z);
         p->fx = fx; p->fz = fz; p->seed = seed;
     }
@@ -705,7 +708,7 @@ int prop_outline(const Prop *p, double (*v)[2]) {
 #define BUDGET 180000   /* vertices: a margin inside MAX_CHUNK_PAGES * PAGE_VERTS */
 
 /* MAT_PROP: params y the model's material (PBR_*), z the model (PM_*), w PF_* | the signal's phase. */
-static Mat prop_mat(const Prop *p, int pm) { return mat(MAT_PROP, p->seed, model_material(pm), (uint8_t)pm, p->flags); }
+static Mat prop_mat(const Prop *p, int pm) { return mat(MAT_PROP, p->seed, model_material(pm, pm == p->model ? p->livery : 0), (uint8_t)pm, p->flags); }
 
 static void emit_prop(Mesh *m, const Prop *p) {
     float ox = (float)(p->x - m->ox), oz = (float)(p->z - m->oz);

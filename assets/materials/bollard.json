@@ -1,4 +1,4 @@
-// A steel bollard at a kerb: a model (src/city/models/bollard.inc), baked with its maps by tools/model_pack.c
+// A steel bollard at a kerb: a model (assets/models/bollard.glb), baked with its maps by tools/model_pack.c
 // from a .glb (README, "Models"). orm.b is its metalness, not a height.
 {
   "maps": {

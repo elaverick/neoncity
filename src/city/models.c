@@ -11,12 +11,11 @@
 /* The model files (models.h): read once, before the generator runs. */
 
 const char *const MODEL_NAMES[PM_COUNT] = {
-    "bollard", "litter_bin_a", "litter_bin_b", "mailbox", "dumpster_a", "dumpster_b",
-    "aircon", "crossing_sign", "crossing_button", "sofa",
+    "bollard", "litter_bin", "mailbox", "dumpster", "aircon", "crossing_sign", "crossing_button", "sofa",
 };
-static const uint8_t MODEL_PBR[PM_COUNT] = {
-    PBR_BOLLARD, PBR_LITTER_BIN_A, PBR_LITTER_BIN_B, PBR_MAILBOX, PBR_DUMPSTER_A, PBR_DUMPSTER_B,
-    PBR_AIRCON, PBR_CROSSING_SIGN, PBR_CROSSING_BUTTON, PBR_SOFA,
+/* the authored materials, by id (pbr.h), to find a model's by name */
+static const char *const MATERIAL_NAMES[PBR_MATERIAL_COUNT] = {
+#include "pbr_material_names.inc"
 };
 
 static Model g_models[PM_COUNT];
@@ -28,7 +27,13 @@ void model_free(Model *m) {
     memset(m, 0, sizeof(*m));
 }
 
-bool model_read(const char *path, const char *name, Model *m, char *err, size_t errSize) {
+static int material_id(const cgltf_material *cm) {
+    if (!cm || !cm->name) return -1;
+    for (int k = 0; k < PBR_MATERIAL_COUNT; ++k) if (!strcmp(MATERIAL_NAMES[k], cm->name)) return k;
+    return -1;
+}
+
+bool model_read(const char *path, Model *m, char *err, size_t errSize) {
     memset(m, 0, sizeof(*m));
     cgltf_options opt;
     memset(&opt, 0, sizeof(opt));
@@ -51,8 +56,23 @@ bool model_read(const char *path, const char *name, Model *m, char *err, size_t 
             else if (at->type == cgltf_attribute_type_texcoord && at->index == 0) uv = at->data;
         }
         if (!pos || !nrm || !uv) why = "it lacks positions, normals or texture coordinates";
-        else if (!pr->material || !pr->material->name || strcmp(pr->material->name, name) != 0) why = "its material isn't named for it";
         else if (pr->indices->count % 3 || pr->indices->count == 0) why = "its indices aren't whole triangles";
+    }
+    /* its own material, then a livery for each of the file's variants, in order */
+    int id = why ? -1 : material_id(pr->material);
+    if (!why && id < 0) why = "its material isn't one of assets/materials";
+    if (!why) {
+        m->pbr[0] = (uint8_t)id;
+        m->liveries = 1;
+        for (cgltf_size v = 0; v < d->variants_count && !why; ++v) {
+            const cgltf_material *cm = NULL;
+            for (cgltf_size k = 0; k < pr->mappings_count; ++k) if (pr->mappings[k].variant == v) cm = pr->mappings[k].material;
+            int lv = cm ? material_id(cm) : -1;
+            if (lv < 0) why = "a livery's material isn't one of assets/materials";
+            else if (lv == id && v == 0) continue;   /* the first variant is usually its own */
+            else if (m->liveries == MODEL_LIVERIES) why = "it has too many liveries";
+            else m->pbr[m->liveries++] = (uint8_t)lv;
+        }
     }
     if (why) { snprintf(err, errSize, "%s", why); cgltf_free(d); return false; }
     m->nv = (uint32_t)pos->count;
@@ -94,9 +114,9 @@ int models_load(const char *dir) {
             FILE *f = fopen(path, "rb");
             if (!f) continue;
             fclose(f);
-            g_loaded[i] = model_read(path, MODEL_NAMES[i], &g_models[i], err, sizeof(err));
+            g_loaded[i] = model_read(path, &g_models[i], err, sizeof(err));
         }
-        if (g_loaded[i]) { g_models[i].pbr = MODEL_PBR[i]; n++; }
+        if (g_loaded[i]) n++;
         else fprintf(stderr, "model %s: %s; what uses it is left out\n", MODEL_NAMES[i], err);
     }
     return n;

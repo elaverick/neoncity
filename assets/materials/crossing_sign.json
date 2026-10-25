@@ -1,4 +1,4 @@
-// A pedestrian signal head on its pole: a model (src/city/models/crossing_sign.inc), baked
+// A pedestrian signal head on its pole: a model (assets/models/crossing_sign.glb), baked
 // with its maps by tools/model_pack.c from a .glb (README, "Models"). orm.b is its
 // metalness, not a height. The emissive map is its red hand (R) and green walking man (G),
 // which shadeProp lights in turn.

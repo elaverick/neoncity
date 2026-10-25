@@ -304,7 +304,8 @@ debris drawn by the ground shader (`debris`). See the README.
 Bins, bollards, post boxes, crossing signals, dumpsters and condensers (`src/city/props.c`, models
 baked by `tools/model_pack.c`). See the README. Left over:
 - **One model of each:** a second post box, bollard and condenser would break up the repetition; the
-  bins and dumpsters have two liveries each, picked by the seed, and nothing else varies (no tint).
+  bins and dumpsters share one mesh each between two liveries (the B scans baked onto the A meshes,
+  so B's dented, bent-open panel is only painted on), picked by the seed, and nothing else varies (no tint).
 - **Signals:** the poles are plain boxes; the walking man doesn't count down, and the crossing's
   carriageway has no vehicle signals (there are no vehicles). Crossings with a lamp post in the way on
   both sides go without.

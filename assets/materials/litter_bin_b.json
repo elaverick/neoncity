@@ -1,4 +1,4 @@
-// A street litter bin (a second livery): a model (src/city/models/litter_bin_b.inc), baked with its maps by tools/model_pack.c
+// A street litter bin: the second livery of a model (assets/models/litter_bin.glb), baked with its maps by tools/model_pack.c
 // from a .glb (README, "Models"). orm.b is its metalness, not a height.
 {
   "maps": {

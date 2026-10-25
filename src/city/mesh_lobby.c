@@ -483,7 +483,7 @@ static void emit_fixture(Mesh *m, const BGraph *g, const ILayout *L, const IFixt
         float cx = 0.5f * (f->x0 + f->x1), cz = 0.5f * (f->z0 + f->z1), ax, az, bx, bz;
         interior_to_local(L, cx, cz, &ax, &az);
         interior_to_local(L, cx + FX[f->facing & 3], cz + FZ[f->facing & 3], &bx, &bz);
-        emit_model(m, PM_SOFA, v3(ax, y0, az), bx - ax, bz - az, imat(g, L, IS_MODEL, model_material(PM_SOFA)));
+        emit_model(m, PM_SOFA, v3(ax, y0, az), bx - ax, bz - az, imat(g, L, IS_MODEL, model_material(PM_SOFA, 0)));
         break;
     }
     case IX_TABLE: {

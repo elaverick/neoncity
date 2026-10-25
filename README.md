@@ -970,12 +970,15 @@ Authored content is an asset file read at run time, never data compiled into the
 what the engine generates procedurally lives in the source (see "Assets" in
 `docs/code-structure-and-terrain-guidelines.md`). A model is `assets/models/<name>.glb`, a
 glTF 2.0 binary holding the mesh alone: one indexed triangle primitive with positions, normals
-and texture coordinates, in metres, standing on y = 0, centred, its front to +z. Its one
-material is only a name, the authored material that shades it, `assets/materials/<name>.json`,
-so its textures go through the material pipeline like every other surface's. The models are
-read once at startup (`models_load`), before any chunk is generated; a missing one leaves out
-what would have used it (the lobby sofa falls back to its boxes), and `material_test` checks
-every model reads, stands where it should and has its material.
+and texture coordinates, in metres, standing on y = 0, centred, its front to +z. Its
+materials are only names, the authored materials that shade it (`assets/materials/*.json`),
+so its textures go through the material pipeline like every other surface's. The primitive's
+own material is the first; a model may list more as the file's variants
+(`KHR_materials_variants`), its liveries, all baked to the one mesh's texture coordinates, and
+each piece set down wears one, picked by its seed (the bins and dumpsters have two each). The
+models are read once at startup (`models_load`), before any chunk is generated; a missing one
+leaves out what would have used it (the lobby sofa falls back to its boxes), and
+`material_test` checks every model reads, stands where it should and has its materials.
 
 The street furniture and the lobbies' sofa were made from textured `.glb` files. The
 files these came from are scans, or made like them: up to a million triangles in hundreds of
@@ -988,12 +991,15 @@ surface's derivatives (`modelFrame`), and ambient occlusion. A model of a few hu
 triangles comes out looking like the original, in one material however many it had:
 
 ```
-build/model_pack "<Downloads>/3d assets/litter bin a.glb" litter_bin_a --height 0.95 --tris 600 --tex 1024 --floor
+build/model_pack "<Downloads>/3d assets/mailbox.glb" mailbox --width 0.56 --stretch 0.15 0.56 --tris 700 --tex 1024 --floor
 ```
 
 It writes `assets/models/<name>.glb` (`--yaw` turns the model so its front is +z) and
-`assets/textures/<name>/{albedo,normal,orm}.png`, the orm's blue the metalness rather than a
-height. `--height`, `--width` or `--depth` scale it to
+`assets/textures/<material>/{albedo,normal,orm}.png`, the orm's blue the metalness rather than
+a height; the material is `<name>` unless `--material` names it. `--livery IN.glb NAME` adds
+a livery: another file of the same shape near enough (the same bin in other paint), placed
+as the first and baked onto the same mesh as material `NAME`, so one mesh serves both and
+what the second has that the mesh hasn't (a dent, a bent panel) shows in its maps alone. `--height`, `--width` or `--depth` scale it to
 size; `--stretch Y DY` lengthens whatever passes through height Y, as the post box's post was
 (`--stretch 0.15 0.56`) to bring its slot to 1.15 m; `--floor` lets the ground occlude it;
 `--glow` bakes an emissive map of the pale figures on its front (the signal head's hand and
@@ -1002,16 +1008,17 @@ walking man); `--preview` draws it from four sides. The models' commands:
 | Model | Options |
 |---|---|
 | `bollard` | `--height 0.95 --tris 300 --tex 512 --floor` |
-| `litter_bin_a`, `litter_bin_b` | `--height 0.95 --tris 600 --tex 1024 --floor` |
+| `litter_bin` | `"litter bin a.glb" --material litter_bin_a --livery "litter bin b.glb" litter_bin_b --height 0.95 --tris 600 --tex 1024 --floor` |
 | `mailbox` | `--width 0.56 --stretch 0.15 0.56 --tris 700 --tex 1024 --floor` |
-| `dumpster_a`, `dumpster_b` | `--width 1.6 --tris 800 --tex 1024 --floor` |
+| `dumpster` | `"dumpster a.glb" --material dumpster_a --livery "dumpster b.glb" dumpster_b --width 1.6 --tris 800 --tex 1024 --floor` |
 | `aircon` | `--width 0.8 --tris 450 --tex 512` |
 | `crossing_sign` | `--width 0.56 --tris 250 --tex 512 --glow` |
 | `crossing_button` | `--height 0.3 --tris 200 --tex 512` |
 | `sofa` | `--width 2.2 --tris 1600 --tex 1024 --floor` |
 
-Then add its `assets/materials/<name>.json`, and its name to `MODEL_NAMES` and its material to
-`MODEL_PBR` in `src/city/models.c` (and a `PM_` id in `models.h`).
+Then add an `assets/materials/<material>.json` for each of its materials, and its name to
+`MODEL_NAMES` in `src/city/models.c` (and a `PM_` id in `models.h`); its materials are found
+by name from the file.
 
 ### Walking (`src/app/player.c`)
 Collision runs against the same deterministic block layouts, using circle-vs-footprint tests

@@ -1,4 +1,4 @@
-// A crossing's push-button unit, on its signal pole: a model (src/city/models/crossing_button.inc), baked with its maps by tools/model_pack.c
+// A crossing's push-button unit, on its signal pole: a model (assets/models/crossing_button.glb), baked with its maps by tools/model_pack.c
 // from a .glb (README, "Models"). orm.b is its metalness, not a height.
 {
   "maps": {

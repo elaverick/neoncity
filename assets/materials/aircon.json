@@ -1,4 +1,4 @@
-// An air-conditioning condenser hung on a wall, under or on a window: a model (src/city/models/aircon.inc), baked with its maps by tools/model_pack.c
+// An air-conditioning condenser hung on a wall, under or on a window: a model (assets/models/aircon.glb), baked with its maps by tools/model_pack.c
 // from a .glb (README, "Models"). orm.b is its metalness, not a height.
 {
   "maps": {

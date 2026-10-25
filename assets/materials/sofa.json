@@ -1,4 +1,4 @@
-// A lobby's sofa (IX_SOFA, IS_MODEL in shaders/city/lobby.glsl): a model (src/city/models/sofa.inc), baked with its maps by tools/model_pack.c
+// A lobby's sofa (IX_SOFA, IS_MODEL in shaders/city/lobby.glsl): a model (assets/models/sofa.glb), baked with its maps by tools/model_pack.c
 // from a .glb (README, "Models"). orm.b is its metalness, not a height.
 {
   "maps": {
