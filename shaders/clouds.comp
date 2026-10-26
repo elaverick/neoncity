@@ -1,6 +1,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "common.glsl"
+#include "adverts.glsl"   // what the screens show (binding 9)
 
 /* Rain clouds: a low nimbostratus deck with torn scud drifting beneath it,
  * ray marched at half resolution. The deck hangs over the cities and a
@@ -146,11 +147,14 @@ vec3 lightAt(vec3 p, Column c, vec3 glow, float mu) {
 }
 
 // What a sky light is showing now: a neon sign's colour through its flicker,
-// or the average of a video screen's current advert colours (city.frag).
+// or the average of a video screen's current advert colours (city.frag): an
+// authored advert's mean colour at its brightness, or a procedural scene's two.
 vec3 skyLightColor(SkyLight L) {
-    if ((L.kind >> 8u) == AIR_FLAME) return fireColor(0.6) * flameGout(L.seed, gTime).power;   // a flare lighting the cloud base
+    if ((L.kind >> 8u & 255u) == AIR_FLAME) return fireColor(0.6) * flameGout(L.seed, gTime).power;   // a flare lighting the cloud base
     if ((L.kind & SKY_KIND_SCREEN) != 0u) {
         uint h = screenAdvert(L.seed, gTime);
+        int a = advertPick(h, float((L.kind >> 16u) & 255u) / float(max(L.kind >> 24u, 1u)));
+        if (a >= 0 && advertPhase(L.seed, gTime) >= ADVERT_STATIC) return advert[a].mean.rgb * advert[a].play.y;
         return mix(neonColor(h >> 4), neonColor(h >> 8), 0.5);
     }
     return neonColor(L.kind & 7u) * neonFlicker(L.seed, (L.kind >> 3) & 3u, gTime);
@@ -160,7 +164,7 @@ vec3 skyLightColor(SkyLight L) {
 // fire is: from the nozzle it rises with the burning column (n.x carries the
 // gout's reach), and airColor dims it with the gout.
 SkyLight flameAt(SkyLight L) {
-    if ((L.kind >> 8u) != AIR_FLAME) return L;
+    if ((L.kind >> 8u & 255u) != AIR_FLAME) return L;
     Gout g = flameGout(L.seed, gTime);
     L.pos.y += 0.4 * (g.head + g.tail) * L.n.x;
     L.n = vec2(0.0);
@@ -201,7 +205,7 @@ vec3 signLight(vec3 q) {
 const float MIST = 0.0006;   // in-scattering per unit rain intensity
 
 vec3 airColor(SkyLight L) {
-    uint cls = L.kind >> 8u;
+    uint cls = L.kind >> 8u & 255u;
     if (cls == AIR_LAMP_SODIUM) return lampColor(0) * lampState(L.seed, gTime);
     if (cls == AIR_LAMP_LED) return lampColor(1) * lampState(L.seed, gTime);
     if (cls == AIR_SHOP) return shopColor(L.seed);
@@ -217,7 +221,7 @@ vec3 mistLight(vec3 dir, float tEnd, float rain) {
         SkyLight L = flameAt(airLight[i]);
         float t0 = dot(L.pos, dir);
         vec3 q = dir * clamp(t0, 0.0, T) - L.pos;      // nearest point on the ray, from the light
-        uint cls = L.kind >> 8u;
+        uint cls = L.kind >> 8u & 255u;
         // A lamp is a bright head the halo gathers round. A shopfront is a pane
         // metres wide: as a point it glowed as a ball floating in front of the
         // glass, so it is spread over a soft 2.5 m radius with no core; a

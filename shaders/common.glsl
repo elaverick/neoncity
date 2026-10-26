@@ -10,6 +10,8 @@
 // Authored PBR materials: PBR_<NAME> (one per assets/materials/<name>.json), the maps
 // (PBR_ALBEDO..., PBR_MAPS_PER_MATERIAL), PBR_TEXTURE_COUNT and the flags: shared with C
 #include "pbr.h"
+// Authored adverts: ADVERT_COUNT, ADVERT_TABLE_SIZE, the screens' slots: shared with C
+#include "advert_slots.h"
 
 /* Must match src/core/common.h */
 const float CHUNK_SIZE      = 110.0;
@@ -373,8 +375,12 @@ float neonFlicker(uint seed, uint mode, float t) {
     return mix(1.0, 0.15, buzz) * (0.85 + 0.15 * sin(t * 120.0));
 }
 
-// Video screens change advert every 9 s; the advert's hash picks its scene and colours.
-uint screenAdvert(uint seed, float t) { return hash_combine(seed, uint(floor((t + hfloat(seed) * 30.0) / 9.0))); }
+// Video screens change advert every slot (ADVERT_SLOT_SECONDS), each screen on its own
+// clock; the slot's hash picks an authored advert or a procedural scene (adverts.glsl)
+// and the scene's colours. advertPhase: how far through its slot a screen is, 0..1.
+float advertClock(uint seed, float t) { return (t + hfloat(seed) * 30.0) / ADVERT_SLOT_SECONDS; }
+uint screenAdvert(uint seed, float t) { return hash_combine(seed, uint(floor(advertClock(seed, t)))); }
+float advertPhase(uint seed, float t) { return fract(advertClock(seed, t)); }
 
 /* ---------------- the planet ----------------
  * The world is a sphere of PLANET_RADIUS and world X/Z a chart of it (see

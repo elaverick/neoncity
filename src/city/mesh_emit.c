@@ -289,7 +289,8 @@ void sign_lights(Mesh *m, vec3 c, vec3 n, float area, Mat mt) {
     L.power = power;
     L.nx = n.x; L.nz = n.z;
     L.seed = mt.seed;
-    L.kind = screen ? SKY_KIND_SCREEN : (uint32_t)((mt.p[1] & 7) | (((mt.p[1] >> 6) & 3) << 3));
+    L.kind = screen ? SKY_KIND_SCREEN | (uint32_t)mt.p[2] << 16 | (uint32_t)mt.p[3] << 24   /* its shape picks its adverts */
+                    : (uint32_t)((mt.p[1] & 7) | (((mt.p[1] >> 6) & 3) << 3));
     L.kind |= AIR_SIGN << 8;
     push_light(&m->air, &m->nair, &m->capair, &L);
     if (c.y + reach >= CLOUD_LOW && c.y - reach <= CLOUD_HIGH) push_light(&m->sky, &m->nsky, &m->capsky, &L);

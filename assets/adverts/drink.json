@@ -1,0 +1,11 @@
+// A drinks advert: a sumo wrestler on black lifts a red and white can, drinks and
+// smiles (tools/advert_bake.py from Drink Ad.mp4, the plain picture, portrait by its
+// sample aspect ratio; the screens draw the LEDs). It plays only on screens of its
+// shape, portrait about 0.58:1.
+{
+  "frames": "drink.ktx2",    // the frames (KTX2: one layer each, block compressed, mipmapped)
+  "fps": 30,
+  "weight": 4,               // its share of screen time on the screens it fits; each procedural scene has 1
+  "brightness": 2.0,         // its colours' gain on the panel
+  "glow": 0.4                // the share of each LED's light in its soft glow
+}

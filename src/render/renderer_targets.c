@@ -140,7 +140,7 @@ void create_targets(Renderer *r) {
     VkDescriptorPoolSize sizes[5] = {
         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 7 + 2 * MAX_FRAMES + 4 + 5 * MAX_FRAMES + 4 * MAX_FRAMES + 2 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * BLOOM_MIPS + 3 * MAX_FRAMES + MAX_FRAMES + 3 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES + MAX_FRAMES + MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES + MAX_FRAMES + MAX_FRAMES + MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES + 2 * MAX_FRAMES + MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES },
     };
@@ -173,12 +173,16 @@ void create_targets(Renderer *r) {
         r->cloudSet[i] = alloc_set(r, r->cloudLayout);
         VkDescriptorBufferInfo ub = { r->ubo[i].buf, 0, sizeof(FrameUBO) };
         VkDescriptorBufferInfo sb = { r->skyBuf[i].buf, 0, sizeof(SkyGrid) };
-        VkWriteDescriptorSet w[2] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
+        VkDescriptorBufferInfo ab = { adverts_table(r->adverts), 0, sizeof(AdvertTable) };
+        VkWriteDescriptorSet w[3] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
+                                      { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
         w[0].dstSet = r->cloudSet[i]; w[0].dstBinding = 0; w[0].descriptorCount = 1;
         w[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[0].pBufferInfo = &ub;
         w[1].dstSet = r->cloudSet[i]; w[1].dstBinding = 7; w[1].descriptorCount = 1;
         w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w[1].pBufferInfo = &sb;
-        vkUpdateDescriptorSets(vk->device, 2, w, 0, NULL);
+        w[2].dstSet = r->cloudSet[i]; w[2].dstBinding = 9; w[2].descriptorCount = 1;
+        w[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[2].pBufferInfo = &ab;
+        vkUpdateDescriptorSets(vk->device, 3, w, 0, NULL);
         write_tex_set(vk, r->cloudSet[i], 3, CIS, r->linearRepeat, r->cloudNoise.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         write_tex_set(vk, r->cloudSet[i], 4, CIS, r->nearestClamp, sceneDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         write_tex_set(vk, r->cloudSet[i], 5, SI, VK_NULL_HANDLE, r->cloud.view, VK_IMAGE_LAYOUT_GENERAL);

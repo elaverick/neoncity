@@ -7,13 +7,15 @@
  *
  * city_test --fingerprint prints a hash of each layer over a fixed set of
  * chunks instead, to compare what two builds generate; city_test --proxies
- * surveys the distant proxies of the whole city. */
+ * surveys the distant proxies of the whole city; --props and --screens print
+ * views of the street furniture and the video screens. */
 #include "city.h"
 #include "terrain.h"
 #include "hash.h"
 #include "mathlib.h"
 #include "thread.h"
 #include "models.h"
+#include "advert_def.h"
 #include <time.h>
 
 #define N_CHUNKS 400
@@ -727,6 +729,95 @@ static int props_cams(void) {
     return 0;
 }
 
+/* city_test --screens: how many of the video screens round the spawn each authored
+ * advert fits (its aspect ratio within ADVERT_ASPECT_FIT of theirs), then --cam views
+ * of the nearest it fits, from close in front (the LEDs' emitters), 25 m and 90 m off,
+ * each with a --time at which it shows an advert 4 s in. The fit, the slot and the
+ * pick are the shaders' (advertFits and advertPick in shaders/adverts.glsl,
+ * screenAdvert and advertPhase in shaders/common.glsl), with the adverts in assets/. */
+static float g_adAspect[ADVERT_TABLE_SIZE], g_adWeight[ADVERT_TABLE_SIZE];
+
+static bool advert_fits(int i, float aspect) {
+    return g_adWeight[i] > 0.0f && fabsf(logf(aspect / g_adAspect[i])) <= logf(1.0f + (float)ADVERT_ASPECT_FIT);
+}
+
+/* A screen light's aspect (its kind: SKY_KIND_SCREEN in src/core/common.h). */
+static float screen_aspect(const SkyLight *L) {
+    uint32_t h = L->kind >> 24;
+    return (float)((L->kind >> 16) & 255u) / (float)(h ? h : 1u);
+}
+
+static int advert_pick(uint32_t h, float aspect) {
+    float total = (float)ADVERT_PLACEHOLDER_WEIGHT;
+    for (int i = 0; i < ADVERT_COUNT; ++i) if (advert_fits(i, aspect)) total += g_adWeight[i];
+    float x = (float)((hash_combine(h, 0xAD5u) >> 8) * (1.0 / 16777216.0)) * total - (float)ADVERT_PLACEHOLDER_WEIGHT;
+    for (int i = 0; i < ADVERT_COUNT && x >= 0.0f; ++i)
+        if (advert_fits(i, aspect)) {
+            if (x < g_adWeight[i]) return i;
+            x -= g_adWeight[i];
+        }
+    return -1;
+}
+
+static int screens_cams(void) {
+    for (int i = 0; i < ADVERT_COUNT; ++i) {
+        char path[1100], err[1300];
+        snprintf(path, sizeof(path), "%s/adverts/%s.json", NEONCITY_ASSETS, ADVERT_NAMES[i]);
+        AdvertDef d;
+        AdvertFrames f;
+        if (!advert_def_load(path, &d, err, sizeof(err)) || !advert_frames_load(d.frames, &f, err, sizeof(err))) {
+            printf("advert %s: %s\n", ADVERT_NAMES[i], err);
+            continue;
+        }
+        g_adAspect[i] = (float)f.width / (float)f.height;
+        g_adWeight[i] = d.weight;
+        advert_frames_free(&f);
+    }
+    double sx, sz;
+    float yaw;
+    city_spawn(&sx, &sz, &yaw);
+    int hx = (int)floor(sx / CHUNK_SIZE), hz = (int)floor(sz / CHUNK_SIZE), shown = 0, screens = 0;
+    int fit[ADVERT_TABLE_SIZE] = { 0 };
+    const int RINGS = 6;
+    for (int ring = 0; ring <= RINGS; ++ring)
+        for (int cz = hz - ring; cz <= hz + ring; ++cz)
+            for (int cx = hx - ring; cx <= hx + ring; ++cx) {
+                if (abs(cx - hx) != ring && abs(cz - hz) != ring) continue;
+                Mesh m = { 0 };
+                city_build_mesh(cx, cz, &m);
+                for (uint32_t i = 0; i < m.nair; ++i) {
+                    const SkyLight *L = &m.air[i];
+                    if (!(L->kind & SKY_KIND_SCREEN)) continue;
+                    screens++;
+                    float aspect = screen_aspect(L);
+                    bool any = false;
+                    for (int a = 0; a < ADVERT_COUNT; ++a) if (advert_fits(a, aspect)) { fit[a]++; any = true; }
+                    if (!any || shown >= 8) continue;
+                    shown++;
+                    double x = m.ox + L->pos[0], z = m.oz + L->pos[2], y = L->pos[1];
+                    float area = L->power / 0.7f;   /* sign_lights */
+                    float off = (float)((L->seed >> 8) * (1.0 / 16777216.0)) * 30.0f;
+                    double t = -1.0;
+                    for (int k = (int)ceilf(off / (float)ADVERT_SLOT_SECONDS); k < 400 && t < 0.0; ++k)
+                        if (advert_pick(hash_combine(L->seed, (uint32_t)k), aspect) >= 0)
+                            t = k * ADVERT_SLOT_SECONDS - off + ADVERT_SLOT_SECONDS * ADVERT_STATIC + 4.0;
+                    printf("screen %.0f m2, %.2f:1, at (%.1f, %.1f) y %.1f facing (%.2f, %.2f), an advert at --time %.2f\n",
+                           area, aspect, x, z, y, L->nx, L->nz, t);
+                    static const double DIST[3] = { 0.0, 25.0, 90.0 };
+                    for (int k = 0; k < 3; ++k) {
+                        double dd = k ? DIST[k] : 0.5 * sqrt(area / 2.4);   /* near: half a billboard's height */
+                        double ex = x + L->nx * dd, ez = z + L->nz * dd;
+                        printf("  --cam %.2f %.2f %.1f 0 %.1f\n", ex, ez, atan2(-L->nx, L->nz) * 57.2958, y - 1.7);
+                    }
+                }
+                mesh_free(&m);
+            }
+    printf("%d screens within %d chunks of the spawn\n", screens, RINGS);
+    for (int a = 0; a < ADVERT_COUNT; ++a)
+        printf("advert %s (%.3f:1) fits %d of them\n", ADVERT_NAMES[a], g_adAspect[a], fit[a]);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     terrain_earth_load(NULL);
     plan_world_init(cpu_count());   /* before the workers below ask the plan */
@@ -741,6 +832,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
     if (argc > 1 && strcmp(argv[1], "--proxies") == 0) return proxy_survey();
     if (argc > 1 && strcmp(argv[1], "--props") == 0) return props_cams();
+    if (argc > 1 && strcmp(argv[1], "--screens") == 0) return screens_cams();
 
     /* 1. Reference pass, in order. Track mesh sizes against the GPU page budget. */
     uint32_t maxVerts = 0, maxLights = 0, maxInterior = 0, maxLitter = 0, maxPlants = 0, maxProps = 0;

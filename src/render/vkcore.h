@@ -26,6 +26,10 @@ typedef struct VkCore {
      * VK_KHR_acceleration_structure + VK_KHR_ray_query + buffer device addresses. */
     bool             rt;
     VkPhysicalDeviceAccelerationStructurePropertiesKHR asProps;
+    /* The screens' authored adverts (src/render/adverts.c): textureCompressionBC +
+     * shaderSampledImageArrayNonUniformIndexing. Without them the screens show only
+     * the procedural scenes. */
+    bool             adverts;
 
     VkSwapchainKHR   swapchain;
     VkFormat         swapFormat;

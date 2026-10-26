@@ -607,9 +607,12 @@ static void face_feature(Mesh *m, const BGraph *g, const BSection *s, float widt
     float roll = rng_float(r);
     float tall = s->y1 - gy;
     if (tall > 70.0f && roll < 0.22f && width >= 14.0f) {
+        /* 16:9 or 9:16, the shapes adverts are made in (a screen shows only those of
+         * its shape: ADVERT_ASPECT_FIT); a tall one narrower where the section is short */
         float w = minf(width - 4.0f, rng_range(r, 14.0f, 42.0f));
-        float h = rng_float(r) < 0.55f ? w * 0.5625f : w * 1.5f;
-        h = minf(h, th - 6.0f);
+        float shape = rng_float(r) < 0.55f ? 9.0f / 16.0f : 16.0f / 9.0f;
+        float h = minf(w * shape, th - 6.0f);
+        w = h / shape;
         if (h < 8.0f) return;
         float u0 = rng_range(r, 2.0f, width - 2.0f - w);
         float y0 = s->y0 + rng_range(r, 0.3f, 0.9f) * (th - h - 2.0f) + 1.0f;

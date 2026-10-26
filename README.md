@@ -1020,6 +1020,89 @@ Then add an `assets/materials/<material>.json` for each of its materials, and it
 `MODEL_NAMES` in `src/city/models.c` (and a `PM_` id in `models.h`); its materials are found
 by name from the file.
 
+#### Adverts (`assets/adverts/`, `src/render/adverts.c`, `tools/advert_bake.py`)
+The video screens (the rooftop billboards, the giant screens on tall faces and the arcologies'
+screens) show authored adverts alongside the procedural scenes. An advert is a manifest,
+`assets/adverts/<name>.json`, beside its frames, `<name>.ktx2`:
+
+```jsonc
+{
+  "frames": "drink.ktx2",      // KTX2: one layer a frame, block compressed, mipmapped
+  "fps": 30,
+  "weight": 4,                 // its share of screen time on the screens it fits; each procedural scene has 1
+  "brightness": 2.0,           // its colours' gain on the panel
+  "glow": 0.4                  // the share of each LED's light in its soft glow
+}
+```
+
+The format is set out in `src/render/advert_def.h`. To add one, bake it from a video:
+
+```
+python tools/advert_bake.py "Drink Ad.mp4" drink [--rows 180] [--fps 30] [--format bc7|bc1] [--crop auto|none|W:H:X:Y]
+```
+
+The tool reads the video with ffmpeg and numpy. It works on the picture as it is meant to be
+seen:
+- **Borders:** black bars round the picture are cropped (`cropdetect` over the whole video;
+  a bar thinner than 2% of the frame is taken for dark picture and kept).
+- **Shape:** the video's sample aspect ratio is applied. `Drink Ad.mp4` is stored 1080x1080
+  with a sample aspect of 270:467, so it is a 0.578:1 portrait picture and bakes to 104x180
+  LEDs.
+- **Resolution:** each frame is reduced to one pixel per LED, `--rows` LEDs high (180 is the
+  6-pixel pitch of a 1080-line video), averaged in linear light, as is each mip level below.
+- **Compression:** the levels are block compressed, BC7 by default (`--format bc1` halves the
+  size again, at some cost in quality), into a KTX2 2D array texture. The frames' mean
+  colour goes under the key `NeonCity.mean`.
+
+On the first bake the tool writes a manifest to fill in. The video must be the plain picture:
+the screens draw the LEDs themselves. Adding a file reconfigures the build, as for materials:
+CMake writes the count into `adverts_list.h` and the names into `advert_names.inc`.
+
+- **Loading:** at startup `adverts.c` uploads each advert's KTX2 as it lies in the file, every
+  level and layer, into a block-compressed 2D array texture of its own at its own size. The
+  textures are bound as an array (scene binding 10) that each screen indexes with
+  `nonuniformEXT`. Playing an advert is choosing a layer from the clock: nothing is decoded,
+  uploaded or mipmapped while the city runs, and the cost to a screen's pixel is one texture
+  read. The drink advert's 240 frames are a 6.1 MB file and take 10.3 MB of video memory
+  (the driver pads the small levels). They load in about 10 ms. This needs BC textures and
+  non-uniform indexing (`VkCore.adverts`); without them the screens show only the procedural
+  scenes. The properties go into a uniform table (`AdvertTable`, binding 9 of the scene and
+  cloud sets).
+- **Not video decoding:** hardware decoding (Vulkan Video) would keep only a few frames in
+  memory, but the engine would have to parse the stream itself, and screens each run on their
+  own clock, so each would need its own decoder. Every decoded frame would also need
+  converting and mipmapping each frame. At LED resolution a whole compressed advert is a few
+  megabytes, so the frames are kept instead.
+- **Screens of its shape:** a screen shows only the adverts whose frames' aspect ratio is
+  within 5% of its own (`ADVERT_ASPECT_FIT`, `advertFits` in `shaders/adverts.glsl`); the
+  picture fills it edge to edge, never padded, cropped or framed. A screen no advert fits
+  shows only the procedural scenes. The giant screens on tall faces are made 16:9 or 9:16,
+  the shapes adverts are made in (a tall one is narrowed, not cut short, where its section is
+  short); the rooftop billboards and the arcologies' screens are of other shapes. Of the 236
+  screens within 6 chunks of the spawn, the portrait drink advert fits the 88 tall ones.
+- **Slots:** a screen changes what it shows every 9 s (`ADVERT_SLOT_SECONDS`,
+  `src/core/advert_slots.h`), through a burst of static, each screen on its own clock. The
+  slot's hash places it on a line of screen time (`advertPick`): the four procedural scenes'
+  share first (`ADVERT_PLACEHOLDER_WEIGHT`), then, by its weight, each advert that fits the
+  screen. An advert plays once from the end of the static and holds its last frame, so it
+  may last up to 8.775 s.
+- **The panel** (`shadeAdvert`, `shaders/city/signs.glsl`): one LED per pixel of the frames,
+  across the whole screen. Each LED has red, green and blue emitters with soft glows, laid
+  out as in the reference LED effect the advert was first made with
+  (`rgb_led_billboard_v3.py`, kept outside the repository).
+- **Distance:** while a cell spans 3 pixels or more the emitters show; from about 3 to 2 pixels
+  only the grid of LEDs does; beyond that the cells merge into the picture, which the baked
+  mip chain averages, down to a single colour far away. Each stage gives off the same light
+  on average, so the screen doesn't brighten or dim as it recedes. Nothing finer than the pixels is drawn, so the LEDs don't
+  shimmer.
+- **Clouds:** a screen high enough to light the clouds lights them with its advert's mean
+  colour.
+- **Missing adverts:** an advert that can't be read is reported on stderr and given no screen
+  time. `material_test` checks every advert: its manifest reads, its KTX2 is a BC7 or BC1 array
+  with its whole mip chain, levels of the right sizes and a mean colour, and it fits a slot. `city_test --screens` counts the screens round the spawn each advert fits and
+  prints `--cam` views of the nearest, close to, at 25 m and at 90 m, each with a `--time`
+  that shows an advert.
+
 ### Walking (`src/app/player.c`)
 Collision runs against the same deterministic block layouts, using circle-vs-footprint tests
 against the oriented footprints and sliding along walls. A planned lobby is open: its envelope
@@ -1069,7 +1152,8 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
   height, so low bulges and scud glow sodium-orange (tinted by neon in places) while the
   body stays dark.
 - **Signs:** neon signs and video screens high enough to reach the clouds also light them
-  in their own colour. They flicker with the sign and change with each screen's advert.
+  in their own colour. They flicker with the sign and change with each screen's advert (an
+  authored advert's mean colour, `adverts.glsl`).
   `city.c` records each one as a sky light (position, facing, power = radiance x area) while
   building the chunk. Each frame `chunks_sky_lights` gathers those near the camera into a
   grid of 100 m cells, so each march step only tests the few signs around it.

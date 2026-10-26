@@ -32,8 +32,8 @@ This document records the boundaries emerging from the current codebase and the 
 | `src/app/ ` | Application lifetime, input, player/camera behaviour and coordination | Owning the implementation of terrain generation or rendering |
 | `shaders/` | GPU-side shading and compute logic, organised by purpose | Duplicating world-generation policy that belongs on the CPU without a clear reason |
 | `tests/` and lab executables | Determinism, invariants, grammar validity, diagnostic output and reproducible captures | Runtime responsibilities |
-| `assets/` | Authored content read at run time: materials (`materials/*.json`), their images (`textures/`), models (`models/*.glb`). The build copies it beside the executable | Code, or anything the engine could generate itself |
-| `tools/` | Offline converters that turn outside sources into `assets/` (`pbr_pack`, `stud_pack`, `model_pack`) and bakes of `data/` | Runtime code; their output is never C source |
+| `assets/` | Authored content read at run time: materials (`materials/*.json`), their images (`textures/`), models (`models/*.glb`), the screens' adverts (`adverts/*.json` and their KTX2 frames). The build copies it beside the executable | Code, or anything the engine could generate itself |
+| `tools/` | Offline converters that turn outside sources into `assets/` (`pbr_pack`, `stud_pack`, `model_pack`, `advert_bake.py`) and bakes of `data/` | Runtime code; their output is never C source |
 
 The current internal-header pattern is intentional. For example, `city_internal.h`, `interior_internal.h` and `renderer_internal.h` describe shared implementation details for a group of source files; they are not public interfaces. Continue that pattern for new multi-file subsystems.
 
@@ -215,7 +215,7 @@ Decided 2026-10-25, when the street furniture's meshes were first compiled in as
 - **Models are mesh-only glTF 2.0 binaries** (`assets/models/<name>.glb`, `src/city/models.h`): one indexed triangle primitive with positions, normals and texture coordinates, its materials only names, the materials that shade it (`assets/materials/<material>.json`): its own, then any liveries as the file's variants (`KHR_materials_variants`), all on the one mesh's texture coordinates. It is a standard format any tool opens; `tools/model_pack.c` writes it. A second look for the same shape is a livery of one model, not a second copy of the mesh.
 - **Generation may read assets, but only ones loaded before it runs**, once, read-only thereafter, so a chunk is still a pure function of its coordinates and the loaded assets (`models_load` in `main` and in the tests that generate, from `NEONCITY_ASSETS`, the source tree's `assets/`).
 - **A missing or malformed asset degrades, never fails.** A missing material leaves its surfaces procedural; a missing model leaves out what would have used it, the same in mesh and collision, or keeps a procedural stand-in (the lobby sofa's boxes). Report it once on stderr.
-- **Each asset kind is validated by a test** that reads the files from the source tree (`material_test` checks materials and models).
+- **Each asset kind is validated by a test** that reads the files from the source tree (`material_test` checks materials, models and adverts).
 
 ## 7. Build system and tests
 

@@ -135,9 +135,63 @@ vec3 shadeNeon(vec2 uv, uint seed, uvec4 prm, vec3 rel) {
     return mix(c, avg, lod);
 }
 
+/* ---------------- authored adverts (assets/adverts/, src/render/adverts.c) ---------------- */
+#include "adverts.glsl"
+// Each advert's frames, one per layer, block compressed with their mip chain; a screen
+// picks its advert's, so the index is non-uniform across a draw.
+layout(set = 0, binding = 10) uniform sampler2DArray advertFrames[ADVERT_TABLE_SIZE];
+
+// One LED: red, green and blue emitters side by side across the middle of its cell, laid
+// out as rgb_led_billboard_v3.py lays them (ovals 0.27 x 0.34 of the pitch at 0.18, 0.5
+// and 0.82 across), each with a soft glow (sigma 0.22 of the pitch) that carries `glow`
+// of its light. f: the point in the cell (0..1); px: a pixel's size in cells. Returns
+// each channel's light relative to the cell's mean, so a cell gives off its colour on
+// average however its light is split.
+vec3 ledEmitters(vec2 f, float glow, float px) {
+    const vec2  R = vec2(0.135, 0.17);
+    const float CORE = PI * 0.135 * 0.17;          // an oval's share of the cell
+    const float S = 0.22;
+    const float HALO = 2.0 * PI * S * S * 0.954;   // the glow's integral over the cell
+    float w = px / R.x;                            // a pixel, in oval radii
+    vec3 e;
+    for (int k = 0; k < 3; ++k) {
+        vec2 d = f - vec2(0.18 + 0.32 * float(k), 0.5);
+        d -= round(d);                             // the glow of the like emitters in the cells round it
+        float core = 1.0 - smoothstep(1.0 - 0.5 * w, 1.0 + 0.5 * w, length(d / R));
+        e[k] = (1.0 - glow) * core / CORE + glow * exp(-dot(d, d) / (2.0 * S * S)) / HALO;
+    }
+    return e;
+}
+
+/* An authored advert on a screen of its shape (advertFits): one LED per pixel of its
+ * frames, the picture filling the screen edge to edge. Close to, every LED shows its
+ * three emitters; further off, the grid of LEDs; further still they merge into the
+ * picture, whose mip chain averages the LEDs under each pixel. Each stage gives off
+ * the same light on average, so nothing brightens or dims with distance.
+ * t: seconds into the advert, which holds its last frame once it ends. */
+vec3 shadeAdvert(int a, vec2 uv, float t) {
+    Advert A = advert[a];
+    vec2 res = vec2(A.info.yz);
+    vec2 q = clamp(vec2(uv.x, 1.0 - uv.y), 0.0, 1.0) * res;   // in LEDs from the top left
+    vec2 gx = dFdx(q), gy = dFdy(q);
+    float px = max(fwidth(q.x), fwidth(q.y));
+    vec2 ci = min(floor(q), res - 1.0), f = q - ci;
+    float fr = clamp(floor(t * A.play.x), 0.0, float(A.info.x) - 1.0);
+    vec3 cell = textureGrad(advertFrames[nonuniformEXT(a)], vec3((ci + 0.5) / res, fr), gx / res, gy / res).rgb * A.play.y;
+    // The emitters while a cell spans three pixels or more; then, to about two, only the
+    // grid of LEDs (the cells' fundamental, mean 1), finer detail than the pixels would alias.
+    float rgb = 1.0 - smoothstep(0.12, 0.3, px), grid = 1.0 - smoothstep(0.25, 0.45, px);
+    vec2 k = 1.0 + 0.85 * cos(2.0 * PI * (f - 0.5));
+    vec3 e = mix(mix(vec3(1.0), vec3(k.x * k.y), grid), ledEmitters(f, A.play.z, px), rgb);
+    return cell * e + vec3(0.0015);   // the black panel between
+}
+
 vec3 shadeScreen(vec2 uv, uint seed, uvec4 prm) {
     float wM = float(prm.z) * 0.5, hM = float(prm.w) * 0.5;
     uint h = screenAdvert(seed, gTime);
+    float ph = advertPhase(seed, gTime);
+    int ad = advertPick(h, wM / max(hM, 0.5));
+    if (ad >= 0 && ph >= ADVERT_STATIC) return shadeAdvert(ad, uv, (ph - ADVERT_STATIC) * ADVERT_SLOT_SECONDS) * 1.8;
     uint scene = h & 3u;
     vec3 c1 = neonColor(h >> 4), c2 = neonColor(h >> 8);
     vec3 col;
@@ -171,8 +225,7 @@ vec3 shadeScreen(vec2 uv, uint seed, uvec4 prm) {
         col = mix(vec3(0.02, 0.0, 0.03), c2 * 0.15, q.y) + c1 * 2.5 * (1.0 - smoothstep(0.04, 0.1, d)) * (0.8 + 0.2 * sin(t * 4.0));
     }
     // transition static
-    float ph = fract((gTime + hfloat(seed) * 30.0) / 9.0);
-    if (ph < 0.025) col = vec3(hfloat(hash2i(h, int(q.x * 200.0), int(q.y * 120.0 + t * 60.0)))) * 0.8;
+    if (ph < ADVERT_STATIC) col =vec3(hfloat(hash2i(h, int(q.x * 200.0), int(q.y * 120.0 + t * 60.0)))) * 0.8;
     // LED pixel grid and scanline when close
     vec2 pm = uv * vec2(wM, hM) / 0.12;
     float px = max(fwidth(pm.x), fwidth(pm.y));

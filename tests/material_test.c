@@ -8,8 +8,12 @@
  * it names is a PNG that decodes; its properties are sound; the road's tile
  * divides the 64 chunks over which the shaders' world coordinates wrap.
  *
+ * The models (test_models) and the adverts (assets/adverts/*.json,
+ * src/render/advert_def.c: test_adverts) the same way.
+ *
  * material_test [assets dir] (default: assets). */
 #include "material_def.h"
+#include "advert_def.h"
 #include "json.h"
 #include "common.h"
 #include "models.h"
@@ -160,12 +164,68 @@ static void test_models(const char *assets) {
     printf("%d models, %d triangles\n", PM_COUNT, tris);
 }
 
+/* The advert reader: defaults, and a file's errors caught. */
+static void test_advert_def(void) {
+    const char *path = "material_test_advert.json";
+    static const struct { const char *text; bool ok; } CASES[] = {
+        { "{ \"frames\": \"a.ktx2\", \"fps\": 12.5 }", true },
+        { "{ \"fps\": 12 }", false },                                          /* no frames */
+        { "{ \"frames\": 3, \"fps\": 12 }", false },
+        { "{ \"frames\": \"a.ktx2\" }", false },                               /* no fps */
+        { "{ \"frames\": \"a.ktx2\", \"fps\": 0 }", false },
+        { "{ \"frames\": \"a.ktx2\", \"fps\": 12, \"glow\": 2 }", false },
+        { "{ \"frames\": \"a.ktx2\", \"fps\": 12, \"accent\": [1, 1, 1] }", false },   /* the brand panel's, gone */
+        { "{ \"frames\": \"a.ktx2\", \"fps\": 12, \"sheet\": \"a.png\" }", false },
+    };
+    for (size_t i = 0; i < sizeof(CASES) / sizeof(CASES[0]); ++i) {
+        FILE *f = fopen(path, "wb");
+        if (!f) { CHECK(0, "can't write %s", path); return; }
+        fputs(CASES[i].text, f);
+        fclose(f);
+        AdvertDef d;
+        char err[600];
+        bool ok = advert_def_load(path, &d, err, sizeof(err));
+        CHECK(ok == CASES[i].ok, "advert %zu: %s", i, ok ? "accepted" : err);
+        if (i == 0 && ok)
+            CHECK(d.fps == 12.5f && d.weight == 1.0f && d.glow == 0.3f && strcmp(d.frames, "a.ktx2") == 0,
+                  "advert values and defaults");
+    }
+    remove(path);
+}
+
+/* Every advert CMake found (ADVERT_NAMES) reads; its frames file is a KTX2
+ * array of BC7 or BC1 frames with its whole mip chain and mean colour
+ * (advert_frames_load checks); it plays whole within a screen's slot. */
+static void test_adverts(const char *assets) {
+    int frames = 0;
+    double mb = 0.0;
+    for (int i = 0; i < ADVERT_COUNT; ++i) {
+        const char *name = ADVERT_NAMES[i];
+        char path[1100], err[1300];
+        snprintf(path, sizeof(path), "%s/adverts/%s.json", assets, name);
+        AdvertDef d;
+        if (!advert_def_load(path, &d, err, sizeof(err))) { CHECK(0, "advert %s: %s", name, err); continue; }
+        AdvertFrames f;
+        if (!advert_frames_load(d.frames, &f, err, sizeof(err))) { CHECK(0, "advert %s: %s", name, err); continue; }
+        double seconds = f.frames / (double)d.fps, slot = ADVERT_SLOT_SECONDS * (1.0 - ADVERT_STATIC);
+        CHECK(seconds <= slot + 1e-6, "advert %s: %.2f s won't fit a screen's %.3f s slot", name, seconds, slot);
+        CHECK(d.brightness < 50.0f, "advert %s: brightness %g", name, d.brightness);
+        for (int k = 0; k < 3; ++k) CHECK(f.mean[k] >= 0.0f && f.mean[k] <= 1.0f, "advert %s: mean colour %g", name, f.mean[k]);
+        frames += (int)f.frames;
+        mb += f.size / 1e6;
+        advert_frames_free(&f);
+    }
+    printf("%d adverts, %d frames, %.1f MB\n", ADVERT_COUNT, frames, mb);
+}
+
 int main(int argc, char **argv) {
     const char *assets = argc > 1 ? argv[1] : "assets";
     test_json();
     test_def();
+    test_advert_def();
     test_files(assets);
     test_models(assets);
+    test_adverts(assets);
     if (g_failures) { printf("%d failures\n", g_failures); return 1; }
     printf("material_test: ok\n");
     return 0;

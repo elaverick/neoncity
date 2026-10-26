@@ -49,6 +49,8 @@ SIGNS AND LIGHTS (shadeNeon, shadeScreen, shadeEmissive, LED strips)
 --------------------------------------------------------------------
   - Neon signs: pseudo-kanji glyphs, tubes, painted boards, metal lip
   - Video screens / billboards: portrait adverts, scrolling tickers, pulsing rings, brand marks, LED grid
+    (between the authored adverts of assets/adverts/, which shadeAdvert draws on RGB LEDs
+    on the screens of their shape)
   - Street lamp heads, aircraft warning lights, emissive boxes
   - LED strips (steady and chasing)
 

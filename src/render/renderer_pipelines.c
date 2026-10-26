@@ -131,19 +131,21 @@ void write_buf_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkDescript
 
 void create_layouts(Renderer *r) {
     VkCore *vk = r->vk;
-    VkDescriptorSetLayoutBinding scene[9] = {
+    VkDescriptorSetLayoutBinding scene[11] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shelter map (litter: city.vert) */
         { 8, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' properties (materials.c) */
+        { 9, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the adverts' table (adverts.c) */
+        { 10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, ADVERT_TABLE_SIZE, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* each advert's frames */
         /* ray-traced shadows only */
         { 5, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shadow slot ids */
         { 7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shadow slot visibility */
     };
-    r->sceneLayout = make_set_layout(vk, scene, r->rt ? 9 : 6);
+    r->sceneLayout = make_set_layout(vk, scene, r->rt ? 11 : 8);
     if (r->rt) {
         const VkShaderStageFlags C = VK_SHADER_STAGE_COMPUTE_BIT;
         const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -176,7 +178,7 @@ void create_layouts(Renderer *r) {
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },
     };
     r->bloomLayout = make_set_layout(vk, bloom, 2);
-    VkDescriptorSetLayoutBinding cloud[7] = {
+    VkDescriptorSetLayoutBinding cloud[8] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },
         { 7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },           /* sky lights */
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },   /* noise volume */
@@ -184,8 +186,9 @@ void create_layouts(Renderer *r) {
         { 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },            /* cloud */
         { 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },            /* cloudDist */
         { 8, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },            /* mist */
+        { 9, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL },           /* the adverts' table (screens' sky lights) */
     };
-    r->cloudLayout = make_set_layout(vk, cloud, 7);
+    r->cloudLayout = make_set_layout(vk, cloud, 8);
     VkDescriptorSetLayoutBinding cloudComp[4] = {
         { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
@@ -242,9 +245,9 @@ void create_layouts(Renderer *r) {
     r->proxyPL = make_pipeline_layout(vk, r->proxyLayout, 0, 0);
 
     VkDescriptorPoolSize sizes[4] = {
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (PBR_TEXTURE_COUNT + 3) * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (PBR_TEXTURE_COUNT + ADVERT_TABLE_SIZE + 3) * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -265,7 +268,11 @@ void create_layouts(Renderer *r) {
         VkDescriptorBufferInfo sb = { chunks_gpu_buffer(r->chunks, i), 0, chunks_gpu_buffer_size() };
         VkDescriptorBufferInfo lb = { chunks_light_buffer(r->chunks), 0, chunks_light_buffer_size() };
         VkDescriptorBufferInfo mb = { materials_table(r->materials), 0, sizeof(MaterialGPU) * PBR_MATERIAL_COUNT };
-        VkWriteDescriptorSet w[5] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
+        VkDescriptorBufferInfo ab = { adverts_table(r->adverts), 0, sizeof(AdvertTable) };
+        VkDescriptorImageInfo af[ADVERT_TABLE_SIZE];
+        adverts_frames(r->adverts, af);
+        VkWriteDescriptorSet w[7] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
+                                      { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
                                       { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
                                       { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
         w[0].dstSet = r->sceneSet[i]; w[0].dstBinding = 0; w[0].descriptorCount = 1;
@@ -278,7 +285,11 @@ void create_layouts(Renderer *r) {
         w[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[3].pImageInfo = maps;
         w[4].dstSet = r->sceneSet[i]; w[4].dstBinding = 8; w[4].descriptorCount = 1;
         w[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[4].pBufferInfo = &mb;
-        vkUpdateDescriptorSets(vk->device, 5, w, 0, NULL);
+        w[5].dstSet = r->sceneSet[i]; w[5].dstBinding = 9; w[5].descriptorCount = 1;
+        w[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[5].pBufferInfo = &ab;
+        w[6].dstSet = r->sceneSet[i]; w[6].dstBinding = 10; w[6].descriptorCount = ADVERT_TABLE_SIZE;
+        w[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[6].pImageInfo = af;
+        vkUpdateDescriptorSets(vk->device, 7, w, 0, NULL);
         if (r->rt) write_as_set(vk, r->sceneSet[i], 5, rt_tlas(r->rt, i));
     }
 

@@ -143,6 +143,13 @@ static void create_device(VkCore *vk, bool wantRt) {
     }
     printf("Ray-traced shadows: %s\n", vk->rt ? "on" : wantRt ? "off (the GPU has no ray queries)" : "off (--noshadows)");
 
+    /* The screens' adverts (adverts.c): block-compressed frames, an image per advert picked per screen. */
+    VkPhysicalDeviceVulkan12Features f12Idx = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+    VkPhysicalDeviceFeatures2 idxAll = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+    idxAll.pNext = &f12Idx;
+    vkGetPhysicalDeviceFeatures2(vk->phys, &idxAll);
+    vk->adverts = supported.textureCompressionBC && f12Idx.shaderSampledImageArrayNonUniformIndexing;
+
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qi = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
     qi.queueFamilyIndex = vk->queueFamily;
@@ -155,18 +162,20 @@ static void create_device(VkCore *vk, bool wantRt) {
     as.accelerationStructure = VK_TRUE;
     as.pNext = &rq;
     VkPhysicalDeviceVulkan12Features f12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
-    f12.bufferDeviceAddress = VK_TRUE;
-    f12.pNext = &as;
+    f12.bufferDeviceAddress = vk->rt ? VK_TRUE : VK_FALSE;
+    f12.shaderSampledImageArrayNonUniformIndexing = f12Idx.shaderSampledImageArrayNonUniformIndexing;   /* city.frag declares it (required in Vulkan 1.3) */
+    f12.pNext = vk->rt ? &as : NULL;
     VkPhysicalDeviceVulkan13Features f13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
     f13.dynamicRendering = VK_TRUE;
     f13.synchronization2 = VK_TRUE;
     f13.shaderDemoteToHelperInvocation = VK_TRUE;   /* city.frag's discards (required in Vulkan 1.3) */
-    if (vk->rt) f13.pNext = &f12;
+    f13.pNext = &f12;
     VkPhysicalDeviceFeatures2 f2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
     f2.pNext = &f13;
     f2.features.multiDrawIndirect = vk->mdi ? VK_TRUE : VK_FALSE;
     f2.features.drawIndirectFirstInstance = vk->mdi ? VK_TRUE : VK_FALSE;
     f2.features.samplerAnisotropy = supported.samplerAnisotropy;
+    f2.features.textureCompressionBC = vk->adverts ? VK_TRUE : VK_FALSE;
 
     const char *exts[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
                            VK_KHR_RAY_QUERY_EXTENSION_NAME, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME };

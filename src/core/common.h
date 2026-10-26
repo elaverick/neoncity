@@ -79,12 +79,13 @@
 #define SKY_MAX_INDEX     32768
 #define SKY_GAIN          4.0f          /* scattered light per unit power at 1 m (artistic: signs bloom in the haze) */
 #define SKY_RANGE_MAX     220.0f
-#define SKY_KIND_SCREEN   32u           /* kind bits: 0-2 neon colour, 3-4 flicker mode, 5 video screen */
+#define SKY_KIND_SCREEN   32u           /* kind bits: 0-2 neon colour, 3-4 flicker mode, 5 video screen;
+                                         * a screen's 16-23 its width, 24-31 its height (half metres: its params z, w) */
 
 /* Air lights: every lamp, lit shopfront, neon sign and screen, for the rain
  * mist they light (clouds.comp: mistLight). Each frame the AIR_MAX_LIGHTS
  * that matter most to the camera (power / distance^2, within AIR_RANGE) are
- * gathered with the sky lights. kind >> 8 is the class; signs keep the sky
+ * gathered with the sky lights. kind >> 8 & 255 is the class; signs keep the sky
  * light kind bits below it. power: irradiance at 1 m, as the lamp loops. */
 #define AIR_MAX_LIGHTS    256
 #define AIR_RANGE         140.0f
