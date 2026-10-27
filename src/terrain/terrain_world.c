@@ -125,29 +125,23 @@ double terrain_planet_lowest(void) {
 /* --- Where the sea will be ----------------------------------------------------------
  * The planet has no water yet. When it does, the sea will fill the Earth's
  * own oceans, up to SEA_MARGIN_M above sea level (without a bake, the basins
- * of the stand-in below SEA_LEVEL_MACRO), and the whole far side of the
- * planet from the chart's origin, beyond SEA_OUTER_FROM: the world ocean,
- * until a settlement there can have a chart of its own (plan.h,
- * PLAN_WORLD_REACH). The Earth is read at the lift's spacing, as coarse as
- * the plan's sea grid. */
+ * of the stand-in below SEA_LEVEL_MACRO). The margin is the Earth read at the
+ * lift's spacing, as coarse as the plan's sea grid; the shore as finely as
+ * its caller asks. */
 #define SEA_MARGIN_M    20.0
 #define SEA_LEVEL_MACRO (-0.12)
-#define SEA_OUTER_FROM  (0.35 * PI)
-#define SEA_OUTER_TO    (0.39 * PI)
-#define SEA_OUTER_M     4000.0
+
+double terrain_shore(TerrainDir p, double spacing) {
+    return terrain_earth_loaded() ? terrain_earth_height(p, spacing) : TERRAIN_MACRO_M * (terrain_macro(p, 0.0) - SEA_LEVEL_MACRO);
+}
+
+double terrain_sea_margin_dir(TerrainDir p) {
+    return terrain_shore(p, TERRAIN_LIFT_SPACING) - (terrain_earth_loaded() ? SEA_MARGIN_M : 0.0);
+}
 
 double terrain_sea_margin(double x, double z) {
-    double th = hypot(x, z) / PLANET_RADIUS;
-    if (th >= SEA_OUTER_TO) return -SEA_OUTER_M;
     TerrainChart wc = terrain_world_chart();
-    TerrainDir d = terrain_chart_dir(&wc, x, z);
-    double m = terrain_earth_loaded() ? terrain_earth_height(d, TERRAIN_LIFT_SPACING) - SEA_MARGIN_M
-                                      : TERRAIN_MACRO_M * (terrain_macro(d, 0.0) - SEA_LEVEL_MACRO);
-    if (th > SEA_OUTER_FROM) {
-        double t = (th - SEA_OUTER_FROM) / (SEA_OUTER_TO - SEA_OUTER_FROM);
-        m -= SEA_OUTER_M * t * t * (3.0 - 2.0 * t);
-    }
-    return m;
+    return terrain_sea_margin_dir(terrain_chart_dir(&wc, x, z));
 }
 
 /* --- The horizon ------------------------------------------------------------------- */

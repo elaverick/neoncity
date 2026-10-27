@@ -23,7 +23,7 @@ build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders,
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
-build/world_test --map world.ppm         # the settlements and roads over the world (--local out.ppm km [x z]: round a point; --earth <bake> first: on the Earth)
+build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the roads' reach in the world chart; --local out.ppm km [x z]: round a point; --earth <bake> first: on the Earth)
 cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)
 build/terrain_test --earth-map earth.ppm # the bake as the engine reads it (--earth <bake> for another; the tests use tests/data/earth_test.bake)
 ```
@@ -97,22 +97,32 @@ every road meeting it, which leaves room for the crossings, so a road comes out 
 whichever area it is requested through.
 
 ### Settlements and roads (`src/plan/plan_world.c`, `src/plan/plan_roads.c`)
-The megacity is one of 223 cities placed over the planet's land once at startup (`plan_world_init`,
-on every core, two or three seconds), a pure function of the world's seed:
+The megacity is one of the world's largest metropolitan areas, all placed over the planet once at
+startup (`plan_world_init`, on every core, about a second), a pure function of the world's seed and
+the list of cities, `data/earth/largest_metropolitan_areas_227.csv` (rank, name, latitude and longitude;
+read at run time, see `data/earth/SOURCE.md`):
 
-- **Where the sea will be.** There is no water yet, but the planet's broad basins below a sea level to
-  come, and the whole far side beyond about 7,000 km from the megacity, are reserved for it
-  (`terrain_sea_margin`). Cities keep 100 m above it (in the basins' height), roads 20 m. The rest is
-  the land, told apart into continents on a 20 km grid; `world_test --map` draws them.
-- **The cities.** 50 colossal ones the megacity's size (it is one of them: a 25 km footprint, about
-  20 km built) at least 450 km apart, then 173 megacities built from 12 km down to 7 km across, the best
-  sites the largest. Sites score for level land (the region's plains, against mountains, hills and
-  plateaus), no canyon, and the lowlands near the coast to come, where cities gather; any two footprints
-  stay 90 km apart. Each is a warped disc like the megacity's, built of whole towns of the same lattice,
-  its core a regional centre; its ground rises and falls by its own relief on the planet's highlands.
-  The plan of every city is in the world's chart, which is near enough true to the sphere within the
-  cities' reach (0.38 pi R) for a city to look right.
-- **The roads.** On each continent: candidate links between the Delaunay neighbours, each costed by a
+- **The cities.** Los Angeles is the megacity, settlement 0 at the world chart's origin; the rest follow
+  by rank. Cities within 30 km of each other are one conurbation (Tokyo with Yokohama, Osaka with Kobe,
+  Guangzhou with Foshan, Shenzhen with Hong Kong), with the best rank's name and their summed area. Ranks
+  1 to 50 are colossal, the megacity's size (a 25 km footprint, about 20 km built); beyond, they fall from
+  12 km to 6 km across at the last rank as a power of the rank. Each is a warped disc like the megacity's
+  in its own chart, about its centre with north up, built of whole towns of the same lattice, its core a
+  regional centre; its ground rises and falls by its own relief on the Earth's highlands.
+- **The coasts.** A footprint stops 1 km short of the shore (the Earth read at about 2 km, on a 500 m
+  grid in the city's chart); one the sea cuts short is pushed inland, away from what was cut off, to
+  where it keeps its area, and grown by up to 30% if it must. A city whose place is all below the sea
+  goes 40 km inland at most, or is left out (Rotterdam-The Hague, beside a pushed Amsterdam). No two
+  footprints meet: the lower-ranked of a pair too close shrinks. 220 of the 221 stand on the Earth's
+  bake. `world_test --map` draws them over the whole planet.
+- **Where the sea will be.** There is no water yet, but the planet's basins below a sea level to come
+  are reserved for it (`terrain_sea_margin`, the Earth at 20 km less 20 m; `terrain_shore` finely). The
+  cities keep off it as above; the roads keep 20 m above it on a 20 km grid, or 5 m above the finer shore
+  on the coastal plains the grid takes for sea (any land within 20 km of a city). The land is told apart
+  into continents on that grid.
+- **The roads.** The cities within 5,000 km of the megacity, all of North America from Mexico City to
+  Boston, where the world's chart is near enough true for a road (they move onto the sphere next). On
+  each continent: candidate links between the Delaunay neighbours, each costed by a
   route over a 4 km grid of the landforms; their minimum spanning tree; then links a gravity model
   (traffic as the cities' sizes' product over the square of their distance) finds the network makes go
   round, preferring cities that already have links and are big (every colossal city keeps three); then
@@ -121,7 +131,7 @@ on every core, two or three seconds), a pure function of the world's seed:
   canyons (tested against their centre lines), other cities and the sea, and pulled straight wherever a
   straight line costs no more. Roads that run beside a longer one join it at junctions; crossings
   become junctions. The gravity model's traffic on the cheapest routes picks the freeways (about half
-  the length); the rest are trunk roads. About 860 roads, 400 junctions and 160,000 km in all.
+  the length); the rest are trunk roads. On the Earth about 80 roads, 40 junctions and 17,000 km.
 - **Into the ground.** A road ends at each city where it leaves the built towns, on the perimeter
   boulevard (a gate: the verge there is asphalt). Its height runs every 50 m along it: the ground
   smoothed, held to 6% (freeways) or 9% (trunk roads), meeting the city's ground at a gate and one height
@@ -132,7 +142,9 @@ on every core, two or three seconds), a pure function of the world's seed:
   lane lines and freeways' sodium lamps every 60 m, from the segments within 16 km of the camera.
 
 `world_test` checks them; `world_test --threads 1 --fingerprint` hashes what was placed and built, the
-same on any number of threads, and prints `--cam` views out along the megacity's roads.
+same on any number of threads, and prints `--cam` views out along the megacity's roads. Without a bake
+the same list stands on the procedural stand-in, where about half the cities find their place at sea
+and are left out.
 
 ### Plots (`src/city/lots.c`)
 Blocks are divided into plots that conform to the plan:
@@ -530,8 +542,8 @@ without it the procedural field below stands in): the height at any direction, s
 and continuous across the faces' seams, with bounds for culling and levels of detail (`terrain_test --earth-map
 out.ppm` draws it). The chart's origin is central Los Angeles. From 40 to 400 km beyond the megacity the land rises
 and falls with the real Earth, and its landforms follow the data: mountains where it has the relief, plains where
-it is low and level, ridges along its ranges (`terrain_test --landform-map out.ppm`). The settlements stand on its
-lowlands and the roads go round its mountains (`world_test --earth build/earth.bake --map out.ppm`). Without a bake,
+it is low and level, ridges along its ranges (`terrain_test --landform-map out.ppm`). The settlements stand at the
+world's largest cities and the roads go round its mountains (`world_test --earth build/earth.bake --map out.ppm`). Without a bake,
 broad procedural highlands and basins up to 1.5 km high and low stand in (`terrain_test --planet-map out.ppm` draws all
 six faces). The design is in `docs/neoncity-terrain-and-bounded-city-world-design.md`, "Earth data". Beyond the clipmap's window the ground is the cube-sphere's patches (`src/terrain/terrain_patch.c`,
 `src/render/planet_gpu.c`): 33 x 33 grids refined as a quadtree by their screen-space error through the haze,

@@ -2,7 +2,7 @@
 #include "common.h"
 #include "geom2d.h"
 #include "mathlib.h"
-#include "terrain_planet.h"   /* PLANET_RADIUS */
+#include "terrain.h"   /* PLANET_RADIUS, TerrainDir, TerrainChart */
 
 /* The city plan: a polycentric, cellular layout in the spirit of Singapore's
  * new towns, generated as a pure function of world position.
@@ -67,41 +67,59 @@
 #define CITY_FRINGE      3000.0
 
 /* Settlements: the cities on the land, each with a footprint and ground of
- * its own (src/plan/plan_world.c). Settlement 0 is the megacity the player
- * starts in, round town (0, 0); the rest are placed over the planet's land
- * once, at plan_world_init: PLAN_COLOSSAL cities of its size in all (it
- * included), then megacities built PLAN_MEGA_MIN_KM to PLAN_MEGA_MAX_KM
- * across. Each footprint is a disc warped like the megacity's, the warp
- * scaled with the radius. The ground under a settlement rises and falls
- * gently by its relief, larger the smaller the settlement: a megacity is kept
- * nearly flat, a small city can be moderately hilly (plan_settlement_relief).
+ * its own (src/plan/plan_world.c). They are the world's largest metropolitan
+ * areas, read at plan_world_init from PLAN_CITY_LIST (rank, name, latitude
+ * and longitude). Settlement 0 is Los Angeles, the megacity the player starts
+ * in, round town (0, 0) at the world chart's origin; the rest follow by rank.
+ * Cities closer than PLAN_MERGE_KM (chained) are one conurbation, with the
+ * best rank's name and the summed area of its parts. Size comes from rank:
+ * up to PLAN_COLOSSAL_RANK they are colossal, the megacity's 20 km across;
+ * beyond it they fall from PLAN_MEGA_MAX_KM to PLAN_MEGA_MIN_KM at the last
+ * rank as a power of the rank.
  *
- * Every settlement lies within PLAN_WORLD_REACH of the world's origin, where
- * the chart world X/Z is (terrain.h, "The planet") is near enough true to the
- * sphere for a city's plan; and where the sea can't come (terrain_sea_margin). */
-#define PLAN_SETTLEMENTS   223
-#define PLAN_COLOSSAL      50
-#define PLAN_MEGA_MAX_KM   12.0    /* the megacities' built size, across (km) */
-#define PLAN_MEGA_MIN_KM   7.0
+ * Each settlement has its own chart, about its centre with north up, and its
+ * footprint is measured in it: a disc warped like the megacity's, the warp
+ * scaled with the radius, and cut back to PLAN_COAST_M from the shore
+ * (terrain_shore). A footprint that strays into the sea is pushed inland, and
+ * grown if it must be, until it keeps its size; two footprints never meet.
+ * The ground under a settlement rises and falls gently by its relief, larger
+ * the smaller the settlement: a megacity is kept nearly flat, a small city
+ * can be moderately hilly (plan_settlement_relief).
+ *
+ * The city itself is still laid out in the world chart, X/Z (terrain.h, "The
+ * planet"), where settlement 0's chart is the world's: the plan's towns of a
+ * far settlement are its footprint's image there. */
+#define PLAN_MAX_SETTLEMENTS 256
+#define PLAN_CITY_LIST     "data/earth/largest_metropolitan_areas_227.csv"
+#define PLAN_MERGE_KM      30.0    /* cities closer than this are one (km, over the sphere) */
+#define PLAN_COLOSSAL_RANK 50      /* the colossal cities: this rank and better */
+#define PLAN_MEGA_MAX_KM   12.0    /* the megacities' built size, across (km): the first after the colossal ones... */
+#define PLAN_MEGA_MIN_KM   6.0     /* ...and the last rank */
+#define PLAN_COAST_M       1000.0  /* footprints stop this far from the shore (m) */
 #define PLAN_RELIEF_MEGA_M 10.0    /* relief of a settlement of CITY_RADIUS (m) */
 #define PLAN_RELIEF_MAX_M  40.0    /* the most relief any settlement has (m) */
-#define PLAN_WORLD_REACH   (0.38 * 3.14159265358979323846 * PLANET_RADIUS)   /* m */
 typedef struct PlanSettlement {
     DVec2  centre;     /* world (x, z) of its footprint's centre: a town's centre (m) */
     double radius;     /* its footprint's radius before the warp (m) */
     double relief_m;   /* amplitude of its ground's relief (m) */
     int    town[2];    /* the town (i, j) at its centre, a regional centre */
-    int    colossal;   /* one of the PLAN_COLOSSAL */
-    int    continent;  /* which land it stands on (plan_world_continent) */
-    double size_km;    /* its built size across, as placed (km) */
+    int    colossal;   /* ranked PLAN_COLOSSAL_RANK or better */
+    int    continent;  /* which land its roads join it to (plan_world_continent), 0 for none */
+    double size_km;    /* its built size across, from its rank (km) */
+    int    rank;       /* its rank in the list (a conurbation's best) */
+    TerrainDir   dir;     /* its centre, in the planet frame (unit) */
+    TerrainChart chart;   /* its own chart, about dir, north up; settlement 0's is the world's */
 } PlanSettlement;
 /* Places the settlements and builds the roads between them (plan_roads.c),
- * on up to `threads` threads; a pure function of WORLD_SEED. Call it once,
- * before anything else asks the plan or the terrain for anything from more
- * than one thread: until it has run, the first such call runs it on one. */
+ * on up to `threads` threads; a pure function of WORLD_SEED and the list.
+ * Call it once, before anything else asks the plan or the terrain for
+ * anything from more than one thread: until it has run, the first such call
+ * runs it on one. */
 void   plan_world_init(int threads);
-/* Settlement k, 0 <= k < PLAN_SETTLEMENTS. */
+/* How many settlements there are, and settlement k, 0 <= k < that, and its name. */
+int    plan_settlement_count(void);
 PlanSettlement plan_settlement(int k);
+const char *plan_settlement_name(int k);
 /* The settlement whose footprint lies nearest (x, z), among those within
  * PLAN_EDGE_CAP of it; the megacity, 0, where none is. */
 int    plan_settlement_near(double x, double z);
@@ -117,16 +135,30 @@ void   plan_settlement_relief_in(double x0, double z0, double x1, double z1, dou
 /* The footprint's radius for a settlement built `km` across: CITY_RADIUS for
  * the megacity's 20 km, as much less as half the difference. */
 double plan_settlement_radius(double km);
-/* Which land (x, z) stands on: a continent's number, from 1, or 0 for where
- * the sea will be, the shore within PLAN_ROAD_SEA_M of it, and beyond the
- * world's reach. Continents are told apart on a grid of PLAN_SEA_CELL, so
- * land joined only across that shore (a strait a road can't cross) is two. */
+/* The roads between the settlements are laid out in the world chart (until
+ * they are on the sphere), over PLAN_ROAD_REACH of its origin, where the
+ * chart's distances are within a tenth of the sphere's: a settlement farther
+ * out has no roads yet. On the Earth that is North America, from Mexico City
+ * to Boston; the next city out, Bogotá, is 5600 km from Los Angeles. */
+#define PLAN_ROAD_REACH   5000000.0   /* m */
+/* Which land (x, z) stands on: a continent's number, from 1, or 0 where no
+ * road may go (plan_road_dry) and beyond the roads' reach. Continents are
+ * told apart on a grid of PLAN_SEA_CELL, so land joined only across what no
+ * road may cross (a strait) is two. */
 #define PLAN_SEA_CELL 20000.0
 #define PLAN_ROAD_SEA_M 20.0   /* roads stay this far above the sea to come (terrain_sea_margin, m) */
 int    plan_world_continent(double x, double z);
 /* terrain_sea_margin at (x, z), read from that grid: interpolated, and -1e9
- * beyond the world's reach (m). */
+ * beyond the roads' reach (m). */
 double plan_world_sea(double x, double z);
+/* Whether a road may stand at (x, z) for the sea to come: PLAN_ROAD_SEA_M
+ * above it on that grid, or, where the grid's 20 km take a coast's lowlands
+ * for the sea, PLAN_ROAD_SHORE_M above the Earth's finer shore
+ * (terrain_shore); and within PLAN_EDGE_CAP of a settlement anywhere on land
+ * (the shore above 0), as its coast was cut, so the roads reach the cities
+ * on the coastal plains. */
+#define PLAN_ROAD_SHORE_M 5.0
+int    plan_road_dry(double x, double z);
 
 /* Roads between the settlements (src/plan/plan_roads.c): on each continent
  * a network joins every settlement, designed once at plan_world_init. Its

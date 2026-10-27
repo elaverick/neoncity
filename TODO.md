@@ -172,7 +172,8 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
 
 ## Settlements and roads
-223 cities over the planet's land and the freeways and trunk roads between them (`src/plan/plan_world.c`,
+The world's largest metropolitan areas over the planet (220 of a list of 227, merged and cut at their coasts)
+and the freeways and trunk roads between those of North America (`src/plan/plan_world.c`,
 `src/plan/plan_roads.c`, `src/render/road_gpu.c`, `shaders/terrain/roads.glsl`; see the README, `world_test --map`).
 Left over:
 - **Normal cities and towns** (the user's next step): smaller settlements fit the same machinery (a footprint, a
@@ -185,9 +186,22 @@ Left over:
   so beyond about 4 km the paint lies on the bare ground's coarse levels, and the planet's patches don't draw roads
   at all. Lamp heads, poles, barriers, signs and traffic aren't modelled: the freeways' light is pools on the
   asphalt. Freeway junctions are level, without slip roads or interchanges.
-- **The far side** of the planet is reserved for a world ocean, because the world chart is only true near its
-  origin (`PLAN_WORLD_REACH`, 0.38 pi R). Per-settlement charts (The planet, One chart) would let cities go anywhere.
-  The sea itself isn't in the terrain yet: the basins it will fill are only low ground.
+- **Roads only in North America.** The roads are laid out in the world chart, so only the cities within
+  `PLAN_ROAD_REACH` (5000 km) have them; C3b puts them on the sphere. Out to Bogota and Lima the network
+  funnelled through Panama and along the Andes, where roads ran inside each other's reach. Miami has no roads:
+  its plain stands under the 5 m the roads keep above the finer shore, beyond 20 km of the city.
+- **Far cities are laid out in the world chart.** Each settlement has its own chart and its footprint is
+  measured in it, but its towns are on the world chart's lattice, so a far city's plan is stretched across by
+  up to theta / sin theta. Keying towns, chunks and proxies by (settlement, i, j) comes with the active chart.
+- **Cities the coast cuts.** The San Francisco Bay Area keeps 69% of its area (the bay, with the growth
+  capped at 30%); about 65 cities lose 3% or more. Rotterdam-The Hague is left out: pushed inland off
+  the polders it meets a pushed Amsterdam. The cut reads the bake's 2.4 km samples, so narrow water (New
+  York's Narrows) dips only centimetres below the sea, and a road may cross it (bridges are to come).
+- **Steep cities.** Placement no longer looks at the land's tilt or landform: the Earth tilts up to about
+  7% under a footprint (0.5% on average), and the procedural mountains and canyons fade out under the
+  city's ground. A city at a mountain front (Almaty, the steepest) may want its relief raised or its
+  footprint fitted to the land.
+- The sea itself isn't in the terrain yet: the basins it will fill are only low ground.
 - **Roads out of a city bundle.** Every colossal city keeps three links in the design, but links leaving it in one
   direction share a road (Steiner junctions, roads beside each other joined), so it may have fewer gates; the
   megacity has two on the Earth (north up the Central Valley, a freeway east; one on the test bake, its three

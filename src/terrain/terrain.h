@@ -212,13 +212,19 @@ typedef struct TerrainEarthLand {
 } TerrainEarthLand;
 int    terrain_earth_land(TerrainDir p, TerrainEarthLand *out);
 
-/* Where the sea will be, at world (x, z): there is no water yet, but when it
- * comes it will cover only where this is at most 0. It is the Earth's
- * elevation (the stand-in's without a bake) above the sea level to come (m),
- * less the world ocean's fall beyond the settlements' reach. A pure
- * function, slow (scales of tens of km and more): the
- * plan keeps a grid of it (plan_world_sea). */
+/* Where the sea will be, at world (x, z) or at a direction: there is no water
+ * yet, but when it comes it will cover only where this is at most 0. It is
+ * the Earth's elevation at the lift's spacing (the stand-in's without a bake)
+ * above the sea level to come, less a margin of 20 m with a bake (m). A pure
+ * function, slow (scales of tens of km and more): the plan keeps a grid of
+ * it (plan_world_sea). */
 double terrain_sea_margin(double x, double z);
+double terrain_sea_margin_dir(TerrainDir p);
+/* The shore at p, as finely as `spacing` reads it: the Earth's elevation
+ * above the sea level to come (the stand-in's without a bake), so the sea
+ * will reach where this is below 0 (m). The settlements' coasts are cut by
+ * it (plan_world.c). */
+double terrain_shore(TerrainDir p, double spacing);
 
 /* Horizon culling: whether a ball (centre, radius; planet frame, m) is wholly
  * hidden from a camera (planet frame) by a sphere of radius `occluder` round

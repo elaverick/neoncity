@@ -28,7 +28,7 @@ void weather_frame(const Weather *w, const double eye[3], FrameUBO *ubo) {
     const double far = CLOUD_REACH + CLOUD_BORDER + CLOUD_FADE + CLOUD_RAGGED;
     Near nearest[CLOUD_CITIES];
     int n = 0;
-    for (int k = 0; k < PLAN_SETTLEMENTS; ++k) {
+    for (int k = 0, ns = plan_settlement_count(); k < ns; ++k) {
         PlanSettlement s = plan_settlement(k);
         double e = hypot(s.centre.x - eye[0], s.centre.z - eye[2]) - s.radius;
         if (e >= far || (n == CLOUD_CITIES && e >= nearest[n - 1].edge)) continue;

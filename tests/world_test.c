@@ -1,11 +1,13 @@
 /* The world's settlements and the roads between them (src/plan/plan_world.c,
  * plan_roads.c).
  *
- * Settlements: the megacity is settlement 0, as it was; PLAN_COLOSSAL cities of
- * its size and the megacities between PLAN_MEGA_MIN_KM and PLAN_MEGA_MAX_KM
- * across; every one on land the sea can't reach, clear of canyons and
- * mountains, apart from the others, inside the world's reach; the edge
- * measure finds each, and each is built about as big as it was placed.
+ * Settlements: the megacity is settlement 0, as it was, in the world's chart;
+ * the rest are the list's cities in rank order, colossal to
+ * PLAN_COLOSSAL_RANK and from PLAN_MEGA_MAX_KM down to PLAN_MEGA_MIN_KM
+ * beyond; each in its own chart about its centre, its town's; none of their
+ * footprints on the sea or within PLAN_COAST_M of it, none meeting another;
+ * the edge measure finds each, and each is built about as big as its rank
+ * makes it.
  *
  * Roads: every settlement on a continent joined to the rest of it; every road
  * between nodes, on land, clear of the other cities; junctions only where
@@ -18,8 +20,10 @@
  * world_test --fingerprint prints a hash of what was placed and built, to
  * compare two builds (or the game's floating point against the tests', or
  * world_test --threads 1 --fingerprint against any other number of threads);
- * world_test --map out.ppm [px] draws the world, world_test --local out.ppm
- * [km [x z]] the land and roads round a point (the megacity by default).
+ * world_test --map out.ppm [px] draws the planet (longitude across, latitude
+ * up), world_test --chart out.ppm [px] the roads' reach in the world chart,
+ * world_test --local out.ppm [km [x z]] the land and roads round a point (the
+ * megacity by default).
  * world_test [--threads n] --earth <bake> ... builds the world on the Earth's
  * bake (src/terrain/terrain_earth.c); without one, on the procedural stand-in. */
 #include "plan.h"
@@ -41,9 +45,12 @@ static uint64_t fnv(const void *data, size_t n, uint64_t h) {
     return h;
 }
 
-/* A settlement's built towns, and the size across of a disc of their area (km). */
+/* A settlement's built towns, and the size across of a disc of their area
+ * over the sphere (km): the world chart stretches the land across a line
+ * from its origin by th / sin th, th the angle out. */
 static int built_towns(const PlanSettlement *s, double *km) {
-    double r = s->radius + 2.0 * TOWN_SIZE;
+    double th = dlen(s->centre) / PLANET_RADIUS, f = th > 1e-9 ? sin(th) / th : 1.0;
+    double r = (s->radius + 2.0 * TOWN_SIZE) / f;
     int i0 = (int)floor((s->centre.x - r) / TOWN_SIZE), i1 = (int)floor((s->centre.x + r) / TOWN_SIZE);
     int j0 = (int)floor((s->centre.z - r) / TOWN_SIZE), j1 = (int)floor((s->centre.z + r) / TOWN_SIZE);
     int n = 0;
@@ -52,48 +59,102 @@ static int built_towns(const PlanSettlement *s, double *km) {
             DVec2 c = plan_town_centre(i, j);
             if (dlen(dsub(c, s->centre)) <= r && plan_town_built(i, j)) n++;
         }
-    *km = 2.0 * sqrt(n * TOWN_SIZE * TOWN_SIZE / 3.14159265358979) / 1000.0;
+    *km = 2.0 * sqrt(f * n * TOWN_SIZE * TOWN_SIZE / 3.14159265358979) / 1000.0;
     return n;
 }
 
+static double warp_of(double r) { return 1.4142135623730951 * (CITY_WARP1_M + CITY_WARP2_M) * (r < CITY_RADIUS ? r / CITY_RADIUS : 1.0); }
+
+static double sphere_m(TerrainDir a, TerrainDir b) {
+    TerrainDir c = { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
+    return PLANET_RADIUS * atan2(sqrt(dot3(c, c)), dot3(a, b));
+}
+
+/* A settlement's footprint sampled every `step` m over its own chart: how
+ * many samples lie on the sea, and its area (m^2). The coast is cut on a grid
+ * (plan_world.c, COAST_CELL), so between its nodes in the lowlands the
+ * interpolated Earth may dip a little below the sea; deeper than WET_DIP_M is
+ * the sea. */
+#define WET_DIP_M 1.0
+static void footprint_sample(int k, double step, int *wet, double *area) {
+    PlanSettlement s = plan_settlement(k);
+    TerrainChart wc = terrain_world_chart();
+    double reach = s.radius + warp_of(s.radius);
+    int n = (int)ceil(reach / step);
+    *wet = 0;
+    *area = 0.0;
+    for (int j = -n; j <= n; ++j)
+        for (int i = -n; i <= n; ++i) {
+            double u = i * step, v = j * step, x, z;
+            if (hypot(u, v) > reach) continue;
+            TerrainDir d = terrain_chart_dir(&s.chart, u, v);
+            terrain_dir_chart(&wc, d, &x, &z);
+            if (plan_city_edge(x, z) >= 0.0 || plan_settlement_near(x, z) != k) continue;
+            *area += step * step;
+            double sh = terrain_shore(d, 500.0);
+            if (k && sh < -WET_DIP_M) (*wet)++;
+        }
+}
+
 static void test_settlements(void) {
+    const int ns = plan_settlement_count();
     PlanSettlement home = plan_settlement(0);
     DVec2 c0 = plan_town_centre(0, 0);
+    TerrainChart wc = terrain_world_chart();
     CHECK(home.centre.x == c0.x && home.centre.z == c0.z && home.radius == CITY_RADIUS && home.relief_m == PLAN_RELIEF_MEGA_M
           && home.colossal && home.town[0] == 0 && home.town[1] == 0, "settlement 0 isn't the megacity as it was");
-    int colossal = 0, continents[64] = { 0 };
-    double gapMin = 1e300, seaMin = 1e300, reachMax = 0.0, gradeMax = 0.0;
+    CHECK(memcmp(&home.chart, &wc, sizeof wc) == 0, "settlement 0's chart isn't the world's");
+    CHECK(!terrain_earth_loaded() || home.rank > 0, "no city of the list is the megacity, on the Earth");
+    printf("settlements: %d; the megacity is %s (rank %d)\n", ns, plan_settlement_name(0), home.rank);
+    int colossal = 0, continents[64] = { 0 }, inReach = 0, roaded = 0, wetAll = 0, clipped = 0, grown = 0;
+    double gapMin = 1e300, gradeMax = 0.0, gradeSum = 0.0, keptMin = 1e300, farthest = 0.0;
     double kmLo[2] = { 1e9, 1e9 }, kmHi[2] = { 0.0, 0.0 };
-    for (int k = 0; k < PLAN_SETTLEMENTS; ++k) {
+    int keptMinK = 0, gradeMaxK = 0;
+    for (int k = 0; k < ns; ++k) {
         PlanSettlement s = plan_settlement(k);
         colossal += s.colossal;
-        CHECK(s.colossal == (k < PLAN_COLOSSAL), "settlement %d: colossal %d out of order", k, s.colossal);
-        if (s.colossal) CHECK(s.radius == CITY_RADIUS, "colossal settlement %d has radius %.0f", k, s.radius);
-        else CHECK(s.size_km >= PLAN_MEGA_MIN_KM && s.size_km <= PLAN_MEGA_MAX_KM && s.radius == plan_settlement_radius(s.size_km),
-                   "megacity %d is %.2f km (radius %.0f)", k, s.size_km, s.radius);
+        if (k) {
+            CHECK(s.colossal == (s.rank <= PLAN_COLOSSAL_RANK), "settlement %d (rank %d): colossal %d", k, s.rank, s.colossal);
+            CHECK(k == 1 || s.rank > plan_settlement(k - 1).rank, "settlement %d (rank %d) out of rank order", k, s.rank);
+            CHECK(s.size_km >= PLAN_MEGA_MIN_KM - 1e-9 && s.size_km <= 20.0 && (!s.colossal || s.size_km == 20.0),
+                  "settlement %d is %.2f km", k, s.size_km);
+            double r0 = plan_settlement_radius(s.size_km);
+            CHECK(s.radius <= 1.3 * r0 + 1e-6 && s.radius >= 3000.0, "settlement %d's radius %.0f m, for %.1f km", k, s.radius, s.size_km);
+            grown += s.radius > r0 + 1.0;
+        }
         DVec2 tc = plan_town_centre(s.town[0], s.town[1]);
         CHECK(tc.x == s.centre.x && tc.z == s.centre.z && plan_town_regional(s.town[0], s.town[1]), "settlement %d's centre isn't its regional town's", k);
-        double sea = plan_world_sea(s.centre.x, s.centre.z);
-        if (k) seaMin = fmin(seaMin, sea);
-        CHECK(k == 0 || sea >= 90.0, "settlement %d stands %.0f m above the sea to come", k, sea);
-        for (int q = 0; k && q < 16; ++q) {   /* the Earth's tilt under it, as coarsely as its ground reads it */
+        TerrainDir dc = terrain_chart_dir(&wc, s.centre.x, s.centre.z);
+        CHECK(sphere_m(dc, s.dir) < 1e-3 && (k == 0 || sphere_m(s.chart.o, s.dir) < 1e-3), "settlement %d's direction or chart isn't its centre's", k);
+        farthest = fmax(farthest, sphere_m(s.dir, home.dir));
+        /* the Earth's tilt under it, as coarsely as its ground reads it */
+        double sea = terrain_sea_margin_dir(s.dir), tilt = 0.0;
+        for (int q = 0; k && q < 16; ++q) {
             double rr = s.radius + 2000.0, a = 6.283185307179586 * q / 16.0;
-            gradeMax = fmax(gradeMax, fabs(plan_world_sea(s.centre.x + rr * cos(a), s.centre.z + rr * sin(a)) - sea) / rr);
+            tilt = fmax(tilt, fabs(terrain_sea_margin_dir(terrain_chart_dir(&s.chart, rr * cos(a), rr * sin(a))) - sea) / rr);
         }
-        CHECK(s.continent > 0, "settlement %d isn't on a continent", k);
+        if (tilt > gradeMax) { gradeMax = tilt; gradeMaxK = k; }
+        gradeSum += tilt;
+        if (dlen(s.centre) <= PLAN_ROAD_REACH - CITY_RADIUS) { inReach++; roaded += s.continent > 0; }
+        else CHECK(s.continent == 0, "settlement %d lies past the roads' reach, but on continent %d", k, s.continent);
+        CHECK(k || s.continent > 0, "the megacity isn't on a continent");
         if (s.continent > 0 && s.continent < 64) continents[s.continent]++;
-        reachMax = fmax(reachMax, dlen(s.centre));
-        CHECK(dlen(s.centre) <= PLAN_WORLD_REACH, "settlement %d lies %.0f km out, past the world's reach", k, dlen(s.centre) / 1000.0);
         CHECK(plan_city_edge(s.centre.x, s.centre.z) < -CITY_BELT && plan_settlement_near(s.centre.x, s.centre.z) == k,
               "the edge measure doesn't find settlement %d (edge %.0f, near %d)", k, plan_city_edge(s.centre.x, s.centre.z),
               plan_settlement_near(s.centre.x, s.centre.z));
-        TerrainLandform lf;
-        terrain_landform(s.centre.x, s.centre.z, &lf);
-        CHECK(k == 0 || (lf.canyon == 0.0f && lf.w[TERRAIN_MOUNTAINS] <= 0.35f), "settlement %d stands on a canyon or a mountain", k);
         for (int q = 0; q < k; ++q) {
             PlanSettlement o = plan_settlement(q);
-            gapMin = fmin(gapMin, dlen(dsub(s.centre, o.centre)) - s.radius - o.radius);
+            gapMin = fmin(gapMin, sphere_m(s.dir, o.dir) - s.radius - o.radius - 2.0 * fmax(warp_of(s.radius), warp_of(o.radius)));
         }
+        /* on land, clear of the coast, and as big as its rank makes it */
+        int wet;
+        double area;
+        footprint_sample(k, 400.0, &wet, &area);
+        double r0 = plan_settlement_radius(s.size_km), kept = area / (3.14159265358979 * r0 * r0);
+        if (k && kept < keptMin) { keptMin = kept; keptMinK = k; }
+        clipped += k && kept < 0.97;
+        wetAll += wet;
+        CHECK(wet == 0, "%d samples of settlement %d (%s) on the sea or its margin", wet, k, plan_settlement_name(k));
         double km;
         built_towns(&s, &km);
         kmLo[s.colossal] = fmin(kmLo[s.colossal], km);
@@ -101,23 +162,24 @@ static void test_settlements(void) {
     }
     int nc = 0, biggest = 0;
     for (int k = 1; k < 64; ++k) if (continents[k]) { nc++; biggest = continents[k] > biggest ? continents[k] : biggest; }
-    printf("settlements: %d colossal, %d megacities on %d continents (the largest holds %d); the farthest %.0f km out\n",
-           colossal, PLAN_SETTLEMENTS - colossal, nc, biggest, reachMax / 1000.0);
-    printf("  footprints at least %.0f km apart; centres at least %.0f m above the sea to come, on ground tilted at most %.2f%%\n",
-           gapMin / 1000.0, seaMin, 100.0 * gradeMax);
+    printf("  %d colossal, %d megacities; the farthest %.0f km from the megacity\n", colossal, ns - colossal, farthest / 1000.0);
+    printf("  %d within the roads' reach, %d of them on %d continents (the largest holds %d)\n", inReach, roaded, nc, biggest);
+    printf("  footprints at least %.1f km apart (warps allowed for); the Earth tilts under them %.2f%% at most (%s), %.2f%% on average\n",
+           gapMin / 1000.0, 100.0 * gradeMax, plan_settlement_name(gradeMaxK), 100.0 * gradeSum / fmax(ns - 1, 1));
+    printf("  %d short of a disc of their size by 3%% or more, %d grown to keep their area; the least kept %.0f%% (%s)\n",
+           clipped, grown, 100.0 * keptMin, plan_settlement_name(keptMinK));
     printf("  built across (from their towns' area): colossal %.1f .. %.1f km, megacities %.1f .. %.1f km\n",
            kmLo[1], kmHi[1], kmLo[0], kmHi[0]);
-    CHECK(colossal == PLAN_COLOSSAL, "%d colossal settlements, not %d", colossal, PLAN_COLOSSAL);
-    CHECK(gapMin > 20000.0, "two footprints only %.1f km apart", gapMin / 1000.0);
-    CHECK(gradeMax <= 0.0201, "a settlement stands on ground the Earth tilts by %.2f%%", 100.0 * gradeMax);
-    CHECK(kmLo[1] >= 17.0 && kmHi[1] <= 23.0, "colossal cities built %.1f .. %.1f km across", kmLo[1], kmHi[1]);
-    CHECK(kmLo[0] >= 5.5 && kmHi[0] <= 13.5, "megacities built %.1f .. %.1f km across", kmLo[0], kmHi[0]);
+    CHECK(gapMin > 0.0, "two footprints only %.1f km apart, warps allowed for", gapMin / 1000.0);
+    CHECK(wetAll == 0, "%d footprint samples on the sea or within its margin", wetAll);
+    CHECK(kmLo[1] >= 12.0 && kmHi[1] <= 26.0, "colossal cities built %.1f .. %.1f km across", kmLo[1], kmHi[1]);
+    CHECK(kmLo[0] >= 3.0 && kmHi[0] <= 22.0, "megacities built %.1f .. %.1f km across", kmLo[0], kmHi[0]);
 
     /* The edge measure: capped, continuous, and no faster than CITY_EDGE_RATE, near the settlements too. */
     Rng r = rng_make(77);
     double rateMax = 0.0, eMax = -1e300;
     for (int k = 0; k < 40000; ++k) {
-        PlanSettlement s = plan_settlement(rng_int(&r, 0, PLAN_SETTLEMENTS - 1));
+        PlanSettlement s = plan_settlement(rng_int(&r, 0, ns - 1));
         float a = rng_float(&r), b = rng_float(&r), u = rng_float(&r), v = rng_float(&r);
         double rad = (s.radius + PLAN_EDGE_CAP + 5000.0) * sqrt(a), th = 6.2831853 * b;
         double x = s.centre.x + rad * cos(th), z = s.centre.z + rad * sin(th);
@@ -136,7 +198,11 @@ static int uf_find(int *p, int x) { while (p[x] != x) { p[x] = p[p[x]]; x = p[x]
 static void test_roads(void) {
     int nr = plan_road_count(), nn = plan_node_count();
     int *parent = (int *)malloc(sizeof(int) * (size_t)nn), *deg = (int *)calloc((size_t)nn, sizeof(int));
-    int fwAt[PLAN_SETTLEMENTS] = { 0 };
+    int fwAt[PLAN_MAX_SETTLEMENTS] = { 0 }, ns = plan_settlement_count();
+    /* the sea: where no road may go and the Earth's shore is more than
+     * WET_DIP_M below it (the narrow straits the bake barely resolves, such as
+     * New York's Narrows, dip less: the bridges are to come) */
+    TerrainChart wc = terrain_world_chart();
     for (int k = 0; k < nn; ++k) parent[k] = k;
     double total = 0.0, freeway = 0.0, detourMax = 0.0, seaMin = 1e300;
     int offLand = 0, inCity = 0, badEnds = 0, gates = 0, badGates = 0;
@@ -177,22 +243,25 @@ static void test_roads(void) {
                 DVec2 p = dadd(R->pts[k], dscale(dsub(R->pts[k + 1], R->pts[k]), q / 4.0));
                 double sea = plan_world_sea(p.x, p.z);
                 seaMin = fmin(seaMin, sea);
-                if (sea <= 0.0) offLand++;
+                if (sea <= 0.0 && !plan_road_dry(p.x, p.z) && terrain_shore(terrain_chart_dir(&wc, p.x, p.z), 2000.0) < -WET_DIP_M) offLand++;
                 if (plan_city_edge(p.x, p.z) < 0.0) {
                     int near = plan_settlement_near(p.x, p.z);
                     if (near != a.settlement && near != b.settlement) inCity++;
                 }
             }
     }
-    int junctions = 0, deadJunctions = 0, splitContinents = 0, colossalNoFw = 0;
+    int junctions = 0, deadJunctions = 0, splitContinents = 0, colossalNoFw = 0, apart[2] = { -1, -1 };
     for (int k = 0; k < nn; ++k)
         if (plan_node(k).settlement < 0) {
             junctions++;
             if (deg[k] < 3) deadJunctions++;
         }
-    for (int s = 0; s < PLAN_SETTLEMENTS; ++s) {
-        for (int t = s + 1; t < PLAN_SETTLEMENTS; ++t)
-            if (plan_settlement(s).continent == plan_settlement(t).continent && uf_find(parent, s) != uf_find(parent, t)) { splitContinents++; break; }
+    for (int s = 0; s < ns; ++s) {
+        for (int t = s + 1; t < ns && plan_settlement(s).continent > 0; ++t)
+            if (plan_settlement(s).continent == plan_settlement(t).continent && uf_find(parent, s) != uf_find(parent, t)) {
+                if (!splitContinents++) { apart[0] = s; apart[1] = t; }
+                break;
+            }
         if (plan_settlement(s).colossal && deg[s] && !fwAt[s]) colossalNoFw++;   /* alone on its island, it has no roads */
     }
     printf("roads: %d between %d nodes (%d junctions), %.0f km in all, %.0f%% freeway; the worst detour %.2f times the straight line\n",
@@ -201,7 +270,9 @@ static void test_roads(void) {
     printf("  %d gates; the steepest grade %.2f of its class's\n", gates, gradeOver);
     CHECK(badGates == 0, "%d gates off the built towns' boundary or the city's ground", badGates);
     CHECK(gradeOver <= 1.01, "a road %.2f times as steep as its class allows", gradeOver);
-    CHECK(splitContinents == 0, "%d settlements not joined to the rest of their continent", splitContinents);
+    CHECK(splitContinents == 0, "%d settlements not joined to the rest of their continent (%s and %s, %d and %d roads; the second at %.0f %.0f)",
+          splitContinents, plan_settlement_name(apart[0]), plan_settlement_name(apart[1]), apart[0] >= 0 ? deg[apart[0]] : 0,
+          apart[1] >= 0 ? deg[apart[1]] : 0, plan_settlement(apart[1]).centre.x, plan_settlement(apart[1]).centre.z);
     CHECK(offLand == 0, "%d points of road where the sea will be", offLand);
     CHECK(inCity == 0, "%d points of road inside other settlements", inCity);
     CHECK(badEnds == 0, "%d roads not ending at their nodes", badEnds);
@@ -238,10 +309,10 @@ static void test_roads(void) {
 
 static int fingerprint(void) {
     uint64_t hs = 0xcbf29ce484222325ULL;
-    for (int k = 0; k < PLAN_SETTLEMENTS; ++k) {
+    for (int k = 0; k < plan_settlement_count(); ++k) {
         PlanSettlement s = plan_settlement(k);
         double v[4] = { s.centre.x, s.centre.z, s.radius, s.relief_m };
-        int iv[4] = { s.town[0], s.town[1], s.colossal, s.continent };
+        int iv[5] = { s.town[0], s.town[1], s.colossal, s.continent, s.rank };
         hs = fnv(v, sizeof(v), hs);
         hs = fnv(iv, sizeof(iv), hs);
     }
@@ -348,7 +419,7 @@ static int draw_map(const char *path, int W, double cx, double cz, double ext, i
         PlanNode n = plan_node(k);
         if (n.settlement < 0) disc(&im, (n.p.x - mc.x0) / mc.m, (n.p.z - mc.z0) / mc.m, 1.6 * fmin(scale, 1.5), white);
     }
-    for (int k = PLAN_SETTLEMENTS - 1; k >= 0; --k) {
+    for (int k = plan_settlement_count() - 1; k >= 0; --k) {
         PlanSettlement s = plan_settlement(k);
         double px = (s.centre.x - mc.x0) / mc.m, py = (s.centre.z - mc.z0) / mc.m;
         disc(&im, px, py, fmax((s.colossal ? 4.0 : 2.5) * fmin(scale, 1.5) + 0.5, s.radius / mc.m), k == 0 ? white : s.colossal ? red : orange);
@@ -359,12 +430,93 @@ static int draw_map(const char *path, int W, double cx, double cz, double ext, i
     return rc;
 }
 
+/* The planet, longitude across from 180 W and latitude up, W px by W / 2:
+ * the Earth's land shaded by its height and the sea to come blue, the roads
+ * (freeways red, trunk roads yellow) and the settlements (colossal red, the
+ * megacities orange, the megacity white). */
+typedef struct PlanetCtx { Image *im; } PlanetCtx;
+
+static void planet_row(void *ctx, int j) {
+    PlanetCtx *pc = (PlanetCtx *)ctx;
+    double lat = 90.0 - (j + 0.5) * 180.0 / pc->im->h;
+    for (int i = 0; i < pc->im->w; ++i) {
+        double lon = -180.0 + (i + 0.5) * 360.0 / pc->im->w;
+        double h = terrain_shore(terrain_latlon_dir(lat, lon), 20000.0);
+        float col[3];
+        if (h < 0.0) {
+            float d = clampf((float)(-h / 6000.0), 0.0f, 1.0f);
+            col[0] = 0.10f - 0.06f * d; col[1] = 0.22f - 0.12f * d; col[2] = 0.45f - 0.2f * d;
+        } else {
+            float t = clampf((float)(h / 3000.0), 0.0f, 1.0f);
+            col[0] = 0.35f + 0.45f * t; col[1] = 0.55f + 0.15f * t; col[2] = 0.3f + 0.4f * t;
+        }
+        put(pc->im, i, j, col);
+    }
+}
+
+static void planet_xy(const Image *im, TerrainDir d, double *x, double *y) {
+    double lat, lon;
+    terrain_dir_latlon(d, &lat, &lon);
+    *x = (lon + 180.0) / 360.0 * im->w;
+    *y = (90.0 - lat) / 180.0 * im->h;
+}
+
+static int draw_planet(const char *path, int W, int threads) {
+    Image im = { W, W / 2, (uint8_t *)calloc((size_t)W * (W / 2) * 3, 1) };
+    if (!im.px) return 1;
+    PlanetCtx pc = { &im };
+    thread_parallel_for(im.h, threads, planet_row, &pc);
+    TerrainChart wc = terrain_world_chart();
+    const float red[3] = { 0.95f, 0.15f, 0.1f }, orange[3] = { 1.0f, 0.65f, 0.1f }, white[3] = { 1.0f, 1.0f, 1.0f };
+    const float fw[3] = { 0.9f, 0.1f, 0.1f }, trunk[3] = { 1.0f, 0.9f, 0.2f };
+    double scale = W / 1600.0;
+    for (int pass = 0; pass < 2; ++pass)
+        for (int r = 0; r < plan_road_count(); ++r) {
+            const PlanRoad *R = plan_road(r);
+            if ((R->cls == PLAN_ROAD_FREEWAY) != pass) continue;
+            double px = 0.0, py = 0.0;
+            for (int k = 0; k < R->npts; k += 8) {
+                double x, y;
+                planet_xy(&im, terrain_chart_dir(&wc, R->pts[k].x, R->pts[k].z), &x, &y);
+                if (k && fabs(x - px) < 0.5 * im.w) line(&im, px, py, x, y, 0.6 * fmin(scale, 1.5), pass ? fw : trunk);
+                px = x; py = y;
+            }
+        }
+    for (int k = plan_settlement_count() - 1; k >= 0; --k) {
+        PlanSettlement s = plan_settlement(k);
+        double x, y;
+        planet_xy(&im, s.dir, &x, &y);
+        disc(&im, x, y, (k == 0 ? 3.5 : s.colossal ? 2.8 : 1.8) * fmin(scale, 2.0), k == 0 ? white : s.colossal ? red : orange);
+    }
+    int rc = save(&im, path);
+    printf("planet map, %d x %d px\n", im.w, im.h);
+    free(im.px);
+    return rc;
+}
+
+/* Whether another road's centre line, or this one's further along (a hairpin),
+ * passes within both roads' reach of p, s along R, where the ground takes
+ * whichever weighs more there. */
+static int road_beside(const PlanRoad *R, DVec2 p, double s) {
+    const double reach = 2.0 * (PLAN_FREEWAY_HALF + PLAN_ROAD_SHOULDER + PLAN_ROAD_BATTER_MAX);
+    for (int q = 0; q < plan_road_count(); ++q) {
+        const PlanRoad *O = plan_road(q);
+        for (int k = 0; k + 1 < O->npts; ++k) {
+            if (O == R && O->s[k + 1] > s - 4.0 * reach && O->s[k] < s + 4.0 * reach) continue;
+            DVec2 a = O->pts[k], d = dsub(O->pts[k + 1], a);
+            double t = fmin(fmax(ddot(dsub(p, a), d) / fmax(ddot(d, d), 1e-9), 0.0), 1.0);
+            if (dlen(dsub(p, dadd(a, dscale(d, t)))) < reach) return 1;
+        }
+    }
+    return 0;
+}
+
 /* The ground with the roads in it: the road's surface along its centre, and
  * a slope no steeper than a batter across it. */
 static void test_road_ground(void) {
     Rng r = rng_make(99);
     double offCentre = 0.0, steepest = 0.0;
-    int n = 0;
+    int n = 0, beside = 0;
     for (int k = 0; k < 4000; ++k) {
         const PlanRoad *R = plan_road(rng_int(&r, 0, plan_road_count() - 1));
         float u = rng_float(&r), v = rng_float(&r);
@@ -375,10 +527,12 @@ static void test_road_ground(void) {
         DVec2 a = R->pts[sg], d = dsub(R->pts[sg + 1], a), p = dadd(a, dscale(d, t)), nrm = dnorm(dv(-d.z, d.x));
         if (plan_urban(p.x, p.z) > 0.0f) continue;   /* the city's ground stands there */
         double h = terrain_height(p.x, p.z), rh = plan_road_height((int)(R - plan_road(0)), s);
-        /* where two roads' reaches overlap the higher weight wins; skip near junctions */
+        /* where two roads' reaches overlap the higher weight wins: skip near
+         * junctions, and count where another road runs beside this one */
         int nearNode = 0;
         for (int e = 0; e < 2; ++e) nearNode |= dlen(dsub(p, plan_node(e ? R->to : R->from).p)) < 2000.0 || s < 2000.0 || s > R->s[R->npts - 1] - 2000.0;
         if (nearNode) continue;
+        if (road_beside(R, p, s)) { beside++; continue; }
         offCentre = fmax(offCentre, fabs(h - rh));
         /* across: out to the batter's farthest */
         double off = (2.0 * v - 1.0) * (R->half + PLAN_ROAD_SHOULDER + PLAN_ROAD_BATTER_MAX);
@@ -386,7 +540,8 @@ static void test_road_ground(void) {
         steepest = fmax(steepest, fabs(terrain_height(q2.x, q2.z) - terrain_height(q.x, q.z)) / 0.5);
         n++;
     }
-    printf("  the ground on %d points along the roads: within %.3f m of the road's surface; across, at most %.2f m/m\n", n, offCentre, steepest);
+    printf("  the ground on %d points along the roads: within %.3f m of the road's surface; across, at most %.2f m/m"
+           " (%d more beside another road or itself, away from a junction)\n", n, offCentre, steepest, beside);
     /* How far the roads stand above or below the bare land: the cuttings and embankments (bridges and tunnels to come) */
     double total = 0.0, over10 = 0.0, over30 = 0.0, deepest = 0.0;
     for (int r = 0; r < plan_road_count(); ++r) {
@@ -425,7 +580,8 @@ int main(int argc, char **argv) {
     plan_world_init(threads);
     printf("world built on %d threads in %.2f s\n", threads, (double)(clock() - t0) / CLOCKS_PER_SEC);
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
-    if (argc > 2 && strcmp(argv[1], "--map") == 0) return draw_map(argv[2], argc > 3 ? atoi(argv[3]) : 1600, 0.0, 0.0, PLAN_WORLD_REACH * 1.08, 0, threads);
+    if (argc > 2 && strcmp(argv[1], "--map") == 0) return draw_planet(argv[2], argc > 3 ? atoi(argv[3]) : 1600, threads);
+    if (argc > 2 && strcmp(argv[1], "--chart") == 0) return draw_map(argv[2], argc > 3 ? atoi(argv[3]) : 1600, 0.0, 0.0, PLAN_ROAD_REACH * 1.08, 0, threads);
     if (argc > 2 && strcmp(argv[1], "--local") == 0) {
         DVec2 c = plan_town_centre(0, 0);
         double km = argc > 3 ? atof(argv[3]) : 300.0;

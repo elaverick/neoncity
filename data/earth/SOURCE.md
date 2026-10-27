@@ -117,3 +117,13 @@ relief makes mountains, some hills, high level ground plateaus, low level ground
 ridges run along the strike; and where the data already carries the relief the procedural ridges are
 scaled down. It adds about 2 s and 25 MB to the full bake. `terrain_test --landform-map out.ppm [px]`
 draws the landforms the bake gives the whole planet.
+
+## The city list
+
+`largest_metropolitan_areas_227.csv` (UTF-8; added 2026-10-27) lists the 227 metropolitan areas the
+settlements stand at: `rank,name,latitude,longitude`, a header first, a name in double quotes where it
+holds a comma. It has no population; the size comes from the rank. Two rows are spelling duplicates
+at the same place (Ho Chi Minh City, Urumqi), which the merging absorbs. The engine reads it at run
+time (`src/plan/plan_world.c`, `PLAN_CITY_LIST`) from beside the executable, where every build copies
+it (the `city_list` target), or failing that from the source tree. Cities within 30 km of each other become one,
+ranks 1-50 are colossal, and the row at the bake's origin (Los Angeles) is the megacity.

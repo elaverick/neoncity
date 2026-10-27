@@ -72,7 +72,8 @@
 #define FREEWAY_RADIUS 1500.0   /* the corners' radius (m) */
 #define TRUNK_RADIUS   500.0
 #define ARC_STEP       60.0     /* a rounded corner's points at most this far apart (m) */
-#define MAX_NODES      (PLAN_SETTLEMENTS + 1024)
+#define SPIKE_COS      (-0.94)  /* a corner turning back by more than about 160 degrees is a spike */
+#define MAX_NODES      (PLAN_MAX_SETTLEMENTS + 1024)
 #define MAX_LINKS      4096
 #define GATE_STEP      250.0    /* m: a road's way out of its settlement is walked in these steps... */
 #define GATE_APPROACH  300.0    /* ...and its last stretch is square to the boulevard for this long */
@@ -275,11 +276,14 @@ static int64_t astar(int si, int sj, int gi, int gj, double cell, double eps, in
 /* --- What a route may cross ---------------------------------------------------------------- */
 
 /* Whether a road may pass (x, z) on its way between settlements `from` and
- * `to` (-1 for a junction): above the sea to come, inside the world's reach,
- * and clear of every other settlement. */
+ * `to` (-1 for a junction): above the sea to come, inside the roads' reach,
+ * and clear of every other settlement. Inside its own settlements' footprints
+ * the ground is the city's, kept off the sea by its coast (plan_world.c), so
+ * there it may pass however low the land. */
 static int passable(double x, double z, int from, int to) {
-    if (plan_world_sea(x, z) < PLAN_ROAD_SEA_M) return 0;
-    if (plan_city_edge(x, z) < CITY_CLEAR) {
+    double e = plan_city_edge(x, z);
+    if (e >= 0.0 && !plan_road_dry(x, z)) return 0;
+    if (e < CITY_CLEAR) {
         int k = plan_settlement_near(x, z);
         if (k != from && k != to) return 0;
     }
@@ -287,11 +291,11 @@ static int passable(double x, double z, int from, int to) {
 }
 
 /* The coarse grid: each cell's cost per metre of a step, from the region's
- * landforms, worked out once for the whole world's reach (its rows on the
+ * landforms, worked out once for the whole of the roads' reach (its rows on the
  * threads) and kept as a byte: 1 + v / COARSE_STEPS, or COARSE_SEA where no
  * road may go and COARSE_CITY within CITY_CLEAR of a settlement, where only
- * its own roads may. */
-#define COARSE_EXTENT (PLAN_WORLD_REACH + 300000.0)
+ * its own roads may (inside its footprint, however low the land: passable). */
+#define COARSE_EXTENT (PLAN_ROAD_REACH + 300000.0)
 #define COARSE_I0     ((int)floor(-COARSE_EXTENT / COARSE_CELL))
 #define COARSE_SIDE   (2 * -COARSE_I0)
 #define COARSE_STEPS  50.0f
@@ -305,8 +309,10 @@ static void coarse_row(void *ctx, int r) {
     for (int q = 0; q < COARSE_SIDE; ++q) {
         double x = (COARSE_I0 + q + 0.5) * COARSE_CELL, z = (COARSE_I0 + r + 0.5) * COARSE_CELL;
         uint8_t v = COARSE_SEA;
-        if (plan_world_sea(x, z) >= PLAN_ROAD_SEA_M) {
-            if (plan_city_edge(x, z) < CITY_CLEAR) v = COARSE_CITY;
+        double e = plan_city_edge(x, z);
+        if (e < 0.0) v = COARSE_CITY;
+        else if (plan_road_dry(x, z)) {
+            if (e < CITY_CLEAR) v = COARSE_CITY;
             else {
                 TerrainLandform lf;
                 terrain_landform(x, z, &lf);
@@ -340,7 +346,7 @@ static int64_t coarse_step(void *ctx, int ai, int aj, int bi, int bj) {
     if (fa < 0.0f || fb < 0.0f) return -1;
     double len = (ai != bi && aj != bj ? 1.4142135623730951 : 1.0) * COARSE_CELL;
     /* a diagonal step mustn't jump a strait */
-    if (ai != bi && aj != bj && plan_world_sea((ai + bi + 1) * 0.5 * COARSE_CELL, (aj + bj + 1) * 0.5 * COARSE_CELL) < PLAN_ROAD_SEA_M) return -1;
+    if (ai != bi && aj != bj && !plan_road_dry((ai + bi + 1) * 0.5 * COARSE_CELL, (aj + bj + 1) * 0.5 * COARSE_CELL)) return -1;
     return (int64_t)(len * 0.5 * (fa + fb) + 0.5);
 }
 
@@ -665,14 +671,15 @@ static Tri make_tri(const DVec2 *p, int a, int b, int c) {
     return t;
 }
 
-/* Bowyer-Watson over the settlements' centres; the pairs of neighbours (i < j) into pairs. */
-static int delaunay(int n, int (*pairs)[2], int maxPairs) {
+/* Bowyer-Watson over the centres of settlements ids[0 .. n); the pairs of
+ * neighbours (settlements i < j) into pairs. */
+static int delaunay(const int *ids, int n, int (*pairs)[2], int maxPairs) {
     DVec2 *p = (DVec2 *)malloc(sizeof(DVec2) * (size_t)(n + 3));
     int cap = 8 * n + 16, nt = 0;
     Tri *t = (Tri *)malloc(sizeof(Tri) * (size_t)cap);
     int (*edges)[2] = malloc(sizeof(int[2]) * (size_t)cap * 3);
     if (!p || !t || !edges) fatal("out of memory triangulating the settlements");
-    for (int k = 0; k < n; ++k) p[k] = plan_settlement(k).centre;
+    for (int k = 0; k < n; ++k) p[k] = plan_settlement(ids[k]).centre;
     const double big = 1e8;
     p[n] = dv(-big, -big); p[n + 1] = dv(big * 3.0, -big); p[n + 2] = dv(-big, big * 3.0);
     t[nt++] = make_tri(p, n, n + 1, n + 2);
@@ -705,6 +712,7 @@ static int delaunay(int n, int (*pairs)[2], int maxPairs) {
         for (int e = 0; e < 3; ++e) {
             int a = v[e], b = v[(e + 1) % 3];
             if (a >= n || b >= n) continue;
+            a = ids[a]; b = ids[b];
             int lo = a < b ? a : b, hi = a < b ? b : a, dup = 0;
             for (int s = 0; s < np && !dup; ++s) dup = pairs[s][0] == lo && pairs[s][1] == hi;
             if (!dup && np < maxPairs) { pairs[np][0] = lo; pairs[np][1] = hi; np++; }
@@ -773,9 +781,10 @@ static void network_costs(int n, const Cand *c, int nc, double *D) {
 /* The links: a spanning tree of the candidates per continent, then those the
  * gravity model finds worth adding. */
 static int design(Cand *c, int nc) {
-    const int n = PLAN_SETTLEMENTS;
+    const int n = plan_settlement_count();
     qsort(c, (size_t)nc, sizeof(Cand), cand_by_cost);
-    int parent[PLAN_SETTLEMENTS], deg[PLAN_SETTLEMENTS] = { 0 };
+    int parent[PLAN_MAX_SETTLEMENTS], deg[PLAN_MAX_SETTLEMENTS] = { 0 }, roaded = 0;
+    for (int k = 0; k < n; ++k) roaded += plan_settlement(k).continent > 0;
     for (int k = 0; k < n; ++k) parent[k] = k;
     int used = 0;
     for (int k = 0; k < nc; ++k) {
@@ -790,7 +799,7 @@ static int design(Cand *c, int nc) {
     double *D = (double *)malloc(sizeof(double) * (size_t)n * n);
     if (!D) fatal("out of memory designing the roads");
     network_costs(n, c, nc, D);
-    int budget = (int)(ADD_PER_CITY * n), added = 0;
+    int budget = (int)(ADD_PER_CITY * roaded), added = 0;
     while (added < budget) {
         int best = -1;
         double bestScore = ADD_SCORE_MIN;
@@ -823,8 +832,8 @@ static int design(Cand *c, int nc) {
     free(D);
     /* A colossal city is a hub: at least HUB_LINKS links, its cheapest
      * candidates first, where it has them. */
-    for (int s = 0; s < PLAN_COLOSSAL; ++s)
-        for (int k = 0; k < nc && deg[s] < HUB_LINKS; ++k) {
+    for (int s = 0; s < n; ++s)
+        for (int k = 0; k < nc && deg[s] < HUB_LINKS && plan_settlement(s).colossal; ++k) {
             if (c[k].used || c[k].cost < 0 || (c[k].a != s && c[k].b != s)) continue;
             c[k].used = 1;
             deg[c[k].a]++; deg[c[k].b]++;
@@ -866,7 +875,7 @@ static int add_link(Net *net, int a, int b) {
 static void steiner(Net *net) {
     int *start = (int *)malloc(sizeof(int) * (MAX_NODES + 1)), *incidence = (int *)malloc(sizeof(int) * 2 * MAX_LINKS);
     if (!start || !incidence) fatal("out of memory joining the roads");
-    for (int round = 0; round < 4 * PLAN_SETTLEMENTS; ++round) {
+    for (int round = 0; round < 4 * plan_settlement_count(); ++round) {
         /* each node's links, in link order */
         for (int v = 0; v <= net->nnodes; ++v) start[v] = 0;
         for (int k = 0; k < net->nlinks; ++k) { start[net->link[k].a + 1]++; start[net->link[k].b + 1]++; }
@@ -883,7 +892,7 @@ static void steiner(Net *net) {
             /* merging two of a node's roads takes one from it: a junction must
              * keep three, a colossal city its HUB_LINKS */
             if (net->node[v].settlement < 0 && ni < 4) continue;
-            if (net->node[v].settlement >= 0 && net->node[v].settlement < PLAN_COLOSSAL && ni <= HUB_LINKS) continue;
+            if (net->node[v].settlement >= 0 && plan_settlement(net->node[v].settlement).colossal && ni <= HUB_LINKS) continue;
             for (int x = 0; x < ni; ++x)
                 for (int y = x + 1; y < ni; ++y) {
                     const Link *l1 = &net->link[inc[x]], *l2 = &net->link[inc[y]];
@@ -897,7 +906,7 @@ static void steiner(Net *net) {
                     double save = before - (dlen(dsub(f, pv)) + dlen(dsub(f, pa)) + dlen(dsub(f, pb)));
                     save = floor(save + 0.5);
                     if (save < STEINER_SAVE * before || save <= bestSave) continue;
-                    if (plan_world_sea(f.x, f.z) < PLAN_ROAD_SEA_M || plan_city_edge(f.x, f.z) < 2.0 * CITY_CLEAR) continue;
+                    if (!plan_road_dry(f.x, f.z) || plan_city_edge(f.x, f.z) < 2.0 * CITY_CLEAR) continue;
                     bestSave = save; bl1 = inc[x]; bl2 = inc[y]; bv = v; bf = f;
                 }
         }
@@ -1243,7 +1252,7 @@ static void tidy_junctions(Net *net) {
         if (net->link[l].ok) { deg[net->link[l].a]++; deg[net->link[l].b]++; }
     for (int changed = 1; changed;) {
         changed = 0;
-        for (int v = PLAN_SETTLEMENTS; v < net->nnodes; ++v) {
+        for (int v = plan_settlement_count(); v < net->nnodes; ++v) {
             if (deg[v] != 1 && deg[v] != 2) continue;
             int l1 = -1, l2 = -1;
             for (int l = 0; l < net->nlinks; ++l)
@@ -1279,7 +1288,7 @@ static void tidy_junctions(Net *net) {
     int *renum = (int *)malloc(sizeof(int) * (size_t)net->nnodes), m = 0;
     if (!renum) fatal("out of memory tidying the roads");
     for (int v = 0; v < net->nnodes; ++v) {
-        renum[v] = v < PLAN_SETTLEMENTS || deg[v] > 0 ? m : -1;
+        renum[v] = v < plan_settlement_count() || deg[v] > 0 ? m : -1;
         if (renum[v] >= 0) net->node[m++] = net->node[v];
     }
     net->nnodes = m;
@@ -1299,7 +1308,8 @@ static void classify(Net *net) {
     int *order = (int *)malloc(sizeof(int) * (size_t)nl);
     if (!d || !via || !done || !order) fatal("out of memory classing the roads");
     for (int l = 0; l < nl; ++l) net->link[l].flow = 0.0;
-    for (int s = 0; s < PLAN_SETTLEMENTS; ++s) {
+    const int ns = plan_settlement_count();
+    for (int s = 0; s < ns; ++s) {
         for (int k = 0; k < nn; ++k) { d[k] = 1e300; via[k] = -1; done[k] = 0; }
         d[s] = 0.0;
         for (;;) {
@@ -1316,7 +1326,7 @@ static void classify(Net *net) {
                 if (c < d[v]) { d[v] = c; via[v] = l; }
             }
         }
-        for (int t = s + 1; t < PLAN_SETTLEMENTS; ++t) {
+        for (int t = s + 1; t < ns; ++t) {
             if (d[t] >= 1e299) continue;
             double T = gravity(s, t);
             for (int v = t; v != s;) {
@@ -1366,6 +1376,16 @@ static void classify(Net *net) {
  * distance along. */
 static void round_corners(Link *L) {
     double R = L->cls == PLAN_ROAD_FREEWAY ? FREEWAY_RADIUS : TRUNK_RADIUS;
+    /* A corner turning back on itself (a route out to a point and back along
+     * the same line) has no arc: the point goes, until none is left; so does
+     * a point repeated. */
+    for (int k = 1, m; k + 1 < L->npts; k = m > 1 ? m - 1 : 1) {
+        DVec2 d1 = dsub(L->pts[k], L->pts[k - 1]), d2 = dsub(L->pts[k + 1], L->pts[k]);
+        if (dlen(d1) > 1e-6 && dlen(d2) > 1e-6 && ddot(dnorm(d1), dnorm(d2)) > SPIKE_COS) { m = k + 2; continue; }
+        memmove(&L->pts[k], &L->pts[k + 1], sizeof(DVec2) * (size_t)(L->npts - k - 1));
+        L->npts--;
+        m = k;
+    }
     int cap = 0, n = 0;
     DVec2 *out = NULL;
     out = (DVec2 *)grow(out, &cap, 1, sizeof(DVec2));
@@ -1743,7 +1763,8 @@ static void build_index(Net *net) {
 void plan_roads_build(int threads) {
     Net *net = (Net *)calloc(1, sizeof(Net));
     if (!net) fatal("out of memory building the roads");
-    for (int k = 0; k < PLAN_SETTLEMENTS; ++k) add_node(net, plan_settlement(k).centre, k);
+    const int ns = plan_settlement_count();
+    for (int k = 0; k < ns; ++k) add_node(net, plan_settlement(k).centre, k);
 
     /* the coarse grid, for every route */
     g_coarse = (uint8_t *)malloc((size_t)COARSE_SIDE * COARSE_SIDE);
@@ -1751,18 +1772,22 @@ void plan_roads_build(int threads) {
     thread_parallel_for(COARSE_SIDE, threads, coarse_row, NULL);
 
     /* 1. candidates, routed coarsely for their costs */
-    int (*pairs)[2] = malloc(sizeof(int[2]) * 8 * PLAN_SETTLEMENTS);
+    /* between the settlements within the roads' reach, on land */
+    int (*pairs)[2] = malloc(sizeof(int[2]) * 8 * PLAN_MAX_SETTLEMENTS);
+    int ids[PLAN_MAX_SETTLEMENTS], nids = 0;
     if (!pairs) fatal("out of memory building the roads");
-    int np = delaunay(PLAN_SETTLEMENTS, pairs, 8 * PLAN_SETTLEMENTS), nc = 0;
+    for (int k = 0; k < ns; ++k)
+        if (plan_settlement(k).continent > 0) ids[nids++] = k;
+    int np = delaunay(ids, nids, pairs, 8 * PLAN_MAX_SETTLEMENTS), nc = 0;
     Cand *cand = (Cand *)calloc((size_t)np, sizeof(Cand));
     {
         /* those longer than CAND_REACH only where the shorter leave their ends
          * apart: the shortest across each gap, until every continent is whole */
-        int *parent = (int *)malloc(sizeof(int) * PLAN_SETTLEMENTS);
+        int *parent = (int *)malloc(sizeof(int) * PLAN_MAX_SETTLEMENTS);
         double *len = (double *)malloc(sizeof(double) * (size_t)np);
         if (!cand || !parent || !len) fatal("out of memory building the roads");
-        int ncand[PLAN_SETTLEMENTS] = { 0 };
-        for (int v = 0; v < PLAN_SETTLEMENTS; ++v) parent[v] = v;
+        int ncand[PLAN_MAX_SETTLEMENTS] = { 0 };
+        for (int v = 0; v < ns; ++v) parent[v] = v;
         for (int k = 0; k < np; ++k) {
             PlanSettlement a = plan_settlement(pairs[k][0]), b = plan_settlement(pairs[k][1]);
             len[k] = a.continent != b.continent ? -1.0 : dlen(dsub(a.centre, b.centre));
@@ -1778,7 +1803,7 @@ void plan_roads_build(int threads) {
                     for (int k = 0; k < np; ++k) {
                         int a = pairs[k][0], b = pairs[k][1];
                         if (len[k] < 0.0 || (best >= 0 && len[k] >= len[best])) continue;
-                        if (pass == 1 ? (a < PLAN_COLOSSAL && ncand[a] < HUB_LINKS) || (b < PLAN_COLOSSAL && ncand[b] < HUB_LINKS)
+                        if (pass == 1 ? (plan_settlement(a).colossal && ncand[a] < HUB_LINKS) || (plan_settlement(b).colossal && ncand[b] < HUB_LINKS)
                                       : uf_find(parent, a) != uf_find(parent, b)) best = k;
                     }
                     if (best < 0) break;
@@ -1799,6 +1824,14 @@ void plan_roads_build(int threads) {
         route_all(net, ls, nc, 1, threads);
         for (int k = 0; k < nc; ++k) { cand[k].cost = net->link[ls[k]].ok ? net->link[ls[k]].cost : -1; cand[k].used = 0; }
         free(ls);
+        /* a settlement the limit leaves with no candidate at all (rough land
+         * all round it) has its candidates routed again without one */
+        int routed[PLAN_MAX_SETTLEMENTS] = { 0 };
+        for (int k = 0; k < nc; ++k)
+            if (cand[k].cost >= 0) { routed[cand[k].a] = 1; routed[cand[k].b] = 1; }
+        for (int k = 0; k < nc; ++k)
+            if (cand[k].cost < 0 && (!routed[cand[k].a] || !routed[cand[k].b]))
+                cand[k].cost = coarse_route(net, cand[k].a, cand[k].b, 0.0, NULL, NULL, NULL);
     }
     /* 2-3. the spanning tree and the gravity model's additions */
     design(cand, nc);

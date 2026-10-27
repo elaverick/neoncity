@@ -382,6 +382,14 @@ target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_
 add_custom_command(TARGET NeonCity POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/assets $<TARGET_FILE_DIR:NeonCity>/assets
   VERBATIM)
+# So is the list of cities the settlements stand at (src/plan/plan_world.c, PLAN_CITY_LIST), read
+# beside the executable first (src/core/assets.h, data_roots): copied on every build, so the game
+# and the tests never read an older one.
+add_custom_target(city_list ALL
+  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:NeonCity>/data/earth
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/largest_metropolitan_areas_227.csv
+          $<TARGET_FILE_DIR:NeonCity>/data/earth/largest_metropolitan_areas_227.csv
+  VERBATIM)
 target_link_libraries(NeonCity PRIVATE volk glfw)
 if(MSVC)
   target_compile_options(NeonCity PRIVATE /W3 /wd4100 /wd4996 /fp:fast)
