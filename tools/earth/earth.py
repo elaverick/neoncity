@@ -12,6 +12,7 @@ and the whole project is staged as one raw grid for the engine's bake tool (tool
     earth.py check   <project>
     earth.py preview <project> <out.png> [--region lon0 lat0 lon1 lat1] [--width W]
     earth.py stage   <project> <out.r16>     (and <out.r16>.hints, if the project has hint tiles)
+    earth.py cities  <GHS_UCDB_GLOBE_R2024A.gpkg> <list.csv> [--sha256 HEX]
 
 The grid is fixed: EPSG:4326, 60" cells, pixel-is-area, 21600 x 10800, the north-west corner at
 90N 180W. Tiles are named by their south-west corner (height/N30_W120.tif spans 30N..60N,
@@ -24,10 +25,13 @@ Run it with the source treated as untrusted data: `python -I tools/earth/earth.p
 """
 
 import argparse
+import csv
 import hashlib
 import json
 import math
 import os
+import sqlite3
+import struct
 import sys
 
 import numpy as np
@@ -652,6 +656,190 @@ def cmd_stage(args):
                                              ", %s (%d bytes)" % (hints, WIDTH * HEIGHT * 3) if hints else "", args.out))
 
 
+# ----------------------------------------------------------------------------- cities
+# The city list's sizes from the GHSL Urban Centre Database (a GeoPackage: SQLite, its polygons in
+# ESRI:54009, Mollweide on the WGS 84 sphere). Each row is matched to the urban centre of at least
+# CITY_MIN_PEOPLE holding its coordinates, else to the nearest such within CITY_NEAR_KM (a listed
+# city's point may fall in a small suburb beside its own centre), and gains that centre's id, name,
+# area and population (2025 epoch); a row with none gets empty columns (Perm: the database has no
+# centre for it). Several rows can share a centre (Guangzhou, Shenzhen, Foshan, Dongguan). The
+# engine sizes the megacities from the area.
+
+UCDB_TABLE = "GHSL_UCDB_THEME_GENERAL_CHARACTERISTICS_GLOBE_R2024A"
+MOLL_R = 6378137.0
+CITY_NEAR_KM = 30.0
+CITY_MIN_PEOPLE = 300000
+CITY_COLUMNS = ["rank", "name", "latitude", "longitude", "ghsl_id", "ghsl_name", "area_km2", "population", "ghsl_km"]
+
+
+def moll_forward(lat, lon):
+    phi, lam = math.radians(lat), math.radians(lon)
+    if abs(abs(phi) - math.pi / 2) < 1e-12:
+        th = math.copysign(math.pi / 2, phi)
+    else:
+        th = phi
+        for _ in range(50):   # 2 th + sin 2 th = pi sin phi, by Newton
+            d = (2 * th + math.sin(2 * th) - math.pi * math.sin(phi)) / (2 + 2 * math.cos(2 * th))
+            th -= d
+            if abs(d) < 1e-14:
+                break
+    return 2 * math.sqrt(2) / math.pi * MOLL_R * lam * math.cos(th), math.sqrt(2) * MOLL_R * math.sin(th)
+
+
+def moll_inverse(x, y):
+    th = np.arcsin(np.clip(y / (math.sqrt(2) * MOLL_R), -1, 1))
+    lat = np.degrees(np.arcsin(np.clip((2 * th + np.sin(2 * th)) / math.pi, -1, 1)))
+    lon = np.degrees(math.pi * x / (2 * math.sqrt(2) * MOLL_R * np.cos(th)))
+    return lat, lon
+
+
+def gpkg_rings(blob):
+    """The rings of a GeoPackage (multi)polygon blob, each an (n, 2) array of x, y."""
+    if blob[:2] != b"GP":
+        fail("a geometry isn't a GeoPackage blob")
+    flags = blob[3]
+    env = (0, 32, 48, 48, 64)[(flags >> 1) & 7]
+    wkb, rings = memoryview(blob)[8 + env:], []
+
+    def geom(off):
+        bo = "<" if wkb[off] == 1 else ">"
+        kind = struct.unpack_from(bo + "I", wkb, off + 1)[0] % 1000
+        off += 5
+        if kind == 3:
+            nr = struct.unpack_from(bo + "I", wkb, off)[0]
+            off += 4
+            for _ in range(nr):
+                n = struct.unpack_from(bo + "I", wkb, off)[0]
+                off += 4
+                rings.append(np.frombuffer(wkb, dtype=bo + "f8", count=2 * n, offset=off).reshape(n, 2))
+                off += 16 * n
+            return off
+        if kind == 6:
+            ng = struct.unpack_from(bo + "I", wkb, off)[0]
+            off += 4
+            for _ in range(ng):
+                off = geom(off)
+            return off
+        fail("an urban centre's geometry is neither a polygon nor a multipolygon (WKB type %d)" % kind)
+
+    geom(0)
+    return rings
+
+
+def inside_rings(rings, x, y):
+    """Even-odd: whether (x, y) lies inside the rings (holes count against)."""
+    inside = False
+    for r in rings:
+        x0, y0, x1, y1 = r[:-1, 0], r[:-1, 1], r[1:, 0], r[1:, 1]
+        cross = (y0 > y) != (y1 > y)
+        xs = x0 + (y - y0) * (x1 - x0) / np.where(y1 != y0, y1 - y0, 1.0)
+        inside ^= bool(np.count_nonzero(cross & (x < xs)) & 1)
+    return inside
+
+
+def sphere_km(lat0, lon0, lat1, lon1):
+    p0, p1, dl = np.radians(lat0), np.radians(lat1), np.radians(np.asarray(lon1) - lon0)
+    c = np.sin(p0) * np.sin(p1) + np.cos(p0) * np.cos(p1) * np.cos(dl)
+    return 6371.0088 * np.arccos(np.clip(c, -1, 1))
+
+
+def ring_km(rings, lat, lon):
+    """The distance from (lat, lon) to the nearest point of the rings' edges (km), each edge
+    sampled every ~100 m in Mollweide and measured over the sphere."""
+    best = 1e300
+    for r in rings:
+        seg = np.hypot(np.diff(r[:, 0]), np.diff(r[:, 1]))
+        steps = np.maximum(1, np.ceil(seg / 100.0)).astype(int)
+        t = np.concatenate([np.arange(s) / s for s in steps])
+        k = np.repeat(np.arange(len(seg)), steps)
+        px, py = r[k, 0] + t * (r[k + 1, 0] - r[k, 0]), r[k, 1] + t * (r[k + 1, 1] - r[k, 1])
+        plat, plon = moll_inverse(px, py)
+        best = min(best, float(np.min(sphere_km(lat, lon, plat, plon))))
+    return best
+
+
+def cmd_cities(args):
+    src = args.ucdb
+    if not os.path.isfile(src):
+        fail("no such database " + src)
+    print("hashing source ...", flush=True)
+    digest = sha256_file(src)
+    expected = args.sha256
+    sidecar = src + ".sha256"
+    if expected is None and os.path.isfile(sidecar):
+        with open(sidecar, "r", encoding="utf-8") as f:
+            expected = f.read().split()[0]
+    if expected is not None and expected.lower() != digest:
+        fail("source SHA-256 %s does not match the expected %s" % (digest, expected))
+    print("source sha256 " + digest)
+    sys.stdout.reconfigure(errors="replace")   # the centres' names, on a console that can't show them
+
+    with open(args.list, "r", encoding="utf-8", newline="") as f:
+        rows = list(csv.reader(f))
+    if not rows or [c.strip() for c in rows[0][:4]] != CITY_COLUMNS[:4]:
+        fail(args.list + " doesn't begin rank,name,latitude,longitude")
+    cities = [(int(r[0]), r[1], float(r[2]), float(r[3])) for r in rows[1:] if r]
+
+    db = sqlite3.connect("file:" + src.replace("\\", "/") + "?mode=ro", uri=True)
+    srs = db.execute("select srs_id from gpkg_geometry_columns where table_name = ?", (UCDB_TABLE,)).fetchone()
+    if not srs or srs[0] != 54009:
+        fail("the database has no %s in ESRI:54009" % UCDB_TABLE)
+    centres = db.execute('select ID_UC_G0, GC_UCN_MAI_2025, GC_UCA_KM2_2025, GC_POP_TOT_2025, geom from "%s"' % UCDB_TABLE).fetchall()
+    print("%d urban centres" % len(centres), flush=True)
+    # each centre's box in Mollweide, and its middle's latitude and longitude
+    boxes, mids = [], []
+    for c in centres:
+        flags = c[4][3]
+        if (flags >> 1) & 7 == 0:
+            fail("an urban centre's geometry has no envelope")
+        x0, x1, y0, y1 = struct.unpack_from("<dddd" if flags & 1 else ">dddd", c[4], 8)
+        boxes.append((x0, x1, y0, y1))
+        mids.append(moll_inverse(np.array(0.5 * (x0 + x1)), np.array(0.5 * (y0 + y1))))
+    boxes = np.array(boxes)
+    mlat = np.array([float(m[0]) for m in mids])
+    mlon = np.array([float(m[1]) for m in mids])
+
+    out, far, unmatched = [], 0, 0
+    for (rank, name, lat, lon), row in zip(cities, rows[1:]):
+        x, y = moll_forward(lat, lon)
+        match, km = None, 0.0
+        for k in np.nonzero((boxes[:, 0] <= x) & (x <= boxes[:, 1]) & (boxes[:, 2] <= y) & (y <= boxes[:, 3]))[0]:
+            if centres[k][3] >= CITY_MIN_PEOPLE and inside_rings(gpkg_rings(centres[k][4]), x, y):
+                match = k
+                break
+        if match is None:
+            # the nearest edge among the big enough centres whose middle lies within reach of it
+            near = np.nonzero(sphere_km(lat, lon, mlat, mlon) < CITY_NEAR_KM + 150.0)[0]
+            for k in near:
+                if centres[k][3] < CITY_MIN_PEOPLE:
+                    continue
+                d = ring_km(gpkg_rings(centres[k][4]), lat, lon)
+                if d < CITY_NEAR_KM and (match is None or d < km):
+                    match, km = k, d
+        if match is None:
+            unmatched += 1
+            print("  %-28s no centre of %d people within %g km: no size" % (name, CITY_MIN_PEOPLE, CITY_NEAR_KM))
+            out.append(row[:4] + [""] * 5)
+            continue
+        c = centres[match]
+        if km > 0.0:
+            far += 1
+            print("  %-28s outside any centre big enough: %.1f km from %s" % (name, km, c[1]))
+        out.append(row[:4] + [str(int(c[0])), c[1] or "", "%.1f" % float(c[2]), "%d" % round(float(c[3])), "%.1f" % km])
+
+    with open(args.list + ".tmp", "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f, lineterminator="\n")
+        w.writerow(CITY_COLUMNS)
+        w.writerows(out)
+    os.replace(args.list + ".tmp", args.list)
+    sized = [r for r in out if r[4]]
+    shared = len(sized) - len({r[4] for r in sized})
+    print("%d cities matched (%d by the nearest centre), %d not; %d share a centre with another row"
+          % (len(sized), far, unmatched, shared))
+    for r in sorted(sized, key=lambda r: -float(r[6]))[:5] + sorted(sized, key=lambda r: float(r[6]))[:5]:
+        print("  %-28s %-24s %9s km2 %11s people" % (r[1], r[5], r[6], r[7]))
+
+
 # ----------------------------------------------------------------------------- main
 
 def main(argv=None):
@@ -704,6 +892,12 @@ def main(argv=None):
     s.add_argument("project")
     s.add_argument("out")
     s.set_defaults(fn=cmd_stage)
+
+    s = sub.add_parser("cities", help="add each listed city's GHSL urban centre (area, population) to the list")
+    s.add_argument("ucdb", help="GHS_UCDB_GLOBE_R2024A.gpkg")
+    s.add_argument("list", help="the city list CSV, rewritten in place")
+    s.add_argument("--sha256", help="expected source checksum (default: the .sha256 sidecar if present)")
+    s.set_defaults(fn=cmd_cities)
 
     args = p.parse_args(argv)
     if args.cmd == "import":

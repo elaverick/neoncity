@@ -67,6 +67,7 @@ Then, with `py` standing for `tools/earth/.venv/Scripts/python -I tools/earth/ea
 | `py insert data/earth edited.tif [--feather N]` | writes the edit back into the tiles it covers; nodata pixels keep their values; only changed tiles are rewritten |
 | `py preview data/earth out.png [--region …] [--width W] [--exaggerate X]` | a hillshade with the sea floor tinted blue |
 | `py stage data/earth out.r16` | the whole grid as raw little-endian int16 plus `out.r16.txt`, the input of `tools/earth_bake.c`; with any `hints/` tile, the hints too as `out.r16.hints` (uint8 × 3 a cell, 700 MB), named in the sidecar |
+| `py cities <ucdb.gpkg> <list.csv> [--sha256 HEX]` | adds each listed city's GHSL urban centre (id, name, area, population) to the city list, in place ("City sizes", below) |
 
 The grid is fixed at EPSG:4326, 60", pixel-is-area, 21600 × 10800 from 90°N 180°W. A tile is named
 by its south-west corner: `height/N30_W120.tif` spans 30°N..60°N, 120°W..90°W. Elevations are whole
@@ -121,9 +122,47 @@ draws the landforms the bake gives the whole planet.
 ## The city list
 
 `largest_metropolitan_areas_227.csv` (UTF-8; added 2026-10-27) lists the 227 metropolitan areas the
-settlements stand at: `rank,name,latitude,longitude`, a header first, a name in double quotes where it
-holds a comma. It has no population; the size comes from the rank. Two rows are spelling duplicates
-at the same place (Ho Chi Minh City, Urumqi), which the merging absorbs. The engine reads it at run
+settlements stand at, a header first, a name in double quotes where it holds a comma:
+`rank,name,latitude,longitude` as the list came, then `ghsl_id,ghsl_name,area_km2,population,ghsl_km`,
+the GHSL urban centre (below) each row was matched to by `earth.py cities`: its id, name, area (km²) and
+population in 2025, and how far the row's point lies outside it (0 inside). Two rows are spelling
+duplicates at the same place (Ho Chi Minh City, Urumqi), and several share one centre (Guangzhou,
+Shenzhen, Dongguan and Foshan are one urban centre of 6,454 km²); the merging absorbs both. The engine
+reads it at run
 time (`src/plan/plan_world.c`, `PLAN_CITY_LIST`) from beside the executable, where every build copies
 it (the `city_list` target), or failing that from the source tree. Cities within 30 km of each other become one,
 ranks 1-50 are colossal, and the row at the bake's origin (Los Angeles) is the megacity.
+
+### City sizes: the GHSL Urban Centre Database
+
+| | |
+|---|---|
+| Dataset | GHS Urban Centre Database 2025 (GHS-UCDB R2024A), V1.2 |
+| File | `GHS_UCDB_GLOBE_R2024A_V1_2.zip`, and from it `GHS_UCDB_GLOBE_R2024A.gpkg` |
+| URL | https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_UCDB_GLOBE_R2024A/GHS_UCDB_GLOBE_R2024A/V1-2/GHS_UCDB_GLOBE_R2024A_V1_2.zip |
+| Server last-modified | 2026-05-19 14:26:51 GMT |
+| Size | zip 276,662,440 bytes; gpkg 285,081,600 bytes |
+| SHA-256 | zip `12dc8d366a6057b832a070ba3f7b7b7c601bad191da0417a666851f35f10db2e`; gpkg `56e60b7cbfc776b23493d5684aa5d0d7d6940fc3dd9a3881fa52599f20fd80fc` |
+| Format | GeoPackage, 11,422 urban centres, polygons in ESRI:54009 (Mollweide); the table read is `GHSL_UCDB_THEME_GENERAL_CHARACTERISTICS_GLOBE_R2024A` (`ID_UC_G0`, `GC_UCN_MAI_2025`, `GC_UCA_KM2_2025`, `GC_POP_TOT_2025`) |
+| Licence | CC BY 4.0 (© European Union, 1995-2026) |
+| DOI | https://doi.org/10.2905/1a338be6-7eaf-480c-9664-3a8ade88cbcd |
+| Downloaded | 2026-10-28 |
+
+The JRC publishes no checksums; those above were computed on the download. The source is not in the
+repository; it sits with its hashes beside it at `C:\Users\Edward Laverick\Source\Data\GHSL\`. Treat it as
+untrusted download data, as the elevation source.
+
+Citation: Mari Rivero, I., Melchiorri, M., Florio, P., Schiavina, M., Goch, K., Politis, P., Uhl, J. H.,
+Pesaresi, M., Maffenini, L., Sulis, P., Crippa, M., Guizzardi, D., Pisoni, E., Belis, C., Jacome Felix
+Oom, D., Branco, A., Mwaniki, D., Kochulem, E., Githira, D., Carioli, A., Ehrlich, D., Tommasi, P.,
+Kemper, T., Dijkstra, L. (2024): GHS-UCDB R2024A - GHS Urban Centre Database 2025. European Commission,
+Joint Research Centre (JRC). doi:10.2905/1a338be6-7eaf-480c-9664-3a8ade88cbcd. Changes: only the
+centres' areas and populations are used, matched to the city list's points.
+
+`py cities <dir>/GHS_UCDB_GLOBE_R2024A.gpkg data/earth/largest_metropolitan_areas_227.csv` checks the
+GeoPackage against its `.sha256` sidecar and rewrites the list's GHSL columns (about a second). It matches
+each row to the urban centre of at least 300,000 people that holds its point, else to the nearest such
+centre within 30 km. On R2024A V1.2, 223 rows lie inside a centre and 3 are matched to the nearest
+(Tianjin, 13.7 km; Harbin, 3.9 km; Yantai, 5.0 km, to Fushan). Perm is unmatched: the database has no
+centre for it, so its columns are empty. The largest centre is Dhaka's (6,611 km²), then Guangzhou's
+(6,454) and Tokyo's (5,165); Los Angeles's is 4,498 km²; the smallest is Ufa's (123).
