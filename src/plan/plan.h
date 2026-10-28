@@ -157,22 +157,22 @@ double plan_settlement_km(double km2, double lo, double hi);
 /* The farthest from the world chart's origin the megacity's edge measure is
  * below 0 (m): beyond, plan_urban is 0 but near another settlement. */
 double plan_home_reach(void);
-/* The roads between the settlements are laid out in the world chart (until
- * they are on the sphere), over PLAN_ROAD_REACH of its origin, where the
- * chart's distances are within a tenth of the sphere's: a settlement farther
- * out has no roads yet. On the Earth that is North America, from Mexico City
- * to Boston; the next city out, Bogotá, is 5600 km from Los Angeles. */
-#define PLAN_ROAD_REACH   5000000.0   /* m */
-/* Which land (x, z) stands on: a continent's number, from 1, or 0 where no
- * road may go (plan_road_dry) and beyond the roads' reach. Continents are
- * told apart on a grid of PLAN_SEA_CELL, so land joined only across what no
- * road may cross (a strait) is two. */
+/* Which land (x, z), or the direction p, stands on: a continent's number,
+ * from 1, or 0 where no road may go (plan_road_dry). Continents are told
+ * apart on a grid over the sphere, its nodes no more than PLAN_SEA_CELL
+ * apart, so land joined only across what no road may cross (a strait) is
+ * two. */
 #define PLAN_SEA_CELL 20000.0
 #define PLAN_ROAD_SEA_M 20.0   /* roads stay this far above the sea to come (terrain_sea_margin, m) */
+/* Without the Earth's bake the list's cities stand on the stand-in's land,
+ * whose continents are noise: only those within this of the megacity are on
+ * one, and have roads (m). */
+#define PLAN_STANDIN_ROADS 5000000.0
 int    plan_world_continent(double x, double z);
-/* terrain_sea_margin at (x, z), read from that grid: interpolated, and -1e9
- * beyond the roads' reach (m). */
+int    plan_world_continent_dir(TerrainDir p);
+/* terrain_sea_margin at (x, z), or at p, read from that grid: interpolated (m). */
 double plan_world_sea(double x, double z);
+double plan_world_sea_dir(TerrainDir p);
 /* Whether a road may stand at (x, z) for the sea to come: PLAN_ROAD_SEA_M
  * above it on that grid, or, where the grid's 20 km take a coast's lowlands
  * for the sea, PLAN_ROAD_SHORE_M above the Earth's finer shore
@@ -181,6 +181,7 @@ double plan_world_sea(double x, double z);
  * on the coastal plains. */
 #define PLAN_ROAD_SHORE_M 5.0
 int    plan_road_dry(double x, double z);
+int    plan_road_dry_dir(TerrainDir p);
 
 /* Roads between the settlements (src/plan/plan_roads.c): on each continent
  * a network joins every settlement, designed once at plan_world_init. Its
@@ -192,8 +193,9 @@ enum { PLAN_ROAD_TRUNK = 1, PLAN_ROAD_FREEWAY };
 #define PLAN_FREEWAY_HALF 16.0f   /* half the paved width (m): two carriageways of three lanes, a median, shoulders */
 #define PLAN_TRUNK_HALF    6.0f   /* two lanes and shoulders */
 typedef struct PlanNode {
-    DVec2 p;            /* world (x, z): a settlement's centre, or the junction */
-    int   settlement;   /* its settlement, or -1 for a junction */
+    DVec2      p;          /* world (x, z): a settlement's centre, or the junction */
+    TerrainDir dir;        /* the same place on the sphere */
+    int        settlement; /* its settlement, or -1 for a junction */
 } PlanNode;
 /* Where a road meets its settlement: on the perimeter boulevard's centre line,
  * the road's last stretch square to it. */
@@ -231,8 +233,8 @@ typedef struct PlanRoad {
     float         half;       /* half the paved width (m) */
     double        flow;       /* the traffic the gravity model sends along it (relative) */
     int           npts;
-    const DVec2  *pts;        /* its centre line, world (x, z): from `from` (its gate, at a settlement) to `to` */
-    const double *s;          /* distance along it at each point (m) */
+    const DVec2  *pts;        /* its centre line, world (x, z), points 400 m apart at most: from `from` (its gate, at a settlement) to `to` */
+    const double *s;          /* distance along it at each point (m on the sphere: the world chart stretches far ones across) */
     int           gate[2];    /* whether it ends at a gate at `from`, `to` (then pts begins or ends there) */
     int           nprof;
     double        ds;

@@ -50,15 +50,34 @@
  *    bridge's clearance; the ground blends to it (plan_road_ground) but for
  *    under the bridges, found through an index of ROAD_CELL squares.
  *
- * The grids (in the world's chart) cost a step by its length, more on rough
+ * The roads are on the sphere. A link is routed and shaped in a chart of its
+ * own (link_chart: the azimuthal-equidistant one about the midpoint of its
+ * ends, north up), where over a link's length the chart's distances are the
+ * sphere's to within a percent; the nodes, where links meet, are directions,
+ * and whatever one link asks of another goes through them. Distances between
+ * nodes are great circles, and the candidates are the sphere's Delaunay
+ * triangulation (the plane's of the centres' stereographic projection).
+ *
+ * The grids, in each link's chart, cost a step by its length, more on rough
  * land: in the mountains, on hills and plateaus (the coarse grid, by the
- * region's landforms), up steep grades and along or across canyons (the fine
- * grid, from heights and the canyons' centre lines), and across the water
- * (the fine grid: the bake's rivers and lakes). The sea to come, the lakes,
- * the world's edge and other settlements block them. Steps are costed in whole
- * metres, so the game's fast floating point and the tests route alike.
- * Everything is a pure function of the settlements and the terrain (without
- * roads), on as many threads as the caller gives, each link on its own. */
+ * region's landforms, worked out once over the sphere: plan_cube_*), up
+ * steep grades and along or across canyons (the fine grid, from heights and
+ * the canyons' centre lines), and across the water (the fine grid: the
+ * bake's rivers and lakes). The sea to come, the lakes and other settlements
+ * block them. Steps are costed in whole metres, so the game's fast floating
+ * point and the tests route alike. Everything is a pure function of the
+ * settlements and the terrain (without roads), on as many threads as the
+ * caller gives, each link on its own.
+ *
+ * The city and the terrain are still drawn in the world's chart, so that is
+ * where the roads are published (PlanRoad): each link's points taken into
+ * it, no more than PUBLISH_STEP apart, so that a segment straight in either
+ * chart is straight in the other to within millimetres. Lengths along them
+ * are the sphere's. plan_road_ground measures its distances as the sphere's
+ * too (metric_at): far from the chart's origin, where its distances across
+ * are stretched, the ground is graded to the road's true width. Spatial
+ * indices are of world chart squares, each thing filed as far round as the
+ * chart's stretch there takes its reach (seg_squares). */
 
 #define COARSE_CELL    4000.0   /* m */
 #define FINE_CELL      1000.0
@@ -71,6 +90,8 @@
 #define ADD_SCORE_MIN  0.02
 #define PREFER         0.5      /* preferential connection: the ends' degrees count to this power */
 #define HUB_LINKS      3        /* a colossal city has at least this many links, candidates allowing */
+#define GAP_TRIES      4        /* pairs across a continent's gaps tried, at most, for each settlement on one... */
+#define GAP_BATCH      32       /* ...so many at a time */
 #define STEINER_SAVE   0.06     /* a junction is made where it saves this share of the two links' length */
 #define FREEWAY_SHARE  0.4
 #define GRAVITY_D0     500000.0 /* the gravity model's distances in this unit, never under a fifth of it */
@@ -96,6 +117,8 @@
 #define WET_MAX        1500.0   /* ...this far either side at most */
 #define WET_DEPTH      0.5      /* ground this far under the dry ground is the water's bed or bank (m) */
 #define WET_JOIN       60.0     /* stretches this near each other are one bridge (m) */
+#define JUNCTION_CLEAR 40.0     /* a bridge stays this far from a junction (where the other roads' surfaces are) (m) */
+#define PUBLISH_STEP   400.0    /* a published road's points are no more than this far apart (m) */
 #define BRIDGE_UNDER   0.3      /* the ground under a deck stands this far under its soffit, at least (m) */
 
 /* Open addressing from int64 keys to ints; INT64_MIN marks an empty slot. */
@@ -106,6 +129,7 @@ typedef struct Link {
     int64_t  cost;          /* the route's (or, before it is routed, the coarse route's) cost */
     int      cls;
     double   flow;
+    TerrainChart ch;        /* its own chart: pts are in it */
     DVec2   *pts;           /* the route, from a to b (malloc'd) */
     int      npts;
     double  *s;
@@ -127,10 +151,10 @@ typedef struct Net {
     int      nlinks;
     PlanRoad road[MAX_LINKS];
     double   nodeH[MAX_NODES];   /* each junction's height, where its roads meet */
-    /* the index: ROAD_CELL squares -> runs of (road, segment) in idx */
-    IMap     cells;              /* square -> its first entry in idx */
+    /* the index: ROAD_CELL squares -> runs of a road's segments (build_index) */
+    IMap     cells;              /* square -> its first run in idx */
     int     *idxCount;           /* by the same number: how many */
-    int     *idx;                /* road, segment, road, segment... */
+    int     *idx;                /* each run's road, first and last segment */
     float   *idxLo, *idxHi;      /* by a square's first entry: the least and most height of its roads' segments */
     float    lo, hi;             /* ...and of every road */
 } Net;
@@ -180,6 +204,52 @@ static void *grow(void *p, int *cap, int need, size_t size) {
     if (!q) fatal("out of memory routing the roads");
     *cap = c;
     return q;
+}
+
+/* --- Charts ------------------------------------------------------------------------------- */
+
+static TerrainChart g_wc;   /* the world's chart */
+
+static TerrainDir dir_of(const TerrainChart *c, DVec2 p) { return terrain_chart_dir(c, p.x, p.z); }
+static DVec2 in_chart(const TerrainChart *c, TerrainDir d) { DVec2 r; terrain_dir_chart(c, d, &r.x, &r.z); return r; }
+static DVec2 world_of(TerrainDir d) { return in_chart(&g_wc, d); }
+/* A point of chart c taken into chart to. */
+static DVec2 rechart(const TerrainChart *c, const TerrainChart *to, DVec2 p) { return in_chart(to, dir_of(c, p)); }
+
+static double sphere_m(TerrainDir a, TerrainDir b) {
+    TerrainDir c = { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
+    return PLANET_RADIUS * atan2(sqrt(c.x * c.x + c.y * c.y + c.z * c.z), a.x * b.x + a.y * b.y + a.z * b.z);
+}
+
+/* A link's chart: about the midpoint of the great circle between its ends. */
+static TerrainChart link_chart(TerrainDir a, TerrainDir b) {
+    TerrainDir m = { a.x + b.x, a.y + b.y, a.z + b.z };
+    double l = sqrt(m.x * m.x + m.y * m.y + m.z * m.z);
+    if (l < 1e-9) m = a; else { m.x /= l; m.y /= l; m.z /= l; }
+    return terrain_chart_about(m, 0.0);
+}
+
+/* How far the world's chart stretches distances at its (x, z): along the
+ * line out from its origin not at all, across it by th / sin th, th the
+ * angle out (held short of the antipode, where it is unbounded). */
+static double stretch_at(DVec2 w) {
+    double th = fmin(dlen(w) / PLANET_RADIUS, 3.1);
+    return th > 1e-9 ? th / sin(th) : 1.0;
+}
+
+/* The sphere's metres at the world chart's (x, z): offsets from there along
+ * the line out from the origin as they are, across it shrunk by sin th / th. */
+typedef struct Metric { DVec2 r; double s; } Metric;
+static Metric metric_at(DVec2 w) {
+    Metric m = { dv(1.0, 0.0), 1.0 };
+    double l = dlen(w);
+    if (l > 0.0) { m.r = dscale(w, 1.0 / l); m.s = 1.0 / stretch_at(w); }
+    return m;
+}
+static DVec2 metric_apply(const Metric *m, DVec2 d) {
+    double a = ddot(d, m->r);
+    DVec2 r = dscale(m->r, a);
+    return dadd(r, dscale(dsub(d, r), m->s));
 }
 
 /* --- A* over a grid --------------------------------------------------------------------- */
@@ -294,71 +364,96 @@ static int64_t astar(int si, int sj, int gi, int gj, double cell, double eps, in
 
 /* --- What a route may cross ---------------------------------------------------------------- */
 
-/* Whether a road may pass (x, z) on its way between settlements `from` and
- * `to` (-1 for a junction): above the sea to come, inside the roads' reach,
- * and clear of every other settlement. Inside its own settlements' footprints
- * the ground is the city's, kept off the sea by its coast (plan_world.c), so
+/* Whether a road may pass p (w in the world's chart) on its way between
+ * settlements `from` and `to` (-1 for a junction): above the sea to come and
+ * clear of every other settlement. Inside its own settlements' footprints the
+ * ground is the city's, kept off the sea by its coast (plan_world.c), so
  * there it may pass however low the land. */
-static int passable(double x, double z, int from, int to) {
-    double e = plan_city_edge(x, z);
-    if (e >= 0.0 && !plan_road_dry(x, z)) return 0;
+static int passable(TerrainDir p, DVec2 w, int from, int to) {
+    double e = plan_city_edge(w.x, w.z);
+    if (e >= 0.0 && !plan_road_dry_dir(p)) return 0;
     if (e < CITY_CLEAR) {
-        int k = plan_settlement_near(x, z);
+        int k = plan_settlement_near(w.x, w.z);
         if (k != from && k != to) return 0;
     }
     return 1;
 }
 
 /* The coarse grid: each cell's cost per metre of a step, from the region's
- * landforms, worked out once for the whole of the roads' reach (its rows on the
- * threads) and kept as a byte: 1 + v / COARSE_STEPS, or COARSE_SEA where no
- * road may go (the sea, a lake) and COARSE_CITY within CITY_CLEAR of a settlement, where only
- * its own roads may (inside its footprint, however low the land: passable). */
-#define COARSE_EXTENT (PLAN_ROAD_REACH + 300000.0)
-#define COARSE_I0     ((int)floor(-COARSE_EXTENT / COARSE_CELL))
-#define COARSE_SIDE   (2 * -COARSE_I0)
+ * landforms, worked out once over the sphere (plan_cube_*, nodes COARSE_CELL
+ * apart at most; a face's rows on the threads) and kept as a byte:
+ * 1 + v / COARSE_STEPS, or COARSE_SEA where no road may go (the sea, a lake)
+ * and COARSE_CITY within CITY_CLEAR of a settlement, where only its own
+ * roads may (inside its footprint, however low the land: passable). A
+ * link's coarse cells, COARSE_CELL squares of its chart, read the node
+ * nearest their centres. */
 #define COARSE_STEPS  50.0f
 #define COARSE_SEA    255
 #define COARSE_CITY   254
+#define COARSE_DEEP   (-1000.0)   /* the sea grid's margin this far under is the deep ocean (m) */
 
-static uint8_t *g_coarse;
+static uint8_t   *g_coarse;
+static int        g_coarse_n;
 
 static void coarse_row(void *ctx, int r) {
     (void)ctx;
-    for (int q = 0; q < COARSE_SIDE; ++q) {
-        double x = (COARSE_I0 + q + 0.5) * COARSE_CELL, z = (COARSE_I0 + r + 0.5) * COARSE_CELL;
+    const int n = g_coarse_n, f = r / n, j = r % n;
+    for (int i = 0; i < n; ++i) {
+        TerrainDir p = plan_cube_dir(n, f, i, j);
         uint8_t v = COARSE_SEA;
-        double e = plan_city_edge(x, z);
+        /* the deep ocean, which no footprint reaches (they stop short of the shore) */
+        if (plan_world_sea_dir(p) < COARSE_DEEP) { g_coarse[plan_cube_index(n, f, i, j)] = v; continue; }
+        DVec2 w = world_of(p);
+        double e = plan_city_edge(w.x, w.z);
         if (e < 0.0) v = COARSE_CITY;
-        else if (plan_road_dry(x, z)) {
-            TerrainChart wc = terrain_world_chart();
+        else if (plan_road_dry_dir(p)) {
             if (e < CITY_CLEAR) v = COARSE_CITY;
-            else if (terrain_earth_shore(terrain_chart_dir(&wc, x, z)) < 0.0) v = COARSE_SEA;   /* a lake */
+            else if (terrain_earth_shore(p) < 0.0) v = COARSE_SEA;   /* a lake */
             else {
                 TerrainLandform lf;
-                terrain_landform(x, z, &lf);
-                float f = 4.0f * lf.w[TERRAIN_MOUNTAINS] + 1.5f * lf.w[TERRAIN_PLATEAU] + 0.6f * lf.w[TERRAIN_HILLS] + (lf.canyon > 0.0f ? 0.3f : 0.0f);
-                v = (uint8_t)fminf(f * COARSE_STEPS + 0.5f, COARSE_CITY - 1.0f);
+                terrain_landform_dir(p, &lf);
+                float c = 4.0f * lf.w[TERRAIN_MOUNTAINS] + 1.5f * lf.w[TERRAIN_PLATEAU] + 0.6f * lf.w[TERRAIN_HILLS] + (lf.canyon > 0.0f ? 0.3f : 0.0f);
+                v = (uint8_t)fminf(c * COARSE_STEPS + 0.5f, COARSE_CITY - 1.0f);
             }
         }
-        g_coarse[(size_t)r * COARSE_SIDE + q] = v;
+        g_coarse[plan_cube_index(n, f, i, j)] = v;
     }
 }
 
-typedef struct Coarse { int from, to, gi, gj, si, sj; } Coarse;
+/* A coarse route's search: in chart ch, between settlements from and to
+ * (-1 for a junction), from cell (si, sj) to (gi, gj); what it has read of
+ * the grid, by cell (its factor in 1/1024ths, -1024 for none) and by corner
+ * (whether a diagonal step through it stays on land). */
+typedef struct Coarse { const TerrainChart *ch; int from, to, gi, gj, si, sj; IMap memo, corner; } Coarse;
 
 /* Coarse cell (i, j)'s cost per metre, or -1 where this route can't go. */
-static float coarse_factor(const Coarse *c, int i, int j) {
-    int q = i - COARSE_I0, r = j - COARSE_I0;
-    if (q < 0 || r < 0 || q >= COARSE_SIDE || r >= COARSE_SIDE) return -1.0f;
-    uint8_t v = g_coarse[(size_t)r * COARSE_SIDE + q];
+static float coarse_factor(Coarse *c, int i, int j) {
+    int64_t key = cell_key(i, j);
+    int m = imap_get(&c->memo, key);
+    if (m != -1) return m / 1024.0f;   /* -1 is never a factor's: they are -1024 or 1024 and more */
+    TerrainDir p = dir_of(c->ch, dv((i + 0.5) * COARSE_CELL, (j + 0.5) * COARSE_CELL));
+    double fi, fj;
+    int f = plan_cube_at(g_coarse_n, p, &fi, &fj);
+    uint8_t v = g_coarse[plan_cube_index(g_coarse_n, f, (int)(fi + 0.5), (int)(fj + 0.5))];
     int end = (i == c->si && j == c->sj) || (i == c->gi && j == c->gj);
-    if (v == COARSE_SEA) return end ? 1.0f : -1.0f;
-    if (v == COARSE_CITY) {
-        int k = plan_settlement_near((i + 0.5) * COARSE_CELL, (j + 0.5) * COARSE_CELL);
-        return end || k == c->from || k == c->to ? 1.0f : -1.0f;
-    }
-    return 1.0f + v / COARSE_STEPS;
+    float r;
+    if (v == COARSE_SEA) r = end ? 1.0f : -1.0f;
+    else if (v == COARSE_CITY) {
+        DVec2 w = world_of(p);
+        int k = plan_settlement_near(w.x, w.z);
+        r = end || k == c->from || k == c->to ? 1.0f : -1.0f;
+    } else r = 1.0f + v / COARSE_STEPS;
+    imap_put(&c->memo, key, (int)(r * 1024.0f));
+    return r;
+}
+
+static int coarse_corner_dry(Coarse *c, int i, int j) {
+    int64_t key = cell_key(i, j);
+    int m = imap_get(&c->corner, key);
+    if (m >= 0) return m;
+    m = plan_road_dry_dir(dir_of(c->ch, dv(i * COARSE_CELL, j * COARSE_CELL)));
+    imap_put(&c->corner, key, m);
+    return m;
 }
 
 static int64_t coarse_step(void *ctx, int ai, int aj, int bi, int bj) {
@@ -367,7 +462,7 @@ static int64_t coarse_step(void *ctx, int ai, int aj, int bi, int bj) {
     if (fa < 0.0f || fb < 0.0f) return -1;
     double len = (ai != bi && aj != bj ? 1.4142135623730951 : 1.0) * COARSE_CELL;
     /* a diagonal step mustn't jump a strait */
-    if (ai != bi && aj != bj && !plan_road_dry((ai + bi + 1) * 0.5 * COARSE_CELL, (aj + bj + 1) * 0.5 * COARSE_CELL)) return -1;
+    if (ai != bi && aj != bj && !coarse_corner_dry(c, ai > bi ? ai : bi, aj > bj ? aj : bj)) return -1;
     return (int64_t)(len * 0.5 * (fa + fb) + 0.5);
 }
 
@@ -375,13 +470,14 @@ static int coarse_of(double v) { return (int)floor(v / COARSE_CELL); }
 static int fine_of(double v) { return (int)floor(v / FINE_CELL); }
 
 /* The water near a route: the bake's rivers, with their widths, and its
- * lakes' shores, in the world's chart, each segment filed under every square
+ * lakes' shores, in the route's chart, each segment filed under every square
  * of a grid its bounds touch (a river's widened by its half width), so a
  * line crosses, or comes into a river's water from, only segments filed in
  * the squares it passes through (water_hits walks them). */
 typedef struct WaterSeg { DVec2 a, b; double w; int kind; } WaterSeg;
 typedef struct WaterHit { double t, w, sin; uint32_t id; int kind, near; } WaterHit;
 typedef struct WaterGrid {
+    const TerrainChart *ch;
     double      cell;
     const IMap *corridor;   /* only the squares in these coarse cells (FINE_PER squares a side), or NULL for all */
     IMap        seen;       /* the bake's segment -> its own */
@@ -395,8 +491,9 @@ typedef struct WaterGrid {
     int         nhit, caphit;
 } WaterGrid;
 
-static void water_init(WaterGrid *g, double cell, const IMap *corridor) {
+static void water_init(WaterGrid *g, const TerrainChart *ch, double cell, const IMap *corridor) {
     memset(g, 0, sizeof(*g));
+    g->ch = ch;
     g->cell = cell;
     g->corridor = corridor;
     imap_init(&g->seen, 1 << 10);
@@ -413,10 +510,9 @@ static void water_gather(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, doub
     WaterGrid *g = (WaterGrid *)ctx;
     if (imap_get(&g->seen, (int64_t)k) >= 0) return;
     imap_put(&g->seen, (int64_t)k, g->nseg);
-    TerrainChart wc = terrain_world_chart();
     WaterSeg sg;
-    terrain_dir_chart(&wc, a, &sg.a.x, &sg.a.z);
-    terrain_dir_chart(&wc, b, &sg.b.x, &sg.b.z);
+    sg.a = in_chart(g->ch, a);
+    sg.b = in_chart(g->ch, b);
     sg.w = width;
     sg.kind = kind;
     int e = g->nseg++;
@@ -442,8 +538,7 @@ static void water_gather(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, doub
 
 /* The water within `radius` of p, gathered into the grid. */
 static void water_near(WaterGrid *g, DVec2 p, double radius) {
-    TerrainChart wc = terrain_world_chart();
-    terrain_earth_water_near(terrain_chart_dir(&wc, p.x, p.z), radius, (1u << 1) | (1u << 2), water_gather, g);
+    terrain_earth_water_near(dir_of(g->ch, p), radius, (1u << 1) | (1u << 2), water_gather, g);
 }
 
 static int hit_by_id(const void *pa, const void *pb) {
@@ -548,11 +643,15 @@ static int64_t water_cost(WaterGrid *g, DVec2 p, DVec2 q) {
     return (int64_t)(c + 0.5);
 }
 
-/* The fine grid: heights for grades, the mountains, canyons along and across. */
+/* The fine grid: heights for grades, the mountains, canyons along and across.
+ * A cell is open on land (1) or, as a last resort (Fine.wet), in a river's
+ * water or a lake (2). */
 typedef struct FineCell { float h, mountain, canyon; int open; } FineCell;
 
 typedef struct Fine {
+    const TerrainChart *ch;
     int       from, to;
+    int       wet;          /* the water's cells are open too, each metre across them a bridge's */
     IMap      corridor;     /* coarse cells the route may use */
     IMap      memo;
     FineCell *cell;
@@ -575,15 +674,16 @@ static const FineCell *fine_cell(Fine *f, int i, int j) {
     FineCell c = { 0.0f, 0.0f, 0.0f, 0 };
     int end = (i == f->si && j == f->sj) || (i == f->gi && j == f->gj);
     int inside = imap_get(&f->corridor, cell_key((int)floor((double)i / FINE_PER), (int)floor((double)j / FINE_PER))) >= 0;
-    TerrainChart wc = terrain_world_chart();
-    if (end || (inside && passable(x, z, f->from, f->to) && !water_in_river(&f->water, dv(x, z)) &&
-                terrain_earth_shore(terrain_chart_dir(&wc, x, z)) >= 0.0)) {   /* not in a river's water or a lake */
+    TerrainDir p = dir_of(f->ch, dv(x, z));
+    int water = -1;
+    if (end || (inside && passable(p, world_of(p), f->from, f->to) &&
+                (!(water = water_in_river(&f->water, dv(x, z)) || terrain_earth_shore(p) < 0.0) || f->wet))) {   /* not in a river's water or a lake */
         TerrainLandform lf;
-        terrain_landform(x, z, &lf);
-        c.h = (float)terrain_height_dry_lod(x, z, 250.0);
+        terrain_landform_dir(p, &lf);
+        c.h = (float)terrain_height_dry_dir(p, 250.0);
         c.mountain = lf.w[TERRAIN_MOUNTAINS];
         c.canyon = lf.canyon;
-        c.open = 1;
+        c.open = water > 0 ? 2 : 1;
     }
     f->cell = (FineCell *)grow(f->cell, &f->cap, f->n + 1, sizeof(FineCell));
     f->cell[f->n] = c;
@@ -613,13 +713,15 @@ static double crossing_depth(const Fine *f, DVec2 p, DVec2 q, int ci, int cj, in
 }
 
 /* A step's cost: its length, more in the mountains, up a grade beyond 3% (and
- * steeply more beyond 8%), along a canyon, and a great deal across one any
- * deeper than a road could simply dip through. */
+ * steeply more beyond 8%), along a canyon, a great deal across one any
+ * deeper than a road could simply dip through, and over the water's cells as
+ * a bridge. */
 static int64_t step_cost(const FineCell *a, const FineCell *b, double len, double crossing) {
     double g = fabs((double)b->h - a->h) / len;
     double c = len * (1.0 + 1.25 * (a->mountain + b->mountain));
     c += len * (30.0 * fmax(0.0, g - 0.03) + 1500.0 * fmax(0.0, g - 0.08) * fmax(0.0, g - 0.08));
     c += len * 0.05 * (a->canyon + b->canyon);
+    c += len * 0.5 * BRIDGE_PER_M * ((a->open == 2) + (b->open == 2));
     if (crossing > 10.0) c += 300.0 * crossing;
     return (int64_t)(c + 0.5);
 }
@@ -645,7 +747,7 @@ static void file_canyons(Fine *f, const int *ci, const int *cj, int n) {
     TerrainCanyon near[64];
     for (int k = 0; k < n; k += 2) {
         double x = (ci[k] + 0.5) * COARSE_CELL, z = (cj[k] + 0.5) * COARSE_CELL;
-        int m = terrain_canyons_near(x, z, (CORRIDOR + 2) * COARSE_CELL, near, 64);
+        int m = terrain_canyons_near_in(f->ch, x, z, (CORRIDOR + 2) * COARSE_CELL, near, 64);
         for (int q = 0; q < m; ++q) {
             if (imap_get(&seen, (int64_t)near[q].id) >= 0) continue;
             imap_put(&seen, (int64_t)near[q].id, 1);
@@ -710,22 +812,38 @@ static int64_t line_cost(Fine *f, DVec2 p, DVec2 q) {
 
 /* --- Routing a link ---------------------------------------------------------------------------- */
 
-static DVec2 node_p(const Net *net, int k) { return net->node[k].p; }
+static TerrainDir node_dir(const Net *net, int k) { return net->node[k].dir; }
+/* Whether a junction at p would stand in or beside the bake's rivers and
+ * lakes, within JUNCTION_DRY of their water: a road's bridges stop short of
+ * its ends, so its junctions are on dry land. */
+#define JUNCTION_DRY 50.0
+static int junction_wet(TerrainDir p) {
+    TerrainEarthWater w;
+    return terrain_earth_water(p, &w) && !w.stream && w.edge < JUNCTION_DRY;
+}
 static int node_settlement(const Net *net, int k) { return net->node[k].settlement; }
+/* Node k in chart c. */
+static DVec2 node_in(const Net *net, int k, const TerrainChart *c) { return in_chart(c, net->node[k].dir); }
+static double node_m(const Net *net, int a, int b) { return sphere_m(net->node[a].dir, net->node[b].dir); }
 
-/* The coarse route's cost between two nodes (and its cells, if wanted), or -1
- * (also if it would cost more than `limit` times the straight line, when that
- * is above 0). */
-static int64_t coarse_route(const Net *net, int a, int b, double limitFactor, int **ci, int **cj, int *n) {
+/* The coarse route's cost between two nodes in chart ch (and its cells, if
+ * wanted), or -1 (also if it would cost more than `limit` times the straight
+ * line, when that is above 0). */
+static int64_t coarse_route(const Net *net, int a, int b, const TerrainChart *ch, double limitFactor, int **ci, int **cj, int *n) {
     Coarse c;
+    c.ch = ch;
     c.from = node_settlement(net, a);
     c.to = node_settlement(net, b);
-    DVec2 pa = node_p(net, a), pb = node_p(net, b);
+    DVec2 pa = node_in(net, a, ch), pb = node_in(net, b, ch);
     c.si = coarse_of(pa.x); c.sj = coarse_of(pa.z);
     c.gi = coarse_of(pb.x); c.gj = coarse_of(pb.z);
+    imap_init(&c.memo, 1 << 12);
+    imap_init(&c.corner, 1 << 10);
     int *pi, *pj, np;
     int64_t limit = limitFactor > 0.0 ? (int64_t)(limitFactor * dlen(dsub(pb, pa))) + (int64_t)(4.0 * COARSE_CELL) : INT64_MAX / 4;
     int64_t cost = astar(c.si, c.sj, c.gi, c.gj, COARSE_CELL, 1.4, limit, coarse_step, &c, &pi, &pj, &np);
+    imap_free(&c.memo);
+    imap_free(&c.corner);
     if (ci) { *ci = pi; *cj = pj; *n = np; }
     else { free(pi); free(pj); }
     return cost;
@@ -769,18 +887,22 @@ static int pull_straight(Fine *f, const DVec2 *p, const int64_t *g, int n, DVec2
 
 typedef struct RouteJob { Net *net; int *links; int n; int coarseOnly; } RouteJob;
 
-/* Routes link k: coarse, then fine within the corridor round it (widened if
- * that finds nothing), pulled straight. Its points run from the centre of a's
- * cell to b's, ending at the nodes themselves. */
+/* Routes link k in its chart: coarse, then fine within the corridor round it
+ * (widened if that finds nothing, and at last with the water open: a river
+ * too wide for a fine cell, a lake's long arm), pulled straight. Its points
+ * run from the centre of a's cell to b's, ending at the nodes themselves. */
 static void route_link(Net *net, Link *L) {
     int *ci, *cj, nc;
     L->ok = 0;
-    int64_t cc = coarse_route(net, L->a, L->b, 0.0, &ci, &cj, &nc);
+    L->ch = link_chart(node_dir(net, L->a), node_dir(net, L->b));
+    int64_t cc = coarse_route(net, L->a, L->b, &L->ch, 0.0, &ci, &cj, &nc);
     if (cc < 0) return;
-    DVec2 pa = node_p(net, L->a), pb = node_p(net, L->b);
-    for (int widen = 0; widen < 3 && !L->ok; ++widen) {
+    DVec2 pa = node_in(net, L->a, &L->ch), pb = node_in(net, L->b, &L->ch);
+    for (int widen = 0; widen < 4 && !L->ok; ++widen) {
         Fine f;
         memset(&f, 0, sizeof(f));
+        f.ch = &L->ch;
+        f.wet = widen == 3;
         f.from = node_settlement(net, L->a);
         f.to = node_settlement(net, L->b);
         f.si = fine_of(pa.x); f.sj = fine_of(pa.z);
@@ -788,12 +910,12 @@ static void route_link(Net *net, Link *L) {
         imap_init(&f.corridor, 1 << 10);
         imap_init(&f.memo, 1 << 14);
         imap_init(&f.seghead, 1 << 12);
-        int r = CORRIDOR << widen;
+        int r = CORRIDOR << (widen < 3 ? widen : 1);
         for (int k = 0; k < nc; ++k)
             for (int dj = -r; dj <= r; ++dj)
                 for (int di = -r; di <= r; ++di) imap_put(&f.corridor, cell_key(ci[k] + di, cj[k] + dj), 1);
         file_canyons(&f, ci, cj, nc);
-        water_init(&f.water, FINE_CELL, &f.corridor);
+        water_init(&f.water, &L->ch, FINE_CELL, &f.corridor);
         for (int k = 0; k < nc; k = k + 2 < nc || k == nc - 1 ? k + 2 : nc - 1)
             water_near(&f.water, dv((ci[k] + 0.5) * COARSE_CELL, (cj[k] + 0.5) * COARSE_CELL), (r + 1.5) * COARSE_CELL);
         int *pi, *pj, np;
@@ -830,7 +952,8 @@ static void route_job(void *ctx, int i) {
     RouteJob *j = (RouteJob *)ctx;
     Link *L = &j->net->link[j->links[i]];
     if (j->coarseOnly) {
-        L->cost = coarse_route(j->net, L->a, L->b, ROUTE_LIMIT, NULL, NULL, NULL);
+        TerrainChart ch = link_chart(node_dir(j->net, L->a), node_dir(j->net, L->b));
+        L->cost = coarse_route(j->net, L->a, L->b, &ch, ROUTE_LIMIT, NULL, NULL, NULL);
         L->ok = L->cost >= 0;
     } else {
         route_link(j->net, L);
@@ -845,7 +968,7 @@ static void route_all(Net *net, int *links, int n, int coarseOnly, int threads) 
     if (!order || !len) fatal("out of memory routing the roads");
     for (int k = 0; k < n; ++k) {
         const Link *L = &net->link[links[k]];
-        len[k] = dlen(dsub(node_p(net, L->b), node_p(net, L->a)));
+        len[k] = node_m(net, L->a, L->b);
         order[k] = links[k];
         for (int q = k; q > 0 && len[q] > len[q - 1]; --q) {
             double t = len[q]; len[q] = len[q - 1]; len[q - 1] = t;
@@ -873,15 +996,21 @@ static Tri make_tri(const DVec2 *p, int a, int b, int c) {
     return t;
 }
 
-/* Bowyer-Watson over the centres of settlements ids[0 .. n); the pairs of
- * neighbours (settlements i < j) into pairs. */
+/* Bowyer-Watson over the centres of settlements ids[0 .. n) as the sphere's
+ * stereographic projection from its south pole (where there are none), which
+ * keeps circles circles: the plane's triangulation is the sphere's but for
+ * the triangles round the pole. The pairs of neighbours (settlements i < j)
+ * into pairs. */
 static int delaunay(const int *ids, int n, int (*pairs)[2], int maxPairs) {
     DVec2 *p = (DVec2 *)malloc(sizeof(DVec2) * (size_t)(n + 3));
     int cap = 8 * n + 16, nt = 0;
     Tri *t = (Tri *)malloc(sizeof(Tri) * (size_t)cap);
     int (*edges)[2] = malloc(sizeof(int[2]) * (size_t)cap * 3);
     if (!p || !t || !edges) fatal("out of memory triangulating the settlements");
-    for (int k = 0; k < n; ++k) p[k] = plan_settlement(ids[k]).centre;
+    for (int k = 0; k < n; ++k) {
+        TerrainDir d = plan_settlement(ids[k]).dir;
+        p[k] = dv(PLANET_RADIUS * d.x / (1.0 + d.z), PLANET_RADIUS * d.y / (1.0 + d.z));
+    }
     const double big = 1e8;
     p[n] = dv(-big, -big); p[n + 1] = dv(big * 3.0, -big); p[n + 2] = dv(-big, big * 3.0);
     t[nt++] = make_tri(p, n, n + 1, n + 2);
@@ -930,7 +1059,7 @@ static double settlement_weight(int k) { double km = plan_settlement(k).size_km;
 
 /* The gravity model's traffic between settlements i and j. */
 static double gravity(int i, int j) {
-    double d = dlen(dsub(plan_settlement(i).centre, plan_settlement(j).centre)) / GRAVITY_D0;
+    double d = sphere_m(plan_settlement(i).dir, plan_settlement(j).dir) / GRAVITY_D0;
     d = d < 0.2 ? 0.2 : d;
     return settlement_weight(i) * settlement_weight(j) / (d * d);
 }
@@ -1057,9 +1186,10 @@ static DVec2 fermat(DVec2 a, DVec2 b, DVec2 c) {
     return p;
 }
 
-static int add_node(Net *net, DVec2 p, int settlement) {
+static int add_node(Net *net, TerrainDir d, int settlement) {
     if (net->nnodes >= MAX_NODES) fatal("the road network outgrew its nodes");
-    net->node[net->nnodes].p = p;
+    net->node[net->nnodes].dir = d;
+    net->node[net->nnodes].p = world_of(d);
     net->node[net->nnodes].settlement = settlement;
     return net->nnodes++;
 }
@@ -1073,7 +1203,8 @@ static int add_link(Net *net, int a, int b) {
 }
 
 /* Junctions where two links leave a node close together (step 4): the best
- * saving first, while any saves STEINER_SAVE of their length. */
+ * saving first, while any saves STEINER_SAVE of their length. Each node's
+ * triangles are worked out in a chart about it. */
 static void steiner(Net *net) {
     int *start = (int *)malloc(sizeof(int) * (MAX_NODES + 1)), *incidence = (int *)malloc(sizeof(int) * 2 * MAX_LINKS);
     if (!start || !incidence) fatal("out of memory joining the roads");
@@ -1087,7 +1218,7 @@ static void steiner(Net *net) {
         start[0] = 0;
         double bestSave = 0.0;
         int bl1 = -1, bl2 = -1, bv = -1;
-        DVec2 bf = dv(0, 0);
+        TerrainDir bf = { 0.0, 0.0, 0.0 };
         for (int v = 0; v < net->nnodes; ++v) {
             int ni = 0, *inc = &incidence[start[v]];
             for (int k = start[v]; k < start[v + 1]; ++k) ni++;
@@ -1095,12 +1226,13 @@ static void steiner(Net *net) {
              * keep three, a colossal city its HUB_LINKS */
             if (net->node[v].settlement < 0 && ni < 4) continue;
             if (net->node[v].settlement >= 0 && plan_settlement(net->node[v].settlement).colossal && ni <= HUB_LINKS) continue;
+            TerrainChart cv = terrain_chart_about(node_dir(net, v), 0.0);
             for (int x = 0; x < ni; ++x)
                 for (int y = x + 1; y < ni; ++y) {
                     const Link *l1 = &net->link[inc[x]], *l2 = &net->link[inc[y]];
                     int a = l1->a == v ? l1->b : l1->a, b = l2->a == v ? l2->b : l2->a;
                     if (a == b) continue;
-                    DVec2 pv = node_p(net, v), pa = node_p(net, a), pb = node_p(net, b);
+                    DVec2 pv = node_in(net, v, &cv), pa = node_in(net, a, &cv), pb = node_in(net, b, &cv);
                     DVec2 ua = dnorm(dsub(pa, pv)), ub = dnorm(dsub(pb, pv));
                     if (ddot(ua, ub) <= -0.5) continue;   /* 120 degrees or more apart: no junction helps */
                     DVec2 f = fermat(pv, pa, pb);
@@ -1108,8 +1240,10 @@ static void steiner(Net *net) {
                     double save = before - (dlen(dsub(f, pv)) + dlen(dsub(f, pa)) + dlen(dsub(f, pb)));
                     save = floor(save + 0.5);
                     if (save < STEINER_SAVE * before || save <= bestSave) continue;
-                    if (!plan_road_dry(f.x, f.z) || plan_city_edge(f.x, f.z) < 2.0 * CITY_CLEAR) continue;
-                    bestSave = save; bl1 = inc[x]; bl2 = inc[y]; bv = v; bf = f;
+                    TerrainDir fd = dir_of(&cv, f);
+                    DVec2 fw = world_of(fd);
+                    if (!plan_road_dry_dir(fd) || plan_city_edge(fw.x, fw.z) < 2.0 * CITY_CLEAR || junction_wet(fd)) continue;
+                    bestSave = save; bl1 = inc[x]; bl2 = inc[y]; bv = v; bf = fd;
                 }
         }
         if (bl1 < 0) break;
@@ -1133,7 +1267,35 @@ static double link_length(const Link *L) {
     return s;
 }
 
-typedef struct Cross { int link, seg; double t; DVec2 p; int node; } Cross;
+/* How far along from each end a link is still its settlement's there: up to
+ * the farthest (from that end) it comes within CITY_CLEAR of that
+ * settlement's footprint, sampled every SPAN_STEP; nothing at a junction.
+ * Out of a city 60-150 km across a route may leave round a bay or a range
+ * and come back in; until it leaves for the last time it is the city's (its
+ * gate cuts it there), so no junction is made on that stretch. *s0 from the
+ * start, *s1 from the end (m). */
+#define SPAN_STEP 500.0
+static void end_spans(const Net *net, const Link *L, double *s0, double *s1) {
+    int sa = net->node[L->a].settlement, sb = net->node[L->b].settlement;
+    double first = -1.0, s = 0.0, at = 0.0;
+    *s0 = *s1 = 0.0;
+    if (sa < 0 && sb < 0) return;
+    for (int k = 0; k + 1 < L->npts; ++k) {
+        double len = dlen(dsub(L->pts[k + 1], L->pts[k]));
+        for (; at <= s + len; at += SPAN_STEP) {
+            DVec2 p = dadd(L->pts[k], dscale(dsub(L->pts[k + 1], L->pts[k]), len > 0.0 ? (at - s) / len : 0.0));
+            DVec2 w = world_of(dir_of(&L->ch, p));
+            if (plan_city_edge(w.x, w.z) >= CITY_CLEAR) continue;
+            int near = plan_settlement_near(w.x, w.z);
+            if (near == sa) *s0 = at + SPAN_STEP;
+            if (near == sb && first < 0.0) first = at;
+        }
+        s += len;
+    }
+    if (first >= 0.0) *s1 = s - first + SPAN_STEP;
+}
+
+typedef struct Cross { int link, seg; double t; int node; } Cross;
 
 static int cross_cmp(const void *pa, const void *pb) {
     const Cross *a = (const Cross *)pa, *b = (const Cross *)pb;
@@ -1142,64 +1304,126 @@ static int cross_cmp(const void *pa, const void *pb) {
     return a->t < b->t ? -1 : a->t > b->t ? 1 : 0;
 }
 
+static int key_cmp(const void *pa, const void *pb) {
+    int64_t a = *(const int64_t *)pa, b = *(const int64_t *)pb;
+    return a < b ? -1 : a > b;
+}
+
+/* The world chart's squares of side `cell` that segment a-b of chart ch
+ * comes within `reach` of (m on the sphere), each once and sorted, into
+ * *keys (grown as needed); returns how many. Stepped along no more than a
+ * quarter square apart in the world's chart, each step filed as far round as
+ * the chart's stretch there takes the reach and half a step. */
+static int seg_squares(const TerrainChart *ch, DVec2 a, DVec2 b, double reach, double cell, int64_t **keys, int *cap) {
+    DVec2 wa = world_of(dir_of(ch, a)), wb = world_of(dir_of(ch, b));
+    double len = dlen(dsub(b, a)), k = 1.25 * fmax(stretch_at(wa), stretch_at(wb));
+    int steps = (int)ceil(len * k / (0.25 * cell)) + 1, n = 0;
+    for (int q = 0; q <= steps; ++q) {
+        DVec2 w = q == 0 ? wa : q == steps ? wb : world_of(dir_of(ch, dadd(a, dscale(dsub(b, a), (double)q / steps))));
+        double pad = 1.01 * (reach + 0.5 * len / steps) * stretch_at(w) + 1.0;
+        int i0 = (int)floor((w.x - pad) / cell), i1 = (int)floor((w.x + pad) / cell);
+        int j0 = (int)floor((w.z - pad) / cell), j1 = (int)floor((w.z + pad) / cell);
+        for (int j = j0; j <= j1; ++j)
+            for (int i = i0; i <= i1; ++i) {
+                int64_t key = cell_key(i, j);
+                if (n > 0 && (*keys)[n - 1] == key) continue;
+                *keys = (int64_t *)grow(*keys, cap, n + 1, sizeof(int64_t));
+                (*keys)[n++] = key;
+            }
+    }
+    qsort(*keys, (size_t)n, sizeof(int64_t), key_cmp);
+    int m = 0;
+    for (int q = 0; q < n; ++q)
+        if (m == 0 || (*keys)[q] != (*keys)[m - 1]) (*keys)[m++] = (*keys)[q];
+    return m;
+}
+
+static int key_i(int64_t key) { return (int)(uint32_t)((uint64_t)key >> 32); }
+static int key_j(int64_t key) { return (int)(uint32_t)key; }
+
 static void split_links(Net *net, Cross *x, int nx);
 
-/* Step 6: wherever two links' centre lines cross, away from their ends, a
- * junction; each link crossed is split into pieces there. */
+/* Step 6: wherever two links' centre lines cross, away from their ends and
+ * their settlements' stretches (end_spans), a junction; each link crossed is
+ * split into pieces there. Segments are filed by the world chart's squares,
+ * and a pair is crossed in the first's chart. */
 static void split_crossings(Net *net) {
     const double CELL = 20000.0, END_CLEAR = 3000.0;
     IMap grid;
     imap_init(&grid, 1 << 14);
-    int *next = NULL, *lk = NULL, *sg = NULL, cn = 0, c1 = 0, c2 = 0, c3 = 0;
+    int *next = NULL, *lk = NULL, *sg = NULL, cn = 0, c1 = 0, c2 = 0, c3 = 0, capk = 0;
+    int64_t *keys = NULL;
+    double (*span)[2] = malloc(sizeof(double[2]) * (size_t)(net->nlinks + 1)), **pre = malloc(sizeof(double *) * (size_t)(net->nlinks + 1));
+    if (!span || !pre) fatal("out of memory crossing the roads");
+    for (int l = 0; l < net->nlinks; ++l) {
+        const Link *L = &net->link[l];
+        end_spans(net, L, &span[l][0], &span[l][1]);
+        pre[l] = (double *)malloc(sizeof(double) * (size_t)L->npts);
+        if (!pre[l]) fatal("out of memory crossing the roads");
+        pre[l][0] = 0.0;
+        for (int k = 1; k < L->npts; ++k) pre[l][k] = pre[l][k - 1] + dlen(dsub(L->pts[k], L->pts[k - 1]));
+        span[l][1] = pre[l][L->npts - 1] - span[l][1];   /* from here on: the stretch between them, [s0, s1] */
+    }
+#define IN_SPAN(l, k, t) (pre[l][k] + (t) * (pre[l][(k) + 1] - pre[l][k]) < span[l][0] || pre[l][k] + (t) * (pre[l][(k) + 1] - pre[l][k]) > span[l][1])
     for (int l = 0; l < net->nlinks; ++l) {
         const Link *L = &net->link[l];
         for (int s = 0; s + 1 < L->npts; ++s) {
-            DVec2 a = L->pts[s], b = L->pts[s + 1];
-            for (int j = (int)floor(fmin(a.z, b.z) / CELL); j <= (int)floor(fmax(a.z, b.z) / CELL); ++j)
-                for (int i = (int)floor(fmin(a.x, b.x) / CELL); i <= (int)floor(fmax(a.x, b.x) / CELL); ++i) {
-                    next = (int *)grow(next, &c1, cn + 1, sizeof(int));
-                    lk = (int *)grow(lk, &c2, cn + 1, sizeof(int));
-                    sg = (int *)grow(sg, &c3, cn + 1, sizeof(int));
-                    next[cn] = imap_get(&grid, cell_key(i, j));
-                    lk[cn] = l; sg[cn] = s;
-                    imap_put(&grid, cell_key(i, j), cn++);
-                }
+            if (pre[l][s + 1] < span[l][0] || pre[l][s] > span[l][1]) continue;
+            int nk = seg_squares(&L->ch, L->pts[s], L->pts[s + 1], 0.0, CELL, &keys, &capk);
+            for (int q = 0; q < nk; ++q) {
+                next = (int *)grow(next, &c1, cn + 1, sizeof(int));
+                lk = (int *)grow(lk, &c2, cn + 1, sizeof(int));
+                sg = (int *)grow(sg, &c3, cn + 1, sizeof(int));
+                next[cn] = imap_get(&grid, keys[q]);
+                lk[cn] = l; sg[cn] = s;
+                imap_put(&grid, keys[q], cn++);
+            }
         }
     }
     Cross *x = NULL;
     int nx = 0, cx = 0;
     for (int l = 0; l < net->nlinks; ++l) {
         const Link *L = &net->link[l];
+        DVec2 ends[4];
+        for (int q = 0; q < 4; ++q) ends[q] = node_in(net, q == 0 ? L->a : q == 1 ? L->b : 0, &L->ch);
         for (int s = 0; s + 1 < L->npts; ++s) {
+            if (pre[l][s + 1] < span[l][0] || pre[l][s] > span[l][1]) continue;
             DVec2 a = L->pts[s], b = L->pts[s + 1], r = dsub(b, a);
-            for (int j = (int)floor(fmin(a.z, b.z) / CELL); j <= (int)floor(fmax(a.z, b.z) / CELL); ++j)
-                for (int i = (int)floor(fmin(a.x, b.x) / CELL); i <= (int)floor(fmax(a.x, b.x) / CELL); ++i)
-                    for (int e = imap_get(&grid, cell_key(i, j)); e >= 0; e = next[e]) {
-                        if (lk[e] <= l) continue;   /* each pair once, from the lower link */
-                        const Link *M = &net->link[lk[e]];
-                        DVec2 c = M->pts[sg[e]], sv = dsub(M->pts[sg[e] + 1], c);
-                        double den = dcross(r, sv);
-                        if (fabs(den) < 1e-9) continue;
-                        DVec2 qp = dsub(c, a);
-                        double t = dcross(qp, sv) / den, u = dcross(qp, r) / den;
-                        if (t < 0.0 || t >= 1.0 || u < 0.0 || u >= 1.0) continue;
-                        DVec2 p = dadd(a, dscale(r, t));
-                        /* once, in the cell holding the crossing (both segments are filed there) */
-                        if ((int)floor(p.x / CELL) != i || (int)floor(p.z / CELL) != j) continue;
-                        /* not where they share an end (they meet there anyway) */
-                        int ends[4] = { L->a, L->b, M->a, M->b }, nearEnd = 0;
-                        for (int q = 0; q < 4; ++q) nearEnd |= dlen(dsub(p, node_p(net, ends[q]))) < END_CLEAR;
-                        /* nor inside a settlement: both roads end there, and its gates cut them off before they meet */
-                        if (nearEnd || plan_city_edge(p.x, p.z) < CITY_CLEAR) continue;
-                        x = (Cross *)grow(x, &cx, nx + 2, sizeof(Cross));
-                        int node = add_node(net, p, -1);
-                        x[nx++] = (Cross){ l, s, t, p, node };
-                        x[nx++] = (Cross){ lk[e], sg[e], u, p, node };
-                    }
+            int nk = seg_squares(&L->ch, a, b, 0.0, CELL, &keys, &capk);
+            for (int q = 0; q < nk; ++q)
+                for (int e = imap_get(&grid, keys[q]); e >= 0; e = next[e]) {
+                    if (lk[e] <= l) continue;   /* each pair once, from the lower link */
+                    const Link *M = &net->link[lk[e]];
+                    DVec2 c = rechart(&M->ch, &L->ch, M->pts[sg[e]]), sv = dsub(rechart(&M->ch, &L->ch, M->pts[sg[e] + 1]), c);
+                    double den = dcross(r, sv);
+                    if (fabs(den) < 1e-9) continue;
+                    DVec2 qp = dsub(c, a);
+                    double t = dcross(qp, sv) / den, u = dcross(qp, r) / den;
+                    if (t < 0.0 || t >= 1.0 || u < 0.0 || u >= 1.0) continue;
+                    if (IN_SPAN(l, s, t) || IN_SPAN(lk[e], sg[e], u)) continue;   /* a settlement's: its gate cuts it off */
+                    TerrainDir pd = dir_of(&L->ch, dadd(a, dscale(r, t)));
+                    DVec2 pw = world_of(pd), p = dadd(a, dscale(r, t));
+                    /* once, in the square holding the crossing (both segments are filed there) */
+                    if ((int)floor(pw.x / CELL) != key_i(keys[q]) || (int)floor(pw.z / CELL) != key_j(keys[q])) continue;
+                    /* not where they share an end (they meet there anyway) */
+                    ends[2] = node_in(net, M->a, &L->ch);
+                    ends[3] = node_in(net, M->b, &L->ch);
+                    int nearEnd = 0;
+                    for (int k = 0; k < 4; ++k) nearEnd |= dlen(dsub(p, ends[k])) < END_CLEAR;
+                    /* nor inside a settlement: both roads end there, and its gates cut them off before they meet */
+                    if (nearEnd || plan_city_edge(pw.x, pw.z) < CITY_CLEAR || junction_wet(pd)) continue;
+                    x = (Cross *)grow(x, &cx, nx + 2, sizeof(Cross));
+                    int node = add_node(net, pd, -1);
+                    x[nx++] = (Cross){ l, s, t, node };
+                    x[nx++] = (Cross){ lk[e], sg[e], u, node };
+                }
         }
     }
+#undef IN_SPAN
+    for (int l = 0; l < net->nlinks; ++l) free(pre[l]);
+    free(pre); free(span);
     imap_free(&grid);
-    free(next); free(lk); free(sg);
+    free(next); free(lk); free(sg); free(keys);
     split_links(net, x, nx);
     free(x);
 }
@@ -1219,36 +1443,43 @@ static void split_crossings(Net *net) {
 #define MERGE_MIN    4000.0
 #define MERGE_CELL   4000.0
 
-typedef struct SegGrid { IMap head; int *next, *link, *seg; int n, c1, c2, c3; } SegGrid;
+typedef struct SegGrid { IMap head; int *next, *link, *seg; int n, c1, c2, c3, capk; int64_t *keys; } SegGrid;
 
-static void seggrid_add(SegGrid *g, const Link *L, int l) {
+/* Files link l's segments but those wholly within its settlements' stretches (end_spans). */
+static void seggrid_add(const Net *net, SegGrid *g, const Link *L, int l) {
+    double s0, s1, at = 0.0, len = link_length(L);
+    end_spans(net, L, &s0, &s1);
     for (int s = 0; s + 1 < L->npts; ++s) {
-        DVec2 a = L->pts[s], b = L->pts[s + 1];
-        int i0 = (int)floor((fmin(a.x, b.x) - MERGE_D) / MERGE_CELL), i1 = (int)floor((fmax(a.x, b.x) + MERGE_D) / MERGE_CELL);
-        int j0 = (int)floor((fmin(a.z, b.z) - MERGE_D) / MERGE_CELL), j1 = (int)floor((fmax(a.z, b.z) + MERGE_D) / MERGE_CELL);
-        for (int j = j0; j <= j1; ++j)
-            for (int i = i0; i <= i1; ++i) {
-                int e = g->n++;
-                g->next = (int *)grow(g->next, &g->c1, g->n, sizeof(int));
-                g->link = (int *)grow(g->link, &g->c2, g->n, sizeof(int));
-                g->seg = (int *)grow(g->seg, &g->c3, g->n, sizeof(int));
-                g->next[e] = imap_get(&g->head, cell_key(i, j));
-                g->link[e] = l;
-                g->seg[e] = s;
-                imap_put(&g->head, cell_key(i, j), e);
-            }
+        double sl = dlen(dsub(L->pts[s + 1], L->pts[s]));
+        at += sl;
+        if (at < s0 || at - sl > len - s1) continue;
+        int nk = seg_squares(&L->ch, L->pts[s], L->pts[s + 1], MERGE_D, MERGE_CELL, &g->keys, &g->capk);
+        for (int q = 0; q < nk; ++q) {
+            int e = g->n++;
+            g->next = (int *)grow(g->next, &g->c1, g->n, sizeof(int));
+            g->link = (int *)grow(g->link, &g->c2, g->n, sizeof(int));
+            g->seg = (int *)grow(g->seg, &g->c3, g->n, sizeof(int));
+            g->next[e] = imap_get(&g->head, g->keys[q]);
+            g->link[e] = l;
+            g->seg[e] = s;
+            imap_put(&g->head, g->keys[q], e);
+        }
     }
 }
 
-/* The nearest point to p on the links filed (only link `only` if >= 0; not
- * link `skip`), within MERGE_D: its link, segment and place along it. */
-static double seggrid_nearest(const Net *net, const SegGrid *g, DVec2 p, int skip, int only, int *link, int *seg, double *t) {
+/* The nearest point to the direction p on the links filed (only link `only`
+ * if >= 0; not link `skip`), within MERGE_D, measured in each link's chart:
+ * its link, segment and place along it. */
+static double seggrid_nearest(const Net *net, const SegGrid *g, TerrainDir pd, int skip, int only, int *link, int *seg, double *t) {
     double best = MERGE_D;
     *link = -1;
-    for (int e = imap_get(&g->head, cell_key((int)floor(p.x / MERGE_CELL), (int)floor(p.z / MERGE_CELL))); e >= 0; e = g->next[e]) {
+    DVec2 w = world_of(pd), pl = dv(0.0, 0.0);
+    int inL = -1;   /* the link whose chart pl is p in */
+    for (int e = imap_get(&g->head, cell_key((int)floor(w.x / MERGE_CELL), (int)floor(w.z / MERGE_CELL))); e >= 0; e = g->next[e]) {
         if (g->link[e] == skip || (only >= 0 && g->link[e] != only)) continue;
         const Link *L = &net->link[g->link[e]];
-        DVec2 a = L->pts[g->seg[e]], ab = dsub(L->pts[g->seg[e] + 1], a);
+        if (inL != g->link[e]) { pl = in_chart(&L->ch, pd); inL = g->link[e]; }
+        DVec2 p = pl, a = L->pts[g->seg[e]], ab = dsub(L->pts[g->seg[e] + 1], a);
         double l2 = ddot(ab, ab), u = l2 > 0.0 ? ddot(dsub(p, a), ab) / l2 : 0.0;
         u = u < 0.0 ? 0.0 : u > 1.0 ? 1.0 : u;
         double d = dlen(dsub(p, dadd(a, dscale(ab, u))));
@@ -1316,7 +1547,8 @@ static void merge_parallel(Net *net) {
     int ncut = 0, ccut = 0;
     int *nearL = NULL, *nearS = NULL, cn1 = 0, cn2 = 0;
     double *nearT = NULL;
-    int cn3 = 0;
+    TerrainDir *at = NULL;   /* B's samples */
+    int cn3 = 0, cn4 = 0;
     for (int oi = 0; oi < n0; ++oi) {
         int l = order[oi];
         Link B = net->link[l];
@@ -1326,11 +1558,20 @@ static void merge_parallel(Net *net) {
         nearL = (int *)grow(nearL, &cn1, ns, sizeof(int));
         nearS = (int *)grow(nearS, &cn2, ns, sizeof(int));
         nearT = (double *)grow(nearT, &cn3, ns, sizeof(double));
+        at = (TerrainDir *)grow(at, &cn4, ns, sizeof(TerrainDir));
+        double s0, s1;
+        end_spans(net, &B, &s0, &s1);
         for (int k = 0; k < ns; ++k) {
-            OnLink o = along(&B, L * k / (ns - 1));
+            at[k] = dir_of(&B.ch, along(&B, L * k / (ns - 1)).p);
+            DVec2 w = world_of(at[k]);
             nearL[k] = -1;
-            if (plan_city_edge(o.p.x, o.p.z) < CITY_CLEAR) { nearL[k] = -2; continue; }
-            seggrid_nearest(net, &g, o.p, l, -1, &nearL[k], &nearS[k], &nearT[k]);
+            if (plan_city_edge(w.x, w.z) < CITY_CLEAR || L * k / (ns - 1) < s0 || L * k / (ns - 1) > L - s1) { nearL[k] = -2; continue; }
+            seggrid_nearest(net, &g, at[k], l, -1, &nearL[k], &nearS[k], &nearT[k]);
+            if (nearL[k] >= 0) {   /* where a run starts or ends is a junction: not over the water */
+                const Link *LA = &net->link[nearL[k]];
+                DVec2 q = dadd(LA->pts[nearS[k]], dscale(dsub(LA->pts[nearS[k] + 1], LA->pts[nearS[k]]), nearT[k]));
+                if (junction_wet(dir_of(&LA->ch, q))) nearL[k] = -1;
+            }
         }
         /* runs alongside one link, long enough */
         int runs[64][2], nruns = 0;
@@ -1341,7 +1582,7 @@ static void merge_parallel(Net *net) {
             if ((e - k) * (L / (ns - 1)) >= MERGE_MIN) { runs[nruns][0] = k; runs[nruns][1] = e; nruns++; }
             k = e + 1;
         }
-        if (!nruns) { seggrid_add(&g, &net->link[l], l); continue; }
+        if (!nruns) { seggrid_add(net, &g, &net->link[l], l); continue; }
         /* The pieces between the runs: piece r from B's start or where run
          * r - 1 leaves its road, to B's end or where run r meets its road. A
          * first or last piece from an end node it shares with the run's road,
@@ -1356,7 +1597,7 @@ static void merge_parallel(Net *net) {
                 if (nearL[k] == -2) continue;
                 int ll, ss;
                 double tt;
-                seggrid_nearest(net, &g, along(&B, L * k / (ns - 1)).p, l, A, &ll, &ss, &tt);
+                seggrid_nearest(net, &g, at[k], l, A, &ll, &ss, &tt);
                 drop = ll == A;
             }
             if (drop) continue;
@@ -1366,10 +1607,11 @@ static void merge_parallel(Net *net) {
                 if (side == 0 ? !haveHead : !haveTail) continue;
                 int k = side == 0 ? startK : endK, AL = nearL[side == 0 ? runs[r - 1][0] : runs[r][0]];
                 const Link *LA = &net->link[AL];
-                DVec2 q = dadd(LA->pts[nearS[k]], dscale(dsub(LA->pts[nearS[k] + 1], LA->pts[nearS[k]]), nearT[k]));
-                int j = add_node(net, q, -1);
+                TerrainDir qd = dir_of(&LA->ch, dadd(LA->pts[nearS[k]], dscale(dsub(LA->pts[nearS[k] + 1], LA->pts[nearS[k]]), nearT[k])));
+                DVec2 q = in_chart(&B.ch, qd);
+                int j = add_node(net, qd, -1);
                 cut = (Cross *)grow(cut, &ccut, ncut + 1, sizeof(Cross));
-                cut[ncut++] = (Cross){ AL, nearS[k], nearT[k], q, j };
+                cut[ncut++] = (Cross){ AL, nearS[k], nearT[k], j };
                 if (side == 0) { from = j; head = q; } else { to = j; tail = q; }
             }
             OnLink a = startK == 0 ? (OnLink){ B.pts[0], 0, 0.0 } : along(&B, L * startK / (ns - 1));
@@ -1378,16 +1620,16 @@ static void merge_parallel(Net *net) {
             int np = piece(&B, a, b, haveHead ? &head : NULL, haveTail ? &tail : NULL, &pts);
             int idx = kept++ == 0 ? l : add_link(net, from, to);
             Link *P = &net->link[idx];
-            P->a = from; P->b = to; P->pts = pts; P->npts = np; P->ok = 1;
+            P->a = from; P->b = to; P->ch = B.ch; P->pts = pts; P->npts = np; P->ok = 1;
             P->cost = (int64_t)((double)B.cost * link_length(P) / fmax(L, 1.0) + 0.5);
-            seggrid_add(&g, P, idx);
+            seggrid_add(net, &g, P, idx);
         }
         if (!kept) { net->link[l].ok = 0; net->link[l].pts = NULL; }   /* wholly beside other roads */
         free(B.pts);
     }
     imap_free(&g.head);
-    free(g.next); free(g.link); free(g.seg);
-    free(nearL); free(nearS); free(nearT);
+    free(g.next); free(g.link); free(g.seg); free(g.keys);
+    free(nearL); free(nearS); free(nearT); free(at);
     free(len); free(order);
     split_links(net, cut, ncut);
     free(cut);
@@ -1407,7 +1649,7 @@ static void split_links(Net *net, Cross *x, int nx) {
         double oldLen = fmax(link_length(&old), 1.0);
         for (int q = k; q <= e; ++q) {
             int to = q < e ? x[q].node : old.b, seg1 = q < e ? x[q].seg : old.npts - 2;
-            DVec2 end = q < e ? x[q].p : old.pts[old.npts - 1];
+            DVec2 end = q < e ? node_in(net, x[q].node, &old.ch) : old.pts[old.npts - 1];
             int idx = q == k ? l : add_link(net, from, to);
             Link *L = &net->link[idx];
             int np = seg1 - seg0 + 2;
@@ -1416,7 +1658,7 @@ static void split_links(Net *net, Cross *x, int nx) {
             pts[0] = start;
             for (int v = seg0 + 1; v <= seg1; ++v) pts[v - seg0] = old.pts[v];
             pts[np - 1] = end;
-            L->a = from; L->b = to; L->pts = pts; L->npts = np; L->ok = 1;
+            L->a = from; L->b = to; L->ch = old.ch; L->pts = pts; L->npts = np; L->ok = 1;
             L->cost = (int64_t)((double)old.cost * link_length(L) / oldLen + 0.5);
             from = to; start = end; seg0 = seg1;
         }
@@ -1444,8 +1686,8 @@ static void tidy_junctions(Net *net) {
         for (int k = 0; k < net->nlinks; ++k) {
             Link *M = &net->link[k];
             if (!M->ok) continue;
-            if (M->a == gone) { M->a = keep; M->pts[0] = net->node[keep].p; }
-            if (M->b == gone) { M->b = keep; M->pts[M->npts - 1] = net->node[keep].p; }
+            if (M->a == gone) { M->a = keep; M->pts[0] = node_in(net, keep, &M->ch); }
+            if (M->b == gone) { M->b = keep; M->pts[M->npts - 1] = node_in(net, keep, &M->ch); }
         }
     }
     int *deg = (int *)calloc((size_t)net->nnodes, sizeof(int));
@@ -1468,15 +1710,16 @@ static void tidy_junctions(Net *net) {
             }
             Link *B = &net->link[l2];
             int x = A->a == v ? A->b : A->a, y = B->a == v ? B->b : B->a;
-            /* A's points ending at v, then B's from v on */
+            /* A's points ending at v, then B's from v on, in a chart about the two's ends */
             DVec2 *p = (DVec2 *)malloc(sizeof(DVec2) * (size_t)(A->npts + B->npts));
             if (!p) fatal("out of memory tidying the roads");
+            TerrainChart ch = link_chart(node_dir(net, x), node_dir(net, y));
             int n = 0;
-            for (int k = 0; k < A->npts; ++k) p[n++] = A->pts[A->a == v ? A->npts - 1 - k : k];
-            for (int k = 1; k < B->npts; ++k) p[n++] = B->pts[B->a == v ? k : B->npts - 1 - k];
+            for (int k = 0; k < A->npts; ++k) p[n++] = rechart(&A->ch, &ch, A->pts[A->a == v ? A->npts - 1 - k : k]);
+            for (int k = 1; k < B->npts; ++k) p[n++] = rechart(&B->ch, &ch, B->pts[B->a == v ? k : B->npts - 1 - k]);
             free(A->pts);
             free(B->pts);
-            A->pts = p; A->npts = n; A->a = x; A->b = y; A->cost += B->cost;
+            A->ch = ch; A->pts = p; A->npts = n; A->a = x; A->b = y; A->cost += B->cost;
             B->ok = 0; B->pts = NULL;
             deg[v] = 0;
             changed = 1;
@@ -1624,10 +1867,10 @@ static void round_corners(Link *L) {
 
 /* --- Gates ------------------------------------------------------------------------------------ */
 
-/* Whether the town holding (x, z) is built, remembered in `cache`. */
-static int built_at(IMap *cache, double x, double z) {
+/* Whether the town holding world (x, z) is built, remembered in `cache`. */
+static int built_at(IMap *cache, DVec2 w) {
     int i, j;
-    plan_town_at(x, z, &i, &j);
+    plan_town_at(w.x, w.z, &i, &j);
     int64_t key = cell_key(i, j);
     int v = imap_get(cache, key);
     if (v < 0) { v = plan_town_built(i, j); imap_put(cache, key, v); }
@@ -1644,51 +1887,56 @@ static DVec2 at_s(const DVec2 *p, int n, double s) {
     return p[0];
 }
 
-/* A road running out from settlement k's centre along p (n points): where it
- * leaves the built towns for the last time, on the boulevard between the
- * last built town and the next; its points from there into *out (malloc'd),
- * the first GATE_APPROACH of them (less if that would reach a built town)
- * straight out along the boulevard's normal. Returns the new count, or 0 if
- * it never leaves (then p stands). */
-static int gate_out(const DVec2 *p, int n, IMap *cache, PlanGate *g, DVec2 **out) {
+/* The point s along polyline p of chart ch, in the world's chart. */
+static DVec2 world_at_s(const TerrainChart *ch, const DVec2 *p, int n, double s) { return world_of(dir_of(ch, at_s(p, n, s))); }
+
+/* A road running out from settlement k's centre along p (n points of chart
+ * ch): where it leaves k's built towns for the last time, on the boulevard
+ * between the last built town and the next (the towns are the world chart's,
+ * so the gate is found there); its points from there into *out (malloc'd,
+ * in ch), the first GATE_APPROACH of them (less if that would reach a built
+ * town) straight out along the boulevard's normal. Returns the new count, or
+ * 0 if it never leaves (then p stands). The whole road is walked: it may
+ * leave a city 60-150 km across into a hole the cut made (a range, a lake)
+ * and come back in beyond; other settlements' towns don't count. */
+static int gate_out(int k, const TerrainChart *ch, const DVec2 *p, int n, IMap *cache, PlanGate *g, DVec2 **out) {
     double len = 0.0;
-    for (int k = 0; k + 1 < n; ++k) len += dlen(dsub(p[k + 1], p[k]));
+    for (int q = 0; q + 1 < n; ++q) len += dlen(dsub(p[q + 1], p[q]));
     double sIn = -1.0;
     for (double s = 0.0; s <= len; s += GATE_STEP) {
-        DVec2 q = at_s(p, n, s);
-        if (built_at(cache, q.x, q.z)) sIn = s;
-        else if (plan_city_edge(q.x, q.z) > 0.0 && sIn >= 0.0) break;   /* past the footprint: no more built towns */
+        DVec2 q = world_at_s(ch, p, n, s);
+        if (built_at(cache, q) && plan_settlement_near(q.x, q.z) == k) sIn = s;
     }
     if (sIn < 0.0 || sIn + GATE_STEP > len) return 0;
     double lo = sIn, hi = sIn + GATE_STEP;
     for (int it = 0; it < 20; ++it) {
         double mid = 0.5 * (lo + hi);
-        DVec2 q = at_s(p, n, mid);
-        if (built_at(cache, q.x, q.z)) lo = mid; else hi = mid;
+        if (built_at(cache, world_at_s(ch, p, n, mid))) lo = mid; else hi = mid;
     }
-    DVec2 qi = at_s(p, n, lo), qo = at_s(p, n, hi);
+    DVec2 qi = world_at_s(ch, p, n, lo), qo = world_at_s(ch, p, n, hi);
     int ii, ij, oi, oj;
     plan_town_at(qi.x, qi.z, &ii, &ij);
     plan_town_at(qo.x, qo.z, &oi, &oj);
     DVec2 ci = plan_town_centre(ii, ij), co = plan_town_centre(oi, oj);
     DVec2 nrm = dnorm(dsub(co, ci)), mid = dscale(dadd(ci, co), 0.5);
-    DVec2 gp = at_s(p, n, 0.5 * (lo + hi));
+    DVec2 gp = world_at_s(ch, p, n, 0.5 * (lo + hi));
     gp = dsub(gp, dscale(nrm, ddot(dsub(gp, mid), nrm)));   /* onto the bisector: the boulevard's centre line */
     double approach = GATE_APPROACH;
     DVec2 a = dadd(gp, dscale(nrm, approach));
-    while (approach > 40.0 && built_at(cache, a.x, a.z)) { approach *= 0.5; a = dadd(gp, dscale(nrm, approach)); }
+    while (approach > 40.0 && built_at(cache, a)) { approach *= 0.5; a = dadd(gp, dscale(nrm, approach)); }
+    DVec2 gl = in_chart(ch, terrain_chart_dir(&g_wc, gp.x, gp.z)), al = in_chart(ch, terrain_chart_dir(&g_wc, a.x, a.z));
     /* on along the route from the first point well clear of the gate */
     int m = 0;
     double sk = 0.0;
     for (; m < n; ++m) {
         if (m > 0) sk += dlen(dsub(p[m], p[m - 1]));
-        if (sk > hi && dlen(dsub(p[m], gp)) >= 2.0 * approach && !built_at(cache, p[m].x, p[m].z)) break;
+        if (sk > hi && dlen(dsub(p[m], gl)) >= 2.0 * approach && !built_at(cache, world_of(dir_of(ch, p[m])))) break;
     }
     DVec2 *o = (DVec2 *)malloc(sizeof(DVec2) * (size_t)(n - m + 3));
     if (!o) fatal("out of memory making the roads' gates");
     int c = 0;
-    o[c++] = gp;
-    o[c++] = a;
+    o[c++] = gl;
+    o[c++] = al;
     if (m >= n) o[c++] = p[n - 1];
     for (int k = m; k < n; ++k) o[c++] = p[k];
     g->p = gp;
@@ -1713,7 +1961,7 @@ static void gate_job(void *ctx, int l) {
         if (end) reverse(L->pts, L->npts);
         DVec2 *o;
         PlanGate g;
-        int n = gate_out(L->pts, L->npts, &cache, &g, &o);
+        int n = gate_out(net->node[v].settlement, &L->ch, L->pts, L->npts, &cache, &g, &o);
         if (n) {
             free(L->pts);
             L->pts = o;
@@ -1732,7 +1980,7 @@ static void gate_job(void *ctx, int l) {
 
 /* The ground's height for the roads to follow: without them (they aren't in
  * the terrain while it is asked), its finest detail left out. */
-static double road_ground(DVec2 p) { return terrain_height_dry_lod(p.x, p.z, 10.0); }
+static double road_ground(TerrainDir p) { return terrain_height_dry_dir(p, 10.0); }
 
 /* First pass: the ground along the road every station, smoothed over the
  * class's window, into L->prof. */
@@ -1750,7 +1998,7 @@ static void profile_ground_job(void *ctx, int l) {
         double s = k * ds;
         while (seg + 2 < L->npts && L->s[seg + 1] < s) seg++;
         double sl = L->s[seg + 1] - L->s[seg], t = sl > 0.0 ? (s - L->s[seg]) / sl : 0.0;
-        g[k] = (float)road_ground(dadd(L->pts[seg], dscale(dsub(L->pts[seg + 1], L->pts[seg]), fmin(fmax(t, 0.0), 1.0))));
+        g[k] = (float)road_ground(dir_of(&L->ch, dadd(L->pts[seg], dscale(dsub(L->pts[seg + 1], L->pts[seg]), fmin(fmax(t, 0.0), 1.0)))));
     }
     int W = (int)ceil((L->cls == PLAN_ROAD_FREEWAY ? 300.0 : 150.0) / ds);
     for (int k = 0; k < n; ++k) {
@@ -1808,8 +2056,8 @@ static void profile_grade_job(void *ctx, int l) {
     int n = L->nprof;
     double ds = L->ds, len = ds * (n - 1), G = link_grade(L);
     int back = L->gate[1] && !L->gate[0];
-    double h0 = L->gate[0] ? terrain_height(L->pts[0].x, L->pts[0].z) : net->nodeH[L->a];
-    double h1 = L->gate[1] ? terrain_height(L->pts[L->npts - 1].x, L->pts[L->npts - 1].z) : net->nodeH[L->b];
+    double h0 = L->gate[0] ? terrain_height(L->gp[0].p.x, L->gp[0].p.z) : net->nodeH[L->a];
+    double h1 = L->gate[1] ? terrain_height(L->gp[1].p.x, L->gp[1].p.z) : net->nodeH[L->b];
     /* drawn to the ends' heights over as long as half the grade takes */
     double e0 = h0 - r[0], e1 = h1 - r[n - 1];
     double l0 = fmax(200.0, fabs(e0) / (0.5 * G)), l1 = fmax(200.0, fabs(e1) / (0.5 * G));
@@ -1864,12 +2112,12 @@ static void junction_heights(Net *net) {
         if (!L->gate[1]) { net->nodeH[L->b] += L->prof[L->nprof - 1]; cnt[L->b]++; }
     }
     for (int v = 0; v < net->nnodes; ++v)
-        net->nodeH[v] = cnt[v] ? net->nodeH[v] / cnt[v] : road_ground(net->node[v].p);
+        net->nodeH[v] = cnt[v] ? net->nodeH[v] / cnt[v] : road_ground(net->node[v].dir);
     for (int it = 0; it < 32; ++it)
         for (int l = 0; l < net->nlinks; ++l) {
             const Link *L = &net->link[l];
-            double ha = L->gate[0] ? terrain_height(L->pts[0].x, L->pts[0].z) : net->nodeH[L->a];
-            double hb = L->gate[1] ? terrain_height(L->pts[L->npts - 1].x, L->pts[L->npts - 1].z) : net->nodeH[L->b];
+            double ha = L->gate[0] ? terrain_height(L->gp[0].p.x, L->gp[0].p.z) : net->nodeH[L->a];
+            double hb = L->gate[1] ? terrain_height(L->gp[1].p.x, L->gp[1].p.z) : net->nodeH[L->b];
             double reach = 0.8 * link_grade(L) * L->ds * (L->nprof - 1), d = hb - ha, excess = fabs(d) - reach;
             if (excess <= 0.0 || (L->gate[0] && L->gate[1])) continue;
             double sgn = d > 0.0 ? 1.0 : -1.0;
@@ -1891,7 +2139,7 @@ static double profile_at(const PlanRoad *R, double s) {
 
 /* --- Bridges ------------------------------------------------------------------------------------- */
 
-/* The point s along link L. */
+/* The point s along link L, in its chart. */
 static DVec2 link_at(const Link *L, double s) {
     int lo = 0, hi = L->npts - 1;
     while (hi - lo > 1) {
@@ -1910,19 +2158,25 @@ static double link_profile(const Link *L, double s) {
     return L->prof[k] + (L->prof[k + 1] - L->prof[k]) * (f - k);
 }
 
-/* Whether the ground at p is the water's: in the water or within a metre of
- * it, or more than WET_DEPTH under the dry ground (a bed or a bank carved
- * into it); the dry ground into *dry. While the roads are being built the
- * terrain has none of them. Never on a city's ground (its urban weight over
- * 0), which the roads don't move and the water carves no bed in: there the
- * rivers run in the city's channels or are buried. */
-static int wet_at(DVec2 p, double *dry) {
-    TerrainChart wc = terrain_world_chart();
+/* Whether chart ch's p is on a city's ground (its urban weight over 0). */
+static int urban_in(const TerrainChart *ch, DVec2 p) {
+    DVec2 w = world_of(dir_of(ch, p));
+    return plan_urban(w.x, w.z) > 0.0f;
+}
+
+/* Whether the ground at chart ch's p is the water's: in the water or within
+ * a metre of it, or more than WET_DEPTH under the dry ground (a bed or a
+ * bank carved into it); the dry ground into *dry. While the roads are being
+ * built the terrain has none of them. Never on a city's ground, which the
+ * roads don't move and the water carves no bed in: there the rivers run in
+ * the city's channels or are buried. */
+static int wet_at(const TerrainChart *ch, DVec2 p, double *dry) {
+    TerrainDir d = dir_of(ch, p);
     TerrainEarthWater w;
-    *dry = road_ground(p);
-    if (plan_urban(p.x, p.z) > 0.0f) return 0;
-    if (terrain_earth_water(terrain_chart_dir(&wc, p.x, p.z), &w) && w.edge < 1.0) return 1;
-    return terrain_height_lod(p.x, p.z, 10.0) < *dry - WET_DEPTH;
+    *dry = road_ground(d);
+    if (urban_in(ch, p)) return 0;
+    if (terrain_earth_water(d, &w) && w.edge < 1.0) return 1;
+    return terrain_height_dir(d, 10.0) < *dry - WET_DEPTH;
 }
 
 /* A bridge's clearance over the water's level, to its deck's surface: more
@@ -1948,7 +2202,7 @@ static void bridge_find_job(void *ctx, int l) {
     if (!terrain_earth_loaded()) return;
     double len = L->s[L->npts - 1];
     WaterGrid g;
-    water_init(&g, WATER_CELL, NULL);
+    water_init(&g, &L->ch, WATER_CELL, NULL);
     for (double s = 0.0;; s += WATER_STEP) {
         water_near(&g, link_at(L, fmin(s, len)), WATER_RADIUS);
         if (s >= len) break;
@@ -1967,8 +2221,7 @@ static void bridge_find_job(void *ctx, int l) {
             double a = wh->kind == 1 ? s : in;
             if (wh->kind == 2) in = -1.0;   /* out of the lake (a river's line may run through one) */
             /* none on a city's ground (wet_at) */
-            DVec2 pa = link_at(L, a), pm = link_at(L, 0.5 * (a + s)), pb = link_at(L, s);
-            if (plan_urban(pa.x, pa.z) > 0.0f || plan_urban(pm.x, pm.z) > 0.0f || plan_urban(pb.x, pb.z) > 0.0f) continue;
+            if (urban_in(&L->ch, link_at(L, a)) || urban_in(&L->ch, link_at(L, 0.5 * (a + s))) || urban_in(&L->ch, link_at(L, s))) continue;
             wet = (Wet *)grow(wet, &capw, nw + 1, sizeof(Wet));
             wet[nw++] = (Wet){ a, s, wh->kind == 1 ? wh->w : 0.0, 0.0, wh->kind == 2 };
         }
@@ -1978,21 +2231,21 @@ static void bridge_find_job(void *ctx, int l) {
     for (int k = 0; k < nw; ++k) {
         double d, lo = wet[k].a, hi = wet[k].b, lv = 1e30;
         for (double s = wet[k].a; s >= fmax(0.0, wet[k].a - WET_MAX); s -= WET_STEP) {
-            int w = wet_at(link_at(L, s), &d);
+            int w = wet_at(&L->ch, link_at(L, s), &d);
             lv = fmin(lv, d);
             if (!w) break;
             lo = s - WET_STEP;
         }
         for (double s = wet[k].b; s <= fmin(len, wet[k].b + WET_MAX); s += WET_STEP) {
-            int w = wet_at(link_at(L, s), &d);
+            int w = wet_at(&L->ch, link_at(L, s), &d);
             lv = fmin(lv, d);
             if (!w) break;
             hi = s + WET_STEP;
         }
         if (wet[k].lake)   /* the dry ground over a lake (the elevation's flat water) */
-            for (double s = wet[k].a; s <= wet[k].b; s += fmax(WET_STEP, (wet[k].b - wet[k].a) / 16.0)) lv = fmin(lv, road_ground(link_at(L, s)));
-        wet[k].a = fmax(lo, 1.0);
-        wet[k].b = fmin(hi, len - 1.0);
+            for (double s = wet[k].a; s <= wet[k].b; s += fmax(WET_STEP, (wet[k].b - wet[k].a) / 16.0)) lv = fmin(lv, road_ground(dir_of(&L->ch, link_at(L, s))));
+        wet[k].a = fmax(lo, L->gate[0] ? 1.0 : JUNCTION_CLEAR);
+        wet[k].b = fmin(hi, len - (L->gate[1] ? 1.0 : JUNCTION_CLEAR));
         wet[k].lv = lv;
     }
     qsort(wet, (size_t)nw, sizeof(Wet), wet_cmp);
@@ -2029,11 +2282,11 @@ static void bridge_span_job(void *ctx, int l) {
     int m = 0;
     for (int b = 0; b < L->nbr; ++b) {
         PlanRoadBridge B = L->br[b];
-        double g0 = road_ground(link_at(L, B.w0)), g1 = road_ground(link_at(L, B.w1));
+        double g0 = road_ground(dir_of(&L->ch, link_at(L, B.w0))), g1 = road_ground(dir_of(&L->ch, link_at(L, B.w1)));
         double sp0 = fmin(fmax(2.0 * (link_profile(L, B.w0) - g0), PLAN_ROAD_BATTER_MIN), PLAN_ROAD_BATTER_MAX);
         double sp1 = fmin(fmax(2.0 * (link_profile(L, B.w1) - g1), PLAN_ROAD_BATTER_MIN), PLAN_ROAD_BATTER_MAX);
-        B.s0 = fmax(B.w0 - sp0, 0.5);
-        B.s1 = fmin(B.w1 + sp1, len - 0.5);
+        B.s0 = fmax(B.w0 - sp0, L->gate[0] ? 0.5 : fmin(JUNCTION_CLEAR, B.w0));
+        B.s1 = fmin(B.w1 + sp1, len - (L->gate[1] ? 0.5 : fmin(JUNCTION_CLEAR, len - B.w1)));
         if (m && B.s0 <= L->br[m - 1].s1) {
             PlanRoadBridge *P = &L->br[m - 1];
             P->s1 = fmax(P->s1, B.s1); P->w1 = fmax(P->w1, B.w1);
@@ -2071,92 +2324,142 @@ static void bridge_span_job(void *ctx, int l) {
     }
 }
 
-/* --- The index ---------------------------------------------------------------------------------- */
+/* --- Publishing ------------------------------------------------------------------------------ */
 
-typedef struct IdxEntry { int64_t cell; int road, seg; } IdxEntry;
-
-static int idx_cmp(const void *pa, const void *pb) {
-    const IdxEntry *a = (const IdxEntry *)pa, *b = (const IdxEntry *)pb;
-    if (a->cell != b->cell) return a->cell < b->cell ? -1 : 1;
-    if (a->road != b->road) return a->road - b->road;
-    return a->seg - b->seg;
+/* Link l's points taken into the world's chart, no more than PUBLISH_STEP
+ * apart: each segment cut into equal pieces, under its bridge if it is, the
+ * distance along them its own; its ends the gates' or the nodes' points
+ * exactly. From here on the link's points are the world chart's. */
+static void publish_job(void *ctx, int l) {
+    Net *net = (Net *)ctx;
+    Link *L = &net->link[l];
+    int n = 1;
+    for (int k = 0; k + 1 < L->npts; ++k) n += 1 + (int)((L->s[k + 1] - L->s[k]) / PUBLISH_STEP);
+    DVec2 *p = (DVec2 *)malloc(sizeof(DVec2) * (size_t)n);
+    double *s = (double *)malloc(sizeof(double) * (size_t)n);
+    int *sb = L->segbr ? (int *)malloc(sizeof(int) * (size_t)(n - 1)) : NULL;
+    if (!p || !s || (L->segbr && !sb)) fatal("out of memory publishing the roads");
+    int m = 0;
+    p[m] = L->gate[0] ? L->gp[0].p : net->node[L->a].p;
+    s[m++] = 0.0;
+    for (int k = 0; k + 1 < L->npts; ++k) {
+        int pieces = 1 + (int)((L->s[k + 1] - L->s[k]) / PUBLISH_STEP);
+        for (int q = 1; q <= pieces; ++q) {
+            double t = (double)q / pieces;
+            if (sb) sb[m - 1] = L->segbr[k];
+            s[m] = q == pieces ? L->s[k + 1] : L->s[k] + t * (L->s[k + 1] - L->s[k]);
+            p[m++] = world_of(dir_of(&L->ch, q == pieces ? L->pts[k + 1] : dadd(L->pts[k], dscale(dsub(L->pts[k + 1], L->pts[k]), t))));
+        }
+    }
+    p[m - 1] = L->gate[1] ? L->gp[1].p : net->node[L->b].p;
+    free(L->pts); free(L->s); free(L->segbr);
+    L->pts = p; L->s = s; L->npts = m; L->segbr = sb;
 }
 
-/* Every segment of every road filed under each square within ROAD_REACH of
- * it, stepping along it (a long straight would touch far too many squares
- * by its bounds). */
-static void build_index(Net *net) {
-    IdxEntry *e = NULL;
-    int ne = 0, ce = 0;
-    for (int r = 0; r < net->nlinks; ++r) {
-        const Link *L = &net->link[r];
-        for (int sg = 0; sg + 1 < L->npts; ++sg) {
-            DVec2 a = L->pts[sg], b = L->pts[sg + 1];
-            int steps = (int)ceil(dlen(dsub(b, a)) / (0.5 * ROAD_CELL)) + 1;
-            int64_t recent[16];   /* the squares this segment was last filed in: the next steps mostly reach them again */
-            int nrecent = 0, wr = 0;
-            for (int k = 0; k <= steps; ++k) {
-                DVec2 q = dadd(a, dscale(dsub(b, a), (double)k / steps));
-                int i0 = (int)floor((q.x - ROAD_REACH) / ROAD_CELL), i1 = (int)floor((q.x + ROAD_REACH) / ROAD_CELL);
-                int j0 = (int)floor((q.z - ROAD_REACH) / ROAD_CELL), j1 = (int)floor((q.z + ROAD_REACH) / ROAD_CELL);
-                for (int j = j0; j <= j1; ++j)
-                    for (int i = i0; i <= i1; ++i) {
-                        int64_t key = cell_key(i, j), seen = 0;
-                        for (int t = 0; t < nrecent && !seen; ++t) seen = recent[t] == key;
-                        if (seen) continue;
-                        recent[wr++ & 15] = key;
-                        if (nrecent < 16) nrecent++;
-                        e = (IdxEntry *)grow(e, &ce, ne + 1, sizeof(IdxEntry));
-                        e[ne++] = (IdxEntry){ key, r, sg };
-                    }
+/* --- The index ---------------------------------------------------------------------------------- */
+
+/* A run of road's segments seg0 to seg1 that all reach one square. */
+typedef struct IdxRun { int64_t cell; int road, seg0, seg1; float lo, hi; } IdxRun;
+typedef struct IdxRuns { IdxRun *run; int n, cap; } IdxRuns;
+typedef struct IndexJob { const Net *net; IdxRuns *runs; } IndexJob;
+
+static int run_cmp(const void *pa, const void *pb) {
+    const IdxRun *a = (const IdxRun *)pa, *b = (const IdxRun *)pb;
+    if (a->cell != b->cell) return a->cell < b->cell ? -1 : 1;
+    if (a->road != b->road) return a->road - b->road;
+    return a->seg0 - b->seg0;
+}
+
+/* How far either way along the world chart's x and z ROAD_REACH on the
+ * sphere reaches at w: across the line out from its origin the chart
+ * stretches it, along that line not. */
+static DVec2 reach_at(DVec2 w) {
+    Metric m = metric_at(w);
+    double k = 1.0 / m.s;
+    return dv(ROAD_REACH * sqrt(m.r.x * m.r.x + k * k * m.r.z * m.r.z), ROAD_REACH * sqrt(m.r.z * m.r.z + k * k * m.r.x * m.r.x));
+}
+
+/* Road r's segments (in the world's chart: they are short, PUBLISH_STEP at
+ * most on the sphere) filed under each square their bounds, widened by the
+ * reach, touch: consecutive segments in one square as one run; each with
+ * the least and most height of its segments (the profile's stations over
+ * them and either side). */
+static void index_job(void *ctx, int r) {
+    IndexJob *j = (IndexJob *)ctx;
+    const Link *L = &j->net->link[r];
+    IdxRuns *out = &j->runs[r];
+    IMap open;   /* square -> its latest run */
+    imap_init(&open, 1 << 10);
+    for (int sg = 0; sg + 1 < L->npts; ++sg) {
+        DVec2 a = L->pts[sg], b = L->pts[sg + 1], ra = reach_at(a), rb = reach_at(b);
+        double hx = 1.01 * fmax(ra.x, rb.x) + 1.0, hz = 1.01 * fmax(ra.z, rb.z) + 1.0;
+        int k0 = (int)floor(L->s[sg] / L->ds), k1 = (int)ceil(L->s[sg + 1] / L->ds);
+        float lo = 1e30f, hi = -1e30f;
+        for (int k = k0 < 0 ? 0 : k0; k <= k1 && k < L->nprof; ++k) { lo = fminf(lo, L->prof[k]); hi = fmaxf(hi, L->prof[k]); }
+        int i0 = (int)floor((fmin(a.x, b.x) - hx) / ROAD_CELL), i1 = (int)floor((fmax(a.x, b.x) + hx) / ROAD_CELL);
+        int j0 = (int)floor((fmin(a.z, b.z) - hz) / ROAD_CELL), j1 = (int)floor((fmax(a.z, b.z) + hz) / ROAD_CELL);
+        for (int jj = j0; jj <= j1; ++jj)
+            for (int ii = i0; ii <= i1; ++ii) {
+                int64_t key = cell_key(ii, jj);
+                int k = imap_get(&open, key);
+                if (k >= 0 && out->run[k].seg1 == sg - 1) {
+                    IdxRun *u = &out->run[k];
+                    u->seg1 = sg; u->lo = fminf(u->lo, lo); u->hi = fmaxf(u->hi, hi);
+                    continue;
+                }
+                out->run = (IdxRun *)grow(out->run, &out->cap, out->n + 1, sizeof(IdxRun));
+                out->run[out->n] = (IdxRun){ key, r, sg, sg, lo, hi };
+                imap_put(&open, key, out->n++);
             }
-        }
     }
-    qsort(e, (size_t)ne, sizeof(IdxEntry), idx_cmp);
-    /* each segment's least and most height: the profile's stations over it and either side */
-    int *segBase = (int *)malloc(sizeof(int) * (size_t)(net->nlinks + 1)), nseg = 0;
-    if (!segBase) fatal("out of memory indexing the roads");
-    for (int r = 0; r < net->nlinks; ++r) { segBase[r] = nseg; nseg += net->link[r].npts - 1; }
-    float *segLo = (float *)malloc(sizeof(float) * (size_t)(nseg + 1)), *segHi = (float *)malloc(sizeof(float) * (size_t)(nseg + 1));
-    if (!segLo || !segHi) fatal("out of memory indexing the roads");
-    net->lo = 1e30f; net->hi = -1e30f;
+    imap_free(&open);
+}
+
+/* Every road's runs, by square: the runs of a square together, by road and
+ * segment, each square's first in `cells`, with how many and the least and
+ * most height of their segments. */
+static void build_index(Net *net, int threads) {
+    IdxRuns *runs = (IdxRuns *)calloc((size_t)(net->nlinks + 1), sizeof(IdxRuns));
+    if (!runs) fatal("out of memory indexing the roads");
+    IndexJob job = { net, runs };
+    thread_parallel_for(net->nlinks, threads, index_job, &job);
+    int ne = 0;
+    for (int r = 0; r < net->nlinks; ++r) ne += runs[r].n;
+    IdxRun *e = (IdxRun *)malloc(sizeof(IdxRun) * (size_t)(ne + 1));
+    if (!e) fatal("out of memory indexing the roads");
+    ne = 0;
     for (int r = 0; r < net->nlinks; ++r) {
-        const Link *L = &net->link[r];
-        for (int sg = 0; sg + 1 < L->npts; ++sg) {
-            int k0 = (int)floor(L->s[sg] / L->ds), k1 = (int)ceil(L->s[sg + 1] / L->ds);
-            float lo = 1e30f, hi = -1e30f;
-            for (int k = k0 < 0 ? 0 : k0; k <= k1 && k < L->nprof; ++k) { lo = fminf(lo, L->prof[k]); hi = fmaxf(hi, L->prof[k]); }
-            segLo[segBase[r] + sg] = lo;
-            segHi[segBase[r] + sg] = hi;
-            net->lo = fminf(net->lo, lo); net->hi = fmaxf(net->hi, hi);
-        }
+        memcpy(&e[ne], runs[r].run, sizeof(IdxRun) * (size_t)runs[r].n);
+        ne += runs[r].n;
+        free(runs[r].run);
     }
+    free(runs);
+    qsort(e, (size_t)ne, sizeof(IdxRun), run_cmp);
     imap_init(&net->cells, 1 << 16);
-    net->idx = (int *)malloc(sizeof(int) * 2 * (size_t)(ne + 1));
+    net->idx = (int *)malloc(sizeof(int) * 3 * (size_t)(ne + 1));
     net->idxCount = (int *)malloc(sizeof(int) * (size_t)(ne + 1));
     net->idxLo = (float *)malloc(sizeof(float) * (size_t)(ne + 1));
     net->idxHi = (float *)malloc(sizeof(float) * (size_t)(ne + 1));
     if (!net->idx || !net->idxCount || !net->idxLo || !net->idxHi) fatal("out of memory indexing the roads");
-    int n = 0, cells = 0;
+    net->lo = 1e30f; net->hi = -1e30f;
+    int first = -1;
     for (int k = 0; k < ne; ++k) {
-        if (k > 0 && e[k].cell == e[k - 1].cell && e[k].road == e[k - 1].road && e[k].seg == e[k - 1].seg) continue;
         if (k == 0 || e[k].cell != e[k - 1].cell) {
-            imap_put(&net->cells, e[k].cell, n);
-            net->idxCount[n] = 0;
-            net->idxLo[n] = 1e30f;
-            net->idxHi[n] = -1e30f;
-            cells++;
+            first = k;
+            imap_put(&net->cells, e[k].cell, k);
+            net->idxCount[k] = 0;
+            net->idxLo[k] = 1e30f;
+            net->idxHi[k] = -1e30f;
         }
-        int first = imap_get(&net->cells, e[k].cell), sg = segBase[e[k].road] + e[k].seg;
-        net->idx[2 * n] = e[k].road;
-        net->idx[2 * n + 1] = e[k].seg;
+        net->idx[3 * k] = e[k].road;
+        net->idx[3 * k + 1] = e[k].seg0;
+        net->idx[3 * k + 2] = e[k].seg1;
         net->idxCount[first]++;
-        net->idxLo[first] = fminf(net->idxLo[first], segLo[sg]);
-        net->idxHi[first] = fmaxf(net->idxHi[first], segHi[sg]);
-        n++;
+        net->idxLo[first] = fminf(net->idxLo[first], e[k].lo);
+        net->idxHi[first] = fmaxf(net->idxHi[first], e[k].hi);
+        net->lo = fminf(net->lo, e[k].lo); net->hi = fmaxf(net->hi, e[k].hi);
     }
     free(e);
-    free(segBase); free(segLo); free(segHi);
 }
 
 /* --- The whole network --------------------------------------------------------------------------- */
@@ -2165,22 +2468,25 @@ void plan_roads_build(int threads) {
     Net *net = (Net *)calloc(1, sizeof(Net));
     if (!net) fatal("out of memory building the roads");
     const int ns = plan_settlement_count();
-    for (int k = 0; k < ns; ++k) add_node(net, plan_settlement(k).centre, k);
+    g_wc = terrain_world_chart();
+    for (int k = 0; k < ns; ++k) net->node[add_node(net, plan_settlement(k).dir, k)].p = plan_settlement(k).centre;
 
     /* the coarse grid, for every route */
-    g_coarse = (uint8_t *)malloc((size_t)COARSE_SIDE * COARSE_SIDE);
+    g_coarse_n = plan_cube_side(COARSE_CELL);
+    g_coarse = (uint8_t *)malloc(6 * (size_t)g_coarse_n * g_coarse_n);
     if (!g_coarse) fatal("out of memory building the roads");
-    thread_parallel_for(COARSE_SIDE, threads, coarse_row, NULL);
+    thread_parallel_for(6 * g_coarse_n, threads, coarse_row, NULL);
 
     /* 1. candidates, routed coarsely for their costs */
-    /* between the settlements within the roads' reach, on land */
+    /* between the settlements on a continent */
     int (*pairs)[2] = malloc(sizeof(int[2]) * 8 * PLAN_MAX_SETTLEMENTS);
     int ids[PLAN_MAX_SETTLEMENTS], nids = 0;
     if (!pairs) fatal("out of memory building the roads");
     for (int k = 0; k < ns; ++k)
         if (plan_settlement(k).continent > 0) ids[nids++] = k;
     int np = delaunay(ids, nids, pairs, 8 * PLAN_MAX_SETTLEMENTS), nc = 0;
-    Cand *cand = (Cand *)calloc((size_t)np, sizeof(Cand));
+    int capc = np > 0 ? np : 1;
+    Cand *cand = (Cand *)calloc((size_t)capc, sizeof(Cand));
     {
         /* those longer than CAND_REACH only where the shorter leave their ends
          * apart: the shortest across each gap, until every continent is whole */
@@ -2191,7 +2497,7 @@ void plan_roads_build(int threads) {
         for (int v = 0; v < ns; ++v) parent[v] = v;
         for (int k = 0; k < np; ++k) {
             PlanSettlement a = plan_settlement(pairs[k][0]), b = plan_settlement(pairs[k][1]);
-            len[k] = a.continent != b.continent ? -1.0 : dlen(dsub(a.centre, b.centre));
+            len[k] = a.continent != b.continent ? -1.0 : sphere_m(a.dir, b.dir);
         }
         /* pass 0 takes every pair within CAND_REACH; pass 1 the shortest
          * longer one at a colossal city with fewer than HUB_LINKS, again;
@@ -2231,8 +2537,55 @@ void plan_roads_build(int threads) {
         for (int k = 0; k < nc; ++k)
             if (cand[k].cost >= 0) { routed[cand[k].a] = 1; routed[cand[k].b] = 1; }
         for (int k = 0; k < nc; ++k)
-            if (cand[k].cost < 0 && (!routed[cand[k].a] || !routed[cand[k].b]))
-                cand[k].cost = coarse_route(net, cand[k].a, cand[k].b, 0.0, NULL, NULL, NULL);
+            if (cand[k].cost < 0 && (!routed[cand[k].a] || !routed[cand[k].b])) {
+                TerrainChart ch = link_chart(node_dir(net, cand[k].a), node_dir(net, cand[k].b));
+                cand[k].cost = coarse_route(net, cand[k].a, cand[k].b, &ch, 0.0, NULL, NULL, NULL);
+            }
+        /* Gaps the routed candidates leave in a continent (those across a
+         * strait no road crosses, the land round it too long a way for the
+         * limit): the nearest pairs of settlements across them not yet
+         * tried, GAP_BATCH at a time on the threads, routed, again, until
+         * each continent is whole or GAP_TRIES pairs for each settlement on
+         * one have been tried. */
+        int *parent = (int *)malloc(sizeof(int) * PLAN_MAX_SETTLEMENTS), on = 0, triedAll = 0;
+        uint8_t *tried = (uint8_t *)calloc((size_t)ns * ns, 1);
+        if (!parent || !tried) fatal("out of memory building the roads");
+        for (int k = 0; k < nc; ++k) tried[cand[k].a * ns + cand[k].b] = tried[cand[k].b * ns + cand[k].a] = 1;
+        for (int k = 0; k < ns; ++k) on += plan_settlement(k).continent > 0;
+        while (triedAll < GAP_TRIES * on) {
+            for (int v = 0; v < ns; ++v) parent[v] = v;
+            for (int k = 0; k < nc; ++k)
+                if (cand[k].cost >= 0) parent[uf_find(parent, cand[k].a)] = uf_find(parent, cand[k].b);
+            int pa[GAP_BATCH], pb[GAP_BATCH], npair = 0;
+            double pd[GAP_BATCH];
+            for (int a = 0; a < ns; ++a) {
+                int ca = plan_settlement(a).continent;
+                if (ca <= 0) continue;
+                for (int b = a + 1; b < ns; ++b) {
+                    if (plan_settlement(b).continent != ca || tried[a * ns + b] || uf_find(parent, a) == uf_find(parent, b)) continue;
+                    double d = node_m(net, a, b);
+                    if (npair == GAP_BATCH && d >= pd[npair - 1]) continue;
+                    int q = npair < GAP_BATCH ? npair++ : npair - 1;   /* in order, nearest first */
+                    for (; q > 0 && pd[q - 1] > d; --q) { pa[q] = pa[q - 1]; pb[q] = pb[q - 1]; pd[q] = pd[q - 1]; }
+                    pa[q] = a; pb[q] = b; pd[q] = d;
+                }
+            }
+            if (!npair) break;
+            int ls[GAP_BATCH], base = net->nlinks;
+            for (int q = 0; q < npair; ++q) {
+                tried[pa[q] * ns + pb[q]] = tried[pb[q] * ns + pa[q]] = 1;
+                ls[q] = add_link(net, pa[q], pb[q]);
+            }
+            route_all(net, ls, npair, 1, threads);
+            for (int q = 0; q < npair; ++q) {
+                cand = (Cand *)grow(cand, &capc, nc + 1, sizeof(Cand));
+                cand[nc++] = (Cand){ pa[q], pb[q], net->link[ls[q]].ok ? net->link[ls[q]].cost : -1, 0 };
+            }
+            net->nlinks = base;
+            triedAll += npair;
+        }
+        free(parent);
+        free(tried);
     }
     /* 2-3. the spanning tree and the gravity model's additions */
     design(cand, nc);
@@ -2280,7 +2633,8 @@ void plan_roads_build(int threads) {
     junction_heights(net);
     thread_parallel_for(net->nlinks, threads, profile_grade_job, net);
     thread_parallel_for(net->nlinks, threads, bridge_span_job, net);
-    build_index(net);
+    thread_parallel_for(net->nlinks, threads, publish_job, net);
+    build_index(net, threads);
     /* the public view */
     int nr = 0;
     for (int l = 0; l < net->nlinks; ++l) {
@@ -2336,21 +2690,25 @@ int plan_road_bridges_in(double x0, double z0, double x1, double z1, double pad,
     const Net *net = g_net;
     if (!net || net->nlinks == 0) return 0;
     int n = 0;
+    double k = 1.01 * stretch_at(dv(0.5 * (x0 + x1), 0.5 * (z0 + z1)));   /* the sphere's metres as the chart's there */
     for (int j = (int)floor(z0 / ROAD_CELL); j <= (int)floor(z1 / ROAD_CELL); ++j)
         for (int i = (int)floor(x0 / ROAD_CELL); i <= (int)floor(x1 / ROAD_CELL); ++i) {
             int first = imap_get(&net->cells, cell_key(i, j));
             if (first < 0) continue;
-            for (int k = first; k < first + net->idxCount[first]; ++k) {
-                int r = net->idx[2 * k], sg = net->idx[2 * k + 1];
+            for (int e = first; e < first + net->idxCount[first]; ++e) {
+                int r = net->idx[3 * e];
                 const PlanRoad *R = &net->road[r];
-                int b = R->bridge ? R->bridge[sg] : -1;
-                if (b < 0) continue;
-                DVec2 a = R->pts[sg], c = R->pts[sg + 1];
-                double m = pad + R->half;
-                if (fmax(a.x, c.x) < x0 - m || fmin(a.x, c.x) > x1 + m || fmax(a.z, c.z) < z0 - m || fmin(a.z, c.z) > z1 + m) continue;
-                int seen = 0;
-                for (int q = 0; q < n && !seen; ++q) seen = out[q].road == r && out[q].bridge == b;
-                if (!seen && n < max) out[n++] = (PlanRoadSpan){ r, b };
+                if (!R->bridge) continue;
+                for (int sg = net->idx[3 * e + 1]; sg <= net->idx[3 * e + 2]; ++sg) {
+                    int b = R->bridge[sg];
+                    if (b < 0) continue;
+                    DVec2 a = R->pts[sg], c = R->pts[sg + 1];
+                    double m = (pad + R->half) * k;
+                    if (fmax(a.x, c.x) < x0 - m || fmin(a.x, c.x) > x1 + m || fmax(a.z, c.z) < z0 - m || fmin(a.z, c.z) > z1 + m) continue;
+                    int seen = 0;
+                    for (int q = 0; q < n && !seen; ++q) seen = out[q].road == r && out[q].bridge == b;
+                    if (!seen && n < max) out[n++] = (PlanRoadSpan){ r, b };
+                }
             }
         }
     return n;
@@ -2363,7 +2721,8 @@ int plan_road_bridges_in(double x0, double z0, double x1, double z1, double pad,
  * stretch is left as it is, and the embankment's spill slope comes in from
  * each end of the span (never wider for the spacing); ground there that
  * would stand above the deck's soffit is cut down under it. Where reaches
- * overlap, the strongest. */
+ * overlap, the strongest. Distances are the sphere's: the world chart's
+ * offsets from (x, z) taken through its metric there (metric_at). */
 double plan_road_ground(double x, double z, double ground, double spacing, double *road_h) {
     const Net *net = g_net;
     if (!net || spacing > PLAN_ROAD_LOD_SPACING) return 0.0;
@@ -2371,51 +2730,57 @@ double plan_road_ground(double x, double z, double ground, double spacing, doubl
     if (first < 0) return 0.0;
     double best = 0.0, bestD = 1e300;
     DVec2 p = dv(x, z);
-    for (int k = first; k < first + net->idxCount[first]; ++k) {
-        const PlanRoad *R = &net->road[net->idx[2 * k]];
-        int sg = net->idx[2 * k + 1];
-        DVec2 a = R->pts[sg], ab = dsub(R->pts[sg + 1], a);
-        double l2 = ddot(ab, ab), t = l2 > 0.0 ? ddot(dsub(p, a), ab) / l2 : 0.0;
-        if (R->bridge && (t < 0.0 || t > 1.0)) {
-            /* past a segment's end, nothing reaches round into a span, nor a
-             * bridge's segment out of it: under the deck is the bridge's,
-             * before it the road's */
-            double sraw = R->s[sg] + t * sqrt(l2);
-            if (R->bridge[sg] >= 0) continue;
-            int into = 0;
-            for (int q = 0; q < R->nbridges && !into; ++q) into = sraw > R->bridges[q].s0 && sraw < R->bridges[q].s1;
-            if (into) continue;
-        }
-        t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
-        double d = dlen(dsub(p, dadd(a, dscale(ab, t)))), core = R->half + PLAN_ROAD_SHOULDER;
-        if (d >= core + PLAN_ROAD_BATTER_MAX + 1.5 * spacing) continue;
-        double sr = R->s[sg] + t * sqrt(l2), h = profile_at(R, sr);
-        double batter = fmin(fmax(2.0 * fabs(ground - h), PLAN_ROAD_BATTER_MIN), PLAN_ROAD_BATTER_MAX) + 1.5 * spacing;
-        double over = d - core;
-        int b = R->bridge ? R->bridge[sg] : -1;
-        if (b >= 0) {
-            /* under a bridge the ground is the water's: the embankment's
-             * spill slope comes in from each end of the span as from the
-             * road's edge, never over the water's stretch; but a bank
-             * standing up into the span is cut down under the soffit */
-            const PlanRoadBridge *B = &R->bridges[b];
-            double soffit = h - PLAN_ROAD_DECK_DEPTH - BRIDGE_UNDER;
-            if (ground > soffit) {
-                h = soffit;
-                batter = fmin(fmax(2.0 * (ground - h), PLAN_ROAD_BATTER_MIN), PLAN_ROAD_BATTER_MAX) + 1.5 * spacing;
-            } else {
-                int first = sr < 0.5 * (B->w0 + B->w1);
-                over = fmax(over, first ? sr - B->s0 : B->s1 - sr);
-                batter = fmin(batter, first ? B->w0 - B->s0 : B->s1 - B->w1);
-                if (over >= batter) continue;
+    Metric mt = metric_at(p);
+    for (int e = first; e < first + net->idxCount[first]; ++e) {
+        const PlanRoad *R = &net->road[net->idx[3 * e]];
+        for (int sg = net->idx[3 * e + 1]; sg <= net->idx[3 * e + 2]; ++sg) {
+            DVec2 a = metric_apply(&mt, dsub(R->pts[sg], p)), ab = dsub(metric_apply(&mt, dsub(R->pts[sg + 1], p)), a);
+            double l2 = ddot(ab, ab), t = l2 > 0.0 ? -ddot(a, ab) / l2 : 0.0, sl = R->s[sg + 1] - R->s[sg];
+            if (R->bridge && (t < 0.0 || t > 1.0)) {
+                /* past a segment's end, nothing reaches round into a span, nor a
+                 * bridge's segment out of it: under the deck is the bridge's,
+                 * before it the road's. Round a corner the road is no longer
+                 * along the segment's line, so a span as far back along the road
+                 * as the point lies past the end, and off the line, counts. */
+                if (R->bridge[sg] >= 0) continue;
+                double tc = t < 0.0 ? 0.0 : 1.0, se = R->s[sg] + tc * sl;
+                double past = fabs(t - tc) * sl + dlen(dadd(a, dscale(ab, tc)));
+                double lo = t < 0.0 ? se - past : se, hi = t < 0.0 ? se : se + past;
+                int into = 0;
+                for (int q = 0; q < R->nbridges && !into; ++q) into = R->bridges[q].s0 < hi && R->bridges[q].s1 > lo;
+                if (into) continue;
             }
+            t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
+            double d = dlen(dadd(a, dscale(ab, t))), core = R->half + PLAN_ROAD_SHOULDER;
+            if (d >= core + PLAN_ROAD_BATTER_MAX + 1.5 * spacing) continue;
+            double sr = R->s[sg] + t * sl, h = profile_at(R, sr);
+            double batter = fmin(fmax(2.0 * fabs(ground - h), PLAN_ROAD_BATTER_MIN), PLAN_ROAD_BATTER_MAX) + 1.5 * spacing;
+            double over = d - core;
+            int b = R->bridge ? R->bridge[sg] : -1;
+            if (b >= 0) {
+                /* under a bridge the ground is the water's: the embankment's
+                 * spill slope comes in from each end of the span as from the
+                 * road's edge, never over the water's stretch; but a bank
+                 * standing up into the span is cut down under the soffit */
+                const PlanRoadBridge *B = &R->bridges[b];
+                double soffit = h - PLAN_ROAD_DECK_DEPTH - BRIDGE_UNDER;
+                if (ground > soffit) {
+                    h = soffit;
+                    batter = fmin(fmax(2.0 * (ground - h), PLAN_ROAD_BATTER_MIN), PLAN_ROAD_BATTER_MAX) + 1.5 * spacing;
+                } else {
+                    int first = sr < 0.5 * (B->w0 + B->w1);
+                    over = fmax(over, first ? sr - B->s0 : B->s1 - sr);
+                    batter = fmin(batter, first ? B->w0 - B->s0 : B->s1 - B->w1);
+                    if (over >= batter) continue;
+                }
+            }
+            double w = 1.0;
+            if (over > 0.0) {
+                double u = fmin(over / batter, 1.0);
+                w = 1.0 - u * u * (3.0 - 2.0 * u);
+            }
+            if (w > best || (w == best && w > 0.0 && d < bestD)) { best = w; bestD = d; *road_h = h; }
         }
-        double w = 1.0;
-        if (over > 0.0) {
-            double u = fmin(over / batter, 1.0);
-            w = 1.0 - u * u * (3.0 - 2.0 * u);
-        }
-        if (w > best || (w == best && w > 0.0 && d < bestD)) { best = w; bestD = d; *road_h = h; }
     }
     return best;
 }

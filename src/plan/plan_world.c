@@ -65,12 +65,13 @@
  * so its core is a town as the megacity's is (plan_town_regional); its chart
  * is about that place.
  *
- * The sea to come: terrain_sea_margin on a grid of PLAN_SEA_CELL over the
- * roads' reach, interpolated between its nodes. A road may go where the
- * grid's margin is PLAN_ROAD_SEA_M or more; where it is less, but not out in
- * the ocean, the Earth's shore is read finely (plan_road_dry), so the coastal
- * plains, which the grid's 20 km mix with the sea beside them, are land. The
- * nodes a road may reach, joined along the grid's lines, are one continent.
+ * The sea to come: terrain_sea_margin on a grid over the sphere, its nodes
+ * no more than PLAN_SEA_CELL apart (plan_cube_*), interpolated between them.
+ * A road may go where the grid's margin is PLAN_ROAD_SEA_M or more; where it
+ * is less, but not out in the ocean, the Earth's shore is read finely
+ * (plan_road_dry), so the coastal plains, which the grid's 20 km mix with
+ * the sea beside them, are land. The nodes a road may reach, joined along
+ * the grid's lines (across the cube's edges too), are one continent.
  *
  * Determinism: the list is read in order and everything after it is
  * sequenced (the cuts on threads, each its own); counts of nodes are
@@ -82,8 +83,6 @@
 
 #define PI 3.14159265358979323846
 
-#define SEA_EXTENT    (PLAN_ROAD_REACH + 600000.0)   /* the sea grid covers |x|, |z| up to this (m) */
-#define SEA_SIDE      ((int)(2.0 * SEA_EXTENT / PLAN_SEA_CELL) + 2)
 #define HOME_KM       30.0        /* a row of the list this near the world chart's origin is the megacity (km) */
 #define CUT_CELL      1000.0      /* the cut grid's spacing (m) */
 #define STEEP_SPACING 1000.0      /* the Earth's grade read at this spacing: mip 0 */
@@ -131,8 +130,10 @@ typedef struct World {
     Cut            cut[PLAN_MAX_SETTLEMENTS];
     TerrainChart   wc;           /* the world chart */
     double         relief_lo, relief_hi;
-    float         *sea;          /* SEA_SIDE^2 nodes, row by row: node (i, j) at -SEA_EXTENT + (i, j) * PLAN_SEA_CELL */
+    int            sea_n;        /* the sea grid: nodes a face's side (plan_cube_*), PLAN_SEA_CELL apart at most */
+    float         *sea;          /* its nodes' terrain_sea_margin, by plan_cube_index */
     uint8_t       *dry;          /* each node's plan_road_dry */
+    uint8_t       *join;         /* each node's joins along the grid (JOIN_I to the next node along i, JOIN_J along j) */
     int           *land;         /* each node's continent, 0 for the sea */
     int            continents;
     int           *cell_start;   /* the index: INDEX_SIDE^2 + 1 offsets into cell_ids */
@@ -338,98 +339,168 @@ int plan_world_core_town(int i, int j) {
     return 0;
 }
 
-/* --- The sea to come, and the continents ---------------------------------------------- */
+/* --- A grid over the sphere ----------------------------------------------------------- */
 
-static double sea_node_x(int i) { return -SEA_EXTENT + i * PLAN_SEA_CELL; }
+size_t plan_cube_index(int n, int f, int i, int j) { return ((size_t)f * n + j) * n + i; }
 
-/* plan_road_dry, given the sea grid's margin there; the shore read finely
- * only where the grid finds the land low, not out in the ocean. Until the
- * settlements are placed (the continents' grid) there are none near. */
-#define ROAD_SHORE_SPACING 2000.0   /* about mip 0 (m) */
-#define ROAD_SHORE_DEEP    (-1000.0)
-static int road_dry_at(double x, double z, double sea) {
-    if (sea >= PLAN_ROAD_SEA_M) return 1;
-    if (sea < ROAD_SHORE_DEEP) return 0;
-    double shore = terrain_shore(terrain_chart_dir(&W.wc, x, z), ROAD_SHORE_SPACING);
-    if (shore >= PLAN_ROAD_SHORE_M) return 1;
-    return shore >= 0.0 && W.state >= WORLD_SETTLED && plan_city_edge(x, z) < PLAN_EDGE_CAP;
+int plan_cube_side(double spacing) { return (int)ceil(0.5 * PI * PLANET_RADIUS / spacing) + 1; }
+
+TerrainDir plan_cube_dir(int n, int f, int i, int j) {
+    return terrain_face_dir(f, -1.0 + 2.0 * i / (n - 1), -1.0 + 2.0 * j / (n - 1));
 }
 
-static void sea_row(void *ctx, int j) {
+int plan_cube_at(int n, TerrainDir p, double *fi, double *fj) {
+    double u, v;
+    int f = terrain_dir_face(p, &u, &v);
+    *fi = fmin(fmax(0.5 * (u + 1.0) * (n - 1), 0.0), n - 1.0);
+    *fj = fmin(fmax(0.5 * (v + 1.0) * (n - 1), 0.0), n - 1.0);
+    return f;
+}
+
+int plan_cube_step(int n, int f, int i, int j, int di, int dj, int *gi, int *gj) {
+    int a = i + di, b = j + dj;
+    if (a >= 0 && b >= 0 && a < n && b < n) { *gi = a; *gj = b; return f; }
+    double fi, fj;
+    int g = plan_cube_at(n, terrain_face_dir(f, -1.0 + 2.0 * a / (n - 1), -1.0 + 2.0 * b / (n - 1)), &fi, &fj);
+    *gi = (int)floor(fi + 0.5);
+    *gj = (int)floor(fj + 0.5);
+    return g;
+}
+
+/* --- The sea to come, and the continents ---------------------------------------------- */
+
+/* plan_road_dry at p, given the sea grid's margin there; the shore read
+ * finely only where the grid finds the land low, not out in the ocean. Until
+ * the settlements are placed (the continents' grid) there are none near. */
+#define ROAD_SHORE_SPACING 2000.0   /* about mip 0 (m) */
+#define ROAD_SHORE_DEEP    (-1000.0)
+static int road_dry_at(TerrainDir p, double sea) {
+    if (sea >= PLAN_ROAD_SEA_M) return 1;
+    if (sea < ROAD_SHORE_DEEP) return 0;
+    double shore = terrain_shore(p, ROAD_SHORE_SPACING);
+    if (shore >= PLAN_ROAD_SHORE_M) return 1;
+    if (shore < 0.0 || W.state < WORLD_SETTLED) return 0;
+    double x, z;
+    terrain_dir_chart(&W.wc, p, &x, &z);
+    return plan_city_edge(x, z) < PLAN_EDGE_CAP;
+}
+
+/* Two nodes next to each other along a face are joined where the land
+ * between them is dry all the way, read every JOIN_SAMPLES-th of the way (a
+ * strait narrower than the grid's spacing parts them). */
+#define JOIN_I       1
+#define JOIN_J       2
+#define JOIN_SAMPLES 8
+static int joined(TerrainDir a, TerrainDir b) {
+    for (int q = 1; q < JOIN_SAMPLES; ++q) {
+        double t = (double)q / JOIN_SAMPLES;
+        TerrainDir p = padd(pscale(a, 1.0 - t), pscale(b, t));
+        p = pscale(p, 1.0 / sqrt(pdot(p, p)));
+        if (!road_dry_at(p, terrain_sea_margin_dir(p))) return 0;
+    }
+    return 1;
+}
+
+static void sea_row(void *ctx, int r) {
     (void)ctx;
-    for (int i = 0; i < SEA_SIDE; ++i) {
-        double x = sea_node_x(i), z = sea_node_x(j);
-        W.sea[(size_t)j * SEA_SIDE + i] = hypot(x, z) > SEA_EXTENT ? -1e9f : (float)terrain_sea_margin(x, z);
-        W.dry[(size_t)j * SEA_SIDE + i] = (uint8_t)road_dry_at(x, z, W.sea[(size_t)j * SEA_SIDE + i]);
+    const int n = W.sea_n, f = r / n, j = r % n;
+    for (int i = 0; i < n; ++i) {
+        TerrainDir p = plan_cube_dir(n, f, i, j);
+        size_t k = plan_cube_index(n, f, i, j);
+        W.sea[k] = (float)terrain_sea_margin_dir(p);
+        W.dry[k] = (uint8_t)road_dry_at(p, W.sea[k]);
     }
 }
 
-double plan_world_sea(double x, double z) {
-    ensure();
-    double fx = (x + SEA_EXTENT) / PLAN_SEA_CELL, fz = (z + SEA_EXTENT) / PLAN_SEA_CELL;
-    if (!(fx >= 0.0 && fz >= 0.0 && fx < SEA_SIDE - 1 && fz < SEA_SIDE - 1)) return -1e9;
-    int i = (int)fx, j = (int)fz;
-    double tx = fx - i, tz = fz - j;
-    const float *r0 = &W.sea[(size_t)j * SEA_SIDE + i], *r1 = r0 + SEA_SIDE;
-    return (1.0 - tz) * ((1.0 - tx) * r0[0] + tx * r0[1]) + tz * ((1.0 - tx) * r1[0] + tx * r1[1]);
+/* After sea_row, every node's dry: its joins to the next along each way. */
+static void join_row(void *ctx, int r) {
+    (void)ctx;
+    const int n = W.sea_n, f = r / n, j = r % n;
+    for (int i = 0; i < n; ++i) {
+        size_t k = plan_cube_index(n, f, i, j);
+        uint8_t m = 0;
+        if (W.dry[k]) {
+            TerrainDir p = plan_cube_dir(n, f, i, j);
+            if (i + 1 < n && W.dry[k + 1] && joined(p, plan_cube_dir(n, f, i + 1, j))) m |= JOIN_I;
+            if (j + 1 < n && W.dry[k + n] && joined(p, plan_cube_dir(n, f, i, j + 1))) m |= JOIN_J;
+        }
+        W.join[k] = m;
+    }
 }
 
-int plan_road_dry(double x, double z) { ensure(); return road_dry_at(x, z, plan_world_sea(x, z)); }
-
-int plan_world_continent(double x, double z) {
+double plan_world_sea_dir(TerrainDir p) {
     ensure();
-    if (!plan_road_dry(x, z)) return 0;
-    int i = (int)floor((x + SEA_EXTENT) / PLAN_SEA_CELL), j = (int)floor((z + SEA_EXTENT) / PLAN_SEA_CELL);
-    /* the nearest of the four nodes round it that is land */
-    int best = 0;
-    double bd = 1e300;
-    for (int dj = 0; dj <= 1; ++dj)
-        for (int di = 0; di <= 1; ++di) {
-            int n = W.land[(size_t)(j + dj) * SEA_SIDE + (i + di)];
-            double d = hypot(x - sea_node_x(i + di), z - sea_node_x(j + dj));
-            if (n && d < bd) { bd = d; best = n; }
+    const int n = W.sea_n;
+    double fi, fj;
+    int f = plan_cube_at(n, p, &fi, &fj);
+    int i = fi < n - 1 ? (int)fi : n - 2, j = fj < n - 1 ? (int)fj : n - 2;
+    double ti = fi - i, tj = fj - j;
+    const float *r0 = &W.sea[plan_cube_index(n, f, i, j)], *r1 = r0 + n;
+    return (1.0 - tj) * ((1.0 - ti) * r0[0] + ti * r0[1]) + tj * ((1.0 - ti) * r1[0] + ti * r1[1]);
+}
+
+double plan_world_sea(double x, double z) { ensure(); return plan_world_sea_dir(terrain_chart_dir(&W.wc, x, z)); }
+
+int plan_road_dry_dir(TerrainDir p) { return road_dry_at(p, plan_world_sea_dir(p)); }
+
+int plan_road_dry(double x, double z) { ensure(); return plan_road_dry_dir(terrain_chart_dir(&W.wc, x, z)); }
+
+/* The continent of the land node nearest p within `near` nodes of the cell
+ * holding it on its face, or 0. */
+static int continent_near(TerrainDir p, int near) {
+    const int n = W.sea_n;
+    double fi, fj;
+    int f = plan_cube_at(n, p, &fi, &fj), i0 = (int)floor(fi), j0 = (int)floor(fj), best = 0;
+    double bd = -2.0;
+    for (int j = j0 - near; j <= j0 + 1 + near; ++j)
+        for (int i = i0 - near; i <= i0 + 1 + near; ++i) {
+            if (i < 0 || j < 0 || i >= n || j >= n) continue;
+            int m = W.land[plan_cube_index(n, f, i, j)];
+            double d = pdot(p, plan_cube_dir(n, f, i, j));
+            if (m && d > bd) { bd = d; best = m; }
         }
     return best;
 }
 
-/* A settlement's continent: its centre's, or by the sea, where the grid
- * takes its centre for shore, the nearest land node's within
- * CONTINENT_NEAR; 0 beyond the roads' reach. */
-static int settlement_continent(DVec2 c) {
-    if (dlen(c) > PLAN_ROAD_REACH - CITY_RADIUS) return 0;
-    int n = plan_world_continent(c.x, c.z);
-    if (n) return n;
-    int i0 = (int)floor((c.x + SEA_EXTENT) / PLAN_SEA_CELL), j0 = (int)floor((c.z + SEA_EXTENT) / PLAN_SEA_CELL);
-    double bd = 1e300;
-    for (int j = j0 - CONTINENT_NEAR; j <= j0 + 1 + CONTINENT_NEAR; ++j)
-        for (int i = i0 - CONTINENT_NEAR; i <= i0 + 1 + CONTINENT_NEAR; ++i) {
-            if (i < 0 || j < 0 || i >= SEA_SIDE || j >= SEA_SIDE) continue;
-            int m = W.land[(size_t)j * SEA_SIDE + i];
-            double d = hypot(c.x - sea_node_x(i), c.z - sea_node_x(j));
-            if (m && d < bd) { bd = d; n = m; }
-        }
-    return n;
+int plan_world_continent_dir(TerrainDir p) {
+    ensure();
+    return plan_road_dry_dir(p) ? continent_near(p, 0) : 0;
 }
 
-/* Land nodes joined along the grid's lines, numbered in the order a scan of
- * the rows first meets them. */
+int plan_world_continent(double x, double z) { ensure(); return plan_world_continent_dir(terrain_chart_dir(&W.wc, x, z)); }
+
+static double sphere_m(TerrainDir a, TerrainDir b);
+
+/* A settlement's continent: its centre's, or by the sea, where the grid
+ * takes its centre for shore, the nearest land node's within
+ * CONTINENT_NEAR. Without the Earth's bake, only within PLAN_STANDIN_ROADS
+ * of the megacity: the stand-in's continents are noise, not the list's. */
+static int settlement_continent(TerrainDir p) {
+    if (!terrain_earth_loaded() && sphere_m(p, W.s[0].dir) > PLAN_STANDIN_ROADS) return 0;
+    int n = plan_world_continent_dir(p);
+    return n ? n : continent_near(p, CONTINENT_NEAR);
+}
+
+/* Land nodes joined along the grid's lines (join_row), and across the faces'
+ * edges, numbered in the order a scan of the faces' rows first meets them. */
 static void label_continents(void) {
-    const int n = SEA_SIDE;
-    int *stack = (int *)malloc(sizeof(int) * (size_t)n * n);
+    const int n = W.sea_n, total = 6 * n * n;
+    int *stack = (int *)malloc(sizeof(int) * (size_t)total);
     if (!stack) fatal("out of memory labelling the continents");
     W.continents = 0;
-    for (int start = 0; start < n * n; ++start) {
+    for (int start = 0; start < total; ++start) {
         if (W.land[start] || !W.dry[start]) continue;
         int label = ++W.continents, top = 0;
         W.land[start] = label;
         stack[top++] = start;
         while (top) {
-            int c = stack[--top], ci = c % n, cj = c / n;
-            const int nb[4][2] = { { ci - 1, cj }, { ci + 1, cj }, { ci, cj - 1 }, { ci, cj + 1 } };
+            int c = stack[--top], f = c / (n * n), ci = c % n, cj = c / n % n;
+            const int nb[4][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
             for (int k = 0; k < 4; ++k) {
-                if (nb[k][0] < 0 || nb[k][1] < 0 || nb[k][0] >= n || nb[k][1] >= n) continue;
-                int q = nb[k][1] * n + nb[k][0];
+                int gi, gj, g = plan_cube_step(n, f, ci, cj, nb[k][0], nb[k][1], &gi, &gj);
+                int q = (int)plan_cube_index(n, g, gi, gj);
                 if (W.land[q] || !W.dry[q]) continue;
+                if (g == f && !(k == 0 ? W.join[q] & JOIN_I : k == 1 ? W.join[c] & JOIN_I : k == 2 ? W.join[q] & JOIN_J : W.join[c] & JOIN_J)) continue;
                 W.land[q] = label;
                 stack[top++] = q;
             }
@@ -1091,17 +1162,21 @@ void plan_world_init(int threads) {
     W.s[0].chart = W.wc;
     snprintf(W.name[0], sizeof W.name[0], "the megacity");
 
-    W.sea = (float *)malloc(sizeof(float) * (size_t)SEA_SIDE * SEA_SIDE);
-    W.land = (int *)calloc((size_t)SEA_SIDE * SEA_SIDE, sizeof(int));
-    W.dry = (uint8_t *)malloc((size_t)SEA_SIDE * SEA_SIDE);
-    if (!W.sea || !W.land || !W.dry) fatal("out of memory mapping the sea");
-    thread_parallel_for(SEA_SIDE, threads, sea_row, NULL);
+    W.sea_n = plan_cube_side(PLAN_SEA_CELL);
+    size_t nodes = 6 * (size_t)W.sea_n * W.sea_n;
+    W.sea = (float *)malloc(sizeof(float) * nodes);
+    W.land = (int *)calloc(nodes, sizeof(int));
+    W.dry = (uint8_t *)malloc(nodes);
+    W.join = (uint8_t *)malloc(nodes);
+    if (!W.sea || !W.land || !W.dry || !W.join) fatal("out of memory mapping the sea");
+    thread_parallel_for(6 * W.sea_n, threads, sea_row, NULL);
+    thread_parallel_for(6 * W.sea_n, threads, join_row, NULL);
     label_continents();
 
     place_settlements(threads);
     W.relief_lo = W.relief_hi = W.s[0].relief_m;
     for (int k = 0; k < W.n; ++k) {
-        W.s[k].continent = settlement_continent(W.s[k].centre);
+        W.s[k].continent = settlement_continent(W.s[k].dir);
         W.relief_lo = fmin(W.relief_lo, W.s[k].relief_m);
         W.relief_hi = fmax(W.relief_hi, W.s[k].relief_m);
     }

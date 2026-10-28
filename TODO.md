@@ -172,7 +172,7 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
 ## Settlements and roads
 The world's largest metropolitan areas over the planet, megacities of the future 60-150 km across (177 of a
 list of 227, sized from their real GHSL areas, merged where they would meet, cut at their coasts and mountains)
-and the freeways and trunk roads between those of North America (`src/plan/plan_world.c`,
+and the freeways and trunk roads between those on each continent, on the sphere (`src/plan/plan_world.c`,
 `src/plan/plan_roads.c`, `src/render/road_gpu.c`, `shaders/terrain/roads.glsl`; see the README, `world_test --map`).
 Left over:
 - **Normal cities and towns** (the user's next step): smaller settlements fit the same machinery (a footprint, a
@@ -186,10 +186,25 @@ Left over:
   so beyond about 4 km the paint lies on the bare ground's coarse levels, and the planet's patches don't draw roads
   at all. Lamp heads, poles, barriers, signs and traffic aren't modelled: the freeways' light is pools on the
   asphalt. Freeway junctions are level, without slip roads or interchanges.
-- **Roads only in North America.** The roads are laid out in the world chart, so only the cities within
-  `PLAN_ROAD_REACH` (5000 km) have them; C3b puts them on the sphere. Out to Bogota and Lima the network
-  funnelled through Panama and along the Andes, where roads ran inside each other's reach. Miami has no roads:
-  its plain stands under the 5 m the roads keep above the finer shore, beyond 20 km of the city.
+- **Roads on the sphere, drawn in the world chart** (C3b). Each link is built in a chart of its own and
+  published in the world's; `plan_road_ground` grades a road's true width anywhere, but the terrain's paint
+  (`roads.glsl`) and the decks' chunks measure in the world chart, so far from Los Angeles (stretched across
+  by θ/sin θ: about 2 in India, 5 in Johannesburg) the paint is narrower than the road. C4's active chart
+  fixes it. Miami has no roads: its plain stands under the 5 m the roads keep above the finer shore.
+- **Straits.** Continents are told apart on a 20 km grid whose neighbours join only where the land between
+  is dry every 2.5 km; roads never cross the sea, so Britain, Japan, Copenhagen's Zealand and Indonesia's
+  islands have networks of their own, or none (no sea bridges or tunnels yet). The gaps the routed
+  candidates leave in a continent are filled by trying the nearest pairs across them (`GAP_TRIES`,
+  `GAP_BATCH`), which on the stand-in's noise continents cost tens of seconds: without a bake only the
+  cities within 5000 km of the megacity have roads (`PLAN_STANDIN_ROADS`).
+- **Wide water on the routes.** A route that finds no way at any corridor width tries once more with the
+  rivers' water and the lakes open, a metre of bridge for each (the Congo, Lake Nasser's arms); bridges walk
+  out at most 1.5 km either side of a crossing, so a river much wider than that would leave road on the
+  water (none on the Earth). Junctions keep `JUNCTION_DRY` off the water and bridges `JUNCTION_CLEAR` off a
+  junction: where two roads leave one side by side over a river, one's deck may be under the other's
+  surface (one point on the Earth, counted in world_test as beside another road).
+- **Corners at a city's edge.** Gates are found before the corners are rounded, so a corner near the
+  edge can clip a built town (1 point in 25 m on the Earth, 3 on the test bake; world_test fails at 50).
 - **Far cities are laid out in the world chart.** Each settlement has its own chart and its footprint is
   measured in it, but its towns are on the world chart's lattice, so a far city's plan is stretched across by
   up to theta / sin theta. Keying towns, chunks and proxies by (settlement, i, j) comes with the active chart.
@@ -216,13 +231,14 @@ Left over:
 - The sea itself isn't in the terrain yet: the basins it will fill are only low ground.
 - **Roads out of a city bundle.** Every colossal city keeps three links in the design, but links leaving it in one
   direction share a road (Steiner junctions, roads beside each other joined), so it may have fewer gates; the
-  megacity has two on the Earth (north up the Central Valley, a freeway east; one on the test bake, its three
-  links east joined), three on the stand-in. Small changes to the routing's costs reshuffle which.
+  megacity has three on the Earth (two freeways and a trunk road, their gates 65-125 km out at the built
+  towns' edge). Small changes to the routing's costs reshuffle which.
 - **Clouds sit on the hills.** The deck's underside is at a fixed height (about 200 m), so within a city's cloud
   border a road climbing into the hills runs into it (see Landforms, Seen from the city, and Weather).
-- **Start-up.** Building the world costs about 28 s of one core's time (2.4 s on 32 threads): the cut grids of the
-  177 cities (placed up to five times as the merging settles), the coarse cost grid, candidate and fine routes,
-  profiles and the index; every test and the game pay it. Profiles and fine routes could be made lazily for the roads near the
+- **Start-up.** Building the world on the Earth takes about 10.3 s on 32 threads (6 s before the roads went
+  global): placing the 177 cities 4.3 s, the rivers through them 0.8 s, the roads 5 s (the coarse grid over
+  the sphere 0.9 s, candidates 0.7, fine routes 1.8, merging 0.7, profiles 0.4, the index 0.4); every test
+  and the game pay it. Profiles and fine routes could be made lazily for the roads near the
   camera, or the world cached on disk by a hash of its inputs.
 - **Determinism across compilers.** It did tip: with `/fp:fast` the game placed about six of the 177 cities
   differently from the tests (up to 23 km; found by the streams' plan probes, W2a). The game now builds the plan

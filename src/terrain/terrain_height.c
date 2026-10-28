@@ -181,6 +181,13 @@ double terrain_height_dir(TerrainDir p, double spacing) {
     return height_lod(x, z, &p, spacing, &w, &relief, GROUND_ALL);
 }
 
+double terrain_height_dry_dir(TerrainDir p, double spacing) {
+    TerrainChart wc = terrain_world_chart();
+    double x, z, w, relief;
+    terrain_dir_chart(&wc, p, &x, &z);
+    return height_lod(x, z, &p, spacing, &w, &relief, GROUND_ROADS);
+}
+
 double terrain_ground_bare_dir(TerrainDir p, double spacing) {
     TerrainChart wc = terrain_world_chart();
     double x, z, w, relief;

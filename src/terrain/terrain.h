@@ -37,7 +37,8 @@ void   terrain_urban_height_range(double x0, double z0, double x1, double z1, do
 double terrain_height_lod(double x, double z, double spacing);
 
 /* terrain_height_lod without the water's beds carved in: the ground the
- * roads between the settlements are routed and graded over. */
+ * roads between the settlements are routed and graded over (and
+ * terrain_height_dry_dir, below). */
 double terrain_height_dry_lod(double x, double z, double spacing);
 /* Conservative bounds on terrain_height (and terrain_height_lod at any
  * spacing up to 20 km, TERRAIN_LIFT_SPACING, which every clipmap level is under)
@@ -66,7 +67,8 @@ typedef struct TerrainCanyon {
     uint32_t id;
 } TerrainCanyon;
 /* The canyons whose cut can reach the square of half-width r round (x, z),
- * at most max of them; returns how many it wrote. */
+ * at most max of them; returns how many it wrote (and
+ * terrain_canyons_near_in, below). */
 int    terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, int max);
 
 /* --- The planet (src/terrain/terrain_world.c, terrain_cube.c) --------------------
@@ -117,6 +119,13 @@ TerrainDir terrain_chart_point(const TerrainChart *c, double x, double y, double
 /* The local frame at chart c's (x, z): up along the sphere's normal, and x
  * and z along the chart's x and z there, orthogonal to it and to each other. */
 void       terrain_chart_frame(const TerrainChart *c, double x, double z, TerrainDir *ax, TerrainDir *up, TerrainDir *az);
+
+/* Some of the ground's queries above at a direction, or in another chart:
+ * terrain_height_dry_lod at p (as terrain_height_dir), terrain_landform at p,
+ * and terrain_canyons_near about chart c's (x, z), the canyons' lines in c. */
+double terrain_height_dry_dir(TerrainDir p, double spacing);
+void   terrain_landform_dir(TerrainDir p, TerrainLandform *out);
+int    terrain_canyons_near_in(const TerrainChart *c, double x, double z, double r, TerrainCanyon *out, int max);
 
 /* A point at world (cam_x + dx, h, cam_z + dz) as seen from a camera at world
  * (cam_x, cam_y, cam_z), in the camera's local frame (terrain_chart_frame):

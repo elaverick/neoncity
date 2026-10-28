@@ -12,6 +12,20 @@
  * megacity (whose centre is town (0, 0)). */
 int  plan_world_core_town(int i, int j);
 
+/* A grid over the sphere (plan_world.c): on each cube face
+ * (terrain_face_dir) n nodes a side, node (f, i, j) at u = -1 + 2 i / (n - 1)
+ * and v likewise, so the nodes on a face's edges are its neighbour's too.
+ * plan_cube_side is the n whose nodes are no more than `spacing` apart (the
+ * faces' middles are where they are farthest apart); plan_cube_at gives the
+ * face p is on and its place there in nodes, in [0, n - 1] each way;
+ * plan_cube_step the node (di, dj) from node (f, i, j), stepping over a
+ * face's edge onto the nearest node of the next face (returns its face). */
+int        plan_cube_side(double spacing);
+size_t     plan_cube_index(int n, int f, int i, int j);
+TerrainDir plan_cube_dir(int n, int f, int i, int j);
+int        plan_cube_at(int n, TerrainDir p, double *fi, double *fj);
+int        plan_cube_step(int n, int f, int i, int j, int di, int dj, int *gi, int *gj);
+
 /* The road network (plan_roads.c): built by plan_world_init once the
  * settlements are placed, on up to `threads` threads. */
 void plan_roads_build(int threads);

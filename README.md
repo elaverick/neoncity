@@ -23,7 +23,7 @@ build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders,
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
-build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the roads' reach in the world chart; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
+build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the world chart within 5400 km; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
 cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)
 build/terrain_test --earth-map earth.ppm # the bake as the engine reads it (--earth <bake> for another; the tests use tests/data/earth_test.bake)
 ```
@@ -138,10 +138,12 @@ the real urban area from the GHSL; read at run time, see `data/earth/SOURCE.md`)
   level, at most 30 m deep). The water itself isn't drawn yet. Under the cities the streams are buried and the
   rivers run in concrete channels, 5 m deep, under bridges at every arterial and boulevard
   (`src/plan/plan_water.c`, `src/city/channels.c`).
-- **The roads.** The cities within 5,000 km of the megacity, all of North America from Mexico City to
-  Boston, where the world's chart is near enough true for a road (they move onto the sphere next). On
-  each continent: candidate links between the Delaunay neighbours, each costed by a
-  route over a 4 km grid of the landforms; their minimum spanning tree; then links a gravity model
+- **The roads.** Every continent's cities, on the sphere (C3b): each link is routed and shaped in a chart
+  of its own about its midpoint, true to within a percent over its length, and the roads are then taken
+  into the world's chart, where the city and the terrain are still drawn. On each continent: candidate
+  links between the sphere's Delaunay neighbours, each costed by a route over a 4 km grid of the
+  landforms (worked out once over the whole sphere); where the routed candidates still leave a continent
+  in pieces, the nearest pairs across the gap are tried; their minimum spanning tree; then links a gravity model
   (traffic as the cities' sizes' product over the square of their distance) finds the network makes go
   round, preferring cities that already have links and are big (every colossal city keeps three); then
   Steiner junctions where two links leave a city or junction close together. Each link is routed by A*
@@ -151,7 +153,11 @@ the real urban area from the GHSL; read at run time, see `data/earth/SOURCE.md`)
   as much as a kilometre of road and twenty metres more for each metre of bridge, so the roads cross
   few, and where they are narrow. Roads that run beside a longer one join it at junctions; crossings
   become junctions. The gravity model's traffic on the cheapest routes picks the freeways (about half
-  the length); the rest are trunk roads. On the Earth about 55 roads, 25 junctions and 18,000 km.
+  the length); the rest are trunk roads. On the Earth about 1,700 roads, 1,000 junctions and 160,000 km on
+  15 continents and islands (a strait narrower than the 20 km grid still parts two). A route that finds
+  no way at any corridor width tries once more across the water on a bridge (a wide river, a lake's long
+  arm). Junctions keep 50 m off the water, and bridges 40 m off a junction. Without the bake only the
+  cities within 5,000 km of the megacity have roads: the stand-in's continents are noise.
 - **Into the ground.** A road ends at each city where it leaves the built towns, on the perimeter
   boulevard (a gate: the verge there is asphalt). Its height runs every 50 m along it: the ground
   smoothed, held to 6% (freeways) or 9% (trunk roads), meeting the city's ground at a gate and one height

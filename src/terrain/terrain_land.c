@@ -552,7 +552,11 @@ static void canyon_line(const Canyon *c, const TerrainChart *wc, TerrainCanyon *
 
 int terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, int max) {
     TerrainChart wc = terrain_world_chart();
-    TerrainDir p = terrain_chart_dir(&wc, x, z);
+    return terrain_canyons_near_in(&wc, x, z, r, out, max);
+}
+
+int terrain_canyons_near_in(const TerrainChart *wc, double x, double z, double r, TerrainCanyon *out, int max) {
+    TerrainDir p = terrain_chart_dir(wc, x, z);
     double reach = r * 1.4142135623730951 + CANYON_REACH, cx, cz;
     int n = 0, i0, i1, j0, j1;
     Canyon c;
@@ -566,7 +570,7 @@ int terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, int m
                 double d = dot3(p, o);
                 if (acos(d > 1.0 ? 1.0 : d) * PLANET_RADIUS >= reach) continue;
                 canyon_of(f, i, j, o, &c, &cx, &cz);   /* asked at its own centre, it is always found */
-                canyon_line(&c, &wc, &out[n]);
+                canyon_line(&c, wc, &out[n]);
                 out[n++].id = h;
             }
     }
@@ -643,7 +647,10 @@ void terrain_urban_lift_range(double x0, double z0, double x1, double z1, double
 
 void terrain_landform(double x, double z, TerrainLandform *out) {
     TerrainChart wc = terrain_world_chart();
-    TerrainDir d = terrain_chart_dir(&wc, x, z);
+    terrain_landform_dir(terrain_chart_dir(&wc, x, z), out);
+}
+
+void terrain_landform_dir(TerrainDir d, TerrainLandform *out) {
     Macro m;
     Region r;
     Frame fr[FRAME_MAX];
