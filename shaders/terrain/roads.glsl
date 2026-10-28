@@ -10,7 +10,10 @@
  * 16 m): a concrete median, three lanes each way between solid edge lines,
  * dashed between, hard shoulders, and sodium lamps down the median every
  * LAMP_SPACING whose pools light the carriageways. Trunk roads (half 6 m): a
- * lane each way about a dashed centre line, solid edge lines, unlit. */
+ * lane each way about a dashed centre line, solid edge lines, unlit. On a
+ * bridge's span the road is the deck the city's chunks draw over the water
+ * (src/city/road_bridges.c), out to VIEW_DISTANCE; past that the paint
+ * stands in for it on the ground below. */
 
 layout(std430, set = 0, binding = 2) readonly buffer Roads { uint roadData[]; };
 
@@ -24,12 +27,15 @@ struct RoadHit {
     float s;      // distance along the road (m)
     float hw;     // half the paved width (m)
     int   cls;    // 1 trunk, 2 freeway
+    bool  bridge; // on a bridge's span
 };
+
+const int ROAD_SEG_BRIDGE = 4;   // in a segment's class (src/render/road_gpu.c)
 
 // The road nearest rel (camera-relative x, z) whose paved edge is within a
 // metre of it, if any.
 bool roadNear(vec2 rel, out RoadHit h) {
-    h.off = 1e9; h.s = 0.0; h.hw = 0.0; h.cls = 0;
+    h.off = 1e9; h.s = 0.0; h.hw = 0.0; h.cls = 0; h.bridge = false;
     vec2 p = rel - vec2(roadF(0u), roadF(1u));
     float cell = roadF(2u);
     int dim = int(roadData[3]);
@@ -50,9 +56,13 @@ bool roadNear(vec2 rel, out RoadHit h) {
             h.off = (e.x * d.y - e.y * d.x) * inversesqrt(l2);
             h.s = roadF(b + 4u) + t * roadF(b + 5u);
             h.hw = hw;
-            h.cls = int(roadF(b + 7u) + 0.5);
+            int c = int(roadF(b + 7u) + 0.5);
+            h.cls = c & 3;
+            h.bridge = (c & ROAD_SEG_BRIDGE) != 0;
         }
     }
+    // under a deck the chunks draw, the ground is the water's
+    if (h.bridge && dot(rel, rel) < VIEW_DISTANCE * VIEW_DISTANCE) return false;
     return best < 1.0;
 }
 

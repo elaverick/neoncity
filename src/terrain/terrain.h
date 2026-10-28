@@ -273,6 +273,11 @@ size_t terrain_earth_water_segments(void (*fn)(void *ctx, TerrainDir a, TerrainD
  * are read so (plan_water.c). */
 size_t terrain_earth_rivers_near(TerrainDir c, double radius,
                                  void (*fn)(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, double width), void *ctx);
+/* The same for the segments of the kinds in the mask (bit 1 << kind: 1 a
+ * river, 2 a lake's shore), each with its kind. The roads read the rivers and
+ * the lakes' shores they cross so (plan_roads.c). */
+size_t terrain_earth_water_near(TerrainDir c, double radius, unsigned kinds,
+                                void (*fn)(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, double width, int kind), void *ctx);
 /* The streams: the small streams of the land, derived from it by
  * tools/earth_streams.c (the Earth plus the procedural land with no
  * settlement near, TERRAIN_WILD_EDGE) and kept beside the bake

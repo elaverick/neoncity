@@ -30,7 +30,8 @@
  * 5. Routing. Each link is routed over the coarse grid, then over the fine
  *    grid in a corridor round that route, then pulled straight wherever a
  *    straight line costs no more, so the road runs in long straights round
- *    the obstacles rather than along the grid.
+ *    the obstacles rather than along the grid. The fine grid costs each
+ *    river and lake it crosses heavily, by the bridge's length.
  * 6. Where two roads cross, a junction: both are split there.
  * 7. Classes. The gravity model's traffic between every pair of settlements
  *    goes by the shortest route; the busiest links are freeways, up to
@@ -41,16 +42,20 @@
  *    on the perimeter boulevard's centre line, its last stretch square to
  *    the boulevard.
  * 9. Corners are rounded, wider for freeways.
- * 10. Profiles: the ground along each road every PLAN_ROAD_STATION metres,
+ * 10. Bridges: where a road crosses the bake's rivers and lakes, a span
+ *    over the water's stretch and the embankments' spill slopes.
+ * 11. Profiles: the ground along each road every PLAN_ROAD_STATION metres,
  *    smoothed, pinned to the city's ground at a gate and to one height at a
- *    junction, its grade held to the class's; the ground blends to it
- *    (plan_road_ground), found through an index of ROAD_CELL squares.
+ *    junction, its grade held to the class's, raised over the water to each
+ *    bridge's clearance; the ground blends to it (plan_road_ground) but for
+ *    under the bridges, found through an index of ROAD_CELL squares.
  *
  * The grids (in the world's chart) cost a step by its length, more on rough
  * land: in the mountains, on hills and plateaus (the coarse grid, by the
  * region's landforms), up steep grades and along or across canyons (the fine
- * grid, from heights and the canyons' centre lines). The sea to come, the
- * world's edge and other settlements block them. Steps are costed in whole
+ * grid, from heights and the canyons' centre lines), and across the water
+ * (the fine grid: the bake's rivers and lakes). The sea to come, the lakes,
+ * the world's edge and other settlements block them. Steps are costed in whole
  * metres, so the game's fast floating point and the tests route alike.
  * Everything is a pure function of the settlements and the terrain (without
  * roads), on as many threads as the caller gives, each link on its own. */
@@ -81,6 +86,17 @@
 #define ROAD_REACH     (PLAN_FREEWAY_HALF + PLAN_ROAD_SHOULDER + PLAN_ROAD_BATTER_MAX + 1.5 * PLAN_ROAD_LOD_SPACING)
 #define MAX_RECORDS    1500000  /* a search gives up past this many cells... */
 #define ROUTE_LIMIT    6.0      /* ...or costing more than this many times the straight line */
+#define BRIDGE_FIXED   1000.0   /* a crossing of a river or a lake costs as much as this much road (m)... */
+#define BRIDGE_PER_M   20.0     /* ...and this much for each metre of bridge */
+#define BRIDGE_SIN_MIN 0.2      /* a crossing at a shallow angle costs as one at this sine (its bridge five times the river's width) */
+#define WATER_CELL     250.0    /* the bridges' grid of the water near a road (m) */
+#define WATER_STEP     5000.0   /* the water near a road is gathered every this far along it... */
+#define WATER_RADIUS   4000.0   /* ...this far round */
+#define WET_STEP       4.0      /* a crossing's stretch over the water and its banks is walked out in these steps (m)... */
+#define WET_MAX        1500.0   /* ...this far either side at most */
+#define WET_DEPTH      0.5      /* ground this far under the dry ground is the water's bed or bank (m) */
+#define WET_JOIN       60.0     /* stretches this near each other are one bridge (m) */
+#define BRIDGE_UNDER   0.3      /* the ground under a deck stands this far under its soffit, at least (m) */
 
 /* Open addressing from int64 keys to ints; INT64_MIN marks an empty slot. */
 typedef struct IMap { int64_t *keys; int *vals; int cap, n; } IMap;
@@ -99,6 +115,9 @@ typedef struct Link {
     float   *prof;          /* the profile (malloc'd) */
     int      nprof;
     double   ds;
+    PlanRoadBridge *br;     /* its bridges, along it (malloc'd) */
+    int      nbr;
+    int     *segbr;         /* each segment's bridge, or -1 (malloc'd) */
 } Link;
 
 typedef struct Net {
@@ -293,7 +312,7 @@ static int passable(double x, double z, int from, int to) {
 /* The coarse grid: each cell's cost per metre of a step, from the region's
  * landforms, worked out once for the whole of the roads' reach (its rows on the
  * threads) and kept as a byte: 1 + v / COARSE_STEPS, or COARSE_SEA where no
- * road may go and COARSE_CITY within CITY_CLEAR of a settlement, where only
+ * road may go (the sea, a lake) and COARSE_CITY within CITY_CLEAR of a settlement, where only
  * its own roads may (inside its footprint, however low the land: passable). */
 #define COARSE_EXTENT (PLAN_ROAD_REACH + 300000.0)
 #define COARSE_I0     ((int)floor(-COARSE_EXTENT / COARSE_CELL))
@@ -312,7 +331,9 @@ static void coarse_row(void *ctx, int r) {
         double e = plan_city_edge(x, z);
         if (e < 0.0) v = COARSE_CITY;
         else if (plan_road_dry(x, z)) {
+            TerrainChart wc = terrain_world_chart();
             if (e < CITY_CLEAR) v = COARSE_CITY;
+            else if (terrain_earth_shore(terrain_chart_dir(&wc, x, z)) < 0.0) v = COARSE_SEA;   /* a lake */
             else {
                 TerrainLandform lf;
                 terrain_landform(x, z, &lf);
@@ -353,6 +374,180 @@ static int64_t coarse_step(void *ctx, int ai, int aj, int bi, int bj) {
 static int coarse_of(double v) { return (int)floor(v / COARSE_CELL); }
 static int fine_of(double v) { return (int)floor(v / FINE_CELL); }
 
+/* The water near a route: the bake's rivers, with their widths, and its
+ * lakes' shores, in the world's chart, each segment filed under every square
+ * of a grid its bounds touch (a river's widened by its half width), so a
+ * line crosses, or comes into a river's water from, only segments filed in
+ * the squares it passes through (water_hits walks them). */
+typedef struct WaterSeg { DVec2 a, b; double w; int kind; } WaterSeg;
+typedef struct WaterHit { double t, w, sin; uint32_t id; int kind, near; } WaterHit;
+typedef struct WaterGrid {
+    double      cell;
+    const IMap *corridor;   /* only the squares in these coarse cells (FINE_PER squares a side), or NULL for all */
+    IMap        seen;       /* the bake's segment -> its own */
+    WaterSeg   *seg;
+    uint32_t   *id;
+    int         nseg, capseg, capid;
+    IMap        head;       /* square -> its first entry */
+    int        *next, *which;
+    int         nent, capnext, capwhich;
+    WaterHit   *hit;        /* water_hits' */
+    int         nhit, caphit;
+} WaterGrid;
+
+static void water_init(WaterGrid *g, double cell, const IMap *corridor) {
+    memset(g, 0, sizeof(*g));
+    g->cell = cell;
+    g->corridor = corridor;
+    imap_init(&g->seen, 1 << 10);
+    imap_init(&g->head, 1 << 10);
+}
+
+static void water_free(WaterGrid *g) {
+    imap_free(&g->seen);
+    imap_free(&g->head);
+    free(g->seg); free(g->id); free(g->next); free(g->which); free(g->hit);
+}
+
+static void water_gather(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, double width, int kind) {
+    WaterGrid *g = (WaterGrid *)ctx;
+    if (imap_get(&g->seen, (int64_t)k) >= 0) return;
+    imap_put(&g->seen, (int64_t)k, g->nseg);
+    TerrainChart wc = terrain_world_chart();
+    WaterSeg sg;
+    terrain_dir_chart(&wc, a, &sg.a.x, &sg.a.z);
+    terrain_dir_chart(&wc, b, &sg.b.x, &sg.b.z);
+    sg.w = width;
+    sg.kind = kind;
+    int e = g->nseg++;
+    g->seg = (WaterSeg *)grow(g->seg, &g->capseg, g->nseg, sizeof(WaterSeg));
+    g->id = (uint32_t *)grow(g->id, &g->capid, g->nseg, sizeof(uint32_t));
+    g->seg[e] = sg;
+    g->id[e] = k;
+    double m = (kind == 1 ? 0.5 * width : 0.0) + 1.0;
+    int i0 = (int)floor((fmin(sg.a.x, sg.b.x) - m) / g->cell), i1 = (int)floor((fmax(sg.a.x, sg.b.x) + m) / g->cell);
+    int j0 = (int)floor((fmin(sg.a.z, sg.b.z) - m) / g->cell), j1 = (int)floor((fmax(sg.a.z, sg.b.z) + m) / g->cell);
+    for (int j = j0; j <= j1; ++j)
+        for (int i = i0; i <= i1; ++i) {
+            if (g->corridor && imap_get(g->corridor, cell_key((int)floor((double)i / FINE_PER), (int)floor((double)j / FINE_PER))) < 0) continue;
+            int n = g->nent++;
+            g->next = (int *)grow(g->next, &g->capnext, g->nent, sizeof(int));
+            g->which = (int *)grow(g->which, &g->capwhich, g->nent, sizeof(int));
+            int64_t key = cell_key(i, j);
+            g->next[n] = imap_get(&g->head, key);
+            g->which[n] = e;
+            imap_put(&g->head, key, n);
+        }
+}
+
+/* The water within `radius` of p, gathered into the grid. */
+static void water_near(WaterGrid *g, DVec2 p, double radius) {
+    TerrainChart wc = terrain_world_chart();
+    terrain_earth_water_near(terrain_chart_dir(&wc, p.x, p.z), radius, (1u << 1) | (1u << 2), water_gather, g);
+}
+
+static int hit_by_id(const void *pa, const void *pb) {
+    const WaterHit *a = (const WaterHit *)pa, *b = (const WaterHit *)pb;
+    if (a->id != b->id) return a->id < b->id ? -1 : 1;
+    return a->t < b->t ? -1 : a->t > b->t ? 1 : 0;
+}
+static int hit_by_t(const void *pa, const void *pb) {
+    const WaterHit *a = (const WaterHit *)pa, *b = (const WaterHit *)pb;
+    if (a->t != b->t) return a->t < b->t ? -1 : 1;
+    return a->id < b->id ? -1 : a->id > b->id ? 1 : 0;
+}
+
+/* The distance from p to segment a b, and how far along it the nearest point is (0 to 1). */
+static double near_dist(DVec2 p, DVec2 a, DVec2 b, double *t) {
+    DVec2 ab = dsub(b, a);
+    double l2 = ddot(ab, ab), u = l2 > 0.0 ? ddot(dsub(p, a), ab) / l2 : 0.0;
+    u = u < 0.0 ? 0.0 : u > 1.0 ? 1.0 : u;
+    if (t) *t = u;
+    return dlen(dsub(p, dadd(a, dscale(ab, u))));
+}
+
+/* Whether p lies in a river's water (within its half width of its line). */
+static int water_in_river(const WaterGrid *g, DVec2 p) {
+    for (int k = imap_get(&g->head, cell_key((int)floor(p.x / g->cell), (int)floor(p.z / g->cell))); k >= 0; k = g->next[k]) {
+        const WaterSeg *sg = &g->seg[g->which[k]];
+        if (sg->kind == 1 && near_dist(p, sg->a, sg->b, NULL) < 0.5 * sg->w) return 1;
+    }
+    return 0;
+}
+
+/* The water's segments the line p q crosses, each once (t along it, 0 to 1,
+ * and the crossing's sine), in order along it, into g->hit; returns how
+ * many. With `near`, also the rivers it comes into the water of without
+ * crossing their lines (sine 0, `near` set), at its nearest to each. The
+ * squares it passes through are walked one by one. A segment's end counts
+ * as the next one's start, so a run is crossed once there. */
+static int water_hits(WaterGrid *g, DVec2 p, DVec2 q, int near) {
+    g->nhit = 0;
+    if (!g->nseg) return 0;
+    const double c = g->cell;
+    int i = (int)floor(p.x / c), j = (int)floor(p.z / c), gi = (int)floor(q.x / c), gj = (int)floor(q.z / c);
+    DVec2 r = dsub(q, p);
+    double rl = dlen(r);
+    if (rl < 1e-9) return 0;
+    int si = r.x > 0.0 ? 1 : -1, sj = r.z > 0.0 ? 1 : -1;
+    double tdx = fabs(r.x) > 1e-12 ? c / fabs(r.x) : 1e300, tdz = fabs(r.z) > 1e-12 ? c / fabs(r.z) : 1e300;
+    double tx = fabs(r.x) > 1e-12 ? (si > 0 ? (i + 1) * c - p.x : p.x - i * c) / fabs(r.x) : 1e300;
+    double tz = fabs(r.z) > 1e-12 ? (sj > 0 ? (j + 1) * c - p.z : p.z - j * c) / fabs(r.z) : 1e300;
+    for (int guard = abs(gi - i) + abs(gj - j) + 2; guard > 0; --guard) {
+        for (int k = imap_get(&g->head, cell_key(i, j)); k >= 0; k = g->next[k]) {
+            int e = g->which[k];
+            const WaterSeg *sg = &g->seg[e];
+            DVec2 sv = dsub(sg->b, sg->a);
+            double den = dcross(r, sv);
+            DVec2 qp = dsub(sg->a, p);
+            double t = fabs(den) < 1e-9 ? -1.0 : dcross(qp, sv) / den, u = fabs(den) < 1e-9 ? -1.0 : dcross(qp, r) / den;
+            if (t < 0.0 || t > 1.0 || u < 0.0 || u >= 1.0) {
+                if (!near || sg->kind != 1) continue;
+                /* the nearest the two segments come: from an end of one to the other */
+                double ta, tb, ua, ub, d0 = near_dist(sg->a, p, q, &ta), d1 = near_dist(sg->b, p, q, &tb);
+                double d2 = near_dist(p, sg->a, sg->b, &ua), d3 = near_dist(q, sg->a, sg->b, &ub), d = fmin(fmin(d0, d1), fmin(d2, d3));
+                if (d >= 0.5 * sg->w) continue;
+                t = d == d0 ? ta : d == d1 ? tb : d == d2 ? 0.0 : 1.0;
+                g->hit = (WaterHit *)grow(g->hit, &g->caphit, g->nhit + 1, sizeof(WaterHit));
+                g->hit[g->nhit++] = (WaterHit){ t, sg->w, 0.0, g->id[e], sg->kind, 1 };
+                continue;
+            }
+            g->hit = (WaterHit *)grow(g->hit, &g->caphit, g->nhit + 1, sizeof(WaterHit));
+            g->hit[g->nhit++] = (WaterHit){ t, sg->w, fabs(den) / (rl * dlen(sv)), g->id[e], sg->kind, 0 };
+        }
+        if (i == gi && j == gj) break;
+        if (tx < tz) { tx += tdx; i += si; } else { tz += tdz; j += sj; }
+    }
+    if (g->nhit > 1) {
+        qsort(g->hit, (size_t)g->nhit, sizeof(WaterHit), hit_by_id);
+        int m = 1;
+        for (int k = 1; k < g->nhit; ++k)
+            if (g->hit[k].id != g->hit[m - 1].id) g->hit[m++] = g->hit[k];
+        g->nhit = m;
+        qsort(g->hit, (size_t)g->nhit, sizeof(WaterHit), hit_by_t);
+    }
+    return g->nhit;
+}
+
+/* What the water costs a road along p q: each river it crosses BRIDGE_FIXED
+ * and BRIDGE_PER_M for each metre of its bridge (the river's width over the
+ * crossing's sine, which counts as no less than BRIDGE_SIN_MIN); each
+ * stretch over a lake, between the shores it crosses taken in pairs (p and q
+ * are on land), the same by its length. */
+static int64_t water_cost(WaterGrid *g, DVec2 p, DVec2 q) {
+    int n = water_hits(g, p, q, 0);
+    if (!n) return 0;
+    double len = dlen(dsub(q, p)), c = 0.0, in = -1.0;
+    for (int k = 0; k < n; ++k) {
+        const WaterHit *h = &g->hit[k];
+        if (h->kind == 1) c += BRIDGE_FIXED + BRIDGE_PER_M * h->w / fmax(h->sin, BRIDGE_SIN_MIN);
+        else if (in < 0.0) in = h->t;
+        else { c += BRIDGE_FIXED + BRIDGE_PER_M * (h->t - in) * len; in = -1.0; }
+    }
+    if (in >= 0.0) c += BRIDGE_FIXED + BRIDGE_PER_M * (1.0 - in) * len;
+    return (int64_t)(c + 0.5);
+}
+
 /* The fine grid: heights for grades, the mountains, canyons along and across. */
 typedef struct FineCell { float h, mountain, canyon; int open; } FineCell;
 
@@ -369,6 +564,7 @@ typedef struct Fine {
     IMap      seghead;      /* fine cell -> first entry */
     int      *segnext, *segcanyon, *segk;
     int       nseg, capseg, capseg2, capseg3;
+    WaterGrid water;        /* the rivers and lakes near the corridor, by fine cell */
 } Fine;
 
 static const FineCell *fine_cell(Fine *f, int i, int j) {
@@ -379,7 +575,9 @@ static const FineCell *fine_cell(Fine *f, int i, int j) {
     FineCell c = { 0.0f, 0.0f, 0.0f, 0 };
     int end = (i == f->si && j == f->sj) || (i == f->gi && j == f->gj);
     int inside = imap_get(&f->corridor, cell_key((int)floor((double)i / FINE_PER), (int)floor((double)j / FINE_PER))) >= 0;
-    if (end || (inside && passable(x, z, f->from, f->to))) {
+    TerrainChart wc = terrain_world_chart();
+    if (end || (inside && passable(x, z, f->from, f->to) && !water_in_river(&f->water, dv(x, z)) &&
+                terrain_earth_shore(terrain_chart_dir(&wc, x, z)) >= 0.0)) {   /* not in a river's water or a lake */
         TerrainLandform lf;
         terrain_landform(x, z, &lf);
         c.h = (float)terrain_height_dry_lod(x, z, 250.0);
@@ -435,7 +633,7 @@ static int64_t fine_step(void *ctx, int ai, int aj, int bi, int bj) {
     if (!b->open) return -1;
     double len = (ai != bi && aj != bj ? 1.4142135623730951 : 1.0) * FINE_CELL;
     DVec2 p = dv((ai + 0.5) * FINE_CELL, (aj + 0.5) * FINE_CELL), q = dv((bi + 0.5) * FINE_CELL, (bj + 0.5) * FINE_CELL);
-    return step_cost(&ca, b, len, crossing_depth(f, p, q, ai, aj, bi, bj));
+    return step_cost(&ca, b, len, crossing_depth(f, p, q, ai, aj, bi, bj)) + water_cost(&f->water, p, q);
 }
 
 /* The canyons near the coarse route, their segments filed by every fine cell
@@ -483,11 +681,12 @@ static void fine_free(Fine *f) {
     imap_free(&f->memo);
     imap_free(&f->seghead);
     free(f->cell); free(f->canyon); free(f->segnext); free(f->segcanyon); free(f->segk);
+    water_free(&f->water);
 }
 
 /* The cost of the straight line p-q over the fine grid: each cell it passes
- * through, stepped along it, and the canyons it crosses; -1 where it leaves
- * the open cells. */
+ * through, stepped along it, the canyons it crosses and the water; -1 where
+ * it leaves the open cells. */
 static int64_t line_cost(Fine *f, DVec2 p, DVec2 q) {
     double len = dlen(dsub(q, p));
     int steps = (int)ceil(len / (0.5 * FINE_CELL));
@@ -506,7 +705,7 @@ static int64_t line_cost(Fine *f, DVec2 p, DVec2 q) {
         prev = cur;
         a = b;
     }
-    return total;
+    return total + water_cost(&f->water, p, q);
 }
 
 /* --- Routing a link ---------------------------------------------------------------------------- */
@@ -594,6 +793,9 @@ static void route_link(Net *net, Link *L) {
             for (int dj = -r; dj <= r; ++dj)
                 for (int di = -r; di <= r; ++di) imap_put(&f.corridor, cell_key(ci[k] + di, cj[k] + dj), 1);
         file_canyons(&f, ci, cj, nc);
+        water_init(&f.water, FINE_CELL, &f.corridor);
+        for (int k = 0; k < nc; k = k + 2 < nc || k == nc - 1 ? k + 2 : nc - 1)
+            water_near(&f.water, dv((ci[k] + 0.5) * COARSE_CELL, (cj[k] + 0.5) * COARSE_CELL), (r + 1.5) * COARSE_CELL);
         int *pi, *pj, np;
         int64_t cost = astar(f.si, f.sj, f.gi, f.gj, FINE_CELL, 1.5, INT64_MAX / 4, fine_step, &f, &pi, &pj, &np);
         if (cost >= 0) {
@@ -1629,6 +1831,23 @@ static void profile_grade_job(void *ctx, int l) {
     }
     free(g);
     hold_grade_from(r, n, ds, G, h0, h1, back);
+    /* over the water, each bridge's deck at its clearance, the grade held
+     * down from it on either side (the approaches' embankments); never so
+     * high that an end would have to move */
+    if (L->nbr) {
+        for (int b = 0; b < L->nbr; ++b) {
+            PlanRoadBridge *B = &L->br[b];
+            double h = fmin(B->deck, fmin(h0 + G * fmax(0.0, B->w0 - ds), h1 + G * fmax(0.0, len - B->w1 - ds)));
+            B->deck = (float)h;
+            for (int k = 0; k < n; ++k)
+                if (k * ds > B->w0 - ds && k * ds < B->w1 + ds) r[k] = fmaxf(r[k], (float)h);
+        }
+        float step = (float)(G * ds);
+        for (int k = 1; k < n; ++k) r[k] = fmaxf(r[k], r[k - 1] - step);
+        for (int k = n - 2; k >= 0; --k) r[k] = fmaxf(r[k], r[k + 1] - step);
+        r[0] = (float)h0;
+        r[n - 1] = (float)h1;
+    }
 }
 
 /* Where roads meet at a junction they meet at one height: the mean of their
@@ -1668,6 +1887,188 @@ static double profile_at(const PlanRoad *R, double s) {
     if (f >= R->nprof - 1) return R->prof[R->nprof - 1];
     int k = (int)f;
     return R->prof[k] + (R->prof[k + 1] - R->prof[k]) * (f - k);
+}
+
+/* --- Bridges ------------------------------------------------------------------------------------- */
+
+/* The point s along link L. */
+static DVec2 link_at(const Link *L, double s) {
+    int lo = 0, hi = L->npts - 1;
+    while (hi - lo > 1) {
+        int mid = (lo + hi) / 2;
+        if (L->s[mid] <= s) lo = mid; else hi = mid;
+    }
+    double sl = L->s[hi] - L->s[lo], t = sl > 0.0 ? (s - L->s[lo]) / sl : 0.0;
+    return dadd(L->pts[lo], dscale(dsub(L->pts[hi], L->pts[lo]), fmin(fmax(t, 0.0), 1.0)));
+}
+
+static double link_profile(const Link *L, double s) {
+    double f = s / L->ds;
+    if (f <= 0.0) return L->prof[0];
+    if (f >= L->nprof - 1) return L->prof[L->nprof - 1];
+    int k = (int)f;
+    return L->prof[k] + (L->prof[k + 1] - L->prof[k]) * (f - k);
+}
+
+/* Whether the ground at p is the water's: in the water or within a metre of
+ * it, or more than WET_DEPTH under the dry ground (a bed or a bank carved
+ * into it); the dry ground into *dry. While the roads are being built the
+ * terrain has none of them. Never on a city's ground (its urban weight over
+ * 0), which the roads don't move and the water carves no bed in: there the
+ * rivers run in the city's channels or are buried. */
+static int wet_at(DVec2 p, double *dry) {
+    TerrainChart wc = terrain_world_chart();
+    TerrainEarthWater w;
+    *dry = road_ground(p);
+    if (plan_urban(p.x, p.z) > 0.0f) return 0;
+    if (terrain_earth_water(terrain_chart_dir(&wc, p.x, p.z), &w) && w.edge < 1.0) return 1;
+    return terrain_height_lod(p.x, p.z, 10.0) < *dry - WET_DEPTH;
+}
+
+/* A bridge's clearance over the water's level, to its deck's surface: more
+ * over a wider river, most over a lake (m). */
+static double bridge_clear(double w, int lake) { return (lake ? 8.0 : 4.0 + fmin(w, 300.0) / 50.0) + PLAN_ROAD_DECK_DEPTH; }
+
+typedef struct Wet { double a, b, w, lv; int lake; } Wet;
+static int wet_cmp(const void *pa, const void *pb) {
+    const Wet *a = (const Wet *)pa, *b = (const Wet *)pb;
+    return a->a < b->a ? -1 : a->a > b->a ? 1 : 0;
+}
+
+/* Step 10, first part: where link l crosses the bake's rivers (their centre
+ * lines) and lakes (between the shores it crosses), each crossing walked out
+ * along the road while the ground is the water's (wet_at), up to WET_MAX
+ * either side; those within WET_JOIN of each other one bridge, its deck over
+ * the water's level (the dry ground's least along the stretch) by its
+ * clearance. The spans come once the profile is known (bridge_span_job). */
+static void bridge_find_job(void *ctx, int l) {
+    Net *net = (Net *)ctx;
+    Link *L = &net->link[l];
+    L->br = NULL; L->nbr = 0; L->segbr = NULL;
+    if (!terrain_earth_loaded()) return;
+    double len = L->s[L->npts - 1];
+    WaterGrid g;
+    water_init(&g, WATER_CELL, NULL);
+    for (double s = 0.0;; s += WATER_STEP) {
+        water_near(&g, link_at(L, fmin(s, len)), WATER_RADIUS);
+        if (s >= len) break;
+    }
+    Wet *wet = NULL;
+    int nw = 0, capw = 0;
+    double in = -1.0;
+    for (int k = 0; k + 1 < L->npts; ++k) {
+        int n = water_hits(&g, L->pts[k], L->pts[k + 1], 1);
+        double sl = L->s[k + 1] - L->s[k];
+        for (int h = 0; h < n; ++h) {
+            const WaterHit *wh = &g.hit[h];
+            if (wh->t >= 1.0 && k + 2 < L->npts) continue;   /* the next segment's start */
+            double s = L->s[k] + wh->t * sl;
+            if (wh->kind == 2 && in < 0.0) { in = s; continue; }
+            double a = wh->kind == 1 ? s : in;
+            if (wh->kind == 2) in = -1.0;   /* out of the lake (a river's line may run through one) */
+            /* none on a city's ground (wet_at) */
+            DVec2 pa = link_at(L, a), pm = link_at(L, 0.5 * (a + s)), pb = link_at(L, s);
+            if (plan_urban(pa.x, pa.z) > 0.0f || plan_urban(pm.x, pm.z) > 0.0f || plan_urban(pb.x, pb.z) > 0.0f) continue;
+            wet = (Wet *)grow(wet, &capw, nw + 1, sizeof(Wet));
+            wet[nw++] = (Wet){ a, s, wh->kind == 1 ? wh->w : 0.0, 0.0, wh->kind == 2 };
+        }
+    }
+    water_free(&g);
+    if (!nw) return;
+    for (int k = 0; k < nw; ++k) {
+        double d, lo = wet[k].a, hi = wet[k].b, lv = 1e30;
+        for (double s = wet[k].a; s >= fmax(0.0, wet[k].a - WET_MAX); s -= WET_STEP) {
+            int w = wet_at(link_at(L, s), &d);
+            lv = fmin(lv, d);
+            if (!w) break;
+            lo = s - WET_STEP;
+        }
+        for (double s = wet[k].b; s <= fmin(len, wet[k].b + WET_MAX); s += WET_STEP) {
+            int w = wet_at(link_at(L, s), &d);
+            lv = fmin(lv, d);
+            if (!w) break;
+            hi = s + WET_STEP;
+        }
+        if (wet[k].lake)   /* the dry ground over a lake (the elevation's flat water) */
+            for (double s = wet[k].a; s <= wet[k].b; s += fmax(WET_STEP, (wet[k].b - wet[k].a) / 16.0)) lv = fmin(lv, road_ground(link_at(L, s)));
+        wet[k].a = fmax(lo, 1.0);
+        wet[k].b = fmin(hi, len - 1.0);
+        wet[k].lv = lv;
+    }
+    qsort(wet, (size_t)nw, sizeof(Wet), wet_cmp);
+    L->br = (PlanRoadBridge *)calloc((size_t)nw, sizeof(PlanRoadBridge));
+    if (!L->br) fatal("out of memory bridging the roads");
+    for (int k = 0; k < nw; ++k) {
+        if (wet[k].b - wet[k].a < 1.0) continue;
+        double deck = wet[k].lv + bridge_clear(wet[k].w, wet[k].lake);
+        PlanRoadBridge *B = L->nbr ? &L->br[L->nbr - 1] : NULL;
+        if (B && wet[k].a - B->w1 < WET_JOIN) {
+            B->w1 = fmax(B->w1, wet[k].b);
+            B->deck = fmaxf(B->deck, (float)deck);
+            B->lake |= (uint8_t)wet[k].lake;
+            continue;
+        }
+        B = &L->br[L->nbr++];
+        B->w0 = wet[k].a; B->w1 = wet[k].b;
+        B->deck = (float)deck;
+        B->lake = (uint8_t)wet[k].lake;
+    }
+    free(wet);
+}
+
+/* Step 10, second part, once the profile is raised: each span reaches out
+ * past its water's stretch as far as the embankment's spill slope takes to
+ * come down from the road to the dry ground there (twice the height, as the
+ * batter: PLAN_ROAD_BATTER_MIN to _MAX); spans that meet are one. The spans'
+ * ends become points of the road, so each segment is under a bridge or not. */
+static void bridge_span_job(void *ctx, int l) {
+    Net *net = (Net *)ctx;
+    Link *L = &net->link[l];
+    if (!L->nbr) return;
+    double len = L->s[L->npts - 1];
+    int m = 0;
+    for (int b = 0; b < L->nbr; ++b) {
+        PlanRoadBridge B = L->br[b];
+        double g0 = road_ground(link_at(L, B.w0)), g1 = road_ground(link_at(L, B.w1));
+        double sp0 = fmin(fmax(2.0 * (link_profile(L, B.w0) - g0), PLAN_ROAD_BATTER_MIN), PLAN_ROAD_BATTER_MAX);
+        double sp1 = fmin(fmax(2.0 * (link_profile(L, B.w1) - g1), PLAN_ROAD_BATTER_MIN), PLAN_ROAD_BATTER_MAX);
+        B.s0 = fmax(B.w0 - sp0, 0.5);
+        B.s1 = fmin(B.w1 + sp1, len - 0.5);
+        if (m && B.s0 <= L->br[m - 1].s1) {
+            PlanRoadBridge *P = &L->br[m - 1];
+            P->s1 = fmax(P->s1, B.s1); P->w1 = fmax(P->w1, B.w1);
+            P->deck = fmaxf(P->deck, B.deck);
+            P->lake |= B.lake;
+            continue;
+        }
+        L->br[m++] = B;
+    }
+    L->nbr = m;
+    /* the spans' ends into the points */
+    int cap = L->npts + 2 * m, n = 0;
+    DVec2 *p = (DVec2 *)malloc(sizeof(DVec2) * (size_t)cap);
+    double *s = (double *)malloc(sizeof(double) * (size_t)cap);
+    if (!p || !s) fatal("out of memory bridging the roads");
+    int e = 0;
+    for (int k = 0; k < L->npts; ++k) {
+        while (e < 2 * m) {
+            double c = e & 1 ? L->br[e >> 1].s1 : L->br[e >> 1].s0;
+            if (c >= L->s[k] - 1e-6) break;
+            if (k > 0 && c > L->s[k - 1] + 1e-6) { p[n] = link_at(L, c); s[n++] = c; }
+            e++;
+        }
+        while (e < 2 * m && fabs((e & 1 ? L->br[e >> 1].s1 : L->br[e >> 1].s0) - L->s[k]) <= 1e-6) e++;
+        p[n] = L->pts[k]; s[n++] = L->s[k];
+    }
+    free(L->pts); free(L->s);
+    L->pts = p; L->s = s; L->npts = n;
+    L->segbr = (int *)malloc(sizeof(int) * (size_t)(n > 1 ? n - 1 : 1));
+    if (!L->segbr) fatal("out of memory bridging the roads");
+    for (int k = 0, b = 0; k + 1 < n; ++k) {
+        double mid = 0.5 * (s[k] + s[k + 1]);
+        while (b < m && L->br[b].s1 < mid) b++;
+        L->segbr[k] = b < m && L->br[b].s0 < mid ? b : -1;
+    }
 }
 
 /* --- The index ---------------------------------------------------------------------------------- */
@@ -1874,9 +2275,11 @@ void plan_roads_build(int threads) {
     for (int l = 0; l < net->nlinks; ++l) round_corners(&net->link[l]);
     free(g_coarse);
     g_coarse = NULL;
+    thread_parallel_for(net->nlinks, threads, bridge_find_job, net);
     thread_parallel_for(net->nlinks, threads, profile_ground_job, net);
     junction_heights(net);
     thread_parallel_for(net->nlinks, threads, profile_grade_job, net);
+    thread_parallel_for(net->nlinks, threads, bridge_span_job, net);
     build_index(net);
     /* the public view */
     int nr = 0;
@@ -1890,6 +2293,7 @@ void plan_roads_build(int threads) {
         r->npts = L->npts; r->pts = L->pts; r->s = L->s;
         r->gate[0] = L->gate[0]; r->gate[1] = L->gate[1];
         r->nprof = L->nprof; r->ds = L->ds; r->prof = L->prof;
+        r->nbridges = L->nbr; r->bridges = L->br; r->bridge = L->segbr;
     }
     net->nlinks = nr;   /* road k is link k from here on: compact the links to match */
     {
@@ -1926,11 +2330,40 @@ int plan_road_range(double x0, double z0, double x1, double z1, double *lo, doub
     return any;
 }
 
+/* The bridges any of whose segments come within `pad` of the rectangle, each
+ * once, in the order the index files them. */
+int plan_road_bridges_in(double x0, double z0, double x1, double z1, double pad, PlanRoadSpan *out, int max) {
+    const Net *net = g_net;
+    if (!net || net->nlinks == 0) return 0;
+    int n = 0;
+    for (int j = (int)floor(z0 / ROAD_CELL); j <= (int)floor(z1 / ROAD_CELL); ++j)
+        for (int i = (int)floor(x0 / ROAD_CELL); i <= (int)floor(x1 / ROAD_CELL); ++i) {
+            int first = imap_get(&net->cells, cell_key(i, j));
+            if (first < 0) continue;
+            for (int k = first; k < first + net->idxCount[first]; ++k) {
+                int r = net->idx[2 * k], sg = net->idx[2 * k + 1];
+                const PlanRoad *R = &net->road[r];
+                int b = R->bridge ? R->bridge[sg] : -1;
+                if (b < 0) continue;
+                DVec2 a = R->pts[sg], c = R->pts[sg + 1];
+                double m = pad + R->half;
+                if (fmax(a.x, c.x) < x0 - m || fmin(a.x, c.x) > x1 + m || fmax(a.z, c.z) < z0 - m || fmin(a.z, c.z) > z1 + m) continue;
+                int seen = 0;
+                for (int q = 0; q < n && !seen; ++q) seen = out[q].road == r && out[q].bridge == b;
+                if (!seen && n < max) out[n++] = (PlanRoadSpan){ r, b };
+            }
+        }
+    return n;
+}
+
 /* The nearest road's reach over (x, z): its surface where (x, z) is on it or
  * its shoulders, then a batter sloping to the ground, a smoothstep across
  * twice the cut or fill (between the batter's least and greatest), widened
- * by the spacing so coarse samples still see it. Where reaches overlap, the
- * strongest. */
+ * by the spacing so coarse samples still see it. Under a bridge, the water's
+ * stretch is left as it is, and the embankment's spill slope comes in from
+ * each end of the span (never wider for the spacing); ground there that
+ * would stand above the deck's soffit is cut down under it. Where reaches
+ * overlap, the strongest. */
 double plan_road_ground(double x, double z, double ground, double spacing, double *road_h) {
     const Net *net = g_net;
     if (!net || spacing > PLAN_ROAD_LOD_SPACING) return 0.0;
@@ -1943,14 +2376,43 @@ double plan_road_ground(double x, double z, double ground, double spacing, doubl
         int sg = net->idx[2 * k + 1];
         DVec2 a = R->pts[sg], ab = dsub(R->pts[sg + 1], a);
         double l2 = ddot(ab, ab), t = l2 > 0.0 ? ddot(dsub(p, a), ab) / l2 : 0.0;
+        if (R->bridge && (t < 0.0 || t > 1.0)) {
+            /* past a segment's end, nothing reaches round into a span, nor a
+             * bridge's segment out of it: under the deck is the bridge's,
+             * before it the road's */
+            double sraw = R->s[sg] + t * sqrt(l2);
+            if (R->bridge[sg] >= 0) continue;
+            int into = 0;
+            for (int q = 0; q < R->nbridges && !into; ++q) into = sraw > R->bridges[q].s0 && sraw < R->bridges[q].s1;
+            if (into) continue;
+        }
         t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
         double d = dlen(dsub(p, dadd(a, dscale(ab, t)))), core = R->half + PLAN_ROAD_SHOULDER;
         if (d >= core + PLAN_ROAD_BATTER_MAX + 1.5 * spacing) continue;
-        double h = profile_at(R, R->s[sg] + t * sqrt(l2));
+        double sr = R->s[sg] + t * sqrt(l2), h = profile_at(R, sr);
         double batter = fmin(fmax(2.0 * fabs(ground - h), PLAN_ROAD_BATTER_MIN), PLAN_ROAD_BATTER_MAX) + 1.5 * spacing;
+        double over = d - core;
+        int b = R->bridge ? R->bridge[sg] : -1;
+        if (b >= 0) {
+            /* under a bridge the ground is the water's: the embankment's
+             * spill slope comes in from each end of the span as from the
+             * road's edge, never over the water's stretch; but a bank
+             * standing up into the span is cut down under the soffit */
+            const PlanRoadBridge *B = &R->bridges[b];
+            double soffit = h - PLAN_ROAD_DECK_DEPTH - BRIDGE_UNDER;
+            if (ground > soffit) {
+                h = soffit;
+                batter = fmin(fmax(2.0 * (ground - h), PLAN_ROAD_BATTER_MIN), PLAN_ROAD_BATTER_MAX) + 1.5 * spacing;
+            } else {
+                int first = sr < 0.5 * (B->w0 + B->w1);
+                over = fmax(over, first ? sr - B->s0 : B->s1 - sr);
+                batter = fmin(batter, first ? B->w0 - B->s0 : B->s1 - B->w1);
+                if (over >= batter) continue;
+            }
+        }
         double w = 1.0;
-        if (d > core) {
-            double u = fmin((d - core) / batter, 1.0);
+        if (over > 0.0) {
+            double u = fmin(over / batter, 1.0);
             w = 1.0 - u * u * (3.0 - 2.0 * u);
         }
         if (w > best || (w == best && w > 0.0 && d < bestD)) { best = w; bestD = d; *road_h = h; }

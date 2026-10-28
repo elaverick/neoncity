@@ -11,10 +11,29 @@ static int touches(const ChunkGen *g, double x0, double z0, double x1, double z1
     return x1 + pad >= g->ox && x0 - pad <= g->ox + CHUNK_SIZE && z1 + pad >= g->oz && z0 - pad <= g->oz + CHUNK_SIZE;
 }
 
-static void barrier(BlockLayout *L, const ChunkGen *g, DVec2 a, DVec2 b, float half, int low) {
-    if (L->nbarrier >= MAX_BARRIERS || !touches(g, fmin(a.x, b.x), fmin(a.z, b.z), fmax(a.x, b.x), fmax(a.z, b.z), 1.0)) return;
+static Barrier *barrier(BlockLayout *L, const ChunkGen *g, DVec2 a, DVec2 b, float half, int low) {
+    if (L->nbarrier >= MAX_BARRIERS || !touches(g, fmin(a.x, b.x), fmin(a.z, b.z), fmax(a.x, b.x), fmax(a.z, b.z), 1.0)) return NULL;
     Barrier *r = &L->barrier[L->nbarrier++];
-    r->a[0] = a.x; r->a[1] = a.z; r->b[0] = b.x; r->b[1] = b.z; r->half = half; r->low = (uint8_t)low;
+    r->a[0] = a.x; r->a[1] = a.z; r->b[0] = b.x; r->b[1] = b.z; r->half = half; r->y = 0.0f; r->low = (uint8_t)low;
+    return r;
+}
+
+/* The roads' bridges touching the chunk: their decks' pieces and their
+ * parapets (on the parapet's centre line, stopping feet up on the deck). */
+static void road_decks_layout(BlockLayout *L, const ChunkGen *g) {
+    RoadDeck d[MAX_ROAD_DECKS];
+    int n = city_road_decks(g->ox, g->oz, g->ox + CHUNK_SIZE, g->oz + CHUNK_SIZE, d, MAX_ROAD_DECKS);
+    for (int k = 0; k < n; ++k) {
+        RoadDeckSpan *o = &L->rdeck[L->nrdeck++];
+        o->a[0] = d[k].a.x; o->a[1] = d[k].a.z; o->b[0] = d[k].b.x; o->b[1] = d[k].b.z;
+        o->half = d[k].edge; o->ya = d[k].ya; o->yb = d[k].yb;
+        for (int side = -1; side <= 1; side += 2) {
+            double off = side * (d[k].edge + 0.5 * ROAD_PARAPET_W);
+            Barrier *r = barrier(L, g, dadd(d[k].a, dscale(d[k].na, off * d[k].wa)), dadd(d[k].b, dscale(d[k].nb, off * d[k].wb)),
+                                 0.5f * ROAD_PARAPET_W, BARRIER_DECK);
+            if (r) r->y = fminf(d[k].ya, d[k].yb);
+        }
+    }
 }
 
 /* The rivers' channels touching the chunk: their outlines, the decks over
@@ -94,6 +113,7 @@ void city_layout(int cx, int cz, BlockLayout *L) {
         for (int k = 0; k < c->n; ++k) { c->v[k][0] = gp->v[k].x; c->v[k][1] = gp->v[k].z; }
     }
     channels_layout(L, &g);
+    road_decks_layout(L, &g);
     for (int i = 0; i < g.pa->nblocks && L->ncurbs < MAX_CURBS; ++i) {
         const Block *bk = &g.pa->blocks[i];
         if (bk->x1 < g.ox || bk->x0 > g.ox + P || bk->z1 < g.oz || bk->z0 > g.oz + P) continue;

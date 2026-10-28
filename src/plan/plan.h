@@ -211,6 +211,20 @@ typedef struct PlanGate {
 #define PLAN_ROAD_STATION  50.0
 #define PLAN_FREEWAY_GRADE 0.06
 #define PLAN_TRUNK_GRADE   0.09
+/* A bridge, where a road crosses the bake's rivers and lakes: from s0 to s1
+ * along it the ground is the water's (its bed and banks, carved into the
+ * land), and the road crosses on a deck at its profile's height, raised to
+ * clear the water by more over a wider river. Over w0 to w1 the ground is
+ * the water's own; between, at either end, the embankment's spill slope
+ * comes down from the road. Streams pass under the roads in culverts: the
+ * embankment fills their beds. */
+#define PLAN_ROAD_DECK_DEPTH 1.2   /* a bridge's deck, from its surface to its soffit (m) */
+typedef struct PlanRoadBridge {
+    double  s0, s1;     /* the span, along the road (m) */
+    double  w0, w1;     /* the water's stretch, within it */
+    float   deck;       /* the deck's surface over the water's stretch is no lower than this (world Y) */
+    uint8_t lake;       /* over a lake, else a river */
+} PlanRoadBridge;
 typedef struct PlanRoad {
     int           from, to;   /* nodes */
     int           cls;        /* PLAN_ROAD_* */
@@ -223,6 +237,9 @@ typedef struct PlanRoad {
     int           nprof;
     double        ds;
     const float  *prof;       /* nprof heights, the first at s = 0, the last at its length (world Y, m) */
+    int           nbridges;
+    const PlanRoadBridge *bridges;   /* along it */
+    const int    *bridge;     /* each segment's bridge (npts - 1 of them; a span's ends are points), or -1 */
 } PlanRoad;
 int             plan_node_count(void);
 PlanNode        plan_node(int k);
@@ -247,6 +264,11 @@ double          plan_road_ground(double x, double z, double ground, double spaci
 /* Bounds on the road heights plan_road_ground can give in the rectangle
  * [x0, x1] x [z0, z1]; 0 if it gives none there. */
 int             plan_road_range(double x0, double z0, double x1, double z1, double *lo, double *hi);
+/* The bridges a segment of which comes within `pad` (beyond its road's
+ * half-width) of the rectangle [x0, x1] x [z0, z1], each once, up to max;
+ * returns how many. The city's chunks draw their decks. */
+typedef struct PlanRoadSpan { int road, bridge; } PlanRoadSpan;
+int             plan_road_bridges_in(double x0, double z0, double x1, double z1, double pad, PlanRoadSpan *out, int max);
 
 enum { ROAD_NONE = 0, ROAD_LOCAL, ROAD_ARTERIAL, ROAD_BOULEVARD };
 enum { ZONE_CORE = 0, ZONE_CENTRE, ZONE_RESIDENTIAL, ZONE_INDUSTRIAL, ZONE_PARK, ZONE_RURAL, ZONE_COUNT };

@@ -372,6 +372,17 @@ static int fingerprint(void) {
         hr = fnv(iv, sizeof(iv), hr);
         hr = fnv(R->pts, sizeof(DVec2) * (size_t)R->npts, hr);
     }
+    uint64_t hb = 0xcbf29ce484222325ULL;
+    for (int r = 0; r < plan_road_count(); ++r) {
+        const PlanRoad *R = plan_road(r);
+        for (int b = 0; b < R->nbridges; ++b) {
+            const PlanRoadBridge *B = &R->bridges[b];
+            double v[5] = { B->s0, B->s1, B->w0, B->w1, B->deck };
+            hb = fnv(v, sizeof v, hb);
+            hb = fnv(&B->lake, 1, hb);
+        }
+        hb = fnv(R->prof, sizeof(float) * (size_t)R->nprof, hb);
+    }
     uint64_t hc = 0xcbf29ce484222325ULL;
     for (int k = 0; k < plan_channel_count(); ++k) {
         const PlanChannel *c = plan_channel(k);
@@ -389,6 +400,7 @@ static int fingerprint(void) {
     printf("  settlements %016llx\n", (unsigned long long)hs);
     printf("  roads       %016llx\n", (unsigned long long)hr);
     printf("  channels    %016llx\n", (unsigned long long)hc);
+    printf("  bridges     %016llx\n", (unsigned long long)hb);
     return 0;
 }
 
@@ -463,15 +475,33 @@ static void map_row(void *ctx, int j) {
     }
 }
 
+/* The bake's rivers (as wide as they are, or a pixel) and lakes' shores over the map. */
+typedef struct WaterMap { Image *im; const MapCtx *mc; TerrainChart wc; } WaterMap;
+static void map_water(void *ctx, TerrainDir a, TerrainDir b, double width, int kind) {
+    const WaterMap *wm = (const WaterMap *)ctx;
+    if (kind != 1 && kind != 2) return;
+    double ax, az, bx, bz;
+    terrain_dir_chart(&wm->wc, a, &ax, &az);
+    terrain_dir_chart(&wm->wc, b, &bx, &bz);
+    const MapCtx *mc = wm->mc;
+    double x0 = (ax - mc->x0) / mc->m, y0 = (az - mc->z0) / mc->m, x1 = (bx - mc->x0) / mc->m, y1 = (bz - mc->z0) / mc->m;
+    if (fmax(x0, x1) < -2.0 || fmin(x0, x1) > wm->im->w + 2.0 || fmax(y0, y1) < -2.0 || fmin(y0, y1) > wm->im->h + 2.0) return;
+    const float water[3] = { 0.2f, 0.6f, 1.0f };
+    line(wm->im, x0, y0, x1, y1, fmax(0.5 * width / mc->m, 0.5), water);
+}
+
 /* The square of side `ext` * 2 round (cx, cz), W px square, north (-z) up:
- * the land and the sea to come, the roads (freeways red, trunk roads yellow,
- * junctions white), the settlements (colossal red, the megacities orange, the
- * megacity white), each as its footprint where that is bigger than a dot. */
+ * the land and the sea to come, the bake's rivers and lakes (blue), the
+ * roads (freeways red, trunk roads yellow, their bridges white, junctions
+ * white), the settlements (colossal red, the megacities orange, the megacity
+ * white), each as its footprint where that is bigger than a dot. */
 static int draw_map(const char *path, int W, double cx, double cz, double ext, int relief, int threads) {
     Image im = { W, W, (uint8_t *)calloc((size_t)W * W * 3, 1) };
     if (!im.px) return 1;
     MapCtx mc = { &im, cx - ext, cz - ext, 2.0 * ext / W, relief };
     thread_parallel_for(W, threads, map_row, &mc);
+    WaterMap wm = { &im, &mc, terrain_world_chart() };
+    terrain_earth_water_segments(map_water, &wm);
     const float red[3] = { 0.95f, 0.15f, 0.1f }, orange[3] = { 1.0f, 0.65f, 0.1f }, white[3] = { 1.0f, 1.0f, 1.0f };
     const float fw[3] = { 0.9f, 0.1f, 0.1f }, trunk[3] = { 1.0f, 0.9f, 0.2f };
     double scale = W / 1600.0;
@@ -482,7 +512,7 @@ static int draw_map(const char *path, int W, double cx, double cz, double ext, i
             double w = fmax((R->cls == PLAN_ROAD_FREEWAY ? 1.3 : 0.7) * fmin(scale, 1.5), R->half / mc.m);
             for (int k = 0; k + 1 < R->npts; ++k)
                 line(&im, (R->pts[k].x - mc.x0) / mc.m, (R->pts[k].z - mc.z0) / mc.m, (R->pts[k + 1].x - mc.x0) / mc.m,
-                     (R->pts[k + 1].z - mc.z0) / mc.m, w, pass ? fw : trunk);
+                     (R->pts[k + 1].z - mc.z0) / mc.m, w, R->bridge && R->bridge[k] >= 0 ? white : pass ? fw : trunk);
         }
     for (int k = 0; k < plan_node_count(); ++k) {
         PlanNode n = plan_node(k);
@@ -581,8 +611,15 @@ static int road_beside(const PlanRoad *R, DVec2 p, double s) {
     return 0;
 }
 
-/* The ground with the roads in it: the road's surface along its centre, and
- * a slope no steeper than a batter across it. */
+/* Road R's bridge whose span holds s (widened by `pad`), or -1. */
+static int road_bridge_at(const PlanRoad *R, double s, double pad) {
+    for (int b = 0; b < R->nbridges; ++b)
+        if (s >= R->bridges[b].s0 - pad && s <= R->bridges[b].s1 + pad) return b;
+    return -1;
+}
+
+/* The ground with the roads in it: the road's surface along its centre (but
+ * under a bridge), and a slope no steeper than a batter across it. */
 static void test_road_ground(void) {
     Rng r = rng_make(99);
     double offCentre = 0.0, steepest = 0.0;
@@ -596,6 +633,7 @@ static void test_road_ground(void) {
         double t = (s - R->s[sg]) / fmax(R->s[sg + 1] - R->s[sg], 1e-9);
         DVec2 a = R->pts[sg], d = dsub(R->pts[sg + 1], a), p = dadd(a, dscale(d, t)), nrm = dnorm(dv(-d.z, d.x));
         if (plan_urban(p.x, p.z) > 0.0f) continue;   /* the city's ground stands there */
+        if (road_bridge_at(R, s, 1.0) >= 0) continue;   /* the water's, under a bridge */
         double h = terrain_height(p.x, p.z), rh = plan_road_height((int)(R - plan_road(0)), s);
         /* where two roads' reaches overlap the higher weight wins: skip near
          * junctions, and count where another road runs beside this one */
@@ -612,7 +650,7 @@ static void test_road_ground(void) {
     }
     printf("  the ground on %d points along the roads: within %.3f m of the road's surface; across, at most %.2f m/m"
            " (%d more beside another road or itself, away from a junction)\n", n, offCentre, steepest, beside);
-    /* How far the roads stand above or below the bare land: the cuttings and embankments (bridges and tunnels to come) */
+    /* How far the roads stand above or below the bare land: the cuttings and embankments, off the bridges (tunnels to come) */
     double total = 0.0, over10 = 0.0, over30 = 0.0, deepest = 0.0;
     for (int r = 0; r < plan_road_count(); ++r) {
         const PlanRoad *R = plan_road(r);
@@ -622,7 +660,7 @@ static void test_road_ground(void) {
             while (sg + 2 < R->npts && R->s[sg + 1] < s) sg++;
             double t = (s - R->s[sg]) / fmax(R->s[sg + 1] - R->s[sg], 1e-9);
             DVec2 p = dadd(R->pts[sg], dscale(dsub(R->pts[sg + 1], R->pts[sg]), fmin(fmax(t, 0.0), 1.0)));
-            if (plan_urban(p.x, p.z) > 0.0f) continue;
+            if (plan_urban(p.x, p.z) > 0.0f || road_bridge_at(R, s, 0.0) >= 0) continue;
             double d = fabs(R->prof[k] - terrain_height_bare(p.x, p.z, 0.0)), step = 4.0 * R->ds;
             total += step;
             if (d > 10.0) over10 += step;
@@ -632,6 +670,123 @@ static void test_road_ground(void) {
     }
     printf("  cut or fill: over 10 m on %.1f%% of the roads, over 30 m on %.2f%%, at most %.0f m\n", 100.0 * over10 / total, 100.0 * over30 / total, deepest);
     CHECK(offCentre <= 0.01, "the ground strays %.3f m from a road's surface", offCentre);
+}
+
+/* --- The roads' bridges ----------------------------------------------------------------- */
+
+/* Along each road every BRIDGE_PROBE metres outside the cities: where the
+ * point is in a river or a lake (not a stream: a culvert), it is on a
+ * bridge's water stretch; and over every water stretch the road stands at its
+ * deck's clearance and over the ground, which is the water's. */
+#define BRIDGE_PROBE 25.0
+typedef struct BridgeProbe { int wet, culverts, low, buried; double over; } BridgeProbe;
+static void bridge_probe_job(void *ctx, int r) {
+    BridgeProbe *out = &((BridgeProbe *)ctx)[r];
+    const PlanRoad *R = plan_road(r);
+    TerrainChart wc = terrain_world_chart();
+    memset(out, 0, sizeof *out);
+    for (int sg = 0; sg + 1 < R->npts; ++sg) {
+        double l = R->s[sg + 1] - R->s[sg];
+        for (double u = fmod(BRIDGE_PROBE - fmod(R->s[sg], BRIDGE_PROBE), BRIDGE_PROBE); u < l; u += BRIDGE_PROBE) {
+            double s = R->s[sg] + u;
+            DVec2 p = dadd(R->pts[sg], dscale(dsub(R->pts[sg + 1], R->pts[sg]), u / l));
+            if (plan_urban(p.x, p.z) > 0.0f) continue;
+            int b = R->bridge ? R->bridge[sg] : -1;
+            TerrainEarthWater w;
+            if (b < 0 && terrain_earth_water(terrain_chart_dir(&wc, p.x, p.z), &w) && w.edge < 0.0) {
+                if (w.stream) out->culverts++;
+                else out->wet++;
+            }
+            if (b < 0) continue;
+            const PlanRoadBridge *B = &R->bridges[b];
+            double h = plan_road_height(r, s), g = terrain_height(p.x, p.z);
+            if (s >= B->w0 && s <= B->w1) {
+                if (h < B->deck - 0.01) out->low++;
+                out->over = fmax(out->over, h - g);
+            }
+            if (g > h + 0.01) out->buried++;   /* the deck in the ground */
+        }
+    }
+}
+
+static void test_road_bridges(int threads) {
+    int nr = plan_road_count(), nb = 0, lakes = 0;
+    double span = 0.0, longest = 0.0;
+    int lr = -1, lb = -1;
+    for (int r = 0; r < nr; ++r) {
+        const PlanRoad *R = plan_road(r);
+        for (int b = 0; b < R->nbridges; ++b) {
+            const PlanRoadBridge *B = &R->bridges[b];
+            nb++;
+            lakes += B->lake;
+            span += B->s1 - B->s0;
+            if (B->s1 - B->s0 > longest) { longest = B->s1 - B->s0; lr = r; lb = b; }
+        }
+    }
+    BridgeProbe *pr = (BridgeProbe *)calloc((size_t)(nr > 0 ? nr : 1), sizeof(BridgeProbe));
+    if (!pr) return;
+    thread_parallel_for(nr, threads, bridge_probe_job, pr);
+    BridgeProbe all = { 0 };
+    for (int r = 0; r < nr; ++r) {
+        all.wet += pr[r].wet; all.culverts += pr[r].culverts; all.low += pr[r].low; all.buried += pr[r].buried;
+        all.over = fmax(all.over, pr[r].over);
+    }
+    free(pr);
+    printf("roads' bridges: %d (%d over lakes), %.1f km of span, the longest %.0f m", nb, lakes, span / 1000.0, longest);
+    if (lr >= 0) {
+        const PlanRoad *R = plan_road(lr);
+        DVec2 m = dscale(dadd(R->pts[0], R->pts[0]), 0.5);
+        for (int sg = 0; sg + 1 < R->npts; ++sg)
+            if (R->bridge[sg] == lb) { m = R->pts[sg]; break; }
+        printf(" (at %.0f %.0f)", m.x, m.z);
+    }
+    printf("\n  every %.0f m along the roads: %d points in a river or lake on no bridge, %d in a stream (culverts);"
+           " %d under a deck's clearance, %d with the ground over the deck; the highest deck %.0f m over the ground\n",
+           BRIDGE_PROBE, all.wet, all.culverts, all.low, all.buried, all.over);
+    /* views of the bridges nearest the megacity, for NeonCity --cam: from the road 60 m back, and from beside it down by the water */
+    DVec2 c0 = plan_settlement(0).centre;
+    int near[2][2] = { { -1, -1 }, { -1, -1 } };
+    double nd[2] = { 1e300, 1e300 };
+    for (int r = 0; r < nr; ++r) {
+        const PlanRoad *R = plan_road(r);
+        for (int b = 0; b < R->nbridges; ++b) {
+            DVec2 p = R->pts[0];
+            for (int sg = 0; sg + 1 < R->npts; ++sg)
+                if (R->bridge[sg] == b) { p = R->pts[sg]; break; }
+            double d = dlen(dsub(p, c0));
+            for (int q = 0; q < 2; ++q) {
+                if (d >= nd[q]) continue;
+                if (q == 0) { nd[1] = nd[0]; near[1][0] = near[0][0]; near[1][1] = near[0][1]; }
+                nd[q] = d; near[q][0] = r; near[q][1] = b;
+                break;
+            }
+        }
+    }
+    for (int q = 0; q < 2; ++q) {
+        if (near[q][0] < 0) continue;
+        const PlanRoad *R = plan_road(near[q][0]);
+        const PlanRoadBridge *B = &R->bridges[near[q][1]];
+        int sg = 0;
+        double s = B->s0 - 60.0;
+        while (sg + 2 < R->npts && R->s[sg + 1] < fmax(s, 0.0)) sg++;
+        DVec2 d = dnorm(dsub(R->pts[sg + 1], R->pts[sg])), n = dv(-d.z, d.x);
+        DVec2 at = dadd(R->pts[sg], dscale(d, fmax(s, 0.0) - R->s[sg]));
+        double yaw = atan2(d.x, -d.z) * 57.29577951;
+        if (yaw < 0.0) yaw += 360.0;
+        double mid = 0.5 * (B->w0 + B->w1);
+        int sm = sg;
+        while (sm + 2 < R->npts && R->s[sm + 1] < mid) sm++;
+        DVec2 pm = dadd(R->pts[sm], dscale(dnorm(dsub(R->pts[sm + 1], R->pts[sm])), mid - R->s[sm]));
+        DVec2 side = dadd(pm, dscale(n, 80.0));
+        double syaw = atan2(-n.x, n.z) * 57.29577951;
+        if (syaw < 0.0) syaw += 360.0;
+        printf("  a bridge %.0f km from the megacity's centre (%s, %.0f m, over %s): --cam %.0f %.0f %.0f -3 %.0f / --cam %.0f %.0f %.0f 4 %.0f\n",
+               nd[q] / 1000.0, R->cls == PLAN_ROAD_FREEWAY ? "freeway" : "trunk road", B->s1 - B->s0, B->lake ? "a lake" : "a river",
+               at.x, at.z, yaw, plan_road_height(near[q][0], fmax(s, 0.0)) + 2.0, side.x, side.z, syaw, terrain_height(side.x, side.z) + 3.0);
+    }
+    CHECK(all.wet == 0, "%d points of road in a river or a lake on no bridge", all.wet);
+    CHECK(all.low == 0, "%d points of road over the water under their bridge's clearance", all.low);
+    CHECK(all.buried == 0, "%d points of a bridge's deck under the ground", all.buried);
 }
 
 /* --- The rivers through the cities ---------------------------------------------------- */
@@ -786,6 +941,7 @@ int main(int argc, char **argv) {
     test_settlements();
     test_roads();
     test_road_ground();
+    test_road_bridges(threads);
     test_channels();
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }

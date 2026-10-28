@@ -30,14 +30,22 @@
 #define MAX_CHANNELS    24
 #define MAX_DECKS       24
 #define MAX_BARRIERS    256
+#define MAX_ROAD_DECKS  32
 #define CITY_OVERHANG   70.0f
 
 typedef struct Rect { float x0, z0, x1, z1; } Rect;
 
 /* A wall the walker can't pass: a line a b (world x, z) `half` thick. A low
- * one (a channel's wall) stops feet down in the channel, more than a metre
- * under the city's ground; any other (a parapet) feet up at the street. */
-typedef struct Barrier { double a[2], b[2]; float half; uint8_t low; } Barrier;
+ * one (BARRIER_LOW, a channel's wall) stops feet down in the channel, more
+ * than a metre under the city's ground; a deck's (BARRIER_DECK, a road
+ * bridge's parapet) feet up on the deck, its surface at y; any other (a
+ * parapet) feet up at the street. */
+enum { BARRIER_STREET = 0, BARRIER_LOW = 1, BARRIER_DECK = 2 };
+typedef struct Barrier { double a[2], b[2]; float half, y; uint8_t low; } Barrier;
+/* A piece of a road bridge's deck (src/city/road_bridges.c): its centre line
+ * a b (world x, z), its surface from ya to yb (world Y), `half` across to its
+ * parapets. */
+typedef struct RoadDeckSpan { double a[2], b[2]; float half, ya, yb; } RoadDeckSpan;
 
 enum { BK_BLOCK = 0, BK_TOWER = 1, BK_MEGA = 2 };
 enum { SIDE_W = 1, SIDE_E = 2, SIDE_S = 4, SIDE_N = 8 };
@@ -120,7 +128,9 @@ typedef struct BlockLayout {
     CurbPoly chan[MAX_CHANNELS];    /* the rivers' channels touching this chunk (PlanChannel): their floors, */
     uint8_t  chanbuilt[MAX_CHANNELS]; /* (each across a built town, or out in the belt: there, only over the city's ground) */
     CurbPoly deck[MAX_DECKS];       /* the bridges' decks over them, */
-    Barrier  barrier[MAX_BARRIERS]; /* and their walls and parapets */
+    Barrier  barrier[MAX_BARRIERS]; /* and their walls and parapets; and the roads' bridges' parapets */
+    int      nrdeck;
+    RoadDeckSpan rdeck[MAX_ROAD_DECKS]; /* the roads' bridges' decks touching this chunk */
     double   collv[MAX_COLL_VERTS][2];
 } BlockLayout;
 

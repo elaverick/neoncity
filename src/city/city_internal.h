@@ -281,6 +281,31 @@ int  city_bridge_decks(const PlanArea *pa, DeckPiece *out, int max);
 /* The walls, floors, parapets and decks, draped (the streets' mesh). */
 void build_channels(Mesh *m, const ChunkGen *g);
 
+/* road_bridges.c: the bridges of the roads between the settlements (plan.h,
+ * PlanRoadBridge), out over the rivers and lakes. Heights are world Y. */
+#define ROAD_DECK_STEP   40.0    /* a deck is drawn in pieces at most this long (m) */
+#define ROAD_PIER_SPAN   40.0    /* the most a span runs between piers (m) */
+#define ROAD_PARAPET_W   0.45f   /* a parapet's thickness (m)... */
+#define ROAD_PARAPET_H   1.05f   /* ...and its height over the deck */
+#define ROAD_DECK_MARK   8       /* a deck's asphalt: params.w is this plus the road's class (shaders/city/ground.glsl) */
+/* A piece of a deck: its centre line a b (world), the normals (unit, to the
+ * left) its edges stand out along at each end, by edge times wa / wb (mitred
+ * at a point of the road); along the road from sa to sb, its surface ya to yb. */
+typedef struct RoadDeck {
+    DVec2   a, b, na, nb;
+    double  sa, sb;
+    float   ya, yb, wa, wb;
+    float   half, edge;        /* the paved half-width; to the parapets' inner faces */
+    int     road, bridge, cls;
+    uint8_t first, last;       /* the deck's ends */
+} RoadDeck;
+/* The pieces any of which reaches into the rectangle (world), up to max; returns how many. */
+int  city_road_decks(double x0, double z0, double x1, double z1, RoadDeck *out, int max);
+/* The heights the decks over the rectangle and their piers reach (world Y); 0 if none is there. */
+int  city_road_deck_range(double x0, double z0, double x1, double z1, float *lo, float *hi);
+/* Each chunk draws the pieces whose middle lies in it, and the piers standing in it. */
+void build_road_bridges(Mesh *m, const ChunkGen *g);
+
 /* light_tiles.c */
 void build_lights(Mesh *m, ChunkGen *g);
 

@@ -88,8 +88,8 @@ static void usage(void) {
 typedef struct Options {
     bool        validation, shadows, shadowDebug;
     const char *shotPath;
-    bool        haveCam;
-    double      cam[5];          /* x, z, yaw, pitch (degrees), height (< 0: walking) */
+    bool        haveCam, camFly;
+    double      cam[5];          /* x, z, yaw, pitch (degrees), height (world Y; with camFly, else walking) */
     float       walkSeconds, turnRate, fixedRain;   /* turnRate: degrees a second while walking */
     double      fixedTime;       /* the shaders' clock held here (< 0: running) */
 } Options;
@@ -97,7 +97,6 @@ typedef struct Options {
 static bool parse_args(int argc, char **argv, Options *o) {
     memset(o, 0, sizeof(*o));
     o->shadows = true;
-    o->cam[4] = -1;
     o->fixedRain = -1.0f;
     o->fixedTime = -1.0;
     for (int i = 1; i < argc; ++i) {
@@ -112,7 +111,11 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--cam") == 0 && i + 4 < argc) {
             o->haveCam = true;
             for (int k = 0; k < 4; ++k) o->cam[k] = atof(argv[++i]);
-            if (i + 1 < argc && argv[i + 1][0] != '-') o->cam[4] = atof(argv[++i]);
+            /* a height (fly mode), which may be below the world's zero: not an option's dash */
+            if (i + 1 < argc && (argv[i + 1][0] != '-' || (argv[i + 1][1] >= '0' && argv[i + 1][1] <= '9'))) {
+                o->cam[4] = atof(argv[++i]);
+                o->camFly = true;
+            }
         } else return false;
     }
     return true;
@@ -381,7 +384,7 @@ int main(int argc, char **argv) {
         player.feet[2] = opt.cam[1];
         player.yaw = (float)(opt.cam[2] * PI_F / 180.0);
         player.pitch = (float)(opt.cam[3] * PI_F / 180.0);
-        if (opt.cam[4] >= 0) { player.fly = true; player.feet[1] = opt.cam[4]; }
+        if (opt.camFly) { player.fly = true; player.feet[1] = opt.cam[4]; }
     }
 
     run(win, &vk, chunks, renderer, &player, &opt);

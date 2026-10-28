@@ -55,9 +55,38 @@ static double curb_distance(const CurbPoly *c, double x, double z) {
     return best;
 }
 
+/* Feet within this of a road bridge's deck, or above it, are on it (m). */
+#define DECK_UP 1.0f
+
+/* Whether (x, z) lies on a road bridge's deck with the feet up on it, and its
+ * surface's height there. A piece reaches DECK_JOIN past its ends, over the
+ * wedge where two pieces meet at a bend (the mitred corners the mesh draws). */
+#define DECK_JOIN 1.0
+static bool road_deck(double x, double z, double feet, float *y) {
+    const BlockLayout *L = layouts_get((int)floor(x / CHUNK_SIZE), (int)floor(z / CHUNK_SIZE));
+    for (int i = 0; i < L->nrdeck; ++i) {
+        const RoadDeckSpan *d = &L->rdeck[i];
+        double ex = d->b[0] - d->a[0], ez = d->b[1] - d->a[1], l2 = ex * ex + ez * ez;
+        if (l2 <= 0.0) continue;
+        double t = ((x - d->a[0]) * ex + (z - d->a[1]) * ez) / l2, over = DECK_JOIN / sqrt(l2);
+        if (t < -over || t > 1.0 + over) continue;
+        t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
+        double qx = d->a[0] + t * ex - x, qz = d->a[1] + t * ez - z;
+        if (qx * qx + qz * qz > (double)d->half * d->half) continue;
+        float h = d->ya + (float)t * (d->yb - d->ya);
+        if (feet < h - DECK_UP) continue;
+        *y = h;
+        return true;
+    }
+    return false;
+}
+
 /* The ground under the city's surfaces; beyond its edge the verge sloping
- * down from them (city_verge_height) until it meets the land, then the land's. */
-static float base_ground(double x, double z) {
+ * down from them (city_verge_height) until it meets the land, then the land's;
+ * a road bridge's deck where the feet are up on it. */
+static float base_ground(double x, double z, double feet) {
+    float deck;
+    if (road_deck(x, z, feet, &deck)) return deck;
     const BlockLayout *L = layouts_get((int)floor(x / CHUNK_SIZE), (int)floor(z / CHUNK_SIZE));
     if (!L->bounded) return city_ground_y(x, z);
     double d = 1e30;
@@ -185,7 +214,7 @@ static bool channel_floor(double x, double z, double feet, float *y) {
 static float ground_height(double x, double z, double feet) {
     float f, street;
     if (channel_floor(x, z, feet, &f)) return f;
-    street = base_ground(x, z) + kerb_height(x, z);
+    street = base_ground(x, z, feet) + kerb_height(x, z);
     return floor_height(x, z, &f) ? maxf(f, street) : street;
 }
 
@@ -214,8 +243,10 @@ static void collide(double *x, double *z, double feet) {
                 const BlockLayout *L = layouts_get(ccx + dx, ccz + dz);
                 for (int i = 0; i < L->ncoll; ++i) push_out_poly(x, z, L, &L->coll[i]);
                 for (int i = 0; i < L->nlamps; ++i) push_out_frame(x, z, L->lamp[i].x, L->lamp[i].z, 1.0f, 0.0f, pole);
-                for (int i = 0; i < L->nbarrier; ++i)
-                    if (L->barrier[i].low == down) push_out_barrier(x, z, &L->barrier[i]);
+                for (int i = 0; i < L->nbarrier; ++i) {
+                    const Barrier *b = &L->barrier[i];
+                    if (b->low == BARRIER_DECK ? feet > b->y - DECK_UP : b->low == down) push_out_barrier(x, z, b);
+                }
             }
     }
 }
@@ -285,7 +316,7 @@ static void move_walk(Player *p, const PlayerInput *in, vec3 flatFwd, vec3 flatR
      * A floor is level, and the step onto it is a step. */
     float f;
     if (p->onGround && !floor_height(nx, nz, &f) && !floor_height(p->feet[0], p->feet[2], &f))
-        p->feet[1] += base_ground(nx, nz) - base_ground(p->feet[0], p->feet[2]);
+        p->feet[1] += base_ground(nx, nz, p->feet[1]) - base_ground(p->feet[0], p->feet[2], p->feet[1]);
     p->feet[0] = nx; p->feet[2] = nz;
 
     float prevY = (float)p->feet[1];

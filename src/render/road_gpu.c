@@ -18,7 +18,7 @@
  *   list   segment numbers
  *   segs   ROAD_SEG_WORDS each: a.x, a.z, b.x, b.z (m from the corner), the
  *          distance along its road at a, its length, the road's half-width,
- *          its class (PLAN_ROAD_*) */
+ *          its class (PLAN_ROAD_*), plus ROAD_SEG_BRIDGE on a bridge's span */
 #define ROAD_WINDOW    32768.0
 #define ROAD_GCELL     256.0
 #define ROAD_GDIM      128
@@ -27,6 +27,7 @@
 #define ROAD_MAX_LIST  131072
 #define ROAD_HEADER    8
 #define ROAD_SEG_WORDS 8
+#define ROAD_SEG_BRIDGE 4         /* in a segment's class: it is on a bridge (shaders/terrain/roads.glsl) */
 #define ROAD_CELL_REACH (PLAN_FREEWAY_HALF + 2.0)   /* a segment is filed in each cell within this of it (m) */
 #define ROAD_WORDS     (ROAD_HEADER + 2 * ROAD_GDIM * ROAD_GDIM + ROAD_MAX_LIST + ROAD_SEG_WORDS * ROAD_MAX_SEGS)
 
@@ -142,7 +143,7 @@ static void build_window(RoadGpu *g, double cx, double cz) {
                     sg[0] = fbits((float)la.x); sg[1] = fbits((float)la.z);
                     sg[2] = fbits((float)lb.x); sg[3] = fbits((float)lb.z);
                     sg[4] = fbits((float)R->s[q]); sg[5] = fbits((float)(R->s[q + 1] - R->s[q]));
-                    sg[6] = fbits(R->half); sg[7] = fbits((float)R->cls);
+                    sg[6] = fbits(R->half); sg[7] = fbits((float)(R->cls + (R->bridge && R->bridge[q] >= 0 ? ROAD_SEG_BRIDGE : 0)));
                     file_segment(g, la, lb, ns, 1);
                 }
                 ns++;

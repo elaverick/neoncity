@@ -1205,9 +1205,10 @@ static int u32_less(const void *a, const void *b) {
 
 /* The buckets near c, found by stepping over the disc in c's tangent plane
  * finer than the smallest bucket (a face's corner's, a third of its centre's
- * across), their river segments gathered, sorted and made unique. */
-size_t terrain_earth_rivers_near(TerrainDir c, double radius,
-                                 void (*fn)(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, double width), void *ctx) {
+ * across), their segments of the kinds asked for gathered, sorted and made
+ * unique. */
+size_t terrain_earth_water_near(TerrainDir c, double radius, unsigned kinds,
+                                void (*fn)(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, double width, int kind), void *ctx) {
     const EarthWater *w = &g_earth.water;
     if (!g_earth.loaded || !w->B) return 0;
     double len = sqrt(c.x * c.x + c.y * c.y + c.z * c.z);
@@ -1234,7 +1235,7 @@ size_t terrain_earth_rivers_near(TerrainDir c, double radius,
         if (q && bk[q] == bk[q - 1]) continue;
         for (uint32_t e = w->start[bk[q]]; e < w->start[bk[q] + 1]; ++e) {
             uint32_t k = w->entry[e];
-            if (w->kind[k] != 1) continue;
+            if (!(kinds & (1u << w->kind[k]))) continue;
             if (ns == scap) { scap *= 2; seg = (uint32_t *)realloc(seg, sizeof(uint32_t) * scap); if (!seg) fatal("out of memory finding the rivers"); }
             seg[ns++] = k;
         }
@@ -1243,12 +1244,25 @@ size_t terrain_earth_rivers_near(TerrainDir c, double radius,
     size_t count = 0;
     for (size_t q = 0; q < ns; ++q) {
         if (q && seg[q] == seg[q - 1]) continue;
-        if (fn) fn(ctx, seg[q], water_point(w, seg[q]), water_point(w, seg[q] + 1), w->width[seg[q]]);
+        if (fn) fn(ctx, seg[q], water_point(w, seg[q]), water_point(w, seg[q] + 1), w->width[seg[q]], w->kind[seg[q]]);
         ++count;
     }
     free(bk);
     free(seg);
     return count;
+}
+
+typedef struct RiversNear { void (*fn)(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, double width); void *ctx; } RiversNear;
+static void river_near(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, double width, int kind) {
+    (void)kind;
+    RiversNear *r = (RiversNear *)ctx;
+    if (r->fn) r->fn(r->ctx, k, a, b, width);
+}
+
+size_t terrain_earth_rivers_near(TerrainDir c, double radius,
+                                 void (*fn)(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, double width), void *ctx) {
+    RiversNear r = { fn, ctx };
+    return terrain_earth_water_near(c, radius, 1u << 1, river_near, &r);
 }
 
 int terrain_earth_stream(uint32_t k, TerrainDir *a, TerrainDir *b, double *bed_a, double *bed_b, double *flow_a, double *flow_b) {

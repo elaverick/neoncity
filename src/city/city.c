@@ -46,6 +46,12 @@ void city_ground_range(int cx, int cz, float *lo, float *hi) {
     terrain_urban_height_range(cx * P - o, cz * P - o, (cx + 1) * P + o, (cz + 1) * P + o, &l, &h);
     *lo = (float)floor(l);
     *hi = (float)ceil(h);
+    /* out in the land, a road's bridge stands at its road's height */
+    float dl, dh;
+    if (city_road_deck_range(cx * P, cz * P, (cx + 1) * P, (cz + 1) * P, &dl, &dh)) {
+        *lo = fminf(*lo, floorf(dl));
+        *hi = fmaxf(*hi, ceilf(dh));
+    }
 }
 
 /* The highest ground under the plot, sampled finely enough for the ground's
@@ -118,6 +124,7 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
     build_channels(m, &g);
     build_blocks(m, &g);
     m->drape = 0;
+    build_road_bridges(m, &g);
     build_vents(m, &g);
     for (int i = 0; i < g.nl; ++i)
         if (chunk_gen_owns(&g, g.lamp[i].x, g.lamp[i].z)) build_lamp(m, &g, &g.lamp[i], (uint32_t)i);

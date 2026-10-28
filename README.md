@@ -23,7 +23,7 @@ build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders,
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
-build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the roads' reach in the world chart; --local out.ppm km [x z]: round a point; --earth <bake> first: on the Earth)
+build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the roads' reach in the world chart; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
 cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)
 build/terrain_test --earth-map earth.ppm # the bake as the engine reads it (--earth <bake> for another; the tests use tests/data/earth_test.bake)
 ```
@@ -135,8 +135,9 @@ the real urban area from the GHSL; read at run time, see `data/earth/SOURCE.md`)
   drainage tree, never rising downstream, and each lake its level. Within 1 km of the real rivers and lakes
   the procedural hills, mountains and canyons fade out, so they lie on the Earth's own valley floors; outside
   the cities the ground is carved down to the water's floor (banks at 1 in 2, lake beds to 10 m under the
-  level, at most 30 m deep). The water itself isn't drawn yet; under the cities the streams are buried and the
-  rivers wait for their concrete channels and bridges.
+  level, at most 30 m deep). The water itself isn't drawn yet. Under the cities the streams are buried and the
+  rivers run in concrete channels, 5 m deep, under bridges at every arterial and boulevard
+  (`src/plan/plan_water.c`, `src/city/channels.c`).
 - **The roads.** The cities within 5,000 km of the megacity, all of North America from Mexico City to
   Boston, where the world's chart is near enough true for a road (they move onto the sphere next). On
   each continent: candidate links between the Delaunay neighbours, each costed by a
@@ -146,15 +147,25 @@ the real urban area from the GHSL; read at run time, see `data/earth/SOURCE.md`)
   Steiner junctions where two links leave a city or junction close together. Each link is routed by A*
   over a 1 km grid in a corridor round its coarse route, round mountains, plateau escarpments and
   canyons (tested against their centre lines), other cities and the sea, and pulled straight wherever a
-  straight line costs no more. Roads that run beside a longer one join it at junctions; crossings
+  straight line costs no more; the lakes block the routes as the sea does, and every river crossed costs
+  as much as a kilometre of road and twenty metres more for each metre of bridge, so the roads cross
+  few, and where they are narrow. Roads that run beside a longer one join it at junctions; crossings
   become junctions. The gravity model's traffic on the cheapest routes picks the freeways (about half
-  the length); the rest are trunk roads. On the Earth about 80 roads, 40 junctions and 17,000 km.
+  the length); the rest are trunk roads. On the Earth about 55 roads, 25 junctions and 18,000 km.
 - **Into the ground.** A road ends at each city where it leaves the built towns, on the perimeter
   boulevard (a gate: the verge there is asphalt). Its height runs every 50 m along it: the ground
   smoothed, held to 6% (freeways) or 9% (trunk roads), meeting the city's ground at a gate and one height
   at a junction. The terrain takes it (`plan_road_ground`): level across its width and shoulders, then a
   batter twice as wide as the cut or fill. Where the land is too rough for the grade the cutting or
-  embankment can be deep (3% of the length is over 30 m); bridges and tunnels are to come.
+  embankment can be deep (1% of the length is over 30 m); tunnels are to come.
+- **Bridges** (`PlanRoadBridge`, `src/city/road_bridges.c`). Where a road crosses a river of the bake or a
+  lake, out in the land, it crosses on a bridge: over the water and its banks carved into the ground,
+  raised to clear the water by 4 m and more over a wider river (8 m over a lake), its approaches climbing on
+  embankments at the road's grade, their spill slopes coming down under each end. The ground under it is the
+  water's. The city's chunks draw the deck (asphalt marked as the road, parapets, fascias, soffit, wall
+  piers every 40 m at most) out to 1.9 km; beyond, the road's paint stands in for it on the ground below.
+  Streams pass under the roads in culverts (the embankment fills their beds). On the Earth 340 bridges,
+  57 km of span, the longest 1.7 km.
 - **Drawn** by the terrain shader (`shaders/terrain/roads.glsl`, `src/render/road_gpu.c`): asphalt,
   lane lines and freeways' sodium lamps every 60 m, from the segments within 16 km of the camera.
 

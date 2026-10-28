@@ -38,6 +38,26 @@ vec2 roadPaint(vec2 uv, float half_, float len, bool crossing, float aa) {
     return mk;
 }
 
+// A road bridge's deck out in the land (src/city/road_bridges.c): params.w is
+// ROAD_DECK_MARK plus its road's class, and it is marked as the terrain marks
+// the road (shaders/terrain/roads.glsl, shadeRoad): a freeway's (2) edge
+// lines either side of its median and its dashed lanes, a trunk road's (1)
+// dashed centre line and edge lines, the dashes 3 m in 12 along the road
+// (uv.y, which the deck counts from a whole number of dashes), so they run
+// on from the ground's. x = coverage.
+const uint ROAD_DECK_MARK = 8u;
+vec2 deckPaint(vec2 uv, uint cls, float aa) {
+    float a = abs(uv.x), dash = band(mod(uv.y, 12.0), 0.0, 3.0, aa);
+    float p = cls == 2u ? band(a, 1.5, 1.7, aa) + band(a, 12.45, 12.65, aa) + (band(a, 5.175, 5.325, aa) + band(a, 8.825, 8.975, aa)) * dash
+                        : band(a, -0.075, 0.075, aa) * dash + band(a, 3.525, 3.675, aa);
+    return vec2(clamp(p, 0.0, 1.0), 0.0);
+}
+
+// The paint at carriageway uv: a deck's (deck > 0, its road's class) or a street's.
+vec2 markPaint(vec2 uv, float half_, float len, bool crossing, float aa, uint deck) {
+    return deck > 0u ? deckPaint(uv, deck, aa) : roadPaint(uv, half_, len, crossing, aa);
+}
+
 // Road markings are thermoplastic, laid a few millimetres thick.
 const float PAINT_H = 0.003;
 
@@ -210,6 +230,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
     bool wettable = false;
     float relH = 0.0, relBroad = 0.0, sink = 0.0, jointLevel = -1.0;
     float paintC = 0.0;   // road paint coverage (raised: stays out of the standing water)
+    vec3 lampPool = vec3(0.0);   // a freeway deck's median lamps' light
 
     if (mat == MAT_ROAD) {
         // Base asphalt (authored or procedural), then markings and covers
@@ -233,6 +254,17 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         if (hfloat(ph) < 0.12) s.albedo *= 0.75;
 
         float half_ = float(prm.y) * 0.25;
+        uint deck = prm.w >= ROAD_DECK_MARK ? prm.w - ROAD_DECK_MARK : 0u;   // a road bridge's deck, its road's class
+        if (deck == 2u) s.albedo = mix(s.albedo, vec3(0.11), band(abs(uv.x), -1.0, 0.8, aa));   // a freeway's concrete median
+        if (deck > 0u) s.albedo *= mix(1.0, 1.5, smoothstep(half_ - 0.1, half_ + 0.1, abs(uv.x)));   // its shoulders' lighter strip
+        if (deck == 2u) {
+            // the median's sodium lamps every 60 m, as out in the land (shaders/terrain/roads.glsl, shadeRoad):
+            // a pool round each, longer along the road, and their mean once a pixel spans several
+            float a = abs(uv.x), ds = uv.y - 60.0 * floor(uv.y / 60.0 + 0.5), pxs = max(fwidth(uv.y), 1e-3);
+            float pool = exp(-ds * ds / (2.0 * 14.0 * 14.0) - a * a / (2.0 * 11.0 * 11.0));
+            float mean = 2.5066 * 14.0 / 60.0 * exp(-a * a / (2.0 * 11.0 * 11.0));
+            lampPool = vec3(1.0, 0.55, 0.22) * 1.4 * mix(pool, mean, clamp(pxs / 30.0, 0.0, 1.0));
+        }
         vec2 mk = vec2(0.0);
         float dCurb = 10.0, side = 0.0, rim = 0.0;
         vec3 tilt = vec3(0.0);
@@ -251,19 +283,19 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
             vec2 lift = paintLift(V, nGeom, PAINT_H);
             lift *= min(1.0, 0.15 / max(length(lift), 1e-6));
             vec2 uvTop = uv + toUV * lift;
-            vec2 mTop = roadPaint(uvTop, half_, len, xing, aa);
-            vec2 mBase = roadPaint(uv, half_, len, xing, aa);
+            vec2 mTop = markPaint(uvTop, half_, len, xing, aa, deck);
+            vec2 mBase = markPaint(uv, half_, len, xing, aa, deck);
             mk = vec2(max(mTop.x, mBase.x), max(mTop.y, mBase.y));
             side = max(mBase.x - mTop.x, 0.0);
             // the rounded edges of the top catch the light: its slope from the coverage gradient
             float e = aa * 0.5 + 0.002;
-            vec2 g = vec2(roadPaint(uvTop + vec2(e, 0.0), half_, len, xing, aa).x - mTop.x,
-                          roadPaint(uvTop + vec2(0.0, e), half_, len, xing, aa).x - mTop.x) / e;
+            vec2 g = vec2(markPaint(uvTop + vec2(e, 0.0), half_, len, xing, aa, deck).x - mTop.x,
+                          markPaint(uvTop + vec2(0.0, e), half_, len, xing, aa, deck).x - mTop.x) / e;
             vec2 gw = transpose(toUV) * g;
             tilt = -vec3(gw.x, 0.0, gw.y) * PAINT_H * wear;
             // water dams up against the paint's edges, and grime collects in the angle
-            rim = max(roadPaint(uv, half_, len, xing, aa + 0.025).x - mk.x, 0.0) * wear;
-            dCurb = half_ - abs(uv.x);
+            rim = max(markPaint(uv, half_, len, xing, aa + 0.025, deck).x - mk.x, 0.0) * wear;
+            dCurb = half_ + (deck > 0u ? 2.0 : 0.0) - abs(uv.x);   // a deck's parapet stands beyond its shoulder (PLAN_ROAD_SHOULDER)
             // run-off pools in the gutter at the foot of each drop kerb
             if (xing) sink += 0.9 * band(min(uv.y, len - uv.y), 0.3, 3.9, 0.3) * (1.0 - smoothstep(0.15, 0.9, dCurb));
             // ruts faintly worn into the wheel paths, 0.85 m either side of each lane's centre
@@ -287,7 +319,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         // manhole covers (build_vents in src/city/streets.c finds the same ones to steam: must match)
         vec2 mc = floor(w.xz / 13.0);
         uint mh = hash2i(0xA9u, int(mc.x), int(mc.y));
-        if (hfloat(mh) < 0.25) {
+        if (hfloat(mh) < 0.25 && deck == 0u) {
             vec2 c = (mc + 0.3 + 0.4 * vec2(hf(mh, 1u), hf(mh, 2u))) * 13.0;
             float r = length(w.xz - c);
             float ring = band(r, 0.30, 0.36, aa);
@@ -303,7 +335,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         // a gully grate: its slots steep parallax mapped, the view ray stepping
         // down past the bars into the dark of the gully below
         vec2 gst;
-        bool grate = half_ > 0.0 && pbrLoaded(PBR_DRAIN) && gullyAt(uv, half_, uintBitsToFloat(seed), (prm.z & 1u) != 0u, gst);
+        bool grate = half_ > 0.0 && deck == 0u && pbrLoaded(PBR_DRAIN) && gullyAt(uv, half_, uintBitsToFloat(seed), (prm.z & 1u) != 0u, gst);
         if (grate) {
             const int G = PBR_DRAIN * PBR_MAPS_PER_MATERIAL;
             float size = pbrTile(PBR_DRAIN).x, sg = uv.x > 0.0 ? -1.0 : 1.0;   // st.x runs against uv.x's sign, out from the kerb
@@ -479,7 +511,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
     vec3 diff = ambientLight(n, p.y - gBase) * ao;
     vec3 spec = vec3(0.0);
     cityLights(p, n, V, shin, specK, rough, diff, spec);
-    diff += neonBounce(w, p.y - gBase) * ao;
+    diff += neonBounce(w, p.y - gBase) * ao + lampPool * ao;
     if (rough >= 0.0) {
         // sky / haze reflection: rougher surfaces reflect closer to the normal
         float ndv = max(dot(n, V), 1e-4);

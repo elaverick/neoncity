@@ -177,10 +177,11 @@ and the freeways and trunk roads between those of North America (`src/plan/plan_
 Left over:
 - **Normal cities and towns** (the user's next step): smaller settlements fit the same machinery (a footprint, a
   relief, gates); the network would want local roads under the trunk roads, and placement round the megacities.
-- **Bridges, viaducts and tunnels.** Where the land is too rough for the grade, a road's cutting or embankment is
-  deep: over 30 m on 3% of the length, up to about 530 m, in mountain belts and up plateau escarpments
-  (`world_test` reports it). There the batter stops at 80 m wide, so the walls are steep. Raised roads and bridges
-  would take the deepest; canyons are already avoided (crossed only where shallow).
+- **Viaducts and tunnels.** Where the land is too rough for the grade, a road's cutting or embankment is
+  deep: over 30 m on 1% of the length, up to about 490 m, in mountain belts and up plateau escarpments
+  (`world_test` reports it). There the batter stops at 80 m wide, so the walls are steep. Viaducts and tunnels
+  would take the deepest; canyons are already avoided (crossed only where shallow). The rivers' and lakes'
+  bridges (W2c) are the only structures so far.
 - **Only the near ground is graded.** The roads are in the terrain at spacings up to 64 m (`PLAN_ROAD_LOD_SPACING`),
   so beyond about 4 km the paint lies on the bare ground's coarse levels, and the planet's patches don't draw roads
   at all. Lamp heads, poles, barriers, signs and traffic aren't modelled: the freeways' light is pools on the
@@ -195,7 +196,8 @@ Left over:
 - **Cities the cut leaves short.** About 50 cities lose 3% or more of a disc of their size to the coast and the
   mountains; 75 are grown, up to twice their radius. Lima keeps 71% (a strip between the Pacific and the
   Andes), Tokyo 90%. The cut reads the bake's 2.4 km samples, so narrow water (New York's Narrows) dips only
-  centimetres below the sea, and a road may cross it (bridges are to come). The steep cut's values (8% at mip 0,
+  centimetres below the sea, and a road may cross it on the ground (the bridges are only over the bake's rivers
+  and lakes). The steep cut's values (8% at mip 0,
   patches closed over 6 km, 2 km into it) were set on Los Angeles's map, not tuned city by city.
 - **Holes and islands.** The cut makes holes in a footprint where a range stands inside it (the San Gabriels in
   Los Angeles, the Santa Monica Mountains), and pieces beyond a range or a bay may join it only round the far
@@ -236,8 +238,26 @@ their beds fitted along each drainage tree and each lake's level (`tools/earth_s
 fades out within 1 km of the real water, the ground is carved to the water's floor outside the cities, and lakes cut
 the footprints 200 m back (W2a; see `data/earth/SOURCE.md`, "Runoff and the streams"). Left over:
 - **The water itself** isn't drawn: the channels and basins are empty.
-- **The roads between the cities** (W2c, next): water crossings costed and bridged. Until then those roads read the
-  ground without the beds (`terrain_height_dry_lod`), and where they cross a channel their embankment fills it.
+- **The roads between the cities' bridges** (W2c, `plan_roads.c` "Bridges", `src/city/road_bridges.c`): the routes
+  cost each river crossed (a kilometre of road and 20 m more for each metre of bridge) and keep out of the
+  lakes and the rivers' water; every crossing of a river or lake out in the land is a bridge, its profile raised
+  to clear the water, the ground under it left as the water's (340 on the Earth, 57 km of span). Left over:
+  - **Lakes block the routes**, so roads go round them: road 36 (a junction south of Lake Erie to one near
+    Toronto) runs 580 km for 342 straight, round the lake's east end. Big lakes the real roads cross on long
+    bridges or causeways (Lake Pontchartrain) would want a cost instead of a wall.
+  - **On a city's ground there are no bridges.** Inside a footprint and its belt (urban weight over 0) the
+    ground is the city's, which the roads don't move and the water carves no bed in, so a road crosses a river
+    there on the ground; a river crossing the belt in one of W2b's channels is filled where the road crosses it.
+  - **From afar.** Past VIEW_DISTANCE (1.9 km) the chunks don't draw the decks, and the road's paint lies on
+    the water's bed under where the deck is. The decks aren't in the proxies.
+  - **Plain decks.** A slab with parapets, wall piers evenly every 40 m at most whatever the ground under them
+    (up to 500 m tall where a road crosses a deep valley at its grade), no bearings, expansion joints,
+    abutment walls or lamp posts (the freeway's pools light the deck as they do the road). The deck's
+    asphalt is the city's, marked as the road; the walker stands on it and its parapets stop the walker.
+  - **Culverts.** Streams pass under the roads in the embankment's fill: there is no opening for them, and
+    with water drawn they would pond against it upstream.
+  - **Cost.** The routes read the water near their corridors and the bridges walk each crossing out: the
+    world builds about 0.7 s slower on 32 threads (5.5 to 6.1 s; 11.6 s on 8).
 - **Rivers through the cities** (W2b, `src/plan/plan_water.c`, `src/city/channels.c`): concrete channels straight
   across each neighbourhood, bridges at every arterial and boulevard. Left over:
   - **Confluences.** Where a tributary meets another river inside a neighbourhood, its channel ends at a wall under
