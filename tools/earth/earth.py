@@ -11,10 +11,11 @@ and the whole project is staged as one raw grid for the engine's bake tool (tool
     earth.py insert  <project> <edited.tif> [--feather N] [--layer height|hints] [--rewrite]
     earth.py check   <project>
     earth.py preview <project> <out.png> [--region lon0 lat0 lon1 lat1] [--width W]
-    earth.py stage   <project> <out.r16>     (and <out.r16>.hints and .water, if the project has them)
+    earth.py stage   <project> <out.r16>     (and <out.r16>.hints, .water and .runoff, if the project has them)
     earth.py cities  <GHS_UCDB_GLOBE_R2024A.gpkg> <list.csv> [--sha256 HEX]
     earth.py water   <HydroRIVERS_v10.shp> <HydroLAKES_polys_v10.shp> <project> [--min-discharge M3S]
                      [--min-lake KM2] [--tolerance M]
+    earth.py runoff  <HydroRIVERS_v10.shp> <project>
 
 The grid is fixed: EPSG:4326, 60" cells, pixel-is-area, 21600 x 10800, the north-west corner at
 90N 180W. Tiles are named by their south-west corner (height/N30_W120.tif spans 30N..60N,
@@ -22,7 +23,9 @@ The grid is fixed: EPSG:4326, 60" cells, pixel-is-area, 21600 x 10800, the north
 the sea floor as negative values and no nodata. The optional hints layer holds the same tiles at
 8 bits, three bands: R landform override (0 none, 1 plains, 2 hills, 3 mountains, 4 plateau),
 G detail roughness scale, B no-settlement mask. The optional water layer (water/*.gpkg) holds the
-major rivers as lines with a width and the lakes as polygons, from HydroSHEDS.
+major rivers as lines with a width and the lakes as polygons, from HydroSHEDS; the optional runoff
+(runoff/runoff.tif, 0.25 degrees, L/s/km2, from HydroRIVERS) sets how much water the derived
+streams (tools/earth_streams.c) carry.
 
 Run it with the source treated as untrusted data: `python -I tools/earth/earth.py ...`.
 """
@@ -633,6 +636,11 @@ def cmd_stage(args):
     wh = stage_water(project, water)
     if wh is None and os.path.exists(water):
         os.remove(water)
+    # The runoff, if the project has it (for earth_streams; the bake ignores it).
+    runoff = args.out + ".runoff"
+    rh = stage_runoff(project, runoff)
+    if rh is None and os.path.exists(runoff):
+        os.remove(runoff)
     origin = m["origin"]
     lines = [
         "format earth-stage-1",
@@ -660,6 +668,8 @@ def cmd_stage(args):
         lines += ["hints_file %s" % os.path.basename(hints), "hints_sha256 %s" % hh.hexdigest()]
     if wh:
         lines += ["water_file %s" % os.path.basename(water), "water_sha256 %s" % wh]
+    if rh:
+        lines += ["runoff_file %s" % os.path.basename(runoff), "runoff_sha256 %s" % rh]
     with open(args.out + ".txt", "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
     print("wrote %s (%d bytes)%s and %s.txt" % (args.out, WIDTH * HEIGHT * 2,
@@ -1178,6 +1188,130 @@ def cmd_water(args):
     print("wrote %d water tiles, %.1f MB" % (len(tiles), total / 1e6))
 
 
+# ----------------------------------------------------------------------------- runoff
+# How much water the land sheds, from HydroRIVERS: each reach's mean discharge less its tributaries'
+# is what its own catchment (CATCH_SKM) adds, never less than 0 (a reach that loses water to
+# evaporation adds nothing). Summed over the reaches whose box centres fall in each cell of a
+# RUNOFF_CELL grid (those draining at most RUNOFF_UPLAND; capped at RUNOFF_MAX), the runoff is the cell's added discharge over its catchment, in litres a second
+# per km2; a cell without reaches borrows its neighbours' mean, RUNOFF_FILL rounds out from the data,
+# and is NaN beyond (the sea, Antarctica: the engine's streams need runoff, so none rise there).
+# The engine's bake doesn't read it; tools/earth_streams.c does, through stage.
+
+RUNOFF = "runoff"
+RUNOFF_FILE = "runoff/runoff.tif"
+RUNOFF_CELL = 0.25             # degrees
+RUNOFF_FILL = 2                # rounds of borrowing from the neighbours
+RUNOFF_UPLAND = 1000.0         # km2: only reaches draining at most this (a big river's gain is its rounding)
+RUNOFF_MAX = 300.0             # L/s/km2: about 9.5 m of rain a year, the wettest real catchments'
+RUNOFF_MAGIC = b"NCRUNOF1"
+
+
+def shape_boxes(shp):
+    """Each record's shape type and bounding box (xmin, ymin, xmax, ymax), read without walking
+    the records one by one."""
+    o = shp.offsets + 8
+    kind = shp.shp[(o[:, None] + np.arange(4)).ravel()].reshape(-1, 4).copy().view("<i4").ravel()
+    box = shp.shp[(o[:, None] + 4 + np.arange(32)).ravel()].reshape(-1, 32).copy().view("<f8")
+    return kind, box
+
+
+def cmd_runoff(args):
+    project = Project(args.project)
+    stem = os.path.splitext(args.rivers)[0]
+    print("hashing sources ...", flush=True)
+    sources = {ext: checked_source(stem + ext) for ext in (".shp", ".shx", ".dbf")}
+    cols = dbf_columns(stem + ".dbf", ["HYRIV_ID", "NEXT_DOWN", "CATCH_SKM", "UPLAND_SKM", "DIS_AV_CMS"])
+    rid = cols["HYRIV_ID"].astype(np.int64)
+    nxt = cols["NEXT_DOWN"].astype(np.int64)
+    catch = cols["CATCH_SKM"].astype(np.float64)
+    q = cols["DIS_AV_CMS"].astype(np.float64)
+    shp = Shapefile(args.rivers)
+    if len(shp) != len(q):
+        fail(args.rivers + ": the shapes and the table differ in length")
+    kind, box = shape_boxes(shp)
+    order = np.argsort(rid)
+    down = nxt > 0
+    at = np.searchsorted(rid, nxt[down], sorter=order)
+    at = np.clip(at, 0, len(rid) - 1)
+    found = rid[order[at]] == nxt[down]
+    inflow = np.zeros(len(q))
+    np.add.at(inflow, order[at[found]], q[down][found])
+    added = np.maximum(0.0, q - inflow)
+    ok = (kind == 3) & (catch > 0.0) & (cols["UPLAND_SKM"].astype(np.float64) <= RUNOFF_UPLAND)
+    lon = 0.5 * (box[:, 0] + box[:, 2])
+    lat = 0.5 * (box[:, 1] + box[:, 3])
+    W, H = int(round(360.0 / RUNOFF_CELL)), int(round(180.0 / RUNOFF_CELL))
+    cx = np.clip(((lon + 180.0) / RUNOFF_CELL).astype(np.int64), 0, W - 1)
+    cy = np.clip(((90.0 - lat) / RUNOFF_CELL).astype(np.int64), 0, H - 1)
+    cell = (cy * W + cx)[ok]
+    qsum = np.bincount(cell, weights=added[ok], minlength=W * H)
+    asum = np.bincount(cell, weights=catch[ok], minlength=W * H)
+    r = np.full(W * H, np.nan)
+    have = asum > 0.0
+    r[have] = np.minimum(RUNOFF_MAX, 1000.0 * qsum[have] / asum[have])
+    r = r.reshape(H, W)
+    print("%d reaches, %d of them unmatched downstream; %d cells hold reaches" % (len(q), int((~found).sum()), int(have.sum())))
+    for _ in range(RUNOFF_FILL):
+        v = np.nan_to_num(r)
+        n = (~np.isnan(r)).astype(np.float64)
+        s, c = np.zeros_like(v), np.zeros_like(v)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dy or dx:
+                    sv = np.roll(v, dx, axis=1)
+                    sn = np.roll(n, dx, axis=1)
+                    if dy:   # rolled along the longitudes, never over the poles
+                        sv = np.roll(sv, dy, axis=0)
+                        sn = np.roll(sn, dy, axis=0)
+                        edge = 0 if dy > 0 else -1
+                        sv[edge], sn[edge] = 0.0, 0.0
+                    s += sv
+                    c += sn
+        fill = np.isnan(r) & (c > 0)
+        r[fill] = s[fill] / c[fill]
+    r = r.astype(np.float32)
+    valid = r[~np.isnan(r)]
+    print("runoff over %d cells: median %.1f, 90th percentile %.1f, max %.0f L/s/km2; %d cells (%.1f%%) under 1"
+          % (valid.size, np.median(valid), np.percentile(valid, 90), valid.max(), int((valid < 1.0).sum()),
+             100.0 * (valid < 1.0).mean()))
+    path = os.path.join(project.root, RUNOFF_FILE)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    profile = dict(driver="GTiff", dtype="float32", count=1, width=W, height=H, crs=CRS4326,
+                   transform=Affine(RUNOFF_CELL, 0.0, LON0, 0.0, -RUNOFF_CELL, LAT0), nodata=float("nan"),
+                   compress="deflate", predictor=3, tiled=True, blockxsize=256, blockysize=256)
+    with rasterio.open(path, "w", **profile) as ds:
+        ds.write(r[None])
+        ds.update_tags(unit="L/s/km2", source="HydroRIVERS v1.0 (Lehner & Grill 2013)")
+    project.manifest["runoff"] = {
+        "file": RUNOFF_FILE, "cell_deg": RUNOFF_CELL, "unit": "L/s/km2",
+        "method": "per cell: sum over reaches of max(0, DIS_AV_CMS less the tributaries') / sum of CATCH_SKM; "
+                  "reaches draining at most %g km2; at most %g; %d rounds of neighbour means into empty cells" % (RUNOFF_UPLAND, RUNOFF_MAX, RUNOFF_FILL),
+        "sources": {os.path.basename(stem): sources}}
+    project.save()
+    print("wrote %s (%d x %d, %.1f MB)" % (path, W, H, os.path.getsize(path) / 1e6))
+
+
+def stage_runoff(project, out):
+    """The runoff as earth_streams reads it, little-endian: "NCRUNOF1", u32 version 1, u32 width,
+    u32 height, f64 west longitude, f64 north latitude, f64 cell (degrees), then f32 L/s/km2 rows
+    north to south (NaN: no data). Returns its SHA-256, or None if the project has no runoff."""
+    spec = project.manifest.get("runoff")
+    if not spec:
+        return None
+    path = os.path.join(project.root, spec["file"])
+    if not os.path.isfile(path):
+        return None
+    with rasterio.open(path) as ds:
+        r = ds.read(1).astype("<f4")
+        t = ds.transform
+    h = hashlib.sha256()
+    with open(out, "wb") as f:
+        for b in (RUNOFF_MAGIC + struct.pack("<IIIddd", 1, r.shape[1], r.shape[0], t.c, t.f, t.a), r.tobytes()):
+            h.update(b)
+            f.write(b)
+    return h.hexdigest()
+
+
 def read_water(project):
     """Every river line and lake ring of the project's water tiles, in file and row order: a list
     of (kind, id, width, size, lon/lat array); kind 1 is a river (size its discharge, m3/s), kind 2 a
@@ -1295,6 +1429,11 @@ def main(argv=None):
     s.add_argument("--tolerance", type=float, default=WATER_TOLERANCE_M, metavar="M",
                    help="simplify the lines to within this, default %(default)s m")
     s.set_defaults(fn=cmd_water)
+
+    s = sub.add_parser("runoff", help="the land's runoff from HydroRIVERS, for the derived streams")
+    s.add_argument("rivers", help="HydroRIVERS_v10.shp (its .shx and .dbf beside it)")
+    s.add_argument("project")
+    s.set_defaults(fn=cmd_runoff)
 
     args = p.parse_args(argv)
     if args.cmd == "import":

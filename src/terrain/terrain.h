@@ -218,18 +218,37 @@ int    terrain_earth_land(TerrainDir p, TerrainEarthLand *out);
  * river's bank or a lake's shore, negative in the water; river, the distance
  * to the nearest river's centre line (the river whose bank is nearest), its
  * width (m) and its direction downstream there (unit, along the ground);
- * lake, 1 in a lake. Exact within `reach` of the water (the bake's, 2 km);
+ * lake, 1 in a lake. The rivers include the streams derived from the land
+ * (below) where they are loaded: stream is 1 when the nearest bank is a
+ * stream's, and bed its bed there (world Y; 1e30 for a real river, whose
+ * bed W2 sets). Exact within `reach` of the water (the bake's, 2 km);
  * beyond it, edge reads +-reach, river reads reach and width 0. Pure, about a
- * microsecond. Returns 0, everything far (1e30), with no water in the bake. */
+ * microsecond or two. Returns 0, everything far (1e30), with no water in the bake. */
 typedef struct TerrainEarthWater {
-    double     edge, river, width, reach;
+    double     edge, river, width, reach, bed;
     TerrainDir flow;
-    int        lake;
+    int        lake, stream;
 } TerrainEarthWater;
 int    terrain_earth_water(TerrainDir p, TerrainEarthWater *out);
 /* Calls fn for every segment of the water (its ends, the river's width or 0,
- * and whether it is a lake's shore), for maps and checks; returns how many. */
-size_t terrain_earth_water_segments(void (*fn)(void *ctx, TerrainDir a, TerrainDir b, double width, int lake), void *ctx);
+ * and its kind: 1 a river, 2 a lake's shore, 3 a stream), for maps and
+ * checks; returns how many. */
+size_t terrain_earth_water_segments(void (*fn)(void *ctx, TerrainDir a, TerrainDir b, double width, int kind), void *ctx);
+/* The streams: the small streams of the land, derived from it by
+ * tools/earth_streams.c (the Earth plus the procedural land with no
+ * settlement near, TERRAIN_WILD_EDGE) and kept beside the bake
+ * (earth.streams for earth.bake). They carry at least 0.5 m3/s (their
+ * catchment times the local runoff), run down to a real river, a lake, the
+ * coast or each other, and each point has its bed, which never rises
+ * downstream. terrain_earth_load loads them with the bake; this loads them
+ * from `path` (NULL: beside the bake; "": none, dropping any loaded),
+ * refusing them, with a warning, if another bake made them or the land has
+ * changed since. Returns 1 when loaded. */
+int      terrain_earth_load_streams(const char *path);
+/* The streams' points, and segment k (from point k to k + 1, if one runs
+ * there): its ends, their beds (world Y) and flows (m3/s). */
+uint32_t terrain_earth_stream_points(void);
+int      terrain_earth_stream(uint32_t k, TerrainDir *a, TerrainDir *b, double *bed_a, double *bed_b, double *flow_a, double *flow_b);
 
 /* Where the sea will be, at world (x, z) or at a direction: there is no water
  * yet, but when it comes it will cover only where this is at most 0. It is

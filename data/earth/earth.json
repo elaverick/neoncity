@@ -119,5 +119,18 @@
         ".dbf": "7155f56b9336c963c68f0bee690c0268076e2155ac0fdc0e272d2bc368687887"
       }
     }
+  },
+  "runoff": {
+    "file": "runoff/runoff.tif",
+    "cell_deg": 0.25,
+    "unit": "L/s/km2",
+    "method": "per cell: sum over reaches of max(0, DIS_AV_CMS less the tributaries') / sum of CATCH_SKM; reaches draining at most 1000 km2; at most 300; 2 rounds of neighbour means into empty cells",
+    "sources": {
+      "HydroRIVERS_v10": {
+        ".shp": "43ac4438578419fe3a4a70e718639f99ac3c6e6d4abdbaec905e96b30a70fddf",
+        ".shx": "551006f8eb4a6290b93720520d09210a3103c1d4e4271a0fa1c98f157da1355f",
+        ".dbf": "c71c46b2b6beedcb3b76ffd99a6e1b43eac5bcd41dddbb011098873eebc86b36"
+      }
+    }
   }
 }

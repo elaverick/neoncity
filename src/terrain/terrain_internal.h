@@ -160,6 +160,11 @@
 #define TERRAIN_LAND_TOP_M  (TERRAIN_BASE_M + TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M)
 #define TERRAIN_LAND_DEEP_M (TERRAIN_BASE_M + TERRAIN_HILLS_M + TERRAIN_CANYON_DEEP_M)
 
+/* An edge measure past every rise (E, C and the Earth's detail all 1): the
+ * land as it would be with no settlement near, which the streams are
+ * derived from (terrain_earth_load_streams). */
+#define TERRAIN_WILD_EDGE 1.0e9
+
 /* The urban field before blending, unit amplitude, [-1, 1]. */
 double terrain_urban_shape(double x, double z);
 /* The land at direction d and `spacing`, given plan_city_edge at its place

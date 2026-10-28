@@ -67,9 +67,10 @@ Then, with `py` standing for `tools/earth/.venv/Scripts/python -I tools/earth/ea
 | `py extract data/earth <lon0> <lat0> <lon1> <lat1> out.tif` | one GeoTIFF of a region to edit in QGIS, Photoshop or Gaea (`--layer hints` for the hint layer) |
 | `py insert data/earth edited.tif [--feather N]` | writes the edit back into the tiles it covers; nodata pixels keep their values; only changed tiles are rewritten |
 | `py preview data/earth out.png [--region …] [--width W] [--exaggerate X]` | a hillshade with the sea floor tinted blue |
-| `py stage data/earth out.r16` | the whole grid as raw little-endian int16 plus `out.r16.txt`, the input of `tools/earth_bake.c`; with any `hints/` tile, the hints too as `out.r16.hints` (uint8 × 3 a cell, 700 MB), and with `water/` the rivers' and lakes' lines as `out.r16.water` (240 MB), both named in the sidecar |
+| `py stage data/earth out.r16` | the whole grid as raw little-endian int16 plus `out.r16.txt`, the input of `tools/earth_bake.c`; with any `hints/` tile, the hints too as `out.r16.hints` (uint8 × 3 a cell, 700 MB), with `water/` the rivers' and lakes' lines as `out.r16.water` (240 MB), and with `runoff/` the runoff as `out.r16.runoff` (4 MB, for `tools/earth_streams.c`), each named in the sidecar |
 | `py cities <ucdb.gpkg> <list.csv> [--sha256 HEX]` | adds each listed city's GHSL urban centre (id, name, area, population) to the city list, in place ("City sizes", below) |
 | `py water <HydroRIVERS_v10.shp> <HydroLAKES_polys_v10.shp> data/earth [--min-discharge 5] [--min-lake 1] [--tolerance 100]` | the major rivers and the lakes as the project's `water/` tiles ("Rivers and lakes", below; about 5 minutes) |
+| `py runoff <HydroRIVERS_v10.shp> data/earth` | the land's runoff, `runoff/runoff.tif` ("Runoff and the streams", below; a few seconds) |
 
 The grid is fixed at EPSG:4326, 60", pixel-is-area, 21600 × 10800 from 90°N 180°W. A tile is named
 by its south-west corner: `height/N30_W120.tif` spans 30°N..60°N, 120°W..90°W. Elevations are whole
@@ -230,3 +231,44 @@ lake, `elevation` m). Open them in QGIS and edit them there: add, move or delete
 change a width. The tile is only a convention: `stage` reads every feature of every file, so a new river
 can go in whichever file is open. The lines through the lakes are HydroRIVERS' own flow paths; they are
 under water anyway.
+
+## Runoff and the streams
+
+The small streams below the project's rivers are derived, not imported: `tools/earth_streams.c` routes
+the water over the land the engine draws and writes `build/earth.streams` beside the bake (a build
+output, never committed; `cmake --build build --target earth` stages, bakes and then derives them).
+Decided with the user on 2026-10-28: derived offline after the bake, streams carrying at least
+0.5 m³/s, on a 500 m grid.
+
+How much water the land sheds comes from HydroRIVERS (the same download as above): `py runoff` takes
+each reach's mean discharge less its tributaries' (what its own catchment, `CATCH_SKM`, adds; never
+below 0) and sums it over the reaches draining at most 1,000 km² whose box centres fall in each 0.25°
+cell, over their catchments: litres a second per km², capped at 300. Empty cells borrow their
+neighbours' mean, two rounds out from the data; beyond that (the sea, Antarctica) the layer is NaN and
+no stream rises there. It is `runoff/runoff.tif` (1440 × 720 float32, 1 MB, Git LFS), staged as
+`out.r16.runoff`. The median land cell sheds 6.3 L/s/km², the 90th percentile 31; the Sahara and the
+Atacama 0, Los Angeles 6, London 9, the Amazon 37, Seattle 46, Mumbai 68.
+
+`earth_streams <bake> <out.streams> --stage <stage.r16>` reads the land with no settlement near
+(`terrain_land_parts` at `TERRAIN_WILD_EDGE`: the Earth, the region's landforms and canyons) on each
+cube face's equal-angle grid at 500 m, with a 30 km halo past the face's edges. Sea is where
+`terrain_shore` is below 0; water where the bake's rivers and lakes come within half a cell (250 m).
+A priority flood from the sea, the water and the grid's border gives every land cell a neighbour to
+drain to and a level that never rises downstream (a pit fills to its spill); each cell sheds its
+area times the runoff, summed down the drainage. A stream is every cell carrying at least 0.5 m³/s.
+Its links run from each head and junction to the next junction, the sea (moved to the coast), the
+water (moved to its edge) or the next face (joined to that face's start), corner-cut twice and thinned
+to 60 m across and 2 m of bed. Each point keeps its bed (the flood's level, world Y) and its flow; the
+width is 7·√flow m, as the rivers'. The file repeats the bake's water layout (`tools/earth_water.c`,
+shared with `earth_bake`) after a header holding the bake's stage checksum and the land at 24 probes;
+the engine refuses the file, with a warning, if either has changed (`terrain_earth_load_streams`).
+
+On the full project (2026-10-28): 918,419 links, 8.2 million points, 6.0 million km of stream, 299 MB,
+4.6 minutes on 32 threads (about 6 GB a face; the flood is single-threaded, 60 s on the busiest face).
+Of the links' ends, 516,677 meet another link, 29,045 the sea and 372,079 the project's water; 371
+cross a face seam into the next face's start and 247 find none (the faces drained differently there).
+Against the land at full detail the bed lies 0.5 m under it at the median, 45 m at the 90th
+percentile and 116 m at the 99th (the notches the channel must cut, where finer ridges cross a path);
+34% of the streams' length crosses pits the flood filled, where the bed stands above the land (17.5 m
+on average). `terrain_test --earth <bake> --streams <file>` checks them (ctest runs it on the test
+bake's, derived at 8 km), and `terrain_test --water-map` draws them in teal.

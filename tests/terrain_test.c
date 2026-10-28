@@ -1590,19 +1590,20 @@ static int landform_map(const char *path, int W) {
  * water as an equirectangular map, px pixels across, of the world or of a
  * region: the lakes (where each pixel's centre lies in one) and the lakes'
  * shores blue, the rivers drawn as lines, darker and heavier the wider they
- * are, over the Earth's shading (as --earth-map, the sea floor grey). */
-typedef struct WaterMap { uint8_t *img; float *river, *shore; int W, H; double lon0, lat0, lon1, lat1, sp; size_t rivers, shores; } WaterMap;
+ * are, and the streams (with the bake's streams beside it) teal, over the Earth's shading (as --earth-map, the sea floor grey). */
+typedef struct WaterMap { uint8_t *img; float *river, *shore, *stream; int W, H; double lon0, lat0, lon1, lat1, sp; size_t rivers, shores, streams; } WaterMap;
 
 /* Each pixel keeps its strongest line of each kind, so a crowd of small rivers reads as faint as one. */
-static void water_plot(WaterMap *m, double x, double y, int lake, float a) {
+static void water_plot(WaterMap *m, double x, double y, int kind, float a) {
     int i = (int)floor(x), j = (int)floor(y);
     if (i < 0 || j < 0 || i >= m->W || j >= m->H) return;
-    float *v = (lake ? m->shore : m->river) + (size_t)j * m->W + i;
+    float *v = (kind == 2 ? m->shore : kind == 3 ? m->stream : m->river) + (size_t)j * m->W + i;
     if (a > *v) *v = a;
 }
 
-static void water_line(void *ctx, TerrainDir a, TerrainDir b, double width, int lake) {
+static void water_line(void *ctx, TerrainDir a, TerrainDir b, double width, int kind) {
     WaterMap *m = (WaterMap *)ctx;
+    int lake = kind == 2;
     double la0, lo0, la1, lo1;
     terrain_dir_latlon(a, &la0, &lo0);
     terrain_dir_latlon(b, &la1, &lo1);
@@ -1616,10 +1617,10 @@ static void water_line(void *ctx, TerrainDir a, TerrainDir b, double width, int 
     int steps = (int)ceil(2.0 * fmax(fabs(x1 - x0), fabs(y1 - y0))) + 1;
     for (int s = 0; s <= steps; ++s) {
         double t = (double)s / steps, x = x0 + t * (x1 - x0), y = y0 + t * (y1 - y0);
-        water_plot(m, x, y, lake, a8);
+        water_plot(m, x, y, kind, a8);
         if (heavy) { water_plot(m, x + 1.0, y, 0, a8); water_plot(m, x, y + 1.0, 0, a8); }
     }
-    if (lake) m->shores++; else m->rivers++;
+    if (lake) m->shores++; else if (kind == 3) m->streams++; else m->rivers++;
 }
 
 static int water_map(const char *path, int W, double lon0, double lat0, double lon1, double lat1) {
@@ -1629,11 +1630,11 @@ static int water_map(const char *path, int W, double lon0, double lat0, double l
     int H = (int)ceil(W * (lat1 - lat0) / ((lon1 - lon0) * fmax(cos(mid * PI_D / 180.0), 0.2)));
     if (lon1 - lon0 >= 359.0) H = (int)ceil(W * (lat1 - lat0) / (lon1 - lon0));
     double sp = (lon1 - lon0) / W * PI_D / 180.0 * PLANET_RADIUS;
-    WaterMap m = { (uint8_t *)malloc((size_t)W * H * 3), (float *)calloc((size_t)W * H, sizeof(float)), (float *)calloc((size_t)W * H, sizeof(float)),
-                   W, H, lon0, lat0, lon1, lat1, sp, 0, 0 };
+    WaterMap m = { (uint8_t *)malloc((size_t)W * H * 3), (float *)calloc((size_t)W * H, sizeof(float)), (float *)calloc((size_t)W * H, sizeof(float)), (float *)calloc((size_t)W * H, sizeof(float)),
+                   W, H, lon0, lat0, lon1, lat1, sp, 0, 0, 0 };
     double relief = 60.0 * pow(sp / 14000.0, 0.7);   /* the shading's strength, as --earth-map's on the world */
     double *hgt = (double *)malloc(sizeof(double) * (size_t)(W + 1) * (H + 1));
-    if (!m.img || !m.river || !m.shore || !hgt) return 1;
+    if (!m.img || !m.river || !m.shore || !m.stream || !hgt) return 1;
     for (int j = 0; j <= H; ++j)
         for (int i = 0; i <= W; ++i)
             hgt[(size_t)j * (W + 1) + i] = terrain_earth_height(terrain_latlon_dir(lat1 - (lat1 - lat0) * j / H, lon0 + (lon1 - lon0) * i / W), sp);
@@ -1655,11 +1656,12 @@ static int water_map(const char *path, int W, double lon0, double lat0, double l
             for (int q = 0; q < 3; ++q) m.img[px + q] = (uint8_t)clampf(col[q] * shade * 255.0f, 0.0f, 255.0f);
         }
     terrain_earth_water_segments(water_line, &m);
-    static const float shorecol[3] = { 0.15f, 0.35f, 0.85f }, rivercol[3] = { 0.05f, 0.2f, 0.75f };
+    static const float shorecol[3] = { 0.15f, 0.35f, 0.85f }, rivercol[3] = { 0.05f, 0.2f, 0.75f }, streamcol[3] = { 0.0f, 0.55f, 0.6f };
     for (size_t k = 0; k < (size_t)W * H; ++k)
         for (int q = 0; q < 3; ++q) {
             float v = m.img[3 * k + q];
             v += m.shore[k] * (shorecol[q] * 255.0f - v);
+            v += m.stream[k] * (streamcol[q] * 255.0f - v);
             v += m.river[k] * (rivercol[q] * 255.0f - v);
             m.img[3 * k + q] = (uint8_t)clampf(v, 0.0f, 255.0f);
         }
@@ -1668,11 +1670,12 @@ static int water_map(const char *path, int W, double lon0, double lat0, double l
     fprintf(fp, "P6\n%d %d\n255\n", W, H);
     fwrite(m.img, 1, (size_t)W * H * 3, fp);
     fclose(fp);
-    printf("water map, %d x %d (%.1f km a pixel): %zu river segments, %zu shore segments drawn, %.2f%% of pixels in lakes\n",
-           W, H, sp / 1000.0, m.rivers, m.shores, 100.0 * wet / ((double)W * H));
+    printf("water map, %d x %d (%.1f km a pixel): %zu river, %zu stream and %zu shore segments drawn, %.2f%% of pixels in lakes\n",
+           W, H, sp / 1000.0, m.rivers, m.streams, m.shores, 100.0 * wet / ((double)W * H));
     free(m.img);
     free(m.river);
     free(m.shore);
+    free(m.stream);
     free(hgt);
     return 0;
 }
@@ -1686,10 +1689,10 @@ static TerrainDir pnudge(Rng *r, TerrainDir p, double metres);
 
 typedef struct WaterSegs { TerrainDir a[4096], b[4096]; double width[4096]; int lake[4096], n; size_t seen; Rng *r; } WaterSegs;
 
-static void water_keep(void *ctx, TerrainDir a, TerrainDir b, double width, int lake) {
+static void water_keep(void *ctx, TerrainDir a, TerrainDir b, double width, int kind) {
     WaterSegs *s = (WaterSegs *)ctx;
     int k = s->n < 4096 ? s->n++ : (int)(rng_u32(s->r) % (s->seen + 1));   /* reservoir sampling */
-    if (k < 4096) { s->a[k] = a; s->b[k] = b; s->width[k] = width; s->lake[k] = lake; }
+    if (k < 4096) { s->a[k] = a; s->b[k] = b; s->width[k] = width; s->lake[k] = kind == 2; }
     s->seen++;
 }
 
@@ -1777,6 +1780,99 @@ static void test_earth_water(Rng *r) {
     printf("water: %zu segments; %d sampled (%d lakes' shores): %d not water along the middle, %d steeper than 1, %d sign flips away from the edge; %.2f us a query\n",
            all, segs.n, lakes, dry, steep, flips, us);
     CHECK(dry == 0 && steep == 0 && flips == 0, "the water's segments and edge disagree (%d dry, %d steep, %d flips)", dry, steep, flips);
+}
+
+/* The streams (terrain_test --earth <bake> --streams <file>): they load
+ * against their bake; their beds never rise and their flows never fall
+ * downstream, within a link and where one runs into the next; every segment
+ * is water along its middle, a stream's or nearer water's; and how far the
+ * land at full detail stands above or below the bed along them, which W2's
+ * channels will have to cut or fill, is reported. */
+static int point_less(const void *a, const void *b) {
+    const double *p = (const double *)a, *q = (const double *)b;
+    for (int k = 0; k < 3; ++k) if (p[k] != q[k]) return p[k] < q[k] ? -1 : 1;
+    return 0;
+}
+
+static void test_streams(Rng *r, const char *path) {
+    if (!terrain_earth_loaded()) { CHECK(0, "--streams needs a bake (--earth)"); return; }
+    if (!terrain_earth_load_streams(path)) { CHECK(0, "the streams %s didn't load", path); return; }
+    uint32_t V = terrain_earth_stream_points();
+    TerrainDir a, b;
+    double ba, bb, fa, fb;
+    /* the links: runs of segments; each start (a point no segment runs into) and each end */
+    double *starts = (double *)malloc(sizeof(double) * 4 * (V + 1));
+    size_t ns = 0, segs = 0, rise = 0, thin = 0, links = 0, ends = 0, joined = 0, join_rise = 0;
+    int prev = 0;
+    for (uint32_t k = 0; k < V; ++k) {
+        int seg = terrain_earth_stream(k, &a, &b, &ba, &bb, &fa, &fb);
+        if (seg) {
+            ++segs;
+            rise += bb > ba + 1e-3;
+            thin += fb < fa - 1e-3;
+            if (!prev) { starts[4 * ns] = a.x; starts[4 * ns + 1] = a.y; starts[4 * ns + 2] = a.z; starts[4 * ns + 3] = ba; ++ns; ++links; }
+        }
+        prev = seg;
+    }
+    qsort(starts, ns, 4 * sizeof(double), point_less);
+    prev = 0;
+    TerrainDir last = { 0, 0, 0 };
+    double last_bed = 0.0;
+    for (uint32_t k = 0; k <= V; ++k) {
+        int seg = k < V && terrain_earth_stream(k, &a, &b, &ba, &bb, &fa, &fb);
+        if (!seg && prev) {   /* the link ended at last: does another start there? */
+            ++ends;
+            double key[4] = { last.x, last.y, last.z, 0.0 };
+            const double *hit = (const double *)bsearch(key, starts, ns, 4 * sizeof(double), point_less);
+            if (hit) { ++joined; join_rise += hit[3] > last_bed + 1e-3; }
+        }
+        if (seg) { last = b; last_bed = bb; }
+        prev = seg;
+    }
+    free(starts);
+    printf("streams: %u points, %zu links, %zu segments; %zu ends run into another link (%zu of them into a higher start), %zu at the water, the coast or loose\n",
+           V, links, segs, joined, join_rise, ends - joined);
+    CHECK(segs > 0, "the streams have no segments");
+    CHECK(rise == 0 && thin == 0, "%zu segments' beds rise and %zu flows fall downstream", rise, thin);
+    CHECK(join_rise * 100 <= joined + 100, "%zu of %zu links run into a higher start", join_rise, joined);
+
+    /* sampled segments: water along the middle, and the land against the bed */
+    enum { SAMPLES = 4000 };
+    static double cut[SAMPLES];
+    int n = 0, dry = 0, notstream = 0;
+    double fill_max = 0.0;
+    for (int t = 0; t < SAMPLES * 4 && n < SAMPLES; ++t) {
+        uint32_t k = rng_u32(r) % V;
+        if (!terrain_earth_stream(k, &a, &b, &ba, &bb, &fa, &fb)) continue;
+        double s = rng_float(r);
+        TerrainDir m = { a.x + s * (b.x - a.x), a.y + s * (b.y - a.y), a.z + s * (b.z - a.z) };
+        double ml = sqrt(pdot(m, m)), lift;
+        m.x /= ml; m.y /= ml; m.z /= ml;
+        TerrainEarthWater w;
+        terrain_earth_water(m, &w);
+        /* the query measures to the chord's nearest point taken out to the sphere: a long segment's arc strays from it by 5e-5 of its length */
+        double slack = 1.0 + 5e-5 * pdist(a, b) * PLANET_RADIUS;
+        if (w.edge > slack - 0.5 * fmax(1.0, 7.0 * sqrt(fa))) {
+            if (dry++ < 5) printf("  dry: edge %.1f river %.1f width %.0f stream %d lake %d; segment %.0f m, flow %.1f\n", w.edge, w.river, w.width, w.stream, w.lake, pdist(a, b) * PLANET_RADIUS, fa);
+        }
+        if (w.stream && fabs(w.bed - (ba + s * (bb - ba))) > 0.5 + fabs(ba - bb)) notstream++;
+        double h = terrain_land_parts(m, TERRAIN_WILD_EDGE, 0.0, &lift), bed = ba + s * (bb - ba);
+        cut[n++] = h - bed;
+        fill_max = fmax(fill_max, bed - h);
+    }
+    for (int i = 1; i < n; ++i) {   /* sorted, for the percentiles */
+        double v = cut[i];
+        int j = i;
+        while (j > 0 && cut[j - 1] > v) { cut[j] = cut[j - 1]; --j; }
+        cut[j] = v;
+    }
+    int under = 0;
+    for (int i = 0; i < n; ++i) under += cut[i] < -2.0;
+    printf("streams: %d sampled points: land over the bed %.1f m at the median, %.1f at the 90th percentile, %.1f at the 99th, %.0f at most; "
+           "%.1f%% more than 2 m under it (pits the flood filled, %.0f m at most); %d not water, %d with another bed\n",
+           n, cut[n / 2], cut[n * 9 / 10], cut[n * 99 / 100], cut[n - 1], 100.0 * under / n, fill_max, dry, notstream);
+    CHECK(dry == 0, "%d sampled points of the streams aren't water", dry);
+    CHECK(notstream == 0, "%d sampled points read another stream's bed", notstream);
 }
 
 /* A direction about `metres` off p, in a random direction over the sphere. */
@@ -2059,6 +2155,7 @@ int main(int argc, char **argv) {
     if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
     if (argc > 2 && strcmp(argv[1], "--earth-map") == 0) return earth_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
     if (argc > 2 && strcmp(argv[1], "--landform-map") == 0) return landform_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
+    if (argc > 2 && strcmp(argv[1], "--streams") == 0) { test_streams(&r, argv[2]); return g_failures != 0; }
     if (argc > 2 && strcmp(argv[1], "--water-map") == 0) {
         if (argc > 7) return water_map(argv[2], atoi(argv[3]), atof(argv[4]), atof(argv[5]), atof(argv[6]), atof(argv[7]));
         return water_map(argv[2], argc > 3 ? atoi(argv[3]) : 2880, -180.0, -90.0, 180.0, 90.0);

@@ -338,8 +338,8 @@ endif()
 # Bakes the Earth project's staged grid (tools/earth/earth.py stage) onto the six cube
 # faces the engine reads (tools/earth_bake.c, data/earth/SOURCE.md). It links the
 # cube-sphere alone, so its directions are the engine's bit for bit.
-add_executable(earth_bake tools/earth_bake.c src/terrain/terrain_cube.c src/core/thread.c)
-target_include_directories(earth_bake PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
+add_executable(earth_bake tools/earth_bake.c tools/earth_water.c src/terrain/terrain_cube.c src/core/thread.c)
+target_include_directories(earth_bake PRIVATE ${SRC_DIRS} tools ${stb_SOURCE_DIR})
 if(MSVC)
   target_compile_options(earth_bake PRIVATE /W3 /wd4996)
 else()
@@ -350,6 +350,25 @@ else()
 endif()
 # The committed test bake (--size 256, recognisably Earth) reads back whole.
 add_test(NAME earth_bake_reads COMMAND earth_bake --info ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake)
+# Derives the land's small streams from a bake and the procedural land (tools/earth_streams.c),
+# beside the bake as earth.streams. It links the generator, whose land it reads.
+add_executable(earth_streams tools/earth_streams.c tools/earth_water.c ${GEN_SOURCES})
+target_include_directories(earth_streams PRIVATE ${SRC_DIRS} tools)
+target_compile_definitions(earth_streams PRIVATE NEONCITY_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets")
+if(MSVC)
+  target_compile_options(earth_streams PRIVATE /W3 /wd4996)
+else()
+  target_link_libraries(earth_streams PRIVATE m)
+  if(UNIX)
+    target_link_libraries(earth_streams PRIVATE pthread)
+  endif()
+endif()
+# The streams of the test bake on a coarse grid, read back and checked by terrain_test.
+add_test(NAME earth_streams_derive COMMAND earth_streams ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake
+         ${CMAKE_BINARY_DIR}/earth_test.streams --runoff-const 10 --cell 8000 --min-flow 20 --halo 80000 --tolerance 800)
+add_test(NAME terrain_rules_streams COMMAND terrain_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake
+         --streams ${CMAKE_BINARY_DIR}/earth_test.streams)
+set_tests_properties(terrain_rules_streams PROPERTIES DEPENDS earth_streams_derive)
 # `cmake --build build --target earth` stages the project and bakes it to build/earth.bake,
 # with the tool's virtual environment (tools/earth/.venv) or else a python3 on the PATH;
 # without either, run the two steps by hand (SOURCE.md). Not part of the default build.
@@ -363,7 +382,7 @@ if(NOT EXISTS ${EARTH_PY})
 endif()
 if(EARTH_PY)
   file(GLOB EARTH_TILES ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/height/*.tif ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/hints/*.tif
-                          ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/water/*.gpkg)
+                          ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/water/*.gpkg ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/runoff/*.tif)
   add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/earth.r16 ${CMAKE_BINARY_DIR}/earth.r16.txt
     COMMAND ${EARTH_PY} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/earth/earth.py stage ${CMAKE_CURRENT_SOURCE_DIR}/data/earth ${CMAKE_BINARY_DIR}/earth.r16
     DEPENDS ${EARTH_TILES} ${CMAKE_CURRENT_SOURCE_DIR}/data/earth/earth.json ${CMAKE_CURRENT_SOURCE_DIR}/tools/earth/earth.py
@@ -372,7 +391,11 @@ if(EARTH_PY)
     COMMAND earth_bake ${CMAKE_BINARY_DIR}/earth.r16 ${CMAKE_BINARY_DIR}/earth.bake
     DEPENDS earth_bake ${CMAKE_BINARY_DIR}/earth.r16
     COMMENT "Baking the Earth" VERBATIM)
-  add_custom_target(earth DEPENDS ${CMAKE_BINARY_DIR}/earth.bake)
+  add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/earth.streams
+    COMMAND earth_streams ${CMAKE_BINARY_DIR}/earth.bake ${CMAKE_BINARY_DIR}/earth.streams --stage ${CMAKE_BINARY_DIR}/earth.r16
+    DEPENDS earth_streams ${CMAKE_BINARY_DIR}/earth.bake ${CMAKE_BINARY_DIR}/earth.r16
+    COMMENT "Deriving the Earth's streams" VERBATIM)
+  add_custom_target(earth DEPENDS ${CMAKE_BINARY_DIR}/earth.bake ${CMAKE_BINARY_DIR}/earth.streams)
 endif()
 
 # --- Game ---------------------------------------------------------------------
