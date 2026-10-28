@@ -260,6 +260,13 @@ the footprints 200 m back (W2a; see `data/earth/SOURCE.md`, "Runoff and the stre
     world builds about 0.7 s slower on 32 threads (5.5 to 6.1 s; 11.6 s on 8).
 - **Rivers through the cities** (W2b, `src/plan/plan_water.c`, `src/city/channels.c`): concrete channels straight
   across each neighbourhood, bridges at every arterial and boulevard. Left over:
+  - **Storm-drain banks** (the user's request, 2026-10-28). The channels should read more like storm drains, with
+    banked (sloping) sides rather than sheer walls: the walls, the floor's width, the ground's cut
+    (`channel_cut`), the parapets and the walker's barriers all follow from the cross-section.
+  - **Dead ends at the banks** (the user's request, 2026-10-28). Only arterials and boulevards bridge a channel, so
+    many local streets end at its wall, and a lot of them look unnatural. Review how roads cross the rivers in the
+    cities (more bridges, or streets turned to run along the bank), and have the blocks cap a street's end with a
+    building, so there is a reason there is no bridge there.
   - **Confluences.** Where a tributary meets another river inside a neighbourhood, its channel ends at a wall under
     the last bridge before it (a culvert, in effect), not in a junction with the other's.
   - **Shallow crossings.** A river crossing a road at a shallow angle makes a long deck (90 m at one near the LA spawn);
