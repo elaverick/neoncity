@@ -1,8 +1,9 @@
 # Earth source data
 
 The planet's large-scale shape comes from a real elevation model. This folder holds the
-editable project (`earth.json`, `height/*.tif` tiles, optional `hints/`) that `tools/earth/earth.py`
-writes from the source below. The `.tif` tiles are stored with Git LFS (`.gitattributes`); the
+editable project (`earth.json`, `height/*.tif` tiles, optional `hints/`, and the rivers and lakes in
+`water/*.gpkg`) that `tools/earth/earth.py` writes from the sources below. The `.tif` tiles and the
+`.gpkg` water tiles are stored with Git LFS (`.gitattributes`); the
 engine's bake (`earth.bake`) is a build output and is never committed.
 
 ## Source
@@ -66,8 +67,9 @@ Then, with `py` standing for `tools/earth/.venv/Scripts/python -I tools/earth/ea
 | `py extract data/earth <lon0> <lat0> <lon1> <lat1> out.tif` | one GeoTIFF of a region to edit in QGIS, Photoshop or Gaea (`--layer hints` for the hint layer) |
 | `py insert data/earth edited.tif [--feather N]` | writes the edit back into the tiles it covers; nodata pixels keep their values; only changed tiles are rewritten |
 | `py preview data/earth out.png [--region …] [--width W] [--exaggerate X]` | a hillshade with the sea floor tinted blue |
-| `py stage data/earth out.r16` | the whole grid as raw little-endian int16 plus `out.r16.txt`, the input of `tools/earth_bake.c`; with any `hints/` tile, the hints too as `out.r16.hints` (uint8 × 3 a cell, 700 MB), named in the sidecar |
+| `py stage data/earth out.r16` | the whole grid as raw little-endian int16 plus `out.r16.txt`, the input of `tools/earth_bake.c`; with any `hints/` tile, the hints too as `out.r16.hints` (uint8 × 3 a cell, 700 MB), and with `water/` the rivers' and lakes' lines as `out.r16.water` (240 MB), both named in the sidecar |
 | `py cities <ucdb.gpkg> <list.csv> [--sha256 HEX]` | adds each listed city's GHSL urban centre (id, name, area, population) to the city list, in place ("City sizes", below) |
+| `py water <HydroRIVERS_v10.shp> <HydroLAKES_polys_v10.shp> data/earth [--min-discharge 5] [--min-lake 1] [--tolerance 100]` | the major rivers and the lakes as the project's `water/` tiles ("Rivers and lakes", below; about 5 minutes) |
 
 The grid is fixed at EPSG:4326, 60", pixel-is-area, 21600 × 10800 from 90°N 180°W. A tile is named
 by its south-west corner: `height/N30_W120.tif` spans 30°N..60°N, 120°W..90°W. Elevations are whole
@@ -106,7 +108,11 @@ same size gives the same bytes whatever the thread count; the full bake is 319 M
 on 32 threads. `--info <bake>` prints the header, the per-mip table and a seam check (each apron sample
 against the face it lies over); `--dump-face <k|all> <bake> out.png [--mip M]` draws a face, or the six
 as a 3 × 2 net, shaded, the sea floor blue. `tests/data/earth_test.bake` is the real project at
-`--size 256` (2.8 MB), for ctest and the engine's tests.
+`--size 256` with the big waters only (5.9 MB), for ctest and the engine's tests:
+
+```
+build/earth_bake build/earth.r16 tests/data/earth_test.bake --size 256 --water-min-discharge 1000 --water-min-lake 500 --water-tolerance 2000
+```
 
 After the mips the bake (format version 2) carries a landform grid on the first mip at least 8 km a
 sample (mip 2, 1024 a side, at N = 4096; mip 0 in the test bake): per sample, the relief (the range of
@@ -118,6 +124,16 @@ relief makes mountains, some hills, high level ground plateaus, low level ground
 ridges run along the strike; and where the data already carries the relief the procedural ridges are
 scaled down. It adds about 2 s and 25 MB to the full bake. `terrain_test --landform-map out.ppm [px]`
 draws the landforms the bake gives the whole planet.
+
+Last (format version 3) comes the water: the rivers' lines and the lakes' rings as runs of points
+(directions in f32, each river point with its width), and per face 1024 × 1024 buckets (9.8 km at a
+face's centre) listing every segment within 2 km (plus a river's half width) of them, with whether each
+bucket's centre lies in a lake. The engine measures the exact distance to the lines near a point
+(`terrain_earth_water` in `src/terrain/terrain.h`: the signed distance to the water's edge, the nearest
+river's centre line, width and direction downstream, and whether the point is in a lake), about 2 µs a
+query. On the full project it is 13.0 million points and 27.9 million bucket entries: it adds 351 MB to
+the bake (670 MB in all) and about 6 s. The `--water-*` options thin it (the test bake's).
+`terrain_test --water-map out.ppm [px] [lon0 lat0 lon1 lat1]` draws it, of the world or of a region.
 
 ## The city list
 
@@ -167,3 +183,50 @@ centre within 30 km. On R2024A V1.2, 223 rows lie inside a centre and 3 are matc
 (Tianjin, 13.7 km; Harbin, 3.9 km; Yantai, 5.0 km, to Fushan). Perm is unmatched: the database has no
 centre for it, so its columns are empty. The largest centre is Dhaka's (6,611 km²), then Guangzhou's
 (6,454) and Tokyo's (5,165); Los Angeles's is 4,498 km²; the smallest is Ufa's (123).
+
+## Rivers and lakes
+
+The major rivers and the lakes come from HydroSHEDS, as lines, not as a raster: at 60" a cell is 1.85 km
+and most rivers are tens of metres wide, so the project keeps the rivers' lines with a width each and the
+lakes' shores as polygons, and the engine measures the distance to them (decided with the user,
+2026-10-28, in place of masks in the hints).
+
+| | |
+|---|---|
+| Rivers | HydroRIVERS v1.0, `HydroRIVERS_v10_shp.zip`: https://data.hydrosheds.org/file/HydroRIVERS/HydroRIVERS_v10_shp.zip (544,388,154 bytes; SHA-256 `0cf9e363e4b48ede535787f9e2eecbcff43eb53acad4b9cbf048c9e12453e5b5`). 8,477,883 river reaches as lines from the 15" HydroSHEDS flow directions, each with its long-term mean natural discharge (`DIS_AV_CMS`, WaterGAP 1971-2000), drawn downstream |
+| Lakes | HydroLAKES v1.0, `HydroLAKES_polys_v10_shp.zip`: https://data.hydrosheds.org/file/hydrolakes/HydroLAKES_polys_v10_shp.zip (820,295,132 bytes; SHA-256 `9ef63498569dd7ccd0b8d8852da026e009a75f42d293f00e483f3b9fcfe8e1f9`). 1,427,688 lakes and reservoirs of 10 ha and more as shoreline polygons, the Caspian among them |
+| Format | ESRI shapefiles in WGS 84 latitude and longitude; `earth.py` reads them itself (no GDAL vector driver needed) |
+| Licence | HydroLAKES: CC BY 4.0. HydroRIVERS: the HydroSHEDS licence agreement, free for non-commercial and commercial use with attribution |
+| Product pages | https://www.hydrosheds.org/products/hydrorivers, https://www.hydrosheds.org/products/hydrolakes |
+| Downloaded | 2026-10-28 |
+
+HydroSHEDS publishes no checksums; those above were computed on the downloads. The sources are not in the
+repository; the zips and the shapefiles extracted from them sit at
+`C:\Users\Edward Laverick\Source\Data\HydroSHEDS\`, with `SHA256SUMS` for the zips and a `.sha256`
+sidecar beside each `.shp`, `.shx` and `.dbf`, which `earth.py water` checks. Treat them as untrusted
+download data, as the elevation source.
+
+Citations: Lehner, B., Grill G. (2013): Global river hydrography and network routing: baseline data and
+new approaches to study the world's large river systems. Hydrological Processes, 27(15): 2171-2186. Data
+is available at www.hydrosheds.org. Messager, M.L., Lehner, B., Grill, G., Nedeva, I., Schmitt, O. (2016):
+Estimating the volume and age of water stored in global lakes using a geo-statistical approach. Nature
+Communications: 13603. doi: 10.1038/ncomms13603. Data is available at www.hydrosheds.org. Changes: only
+the rivers carrying at least 5 m³/s and the lakes of at least 1 km², the rivers smoothed, both simplified
+to 100 m.
+
+`py water` keeps the river reaches carrying at least 5 m³/s (the user's threshold: about 16 m wide;
+1,170,717 reaches, 3.9 million km) and the lakes of at least 1 km² (185,181). A river's width is
+7·√(discharge) m (16 m at 5 m³/s, about 700 m for the Mississippi at Memphis, 3 km for the lower
+Amazon), written as a column the editor may change. A river's line (its points on the 15" cells'
+centres) is smoothed by two rounds of corner cutting, its ends kept so the reaches still meet, and both
+are simplified (Douglas-Peucker) to 100 m: the rivers are good to about 500 m, the shores to 50-125 m.
+Islands and bays under 200 m across go (26,790 rings). The result is 5.0 million river points and 8.0
+million shore points in 53 GeoPackages (350 MB).
+
+The water tiles are GeoPackages (`water/N30_W120.gpkg`, by the tile of each feature's first point), each
+with two tables in EPSG:4326: `rivers` (LineString; `hyriv_id`, `next_down`, `discharge` m³/s, `width` m)
+and `lakes` (MultiPolygon; `hylak_id`, `name`, `area_km2`, `lake_type` 1 lake, 2 reservoir, 3 regulated
+lake, `elevation` m). Open them in QGIS and edit them there: add, move or delete a river or a lake, or
+change a width. The tile is only a convention: `stage` reads every feature of every file, so a new river
+can go in whichever file is open. The lines through the lakes are HydroRIVERS' own flow paths; they are
+under water anyway.

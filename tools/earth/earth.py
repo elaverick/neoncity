@@ -11,15 +11,18 @@ and the whole project is staged as one raw grid for the engine's bake tool (tool
     earth.py insert  <project> <edited.tif> [--feather N] [--layer height|hints] [--rewrite]
     earth.py check   <project>
     earth.py preview <project> <out.png> [--region lon0 lat0 lon1 lat1] [--width W]
-    earth.py stage   <project> <out.r16>     (and <out.r16>.hints, if the project has hint tiles)
+    earth.py stage   <project> <out.r16>     (and <out.r16>.hints and .water, if the project has them)
     earth.py cities  <GHS_UCDB_GLOBE_R2024A.gpkg> <list.csv> [--sha256 HEX]
+    earth.py water   <HydroRIVERS_v10.shp> <HydroLAKES_polys_v10.shp> <project> [--min-discharge M3S]
+                     [--min-lake KM2] [--tolerance M]
 
 The grid is fixed: EPSG:4326, 60" cells, pixel-is-area, 21600 x 10800, the north-west corner at
 90N 180W. Tiles are named by their south-west corner (height/N30_W120.tif spans 30N..60N,
 120W..90W). Elevations are whole metres above the source's datum (EGM2008 for ETOPO 2022), with
 the sea floor as negative values and no nodata. The optional hints layer holds the same tiles at
 8 bits, three bands: R landform override (0 none, 1 plains, 2 hills, 3 mountains, 4 plateau),
-G detail roughness scale, B no-settlement mask.
+G detail roughness scale, B no-settlement mask. The optional water layer (water/*.gpkg) holds the
+major rivers as lines with a width and the lakes as polygons, from HydroSHEDS.
 
 Run it with the source treated as untrusted data: `python -I tools/earth/earth.py ...`.
 """
@@ -625,6 +628,11 @@ def cmd_stage(args):
                 b = np.ascontiguousarray(np.moveaxis(strip, 0, -1), dtype="u1").tobytes()
                 hh.update(b)
                 f.write(b)
+    # The water, if the project has any: the rivers' lines and the lakes' rings.
+    water = args.out + ".water"
+    wh = stage_water(project, water)
+    if wh is None and os.path.exists(water):
+        os.remove(water)
     origin = m["origin"]
     lines = [
         "format earth-stage-1",
@@ -650,6 +658,8 @@ def cmd_stage(args):
     ]
     if hints:
         lines += ["hints_file %s" % os.path.basename(hints), "hints_sha256 %s" % hh.hexdigest()]
+    if wh:
+        lines += ["water_file %s" % os.path.basename(water), "water_sha256 %s" % wh]
     with open(args.out + ".txt", "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
     print("wrote %s (%d bytes)%s and %s.txt" % (args.out, WIDTH * HEIGHT * 2,
@@ -694,33 +704,40 @@ def moll_inverse(x, y):
 
 
 def gpkg_rings(blob):
-    """The rings of a GeoPackage (multi)polygon blob, each an (n, 2) array of x, y."""
+    """The rings of a GeoPackage (multi)polygon blob, or the lines of a (multi)linestring blob,
+    each an (n, 2) array of x, y (any z or m dropped)."""
     if blob[:2] != b"GP":
         fail("a geometry isn't a GeoPackage blob")
     flags = blob[3]
     env = (0, 32, 48, 48, 64)[(flags >> 1) & 7]
     wkb, rings = memoryview(blob)[8 + env:], []
 
+    def points(off, bo, dims):
+        n = struct.unpack_from(bo + "I", wkb, off)[0]
+        off += 4
+        rings.append(np.frombuffer(wkb, dtype=bo + "f8", count=dims * n, offset=off).reshape(n, dims)[:, :2])
+        return off + 8 * dims * n
+
     def geom(off):
         bo = "<" if wkb[off] == 1 else ">"
-        kind = struct.unpack_from(bo + "I", wkb, off + 1)[0] % 1000
+        code = struct.unpack_from(bo + "I", wkb, off + 1)[0]
+        kind, dims = code % 1000, (2, 3, 3, 4)[min(code // 1000, 3)]
         off += 5
+        if kind == 2:
+            return points(off, bo, dims)
         if kind == 3:
             nr = struct.unpack_from(bo + "I", wkb, off)[0]
             off += 4
             for _ in range(nr):
-                n = struct.unpack_from(bo + "I", wkb, off)[0]
-                off += 4
-                rings.append(np.frombuffer(wkb, dtype=bo + "f8", count=2 * n, offset=off).reshape(n, 2))
-                off += 16 * n
+                off = points(off, bo, dims)
             return off
-        if kind == 6:
+        if kind in (5, 6):
             ng = struct.unpack_from(bo + "I", wkb, off)[0]
             off += 4
             for _ in range(ng):
                 off = geom(off)
             return off
-        fail("an urban centre's geometry is neither a polygon nor a multipolygon (WKB type %d)" % kind)
+        fail("a geometry is neither a line nor a polygon (WKB type %d)" % code)
 
     geom(0)
     return rings
@@ -840,6 +857,374 @@ def cmd_cities(args):
         print("  %-28s %-24s %9s km2 %11s people" % (r[1], r[5], r[6], r[7]))
 
 
+# ----------------------------------------------------------------------------- water
+# The major rivers and the lakes, from HydroSHEDS: HydroRIVERS v1.0 (river reaches as lines, each
+# with its long-term mean discharge) and HydroLAKES v1.0 (lake shorelines as polygons), shapefiles in
+# WGS 84 latitude and longitude. They stay lines in the project, not a raster: at 60" a cell is
+# 1.85 km and most rivers are tens of metres wide, so the engine measures the distance to the line.
+# The project keeps them as GeoPackages in water/, one per 30-degree tile by the feature's first
+# point (a convention only: stage reads every feature of every file, so an edit may add a river to
+# whichever file is open). A river's lines are smoothed (Chaikin's corner cutting, its ends kept, so
+# the reaches still meet) and both are simplified (Douglas-Peucker) to WATER_TOLERANCE_M.
+
+WATER = "water"
+WATER_MIN_DISCHARGE = 5.0      # m3/s: the rivers kept (user, 2026-10-28), about 16 m wide
+WATER_MIN_LAKE = 1.0           # km2: the lakes kept
+WATER_WIDTH_K = 7.0            # a river's width (m) is about this times the root of its discharge
+WATER_SMOOTH = 2               # rounds of corner cutting on a river (its points step 15" cells)
+WATER_TOLERANCE_M = 100.0      # the simplification's tolerance (the rivers are good to ~500 m, the shores to 50-125 m)
+WATER_MAGIC = b"NCWATER1"
+EARTH_R_M = 6371008.8
+GPKG_TIME = "2026-10-28T00:00:00.000Z"   # fixed, so the same import writes the same bytes
+RIVER_COLUMNS = ["hyriv_id", "next_down", "discharge", "width"]
+LAKE_COLUMNS = ["hylak_id", "name", "area_km2", "lake_type", "elevation"]
+
+
+def checked_source(path):
+    """Hashes a source file and checks it against its .sha256 sidecar, if there is one."""
+    if not os.path.isfile(path):
+        fail("no such source " + path)
+    digest = sha256_file(path)
+    sidecar = path + ".sha256"
+    if os.path.isfile(sidecar):
+        with open(sidecar, "r", encoding="utf-8") as f:
+            expected = f.read().split()[0].lower()
+        if expected != digest:
+            fail("%s: SHA-256 %s does not match the sidecar's %s" % (path, digest, expected))
+    return digest
+
+
+def dbf_columns(path, names):
+    """Columns of a dBASE table, each a numpy array of its fields' raw bytes."""
+    mm = np.memmap(path, dtype="u1", mode="r")
+    count = int(mm[4:8].view("<u4")[0])
+    header, record = int(mm[8:10].view("<u2")[0]), int(mm[10:12].view("<u2")[0])
+    fields, off, p = {}, 1, 32
+    while mm[p] != 0x0D:
+        fields[bytes(mm[p:p + 11]).split(b"\0")[0].decode("ascii")] = (off, int(mm[p + 16]))
+        off += int(mm[p + 16])
+        p += 32
+    if off != record:
+        fail("%s: the fields don't fill a record" % path)
+    recs = np.ndarray((count, record), dtype="u1", buffer=mm, offset=header)
+    out = {}
+    for name in names:
+        if name not in fields:
+            fail("%s has no column %s" % (path, name))
+        o, n = fields[name]
+        out[name] = np.ascontiguousarray(recs[:, o:o + n]).view("S%d" % n).ravel()
+    return out
+
+
+def dbf_text(b):
+    b = b.strip()
+    try:
+        return b.decode("utf-8")
+    except UnicodeDecodeError:
+        return b.decode("latin-1")
+
+
+class Shapefile:
+    """The parts of a polyline or polygon shapefile's records, read through its index (.shx)."""
+
+    def __init__(self, path):
+        self.shp = np.memmap(path, dtype="u1", mode="r")
+        index = np.fromfile(os.path.splitext(path)[0] + ".shx", dtype=">i4", offset=100).reshape(-1, 2)
+        self.offsets = index[:, 0].astype(np.int64) * 2
+
+    def __len__(self):
+        return len(self.offsets)
+
+    def parts(self, k):
+        o = int(self.offsets[k]) + 8
+        kind = struct.unpack_from("<i", self.shp, o)[0]
+        if kind == 0:
+            return []
+        if kind not in (3, 5):
+            fail("a shape is neither a polyline nor a polygon (type %d)" % kind)
+        nparts, npts = struct.unpack_from("<ii", self.shp, o + 36)
+        starts = list(np.frombuffer(self.shp, "<i4", nparts, o + 44)) + [npts]
+        pts = np.frombuffer(self.shp, "<f8", 2 * npts, o + 44 + 4 * nparts).reshape(npts, 2)
+        return [pts[starts[i]:starts[i + 1]] for i in range(nparts)]
+
+
+def unwrapped(ll):
+    """Longitudes and latitudes (n, 2) with the longitudes made continuous across the antimeridian."""
+    out = np.array(ll, dtype=np.float64)
+    out[:, 0] = np.degrees(np.unwrap(np.radians(out[:, 0])))
+    return out
+
+
+def plane_m(ll):
+    """Unwrapped longitudes and latitudes to metres east and north on a plane about the middle."""
+    lat = math.radians(0.5 * (ll[:, 1].min() + ll[:, 1].max()))
+    k = EARTH_R_M * math.pi / 180.0
+    return np.stack([(ll[:, 0] - ll[0, 0]) * k * math.cos(lat), (ll[:, 1] - ll[0, 1]) * k], axis=1)
+
+
+def simplified(xy, tol):
+    """Douglas-Peucker: the indices of the points kept (the ends always)."""
+    n = len(xy)
+    keep = np.zeros(n, dtype=bool)
+    keep[0] = keep[-1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        d = xy[j] - xy[i]
+        p = xy[i + 1:j] - xy[i]
+        dd = float(d @ d)
+        e = p - np.clip(p @ d / dd, 0.0, 1.0)[:, None] * d if dd > 0.0 else p
+        e2 = np.einsum("ij,ij->i", e, e)
+        k = int(np.argmax(e2))
+        if e2[k] > tol * tol:
+            k += i + 1
+            keep[k] = True
+            stack += [(i, k), (k, j)]
+    return np.nonzero(keep)[0]
+
+
+def smoothed(ll, rounds):
+    """Chaikin's corner cutting, the two ends kept."""
+    for _ in range(rounds):
+        if len(ll) < 3:
+            break
+        a, b = ll[:-1], ll[1:]
+        cut = np.empty((2 * len(a), 2))
+        cut[0::2], cut[1::2] = 0.75 * a + 0.25 * b, 0.25 * a + 0.75 * b
+        ll = np.concatenate([ll[:1], cut[1:-1], ll[-1:]])
+    return ll
+
+
+def wrapped(ll):
+    out = ll.copy()
+    out[:, 0] = (out[:, 0] + 180.0) % 360.0 - 180.0
+    return out
+
+
+def ring_area(xy):
+    return 0.5 * float(np.sum(xy[:-1, 0] * xy[1:, 1] - xy[1:, 0] * xy[:-1, 1]))
+
+
+def tile_of(lon, lat):
+    ti = min(TILES_X - 1, max(0, int((lon - LON0) // TILE_DEG)))
+    tj = min(TILES_Y - 1, max(0, int((LAT0 - lat) // TILE_DEG)))
+    return ti, tj
+
+
+def wkb_points(ll):
+    return struct.pack("<I", len(ll)) + np.ascontiguousarray(ll, dtype="<f8").tobytes()
+
+
+def gpkg_blob(wkb, ll):
+    """A GeoPackage geometry: the header (little-endian, EPSG:4326, an x/y envelope) and the WKB."""
+    return (b"GP\0\x03" + struct.pack("<i4d", 4326, ll[:, 0].min(), ll[:, 0].max(), ll[:, 1].min(), ll[:, 1].max())
+            + wkb)
+
+
+def line_blob(ll):
+    return gpkg_blob(b"\x01" + struct.pack("<I", 2) + wkb_points(ll), ll)
+
+
+def multipolygon_blob(polygons):
+    """polygons: a list of polygons, each a list of rings (the outer first)."""
+    wkb = b"\x01" + struct.pack("<II", 6, len(polygons))
+    for rings in polygons:
+        wkb += b"\x01" + struct.pack("<II", 3, len(rings)) + b"".join(wkb_points(r) for r in rings)
+    return gpkg_blob(wkb, np.concatenate([r for rings in polygons for r in rings]))
+
+
+def write_gpkg(path, rivers, lakes):
+    """A GeoPackage (1.3, written with sqlite3) of two feature tables in EPSG:4326, no spatial index."""
+    tmp = path + ".tmp"
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    db = sqlite3.connect(tmp)
+    db.execute("PRAGMA application_id = 1196444487")   # 'GPKG'
+    db.execute("PRAGMA user_version = 10300")
+    db.executescript("""
+        CREATE TABLE gpkg_spatial_ref_sys (srs_name TEXT NOT NULL, srs_id INTEGER PRIMARY KEY,
+          organization TEXT NOT NULL, organization_coordsys_id INTEGER NOT NULL, definition TEXT NOT NULL,
+          description TEXT);
+        CREATE TABLE gpkg_contents (table_name TEXT NOT NULL PRIMARY KEY, data_type TEXT NOT NULL,
+          identifier TEXT UNIQUE, description TEXT DEFAULT '', last_change DATETIME NOT NULL,
+          min_x DOUBLE, min_y DOUBLE, max_x DOUBLE, max_y DOUBLE, srs_id INTEGER,
+          CONSTRAINT fk_gc_r_srs_id FOREIGN KEY (srs_id) REFERENCES gpkg_spatial_ref_sys(srs_id));
+        CREATE TABLE gpkg_geometry_columns (table_name TEXT NOT NULL, column_name TEXT NOT NULL,
+          geometry_type_name TEXT NOT NULL, srs_id INTEGER NOT NULL, z TINYINT NOT NULL, m TINYINT NOT NULL,
+          CONSTRAINT pk_geom_cols PRIMARY KEY (table_name, column_name),
+          CONSTRAINT uk_gc_table_name UNIQUE (table_name),
+          CONSTRAINT fk_gc_tn FOREIGN KEY (table_name) REFERENCES gpkg_contents(table_name),
+          CONSTRAINT fk_gc_srs FOREIGN KEY (srs_id) REFERENCES gpkg_spatial_ref_sys (srs_id));
+        CREATE TABLE rivers (fid INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, geom LINESTRING,
+          hyriv_id INTEGER, next_down INTEGER, discharge REAL, width REAL);
+        CREATE TABLE lakes (fid INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, geom MULTIPOLYGON,
+          hylak_id INTEGER, name TEXT, area_km2 REAL, lake_type INTEGER, elevation REAL);
+    """)
+    db.executemany("INSERT INTO gpkg_spatial_ref_sys VALUES (?, ?, ?, ?, ?, ?)", [
+        ("Undefined cartesian SRS", -1, "NONE", -1, "undefined", "undefined cartesian coordinate reference system"),
+        ("Undefined geographic SRS", 0, "NONE", 0, "undefined", "undefined geographic coordinate reference system"),
+        ("WGS 84 geodetic", 4326, "EPSG", 4326, CRS4326.to_wkt(),
+         "longitude/latitude coordinates in decimal degrees on the WGS 84 spheroid")])
+    for table, rows, kind, what in (("rivers", rivers, "LINESTRING", "rivers from HydroRIVERS v1.0, width in m"),
+                                    ("lakes", lakes, "MULTIPOLYGON", "lakes from HydroLAKES v1.0")):
+        box = [None] * 4
+        if rows:
+            env = np.array([struct.unpack_from("<4d", r[0], 8) for r in rows])
+            box = [float(env[:, 0].min()), float(env[:, 2].min()), float(env[:, 1].max()), float(env[:, 3].max())]
+        db.execute("INSERT INTO gpkg_contents VALUES (?, 'features', ?, ?, ?, ?, ?, ?, ?, 4326)",
+                   (table, table, what, GPKG_TIME, *box))
+        db.execute("INSERT INTO gpkg_geometry_columns VALUES (?, 'geom', ?, 4326, 0, 0)", (table, kind))
+    db.executemany("INSERT INTO rivers (geom, %s) VALUES (?, ?, ?, ?, ?)" % ", ".join(RIVER_COLUMNS), rivers)
+    db.executemany("INSERT INTO lakes (geom, %s) VALUES (?, ?, ?, ?, ?, ?)" % ", ".join(LAKE_COLUMNS), lakes)
+    db.commit()
+    db.close()
+    os.replace(tmp, path)
+
+
+def cmd_water(args):
+    project = Project(args.project)
+    rivers_shp, lakes_shp = args.rivers, args.lakes
+    sources = {}
+    print("hashing sources ...", flush=True)
+    for shp in (rivers_shp, lakes_shp):
+        stem = os.path.splitext(shp)[0]
+        sources[os.path.basename(stem)] = {ext: checked_source(stem + ext) for ext in (".shp", ".shx", ".dbf")}
+    tiles = {}   # (ti, tj) -> ([river rows], [lake rows])
+
+    def bucket(lon, lat):
+        return tiles.setdefault(tile_of(lon, lat), ([], []))
+
+    cols = dbf_columns(os.path.splitext(rivers_shp)[0] + ".dbf", ["HYRIV_ID", "NEXT_DOWN", "DIS_AV_CMS"])
+    q = cols["DIS_AV_CMS"].astype(np.float64)
+    keep = np.nonzero(q >= args.min_discharge)[0]
+    shp = Shapefile(rivers_shp)
+    if len(shp) != len(q):
+        fail(rivers_shp + ": the shapes and the table differ in length")
+    print("%d of %d river reaches carry at least %g m3/s" % (len(keep), len(q), args.min_discharge), flush=True)
+    points_in = points_out = 0
+    for n, k in enumerate(keep):
+        for part in shp.parts(k):
+            if len(part) < 2:
+                continue
+            ll = smoothed(unwrapped(part), WATER_SMOOTH)
+            ll = wrapped(ll[simplified(plane_m(ll), args.tolerance)])
+            points_in, points_out = points_in + len(part), points_out + len(ll)
+            bucket(ll[0, 0], ll[0, 1])[0].append((line_blob(ll), int(cols["HYRIV_ID"][k]), int(cols["NEXT_DOWN"][k]),
+                                                  float(q[k]), round(WATER_WIDTH_K * math.sqrt(q[k]), 1)))
+        if n % 200000 == 0:
+            print("  rivers %d / %d" % (n, len(keep)), flush=True)
+    print("rivers: %d points in, %d out" % (points_in, points_out), flush=True)
+
+    cols = dbf_columns(os.path.splitext(lakes_shp)[0] + ".dbf", ["Hylak_id", "Lake_name", "Lake_area", "Lake_type", "Elevation"])
+    area = cols["Lake_area"].astype(np.float64)
+    keep = np.nonzero(area >= args.min_lake)[0]
+    shp = Shapefile(lakes_shp)
+    if len(shp) != len(area):
+        fail(lakes_shp + ": the shapes and the table differ in length")
+    print("%d of %d lakes cover at least %g km2" % (len(keep), len(area), args.min_lake), flush=True)
+    points_in = points_out = dropped = 0
+    for n, k in enumerate(keep):
+        outers, holes = [], []
+        for part in shp.parts(k):
+            ll = unwrapped(part)
+            xy = plane_m(ll)
+            # a ring whose span is within the tolerance would collapse: islands and bays that small go
+            if len(ll) < 4 or np.ptp(xy[:, 0]) < 2 * args.tolerance and np.ptp(xy[:, 1]) < 2 * args.tolerance:
+                dropped += 1
+                continue
+            idx = simplified(xy, args.tolerance)
+            if len(idx) < 4:
+                dropped += 1
+                continue
+            r = ll[idx]
+            points_in, points_out = points_in + len(part), points_out + len(r)
+            # shapefiles wind outer rings clockwise, holes anticlockwise; WKB the other way round
+            (outers if ring_area(xy[idx]) < 0 else holes).append(wrapped(r[::-1]))
+        if not outers:
+            dropped += 1
+            continue
+        polygons = [[o] for o in outers]
+        for h in holes:   # each hole to the outer ring whose box holds its first point
+            for p in polygons:
+                lo, hi = p[0].min(axis=0), p[0].max(axis=0)
+                if np.all(h[0] >= lo) and np.all(h[0] <= hi):
+                    p.append(h)
+                    break
+        first = polygons[0][0][0]
+        bucket(first[0], first[1])[1].append((multipolygon_blob(polygons), int(cols["Hylak_id"][k]),
+                                              dbf_text(cols["Lake_name"][k]), float(area[k]),
+                                              int(cols["Lake_type"][k]), float(cols["Elevation"][k])))
+        if n % 50000 == 0:
+            print("  lakes %d / %d" % (n, len(keep)), flush=True)
+    print("lakes: %d points in, %d out; %d rings dropped as too small" % (points_in, points_out, dropped), flush=True)
+
+    folder = os.path.join(project.root, WATER)
+    os.makedirs(folder, exist_ok=True)
+    for name in os.listdir(folder):
+        if name.endswith(".gpkg"):
+            os.remove(os.path.join(folder, name))
+    total = 0
+    for (ti, tj), (r, l) in sorted(tiles.items()):
+        path = os.path.join(folder, tile_name(ti, tj) + ".gpkg")
+        write_gpkg(path, r, l)
+        total += os.path.getsize(path)
+    project.manifest["water"] = {
+        "folder": WATER, "min_discharge_m3s": args.min_discharge, "min_lake_km2": args.min_lake,
+        "width": "%g * sqrt(discharge) m" % WATER_WIDTH_K, "smooth_rounds": WATER_SMOOTH,
+        "tolerance_m": args.tolerance, "sources": sources}
+    project.save()
+    print("wrote %d water tiles, %.1f MB" % (len(tiles), total / 1e6))
+
+
+def read_water(project):
+    """Every river line and lake ring of the project's water tiles, in file and row order: a list
+    of (kind, id, width, size, lon/lat array); kind 1 is a river (size its discharge, m3/s), kind 2 a
+    lake's ring (size its area, km2), closed."""
+    folder = os.path.join(project.root, WATER)
+    out = []
+    if not os.path.isdir(folder):
+        return out
+    for name in sorted(n for n in os.listdir(folder) if n.endswith(".gpkg")):
+        path = os.path.join(folder, name).replace("\\", "/")
+        db = sqlite3.connect("file:" + path + "?mode=ro", uri=True)
+        for geom, rid, q, w in db.execute("SELECT geom, hyriv_id, discharge, width FROM rivers ORDER BY fid"):
+            for line in gpkg_rings(geom):
+                if len(line) >= 2:
+                    out.append((1, int(rid or 0), float(w or WATER_WIDTH_K * math.sqrt(q or 0.0)), float(q or 0.0), line))
+        for geom, lid, a in db.execute("SELECT geom, hylak_id, area_km2 FROM lakes ORDER BY fid"):
+            for ring in gpkg_rings(geom):
+                if len(ring) >= 4:
+                    if not np.array_equal(ring[0], ring[-1]):
+                        ring = np.concatenate([ring, ring[:1]])
+                    out.append((2, int(lid or 0), 0.0, float(a or 0.0), ring))
+        db.close()
+    return out
+
+
+def stage_water(project, out):
+    """The water as the bake reads it, little-endian: "NCWATER1", u32 version 1, u32 count, then per
+    line u8 kind (1 river, 2 lake ring), u8 0, u16 0, u32 id, f32 width (m), f32 size (m3/s or km2),
+    u32 points, and the points as f64 longitude, latitude. Returns its SHA-256, or None if the
+    project has no water."""
+    lines = read_water(project)
+    if not lines:
+        return None
+    h = hashlib.sha256()
+    with open(out, "wb") as f:
+        def put(b):
+            h.update(b)
+            f.write(b)
+        put(WATER_MAGIC + struct.pack("<II", 1, len(lines)))
+        for kind, wid, width, size, ll in lines:
+            put(struct.pack("<BBHIffI", kind, 0, 0, wid, width, size, len(ll)))
+            put(np.ascontiguousarray(ll, dtype="<f8").tobytes())
+    rivers = sum(1 for l in lines if l[0] == 1)
+    print("water: %d river lines, %d lake rings, %d points" % (rivers, len(lines) - rivers, sum(len(l[4]) for l in lines)))
+    return h.hexdigest()
+
+
 # ----------------------------------------------------------------------------- main
 
 def main(argv=None):
@@ -898,6 +1283,18 @@ def main(argv=None):
     s.add_argument("list", help="the city list CSV, rewritten in place")
     s.add_argument("--sha256", help="expected source checksum (default: the .sha256 sidecar if present)")
     s.set_defaults(fn=cmd_cities)
+
+    s = sub.add_parser("water", help="the major rivers and the lakes from HydroSHEDS, as the project's water tiles")
+    s.add_argument("rivers", help="HydroRIVERS_v10.shp (its .shx and .dbf beside it)")
+    s.add_argument("lakes", help="HydroLAKES_polys_v10.shp (its .shx and .dbf beside it)")
+    s.add_argument("project")
+    s.add_argument("--min-discharge", type=float, default=WATER_MIN_DISCHARGE, metavar="M3S",
+                   help="keep river reaches carrying at least this, default %(default)s m3/s")
+    s.add_argument("--min-lake", type=float, default=WATER_MIN_LAKE, metavar="KM2",
+                   help="keep lakes at least this large, default %(default)s km2")
+    s.add_argument("--tolerance", type=float, default=WATER_TOLERANCE_M, metavar="M",
+                   help="simplify the lines to within this, default %(default)s m")
+    s.set_defaults(fn=cmd_water)
 
     args = p.parse_args(argv)
     if args.cmd == "import":

@@ -212,6 +212,24 @@ typedef struct TerrainEarthLand {
     double hint[TERRAIN_TYPES], rough, nosettle;
 } TerrainEarthLand;
 int    terrain_earth_land(TerrainDir p, TerrainEarthLand *out);
+/* The water at a direction, from the bake's rivers and lakes (the project's
+ * data/earth/water, HydroSHEDS: the rivers as lines with a width, the lakes as
+ * rings): edge, the signed distance (m) to the nearest water's edge, a
+ * river's bank or a lake's shore, negative in the water; river, the distance
+ * to the nearest river's centre line (the river whose bank is nearest), its
+ * width (m) and its direction downstream there (unit, along the ground);
+ * lake, 1 in a lake. Exact within `reach` of the water (the bake's, 2 km);
+ * beyond it, edge reads +-reach, river reads reach and width 0. Pure, about a
+ * microsecond. Returns 0, everything far (1e30), with no water in the bake. */
+typedef struct TerrainEarthWater {
+    double     edge, river, width, reach;
+    TerrainDir flow;
+    int        lake;
+} TerrainEarthWater;
+int    terrain_earth_water(TerrainDir p, TerrainEarthWater *out);
+/* Calls fn for every segment of the water (its ends, the river's width or 0,
+ * and whether it is a lake's shore), for maps and checks; returns how many. */
+size_t terrain_earth_water_segments(void (*fn)(void *ctx, TerrainDir a, TerrainDir b, double width, int lake), void *ctx);
 
 /* Where the sea will be, at world (x, z) or at a direction: there is no water
  * yet, but when it comes it will cover only where this is at most 0. It is

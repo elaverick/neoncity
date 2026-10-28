@@ -41,12 +41,20 @@
  * read the same way (a Catmull-Rom per face, the faces blended across the
  * seams) whatever the spacing.
  *
+ * The bake's water (terrain_earth_water) is the project's rivers and lakes as
+ * lines: runs of points, each river with its width, each lake's ring closed.
+ * Every face is cut into buckets (sides on great circles), each listing the
+ * segments within the reach of it, so a query measures the exact distance to
+ * the few lines near it; whether a point lies in a lake is its bucket's
+ * centre's answer (the bake's even-odd test over the rings), flipped by each
+ * shore the arc from the centre crosses.
+ *
  * Without a bake the planet's procedural macro field (terrain_macro, in
  * metres) stands in, so a clone without the LFS tiles still runs. */
 
 #define PI          3.14159265358979323846
 #define EARTH_MAGIC "NCEARTH1"
-#define EARTH_VERSION 2
+#define EARTH_VERSION 3
 #define EARTH_HEADER 256
 #define APRON       2
 #define BLOCK       8
@@ -73,6 +81,22 @@ typedef struct EarthLand {
     uint8_t *override[6], *rough[6], *nosettle[6];
 } EarthLand;
 
+/* The water (tools/earth_bake.c): the rivers' lines and the lakes' rings as
+ * runs of points, listed in B x B buckets a face, each bucket every segment
+ * within the reach (plus a river's half width) of it, and whether its centre
+ * lies in a lake. */
+typedef struct EarthWater {
+    int       B;
+    double    reach;            /* m */
+    uint32_t  V, E;
+    float    *xyz;              /* V x 3 */
+    uint16_t *width;            /* a river's width (m), 0 on a lake's shore */
+    uint8_t  *kind, *flags;     /* 1 river, 2 lake; 1: a segment runs on to the next point */
+    uint32_t *start;            /* 6 B B + 1 */
+    uint8_t  *inside;           /* 6 B B */
+    uint32_t *entry;            /* E: each segment's first point */
+} EarthWater;
+
 static struct Earth {
     int        loaded, mips, N;
     double     scale, offset;
@@ -82,6 +106,7 @@ static struct Earth {
     char       path[1024];
     EarthMip   mip[MAX_MIPS];
     EarthLand  land;
+    EarthWater water;
 } g_earth;
 
 /* --- Reading the file ------------------------------------------------------------ */
@@ -124,10 +149,42 @@ static void land_free(EarthLand *l) {
     memset(l, 0, sizeof *l);
 }
 
+static void water_free(EarthWater *w) {
+    free(w->xyz); free(w->width); free(w->kind); free(w->flags); free(w->start); free(w->inside); free(w->entry);
+    memset(w, 0, sizeof *w);
+}
+
 void terrain_earth_unload(void) {
     for (int m = 0; m < g_earth.mips; ++m) mip_free(&g_earth.mip[m]);
     land_free(&g_earth.land);
+    water_free(&g_earth.water);
     memset(&g_earth, 0, sizeof g_earth);
+}
+
+/* The water's points (16 bytes each, see the bake's layout) and its u32 tables. */
+static int read_water_points(FILE *f, EarthWater *w) {
+    static unsigned char buf[16 * 4096];
+    for (uint32_t k = 0; k < w->V;) {
+        uint32_t take = w->V - k < 4096 ? w->V - k : 4096;
+        if (fread(buf, 16, take, f) != take) return 0;
+        for (uint32_t i = 0; i < take; ++i, ++k) {
+            const unsigned char *r = buf + 16 * i;
+            w->xyz[3 * k] = get_f32(r); w->xyz[3 * k + 1] = get_f32(r + 4); w->xyz[3 * k + 2] = get_f32(r + 8);
+            w->width[k] = get_u16(r + 12); w->kind[k] = r[14]; w->flags[k] = r[15];
+        }
+    }
+    return 1;
+}
+
+static int read_u32s(FILE *f, uint32_t *v, size_t n) {
+    static unsigned char buf[1 << 16];
+    while (n > 0) {
+        size_t take = n < sizeof buf / 4 ? n : sizeof buf / 4;
+        if (fread(buf, 4, take, f) != take) return 0;
+        for (size_t i = 0; i < take; ++i) v[i] = get_u32(buf + 4 * i);
+        v += take; n -= take;
+    }
+    return 1;
 }
 
 /* Sample (i, j) of a face of n a side, as the bake places it. */
@@ -187,7 +244,7 @@ static int load_file(const char *path) {
     unsigned char hd[EARTH_HEADER];
     if (fread(hd, 1, EARTH_HEADER, f) != EARTH_HEADER || memcmp(hd, EARTH_MAGIC, 8) != 0)
         return fail(f, path, "not an Earth bake");
-    if (get_u32(hd + 8) != EARTH_VERSION) return fail(f, path, "an older Earth bake (version 1): bake it again (cmake --build build --target earth)");
+    if (get_u32(hd + 8) != EARTH_VERSION) return fail(f, path, "an older Earth bake: bake it again (cmake --build build --target earth)");
     int N = (int)get_u32(hd + 12), mips = (int)get_u32(hd + 20);
     if (get_u32(hd + 16) != APRON || get_u32(hd + 24) != BLOCK || mips < 1 || mips > MAX_MIPS || N < MIN_FACE || (N & (N - 1)) != 0 || (N >> (mips - 1)) % BLOCK != 0)
         return fail(f, path, "an apron, block, size or mip count this build can't read");
@@ -246,6 +303,22 @@ static int load_file(const char *path) {
             return fail(f, path, "truncated");
         for (size_t k = 0; k < lcells; ++k)
             if (l->rough[face][k] / 128.0 > l->rough_max) l->rough_max = l->rough[face][k] / 128.0;
+    }
+    EarthWater *w = &g_earth.water;
+    w->B = (int)get_u32(hd + 232); w->reach = get_f32(hd + 236); w->V = get_u32(hd + 240); w->E = get_u32(hd + 244);
+    if (w->B) {
+        size_t cells = 6 * (size_t)w->B * w->B;
+        w->xyz = (float *)malloc((size_t)w->V * 3 * sizeof(float));
+        w->width = (uint16_t *)malloc((size_t)w->V * sizeof(uint16_t));
+        w->kind = (uint8_t *)malloc((size_t)w->V + 1); w->flags = (uint8_t *)malloc((size_t)w->V + 1);
+        w->start = (uint32_t *)malloc((cells + 1) * sizeof(uint32_t)); w->inside = (uint8_t *)malloc(cells);
+        w->entry = (uint32_t *)malloc((size_t)w->E * sizeof(uint32_t) + 1);
+        if (!w->xyz || !w->width || !w->kind || !w->flags || !w->start || !w->inside || !w->entry) return fail(f, path, "out of memory");
+        if (!read_water_points(f, w) || !read_u32s(f, w->start, cells + 1) || fread(w->inside, 1, cells, f) != cells || !read_u32s(f, w->entry, w->E))
+            return fail(f, path, "truncated");
+        if (w->start[cells] != w->E) return fail(f, path, "water buckets that don't add up");
+        for (uint32_t e = 0; e < w->E; ++e)
+            if (w->entry[e] + 1 >= w->V || !(w->flags[w->entry[e]] & 1)) return fail(f, path, "a water bucket lists no segment");
     }
     if (fgetc(f) != EOF) return fail(f, path, "overlong");
     fclose(f);
@@ -714,4 +787,99 @@ double terrain_earth_lod_error(TerrainDir p, double spacing) {
     double lo, hi;
     bound_out(&b, &lo, &hi);
     return hi - lo;
+}
+
+/* --- The water ---------------------------------------------------------------------- */
+
+static TerrainDir water_point(const EarthWater *w, uint32_t k) {
+    TerrainDir p = { w->xyz[3 * k], w->xyz[3 * k + 1], w->xyz[3 * k + 2] };
+    return p;
+}
+
+/* The distance (chord, on the unit sphere) from p to the arc a b: to the
+ * point of the chord nearest p, taken out to the sphere. The bake measures
+ * the same way. */
+static double arc_dist(TerrainDir p, TerrainDir a, TerrainDir b) {
+    double dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    double px = p.x - a.x, py = p.y - a.y, pz = p.z - a.z;
+    double dd = dx * dx + dy * dy + dz * dz;
+    double t = dd > 0.0 ? (px * dx + py * dy + pz * dz) / dd : 0.0;
+    t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
+    double cx = a.x + t * dx, cy = a.y + t * dy, cz = a.z + t * dz, len = sqrt(cx * cx + cy * cy + cz * cz);
+    if (len > 0.0) { cx /= len; cy /= len; cz /= len; }
+    return sqrt((p.x - cx) * (p.x - cx) + (p.y - cy) * (p.y - cy) + (p.z - cz) * (p.z - cz));
+}
+
+static double det3(TerrainDir a, TerrainDir b, TerrainDir c) {
+    return a.x * (b.y * c.z - b.z * c.y) - a.y * (b.x * c.z - b.z * c.x) + a.z * (b.x * c.y - b.y * c.x);
+}
+
+/* Whether the short arcs c p and a b cross. */
+static int arcs_cross(TerrainDir c, TerrainDir p, TerrainDir a, TerrainDir b) {
+    return (det3(a, b, c) > 0.0) != (det3(a, b, p) > 0.0) && (det3(c, p, a) > 0.0) != (det3(c, p, b) > 0.0);
+}
+
+int terrain_earth_water(TerrainDir p, TerrainEarthWater *out) {
+    const EarthWater *w = &g_earth.water;
+    TerrainEarthWater r;
+    memset(&r, 0, sizeof r);
+    if (!g_earth.loaded || !w->B) {
+        r.edge = r.river = r.reach = 1e30;
+        *out = r;
+        return 0;
+    }
+    double len = sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+    p.x /= len; p.y /= len; p.z /= len;
+    double u, v;
+    int B = w->B, f = terrain_dir_face(p, &u, &v);
+    int i = (int)floor((u + 1.0) * 0.5 * B), j = (int)floor((v + 1.0) * 0.5 * B);
+    i = i < 0 ? 0 : i >= B ? B - 1 : i;
+    j = j < 0 ? 0 : j >= B ? B - 1 : j;
+    size_t b = ((size_t)f * B + j) * B + i;
+    /* p is in a lake if the bucket's centre is, flipped by each shore the arc between them crosses */
+    TerrainDir c = terrain_face_dir(f, -1.0 + (2.0 * i + 1.0) / B, -1.0 + (2.0 * j + 1.0) / B);
+    int inside = w->inside[b];
+    double reach = w->reach / PLANET_RADIUS, shore = reach, bank = reach, centre = reach;
+    uint32_t best = 0xffffffffu;
+    for (uint32_t e = w->start[b]; e < w->start[b + 1]; ++e) {
+        uint32_t k = w->entry[e];
+        TerrainDir a = water_point(w, k), q = water_point(w, k + 1);
+        double d = arc_dist(p, a, q);
+        if (w->kind[k] == 2) {
+            if (d < shore) shore = d;
+            if (arcs_cross(c, p, a, q)) inside ^= 1;
+        } else {
+            double hw = 0.5 * w->width[k] / PLANET_RADIUS;
+            if (d - hw < bank) { bank = d - hw; centre = d; best = k; }
+        }
+    }
+    r.reach = w->reach;
+    r.lake = inside;
+    r.river = PLANET_RADIUS * centre;
+    double lake_edge = PLANET_RADIUS * (inside ? -shore : shore), river_edge = PLANET_RADIUS * bank;
+    r.edge = lake_edge < river_edge ? lake_edge : river_edge;
+    if (best != 0xffffffffu) {
+        TerrainDir a = water_point(w, best), q = water_point(w, best + 1);
+        TerrainDir d = { q.x - a.x, q.y - a.y, q.z - a.z };
+        double k = d.x * p.x + d.y * p.y + d.z * p.z;
+        d.x -= k * p.x; d.y -= k * p.y; d.z -= k * p.z;
+        double dl = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        if (dl > 0.0) { d.x /= dl; d.y /= dl; d.z /= dl; }
+        r.width = w->width[best];
+        r.flow = d;
+    }
+    *out = r;
+    return 1;
+}
+
+size_t terrain_earth_water_segments(void (*fn)(void *ctx, TerrainDir a, TerrainDir b, double width, int lake), void *ctx) {
+    const EarthWater *w = &g_earth.water;
+    size_t n = 0;
+    if (!g_earth.loaded || !w->B) return 0;
+    for (uint32_t k = 0; k + 1 < w->V; ++k) {
+        if (!(w->flags[k] & 1)) continue;
+        if (fn) fn(ctx, water_point(w, k), water_point(w, k + 1), w->width[k], w->kind[k] == 2);
+        ++n;
+    }
+    return n;
 }

@@ -37,7 +37,8 @@
  * terrain_test --map out.ppm [km] draws the land round the city (see map);
  * terrain_test --planet-map out.ppm [px] the whole planet (see planet_map);
  * terrain_test --earth-map out.ppm [px] the Earth's bake (see earth_map);
- * terrain_test --landform-map out.ppm [px] its landforms (see landform_map).
+ * terrain_test --landform-map out.ppm [px] its landforms (see landform_map);
+ * terrain_test --water-map out.ppm [px] [lon0 lat0 lon1 lat1] its rivers and lakes (see water_map).
  * --earth <bake> names the Earth bake to load (the test bake by default). */
 #include "terrain_internal.h"
 #include "plan.h"
@@ -1585,6 +1586,199 @@ static int landform_map(const char *path, int W) {
     return 0;
 }
 
+/* terrain_test --water-map out.ppm [px] [lon0 lat0 lon1 lat1]: the bake's
+ * water as an equirectangular map, px pixels across, of the world or of a
+ * region: the lakes (where each pixel's centre lies in one) and the lakes'
+ * shores blue, the rivers drawn as lines, darker and heavier the wider they
+ * are, over the Earth's shading (as --earth-map, the sea floor grey). */
+typedef struct WaterMap { uint8_t *img; float *river, *shore; int W, H; double lon0, lat0, lon1, lat1, sp; size_t rivers, shores; } WaterMap;
+
+/* Each pixel keeps its strongest line of each kind, so a crowd of small rivers reads as faint as one. */
+static void water_plot(WaterMap *m, double x, double y, int lake, float a) {
+    int i = (int)floor(x), j = (int)floor(y);
+    if (i < 0 || j < 0 || i >= m->W || j >= m->H) return;
+    float *v = (lake ? m->shore : m->river) + (size_t)j * m->W + i;
+    if (a > *v) *v = a;
+}
+
+static void water_line(void *ctx, TerrainDir a, TerrainDir b, double width, int lake) {
+    WaterMap *m = (WaterMap *)ctx;
+    double la0, lo0, la1, lo1;
+    terrain_dir_latlon(a, &la0, &lo0);
+    terrain_dir_latlon(b, &la1, &lo1);
+    if (fabs(lo1 - lo0) > 180.0) return;   /* across the antimeridian: two pixels' worth at most, left out */
+    double sx = m->W / (m->lon1 - m->lon0), sy = m->H / (m->lat1 - m->lat0);
+    double x0 = (lo0 - m->lon0) * sx, y0 = (m->lat1 - la0) * sy, x1 = (lo1 - m->lon0) * sx, y1 = (m->lat1 - la1) * sy;
+    if (fmax(x0, x1) < -2 || fmin(x0, x1) > m->W + 2 || fmax(y0, y1) < -2 || fmin(y0, y1) > m->H + 2) return;
+    /* a river as dark as its width is a share of the pixel, made visible: faint where many small ones crowd a coarse map */
+    float a8 = lake ? 0.6f : clampf((float)(0.5 + 0.4 * log10(width * 20.0 / m->sp)), 0.06f, 1.0f);
+    int heavy = !lake && width >= 1000.0;
+    int steps = (int)ceil(2.0 * fmax(fabs(x1 - x0), fabs(y1 - y0))) + 1;
+    for (int s = 0; s <= steps; ++s) {
+        double t = (double)s / steps, x = x0 + t * (x1 - x0), y = y0 + t * (y1 - y0);
+        water_plot(m, x, y, lake, a8);
+        if (heavy) { water_plot(m, x + 1.0, y, 0, a8); water_plot(m, x, y + 1.0, 0, a8); }
+    }
+    if (lake) m->shores++; else m->rivers++;
+}
+
+static int water_map(const char *path, int W, double lon0, double lat0, double lon1, double lat1) {
+    if (lon1 <= lon0 || lat1 <= lat0 || W < 16) { printf("water map: an empty region\n"); return 1; }
+    const double PI_D = 3.14159265358979323846;
+    double mid = 0.5 * (lat0 + lat1);
+    int H = (int)ceil(W * (lat1 - lat0) / ((lon1 - lon0) * fmax(cos(mid * PI_D / 180.0), 0.2)));
+    if (lon1 - lon0 >= 359.0) H = (int)ceil(W * (lat1 - lat0) / (lon1 - lon0));
+    double sp = (lon1 - lon0) / W * PI_D / 180.0 * PLANET_RADIUS;
+    WaterMap m = { (uint8_t *)malloc((size_t)W * H * 3), (float *)calloc((size_t)W * H, sizeof(float)), (float *)calloc((size_t)W * H, sizeof(float)),
+                   W, H, lon0, lat0, lon1, lat1, sp, 0, 0 };
+    double relief = 60.0 * pow(sp / 14000.0, 0.7);   /* the shading's strength, as --earth-map's on the world */
+    double *hgt = (double *)malloc(sizeof(double) * (size_t)(W + 1) * (H + 1));
+    if (!m.img || !m.river || !m.shore || !hgt) return 1;
+    for (int j = 0; j <= H; ++j)
+        for (int i = 0; i <= W; ++i)
+            hgt[(size_t)j * (W + 1) + i] = terrain_earth_height(terrain_latlon_dir(lat1 - (lat1 - lat0) * j / H, lon0 + (lon1 - lon0) * i / W), sp);
+    size_t wet = 0;
+    static const float lakecol[3] = { 0.3f, 0.5f, 0.95f };
+    for (int j = 0; j < H; ++j)
+        for (int i = 0; i < W; ++i) {
+            double h = hgt[(size_t)j * (W + 1) + i], gx = (hgt[(size_t)j * (W + 1) + i + 1] - h) / sp, gz = (hgt[(size_t)(j + 1) * (W + 1) + i] - h) / sp;
+            float shade = clampf(1.0f - (float)(relief * (gx + gz)), 0.5f, 1.3f), col[3];
+            if (h < 0.0) { col[0] = 0.55f; col[1] = 0.58f; col[2] = 0.62f; }
+            else {
+                float t = clampf((float)(h / 4000.0), 0.0f, 1.0f);
+                col[0] = 0.55f + 0.4f * t; col[1] = 0.62f + 0.3f * t * t; col[2] = 0.45f + 0.5f * t * t;
+            }
+            TerrainEarthWater w;
+            terrain_earth_water(terrain_latlon_dir(lat1 - (lat1 - lat0) * (j + 0.5) / H, lon0 + (lon1 - lon0) * (i + 0.5) / W), &w);
+            if (w.lake) { col[0] = lakecol[0]; col[1] = lakecol[1]; col[2] = lakecol[2]; shade = 1.0f; wet++; }
+            size_t px = ((size_t)j * W + i) * 3;
+            for (int q = 0; q < 3; ++q) m.img[px + q] = (uint8_t)clampf(col[q] * shade * 255.0f, 0.0f, 255.0f);
+        }
+    terrain_earth_water_segments(water_line, &m);
+    static const float shorecol[3] = { 0.15f, 0.35f, 0.85f }, rivercol[3] = { 0.05f, 0.2f, 0.75f };
+    for (size_t k = 0; k < (size_t)W * H; ++k)
+        for (int q = 0; q < 3; ++q) {
+            float v = m.img[3 * k + q];
+            v += m.shore[k] * (shorecol[q] * 255.0f - v);
+            v += m.river[k] * (rivercol[q] * 255.0f - v);
+            m.img[3 * k + q] = (uint8_t)clampf(v, 0.0f, 255.0f);
+        }
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return 1;
+    fprintf(fp, "P6\n%d %d\n255\n", W, H);
+    fwrite(m.img, 1, (size_t)W * H * 3, fp);
+    fclose(fp);
+    printf("water map, %d x %d (%.1f km a pixel): %zu river segments, %zu shore segments drawn, %.2f%% of pixels in lakes\n",
+           W, H, sp / 1000.0, m.rivers, m.shores, 100.0 * wet / ((double)W * H));
+    free(m.img);
+    free(m.river);
+    free(m.shore);
+    free(hgt);
+    return 0;
+}
+
+/* The water (with a bake that has it): the lakes and rivers are where the
+ * Earth's are, a river's segment is water along its middle, and the signed
+ * distance to the water's edge is continuous: it changes no faster than the
+ * distance walked, and changes sign only at an edge, across the buckets'
+ * sides as within them. */
+static TerrainDir pnudge(Rng *r, TerrainDir p, double metres);
+
+typedef struct WaterSegs { TerrainDir a[4096], b[4096]; double width[4096]; int lake[4096], n; size_t seen; Rng *r; } WaterSegs;
+
+static void water_keep(void *ctx, TerrainDir a, TerrainDir b, double width, int lake) {
+    WaterSegs *s = (WaterSegs *)ctx;
+    int k = s->n < 4096 ? s->n++ : (int)(rng_u32(s->r) % (s->seen + 1));   /* reservoir sampling */
+    if (k < 4096) { s->a[k] = a; s->b[k] = b; s->width[k] = width; s->lake[k] = lake; }
+    s->seen++;
+}
+
+/* The water at (lat, lon) walked east (dlon) or north (dlat) in steps of
+ * `step` metres: whether any step lies in water, and whether the edge's sign
+ * ever flips without the edge being within a step. */
+static void water_walk(double lat, double lon, double dlat, double dlon, int steps, double step, int *wet, int *jumps, double *worst) {
+    TerrainEarthWater w0, w1;
+    TerrainDir p = terrain_latlon_dir(lat, lon);
+    terrain_earth_water(p, &w0);
+    *wet |= w0.edge < 0.0;
+    for (int s = 1; s <= steps; ++s) {
+        TerrainDir q = terrain_latlon_dir(lat + dlat * s, lon + dlon * s);
+        terrain_earth_water(q, &w1);
+        double d = pdist(p, q) * PLANET_RADIUS;
+        double change = fabs(w1.edge - w0.edge);
+        if (fabs(w0.edge) < w0.reach && fabs(w1.edge) < w1.reach && change - d > *worst) *worst = change - d;
+        if ((w0.edge < 0.0) != (w1.edge < 0.0) && (fabs(w0.edge) > d + 1.0 || fabs(w1.edge) > d + 1.0)) ++*jumps;
+        *wet |= w1.edge < 0.0;
+        w0 = w1; p = q;
+    }
+}
+
+static void test_earth_water(Rng *r) {
+    TerrainEarthWater w;
+    if (!terrain_earth_loaded()) return;
+    if (!terrain_earth_water(prand(r), &w)) { CHECK(0, "the test bake has no water: bake it again with the project's water"); return; }
+    static const struct { double lat, lon; int lake; const char *name; } places[] = {
+        { 42.0, 50.5, 1, "the Caspian" }, { 47.6, -87.5, 1, "Lake Superior" }, { -1.0, 33.0, 1, "Lake Victoria" },
+        { 44.0, -82.3, 1, "Lake Huron" }, { 23.0, 12.0, 0, "the Sahara" }, { 34.0522, -118.2440, 0, "Los Angeles" },
+    };
+    for (size_t k = 0; k < sizeof places / sizeof places[0]; ++k) {
+        terrain_earth_water(terrain_latlon_dir(places[k].lat, places[k].lon), &w);
+        CHECK(w.lake == places[k].lake && (w.edge < 0.0) == places[k].lake, "%s: lake %d, edge %.0f m", places[k].name, w.lake, w.edge);
+    }
+    /* the big rivers cross these lines (lat, lon from .. to, east), every 250 m */
+    static const struct { double lat, lon0, lon1; const char *name; } rivers[] = {
+        { -3.3, -60.6, -59.4, "the Amazon at Manaus" }, { 35.15, -91.0, -89.5, "the Mississippi at Memphis" },
+        { 25.7, 32.0, 33.2, "the Nile at Luxor" }, { 50.0, 7.3, 8.3, "the Rhine at Mainz" }, { 30.6, 113.8, 114.8, "the Yangtze at Wuhan" },
+    };
+    for (size_t k = 0; k < sizeof rivers / sizeof rivers[0]; ++k) {
+        double km = (rivers[k].lon1 - rivers[k].lon0) * 111.2 * cos(rivers[k].lat * 3.14159265358979323846 / 180.0);
+        int steps = (int)(km / 0.25), wet = 0, jumps = 0;
+        double worst = 0.0;
+        water_walk(rivers[k].lat, rivers[k].lon0, 0.0, (rivers[k].lon1 - rivers[k].lon0) / steps, steps, 250.0, &wet, &jumps, &worst);
+        CHECK(wet, "no water crossing %s", rivers[k].name);
+        CHECK(jumps == 0 && worst < 1.0, "%s: the edge jumps (%d sign flips away from it, %.2f m beyond the distance walked)", rivers[k].name, jumps, worst);
+    }
+    /* walks right across the big lakes, through the buckets' sides */
+    static const struct { double lat0, lon0, dlat, dlon; const char *name; } walks[] = {
+        { 42.0, 46.0, 0.0, 9.0, "the Caspian, west to east" }, { 36.0, 51.0, 11.0, 0.0, "the Caspian, south to north" },
+        { 47.5, -92.5, 0.0, 8.5, "Lake Superior" }, { -3.5, 31.0, 4.5, 4.5, "Lake Victoria" }, { 51.0, 103.0, 6.0, 8.0, "Lake Baikal" },
+    };
+    for (size_t k = 0; k < sizeof walks / sizeof walks[0]; ++k) {
+        int steps = 4000, wet = 0, jumps = 0;
+        double worst = 0.0;
+        double km = 111.2 * sqrt(walks[k].dlat * walks[k].dlat + pow(walks[k].dlon * cos(walks[k].lat0 * 3.14159265358979323846 / 180.0), 2.0));
+        water_walk(walks[k].lat0, walks[k].lon0, walks[k].dlat / steps, walks[k].dlon / steps, steps, km * 1000.0 / steps, &wet, &jumps, &worst);
+        CHECK(wet && jumps == 0 && worst < 1.0, "%s: wet %d, %d sign flips away from the edge, %.2f m beyond the distance walked", walks[k].name, wet, jumps, worst);
+    }
+    /* every segment is water along its middle (a river's bank half its width away), and nearby the edge is 1-Lipschitz */
+    static WaterSegs segs;
+    segs.n = 0; segs.seen = 0; segs.r = r;
+    size_t all = terrain_earth_water_segments(water_keep, &segs);
+    int dry = 0, steep = 0, flips = 0, lakes = 0;
+    clock_t t0 = clock();
+    for (int k = 0; k < segs.n; ++k) {
+        TerrainDir a = segs.a[k], b = segs.b[k], m = { 0.5 * (a.x + b.x), 0.5 * (a.y + b.y), 0.5 * (a.z + b.z) };
+        double ml = sqrt(pdot(m, m));
+        m.x /= ml; m.y /= ml; m.z /= ml;
+        terrain_earth_water(m, &w);
+        lakes += segs.lake[k];
+        if (w.edge > (segs.lake[k] ? 1.0 : 1.0 - 0.5 * segs.width[k])) dry++;   /* on the shore, or half the river's width in (or deeper, where waters meet) */
+        for (int t = 0; t < 8; ++t) {
+            TerrainDir p = pnudge(r, m, 1500.0 * rng_float(r)), q = pnudge(r, p, 200.0);
+            TerrainEarthWater wp, wq;
+            terrain_earth_water(p, &wp);
+            terrain_earth_water(q, &wq);
+            double d = pdist(p, q) * PLANET_RADIUS;
+            if (fabs(wp.edge) < wp.reach && fabs(wq.edge) < wq.reach && fabs(wp.edge - wq.edge) > d + 1.0) steep++;
+            if ((wp.edge < 0.0) != (wq.edge < 0.0) && (fabs(wp.edge) > d + 1.0 || fabs(wq.edge) > d + 1.0)) flips++;
+        }
+    }
+    double us = 1e6 * (double)(clock() - t0) / CLOCKS_PER_SEC / (segs.n * 17.0);
+    printf("water: %zu segments; %d sampled (%d lakes' shores): %d not water along the middle, %d steeper than 1, %d sign flips away from the edge; %.2f us a query\n",
+           all, segs.n, lakes, dry, steep, flips, us);
+    CHECK(dry == 0 && steep == 0 && flips == 0, "the water's segments and edge disagree (%d dry, %d steep, %d flips)", dry, steep, flips);
+}
+
 /* A direction about `metres` off p, in a random direction over the sphere. */
 static TerrainDir pnudge(Rng *r, TerrainDir p, double metres) {
     TerrainDir t = prand(r);
@@ -1626,6 +1820,8 @@ static void test_earth(Rng *r, const char *path) {
     CHECK(lo == -TERRAIN_MACRO_M && hi == TERRAIN_MACRO_M, "without a bake, the extremes aren't the macro field's");
     TerrainEarthLand none;
     CHECK(!terrain_earth_land(prand(r), &none) && none.relief == 0.0 && none.rough == 1.0 && terrain_earth_rough_max() == 1.0, "without a bake, the landform grid isn't empty");
+    TerrainEarthWater dry;
+    CHECK(!terrain_earth_water(prand(r), &dry) && dry.edge >= 1e30 && !dry.lake && terrain_earth_water_segments(NULL, NULL) == 0, "without a bake, there is water");
 
     if (path && strcmp(path, "none") == 0) { printf("earth: no bake (--earth none): the stand-in only\n"); return; }
     if (!terrain_earth_load(path)) { CHECK(0, "the test bake %s didn't load", path ? path : "(none)"); return; }
@@ -1863,6 +2059,10 @@ int main(int argc, char **argv) {
     if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
     if (argc > 2 && strcmp(argv[1], "--earth-map") == 0) return earth_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
     if (argc > 2 && strcmp(argv[1], "--landform-map") == 0) return landform_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
+    if (argc > 2 && strcmp(argv[1], "--water-map") == 0) {
+        if (argc > 7) return water_map(argv[2], atoi(argv[3]), atof(argv[4]), atof(argv[5]), atof(argv[6]), atof(argv[7]));
+        return water_map(argv[2], argc > 3 ? atoi(argv[3]) : 2880, -180.0, -90.0, 180.0, 90.0);
+    }
 
     /* 1. Reference pass, in order: finite and within the amplitudes. */
     double amax = fmax(PLAN_RELIEF_MAX_M, fmax(TERRAIN_LAND_TOP_M, TERRAIN_LAND_DEEP_M)) + terrain_lift_bound() + 1e-3, lo = 1e9, hi = -1e9;
@@ -2043,6 +2243,7 @@ int main(int argc, char **argv) {
     test_planet(&r);
     test_planet_patches(&r);
     test_earth(&r, earth);
+    test_earth_water(&r);
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all terrain tests passed (%d points)\n", N_POINTS);
