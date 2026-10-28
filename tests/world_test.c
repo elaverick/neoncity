@@ -372,9 +372,23 @@ static int fingerprint(void) {
         hr = fnv(iv, sizeof(iv), hr);
         hr = fnv(R->pts, sizeof(DVec2) * (size_t)R->npts, hr);
     }
+    uint64_t hc = 0xcbf29ce484222325ULL;
+    for (int k = 0; k < plan_channel_count(); ++k) {
+        const PlanChannel *c = plan_channel(k);
+        hc = fnv(c->v, sizeof(DVec2) * (size_t)c->n, hc);
+        hc = fnv(c->edge, (size_t)c->n, hc);
+        hc = fnv(&c->built, 1, hc);
+    }
+    for (int k = 0; k < plan_bridge_count(); ++k) {
+        const PlanBridge *b = plan_bridge(k);
+        double v[6] = { b->p.x, b->p.z, b->d.x, b->d.z, b->s0, b->s1 };
+        hc = fnv(v, sizeof v, hc);
+        hc = fnv(&b->road, sizeof b->road, hc);
+    }
     printf("world fingerprint\n");
     printf("  settlements %016llx\n", (unsigned long long)hs);
     printf("  roads       %016llx\n", (unsigned long long)hr);
+    printf("  channels    %016llx\n", (unsigned long long)hc);
     return 0;
 }
 
@@ -620,6 +634,129 @@ static void test_road_ground(void) {
     CHECK(offCentre <= 0.01, "the ground strays %.3f m from a road's surface", offCentre);
 }
 
+/* --- The rivers through the cities ---------------------------------------------------- */
+
+/* The area of convex p inside convex channel c (m^2). */
+static double overlap_area(const Poly *p, const PlanChannel *c) {
+    double area = 0.0;
+    for (int i = 1; i + 1 < c->n; ++i) area += dcross(dsub(c->v[i], c->v[0]), dsub(c->v[i + 1], c->v[0]));
+    double o = area >= 0.0 ? 1.0 : -1.0;
+    Poly q = *p;
+    RoadAttr none;
+    memset(&none, 0, sizeof none);
+    for (int i = 0; i < c->n && q.n; ++i) {
+        DVec2 a = c->v[i], e = dsub(c->v[(i + 1) % c->n], a);
+        poly_clip(&q, a, dv(o * e.z, -o * e.x), none, &q);
+    }
+    return q.n ? poly_area(&q) : 0.0;
+}
+
+/* How much of segment a b lies inside convex channel c, shrunk by `in` (m). */
+static double inside_length(DVec2 a, DVec2 b, const PlanChannel *c, double in) {
+    double area = 0.0;
+    for (int i = 1; i + 1 < c->n; ++i) area += dcross(dsub(c->v[i], c->v[0]), dsub(c->v[i + 1], c->v[0]));
+    double o = area >= 0.0 ? 1.0 : -1.0, lo = 0.0, hi = 1.0;
+    DVec2 d = dsub(b, a);
+    for (int i = 0; i < c->n; ++i) {
+        DVec2 v = c->v[i], e = dsub(c->v[(i + 1) % c->n], v);
+        double l = dlen(e);
+        if (l < 1e-9) continue;
+        double k0 = o * dcross(e, dsub(a, v)) / l - in, k1 = o * dcross(e, d) / l;   /* inside: k0 + t k1 >= 0 */
+        if (fabs(k1) < 1e-12) { if (k0 < 0.0) return 0.0; continue; }
+        double t = -k0 / k1;
+        if (k1 > 0.0) lo = fmax(lo, t); else hi = fmin(hi, t);
+    }
+    return hi > lo ? (hi - lo) * dlen(d) : 0.0;
+}
+
+/* Where a river runs through a built town: no block stands on its channel,
+ * no local street crosses it, and every arterial and boulevard that does is
+ * a bridge. Read round every built piece of channel (every stride-th). */
+static void test_channels(void) {
+    int built = 0, belt = 0, home = 0, home_bridges = 0;
+    double built_km = 0.0, belt_km = 0.0;
+    for (int k = 0; k < plan_channel_count(); ++k) {
+        const PlanChannel *c = plan_channel(k);
+        double l = dlen(dsub(c->b, c->a)) / 1000.0;
+        if (c->built) { built++; built_km += l; } else { belt++; belt_km += l; }
+        if (c->built && plan_settlement_near(c->a.x, c->a.z) == 0) home++;
+    }
+    for (int k = 0; k < plan_bridge_count(); ++k) {
+        const PlanBridge *b = plan_bridge(k);
+        if (plan_settlement_near(b->p.x, b->p.z) == 0) home_bridges++;
+    }
+    printf("rivers through the cities: %d pieces of channel across the towns (%.0f km), %d out in their belts (%.0f km), %d bridges;"
+           " the megacity %d pieces, %d bridges\n", built, built_km, belt, belt_km, plan_bridge_count(), home, home_bridges);
+    /* views of the bridges nearest the megacity's core, for NeonCity --cam: from a deck's sidewalk out over its parapet, and from 60 m up */
+    DVec2 c0 = plan_town_centre(0, 0);
+    int near[3] = { -1, -1, -1 };
+    for (int k = 0; k < plan_bridge_count(); ++k) {
+        double d = dlen(dsub(plan_bridge(k)->p, c0));
+        for (int q = 0; q < 3; ++q) {
+            if (near[q] >= 0 && d >= dlen(dsub(plan_bridge(near[q])->p, c0))) continue;
+            for (int m = 2; m > q; --m) near[m] = near[m - 1];
+            near[q] = k;
+            break;
+        }
+    }
+    for (int q = 0; q < 3; ++q) {
+        if (near[q] < 0) continue;
+        const PlanBridge *b = plan_bridge(near[q]);
+        DVec2 n = dv(-b->d.z, b->d.x), at = dadd(b->p, dscale(n, b->half + 0.5 * b->walk));
+        double yaw = atan2(n.x, -n.z) * 57.29577951;
+        if (yaw < 0.0) yaw += 360.0;
+        printf("  a bridge %.0f m from the core (class %d, deck %.0f m): --cam %.0f %.0f %.0f -20 / --cam %.0f %.0f %.0f -35 60\n", dlen(dsub(b->p, c0)),
+               b->cls, b->s1 - b->s0, at.x, at.z, yaw, at.x - 60.0 * n.x, at.z - 60.0 * n.z, yaw);
+    }
+    /* ...and of the piece of channel nearest it: from its promenade along it, and from 40 m up behind */
+    {
+        int best = -1;
+        double bd = 1e300;
+        for (int k = 0; k < plan_channel_count(); ++k) {
+            const PlanChannel *c = plan_channel(k);
+            double d = dlen(dsub(dscale(dadd(c->a, c->b), 0.5), c0));
+            if (c->built && dlen(dsub(c->b, c->a)) > 150.0 && d < bd) { bd = d; best = k; }
+        }
+        if (best >= 0) {
+            const PlanChannel *c = plan_channel(best);
+            DVec2 u = dnorm(dsub(c->b, c->a)), n = dv(-u.z, u.x), m = dscale(dadd(c->a, c->b), 0.5);
+            DVec2 at = dadd(dsub(m, dscale(u, 40.0)), dscale(n, c->hw + 2.0));
+            double yaw = atan2(u.x, -u.z) * 57.29577951;
+            if (yaw < 0.0) yaw += 360.0;
+            printf("  a channel %.0f m from the core (%.0f m wide): --cam %.0f %.0f %.0f -12 / --cam %.0f %.0f %.0f -30 40\n", bd, 2.0 * c->hw,
+                   at.x, at.z, yaw, m.x - 90.0 * u.x, m.z - 90.0 * u.z, yaw);
+        }
+    }
+    PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
+    if (!pa) return;
+    int stride = 1 + built / 600, checked = 0, on_block = 0, crossed = 0, unbridged = 0;
+    for (int k = 0, n = 0; k < plan_channel_count(); ++k) {
+        const PlanChannel *c = plan_channel(k);
+        if (!c->built || n++ % stride) continue;
+        plan_area(c->x0 - 30.0, c->z0 - 30.0, c->x1 + 30.0, c->z1 + 30.0, pa);
+        checked++;
+        for (int q = 0; q < pa->nchannels; ++q) {
+            const PlanChannel *h = &pa->channels[q];
+            if (!h->built) continue;
+            for (int b = 0; b < pa->nblocks; ++b) {
+                double a = overlap_area(&pa->blocks[b].curb, h);
+                if (a > 0.5 && on_block++ < 5) CHECK(0, "a block at (%.0f, %.0f) stands %.1f m2 on a channel", pa->blocks[b].x0, pa->blocks[b].z0, a);
+            }
+            for (int r = 0; r < pa->nroads; ++r) {
+                const Road *rd = &pa->roads[r];
+                double len = inside_length(rd->a, rd->b, h, 0.5);
+                if (len <= 0.5) continue;
+                if (rd->at.cls == ROAD_LOCAL) { if (crossed++ < 5) CHECK(0, "a local street at (%.0f, %.0f) crosses a channel for %.1f m", rd->a.x, rd->a.z, len); continue; }
+                int bridged = 0;
+                for (int g = 0; g < pa->nbridges; ++g) bridged |= pa->bridges[g].road == rd->at.id;
+                if (!bridged && unbridged++ < 5) CHECK(0, "a road (class %d) at (%.0f, %.0f) crosses a channel for %.1f m on no bridge", rd->at.cls, rd->a.x, rd->a.z, len);
+            }
+        }
+    }
+    printf("  round %d of them: %d blocks on a channel, %d local streets across one, %d roads across one on no bridge\n", checked, on_block, crossed, unbridged);
+    free(pa);
+}
+
 int main(int argc, char **argv) {
     int threads = cpu_count();
     if (argc > 2 && strcmp(argv[1], "--threads") == 0) {   /* the world must come out the same on any number */
@@ -649,6 +786,7 @@ int main(int argc, char **argv) {
     test_settlements();
     test_roads();
     test_road_ground();
+    test_channels();
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all world tests passed\n");

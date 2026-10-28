@@ -7,6 +7,7 @@
 #define MAX_TOWN_SEEDS  48
 #define TOWN_CACHE      96
 #define MAX_JDIRS       16
+#define MAX_PIECE_PARTS 16       /* a neighbourhood split by rivers into at most this many parts */
 
 typedef struct Site { int i, j; DVec2 p; uint32_t h; } Site;
 
@@ -406,6 +407,23 @@ static const TownEntry *town_ground(PlanCtx *c, int i, int j) {
  * inside the town, computed among those sites only and clipped to the town.
  * A boulevard to a town that isn't built is the city's perimeter road, and
  * this side of it, the only side there is, owns it. */
+/* The neighbourhood sites inside a town's cell (te's), or one at its centre
+ * where none is. */
+static int town_seeds(const TownEntry *te, Site *seeds) {
+    int ns = 0;
+    for (int j = (int)floor(te->z0 / NBHD_SIZE); j <= (int)floor(te->z1 / NBHD_SIZE); ++j)
+        for (int i = (int)floor(te->x0 / NBHD_SIZE); i <= (int)floor(te->x1 / NBHD_SIZE); ++i) {
+            Site s = nbhd_site(i, j);
+            if (ns < MAX_TOWN_SEEDS && poly_contains(&te->poly, s.p.x, s.p.z, -1.0)) seeds[ns++] = s;
+        }
+    if (ns == 0) {
+        seeds[0] = nbhd_site((int)floor(te->s.p.x / NBHD_SIZE), (int)floor(te->s.p.z / NBHD_SIZE));
+        seeds[0].p = te->s.p;
+        ns = 1;
+    }
+    return ns;
+}
+
 static void town_plan(PlanCtx *c, Site t, TownPlan *tp) {
     const TownEntry *te = town_get(c, t.i, t.j);
     int8_t nb[PLAN_MAX_PV];
@@ -416,19 +434,8 @@ static void town_plan(PlanCtx *c, Site t, TownPlan *tp) {
     for (int k = 0; k < tp->poly.n; ++k)
         if (nb[k] >= 0 && !town_built(c, t.i + nb_di(nb[k]), t.j + nb_dj(nb[k]))) tp->poly.e[k].own = 1;
     te = town_get(c, t.i, t.j);
-    double x0 = te->x0, z0 = te->z0, x1 = te->x1, z1 = te->z1;
     Site seeds[MAX_TOWN_SEEDS];
-    int ns = 0;
-    for (int j = (int)floor(z0 / NBHD_SIZE); j <= (int)floor(z1 / NBHD_SIZE); ++j)
-        for (int i = (int)floor(x0 / NBHD_SIZE); i <= (int)floor(x1 / NBHD_SIZE); ++i) {
-            Site s = nbhd_site(i, j);
-            if (ns < MAX_TOWN_SEEDS && poly_contains(&tp->poly, s.p.x, s.p.z, -1.0)) seeds[ns++] = s;
-        }
-    if (ns == 0) {
-        seeds[0] = nbhd_site((int)floor(t.p.x / NBHD_SIZE), (int)floor(t.p.z / NBHD_SIZE));
-        seeds[0].p = t.p;
-        ns = 1;
-    }
+    int ns = town_seeds(te, seeds);
     for (int k = 0; k < ns; ++k) {
         Piece *pc = &tp->pc[tp->n];
         pc->nb = seeds[k];
@@ -686,7 +693,34 @@ static void process_piece(PlanCtx *c, const TownPlan *tp, const Piece *pc) {
     float d = plan_density(cen.x, cen.z);
     sc.blockSize = 230.0 - 120.0 * d;
     sc.lamp = 0;  /* every street lamp is sodium */
-    split_rec(&sc, p, 1u, 0);
+    const PlanChannel *const *ch;
+    int nch = plan_water_piece(tp->t.i, tp->t.j, pc->nb.i, pc->nb.j, &ch);
+    if (!nch) { split_rec(&sc, p, 1u, 0); return; }
+    /* A river across it: the land either side of each channel's banks, each
+     * part split on its own (paths 0x1000 (k + 1) + 1 and down, apart from
+     * one another's and from a whole piece's). */
+    Poly *parts = (Poly *)malloc(sizeof(Poly) * 2 * MAX_PIECE_PARTS);
+    if (!parts) fatal("out of memory splitting a neighbourhood");
+    Poly *next = parts + MAX_PIECE_PARTS;
+    int np = 1;
+    parts[0] = *p;
+    RoadAttr bank = no_road();
+    bank.bank = 1;
+    bank.walk = (float)PLAN_BANK_WALK;
+    for (int r = 0; r < nch; ++r) {
+        DVec2 u = dnorm(dsub(ch[r]->b, ch[r]->a)), nl = dv(-u.z, u.x);
+        DVec2 ql = dadd(ch[r]->a, dscale(nl, ch[r]->hw)), qr = dsub(ch[r]->a, dscale(nl, ch[r]->hw));
+        int nn = 0;
+        for (int k = 0; k < np; ++k) {
+            if (nn < MAX_PIECE_PARTS && poly_clip(&parts[k], ql, dv(-nl.x, -nl.z), bank, &next[nn])) nn++;
+            if (nn < MAX_PIECE_PARTS && poly_clip(&parts[k], qr, nl, bank, &next[nn])) nn++;
+        }
+        memcpy(parts, next, sizeof(Poly) * (size_t)nn);
+        np = nn;
+    }
+    for (int k = 0; k < np; ++k)
+        if (poly_area(&parts[k]) >= 40.0) split_rec(&sc, &parts[k], 0x1000u * (uint32_t)(k + 1) + 1u, 0);
+    free(parts);
 }
 
 static void process_town(PlanCtx *c, const TownPlan *tp) {
@@ -797,5 +831,70 @@ void plan_area(double x0, double z0, double x1, double z1, PlanArea *out) {
                 if (box_overlaps(c->A, g.p.x, g.p.z, g.p.x, g.p.z, pad)) out->gates[out->ngates++] = g;
             }
     }
+    plan_water_area(out);
     free(c);
+}
+
+/* ===========================================================================
+ * The pieces of the city, for the rivers through it (plan_water.c)
+ * ========================================================================= */
+
+struct PlanPieces {
+    PlanCtx c;
+    int     has, ti, tj, built, ns;   /* the town last asked about, and its sites */
+    Site    seeds[MAX_TOWN_SEEDS];
+};
+
+PlanPieces *plan_pieces_new(void) {
+    PlanPieces *pp = (PlanPieces *)calloc(1, sizeof(PlanPieces));
+    if (!pp) fatal("out of memory finding the city's pieces");
+    return pp;
+}
+
+void plan_pieces_free(PlanPieces *pp) { free(pp); }
+
+void plan_piece_at(PlanPieces *pp, double x, double z, PlanPiece *out) {
+    int ti, tj;
+    plan_town_at(x, z, &ti, &tj);
+    if (!pp->has || ti != pp->ti || tj != pp->tj) {
+        if (pp->c.ntowns == TOWN_CACHE) pp->c.ntowns = 0;   /* a long walk: forget the towns behind */
+        pp->built = town_built(&pp->c, ti, tj);
+        pp->ns = town_seeds(town_get(&pp->c, ti, tj), pp->seeds);
+        pp->has = 1; pp->ti = ti; pp->tj = tj;
+    }
+    int best = 0;
+    double bd = 1e300;
+    for (int k = 0; k < pp->ns; ++k) {
+        double d = (x - pp->seeds[k].p.x) * (x - pp->seeds[k].p.x) + (z - pp->seeds[k].p.z) * (z - pp->seeds[k].p.z);
+        if (d < bd) { bd = d; best = k; }
+    }
+    out->ti = ti; out->tj = tj;
+    out->ni = pp->seeds[best].i; out->nj = pp->seeds[best].j;
+    out->built = pp->built;
+}
+
+RoadAttr plan_piece_road(const PlanPiece *a, const PlanPiece *b, DVec2 *q, DVec2 *n) {
+    Site sa, sb;
+    RoadAttr at;
+    if (a->ti != b->ti || a->tj != b->tj) {
+        sa = town_site(a->ti, a->tj); sb = town_site(b->ti, b->tj);
+        at = boulevard_attr(sa, sb);
+    } else {
+        sa = nbhd_site(a->ni, a->nj); sb = nbhd_site(b->ni, b->nj);
+        at = arterial_attr(sa, sb);
+    }
+    *q = dv((sa.p.x + sb.p.x) * 0.5, (sa.p.z + sb.p.z) * 0.5);
+    *n = dnorm(dsub(sb.p, sa.p));
+    return at;
+}
+
+int plan_piece_poly(PlanPieces *pp, const PlanPiece *pc, Poly *out) {
+    TownPlan *tp = &pp->c.plan;
+    if (pp->c.ntowns == TOWN_CACHE) pp->c.ntowns = 0;
+    town_plan(&pp->c, town_site(pc->ti, pc->tj), tp);
+    pp->has = 0;   /* the cache may have moved */
+    for (int k = 0; k < tp->n; ++k)
+        if (tp->pc[k].nb.i == pc->ni && tp->pc[k].nb.j == pc->nj) { *out = tp->pc[k].poly; return 1; }
+    out->n = 0;
+    return 0;
 }

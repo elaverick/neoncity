@@ -266,6 +266,13 @@ void   terrain_earth_check_streams(void);
  * and its kind: 1 a river, 2 a lake's shore, 3 a stream), for maps and
  * checks; returns how many. */
 size_t terrain_earth_water_segments(void (*fn)(void *ctx, TerrainDir a, TerrainDir b, double width, int kind), void *ctx);
+/* Calls fn for every segment of the bake's rivers (from point k to k + 1,
+ * its width) that the water's buckets within `radius` (m) of c list, each
+ * once, in order of k; returns how many. A river runs on from segment k to
+ * k + 1 where both are listed and share point k + 1. The settlements' rivers
+ * are read so (plan_water.c). */
+size_t terrain_earth_rivers_near(TerrainDir c, double radius,
+                                 void (*fn)(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, double width), void *ctx);
 /* The streams: the small streams of the land, derived from it by
  * tools/earth_streams.c (the Earth plus the procedural land with no
  * settlement near, TERRAIN_WILD_EDGE) and kept beside the bake

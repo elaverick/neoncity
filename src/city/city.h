@@ -27,9 +27,17 @@
 #define MAX_COLL        4096
 #define MAX_COLL_VERTS  20480
 #define MAX_FLOORS      128
+#define MAX_CHANNELS    24
+#define MAX_DECKS       24
+#define MAX_BARRIERS    256
 #define CITY_OVERHANG   70.0f
 
 typedef struct Rect { float x0, z0, x1, z1; } Rect;
+
+/* A wall the walker can't pass: a line a b (world x, z) `half` thick. A low
+ * one (a channel's wall) stops feet down in the channel, more than a metre
+ * under the city's ground; any other (a parapet) feet up at the street. */
+typedef struct Barrier { double a[2], b[2]; float half; uint8_t low; } Barrier;
 
 enum { BK_BLOCK = 0, BK_TOWER = 1, BK_MEGA = 2 };
 enum { SIDE_W = 1, SIDE_E = 2, SIDE_S = 4, SIDE_N = 8 };
@@ -108,6 +116,11 @@ typedef struct BlockLayout {
     CollPoly coll[MAX_COLL];
     int      nfloor;                /* floors inside them, of the buildings in this chunk */
     FloorPoly floor[MAX_FLOORS];
+    int      nchan, ndeck, nbarrier;
+    CurbPoly chan[MAX_CHANNELS];    /* the rivers' channels touching this chunk (PlanChannel): their floors, */
+    uint8_t  chanbuilt[MAX_CHANNELS]; /* (each across a built town, or out in the belt: there, only over the city's ground) */
+    CurbPoly deck[MAX_DECKS];       /* the bridges' decks over them, */
+    Barrier  barrier[MAX_BARRIERS]; /* and their walls and parapets */
     double   collv[MAX_COLL_VERTS][2];
 } BlockLayout;
 

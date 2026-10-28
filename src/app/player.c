@@ -154,27 +154,68 @@ static bool floor_height(double x, double z, float *y) {
     return false;
 }
 
+/* Feet this far under the city's ground are down in a river's channel (m). */
+#define CHANNEL_DOWN 1.0f
+
+/* Whether (x, z) lies over a river's channel, and its floor's height there;
+ * not where a bridge's deck spans it and the feet are up on the deck. */
+static bool channel_floor(double x, double z, double feet, float *y) {
+    const BlockLayout *L = layouts_get((int)floor(x / CHUNK_SIZE), (int)floor(z / CHUNK_SIZE));
+    for (int i = 0; i < L->nchan; ++i) {
+        if (!in_curb(&L->chan[i], x, z)) continue;
+        if (!L->chanbuilt[i]) {   /* out in the belt: the channel's floor over the city's ground, the land's beyond */
+            bool over = !L->bounded;
+            for (int k = 0; k < L->nground && !over; ++k) over = in_curb(&L->ground[k], x, z);
+            if (!over) continue;
+        }
+        float g = city_ground_y(x, z);
+        if (feet > g - CHANNEL_DOWN)
+            for (int d = 0; d < L->ndeck; ++d)
+                if (in_curb(&L->deck[d], x, z)) return false;
+        *y = g - (float)PLAN_CHANNEL_DEPTH;
+        return true;
+    }
+    return false;
+}
+
 /* What the feet stand on: a building's floor, or the street's ground and its
- * kerbs. A tread of an entrance's steps is level, and where the street slopes
- * along a wide entrance it dips into the sidewalk at the uphill end. */
-static float ground_height(double x, double z) {
-    float f, street = base_ground(x, z) + kerb_height(x, z);
+ * kerbs, or a channel's floor. A tread of an entrance's steps is level, and
+ * where the street slopes along a wide entrance it dips into the sidewalk at
+ * the uphill end. */
+static float ground_height(double x, double z, double feet) {
+    float f, street;
+    if (channel_floor(x, z, feet, &f)) return f;
+    street = base_ground(x, z) + kerb_height(x, z);
     return floor_height(x, z, &f) ? maxf(f, street) : street;
+}
+
+/* Push a circle out of a barrier (a line `half` thick). */
+static void push_out_barrier(double *x, double *z, const Barrier *b) {
+    double ex = b->b[0] - b->a[0], ez = b->b[1] - b->a[1], l2 = ex * ex + ez * ez;
+    double t = l2 > 0.0 ? ((*x - b->a[0]) * ex + (*z - b->a[1]) * ez) / l2 : 0.0;
+    t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
+    double qx = b->a[0] + t * ex, qz = b->a[1] + t * ez, dx = *x - qx, dz = *z - qz, d = sqrt(dx * dx + dz * dz), r = RADIUS + b->half;
+    if (d >= r || d < 1e-9) return;
+    *x = qx + dx * r / d;
+    *z = qz + dz * r / d;
 }
 
 /* Buildings belong to the chunk holding their centre and overhang by less
  * than a chunk, so the 3x3 chunks around the player cover everything. What
  * stands at street level (walls, piers, lift cores, columns) is solid; the
  * space under arcades, void decks and gateways is open. */
-static void collide(double *x, double *z) {
+static void collide(double *x, double *z, double feet) {
     int ccx = (int)floor(*x / CHUNK_SIZE), ccz = (int)floor(*z / CHUNK_SIZE);
     const Rect pole = { -0.2f, -0.2f, 0.2f, 0.2f };
+    int down = feet < city_ground_y(*x, *z) - CHANNEL_DOWN;   /* in a river's channel: its walls stop the feet, not its parapets */
     for (int iter = 0; iter < 3; ++iter) {
         for (int dz = -1; dz <= 1; ++dz)
             for (int dx = -1; dx <= 1; ++dx) {
                 const BlockLayout *L = layouts_get(ccx + dx, ccz + dz);
                 for (int i = 0; i < L->ncoll; ++i) push_out_poly(x, z, L, &L->coll[i]);
                 for (int i = 0; i < L->nlamps; ++i) push_out_frame(x, z, L->lamp[i].x, L->lamp[i].z, 1.0f, 0.0f, pole);
+                for (int i = 0; i < L->nbarrier; ++i)
+                    if (L->barrier[i].low == down) push_out_barrier(x, z, &L->barrier[i]);
             }
     }
 }
@@ -214,7 +255,7 @@ static void move_fly(Player *p, const PlayerInput *in, vec3 look, vec3 flatRight
         p->vel[i] = damp(p->vel[i], target, 6.0f, dt);
     }
     for (int i = 0; i < 3; ++i) p->feet[i] += p->vel[i] * dt;
-    float gh = ground_height(p->feet[0], p->feet[2]) + 1.0f;
+    float gh = ground_height(p->feet[0], p->feet[2], p->feet[1]) + 1.0f;
     if (p->feet[1] < gh) p->feet[1] = gh;
     if (p->feet[1] > MAX_ALTITUDE) { p->feet[1] = MAX_ALTITUDE; p->vel[1] = minf(p->vel[1], 0.0f); }
     p->bobWeight = damp(p->bobWeight, 0, 8.0f, dt);
@@ -236,7 +277,7 @@ static void move_walk(Player *p, const PlayerInput *in, vec3 flatFwd, vec3 flatR
     p->vel[1] -= GRAVITY * dt;
 
     double nx = p->feet[0] + p->vel[0] * dt, nz = p->feet[2] + p->vel[2] * dt;
-    collide(&nx, &nz);
+    collide(&nx, &nz, p->feet[1]);
     /* Recover velocity actually achieved so sliding along walls feels right. */
     p->vel[0] = (float)((nx - p->feet[0]) / dt);
     p->vel[2] = (float)((nz - p->feet[2]) / dt);
@@ -249,7 +290,7 @@ static void move_walk(Player *p, const PlayerInput *in, vec3 flatFwd, vec3 flatR
 
     float prevY = (float)p->feet[1];
     p->feet[1] += p->vel[1] * dt;
-    float gh = ground_height(p->feet[0], p->feet[2]);
+    float gh = ground_height(p->feet[0], p->feet[2], p->feet[1]);
     bool wasGround = p->onGround;
     if (p->feet[1] <= gh) {
         /* Landing: dip the head proportionally to the impact speed. */

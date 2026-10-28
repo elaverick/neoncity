@@ -1108,6 +1108,7 @@ void plan_world_init(int threads) {
     build_index();
     W.state = WORLD_SETTLED;
     terrain_earth_check_streams();   /* the streams were derived with these settlements, or are dropped */
+    plan_water_build(threads);
     plan_roads_build(threads);
     W.state = WORLD_READY;
 }

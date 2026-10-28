@@ -90,6 +90,31 @@ static int clip_segment(DVec2 *a, DVec2 *b) {
  * distance to the outline. Under its foot a skirt hangs to SKIRT_BOTTOM: the
  * coarse terrain levels, drawn from far off, sink further than the land
  * (src/terrain: terrain_urban_sink). */
+#define MAX_SHARDS 96
+typedef struct Shard { int n; DVec2 v[48]; } Shard;
+static void shards_minus(Shard *s, int *ns, Shard *tmp, const DVec2 *b, int nb);
+
+/* The plain asphalt over convex p (chunk-local), less the rivers' channels
+ * (their floors and walls are build_channels'). */
+static void base_asphalt(Mesh *m, const ChunkGen *g, const DVec2 *p, int n) {
+    const PlanArea *pa = g->pa;
+    float buv[48][2] = { { 0 } };
+    if (!pa->nchannels) { emit_flat(m, p, n, BASE_Y, (const float (*)[2])buv, mat(MAT_ROAD, 0, 0, 0, 0)); return; }
+    Shard *sh = (Shard *)malloc(sizeof(Shard) * MAX_SHARDS * 2);
+    if (!sh) fatal("out of memory building the streets");
+    int ns = 1;
+    sh[0].n = n;
+    memcpy(sh[0].v, p, sizeof(DVec2) * (size_t)n);
+    for (int k = 0; k < pa->nchannels && ns; ++k) {
+        const PlanChannel *c = &pa->channels[k];
+        DVec2 v[PLAN_CHANNEL_PV];
+        for (int i = 0; i < c->n; ++i) v[i] = dv(c->v[i].x - g->ox, c->v[i].z - g->oz);
+        shards_minus(sh, &ns, sh + MAX_SHARDS, v, c->n);
+    }
+    for (int s = 0; s < ns; ++s) emit_flat(m, sh[s].v, sh[s].n, BASE_Y, (const float (*)[2])buv, mat(MAT_ROAD, 0, 0, 0, 0));
+    free(sh);
+}
+
 #define VERGE_TUCK   0.1f    /* m the verge starts inside the outline, under the asphalt */
 #define GATE_FLARE   3.0     /* m a gate's asphalt reaches past its road's paved width, each side */
 #define SKIRT_BOTTOM (-1.0f) /* m below the city's ground */
@@ -120,15 +145,66 @@ static int gate_spans(const PlanArea *pa, const PlanEdge *e, double (*span)[2], 
     return n;
 }
 
+/* A piece of the verge's strip, ai bi bo ao (chunk-local; the inner edge at
+ * `top`, the outer at `foot`, en out), and its skirt under the outer edge,
+ * less the rivers' channels. */
+static void verge_minus(Mesh *m, const ChunkGen *g, DVec2 ai, DVec2 bi, DVec2 bo, DVec2 ao, DVec2 en, float top, float foot, vec3 up, Mat mt) {
+    const PlanArea *pa = g->pa;
+    Shard *sh = (Shard *)malloc(sizeof(Shard) * MAX_SHARDS * 2);
+    if (!sh) fatal("out of memory building the city's edge");
+    int ns = 1;
+    sh[0].n = 4;
+    sh[0].v[0] = ai; sh[0].v[1] = bi; sh[0].v[2] = bo; sh[0].v[3] = ao;
+    double span = ddot(dsub(ao, ai), en);
+    const float zuv[3][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 } };
+    for (int k = 0; k < pa->nchannels && ns; ++k) {
+        const PlanChannel *c = &pa->channels[k];
+        DVec2 v[PLAN_CHANNEL_PV];
+        for (int i = 0; i < c->n; ++i) v[i] = dv(c->v[i].x - g->ox, c->v[i].z - g->oz);
+        shards_minus(sh, &ns, sh + MAX_SHARDS, v, c->n);
+    }
+    for (int s = 0; s < ns; ++s) {
+        vec3 q[48];
+        for (int i = 0; i < sh[s].n; ++i) {
+            float t = (float)clampf((float)(ddot(dsub(sh[s].v[i], ai), en) / span), 0.0f, 1.0f);
+            q[i] = v3((float)sh[s].v[i].x, top + (foot - top) * t, (float)sh[s].v[i].z);
+        }
+        for (int i = 1; i + 1 < sh[s].n; ++i) emit_tri(m, q[0], q[i], q[i + 1], up, zuv, mt);
+    }
+    free(sh);
+    /* the skirt, but where a channel passes under the outer edge */
+    double cut[PLAN_MAX_CHANNELS][2];
+    int nc = 0;
+    DVec2 wa = dv(ao.x + g->ox, ao.z + g->oz), wb = dv(bo.x + g->ox, bo.z + g->oz);
+    for (int k = 0; k < pa->nchannels; ++k) {
+        double t0, t1;
+        if (!city_seg_in(wa, wb, pa->channels[k].v, pa->channels[k].n, 0.0, &t0, &t1)) continue;
+        int at = nc++;
+        while (at > 0 && cut[at - 1][0] > t0) { cut[at][0] = cut[at - 1][0]; cut[at][1] = cut[at - 1][1]; --at; }
+        cut[at][0] = t0; cut[at][1] = t1;
+    }
+    double t = 0.0;
+    const float suv[4][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } };
+    for (int q = 0; q <= nc; ++q) {
+        double t1 = q < nc ? cut[q][0] : 1.0;
+        if (t1 > t + 1e-6) {
+            DVec2 a = dadd(ao, dscale(dsub(bo, ao), t)), b = dadd(ao, dscale(dsub(bo, ao), t1));
+            emit_quad(m, v3((float)a.x, foot, (float)a.z), v3((float)b.x, foot, (float)b.z),
+                      v3((float)b.x, SKIRT_BOTTOM, (float)b.z), v3((float)a.x, SKIRT_BOTTOM, (float)a.z),
+                      v3((float)en.x, 0, (float)en.z), suv, mt);
+        }
+        if (q < nc) t = fmax(t, cut[q][1]);
+    }
+}
+
 static void build_city_edge(Mesh *m, const ChunkGen *g) {
     const PlanArea *pa = g->pa;
-    float buv[48][2] = { { 0 } };
     for (int t = 0; t < pa->ntowns; ++t) {
         const Poly *gp = &pa->ground[t];
         DVec2 l[PLAN_MAX_PV], cl[48];
         for (int i = 0; i < gp->n; ++i) l[i] = dv(gp->v[i].x - g->ox, gp->v[i].z - g->oz);
         int k = clip_chunk(l, gp->n, cl);
-        if (k) emit_flat(m, cl, k, BASE_Y, (const float (*)[2])buv, mat(MAT_ROAD, 0, 0, 0, 0));
+        if (k) base_asphalt(m, g, cl, k);
     }
     const float W = CITY_VERGE_W, top = city_verge_height(0.0f) - 0.01f, foot = city_verge_height(W);
     const Mat grass = mat(MAT_LOT, 0, 1, 0, 0);   /* the parks' grass (emit_lot) */
@@ -167,6 +243,10 @@ static void build_city_edge(Mesh *m, const ChunkGen *g) {
             float slope = (top - foot) / (W + VERGE_TUCK);
             vec3 up = v3_norm(v3((float)en.x * slope, 1.0f, (float)en.z * slope));
             float vuv[4][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 } };
+            if (pa->nchannels) {   /* round the rivers' channels where they leave the city */
+                verge_minus(m, g, ai, bi, bo, ao, en, top, foot, up, gate ? asphalt : grass);
+                continue;
+            }
             emit_quad(m, v3((float)ai.x, top, (float)ai.z), v3((float)bi.x, top, (float)bi.z),
                       v3((float)bo.x, foot, (float)bo.z), v3((float)ao.x, foot, (float)ao.z), up, vuv, gate ? asphalt : grass);
             emit_quad(m, v3((float)ao.x, foot, (float)ao.z), v3((float)bo.x, foot, (float)bo.z),
@@ -184,8 +264,7 @@ void build_roads(Mesh *m, const ChunkGen *g) {
     const double P = CHUNK_SIZE;
     if (!g->pa->bounded) {
         DVec2 base[4] = { {0, 0}, {P, 0}, {P, P}, {0, P} };
-        float buv[4][2] = { {0, 0}, {0, 0}, {0, 0}, {0, 0} };
-        emit_flat(m, base, 4, BASE_Y, buv, mat(MAT_ROAD, 0, 0, 0, 0));
+        base_asphalt(m, g, base, 4);
     } else {
         build_city_edge(m, g);
     }
@@ -259,9 +338,8 @@ void build_vents(Mesh *m, const ChunkGen *g) {
 }
 
 /* Pieces of convex polygons cut round other convex polygons (the sidewalk
- * round its drop kerbs, a slope round its tactile slabs). */
-#define MAX_SHARDS 96
-typedef struct Shard { int n; DVec2 v[48]; } Shard;
+ * round its drop kerbs, a slope round its tactile slabs, the asphalt round
+ * the rivers' channels). */
 
 /* Replaces the *ns shards in s with their parts outside convex polygon b;
  * tmp is scratch for MAX_SHARDS more. */

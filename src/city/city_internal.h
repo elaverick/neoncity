@@ -258,6 +258,29 @@ void build_roads(Mesh *m, const ChunkGen *g);
 void build_blocks(Mesh *m, const ChunkGen *g);
 void build_vents(Mesh *m, const ChunkGen *g);
 
+/* channels.c: the rivers' channels through the city (plan.h, PlanChannel,
+ * PlanBridge). Heights over the city's ground. */
+#define CHANNEL_PARAPET_W  0.3f   /* a parapet's thickness (m)... */
+#define CHANNEL_PARAPET_H  1.0f   /* ...and its height over the sidewalk */
+#define CHANNEL_DECK_DEPTH 1.2f   /* a deck from its sidewalks' top to its soffit (m) */
+#define DECK_PV            16
+/* A channel's wall, a b (world), `in` its normal into the channel (unit); a
+ * bank's carries a parapet. */
+typedef struct ChannelWall { DVec2 a, b, in; int bank; } ChannelWall;
+/* A parapet along a b (world), standing out from the line by `out` (unit,
+ * CHANNEL_PARAPET_W), from `base` up. */
+typedef struct Parapet { DVec2 a, b, out; float base; } Parapet;
+/* A piece of a bridge's deck: bridge k's span over one piece of channel (world, convex). */
+typedef struct DeckPiece { int bridge, n; DVec2 v[DECK_PV]; } DeckPiece;
+/* Where segment p0 p1 lies in convex v[n] grown by g (m): t in [*t0, *t1]
+ * along it; 0 if nowhere. */
+int  city_seg_in(DVec2 p0, DVec2 p1, const DVec2 *v, int n, double g, double *t0, double *t1);
+int  city_channel_walls(const PlanArea *pa, ChannelWall *out, int max);
+int  city_channel_parapets(const PlanArea *pa, const ChannelWall *w, int nw, Parapet *out, int max);
+int  city_bridge_decks(const PlanArea *pa, DeckPiece *out, int max);
+/* The walls, floors, parapets and decks, draped (the streets' mesh). */
+void build_channels(Mesh *m, const ChunkGen *g);
+
 /* light_tiles.c */
 void build_lights(Mesh *m, ChunkGen *g);
 

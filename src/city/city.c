@@ -115,6 +115,7 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
 
     m->drape = 1;   /* the streets' surfaces lie on the ground, vertex by vertex */
     build_roads(m, &g);
+    build_channels(m, &g);
     build_blocks(m, &g);
     m->drape = 0;
     build_vents(m, &g);

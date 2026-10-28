@@ -236,10 +236,28 @@ their beds fitted along each drainage tree and each lake's level (`tools/earth_s
 fades out within 1 km of the real water, the ground is carved to the water's floor outside the cities, and lakes cut
 the footprints 200 m back (W2a; see `data/earth/SOURCE.md`, "Runoff and the streams"). Left over:
 - **The water itself** isn't drawn: the channels and basins are empty.
-- **Rivers through the cities** (W2b, next): the city's ground is still whole over them; concrete channels, the towns
-  split along them, bridges on the boulevards and arterials. Then the roads between the cities (W2c): water
-  crossings costed and bridged. Until then those roads read the ground without the beds (`terrain_height_dry_lod`),
-  and where they cross a channel their embankment fills it.
+- **The roads between the cities** (W2c, next): water crossings costed and bridged. Until then those roads read the
+  ground without the beds (`terrain_height_dry_lod`), and where they cross a channel their embankment fills it.
+- **Rivers through the cities** (W2b, `src/plan/plan_water.c`, `src/city/channels.c`): concrete channels straight
+  across each neighbourhood, bridges at every arterial and boulevard. Left over:
+  - **Confluences.** Where a tributary meets another river inside a neighbourhood, its channel ends at a wall under
+    the last bridge before it (a culvert, in effect), not in a junction with the other's.
+  - **Shallow crossings.** A river crossing a road at a shallow angle makes a long deck (90 m at one near the LA spawn);
+    one running along a road within its width would put the road over the channel with no deck under it.
+  - **Along the city's edge.** A river running just outside a perimeter boulevard, within its shoulder, cuts into the
+    boulevard's outer half; the verge's corner cones aren't cut round a channel.
+  - **Straightened.** The channels run straight between the roads, so they leave the real river by up to a
+    neighbourhood's half width (~200 m); out in the belt the ground's bed follows the river again.
+  - **The view from afar.** Past the chunks the ground's cut is all that shows of a channel, and across the towns it
+    is 48 m wider than the channel each side, its banks easing up over 40 more (`TERRAIN_CHANNEL_CITY_PAD`,
+    `TERRAIN_CHANNEL_BANK_M`: wide enough for the 32 m level the chunks are drawn over at VIEW_DISTANCE, and the
+    same at every level to 64 m so the clipmap's levels agree; none coarser cuts it). From the air a channel reads
+    as a broad trough among the proxies.
+  - **Dark at night.** Nothing lights a channel's floor but the street lamps above the walls; the floor reads as a dark
+    strip from the air.
+  - **Cost.** The channels are laid out at start-up (0.8 s on 32 threads, 1.5 s on 8, for 234,000 pieces across the
+    towns, 78,000 km, and 237,000 bridges on the Earth) and held in memory (about 105 MB, 73 of it the pieces'
+    outlines at up to 12 corners each; a packed store would take a third).
 - **Notches.** A stream's path runs over 500 m cells and is corner-cut, so on a hillside it strays off the valley
   floor: at a tenth of its length the ground stands 59 m or more over its bed, and the carve, capped at 30 m
   (`TERRAIN_WATER_CARVE_M`), leaves a notch there rather than a valley. Paths snapped to the full detail's valley

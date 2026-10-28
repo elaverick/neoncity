@@ -259,7 +259,7 @@ typedef struct RoadAttr {
     uint8_t  cls;      /* ROAD_* */
     uint8_t  lamp;     /* 0 sodium, 1 cold LED */
     uint8_t  own;      /* this side emits the shared road (boundary edges) */
-    uint8_t  pad;
+    uint8_t  bank;     /* 1: not a road but a river's bank, the top of its channel's wall (PlanChannel) */
 } RoadAttr;
 
 /* Convex polygon; e[i] describes edge v[i] -> v[i+1]. */
@@ -289,6 +289,69 @@ typedef struct Block {
  * side of a -> b, the land beyond on the side of the unit normal n. */
 typedef struct PlanEdge { DVec2 a, b, n; } PlanEdge;
 
+/* Rivers through the cities (src/plan/plan_water.c). Wherever one of the
+ * bake's rivers (terrain_earth_rivers_near) runs through a built town it runs
+ * in a concrete channel, its floor PLAN_CHANNEL_DEPTH under the city's ground
+ * and its walls sheer, as wide as the river (PLAN_CHANNEL_MIN_W at least).
+ * Across each neighbourhood it runs straight, from the point where the river
+ * crosses the road it comes in by to the point where it crosses the road it
+ * leaves by, so it splits the neighbourhood in two along its banks, and
+ * every arterial and boulevard it passes under is a bridge; the local
+ * streets end at its banks, and a promenade PLAN_BANK_WALK wide runs along
+ * them. A river that crosses back into a neighbourhood it has left runs
+ * straight on through it instead. Its channel turns under the bridges; where
+ * the river begins or ends within a neighbourhood (a source, or where it
+ * meets another), the channel ends at a wall under the last bridge. Out of
+ * the built towns, across the belt round the city, it follows the river and
+ * the ground carves its bed (terrain_height) as for the other water.
+ *
+ * Each piece of the channel is a PlanChannel: a convex outline (its floor),
+ * whose edges are its banks (CHANNEL_EDGE_BANK, a wall with a parapet over
+ * it), its ends at a road (CHANNEL_EDGE_ROAD, under the road: a wall only
+ * where no other piece of channel meets it) or open (CHANNEL_EDGE_OPEN, out
+ * in the belt, where the next piece goes on). A bridge (PlanBridge) carries
+ * a road and its sidewalks over the channel where the road crosses it. */
+#define PLAN_CHANNEL_DEPTH  5.0    /* m under the city's ground */
+#define PLAN_CHANNEL_MIN_W  12.0   /* the narrowest channel (m) */
+#define PLAN_BANK_WALK      4.0    /* the promenade along a bank (m) */
+#define PLAN_CHANNEL_PV     12
+#define PLAN_MAX_CHANNELS   96
+#define PLAN_MAX_BRIDGES    32
+enum { CHANNEL_EDGE_OPEN = 0, CHANNEL_EDGE_BANK, CHANNEL_EDGE_ROAD };
+typedef struct PlanChannel {
+    int      n;
+    DVec2    v[PLAN_CHANNEL_PV];      /* its floor's outline (convex), world (x, z) */
+    uint8_t  edge[PLAN_CHANNEL_PV];   /* edge v[i] -> v[i + 1]: CHANNEL_EDGE_* */
+    DVec2    a, b;                    /* its centre line, downstream */
+    float    hw;                      /* half its width (m) */
+    uint8_t  built;                   /* in a built town: walls and a floor of concrete; else the ground's bed */
+    uint32_t id;                      /* stable */
+    double   x0, z0, x1, z1;          /* bounds */
+} PlanChannel;
+typedef struct PlanBridge {
+    DVec2    p;          /* where the road's centre line crosses the river */
+    DVec2    d;          /* along the road (unit) */
+    double   s0, s1;     /* the channel under its deck lies between p + s0 d and p + s1 d (m) */
+    float    half, walk; /* the road's half-width and its sidewalks' width */
+    uint8_t  cls;        /* ROAD_ARTERIAL or ROAD_BOULEVARD */
+    uint32_t road;       /* the road's id */
+} PlanBridge;
+/* How far beyond a channel's outline the ground is cut for it, at most (m):
+ * plan_channel_dist reads no further. */
+#define PLAN_CHANNEL_REACH 120.0
+/* The signed distance (m) from (x, z) to the nearest channel's outline,
+ * negative in it, the outlines across the towns grown by `grow` (m, under
+ * PLAN_CHANNEL_REACH); more than PLAN_CHANNEL_REACH less that where none is
+ * that near. */
+double plan_channel_dist(double x, double z, double grow);
+/* Whether a channel's outline comes within PLAN_CHANNEL_REACH of the rectangle. */
+int    plan_channel_in(double x0, double z0, double x1, double z1);
+/* How many pieces of channel and bridges there are in all; channel k and bridge k. */
+int    plan_channel_count(void);
+int    plan_bridge_count(void);
+const PlanChannel *plan_channel(int k);
+const PlanBridge  *plan_bridge(int k);
+
 typedef struct PlanArea {
     double x0, z0, x1, z1;
     int    nroads, nblocks;
@@ -304,7 +367,13 @@ typedef struct PlanArea {
     Poly     ground[PLAN_MAX_TOWNS];
     PlanEdge edges[PLAN_MAX_EDGES];
     PlanGate gates[PLAN_MAX_GATES];
+    /* the pieces of channel and the bridges near the rectangle (within
+     * PLAN_CHANNEL_AREA_PAD), in order of id */
+    int         nchannels, nbridges;
+    PlanChannel channels[PLAN_MAX_CHANNELS];
+    PlanBridge  bridges[PLAN_MAX_BRIDGES];
 } PlanArea;
+#define PLAN_CHANNEL_AREA_PAD 60.0
 
 /* Development density 0..1 (polycentric: peaks at town and regional centres,
  * falling away through the fringe). */

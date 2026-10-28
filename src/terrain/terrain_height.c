@@ -31,8 +31,32 @@ static double urban_shape_lod(double x, double z, double spacing) {
 
 double terrain_urban_shape(double x, double z) { return urban_shape_lod(x, z, 0.0); }
 
-/* What height_lod puts in the ground beyond the land and the settlements. */
-enum { GROUND_ROADS = 1, GROUND_WATER = 2, GROUND_ALL = 3 };
+/* What height_lod puts in the ground beyond the land and the settlements:
+ * the roads between them, the water's beds out in the land, and the rivers'
+ * channels through the cities. */
+enum { GROUND_ROADS = 1, GROUND_WATER = 2, GROUND_CHANNELS = 4, GROUND_ALL = 7 };
+
+/* The rivers' channels through the cities (plan_channel_dist): what they cut
+ * the ground h to at (x, z), urban weight w there and the city's own ground
+ * `urban`. A channel's floor lies PLAN_CHANNEL_DEPTH under the city's ground,
+ * half a metre past its outline, and across the towns TERRAIN_CHANNEL_CITY_PAD
+ * further, the same at every level of detail to TERRAIN_CHANNEL_LOD_SPACING:
+ * however a level that the city's chunks are drawn over interpolates its
+ * samples (and its parent's), no ground stands over the floor the city draws
+ * in a channel. Past that its banks rise to the city's ground over
+ * TERRAIN_CHANNEL_BANK_M, eased (a smoothstep), so that the levels, which
+ * differ only where they interpolate the cut's curve, differ little
+ * (second derivative at most 6 depth / bank^2). Weighted by the urban
+ * weight, so it fades out with the city into the land's own beds. Past
+ * TERRAIN_CHANNEL_LOD_SPACING the ground is whole. */
+static double channel_cut(double x, double z, double spacing, double h, double w, double urban) {
+    if (w <= 0.0 || spacing > TERRAIN_CHANNEL_LOD_SPACING) return h;
+    double d = plan_channel_dist(x, z, TERRAIN_CHANNEL_CITY_PAD) - 0.5;
+    if (d >= TERRAIN_CHANNEL_BANK_M) return h;
+    double t = d > 0.0 ? d / TERRAIN_CHANNEL_BANK_M : 0.0;
+    double cut = urban - PLAN_CHANNEL_DEPTH * (1.0 - t * t * (3.0 - 2.0 * t));
+    return cut < h ? h + w * (cut - h) : h;
+}
 
 /* Each field is evaluated only where its weight is non-zero; that skips work
  * without changing any height. *w gets the urban weight. The planet's
@@ -57,7 +81,11 @@ static double height_lod(double x, double z, const TerrainDir *p, double spacing
         } else land = terrain_land_parts(d, edge, spacing, &lift);
         h += (1.0 - *w) * land;
     } else lift = terrain_lift(x, z, spacing);
-    if (*w > 0.0) h += *w * ((*relief > 0.0 ? *relief * urban_shape_lod(x, z, spacing) : 0.0) + lift);
+    if (*w > 0.0) {
+        double urban = (*relief > 0.0 ? *relief * urban_shape_lod(x, z, spacing) : 0.0) + lift;
+        h += *w * urban;
+        if (parts & GROUND_CHANNELS) h = channel_cut(x, z, spacing, h, *w, urban);
+    }
     /* The roads between the settlements: the ground takes them where the
      * land does, never under the city's own ground. */
     if (roads && *w < 1.0 && spacing <= PLAN_ROAD_LOD_SPACING) {
@@ -183,7 +211,8 @@ double terrain_surface(double x, double z) { return terrain_surface_lod(x, z, 0.
  * (terrain_height_lod) only shrinks each fractal sum, so the bound holds at
  * every level of detail up to that spacing. A road blends the ground towards
  * its own height, which the plan bounds (plan_road_range); the water carves
- * the land by at most TERRAIN_WATER_CARVE_M. */
+ * the land by at most TERRAIN_WATER_CARVE_M, and a channel through the city
+ * cuts it to no lower than PLAN_CHANNEL_DEPTH under the city's ground. */
 void terrain_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
     double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0);
     double e = plan_city_edge(cx, cz), emin = e - CITY_EDGE_RATE * half, emax = e + CITY_EDGE_RATE * half;
@@ -192,6 +221,7 @@ void terrain_height_range(double x0, double z0, double x1, double z1, double *lo
         double llo, lhi, relief = urban_relief_max(x0, z0, x1, z1);
         terrain_urban_lift_range(x0, z0, x1, z1, &llo, &lhi);
         l = -relief + llo; h = relief + lhi;
+        if (plan_channel_in(x0, z0, x1, z1)) l -= PLAN_CHANNEL_DEPTH;   /* a channel's floor, under the city's ground */
     }
     if (emax > -CITY_BELT) {                                                 /* somewhere w < 1 */
         double ll, lh;
@@ -215,10 +245,22 @@ double terrain_height_bare(double x, double z, double spacing) {
 double terrain_road_lod_error(double x, double z, double spacing) {
     double e = 0.0;
     for (int k = 0; k < 2; ++k) {
-        double sp = k ? spacing : 0.0, w, relief, rh, g = height_lod(x, z, NULL, sp, &w, &relief, GROUND_WATER);
+        double sp = k ? spacing : 0.0, w, relief, rh, g = height_lod(x, z, NULL, sp, &w, &relief, GROUND_WATER | GROUND_CHANNELS);
         if (w >= 1.0 || sp > PLAN_ROAD_LOD_SPACING) continue;
         double wr = plan_road_ground(x, z, g, sp, &rh);
         e += wr * (1.0 - w) * fabs(rh - g);
+    }
+    return e;
+}
+
+/* The channels move the ground at a spacing from the ground g without them
+ * there; the difference from full detail is the grounds' difference without
+ * them (the other bounds') and at most the two moves. */
+double terrain_channel_lod_error(double x, double z, double spacing) {
+    double e = 0.0;
+    for (int k = 0; k < 2; ++k) {
+        double sp = k ? spacing : 0.0, w, relief;
+        e += fabs(height_lod(x, z, NULL, sp, &w, &relief, GROUND_WATER | GROUND_CHANNELS) - height_lod(x, z, NULL, sp, &w, &relief, GROUND_WATER));
     }
     return e;
 }

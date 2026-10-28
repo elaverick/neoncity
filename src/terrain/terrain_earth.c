@@ -1198,6 +1198,59 @@ size_t terrain_earth_water_segments(void (*fn)(void *ctx, TerrainDir a, TerrainD
     return n;
 }
 
+static int u32_less(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* The buckets near c, found by stepping over the disc in c's tangent plane
+ * finer than the smallest bucket (a face's corner's, a third of its centre's
+ * across), their river segments gathered, sorted and made unique. */
+size_t terrain_earth_rivers_near(TerrainDir c, double radius,
+                                 void (*fn)(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, double width), void *ctx) {
+    const EarthWater *w = &g_earth.water;
+    if (!g_earth.loaded || !w->B) return 0;
+    double len = sqrt(c.x * c.x + c.y * c.y + c.z * c.z);
+    c.x /= len; c.y /= len; c.z /= len;
+    TerrainChart ch = terrain_chart_about(c, 0.0);
+    double step = 0.25 * (0.5 * PI * PLANET_RADIUS / w->B);
+    int n = (int)ceil(radius / step);
+    size_t cap = 1024, nb = 0, ns = 0, scap = 4096;
+    uint32_t *bk = (uint32_t *)malloc(sizeof(uint32_t) * cap), *seg = (uint32_t *)malloc(sizeof(uint32_t) * scap);
+    if (!bk || !seg) fatal("out of memory finding the rivers");
+    size_t last = (size_t)-1;
+    for (int j = -n; j <= n; ++j)
+        for (int i = -n; i <= n; ++i) {
+            if (hypot(i, j) * step > radius + step) continue;
+            TerrainDir centre;
+            size_t b = water_bucket(w, terrain_chart_dir(&ch, i * step, j * step), &centre);
+            if (b == last) continue;
+            last = b;
+            if (nb == cap) { cap *= 2; bk = (uint32_t *)realloc(bk, sizeof(uint32_t) * cap); if (!bk) fatal("out of memory finding the rivers"); }
+            bk[nb++] = (uint32_t)b;
+        }
+    qsort(bk, nb, sizeof(uint32_t), u32_less);
+    for (size_t q = 0; q < nb; ++q) {
+        if (q && bk[q] == bk[q - 1]) continue;
+        for (uint32_t e = w->start[bk[q]]; e < w->start[bk[q] + 1]; ++e) {
+            uint32_t k = w->entry[e];
+            if (w->kind[k] != 1) continue;
+            if (ns == scap) { scap *= 2; seg = (uint32_t *)realloc(seg, sizeof(uint32_t) * scap); if (!seg) fatal("out of memory finding the rivers"); }
+            seg[ns++] = k;
+        }
+    }
+    qsort(seg, ns, sizeof(uint32_t), u32_less);
+    size_t count = 0;
+    for (size_t q = 0; q < ns; ++q) {
+        if (q && seg[q] == seg[q - 1]) continue;
+        if (fn) fn(ctx, seg[q], water_point(w, seg[q]), water_point(w, seg[q] + 1), w->width[seg[q]]);
+        ++count;
+    }
+    free(bk);
+    free(seg);
+    return count;
+}
+
 int terrain_earth_stream(uint32_t k, TerrainDir *a, TerrainDir *b, double *bed_a, double *bed_b, double *flow_a, double *flow_b) {
     const EarthWater *s = &g_earth.streams;
     if (!g_earth.loaded || !s->B || k + 1 >= s->V || !(s->flags[k] & 1)) return 0;

@@ -245,7 +245,7 @@ static void test_lod_heights(void) {
             double s = terrain_clip_spacing(l), hl = terrain_height_lod(x, z, s);
             /* 1e-3 m: each fractal sum is rounded to float before scaling. */
             double bound = terrain_land_lod_error(x, z, s) + relief * terrain_dropped(TERRAIN_URBAN_WAVE, TERRAIN_URBAN_OCTAVES, s) +
-                           terrain_road_lod_error(x, z, s) + 1e-3;
+                           terrain_road_lod_error(x, z, s) + terrain_channel_lod_error(x, z, s) + 1e-3;
             CHECK(hl >= rlo && hl <= rhi, "height %.3f at spacing %.0f m at (%.1f, %.1f) outside its range", hl, s, x, z);
             CHECK(fabs(hl - h) <= bound, "height at spacing %.0f m at (%.1f, %.1f) is %.3f m from full detail (bound %.3f)", s, x, z, fabs(hl - h), bound);
             if (fabs(hl - h) > worst[l]) worst[l] = fabs(hl - h);
@@ -2239,7 +2239,8 @@ int main(int argc, char **argv) {
         double flo, fhi;
         terrain_urban_lift_range(c.x, c.z, c.x + CHUNK_SIZE, c.z + CHUNK_SIZE, &llo, &lhi);
         plan_settlement_relief_in(c.x, c.z, c.x + CHUNK_SIZE, c.z + CHUNK_SIZE, &flo, &fhi);
-        CHECK(rhi - rlo <= 2.0 * fhi + (lhi - llo) + 0.01, "range at the centre is loose: [%.2f, %.2f] (relief up to %.1f m, the highlands' %.2f m)",
+        double cut = plan_channel_in(c.x, c.z, c.x + CHUNK_SIZE, c.z + CHUNK_SIZE) ? PLAN_CHANNEL_DEPTH : 0.0;   /* a river's channel near */
+        CHECK(rhi - rlo <= 2.0 * fhi + (lhi - llo) + cut + 0.01, "range at the centre is loose: [%.2f, %.2f] (relief up to %.1f m, the highlands' %.2f m)",
               rlo, rhi, fhi, lhi - llo);
         printf("range of %d rectangles checked; a chunk at the centre: [%.3f, %.3f] m\n", rects, rlo, rhi);
     }
@@ -2286,8 +2287,13 @@ int main(int argc, char **argv) {
             double s = slope_of(urban_graded, x, z);
             if (s > urbanMax) urbanMax = s;
             reliefMax = fmax(reliefMax, slope_of(urban_relief_only, x, z));
-            CHECK(terrain_height(x, z) == (TERRAIN_URBAN_GRADED ? urban_graded(x, z) : 0.0), "height at (%.1f, %.1f) inside the city isn't the urban ground", x, z);
-            CHECK(terrain_urban_height(x, z) == terrain_height(x, z), "the city's ground at (%.1f, %.1f) inside the city isn't the terrain", x, z);
+            if (plan_channel_dist(x, z, 0.0) > PLAN_CHANNEL_REACH) {   /* clear of the rivers' channels, which cut it */
+                CHECK(terrain_height(x, z) == (TERRAIN_URBAN_GRADED ? urban_graded(x, z) : 0.0), "height at (%.1f, %.1f) inside the city isn't the urban ground", x, z);
+                CHECK(terrain_urban_height(x, z) == terrain_height(x, z), "the city's ground at (%.1f, %.1f) inside the city isn't the terrain", x, z);
+            } else {
+                double h = terrain_height(x, z), u = terrain_urban_height(x, z);
+                CHECK(h <= u && h >= u - PLAN_CHANNEL_DEPTH - 1e-9, "height at (%.1f, %.1f) by a channel is %.3f m from the city's ground", x, z, h - u);
+            }
             nUrban++;
         }
         /* The city's ground is the urban relief everywhere, even where the land rises past it. */

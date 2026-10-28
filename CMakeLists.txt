@@ -211,8 +211,8 @@ add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/render src/app ${GEN_DIR} ${cgltf_SOURCE_DIR})
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_lobby.c src/city/mesh_planting.c
-                src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/light_tiles.c src/city/cables.c
-                src/city/litter.c src/city/props.c src/city/models.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c
+                src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/channels.c src/city/light_tiles.c src/city/cables.c
+                src/city/litter.c src/city/props.c src/city/models.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c src/plan/plan_water.c
                 src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c src/core/thread.c src/core/assets.c
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
@@ -407,7 +407,7 @@ endif()
 # placing the settlements takes discrete steps (pushes, growth, merges) a rounding can flip,
 # moving a city kilometres, and the streams' file checks the settlements it was derived with.
 # So the game builds them without /fp:fast, as a library of their own.
-set(WORLD_SOURCES src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c src/terrain/terrain_height.c src/terrain/terrain_land.c
+set(WORLD_SOURCES src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c src/plan/plan_water.c src/terrain/terrain_height.c src/terrain/terrain_land.c
                   src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c)
 set(GAME_GEN_SOURCES ${GEN_SOURCES})
 list(REMOVE_ITEM GAME_GEN_SOURCES ${WORLD_SOURCES})

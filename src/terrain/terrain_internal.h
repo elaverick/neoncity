@@ -170,6 +170,17 @@
  * so no segment beyond the reach can carve (m). Whether the water has its
  * beds (the streams' file is loaded): without them it carves nothing. */
 #define TERRAIN_WATER_CARVE_M 30.0
+/* The rivers' channels through the cities (plan.h, "Rivers through the
+ * cities") are cut into the ground this far past their outlines across the
+ * towns (m): one and a half times the spacing of the coarsest level of
+ * detail the city's chunks are drawn over (32 m, to VIEW_DISTANCE), so no
+ * triangle of it over a channel reaches out of the cut. Every level to the
+ * last spacing cuts them so (m); no coarser one does. */
+#define TERRAIN_CHANNEL_CITY_PAD    48.0
+#define TERRAIN_CHANNEL_LOD_SPACING 64.0
+/* Past the cut's floor its banks rise to the city's ground over this (m);
+ * the floor's reach and this stay within PLAN_CHANNEL_REACH. */
+#define TERRAIN_CHANNEL_BANK_M      40.0
 int    terrain_earth_beds(void);
 /* The ground at p as height_lod makes it but with neither the roads between
  * the settlements nor the water's beds in it: the land the streams are
@@ -233,6 +244,9 @@ double terrain_land_lod_error(double x, double z, double spacing);
  * terrain_height_lod at `spacing` from full detail (m). */
 double terrain_height_bare(double x, double z, double spacing);
 double terrain_road_lod_error(double x, double z, double spacing);
+/* A bound on how far the rivers' channels through the cities alone move
+ * terrain_height_lod at `spacing` from full detail (m). */
+double terrain_channel_lod_error(double x, double z, double spacing);
 /* How deep the canyons cut at (x, z) before C keeps them from the city (m). */
 double terrain_canyon_depth(double x, double z);
 /* Which octaves every fractal sum keeps at `spacing`, and the Earth's mips,

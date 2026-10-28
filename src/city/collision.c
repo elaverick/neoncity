@@ -7,6 +7,55 @@
 static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg);
 static int coll_begin(BlockLayout *L, int n);
 
+static int touches(const ChunkGen *g, double x0, double z0, double x1, double z1, double pad) {
+    return x1 + pad >= g->ox && x0 - pad <= g->ox + CHUNK_SIZE && z1 + pad >= g->oz && z0 - pad <= g->oz + CHUNK_SIZE;
+}
+
+static void barrier(BlockLayout *L, const ChunkGen *g, DVec2 a, DVec2 b, float half, int low) {
+    if (L->nbarrier >= MAX_BARRIERS || !touches(g, fmin(a.x, b.x), fmin(a.z, b.z), fmax(a.x, b.x), fmax(a.z, b.z), 1.0)) return;
+    Barrier *r = &L->barrier[L->nbarrier++];
+    r->a[0] = a.x; r->a[1] = a.z; r->b[0] = b.x; r->b[1] = b.z; r->half = half; r->low = (uint8_t)low;
+}
+
+/* The rivers' channels touching the chunk: their outlines, the decks over
+ * them, their walls (low) and parapets (on the parapet's centre line). */
+static void channels_layout(BlockLayout *L, const ChunkGen *g) {
+    const PlanArea *pa = g->pa;
+    if (!pa->nchannels) return;
+    for (int k = 0; k < pa->nchannels && L->nchan < MAX_CHANNELS; ++k) {
+        const PlanChannel *c = &pa->channels[k];
+        if (!touches(g, c->x0, c->z0, c->x1, c->z1, 0.0)) continue;
+        L->chanbuilt[L->nchan] = c->built;
+        CurbPoly *o = &L->chan[L->nchan++];
+        o->n = c->n;
+        for (int i = 0; i < c->n; ++i) { o->v[i][0] = c->v[i].x; o->v[i][1] = c->v[i].z; }
+    }
+    ChannelWall *w = (ChannelWall *)malloc(sizeof(ChannelWall) * 512);
+    Parapet *pp = (Parapet *)malloc(sizeof(Parapet) * 512);
+    DeckPiece *dk = (DeckPiece *)malloc(sizeof(DeckPiece) * 64);
+    if (!w || !pp || !dk) fatal("out of memory laying out a chunk");
+    int nd = city_bridge_decks(pa, dk, 64);
+    for (int i = 0; i < nd && L->ndeck < MAX_DECKS; ++i) {
+        double x0 = 1e300, z0 = 1e300, x1 = -1e300, z1 = -1e300;
+        for (int q = 0; q < dk[i].n; ++q) {
+            x0 = fmin(x0, dk[i].v[q].x); x1 = fmax(x1, dk[i].v[q].x);
+            z0 = fmin(z0, dk[i].v[q].z); z1 = fmax(z1, dk[i].v[q].z);
+        }
+        if (!touches(g, x0, z0, x1, z1, 0.0)) continue;
+        CurbPoly *o = &L->deck[L->ndeck++];
+        o->n = dk[i].n;
+        for (int q = 0; q < dk[i].n; ++q) { o->v[q][0] = dk[i].v[q].x; o->v[q][1] = dk[i].v[q].z; }
+    }
+    int nw = city_channel_walls(pa, w, 512);
+    for (int i = 0; i < nw; ++i) barrier(L, g, w[i].a, w[i].b, 0.0f, 1);
+    int np = city_channel_parapets(pa, w, nw, pp, 512);
+    for (int i = 0; i < np; ++i) {
+        DVec2 o = dscale(pp[i].out, 0.5 * CHANNEL_PARAPET_W);
+        barrier(L, g, dadd(pp[i].a, o), dadd(pp[i].b, o), 0.5f * CHANNEL_PARAPET_W, 0);
+    }
+    free(w); free(pp); free(dk);
+}
+
 void city_layout(int cx, int cz, BlockLayout *L) {
     const double P = CHUNK_SIZE;
     ChunkGen g;
@@ -44,6 +93,7 @@ void city_layout(int cx, int cz, BlockLayout *L) {
         c->n = gp->n;
         for (int k = 0; k < c->n; ++k) { c->v[k][0] = gp->v[k].x; c->v[k][1] = gp->v[k].z; }
     }
+    channels_layout(L, &g);
     for (int i = 0; i < g.pa->nblocks && L->ncurbs < MAX_CURBS; ++i) {
         const Block *bk = &g.pa->blocks[i];
         if (bk->x1 < g.ox || bk->x0 > g.ox + P || bk->z1 < g.oz || bk->z0 > g.oz + P) continue;
