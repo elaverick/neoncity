@@ -81,6 +81,8 @@ static int worker(void *arg) {
 
 #define CHECK(cond, ...) do { if (!(cond)) { printf("FAIL: " __VA_ARGS__); printf("\n"); g_failures++; } } while (0)
 
+static double ray_end(PlanArea *pa, DVec2 c, double dx, double dz, int past);
+
 static int in_curb(const CurbPoly *c, double x, double z) {
     double sgn = 0.0;
     for (int i = 0; i < c->n; ++i) {
@@ -267,11 +269,7 @@ static int fingerprint(void) {
     PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
     if (!pa) fatal("out of memory fingerprinting the edge");
     for (int ray = 0; ray < 8; ++ray) {
-        double th = (ray + 0.25) * 2.0 * 3.14159265358979 / 8.0, dx = cos(th), dz = sin(th), rad = 4000.0;
-        for (; rad < 20000.0; rad += 100.0) {
-            plan_area(home.x + rad * dx - 1.0, home.z + rad * dz - 1.0, home.x + rad * dx + 1.0, home.z + rad * dz + 1.0, pa);
-            if (pa->bounded && pa->nblocks == 0) break;
-        }
+        double th = (ray + 0.25) * 2.0 * 3.14159265358979 / 8.0, dx = cos(th), dz = sin(th), rad = ray_end(pa, home, dx, dz, 1);
         int ex = (int)floor((home.x + (rad - 150.0) * dx) / CHUNK_SIZE), ez = (int)floor((home.z + (rad - 150.0) * dz) / CHUNK_SIZE);
         for (int cz = ez - 1; cz <= ez + 1; ++cz)
             for (int cx = ex - 1; cx <= ex + 1; ++cx) fingerprint_chunk(cx, cz, efp);
@@ -279,6 +277,22 @@ static int fingerprint(void) {
     free(pa);
     printf("  %-10s %016llx\n", "edge", (unsigned long long)fnv(efp, sizeof(efp), 0xcbf29ce484222325ULL));
     return 0;
+}
+
+/* How far along the ray from c (unit dx, dz) the plan first reaches the
+ * city's outline (pa->bounded), and with `past` the last block too (no
+ * blocks either), in 100 m steps from a little before the edge measure first
+ * passes -HOME_CORE (deep inside, the plan is unbounded); the megacity's
+ * reach and more if it never does. pa holds the plan there. */
+#define EDGE_NEAR (CITY_BELT + CITY_FRINGE + 2.0 * TOWN_SIZE)
+static double ray_end(PlanArea *pa, DVec2 c, double dx, double dz, int past) {
+    double far = dlen(c) + plan_home_reach() + 3000.0, rad = 0.0;
+    while (rad < far && plan_city_edge(c.x + rad * dx, c.z + rad * dz) < -EDGE_NEAR) rad += 500.0;
+    for (rad = fmax(0.0, rad - 1000.0); rad < far; rad += 100.0) {
+        plan_area(c.x + rad * dx - 1.0, c.z + rad * dz - 1.0, c.x + rad * dx + 1.0, c.z + rad * dz + 1.0, pa);
+        if (pa->bounded && (!past || pa->nblocks == 0)) break;
+    }
+    return rad;
 }
 
 /* ---------------------------------------------------------------------------
@@ -372,17 +386,13 @@ static int check_edge_area(PlanArea *pa, double x, double z) {
     return pa->nedges;
 }
 
-static void check_edge(void) {
-    /* The towns of the city, each built over nothing but plan_urban 1. */
-    int built = 0, i0 = 99, i1 = -99, j0 = 99, j1 = -99;
-    for (int j = -12; j <= 12; ++j)
-        for (int i = -12; i <= 12; ++i) {
-            if (!plan_town_built(i, j)) continue;
-            built++;
-            if (i < i0) i0 = i;
-            if (i > i1) i1 = i;
-            if (j < j0) j0 = j;
-            if (j > j1) j1 = j;
+/* The towns within `half` of town (ci, cj) each way, each built one built over
+ * nothing but plan_urban 1; counts the built and the unbuilt. */
+static void survey_towns(int ci, int cj, int half, int *built, int *unbuilt) {
+    for (int j = cj - half; j <= cj + half; ++j)
+        for (int i = ci - half; i <= ci + half; ++i) {
+            if (!plan_town_built(i, j)) { (*unbuilt)++; continue; }
+            (*built)++;
             DVec2 c = plan_town_centre(i, j);
             for (double dz = -1500.0; dz <= 1500.0; dz += 50.0)
                 for (double dx = -1500.0; dx <= 1500.0; dx += 50.0) {
@@ -395,25 +405,33 @@ static void check_edge(void) {
                     if (mine) CHECK(plan_urban(x, z) == 1.0f, "town (%d,%d) is built over (%.0f, %.0f), where plan_urban is %.3f", i, j, x, z, plan_urban(x, z));
                 }
         }
-    CHECK(i0 > -12 && i1 < 12 && j0 > -12 && j1 < 12, "the search for built towns doesn't reach past the city");
-    CHECK(plan_town_built(0, 0), "the home town is not built");
-    CHECK(built >= 40, "the city has only %d towns", built);
-    printf("the city: %d towns, lattice %d..%d x %d..%d (%.1f x %.1f km)\n", built, i0, i1, j0, j1,
-           (i1 - i0 + 1) * TOWN_SIZE / 1000.0, (j1 - j0 + 1) * TOWN_SIZE / 1000.0);
+}
 
-    /* Along rays from the centre, the plan where the city ends. */
+static void check_edge(void) {
+    /* The towns of the city, each built over nothing but plan_urban 1: round
+     * its core, and across its edge along 8 rays. */
     PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
     if (!pa) fatal("out of memory checking the city's edge");
     DVec2 c = plan_town_centre(0, 0);
+    int built = 0, unbuilt = 0, coreBuilt = 0, coreUnbuilt = 0;
+    survey_towns(0, 0, 8, &coreBuilt, &coreUnbuilt);
+    for (int ray = 0; ray < 8; ++ray) {
+        double th = (ray + 0.5) * 2.0 * 3.14159265358979 / 8.0, dx = cos(th), dz = sin(th), rad = ray_end(pa, c, dx, dz, 0);
+        int ti, tj;
+        plan_town_at(c.x + rad * dx, c.z + rad * dz, &ti, &tj);
+        survey_towns(ti, tj, 3, &built, &unbuilt);
+    }
+    CHECK(plan_town_built(0, 0), "the home town is not built");
+    CHECK(coreBuilt >= 40, "the city has only %d towns round its core", coreBuilt);
+    CHECK(built > 0 && unbuilt > 0, "the search for built towns across the edge finds %d built, %d not", built, unbuilt);
+    printf("the city: %d of %d towns built round its core; across its edge %d built, %d not\n", coreBuilt, coreBuilt + coreUnbuilt, built, unbuilt);
+
+    /* Along rays from the centre, the plan where the city ends. */
     int areas = 0, edges = 0, rural = 0, blocks = 0;
+    double far = dlen(c) + plan_home_reach() + 3000.0;
     for (int ray = 0; ray < 48; ++ray) {
-        double th = ray * 2.0 * 3.14159265358979 / 48.0, dx = cos(th), dz = sin(th);
-        double rad = 4000.0;
-        for (; rad < 20000.0; rad += 100.0) {
-            plan_area(c.x + rad * dx - 1.0, c.z + rad * dz - 1.0, c.x + rad * dx + 1.0, c.z + rad * dz + 1.0, pa);
-            if (pa->bounded) break;
-        }
-        CHECK(rad < 20000.0, "the city doesn't end along %.1f deg", th * 57.2958);
+        double th = ray * 2.0 * 3.14159265358979 / 48.0, dx = cos(th), dz = sin(th), rad = ray_end(pa, c, dx, dz, 0);
+        CHECK(rad < far, "the city doesn't end along %.1f deg", th * 57.2958);
         edges += check_edge_area(pa, c.x + rad * dx, c.z + rad * dz);
         areas++;
         for (int b = 0; b < pa->nblocks; ++b) { blocks++; rural += pa->blocks[b].zone == ZONE_RURAL; }
@@ -421,9 +439,9 @@ static void check_edge(void) {
     printf("  %d areas where it ends: %d outline pieces, %d blocks (%d rural)\n", areas, edges, blocks, rural);
     CHECK(edges >= areas, "too little of the city's outline found");
     /* Beyond the city: nothing at all. */
-    plan_area(c.x + 18000.0, c.z, c.x + 18300.0, c.z + 300.0, pa);
+    plan_area(c.x + far, c.z, c.x + far + 300.0, c.z + 300.0, pa);
     CHECK(pa->bounded && pa->nroads == 0 && pa->nblocks == 0 && pa->ntowns == 0 && pa->nedges == 0,
-          "18 km out the plan still lays out %d roads, %d blocks, %d towns' ground", pa->nroads, pa->nblocks, pa->ntowns);
+          "%.0f km out the plan still lays out %d roads, %d blocks, %d towns' ground", far / 1000.0, pa->nroads, pa->nblocks, pa->ntowns);
     free(pa);
 }
 
@@ -440,11 +458,7 @@ static void check_skyline(void) {
     if (!pa || !bs) fatal("out of memory checking the skyline");
     double tall[BANDS] = { 0 };
     for (int ray = 0; ray < RAYS; ++ray) {
-        double th = (ray + 0.5) * 2.0 * 3.14159265358979 / RAYS, dx = cos(th), dz = sin(th), rad = 4000.0;
-        for (; rad < 20000.0; rad += 100.0) {
-            plan_area(c.x + rad * dx - 1.0, c.z + rad * dz - 1.0, c.x + rad * dx + 1.0, c.z + rad * dz + 1.0, pa);
-            if (pa->bounded && pa->nblocks == 0) break;   /* past the last block */
-        }
+        double th = (ray + 0.5) * 2.0 * 3.14159265358979 / RAYS, dx = cos(th), dz = sin(th), rad = ray_end(pa, c, dx, dz, 1);   /* past the last block */
         for (int k = 0; k < BANDS; ++k) {
             double r = rad - 300.0 - 600.0 * k, x = c.x + r * dx, z = c.z + r * dz, top = 0.0;
             plan_area(x - 300.0, z - 300.0, x + 300.0, z + 300.0, pa);
@@ -547,9 +561,11 @@ static void check_proxies(void) {
     }
     /* tiles called empty hold nothing: across the edge along 16 rays */
     int empties = 0;
+    PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
+    if (!pa) fatal("out of memory checking the proxies");
     for (int ray = 0; ray < 16; ++ray) {
-        double th = ray * 2.0 * 3.14159265358979 / 16.0;
-        for (double r = 9000.0; r <= 16000.0; r += PROXY_TILE) {
+        double th = ray * 2.0 * 3.14159265358979 / 16.0, end = ray_end(pa, home, cos(th), sin(th), 1);
+        for (double r = end - 2000.0; r <= end + 6000.0; r += PROXY_TILE) {
             int tx = (int)floor((home.x + r * cos(th)) / PROXY_TILE), tz = (int)floor((home.z + r * sin(th)) / PROXY_TILE);
             if (!city_proxy_tile_empty(tx, tz)) continue;
             city_proxy_tile(tx, tz, &t);
@@ -557,6 +573,7 @@ static void check_proxies(void) {
             empties++;
         }
     }
+    free(pa);
     CHECK(empties > 16, "only %d tiles across the edge are called empty", empties);
     /* the same tile after others, and whichever way it is reached */
     city_proxy_tile(htx, htz, &t);
@@ -591,7 +608,7 @@ static int proxy_worker(void *arg) {
 
 static int proxy_survey(void) {
     DVec2 home = plan_town_centre(0, 0);
-    const double R = CITY_RADIUS + CITY_WARP1_M + CITY_WARP2_M;
+    const double R = dlen(home) + plan_home_reach();
     static ProxyWork w[THREADS];
     Thread *th[THREADS];
     clock_t t0 = clock();

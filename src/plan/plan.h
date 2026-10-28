@@ -41,12 +41,15 @@
 #define PLAN_MAX_EDGES     96
 #define PLAN_MAX_GATES      8
 
-/* The city is finite: a disc round town (0,0)'s centre, its edge warped by two
- * octaves of value noise so it doesn't read as a circle. Inside the edge, a
- * belt where the city gives way to the land around it. Metres. */
+/* A city is finite: a disc, its edge warped by two octaves of value noise so
+ * it doesn't read as a circle (plan_world.c). Inside the edge, a belt where
+ * the city gives way to the land around it. The warp's octaves are given for
+ * a city of CITY_RADIUS, the footprint of one built 20 km across; a bigger
+ * city's warp is as much bigger, amplitudes and wavelengths alike, so its
+ * edge changes no faster; a smaller one's amplitudes only shrink. Metres. */
 #define CITY_RADIUS     12500.0
 #define CITY_BELT        1500.0
-#define CITY_WARP1_M     1800.0   /* warp amplitude and wavelength, first octave */
+#define CITY_WARP1_M     1800.0   /* warp amplitude and wavelength, first octave, at CITY_RADIUS */
 #define CITY_WARP1_WAVE  6000.0
 #define CITY_WARP2_M      500.0   /* second octave */
 #define CITY_WARP2_WAVE  2000.0
@@ -54,7 +57,8 @@
  * component's gradient is at most 3*sqrt(2)*(M1/WAVE1 + M2/WAVE2) (value
  * noise: 1.5 per lattice unit per axis), so the warp's Jacobian has norm at
  * most 6*(...), and the edge (a length through it) changes by at most 1 plus
- * that. A little over, for float rounding. */
+ * that; the coast and the slopes cut it by a bilinear distance, which
+ * changes by at most sqrt 2. A little over, for float rounding. */
 #define CITY_EDGE_RATE  (1.0 + 6.0 * (CITY_WARP1_M / CITY_WARP1_WAVE + CITY_WARP2_M / CITY_WARP2_WAVE) + 0.01)
 /* A built town's ground stays at or inside this edge measure, where
  * plan_urban is exactly 1 (and terrain_height is the city's ground). */
@@ -68,44 +72,52 @@
 
 /* Settlements: the cities on the land, each with a footprint and ground of
  * its own (src/plan/plan_world.c). They are the world's largest metropolitan
- * areas, read at plan_world_init from PLAN_CITY_LIST (rank, name, latitude
- * and longitude). Settlement 0 is Los Angeles, the megacity the player starts
- * in, round town (0, 0) at the world chart's origin; the rest follow by rank.
- * Cities closer than PLAN_MERGE_KM (chained) are one conurbation, with the
- * best rank's name and the summed area of its parts. Size comes from rank:
- * up to PLAN_COLOSSAL_RANK they are colossal, the megacity's 20 km across;
- * beyond it they fall from PLAN_MEGA_MAX_KM to PLAN_MEGA_MIN_KM at the last
- * rank as a power of the rank.
+ * areas, read at plan_world_init from PLAN_CITY_LIST (rank, name, latitude,
+ * longitude, and the real urban centre's area from the GHSL: earth.py
+ * cities). Settlement 0 is Los Angeles, the megacity the player starts in,
+ * its core town (0, 0) at the world chart's origin; the rest follow by rank.
+ * Every one is a megacity of the future, far bigger than the city it was: its
+ * size across falls with the log of its real area, from PLAN_CITY_MAX_KM for
+ * the largest in the list to PLAN_CITY_MIN_KM for the smallest (or a city
+ * the GHSL lacks). Cities whose discs would overlap are one conurbation,
+ * chained, with the best rank's name and the summed area of its parts' urban
+ * centres (each counted once), at most PLAN_CITY_MAX_KM.
  *
  * Each settlement has its own chart, about its centre with north up, and its
- * footprint is measured in it: a disc warped like the megacity's, the warp
- * scaled with the radius, and cut back to PLAN_COAST_M from the shore
- * (terrain_shore). A footprint that strays into the sea is pushed inland, and
- * grown if it must be, until it keeps its size; two footprints never meet.
- * The ground under a settlement rises and falls gently by its relief, larger
- * the smaller the settlement: a megacity is kept nearly flat, a small city
- * can be moderately hilly (plan_settlement_relief).
+ * footprint is measured in it: a warped disc, cut back to PLAN_COAST_M from
+ * the shore (terrain_shore) and to PLAN_STEEP_REACH_M into ground steeper
+ * than PLAN_STEEP_GRADE (the Earth read at mip 0). A footprint the cut leaves
+ * short is pushed away from it, and grown if it must be, until it keeps its
+ * size; two footprints never meet. The megacity is cut and grown too, but its
+ * core stays where the player starts: only its footprint's disc moves
+ * (`disc`). The ground under a settlement rises and falls gently by its
+ * relief, larger the smaller the settlement (plan_settlement_relief), on the
+ * Earth's highlands.
  *
  * The city itself is still laid out in the world chart, X/Z (terrain.h, "The
  * planet"), where settlement 0's chart is the world's: the plan's towns of a
  * far settlement are its footprint's image there. */
 #define PLAN_MAX_SETTLEMENTS 256
 #define PLAN_CITY_LIST     "data/earth/largest_metropolitan_areas_227.csv"
-#define PLAN_MERGE_KM      30.0    /* cities closer than this are one (km, over the sphere) */
-#define PLAN_COLOSSAL_RANK 50      /* the colossal cities: this rank and better */
-#define PLAN_MEGA_MAX_KM   12.0    /* the megacities' built size, across (km): the first after the colossal ones... */
-#define PLAN_MEGA_MIN_KM   6.0     /* ...and the last rank */
+#define PLAN_CITY_MIN_KM   60.0    /* the smallest city's built size across (km)... */
+#define PLAN_CITY_MAX_KM   150.0   /* ...and the largest's */
+#define PLAN_COLOSSAL_RANK 50      /* the hubs of the roads: this rank and better */
 #define PLAN_COAST_M       1000.0  /* footprints stop this far from the shore (m) */
+#define PLAN_STEEP_GRADE   0.08    /* ground steeper than this (the Earth at mip 0, 2.4 km) cuts a footprint... */
+#define PLAN_STEEP_CLOSE_M 3000.0  /* ...its patches closed over gaps of twice this, so a range is one (m)... */
+#define PLAN_STEEP_REACH_M 2000.0  /* ...this far into it (m) */
 #define PLAN_RELIEF_MEGA_M 10.0    /* relief of a settlement of CITY_RADIUS (m) */
 #define PLAN_RELIEF_MAX_M  40.0    /* the most relief any settlement has (m) */
 typedef struct PlanSettlement {
-    DVec2  centre;     /* world (x, z) of its footprint's centre: a town's centre (m) */
+    DVec2  centre;     /* world (x, z) of its core: a town's centre (m) */
+    DVec2  disc;       /* world (x, z) of its footprint's disc's centre: the core's but for the megacity's (m) */
     double radius;     /* its footprint's radius before the warp (m) */
     double relief_m;   /* amplitude of its ground's relief (m) */
-    int    town[2];    /* the town (i, j) at its centre, a regional centre */
+    int    town[2];    /* the town (i, j) at its core, a regional centre */
     int    colossal;   /* ranked PLAN_COLOSSAL_RANK or better */
     int    continent;  /* which land its roads join it to (plan_world_continent), 0 for none */
-    double size_km;    /* its built size across, from its rank (km) */
+    double size_km;    /* its built size across, from its area (km) */
+    double area_km2;   /* the real urban area it stands for (GHSL, its parts' summed), 0 where unknown */
     int    rank;       /* its rank in the list (a conurbation's best) */
     TerrainDir   dir;     /* its centre, in the planet frame (unit) */
     TerrainChart chart;   /* its own chart, about dir, north up; settlement 0's is the world's */
@@ -132,9 +144,16 @@ void   plan_settlement_relief_range(double *lo, double *hi);
 /* The least and the most relief of the settlements plan_settlement_near can
  * give anywhere in the rectangle [x0, x1] x [z0, z1] (m). */
 void   plan_settlement_relief_in(double x0, double z0, double x1, double z1, double *lo, double *hi);
-/* The footprint's radius for a settlement built `km` across: CITY_RADIUS for
- * the megacity's 20 km, as much less as half the difference. */
+/* The footprint's radius for a settlement built `km` across: half that and
+ * 2.5 km (the belt and the fringe's outer towns), CITY_RADIUS at 20 km. */
 double plan_settlement_radius(double km);
+/* The size across a settlement of real urban area `km2` is built (km), in a
+ * list whose areas run from lo to hi (km^2): PLAN_CITY_MIN_KM at lo and
+ * below, PLAN_CITY_MAX_KM at hi and above, with the log of the area between. */
+double plan_settlement_km(double km2, double lo, double hi);
+/* The farthest from the world chart's origin the megacity's edge measure is
+ * below 0 (m): beyond, plan_urban is 0 but near another settlement. */
+double plan_home_reach(void);
 /* The roads between the settlements are laid out in the world chart (until
  * they are on the sphere), over PLAN_ROAD_REACH of its origin, where the
  * chart's distances are within a tenth of the sphere's: a settlement farther

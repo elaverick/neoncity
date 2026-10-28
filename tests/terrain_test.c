@@ -86,7 +86,13 @@ static double urban_graded(double x, double z) {
 
 /* --- Landforms -------------------------------------------------------------- */
 
-#define LF_SPAN 60000.0   /* landforms surveyed this far round the city centre (m) */
+#define LF_SPAN 60000.0   /* landforms surveyed this far round a point of the land beyond the megacity (m) */
+
+/* That point: LF_SPAN beyond the megacity's reach, east of its core. */
+static DVec2 land_centre(void) {
+    DVec2 c = plan_town_centre(0, 0);
+    return dv(c.x + plan_home_reach() + LF_SPAN, c.z);
+}
 
 /* 5b. The region's landforms: weights that blend, and canyons cut
  *     continuously, no deeper than their deepest. Without a bake, where the
@@ -96,7 +102,7 @@ static double urban_graded(double x, double z) {
  *     one the Earth decides which types stand there (terrain_rules_procedural
  *     runs these without). */
 static void test_landforms(Rng *r) {
-    DVec2 c = plan_town_centre(0, 0);
+    DVec2 c = land_centre();
     const double full = TERRAIN_REGION_FROM + TERRAIN_LAND_RISE;   /* the region's landforms at full height beyond this edge measure */
     int lead[TERRAIN_TYPES] = { 0 }, n = 0, badW = 0;
     double slopeSum[TERRAIN_TYPES] = { 0 }, slopeMax[TERRAIN_TYPES] = { 0 };
@@ -122,14 +128,14 @@ static void test_landforms(Rng *r) {
                 }
         }
     static const char *names[TERRAIN_TYPES] = { "plains", "hills", "mountains", "plateaus" };
-    printf("landforms over %.0f km square round the centre: leading", 2.0 * LF_SPAN / 1000.0);
+    printf("landforms over %.0f km square beyond the city: leading", 2.0 * LF_SPAN / 1000.0);
     for (int t = 0; t < TERRAIN_TYPES; ++t) printf(" %s %.0f%%", names[t], 100.0 * lead[t] / n);
     printf("\n  mean (steepest) slope where each holds the land alone:");
     for (int t = 0; t < TERRAIN_TYPES; ++t) printf(" %s %.1f%% (%.0f%%)", names[t], 100.0 * slopeSum[t] / fmax(slopeN[t], 1), 100.0 * slopeMax[t]);
     printf("\n");
     CHECK(badW == 0, "%d landform weights out of [0, 1], not summing to 1, or canyons out of depth", badW);
     for (int t = 0; t < TERRAIN_TYPES && !terrain_earth_loaded(); ++t) {
-        CHECK(lead[t] > n / 20, "%s lead only %d of %d points round the city", names[t], lead[t], n);
+        CHECK(lead[t] > n / 20, "%s lead only %d of %d points beyond the city", names[t], lead[t], n);
         CHECK(slopeN[t] > 20, "%s hold the land alone at only %d points", names[t], slopeN[t]);
     }
     double mean[TERRAIN_TYPES];
@@ -202,7 +208,7 @@ static void test_landforms(Rng *r) {
  * least `slope` steep. */
 static int find_landform(int type, double slope, double *ox, double *oz) {
     DVec2 c = plan_town_centre(0, 0);
-    for (double r = 8000.0; r <= LF_SPAN; r += 500.0)
+    for (double r = 8000.0; r <= plan_home_reach() + LF_SPAN; r += 500.0)
         for (int a = 0; a < 360; a += 3) {
             double x = c.x + r * cos(a * (PI_F / 180.0)), z = c.z + r * sin(a * (PI_F / 180.0));
             if (plan_city_edge(x, z) < TERRAIN_REGION_FROM + TERRAIN_LAND_RISE) continue;
@@ -1843,11 +1849,13 @@ int main(int argc, char **argv) {
     DVec2 c = plan_town_centre(0, 0);
     Rng r = rng_make(4321);
     for (int i = 0; i < N_POINTS; ++i) {
-        double span = i % 10 == 0 ? 1.0e8 : REGION;
+        /* far off; round the core; or over the megacity and its edge, out to REGION beyond its reach */
+        DVec2 o = i % 2 ? c : plan_settlement(0).disc;
+        double span = i % 10 == 0 ? 1.0e8 : i % 2 ? REGION : plan_home_reach() - dlen(o) + REGION;
         float u = rng_float(&r);
         float v = rng_float(&r);
-        g_x[i] = c.x + (2.0 * u - 1.0) * span;
-        g_z[i] = c.z + (2.0 * v - 1.0) * span;
+        g_x[i] = o.x + (2.0 * u - 1.0) * span;
+        g_z[i] = o.z + (2.0 * v - 1.0) * span;
     }
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
     if (argc > 1 && strcmp(argv[1], "--patches") == 0) { test_planet_patches(&r); return g_failures != 0; }
@@ -1900,8 +1908,11 @@ int main(int argc, char **argv) {
     {   /* ...and is tight under the city: a chunk at the centre gets only the urban relief, on the highlands' own range. */
         double rlo, rhi, llo, lhi;
         terrain_height_range(c.x, c.z, c.x + CHUNK_SIZE, c.z + CHUNK_SIZE, &rlo, &rhi);
+        double flo, fhi;
         terrain_urban_lift_range(c.x, c.z, c.x + CHUNK_SIZE, c.z + CHUNK_SIZE, &llo, &lhi);
-        CHECK(rhi - rlo <= 2.0 * relief_at(c.x, c.z) + (lhi - llo) + 0.01, "range at the centre is loose: [%.2f, %.2f]", rlo, rhi);
+        plan_settlement_relief_in(c.x, c.z, c.x + CHUNK_SIZE, c.z + CHUNK_SIZE, &flo, &fhi);
+        CHECK(rhi - rlo <= 2.0 * fhi + (lhi - llo) + 0.01, "range at the centre is loose: [%.2f, %.2f] (relief up to %.1f m, the highlands' %.2f m)",
+              rlo, rhi, fhi, lhi - llo);
         printf("range of %d rectangles checked; a chunk at the centre: [%.3f, %.3f] m\n", rects, rlo, rhi);
     }
     {   /* The city's ground has its own range, bounding it at every size and tight at a chunk's. */
@@ -1957,13 +1968,16 @@ int main(int argc, char **argv) {
         if (e > -CITY_BELT && e < TERRAIN_REGION_FROM) { double sb = slope_of(bare_height, x, z); if (sb > beltMax) beltMax = sb; nBelt++; }
         if (s > landMax) landMax = s;
     }
-    /* Points scattered over 50 km rarely land in the belt: walk across it too,
-     * out to where the region's landforms begin. The belt's ground without
-     * the roads: their cuttings and embankments are as steep as they need be. */
+    /* Points scattered over the city rarely land in the belt: walk across it
+     * too, from the megacity's disc out to where the region's landforms
+     * begin. The belt's ground without the roads: their cuttings and
+     * embankments are as steep as they need be. */
+    PlanSettlement home = plan_settlement(0);
+    double reach = plan_home_reach() - dlen(home.disc);
     for (int a = 0; a < 720; ++a) {
         double th = a * (2.0 * PI_F / 720.0);
-        for (double rad = 5000.0; rad <= 16000.0; rad += 25.0) {
-            double x = c.x + rad * cos(th), z = c.z + rad * sin(th), e = plan_city_edge(x, z);
+        for (double rad = 0.5 * home.radius; rad <= reach + 2.0 * TERRAIN_REGION_FROM; rad += 50.0) {
+            double x = home.disc.x + rad * cos(th), z = home.disc.z + rad * sin(th), e = plan_city_edge(x, z);
             if (e <= -CITY_BELT || e >= TERRAIN_REGION_FROM) continue;
             double s = slope_of(bare_height, x, z);
             if (s > beltMax) beltMax = s;
@@ -1978,8 +1992,9 @@ int main(int argc, char **argv) {
     CHECK(beltMax <= BELT_SLOPE, "belt too steep: %.2f%%", 100.0 * beltMax);
     CHECK(landMax <= LAND_SLOPE, "land too steep: %.1f%%", 100.0 * landMax);
 
-    /* 5. The footprint: the spawn is deep in the city, everything 15 km out is
-     *    beyond it, everything 5 km out is inside; the edge measure keeps to its rate. */
+    /* 5. The footprint: the spawn is deep in the city, everything past the
+     *    megacity's reach is beyond it, everything 5 km out from its core is
+     *    inside; the edge measure keeps to its rate. */
     double sx, sz;
     float yaw;
     city_spawn(&sx, &sz, &yaw);
@@ -1988,9 +2003,11 @@ int main(int argc, char **argv) {
     for (int a = 0; a < 720; ++a) {
         double th = a * (2.0 * PI_F / 720.0), dx = cos(th), dz = sin(th);
         CHECK(plan_urban(c.x + 5000.0 * dx, c.z + 5000.0 * dz) == 1.0f, "5 km out at %.1f deg is not in the city", th * 57.2958);
-        CHECK(plan_urban(c.x + 15000.0 * dx, c.z + 15000.0 * dz) == 0.0f, "15 km out at %.1f deg is still in the city", th * 57.2958);
+        double out = dlen(c) + plan_home_reach();
+        CHECK(plan_urban(c.x + out * dx, c.z + out * dz) == 0.0f || plan_settlement_near(c.x + out * dx, c.z + out * dz) != 0,
+              "%.0f km out at %.1f deg is still in the megacity", out / 1000.0, th * 57.2958);
         double rad = 5000.0;   /* first crossing of the edge, to the nearest 10 m */
-        while (rad < 15000.0 && plan_city_edge(c.x + rad * dx, c.z + rad * dz) < 0.0) rad += 10.0;
+        while (rad < out && plan_city_edge(c.x + rad * dx, c.z + rad * dz) < 0.0) rad += 10.0;
         if (rad < rmin) rmin = rad;
         if (rad > rmax) rmax = rad;
     }
@@ -2015,7 +2032,8 @@ int main(int argc, char **argv) {
         CHECK(rl <= prev && rl <= PLAN_RELIEF_MAX_M && rl > 0.0, "relief %.2f m at radius %.0f m: not falling with size, or past the most", rl, rad);
         prev = rl;
     }
-    CHECK(plan_settlement_near(c.x, c.z) == 0 && plan_settlement(0).relief_m == PLAN_RELIEF_MEGA_M, "the megacity isn't settlement 0, of PLAN_RELIEF_MEGA_M");
+    CHECK(plan_settlement_near(c.x, c.z) == 0 && plan_settlement(0).relief_m == plan_settlement_relief(plan_settlement(0).radius),
+          "the megacity isn't settlement 0, of its size's relief");
 
     test_landforms(&r);
     test_lod_heights();

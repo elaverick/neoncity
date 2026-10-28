@@ -170,7 +170,8 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
 
 ## Settlements and roads
-The world's largest metropolitan areas over the planet (220 of a list of 227, merged and cut at their coasts)
+The world's largest metropolitan areas over the planet, megacities of the future 60-150 km across (178 of a
+list of 227, sized from their real GHSL areas, merged where they would meet, cut at their coasts and mountains)
 and the freeways and trunk roads between those of North America (`src/plan/plan_world.c`,
 `src/plan/plan_roads.c`, `src/render/road_gpu.c`, `shaders/terrain/roads.glsl`; see the README, `world_test --map`).
 Left over:
@@ -191,14 +192,24 @@ Left over:
 - **Far cities are laid out in the world chart.** Each settlement has its own chart and its footprint is
   measured in it, but its towns are on the world chart's lattice, so a far city's plan is stretched across by
   up to theta / sin theta. Keying towns, chunks and proxies by (settlement, i, j) comes with the active chart.
-- **Cities the coast cuts.** The San Francisco Bay Area keeps 69% of its area (the bay, with the growth
-  capped at 30%); about 65 cities lose 3% or more. Rotterdam-The Hague is left out: pushed inland off
-  the polders it meets a pushed Amsterdam. The cut reads the bake's 2.4 km samples, so narrow water (New
-  York's Narrows) dips only centimetres below the sea, and a road may cross it (bridges are to come).
-- **Steep cities.** Placement no longer looks at the land's tilt or landform: the Earth tilts up to about
-  7% under a footprint (0.5% on average), and the procedural mountains and canyons fade out under the
-  city's ground. A city at a mountain front (Almaty, the steepest) may want its relief raised or its
-  footprint fitted to the land.
+- **Cities the cut leaves short.** About 50 cities lose 3% or more of a disc of their size to the coast and the
+  mountains; 75 are grown, up to twice their radius. Lima keeps 71% (a strip between the Pacific and the
+  Andes), Tokyo 90%. The cut reads the bake's 2.4 km samples, so narrow water (New York's Narrows) dips only
+  centimetres below the sea, and a road may cross it (bridges are to come). The steep cut's values (8% at mip 0,
+  patches closed over 6 km, 2 km into it) were set on Los Angeles's map, not tuned city by city.
+- **Holes and islands.** The cut makes holes in a footprint where a range stands inside it (the San Gabriels in
+  Los Angeles, the Santa Monica Mountains), and pieces beyond a range or a bay may join it only round the far
+  side. The city's edge, belt and perimeter boulevards follow every one; whether a hole should be a park, the
+  mountains as they are, or filled is a look to decide.
+- **Megacity scale** (S1). The fringe over which a city thins is still 3 km deep (`CITY_FRINGE`) on a 60-150 km
+  city, and the urban relief falls with size to about 4 m on the largest; the Earth's lift under it (up to about
+  4%) now gives the large-scale shape. The proxies reach 20 km, so most of a city's skyline beyond is the
+  planet's patches only, and from the air at night the haze hides it (see the Earth, above). Merging pushes
+  some neighbours into one (13 pairs on the Earth: the list's 227 rows make 178 cities); Perm has no GHSL
+  centre and is built at the smallest size.
+- **Steep cities.** Under a footprint the Earth at 20 km tilts up to about 4% (Almaty; 0.6% on average); the
+  procedural mountains and canyons fade out under the city's ground, and a building on a grade stands at its
+  plot's highest ground with steps up to its entrances.
 - The sea itself isn't in the terrain yet: the basins it will fill are only low ground.
 - **Roads out of a city bundle.** Every colossal city keeps three links in the design, but links leaving it in one
   direction share a road (Steiner junctions, roads beside each other joined), so it may have fewer gates; the
@@ -206,8 +217,9 @@ Left over:
   links east joined), three on the stand-in. Small changes to the routing's costs reshuffle which.
 - **Clouds sit on the hills.** The deck's underside is at a fixed height (about 200 m), so within a city's cloud
   border a road climbing into the hills runs into it (see Landforms, Seen from the city, and Weather).
-- **Start-up.** Building the world costs about 15 s of one core's time (2.4 s on 8 threads, 2 s on 32): the coarse
-  cost grid, candidate and fine routes, profiles and the index; every test and the game pay it. Profiles and fine routes could be made lazily for the roads near the
+- **Start-up.** Building the world costs about 28 s of one core's time (2.4 s on 32 threads): the cut grids of the
+  178 cities (placed up to five times as the merging settles), the coarse cost grid, candidate and fine routes,
+  profiles and the index; every test and the game pay it. Profiles and fine routes could be made lazily for the roads near the
   camera, or the world cached on disk by a hash of its inputs.
 - **Determinism across compilers.** Scores and costs are quantised so the game's `/fp:fast` and the tests agree,
   but a value on a quantum's edge could still tip a different way; `world_test --fingerprint` from both would tell.

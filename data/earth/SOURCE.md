@@ -130,8 +130,9 @@ duplicates at the same place (Ho Chi Minh City, Urumqi), and several share one c
 Shenzhen, Dongguan and Foshan are one urban centre of 6,454 km²); the merging absorbs both. The engine
 reads it at run
 time (`src/plan/plan_world.c`, `PLAN_CITY_LIST`) from beside the executable, where every build copies
-it (the `city_list` target), or failing that from the source tree. Cities within 30 km of each other become one,
-ranks 1-50 are colossal, and the row at the bake's origin (Los Angeles) is the megacity.
+it (the `city_list` target), or failing that from the source tree. The row at the bake's origin (Los Angeles) is
+the megacity. Each city is built from 60 km across (the list's smallest area, and a row without one) to 150 km
+(its largest), with the log of its GHSL area; cities whose footprints would come near merge, their areas summed.
 
 ### City sizes: the GHSL Urban Centre Database
 

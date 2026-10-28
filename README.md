@@ -81,11 +81,12 @@ generated as a pure function of world position:
   - industrial: process plants and substations, sheds on the smallest plots
   - park: more likely along the boulevards, as green buffers between towns
   - rural: open land with the odd farmstead, towards the city's edge
-- **The city's edge.** The city is finite. Its footprint is a warped disc 25 km across
-  (`plan_city_edge`), whose outer 1.5 km belt gives way to the land. It is built of whole
-  towns, each only where its ground provably lies inside that belt (`plan_town_built`), so the
-  city's ground and the terrain's agree wherever they meet; that leaves 142 towns, about
-  20 km across. Over the last 3 km the city thins (`plan_fringe`): density falls, the skyline
+- **The city's edge.** The city is finite. Its footprint is a warped disc (`plan_city_edge`),
+  cut at the coast and the mountains (below), whose outer 1.5 km belt gives way to the land.
+  Los Angeles's disc is 155 km across, its edge 20 km from its core at the nearest (the Pacific)
+  and the San Gabriels a hole in it. It is built of whole towns, each only where its ground provably
+  lies inside that belt (`plan_town_built`), so the city's ground and the terrain's agree
+  wherever they meet. Over the last 3 km the city thins (`plan_fringe`): density falls, the skyline
   steps down (`city_height_cap` falls from 800 m to 60 m), and the land is zoned in bands,
   wobbled so they don't ring the city: industry and logistics, then parks and allotments,
   then open land; town and neighbourhood centres keep their high streets. The outermost boulevards are
@@ -98,23 +99,31 @@ whichever area it is requested through.
 
 ### Settlements and roads (`src/plan/plan_world.c`, `src/plan/plan_roads.c`)
 The megacity is one of the world's largest metropolitan areas, all placed over the planet once at
-startup (`plan_world_init`, on every core, about a second), a pure function of the world's seed and
-the list of cities, `data/earth/largest_metropolitan_areas_227.csv` (rank, name, latitude and longitude;
-read at run time, see `data/earth/SOURCE.md`):
+startup (`plan_world_init`, on every core, about two seconds), a pure function of the world's seed and
+the list of cities, `data/earth/largest_metropolitan_areas_227.csv` (rank, name, latitude, longitude, and
+the real urban area from the GHSL; read at run time, see `data/earth/SOURCE.md`):
 
-- **The cities.** Los Angeles is the megacity, settlement 0 at the world chart's origin; the rest follow
-  by rank. Cities within 30 km of each other are one conurbation (Tokyo with Yokohama, Osaka with Kobe,
-  Guangzhou with Foshan, Shenzhen with Hong Kong), with the best rank's name and their summed area. Ranks
-  1 to 50 are colossal, the megacity's size (a 25 km footprint, about 20 km built); beyond, they fall from
-  12 km to 6 km across at the last rank as a power of the rank. Each is a warped disc like the megacity's
-  in its own chart, about its centre with north up, built of whole towns of the same lattice, its core a
-  regional centre; its ground rises and falls by its own relief on the Earth's highlands.
-- **The coasts.** A footprint stops 1 km short of the shore (the Earth read at about 2 km, on a 500 m
-  grid in the city's chart); one the sea cuts short is pushed inland, away from what was cut off, to
-  where it keeps its area, and grown by up to 30% if it must. A city whose place is all below the sea
-  goes 40 km inland at most, or is left out (Rotterdam-The Hague, beside a pushed Amsterdam). No two
-  footprints meet: the lower-ranked of a pair too close shrinks. 220 of the 221 stand on the Earth's
-  bake. `world_test --map` draws them over the whole planet.
+- **The cities.** Every one is a megacity of the future, far bigger than the city it was. Los Angeles is
+  the megacity the player starts in, settlement 0, its core at the world chart's origin; the rest follow
+  by rank. Each is sized from its real urban area (the GHSL's urban centre; `earth.py cities`): 150 km
+  across for the largest in the list (Dhaka), 60 km for the smallest (Ufa, and Perm, which the GHSL lacks),
+  the size falling with the log of the area between (Los Angeles 141 km, Tokyo 144, Delhi 125, Oslo 75).
+  Cities whose footprints would come near each other are one conurbation, chained (Shanghai with Suzhou and
+  Hangzhou; the Pearl River Delta; Beijing with Tianjin; Osaka with Kyoto and Kobe), with the best rank's
+  name and the summed area of their urban centres, at most 150 km; so are any the cut pushes together.
+  Each is a warped disc in its own chart, about its centre with north up, the warp scaled with it, built
+  of whole towns of the same lattice, its core a regional centre; its ground rises and falls by its own
+  relief on the Earth's highlands. 178 stand on the Earth's bake; `world_test --map` draws them over the
+  whole planet, `world_test --list` lists them, `world_test --local out.ppm` draws the footprints round
+  Los Angeles.
+- **The coasts and the mountains.** A footprint stops 1 km short of the shore and reaches 2 km into
+  ground steeper than 8% (the Earth read at about 2.4 km, where that is a real mountainside of 15-20%; its
+  patches closed over gaps of 6 km so a range is one), both on a 1 km grid in the city's chart. One the cut
+  leaves short is pushed away from what was cut off, to where it keeps its area, and grown by up to twice
+  its radius if it must (Lima, between the Pacific and the Andes, keeps 71%). A city whose place is all
+  below the sea goes 40 km inland at most, or is left out. Los Angeles is cut and grown too, but its core
+  stays where the player starts: its disc alone moves, 60 km north-north-east, over the Inland Empire and
+  the high desert beyond the San Gabriels, which are a hole in it. No two footprints meet.
 - **Where the sea will be.** There is no water yet, but the planet's basins below a sea level to come
   are reserved for it (`terrain_sea_margin`, the Earth at 20 km less 20 m; `terrain_shore` finely). The
   cities keep off it as above; the roads keep 20 m above it on a 20 km grid, or 5 m above the finer shore

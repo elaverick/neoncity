@@ -12,9 +12,6 @@
 #define PS TERRAIN_PATCH_SIDE
 #define AS (PC + 3)        /* the grid with a one-sample apron, for normals */
 #define PP (PC / 2 + 1)    /* the parent's samples under a patch */
-/* plan_urban is 0 this far from the chart's origin and beyond (m): well past
- * the city's edge and belt. */
-#define URBAN_REACH_M (3.0 * (CITY_RADIUS + CITY_BELT))
 
 double terrain_patch_spacing(int level) {
     return 0.5 * PI * PLANET_RADIUS / (double)((int64_t)PC << level);
@@ -34,6 +31,7 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
     memset(in, 0, sizeof(*in));
     in->id = t;
     TerrainChart wc = terrain_world_chart();
+    double urbanReach = plan_home_reach();   /* plan_urban is 0 this far from the chart's origin and beyond, but near another settlement */
     TerrainDir dc = terrain_patch_dir(t, 2, 1, 1);
     in->centre = scale3(dc, PLANET_RADIUS);
     terrain_dir_chart(&wc, dc, &in->chart[0], &in->chart[1]);
@@ -98,7 +96,7 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
             terrain_dir_chart(&wc, dir[gj * PS + gi], &x, &z);
             v->chart[0] = (float)(x - in->chart[0]);
             v->chart[1] = (float)(z - in->chart[1]);
-            v->urban = hypot(x, z) < URBAN_REACH_M ? plan_urban(x, z) : 0.0f;
+            v->urban = hypot(x, z) < urbanReach ? plan_urban(x, z) : 0.0f;
             lox = fmin(lox, x); hix = fmax(hix, x); loz = fmin(loz, z); hiz = fmax(hiz, z);
             r2 = fmax(r2, dot3(rel, rel));
         }

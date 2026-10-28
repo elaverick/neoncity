@@ -30,7 +30,7 @@ void weather_frame(const Weather *w, const double eye[3], FrameUBO *ubo) {
     int n = 0;
     for (int k = 0, ns = plan_settlement_count(); k < ns; ++k) {
         PlanSettlement s = plan_settlement(k);
-        double e = hypot(s.centre.x - eye[0], s.centre.z - eye[2]) - s.radius;
+        double e = hypot(s.disc.x - eye[0], s.disc.z - eye[2]) - s.radius;
         if (e >= far || (n == CLOUD_CITIES && e >= nearest[n - 1].edge)) continue;
         int i = n < CLOUD_CITIES ? n++ : n - 1;   /* insertion, nearest first */
         for (; i > 0 && nearest[i - 1].edge > e; --i) nearest[i] = nearest[i - 1];
@@ -38,8 +38,8 @@ void weather_frame(const Weather *w, const double eye[3], FrameUBO *ubo) {
     }
     for (int i = 0; i < n; ++i) {
         PlanSettlement s = plan_settlement(nearest[i].k);
-        ubo->cities[i][0] = (float)(s.centre.x - eye[0]);
-        ubo->cities[i][1] = (float)(s.centre.z - eye[2]);
+        ubo->cities[i][0] = (float)(s.disc.x - eye[0]);
+        ubo->cities[i][1] = (float)(s.disc.z - eye[2]);
         ubo->cities[i][2] = (float)s.radius;
         ubo->cities[i][3] = 0.0f;
     }
