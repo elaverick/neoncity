@@ -540,8 +540,8 @@ real Earth's ground (ETOPO 2022, `data/earth/SOURCE.md`) is baked onto those fac
 `src/terrain/terrain_earth.c` reads the bake (`build/earth.bake`, found beside the executable or under `build/`;
 without it the procedural field below stands in): the height at any direction, smoothed to the spacing asked for
 and continuous across the faces' seams, with bounds for culling and levels of detail (`terrain_test --earth-map
-out.ppm` draws it). The chart's origin is central Los Angeles. From 40 to 400 km beyond the megacity the land rises
-and falls with the real Earth, and its landforms follow the data: mountains where it has the relief, plains where
+out.ppm` draws it). The chart's origin is central Los Angeles. The land, and every city's ground, rises and falls
+with the real Earth, and the landforms follow the data: mountains where it has the relief, plains where
 it is low and level, ridges along its ranges (`terrain_test --landform-map out.ppm`). The settlements stand at the
 world's largest cities and the roads go round its mountains (`world_test --earth build/earth.bake --map out.ppm`). Without a bake,
 broad procedural highlands and basins up to 1.5 km high and low stand in (`terrain_test --planet-map out.ppm` draws all

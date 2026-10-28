@@ -37,7 +37,8 @@ void   terrain_urban_height_range(double x0, double z0, double x1, double z1, do
 double terrain_height_lod(double x, double z, double spacing);
 
 /* Conservative bounds on terrain_height (and terrain_height_lod at any
- * spacing) over the rectangle [x0,x1] x [z0,z1]: every height inside lies in
+ * spacing up to 20 km, TERRAIN_LIFT_SPACING, which every clipmap level is under)
+ * over the rectangle [x0,x1] x [z0,z1]: every height inside lies in
  * [*lo, *hi]. Cheap; not tight. */
 void   terrain_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi);
 

@@ -40,8 +40,6 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   Earth roadmap (a chart per settlement) is next. Left over:
   - **From the air at night** the terrain haze hides the far ranges, so a 20 km capture shows haze, not the real
     mountains on the horizon; the haze at altitude wants retuning (asked, not decided).
-  - **The coast near the megacity.** The Earth's lift fades in from 40 to 400 km out, so the Pacific 25 km from
-    Los Angeles isn't in the near ground.
   - **The West is nearly empty.** The basins of the American West read as mountains, hills and plateaus, so
     placement (plains first) puts the 223 cities on the plains and coasts east of the Rockies and in South
     America. Los Angeles has a neighbour in the Central Valley and its links east cross 1800-2000 km of desert.

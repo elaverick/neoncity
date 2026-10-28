@@ -300,9 +300,6 @@ float plan_affluence(double x, double z);
  * out. */
 #define PLAN_EDGE_CAP 20000.0
 double plan_city_edge(double x, double z);
-/* The same, and *home the megacity's own measure, uncapped (the planet's
- * highlands rise with distance from it: terrain_land.c). */
-double plan_city_edges(double x, double z, double *home);
 /* The megacity's measure alone, uncapped. */
 double plan_home_edge(double x, double z);
 /* Urban weight: 1 inside the city, falling smoothly to 0 across the belt and

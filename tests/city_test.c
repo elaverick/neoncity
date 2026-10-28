@@ -932,17 +932,28 @@ int main(int argc, char **argv) {
             }
             /* Lobby and concourse floors lie on their blocks, at their building's
              * base: a step up from the sidewalk of no more than the plot falls
-             * (0.6 m at the megacity's 10 m of relief). The treads of the steps
-             * up to them lie between the two, above the sidewalk at its lowest. */
+             * (0.6 m at the megacity's 10 m of relief, and what the highlands
+             * under it fall across the building: the ground's grade, read 50 m
+             * either side, times its footprint's diagonal, and a tenth more).
+             * The treads of the steps up to them lie between the two, above
+             * the sidewalk at its lowest. */
             for (int i = 0; i < L.nfloor; ++i) {
                 const FloorPoly *f = &L.floor[i];
                 const double *v0 = L.collv[f->at.first];
                 float fall = 0.6f * (float)(plan_settlement(plan_settlement_near(v0[0], v0[1])).relief_m / PLAN_RELIEF_MEGA_M);
+                double lgx = (city_ground_y(v0[0] + 50.0, v0[1]) - city_ground_y(v0[0] - 50.0, v0[1])) / 100.0;
+                double lgz = (city_ground_y(v0[0], v0[1] + 50.0) - city_ground_y(v0[0], v0[1] - 50.0)) / 100.0;
                 int base = 0, tread = 0;
-                for (int j = 0; j < L.nbuild && !base; ++j) base = f->y == L.build[j].base + SIDEWALK_HEIGHT;   /* G0 */
+                for (int j = 0; j < L.nbuild && !base; ++j)
+                    if (f->y == L.build[j].base + SIDEWALK_HEIGHT) {   /* G0 */
+                        base = 1;
+                        fall += (float)(1.1 * hypot(lgx, lgz) * hypot(L.build[j].foot.x1 - L.build[j].foot.x0, L.build[j].foot.z1 - L.build[j].foot.z0));
+                    }
                 for (int j = 0; j < L.nbuild && !base && !tread; ++j) {
                     float fy = L.build[j].base + SIDEWALK_HEIGHT;
-                    tread = f->at.holeN == 0 && f->at.n == 4 && f->y < fy && f->y > fy - fall;
+                    float fj = fall + (float)(1.1 * hypot(lgx, lgz) * hypot(L.build[j].foot.x1 - L.build[j].foot.x0, L.build[j].foot.z1 - L.build[j].foot.z0));
+                    tread = f->at.holeN == 0 && f->at.n == 4 && f->y < fy && f->y > fy - fj;
+                    if (tread) fall = fj;
                 }
                 CHECK(base || tread, "chunk (%d,%d) floor %d (%.2f m) isn't at a building's base or on the steps up to it", cx, cz, i, f->y);
                 float low = 1e30f;

@@ -180,10 +180,9 @@ static int index_cell(double x, double z) {
     return (int)fz * INDEX_SIDE + (int)fx;
 }
 
-double plan_city_edges(double x, double z, double *home) {
+double plan_city_edge(double x, double z) {
     ensure();
-    double h = plan_home_edge(x, z), e = fmin(h, PLAN_EDGE_CAP);
-    if (home) *home = h;
+    double e = fmin(plan_home_edge(x, z), PLAN_EDGE_CAP);
     if (W.state < WORLD_SETTLED) return e;
     int c = index_cell(x, z);
     if (c < 0 || W.cell_start[c] == W.cell_start[c + 1]) return e;
@@ -198,8 +197,6 @@ double plan_city_edges(double x, double z, double *home) {
     }
     return e;
 }
-
-double plan_city_edge(double x, double z) { return plan_city_edges(x, z, NULL); }
 
 /* --- Settlements --------------------------------------------------------------------- */
 

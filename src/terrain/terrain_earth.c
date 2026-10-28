@@ -631,8 +631,44 @@ void terrain_earth_range(TerrainDir p, double radius, double spacing, double *lo
     bound_out(&b, lo, hi);
 }
 
+/* The steepest grade (m a metre) between neighbouring samples any stencil
+ * centred in sample coordinates [x0, x1] x [y0, y1] of a face reads: the
+ * samples' own where there are few, else the blocks'. */
+static double box_grade(const EarthMip *m, int face, double x0, double x1, double y0, double y1) {
+    int n = m->n, nb = m->nb, g = m->g;
+    int i0 = (int)floor(x0) - 1, i1 = (int)floor(x1) + 2, j0 = (int)floor(y0) - 1, j1 = (int)floor(y1) + 2;
+    i0 = i0 < -APRON ? -APRON : i0; i1 = i1 > n + APRON - 1 ? n + APRON - 1 : i1;
+    j0 = j0 < -APRON ? -APRON : j0; j1 = j1 > n + APRON - 1 ? n + APRON - 1 : j1;
+    double grade = 0.0;
+    if ((i1 - i0 + 1) * (j1 - j0 + 1) <= DIRECT_SAMPLES) {
+        for (int j = j0; j <= j1; ++j) {
+            const int16_t *row = m->q[face] + (size_t)(j + APRON) * g + APRON;
+            for (int i = i0; i <= i1; ++i) {
+                TerrainDir s = sample_dir(face, n, i, j);
+                if (i < i1) grade = fmax(grade, abs(row[i + 1] - row[i]) / dir_dist(s, sample_dir(face, n, i + 1, j)));
+                if (j < j1) grade = fmax(grade, abs(row[i + g] - row[i]) / dir_dist(s, sample_dir(face, n, i, j + 1)));
+            }
+        }
+    } else {
+        i0 = i0 < 0 ? 0 : i0 > n - 1 ? n - 1 : i0; i1 = i1 < 0 ? 0 : i1 > n - 1 ? n - 1 : i1;
+        j0 = j0 < 0 ? 0 : j0 > n - 1 ? n - 1 : j0; j1 = j1 < 0 ? 0 : j1 > n - 1 ? n - 1 : j1;
+        for (int bj = j0 / BLOCK; bj <= j1 / BLOCK; ++bj)
+            for (int bi = i0 / BLOCK; bi <= i1 / BLOCK; ++bi) grade = fmax(grade, m->bslope[face][(size_t)bj * nb + bi]);
+    }
+    return grade * g_earth.scale;
+}
+
 /* The height at a spacing blends its two mips' heights, so lies between
- * their bounds. */
+ * their bounds. Where the cap lies on one face alone (clear of the seams'
+ * blend), it also lies within the height at p plus or minus the radius
+ * times the steepest the interpolation can climb: a Catmull-Rom's slope
+ * along an axis is at most 2 of its largest step a sample (at t = 1/2,
+ * where the tangent terms peak), and the weights across it sum to at most
+ * 1.25 in magnitude, so each axis climbs at most 2.5 times the steepest
+ * grade between the samples, and the slope both ways at most sqrt 2 times
+ * that; the blend of the two mips no more than the steeper. A little over,
+ * for the samples' spacing changing across a face. */
+#define CR_CLIMB (2.5 * 1.4142135623730951 * 1.05)
 void terrain_earth_range_at(TerrainDir p, double radius, double spacing, double *lo, double *hi) {
     if (!g_earth.loaded) { *lo = -TERRAIN_MACRO_M; *hi = TERRAIN_MACRO_M; return; }
     double alpha = radius / PLANET_RADIUS;
@@ -642,6 +678,24 @@ void terrain_earth_range_at(TerrainDir p, double radius, double spacing, double 
     cap_bound(&g_earth.mip[m], p, alpha, &b);
     if (t > 0.0) cap_bound(&g_earth.mip[m + 1], p, alpha, &b);
     bound_out(&b, lo, hi);
+    int faces = 0, only = 0;
+    double box[4];
+    for (int face = 0; face < 6; ++face) {
+        double reach = 1.0 + 1.0 / g_earth.mip[t > 0.0 ? m + 1 : m].n, u0, u1, v0, v1;
+        if (!cap_range(p, alpha, face, 0, reach, &u0, &u1) || !cap_range(p, alpha, face, 1, reach, &v0, &v1)) continue;
+        faces++;
+        only = face;
+        box[0] = u0; box[1] = u1; box[2] = v0; box[3] = v1;
+    }
+    if (faces != 1) return;
+    double grade = 0.0;
+    for (int k = m; k <= (t > 0.0 ? m + 1 : m); ++k) {
+        const EarthMip *e = &g_earth.mip[k];
+        grade = fmax(grade, box_grade(e, only, sample_x(e, box[0]), sample_x(e, box[1]), sample_x(e, box[2]), sample_x(e, box[3])));
+    }
+    double h = terrain_earth_height(p, spacing), reach = CR_CLIMB * grade * radius + 1e-6;
+    *lo = fmax(*lo, h - reach);
+    *hi = fmin(*hi, h + reach);
 }
 
 double terrain_earth_lod_error(TerrainDir p, double spacing) {

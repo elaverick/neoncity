@@ -14,21 +14,9 @@ static double urban_relief_max(double x0, double z0, double x1, double z1) {
     return TERRAIN_URBAN_GRADED ? hi : 0.0;
 }
 
-/* Within this distance of the megacity's centre its own edge measure is under
- * TERRAIN_MACRO_FROM (the warp moves a point by at most sqrt(2) times the
- * octaves' amplitudes), so the planet's highlands (M * macro) are 0. */
-#define LIFT_CLEAR (TERRAIN_MACRO_FROM + CITY_RADIUS - 1.4142135623730951 * (CITY_WARP1_M + CITY_WARP2_M) - 1.0)
-
-static double home_distance(double x, double z) {
-    DVec2 c = plan_town_centre(0, 0);
-    return hypot(x - c.x, z - c.z);
-}
-
 /* The settlements' ground rises and falls with the planet's highlands, as the
- * land round them does (terrain_land_parts): M * macro, at full detail. */
-static double urban_lift(double x, double z) {
-    return home_distance(x, z) <= LIFT_CLEAR ? 0.0 : terrain_lift(x, z, plan_home_edge(x, z), 0.0);
-}
+ * land round them does (terrain_land_parts): macro, at full detail. */
+static double urban_lift(double x, double z) { return terrain_lift(x, z, 0.0); }
 
 int terrain_octaves(double wave, int octaves, double spacing) {
     int used = 0;
@@ -45,23 +33,18 @@ double terrain_urban_shape(double x, double z) { return urban_shape_lod(x, z, 0.
 
 /* Each field is evaluated only where its weight is non-zero; that skips work
  * without changing any height. *w gets the urban weight. The planet's
- * highlands (lift) are under the settlement's ground as under the land; round
- * the megacity they are 0, and there the sum is as it was before settlements
- * had them, operation for operation. The land reads the direction p, or
- * without one the chart's at (x, z). */
+ * highlands (lift) are under the settlement's ground as under the land. The
+ * land reads the direction p, or without one the chart's at (x, z). */
 static double height_lod(double x, double z, const TerrainDir *p, double spacing, double *w, double *relief, int roads) {
-    double home, edge = plan_city_edges(x, z, &home), h = 0.0, lift = 0.0;
+    double edge = plan_city_edge(x, z), h = 0.0, lift = 0.0;
     *w = plan_urban_weight(edge);
     *relief = *w > 0.0 ? urban_relief(x, z) : 0.0;
     if (*w < 1.0) {
         TerrainChart wc = terrain_world_chart();
         TerrainDir d = p ? *p : terrain_chart_dir(&wc, x, z);
-        h += (1.0 - *w) * terrain_land_parts(d, edge, home, spacing, &lift);
-    } else lift = terrain_lift(x, z, home, spacing);
-    if (*w > 0.0) {
-        if (lift == 0.0) { if (*relief > 0.0) h += *w * *relief * urban_shape_lod(x, z, spacing); }
-        else h += *w * ((*relief > 0.0 ? *relief * urban_shape_lod(x, z, spacing) : 0.0) + lift);
-    }
+        h += (1.0 - *w) * terrain_land_parts(d, edge, spacing, &lift);
+    } else lift = terrain_lift(x, z, spacing);
+    if (*w > 0.0) h += *w * ((*relief > 0.0 ? *relief * urban_shape_lod(x, z, spacing) : 0.0) + lift);
     /* The roads between the settlements: the ground takes them where the
      * land does, never under the city's own ground. */
     if (roads && *w < 1.0 && spacing <= PLAN_ROAD_LOD_SPACING) {
@@ -80,10 +63,8 @@ double terrain_height(double x, double z) { return terrain_height_lod(x, z, 0.0)
 
 /* height_lod at w = 1: 0 + 1 * (relief * shape + lift) is exactly this. */
 double terrain_urban_height(double x, double z) {
-    double relief = urban_relief(x, z), lift = urban_lift(x, z);
-    double h = relief > 0.0 ? relief * urban_shape_lod(x, z, 0.0) : 0.0;
-    if (lift != 0.0) h += lift;
-    return h;
+    double relief = urban_relief(x, z);
+    return (relief > 0.0 ? relief * urban_shape_lod(x, z, 0.0) : 0.0) + urban_lift(x, z);
 }
 
 double terrain_urban_lift(double x, double z) { return urban_lift(x, z); }
@@ -103,7 +84,7 @@ static double urban_shape_slope(void) {
  * half-diagonal of its value at the centre, and in [-1, 1] (a fractal sum of
  * unit amplitude). The height is a relief between the least and the most of
  * any settlement times that, so it lies between the extreme products; and
- * the lift within its own range (0 near the megacity). */
+ * the lift within its own range. */
 void terrain_urban_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
     double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0);
     double sc = terrain_urban_shape(cx, cz), reach = urban_shape_slope() * half;
@@ -112,12 +93,10 @@ void terrain_urban_height_range(double x0, double z0, double x1, double z1, doub
     if (!TERRAIN_URBAN_GRADED) rlo = rhi = 0.0;
     *lo = fmin(rlo * slo, rhi * slo) - 1e-3;   /* rounding: the shape is a float */
     *hi = fmax(rlo * shi, rhi * shi) + 1e-3;
-    if (home_distance(cx, cz) + half > LIFT_CLEAR) {   /* 0 inside LIFT_CLEAR */
-        double llo, lhi;
-        terrain_urban_lift_range(x0, z0, x1, z1, &llo, &lhi);
-        *lo += llo;
-        *hi += lhi;
-    }
+    double llo, lhi;
+    terrain_urban_lift_range(x0, z0, x1, z1, &llo, &lhi);
+    *lo += llo;
+    *hi += lhi;
 }
 
 /* How far the urban relief drawn at `spacing` (interpolated linearly over the
@@ -173,21 +152,24 @@ double terrain_surface(double x, double z) { return terrain_surface_lod(x, z, 0.
  * (within terrain_land_range, which only widens with the edge measures), so
  * it is bounded by whichever of the two can reach into the rectangle. The
  * edge measures over the rectangle are bounded from its centre by
- * CITY_EDGE_RATE. Leaving octaves out (terrain_height_lod) only shrinks each
- * fractal sum, so the bound holds at every level of detail. A road blends the
- * ground towards its own height, which the plan bounds (plan_road_range). */
+ * CITY_EDGE_RATE. The lift under the city reads the Earth at
+ * TERRAIN_LIFT_SPACING at every spacing up to it (every level of the
+ * clipmap), so lies within terrain_urban_lift_range; leaving octaves out
+ * (terrain_height_lod) only shrinks each fractal sum, so the bound holds at
+ * every level of detail up to that spacing. A road blends the ground towards
+ * its own height, which the plan bounds (plan_road_range). */
 void terrain_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
-    double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0), home;
-    double e = plan_city_edges(cx, cz, &home), emin = e - CITY_EDGE_RATE * half, emax = e + CITY_EDGE_RATE * half;
-    double hmax = home + CITY_EDGE_RATE * half;
+    double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0);
+    double e = plan_city_edge(cx, cz), emin = e - CITY_EDGE_RATE * half, emax = e + CITY_EDGE_RATE * half;
     double l = 0.0, h = 0.0;
     if (emin < 0.0) {                                                        /* somewhere w > 0 */
-        double lift = terrain_lift_bound(hmax), relief = urban_relief_max(x0, z0, x1, z1);
-        l = -relief - lift; h = relief + lift;
+        double llo, lhi, relief = urban_relief_max(x0, z0, x1, z1);
+        terrain_urban_lift_range(x0, z0, x1, z1, &llo, &lhi);
+        l = -relief + llo; h = relief + lhi;
     }
     if (emax > -CITY_BELT) {                                                 /* somewhere w < 1 */
         double ll, lh;
-        terrain_land_range(emax, hmax, &ll, &lh);
+        terrain_land_range(emax, &ll, &lh);
         l = fmin(l, ll); h = fmax(h, lh);
         if (plan_road_range(x0, z0, x1, z1, &ll, &lh)) { l = fmin(l, ll); h = fmax(h, lh); }
     }

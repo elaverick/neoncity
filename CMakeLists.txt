@@ -280,6 +280,7 @@ add_test(NAME plant_rules COMMAND plant_lab 12)
 # Arcology interiors over a wide area (only mega plots are generated, so it is quick).
 add_test(NAME arcology_rules COMMAND interior_lab arcology 12000)
 add_test(NAME terrain_rules COMMAND terrain_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake)
+add_test(NAME terrain_rules_procedural COMMAND terrain_test --earth none)
 add_test(NAME world_rules COMMAND world_test)
 add_test(NAME material_rules COMMAND material_test ${CMAKE_CURRENT_SOURCE_DIR}/assets)
 add_test(NAME world_rules_earth COMMAND world_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake)

@@ -50,7 +50,8 @@
 
 #define N_POINTS     20000
 #define REGION       25000.0   /* points scattered this far round the city centre (m) */
-#define URBAN_SLOPE  0.03      /* steepest urban grade allowed */
+#define URBAN_SLOPE  0.03      /* steepest urban relief allowed */
+#define URBAN_LIFT_SLOPE 0.06  /* steepest urban grade, on the highlands */
 #define BELT_SLOPE   0.12      /* steepest ground in the belt */
 #define LAND_SLOPE   3.5       /* steepest land: escarpments and canyon walls are cliffs, up to about 74 deg where one cuts the other */
 
@@ -73,21 +74,27 @@ static double slope_of(double (*f)(double, double), double x, double z) {
 
 /* The urban relief's amplitude at a point: its settlement's (m). */
 static double relief_at(double x, double z) { return TERRAIN_URBAN_GRADED ? plan_settlement(plan_settlement_near(x, z)).relief_m : 0.0; }
-/* The city's ground: its settlement's relief, on the planet's highlands (0 round the megacity). */
+/* The city's ground without the highlands under it. */
+static double urban_relief_only(double x, double z) { return relief_at(x, z) * terrain_urban_shape(x, z); }
+/* The ground without the roads between the settlements. */
+static double bare_height(double x, double z) { return terrain_height_bare(x, z, 0.0); }
+/* The city's ground: its settlement's relief, on the planet's highlands. */
 static double urban_graded(double x, double z) {
-    double h = relief_at(x, z) * terrain_urban_shape(x, z), lift = terrain_urban_lift(x, z);
-    if (lift != 0.0) h += lift;
-    return h;
+    double relief = relief_at(x, z);
+    return (relief > 0.0 ? relief * terrain_urban_shape(x, z) : 0.0) + terrain_urban_lift(x, z);
 }
 
 /* --- Landforms -------------------------------------------------------------- */
 
 #define LF_SPAN 60000.0   /* landforms surveyed this far round the city centre (m) */
 
-/* 5b. The region's landforms: weights that blend, every type present round
- *     the city, each with its own character where it holds the land alone,
- *     mountain belts running along their strike, plateaus with sharp
- *     escarpments, and canyons cut continuously, no deeper than their deepest. */
+/* 5b. The region's landforms: weights that blend, and canyons cut
+ *     continuously, no deeper than their deepest. Without a bake, where the
+ *     region is the generator's own, every type present round the city, each
+ *     with its own character where it holds the land alone, mountain belts
+ *     running along their strike and plateaus with sharp escarpments; with
+ *     one the Earth decides which types stand there (terrain_rules_procedural
+ *     runs these without). */
 static void test_landforms(Rng *r) {
     DVec2 c = plan_town_centre(0, 0);
     const double full = TERRAIN_REGION_FROM + TERRAIN_LAND_RISE;   /* the region's landforms at full height beyond this edge measure */
@@ -121,19 +128,21 @@ static void test_landforms(Rng *r) {
     for (int t = 0; t < TERRAIN_TYPES; ++t) printf(" %s %.1f%% (%.0f%%)", names[t], 100.0 * slopeSum[t] / fmax(slopeN[t], 1), 100.0 * slopeMax[t]);
     printf("\n");
     CHECK(badW == 0, "%d landform weights out of [0, 1], not summing to 1, or canyons out of depth", badW);
-    for (int t = 0; t < TERRAIN_TYPES; ++t) {
+    for (int t = 0; t < TERRAIN_TYPES && !terrain_earth_loaded(); ++t) {
         CHECK(lead[t] > n / 20, "%s lead only %d of %d points round the city", names[t], lead[t], n);
         CHECK(slopeN[t] > 20, "%s hold the land alone at only %d points", names[t], slopeN[t]);
     }
     double mean[TERRAIN_TYPES];
     for (int t = 0; t < TERRAIN_TYPES; ++t) mean[t] = slopeSum[t] / fmax(slopeN[t], 1);
-    CHECK(mean[TERRAIN_PLAINS] < 0.03 && mean[TERRAIN_PLAINS] < mean[TERRAIN_HILLS] && mean[TERRAIN_HILLS] < mean[TERRAIN_MOUNTAINS],
-          "slopes don't rise from plains (%.1f%%) through hills (%.1f%%) to mountains (%.1f%%)", 100.0 * mean[0], 100.0 * mean[1], 100.0 * mean[2]);
-    CHECK(slopeMax[TERRAIN_PLATEAU] > 1.0, "the plateaus' escarpments are smoothed away: steepest %.0f%%", 100.0 * slopeMax[TERRAIN_PLATEAU]);
+    if (!terrain_earth_loaded()) {
+        CHECK(mean[TERRAIN_PLAINS] < 0.03 && mean[TERRAIN_PLAINS] < mean[TERRAIN_HILLS] && mean[TERRAIN_HILLS] < mean[TERRAIN_MOUNTAINS],
+              "slopes don't rise from plains (%.1f%%) through hills (%.1f%%) to mountains (%.1f%%)", 100.0 * mean[0], 100.0 * mean[1], 100.0 * mean[2]);
+        CHECK(slopeMax[TERRAIN_PLATEAU] > 1.0, "the plateaus' escarpments are smoothed away: steepest %.0f%%", 100.0 * slopeMax[TERRAIN_PLATEAU]);
+    }
 
     /* Belts: the mountains' weight holds about as long along the strike as across it, times the stretch,
-     * where the region is its own (M is 0; beyond, the Earth's landforms take their share). The strike is
-     * the frame's round the city, turned into the chart there. */
+     * where the region is its own (without a bake; with one, the Earth's strike and landforms take their
+     * share). The strike is the frame's round the city, turned into the chart there. */
     double along = 0.0, across = 0.0, sx, sz;
     int runsA = 0, runsC = 0;
     {
@@ -155,7 +164,7 @@ static void test_landforms(Rng *r) {
             for (int s = 0; s <= 400; ++s) {
                 TerrainLandform lf;
                 double px = ox + dx * s * 250.0, pz = oz + dz * s * 250.0;
-                int last = s == 400 || plan_home_edge(px, pz) >= TERRAIN_MACRO_FROM;
+                int last = s == 400;
                 terrain_landform(px, pz, &lf);
                 int now = lf.w[TERRAIN_MOUNTAINS] > 0.5f;
                 if (now) len++;
@@ -167,8 +176,8 @@ static void test_landforms(Rng *r) {
         }
     }
     along /= fmax(runsA, 1); across /= fmax(runsC, 1);
-    printf("  mountain belts run %.1f km along the strike, %.1f km across it\n", along * 0.25, across * 0.25);
-    CHECK(along > 1.5 * across, "mountain belts don't run along their strike: %.1f km along, %.1f km across", along * 0.25, across * 0.25);
+    printf("  mountain belts run %.1f km along the default strike, %.1f km across it\n", along * 0.25, across * 0.25);
+    CHECK(terrain_earth_loaded() || along > 1.5 * across, "mountain belts don't run along their strike: %.1f km along, %.1f km across", along * 0.25, across * 0.25);
 
     /* Canyons: continuous (their cut changes no faster than their walls climb), and present. */
     double worst = 0.0, deepest = 0.0;
@@ -693,8 +702,9 @@ static void test_select(void) {
     }
     /* 11c. Different landforms get different detail (design doc 6.1): over
      *      mountains and at an escarpment the selection keeps finer levels
-     *      than over plains, the camera as high above each. */
-    {
+     *      than over plains, the camera as high above each. The region's own
+     *      landforms, without a bake (see test_landforms). */
+    if (!terrain_earth_loaded()) {
         static const char *names[3] = { "plains", "ridges", "escarpment" };
         static const double heights[2] = { 60.0, 300.0 };
         int want[3][2];
@@ -1162,7 +1172,7 @@ static void test_planet(Rng *r) {
             double ox, oz;
             terrain_dir_chart(oc, p, &ox, &oz);
             TerrainDir q = terrain_chart_dir(oc, ox, oz);
-            viaOther = fmax(viaOther, fabs(terrain_land_parts(q, 1e9, 1e9, sp, &lift) - terrain_land_parts(p, 1e9, 1e9, sp, &lift)));
+            viaOther = fmax(viaOther, fabs(terrain_land_parts(q, 1e9, sp, &lift) - terrain_land_parts(p, 1e9, sp, &lift)));
         }
         CHECK(isfinite(h) && h >= lowest && sf >= lowest, "planet ground %.1f (surface %.1f) under the lowest, %.1f", h, sf, lowest);
         seen = fmin(seen, fmin(h, sf));
@@ -1200,7 +1210,7 @@ static void test_planet(Rng *r) {
         double len = sqrt(pdot(q, q));
         q.x /= len; q.y /= len; q.z /= len;
         double step = pdist(p, q) * R;
-        seam = fmax(seam, fabs(terrain_land_parts(q, 1e9, 1e9, 0.0, &lift) - terrain_land_parts(p, 1e9, 1e9, 0.0, &lift)) / step);
+        seam = fmax(seam, fabs(terrain_land_parts(q, 1e9, 0.0, &lift) - terrain_land_parts(p, 1e9, 0.0, &lift)) / step);
     }
     printf("planet ground: lowest %.1f m (bound %.1f), steepest step %.2f, %.2f across the landforms' seams;\n"
            "  through the chart within %.1e m, the land through other charts within %.1e m\n", seen, lowest, jump, seam, viaChart, viaOther);
@@ -1611,6 +1621,7 @@ static void test_earth(Rng *r, const char *path) {
     TerrainEarthLand none;
     CHECK(!terrain_earth_land(prand(r), &none) && none.relief == 0.0 && none.rough == 1.0 && terrain_earth_rough_max() == 1.0, "without a bake, the landform grid isn't empty");
 
+    if (path && strcmp(path, "none") == 0) { printf("earth: no bake (--earth none): the stand-in only\n"); return; }
     if (!terrain_earth_load(path)) { CHECK(0, "the test bake %s didn't load", path ? path : "(none)"); return; }
     double lat, lon, heading;
     terrain_earth_extremes(&lo, &hi, &grade);
@@ -1795,7 +1806,7 @@ static void test_earth(Rng *r, const char *path) {
         double a = 2.0 * PI_D * rng_float(r), s = 5.0e5 + 3.0e6 * rng_float(r), x = s * cos(a), z = s * sin(a);
         TerrainDir d = terrain_chart_dir(&wc, x, z);
         double want = terrain_earth_height(d, 0.0) - e0, lift;
-        terrain_land_parts(d, 1e9, 1e9, 0.0, &lift);
+        terrain_land_parts(d, 1e9, 0.0, &lift);
         CHECK(fabs(lift - want) < 1e-6, "the lift at (%.0f, %.0f) is %.3f, not the Earth less the datum %.3f", x, z, lift, want);
         if (s < 0.3 * PI_D * R) {
             double sea = terrain_sea_margin(x, z), e = terrain_earth_height(d, TERRAIN_LIFT_SPACING);
@@ -1814,7 +1825,7 @@ int main(int argc, char **argv) {
     /* The Earth's test bake (tests/data/earth_test.bake: the real project at
      * 256 a side), from --earth <path> or found from the source or build
      * directory; the Earth tests run against it. */
-    const char *earth = NULL;
+    const char *earth = NULL;   /* "none": the procedural stand-in */
     for (int i = 1; i + 1 < argc; ++i) {
         if (strcmp(argv[i], "--earth") != 0) continue;
         earth = argv[i + 1];
@@ -1826,7 +1837,7 @@ int main(int argc, char **argv) {
         static const char *const candidates[] = { "tests/data/earth_test.bake", "../tests/data/earth_test.bake" };
         for (size_t k = 0; k < 2 && !earth; ++k) { FILE *f = fopen(candidates[k], "rb"); if (f) { fclose(f); earth = candidates[k]; } }
     }
-    if (earth) terrain_earth_load(earth);
+    if (earth && strcmp(earth, "none") != 0) terrain_earth_load(earth);
     plan_world_init(cpu_count());
     /* Points round the city and its surroundings, plus some far away. */
     DVec2 c = plan_town_centre(0, 0);
@@ -1846,7 +1857,7 @@ int main(int argc, char **argv) {
     if (argc > 2 && strcmp(argv[1], "--landform-map") == 0) return landform_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
 
     /* 1. Reference pass, in order: finite and within the amplitudes. */
-    double amax = fmax(PLAN_RELIEF_MAX_M, fmax(TERRAIN_LAND_TOP_M, TERRAIN_LAND_DEEP_M)) + terrain_lift_bound(1e9) + 1e-3, lo = 1e9, hi = -1e9;
+    double amax = fmax(PLAN_RELIEF_MAX_M, fmax(TERRAIN_LAND_TOP_M, TERRAIN_LAND_DEEP_M)) + terrain_lift_bound() + 1e-3, lo = 1e9, hi = -1e9;
     for (int i = 0; i < N_POINTS; ++i) {
         double h = terrain_height(g_x[i], g_z[i]);
         g_ref[i] = h;
@@ -1886,10 +1897,11 @@ int main(int argc, char **argv) {
             }
         rects++;
     }
-    {   /* ...and is tight under the city: a chunk at the centre gets only the urban relief. */
-        double rlo, rhi;
+    {   /* ...and is tight under the city: a chunk at the centre gets only the urban relief, on the highlands' own range. */
+        double rlo, rhi, llo, lhi;
         terrain_height_range(c.x, c.z, c.x + CHUNK_SIZE, c.z + CHUNK_SIZE, &rlo, &rhi);
-        CHECK(rhi <= relief_at(c.x, c.z) + 0.01, "range at the centre is loose: [%.2f, %.2f]", rlo, rhi);
+        terrain_urban_lift_range(c.x, c.z, c.x + CHUNK_SIZE, c.z + CHUNK_SIZE, &llo, &lhi);
+        CHECK(rhi - rlo <= 2.0 * relief_at(c.x, c.z) + (lhi - llo) + 0.01, "range at the centre is loose: [%.2f, %.2f]", rlo, rhi);
         printf("range of %d rectangles checked; a chunk at the centre: [%.3f, %.3f] m\n", rects, rlo, rhi);
     }
     {   /* The city's ground has its own range, bounding it at every size and tight at a chunk's. */
@@ -1908,29 +1920,33 @@ int main(int argc, char **argv) {
         }
         for (int k = 0; k < 400; ++k) {
             int i = rng_int(&r, 0, N_POINTS - 1);
-            double x0 = floor(g_x[i] / CHUNK_SIZE) * CHUNK_SIZE, z0 = floor(g_z[i] / CHUNK_SIZE) * CHUNK_SIZE, rlo, rhi;
+            double x0 = floor(g_x[i] / CHUNK_SIZE) * CHUNK_SIZE, z0 = floor(g_z[i] / CHUNK_SIZE) * CHUNK_SIZE, rlo, rhi, flo, fhi;
             terrain_urban_height_range(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, &rlo, &rhi);
-            /* far off, the planet's highlands under it, by their own range */
-            if (terrain_urban_lift(x0, z0) != 0.0) {
-                double llo, lhi;
-                terrain_urban_lift_range(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, &llo, &lhi);
-                rhi -= lhi - llo;
-            }
-            widest = fmax(widest, rhi - rlo);
+            /* the planet's highlands under it, by their own range, and per 10 m of its relief (where
+             * settlements of different relief may answer there, the bound takes their extremes) */
+            double llo, lhi;
+            terrain_urban_lift_range(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, &llo, &lhi);
+            plan_settlement_relief_in(x0, z0, x0 + CHUNK_SIZE, z0 + CHUNK_SIZE, &flo, &fhi);
+            if (flo != fhi) continue;
+            rhi -= lhi - llo;
+            widest = fmax(widest, (rhi - rlo) * PLAN_RELIEF_MEGA_M / fmax(fhi, PLAN_RELIEF_MEGA_M));
         }
-        printf("city ground's range over a chunk: at most %.2f m wide (less the highlands' own range far off)\n", widest);
-        /* With the megacity's 10 m of relief: its slope bound, 1.9%, across a chunk's diagonal, against 20 m for +-relief. */
-        CHECK(widest <= 3.0, "city ground's range over a chunk is loose: %.2f m", widest);
+        printf("city ground's range over a chunk: at most %.2f m wide for 10 m of relief (less the highlands' own range)\n", widest);
+        /* With 10 m of relief: its slope bound, 1.9%, across a chunk's diagonal, against 20 m for +-relief. */
+        CHECK(widest <= 3.0, "city ground's range over a chunk is loose: %.2f m for 10 m of relief", widest);
     }
 
-    /* 4. Slopes: gentle under the city, no cliff across the belt, bounded on the land. */
-    double urbanMax = 0.0, beltMax = 0.0, landMax = 0.0;
+    /* 4. Slopes: gentle under the city (its relief; the highlands under it
+     *    are the Earth's at 20 km, which the footprints' slope cut keeps
+     *    gentle), no cliff across the belt, bounded on the land. */
+    double urbanMax = 0.0, reliefMax = 0.0, beltMax = 0.0, landMax = 0.0;
     int nUrban = 0, nBelt = 0;
     for (int i = 0; i < N_POINTS; ++i) {
         double x = g_x[i], z = g_z[i], e = plan_city_edge(x, z);
         if (e <= -CITY_BELT) {
             double s = slope_of(urban_graded, x, z);
             if (s > urbanMax) urbanMax = s;
+            reliefMax = fmax(reliefMax, slope_of(urban_relief_only, x, z));
             CHECK(terrain_height(x, z) == (TERRAIN_URBAN_GRADED ? urban_graded(x, z) : 0.0), "height at (%.1f, %.1f) inside the city isn't the urban ground", x, z);
             CHECK(terrain_urban_height(x, z) == terrain_height(x, z), "the city's ground at (%.1f, %.1f) inside the city isn't the terrain", x, z);
             nUrban++;
@@ -1938,25 +1954,27 @@ int main(int argc, char **argv) {
         /* The city's ground is the urban relief everywhere, even where the land rises past it. */
         CHECK(terrain_urban_height(x, z) == (TERRAIN_URBAN_GRADED ? urban_graded(x, z) : 0.0), "the city's ground at (%.1f, %.1f) isn't the urban relief", x, z);
         double s = slope_of(terrain_height, x, z);
-        if (e > -CITY_BELT && e < TERRAIN_REGION_FROM) { if (s > beltMax) beltMax = s; nBelt++; }
+        if (e > -CITY_BELT && e < TERRAIN_REGION_FROM) { double sb = slope_of(bare_height, x, z); if (sb > beltMax) beltMax = sb; nBelt++; }
         if (s > landMax) landMax = s;
     }
     /* Points scattered over 50 km rarely land in the belt: walk across it too,
-     * out to where the region's landforms begin. */
+     * out to where the region's landforms begin. The belt's ground without
+     * the roads: their cuttings and embankments are as steep as they need be. */
     for (int a = 0; a < 720; ++a) {
         double th = a * (2.0 * PI_F / 720.0);
         for (double rad = 5000.0; rad <= 16000.0; rad += 25.0) {
             double x = c.x + rad * cos(th), z = c.z + rad * sin(th), e = plan_city_edge(x, z);
             if (e <= -CITY_BELT || e >= TERRAIN_REGION_FROM) continue;
-            double s = slope_of(terrain_height, x, z);
+            double s = slope_of(bare_height, x, z);
             if (s > beltMax) beltMax = s;
             nBelt++;
         }
     }
-    printf("steepest slope: urban %.2f%% (graded, %d points), belt %.2f%% (%d points), anywhere %.1f%%\n",
-           100.0 * urbanMax, nUrban, 100.0 * beltMax, nBelt, 100.0 * landMax);
+    printf("steepest slope: urban %.2f%% (relief %.2f%%; graded, %d points), belt %.2f%% (%d points), anywhere %.1f%%\n",
+           100.0 * urbanMax, 100.0 * reliefMax, nUrban, 100.0 * beltMax, nBelt, 100.0 * landMax);
     CHECK(nUrban > 100 && nBelt > 1000, "too few points inside the city (%d) or the belt (%d)", nUrban, nBelt);
-    CHECK(urbanMax <= URBAN_SLOPE, "urban ground too steep: %.2f%%", 100.0 * urbanMax);
+    CHECK(reliefMax <= URBAN_SLOPE, "urban relief too steep: %.2f%%", 100.0 * reliefMax);
+    CHECK(urbanMax <= URBAN_LIFT_SLOPE, "urban ground too steep: %.2f%%", 100.0 * urbanMax);
     CHECK(beltMax <= BELT_SLOPE, "belt too steep: %.2f%%", 100.0 * beltMax);
     CHECK(landMax <= LAND_SLOPE, "land too steep: %.1f%%", 100.0 * landMax);
 

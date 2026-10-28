@@ -47,11 +47,11 @@
 #define TERRAIN_URBAN_OCTAVES  2
 
 /* --- The land (terrain_land.c) ------------------------------------------------
- * land = base + M * macro + E * g * sum over types t of w_t * F_t - C * s * canyon
+ * land = base + macro + E * g * sum over types t of w_t * F_t - C * s * canyon
  *   base    rolling ground everywhere, TERRAIN_BASE_M high.
  *   macro   the planet's broad highlands and basins: the Earth
  *           (terrain_earth_height) less the datum E0, its height under the
- *           megacity, so world Y = elevation - E0 and the sea will stand at
+ *           megacity's centre, so world Y = elevation - E0 and the sea will stand at
  *           Y = -E0. Under the settlements and their belts it is read at
  *           TERRAIN_LIFT_SPACING, so a city's grade stays tiny; out on the
  *           land the data's own detail blends in from TERRAIN_DETAIL_FROM
@@ -59,20 +59,18 @@
  *           the procedural stand-in, TERRAIN_MACRO_M times a fractal sum
  *           over the sphere, takes its place with E0 = 0. The landforms
  *           follow the Earth (terrain_earth_land, below at w_t, F_t, g and
- *           s), each by M; without a bake, where the stand-in is high the
- *           mountains and plateaus gain affinity and the plains lose it, by
- *           TERRAIN_MACRO_BIAS a unit of it; low, the reverse. M is 0 out to
- *           TERRAIN_MACRO_FROM beyond the
- *           megacity's edge, rising to 1 at TERRAIN_MACRO_FULL, so its region
- *           is as it was. The other settlements' ground rises and falls with
- *           M * macro, so they stand on their highlands.
+ *           s); without a bake, where the stand-in is high the mountains and
+ *           plateaus gain affinity and the plains lose it, by
+ *           TERRAIN_MACRO_BIAS a unit of it; low, the reverse. Every
+ *           settlement's ground, the megacity's too, rises and falls with
+ *           macro, so it stands on its highlands.
  *   F_t     each landform type's heights (TERRAIN_PLAINS ... ; terrain.h):
  *           plains, low swells; hills, rolling relief; mountain belts, an uplift
  *           under ridged relief whose ridges run along the belt's strike;
  *           plateaus, a level top raised by a steep step on a slow mask, which
  *           gives escarpments where the mask crosses its threshold. The
  *           strike is the Earth's own where its ridges have one (blended by
- *           M times its coherence with TERRAIN_STRIKE_*): the ridges are
+ *           its coherence with TERRAIN_STRIKE_*): the ridges are
  *           drawn in TERRAIN_STRIKES frames turned from the default, the two
  *           either side of the strike blended. Where the data already
  *           carries the relief the belts are scaled down, to
@@ -81,7 +79,7 @@
  *   w_t     the region's mix of types (terrain_landform): slow affinity fields
  *           in a warped frame, the mountains' stretched along the strike so
  *           belts run as long ranges, which give TERRAIN_DATA_SHARE of their
- *           place (times M) to the Earth's: much relief round a point
+ *           place to the Earth's: much relief round a point
  *           makes mountains, some hills, high and level ground plateaus, low
  *           and level ground plains, and the hints' override wins where it
  *           is given. A type more than TERRAIN_REGION_MARGIN
@@ -100,16 +98,14 @@
  * and the types are value noise in three dimensions at R times the
  * direction, and the belts and ridges are drawn in fixed frames, one per
  * tile of the cube's faces, blended across the tiles' edges
- * (terrain_land.c). Only E, C and M read the world's chart, through the
- * edge measures. Every length is metres; every height, metres above y = 0. */
+ * (terrain_land.c). Only E, C and the Earth's detail read the world's chart,
+ * through the edge measure. Every length is metres; every height, metres above y = 0. */
 #define TERRAIN_BASE_M         12.0
 #define TERRAIN_MACRO_M        1500.0
 #define TERRAIN_MACRO_WAVE     3.0e6    /* longest wavelength over the sphere (m) */
 #define TERRAIN_MACRO_OCTAVES  4
-#define TERRAIN_MACRO_FROM     40000.0
-#define TERRAIN_MACRO_FULL     400000.0
 #define TERRAIN_MACRO_BIAS     0.25     /* the stand-in's, without a bake */
-#define TERRAIN_DATA_SHARE     0.8      /* the Earth's share of the affinities where M is 1 */
+#define TERRAIN_DATA_SHARE     0.8      /* the Earth's share of the affinities */
 #define TERRAIN_RIDGE_KEEP     0.35     /* the mountains' height kept where the data has the relief... */
 #define TERRAIN_KEEP_FROM_M    500.0    /* ...none of it taken below this relief (m)... */
 #define TERRAIN_KEEP_FULL_M    2500.0   /* ...and all of it from here */
@@ -166,21 +162,19 @@
 
 /* The urban field before blending, unit amplitude, [-1, 1]. */
 double terrain_urban_shape(double x, double z);
-/* The land at direction d and `spacing`, given plan_city_edges at its place
- * (terrain_height_lod's): the edge measure, and the megacity's own; and
- * M * macro in it in *lift: the planet's highlands, which a settlement's
- * ground rises and falls with too (terrain_height.c). */
-double terrain_land_parts(TerrainDir d, double edge, double home, double spacing, double *lift);
-/* M * macro alone, at `spacing`, for the megacity's edge measure `home`, as
- * it is wherever plan_urban is above 0 (the Earth's detail is left out
- * there): 0 within TERRAIN_MACRO_FROM of the megacity. */
-double terrain_lift(double x, double z, double home, double spacing);
+/* The land at direction d and `spacing`, given plan_city_edge at its place
+ * (terrain_height_lod's); and macro in it in *lift: the planet's highlands,
+ * which a settlement's ground rises and falls with too (terrain_height.c). */
+double terrain_land_parts(TerrainDir d, double edge, double spacing, double *lift);
+/* macro alone, at `spacing`, as it is wherever plan_urban is above 0 (the
+ * Earth's detail is left out there). */
+double terrain_lift(double x, double z, double spacing);
 /* The procedural stand-in for the Earth over the sphere, in [-1, 1]. */
 double terrain_macro(TerrainDir p, double spacing);
-/* |M * macro| is at most this where the megacity's edge measure is at most `home`. */
-double terrain_lift_bound(double home);
-/* The lift under a settlement's ground at (x, z): terrain_lift at full detail,
- * for the megacity's measure there. terrain_urban_height is it plus the relief. */
+/* |macro| is at most this. */
+double terrain_lift_bound(void);
+/* The lift under a settlement's ground at (x, z): terrain_lift at full
+ * detail. terrain_urban_height is it plus the relief. */
 double terrain_urban_lift(double x, double z);
 /* Bounds on terrain_urban_lift over the rectangle (m). */
 void   terrain_urban_lift_range(double x0, double z0, double x1, double z1, double *lo, double *hi);
@@ -196,16 +190,15 @@ double   terrain_earth_datum(void);
 double   terrain_earth_rough_max(void);
 uint32_t terrain_earth_lod_key(double spacing);
 /* The Earth's affinity for each landform type at p, each in [0, 1], as the
- * land takes them where M is 1 (terrain_land.c); 0 without a bake. */
+ * land takes them (terrain_land.c); 0 without a bake. */
 int      terrain_earth_forms(TerrainDir p, float a[TERRAIN_TYPES]);
 /* terrain_earth_range over only the mips `spacing` itself reads. */
 void     terrain_earth_range_at(TerrainDir p, double radius, double spacing, double *lo, double *hi);
 /* The default strike of the mountain belts at p, along the sphere: the
  * frame's that leads there (terrain_land.c). */
 TerrainDir terrain_frame_strike(TerrainDir p);
-/* Bounds on the land wherever plan_city_edge is at most `edge` and the
- * megacity's own measure at most `home` (m). */
-void   terrain_land_range(double edge, double home, double *lo, double *hi);
+/* Bounds on the land wherever plan_city_edge is at most `edge` (m). */
+void   terrain_land_range(double edge, double *lo, double *hi);
 /* A bound on how far the land at `spacing` strays from the land at full detail
  * at (x, z) (m): the octaves left out, through each field's weight and slope. */
 double terrain_land_lod_error(double x, double z, double spacing);
