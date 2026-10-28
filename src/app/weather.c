@@ -20,27 +20,37 @@ static float glsl_fbm(double x, double z, uint32_t salt) {
 
 /* The C mirror of the cloud field in shaders/common.glsl (cityEdge, cloudCover),
  * at the camera. Each settlement's footprint is taken as its plain disc: the
- * warp is lost in the border round it. */
+ * warp is lost in the border round it. The discs are found over the sphere
+ * and drawn where they lie in the active frame. */
 typedef struct Near { double edge; int k; } Near;
 
 void weather_frame(const Weather *w, const double eye[3], FrameUBO *ubo) {
     /* Settlements further than this can't bring cloud within CLOUD_REACH. */
     const double far = CLOUD_REACH + CLOUD_BORDER + CLOUD_FADE + CLOUD_RAGGED;
+    static TerrainDir disc[PLAN_MAX_SETTLEMENTS];
+    static int known;
+    int ns = plan_settlement_count();
+    if (!known) {
+        for (int k = 0; k < ns; ++k) disc[k] = terrain_frame_dir(plan_frame_settlement(k), plan_settlement(k).disc.x, plan_settlement(k).disc.z);
+        known = 1;
+    }
+    TerrainDir at = terrain_world_dir(eye[0], eye[2]);
     Near nearest[CLOUD_CITIES];
     int n = 0;
-    for (int k = 0, ns = plan_settlement_count(); k < ns; ++k) {
-        PlanSettlement s = plan_settlement(k);
-        double e = hypot(s.disc.x - eye[0], s.disc.z - eye[2]) - s.radius;
+    for (int k = 0; k < ns; ++k) {
+        double c = at.x * disc[k].x + at.y * disc[k].y + at.z * disc[k].z;
+        double e = PLANET_RADIUS * acos(c > 1.0 ? 1.0 : c < -1.0 ? -1.0 : c) - plan_settlement(k).radius;
         if (e >= far || (n == CLOUD_CITIES && e >= nearest[n - 1].edge)) continue;
         int i = n < CLOUD_CITIES ? n++ : n - 1;   /* insertion, nearest first */
         for (; i > 0 && nearest[i - 1].edge > e; --i) nearest[i] = nearest[i - 1];
         nearest[i] = (Near){ e, k };
     }
     for (int i = 0; i < n; ++i) {
-        PlanSettlement s = plan_settlement(nearest[i].k);
-        ubo->cities[i][0] = (float)(s.disc.x - eye[0]);
-        ubo->cities[i][1] = (float)(s.disc.z - eye[2]);
-        ubo->cities[i][2] = (float)s.radius;
+        double x, z;
+        terrain_dir_world(disc[nearest[i].k], &x, &z);
+        ubo->cities[i][0] = (float)(x - eye[0]);
+        ubo->cities[i][1] = (float)(z - eye[2]);
+        ubo->cities[i][2] = (float)plan_settlement(nearest[i].k).radius;
         ubo->cities[i][3] = 0.0f;
     }
     double edge = n > 0 ? nearest[0].edge : 1e9;

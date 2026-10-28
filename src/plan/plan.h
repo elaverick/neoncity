@@ -96,9 +96,14 @@
  * relief, larger the smaller the settlement (plan_settlement_relief), on the
  * Earth's highlands.
  *
- * The city itself is still laid out in the world chart, X/Z (terrain.h, "The
- * planet"), where settlement 0's chart is the world's: the plan's towns of a
- * far settlement are its footprint's image there. */
+ * Each settlement's city is laid out in its own frame (TerrainFrame,
+ * plan_frame_settlement): world X/Z there is its chart's, offset by its
+ * centre's world (x, z), so its towns, streets and the plan's noise keep the
+ * numbers they have in the world's frame round its centre, and stand on the
+ * sphere undistorted. The megacity's frame is the world's. A frame builds the
+ * towns of its own settlement only (plan_built_edge); the others, near it,
+ * are their ground (plan_urban, and the terrain's urban relief read in their
+ * own frames: plan_locate) but no streets. */
 #define PLAN_MAX_SETTLEMENTS 256
 #define PLAN_CITY_LIST     "data/earth/largest_metropolitan_areas_227.csv"
 #define PLAN_CITY_MIN_KM   60.0    /* the smallest city's built size across (km)... */
@@ -138,6 +143,35 @@ const char *plan_settlement_name(int k);
 /* The settlement whose footprint lies nearest (x, z), among those within
  * PLAN_EDGE_CAP of it; the megacity, 0, where none is. */
 int    plan_settlement_near(double x, double z);
+/* plan_settlement_near's settlement, and (x, z) in its own frame: the same
+ * numbers in its frame, taken through the sphere in any other. What belongs
+ * to a settlement's ground (its relief's noise, its channels) is read there,
+ * so it is the same whichever frame asks. Over a few tens of km a frame's
+ * distances are its own's to within PLAN_LOCATE_STRETCH. */
+#define PLAN_LOCATE_STRETCH 1.001
+int    plan_locate(double x, double z, double *px, double *pz);
+/* Settlement k's frame (terrain.h): about its centre, its world (x, z) the
+ * world frame's there; the megacity's is the world's frame itself. Valid
+ * from plan_world_init on, for ever. */
+const TerrainFrame *plan_frame_settlement(int k);
+/* The camera works in a settlement's frame while it is within this of the
+ * disc its footprint lies in (its radius and warp, plan_settlement_reach),
+ * and its frame holds the roads that come near enough for the ground round
+ * it then (m). Far enough out that its cloud (CLOUD_BORDER and the rest
+ * beyond its edge) is out of CLOUD_REACH when the frame changes, and its
+ * proxies out of theirs. */
+#define PLAN_FRAME_NEAR 40000.0
+/* How far from its disc's centre settlement k's footprint can reach: its
+ * radius and its warp's largest (m). */
+double plan_settlement_reach(int k);
+/* A travel frame about chart's origin, that place at world (x0, z0), of the
+ * lineage given (terrain.h), with the roads within PLAN_TRAVEL_ROADS of it
+ * published in it (plan_roads.c): for the camera out in the land, which
+ * strays no more than a few tens of km from its origin before it has a new
+ * one. Free its roads with plan_frame_free once nothing works in it. */
+#define PLAN_TRAVEL_ROADS 90000.0
+void   plan_frame_travel(TerrainFrame *f, const TerrainChart *chart, double x0, double z0, uint32_t lineage);
+void   plan_frame_free(TerrainFrame *f);
 /* Ground relief of a settlement of this radius: PLAN_RELIEF_MEGA_M at
  * CITY_RADIUS exactly, rising as sqrt(CITY_RADIUS / radius) for smaller ones,
  * to at most PLAN_RELIEF_MAX_M. */
@@ -374,6 +408,8 @@ int    plan_channel_in(double x0, double z0, double x1, double z1);
 int    plan_channel_count(void);
 int    plan_bridge_count(void);
 const PlanChannel *plan_channel(int k);
+/* The settlement channel k runs through: its points are that settlement's frame's. */
+int plan_channel_settlement(int k);
 const PlanBridge  *plan_bridge(int k);
 
 typedef struct PlanArea {
@@ -417,9 +453,14 @@ float plan_affluence(double x, double z);
 double plan_city_edge(double x, double z);
 /* The megacity's measure alone, uncapped. */
 double plan_home_edge(double x, double z);
+/* The edge measure of the frame's own settlement alone (PLAN_EDGE_CAP for a
+ * travel frame): its towns are built where this says (plan_town_built). */
+double plan_built_edge(double x, double z);
 /* Urban weight: 1 inside the city, falling smoothly to 0 across the belt and
  * 0 beyond the edge. Terrain reads it to keep the ground under the city gentle. */
 float  plan_urban(double x, double z);
+/* The same at a direction (the same in every frame). */
+float  plan_urban_dir(TerrainDir p);
 /* The same weight from a plan_city_edge value already in hand: exactly 1 for
  * edge <= -CITY_BELT, exactly 0 for edge >= 0. */
 static inline float plan_urban_weight(double edge) {
@@ -437,8 +478,9 @@ DVec2 plan_town_centre(int i, int j);
 int   plan_town_regional(int i, int j);
 /* The town (i, j) whose cell holds (x, z). */
 void  plan_town_at(double x, double z, int *i, int *j);
-/* Whether town (i, j) is part of the city: its cell, and CITY_GROUND_PAD
- * round it, provably lie at or inside CITY_BUILT_EDGE. */
+/* Whether town (i, j) is part of the frame's city: its cell, and
+ * CITY_GROUND_PAD round it, provably lie at or inside CITY_BUILT_EDGE of the
+ * frame's own settlement (plan_built_edge). */
 int   plan_town_built(int i, int j);
 
 /* Convex polygon helpers (also used for lots and building placement). */

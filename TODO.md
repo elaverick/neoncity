@@ -186,11 +186,10 @@ Left over:
   so beyond about 4 km the paint lies on the bare ground's coarse levels, and the planet's patches don't draw roads
   at all. Lamp heads, poles, barriers, signs and traffic aren't modelled: the freeways' light is pools on the
   asphalt. Freeway junctions are level, without slip roads or interchanges.
-- **Roads on the sphere, drawn in the world chart** (C3b). Each link is built in a chart of its own and
-  published in the world's; `plan_road_ground` grades a road's true width anywhere, but the terrain's paint
-  (`roads.glsl`) and the decks' chunks measure in the world chart, so far from Los Angeles (stretched across
-  by θ/sin θ: about 2 in India, 5 in Johannesburg) the paint is narrower than the road. C4's active chart
-  fixes it. Miami has no roads: its plain stands under the 5 m the roads keep above the finer shore.
+- **Roads on the sphere.** Each link is built in a chart of its own and published in every frame it comes
+  near (C4: each settlement's frame holds the roads within its reach, a travel frame those within 90 km of
+  it, the world's all of them), so the paint and the decks are drawn true to width near any city. Miami has
+  no roads: its plain stands under the 5 m the roads keep above the finer shore.
 - **Straits.** Continents are told apart on a 20 km grid whose neighbours join only where the land between
   is dry every 2.5 km; roads never cross the sea, so Britain, Japan, Copenhagen's Zealand and Indonesia's
   islands have networks of their own, or none (no sea bridges or tunnels yet). The gaps the routed
@@ -205,9 +204,28 @@ Left over:
   surface (one point on the Earth, counted in world_test as beside another road).
 - **Corners at a city's edge.** Gates are found before the corners are rounded, so a corner near the
   edge can clip a built town (1 point in 25 m on the Earth, 3 on the test bake; world_test fails at 50).
-- **Far cities are laid out in the world chart.** Each settlement has its own chart and its footprint is
-  measured in it, but its towns are on the world chart's lattice, so a far city's plan is stretched across by
-  up to theta / sin theta. Keying towns, chunks and proxies by (settlement, i, j) comes with the active chart.
+- **Frames** (C4: `TerrainFrame`, `src/app/frames.c`). Each city is laid out in its own frame and the engine
+  works in one at a time. Left over:
+  - *Entering a city's frame stalls a frame.* The clipmap is refilled at once in the new frame (the levels
+    drawn, on every core): about 20-25 ms from 20 km up, more near the ground, where every level is drawn.
+    It happens once per city approached, 40-45 km out. A second clipmap drawn through the old frame's
+    transform while the new one fills would hide it; travel frames' recentres keep everything and cost nothing.
+  - *A neighbour's city isn't drawn.* A frame lays out its own settlement's towns only: another city within
+    view shows its ground (its urban weight and relief, read in its own frame) but no streets, buildings or
+    proxies. Footprints are at least 24 km apart and proxies reach 20 km, so where two cities are within about
+    45 km of each other the other's skyline is missing, and at the change between their frames the proxies pop.
+    Proxy tiles keyed by settlement, made in its frame and drawn through a transform into the active one,
+    would fix it.
+  - *The bend far out in a city's frame.* A city's frame is kept to 45 km beyond the disc its footprint lies
+    in; out there the chart's distortion moves the clipmap's edge (32 km off) up to about 4 m from where the
+    planet's patches put it (world_test's flight measures it), a tenth of a pixel. Within a travel frame it
+    is 0.0 m.
+  - *Within a lineage things stand.* A travel frame is made continuous with the last (the same place and axes
+    at the camera), so chunks, proxies, collision and the clipmap's samples made in the one before are kept;
+    they are off by under a metre at the clipmap's edge, and are replaced as the camera moves on.
+  - *Clouds* are noise in the frame's (x, z): entering a city's frame moves their pattern, but only where
+    they are out of reach then (CLOUD_REACH, PLAN_FRAME_NEAR). The moon is fixed against the compass now
+    (east, up, south), not the frame, so it no longer turns with it.
 - **Cities the cut leaves short.** About 50 cities lose 3% or more of a disc of their size to the coast and the
   mountains; 75 are grown, up to twice their radius. Lima keeps 71% (a strip between the Pacific and the
   Andes), Tokyo 90%. The cut reads the bake's 2.4 km samples, so narrow water (New York's Narrows) dips only

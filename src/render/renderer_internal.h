@@ -51,7 +51,7 @@ typedef struct TerrainGpu TerrainGpu;
 typedef struct PlanetPush {
     float ax[4], up[4], az[4];   /* the camera's local axes in the planet frame */
     float centre[4];             /* the patch's centre, camera-relative in that frame; w its sink in the window (m) */
-    float morph[4];              /* the morph's inner and outer distances; the patch's chart centre less the camera's */
+    float morph[4];              /* the morph's inner and outer distances; z, w unused */
     float window[4];             /* the clipmap's window, camera-relative chart x0, z0, x1, z1; zeros for none */
 } PlanetPush;
 typedef struct PlanetGpu PlanetGpu;
@@ -66,6 +66,7 @@ struct Renderer {
     VkCore      *vk;
     ChunkSystem *chunks;
     uint64_t     frameIndex;
+    const struct TerrainFrame *frame;   /* the active frame, as renderer_set_frame last had it */
 
     VkCommandPool   cmdPool;
     VkCommandBuffer cmd[MAX_FRAMES];
@@ -177,6 +178,8 @@ void record_composite(Renderer *r, VkCommandBuffer cmd, uint32_t imageIndex, con
 void terrain_gpu_create(Renderer *r);
 void terrain_gpu_destroy(Renderer *r);
 void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);
+/* The active frame has changed (camera at cam in it): the clipmap refilled at once. */
+void terrain_gpu_set_frame(Renderer *r, const double cam[3]);
 void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
 /* The coarsest drawn level's window, world x0, z0, x1, z1; 0 if none is drawn. */
 int  terrain_gpu_window(Renderer *r, double win[4]);
@@ -186,6 +189,8 @@ int  terrain_gpu_window(Renderer *r, double win[4]);
 void     road_gpu_create(Renderer *r);
 void     road_gpu_destroy(Renderer *r);
 void     road_gpu_update(Renderer *r, int slot, const double cam[3]);
+/* The roads' points are the active frame's: their bounds taken again, and the window rebuilt. */
+void     road_gpu_set_frame(Renderer *r);
 VkBuffer road_gpu_buffer(Renderer *r, int slot, VkDeviceSize *size);
 void     road_gpu_stats(Renderer *r, char *buf, size_t n);
 
@@ -205,4 +210,6 @@ void planet_gpu_stats(Renderer *r, char *buf, size_t n);
 void proxy_gpu_create(Renderer *r);
 void proxy_gpu_destroy(Renderer *r);
 void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame, const double cam[3], const mat4 *viewProj);
+/* The tiles are made in frame f from now (the active one); those of the old one are dropped. */
+void proxy_gpu_set_frame(Renderer *r, uint64_t frame, const struct TerrainFrame *f);
 void proxy_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);

@@ -13,13 +13,14 @@ static int64_t parent_below(int64_t i) { return (i - is_odd(i)) / 2; }
  * spacing, from which hc is interpolated in float exactly as from the
  * parent's own stored heights. */
 int terrain_mesh_fill(TerrainClipmap *c, int level, TerrainSpan sp) {
-    TerrainClipLevel *lv = &c->level[level];
+    return terrain_mesh_fill_in(&c->level[level], level == TERRAIN_CLIP_LEVELS - 1, sp, c->scratch_h, c->scratch_p);
+}
+
+int terrain_mesh_fill_in(TerrainClipLevel *lv, int top, TerrainSpan sp, double *H, float *P) {
     double s = lv->spacing, ps = 2.0 * s;
-    int top = level == TERRAIN_CLIP_LEVELS - 1;
     if (sp.w < 1 || sp.d < 1 || sp.w > TERRAIN_CLIP_W || sp.d > TERRAIN_CLIP_W) fatal("terrain_mesh_fill: span out of range");
 
     int hw = sp.w + 2;
-    double *H = c->scratch_h;
     for (int jj = 0; jj < sp.d + 2; ++jj)
         for (int ii = 0; ii < hw; ++ii) {
             int inside = ii >= 1 && ii <= sp.w && jj >= 1 && jj <= sp.d;
@@ -29,7 +30,6 @@ int terrain_mesh_fill(TerrainClipmap *c, int level, TerrainSpan sp) {
 
     int64_t pi0 = parent_below(sp.i0), pj0 = parent_below(sp.j0);
     int pw = (int)(parent_below(sp.i0 + sp.w) - pi0 + 1), pd = (int)(parent_below(sp.j0 + sp.d) - pj0 + 1);
-    float *P = c->scratch_p;
     if (!top)
         for (int pj = 0; pj < pd; ++pj)
             for (int pi = 0; pi < pw; ++pi)

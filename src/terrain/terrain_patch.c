@@ -30,11 +30,8 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
     TerrainPatchInfo *in = &m->info;
     memset(in, 0, sizeof(*in));
     in->id = t;
-    TerrainChart wc = terrain_world_chart();
-    double urbanReach = plan_home_reach();   /* plan_urban is 0 this far from the chart's origin and beyond, but near another settlement */
     TerrainDir dc = terrain_patch_dir(t, 2, 1, 1);
     in->centre = scale3(dc, PLANET_RADIUS);
-    terrain_dir_chart(&wc, dc, &in->chart[0], &in->chart[1]);
     in->lo = 1e30f; in->hi = -1e30f;
 
     /* The grid and its apron: heights at the patch's spacing. */
@@ -73,7 +70,7 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
         }
     in->err = (float)err;
 
-    double lox = 1e300, loz = 1e300, hix = -1e300, hiz = -1e300, r2 = 0.0;
+    double r2 = 0.0;
     for (int gj = 0; gj <= PC; ++gj)
         for (int gi = 0; gi <= PC; ++gi) {
             TerrainPatchVertex *v = &m->v[gj * PS + gi];
@@ -92,16 +89,9 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
             set3(v->pos, rel);
             set3(v->morph, sub3(target, P));
             set3(v->n, n);
-            double x, z;
-            terrain_dir_chart(&wc, dir[gj * PS + gi], &x, &z);
-            v->chart[0] = (float)(x - in->chart[0]);
-            v->chart[1] = (float)(z - in->chart[1]);
-            v->urban = hypot(x, z) < urbanReach ? plan_urban(x, z) : 0.0f;
-            lox = fmin(lox, x); hix = fmax(hix, x); loz = fmin(loz, z); hiz = fmax(hiz, z);
+            v->urban = plan_urban_dir(dir[gj * PS + gi]);
             r2 = fmax(r2, dot3(rel, rel));
         }
-    in->chart_lo[0] = lox; in->chart_lo[1] = loz;
-    in->chart_hi[0] = hix; in->chart_hi[1] = hiz;
 
     /* The skirt: each edge vertex again, hanging down twice the err and a
      * little more, deeper than any crack to a coarser or finer neighbour. */
@@ -185,6 +175,7 @@ typedef struct Select {
     const TerrainPlanetView *view;
     double                   occluder;   /* the sphere nothing is seen through (m) */
     double                   clear;      /* the camera's distance to the window's edge less the hole's margin, or 0 */
+    double                   win[4];     /* the window, camera-relative */
 } Select;
 
 static void want(TerrainPlanet *tp, TerrainPatch t, float pri) {
@@ -223,13 +214,20 @@ static void visit(Select *x, int s, double parentSplit) {
     }
     int hole = 0;
     if (vw->window) {
-        const double *w = vw->win, m = TERRAIN_PLANET_HOLE_M;
-        if (in->chart_lo[0] >= w[0] + m && in->chart_hi[0] <= w[2] - m && in->chart_lo[1] >= w[1] + m && in->chart_hi[1] <= w[3] - m) {
+        /* The window is a square of the frame's (x, z) round the camera, which
+         * over its few tens of km is the azimuthal-equidistant projection
+         * about the camera to within a few metres (the frame's distortion
+         * there); the patch's points project within its radius of its
+         * centre's. */
+        const double *w = x->win, m = TERRAIN_PLANET_HOLE_M;
+        double hl = hypot(lx, lz), k = hl > 0.0 ? PLANET_RADIUS * atan2(hl, PLANET_RADIUS + vw->cam[1] + ly) / hl : 1.0;
+        double cx = lx * k, cz = lz * k, rr = r * 1.01 + 10.0;
+        if (cx - rr >= w[0] + m && cx + rr <= w[2] - m && cz - rr >= w[1] + m && cz + rr <= w[3] - m) {
             tp->inside++;
             sl->split = 0;
             return;
         }
-        hole = in->chart_hi[0] > w[0] && in->chart_lo[0] < w[2] && in->chart_hi[1] > w[1] && in->chart_lo[1] < w[3];
+        hole = cx + rr > w[0] && cx - rr < w[2] && cz + rr > w[1] && cz - rr < w[3];
     }
     /* Distance to the nearest of it that is drawn: past the window's edge
      * where the window takes the rest. */
@@ -269,15 +267,15 @@ void terrain_planet_select(TerrainPlanet *tp, const TerrainPlanetView *view) {
     tp->count++;
     tp->ndraw = tp->nwant = 0;
     tp->culled = tp->hidden = tp->inside = 0;
-    TerrainChart wc = terrain_world_chart();
-    tp->cam = terrain_chart_point(&wc, view->cam[0], view->cam[1], view->cam[2]);
-    terrain_chart_frame(&wc, view->cam[0], view->cam[2], &tp->ax, &tp->up, &tp->az);
+    tp->cam = scale3(terrain_world_dir(view->cam[0], view->cam[2]), PLANET_RADIUS + view->cam[1]);
+    terrain_frame_axes(terrain_frame(), view->cam[0], view->cam[2], &tp->ax, &tp->up, &tp->az);
     Select x = { tp, view, PLANET_RADIUS + terrain_planet_lowest(), 0.0 };
     if (view->window) {
         const double *w = view->win;
         double cx = view->cam[0], cz = view->cam[2];
         double edge = fmin(fmin(cx - w[0], w[2] - cx), fmin(cz - w[1], w[3] - cz)) - TERRAIN_PLANET_HOLE_M;
         x.clear = fmax(edge, 0.0) * 0.99;   /* chart distance to 3D: never less than 0.99 of it this near */
+        for (int k = 0; k < 4; ++k) x.win[k] = w[k] - view->cam[k & 1 ? 2 : 0];
     }
     for (int f = 0; f < 6; ++f) {
         TerrainPatch t = { f, 0, 0, 0 };

@@ -25,6 +25,11 @@ typedef struct ChunkStats {
 ChunkSystem *chunks_create(VkCore *vk);
 void         chunks_destroy(ChunkSystem *cs);
 
+/* The frame (TerrainFrame) the chunks are built in: the active one. On a
+ * change of lineage every chunk built in the old one is dropped and streamed
+ * again. */
+struct TerrainFrame;
+void         chunks_set_frame(ChunkSystem *cs, const struct TerrainFrame *f);
 /* cam: world-space camera position (double precision). viewProj is camera-relative. */
 void         chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t frameIndex,
                            const double cam[3], const mat4 *viewProj);

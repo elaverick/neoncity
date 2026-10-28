@@ -138,6 +138,7 @@ typedef struct World {
     int            continents;
     int           *cell_start;   /* the index: INDEX_SIDE^2 + 1 offsets into cell_ids */
     int           *cell_ids;
+    TerrainFrame   frame[PLAN_MAX_SETTLEMENTS];   /* each settlement's (0's is the world's: see plan_frame_settlement) */
 } World;
 
 static World W;
@@ -237,22 +238,101 @@ static int index_cell(double x, double z) {
     return (int)fz * INDEX_SIDE + (int)fx;
 }
 
-double plan_city_edge(double x, double z) {
-    ensure();
-    double e = fmin(plan_home_edge(x, z), PLAN_EDGE_CAP);
-    if (W.state < WORLD_SETTLED) return e;
-    int c = index_cell(x, z);
+/* A point of frame f, (x, z): its direction (once asked for) and its place
+ * in the world's frame, where the index and the megacity's measure are. */
+typedef struct Where { const TerrainFrame *f; double x, z, wx, wz; TerrainDir p; int has_p; } Where;
+
+static Where where_at(const TerrainFrame *f, double x, double z) {
+    Where w = { f, x, z, x, z, { 0.0, 0.0, 0.0 }, 0 };
+    if (f->id != 0) {   /* not the world's frame */
+        w.p = terrain_frame_dir(f, x, z);
+        w.has_p = 1;
+        terrain_dir_frame(terrain_frame_world(), w.p, &w.wx, &w.wz);
+    }
+    return w;
+}
+
+/* The point at direction p, in the world's frame. */
+static Where where_dir_at(TerrainDir p) {
+    Where w = { terrain_frame_world(), 0.0, 0.0, 0.0, 0.0, p, 1 };
+    terrain_dir_frame(w.f, p, &w.wx, &w.wz);
+    w.x = w.wx; w.z = w.wz;
+    return w;
+}
+
+static TerrainDir where_dir(Where *w) {
+    if (!w->has_p) { w->p = terrain_frame_dir(w->f, w->x, w->z); w->has_p = 1; }
+    return w->p;
+}
+
+/* Settlement id's own chart's (u, v) at w: in the frame that is its own, the
+ * frame's (x, z) less its centre, exactly; in any other, through the sphere. */
+static void where_in(Where *w, int id, double *u, double *v) {
+    const PlanSettlement *s = &W.s[id];
+    if (w->f->settlement == id && w->f->id != 0) { *u = w->x - s->centre.x; *v = w->z - s->centre.z; return; }
+    terrain_dir_chart(&s->chart, where_dir(w), u, v);
+}
+
+/* The megacity's measure at w: its chart is the world's. */
+static double where_home(Where *w) {
+    const PlanSettlement *s = &W.s[0];
+    double e = footprint_edge(s->disc, s->radius, w->wx, w->wz);
+    double c = cut_at(&W.cut[0], w->wx - s->centre.x, w->wz - s->centre.z);
+    if (W.cut[0].lake) c = fmax(c, lake_exact(&W.cut[0], w->wx - s->centre.x, w->wz - s->centre.z, where_dir(w)));
+    return e > c ? e : c;
+}
+
+/* plan_city_edge at w, over every settlement (only < 0), or settlement
+ * `only`'s measure alone; capped. */
+static double where_edge(Where *w, int only) {
+    double e = only <= 0 ? fmin(where_home(w), PLAN_EDGE_CAP) : PLAN_EDGE_CAP;
+    if (W.state < WORLD_SETTLED || only == 0) return e;
+    int c = index_cell(w->wx, w->wz);
     if (c < 0 || W.cell_start[c] == W.cell_start[c + 1]) return e;
-    TerrainDir p = terrain_chart_dir(&W.wc, x, z);
     for (int k = W.cell_start[c]; k < W.cell_start[c + 1]; ++k) {
         int id = W.cell_ids[k];
+        if (only > 0 && id != only) continue;
         const PlanSettlement *s = &W.s[id];
         double u, v;
-        terrain_dir_chart(&s->chart, p, &u, &v);
+        where_in(w, id, &u, &v);
         double d = hypot(u, v) - s->radius - warp_of(s->radius);
-        if (d < e) e = fmin(e, settlement_edge(id, u, v, p));
+        if (d < e) e = fmin(e, settlement_edge(id, u, v, where_dir(w)));
     }
     return e;
+}
+
+double plan_city_edge(double x, double z) {
+    ensure();
+    Where w = where_at(terrain_frame(), x, z);
+    return where_edge(&w, -1);
+}
+
+double plan_built_edge(double x, double z) {
+    ensure();
+    const TerrainFrame *f = terrain_frame();
+    if (f->settlement < 0 || (W.state < WORLD_SETTLED && f->settlement > 0)) return PLAN_EDGE_CAP;
+    Where w = where_at(f, x, z);
+    return where_edge(&w, f->settlement);
+}
+
+/* plan_urban is 0 where the edge measure is at least 0: the megacity's
+ * beyond its reach, and the rest's where the index lists none. */
+float plan_urban_dir(TerrainDir p) {
+    ensure();
+    Where w = where_dir_at(p);
+    double e = hypot(w.wx, w.wz) < plan_home_reach() ? fmin(where_home(&w), PLAN_EDGE_CAP) : PLAN_EDGE_CAP;
+    if (W.state >= WORLD_SETTLED) {
+        int c = index_cell(w.wx, w.wz);
+        for (int k = c < 0 ? 0 : W.cell_start[c]; c >= 0 && k < W.cell_start[c + 1]; ++k) {
+            int id = W.cell_ids[k];
+            const PlanSettlement *s = &W.s[id];
+            double u, v;
+            where_in(&w, id, &u, &v);
+            double d = hypot(u, v) - s->radius - warp_of(s->radius);
+            if (d < e) e = fmin(e, settlement_edge(id, u, v, p));
+        }
+    }
+    return plan_urban_weight(e);
 }
 
 /* --- Settlements --------------------------------------------------------------------- */
@@ -297,6 +377,19 @@ void plan_settlement_relief_in(double x0, double z0, double x1, double z1, doubl
     ensure();
     *lo = *hi = W.s[0].relief_m;
     if (W.state < WORLD_SETTLED) return;
+    const TerrainFrame *f = terrain_frame();
+    if (f->id != 0) {
+        /* the index is the world's frame's: the box round the rectangle's
+         * corners and middles there, padded for the chart's bending between samples */
+        double bx0 = 1e300, bz0 = 1e300, bx1 = -1e300, bz1 = -1e300;
+        for (int q = 0; q < 9; ++q) {
+            double x = x0 + 0.5 * (q % 3) * (x1 - x0), z = z0 + 0.5 * (q / 3) * (z1 - z0), wx, wz;
+            terrain_dir_frame(terrain_frame_world(), terrain_frame_dir(f, x, z), &wx, &wz);
+            bx0 = fmin(bx0, wx); bx1 = fmax(bx1, wx); bz0 = fmin(bz0, wz); bz1 = fmax(bz1, wz);
+        }
+        double pad = 0.02 * fmax(bx1 - bx0, bz1 - bz0) + 1000.0;
+        x0 = bx0 - pad; x1 = bx1 + pad; z0 = bz0 - pad; z1 = bz1 + pad;
+    }
     double i0 = floor((x0 + INDEX_EXTENT) / INDEX_CELL), i1 = floor((x1 + INDEX_EXTENT) / INDEX_CELL);
     double j0 = floor((z0 + INDEX_EXTENT) / INDEX_CELL), j1 = floor((z1 + INDEX_EXTENT) / INDEX_CELL);
     if (i1 < 0.0 || j1 < 0.0 || i0 >= INDEX_SIDE || j0 >= INDEX_SIDE) return;
@@ -311,32 +404,61 @@ void plan_settlement_relief_in(double x0, double z0, double x1, double z1, doubl
         }
 }
 
-int plan_settlement_near(double x, double z) {
-    ensure();
-    if (W.state < WORLD_SETTLED) return 0;
-    int c = index_cell(x, z), best = 0;
+static int where_near(Where *w) {
+    int c = index_cell(w->wx, w->wz), best = 0;
     if (c < 0 || W.cell_start[c] == W.cell_start[c + 1]) return 0;
-    TerrainDir p = terrain_chart_dir(&W.wc, x, z);
     double bd = PLAN_EDGE_CAP;
     for (int k = W.cell_start[c]; k < W.cell_start[c + 1]; ++k) {
         const PlanSettlement *s = &W.s[W.cell_ids[k]];
         double u, v;
-        terrain_dir_chart(&s->chart, p, &u, &v);
+        where_in(w, W.cell_ids[k], &u, &v);
         double d = hypot(u, v) - s->radius;
         if (d < bd) { bd = d; best = W.cell_ids[k]; }
     }
     return best;
 }
 
+int plan_settlement_near(double x, double z) {
+    ensure();
+    if (W.state < WORLD_SETTLED) return 0;
+    Where w = where_at(terrain_frame(), x, z);
+    return where_near(&w);
+}
+
+int plan_locate(double x, double z, double *px, double *pz) {
+    ensure();
+    *px = x; *pz = z;
+    if (W.state < WORLD_SETTLED) return 0;
+    const TerrainFrame *f = terrain_frame();
+    Where w = where_at(f, x, z);
+    int k = where_near(&w);
+    if (k == f->settlement) return k;
+    if (k == 0) { *px = w.wx; *pz = w.wz; return 0; }
+    terrain_dir_frame(&W.frame[k], where_dir(&w), px, pz);
+    return k;
+}
+
+double plan_settlement_reach(int k) {
+    ensure();
+    const PlanSettlement *s = &W.s[k >= 0 && k < W.n ? k : 0];
+    return s->radius + warp_of(s->radius);
+}
+
+void plan_world_frame_roads(int k, const void *roads) {
+    if (k > 0 && k < W.n) W.frame[k].roads = roads;
+}
+
+const TerrainFrame *plan_frame_settlement(int k) {
+    ensure();
+    if (k <= 0 || k >= W.n || W.state < WORLD_SETTLED) return terrain_frame_world();
+    return &W.frame[k];
+}
+
+/* In a frame the city laid out is its own settlement's, and its core town its. */
 int plan_world_core_town(int i, int j) {
     if (W.state < WORLD_SETTLED) return 0;
-    int c = index_cell((i + 0.5) * TOWN_SIZE, (j + 0.5) * TOWN_SIZE);
-    if (c < 0) return 0;
-    for (int k = W.cell_start[c]; k < W.cell_start[c + 1]; ++k) {
-        const PlanSettlement *s = &W.s[W.cell_ids[k]];
-        if (s->town[0] == i && s->town[1] == j) return 1;
-    }
-    return 0;
+    int k = terrain_frame()->settlement;
+    return k > 0 && k < W.n && W.s[k].town[0] == i && W.s[k].town[1] == j;
 }
 
 /* --- A grid over the sphere ----------------------------------------------------------- */
@@ -380,9 +502,8 @@ static int road_dry_at(TerrainDir p, double sea) {
     double shore = terrain_shore(p, ROAD_SHORE_SPACING);
     if (shore >= PLAN_ROAD_SHORE_M) return 1;
     if (shore < 0.0 || W.state < WORLD_SETTLED) return 0;
-    double x, z;
-    terrain_dir_chart(&W.wc, p, &x, &z);
-    return plan_city_edge(x, z) < PLAN_EDGE_CAP;
+    Where w = where_dir_at(p);
+    return where_edge(&w, -1) < PLAN_EDGE_CAP;
 }
 
 /* Two nodes next to each other along a face are joined where the land
@@ -439,11 +560,11 @@ double plan_world_sea_dir(TerrainDir p) {
     return (1.0 - tj) * ((1.0 - ti) * r0[0] + ti * r0[1]) + tj * ((1.0 - ti) * r1[0] + ti * r1[1]);
 }
 
-double plan_world_sea(double x, double z) { ensure(); return plan_world_sea_dir(terrain_chart_dir(&W.wc, x, z)); }
+double plan_world_sea(double x, double z) { ensure(); return plan_world_sea_dir(terrain_world_dir(x, z)); }
 
 int plan_road_dry_dir(TerrainDir p) { return road_dry_at(p, plan_world_sea_dir(p)); }
 
-int plan_road_dry(double x, double z) { ensure(); return plan_road_dry_dir(terrain_chart_dir(&W.wc, x, z)); }
+int plan_road_dry(double x, double z) { ensure(); return plan_road_dry_dir(terrain_world_dir(x, z)); }
 
 /* The continent of the land node nearest p within `near` nodes of the cell
  * holding it on its face, or 0. */
@@ -467,7 +588,7 @@ int plan_world_continent_dir(TerrainDir p) {
     return plan_road_dry_dir(p) ? continent_near(p, 0) : 0;
 }
 
-int plan_world_continent(double x, double z) { ensure(); return plan_world_continent_dir(terrain_chart_dir(&W.wc, x, z)); }
+int plan_world_continent(double x, double z) { ensure(); return plan_world_continent_dir(terrain_world_dir(x, z)); }
 
 static double sphere_m(TerrainDir a, TerrainDir b);
 
@@ -1181,6 +1302,15 @@ void plan_world_init(int threads) {
         W.relief_hi = fmax(W.relief_hi, W.s[k].relief_m);
     }
     build_index();
+    for (int k = 1; k < W.n; ++k) {
+        TerrainFrame *f = &W.frame[k];
+        f->chart = W.s[k].chart;
+        f->x0 = W.s[k].centre.x;
+        f->z0 = W.s[k].centre.z;
+        f->settlement = k;
+        f->id = f->lineage = (uint32_t)k;
+        f->roads = NULL;   /* plan_roads_build publishes them */
+    }
     W.state = WORLD_SETTLED;
     terrain_earth_check_streams();   /* the streams were derived with these settlements, or are dropped */
     plan_water_build(threads);

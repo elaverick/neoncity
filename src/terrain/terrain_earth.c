@@ -201,6 +201,7 @@ void terrain_earth_unload(void) {
     streams_free();
     water_free(&g_earth.water);
     memset(&g_earth, 0, sizeof g_earth);
+    terrain_frame_world_reset();
 }
 
 /* The water's points (16 bytes each, see the bake's layout) and its u32 tables. */
@@ -380,6 +381,7 @@ static int load_file(const char *path) {
     memcpy(g_earth.stage_sha, hd + 128, 64);
     g_earth.stage_sha[64] = 0;
     g_earth.loaded = 1;
+    terrain_frame_world_reset();
     return 1;
 }
 
@@ -497,12 +499,12 @@ void terrain_earth_check_streams(void) {
         streams_refused(NULL, g_earth.streams_path, why);
         return;
     }
-    TerrainChart wc = terrain_world_chart();
+    const TerrainFrame *wf = terrain_frame_world();   /* the probes were taken in the world's frame */
     for (uint32_t k = 1; k < g_earth.nplan; ++k) {
         const float *r = g_earth.plan_probe + 4 * k;
         TerrainDir d = { r[0], r[1], r[2] };
         double x, z;
-        terrain_dir_chart(&wc, unit3(d), &x, &z);
+        terrain_dir_frame(wf, unit3(d), &x, &z);
         double e = plan_city_edge(x, z);
         if (fabs(e - r[3]) <= STREAMS_PLAN_TOLERANCE) continue;
         snprintf(why, sizeof why, "the settlements have changed since they were derived (the edge at (%.0f, %.0f) is %.2f m, not %.2f): derive them again "

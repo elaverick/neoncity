@@ -33,6 +33,7 @@
 #define BISECT_M    1e-4     /* the crossings are found this finely (m) */
 #define INDEX_CELL  512.0    /* the channels are listed in cells this wide (m) */
 #define BRIDGE_PAD  0.5      /* a deck reaches this far past the channel's walls under it (m) */
+#define CHANNEL_IN_MAPPED 4000.0   /* plan_channel_in looks no wider than this in another settlement's frame (m) */
 
 typedef struct Run {
     PlanChannel ch;
@@ -58,6 +59,7 @@ static struct {
     int          nch, nbr;
     PlanChannel *ch;
     PlanBridge  *br;
+    int         *ch_k, *br_k;   /* each channel's and bridge's settlement */
     int         *piece_order;   /* the built channels, by piece */
     PlanPiece   *piece;         /* each channel's piece (built ones) */
     int          npiece;
@@ -318,18 +320,17 @@ typedef struct Seg { uint32_t k; DVec2 a, b; double w; } Seg;
 
 static void gather(void *ctx, uint32_t k, TerrainDir a, TerrainDir b, double width) {
     Vec *v = (Vec *)ctx;
-    TerrainChart wc = terrain_world_chart();
     Seg *s = (Seg *)vec_push(v);
     s->k = k;
-    terrain_dir_chart(&wc, a, &s->a.x, &s->a.z);
-    terrain_dir_chart(&wc, b, &s->b.x, &s->b.z);
+    terrain_dir_world(a, &s->a.x, &s->a.z);
+    terrain_dir_world(b, &s->b.x, &s->b.z);
     s->w = width;
 }
 
 typedef struct Reach { int first, n; int next, main_in; double w_end; } Reach;   /* segs[first .. first + n) */
 
-static void settle_job(void *ctx, int k) {
-    Settled *out = &((Settled *)ctx)[k];
+/* Settlement k's rivers, laid out in its own frame. */
+static void settle_in(Settled *out, int k) {
     PlanSettlement s = plan_settlement(k);
     double reach = dlen(dsub(s.disc, s.centre)) + 1.3 * s.radius + 3000.0;
     Vec segs = { NULL, 0, 0, sizeof(Seg) };
@@ -412,6 +413,13 @@ static void settle_job(void *ctx, int k) {
     free(segs.p);
 }
 
+static void settle_job(void *ctx, int k) {
+    const TerrainFrame *was = terrain_frame_bound();
+    terrain_frame_bind(plan_frame_settlement(k));
+    settle_in(&((Settled *)ctx)[k], k);
+    terrain_frame_bind(was);
+}
+
 /* --- The index ----------------------------------------------------------------------- */
 
 static int64_t cell_key(int i, int j) { return (int64_t)(((uint64_t)(uint32_t)i << 32) | (uint32_t)j); }
@@ -458,7 +466,9 @@ void plan_water_build(int threads) {
     G.ch = (PlanChannel *)malloc(sizeof(PlanChannel) * (nch ? nch : 1));
     G.piece = (PlanPiece *)malloc(sizeof(PlanPiece) * (nch ? nch : 1));
     G.br = (PlanBridge *)malloc(sizeof(PlanBridge) * (nbr ? nbr : 1));
-    if (!G.ch || !G.piece || !G.br) fatal("out of memory laying out the rivers");
+    G.ch_k = (int *)malloc(sizeof(int) * (nch ? nch : 1));
+    G.br_k = (int *)malloc(sizeof(int) * (nbr ? nbr : 1));
+    if (!G.ch || !G.piece || !G.br || !G.ch_k || !G.br_k) fatal("out of memory laying out the rivers");
     G.nch = G.nbr = 0;
     for (int k = 0; k < ns; ++k) {
         for (size_t r = 0; r < st[k].runs.n; ++r) {
@@ -466,9 +476,13 @@ void plan_water_build(int threads) {
             G.ch[G.nch] = run->ch;
             G.ch[G.nch].id = (uint32_t)G.nch;
             G.piece[G.nch] = run->pc;
+            G.ch_k[G.nch] = k;
             G.nch++;
         }
-        for (size_t b = 0; b < st[k].bridges.n; ++b) G.br[G.nbr++] = ((const PlanBridge *)st[k].bridges.p)[b];
+        for (size_t b = 0; b < st[k].bridges.n; ++b) {
+            G.br_k[G.nbr] = k;
+            G.br[G.nbr++] = ((const PlanBridge *)st[k].bridges.p)[b];
+        }
         free(st[k].runs.p); free(st[k].bridges.p);
     }
     free(st);
@@ -557,8 +571,20 @@ double plan_channel_dist(double x, double z, double grow) {
     return best;
 }
 
+/* The channels are in their settlements' own frames: the rectangle is
+ * looked for in the frame of the settlement nearest its centre, as it is in
+ * that settlement's own frame, and as the square round it (turned and moved
+ * there) in any other; a large one there may reach another settlement's, so
+ * is taken to hold one. */
 int plan_channel_in(double x0, double z0, double x1, double z1) {
     if (!G.ready || !G.nkeys) return 0;
+    double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), px, pz;
+    plan_locate(cx, cz, &px, &pz);
+    if (px != cx || pz != cz) {
+        double h = 0.5 * hypot(x1 - x0, z1 - z0) * PLAN_LOCATE_STRETCH + 1.0;
+        if (h > CHANNEL_IN_MAPPED) return 1;
+        x0 = px - h; x1 = px + h; z0 = pz - h; z1 = pz + h;
+    }
     int i0 = (int)floor(x0 / INDEX_CELL), i1 = (int)floor(x1 / INDEX_CELL);
     int j0 = (int)floor(z0 / INDEX_CELL), j1 = (int)floor(z1 / INDEX_CELL);
     if ((double)(i1 - i0 + 1) * (j1 - j0 + 1) > 4096.0) return 1;   /* too large a rectangle to look: say yes */
@@ -592,6 +618,7 @@ static int id_less(const void *a, const void *b) { int x = *(const int *)a, y = 
 void plan_water_area(PlanArea *out) {
     out->nchannels = out->nbridges = 0;
     if (!G.ready || !G.nkeys) return;
+    int own = terrain_frame()->settlement;   /* the frame's own city's: no other is laid out in it */
     const double pad = PLAN_CHANNEL_AREA_PAD;
     double x0 = out->x0 - pad, z0 = out->z0 - pad, x1 = out->x1 + pad, z1 = out->z1 + pad;
     int i0 = (int)floor(x0 / INDEX_CELL), i1 = (int)floor(x1 / INDEX_CELL);
@@ -612,10 +639,12 @@ void plan_water_area(PlanArea *out) {
             if (q && ids[kind][q] == ids[kind][q - 1]) continue;
             if (kind == 0) {
                 const PlanChannel *c = &G.ch[ids[0][q]];
+                if (G.ch_k[ids[0][q]] != own) continue;
                 if (c->x1 < x0 || c->x0 > x1 || c->z1 < z0 || c->z0 > z1 || out->nchannels >= PLAN_MAX_CHANNELS) continue;
                 out->channels[out->nchannels++] = *c;
             } else {
                 const PlanBridge *b = &G.br[ids[1][q]];
+                if (G.br_k[ids[1][q]] != own) continue;
                 double r = fmax(fabs(b->s0), fabs(b->s1)) + b->half + b->walk;
                 if (b->p.x + r < x0 || b->p.x - r > x1 || b->p.z + r < z0 || b->p.z - r > z1 || out->nbridges >= PLAN_MAX_BRIDGES) continue;
                 out->bridges[out->nbridges++] = *b;
@@ -627,4 +656,5 @@ void plan_water_area(PlanArea *out) {
 int plan_channel_count(void) { return G.nch; }
 int plan_bridge_count(void) { return G.nbr; }
 const PlanChannel *plan_channel(int k) { return &G.ch[k]; }
+int plan_channel_settlement(int k) { return G.ch_k[k]; }
 const PlanBridge *plan_bridge(int k) { return &G.br[k]; }

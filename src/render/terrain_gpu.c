@@ -44,7 +44,14 @@
  * frame, so the samples uploaded and the levels drawn always agree. The
  * windows can then trail the camera by a frame or more: each level blends
  * into its parent round the camera of its update (TerrainPush.morph), as
- * terrain_clip_morph does, while it is drawn round the camera of the frame. */
+ * terrain_clip_morph does, while it is drawn round the camera of the frame.
+ *
+ * Frames (TerrainFrame): an update is made in the frame it was asked for in.
+ * Within a lineage the samples stand. When the active frame changes lineage
+ * every sample is another's, so the render thread waits for the worker,
+ * refills the levels the view draws round the camera at once on every core
+ * (terrain_clip_refill) and uploads them all in that frame: the ground never
+ * goes missing. The finer ones follow as updates fill them. */
 
 #define CLIP_N TERRAIN_CLIP_N
 #define CLIP_W TERRAIN_CLIP_W
@@ -66,9 +73,10 @@ struct TerrainGpu {
     TerrainClipmap shown;                 /* the last update taken: levels and their blocks, no samples */
     Thread        *worker;
     Mutex          lock;                  /* guards busy .. fillMs */
-    CondVar        wake;
+    CondVar        wake, idle;
     int            busy, done, quit;      /* an update asked for and running; finished and not yet taken */
     double         ask[2];                /* the camera (x, z) it was asked for at */
+    const TerrainFrame *askFrame;         /* ...in this frame */
     int            evaluated;             /* the last finished update's heights, and its time on the worker */
     double         fillMs;
     TerrainFade    fade;                  /* which levels are drawn, blending as they change */
@@ -98,6 +106,7 @@ static int terrain_worker(void *arg) {
         while (!t->quit && !t->busy) cond_wait(&t->wake, &t->lock);
         if (t->quit) break;
         double x = t->ask[0], z = t->ask[1];
+        terrain_frame_bind(t->askFrame);
         mutex_unlock(&t->lock);
         double t0 = glfwGetTime();
         int n = terrain_clip_update(&t->clip, x, z, TERRAIN_CLIP_BUDGET);
@@ -107,6 +116,7 @@ static int terrain_worker(void *arg) {
         t->fillMs = ms;
         t->busy = 0;
         t->done = 1;
+        cond_broadcast(&t->idle);
     }
     mutex_unlock(&t->lock);
     return 0;
@@ -211,10 +221,11 @@ void terrain_gpu_create(Renderer *r) {
     t->samples = vk_buffer(vk, sampleBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     /* An update writes no more samples than the heights it evaluates, at most
-     * its budget, or a row when it can't afford one (terrain_clip_update) */
+     * its budget, or a row when it can't afford one (terrain_clip_update); a
+     * refill writes them all (terrain_gpu_set_frame) */
     _Static_assert(TERRAIN_CLIP_BUDGET >= TERRAIN_CLIP_W, "a terrain update's staging must hold at least a row");
     for (int i = 0; i < MAX_FRAMES; ++i)
-        t->staging[i] = vk_buffer(vk, (VkDeviceSize)TERRAIN_CLIP_BUDGET * sizeof(TerrainSample), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        t->staging[i] = vk_buffer(vk, sampleBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     t->copies = (VkBufferCopy *)malloc(sizeof(VkBufferCopy) * TERRAIN_CLIP_BUDGET);
     if (!t->copies) fatal("out of memory allocating the terrain");
@@ -244,6 +255,8 @@ void terrain_gpu_create(Renderer *r) {
 
     mutex_init(&t->lock);
     cond_init(&t->wake);
+    cond_init(&t->idle);
+    t->askFrame = terrain_frame();
     t->worker = thread_create(terrain_worker, t);
 }
 
@@ -258,6 +271,7 @@ void terrain_gpu_destroy(Renderer *r) {
     thread_join(t->worker);
     mutex_destroy(&t->lock);
     cond_destroy(&t->wake);
+    cond_destroy(&t->idle);
     vkDestroyDescriptorPool(vk->device, t->pool, NULL);
     vk_buffer_destroy(vk, &t->indices);
     for (int i = 0; i < MAX_FRAMES; ++i) vk_buffer_destroy(vk, &t->staging[i]);
@@ -365,7 +379,7 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
                 TerrainRect d = lv->dirty[k];
                 VkDeviceSize row = (VkDeviceSize)(d.x1 - d.x0) * sizeof(TerrainSample);
                 for (int z = d.z0; z < d.z1; ++z) {
-                    if (used + row > t->staging[slot].size || n >= TERRAIN_CLIP_BUDGET) fatal("terrain: an update overflowed its staging buffer");
+                    if (used + row > t->staging[slot].size || n >= TERRAIN_CLIP_BUDGET) fatal("terrain: an update overflowed its staging buffer");   /* a refill: LEVELS * N rows */
                     memcpy(dst + used, &lv->samples[z * CLIP_N + d.x0], (size_t)row);
                     t->copies[n++] = (VkBufferCopy){ used, (((VkDeviceSize)l * CLIP_N + z) * CLIP_N + d.x0) * sizeof(TerrainSample), row };
                     used += row;
@@ -381,6 +395,7 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
         mutex_lock(&t->lock);
         t->ask[0] = cam[0];
         t->ask[1] = cam[2];
+        t->askFrame = terrain_frame();
         t->busy = 1;
         if (take && t->fillMs > t->slowestFillMs) t->slowestFillMs = t->fillMs;
         cond_signal(&t->wake);
@@ -413,6 +428,20 @@ void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
         }
         vkCmdDrawIndexed(cmd, t->draw[k].count, 1, t->draw[k].first, 0, 0);
     }
+}
+
+void terrain_gpu_set_frame(Renderer *r, const double cam[3]) {
+    TerrainGpu *t = r->terrain;
+    mutex_lock(&t->lock);
+    while (t->busy) cond_wait(&t->idle, &t->lock);
+    double t0 = glfwGetTime();
+    terrain_clip_refill(&t->clip, cam[0], cam[2], t->shown.want, cpu_count());
+    t->fillMs = (glfwGetTime() - t0) * 1000.0;
+    t->evaluated = 0;
+    t->done = 1;   /* taken whole by the next update */
+    mutex_unlock(&t->lock);
+    terrain_fade_init(&t->fade);
+    t->lastTime = 0.0;
 }
 
 int terrain_gpu_window(Renderer *r, double win[4]) {

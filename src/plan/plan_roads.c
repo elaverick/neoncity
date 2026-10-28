@@ -69,15 +69,17 @@
  * settlements and the terrain (without roads), on as many threads as the
  * caller gives, each link on its own.
  *
- * The city and the terrain are still drawn in the world's chart, so that is
- * where the roads are published (PlanRoad): each link's points taken into
- * it, no more than PUBLISH_STEP apart, so that a segment straight in either
- * chart is straight in the other to within millimetres. Lengths along them
- * are the sphere's. plan_road_ground measures its distances as the sphere's
- * too (metric_at): far from the chart's origin, where its distances across
- * are stretched, the ground is graded to the road's true width. Spatial
- * indices are of world chart squares, each thing filed as far round as the
- * chart's stretch there takes its reach (seg_squares). */
+ * The city and the terrain are drawn in a frame (TerrainFrame: the world's,
+ * a settlement's, a travel frame), so that is where the roads are published
+ * (PlanRoad; RoadSet, a frame's): each link's points taken into it, no more
+ * than PUBLISH_STEP apart, so that a segment straight in either chart is
+ * straight in the other to within millimetres. Lengths along them are the
+ * sphere's. plan_road_ground measures its distances as the sphere's too
+ * (set_metric): far from the frame's origin, where its distances across are
+ * stretched, the ground is graded to the road's true width. The network's
+ * own spatial indices are of world chart squares, each thing filed as far
+ * round as the chart's stretch there takes its reach (seg_squares). A gate
+ * is found in its settlement's frame, where its towns are. */
 
 #define COARSE_CELL    4000.0   /* m */
 #define FINE_CELL      1000.0
@@ -119,6 +121,8 @@
 #define WET_JOIN       60.0     /* stretches this near each other are one bridge (m) */
 #define JUNCTION_CLEAR 40.0     /* a bridge stays this far from a junction (where the other roads' surfaces are) (m) */
 #define PUBLISH_STEP   400.0    /* a published road's points are no more than this far apart (m) */
+#define FRAME_ROADS_PAD 60000.0 /* a settlement's frame holds the roads this far beyond PLAN_FRAME_NEAR of it: the frame is kept a little
+                                 * past that (src/app/frames.h), and the ground reads the roads the clipmap's reach round the camera (m) */
 #define BRIDGE_UNDER   0.3      /* the ground under a deck stands this far under its soffit, at least (m) */
 
 /* Open addressing from int64 keys to ints; INT64_MIN marks an empty slot. */
@@ -142,6 +146,9 @@ typedef struct Link {
     PlanRoadBridge *br;     /* its bridges, along it (malloc'd) */
     int      nbr;
     int     *segbr;         /* each segment's bridge, or -1 (malloc'd) */
+    double   gh[2];         /* the city's ground at its gates (m, world Y) */
+    TerrainDir *samp;       /* its course every SAMPLE_STEP at most (malloc'd) */
+    int      nsamp;
 } Link;
 
 typedef struct Net {
@@ -149,14 +156,8 @@ typedef struct Net {
     int      nnodes;
     Link     link[MAX_LINKS];
     int      nlinks;
-    PlanRoad road[MAX_LINKS];
+    PlanRoad road[MAX_LINKS];    /* each road but its points (npts 0): the frames' sets have those */
     double   nodeH[MAX_NODES];   /* each junction's height, where its roads meet */
-    /* the index: ROAD_CELL squares -> runs of a road's segments (build_index) */
-    IMap     cells;              /* square -> its first run in idx */
-    int     *idxCount;           /* by the same number: how many */
-    int     *idx;                /* each run's road, first and last segment */
-    float   *idxLo, *idxHi;      /* by a square's first entry: the least and most height of its roads' segments */
-    float    lo, hi;             /* ...and of every road */
 } Net;
 
 static Net *g_net;
@@ -1887,13 +1888,17 @@ static DVec2 at_s(const DVec2 *p, int n, double s) {
     return p[0];
 }
 
-/* The point s along polyline p of chart ch, in the world's chart. */
-static DVec2 world_at_s(const TerrainChart *ch, const DVec2 *p, int n, double s) { return world_of(dir_of(ch, at_s(p, n, s))); }
+/* The point s along polyline p of chart ch, in this thread's frame. */
+static DVec2 frame_at_s(const TerrainChart *ch, const DVec2 *p, int n, double s) {
+    DVec2 r;
+    terrain_dir_world(dir_of(ch, at_s(p, n, s)), &r.x, &r.z);
+    return r;
+}
 
 /* A road running out from settlement k's centre along p (n points of chart
  * ch): where it leaves k's built towns for the last time, on the boulevard
- * between the last built town and the next (the towns are the world chart's,
- * so the gate is found there); its points from there into *out (malloc'd,
+ * between the last built town and the next (the towns are k's frame's, so
+ * the gate is found there: the caller binds it); its points from there into *out (malloc'd,
  * in ch), the first GATE_APPROACH of them (less if that would reach a built
  * town) straight out along the boulevard's normal. Returns the new count, or
  * 0 if it never leaves (then p stands). The whole road is walked: it may
@@ -1904,33 +1909,33 @@ static int gate_out(int k, const TerrainChart *ch, const DVec2 *p, int n, IMap *
     for (int q = 0; q + 1 < n; ++q) len += dlen(dsub(p[q + 1], p[q]));
     double sIn = -1.0;
     for (double s = 0.0; s <= len; s += GATE_STEP) {
-        DVec2 q = world_at_s(ch, p, n, s);
+        DVec2 q = frame_at_s(ch, p, n, s);
         if (built_at(cache, q) && plan_settlement_near(q.x, q.z) == k) sIn = s;
     }
     if (sIn < 0.0 || sIn + GATE_STEP > len) return 0;
     double lo = sIn, hi = sIn + GATE_STEP;
     for (int it = 0; it < 20; ++it) {
         double mid = 0.5 * (lo + hi);
-        if (built_at(cache, world_at_s(ch, p, n, mid))) lo = mid; else hi = mid;
+        if (built_at(cache, frame_at_s(ch, p, n, mid))) lo = mid; else hi = mid;
     }
-    DVec2 qi = world_at_s(ch, p, n, lo), qo = world_at_s(ch, p, n, hi);
+    DVec2 qi = frame_at_s(ch, p, n, lo), qo = frame_at_s(ch, p, n, hi);
     int ii, ij, oi, oj;
     plan_town_at(qi.x, qi.z, &ii, &ij);
     plan_town_at(qo.x, qo.z, &oi, &oj);
     DVec2 ci = plan_town_centre(ii, ij), co = plan_town_centre(oi, oj);
     DVec2 nrm = dnorm(dsub(co, ci)), mid = dscale(dadd(ci, co), 0.5);
-    DVec2 gp = world_at_s(ch, p, n, 0.5 * (lo + hi));
+    DVec2 gp = frame_at_s(ch, p, n, 0.5 * (lo + hi));
     gp = dsub(gp, dscale(nrm, ddot(dsub(gp, mid), nrm)));   /* onto the bisector: the boulevard's centre line */
     double approach = GATE_APPROACH;
     DVec2 a = dadd(gp, dscale(nrm, approach));
     while (approach > 40.0 && built_at(cache, a)) { approach *= 0.5; a = dadd(gp, dscale(nrm, approach)); }
-    DVec2 gl = in_chart(ch, terrain_chart_dir(&g_wc, gp.x, gp.z)), al = in_chart(ch, terrain_chart_dir(&g_wc, a.x, a.z));
+    DVec2 gl = in_chart(ch, terrain_world_dir(gp.x, gp.z)), al = in_chart(ch, terrain_world_dir(a.x, a.z));
     /* on along the route from the first point well clear of the gate */
     int m = 0;
     double sk = 0.0;
     for (; m < n; ++m) {
         if (m > 0) sk += dlen(dsub(p[m], p[m - 1]));
-        if (sk > hi && dlen(dsub(p[m], gl)) >= 2.0 * approach && !built_at(cache, world_of(dir_of(ch, p[m])))) break;
+        if (sk > hi && dlen(dsub(p[m], gl)) >= 2.0 * approach && !built_at(cache, frame_at_s(ch, p + m, 1, 0.0))) break;
     }
     DVec2 *o = (DVec2 *)malloc(sizeof(DVec2) * (size_t)(n - m + 3));
     if (!o) fatal("out of memory making the roads' gates");
@@ -1949,19 +1954,24 @@ static void reverse(DVec2 *p, int n) {
     for (int k = 0; k < n / 2; ++k) { DVec2 t = p[k]; p[k] = p[n - 1 - k]; p[n - 1 - k] = t; }
 }
 
+/* Each end's gate is found in its settlement's own frame, where its towns
+ * are laid out, and the city's ground read there. */
 static void gate_job(void *ctx, int l) {
     Net *net = (Net *)ctx;
     Link *L = &net->link[l];
-    IMap cache;
-    imap_init(&cache, 256);
+    const TerrainFrame *was = terrain_frame_bound();
     for (int end = 0; end < 2; ++end) {
         int v = end ? L->b : L->a;
         L->gate[end] = 0;
         if (net->node[v].settlement < 0) continue;
+        terrain_frame_bind(plan_frame_settlement(net->node[v].settlement));
+        IMap cache;
+        imap_init(&cache, 256);
         if (end) reverse(L->pts, L->npts);
         DVec2 *o;
         PlanGate g;
         int n = gate_out(net->node[v].settlement, &L->ch, L->pts, L->npts, &cache, &g, &o);
+        imap_free(&cache);
         if (n) {
             free(L->pts);
             L->pts = o;
@@ -1970,10 +1980,11 @@ static void gate_job(void *ctx, int l) {
             g.road = l;
             L->gp[end] = g;
             L->gate[end] = 1;
+            L->gh[end] = terrain_height(g.p.x, g.p.z);
         }
         if (end) reverse(L->pts, L->npts);
     }
-    imap_free(&cache);
+    terrain_frame_bind(was);
 }
 
 /* --- Profiles ---------------------------------------------------------------------------------- */
@@ -2056,8 +2067,8 @@ static void profile_grade_job(void *ctx, int l) {
     int n = L->nprof;
     double ds = L->ds, len = ds * (n - 1), G = link_grade(L);
     int back = L->gate[1] && !L->gate[0];
-    double h0 = L->gate[0] ? terrain_height(L->gp[0].p.x, L->gp[0].p.z) : net->nodeH[L->a];
-    double h1 = L->gate[1] ? terrain_height(L->gp[1].p.x, L->gp[1].p.z) : net->nodeH[L->b];
+    double h0 = L->gate[0] ? L->gh[0] : net->nodeH[L->a];
+    double h1 = L->gate[1] ? L->gh[1] : net->nodeH[L->b];
     /* drawn to the ends' heights over as long as half the grade takes */
     double e0 = h0 - r[0], e1 = h1 - r[n - 1];
     double l0 = fmax(200.0, fabs(e0) / (0.5 * G)), l1 = fmax(200.0, fabs(e1) / (0.5 * G));
@@ -2116,8 +2127,8 @@ static void junction_heights(Net *net) {
     for (int it = 0; it < 32; ++it)
         for (int l = 0; l < net->nlinks; ++l) {
             const Link *L = &net->link[l];
-            double ha = L->gate[0] ? terrain_height(L->gp[0].p.x, L->gp[0].p.z) : net->nodeH[L->a];
-            double hb = L->gate[1] ? terrain_height(L->gp[1].p.x, L->gp[1].p.z) : net->nodeH[L->b];
+            double ha = L->gate[0] ? L->gh[0] : net->nodeH[L->a];
+            double hb = L->gate[1] ? L->gh[1] : net->nodeH[L->b];
             double reach = 0.8 * link_grade(L) * L->ds * (L->nprof - 1), d = hb - ha, excess = fabs(d) - reach;
             if (excess <= 0.0 || (L->gate[0] && L->gate[1])) continue;
             double sgn = d > 0.0 ? 1.0 : -1.0;
@@ -2326,13 +2337,68 @@ static void bridge_span_job(void *ctx, int l) {
 
 /* --- Publishing ------------------------------------------------------------------------------ */
 
-/* Link l's points taken into the world's chart, no more than PUBLISH_STEP
- * apart: each segment cut into equal pieces, under its bridge if it is, the
- * distance along them its own; its ends the gates' or the nodes' points
- * exactly. From here on the link's points are the world chart's. */
-static void publish_job(void *ctx, int l) {
-    Net *net = (Net *)ctx;
-    Link *L = &net->link[l];
+/* The roads as a frame has them (TerrainFrame.roads): every road in the
+ * world's frame, and in any other those that come within its reach, each
+ * link's points taken into the frame no more than PUBLISH_STEP apart, so
+ * that a segment straight in either chart is straight in the other to within
+ * millimetres. Lengths along them are the sphere's. A set has its own index
+ * of ROAD_CELL squares, each segment filed as far round as the frame's
+ * stretch there takes its reach (its distances are true along lines out
+ * from its chart's origin, and stretched across them). */
+typedef struct RoadSet {
+    double    ox, oz;     /* the frame's chart's origin, world (x, z) */
+    int      *slot;       /* by road: its published road in held, or -1 */
+    int       nheld;
+    PlanRoad *held;
+    int      *heldId;     /* each published road's number */
+    /* the index: ROAD_CELL squares -> runs of a road's segments */
+    IMap      cells;      /* square -> its first run in idx */
+    int      *idxCount;   /* by the same number: how many */
+    int      *idx;        /* each run's road, first and last segment */
+    float    *idxLo, *idxHi;   /* by a square's first entry: the least and most height of its roads' segments */
+    float     lo, hi;     /* ...and of every road */
+} RoadSet;
+
+/* This thread's frame's roads, or none. */
+static const RoadSet *cur_set(void) { return (const RoadSet *)terrain_frame()->roads; }
+
+/* Road k as set rs has it: its published points, or none (npts 0). */
+static const PlanRoad *set_road(const RoadSet *rs, int k) { return rs && rs->slot[k] >= 0 ? &rs->held[rs->slot[k]] : &g_net->road[k]; }
+
+/* How far frame rs's chart stretches distances at its (x, z), and the
+ * sphere's metres there (as stretch_at and metric_at, about its origin). */
+static double set_stretch(const RoadSet *rs, DVec2 w) { return stretch_at(dv(w.x - rs->ox, w.z - rs->oz)); }
+static Metric set_metric(const RoadSet *rs, DVec2 w) { return metric_at(dv(w.x - rs->ox, w.z - rs->oz)); }
+
+/* Node v in frame f: a settlement's centre and the junctions are the world
+ * frame's points, and a settlement's centre its own frame's too. */
+static DVec2 node_at_frame(const Net *net, int v, const TerrainFrame *f) {
+    int s = net->node[v].settlement;
+    if (f->id == 0 || (s > 0 && f->settlement == s)) return net->node[v].p;
+    DVec2 r;
+    terrain_dir_frame(f, net->node[v].dir, &r.x, &r.z);
+    return r;
+}
+
+/* Link L's gate at `end` in frame f (and its way out, into *n): a gate is
+ * found in its settlement's own frame. */
+static DVec2 gate_at_frame(const Net *net, const Link *L, int end, const TerrainFrame *f, DVec2 *n) {
+    const PlanGate *g = &L->gp[end];
+    const TerrainFrame *own = plan_frame_settlement(net->node[end ? L->b : L->a].settlement);
+    if (f->id == own->id) { if (n) *n = g->n; return g->p; }
+    DVec2 p, q;
+    terrain_dir_frame(f, terrain_frame_dir(own, g->p.x, g->p.z), &p.x, &p.z);
+    terrain_dir_frame(f, terrain_frame_dir(own, g->p.x + g->n.x, g->p.z + g->n.z), &q.x, &q.z);
+    if (n) *n = dnorm(dsub(q, p));
+    return p;
+}
+
+/* Link l's points taken into frame f, into *R (its other fields the road's
+ * own): each segment cut into equal pieces, under its bridge if it is, the
+ * distance along them its own; its ends the gates' or the nodes' points. */
+static void publish_link(const Net *net, int l, const TerrainFrame *f, PlanRoad *R) {
+    const Link *L = &net->link[l];
+    *R = net->road[l];
     int n = 1;
     for (int k = 0; k + 1 < L->npts; ++k) n += 1 + (int)((L->s[k + 1] - L->s[k]) / PUBLISH_STEP);
     DVec2 *p = (DVec2 *)malloc(sizeof(DVec2) * (size_t)n);
@@ -2340,7 +2406,7 @@ static void publish_job(void *ctx, int l) {
     int *sb = L->segbr ? (int *)malloc(sizeof(int) * (size_t)(n - 1)) : NULL;
     if (!p || !s || (L->segbr && !sb)) fatal("out of memory publishing the roads");
     int m = 0;
-    p[m] = L->gate[0] ? L->gp[0].p : net->node[L->a].p;
+    p[m] = L->gate[0] ? gate_at_frame(net, L, 0, f, NULL) : node_at_frame(net, L->a, f);
     s[m++] = 0.0;
     for (int k = 0; k + 1 < L->npts; ++k) {
         int pieces = 1 + (int)((L->s[k + 1] - L->s[k]) / PUBLISH_STEP);
@@ -2348,20 +2414,31 @@ static void publish_job(void *ctx, int l) {
             double t = (double)q / pieces;
             if (sb) sb[m - 1] = L->segbr[k];
             s[m] = q == pieces ? L->s[k + 1] : L->s[k] + t * (L->s[k + 1] - L->s[k]);
-            p[m++] = world_of(dir_of(&L->ch, q == pieces ? L->pts[k + 1] : dadd(L->pts[k], dscale(dsub(L->pts[k + 1], L->pts[k]), t))));
+            terrain_dir_frame(f, dir_of(&L->ch, q == pieces ? L->pts[k + 1] : dadd(L->pts[k], dscale(dsub(L->pts[k + 1], L->pts[k]), t))), &p[m].x, &p[m].z);
+            m++;
         }
     }
-    p[m - 1] = L->gate[1] ? L->gp[1].p : net->node[L->b].p;
-    free(L->pts); free(L->s); free(L->segbr);
-    L->pts = p; L->s = s; L->npts = m; L->segbr = sb;
+    p[m - 1] = L->gate[1] ? gate_at_frame(net, L, 1, f, NULL) : node_at_frame(net, L->b, f);
+    R->npts = m; R->pts = p; R->s = s; R->bridge = sb;
 }
 
-/* --- The index ---------------------------------------------------------------------------------- */
+/* Every link's course every SAMPLE_STEP at most, as directions, to find the
+ * links near a frame. */
+#define SAMPLE_STEP 5000.0
+static void sample_job(void *ctx, int l) {
+    Link *L = &((Net *)ctx)->link[l];
+    double len = L->s[L->npts - 1];
+    int n = 2 + (int)(len / SAMPLE_STEP);
+    L->samp = (TerrainDir *)malloc(sizeof(TerrainDir) * (size_t)n);
+    if (!L->samp) fatal("out of memory publishing the roads");
+    for (int q = 0; q < n; ++q) L->samp[q] = dir_of(&L->ch, at_s(L->pts, L->npts, len * q / (n - 1)));
+    L->nsamp = n;
+}
 
 /* A run of road's segments seg0 to seg1 that all reach one square. */
 typedef struct IdxRun { int64_t cell; int road, seg0, seg1; float lo, hi; } IdxRun;
 typedef struct IdxRuns { IdxRun *run; int n, cap; } IdxRuns;
-typedef struct IndexJob { const Net *net; IdxRuns *runs; } IndexJob;
+typedef struct IndexJob { const RoadSet *rs; IdxRuns *runs; } IndexJob;
 
 static int run_cmp(const void *pa, const void *pb) {
     const IdxRun *a = (const IdxRun *)pa, *b = (const IdxRun *)pb;
@@ -2370,32 +2447,34 @@ static int run_cmp(const void *pa, const void *pb) {
     return a->seg0 - b->seg0;
 }
 
-/* How far either way along the world chart's x and z ROAD_REACH on the
- * sphere reaches at w: across the line out from its origin the chart
- * stretches it, along that line not. */
-static DVec2 reach_at(DVec2 w) {
-    Metric m = metric_at(w);
+/* How far either way along the frame's x and z ROAD_REACH on the sphere
+ * reaches at w: across the line out from its origin the chart stretches it,
+ * along that line not. */
+static DVec2 reach_at(const RoadSet *rs, DVec2 w) {
+    Metric m = set_metric(rs, w);
     double k = 1.0 / m.s;
     return dv(ROAD_REACH * sqrt(m.r.x * m.r.x + k * k * m.r.z * m.r.z), ROAD_REACH * sqrt(m.r.z * m.r.z + k * k * m.r.x * m.r.x));
 }
 
-/* Road r's segments (in the world's chart: they are short, PUBLISH_STEP at
- * most on the sphere) filed under each square their bounds, widened by the
- * reach, touch: consecutive segments in one square as one run; each with
- * the least and most height of its segments (the profile's stations over
- * them and either side). */
-static void index_job(void *ctx, int r) {
+/* Published road h's segments (short: PUBLISH_STEP at most on the sphere)
+ * filed under each square their bounds, widened by the reach, touch:
+ * consecutive segments in one square as one run; each with the least and
+ * most height of its segments (the profile's stations over them and either
+ * side). */
+static void index_job(void *ctx, int h) {
     IndexJob *j = (IndexJob *)ctx;
-    const Link *L = &j->net->link[r];
-    IdxRuns *out = &j->runs[r];
+    const RoadSet *rs = j->rs;
+    const PlanRoad *R = &rs->held[h];
+    int r = rs->heldId[h];
+    IdxRuns *out = &j->runs[h];
     IMap open;   /* square -> its latest run */
     imap_init(&open, 1 << 10);
-    for (int sg = 0; sg + 1 < L->npts; ++sg) {
-        DVec2 a = L->pts[sg], b = L->pts[sg + 1], ra = reach_at(a), rb = reach_at(b);
+    for (int sg = 0; sg + 1 < R->npts; ++sg) {
+        DVec2 a = R->pts[sg], b = R->pts[sg + 1], ra = reach_at(rs, a), rb = reach_at(rs, b);
         double hx = 1.01 * fmax(ra.x, rb.x) + 1.0, hz = 1.01 * fmax(ra.z, rb.z) + 1.0;
-        int k0 = (int)floor(L->s[sg] / L->ds), k1 = (int)ceil(L->s[sg + 1] / L->ds);
+        int k0 = (int)floor(R->s[sg] / R->ds), k1 = (int)ceil(R->s[sg + 1] / R->ds);
         float lo = 1e30f, hi = -1e30f;
-        for (int k = k0 < 0 ? 0 : k0; k <= k1 && k < L->nprof; ++k) { lo = fminf(lo, L->prof[k]); hi = fmaxf(hi, L->prof[k]); }
+        for (int k = k0 < 0 ? 0 : k0; k <= k1 && k < R->nprof; ++k) { lo = fminf(lo, R->prof[k]); hi = fmaxf(hi, R->prof[k]); }
         int i0 = (int)floor((fmin(a.x, b.x) - hx) / ROAD_CELL), i1 = (int)floor((fmax(a.x, b.x) + hx) / ROAD_CELL);
         int j0 = (int)floor((fmin(a.z, b.z) - hz) / ROAD_CELL), j1 = (int)floor((fmax(a.z, b.z) + hz) / ROAD_CELL);
         for (int jj = j0; jj <= j1; ++jj)
@@ -2415,51 +2494,120 @@ static void index_job(void *ctx, int r) {
     imap_free(&open);
 }
 
-/* Every road's runs, by square: the runs of a square together, by road and
- * segment, each square's first in `cells`, with how many and the least and
- * most height of their segments. */
-static void build_index(Net *net, int threads) {
-    IdxRuns *runs = (IdxRuns *)calloc((size_t)(net->nlinks + 1), sizeof(IdxRuns));
+/* The set's roads' runs, by square: the runs of a square together, by road
+ * and segment, each square's first in `cells`, with how many and the least
+ * and most height of their segments. */
+static void set_index(RoadSet *rs, int threads) {
+    IdxRuns *runs = (IdxRuns *)calloc((size_t)(rs->nheld + 1), sizeof(IdxRuns));
     if (!runs) fatal("out of memory indexing the roads");
-    IndexJob job = { net, runs };
-    thread_parallel_for(net->nlinks, threads, index_job, &job);
+    IndexJob job = { rs, runs };
+    thread_parallel_for(rs->nheld, threads, index_job, &job);
     int ne = 0;
-    for (int r = 0; r < net->nlinks; ++r) ne += runs[r].n;
+    for (int h = 0; h < rs->nheld; ++h) ne += runs[h].n;
     IdxRun *e = (IdxRun *)malloc(sizeof(IdxRun) * (size_t)(ne + 1));
     if (!e) fatal("out of memory indexing the roads");
     ne = 0;
-    for (int r = 0; r < net->nlinks; ++r) {
-        memcpy(&e[ne], runs[r].run, sizeof(IdxRun) * (size_t)runs[r].n);
-        ne += runs[r].n;
-        free(runs[r].run);
+    for (int h = 0; h < rs->nheld; ++h) {
+        if (runs[h].n) memcpy(&e[ne], runs[h].run, sizeof(IdxRun) * (size_t)runs[h].n);
+        ne += runs[h].n;
+        free(runs[h].run);
     }
     free(runs);
     qsort(e, (size_t)ne, sizeof(IdxRun), run_cmp);
-    imap_init(&net->cells, 1 << 16);
-    net->idx = (int *)malloc(sizeof(int) * 3 * (size_t)(ne + 1));
-    net->idxCount = (int *)malloc(sizeof(int) * (size_t)(ne + 1));
-    net->idxLo = (float *)malloc(sizeof(float) * (size_t)(ne + 1));
-    net->idxHi = (float *)malloc(sizeof(float) * (size_t)(ne + 1));
-    if (!net->idx || !net->idxCount || !net->idxLo || !net->idxHi) fatal("out of memory indexing the roads");
-    net->lo = 1e30f; net->hi = -1e30f;
+    imap_init(&rs->cells, ne > 1 << 12 ? 1 << 16 : 1 << 10);
+    rs->idx = (int *)malloc(sizeof(int) * 3 * (size_t)(ne + 1));
+    rs->idxCount = (int *)malloc(sizeof(int) * (size_t)(ne + 1));
+    rs->idxLo = (float *)malloc(sizeof(float) * (size_t)(ne + 1));
+    rs->idxHi = (float *)malloc(sizeof(float) * (size_t)(ne + 1));
+    if (!rs->idx || !rs->idxCount || !rs->idxLo || !rs->idxHi) fatal("out of memory indexing the roads");
+    rs->lo = 1e30f; rs->hi = -1e30f;
     int first = -1;
     for (int k = 0; k < ne; ++k) {
         if (k == 0 || e[k].cell != e[k - 1].cell) {
             first = k;
-            imap_put(&net->cells, e[k].cell, k);
-            net->idxCount[k] = 0;
-            net->idxLo[k] = 1e30f;
-            net->idxHi[k] = -1e30f;
+            imap_put(&rs->cells, e[k].cell, k);
+            rs->idxCount[k] = 0;
+            rs->idxLo[k] = 1e30f;
+            rs->idxHi[k] = -1e30f;
         }
-        net->idx[3 * k] = e[k].road;
-        net->idx[3 * k + 1] = e[k].seg0;
-        net->idx[3 * k + 2] = e[k].seg1;
-        net->idxCount[first]++;
-        net->idxLo[first] = fminf(net->idxLo[first], e[k].lo);
-        net->idxHi[first] = fmaxf(net->idxHi[first], e[k].hi);
-        net->lo = fminf(net->lo, e[k].lo); net->hi = fmaxf(net->hi, e[k].hi);
+        rs->idx[3 * k] = e[k].road;
+        rs->idx[3 * k + 1] = e[k].seg0;
+        rs->idx[3 * k + 2] = e[k].seg1;
+        rs->idxCount[first]++;
+        rs->idxLo[first] = fminf(rs->idxLo[first], e[k].lo);
+        rs->idxHi[first] = fmaxf(rs->idxHi[first], e[k].hi);
+        rs->lo = fminf(rs->lo, e[k].lo); rs->hi = fmaxf(rs->hi, e[k].hi);
     }
     free(e);
+}
+
+typedef struct PublishJob { const Net *net; RoadSet *rs; const TerrainFrame *f; } PublishJob;
+static void publish_job(void *ctx, int h) {
+    PublishJob *j = (PublishJob *)ctx;
+    publish_link(j->net, j->rs->heldId[h], j->f, &j->rs->held[h]);
+}
+
+/* The roads of frame f: every one (reach < 0), or those that come within
+ * reach of its origin on the sphere; published and indexed on `threads`. */
+static RoadSet *set_build(const Net *net, const TerrainFrame *f, double reach, int threads) {
+    RoadSet *rs = (RoadSet *)calloc(1, sizeof(RoadSet));
+    if (!rs) fatal("out of memory publishing the roads");
+    rs->ox = f->x0; rs->oz = f->z0;
+    rs->slot = (int *)malloc(sizeof(int) * (size_t)(net->nlinks + 1));
+    rs->heldId = (int *)malloc(sizeof(int) * (size_t)(net->nlinks + 1));
+    if (!rs->slot || !rs->heldId) fatal("out of memory publishing the roads");
+    double cosr = reach >= 0.0 ? cos(fmin((reach + SAMPLE_STEP) / PLANET_RADIUS, 3.14159265358979)) : -2.0;
+    for (int l = 0; l < net->nlinks; ++l) {
+        const Link *L = &net->link[l];
+        int near = reach < 0.0;
+        for (int q = 0; q < L->nsamp && !near; ++q)
+            near = L->samp[q].x * f->chart.o.x + L->samp[q].y * f->chart.o.y + L->samp[q].z * f->chart.o.z >= cosr;
+        rs->slot[l] = near ? rs->nheld : -1;
+        if (near) rs->heldId[rs->nheld++] = l;
+    }
+    rs->held = (PlanRoad *)calloc((size_t)(rs->nheld + 1), sizeof(PlanRoad));
+    if (!rs->held) fatal("out of memory publishing the roads");
+    PublishJob job = { net, rs, f };
+    thread_parallel_for(rs->nheld, threads, publish_job, &job);
+    set_index(rs, threads);
+    return rs;
+}
+
+static void set_free(RoadSet *rs) {
+    if (!rs) return;
+    for (int h = 0; h < rs->nheld; ++h) { free((void *)rs->held[h].pts); free((void *)rs->held[h].s); free((void *)rs->held[h].bridge); }
+    free(rs->held); free(rs->heldId); free(rs->slot);
+    imap_free(&rs->cells);
+    free(rs->idx); free(rs->idxCount); free(rs->idxLo); free(rs->idxHi);
+    free(rs);
+}
+
+/* Settlement k's frame holds the roads within reach of the farthest of its
+ * footprint, PLAN_FRAME_NEAR beyond, and FRAME_ROADS_PAD beyond that. */
+static void settlement_set_job(void *ctx, int j) {
+    const Net *net = (const Net *)ctx;
+    int k = j + 1;
+    PlanSettlement s = plan_settlement(k);
+    double reach = dlen(dsub(s.disc, s.centre)) + plan_settlement_reach(k) + PLAN_FRAME_NEAR + FRAME_ROADS_PAD;
+    plan_world_frame_roads(k, set_build(net, plan_frame_settlement(k), reach, 1));
+}
+
+static uint32_t g_travel_ids = 1u << 20;
+
+void plan_frame_travel(TerrainFrame *f, const TerrainChart *chart, double x0, double z0, uint32_t lineage) {
+    plan_settlement(0);
+    memset(f, 0, sizeof *f);
+    f->chart = *chart;
+    f->x0 = x0; f->z0 = z0;
+    f->settlement = -1;
+    f->id = g_travel_ids++;
+    f->lineage = lineage;
+    f->roads = g_net ? set_build(g_net, f, PLAN_TRAVEL_ROADS, 1) : NULL;
+}
+
+void plan_frame_free(TerrainFrame *f) {
+    set_free((RoadSet *)f->roads);
+    f->roads = NULL;
 }
 
 /* --- The whole network --------------------------------------------------------------------------- */
@@ -2633,21 +2781,19 @@ void plan_roads_build(int threads) {
     junction_heights(net);
     thread_parallel_for(net->nlinks, threads, profile_grade_job, net);
     thread_parallel_for(net->nlinks, threads, bridge_span_job, net);
-    thread_parallel_for(net->nlinks, threads, publish_job, net);
-    build_index(net, threads);
-    /* the public view */
+    /* the public view: each road's own, its points in each frame's set */
     int nr = 0;
     for (int l = 0; l < net->nlinks; ++l) {
         const Link *L = &net->link[l];
         if (!L->ok) continue;
         PlanRoad *r = &net->road[nr++];
+        memset(r, 0, sizeof *r);
         r->from = L->a; r->to = L->b; r->cls = L->cls;
         r->half = L->cls == PLAN_ROAD_FREEWAY ? PLAN_FREEWAY_HALF : PLAN_TRUNK_HALF;
         r->flow = L->flow;
-        r->npts = L->npts; r->pts = L->pts; r->s = L->s;
         r->gate[0] = L->gate[0]; r->gate[1] = L->gate[1];
         r->nprof = L->nprof; r->ds = L->ds; r->prof = L->prof;
-        r->nbridges = L->nbr; r->bridges = L->br; r->bridge = L->segbr;
+        r->nbridges = L->nbr; r->bridges = L->br;
     }
     net->nlinks = nr;   /* road k is link k from here on: compact the links to match */
     {
@@ -2655,22 +2801,32 @@ void plan_roads_build(int threads) {
         for (int l = 0; w < nr; ++l)
             if (net->link[l].ok) net->link[w++] = net->link[l];
     }
+    thread_parallel_for(net->nlinks, threads, sample_job, net);
     g_net = net;
+    /* the frames' roads: all of them in the world's, the near ones in each settlement's */
+    terrain_frame_world_roads(set_build(net, terrain_frame_world(), -1.0, threads));
+    thread_parallel_for(plan_settlement_count() - 1, threads, settlement_set_job, net);
 }
 
 int plan_node_count(void) { plan_settlement(0); return g_net ? g_net->nnodes : 0; }
 PlanNode plan_node(int k) { plan_settlement(0); return g_net->node[k]; }
 int plan_road_count(void) { plan_settlement(0); return g_net ? g_net->nlinks : 0; }
-const PlanRoad *plan_road(int k) { plan_settlement(0); return &g_net->road[k]; }
+const PlanRoad *plan_road(int k) { plan_settlement(0); return set_road(cur_set(), k); }
 
-PlanGate plan_road_gate(int k, int end) { plan_settlement(0); return g_net->link[k].gp[end ? 1 : 0]; }
+PlanGate plan_road_gate(int k, int end) {
+    plan_settlement(0);
+    end = end ? 1 : 0;
+    PlanGate g = g_net->link[k].gp[end];
+    g.p = gate_at_frame(g_net, &g_net->link[k], end, terrain_frame(), &g.n);
+    return g;
+}
 
 double plan_road_height(int k, double s) { plan_settlement(0); return profile_at(&g_net->road[k], s); }
 
 /* The squares the rectangle touches, or all the roads if it touches too many to look at. */
 int plan_road_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
-    const Net *net = g_net;
-    if (!net || net->nlinks == 0) return 0;
+    const RoadSet *net = cur_set();
+    if (!net || net->nheld == 0) return 0;
     double i0 = floor(x0 / ROAD_CELL), i1 = floor(x1 / ROAD_CELL), j0 = floor(z0 / ROAD_CELL), j1 = floor(z1 / ROAD_CELL);
     if ((i1 - i0 + 1.0) * (j1 - j0 + 1.0) > 4096.0) { *lo = net->lo; *hi = net->hi; return 1; }
     int any = 0;
@@ -2687,17 +2843,17 @@ int plan_road_range(double x0, double z0, double x1, double z1, double *lo, doub
 /* The bridges any of whose segments come within `pad` of the rectangle, each
  * once, in the order the index files them. */
 int plan_road_bridges_in(double x0, double z0, double x1, double z1, double pad, PlanRoadSpan *out, int max) {
-    const Net *net = g_net;
-    if (!net || net->nlinks == 0) return 0;
+    const RoadSet *net = cur_set();
+    if (!net || net->nheld == 0) return 0;
     int n = 0;
-    double k = 1.01 * stretch_at(dv(0.5 * (x0 + x1), 0.5 * (z0 + z1)));   /* the sphere's metres as the chart's there */
+    double k = 1.01 * set_stretch(net, dv(0.5 * (x0 + x1), 0.5 * (z0 + z1)));   /* the sphere's metres as the chart's there */
     for (int j = (int)floor(z0 / ROAD_CELL); j <= (int)floor(z1 / ROAD_CELL); ++j)
         for (int i = (int)floor(x0 / ROAD_CELL); i <= (int)floor(x1 / ROAD_CELL); ++i) {
             int first = imap_get(&net->cells, cell_key(i, j));
             if (first < 0) continue;
             for (int e = first; e < first + net->idxCount[first]; ++e) {
                 int r = net->idx[3 * e];
-                const PlanRoad *R = &net->road[r];
+                const PlanRoad *R = set_road(net, r);
                 if (!R->bridge) continue;
                 for (int sg = net->idx[3 * e + 1]; sg <= net->idx[3 * e + 2]; ++sg) {
                     int b = R->bridge[sg];
@@ -2721,18 +2877,18 @@ int plan_road_bridges_in(double x0, double z0, double x1, double z1, double pad,
  * stretch is left as it is, and the embankment's spill slope comes in from
  * each end of the span (never wider for the spacing); ground there that
  * would stand above the deck's soffit is cut down under it. Where reaches
- * overlap, the strongest. Distances are the sphere's: the world chart's
- * offsets from (x, z) taken through its metric there (metric_at). */
+ * overlap, the strongest. Distances are the sphere's: the frame's offsets
+ * from (x, z) taken through its metric there (set_metric). */
 double plan_road_ground(double x, double z, double ground, double spacing, double *road_h) {
-    const Net *net = g_net;
+    const RoadSet *net = cur_set();
     if (!net || spacing > PLAN_ROAD_LOD_SPACING) return 0.0;
     int first = imap_get(&net->cells, cell_key((int)floor(x / ROAD_CELL), (int)floor(z / ROAD_CELL)));
     if (first < 0) return 0.0;
     double best = 0.0, bestD = 1e300;
     DVec2 p = dv(x, z);
-    Metric mt = metric_at(p);
+    Metric mt = set_metric(net, p);
     for (int e = first; e < first + net->idxCount[first]; ++e) {
-        const PlanRoad *R = &net->road[net->idx[3 * e]];
+        const PlanRoad *R = set_road(net, net->idx[3 * e]);
         for (int sg = net->idx[3 * e + 1]; sg <= net->idx[3 * e + 2]; ++sg) {
             DVec2 a = metric_apply(&mt, dsub(R->pts[sg], p)), ab = dsub(metric_apply(&mt, dsub(R->pts[sg + 1], p)), a);
             double l2 = ddot(ab, ab), t = l2 > 0.0 ? -ddot(a, ab) / l2 : 0.0, sl = R->s[sg + 1] - R->s[sg];

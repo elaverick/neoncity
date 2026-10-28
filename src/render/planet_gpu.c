@@ -30,7 +30,7 @@
 #define PATCH_BYTES ((VkDeviceSize)TERRAIN_PATCH_VERTS * sizeof(TerrainPatchVertex))
 
 _Static_assert(TERRAIN_PATCH_VERTS <= 65536, "a patch's vertices don't fit 16-bit indices");
-_Static_assert(sizeof(TerrainPatchVertex) == 12 * sizeof(float), "planet.vert reads a patch vertex as 12 floats");
+_Static_assert(sizeof(TerrainPatchVertex) == 10 * sizeof(float), "planet.vert reads a patch vertex as 10 floats");
 _Static_assert(sizeof(PlanetPush) <= 128, "the planet's push constants must fit the guaranteed 128 bytes");
 
 struct PlanetGpu {
@@ -62,6 +62,7 @@ struct PlanetGpu {
 
 static int planet_worker(void *arg) {
     PlanetGpu *p = (PlanetGpu *)arg;
+    terrain_frame_bind(terrain_frame_world());   /* a patch is the same in every frame: made in the world's */
     mutex_lock(&p->lock);
     for (;;) {
         while (!p->quit && (p->qhead >= p->nqueue || p->nresult == RESULTS)) cond_wait(&p->wake, &p->lock);
@@ -287,7 +288,7 @@ void planet_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double 
         set4(pc->az, tp->az.x, tp->az.y, tp->az.z, 0.0);
         set4(pc->centre, c.x * tp->ax.x + c.y * tp->ax.y + c.z * tp->ax.z, c.x * tp->up.x + c.y * tp->up.y + c.z * tp->up.z,
              c.x * tp->az.x + c.y * tp->az.y + c.z * tp->az.z, 2.0 * in->err + 5.0);
-        set4(pc->morph, d->morph_lo, d->morph_hi, in->chart[0] - cam[0], in->chart[1] - cam[2]);
+        set4(pc->morph, d->morph_lo, d->morph_hi, 0.0, 0.0);
         if (d->hole) set4(pc->window, v.win[0] - cam[0], v.win[1] - cam[2], v.win[2] - cam[0], v.win[3] - cam[2]);
         else set4(pc->window, 0.0, 0.0, 0.0, 0.0);
         p->face[p->ndraw] = in->id.face;

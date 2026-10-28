@@ -47,8 +47,9 @@ typedef struct PTile {
     float    mn[3], mx[3];
 } PTile;
 
-/* A job: the tile to generate, then the tile generated (its storage reused). */
-typedef struct PJob { int tx, tz; ProxyTile t; } PJob;
+/* A job: the tile to generate, in the frame it was asked for in, then the
+ * tile generated (its storage reused); none if that frame has gone since. */
+typedef struct PJob { int tx, tz; const TerrainFrame *frame; ProxyTile t; } PJob;
 typedef struct PFree { uint16_t page; uint64_t frame; } PFree;
 typedef struct PCand { int slot; float d; } PCand;
 
@@ -77,6 +78,7 @@ struct ProxyGpu {
     int      quit;
     PCand    cand[PT_SLOTS];
 
+    const TerrainFrame *tf;     /* the frame the tiles are made in (proxy_gpu_set_frame); the worker reads it under lock */
     int      inRange, readyTiles, drawnTiles, drawnBoxes, residentBoxes;
     int      starved;           /* tiles generated that the pool had no room for, so far */
     double   created, filled;   /* when, and how long after it every tile in range was first ready (s) */
@@ -91,8 +93,13 @@ static int proxy_worker(void *arg) {
         while (!p->quit && p->started == p->tail) cond_wait(&p->cond, &p->lock);
         if (p->quit) break;
         PJob *j = &p->job[p->started++ % MAX_JOBS_P];
+        int stale = j->frame->lineage != p->tf->lineage;
         mutex_unlock(&p->lock);
-        city_proxy_tile(j->tx, j->tz, &j->t);
+        if (stale) j->t.n = 0;   /* not taken up (proxy_gpu_update) */
+        else {
+            terrain_frame_bind(j->frame);
+            city_proxy_tile(j->tx, j->tz, &j->t);
+        }
         mutex_lock(&p->lock);
         p->done++;
     }
@@ -143,6 +150,7 @@ void proxy_gpu_create(Renderer *r) {
 
     mutex_init(&p->lock);
     cond_init(&p->cond);
+    p->tf = terrain_frame();
     p->worker = thread_create(proxy_worker, p);
     p->created = glfwGetTime();
     printf("Distant proxies: tiles of %.0f m to %.0f km, %.0f MB box pool\n", PROXY_TILE, PROXY_DISTANCE / 1000.0,
@@ -177,6 +185,28 @@ static int cmp_cand(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
+/* In a frame of the same lineage every tile stands. Otherwise every tile made
+ * in the old one is freed (its pages once the frames drawing it retire);
+ * jobs still queued in it are skipped, and what the worker is making in it is
+ * not taken up. */
+void proxy_gpu_set_frame(Renderer *r, uint64_t frame, const TerrainFrame *f) {
+    ProxyGpu *p = r->proxies;
+    if (f->lineage == p->tf->lineage) {
+        mutex_lock(&p->lock);
+        p->tf = f;
+        mutex_unlock(&p->lock);
+        return;
+    }
+    for (int s = 0; s < PT_SLOTS; ++s) {
+        PTile *t = &p->tiles[s];
+        if (t->state == PT_READY) p->residentBoxes -= t->n;
+        free_tile(p, t, frame);
+    }
+    mutex_lock(&p->lock);
+    p->tf = f;
+    mutex_unlock(&p->lock);
+}
+
 /* Nearest distance from the camera (x, z) to tile (tx, tz). */
 static float tile_dist(int tx, int tz, const double cam[3]) {
     double x0 = tx * PROXY_TILE, z0 = tz * PROXY_TILE;
@@ -204,7 +234,7 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
     for (; p->head != done; p->head++) {
         PJob *j = &p->job[p->head % MAX_JOBS_P];
         PTile *t = &p->tiles[slot_of(j->tx, j->tz)];
-        int want = t->state == PT_QUEUED && t->tx == j->tx && t->tz == j->tz;   /* else freed or replaced meanwhile */
+        int want = t->state == PT_QUEUED && t->tx == j->tx && t->tz == j->tz && j->frame->lineage == p->tf->lineage;   /* else freed or replaced meanwhile */
         int pages = (j->t.n + PAGE_BOXES - 1) / PAGE_BOXES;
         if (want && pages > TILE_PAGES) fatal("proxies: a tile has more boxes than it can hold");
         if (want && staged > 0 && staged + (uint32_t)j->t.n > UPLOAD_BOXES) break;   /* the rest next frame */
@@ -267,6 +297,7 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
             t->state = PT_QUEUED;
             p->job[p->tail % MAX_JOBS_P].tx = t->tx;
             p->job[p->tail % MAX_JOBS_P].tz = t->tz;
+            p->job[p->tail % MAX_JOBS_P].frame = p->tf;
             p->tail++;
         }
         cond_signal(&p->cond);

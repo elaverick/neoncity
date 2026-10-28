@@ -13,6 +13,7 @@
 #include "thread.h"
 #include "weather.h"
 #include "models.h"
+#include "frames.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -73,10 +74,11 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--time SECONDS] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--time SECONDS] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
-           "  --cam   start position (world metres); a HEIGHT starts in fly mode at that altitude\n"
+           "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
+           "  --cam   start position (world metres, in the city's frame); a HEIGHT starts in fly mode at that altitude\n"
            "  --walk  hold W for this many seconds before a --shot\n"
            "  --turn  and turn this fast while walking (degrees a second, + to the right)\n"
            "  --rain  fix the rain intensity (0 drizzle .. 1 downpour); otherwise it drifts\n"
@@ -88,6 +90,7 @@ static void usage(void) {
 typedef struct Options {
     bool        validation, shadows, shadowDebug;
     const char *shotPath;
+    const char *city;            /* --city: a name's beginning, or a number */
     bool        haveCam, camFly;
     double      cam[5];          /* x, z, yaw, pitch (degrees), height (world Y; with camFly, else walking) */
     float       walkSeconds, turnRate, fixedRain;   /* turnRate: degrees a second while walking */
@@ -104,6 +107,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--noshadows") == 0) o->shadows = false;
         else if (strcmp(argv[i], "--shadowdebug") == 0) o->shadowDebug = true;
         else if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) o->shotPath = argv[++i];
+        else if (strcmp(argv[i], "--city") == 0 && i + 1 < argc) o->city = argv[++i];
         else if (strcmp(argv[i], "--walk") == 0 && i + 1 < argc) o->walkSeconds = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--turn") == 0 && i + 1 < argc) o->turnRate = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--rain") == 0 && i + 1 < argc) o->fixedRain = (float)atof(argv[++i]);
@@ -242,17 +246,38 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
  * sits at the origin and every chunk is offset by (chunk origin - camera)
  * computed in doubles. */
 /* The height the haze thins above (hazeAmount in shaders/common.glsl): the
- * city's ground at its centre. There is one settlement for now; with more,
- * this becomes the ground of the one the camera is in or nearest. */
+ * ground at the centre of the city whose frame is active, or out in the
+ * land of the last one. */
 static float haze_datum(void) {
     static float datum;
-    static bool known;
-    if (!known) {
-        DVec2 c = plan_town_centre(0, 0);
+    static uint32_t known = UINT32_MAX;
+    const TerrainFrame *f = terrain_frame();
+    if (f->settlement >= 0 && f->id != known) {
+        DVec2 c = f->settlement > 0 ? plan_settlement(f->settlement).centre : plan_town_centre(0, 0);
         datum = city_ground_y(c.x, c.z);
-        known = true;
+        known = f->id;
     }
     return datum;
+}
+
+/* Towards the moon in the camera's local frame: fixed against the compass
+ * (east, up, south: MOON_ENU), so it neither turns as the frame changes nor
+ * as the camera travels. */
+static const double MOON_ENU[3] = { 0.8547, 0.4223, -0.3017 };
+static void moon_dir(const Player *player, float out[4]) {
+    TerrainDir ax, up, az;
+    terrain_frame_axes(terrain_frame(), player->eye[0], player->eye[2], &ax, &up, &az);
+    TerrainDir east = { -up.y, up.x, 0.0 };   /* the pole (+z) cross up */
+    double l = sqrt(east.x * east.x + east.y * east.y);
+    east.x /= l; east.y /= l;
+    TerrainDir south = { east.y * up.z - east.z * up.y, east.z * up.x - east.x * up.z, east.x * up.y - east.y * up.x };   /* east cross up */
+    TerrainDir m = { MOON_ENU[0] * east.x + MOON_ENU[1] * up.x + MOON_ENU[2] * south.x,
+                     MOON_ENU[0] * east.y + MOON_ENU[1] * up.y + MOON_ENU[2] * south.y,
+                     MOON_ENU[0] * east.z + MOON_ENU[1] * up.z + MOON_ENU[2] * south.z };
+    out[0] = (float)(m.x * ax.x + m.y * ax.y + m.z * ax.z);
+    out[1] = (float)(m.x * up.x + m.y * up.y + m.z * up.z);
+    out[2] = (float)(m.x * az.x + m.y * az.y + m.z * az.z);
+    out[3] = 0.0f;
 }
 
 static void frame_ubo(const Player *player, const VkCore *vk, double t, const Weather *weather, float edge, FrameUBO *ubo) {
@@ -275,6 +300,7 @@ static void frame_ubo(const Player *player, const VkCore *vk, double t, const We
     ubo->weather[2] = haze_datum();
     ubo->weather[3] = edge;
     weather_frame(weather, player->eye, ubo);
+    moon_dir(player, ubo->moon);
 }
 
 /* Where the chunks hand over to their proxies (edgeFog in shaders/common.glsl):
@@ -293,12 +319,19 @@ static float chunk_edge(ChunkSystem *chunks, float edge, float dt) {
  * hides), the --cam that reproduces the view, streaming state. */
 static void update_title(GLFWwindow *win, ChunkSystem *chunks, Renderer *renderer, const Player *player, float fps, float worstMs) {
     ChunkStats s = chunks_stats(chunks);
-    char reach[32] = "";
+    char reach[32] = "", city[96] = "";
     if (s.reach > 0.0f) snprintf(reach, sizeof(reach), " (to %.1f km)", s.reach / 1000.0f);
-    char title[360];
+    const TerrainFrame *f = terrain_frame();
+    if (f->settlement > 0) snprintf(city, sizeof(city), "--city %d (%s) ", f->settlement, plan_settlement_name(f->settlement));
+    else if (f->settlement < 0) {
+        double lat, lon;
+        terrain_dir_latlon(terrain_world_dir(player->eye[0], player->eye[2]), &lat, &lon);
+        snprintf(city, sizeof(city), "travelling at %.3f %.3f: ", lat, lon);
+    }
+    char title[480];
     snprintf(title, sizeof(title),
-             "NeonCity | %.0f fps, worst %.0f ms | --cam %.1f %.1f %.0f %.0f | chunk (%d,%d) | drawn %d (%d draws) | resident %d | queued %d | pool %d%%%s%s%s",
-             fps, worstMs, player->eye[0], player->eye[2],
+             "NeonCity | %.0f fps, worst %.0f ms | %s--cam %.1f %.1f %.0f %.0f | chunk (%d,%d) | drawn %d (%d draws) | resident %d | queued %d | pool %d%%%s%s%s",
+             fps, worstMs, city, player->eye[0], player->eye[2],
              player->yaw * 180.0f / PI_F, player->pitch * 180.0f / PI_F,
              (int)floor(player->feet[0] / CHUNK_SIZE), (int)floor(player->feet[2] / CHUNK_SIZE),
              s.drawnChunks, s.drawCalls, s.resident, s.queued + s.ready,
@@ -321,7 +354,7 @@ static void report_hitch(ChunkSystem *chunks, Renderer *renderer, const Player *
     fflush(stdout);
 }
 
-static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *renderer, Player *player, const Options *opt) {
+static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *renderer, Player *player, Frames *fr, const Options *opt) {
     double startTime = glfwGetTime(), last = startTime, titleTimer = 0, worstDt = 0;
     int frames = 0, shotCount = 0;
     uint64_t totalFrames = 0;
@@ -339,6 +372,14 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
         PlayerInput in = read_input(win, player, opt->shotPath != NULL);
         capture_walk(&cap, &in, dt, totalFrames);
         player_update(player, &in, dt);
+        double t0 = glfwGetTime();
+        if (frames_update(fr, player)) {   /* into another frame (renderer_set_frame says what stands) */
+            renderer_set_frame(renderer, fr->active, player->eye);
+            char what[160];
+            frames_describe(fr, what, sizeof(what));
+            printf("frame: %s (the change took %.1f ms)\n", what, (glfwGetTime() - t0) * 1000.0);
+            fflush(stdout);
+        }
         handle_toggles(renderer, &shotCount);
         capture_step(&cap, win, chunks, renderer, player, emaDt, totalFrames);
         totalFrames++;
@@ -363,12 +404,30 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
     }
 }
 
+/* --city's settlement: its number, or the first whose name begins with s
+ * (any case). Exits when there is none. */
+static int find_city(const char *s) {
+    char *end;
+    long k = strtol(s, &end, 10);
+    if (*s && !*end) {
+        if (k >= 0 && k < plan_settlement_count()) return (int)k;
+    } else {
+        size_t n = strlen(s);
+        for (int q = 0; q < plan_settlement_count(); ++q)
+            if (_strnicmp(plan_settlement_name(q), s, n) == 0) return q;
+    }
+    fprintf(stderr, "--city %s: no such city (world_test --list lists them)\n", s);
+    exit(1);
+}
+
 int main(int argc, char **argv) {
     Options opt;
     if (!parse_args(argc, argv, &opt)) { usage(); return 1; }
     terrain_earth_load(NULL);       /* the Earth's bake, if built, before the plan reads the ground */
     plan_world_init(cpu_count());   /* the settlements and roads, before any worker asks for them */
     models_load(NULL);              /* the street furniture's and lobbies' models (assets/models), before any chunk */
+    Frames frames;
+    frames_init(&frames, opt.city ? find_city(opt.city) : 0);   /* the frame the camera starts in, before anything is built */
     GLFWwindow *win = create_window();
 
     VkCore vk;
@@ -387,12 +446,13 @@ int main(int argc, char **argv) {
         if (opt.camFly) { player.fly = true; player.feet[1] = opt.cam[4]; }
     }
 
-    run(win, &vk, chunks, renderer, &player, &opt);
+    run(win, &vk, chunks, renderer, &player, &frames, &opt);
     layouts_shutdown();
 
     vkDeviceWaitIdle(vk.device);
     renderer_destroy(renderer);
     chunks_destroy(chunks);
+    frames_shutdown(&frames);
     vk_shutdown(&vk);
     glfwDestroyWindow(win);
     glfwTerminate();

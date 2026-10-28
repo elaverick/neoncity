@@ -2,10 +2,8 @@
 #include "noise.h"
 #include "plan.h"
 
-/* The urban relief at a point, its settlement's (m); 0 with the city on a datum. */
-static double urban_relief(double x, double z) {
-    return TERRAIN_URBAN_GRADED ? plan_settlement(plan_settlement_near(x, z)).relief_m : 0.0;
-}
+/* The urban relief of settlement k (m); 0 with the city on a datum. */
+static double urban_relief(int k) { return TERRAIN_URBAN_GRADED ? plan_settlement(k).relief_m : 0.0; }
 
 /* The most relief any settlement's ground has in the rectangle (m). */
 static double urban_relief_max(double x0, double z0, double x1, double z1) {
@@ -51,7 +49,7 @@ enum { GROUND_ROADS = 1, GROUND_WATER = 2, GROUND_CHANNELS = 4, GROUND_ALL = 7 }
  * TERRAIN_CHANNEL_LOD_SPACING the ground is whole. */
 static double channel_cut(double x, double z, double spacing, double h, double w, double urban) {
     if (w <= 0.0 || spacing > TERRAIN_CHANNEL_LOD_SPACING) return h;
-    double d = plan_channel_dist(x, z, TERRAIN_CHANNEL_CITY_PAD) - 0.5;
+    double d = plan_channel_dist(x, z, TERRAIN_CHANNEL_CITY_PAD) - 0.5;   /* (x, z) in the settlement's own frame */
     if (d >= TERRAIN_CHANNEL_BANK_M) return h;
     double t = d > 0.0 ? d / TERRAIN_CHANNEL_BANK_M : 0.0;
     double cut = urban - PLAN_CHANNEL_DEPTH * (1.0 - t * t * (3.0 - 2.0 * t));
@@ -61,18 +59,19 @@ static double channel_cut(double x, double z, double spacing, double h, double w
 /* Each field is evaluated only where its weight is non-zero; that skips work
  * without changing any height. *w gets the urban weight. The planet's
  * highlands (lift) are under the settlement's ground as under the land. The
- * land reads the direction p, or without one the chart's at (x, z). The
+ * land reads the direction p, or without one the frame's at (x, z); the
+ * settlement's own ground, its relief and its channels, read (x, z) in its
+ * own frame (plan_locate), so they are the same whichever frame asks. The
  * water's beds are carved into the land, never under the city's own ground:
  * down to the water's floor (terrain_earth_water), by no more than
  * TERRAIN_WATER_CARVE_M; as the land moves, so does that, by no more. */
 static double height_lod(double x, double z, const TerrainDir *p, double spacing, double *w, double *relief, int parts) {
-    double edge = plan_city_edge(x, z), h = 0.0, lift = 0.0;
+    double edge = plan_city_edge(x, z), h = 0.0, lift = 0.0, ux = x, uz = z;
     int roads = parts & GROUND_ROADS;
     *w = plan_urban_weight(edge);
-    *relief = *w > 0.0 ? urban_relief(x, z) : 0.0;
+    *relief = *w > 0.0 ? urban_relief(plan_locate(x, z, &ux, &uz)) : 0.0;
     if (*w < 1.0) {
-        TerrainChart wc = terrain_world_chart();
-        TerrainDir d = p ? *p : terrain_chart_dir(&wc, x, z);
+        TerrainDir d = p ? *p : terrain_world_dir(x, z);
         double land;
         TerrainEarthWater wt;
         if ((parts & GROUND_WATER) && terrain_earth_beds() && terrain_earth_water(d, &wt)) {   /* one query for the valley and the beds */
@@ -82,9 +81,9 @@ static double height_lod(double x, double z, const TerrainDir *p, double spacing
         h += (1.0 - *w) * land;
     } else lift = terrain_lift(x, z, spacing);
     if (*w > 0.0) {
-        double urban = (*relief > 0.0 ? *relief * urban_shape_lod(x, z, spacing) : 0.0) + lift;
+        double urban = (*relief > 0.0 ? *relief * urban_shape_lod(ux, uz, spacing) : 0.0) + lift;
         h += *w * urban;
-        if (parts & GROUND_CHANNELS) h = channel_cut(x, z, spacing, h, *w, urban);
+        if (parts & GROUND_CHANNELS) h = channel_cut(ux, uz, spacing, h, *w, urban);
     }
     /* The roads between the settlements: the ground takes them where the
      * land does, never under the city's own ground. */
@@ -109,8 +108,8 @@ double terrain_height(double x, double z) { return terrain_height_lod(x, z, 0.0)
 
 /* height_lod at w = 1: 0 + 1 * (relief * shape + lift) is exactly this. */
 double terrain_urban_height(double x, double z) {
-    double relief = urban_relief(x, z);
-    return (relief > 0.0 ? relief * urban_shape_lod(x, z, 0.0) : 0.0) + urban_lift(x, z);
+    double ux = x, uz = z, relief = urban_relief(plan_locate(x, z, &ux, &uz));
+    return (relief > 0.0 ? relief * urban_shape_lod(ux, uz, 0.0) : 0.0) + urban_lift(x, z);
 }
 
 double terrain_urban_lift(double x, double z) { return urban_lift(x, z); }
@@ -132,8 +131,9 @@ static double urban_shape_slope(void) {
  * any settlement times that, so it lies between the extreme products; and
  * the lift within its own range. */
 void terrain_urban_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
-    double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0);
-    double sc = terrain_urban_shape(cx, cz), reach = urban_shape_slope() * half;
+    double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0), ux = cx, uz = cz;
+    plan_locate(cx, cz, &ux, &uz);   /* the shape is the settlement's, in its own frame: about as far across there */
+    double sc = terrain_urban_shape(ux, uz), reach = urban_shape_slope() * half * PLAN_LOCATE_STRETCH;
     double slo = fmax(-1.0, sc - reach), shi = fmin(1.0, sc + reach), rlo, rhi;
     plan_settlement_relief_in(x0, z0, x1, z1, &rlo, &rhi);
     if (!TERRAIN_URBAN_GRADED) rlo = rhi = 0.0;
@@ -173,32 +173,28 @@ static double surface_lod(double x, double z, const TerrainDir *p, double spacin
 double terrain_surface_lod(double x, double z, double spacing, float *urban) { return surface_lod(x, z, NULL, spacing, urban); }
 
 /* The land at p itself; the settlements, their ground and the roads at its
- * place in the world's chart. */
+ * place in this thread's frame. */
 double terrain_height_dir(TerrainDir p, double spacing) {
-    TerrainChart wc = terrain_world_chart();
     double x, z, w, relief;
-    terrain_dir_chart(&wc, p, &x, &z);
+    terrain_dir_world(p, &x, &z);
     return height_lod(x, z, &p, spacing, &w, &relief, GROUND_ALL);
 }
 
 double terrain_height_dry_dir(TerrainDir p, double spacing) {
-    TerrainChart wc = terrain_world_chart();
     double x, z, w, relief;
-    terrain_dir_chart(&wc, p, &x, &z);
+    terrain_dir_world(p, &x, &z);
     return height_lod(x, z, &p, spacing, &w, &relief, GROUND_ROADS);
 }
 
 double terrain_ground_bare_dir(TerrainDir p, double spacing) {
-    TerrainChart wc = terrain_world_chart();
     double x, z, w, relief;
-    terrain_dir_chart(&wc, p, &x, &z);
+    terrain_dir_world(p, &x, &z);
     return height_lod(x, z, &p, spacing, &w, &relief, 0);
 }
 
 double terrain_surface_dir(TerrainDir p, double spacing) {
-    TerrainChart wc = terrain_world_chart();
     double x, z;
-    terrain_dir_chart(&wc, p, &x, &z);
+    terrain_dir_world(p, &x, &z);
     return surface_lod(x, z, &p, spacing, NULL);
 }
 

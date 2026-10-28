@@ -12,7 +12,9 @@
  * first. A queued slot the main thread needs before the worker has started
  * on it is taken back and built at once; one already building is waited for.
  * The queue holds each job's chunk as well as its slot, so a job whose slot
- * has since been taken back is skipped. */
+ * has since been taken back is skipped. A layout belongs to the lineage of
+ * the frame it was asked for in (TerrainFrame: the asking thread's), and is
+ * built in that frame: a slot of another lineage is never found, only reused. */
 
 #define LAYOUT_AHEAD 2                       /* chunks either side of the player's built ahead: 5 x 5 */
 #define LAYOUT_CACHE 32                      /* the 5 x 5, and the row just left (about 0.5 MB each) */
@@ -20,8 +22,8 @@
 
 enum { LS_EMPTY = 0, LS_QUEUED, LS_BUILDING, LS_READY };
 
-typedef struct LSlot { int cx, cz, state; uint32_t use; } LSlot;
-typedef struct LJob { int slot, cx, cz; } LJob;
+typedef struct LSlot { int cx, cz, state; uint32_t use, frame; } LSlot;
+typedef struct LJob { int slot, cx, cz; const TerrainFrame *frame; } LJob;
 
 static BlockLayout g_layout[LAYOUT_CACHE];
 static LSlot       g_slot[LAYOUT_CACHE];
@@ -42,9 +44,10 @@ static int layout_worker(void *arg) {
         if (g_quit) break;
         LJob j = g_queue[g_head++ % LAYOUT_QUEUE];
         LSlot *s = &g_slot[j.slot];
-        if (s->state != LS_QUEUED || s->cx != j.cx || s->cz != j.cz) continue;   /* taken back */
+        if (s->state != LS_QUEUED || s->cx != j.cx || s->cz != j.cz || s->frame != j.frame->lineage) continue;   /* taken back */
         s->state = LS_BUILDING;
         mutex_unlock(&g_lock);
+        terrain_frame_bind(j.frame);
         city_layout(j.cx, j.cz, &g_layout[j.slot]);
         mutex_lock(&g_lock);
         s->state = LS_READY;
@@ -64,10 +67,10 @@ static void start(void) {
     g_worker = thread_create(layout_worker, NULL);
 }
 
-/* The slot holding (or about to hold) chunk (cx, cz), or -1. Under g_lock. */
-static int find(int cx, int cz) {
+/* The slot holding (or about to hold) chunk (cx, cz) of frame f, or -1. Under g_lock. */
+static int find(int cx, int cz, uint32_t f) {
     for (int i = 0; i < LAYOUT_CACHE; ++i)
-        if (g_slot[i].state != LS_EMPTY && g_slot[i].cx == cx && g_slot[i].cz == cz) return i;
+        if (g_slot[i].state != LS_EMPTY && g_slot[i].cx == cx && g_slot[i].cz == cz && g_slot[i].frame == f) return i;
     return -1;
 }
 
@@ -85,8 +88,9 @@ static int victim(void) {
 
 const BlockLayout *layouts_get(int cx, int cz) {
     start();
+    uint32_t f = terrain_frame()->lineage;
     mutex_lock(&g_lock);
-    int s = find(cx, cz);
+    int s = find(cx, cz, f);
     if (s >= 0 && g_slot[s].state == LS_BUILDING) {
         g_waits++;
         while (g_slot[s].state == LS_BUILDING) cond_wait(&g_built, &g_lock);
@@ -99,7 +103,7 @@ const BlockLayout *layouts_get(int cx, int cz) {
     /* Not cached, or queued and not started: build it here. */
     if (s < 0) s = victim();
     if (s < 0) fatal("layouts: every cached layout is being built");
-    g_slot[s] = (LSlot){ cx, cz, LS_EMPTY, ++g_clock };
+    g_slot[s] = (LSlot){ cx, cz, LS_EMPTY, ++g_clock, f };
     g_here++;
     mutex_unlock(&g_lock);
     city_layout(cx, cz, &g_layout[s]);
@@ -111,17 +115,18 @@ const BlockLayout *layouts_get(int cx, int cz) {
 
 void layouts_prefetch(int cx, int cz) {
     start();
+    const TerrainFrame *f = terrain_frame();
     mutex_lock(&g_lock);
     int queued = 0;
     for (int r = 0; r <= LAYOUT_AHEAD; ++r)   /* ring by ring, nearest first */
         for (int dz = -r; dz <= r; ++dz)
             for (int dx = -r; dx <= r; ++dx) {
                 if (abs(dx) != r && abs(dz) != r) continue;
-                if (find(cx + dx, cz + dz) >= 0 || g_tail - g_head >= LAYOUT_QUEUE) continue;
+                if (find(cx + dx, cz + dz, f->lineage) >= 0 || g_tail - g_head >= LAYOUT_QUEUE) continue;
                 int s = victim();
                 if (s < 0) continue;
-                g_slot[s] = (LSlot){ cx + dx, cz + dz, LS_QUEUED, ++g_clock };
-                g_queue[g_tail++ % LAYOUT_QUEUE] = (LJob){ s, cx + dx, cz + dz };
+                g_slot[s] = (LSlot){ cx + dx, cz + dz, LS_QUEUED, ++g_clock, f->lineage };
+                g_queue[g_tail++ % LAYOUT_QUEUE] = (LJob){ s, cx + dx, cz + dz, f };
                 queued = 1;
             }
     if (queued) cond_signal(&g_wake);

@@ -60,6 +60,60 @@ void terrain_dir_chart(const TerrainChart *c, TerrainDir p, double *x, double *z
     }
 }
 
+/* --- Frames -------------------------------------------------------------------------- */
+
+static TerrainFrame g_world_frame;
+static int g_world_known;
+static const TerrainFrame *volatile g_active;
+static _Thread_local const TerrainFrame *t_bound;
+
+/* The Earth's bake moves the world's chart: terrain_earth_load and _unload call this. */
+void terrain_frame_world_reset(void) { g_world_known = 0; }
+
+const TerrainFrame *terrain_frame_world(void) {
+    if (!g_world_known) {
+        g_world_frame.chart = terrain_world_chart();
+        g_world_frame.x0 = g_world_frame.z0 = 0.0;
+        g_world_frame.settlement = 0;
+        g_world_frame.id = g_world_frame.lineage = 0;
+        g_world_known = 1;
+    }
+    return &g_world_frame;
+}
+
+/* The world's frame's roads, set once the plan has published them. */
+void terrain_frame_world_roads(const void *roads) { terrain_frame_world(); g_world_frame.roads = roads; }
+
+const TerrainFrame *terrain_frame(void) {
+    if (t_bound) return t_bound;
+    const TerrainFrame *a = g_active;
+    return a ? a : terrain_frame_world();
+}
+
+void terrain_frame_bind(const TerrainFrame *f) { t_bound = f; }
+
+const TerrainFrame *terrain_frame_bound(void) { return t_bound; }
+
+void terrain_frame_activate(const TerrainFrame *f) { g_active = f; }
+
+TerrainDir terrain_frame_dir(const TerrainFrame *f, double x, double z) { return terrain_chart_dir(&f->chart, x - f->x0, z - f->z0); }
+
+void terrain_dir_frame(const TerrainFrame *f, TerrainDir p, double *x, double *z) {
+    terrain_dir_chart(&f->chart, p, x, z);
+    if (f->x0 != 0.0 || f->z0 != 0.0) {   /* the world's frame's own, bit for bit (a zero's sign too) */
+        *x += f->x0;
+        *z += f->z0;
+    }
+}
+
+void terrain_frame_axes(const TerrainFrame *f, double x, double z, TerrainDir *ax, TerrainDir *up, TerrainDir *az) {
+    terrain_chart_frame(&f->chart, x - f->x0, z - f->z0, ax, up, az);
+}
+
+TerrainDir terrain_world_dir(double x, double z) { return terrain_frame_dir(terrain_frame(), x, z); }
+
+void terrain_dir_world(TerrainDir p, double *x, double *z) { terrain_dir_frame(terrain_frame(), p, x, z); }
+
 TerrainDir terrain_chart_point(const TerrainChart *c, double x, double y, double z) {
     return scale3(terrain_chart_dir(c, x, z), PLANET_RADIUS + y);
 }
@@ -140,10 +194,7 @@ double terrain_sea_margin_dir(TerrainDir p) {
     return terrain_shore(p, TERRAIN_LIFT_SPACING) - (terrain_earth_loaded() ? SEA_MARGIN_M : 0.0);
 }
 
-double terrain_sea_margin(double x, double z) {
-    TerrainChart wc = terrain_world_chart();
-    return terrain_sea_margin_dir(terrain_chart_dir(&wc, x, z));
-}
+double terrain_sea_margin(double x, double z) { return terrain_sea_margin_dir(terrain_world_dir(x, z)); }
 
 /* --- The horizon ------------------------------------------------------------------- */
 

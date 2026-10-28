@@ -73,10 +73,17 @@ static double slope_of(double (*f)(double, double), double x, double z) {
     return sqrt(gx * gx + gz * gz);
 }
 
-/* The urban relief's amplitude at a point: its settlement's (m). */
-static double relief_at(double x, double z) { return TERRAIN_URBAN_GRADED ? plan_settlement(plan_settlement_near(x, z)).relief_m : 0.0; }
+/* The urban relief's amplitude at a point: its settlement's (m); and the
+ * point in that settlement's own frame, where its relief's shape is read. */
+static double relief_at(double x, double z, double *ux, double *uz) {
+    int k = plan_locate(x, z, ux, uz);
+    return TERRAIN_URBAN_GRADED ? plan_settlement(k).relief_m : 0.0;
+}
 /* The city's ground without the highlands under it. */
-static double urban_relief_only(double x, double z) { return relief_at(x, z) * terrain_urban_shape(x, z); }
+static double urban_relief_only(double x, double z) {
+    double ux, uz, relief = relief_at(x, z, &ux, &uz);
+    return relief * terrain_urban_shape(ux, uz);
+}
 /* The ground without the roads between the settlements. */
 /* The ground with neither the roads nor the water's beds: the land and the cities. */
 static double bare_height(double x, double z) {
@@ -85,8 +92,8 @@ static double bare_height(double x, double z) {
 }
 /* The city's ground: its settlement's relief, on the planet's highlands. */
 static double urban_graded(double x, double z) {
-    double relief = relief_at(x, z);
-    return (relief > 0.0 ? relief * terrain_urban_shape(x, z) : 0.0) + terrain_urban_lift(x, z);
+    double ux, uz, relief = relief_at(x, z, &ux, &uz);
+    return (relief > 0.0 ? relief * terrain_urban_shape(ux, uz) : 0.0) + terrain_urban_lift(x, z);
 }
 
 /* --- Landforms -------------------------------------------------------------- */
@@ -238,7 +245,7 @@ static int same_octaves(double s0, double s1) { return terrain_lod_key(s0) == te
 static void test_lod_heights(void) {
     double worst[TERRAIN_CLIP_LEVELS] = { 0 };
     for (int i = 0; i < N_POINTS; i += 4) {
-        double x = g_x[i], z = g_z[i], h = terrain_height(x, z), h0 = terrain_height_lod(x, z, 0.0), rlo, rhi, relief = relief_at(x, z);
+        double x = g_x[i], z = g_z[i], h = terrain_height(x, z), h0 = terrain_height_lod(x, z, 0.0), rlo, rhi, ux, uz, relief = relief_at(x, z, &ux, &uz);
         CHECK(memcmp(&h, &h0, sizeof(h)) == 0, "terrain_height_lod at spacing 0 differs from terrain_height at (%.1f, %.1f)", x, z);
         terrain_height_range(x, z, x, z, &rlo, &rhi);
         for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {

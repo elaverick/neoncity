@@ -62,6 +62,7 @@ layout(set = 0, binding = 0) uniform Frame {
     mat4 prevViewProj;   // the previous frame's viewProj, taking this frame's camera-relative positions
     vec4 sky;        // x the city's light in the air round the camera (0 countryside .. 1 city), y how many cities[], z cloud cover over the camera (src/app/weather.c)
     vec4 cities[CLOUD_CITIES];   // the settlements whose clouds are drawn: camera-relative centre x, z; footprint radius (clouds.h)
+    vec4 moon;       // xyz towards the moon, in the camera's local frame (src/app/main.c: moon_dir)
 } frame;
 
 struct ChunkGPU {
@@ -449,9 +450,9 @@ float cloudCover(vec2 rel, float edge) {
 float cityLight(float edge) { return 1.0 - smoothstep(0.0, CLOUD_BORDER, edge); }
 
 // The moon, low in the sky and so far off that its light falls the same way
-// everywhere. It stays put in the camera's frame for now, wherever on the
-// planet the camera is.
-const vec3  MOON_DIR = vec3(0.8547, 0.4223, -0.3017);   // unit: towards the moon
+// everywhere. It stays put against the compass for now, wherever on the
+// planet the camera is (src/app/main.c: moon_dir).
+#define MOON_DIR (frame.moon.xyz)   // unit: towards the moon
 const float MOON_RADIUS = 0.014;                         // its disc's angular radius (rad), about three times the real moon's
 const vec3  MOON_LIGHT = vec3(0.50, 0.58, 0.80) * 0.60;  // the light it throws on ground square to it
 const vec3  STARLIGHT = vec3(0.0016, 0.0020, 0.0032);    // the clear night sky's own glow, from above

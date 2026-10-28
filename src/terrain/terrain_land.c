@@ -551,8 +551,12 @@ static void canyon_line(const Canyon *c, const TerrainChart *wc, TerrainCanyon *
 }
 
 int terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, int max) {
-    TerrainChart wc = terrain_world_chart();
-    return terrain_canyons_near_in(&wc, x, z, r, out, max);
+    const TerrainFrame *f = terrain_frame();
+    int n = terrain_canyons_near_in(&f->chart, x - f->x0, z - f->z0, r, out, max);
+    if (f->x0 != 0.0 || f->z0 != 0.0)
+        for (int k = 0; k < n; ++k)
+            for (int q = 0; q < TERRAIN_CANYON_POINTS; ++q) { out[k].x[q] += f->x0; out[k].z[q] += f->z0; }
+    return n;
 }
 
 int terrain_canyons_near_in(const TerrainChart *wc, double x, double z, double r, TerrainCanyon *out, int max) {
@@ -590,10 +594,7 @@ static double canyon_depth(TerrainDir p) {
     return cut;
 }
 
-double terrain_canyon_depth(double x, double z) {
-    TerrainChart wc = terrain_world_chart();
-    return canyon_depth(terrain_chart_dir(&wc, x, z));
-}
+double terrain_canyon_depth(double x, double z) { return canyon_depth(terrain_world_dir(x, z)); }
 
 /* --- The land -------------------------------------------------------------- */
 
@@ -628,9 +629,8 @@ double terrain_land_parts(TerrainDir d, double edge, double spacing, double *lif
 /* Where plan_urban is above 0 the edge measure is below 0, and the detail's
  * rise 0. */
 double terrain_lift(double x, double z, double spacing) {
-    TerrainChart wc = terrain_world_chart();
     Macro m;
-    macro_of(terrain_chart_dir(&wc, x, z), -CITY_BELT, spacing, 0, &m);
+    macro_of(terrain_world_dir(x, z), -CITY_BELT, spacing, 0, &m);
     return m.lift;
 }
 
@@ -639,16 +639,12 @@ double terrain_lift(double x, double z, double spacing) {
  * within its range over that cap. */
 void terrain_urban_lift_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
     double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0), elo, ehi;
-    TerrainChart wc = terrain_world_chart();
-    terrain_earth_range_at(terrain_chart_dir(&wc, cx, cz), half, TERRAIN_LIFT_SPACING, &elo, &ehi);
+    terrain_earth_range_at(terrain_world_dir(cx, cz), half, TERRAIN_LIFT_SPACING, &elo, &ehi);
     *lo = elo - terrain_earth_datum() - 1e-6;   /* rounding */
     *hi = ehi - terrain_earth_datum() + 1e-6;
 }
 
-void terrain_landform(double x, double z, TerrainLandform *out) {
-    TerrainChart wc = terrain_world_chart();
-    terrain_landform_dir(terrain_chart_dir(&wc, x, z), out);
-}
+void terrain_landform(double x, double z, TerrainLandform *out) { terrain_landform_dir(terrain_world_dir(x, z), out); }
 
 void terrain_landform_dir(TerrainDir d, TerrainLandform *out) {
     Macro m;
@@ -690,8 +686,7 @@ void terrain_land_range(double edge, double *lo, double *hi) {
 double terrain_land_lod_error(double x, double z, double spacing) {
     double err = TERRAIN_BASE_M * terrain_dropped(TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
     double edge = plan_city_edge(x, z), e = region_rise(edge), rise = detail_rise(edge);
-    TerrainChart wc = terrain_world_chart();
-    TerrainDir d = terrain_chart_dir(&wc, x, z);
+    TerrainDir d = terrain_world_dir(x, z);
     double fine = terrain_earth_lod_error(d, spacing);
     double coarse = spacing > TERRAIN_LIFT_SPACING ? fine + terrain_earth_lod_error(d, TERRAIN_LIFT_SPACING) : 0.0;
     err += (1.0 - rise) * coarse + rise * fine;

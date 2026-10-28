@@ -61,7 +61,14 @@ void road_gpu_create(Renderer *r) {
     int n = plan_road_count();
     g->bounds = (double *)malloc(sizeof(double) * 4 * (size_t)(n > 0 ? n : 1));
     if (!g->data || !g->bounds) fatal("out of memory allocating the roads");
-    for (int k = 0; k < n; ++k) {
+    road_gpu_set_frame(r);
+}
+
+/* Each road's bounds in the active frame (TerrainFrame); a road the frame
+ * doesn't hold has no points there, and none. */
+void road_gpu_set_frame(Renderer *r) {
+    RoadGpu *g = r->roads;
+    for (int k = 0, n = plan_road_count(); k < n; ++k) {
         const PlanRoad *R = plan_road(k);
         double *b = &g->bounds[4 * k];
         b[0] = b[1] = 1e300; b[2] = b[3] = -1e300;
@@ -70,6 +77,7 @@ void road_gpu_create(Renderer *r) {
             b[2] = fmax(b[2], R->pts[q].x); b[3] = fmax(b[3], R->pts[q].z);
         }
     }
+    g->have = 0;
 }
 
 void road_gpu_destroy(Renderer *r) {

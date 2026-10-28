@@ -196,8 +196,10 @@ void city_build_plants(int cx, int cz, Mesh *m) {
  * Spawn point
  * ========================================================================= */
 
+/* In the frame's own settlement, by its core town's centre (the megacity's is town (0, 0)). */
 void city_spawn(double *x, double *z, float *yaw) {
-    DVec2 c = plan_town_centre(0, 0);
+    int k = terrain_frame()->settlement;
+    DVec2 c = k > 0 ? plan_settlement(k).centre : plan_town_centre(0, 0);
     *x = c.x; *z = c.z; *yaw = 0.0f;
     PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
     if (!pa) fatal("out of memory finding a spawn point");

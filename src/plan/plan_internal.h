@@ -27,8 +27,10 @@ int        plan_cube_at(int n, TerrainDir p, double *fi, double *fj);
 int        plan_cube_step(int n, int f, int i, int j, int di, int dj, int *gi, int *gj);
 
 /* The road network (plan_roads.c): built by plan_world_init once the
- * settlements are placed, on up to `threads` threads. */
+ * settlements are placed, on up to `threads` threads. It publishes each
+ * settlement's frame's roads through plan_world_frame_roads. */
 void plan_roads_build(int threads);
+void plan_world_frame_roads(int k, const void *roads);
 
 /* The pieces of the city (plan.c), for plan_water.c: a neighbourhood's piece
  * of a town, the cell of its site among the town's (plan_area's pieces), and

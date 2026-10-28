@@ -1,5 +1,6 @@
 #include "terrain_internal.h"
 #include "mathlib.h"
+#include "thread.h"
 #include <float.h>
 #include <stdlib.h>
 #include <string.h>
@@ -180,6 +181,69 @@ int terrain_clip_update(TerrainClipmap *c, double cam_x, double cam_z, int budge
         if (lv->ready && c->finest == l + 1) c->finest = l;
     }
     return spent;
+}
+
+/* terrain_clip_refill: each level's window, a band of REFILL_ROWS rows a
+ * job, each job with scratch of its own, in the frame the refill was asked
+ * in. */
+#define REFILL_ROWS 8
+typedef struct Refill { TerrainClipmap *c; const TerrainFrame *f; int from; int64_t want[TERRAIN_CLIP_LEVELS][2]; } Refill;
+static void refill_job(void *ctx, int job) {
+    Refill *rf = (Refill *)ctx;
+    const int bands = (TERRAIN_CLIP_W + REFILL_ROWS - 1) / REFILL_ROWS;
+    int l = rf->from + job / bands, b = job % bands;
+    TerrainSpan sp = { rf->want[l][0], rf->want[l][1] + (int64_t)b * REFILL_ROWS, TERRAIN_CLIP_W,
+                       TERRAIN_CLIP_W - b * REFILL_ROWS < REFILL_ROWS ? TERRAIN_CLIP_W - b * REFILL_ROWS : REFILL_ROWS };
+    double *H = (double *)malloc(sizeof(double) * (TERRAIN_CLIP_W + 2) * (REFILL_ROWS + 2));
+    float *P = (float *)malloc(sizeof(float) * (TERRAIN_CLIP_W / 2 + 3) * (REFILL_ROWS / 2 + 3));
+    if (!H || !P) fatal("out of memory refilling the terrain clipmap");
+    const TerrainFrame *was = terrain_frame_bound();
+    terrain_frame_bind(rf->f);
+    /* split where the band wraps in storage, as push_span splits a move */
+    int sx = terrain_clip_slot(sp.i0), sz = terrain_clip_slot(sp.j0);
+    for (int pz = 0; pz < 2; ++pz)
+        for (int px = 0; px < 2; ++px) {
+            TerrainSpan q = sp;
+            int wa = sx + sp.w > TERRAIN_CLIP_N ? TERRAIN_CLIP_N - sx : sp.w, da = sz + sp.d > TERRAIN_CLIP_N ? TERRAIN_CLIP_N - sz : sp.d;
+            if (px) { q.i0 += wa; q.w = sp.w - wa; } else q.w = wa;
+            if (pz) { q.j0 += da; q.d = sp.d - da; } else q.d = da;
+            if (q.w > 0 && q.d > 0) terrain_mesh_fill_in(&rf->c->level[l], l == TERRAIN_CLIP_LEVELS - 1, q, H, P);
+        }
+    terrain_frame_bind(was);
+    free(H);
+    free(P);
+}
+
+void terrain_clip_refill(TerrainClipmap *c, double cam_x, double cam_z, int from, int threads) {
+    Refill rf;
+    rf.c = c;
+    rf.f = terrain_frame();
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
+        rf.want[l][0] = want_origin(cam_x, c->level[l].spacing);
+        rf.want[l][1] = want_origin(cam_z, c->level[l].spacing);
+    }
+    const int bands = (TERRAIN_CLIP_W + REFILL_ROWS - 1) / REFILL_ROWS;
+    rf.from = from;
+    thread_parallel_for((TERRAIN_CLIP_LEVELS - from) * bands, threads, refill_job, &rf);
+    c->cam[0] = cam_x;
+    c->cam[1] = cam_z;
+    for (int l = 0; l < from; ++l) {   /* empty: updates fill them, from scratch */
+        TerrainClipLevel *lv = &c->level[l];
+        lv->filled = lv->ready = 0;
+        lv->n_pending = lv->n_dirty = 0;
+    }
+    for (int l = from; l < TERRAIN_CLIP_LEVELS; ++l) {
+        TerrainClipLevel *lv = &c->level[l];
+        lv->origin[0] = lv->target[0] = rf.want[l][0];
+        lv->origin[1] = lv->target[1] = rf.want[l][1];
+        lv->n_pending = 0;
+        lv->filled = lv->ready = 1;
+        for (int bz = 0; bz < TERRAIN_CLIP_NB; ++bz)
+            for (int bx = 0; bx < TERRAIN_CLIP_NB; ++bx) refresh_block(lv, lv->origin, bx, bz);
+        lv->n_dirty = 1;
+        lv->dirty[0] = (TerrainRect){ 0, 0, TERRAIN_CLIP_N, TERRAIN_CLIP_N };
+    }
+    c->finest = from;
 }
 
 /* The camera is within one sample of the window's centre, so every edge

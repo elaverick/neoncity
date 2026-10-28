@@ -140,12 +140,13 @@ void city_proxy_tile(int tx, int tz, ProxyTile *t) {
     free(pend); free(g); free(bl); free(pa);
 }
 
-/* Buildings stand only on built towns' ground, where plan_city_edge is at most
- * CITY_BUILT_EDGE, and the edge measure changes by at most CITY_EDGE_RATE a
- * metre, so from the tile's centre it bounds the whole tile. */
+/* Buildings stand only on built towns' ground, where the frame's own
+ * settlement's edge measure (plan_built_edge) is at most CITY_BUILT_EDGE, and
+ * the edge measure changes by at most CITY_EDGE_RATE a metre, so from the
+ * tile's centre it bounds the whole tile. */
 int city_proxy_tile_empty(int tx, int tz) {
     double h = 0.5 * PROXY_TILE, r = h * 1.4142135623730951;
-    return plan_city_edge(tx * PROXY_TILE + h, tz * PROXY_TILE + h) - CITY_EDGE_RATE * r > CITY_BUILT_EDGE;
+    return plan_built_edge(tx * PROXY_TILE + h, tz * PROXY_TILE + h) - CITY_EDGE_RATE * r > CITY_BUILT_EDGE;
 }
 
 void proxy_tile_free(ProxyTile *t) { free(t->box); memset(t, 0, sizeof(*t)); }

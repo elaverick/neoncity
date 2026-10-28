@@ -223,6 +223,8 @@ void   terrain_urban_lift_range(double x0, double z0, double x1, double z1, doub
  * bake); the hints' largest roughness (1 without them); and the Earth's
  * part of terrain_lod_key (0 wherever it reads mip 0 alone, or has no bake). */
 int      terrain_earth_chart(TerrainChart *c);
+/* The world's frame follows the world's chart: the bake's loading calls this. */
+void     terrain_frame_world_reset(void);
 double   terrain_earth_datum(void);
 double   terrain_earth_rough_max(void);
 uint32_t terrain_earth_lod_key(double spacing);
@@ -296,3 +298,7 @@ static inline TerrainDir unit3(TerrainDir a) { return scale3(a, 1.0 / sqrt(dot3(
  * the level and the world sample. Returns the heights it evaluated (at most
  * terrain_clip_fill_cost). */
 int  terrain_mesh_fill(TerrainClipmap *c, int level, TerrainSpan span);
+/* The same into level lv (the top level if `top`) with scratch of the
+ * caller's: H (span.w + 2) * (span.d + 2) doubles, P (span.w / 2 + 3) *
+ * (span.d / 2 + 3) floats. */
+int  terrain_mesh_fill_in(TerrainClipLevel *lv, int top, TerrainSpan span, double *H, float *P);

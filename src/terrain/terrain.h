@@ -73,11 +73,14 @@ int    terrain_canyons_near(double x, double z, double r, TerrainCanyon *out, in
 
 /* --- The planet (src/terrain/terrain_world.c, terrain_cube.c) --------------------
  * The world is a sphere of PLANET_RADIUS, and world X/Z is a chart of it: the
- * azimuthal-equidistant projection about the chart's origin, world (0, 0), so
- * a point's distance from the origin in X/Z is its distance over the sphere.
- * Y is height above the sphere. The city, the plan and the clipmap all work
- * in the chart; over the 20 km round the city it is the sphere's tangent plane
- * to within a millimetre in a kilometre or two (terrain_bend).
+ * azimuthal-equidistant projection about the chart's origin, so a point's
+ * distance from the origin in X/Z is its distance over the sphere. Which
+ * chart is the frame's (TerrainFrame, below): the world's, about world (0, 0)
+ * and the megacity, or a settlement's about its centre, or a travel frame
+ * about the camera. Y is height above the sphere. The city, the plan and the
+ * clipmap all work in the frame; within a few tens of km of its origin it is
+ * the sphere's tangent plane to within a millimetre in a kilometre or two
+ * (terrain_bend).
  *
  * The planet frame has its origin at the planet's centre and is geocentric
  * and right-handed, as the Earth's is: +Z through the north pole, +X through
@@ -119,6 +122,59 @@ TerrainDir terrain_chart_point(const TerrainChart *c, double x, double y, double
 /* The local frame at chart c's (x, z): up along the sphere's normal, and x
  * and z along the chart's x and z there, orthogonal to it and to each other. */
 void       terrain_chart_frame(const TerrainChart *c, double x, double z, TerrainDir *ax, TerrainDir *up, TerrainDir *az);
+
+/* A frame: what world X/Z means. The engine works in one at a time, the
+ * active frame: the frame of the settlement the camera is in or near, whose
+ * city is laid out in it, or out in the land a travel frame about the camera
+ * (src/app/main.c). A frame's world (x, z) is its chart's (x - x0, z - z0):
+ * the chart about the place world (x0, z0) stands for, so that a
+ * settlement's world X/Z (its towns, its streets, the plan's lattice and
+ * noise) are the same numbers whichever frame is active. The world's frame
+ * is the world's chart with x0 = z0 = 0, and it is settlement 0's, the
+ * megacity's; settlement k's is about its centre, k's world (x, z) there
+ * (plan_frame_settlement). `roads` is the plan's roads published in the frame
+ * (plan_roads.c); `settlement` the one whose city the frame lays out, -1 for
+ * none. A frame is never changed once made: whoever made it keeps it alive
+ * while anything works in it.
+ *
+ * A travel frame is made from the frame before it, continuous with it where
+ * the camera is (src/app/frames.c): the same (x, z) and axes there, so the
+ * two agree to millimetres within a few km of it and to under a metre within
+ * the clipmap's reach. It inherits its `lineage`; a settlement's frame is a
+ * lineage of its own. What was made in one frame stands in any other of its
+ * lineage, and only a change of lineage throws it away. */
+typedef struct TerrainFrame {
+    TerrainChart chart;
+    double       x0, z0;
+    int          settlement;
+    uint32_t     id, lineage;
+    const void  *roads;
+} TerrainFrame;
+/* The frame this thread works in: the one bound to it (terrain_frame_bind),
+ * else the active one, else the world's. */
+const TerrainFrame *terrain_frame(void);
+/* The world's frame (it changes as the Earth's bake is loaded). */
+const TerrainFrame *terrain_frame_world(void);
+/* Binds f to this thread (NULL unbinds it): every query in world X/Z on it is
+ * f's until it is bound again. A worker binds the frame of each job it takes,
+ * so a job asked for in one frame is done in it even if the active one
+ * changes meanwhile. */
+void terrain_frame_bind(const TerrainFrame *f);
+/* The frame bound to this thread, or NULL. */
+const TerrainFrame *terrain_frame_bound(void);
+/* Makes f the active frame, for threads with none bound (NULL: the world's).
+ * Call it only while no unbound thread is asking anything in world X/Z. */
+void terrain_frame_activate(const TerrainFrame *f);
+/* Frame f's (x, z) on the sphere and back, and its local frame there (as
+ * terrain_chart_frame). */
+TerrainDir terrain_frame_dir(const TerrainFrame *f, double x, double z);
+void       terrain_dir_frame(const TerrainFrame *f, TerrainDir p, double *x, double *z);
+void       terrain_frame_axes(const TerrainFrame *f, double x, double z, TerrainDir *ax, TerrainDir *up, TerrainDir *az);
+/* The same in this thread's frame (terrain_frame). */
+TerrainDir terrain_world_dir(double x, double z);
+void       terrain_dir_world(TerrainDir p, double *x, double *z);
+/* For the plan: the world's frame's roads, once published. */
+void       terrain_frame_world_roads(const void *roads);
 
 /* Some of the ground's queries above at a direction, or in another chart:
  * terrain_height_dry_lod at p (as terrain_height_dir), terrain_landform at p,
@@ -169,9 +225,9 @@ TerrainPatch terrain_patch_neighbour(TerrainPatch t, int side);
 
 /* The ground at a direction: terrain_height_lod / terrain_surface_lod, the
  * main entry. The land is a function of the direction alone, the same
- * through any chart and seamless over the whole planet; the settlements,
- * their ground and the roads between them are read at p's place in the
- * world's chart. */
+ * through any chart and seamless over the whole planet; the settlements and
+ * their ground too (each read in its own frame: plan_locate); the roads
+ * between them are read at p's place in this thread's frame. */
 double terrain_height_dir(TerrainDir p, double spacing);
 double terrain_surface_dir(TerrainDir p, double spacing);
 /* No ground anywhere on the planet lies lower than this (m, world Y). */
@@ -342,9 +398,9 @@ int        terrain_horizon_hidden(TerrainDir cam, TerrainDir centre, double radi
  *   morph  where it moves to on the parent's surface, less pos (0 on the
  *          six top patches);
  *   n      the unit normal, in the planet frame;
- *   chart  its world (x, z) less the patch's centre's (m; for cutting the
- *          clipmap's window out; garbage round the antipode, never seen);
  *   urban  plan_urban there (1 in the city, 0 beyond its belt).
+ * Nothing in it depends on the frame (TerrainFrame): a patch is drawn as it
+ * is whichever frame is active.
  * err is how far the surface strays from its children's, at the cells'
  * centres: what drawing it in their place costs. */
 #define TERRAIN_PATCH_CELLS 32
@@ -352,12 +408,10 @@ int        terrain_horizon_hidden(TerrainDir cam, TerrainDir centre, double radi
 #define TERRAIN_PATCH_VERTS (TERRAIN_PATCH_SIDE * TERRAIN_PATCH_SIDE + 4 * TERRAIN_PATCH_SIDE)
 #define TERRAIN_PATCH_LEVELS 15   /* the finest the selection goes: level 14, cells about 76 m */
 
-typedef struct TerrainPatchVertex { float pos[3], morph[3], n[3], chart[2], urban; } TerrainPatchVertex;
+typedef struct TerrainPatchVertex { float pos[3], morph[3], n[3], urban; } TerrainPatchVertex;
 typedef struct TerrainPatchInfo {
     TerrainPatch id;
     TerrainDir   centre;           /* planet frame (m): on the sphere, under the patch's middle */
-    double       chart[2];         /* world (x, z) of the centre */
-    double       chart_lo[2], chart_hi[2];   /* world (x, z) bounds of its vertices */
     float        radius;           /* every vertex, skirt too, lies within this of the centre (m) */
     float        err;              /* m; see above */
     float        lo, hi;           /* its heights (m, world Y) */
@@ -404,7 +458,7 @@ typedef struct TerrainPlanetView {
     Frustum frustum;    /* in the camera's local frame (terrain_chart_frame), camera-relative */
     double  haze;       /* how far the haze takes all but 1/e of a patch's contrast (m); 0 for clear air */
     int     window;     /* whether the clipmap's window below is drawn */
-    double  win[4];     /* its world x0, z0, x1, z1 */
+    double  win[4];     /* its world x0, z0, x1, z1 (this thread's frame, as cam) */
 } TerrainPlanetView;
 
 /* A patch to draw: its cache slot, the distances its morph runs between
@@ -551,6 +605,11 @@ typedef struct TerrainClipmap {
 /* Allocates the levels, all empty; free with terrain_clip_free. */
 void   terrain_clip_init(TerrainClipmap *c);
 void   terrain_clip_free(TerrainClipmap *c);
+/* Levels `from` up filled at once round the camera, on up to `threads`
+ * threads, in this thread's frame: as terrain_clip_update would leave them
+ * settled there, ready and wholly dirty; the finer ones emptied, for updates
+ * to fill. For a change of frame (TerrainFrame) whose samples are all new. */
+void   terrain_clip_refill(TerrainClipmap *c, double cam_x, double cam_z, int from, int threads);
 /* Moves the levels to follow the camera, evaluating at most `budget` heights
  * (whole rows; an update that can't afford a row fills one anyway, so work
  * always progresses). Levels are filled coarsest first: a finer level is only

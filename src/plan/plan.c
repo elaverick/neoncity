@@ -334,7 +334,7 @@ static void town_cut(Site t, const double *push, Poly *p, int8_t *nb) {
 static int ground_inside(const Poly *p, double cx, double cz, double h, int depth) {
     double r = h * 1.4142135623730951;
     if (!poly_contains(p, cx, cz, r + CITY_GROUND_PAD)) return 1;   /* the square misses the padded cell */
-    double e = plan_city_edge(cx, cz);
+    double e = plan_built_edge(cx, cz);
     if (e + CITY_EDGE_RATE * r <= CITY_BUILT_EDGE) return 1;
     if (depth == 0 || (e > CITY_BUILT_EDGE && poly_contains(p, cx, cz, CITY_GROUND_PAD))) return 0;
     h *= 0.5;
@@ -343,7 +343,7 @@ static int ground_inside(const Poly *p, double cx, double cz, double h, int dept
 }
 
 static int cell_built(Site s, const Poly *p, double x0, double z0, double x1, double z1) {
-    if (plan_city_edge(s.p.x, s.p.z) > CITY_BUILT_EDGE) return 0;   /* the site is in its own cell */
+    if (plan_built_edge(s.p.x, s.p.z) > CITY_BUILT_EDGE) return 0;   /* the site is in its own cell */
     double h = 0.5 * fmax(x1 - x0, z1 - z0) + CITY_GROUND_PAD;
     return ground_inside(p, 0.5 * (x0 + x1), 0.5 * (z0 + z1), h, 7);
 }
@@ -822,10 +822,12 @@ void plan_area(double x0, double z0, double x1, double z1, PlanArea *out) {
                 const TownEntry *te = town_get(c, ti, tj);
                 if (box_overlaps(c->A, te->x0, te->z0, te->x1, te->z1, 30.0) && town_built(c, ti, tj)) town_outline(c, ti, tj);
             }
-        /* the roads out, in road order: a gate reaches its road's half-width along the outline */
+        /* the roads out of the frame's city, in road order: a gate reaches its road's half-width along the outline */
+        int own = terrain_frame()->settlement;
         for (int r = 0; r < plan_road_count() && out->ngates < PLAN_MAX_GATES; ++r)
             for (int end = 0; end < 2 && out->ngates < PLAN_MAX_GATES; ++end) {
-                if (!plan_road(r)->gate[end]) continue;
+                const PlanRoad *R = plan_road(r);
+                if (!R->gate[end] || plan_node(end ? R->to : R->from).settlement != own) continue;
                 PlanGate g = plan_road_gate(r, end);
                 double pad = g.half + 60.0;
                 if (box_overlaps(c->A, g.p.x, g.p.z, g.p.x, g.p.z, pad)) out->gates[out->ngates++] = g;

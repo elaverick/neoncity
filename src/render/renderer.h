@@ -17,6 +17,7 @@ typedef struct FrameUBO {
     mat4    prevViewProj;  /* the previous frame's viewProj for this frame's camera-relative positions (renderer.c) */
     float   sky[4];        /* the city's light in the air round the camera (0 countryside .. 1 city), how many cities[], cloud cover over the camera, unused (src/app/weather.c) */
     float   cities[CLOUD_CITIES][4];   /* the settlements whose clouds are drawn: camera-relative centre x, z; footprint radius; unused */
+    float   moon[4];       /* towards the moon, in the camera's local frame (src/app/main.c); unused */
 } FrameUBO;
 
 typedef struct Renderer Renderer;
@@ -25,6 +26,13 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks);
 void      renderer_destroy(Renderer *r);
 /* Renders and presents one frame. cam is the precise world-space camera position. */
 void      renderer_frame(Renderer *r, const FrameUBO *ubo, const double cam[3], bool resized);
+/* The active frame (TerrainFrame) has changed to f, the camera now at cam in
+ * it. In a frame of another lineage what was built in the old one is dropped
+ * (the chunks, the proxies) or refilled at once (the clipmap), and nothing is
+ * reprojected from the last frame; in any, the roads are taken again. Call it
+ * before the frame's renderer_frame. */
+struct TerrainFrame;
+void      renderer_set_frame(Renderer *r, const struct TerrainFrame *f, const double cam[3]);
 uint64_t  renderer_frame_index(Renderer *r);
 /* Ray-traced shadows on or off (they stay off without ray queries). */
 void      renderer_set_shadows(Renderer *r, bool on);

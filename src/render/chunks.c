@@ -72,9 +72,11 @@ typedef struct Entry {
     int       blas;         /* -1: none */
 } Entry;
 
-typedef struct Job { int cx, cz, layer; } Job;
+/* A job is built in the frame it was asked for in (TerrainFrame), and its
+ * result taken only while the streamer's frame is still of that lineage. */
+typedef struct Job { int cx, cz, layer; const TerrainFrame *frame; } Job;
 typedef struct KnownBounds { int cx, cz, used; float mn[3], mx[3]; } KnownBounds;
-typedef struct Result { int cx, cz, layer; Mesh mesh; } Result;
+typedef struct Result { int cx, cz, layer; uint32_t lineage; Mesh mesh; } Result;
 typedef struct PendingFree { uint16_t page; uint64_t frame; } PendingFree;
 /* key orders the draws (front to back); prio, the jobs (want_chunks). */
 typedef struct Want { int cx, cz, layer; float key, prio; int inView; } Want;
@@ -144,6 +146,7 @@ struct ChunkSystem {
     int        uploaded[MAX_ENTRIES];
 
     uint64_t   frame;   /* this frame's index (chunks_update) */
+    const TerrainFrame *tf;   /* the frame the chunks are built in (chunks_set_frame) */
     ChunkStats stats;
     SkyGrid    sky;     /* built here, then copied out: the destination is write-combined GPU memory */
     SkyLight   airCand[16384];
@@ -211,8 +214,9 @@ static int worker_main(void *arg) {
         mutex_unlock(&cs->jobLock);
 
         Result r;
-        r.cx = job.cx; r.cz = job.cz; r.layer = job.layer;
+        r.cx = job.cx; r.cz = job.cz; r.layer = job.layer; r.lineage = job.frame->lineage;
         memset(&r.mesh, 0, sizeof(r.mesh));
+        terrain_frame_bind(job.frame);
         if (job.layer == 1) city_build_interiors(job.cx, job.cz, &r.mesh);
         else if (job.layer == 2) city_build_litter(job.cx, job.cz, &r.mesh);
         else if (job.layer == LAYER_PLANTS) city_build_plants(job.cx, job.cz, &r.mesh);
@@ -240,6 +244,7 @@ ChunkSystem *chunks_create(VkCore *vk) {
     for (int i = 0; i < MAX_ENTRIES; ++i) cs->freeEntries[i] = MAX_ENTRIES - 1 - i;
     cs->freeEntryCount = MAX_ENTRIES;
     cs->reach = REACH_ALL;
+    cs->tf = terrain_frame();
     for (int i = 0; i < POOL_PAGES; ++i) cs->freePages[i] = (uint16_t)(POOL_PAGES - 1 - i);
     cs->freePageCount = POOL_PAGES;
     cs->pendingFree = (PendingFree *)malloc(sizeof(PendingFree) * POOL_PAGES);
@@ -567,7 +572,7 @@ static void collect_finished(ChunkSystem *cs) {
     mutex_lock(&cs->doneLock);
     for (int i = 0; i < cs->doneCount; ++i) {
         Result *r = &cs->done[i];
-        int idx = table_find(cs, r->cx, r->cz, r->layer);
+        int idx = r->lineage == cs->tf->lineage ? table_find(cs, r->cx, r->cz, r->layer) : -1;
         if (idx >= 0 && cs->entries[idx].state == CS_QUEUED) {
             cs->entries[idx].mesh = r->mesh;
             cs->entries[idx].state = CS_READY;
@@ -682,7 +687,7 @@ static int queue_wanted(ChunkSystem *cs, uint64_t frame, const double cam[3]) {
             idx = table_insert(cs, w->cx, w->cz, w->layer);
             if (idx < 0) continue;
             cs->entries[idx].state = CS_QUEUED;
-            newJobs[nj].cx = w->cx; newJobs[nj].cz = w->cz; newJobs[nj].layer = w->layer; nj++;
+            newJobs[nj].cx = w->cx; newJobs[nj].cz = w->cz; newJobs[nj].layer = w->layer; newJobs[nj].frame = cs->tf; nj++;
         }
         cs->entries[idx].lastSeen = frame;
         if (cs->entries[idx].state == CS_QUEUED) queued++;
@@ -909,6 +914,26 @@ static void update_stats(ChunkSystem *cs, int slot, int queued, uint32_t viewChu
     cs->stats.blasBuilds = rs.builds;
     cs->stats.instances = rs.instances;
     cs->stats.blasMB = (int)(rs.arenaUsedMB + 0.5);
+}
+
+/* In a frame of the same lineage everything stands; otherwise everything
+ * built in the old one goes: queued jobs withdrawn, what is resident evicted
+ * (its pages freed once the frames drawing it retire), results still to come
+ * dropped when they arrive. */
+void chunks_set_frame(ChunkSystem *cs, const TerrainFrame *f) {
+    if (f->lineage == cs->tf->lineage) { cs->tf = f; return; }
+    withdraw_jobs(cs);
+    for (int i = 0; i < MAX_ENTRIES; ++i) {
+        Entry *e = &cs->entries[i];
+        if (!e->state) continue;
+        if (e->state == CS_RESIDENT) evict(cs, i, cs->frame);
+        else table_remove(cs, i);
+    }
+    cs->readyCount = 0;
+    memset(cs->known, 0, sizeof(cs->known));
+    cs->reach = REACH_ALL;
+    cs->motionTime = 0.0;
+    cs->tf = f;
 }
 
 void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t frame,

@@ -1,4 +1,5 @@
 #include "renderer_internal.h"
+#include "terrain.h"
 
 static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "terrain upload", "shelter", "prepass", "shadow rays", "shadow filter",
                                                 "city", "plants", "proxies", "terrain", "sky", "clouds", "flames", "post" };
@@ -9,6 +10,19 @@ void renderer_set_shadow_debug(Renderer *r, bool on) { r->shadowDebug = on; }
 bool renderer_shadow_debug(Renderer *r) { return r->shadowDebug; }
 
 uint64_t renderer_frame_index(Renderer *r) { return r->frameIndex; }
+
+void renderer_set_frame(Renderer *r, const TerrainFrame *f, const double cam[3]) {
+    int keep = r->frame && f->lineage == r->frame->lineage;
+    chunks_set_frame(r->chunks, f);
+    proxy_gpu_set_frame(r, r->frameIndex, f);
+    if (!keep) terrain_gpu_set_frame(r, cam);   /* within a lineage the clipmap's samples stand (terrain.h, TerrainFrame) */
+    road_gpu_set_frame(r);
+    if (!keep) {
+        r->havePrev = false;      /* last frame's view was another frame's: nothing to reproject */
+        r->historyValid = false;
+    }
+    r->frame = f;
+}
 
 void renderer_gpu_times(Renderer *r, char *buf, size_t n) {
     float total = 0.0f;
@@ -115,6 +129,7 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
     road_gpu_create(r);   /* before the terrain, whose descriptor sets bind it */
     terrain_gpu_create(r);
     planet_gpu_create(r);
+    r->frame = terrain_frame();
     proxy_gpu_create(r);
     build_cloud_noise(r);
     create_targets(r);

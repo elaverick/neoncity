@@ -14,21 +14,21 @@
  * clipmap draws the ground, it sinks a little (and planet.frag discards it),
  * so the clipmap wins the depth test where the two overlap. */
 
-struct PatchVertex { float p[12]; };   // pos[3], morph[3], n[3], chart[2], urban
+struct PatchVertex { float p[10]; };   // pos[3], morph[3], n[3], urban
 layout(std430, set = 0, binding = 1) readonly buffer Verts { PatchVertex verts[]; };
 
 // PlanetPush (src/render/renderer_internal.h)
 layout(push_constant) uniform Patch {
     vec4 ax, up, az;     // the camera's local axes in the planet frame (xyz)
     vec4 centre;         // xyz: the patch's centre, camera-relative, local frame; w: how far it sinks in the window (m)
-    vec4 morph;          // x, y: the morph's inner and outer distances (m; y 0 for none); z, w: the patch's chart centre less the camera's
+    vec4 morph;          // x, y: the morph's inner and outer distances (m; y 0 for none)
     vec4 window;         // the clipmap's window, camera-relative chart x0, z0, x1, z1 (all 0: none)
 } pc;
 
 layout(location = 0) out vec3  vRel;     // camera-relative position
 layout(location = 1) out vec3  vNrm;
 layout(location = 2) out float vUrban;
-layout(location = 3) out vec2  vChart;   // camera-relative chart position
+layout(location = 3) out vec2  vChart;   // camera-relative chart position (the projection about the camera)
 
 vec3 toLocal(vec3 v) { return vec3(dot(v, pc.ax.xyz), dot(v, pc.up.xyz), dot(v, pc.az.xyz)); }
 
@@ -40,7 +40,11 @@ void main() {
         float m = clamp((length(rel) - pc.morph.x) / (pc.morph.y - pc.morph.x), 0.0, 1.0);
         rel += toLocal(mv) * m;
     }
-    vChart = vec2(v.p[9], v.p[10]) + pc.morph.zw;
+    // Where it lies in the azimuthal-equidistant projection about the camera
+    // (planetBend's inverse), which over the clipmap's window is the
+    // frame's to within a few metres, well inside the hole's margin.
+    float hl = length(rel.xz);
+    vChart = hl > 0.0 ? rel.xz * (PLANET_RADIUS * atan(hl, PLANET_RADIUS + frame.camPos.y + rel.y) / hl) : vec2(0.0);
     if (pc.window.z > pc.window.x) {
         // how far inside the window, sinking fully a hole's margin in
         float inside = min(min(vChart.x - pc.window.x, pc.window.z - vChart.x), min(vChart.y - pc.window.y, pc.window.w - vChart.y));
@@ -49,6 +53,6 @@ void main() {
     }
     vRel = rel;
     vNrm = toLocal(vec3(v.p[6], v.p[7], v.p[8]));
-    vUrban = v.p[11];
+    vUrban = v.p[9];
     gl_Position = frame.viewProj * vec4(rel, 1.0);
 }

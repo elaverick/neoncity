@@ -33,6 +33,7 @@
 #include "city.h"
 #include "hash.h"
 #include "thread.h"
+#include "frames.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,12 +50,12 @@ static uint64_t fnv(const void *data, size_t n, uint64_t h) {
 
 static double warp_of(double r) { return 1.4142135623730951 * (CITY_WARP1_M + CITY_WARP2_M) * r / CITY_RADIUS; }
 
-/* A settlement's built towns, every stride-th each way, and the size across
- * of a disc of their area over the sphere (km): the world chart stretches the
- * land across a line from its origin by th / sin th, th the angle out. */
-static int built_towns(const PlanSettlement *s, double *km) {
-    double th = dlen(s->disc) / PLANET_RADIUS, f = th > 1e-9 ? sin(th) / th : 1.0;
-    double r = (s->radius + warp_of(s->radius) + 2.0 * TOWN_SIZE) / f;
+/* Settlement k's built towns, every stride-th each way, and the size across
+ * of a disc of their area (km): in its own frame, where its city is laid out
+ * and its towns are true to size. */
+static int built_towns(int k, const PlanSettlement *s, double *km) {
+    terrain_frame_bind(plan_frame_settlement(k));
+    double r = s->radius + warp_of(s->radius) + 2.0 * TOWN_SIZE;
     int stride = 1 + (int)(r / 30000.0);
     int i0 = (int)floor((s->disc.x - r) / TOWN_SIZE), i1 = (int)floor((s->disc.x + r) / TOWN_SIZE);
     int j0 = (int)floor((s->disc.z - r) / TOWN_SIZE), j1 = (int)floor((s->disc.z + r) / TOWN_SIZE);
@@ -64,7 +65,8 @@ static int built_towns(const PlanSettlement *s, double *km) {
             DVec2 c = plan_town_centre(i, j);
             if (dlen(dsub(c, s->disc)) <= r && plan_town_built(i, j)) n++;
         }
-    *km = 2.0 * sqrt(f * n * stride * stride * TOWN_SIZE * TOWN_SIZE / 3.14159265358979) / 1000.0;
+    terrain_frame_bind(NULL);
+    *km = 2.0 * sqrt(n * stride * stride * TOWN_SIZE * TOWN_SIZE / 3.14159265358979) / 1000.0;
     return n;
 }
 
@@ -150,7 +152,12 @@ static void test_settlements(void) {
         grown += s.radius > r0 + 1.0;
         shrunk += s.radius < r0 - 1.0;
         DVec2 tc = plan_town_centre(s.town[0], s.town[1]);
+        terrain_frame_bind(plan_frame_settlement(k));   /* its towns are its frame's */
         CHECK(tc.x == s.centre.x && tc.z == s.centre.z && plan_town_regional(s.town[0], s.town[1]), "settlement %d's centre isn't its regional town's", k);
+        TerrainDir fc = terrain_world_dir(s.centre.x, s.centre.z);
+        CHECK(sphere_m(fc, s.dir) < 1e-3 && plan_settlement_near(s.centre.x, s.centre.z) == k && plan_built_edge(s.centre.x, s.centre.z) < -CITY_BELT,
+              "settlement %d's frame doesn't hold it at its centre", k);
+        terrain_frame_bind(NULL);
         TerrainDir dc = terrain_chart_dir(&wc, s.centre.x, s.centre.z);
         CHECK(sphere_m(dc, s.dir) < 1e-3 && (k == 0 || sphere_m(s.chart.o, s.dir) < 1e-3), "settlement %d's direction or chart isn't its centre's", k);
         farthest = fmax(farthest, sphere_m(s.dir, home.dir));
@@ -190,7 +197,7 @@ static void test_settlements(void) {
         wetAll += wet;
         CHECK(wet == 0, "%d samples of settlement %d (%s) on the sea or its margin", wet, k, plan_settlement_name(k));
         double km;
-        built_towns(&s, &km);
+        built_towns(k, &s, &km);
         if (s.radius >= r0 - 1.0 && km < kmLo) { kmLo = km; kmLoK = k; }
         kmHi = fmax(kmHi, km);
     }
@@ -257,8 +264,12 @@ static void test_roads(void) {
             PlanNode nd = end ? b : a;
             DVec2 e = R->pts[end ? R->npts - 1 : 0];
             if (nd.settlement < 0) { badEnds += dlen(dsub(e, nd.p)) > 1.0 || R->gate[end]; continue; }
+            /* in the settlement's own frame, where its towns are and the gate was found */
+            terrain_frame_bind(plan_frame_settlement(nd.settlement));
+            const PlanRoad *Rs = plan_road(r);
             PlanGate g = plan_road_gate(r, end);
-            if (!R->gate[end] || dlen(dsub(e, g.p)) > 1e-6) { badEnds++; continue; }
+            DVec2 es = Rs->npts ? Rs->pts[end ? Rs->npts - 1 : 0] : dv(1e30, 1e30);
+            if (!R->gate[end] || dlen(dsub(es, g.p)) > 1e-6) { badEnds++; terrain_frame_bind(NULL); continue; }
             /* on the boundary: built towns behind it, not in front */
             int ii, ij, oi, oj;
             DVec2 in = dsub(g.p, dscale(g.n, 2.0)), out = dadd(g.p, dscale(g.n, 2.0));
@@ -267,6 +278,7 @@ static void test_roads(void) {
             gates++;
             if (!plan_town_built(ii, ij) || plan_town_built(oi, oj)) badGates++;
             if (fabs(R->prof[end ? R->nprof - 1 : 0] - terrain_height(g.p.x, g.p.z)) > 1e-3) badGates++;
+            terrain_frame_bind(NULL);
         }
         double G = R->cls == PLAN_ROAD_FREEWAY ? PLAN_FREEWAY_GRADE : PLAN_TRUNK_GRADE;
         for (int k = 0; k + 1 < R->nprof; ++k) gradeOver = fmax(gradeOver, fabs(R->prof[k + 1] - R->prof[k]) / R->ds / G);
@@ -284,10 +296,17 @@ static void test_roads(void) {
                     /* nor back in its own city's built towns past its gate (a gate is where it leaves them
                      * for the last time): but for a corner, rounded after the gates, clipping one at its edge */
                     double sp = R->s[k] + (R->s[k + 1] - R->s[k]) * q / 4.0, len = R->s[R->npts - 1];
-                    int ti, tj;
-                    plan_town_at(p.x, p.z, &ti, &tj);
-                    if (plan_town_built(ti, tj) && ((near == a.settlement && R->gate[0] && sp > 1000.0) || (near == b.settlement && R->gate[1] && sp < len - 1000.0)))
-                        inOwn++;
+                    if ((near == a.settlement && R->gate[0] && sp > 1000.0) || (near == b.settlement && R->gate[1] && sp < len - 1000.0)) {
+                        /* its towns are its own frame's */
+                        const TerrainFrame *nf = plan_frame_settlement(near);
+                        double nx, nz;
+                        terrain_dir_frame(nf, terrain_world_dir(p.x, p.z), &nx, &nz);
+                        terrain_frame_bind(nf);
+                        int ti, tj;
+                        plan_town_at(nx, nz, &ti, &tj);
+                        inOwn += plan_town_built(ti, tj);
+                        terrain_frame_bind(NULL);
+                    }
                 }
             }
     }
@@ -904,7 +923,9 @@ static void test_channels(void) {
     for (int k = 0, n = 0; k < plan_channel_count(); ++k) {
         const PlanChannel *c = plan_channel(k);
         if (!c->built || n++ % stride) continue;
+        terrain_frame_bind(plan_frame_settlement(plan_channel_settlement(k)));   /* laid out in its city's frame */
         plan_area(c->x0 - 30.0, c->z0 - 30.0, c->x1 + 30.0, c->z1 + 30.0, pa);
+        terrain_frame_bind(NULL);
         checked++;
         for (int q = 0; q < pa->nchannels; ++q) {
             const PlanChannel *h = &pa->channels[q];
@@ -926,6 +947,166 @@ static void test_channels(void) {
     }
     printf("  round %d of them: %d blocks on a channel, %d local streets across one, %d roads across one on no bridge\n", checked, on_block, crossed, unbridged);
     free(pa);
+}
+
+
+/* --- A flight between the cities -------------------------------------------------------------
+ * The camera flies from the megacity to the city nearest FLIGHT_KM away (and
+ * at least that far) and back, along the great circle, FLIGHT_UP above the
+ * sphere, the active frame chosen as the game chooses it (src/app/frames.c).
+ * At every change of frame nothing may jump: the camera's place on the
+ * planet and the way it faces stay put, and the ground round it, read in the
+ * old frame and in the new at the same places, is the same to within
+ * FLIGHT_POP. In every frame, the bend (terrain_bend: chart offsets taken as
+ * the sphere's) stays within FLIGHT_BEND of the truth at the clipmap's edge;
+ * and the far city is drawn in its own frame, the camera there in its
+ * streets. */
+#define FLIGHT_KM   5000.0
+#define FLIGHT_UP   3000.0      /* m above the sphere */
+#define FLIGHT_STEP 2000.0      /* m */
+#define FLIGHT_POP  0.05        /* m */
+#define FLIGHT_BEND 10.0        /* m, at FLIGHT_EDGE */
+#define FLIGHT_EDGE 32000.0     /* the clipmap's reach from the camera (m) */
+
+static TerrainDir unitd(TerrainDir a) { double l = sqrt(dot3(a, a)); TerrainDir r = { a.x / l, a.y / l, a.z / l }; return r; }
+
+/* The camera at direction p, facing along the great circle towards q, in the active frame. */
+static void flight_place(Player *pl, TerrainDir p, TerrainDir q) {
+    const TerrainFrame *f = terrain_frame();
+    terrain_dir_frame(f, p, &pl->feet[0], &pl->feet[2]);
+    pl->feet[1] = FLIGHT_UP;
+    TerrainDir ax, up, az;
+    terrain_frame_axes(f, pl->feet[0], pl->feet[2], &ax, &up, &az);
+    TerrainDir t = { q.x - dot3(q, p) * p.x, q.y - dot3(q, p) * p.y, q.z - dot3(q, p) * p.z };
+    pl->yaw = (float)atan2(dot3(t, ax), -dot3(t, az));
+    pl->vel[0] = pl->vel[1] = pl->vel[2] = 0.0f;
+    pl->eye[0] = pl->feet[0]; pl->eye[1] = pl->feet[1]; pl->eye[2] = pl->feet[2];
+    pl->fwd = v3(sinf(pl->yaw), 0.0f, -cosf(pl->yaw));
+    pl->right = v3(cosf(pl->yaw), 0.0f, sinf(pl->yaw));
+    pl->up = v3(0.0f, 1.0f, 0.0f);
+}
+
+/* The way the camera faces, on the planet. */
+static TerrainDir flight_heading(const Player *pl) {
+    TerrainDir ax, up, az;
+    terrain_frame_axes(terrain_frame(), pl->feet[0], pl->feet[2], &ax, &up, &az);
+    double sy = sin(pl->yaw), cy = cos(pl->yaw);
+    TerrainDir h = { sy * ax.x - cy * az.x, sy * ax.y - cy * az.y, sy * ax.z - cy * az.z };
+    return h;
+}
+
+/* The worst of terrain_bend against the truth, round the camera at FLIGHT_EDGE. */
+static double flight_bend(const Player *pl) {
+    double cx = pl->feet[0], cz = pl->feet[2], cy = pl->feet[1], worst = 0.0;
+    TerrainDir c = scale3(terrain_world_dir(cx, cz), PLANET_RADIUS + cy), ax, up, az;
+    terrain_frame_axes(terrain_frame(), cx, cz, &ax, &up, &az);
+    for (int q = 0; q < 16; ++q) {
+        double a = 6.283185307179586 * q / 16.0, dx = FLIGHT_EDGE * cos(a), dz = FLIGHT_EDGE * sin(a);
+        TerrainDir P = scale3(terrain_world_dir(cx + dx, cz + dz), PLANET_RADIUS), d = { P.x - c.x, P.y - c.y, P.z - c.z };
+        float b[3];
+        terrain_bend((float)dx, (float)dz, 0.0f, (float)cy, b);
+        double e = hypot(hypot(b[0] - dot3(d, ax), b[1] - dot3(d, up)), b[2] - dot3(d, az));
+        worst = fmax(worst, e);
+    }
+    return worst;
+}
+
+/* The ground round the camera (at it, and 100 m, 1 km and 10 km out every
+ * way), read through the frame: the planet-frame places and their heights. */
+#define FLIGHT_PROBES 25
+static void flight_ground(const Player *pl, TerrainDir *at, double *h) {
+    const double rings[3] = { 100.0, 1000.0, 10000.0 };
+    int n = 0;
+    for (int r = -1; r < 3; ++r)
+        for (int q = 0; q < (r < 0 ? 1 : 8); ++q) {
+            double a = 6.283185307179586 * q / 8.0, s = r < 0 ? 0.0 : rings[r];
+            double x = pl->feet[0] + s * cos(a), z = pl->feet[2] + s * sin(a);
+            at[n] = terrain_world_dir(x, z);
+            h[n++] = terrain_height(x, z);
+        }
+}
+
+static void test_flight(void) {
+    PlanSettlement home = plan_settlement(0);
+    int far = -1;
+    double farD = 1e300;
+    for (int k = 1; k < plan_settlement_count(); ++k) {
+        double d = sphere_m(plan_settlement(k).dir, home.dir);
+        if (d >= FLIGHT_KM * 1000.0 && d < farD) { farD = d; far = k; }
+    }
+    if (far < 0) { printf("flight: no city %.0f km from the megacity\n", FLIGHT_KM); return; }
+    Frames fr;
+    frames_init(&fr, 0);
+    Player pl;
+    memset(&pl, 0, sizeof pl);
+    TerrainDir ends[2] = { terrain_world_dir(plan_town_centre(0, 0).x, plan_town_centre(0, 0).z), plan_settlement(far).dir };
+    int switches = 0, travel = 0, cities = 0, steps = 0, inFar = 0;
+    double posJump = 0.0, turn = 0.0, pop = 0.0, bendTravel = 0.0, bendCity = 0.0;
+    char popAt[160] = "";
+    for (int leg = 0; leg < 2; ++leg) {
+        TerrainDir a = ends[leg], b = ends[1 - leg];
+        double len = sphere_m(a, b);
+        int n = (int)ceil(len / FLIGHT_STEP);
+        for (int s = 0; s <= n; ++s, ++steps) {
+            double t = len * s / n / PLANET_RADIUS, th = len / PLANET_RADIUS;
+            TerrainDir p = unitd(add3(scale3(a, sin(th - t) / sin(th)), scale3(b, sin(t) / sin(th))));
+            flight_place(&pl, p, b);
+            const TerrainFrame *was = terrain_frame();
+            TerrainDir h0 = flight_heading(&pl), g0[FLIGHT_PROBES];
+            double gh0[FLIGHT_PROBES];
+            flight_ground(&pl, g0, gh0);
+            if (!frames_update(&fr, &pl)) continue;
+            switches++;
+            if (fr.active->settlement < 0) travel++; else cities++;
+            if (fr.active->settlement == far) inFar = 1;
+            /* the same place and the same way */
+            TerrainDir p1 = terrain_world_dir(pl.feet[0], pl.feet[2]), h1 = flight_heading(&pl);
+            posJump = fmax(posJump, PLANET_RADIUS * sqrt(dot3(sub3(p1, p), sub3(p1, p))));
+            turn = fmax(turn, acos(fmin(1.0, dot3(unitd(h0), unitd(h1)))));
+            /* the same ground at the same places */
+            for (int k = 0; k < FLIGHT_PROBES; ++k) {
+                double x, z;
+                terrain_dir_world(g0[k], &x, &z);
+                double e = fabs(terrain_height(x, z) - gh0[k]);
+                if (e > pop) {
+                    pop = e;
+                    double lat, lon;
+                    terrain_dir_latlon(g0[k], &lat, &lon);
+                    snprintf(popAt, sizeof popAt, "%.4f %.4f, frame %u to %u", lat, lon, was->id, fr.active->id);
+                }
+            }
+            double bend = flight_bend(&pl);
+            if (fr.active->settlement < 0) bendTravel = fmax(bendTravel, bend); else bendCity = fmax(bendCity, bend);
+        }
+    }
+    /* at the far city: in its frame, in its streets */
+    terrain_frame_bind(plan_frame_settlement(far));
+    double sx, sz;
+    float syaw;
+    city_spawn(&sx, &sz, &syaw);
+    int built = plan_built_edge(sx, sz) < CITY_BUILT_EDGE;
+    PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
+    int roads = 0, blocks = 0;
+    if (pa) { plan_area(sx - 200.0, sz - 200.0, sx + 200.0, sz + 200.0, pa); roads = pa->nroads; blocks = pa->nblocks; free(pa); }
+    Player at;
+    memset(&at, 0, sizeof at);
+    at.feet[0] = sx; at.feet[2] = sz; at.feet[1] = terrain_height(sx, sz) + 2.0;
+    double bendFar = flight_bend(&at);
+    terrain_frame_bind(NULL);
+    frames_shutdown(&fr);
+    terrain_frame_activate(NULL);
+    printf("flight: the megacity to %s (%.0f km) and back, %d steps, %d changes of frame (%d into travel frames, %d into cities')\n",
+           plan_settlement_name(far), farD / 1000.0, steps, switches, travel, cities);
+    printf("  at a change the camera moved %.2e m and turned %.2e rad at most; the ground round it moved %.5f m at most%s%s%s\n",
+           posJump, turn, pop, pop > 0.0 ? " (at " : "", pop > 0.0 ? popAt : "", pop > 0.0 ? ")" : "");
+    printf("  the bend at %.0f km strays %.2f m at most in a travel frame, %.2f m in a city's; %.2f m at %s's spawn\n",
+           FLIGHT_EDGE / 1000.0, bendTravel, bendCity, bendFar, plan_settlement_name(far));
+    printf("  at %s's spawn (its frame): %d roads, %d blocks within 200 m\n", plan_settlement_name(far), roads, blocks);
+    CHECK(inFar, "the flight never worked in %s's frame", plan_settlement_name(far));
+    CHECK(posJump < 1e-3 && turn < 1e-6, "a change of frame moved the camera %.2e m or turned it %.2e rad", posJump, turn);
+    CHECK(pop <= FLIGHT_POP, "a change of frame moved the ground %.3f m (%s)", pop, popAt);
+    CHECK(bendTravel <= FLIGHT_BEND && bendCity <= FLIGHT_BEND && bendFar <= FLIGHT_BEND, "the bend strays %.2f / %.2f / %.2f m", bendTravel, bendCity, bendFar);
+    CHECK(built && roads > 0 && blocks > 0, "%s's spawn isn't in its built streets", plan_settlement_name(far));
 }
 
 int main(int argc, char **argv) {
@@ -959,6 +1140,7 @@ int main(int argc, char **argv) {
     test_road_ground();
     test_road_bridges(threads);
     test_channels();
+    test_flight();
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all world tests passed\n");
