@@ -27,15 +27,21 @@
  *
  * The cut. Every settlement has a cut grid in its own chart (the megacity's
  * about its core in the world chart): nodes CUT_CELL apart over the reach of
- * its edge measure, each the larger of two signed distances, interpolated
+ * its edge measure, each the larger of three signed distances, interpolated
  * between them: to the shore (terrain_shore at mip 0; positive over the sea)
- * plus PLAN_COAST_M, and into ground steeper than PLAN_STEEP_GRADE (the
- * Earth's grade at mip 0 between the nodes either side) less
- * PLAN_STEEP_REACH_M. The footprint's edge is the larger of the warped disc's
- * and the grid's, so the footprint stops PLAN_COAST_M short of the sea and
- * PLAN_STEEP_REACH_M into the mountains; the grid's bilinear distance changes
- * by at most sqrt 2 a metre, well inside CITY_EDGE_RATE. Where the grid finds
- * neither it is left out. A footprint the cut leaves short of its area by
+ * plus PLAN_COAST_M, to a lake's shore (terrain_earth_shore, exact within
+ * LAKE_KNOWN_M of a lake and carried on beyond by a chamfer distance;
+ * positive in the lake) plus PLAN_LAKE_M, and into ground steeper than
+ * PLAN_STEEP_GRADE (the Earth's grade at mip 0 between the nodes either side)
+ * less PLAN_STEEP_REACH_M. The footprint's edge is the larger of the warped
+ * disc's and the grid's, so the footprint stops PLAN_COAST_M short of the
+ * sea, PLAN_LAKE_M short of a lake and PLAN_STEEP_REACH_M into the
+ * mountains; the grid's bilinear distance changes by at most sqrt 2 a metre,
+ * well inside CITY_EDGE_RATE. Where the grid finds none of them it is left
+ * out. Between the nodes the grid can miss a lake's narrow arm, so near a
+ * lake (lake_exact) the edge is also at least PLAN_LAKE_M less the exact
+ * distance to its shore, falling away faster past LAKE_EXACT_FROM so that it
+ * is under the grid's term before LAKE_KNOWN_M, where it is no longer read. A footprint the cut leaves short of its area by
  * more than AREA_SLACK is pushed: its centre steps away from the part cut
  * off, by a PUSH_STEPS-th of its radius at a time (PUSH_STEP_MIN at least)
  * up to its radius (in PUSH_DIRS directions round that), to the nearest
@@ -81,6 +87,10 @@
 #define HOME_KM       30.0        /* a row of the list this near the world chart's origin is the megacity (km) */
 #define CUT_CELL      1000.0      /* the cut grid's spacing (m) */
 #define STEEP_SPACING 1000.0      /* the Earth's grade read at this spacing: mip 0 */
+#define LAKE_KNOWN_M  1500.0      /* the lakes' shores are read exactly this near them (under the bake's reach, 2 km) */
+#define LAKE_EXACT_FROM 500.0     /* the exact lake term falls away an extra... */
+#define LAKE_EXACT_FALL 1.0       /* ...this per metre past here: under the grid's (bilinear, chamfered: within 0.71 CUT_CELL and 8.3%) by LAKE_KNOWN_M */
+#define LAKE_NEAR_NODE  3200.0    /* a lake may be within LAKE_KNOWN_M of a point only if a corner node's chamfer distance is under this */
 #define AREA_SLACK    0.03        /* a footprint may lose this share of its area to the cut */
 #define AREA_NODES    80          /* areas are counted on about this many nodes across a footprint, at most */
 #define PUSH_STEPS    40          /* a push steps out by this fraction of the radius... */
@@ -107,8 +117,11 @@ enum { WORLD_EMPTY = 0, WORLD_PLACING, WORLD_SETTLED, WORLD_READY };
 typedef struct Cut {
     int    n;      /* nodes a side, 0 for none */
     double half;   /* the nodes span [-half, half]^2 about the settlement's centre in its chart (m) */
-    float *d;      /* n * n, row by row: the larger of the signed distances to the coast and into the mountains (m) */
+    float *d;      /* n * n, row by row: the largest of the signed distances to the coast, the lakes and into the mountains (m) */
+    float *lake;   /* n * n: each node's distance to the lakes (m; negative in one), or NULL with none near */
 } Cut;
+
+static void cut_free(Cut *c) { free(c->d); free(c->lake); c->d = c->lake = NULL; }
 
 typedef struct World {
     int            state;
@@ -175,13 +188,29 @@ static double cut_at(const Cut *c, double u, double v) {
     return (1.0 - tv) * ((1.0 - tu) * r0[0] + tu * r0[1]) + tv * ((1.0 - tu) * r1[0] + tu * r1[1]);
 }
 
-/* Settlement k's edge measure at (u, v) of its own chart: the disc about its
- * origin, its warp read where its centre stands in the world chart, cut at
- * the coast and the mountains. */
-static double settlement_edge(int k, double u, double v) {
+/* The exact lake term at (u, v) of cut c, p there: PLAN_LAKE_M less the
+ * distance to the nearest lake's shore, less LAKE_EXACT_FALL a metre of it
+ * past LAKE_EXACT_FROM; far below any edge where no corner node is near a
+ * lake, or the shore is LAKE_KNOWN_M or more away (then the grid's is the
+ * larger anyway). */
+static double lake_exact(const Cut *c, double u, double v, TerrainDir p) {
+    if (!c->lake) return -1e300;
+    double fu = (u + c->half) / CUT_CELL, fv = (v + c->half) / CUT_CELL;
+    if (!(fu >= 0.0 && fv >= 0.0 && fu < c->n - 1 && fv < c->n - 1)) return -1e300;
+    const float *r0 = &c->lake[(size_t)(int)fv * c->n + (int)fu], *r1 = r0 + c->n;
+    if (fminf(fminf(r0[0], r0[1]), fminf(r1[0], r1[1])) >= (float)LAKE_NEAR_NODE) return -1e300;
+    double d = terrain_earth_shore(p);
+    if (d >= LAKE_KNOWN_M) return -1e300;
+    return PLAN_LAKE_M - d - LAKE_EXACT_FALL * fmax(0.0, d - LAKE_EXACT_FROM);
+}
+
+/* Settlement k's edge measure at (u, v) of its own chart, p there: the disc
+ * about its origin, its warp read where its centre stands in the world
+ * chart, cut at the coast, the lakes and the mountains. */
+static double settlement_edge(int k, double u, double v, TerrainDir p) {
     const PlanSettlement *s = &W.s[k];
     double e = footprint_edge(s->disc, s->radius, s->centre.x + u, s->centre.z + v);
-    double c = cut_at(&W.cut[k], u, v);
+    double c = fmax(cut_at(&W.cut[k], u, v), lake_exact(&W.cut[k], u, v, p));
     return e > c ? e : c;
 }
 
@@ -191,6 +220,7 @@ double plan_home_edge(double x, double z) {
     const PlanSettlement *s = &W.s[0];
     double e = footprint_edge(s->disc, s->radius, x, z);
     double c = cut_at(&W.cut[0], x - s->centre.x, z - s->centre.z);
+    if (W.cut[0].lake) c = fmax(c, lake_exact(&W.cut[0], x - s->centre.x, z - s->centre.z, terrain_chart_dir(&W.wc, x, z)));
     return e > c ? e : c;
 }
 
@@ -219,7 +249,7 @@ double plan_city_edge(double x, double z) {
         double u, v;
         terrain_dir_chart(&s->chart, p, &u, &v);
         double d = hypot(u, v) - s->radius - warp_of(s->radius);
-        if (d < e) e = fmin(e, settlement_edge(id, u, v));
+        if (d < e) e = fmin(e, settlement_edge(id, u, v, p));
     }
     return e;
 }
@@ -608,8 +638,36 @@ static void signed_distance(const uint8_t *mark, int n, double *in, double *out,
         d[q] = (float)((mark[q] ? sqrt(out[q]) - 0.5 : 0.5 - sqrt(in[q])) * CUT_CELL + add);
 }
 
+/* The distance from each node to the lakes (m): d holds it where it is
+ * known (exactly, near a lake) and 1e30 elsewhere, and is carried on to the
+ * rest by a two-pass chamfer, a node's at most its neighbour's plus the step
+ * between them, so it changes by no more than a node's spacing a node. */
+static void chamfer(float *d, int n) {
+    const float a = (float)CUT_CELL, g = (float)(CUT_CELL * 1.4142135623730951);
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            float *q = &d[(size_t)j * n + i];
+            if (i > 0) *q = fminf(*q, q[-1] + a);
+            if (j > 0) {
+                *q = fminf(*q, q[-n] + a);
+                if (i > 0) *q = fminf(*q, q[-n - 1] + g);
+                if (i < n - 1) *q = fminf(*q, q[-n + 1] + g);
+            }
+        }
+    for (int j = n - 1; j >= 0; --j)
+        for (int i = n - 1; i >= 0; --i) {
+            float *q = &d[(size_t)j * n + i];
+            if (i < n - 1) *q = fminf(*q, q[1] + a);
+            if (j < n - 1) {
+                *q = fminf(*q, q[n] + a);
+                if (i < n - 1) *q = fminf(*q, q[n + 1] + g);
+                if (i > 0) *q = fminf(*q, q[n - 1] + g);
+            }
+        }
+}
+
 /* The cut grid over [-half, half]^2 about (ox, oz) of chart ch; none where it
- * finds neither sea nor mountains. */
+ * finds neither sea, lakes nor mountains. */
 static void cut_build(Cut *c, const TerrainChart *ch, double ox, double oz, double half) {
     memset(c, 0, sizeof(*c));
     int n = (int)ceil(2.0 * half / CUT_CELL) + 1;
@@ -617,9 +675,9 @@ static void cut_build(Cut *c, const TerrainChart *ch, double ox, double oz, doub
     size_t nn = (size_t)n * n;
     uint8_t *sea = (uint8_t *)malloc(nn), *steep = (uint8_t *)malloc(nn), *inv = (uint8_t *)malloc(nn);
     double *h = (double *)malloc(sizeof(double) * nn), *din = (double *)malloc(sizeof(double) * nn), *dout = (double *)malloc(sizeof(double) * nn);
-    float *ds = (float *)malloc(sizeof(float) * nn);
-    if (!sea || !steep || !inv || !h || !din || !dout || !ds) fatal("out of memory cutting the footprints");
-    int nsea = 0, nsteep = 0;
+    float *ds = (float *)malloc(sizeof(float) * nn), *lake = (float *)malloc(sizeof(float) * nn);
+    if (!sea || !steep || !inv || !h || !din || !dout || !ds || !lake) fatal("out of memory cutting the footprints");
+    int nsea = 0, nsteep = 0, nlake = 0;
     for (int j = 0; j < n; ++j)
         for (int i = 0; i < n; ++i) {
             size_t q = (size_t)j * n + i;
@@ -632,6 +690,10 @@ static void cut_build(Cut *c, const TerrainChart *ch, double ox, double oz, doub
                                                          v + (e == 2 ? 0.5 : e == 3 ? -0.5 : 0.0) * CUT_CELL), CUT_CELL) < 0.0;
             h[q] = terrain_earth_height(p, STEEP_SPACING);
             nsea += sea[q];
+            /* the lakes' shores: exact near them, inside one however far in */
+            double s = terrain_earth_shore(p);
+            lake[q] = s < 0.0 ? (float)s : s < LAKE_KNOWN_M ? (float)s : 1e30f;
+            nlake += s < LAKE_KNOWN_M;
         }
     /* the grade between the nodes either side (one side at the grid's border), on land */
     for (int j = 0; j < n; ++j)
@@ -657,7 +719,7 @@ static void cut_build(Cut *c, const TerrainChart *ch, double ox, double oz, doub
             steep[q] |= (uint8_t)closed;
         }
     }
-    if (nsea || nsteep) {
+    if (nsea || nsteep || nlake) {
         c->n = n;
         c->half = h0;
         c->d = (float *)malloc(sizeof(float) * nn);
@@ -665,8 +727,14 @@ static void cut_build(Cut *c, const TerrainChart *ch, double ox, double oz, doub
         signed_distance(sea, n, din, dout, inv, c->d, (float)PLAN_COAST_M);
         signed_distance(steep, n, din, dout, inv, ds, (float)-PLAN_STEEP_REACH_M);
         for (size_t q = 0; q < nn; ++q) c->d[q] = fmaxf(c->d[q], ds[q]);
+        if (nlake) {
+            chamfer(lake, n);
+            for (size_t q = 0; q < nn; ++q) c->d[q] = fmaxf(c->d[q], (float)PLAN_LAKE_M - lake[q]);
+            c->lake = lake;
+            lake = NULL;
+        }
     }
-    free(sea); free(steep); free(inv); free(h); free(din); free(dout); free(ds);
+    free(sea); free(steep); free(inv); free(h); free(din); free(dout); free(ds); free(lake);
 }
 
 /* Footprints are counted on every this-many-th node of the grid each way, so
@@ -744,11 +812,15 @@ static void cut_crop(Cut *c, double half) {
     if (!c->n || m >= c->n) return;
     if ((c->n - m) & 1) m++;   /* the same nodes, about the same centre */
     int o = (c->n - m) / 2;
-    float *d = (float *)malloc(sizeof(float) * (size_t)m * m);
-    if (!d) fatal("out of memory cutting the footprints");
-    for (int j = 0; j < m; ++j) memcpy(&d[(size_t)j * m], &c->d[(size_t)(j + o) * c->n + o], sizeof(float) * (size_t)m);
-    free(c->d);
-    c->d = d;
+    for (int pass = 0; pass < 2; ++pass) {
+        float **src = pass ? &c->lake : &c->d;
+        if (!*src) continue;
+        float *d = (float *)malloc(sizeof(float) * (size_t)m * m);
+        if (!d) fatal("out of memory cutting the footprints");
+        for (int j = 0; j < m; ++j) memcpy(&d[(size_t)j * m], &(*src)[(size_t)(j + o) * c->n + o], sizeof(float) * (size_t)m);
+        free(*src);
+        *src = d;
+    }
     c->n = m;
     c->half = 0.5 * (m - 1) * CUT_CELL;
 }
@@ -801,7 +873,7 @@ static void place_job(void *ctx, int job) {
     DVec2 at = dv(0.0, 0.0);
     if (cs.n) {
         int best = push_footprint(&cs, off, r, r, fmax(r, PUSH_FAR), centre_inland, NULL, &at);
-        free(cs.d);
+        cut_free(&cs);
         if (best < 0) { pc->ok[k] = 0; return; }   /* nowhere inland enough for its centre */
     }
     /* its town, its own chart about it, and its cut there */
@@ -833,7 +905,7 @@ static void place_home(const Group *g) {
     cut_build(&cs, &W.wc, c0.x, c0.z, near + r + warp_of(r) + 2.0 * CUT_CELL);
     if (cs.n) {
         push_footprint(&cs, c0, r, near, near, home_core, NULL, &at);
-        free(cs.d);
+        cut_free(&cs);
     }
     s->disc = dadd(c0, at);
     s->size_km = g->km;
@@ -915,14 +987,14 @@ static void place_settlements(int threads) {
                 if (pa != pb) { parent[pb] = pa; any = 1; rejoined++; }
             }
         if (!any) break;
-        for (int k = 0; k < ng; ++k) { free(W.cut[k].d); memset(&W.cut[k], 0, sizeof(Cut)); }
+        for (int k = 0; k < ng; ++k) { cut_free(&W.cut[k]); memset(&W.cut[k], 0, sizeof(Cut)); }
     }
     /* the megacity, with the name of the city it is */
     snprintf(W.name[0], sizeof W.name[0], "%s", g[0].name);
     int n = 1, lost = 0;
     char gone[512] = "";
     for (int k = 1; k < ng; ++k) {
-        if (!ok[k]) { note_lost(gone, sizeof gone, lost++, g[k].name); free(W.cut[k].d); continue; }
+        if (!ok[k]) { note_lost(gone, sizeof gone, lost++, g[k].name); cut_free(&W.cut[k]); continue; }
         W.s[n] = s[k];
         W.cut[n] = W.cut[k];
         snprintf(W.name[n], sizeof W.name[n], "%s", g[k].name);
@@ -931,7 +1003,7 @@ static void place_settlements(int threads) {
     for (int k = n; k < ng; ++k) memset(&W.cut[k], 0, sizeof(Cut));
     int shrunk = space_out(W.s, n), m = 1;
     for (int k = 1; k < n; ++k) {
-        if (W.s[k].radius == 0.0) { note_lost(gone, sizeof gone, lost++, W.name[k]); free(W.cut[k].d); continue; }
+        if (W.s[k].radius == 0.0) { note_lost(gone, sizeof gone, lost++, W.name[k]); cut_free(&W.cut[k]); continue; }
         W.s[m] = W.s[k];
         W.cut[m] = W.cut[k];
         memmove(W.name[m], W.name[k], sizeof W.name[m]);
@@ -1035,6 +1107,7 @@ void plan_world_init(int threads) {
     }
     build_index();
     W.state = WORLD_SETTLED;
+    terrain_earth_check_streams();   /* the streams were derived with these settlements, or are dropped */
     plan_roads_build(threads);
     W.state = WORLD_READY;
 }

@@ -593,9 +593,16 @@ double terrain_canyon_depth(double x, double z) {
 
 /* --- The land -------------------------------------------------------------- */
 
-double terrain_land_parts(TerrainDir d, double edge, double spacing, double *lift) {
-    double h = TERRAIN_BASE_M * fbm_lod(WORLD_SEED ^ 0x7E12u, scale3(d, PLANET_RADIUS), TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing);
-    double e = region_rise(edge), c = canyon_rise(edge);
+/* The procedural land's share at a signed distance s (m) from the real
+ * water's edge (terrain_earth_valley): none in the water, all of it from
+ * TERRAIN_VALLEY_M out, so the real rivers and lakes lie on the Earth's own
+ * valley floors and shores. */
+static double valley_rise(double s) { return smoothstepf(0.0f, (float)TERRAIN_VALLEY_M, (float)s); }
+
+double terrain_land_parts_at(TerrainDir d, double edge, double spacing, double valley, double *lift) {
+    double v = valley_rise(valley);
+    double h = v > 0.0 ? v * TERRAIN_BASE_M * fbm_lod(WORLD_SEED ^ 0x7E12u, scale3(d, PLANET_RADIUS), TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing) : 0.0;
+    double e = v * region_rise(edge), c = v * canyon_rise(edge);
     Macro m;
     macro_of(d, edge, spacing, e > 0.0 || c > 0.0, &m);
     *lift = m.lift;
@@ -608,6 +615,10 @@ double terrain_land_parts(TerrainDir d, double edge, double spacing, double *lif
     }
     if (c > 0.0) h -= c * m.canyon * canyon_depth(d);
     return h;
+}
+
+double terrain_land_parts(TerrainDir d, double edge, double spacing, double *lift) {
+    return terrain_land_parts_at(d, edge, spacing, terrain_earth_valley(d), lift);
 }
 
 /* Where plan_urban is above 0 the edge measure is below 0, and the detail's

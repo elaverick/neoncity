@@ -31,18 +31,31 @@ static double urban_shape_lod(double x, double z, double spacing) {
 
 double terrain_urban_shape(double x, double z) { return urban_shape_lod(x, z, 0.0); }
 
+/* What height_lod puts in the ground beyond the land and the settlements. */
+enum { GROUND_ROADS = 1, GROUND_WATER = 2, GROUND_ALL = 3 };
+
 /* Each field is evaluated only where its weight is non-zero; that skips work
  * without changing any height. *w gets the urban weight. The planet's
  * highlands (lift) are under the settlement's ground as under the land. The
- * land reads the direction p, or without one the chart's at (x, z). */
-static double height_lod(double x, double z, const TerrainDir *p, double spacing, double *w, double *relief, int roads) {
+ * land reads the direction p, or without one the chart's at (x, z). The
+ * water's beds are carved into the land, never under the city's own ground:
+ * down to the water's floor (terrain_earth_water), by no more than
+ * TERRAIN_WATER_CARVE_M; as the land moves, so does that, by no more. */
+static double height_lod(double x, double z, const TerrainDir *p, double spacing, double *w, double *relief, int parts) {
     double edge = plan_city_edge(x, z), h = 0.0, lift = 0.0;
+    int roads = parts & GROUND_ROADS;
     *w = plan_urban_weight(edge);
     *relief = *w > 0.0 ? urban_relief(x, z) : 0.0;
     if (*w < 1.0) {
         TerrainChart wc = terrain_world_chart();
         TerrainDir d = p ? *p : terrain_chart_dir(&wc, x, z);
-        h += (1.0 - *w) * terrain_land_parts(d, edge, spacing, &lift);
+        double land;
+        TerrainEarthWater wt;
+        if ((parts & GROUND_WATER) && terrain_earth_beds() && terrain_earth_water(d, &wt)) {   /* one query for the valley and the beds */
+            land = terrain_land_parts_at(d, edge, spacing, wt.valley, &lift);
+            if (wt.floor < land) land = fmax(wt.floor, land - TERRAIN_WATER_CARVE_M);
+        } else land = terrain_land_parts(d, edge, spacing, &lift);
+        h += (1.0 - *w) * land;
     } else lift = terrain_lift(x, z, spacing);
     if (*w > 0.0) h += *w * ((*relief > 0.0 ? *relief * urban_shape_lod(x, z, spacing) : 0.0) + lift);
     /* The roads between the settlements: the ground takes them where the
@@ -56,7 +69,12 @@ static double height_lod(double x, double z, const TerrainDir *p, double spacing
 
 double terrain_height_lod(double x, double z, double spacing) {
     double w, relief;
-    return height_lod(x, z, NULL, spacing, &w, &relief, 1);
+    return height_lod(x, z, NULL, spacing, &w, &relief, GROUND_ALL);
+}
+
+double terrain_height_dry_lod(double x, double z, double spacing) {
+    double w, relief;
+    return height_lod(x, z, NULL, spacing, &w, &relief, GROUND_ROADS);
 }
 
 double terrain_height(double x, double z) { return terrain_height_lod(x, z, 0.0); }
@@ -119,7 +137,7 @@ double terrain_urban_lod_error(double spacing, double relief) {
 }
 
 static double surface_lod(double x, double z, const TerrainDir *p, double spacing, float *urban) {
-    double w, relief, h = height_lod(x, z, p, spacing, &w, &relief, 1);
+    double w, relief, h = height_lod(x, z, p, spacing, &w, &relief, GROUND_ALL);
     if (urban) *urban = (float)w;
     return h - terrain_urban_sink(spacing, relief) * w;
 }
@@ -132,7 +150,14 @@ double terrain_height_dir(TerrainDir p, double spacing) {
     TerrainChart wc = terrain_world_chart();
     double x, z, w, relief;
     terrain_dir_chart(&wc, p, &x, &z);
-    return height_lod(x, z, &p, spacing, &w, &relief, 1);
+    return height_lod(x, z, &p, spacing, &w, &relief, GROUND_ALL);
+}
+
+double terrain_ground_bare_dir(TerrainDir p, double spacing) {
+    TerrainChart wc = terrain_world_chart();
+    double x, z, w, relief;
+    terrain_dir_chart(&wc, p, &x, &z);
+    return height_lod(x, z, &p, spacing, &w, &relief, 0);
 }
 
 double terrain_surface_dir(TerrainDir p, double spacing) {
@@ -157,7 +182,8 @@ double terrain_surface(double x, double z) { return terrain_surface_lod(x, z, 0.
  * clipmap), so lies within terrain_urban_lift_range; leaving octaves out
  * (terrain_height_lod) only shrinks each fractal sum, so the bound holds at
  * every level of detail up to that spacing. A road blends the ground towards
- * its own height, which the plan bounds (plan_road_range). */
+ * its own height, which the plan bounds (plan_road_range); the water carves
+ * the land by at most TERRAIN_WATER_CARVE_M. */
 void terrain_height_range(double x0, double z0, double x1, double z1, double *lo, double *hi) {
     double cx = 0.5 * (x0 + x1), cz = 0.5 * (z0 + z1), half = 0.5 * hypot(x1 - x0, z1 - z0);
     double e = plan_city_edge(cx, cz), emin = e - CITY_EDGE_RATE * half, emax = e + CITY_EDGE_RATE * half;
@@ -170,6 +196,7 @@ void terrain_height_range(double x0, double z0, double x1, double z1, double *lo
     if (emax > -CITY_BELT) {                                                 /* somewhere w < 1 */
         double ll, lh;
         terrain_land_range(emax, &ll, &lh);
+        if (terrain_earth_beds()) ll -= TERRAIN_WATER_CARVE_M;
         l = fmin(l, ll); h = fmax(h, lh);
         if (plan_road_range(x0, z0, x1, z1, &ll, &lh)) { l = fmin(l, ll); h = fmax(h, lh); }
     }
@@ -179,7 +206,7 @@ void terrain_height_range(double x0, double z0, double x1, double z1, double *lo
 
 double terrain_height_bare(double x, double z, double spacing) {
     double w, relief;
-    return height_lod(x, z, NULL, spacing, &w, &relief, 0);
+    return height_lod(x, z, NULL, spacing, &w, &relief, GROUND_WATER);
 }
 
 /* The roads move the ground at a spacing by wr (1 - w) (rh - g) from the bare
@@ -188,7 +215,7 @@ double terrain_height_bare(double x, double z, double spacing) {
 double terrain_road_lod_error(double x, double z, double spacing) {
     double e = 0.0;
     for (int k = 0; k < 2; ++k) {
-        double sp = k ? spacing : 0.0, w, relief, rh, g = height_lod(x, z, NULL, sp, &w, &relief, 0);
+        double sp = k ? spacing : 0.0, w, relief, rh, g = height_lod(x, z, NULL, sp, &w, &relief, GROUND_WATER);
         if (w >= 1.0 || sp > PLAN_ROAD_LOD_SPACING) continue;
         double wr = plan_road_ground(x, z, g, sp, &rh);
         e += wr * (1.0 - w) * fabs(rh - g);

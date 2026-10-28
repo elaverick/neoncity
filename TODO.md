@@ -170,7 +170,7 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
 
 ## Settlements and roads
-The world's largest metropolitan areas over the planet, megacities of the future 60-150 km across (178 of a
+The world's largest metropolitan areas over the planet, megacities of the future 60-150 km across (177 of a
 list of 227, sized from their real GHSL areas, merged where they would meet, cut at their coasts and mountains)
 and the freeways and trunk roads between those of North America (`src/plan/plan_world.c`,
 `src/plan/plan_roads.c`, `src/render/road_gpu.c`, `shaders/terrain/roads.glsl`; see the README, `world_test --map`).
@@ -205,7 +205,8 @@ Left over:
   city, and the urban relief falls with size to about 4 m on the largest; the Earth's lift under it (up to about
   4%) now gives the large-scale shape. The proxies reach 20 km, so most of a city's skyline beyond is the
   planet's patches only, and from the air at night the haze hides it (see the Earth, above). Merging pushes
-  some neighbours into one (13 pairs on the Earth: the list's 227 rows make 178 cities); Perm has no GHSL
+  some neighbours into one (14 pairs on the Earth since the lakes cut too, Qingdao taking Yantai: the list's 227
+  rows make 177 cities); Perm has no GHSL
   centre and is built at the smallest size.
 - **Steep cities.** Under a footprint the Earth at 20 km tilts up to about 4% (Almaty; 0.6% on average); the
   procedural mountains and canyons fade out under the city's ground, and a building on a grade stands at its
@@ -218,14 +219,42 @@ Left over:
 - **Clouds sit on the hills.** The deck's underside is at a fixed height (about 200 m), so within a city's cloud
   border a road climbing into the hills runs into it (see Landforms, Seen from the city, and Weather).
 - **Start-up.** Building the world costs about 28 s of one core's time (2.4 s on 32 threads): the cut grids of the
-  178 cities (placed up to five times as the merging settles), the coarse cost grid, candidate and fine routes,
+  177 cities (placed up to five times as the merging settles), the coarse cost grid, candidate and fine routes,
   profiles and the index; every test and the game pay it. Profiles and fine routes could be made lazily for the roads near the
   camera, or the world cached on disk by a hash of its inputs.
-- **Determinism across compilers.** Scores and costs are quantised so the game's `/fp:fast` and the tests agree,
-  but a value on a quantum's edge could still tip a different way; `world_test --fingerprint` from both would tell.
+- **Determinism across compilers.** It did tip: with `/fp:fast` the game placed about six of the 177 cities
+  differently from the tests (up to 23 km; found by the streams' plan probes, W2a). The game now builds the plan
+  and the ground without it (`neoncity_world` in CMakeLists.txt), and its probes match the tests' exactly. Another
+  compiler or platform could still differ; the streams' file would refuse to load and say where.
 - **Routing:** costs are first guesses (mountains 4, plateaus 1.5 and hills 0.6 times a metre on the coarse grid;
   grades over 3% and steeply over 8% on the fine one). Roads beside each other within 1.5 km are joined, further
   apart they stay two (some parallel freeways 20-50 km apart are real alternatives).
+
+## Water
+The major rivers and lakes (HydroSHEDS) and the small streams derived from the land (`build/earth.streams`), with
+their beds fitted along each drainage tree and each lake's level (`tools/earth_streams.c`); the procedural land
+fades out within 1 km of the real water, the ground is carved to the water's floor outside the cities, and lakes cut
+the footprints 200 m back (W2a; see `data/earth/SOURCE.md`, "Runoff and the streams"). Left over:
+- **The water itself** isn't drawn: the channels and basins are empty.
+- **Rivers through the cities** (W2b, next): the city's ground is still whole over them; concrete channels, the towns
+  split along them, bridges on the boulevards and arterials. Then the roads between the cities (W2c): water
+  crossings costed and bridged. Until then those roads read the ground without the beds (`terrain_height_dry_lod`),
+  and where they cross a channel their embankment fills it.
+- **Notches.** A stream's path runs over 500 m cells and is corner-cut, so on a hillside it strays off the valley
+  floor: at a tenth of its length the ground stands 59 m or more over its bed, and the carve, capped at 30 m
+  (`TERRAIN_WATER_CARVE_M`), leaves a notch there rather than a valley. Paths snapped to the full detail's valley
+  floors, or a wider and gentler cut, would read better.
+- **Fills.** About a quarter of the streams' points, and of the rivers', lie more than 2 m under their fitted level
+  (pits the fit fills rather than cuts: 7.7 m on average for the streams, 5.4 m for the rivers); with water there
+  they would be ponds. The fit weighs cut and fill alike (the user's choice); weighting the fill more would cut
+  deeper notches instead.
+- **The banks** rise at 1 in 2 out of every channel and lake (`TERRAIN_WATER_BANK`), whatever the river's size and the
+  ground; the lakes' basins fall 1 in 20 to 10 m. Values set by reasoning, not yet judged by eye (night captures
+  from the air show nothing; `terrain_test --map out.ppm km x z` draws the ground with the water in cyan).
+- **Cost.** The water is read at every land sample: the planet's patches fill about 20% slower (0.98 to 1.18 ms),
+  the clipmap round the city 11% (428 to 477 ns a sample); a query near the water is about 2.2 us.
+- **Face seams.** 246 of 623 streams reaching a cube face's edge find no start on the next face, and 189 that do
+  start higher there.
 
 ## Weather
 The start of a weather system (`src/core/clouds.h`, `src/app/weather.c`, `shaders/sky.frag`, `cloudCover` in

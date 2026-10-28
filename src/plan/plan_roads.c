@@ -382,7 +382,7 @@ static const FineCell *fine_cell(Fine *f, int i, int j) {
     if (end || (inside && passable(x, z, f->from, f->to))) {
         TerrainLandform lf;
         terrain_landform(x, z, &lf);
-        c.h = (float)terrain_height_lod(x, z, 250.0);
+        c.h = (float)terrain_height_dry_lod(x, z, 250.0);
         c.mountain = lf.w[TERRAIN_MOUNTAINS];
         c.canyon = lf.canyon;
         c.open = 1;
@@ -1530,7 +1530,7 @@ static void gate_job(void *ctx, int l) {
 
 /* The ground's height for the roads to follow: without them (they aren't in
  * the terrain while it is asked), its finest detail left out. */
-static double road_ground(DVec2 p) { return terrain_height_lod(p.x, p.z, 10.0); }
+static double road_ground(DVec2 p) { return terrain_height_dry_lod(p.x, p.z, 10.0); }
 
 /* First pass: the ground along the road every station, smoothed over the
  * class's window, into L->prof. */

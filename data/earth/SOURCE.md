@@ -249,26 +249,51 @@ no stream rises there. It is `runoff/runoff.tif` (1440 × 720 float32, 1 MB, Git
 `out.r16.runoff`. The median land cell sheds 6.3 L/s/km², the 90th percentile 31; the Sahara and the
 Atacama 0, Los Angeles 6, London 9, the Amazon 37, Seattle 46, Mumbai 68.
 
-`earth_streams <bake> <out.streams> --stage <stage.r16>` reads the land with no settlement near
-(`terrain_land_parts` at `TERRAIN_WILD_EDGE`: the Earth, the region's landforms and canyons) on each
-cube face's equal-angle grid at 500 m, with a 30 km halo past the face's edges. Sea is where
+`earth_streams <bake> <out.streams> --stage <stage.r16>` places the settlements (`plan_world_init`)
+and reads the ground with them (`terrain_ground_bare_dir`: the Earth, the region's landforms and
+canyons, the cities' ground, but neither the roads, which the streams pass under, nor the water's
+own beds) on each cube face's equal-angle grid at 500 m, with a 30 km halo past the face's edges.
+Through a city the streams run on through its ground, buried: the engine carves none there (the
+user's choice, 2026-10-28). Sea is where
 `terrain_shore` is below 0; water where the bake's rivers and lakes come within half a cell (250 m).
 A priority flood from the sea, the water and the grid's border gives every land cell a neighbour to
 drain to and a level that never rises downstream (a pit fills to its spill); each cell sheds its
 area times the runoff, summed down the drainage. A stream is every cell carrying at least 0.5 m³/s.
 Its links run from each head and junction to the next junction, the sea (moved to the coast), the
 water (moved to its edge) or the next face (joined to that face's start), corner-cut twice and thinned
-to 60 m across and 2 m of bed. Each point keeps its bed (the flood's level, world Y) and its flow; the
-width is 7·√flow m, as the rivers'. The file repeats the bake's water layout (`tools/earth_water.c`,
-shared with `earth_bake`) after a header holding the bake's stage checksum and the land at 24 probes;
-the engine refuses the file, with a warning, if either has changed (`terrain_earth_load_streams`).
+to 60 m across and 2 m of bed. Each point keeps its bed and its flow; the width is 7·√flow m, as the
+rivers'. The bed (W2, decided with the user on 2026-10-28) is fitted, not the flood's level: along
+the drainage tree the water's level is fitted to the land at the stream's cells, never rising
+downstream, with the least total |cut| + |fill| (an L1 isotonic regression on the tree, solved leaf
+to root with mergeable heaps), less the channel's depth, 0.27·flow^0.39 m (Leopold and Maddock).
+The same file gives the bake's water its beds: each river point's, fitted the same way along its
+reaches (each reach's end runs on into the nearest other reach starting within 1.5 km, as
+HydroRIVERS steps 15" cells), and each lake its level, the lowest ground on any of its rings (a ring
+is told outer or hole by its winding and the side the water lies on; the holes follow their outer
+ring), with the buckets inside a lake that list no shore taking its level from those round them.
+The file repeats the bake's water layout (`tools/earth_water.c`, shared with `earth_bake`) after a
+header holding the bake's stage checksum and the land at 24 probes, and after the streams the
+settlements' count and the edge measure round each settlement (9 probes each); the engine refuses
+the file, with a warning, if the bake, the land or the settlements have changed
+(`terrain_earth_load_streams`, `terrain_earth_check_streams`). The game builds the plan and the
+ground without `/fp:fast` (`neoncity_world`), so its settlements are the tool's to the bit.
 
-On the full project (2026-10-28): 918,419 links, 8.2 million points, 6.0 million km of stream, 299 MB,
-4.6 minutes on 32 threads (about 6 GB a face; the flood is single-threaded, 60 s on the busiest face).
-Of the links' ends, 516,677 meet another link, 29,045 the sea and 372,079 the project's water; 371
-cross a face seam into the next face's start and 247 find none (the faces drained differently there).
-Against the land at full detail the bed lies 0.5 m under it at the median, 45 m at the 90th
-percentile and 116 m at the 99th (the notches the channel must cut, where finer ridges cross a path);
-34% of the streams' length crosses pits the flood filled, where the bed stands above the land (17.5 m
-on average). `terrain_test --earth <bake> --streams <file>` checks them (ctest runs it on the test
-bake's, derived at 8 km), and `terrain_test --water-map` draws them in teal.
+On the full project (2026-10-28, W2a): 929,917 links, 8.7 million points, 6.1 million km of stream,
+316 MB, 5.2 minutes on 32 threads (about 6 GB a face; the flood is single-threaded, 65 s on the
+busiest face). Of the links' ends, 528,729 meet another link, 29,287 the sea and 371,278 the
+project's water; 377 cross a face seam into the next face's start and 246 find none. The streams'
+fitted levels lie off the land at their cells by more than 2 m at 30% of them (cut 4.2 m, filled 7.7 m
+on average); the rivers' at 31% (cut 3.5 m, filled 5.4 m), once the procedural land fades out near
+them (below; 60% before). Against the ground at full detail a stream's bed lies 2.4 m under it at the
+median, 59 m at the 90th percentile and 167 m at the 99th (where the 500 m path crosses a hillside
+between valley cells; the ground carves at most 30 m), and 26% of the points lie more than 2 m over
+it (pits the fit fills rather than cuts). Lakes: 185,340 found against 185,181 lake ids in the staged
+file (356,610 rings). `terrain_test --earth <bake> --streams <file>` checks them (ctest runs it on
+the test bake's, derived at 8 km), and `terrain_test --water-map` draws them in teal.
+
+The ground (W2a). Within 1 km of the bake's rivers' banks and lakes' shores the procedural land (the
+base, the landforms, the canyons) fades out, so the real water lies on the Earth's own valley floors
+(`terrain_earth_valley`; never the streams, which are derived from the land). Outside the cities the
+water carves the ground down to its floor (`terrain_earth_water`'s `floor`): each channel's bed
+rising at 1 in 2 beyond its half width, a lake's level falling inwards at 1 in 20 to 10 m under it,
+by at most 30 m. Lakes cut the footprints like the sea, 200 m from the shore (`PLAN_LAKE_M`).

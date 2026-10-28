@@ -75,16 +75,18 @@ static double sphere_m(TerrainDir a, TerrainDir b) {
 
 /* A settlement's footprint sampled every `step` m over its own chart, about
  * its disc (the megacity's chart is the world's): how many samples lie on the
- * sea, and its area (m^2). The coast is cut on a grid (plan_world.c,
- * CUT_CELL), so between its nodes in the lowlands the interpolated Earth may
- * dip a little below the sea; deeper than WET_DIP_M is the sea. */
+ * sea, how many in a lake and the nearest any comes to a lake's shore (m),
+ * and its area (m^2). The coast is cut on a grid (plan_world.c, CUT_CELL), so
+ * between its nodes in the lowlands the interpolated Earth may dip a little
+ * below the sea; deeper than WET_DIP_M is the sea. */
 #define WET_DIP_M 1.0
-static void footprint_sample(int k, double step, int *wet, double *area) {
+static void footprint_sample(int k, double step, int *wet, int *lake, double *lake_near, double *area) {
     PlanSettlement s = plan_settlement(k);
     TerrainChart wc = terrain_world_chart();
     double reach = s.radius + warp_of(s.radius), ou = k ? 0.0 : s.disc.x, ov = k ? 0.0 : s.disc.z;
     int n = (int)ceil(reach / step);
-    *wet = 0;
+    *wet = *lake = 0;
+    *lake_near = 1e30;
     *area = 0.0;
     for (int j = -n; j <= n; ++j)
         for (int i = -n; i <= n; ++i) {
@@ -96,6 +98,9 @@ static void footprint_sample(int k, double step, int *wet, double *area) {
             *area += step * step;
             double sh = terrain_shore(d, 500.0);
             if (sh < -WET_DIP_M) (*wet)++;
+            double ls = terrain_earth_shore(d);
+            if (ls < 0.0) (*lake)++;
+            if (ls < *lake_near) *lake_near = ls;
         }
 }
 
@@ -117,7 +122,8 @@ static void test_settlements(void) {
     CHECK(memcmp(&home.chart, &wc, sizeof wc) == 0, "settlement 0's chart isn't the world's");
     CHECK(!terrain_earth_loaded() || home.rank > 0, "no city of the list is the megacity, on the Earth");
     printf("settlements: %d; the megacity is %s (rank %d)\n", ns, plan_settlement_name(0), home.rank);
-    int colossal = 0, continents[64] = { 0 }, inReach = 0, roaded = 0, wetAll = 0, clipped = 0, grown = 0;
+    int colossal = 0, continents[64] = { 0 }, inReach = 0, roaded = 0, wetAll = 0, clipped = 0, grown = 0, lakeAll = 0, lakeNearK = 0;
+    double lakeNear = 1e30;
     double gapMin = 1e300, gradeMax = 0.0, gradeSum = 0.0, keptMin = 1e300, farthest = 0.0;
     double kmLo = 1e9, kmHi = 0.0, sizeLo = 1e9, sizeHi = 0.0;
     int keptMinK = 0, gradeMaxK = 0, kmLoK = 0, shrunk = 0;
@@ -167,10 +173,13 @@ static void test_settlements(void) {
             PlanSettlement o = plan_settlement(q);
             gapMin = fmin(gapMin, sphere_m(disc_dir(k), disc_dir(q)) - s.radius - o.radius - 2.0 * fmax(warp_of(s.radius), warp_of(o.radius)));
         }
-        /* on land, clear of the coast, and as big as its area makes it */
-        int wet;
-        double area;
-        footprint_sample(k, 1000.0, &wet, &area);
+        /* on land, clear of the coast and the lakes, and as big as its area makes it */
+        int wet, lake;
+        double area, lake_near;
+        footprint_sample(k, 1000.0, &wet, &lake, &lake_near, &area);
+        lakeAll += lake;
+        if (lake_near < lakeNear) { lakeNear = lake_near; lakeNearK = k; }
+        CHECK(lake == 0, "%d samples of settlement %d (%s) in a lake", lake, k, plan_settlement_name(k));
         double kept = area / (3.14159265358979 * r0 * r0);
         if (kept < keptMin) { keptMin = kept; keptMinK = k; }
         clipped += kept < 0.97;
@@ -193,6 +202,7 @@ static void test_settlements(void) {
            sizeLo, sizeHi, kmLo, plan_settlement_name(kmLoK), kmHi);
     CHECK(gapMin > 0.0, "two footprints only %.1f km apart, warps allowed for", gapMin / 1000.0);
     CHECK(wetAll == 0, "%d footprint samples on the sea or within its margin", wetAll);
+    if (lakeNear < 1e29) printf("  footprints come within %.0f m of a lake's shore at the nearest (%s; %d samples in one)\n", lakeNear, plan_settlement_name(lakeNearK), lakeAll);
     CHECK(kmLo >= 0.8 * PLAN_CITY_MIN_KM && kmHi <= 1.4 * PLAN_CITY_MAX_KM, "cities built %.1f .. %.1f km across", kmLo, kmHi);
 
     /* The edge measure: capped, continuous, and no faster than CITY_EDGE_RATE, near the settlements too. */
@@ -337,8 +347,9 @@ static int list_settlements(void) {
         double r0 = plan_settlement_radius(s.size_km), area;
         DVec2 off = dsub(s.disc, s.centre);
         double way = fmod(atan2(off.x, -off.z) * 57.29577951308232 + 360.0, 360.0);   /* the chart's x east, z south */
-        int wet;
-        footprint_sample(k, 1000.0, &wet, &area);
+        int wet, lake;
+        double lake_near;
+        footprint_sample(k, 1000.0, &wet, &lake, &lake_near, &area);
         printf("%3d %4d %-28.28s %8.0f %7.1f %8.0f %6.2f %6.2f %7.1f %5.0f\n", k, s.rank, plan_settlement_name(k), s.area_km2, s.size_km,
                s.radius, s.radius / r0, area / (3.14159265358979 * r0 * r0), dlen(off) / 1000.0, way);
     }

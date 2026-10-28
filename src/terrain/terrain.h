@@ -36,6 +36,9 @@ void   terrain_urban_height_range(double x0, double z0, double x1, double z1, do
  * detail). spacing 0 is terrain_height, bit for bit. */
 double terrain_height_lod(double x, double z, double spacing);
 
+/* terrain_height_lod without the water's beds carved in: the ground the
+ * roads between the settlements are routed and graded over. */
+double terrain_height_dry_lod(double x, double z, double spacing);
 /* Conservative bounds on terrain_height (and terrain_height_lod at any
  * spacing up to 20 km, TERRAIN_LIFT_SPACING, which every clipmap level is under)
  * over the rectangle [x0,x1] x [z0,z1]: every height inside lies in
@@ -218,18 +221,47 @@ int    terrain_earth_land(TerrainDir p, TerrainEarthLand *out);
  * river's bank or a lake's shore, negative in the water; river, the distance
  * to the nearest river's centre line (the river whose bank is nearest), its
  * width (m) and its direction downstream there (unit, along the ground);
- * lake, 1 in a lake. The rivers include the streams derived from the land
- * (below) where they are loaded: stream is 1 when the nearest bank is a
- * stream's, and bed its bed there (world Y; 1e30 for a real river, whose
- * bed W2 sets). Exact within `reach` of the water (the bake's, 2 km);
- * beyond it, edge reads +-reach, river reads reach and width 0. Pure, about a
+ * lake, 1 in a lake, and shore the signed distance to the nearest lake's
+ * shore; valley, the signed distance to the nearest of the bake's own
+ * rivers' banks and lakes' shores (terrain_earth_valley). The rivers include
+ * the streams derived from the land (below) where they are loaded: stream is
+ * 1 when the nearest bank is a stream's.
+ *
+ * The streams' file gives the water its beds (without it these are 1e30):
+ * bed, the nearest river's bed where p is nearest it (world Y, its channel's
+ * floor; never rising downstream); level, the nearest lake's level (its
+ * every ring's); and floor, what the water carves the ground down to at p:
+ * the least of every river's bed rising beyond its half width at
+ * TERRAIN_WATER_BANK, the lake p is in under its level falling inwards at
+ * TERRAIN_LAKE_SLOPE to TERRAIN_LAKE_DEEP_M below it, and every other lake
+ * near under its level rising outwards at TERRAIN_WATER_BANK. The floor is
+ * continuous wherever the water is within the reach.
+ *
+ * Exact within `reach` of the water (the bake's, 2 km); beyond it, edge and
+ * shore read +-reach, river reads reach and width 0. Pure, about a
  * microsecond or two. Returns 0, everything far (1e30), with no water in the bake. */
+#define TERRAIN_WATER_BANK   0.5    /* a channel's or lake's bank: rise per metre out (m) */
+#define TERRAIN_LAKE_SLOPE   0.05   /* a lake's bed: fall per metre in (m)... */
+#define TERRAIN_LAKE_DEEP_M  10.0   /* ...to this far below its level */
 typedef struct TerrainEarthWater {
-    double     edge, river, width, reach, bed;
+    double     edge, river, width, reach, bed, shore, level, floor, valley;
     TerrainDir flow;
     int        lake, stream;
 } TerrainEarthWater;
 int    terrain_earth_water(TerrainDir p, TerrainEarthWater *out);
+/* The signed distance (m) from p to the nearest lake's shore, negative in a
+ * lake, within the reach (+-reach beyond; 1e30 with no water): the bake's
+ * lakes alone, quick where no shore is near. The settlements' cut reads it. */
+double terrain_earth_shore(TerrainDir p);
+/* The signed distance (m) from p to the nearest of the bake's rivers' banks
+ * and lakes' shores, negative in the water, within the reach (+-reach
+ * beyond; 1e30 with no water): the procedural land fades out towards it.
+ * Never the streams, which are derived from the land. */
+double terrain_earth_valley(TerrainDir p);
+/* Drops the streams, with a warning, if the settlements have changed since
+ * they were derived (their file's plan probes); plan_world_init calls it once
+ * the settlements are placed. */
+void   terrain_earth_check_streams(void);
 /* Calls fn for every segment of the water (its ends, the river's width or 0,
  * and its kind: 1 a river, 2 a lake's shore, 3 a stream), for maps and
  * checks; returns how many. */

@@ -5,11 +5,14 @@
  *                 [--cell M] [--min-flow Q] [--halo M] [--tolerance M] [--threads T]
  *   earth_streams --info <bake> <streams>
  *
- * The ground is the land with no settlement near (terrain_land_parts at
- * TERRAIN_WILD_EDGE: the Earth and the region's landforms and canyons), read
- * on each cube face's equal-angle grid of `cell` metres (default 500) at that
- * spacing, with a halo of `halo` metres (default 30 km) past the face's
- * edges. A cell is sea where terrain_shore is below 0, water where the bake's
+ * The ground is the land with the settlements on it (terrain_ground_bare_dir:
+ * the Earth, the region's landforms and canyons, the cities' ground, but
+ * neither the roads, which the streams pass under, nor the water's own beds),
+ * the settlements placed first (plan_world_init), read on each cube face's
+ * equal-angle grid of `cell` metres (default 500) at that spacing, with a
+ * halo of `halo` metres (default 30 km) past the face's edges. Inside a city
+ * the streams run on through its ground, buried: the engine carves none
+ * there. A cell is sea where terrain_shore is below 0, water where the bake's
  * rivers and lakes come within half a cell (terrain_earth_water), and land
  * otherwise. Every land cell drains to a neighbour (of eight) by a
  * priority flood from the sea, the water and the grid's border: the lowest
@@ -24,9 +27,22 @@
  * junction, the sea, the water, or the halo (where the next face's link
  * starts: the ends are joined across the seams); corner-cut twice (Chaikin),
  * the ends kept, then thinned to within `tolerance` metres (default 60) and
- * BED_TOL of the bed. The bed is the flood's level, never rising downstream;
- * the width 7 sqrt(flow) m, as the project's rivers'. An end at the sea is
- * moved to the coast (terrain_shore 0), at the water to its edge.
+ * BED_TOL of the bed. An end at the sea is moved to the coast (terrain_shore
+ * 0), at the water to its edge. The width is 7 sqrt(flow) m, as the
+ * project's rivers'.
+ *
+ * The beds. Along the streams' drainage tree the water's level is fitted to
+ * the land at the stream's cells, never rising downstream, with the least
+ * total |cut| + |fill| (an L1 isotonic regression on the tree, solved
+ * leaf to root with mergeable heaps: tree_fit); the bed is that level less
+ * the channel's depth, DEPTH_K flow^DEPTH_EXP. The bake's rivers get theirs
+ * the same way, the land read at each point, along their reaches, each
+ * reach's end running on into the nearest other reach that starts within
+ * REACH_JOIN_M of it. A lake's level is the lowest land on its shore, its
+ * every ring's (each ring is told an outer ring or a hole by its winding
+ * and the side the water lies on, and the holes follow their outer ring);
+ * buckets inside a lake that no shore comes near take its level from the
+ * buckets round them.
  *
  * File layout, all little-endian (f32 float), the header 512 bytes:
  *      0  char[8] "NCSTREAM"     8  u32 version (1)    12  u32 the grid's cells a face side
@@ -38,10 +54,17 @@
  *         so the engine can tell when the land has changed since
  *   then the bake's water section (src/terrain/terrain_earth.c, tools/earth_water.c): V points of kind
  *   3, each link a run, the buckets (no lakes: inside is 0), then f32 bed[V] (world Y, m) and
- *   f32 flow[V] (m3/s).
+ *   f32 flow[V] (m3/s);
+ *   then the plan's probes, the header's count at 116: f32 x 4 each, the first the
+ *   settlements' count and three 0s, the rest a direction and plan_city_edge there, round
+ *   every settlement's disc, so the engine can tell when the settlements have changed;
+ *   then u32 the bake's water points Vb and f32 bed[Vb] (a river point's bed, a lake point's
+ *   lake's level; world Y, m); then u32 L, u32 bucket[L] (ascending: face, then row, then
+ *   column) and f32 level[L], the lakes' levels in the buckets inside them that list no shore.
  *
  * The same bake, stage and options give the same bytes, whatever the thread count. */
 #include "terrain_internal.h"
+#include "plan.h"
 #include "thread.h"
 #include "earth_water.h"
 
@@ -54,7 +77,7 @@
 
 #define PI            3.14159265358979323846
 #define MAGIC         "NCSTREAM"
-#define VERSION       1
+#define VERSION       2
 #define HEADER        512
 #define PROBES        24
 #define WIDTH_K       7.0       /* m per root of m3/s, as earth.py's WATER_WIDTH_K */
@@ -63,6 +86,11 @@
 #define BUCKETS       1024      /* a face side, as the bake's (9.8 km) */
 #define REACH_M       2000.0    /* as the bake's */
 #define SEAM_JOIN     1.5       /* cells: a link's end in the halo joins the next face's start this near */
+#define DEPTH_K       0.27      /* a channel's depth (m) is this times its flow (m3/s) to the... */
+#define DEPTH_EXP     0.39      /* ...this (Leopold and Maddock's hydraulic geometry) */
+#define PLAN_PROBES   8         /* plan probes round each settlement's disc, besides its centre */
+#define REACH_JOIN_M  1500.0    /* a reach's end runs on into the nearest other reach starting this near (HydroRIVERS steps 15" cells) */
+#define SIDE_M        10.0      /* a lake's ring is told outer or hole by the water this far to the left of its longest side */
 
 enum { LAND = 0, SEA = 1, WATER = 2 };
 enum { END_JUNCTION = 0, END_SEA, END_WATER, END_SEAM, END_GRID, END_KINDS };
@@ -186,7 +214,8 @@ static void classify_task(void *ctx, int j) {
         if (terrain_earth_water(d, &w) && w.edge < fmin(0.5 * g->cell, 0.5 * w.reach)) { g->cls[c] = WATER; continue; }
         double lift, lat, lon;
         g->cls[c] = LAND;
-        g->lv[c] = (float)terrain_land_parts(d, TERRAIN_WILD_EDGE, g->cell, &lift);
+        (void)lift;
+        g->lv[c] = (float)terrain_ground_bare_dir(d, g->cell);
         terrain_dir_latlon(d, &lat, &lon);
         g->q[c] = (float)(cell_area(g, i, j) * runoff_at(g->runoff, lat, lon) / 1000.0);
     }
@@ -423,7 +452,7 @@ static void trace(const Grid *g, Links *L, double tol, Scratch *s) {
                 p.flow = land ? g->q[a] : s->run[k - 1].flow;
                 s->run[k] = p;
                 if (land && k + 1 < n) {   /* the land at the cell's centre against the bed */
-                    double lift, h = terrain_land_parts(p.d, TERRAIN_WILD_EDGE, g->cell, &lift), dz = h - p.bed;
+                    double h = terrain_ground_bare_dir(p.d, g->cell), dz = h - p.bed;
                     L->cells++;
                     if (dz > 0.0) { L->carve_sum += dz; L->carve_max = fmax(L->carve_max, dz); }
                     else { L->fill_sum -= dz; L->fill_max = fmax(L->fill_max, -dz); L->ponded += dz < -2.0; }
@@ -468,6 +497,353 @@ static void mark_streams(Grid *g, double min_flow) {
             if ((g->inc[n] & 15) < 15) g->inc[n]++;
             if (!in_core(g, i, j)) g->inc[n] |= 16;
         }
+}
+
+/* --- The beds -------------------------------------------------------------------------------
+ * An L1 isotonic regression on a forest: levels x minimising the sum of
+ * |x - h| over the nodes, with no node's x below its parent's (the parent is
+ * downstream). Leaf to root, each node's cost as a function of its own level
+ * is convex and piecewise linear; what its parent sees of it, the least cost
+ * at that level or above, is flat to the left of its least point and kept as
+ * the multiset of the points where its slope steps up by one (a leftist
+ * heap, the least on top). A node's own cost adds h twice (slope -1 to +1)
+ * to the melded heaps of its children; its least point is then the heap's
+ * least, which is taken out once to flatten the left. Root to leaf, a node's
+ * level is the larger of its parent's and its own least point. */
+typedef struct LHeap { float *key; int32_t *l, *r; uint8_t *rank; size_t n, cap; } LHeap;
+
+static int32_t lh_new(LHeap *h, float key) {
+    if (h->n == h->cap) {
+        h->cap = h->cap ? 2 * h->cap : 1 << 16;
+        h->key = (float *)realloc(h->key, h->cap * sizeof(float)); h->l = (int32_t *)realloc(h->l, h->cap * sizeof(int32_t));
+        h->r = (int32_t *)realloc(h->r, h->cap * sizeof(int32_t)); h->rank = (uint8_t *)realloc(h->rank, h->cap);
+        if (!h->key || !h->l || !h->r || !h->rank) { fprintf(stderr, "earth_streams: out of memory for the beds\n"); exit(1); }
+    }
+    int32_t k = (int32_t)h->n++;
+    h->key[k] = key; h->l[k] = h->r[k] = -1; h->rank[k] = 1;
+    return k;
+}
+
+static int lh_rank(const LHeap *h, int32_t a) { return a < 0 ? 0 : h->rank[a]; }
+
+/* The right spines are at most log n long, so the recursion is shallow. */
+static int32_t lh_meld(LHeap *h, int32_t a, int32_t b) {
+    if (a < 0) return b;
+    if (b < 0) return a;
+    if (h->key[b] < h->key[a]) { int32_t t = a; a = b; b = t; }
+    h->r[a] = lh_meld(h, h->r[a], b);
+    if (lh_rank(h, h->l[a]) < lh_rank(h, h->r[a])) { int32_t t = h->l[a]; h->l[a] = h->r[a]; h->r[a] = t; }
+    int rk = lh_rank(h, h->r[a]) + 1;
+    h->rank[a] = (uint8_t)(rk > 255 ? 255 : rk);
+    return a;
+}
+
+/* Levels x[n] fitted to h[n]: parent[i] is i's parent or -1 (a root), and
+ * up[0 .. m) lists the nodes fitted, each after all its children (the rest
+ * are left as they are). */
+static void tree_fit(size_t n, const int32_t *parent, const float *h, const uint32_t *up, size_t m, float *x) {
+    LHeap hp;
+    memset(&hp, 0, sizeof hp);
+    int32_t *root = (int32_t *)xmalloc(n * sizeof(int32_t));
+    float *least = (float *)xmalloc(n * sizeof(float));
+    for (size_t i = 0; i < n; ++i) root[i] = -1;
+    for (size_t k = 0; k < m; ++k) {
+        uint32_t i = up[k];
+        int32_t r = lh_meld(&hp, root[i], lh_meld(&hp, lh_new(&hp, h[i]), lh_new(&hp, h[i])));
+        least[i] = hp.key[r];
+        r = lh_meld(&hp, hp.l[r], hp.r[r]);
+        if (parent[i] >= 0) root[parent[i]] = lh_meld(&hp, root[parent[i]], r);
+    }
+    for (size_t k = m; k-- > 0;) {
+        uint32_t i = up[k];
+        x[i] = parent[i] >= 0 && x[parent[i]] > least[i] ? x[parent[i]] : least[i];
+    }
+    free(hp.key); free(hp.l); free(hp.r); free(hp.rank); free(root); free(least);
+}
+
+static double channel_depth(double flow) { return DEPTH_K * pow(flow > 0.0 ? flow : 0.0, DEPTH_EXP); }
+
+/* How the fitted levels sit against the land (m). */
+typedef struct FitStats { double cut, fill, cut_max, fill_max; size_t n, over2; } FitStats;
+
+static void fit_stats(FitStats *s, double h, double x) {
+    double d = h - x;
+    s->n++;
+    if (d >= 0.0) { s->cut += d; s->cut_max = fmax(s->cut_max, d); }
+    else { s->fill -= d; s->fill_max = fmax(s->fill_max, -d); }
+    s->over2 += fabs(d) > 2.0;
+}
+
+static void fit_print(const char *what, const FitStats *s) {
+    printf("%s: %zu fitted against the land: cut %.2f m on average (at most %.0f), filled %.2f m (at most %.0f); %.1f%% more than 2 m off\n",
+           what, s->n, s->cut / fmax(1.0, (double)s->n), s->cut_max, s->fill / fmax(1.0, (double)s->n), s->fill_max, 100.0 * s->over2 / fmax(1.0, (double)s->n));
+}
+
+typedef struct LandCtx { const TerrainDir *d; float *h; double cell; } LandCtx;
+
+static void land_task(void *ctx, int k) {
+    LandCtx *c = (LandCtx *)ctx;
+    for (int i = 0; i < 1024; ++i) {
+        size_t at = (size_t)k * 1024 + i;
+        if (c->d[at].x == 0.0 && c->d[at].y == 0.0 && c->d[at].z == 0.0) continue;
+        c->h[at] = (float)terrain_ground_bare_dir(c->d[at], c->cell);
+    }
+}
+
+/* The land at n directions (zero ones skipped), on threads. */
+static void land_at(TerrainDir *d, size_t n, float *h, double cell, int threads) {
+    size_t padded = (n + 1023) / 1024 * 1024;
+    TerrainDir *dd = d;
+    if (padded != n) {
+        dd = (TerrainDir *)xmalloc(padded * sizeof(TerrainDir));
+        memcpy(dd, d, n * sizeof(TerrainDir));
+        memset(dd + n, 0, (padded - n) * sizeof(TerrainDir));
+    }
+    float *hh = (float *)xmalloc(padded * sizeof(float));
+    LandCtx c = { dd, hh, cell };
+    thread_parallel_for((int)(padded / 1024), threads, land_task, &c);
+    memcpy(h, hh, n * sizeof(float));
+    if (dd != d) free(dd);
+    free(hh);
+}
+
+/* The face's streams' beds: the stream cells taken in the flood's order (each
+ * after the one it drains to), fitted upstream first, and each stream cell's
+ * level in g->lv set to its bed. order is free to use as each cell's index. */
+static void fit_streams(Grid *g, uint32_t *order, size_t land, int threads, FitStats *st) {
+    int G = g->G;
+    long off[8];
+    for (int k = 0; k < 8; ++k) off[k] = (long)DJ[k] * G + DI[k];
+    size_t n = 0;
+    for (size_t k = 0; k < land; ++k) n += (g->inc[order[k]] & 32) != 0;
+    uint32_t *cell = (uint32_t *)xmalloc((n + 1) * sizeof(uint32_t)), *up = (uint32_t *)xmalloc((n + 1) * sizeof(uint32_t));
+    int32_t *parent = (int32_t *)xmalloc((n + 1) * sizeof(int32_t));
+    float *h = (float *)xmalloc((n + 1) * sizeof(float)), *x = (float *)xmalloc((n + 1) * sizeof(float));
+    TerrainDir *d = (TerrainDir *)xmalloc((n + 1) * sizeof(TerrainDir));
+    size_t m = 0;
+    for (size_t k = 0; k < land; ++k)
+        if (g->inc[order[k]] & 32) cell[m++] = order[k];
+    for (size_t i = 0; i < n; ++i) {   /* order now: each stream cell's index */
+        order[cell[i]] = (uint32_t)i;
+        d[i] = cell_dir(g, (int)(cell[i] % G), (int)(cell[i] / G));
+    }
+    for (size_t i = 0; i < n; ++i) {
+        size_t c = cell[i];
+        parent[i] = -1;
+        if (g->rcv[c] < OFF) {
+            size_t nx = c + off[g->rcv[c]];
+            if (g->cls[nx] == LAND && (g->inc[nx] & 32)) parent[i] = (int32_t)order[nx];
+        }
+        up[i] = (uint32_t)(n - 1 - i);   /* downstream first, so backwards is upstream first */
+    }
+    land_at(d, n, h, g->cell, threads);
+    tree_fit(n, parent, h, up, n, x);
+    for (size_t i = 0; i < n; ++i) {
+        if (in_core(g, (int)(cell[i] % G), (int)(cell[i] / G))) fit_stats(st, h[i], x[i]);
+        g->lv[cell[i]] = (float)(x[i] - channel_depth(g->q[cell[i]]));
+    }
+    free(cell); free(up); free(parent); free(h); free(x); free(d);
+}
+
+/* --- The bake's water's beds ------------------------------------------------------------------ */
+
+static uint64_t pos_key(TerrainDir d, double q, int dx, int dy, int dz);
+
+typedef struct WaterBeds {
+    uint32_t  V;
+    float    *bed;                 /* V */
+    uint32_t  nlevels, *bucket;    /* the lakes' levels in buckets inside them listing no shore */
+    float    *level;
+    size_t    lakes, holes, reaches, joined;
+    FitStats  rivers;
+} WaterBeds;
+
+
+/* The bucket of face f, column i, row j, past the face's edges onto the next. */
+static int64_t bucket_at(int B, int f, int i, int j) {
+    if (i >= 0 && j >= 0 && i < B && j < B) return ((int64_t)f * B + j) * B + i;
+    double u, v;
+    int g = terrain_dir_face(terrain_face_dir(f, -1.0 + (2.0 * i + 1.0) / B, -1.0 + (2.0 * j + 1.0) / B), &u, &v);
+    int a = (int)floor((u + 1.0) * 0.5 * B), b = (int)floor((v + 1.0) * 0.5 * B);
+    a = a < 0 ? 0 : a >= B ? B - 1 : a;
+    b = b < 0 ? 0 : b >= B ? B - 1 : b;
+    return ((int64_t)g * B + b) * B + a;
+}
+
+static int water_beds(WaterBeds *wb, double cell, int threads) {
+    memset(wb, 0, sizeof *wb);
+    const float *xyz;
+    const uint16_t *width;
+    const uint8_t *kind, *flags, *inside;
+    const uint32_t *start, *entry;
+    uint32_t V = terrain_earth_water_points(&xyz, &width, &kind, &flags);
+    int B = terrain_earth_water_buckets(&inside, &start, &entry);
+    wb->V = V;
+    if (!V) return 1;
+    wb->bed = (float *)xmalloc(V * sizeof(float));
+    TerrainDir *d = (TerrainDir *)xmalloc(V * sizeof(TerrainDir));
+    float *h = (float *)xmalloc(V * sizeof(float)), *x = (float *)xmalloc(V * sizeof(float));
+    for (uint32_t k = 0; k < V; ++k) {
+        TerrainDir p = { xyz[3 * k], xyz[3 * k + 1], xyz[3 * k + 2] };
+        d[k] = unit3(p);
+        wb->bed[k] = 0.0f;
+    }
+    land_at(d, V, h, cell, threads);
+
+    /* the rivers' tree: along each reach, and from its end into the reach that starts there */
+    int32_t *parent = (int32_t *)xmalloc(V * sizeof(int32_t));
+    uint32_t *nkids = (uint32_t *)calloc(V, sizeof(uint32_t)), *up = (uint32_t *)xmalloc(V * sizeof(uint32_t));
+    size_t size = 1;
+    while (size < 2 * (size_t)V) size <<= 1;
+    uint32_t *head = (uint32_t *)xmalloc(size * sizeof(uint32_t)), *next = (uint32_t *)xmalloc(V * sizeof(uint32_t));
+    if (!nkids) { fprintf(stderr, "earth_streams: out of memory for the beds\n"); return 0; }
+    memset(head, 0xFF, size * sizeof(uint32_t));
+    double jq = REACH_JOIN_M / PLANET_RADIUS;
+    for (uint32_t k = 0; k < V; ++k) {
+        parent[k] = -1;
+        int first = k == 0 || !(flags[k - 1] & 1);
+        if (kind[k] != 1 || !first) continue;
+        size_t b = pos_key(d[k], jq, 0, 0, 0) & (size - 1);
+        next[k] = head[b]; head[b] = k;
+        wb->reaches++;
+    }
+    for (uint32_t k = 0, own = 0; k < V; ++k) {
+        if (k == 0 || !(flags[k - 1] & 1)) own = k;   /* the reach's own start */
+        if (kind[k] != 1) continue;
+        if (flags[k] & 1) { parent[k] = (int32_t)(k + 1); continue; }
+        double best = jq;
+        for (int dz = -1; dz <= 1; ++dz)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                    for (uint32_t o = head[pos_key(d[k], jq, dx, dy, dz) & (size - 1)]; o != 0xFFFFFFFFu; o = next[o]) {
+                        if (o == own) continue;
+                        double dd = sqrt(dot3(sub3(d[o], d[k]), sub3(d[o], d[k])));
+                        if (dd < best || (dd == best && parent[k] >= 0 && (int32_t)o < parent[k])) { best = dd; parent[k] = (int32_t)o; }
+                    }
+        wb->joined += parent[k] >= 0;
+    }
+    for (uint32_t k = 0; k < V; ++k) if (parent[k] >= 0) nkids[parent[k]]++;
+    /* leaves first (Kahn's), so each point comes after all its upstream */
+    size_t m = 0, q = 0;
+    for (uint32_t k = 0; k < V; ++k) if (kind[k] == 1 && nkids[k] == 0) up[m++] = k;
+    while (q < m) {
+        uint32_t k = up[q++];
+        if (parent[k] >= 0 && --nkids[parent[k]] == 0) up[m++] = (uint32_t)parent[k];
+    }
+    tree_fit(V, parent, h, up, m, x);
+    for (size_t i = 0; i < m; ++i) {
+        uint32_t k = up[i];
+        double flow = (width[k] / WIDTH_K) * (width[k] / WIDTH_K);
+        fit_stats(&wb->rivers, h[k], x[k]);
+        wb->bed[k] = (float)(x[k] - channel_depth(flow));
+    }
+    for (uint32_t k = 0; k < V; ++k) if (kind[k] == 1 && nkids[k] > 0) wb->bed[k] = h[k];   /* on a loop, which the data shouldn't hold */
+
+    /* the lakes: each outer ring (anticlockwise, seen from above with north
+     * up) begins a lake, its holes (clockwise) follow it; the lowest land on
+     * any of its rings is its level */
+    int32_t *lake_of = (int32_t *)xmalloc(V * sizeof(int32_t));
+    float *lake_level = (float *)xmalloc(V * sizeof(float));
+    int32_t lakes = 0;
+    for (uint32_t k = 0; k < V;) {
+        uint32_t e = k;
+        while (e + 1 < V && (flags[e] & 1)) ++e;
+        if (kind[k] == 2) {
+            /* its winding (anticlockwise seen from outside the sphere is
+             * positive) and whether the water lies to the left of its longest
+             * side: the water within it, an outer ring, where the two agree */
+            TerrainDir c = { 0, 0, 0 };
+            for (uint32_t i = k; i <= e; ++i) c = add3(c, d[i]);
+            c = unit3(c);
+            double area = 0.0, longest = -1.0;
+            uint32_t at = k;
+            for (uint32_t i = k; i < e; ++i) {
+                area += dot3(c, cross3(scale3(d[i], 1.0 / dot3(d[i], c)), scale3(d[i + 1], 1.0 / dot3(d[i + 1], c))));
+                double l = dot3(sub3(d[i + 1], d[i]), sub3(d[i + 1], d[i]));
+                if (l > longest) { longest = l; at = i; }
+            }
+            TerrainDir mid = unit3(add3(d[at], d[at + 1])), left = unit3(cross3(mid, sub3(d[at + 1], d[at])));
+            int wet_left = terrain_earth_shore(unit3(add3(mid, scale3(left, SIDE_M / PLANET_RADIUS)))) < 0.0;
+            if ((area > 0.0) == wet_left || lakes == 0) { lake_level[lakes++] = 1e30f; wb->lakes++; }
+            else wb->holes++;
+            for (uint32_t i = k; i <= e; ++i) {
+                lake_of[i] = lakes - 1;
+                if (h[i] < lake_level[lakes - 1]) lake_level[lakes - 1] = h[i];
+            }
+        } else for (uint32_t i = k; i <= e; ++i) lake_of[i] = -1;
+        k = e + 1;
+    }
+    for (uint32_t k = 0; k < V; ++k) if (kind[k] == 2) wb->bed[k] = lake_level[lake_of[k]];
+
+    /* the buckets inside a lake that list no shore: their lake's level from
+     * the buckets round them, out from those that do list one (the lake of
+     * the shore nearest the bucket's centre) */
+    size_t cells = 6 * (size_t)B * B;
+    float *lev = (float *)xmalloc(cells * sizeof(float));
+    uint8_t *state = (uint8_t *)calloc(cells, 1);   /* 1 lists a shore, 2 reached */
+    uint32_t *queue = (uint32_t *)xmalloc(cells * sizeof(uint32_t));
+    if (!state) { fprintf(stderr, "earth_streams: out of memory for the lakes\n"); return 0; }
+    size_t qn = 0, qh = 0;
+    for (size_t b = 0; b < cells; ++b) {
+        int f = (int)(b / ((size_t)B * B)), j = (int)(b / B % B), i = (int)(b % B);
+        TerrainDir c = terrain_face_dir(f, -1.0 + (2.0 * i + 1.0) / B, -1.0 + (2.0 * j + 1.0) / B);
+        double best = 1e30;
+        for (uint32_t e = start[b]; e < start[b + 1]; ++e) {
+            uint32_t k = entry[e];
+            if (kind[k] != 2) continue;
+            TerrainDir a = { xyz[3 * k], xyz[3 * k + 1], xyz[3 * k + 2] }, z = { xyz[3 * k + 3], xyz[3 * k + 4], xyz[3 * k + 5] };
+            double dd = water_arc_dist(c, a, z);
+            if (dd < best) { best = dd; lev[b] = wb->bed[k]; }
+        }
+        if (best < 1e29) { state[b] = 1; queue[qn++] = (uint32_t)b; }
+    }
+    while (qh < qn) {
+        size_t b = queue[qh++];
+        int f = (int)(b / ((size_t)B * B)), j = (int)(b / B % B), i = (int)(b % B);
+        static const int NI[4] = { 1, -1, 0, 0 }, NJ[4] = { 0, 0, 1, -1 };
+        for (int s = 0; s < 4; ++s) {
+            int64_t o = bucket_at(B, f, i + NI[s], j + NJ[s]);
+            if (state[o] || !inside[o]) continue;
+            state[o] = 2; lev[o] = lev[b];
+            queue[qn++] = (uint32_t)o;
+            wb->nlevels++;
+        }
+    }
+    wb->bucket = (uint32_t *)xmalloc((wb->nlevels + 1) * sizeof(uint32_t));
+    wb->level = (float *)xmalloc((wb->nlevels + 1) * sizeof(float));
+    uint32_t nl = 0;
+    for (size_t b = 0; b < cells; ++b)
+        if (state[b] == 2) { wb->bucket[nl] = (uint32_t)b; wb->level[nl++] = lev[b]; }
+    free(lev); free(state); free(queue);
+    free(d); free(h); free(x); free(parent); free(nkids); free(up); free(head); free(next); free(lake_of); free(lake_level);
+    return 1;
+}
+
+/* The plan's probes: the settlements' count, then each settlement's disc's
+ * centre and PLAN_PROBES points round its edge, as directions in f32 and
+ * plan_city_edge where the engine will read it (at the f32 direction). */
+static float *plan_probes(uint32_t *count) {
+    int n = plan_settlement_count();
+    uint32_t np = 1 + (uint32_t)n * (1 + PLAN_PROBES);
+    float *p = (float *)xmalloc((size_t)np * 4 * sizeof(float));
+    TerrainChart wc = terrain_world_chart();
+    p[0] = (float)n; p[1] = p[2] = p[3] = 0.0f;
+    uint32_t at = 1;
+    for (int k = 0; k < n; ++k) {
+        PlanSettlement s = plan_settlement(k);
+        for (int q = 0; q <= PLAN_PROBES; ++q) {
+            double a = 2.0 * PI * q / PLAN_PROBES, r = q == 0 ? 0.0 : s.radius;
+            TerrainDir d = terrain_chart_dir(&wc, s.disc.x + r * cos(a), s.disc.z + r * sin(a));
+            float *o = p + 4 * at++;
+            o[0] = (float)d.x; o[1] = (float)d.y; o[2] = (float)d.z;
+            TerrainDir df = { o[0], o[1], o[2] };
+            double x, z;
+            terrain_dir_chart(&wc, unit3(df), &x, &z);
+            o[3] = (float)plan_city_edge(x, z);
+        }
+    }
+    *count = np;
+    return p;
 }
 
 /* --- The seams ------------------------------------------------------------------------------
@@ -531,7 +907,9 @@ typedef struct Opts { double cell, min_flow, halo, tol; int threads; } Opts;
 static int derive(const char *bake, const char *out, const Runoff *runoff, const Opts *o) {
     double t0 = now_s();
     if (!terrain_earth_load(bake)) return 0;
-    terrain_earth_load_streams("");   /* any old ones aside: the water here is the bake's */
+    terrain_earth_load_streams("");   /* any old ones aside: the water here is the bake's, with no beds */
+    plan_world_init(o->threads);      /* the settlements, whose ground the streams cross */
+    printf("plan: %d settlements, placed in %.1f s\n", plan_settlement_count(), now_s() - t0);
     FILE *bf = fopen(bake, "rb");
     unsigned char bh[256];
     if (!bf || fread(bh, 1, 256, bf) != 256) { fprintf(stderr, "earth_streams: cannot read %s's header\n", bake); if (bf) fclose(bf); return 0; }
@@ -552,6 +930,8 @@ static int derive(const char *bake, const char *out, const Runoff *runoff, const
     memset(&L, 0, sizeof L);
     Scratch s;
     memset(&s, 0, sizeof s);
+    FitStats fs;
+    memset(&fs, 0, sizeof fs);
     double tol = o->tol / PLANET_RADIUS;
     long off[8];
     for (int k = 0; k < 8; ++k) off[k] = (long)DJ[k] * G + DI[k];
@@ -569,6 +949,7 @@ static int derive(const char *bake, const char *out, const Runoff *runoff, const
             if (g.cls[nx] == LAND) g.q[nx] += g.q[c];
         }
         mark_streams(&g, o->min_flow);
+        fit_streams(&g, order, land, o->threads, &fs);
         size_t before = L.nl, pts = L.np;
         trace(&g, &L, tol, &s);
         printf("face %d: %zu land cells (%.0f%%); %zu links, %zu points; classify %.1f s, flood %.1f s, trace %.1f s\n", f, land,
@@ -602,6 +983,16 @@ static int derive(const char *bake, const char *out, const Runoff *runoff, const
         }
     }
     if (!water_index(&w, BUCKETS, REACH_M, NULL, o->threads)) return 0;
+    fit_print("streams' levels", &fs);
+
+    /* the bake's water's beds, and the plan's probes */
+    WaterBeds wb;
+    if (!water_beds(&wb, cell, o->threads)) return 0;
+    fit_print("rivers' levels", &wb.rivers);
+    printf("rivers: %zu reaches, %zu running on into the next; lakes: %zu, with %zu holes; %u buckets inside a lake take its level from round them\n",
+           wb.reaches, wb.joined, wb.lakes, wb.holes, wb.nlevels);
+    uint32_t nplan;
+    float *plan = plan_probes(&nplan);
 
     /* the probes: the land at the first PROBES of a spiral of directions that lie on land */
     unsigned char hd[HEADER];
@@ -611,6 +1002,7 @@ static int derive(const char *bake, const char *out, const Runoff *runoff, const
     put_f32(hd + 24, (float)WIDTH_K); put_u32(hd + 28, PROBES);
     memcpy(hd + 32, bh + 128, 64);
     put_u32(hd + 96, (uint32_t)w.B); put_f32(hd + 100, w.reach); put_u32(hd + 104, w.V); put_u32(hd + 108, w.E); put_u32(hd + 112, (uint32_t)L.nl);
+    put_u32(hd + 116, nplan);
     int probes = 0;
     for (int k = 0; k < 4096 && probes < PROBES; ++k) {
         double z = 1.0 - (2.0 * k + 1.0) / 4096.0, r = sqrt(1.0 - z * z), a = k * 2.399963229728653;
@@ -638,6 +1030,19 @@ static int derive(const char *bake, const char *out, const Runoff *runoff, const
             ok = fwrite(buf, 4, m, f) == m;
         }
     }
+    /* the plan's probes, the bake's water's beds, the lakes' buckets' levels */
+    const struct { const void *v; size_t n; int u32; } tail[] = {
+        { plan, (size_t)nplan * 4, 0 }, { &wb.V, 1, 1 }, { wb.bed, wb.V, 0 }, { &wb.nlevels, 1, 1 }, { wb.bucket, wb.nlevels, 1 }, { wb.level, wb.nlevels, 0 },
+    };
+    for (size_t t = 0; t < sizeof tail / sizeof tail[0] && ok; ++t)
+        for (size_t k = 0; k < tail[t].n && ok; k += 1024) {
+            size_t m = tail[t].n - k < 1024 ? tail[t].n - k : 1024;
+            for (size_t i = 0; i < m; ++i) {
+                if (tail[t].u32) put_u32(buf + 4 * i, ((const uint32_t *)tail[t].v)[k + i]);
+                else put_f32(buf + 4 * i, ((const float *)tail[t].v)[k + i]);
+            }
+            ok = fwrite(buf, 4, m, f) == m;
+        }
     if (fclose(f) != 0) ok = 0;
     if (!ok) { fprintf(stderr, "earth_streams: writing %s failed\n", out); return 0; }
     size_t used, most, wet;

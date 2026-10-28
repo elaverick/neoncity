@@ -113,10 +113,11 @@ the real urban area from the GHSL; read at run time, see `data/earth/SOURCE.md`)
   name and the summed area of their urban centres, at most 150 km; so are any the cut pushes together.
   Each is a warped disc in its own chart, about its centre with north up, the warp scaled with it, built
   of whole towns of the same lattice, its core a regional centre; its ground rises and falls by its own
-  relief on the Earth's highlands. 178 stand on the Earth's bake; `world_test --map` draws them over the
+  relief on the Earth's highlands. 177 stand on the Earth's bake; `world_test --map` draws them over the
   whole planet, `world_test --list` lists them, `world_test --local out.ppm` draws the footprints round
   Los Angeles.
-- **The coasts and the mountains.** A footprint stops 1 km short of the shore and reaches 2 km into
+- **The coasts, the lakes and the mountains.** A footprint stops 1 km short of the shore, 200 m short of a
+  lake's (HydroLAKES, exactly near it, so no narrow arm slips between the grid's nodes) and reaches 2 km into
   ground steeper than 8% (the Earth read at about 2.4 km, where that is a real mountainside of 15-20%; its
   patches closed over gaps of 6 km so a range is one), both on a 1 km grid in the city's chart. One the cut
   leaves short is pushed away from what was cut off, to where it keeps its area, and grown by up to twice
@@ -129,6 +130,13 @@ the real urban area from the GHSL; read at run time, see `data/earth/SOURCE.md`)
   cities keep off it as above; the roads keep 20 m above it on a 20 km grid, or 5 m above the finer shore
   on the coastal plains the grid takes for sea (any land within 20 km of a city). The land is told apart
   into continents on that grid.
+- **The rivers, lakes and streams** (HydroSHEDS's, and the small streams derived from the land:
+  `data/earth/SOURCE.md`, "Runoff and the streams") have beds: each river's and stream's fitted along its
+  drainage tree, never rising downstream, and each lake its level. Within 1 km of the real rivers and lakes
+  the procedural hills, mountains and canyons fade out, so they lie on the Earth's own valley floors; outside
+  the cities the ground is carved down to the water's floor (banks at 1 in 2, lake beds to 10 m under the
+  level, at most 30 m deep). The water itself isn't drawn yet; under the cities the streams are buried and the
+  rivers wait for their concrete channels and bridges.
 - **The roads.** The cities within 5,000 km of the megacity, all of North America from Mexico City to
   Boston, where the world's chart is near enough true for a road (they move onto the sphere next). On
   each continent: candidate links between the Delaunay neighbours, each costed by a

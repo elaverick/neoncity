@@ -58,7 +58,8 @@
  * noise: 1.5 per lattice unit per axis), so the warp's Jacobian has norm at
  * most 6*(...), and the edge (a length through it) changes by at most 1 plus
  * that; the coast and the slopes cut it by a bilinear distance, which
- * changes by at most sqrt 2. A little over, for float rounding. */
+ * changes by at most sqrt 2, and a lake near by its exact distance, falling
+ * away at most twice as fast. A little over, for float rounding. */
 #define CITY_EDGE_RATE  (1.0 + 6.0 * (CITY_WARP1_M / CITY_WARP1_WAVE + CITY_WARP2_M / CITY_WARP2_WAVE) + 0.01)
 /* A built town's ground stays at or inside this edge measure, where
  * plan_urban is exactly 1 (and terrain_height is the city's ground). */
@@ -85,7 +86,8 @@
  *
  * Each settlement has its own chart, about its centre with north up, and its
  * footprint is measured in it: a warped disc, cut back to PLAN_COAST_M from
- * the shore (terrain_shore) and to PLAN_STEEP_REACH_M into ground steeper
+ * the shore (terrain_shore), to PLAN_LAKE_M from a lake's (terrain_earth_shore)
+ * and to PLAN_STEEP_REACH_M into ground steeper
  * than PLAN_STEEP_GRADE (the Earth read at mip 0). A footprint the cut leaves
  * short is pushed away from it, and grown if it must be, until it keeps its
  * size; two footprints never meet. The megacity is cut and grown too, but its
@@ -102,7 +104,8 @@
 #define PLAN_CITY_MIN_KM   60.0    /* the smallest city's built size across (km)... */
 #define PLAN_CITY_MAX_KM   150.0   /* ...and the largest's */
 #define PLAN_COLOSSAL_RANK 50      /* the hubs of the roads: this rank and better */
-#define PLAN_COAST_M       1000.0  /* footprints stop this far from the shore (m) */
+#define PLAN_COAST_M       1000.0  /* footprints stop this far from the shore (m)... */
+#define PLAN_LAKE_M        200.0   /* ...and this far from a lake's (m) */
 #define PLAN_STEEP_GRADE   0.08    /* ground steeper than this (the Earth at mip 0, 2.4 km) cuts a footprint... */
 #define PLAN_STEEP_CLOSE_M 3000.0  /* ...its patches closed over gaps of twice this, so a range is one (m)... */
 #define PLAN_STEEP_REACH_M 2000.0  /* ...this far into it (m) */

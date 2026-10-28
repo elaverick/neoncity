@@ -369,6 +369,10 @@ add_test(NAME earth_streams_derive COMMAND earth_streams ${CMAKE_CURRENT_SOURCE_
 add_test(NAME terrain_rules_streams COMMAND terrain_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake
          --streams ${CMAKE_BINARY_DIR}/earth_test.streams)
 set_tests_properties(terrain_rules_streams PROPERTIES DEPENDS earth_streams_derive)
+# Every terrain rule again with the water's beds carved into the ground.
+add_test(NAME terrain_rules_beds COMMAND terrain_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake
+         --with-streams ${CMAKE_BINARY_DIR}/earth_test.streams)
+set_tests_properties(terrain_rules_beds PROPERTIES DEPENDS earth_streams_derive)
 # `cmake --build build --target earth` stages the project and bakes it to build/earth.bake,
 # with the tool's virtual environment (tools/earth/.venv) or else a python3 on the PATH;
 # without either, run the two steps by hand (SOURCE.md). Not part of the default build.
@@ -399,8 +403,18 @@ if(EARTH_PY)
 endif()
 
 # --- Game ---------------------------------------------------------------------
+# The world's plan and the ground it reads come out as the tests' and the tools' to the bit:
+# placing the settlements takes discrete steps (pushes, growth, merges) a rounding can flip,
+# moving a city kilometres, and the streams' file checks the settlements it was derived with.
+# So the game builds them without /fp:fast, as a library of their own.
+set(WORLD_SOURCES src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c src/terrain/terrain_height.c src/terrain/terrain_land.c
+                  src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c)
+set(GAME_GEN_SOURCES ${GEN_SOURCES})
+list(REMOVE_ITEM GAME_GEN_SOURCES ${WORLD_SOURCES})
+add_library(neoncity_world OBJECT ${WORLD_SOURCES})
+target_include_directories(neoncity_world PRIVATE ${SRC_DIRS})
 add_executable(NeonCity
-  src/app/main.c src/app/weather.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/road_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/materials.c src/render/adverts.c ${MATERIAL_SOURCES} ${GEN_SOURCES} ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c)
+  src/app/main.c src/app/weather.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/road_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/materials.c src/render/adverts.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.
@@ -418,11 +432,14 @@ add_custom_target(city_list ALL
 target_link_libraries(NeonCity PRIVATE volk glfw)
 if(MSVC)
   target_compile_options(NeonCity PRIVATE /W3 /wd4100 /wd4996 /fp:fast)
+  target_compile_options(neoncity_world PRIVATE /W3 /wd4100 /wd4996)
   set_property(TARGET NeonCity PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  set_property(TARGET neoncity_world PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   set_property(TARGET volk PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   set_property(TARGET glfw PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
   target_compile_options(NeonCity PRIVATE -Wall -Wno-unused-parameter -Wno-missing-braces)
+  target_compile_options(neoncity_world PRIVATE -Wall -Wno-unused-parameter -Wno-missing-braces)
   target_link_libraries(NeonCity PRIVATE m)
   if(UNIX)
     target_link_libraries(NeonCity PRIVATE pthread dl)

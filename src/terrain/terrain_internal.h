@@ -165,12 +165,33 @@
  * derived from (terrain_earth_load_streams). */
 #define TERRAIN_WILD_EDGE 1.0e9
 
+/* The water carves the land down to its floor (terrain_earth_water) by at
+ * most this; it must stay under TERRAIN_WATER_BANK times the water's reach,
+ * so no segment beyond the reach can carve (m). Whether the water has its
+ * beds (the streams' file is loaded): without them it carves nothing. */
+#define TERRAIN_WATER_CARVE_M 30.0
+int    terrain_earth_beds(void);
+/* The ground at p as height_lod makes it but with neither the roads between
+ * the settlements nor the water's beds in it: the land the streams are
+ * derived from, with the settlements (tools/earth_streams.c). */
+double terrain_ground_bare_dir(TerrainDir p, double spacing);
+/* The bake's water as loaded, for the tools: its points (xyz V x 3, widths,
+ * kinds, flags; returns V, 0 with none) and its buckets (returns B). */
+uint32_t terrain_earth_water_points(const float **xyz, const uint16_t **width, const uint8_t **kind, const uint8_t **flags);
+int      terrain_earth_water_buckets(const uint8_t **inside, const uint32_t **start, const uint32_t **entry);
+
 /* The urban field before blending, unit amplitude, [-1, 1]. */
 double terrain_urban_shape(double x, double z);
 /* The land at direction d and `spacing`, given plan_city_edge at its place
  * (terrain_height_lod's); and macro in it in *lift: the planet's highlands,
- * which a settlement's ground rises and falls with too (terrain_height.c). */
+ * which a settlement's ground rises and falls with too (terrain_height.c).
+ * The procedural land (the base, the landforms, the canyons) fades out over
+ * TERRAIN_VALLEY_M towards the real water's edge (terrain_earth_valley) and
+ * is gone in it; _at takes that distance already read (a terrain_earth_water's
+ * valley), and is otherwise the same. */
+#define TERRAIN_VALLEY_M 1000.0   /* under the water's reach (2 km), so the fade is exact */
 double terrain_land_parts(TerrainDir d, double edge, double spacing, double *lift);
+double terrain_land_parts_at(TerrainDir d, double edge, double spacing, double valley, double *lift);
 /* macro alone, at `spacing`, as it is wherever plan_urban is above 0 (the
  * Earth's detail is left out there). */
 double terrain_lift(double x, double z, double spacing);

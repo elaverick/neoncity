@@ -112,12 +112,13 @@ void terrain_bend_bounds(float mn[3], float mx[3]) {
 
 /* --- The lowest ground ------------------------------------------------------------ */
 
-/* The land's own bound, and the city's ground at its lowest: a settlement's
- * relief down, sunk by at most that relief again and the clearance
- * (terrain_urban_sink, every octave left out). */
+/* The land's own bound (less what the water carves), and the city's ground
+ * at its lowest: a settlement's relief down, sunk by at most that relief
+ * again and the clearance (terrain_urban_sink, every octave left out). */
 double terrain_planet_lowest(void) {
     double lo, hi, rlo, relief;
     terrain_land_range(1e9, &lo, &hi);
+    if (terrain_earth_beds()) lo -= TERRAIN_WATER_CARVE_M;
     plan_settlement_relief_range(&rlo, &relief);
     return fmin(lo, -2.0 * relief - TERRAIN_URBAN_SINK_CLEAR_M - terrain_lift_bound()) - 1.0;
 }

@@ -34,7 +34,7 @@
  *
  * terrain_test --fingerprint prints a hash of the heights, the footprint and
  * some filled clipmaps instead, to compare what two builds generate;
- * terrain_test --map out.ppm [km] draws the land round the city (see map);
+ * terrain_test --map out.ppm [km [x z]] draws the land round the city or a place (see map);
  * terrain_test --planet-map out.ppm [px] the whole planet (see planet_map);
  * terrain_test --earth-map out.ppm [px] the Earth's bake (see earth_map);
  * terrain_test --landform-map out.ppm [px] its landforms (see landform_map);
@@ -78,7 +78,11 @@ static double relief_at(double x, double z) { return TERRAIN_URBAN_GRADED ? plan
 /* The city's ground without the highlands under it. */
 static double urban_relief_only(double x, double z) { return relief_at(x, z) * terrain_urban_shape(x, z); }
 /* The ground without the roads between the settlements. */
-static double bare_height(double x, double z) { return terrain_height_bare(x, z, 0.0); }
+/* The ground with neither the roads nor the water's beds: the land and the cities. */
+static double bare_height(double x, double z) {
+    TerrainChart wc = terrain_world_chart();
+    return terrain_ground_bare_dir(terrain_chart_dir(&wc, x, z), 0.0);
+}
 /* The city's ground: its settlement's relief, on the planet's highlands. */
 static double urban_graded(double x, double z) {
     double relief = relief_at(x, z);
@@ -806,13 +810,15 @@ static void test_fade(void) {
     terrain_clip_free(&clip);
 }
 
-/* terrain_test --map out.ppm [km]: the land round the city centre, `km` across
- * (60 by default), as a relief map 800 pixels square: lit from the north-west,
- * tinted by the leading landform (plains green, hills ochre, mountains grey,
- * plateaus red), canyons blue, the city dark. North (-z) is up. */
-static int map(const char *path, double km) {
+/* terrain_test --map out.ppm [km [x z]]: the land round the city centre, or
+ * the world's (x, z), `km` across (60 by default), as a relief map 800
+ * pixels square: lit from the north-west, tinted by the leading landform
+ * (plains green, hills ochre, mountains grey, plateaus red), canyons blue,
+ * the water cyan, the city dark. North (-z) is up. */
+static int map(const char *path, double km, const double *centre) {
     const int W = 800;
-    DVec2 c = plan_town_centre(0, 0);
+    DVec2 c = centre ? dv(centre[0], centre[1]) : plan_town_centre(0, 0);
+    TerrainChart wc = terrain_world_chart();
     double px = km * 1000.0 / W;
     uint8_t *img = (uint8_t *)malloc((size_t)W * W * 3);
     double *row = (double *)malloc(sizeof(double) * (W + 1) * 2);
@@ -840,11 +846,15 @@ static int map(const char *path, double km) {
             float hgt = 0.7f + 0.6f * clampf((float)(h / fmax(TERRAIN_LAND_TOP_M, 0.4 * km)), -0.5f, 1.0f);
             float sea = terrain_sea_margin(x, z) <= 0.0 ? 1.0f : 0.0f;
             static const float deep[3] = { 0.15f, 0.3f, 0.6f };
+            TerrainEarthWater w;   /* the water itself, rivers, streams and lakes, in cyan */
+            float water = terrain_earth_water(terrain_chart_dir(&wc, x, z), &w) && w.edge < 0.0 ? 1.0f : 0.0f;
+            static const float cyan[3] = { 0.2f, 0.85f, 0.9f };
             for (int q = 0; q < 3; ++q) {
                 float v = col[q] * shade * hgt;
                 v = v * (1.0f - 0.75f * sea) + 0.75f * sea * deep[q] * shade * hgt;
                 v = v * (1.0f - wet) + (q == 2 ? 0.8f : 0.3f) * shade * wet;
                 v = v * (1.0f - 0.7f * city);
+                v = v * (1.0f - water) + water * cyan[q] * shade;
                 img[((size_t)j * W + i) * 3 + q] = (uint8_t)clampf(v * 255.0f, 0.0f, 255.0f);
             }
             lo = fmin(lo, h); hi = fmax(hi, h);
@@ -1797,6 +1807,8 @@ static int point_less(const void *a, const void *b) {
 static void test_streams(Rng *r, const char *path) {
     if (!terrain_earth_loaded()) { CHECK(0, "--streams needs a bake (--earth)"); return; }
     if (!terrain_earth_load_streams(path)) { CHECK(0, "the streams %s didn't load", path); return; }
+    terrain_earth_check_streams();   /* the plan was placed before they were loaded */
+    if (!terrain_earth_beds()) { CHECK(0, "the streams %s were dropped by the plan's check", path); return; }
     uint32_t V = terrain_earth_stream_points();
     TerrainDir a, b;
     double ba, bb, fa, fb;
@@ -1855,8 +1867,11 @@ static void test_streams(Rng *r, const char *path) {
         if (w.edge > slack - 0.5 * fmax(1.0, 7.0 * sqrt(fa))) {
             if (dry++ < 5) printf("  dry: edge %.1f river %.1f width %.0f stream %d lake %d; segment %.0f m, flow %.1f\n", w.edge, w.river, w.width, w.stream, w.lake, pdist(a, b) * PLANET_RADIUS, fa);
         }
-        if (w.stream && fabs(w.bed - (ba + s * (bb - ba))) > 0.5 + fabs(ba - bb)) notstream++;
-        double h = terrain_land_parts(m, TERRAIN_WILD_EDGE, 0.0, &lift), bed = ba + s * (bb - ba);
+        if (w.stream && fabs(w.bed - (ba + s * (bb - ba))) > 0.5 + fabs(ba - bb)) {
+            if (notstream++ < 5) printf("  another bed: %.2f, this %.2f .. %.2f; edge %.1f river %.1f width %.0f\n", w.bed, ba, bb, w.edge, w.river, w.width);
+        }
+        (void)lift;
+        double h = terrain_ground_bare_dir(m, 0.0), bed = ba + s * (bb - ba);   /* the ground they were derived from, at full detail */
         cut[n++] = h - bed;
         fill_max = fmax(fill_max, bed - h);
     }
@@ -2135,8 +2150,21 @@ int main(int argc, char **argv) {
         static const char *const candidates[] = { "tests/data/earth_test.bake", "../tests/data/earth_test.bake" };
         for (size_t k = 0; k < 2 && !earth; ++k) { FILE *f = fopen(candidates[k], "rb"); if (f) { fclose(f); earth = candidates[k]; } }
     }
+    /* --with-streams <path>: the bake's streams from there instead, loaded
+     * before the plan as the app loads them, so every rule runs with the
+     * water's beds carved into the ground */
+    const char *with_streams = NULL;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (strcmp(argv[i], "--with-streams") != 0) continue;
+        with_streams = argv[i + 1];
+        for (int k = i; k + 2 < argc; ++k) argv[k] = argv[k + 2];
+        argc -= 2;
+        break;
+    }
     if (earth && strcmp(earth, "none") != 0) terrain_earth_load(earth);
+    if (with_streams && !terrain_earth_load_streams(with_streams)) { printf("FAIL: the streams %s didn't load\n", with_streams); return 1; }
     plan_world_init(cpu_count());
+    if (with_streams && !terrain_earth_beds()) { printf("FAIL: the streams %s were dropped by the plan's check\n", with_streams); return 1; }
     /* Points round the city and its surroundings, plus some far away. */
     DVec2 c = plan_town_centre(0, 0);
     Rng r = rng_make(4321);
@@ -2151,7 +2179,10 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
     if (argc > 1 && strcmp(argv[1], "--patches") == 0) { test_planet_patches(&r); return g_failures != 0; }
-    if (argc > 2 && strcmp(argv[1], "--map") == 0) return map(argv[2], argc > 3 ? atof(argv[3]) : 60.0);
+    if (argc > 2 && strcmp(argv[1], "--map") == 0) {   /* [km] [x z]: about the world's (x, z), the core's without */
+        double at[2] = { argc > 5 ? atof(argv[4]) : 0.0, argc > 5 ? atof(argv[5]) : 0.0 };
+        return map(argv[2], argc > 3 ? atof(argv[3]) : 60.0, argc > 5 ? at : NULL);
+    }
     if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
     if (argc > 2 && strcmp(argv[1], "--earth-map") == 0) return earth_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
     if (argc > 2 && strcmp(argv[1], "--landform-map") == 0) return landform_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
@@ -2267,8 +2298,8 @@ int main(int argc, char **argv) {
     }
     /* Points scattered over the city rarely land in the belt: walk across it
      * too, from the megacity's disc out to where the region's landforms
-     * begin. The belt's ground without the roads: their cuttings and
-     * embankments are as steep as they need be. */
+     * begin. The belt's ground without the roads and the water: their
+     * cuttings, embankments and banks are as steep as they need be. */
     PlanSettlement home = plan_settlement(0);
     double reach = plan_home_reach() - dlen(home.disc);
     for (int a = 0; a < 720; ++a) {
