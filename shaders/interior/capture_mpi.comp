@@ -1,0 +1,85 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "interior/bake_scene.glsl"
+#define IMP_VIEWS_ONLY
+#include "city/impostor.glsl"
+
+/* The multi-plane capture, the alternative IM1 measures layered depth
+ * against (tools/interior_bake: gpu_capture_mpi). The module's depth is cut
+ * into S slabs; each texel of each view stores, per slab, the premultiplied
+ * colour and opacity of what its ray meets there, composited front to back:
+ * partition glass as a partly transparent surface, an opaque entry as an
+ * opaque one, and a slab inside a solid as that solid's entry colour, so
+ * objects are filled rather than skins. Surfaces hidden from the view's
+ * texel are kept in their slabs as layered depth keeps them in its layers.
+ *
+ * Out: per view, slab and texel, rgba as two packed half pairs. */
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(std430, set = 0, binding = 6) writeonly buffer OutSlices { uvec2 outSlices[]; };
+
+ImpViews paramViews() { ImpViews v; v.n = P_views.xy; v.kind = P_views.z; v.range = P_viewRange; return v; }
+
+int gView, gS;
+ivec2 gPx;
+void writeSlice(int s, vec4 c) {
+    uint i = uint(((gView * gS + s) * P_gridDim.y + gPx.y) * P_gridDim.x + gPx.x);
+    outSlices[i] = uvec2(packHalf2x16(c.rg), packHalf2x16(c.ba));
+}
+
+void main() {
+    gPx = ivec2(gl_GlobalInvocationID.xy);
+    gView = int(gl_GlobalInvocationID.z);
+    gS = P_march.z;
+    if (gPx.x >= P_gridDim.x || gPx.y >= P_gridDim.y) return;
+    vec3 d = impViewDirIndex(paramViews(), gView);
+    vec3 o = vec3(P_grid.xy + (vec2(gPx) + 0.5) / P_grid.z, 0.0);
+    float tEnd = volumeExit(o, d), D = P_module.z, dz = D / float(gS);
+
+    int cur = 0;                 // the slab being composited
+    vec4 acc = vec4(0.0);        // its premultiplied colour and opacity
+    int inside = 0;
+    vec3 solid = vec3(0.0);      // the colour of the solid the ray is in
+    float tRoom = roomEnter(o, d);   // a ray that starts in a slab (capture.comp)
+    if (tRoom > 0.0) {
+        Hit h0;
+        uint m = traceNext(o, d, 0.0, 1e4, h0) ? insts[h0.inst].material : 0u;
+        inside = 1;
+        solid = mats[m].albedo.rgb * P_volume.z;
+        acc = vec4(solid, 1.0);
+    }
+    float t = max(min(tRoom, tEnd) - 1e-3, 0.0);
+    for (int it = 0; it < 160; ++it) {
+        Hit h;
+        if (!traceNext(o, d, t, tEnd, h)) break;
+        t = h.t + max(1e-4, h.t * 1e-5);
+        uint flags = insts[h.inst].flags;
+        int s = min(int(h.t * d.z / dz), gS - 1);
+        if (s > cur) {
+            writeSlice(cur, acc);
+            vec4 fill = inside > 0 ? vec4(solid, 1.0) : vec4(0.0);
+            for (int k = cur + 1; k < s; ++k) writeSlice(k, fill);
+            cur = s;
+            acc = fill;
+        }
+        if ((flags & BF_GLASS) != 0u) {
+            if (inside == 0 && h.front) {
+                float R = glassReflect(abs(dot(h.n, d)));
+                acc.rgb += (1.0 - acc.a) * R * P_glass.z;
+                acc.a += (1.0 - acc.a) * (1.0 - (1.0 - R) * P_glass.y);
+            }
+            continue;
+        }
+        bool open = (flags & BF_OPEN) != 0u;
+        if (inside == 0 && (open || h.front)) {
+            vec3 n = h.front ? h.n : -h.n;
+            vec3 c = shadeSurface(o + d * h.t, n, insts[h.inst].material);
+            acc.rgb += (1.0 - acc.a) * c;
+            acc.a = 1.0;
+            if (!open) solid = c;
+        }
+        if (!open) inside = h.front ? inside + 1 : max(inside - 1, 0);
+    }
+    writeSlice(cur, acc);
+    for (int k = cur + 1; k < gS; ++k) writeSlice(k, inside > 0 ? vec4(solid, 1.0) : vec4(0.0));
+}

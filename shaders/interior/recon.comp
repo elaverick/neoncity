@@ -1,0 +1,126 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "interior/bake_scene.glsl"
+
+/* The reconstruction (tools/interior_bake: gpu_recon): what the impostor
+ * shows the camera at P_cam, over the same evaluation grid as truth.comp. It
+ * uses no geometry, only the baked views: the 3 views round the ray's
+ * direction, each marched as the facade shader will march them
+ * (shaders/city/impostor.glsl), blended by barycentric weight, a view whose
+ * march had to guess (or looked off its grid) counting for less.
+ *
+ * In: the impostor. Layered depth (P_march.z = 0): per view, layer and
+ * texel, uvec4(entry and exit as unorm16, radiance as halves, flags: bit 0
+ * on layer 0, the texel is full). Multi-plane (P_march.z = S slabs): per
+ * view, slab and texel, rgba as halves (capture_mpi.comp).
+ * Out: radiance, and in a the blended hit depth (zExit: none); with P_march.w set, totals
+ * of the steps, the guessed and off-grid views, and the views marched. */
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(std430, set = 0, binding = 6) writeonly buffer OutColor { vec4 outColor[]; };
+layout(std430, set = 0, binding = 7) buffer Stats { uint stats[]; };
+layout(std430, set = 0, binding = 8) readonly buffer Imp { uint imp[]; };
+
+uint ldiIndex(int view, int layer, ivec2 t) {
+    return uint(((view * P_views.w + layer) * P_gridDim.y + t.y) * P_gridDim.x + t.x) * 4u;
+}
+vec2 impFetchDepth(int view, int layer, ivec2 t) { return unpackUnorm2x16(imp[ldiIndex(view, layer, t)]); }
+bool impFetchFull(int view, ivec2 t) { return (imp[ldiIndex(view, 0, t) + 3u] & 1u) != 0u; }
+vec3 impFetchColor(int view, int layer, ivec2 t) {
+    uint b = ldiIndex(view, layer, t);
+    return vec3(unpackHalf2x16(imp[b + 1u]), unpackHalf2x16(imp[b + 2u]).x);
+}
+vec4 fetchSlice(int view, int s, ivec2 t) {
+    uint b = uint(((view * P_march.z + s) * P_gridDim.y + t.y) * P_gridDim.x + t.x) * 2u;
+    return vec4(unpackHalf2x16(imp[b]), unpackHalf2x16(imp[b + 1u]));
+}
+
+#include "city/impostor.glsl"
+
+/* The impostor's radiance along the ray entering the glass at o (rgb), and the blended hit depth (a).
+ * st: steps, guessed, off-grid and marched views, counting views of weight 0.1 or more. */
+vec4 reconRay(vec3 o, inout uvec4 st) {
+    vec3 d = normalize(o - P_cam.xyz);
+    vec2 Q = o.xy, sigma = d.xy / d.z;
+    float zExit = volumeExit(o, d) * d.z;
+
+    ImpViews v;
+    v.n = P_views.xy; v.kind = P_views.z; v.range = P_viewRange;
+    ImpGrid g;
+    g.origin = P_grid.xy; g.tpm = P_grid.z; g.dim = P_gridDim.xy; g.wrapX = P_grid.w > 0.5;
+    g.D = P_module.z; g.K = P_views.w; g.lastSlot = P_evalDim.z != 0;
+
+    ivec3 views;
+    vec3 w;
+    impPickViews(v, d, views, w);
+    vec3 col[3];
+    float zs[3], wts[3];
+    for (int i = 0; i < 3; ++i) {
+        col[i] = vec3(0.0); zs[i] = zExit; wts[i] = 0.0;
+        if (w[i] <= 1e-4) continue;
+        vec3 dk = impViewDirIndex(v, views[i]);
+        vec2 drift = sigma - dk.xy / dk.z;
+        float wt = w[i];
+        bool counted = w[i] >= 0.1;
+        bool guessed = false, offGrid = false;
+        uint steps = 0u;
+        if (P_march.z == 0) {
+            ImpHit h = impMarch(views[i], g, Q, drift, zExit, P_march.x, P_march2.x, P_march.y, P_march2.w > 0.5);
+            col[i] = h.layer >= 0 ? impHitColor(views[i], g, h, Q, drift, P_flags.x != 0, 0.15) : P_outside.rgb;
+            zs[i] = h.layer >= 0 ? h.z : zExit;
+            guessed = h.unknown;
+            offGrid = h.outside;
+            steps = uint(h.steps);
+        } else {
+            // multi-plane: composite the slabs' planes front to back
+            int S = P_march.z;
+            float dz = g.D / float(S);
+            vec4 acc = vec4(0.0);
+            for (int s = 0; s < S; ++s) {
+                float zc = (float(s) + 0.5) * dz;
+                if (zc > zExit) break;
+                vec4 c4 = fetchSlice(views[i], s, impTexel(g, Q + drift * zc, offGrid));
+                if (zs[i] >= zExit && c4.a > 0.5) zs[i] = zc;
+                acc.rgb += (1.0 - acc.a) * c4.rgb;
+                acc.a += (1.0 - acc.a) * c4.a;
+                steps++;
+                if (acc.a > 0.999) break;
+            }
+            col[i] = acc.rgb + (1.0 - acc.a) * P_outside.rgb;
+        }
+        if (guessed) wt *= P_cam.w;
+        if (offGrid) wt *= P_march2.y;
+        wts[i] = wt;
+        if (counted) st += uvec4(steps, guessed ? 1u : 0u, offGrid ? 1u : 0u, 1u);
+    }
+    /* With P_march2.z > 0, a view that saw past the nearest view's hit (through a gap the others
+     * close, or past a thin part it missed) counts for less: opaque things don't hide behind. */
+    if (P_march2.z > 0.0) {
+        float zmin = zExit;
+        for (int i = 0; i < 3; ++i) if (wts[i] > 0.0) zmin = min(zmin, zs[i]);
+        for (int i = 0; i < 3; ++i) wts[i] *= exp(-(zs[i] - zmin) / P_march2.z);
+    }
+    vec3 sum = vec3(0.0);
+    float wsum = 0.0, zsum = 0.0;
+    for (int i = 0; i < 3; ++i) { sum += col[i] * wts[i]; zsum += zs[i] * wts[i]; wsum += wts[i]; }
+    return vec4(sum / max(wsum, 1e-6), zsum / max(wsum, 1e-6));
+}
+
+/* P_glass.w x P_glass.w rays a pixel, on a regular grid, averaged (as truth.comp). */
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= P_evalDim.x || px.y >= P_evalDim.y) return;
+    int n = max(int(P_glass.w), 1);
+    uvec4 st = uvec4(0u);
+    vec4 sum = vec4(0.0);
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i)
+            sum += reconRay(vec3(P_eval.xy + (vec2(px) + (vec2(i, j) + 0.5) / float(n)) / P_eval.zw, 0.0), st);
+    outColor[px.y * P_evalDim.x + px.x] = sum / float(n * n);
+    if (P_march.w != 0) {
+        atomicAdd(stats[0], st.x);
+        atomicAdd(stats[1], st.y);
+        atomicAdd(stats[2], st.z);
+        atomicAdd(stats[3], st.w);
+    }
+}

@@ -162,12 +162,13 @@ file(CONFIGURE OUTPUT ${GEN_DIR}/advert_names.inc CONTENT
 # the executable, so the game is a single self-contained binary.
 set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/spv)
-file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain ${SHADER_OUT_DIR}/proxy)
+file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain ${SHADER_OUT_DIR}/proxy ${SHADER_OUT_DIR}/interior)
 set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp
             cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
             prepass.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag
             terrain/planet.vert terrain/planet.frag
-            proxy/proxy.vert proxy/proxy.frag flame.vert flame.frag smoke.vert smoke.frag)
+            proxy/proxy.vert proxy/proxy.frag flame.vert flame.frag smoke.vert smoke.frag
+            interior/capture.comp interior/capture_mpi.comp interior/truth.comp interior/recon.comp)   # the interior baker's
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)
@@ -331,6 +332,30 @@ else()
   target_link_libraries(model_pack PRIVATE m)
   if(UNIX)
     target_link_libraries(model_pack PRIVATE pthread)
+  endif()
+endif()
+
+# --- Tools: the interior baker ------------------------------------------------
+# Bakes office floor modules into interior impostors and measures the representation
+# (tools/interior_bake, docs/interior-impostors.md): a headless Vulkan device (vk_init_headless)
+# tracing ray queries. It reads the lounge's sofa through the models' own reader and grows its
+# plants with the lobby's generator.
+add_executable(interior_bake tools/interior_bake/main.c tools/interior_bake/scene.c tools/interior_bake/gpu.c
+               tools/interior_bake/pack.c tools/interior_bake/ktx2.c tools/interior_bake/lab.c
+               src/render/vkcore.c src/city/models.c src/core/assets.c ${MATERIAL_SOURCES}
+               src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c)
+add_dependencies(interior_bake shaders)
+target_include_directories(interior_bake PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
+target_compile_definitions(interior_bake PRIVATE NEONCITY_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets")
+target_link_libraries(interior_bake PRIVATE volk glfw)
+if(MSVC)
+  target_compile_options(interior_bake PRIVATE /W3 /wd4100 /wd4996)
+  set_property(TARGET interior_bake PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+else()
+  target_compile_options(interior_bake PRIVATE -Wall -Wno-unused-parameter -Wno-missing-braces)
+  target_link_libraries(interior_bake PRIVATE m)
+  if(UNIX)
+    target_link_libraries(interior_bake PRIVATE pthread dl)
   endif()
 endif()
 

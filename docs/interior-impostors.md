@@ -1,6 +1,6 @@
 # Baked Interior Impostors for Deep Office Floors
 
-**Status:** design (IM0). The numbers marked *(IM1)* are starting values that the representation spike measures and fixes. The milestones are summarised in section 12.
+**Status:** design (IM0), with the representation fixed by the IM1 spike (section 13). The milestones are summarised in section 12.
 
 ## 1. Purpose
 
@@ -42,31 +42,38 @@ It uses the same tangent frame as `rooms.glsl`: x along the wall in the facade's
 
 ## 4. Views
 
-The camera only ever sees a module from in front of its glass. The view directions d (from the eye into the building, d.z > 0) are parametrised by the **hemi-octahedral map**:
+The camera only ever sees a module from in front of its glass. A view direction d runs from the eye into the building (d.z > 0). It is given by its **azimuth** (atan(d.x, d.z)) and its **slope** s = tan(elevation), the rise per metre of horizontal travel. Seen from the street, a window is above the eye, so the rays mostly climb into the building (s > 0). Seen from level (another tower, or in flight), they are near horizontal.
 
-```
-p = d.xy / (|d.x| + |d.y| + d.z)              // a diamond in [-1, 1]^2
-q = (p.x + p.y, p.y - p.x)                     // rotated to the square
-```
+The baked views are a regular **Nu × Nv grid**: 5 across in azimuth, evenly over ±60°, and 10 up in slope, evenly in asinh(s / s0) with s0 = 0.12 (IM1, section 13). The rows sit at about −24°, −12°, −5°, 0°, 5°, 12°, 24°, 42°, 61° and 74°. The range is shifted by under half a row so that one row is exactly horizontal.
 
-The vertical axis of the square is then warped, so that more views fall where cameras actually are. Seen from the street, a window is above the eye, so the rays mostly climb into the building (d.y > 0). Seen from level, from another tower or in flight, they are near horizontal.
+**Why the elevations are spaced this way.** The room is bounded above and below, by the ceiling slab and the floor. A view at slope s, used for a ray at slope σ, looks up texels `|s − σ| · z` above or below the ray's own at depth z.
 
-The baked views are a regular **Nu × Nv grid** in the warped square: 4 × 4 = 16 to start *(IM1: 9, 16 and 25 are compared)*.
+- A climbing ray meets the ceiling within `(height − y) / σ`. Where views are spaced in proportion to their slope (geometrically), that offset stays a fixed share of the room's height, however steep the rays.
+- A near-horizontal ray can see to the far glass, 30 m away. There the views must be close in slope, about the margin over the depth.
 
-Each view is an **oblique orthographic projection onto the glass plane**. Texel (s, t) of view k is the ray that crosses z = 0 at x = s·W, y = t·H and travels along d_k. Every view's texels therefore line up with facade (u, v). This makes the lookup simple: content at depth z shows at plane position `(x, y) + z · d.xy / d.z`, so marching a ray through a view is a 2D march in the plane. Only rays that enter through the glass opening matter, so the texel grid covers just that opening.
+Spacing that is even in asinh(s / s0) meets both needs: geometric where steep, even near the horizontal, turning over at about the room's height over its depth. A grid even in elevation (or the hemi-octahedral square) leaves near-horizontal rays between rows 20-30° apart. Their views then need texels many metres above or below the window, off the grid: in IM1 that made deep views fail outright (12.8 dB). The parametrisation is `impViewDir` and `impDirUV` in `shaders/city/impostor.glsl` (IMP_GRID_SLOPE).
 
-**Resolution:** about 32 texels per metre at the front layer (3 cm), so 384 × 128 for a 12 m × 4 m module *(IM1)*. Back layers are baked at half that.
+Each view is an **oblique orthographic projection onto the glass plane**. Texel (s, t) of view k is the ray that crosses z = 0 at the plane point `origin + (s, t) / texels-per-metre` and travels along d_k. Every view's texels therefore line up with facade (u, v). This makes the lookup simple: content at depth z shows at plane position `(x, y) + z · d.xy / d.z`, so marching a ray through a view is a 2D march in the plane.
+
+**The texel grid** covers more than the opening:
+
+- **In x:** the module's width, wrapped, since modules are periodic. A corner module adds 1 m beyond each end.
+- **In y:** the room, from the floor to the slab's underside, plus a **1 m margin** above and below. A view whose direction differs from the ray's needs the texels next to the window. Rays starting in the margin begin inside a slab (section 5).
+
+**Resolution:** 16 texels per metre (6 cm), so 192 × 86 for a 12 m module with a 3.4 m room. Every layer is at full resolution (IM1: half-resolution back layers cost 1 dB).
 
 ## 5. Layers
 
-A single view can't show what it hides. Neighbouring views reveal it, but not far enough when the floor is deep: a 15° difference in view moves a far wall 30 m away by 8 m. So each texel stores **K depth-peeled hits** along its ray (K = 3 to start; *IM1: 2, 3 and 4*).
+A single view can't show what it hides. Neighbouring views reveal it, but not far enough when the floor is deep: a 15° difference in view moves a far wall 30 m away by 8 m. So each texel stores **K = 3 depth-peeled hits** along its ray, the nearest three (IM1: 2, 3 and 4 were compared; keeping the ray's last surface in place of its third gained nothing).
 
 - **Each hit is an interval:** the depth where the ray enters the surface's object and where it leaves it (measured from the back face, or a thin-shell default thickness for open meshes). The march can then tell solid from empty and step round a desk rather than through it.
 - **A texel with fewer than K hits** marks the rest empty (entry = 1, the module's depth).
-- **Opaque layers end the ray.** Past the last stored layer, a ray in a through module leaves by the far glass. In a core module it ends on the core wall, which is always one of the K layers, since the generator gives every core module one.
+- **A texel with more than K** is *full*: past its last stored exit it says nothing, and a march that crosses those depths has to guess (section 7). The flag is a bit per texel.
+- **A ray that starts in a slab** (a texel in the margin, below the floor or above the ceiling) is inside a solid from depth 0 until it enters the room. That interval has entry 0. A march that hits it has found a face the view never saw, so it counts as a guess.
+- **Opaque layers end the ray.** Past the last stored layer of a texel that isn't full, a ray in a through module leaves by the far glass. In a core module it ends on the core wall.
 - **Thin glass is not a layer.** Interior partitions and the far facade's glass are not stored as hits. The baker takes the primary ray through them: the radiance of the hit behind is recorded as seen through the glass (its transmittance), with the glass's reflection added. Each view bakes its own glass reflection, so view-dependence is kept. Glass mullions and partition frames are ordinary opaque geometry.
 
-**The alternative** is a multi-plane image: per view, a stack of semi-transparent RGBA slices. It handles glass and leaves better, but costs several times the memory. IM1 measures both on a scene with glass meeting rooms and a plant, and keeps layered depth unless the error says otherwise.
+**The alternative** was a multi-plane image: per view, a stack of semi-transparent RGBA slices. IM1 measured both, on all four test floors and on the one with glass meeting rooms and plants in particular. Layered depth stays. A multi-plane image matched it only at 32 slices and 4.6 times the memory, and beat it only at 64 slices and 9 times (section 13).
 
 ## 6. Channels and light
 
@@ -77,7 +84,7 @@ The baked light is split so that a module can be relit by the place it lands in.
 | `lint` | BC6H (RGB HDR) | Radiance from the module's own lights, with full GI: ceiling panels, pendants, desk lamps, cove strips, orb lamps |
 | `albedo` | BC7 (RGBA) | RGB: the surface's base colour. A: the specular share of the exterior-lit radiance (see below) |
 | `ext` | BC7 (RGBA) | Luminance of the radiance under four unit white **basis lights**: R street, G neon, B sky, A screens |
-| `depth` | BC5 (RG) | Entry and exit depth as fractions of D *(IM1 may need RG16 for precision)* |
+| `depth` | BC5 (RG) | Entry and exit depth as fractions of D (IM1: BC5 costs 0.3 dB against RG16 and saves 43% of the memory). The full flag (section 5) needs a bit as well: IM1's files keep it in `normal.a`, and IM2 settles where it lives |
 
 **The exterior bases.**
 
@@ -115,9 +122,13 @@ IM4 fixes the exact evaluation.
 
 1. Turns the view ray into the module frame; mirroring flips x.
 2. Finds the view grid cell holding the ray's direction, and its triangle of 3 views with barycentric weights.
-3. For each of the 3 views, marches the ray in the plane through that view's layer intervals: a fixed number of steps (about 12), then a binary refine on the first crossing. The hit gives a texel and a layer in that view.
+3. For each of the 3 views, marches the ray in the plane through that view's layer intervals (`impMarch`). The steps are spaced so the texel moves one texel a step, at most 64 steps, and the march stops at the first hit. Each step tests the depths it spans against the intervals of the texel at its end. The first that overlaps is refined by 6 bisections: on the point test where the step's end is inside the solid, else on the span test (a part thinner than a step). The hit gives a texel and a layer in that view.
+   - IM1 found the step size the largest lever after the view grid. Two-texel steps (12 cm at 16 texels a metre) skip desk and chair legs and cost 0.6 dB. A cap of 16 steps cost 2 dB.
+   - Testing each step's start texel as well made things worse (the span test then fattens thin parts), so it is off.
 4. Reads `lint`, `albedo` and `ext` there, and recombines them with the coefficients.
-5. Blends the 3 results by weight, with each view's weight dropping where its march found a disocclusion. A hit that the view had to guess behind a layer it doesn't hold counts as one.
+5. Blends the 3 results by weight. A view's weight drops to 0.15 where its march guessed: it crossed depths a full texel doesn't describe, or hit a slab from inside. It drops to 0.1 where the march looked up texels off the grid.
+   - Weighting views towards the nearest hit (a view that sees through a gap the others close counts for less) was tried and is worse. Off-grid views hallucinate near hits.
+   - The colour is the hit texel's own. A depth-aware bilinear fetch over the 2 × 2 texels round the hit (`impHitColor`) gained 0.06 dB in IM1, so it is optional.
 6. If the march leaves by the far glass (a through module, past the last layer), it shows the **view out**: the lamp-lit street, facade across and haze that `cornerInterior` already models from the window's height.
 
 **Everything else on the glass stays as it is.** Blinds, curtains, privacy film, frames, mullions, the glass tint, the Fresnel reflection and `paneSheen` are all applied on top of the result by the existing code in `shadeFacade`.
@@ -153,9 +164,9 @@ The engine reads the catalogue at startup, as it reads the adverts (`src/render/
 
 **Storage** (decided 2026-10-29): the bakes and the high-poly sources both go in Git LFS (`.gitattributes`) while the account has capacity. On 2026-10-29 the repo's LFS objects took about 0.5 GiB of the free 10 GiB. If capacity runs short, the sources stay in LFS and the bakes leave it, since the baker can rebuild them with one command. Every version of an LFS file counts towards storage, so re-bakes are committed at the end of a milestone, not on every iteration.
 
-**Budget per module** *(IM1)*: 16 views × 3 layers, the front layer at 384 × 128 and the back layers at half that, about 4 bytes a texel over the four channels with mips. That is about 6 MB, so a 32-module catalogue is about 200 MB, all resident. If the catalogue grows past that, modules are streamed by the chunks in range.
+**Budget per module** (IM1): 50 views × 3 layers × 192 × 86 texels, at 4 bytes a texel over the four channels (BC5 depth) with mips. That is about **12.6 MB**, twice IM0's guess: the margins round the window and the view count both had to grow (section 13). A 200 MB budget holds 16 modules, all resident. A larger catalogue streams modules by the chunks in range, drops to K = 2 (8.4 MB), or takes a bigger budget (IM7 decides).
 
-**GPU target:** at most 0.5 ms at 1600 × 900 with a tower's facade filling the screen, on an RTX 4080 SUPER, read from the `--shot` pass timings.
+**GPU target:** at most 0.5 ms at 1600 × 900 with a tower's facade filling the screen, on an RTX 4080 SUPER, read from the `--shot` pass timings. In IM1's lab, a full 1600 × 900 of impostor pixels takes 0.38 to 0.67 ms, read from plain buffers rather than textures. A facade where only 30-50% of the floors are impostors, and only the glass of those, comes in under that. IM2 measures it in the engine.
 
 ## 9. The baker
 
@@ -176,6 +187,9 @@ The baker is `tools/interior_bake/`, an in-house path tracer in C11 and Vulkan c
 - Intel Open Image Denoise, with albedo and normal guides, is an optional dependency of the baker alone, never the game.
 
 **Modes:**
+- IM1 has two:
+  - `--scene <name> --out <dir>`: bakes one of the test modules to `<dir>`, with IM1's choices as defaults (`--views`, `--grid`, `--res`, `--margin` and `--layers` override them).
+  - `--lab <dir>`: the representation sweep (section 13). With `IMP_SELFTEST` set, it checks the pipeline instead.
 - `--module <name>`: bakes one module from the catalogue.
 - `--catalogue`: bakes whatever changed, by input hash.
 - `--beauty <camera>`: a perspective still from inside a module, for look-dev against the reference.
@@ -207,9 +221,9 @@ Floor layouts are procedural, in code, and used only by the baker: they are the 
 
 ## 11. Risks
 
-- **Seams between views.** Blending 3 views can ghost or swim where they disagree. The defence is enough views where cameras actually look (the warp), a disocclusion-aware weight, and IM1's error measurements on novel views.
+- **Seams between views.** Blending 3 views ghosts where they disagree. IM1 measured it, and found the cause was mostly views whose texels fall off the grid. The defences are the slope-spaced view grid (section 4), one-texel march steps, and the weights for guessing and off-grid views. What remains shows as soft edges on thin parts (pendants, wires, chair legs) and as staircases along oblique edges seen from far aside (section 13).
 - **Repetition.** One module seen on many floors at once could read as a pattern. The defence is mirroring, families of several modules, the per-floor light state, relighting by the local neon, and the mix with interior-mapped floors. IM7 checks a 10-tower view.
-- **Memory.** If the catalogue must grow past the budget, back layers and the far views can drop resolution first, and streaming comes in.
+- **Memory.** A module is about 12.6 MB (section 8), so the 200 MB budget holds 16. A larger catalogue needs streaming, or K = 2 (8.4 MB, 0.4 dB worse), or a bigger budget. Half-resolution back layers cost 1 dB, so they come last.
 - **Footprints that aren't rectangles.** A faceted drum or an L-shape has no single depth across a face. The face takes the depth of its centre line, the core module type stops rays short where the plate is shallow, and corner modules only key at 90° corners.
 
 ## 12. Milestones
@@ -219,7 +233,7 @@ The working plan is kept outside the repo. In summary:
 | | |
 |---|---|
 | IM0 | This design, the reference image, the LFS patterns |
-| IM1 | Baker skeleton (headless Vulkan, multi-hit capture under simple light) and the representation spike: views × layers × resolution, layered depth against MPI, measured against true renders |
+| IM1 | Baker skeleton (headless Vulkan, multi-hit capture under simple light) and the representation spike: views × layers × resolution, layered depth against MPI, measured against true renders. Done: section 13 |
 | IM2 | First light in the engine: loading, the facade trace, a debug selection of floors, cost measured |
 | IM3 | The path tracer: materials, emitters, NEE and MIS, glass, clearcoat; furnace and Cornell tests |
 | IM4 | Light: the interior kit, the exterior bases and their colouring in the engine, exposure calibration, a beauty render against the reference |
@@ -228,3 +242,80 @@ The working plan is kept outside the repo. In summary:
 | IM7 | The city: floor selection, tiling, plate and core depths in the vertex data, corners, LOD, memory |
 | IM8 | The catalogue and one-command rebuild; README |
 | IM9 | Animated screens, people, more kits |
+
+## 13. IM1: the representation spike
+
+IM1 built the baker's skeleton and used it to choose the representation, measuring each candidate against the truth.
+
+**What was built:**
+
+- **The device:** `vk_init_headless` (`src/render/vkcore.c`), the engine's device without a window.
+- **The scenes** (`tools/interior_bake/scene.c`), four test floors after the reference. They are built from one instanced unit cube, plus the engine's sofa (`assets/models/sofa.glb`, with its material's mean albedo) and two lobby plants from `plant.c`. Each has 500 to 1,500 instances, from 8 mm pendant wires to 60 cm columns.
+- **The geometry** (`gpu.c`): a BLAS per mesh, and a TLAS holding a periodic module's copies along x, so rays cross its ends.
+- **The capture** (`shaders/interior/capture.comp`): every surface along each texel's ray, folded into intervals. Partition glass is folded into what lies behind it.
+- **The truth** (`truth.comp`) and **the reconstruction** (`recon.comp`).
+- **The march** (`shaders/city/impostor.glsl`): the view grid, the 3-view pick, the march and the colour fetch. The facade shader includes it from IM2.
+- **The files:** the KTX2 writer and JSON sidecar (`ktx2.c`).
+- **The sweep** (`lab.c`).
+
+**The light** is direct only, for now. N·L from 12 to 39 downward point lights with cosine lobes and ray-traced shadows, plus emissive surfaces and a little ambient. It is the same in the truth and the capture, so the errors are the representation's alone.
+
+**Method.**
+
+- **Floors:**
+  - `through30`: 12 × 30 m, to far glass
+  - `core12`: to a core wall with doors
+  - `corner16`: glass on two sides, so not periodic
+  - `glass20`: two glass meeting rooms, a lounge, plants
+- **Cameras:** 15 per floor. 10 are on the street: 2 to 60 m below the window, 10 to 80 m out, up to 55 m aside. 5 are level with it or above.
+- **Truth:** the scene traced through the glass, at 40 pixels a metre over the opening, each pixel the mean of 4 × 4 rays. That is about a 1600-pixel view 35 m away.
+- **Reconstruction:** the same rays, from the views alone.
+- **Measures:**
+  - PSNR of the tonemapped radiance.
+  - A *coarse* PSNR over 4 × 4 blocks, which measures structure (ghosts, holes, misplaced parts) rather than edge aliasing.
+  - The share of pixels off by more than 0.1.
+  - Memory in the final block formats.
+  - The march's time for a 1600 × 900 dispatch.
+- **The floor.** Along a baked view's own direction (`IMP_SELFTEST`), the reconstruction is exact but for the texels' size. At 16 texels a metre that alone scores 20 to 28 dB (51 dB on a plain ceiling): every edge's 6 cm texel costs that much at 40 pixels a metre. The fine PSNR is therefore resolution-bound, and the candidates are best compared on the coarse score and the images.
+
+**Results** (the mean over the four floors; every row is in `docs/reference/im1/results.md`):
+
+| | PSNR | coarse | bad % | MB | ms |
+|---|---|---|---|---|---|
+| IM0's starting point: azimuth-elevation 4 × 4, 32 texels a metre, K = 3 | 23.73 | 27.01 | 4.65 | 28.4 | 0.66 |
+| Hemi-octahedral 7 × 7, 16 texels a metre | 24.79 | 28.45 | 3.97 | 29.6 | 0.59 |
+| Slope grid 4 × 10, 16 texels a metre, 2 m margins, 2-texel steps | 24.90 | 28.34 | 4.04 | 24.2 | 0.67 |
+| … with 1-texel steps | 26.20 | 30.16 | 3.36 | 24.2 | 1.11 |
+| **The choice:** slope 5 × 10 (±60°, −30..70°), 16 texels a metre, 1 m margins, K = 3, BC5 depth, 1-texel steps up to 64 | **25.87** | **29.75** | **3.77** | **12.6** | **0.67** |
+| … at 24 texels a metre (4 × 10) | 26.37 | 30.14 | 3.51 | 22.9 | 0.79 |
+| Multi-plane, 32 slices (slope 4 × 10) | 25.05 | 28.59 | 3.91 | 110.6 | 0.19 |
+| Multi-plane, 64 slices | 26.66 | 30.84 | 3.00 | 221.2 | 0.27 |
+
+**What it showed.**
+
+- **Elevation spacing matters most.** Grids with no row near the horizontal (azimuth-elevation 3 × 3 and 5 × 5) were worse than 4 × 4. Their near-horizontal rays drew on views 20-30° away, whose texels then lay metres off the grid. Half way between two such views, a deep floor scored 12.8 dB. The slope grid (section 4) cut off-grid lookups from 19% to 2-5%. s0 = 0.12 beat 0.06 and 0.25, and narrowing the range to ±60°, −30..70° gained 0.3 dB for nothing.
+- **More azimuths help to 5**, little beyond: 3, 4, 5 and 6 columns scored 23.8, 24.9, 25.1 and 25.3 dB. More elevation rows past 10 didn't help.
+- **The march's step size** is the next lever. One-texel steps gain 1.3 dB over two. Capping the march at 16 steps costs 2 dB, and 24 steps 1.2.
+- **Layers:** K = 1, 2, 3 and 4 scored 22.1, 24.5, 24.9 and 25.0 dB. K = 3 is the knee. Keeping the ray's last surface in the last slot gained nothing.
+- **Resolution:** 12, 16, 24 and 32 texels a metre scored 23.8, 24.9, 25.6 and 25.8 dB, for 13.7, 24.2, 54.8 and 97.2 MB. 16 is the best value. 24 is the step up if close views in IM2 call for it.
+- **Margins:** a 1 m margin scores within 0.05 dB of 2 m, for 27% less memory.
+- **Depth format:** BC5 against RG16 costs 0.3 dB and saves 43% of the memory. Half-resolution back layers cost 1 dB.
+- **Multi-plane against layered depth:** a multi-plane image matches layered depth only at 32 slices (4.6 times the memory) and beats it only at 64 (9 times). That holds on the glass meeting rooms as well: 26.2 dB at 32 slices and 111 MB, against 27.1 dB for layered depth with 1-texel steps at 24 MB.
+- **Tried and dropped:**
+  - Testing both ends of each march step (worse: thin parts fatten).
+  - Weighting views towards the nearest hit (worse: off-grid views hallucinate near hits).
+  - A depth-aware bilinear colour fetch (+0.06 dB: kept as an option).
+- **Cost:** 0.38 to 0.67 ms for a full 1600 × 900 of impostor pixels, as section 8 says.
+
+**What remains wrong** (the images):
+
+- **Thin bright parts:** pendants and lamp heads come out a texel fat, and bright, so they show.
+- **Oblique edges** seen from far aside step like a staircase.
+- **Partition glass**, folded into what lies behind it, is right only from its own view. Across the meeting rooms it leaves a broad, faint error.
+- **Every edge** costs the 6 cm texel.
+
+None of these is structural: the parts are where they should be. If IM2's close-up captures show the texel, 24 texels a metre is the remedy, at 1.8 times the memory.
+
+**Images:** `docs/reference/im1/`. For each floor (`through30.png`, `core12.png`, `corner16.png`, `glass20.png`), the truth, the impostor and their error, the error ×4 (black, red, yellow, white). The rows are three cameras: a street camera 2 m below and 10 m out, one 10 m below, 25 m out and 30 m aside, and a level one 10 m out. `through30_im0_start.png` shows IM0's starting point, ghosting, and `glass20_mpi32.png` shows the 32-slice multi-plane image.
+
+**To rerun:** `interior_bake --lab <dir>` (about 12 minutes on the 4080 SUPER), or `--quick` for the choice alone. `interior_bake --scene <name> --out <dir>` bakes a test module with the choice. Its sidecar records the view grid's range and rows and the march's parameters.

@@ -20,13 +20,15 @@ static bool has_layer(const char *name) {
     return found;
 }
 
-static void create_instance(VkCore *vk, bool validation) {
-    uint32_t glfwCount = 0;
-    const char **glfwExts = glfwGetRequiredInstanceExtensions(&glfwCount);
-    if (!glfwExts) fatal("GLFW reports no Vulkan surface support");
+static void create_instance(VkCore *vk, bool validation, bool headless) {
     const char *exts[16];
     uint32_t n = 0;
-    for (uint32_t i = 0; i < glfwCount && n < 15; ++i) exts[n++] = glfwExts[i];
+    if (!headless) {
+        uint32_t glfwCount = 0;
+        const char **glfwExts = glfwGetRequiredInstanceExtensions(&glfwCount);
+        if (!glfwExts) fatal("GLFW reports no Vulkan surface support");
+        for (uint32_t i = 0; i < glfwCount && n < 15; ++i) exts[n++] = glfwExts[i];
+    }
 
     const char *layer = "VK_LAYER_KHRONOS_validation";
     bool useLayer = validation && has_layer(layer);
@@ -71,8 +73,8 @@ static int score_device(VkCore *vk, VkPhysicalDevice pd, uint32_t *familyOut) {
     if (qn > 32) qn = 32;
     vkGetPhysicalDeviceQueueFamilyProperties(pd, &qn, qp);
     for (uint32_t i = 0; i < qn; ++i) {
-        VkBool32 present = VK_FALSE;
-        vkGetPhysicalDeviceSurfaceSupportKHR(pd, i, vk->surface, &present);
+        VkBool32 present = vk->surface ? VK_FALSE : VK_TRUE;   /* headless: nothing to present to */
+        if (vk->surface) vkGetPhysicalDeviceSurfaceSupportKHR(pd, i, vk->surface, &present);
         VkQueueFlags need = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
         if ((qp[i].queueFlags & need) == need && present) {
             *familyOut = i;
@@ -95,7 +97,8 @@ static void pick_device(VkCore *vk) {
         int s = score_device(vk, devs[i], &fam);
         if (s > best) { best = s; vk->phys = devs[i]; vk->queueFamily = fam; }
     }
-    if (best < 0) fatal("no GPU with Vulkan 1.3 (dynamic rendering + synchronization2) and presentation support");
+    if (best < 0) fatal(vk->surface ? "no GPU with Vulkan 1.3 (dynamic rendering + synchronization2) and presentation support"
+                                    : "no GPU with Vulkan 1.3 (dynamic rendering + synchronization2)");
     vkGetPhysicalDeviceProperties(vk->phys, &vk->props);
     vkGetPhysicalDeviceMemoryProperties(vk->phys, &vk->memProps);
 
@@ -179,12 +182,13 @@ static void create_device(VkCore *vk, bool wantRt) {
 
     const char *exts[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
                            VK_KHR_RAY_QUERY_EXTENSION_NAME, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME };
+    bool swap = vk->surface != VK_NULL_HANDLE;   /* headless devices have no swapchain */
     VkDeviceCreateInfo ci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     ci.pNext = &f2;
     ci.queueCreateInfoCount = 1;
     ci.pQueueCreateInfos = &qi;
-    ci.enabledExtensionCount = vk->rt ? 4 : 1;
-    ci.ppEnabledExtensionNames = exts;
+    ci.enabledExtensionCount = (vk->rt ? 3 : 0) + (swap ? 1 : 0);
+    ci.ppEnabledExtensionNames = swap ? exts : exts + 1;
     VK_CHECK(vkCreateDevice(vk->phys, &ci, NULL, &vk->device));
     volkLoadDevice(vk->device);
     vkGetDeviceQueue(vk->device, vk->queueFamily, 0, &vk->queue);
@@ -194,11 +198,19 @@ void vk_init(VkCore *vk, GLFWwindow *window, bool validation, bool rt) {
     memset(vk, 0, sizeof(*vk));
     vk->window = window;
     VK_CHECK(volkInitialize());
-    create_instance(vk, validation);
+    create_instance(vk, validation, false);
     VK_CHECK(glfwCreateWindowSurface(vk->instance, window, NULL, &vk->surface));
     pick_device(vk);
     create_device(vk, rt);
     vk_create_swapchain(vk);
+}
+
+void vk_init_headless(VkCore *vk, bool validation, bool rt) {
+    memset(vk, 0, sizeof(*vk));
+    VK_CHECK(volkInitialize());
+    create_instance(vk, validation, true);
+    pick_device(vk);
+    create_device(vk, rt);
 }
 
 void vk_create_swapchain(VkCore *vk) {
@@ -271,9 +283,9 @@ void vk_destroy_swapchain(VkCore *vk) {
 }
 
 void vk_shutdown(VkCore *vk) {
-    vk_destroy_swapchain(vk);
+    if (vk->swapchain) vk_destroy_swapchain(vk);
     vkDestroyDevice(vk->device, NULL);
-    vkDestroySurfaceKHR(vk->instance, vk->surface, NULL);
+    if (vk->surface) vkDestroySurfaceKHR(vk->instance, vk->surface, NULL);
     if (vk->messenger) vkDestroyDebugUtilsMessengerEXT(vk->instance, vk->messenger, NULL);
     vkDestroyInstance(vk->instance, NULL);
 }

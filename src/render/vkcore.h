@@ -57,6 +57,8 @@ typedef struct Image {
 
 /* rt: use ray queries if the device has them (vk->rt says whether it did). */
 void     vk_init(VkCore *vk, GLFWwindow *window, bool validation, bool rt);
+/* The same device without a window, surface or swapchain, for tools (tools/interior_bake). */
+void     vk_init_headless(VkCore *vk, bool validation, bool rt);
 void     vk_shutdown(VkCore *vk);
 void     vk_create_swapchain(VkCore *vk);
 void     vk_destroy_swapchain(VkCore *vk);
