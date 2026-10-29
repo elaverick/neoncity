@@ -8,6 +8,9 @@ void renderer_set_shadows(Renderer *r, bool on) { r->shadowsOn = on && r->rt; }
 bool renderer_shadows(Renderer *r) { return r->shadowsOn; }
 void renderer_set_shadow_debug(Renderer *r, bool on) { r->shadowDebug = on; }
 bool renderer_shadow_debug(Renderer *r) { return r->shadowDebug; }
+void renderer_set_impostors(Renderer *r, float share) { interiors_set_share(r->interiors, share); }
+float renderer_impostors(Renderer *r) { return interiors_share(r->interiors); }
+int renderer_impostor_modules(Renderer *r) { return interiors_count(r->interiors); }
 
 uint64_t renderer_frame_index(Renderer *r) { return r->frameIndex; }
 
@@ -123,6 +126,7 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
     }
     r->materials = materials_create(vk);
     r->adverts = adverts_create(vk);
+    r->interiors = interiors_create(vk);
     r->shelter = vk_image(vk, SHELTER_SIZE, SHELTER_SIZE, 1, DEPTH_FORMAT,
                           VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                           VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
@@ -182,6 +186,7 @@ void renderer_destroy(Renderer *r) {
     vk_image_destroy(vk, &r->shelter);
     materials_destroy(r->materials);
     adverts_destroy(r->adverts);
+    interiors_destroy(r->interiors);
     for (int i = 0; i < MAX_FRAMES; ++i) {
         vkDestroyFence(vk->device, r->fence[i], NULL);
         vkDestroySemaphore(vk->device, r->imageReady[i], NULL);

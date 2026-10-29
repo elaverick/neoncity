@@ -1,6 +1,6 @@
 # Baked Interior Impostors for Deep Office Floors
 
-**Status:** design (IM0), with the representation fixed by the IM1 spike (section 13). The milestones are summarised in section 12.
+**Status:** design (IM0), with the representation fixed by the IM1 spike (section 13), and drawn in the engine since IM2 (section 14). The milestones are summarised in section 12.
 
 ## 1. Purpose
 
@@ -84,7 +84,10 @@ The baked light is split so that a module can be relit by the place it lands in.
 | `lint` | BC6H (RGB HDR) | Radiance from the module's own lights, with full GI: ceiling panels, pendants, desk lamps, cove strips, orb lamps |
 | `albedo` | BC7 (RGBA) | RGB: the surface's base colour. A: the specular share of the exterior-lit radiance (see below) |
 | `ext` | BC7 (RGBA) | Luminance of the radiance under four unit white **basis lights**: R street, G neon, B sky, A screens |
-| `depth` | BC5 (RG) | Entry and exit depth as fractions of D (IM1: BC5 costs 0.3 dB against RG16 and saves 43% of the memory). The full flag (section 5) needs a bit as well: IM1's files keep it in `normal.a`, and IM2 settles where it lives |
+| `depth` | BC5 (RG) | Entry and exit depth as fractions of D (IM1: BC5 costs 0.3 dB against RG16 and saves 43% of the memory) |
+| `flags` | R8, a layer per view | 1 where the texel is full (section 5). A byte per texel and view leaves room for IM9's screen mask |
+
+**Until IM3 and IM4** (section 14), `lint` is B10G11R11 float and `albedo` RGBA8, both uncompressed: their contents change in those milestones, and a block encoder for BC6H and BC7 comes with the final ones. The depth is real BC5 already (`bc4_channel` in `tools/interior_bake/pack.c`, the encoder IM1's lab simulated).
 
 **The exterior bases.**
 
@@ -125,6 +128,7 @@ IM4 fixes the exact evaluation.
 3. For each of the 3 views, marches the ray in the plane through that view's layer intervals (`impMarch`). The steps are spaced so the texel moves one texel a step, at most 64 steps, and the march stops at the first hit. Each step tests the depths it spans against the intervals of the texel at its end. The first that overlaps is refined by 6 bisections: on the point test where the step's end is inside the solid, else on the span test (a part thinner than a step). The hit gives a texel and a layer in that view.
    - IM1 found the step size the largest lever after the view grid. Two-texel steps (12 cm at 16 texels a metre) skip desk and chair legs and cost 0.6 dB. A cap of 16 steps cost 2 dB.
    - Testing each step's start texel as well made things worse (the span test then fattens thin parts), so it is off.
+   - A texel's layers lie nearest first, so the test stops at the first layer beyond the step, and reads the full flag only where it decides the answer. Most steps cost one fetch (IM2: section 14).
 4. Reads `lint`, `albedo` and `ext` there, and recombines them with the coefficients.
 5. Blends the 3 results by weight. A view's weight drops to 0.15 where its march guessed: it crossed depths a full texel doesn't describe, or hit a slab from inside. It drops to 0.1 where the march looked up texels off the grid.
    - Weighting views towards the nearest hit (a view that sees through a gap the others close counts for less) was tried and is worse. Off-grid views hallucinate near hits.
@@ -146,7 +150,8 @@ The mid and far terms are matched so nothing pops at the transitions.
 assets/interiors/catalogue.json             every module's generator inputs, seed and input hash
 assets/interiors/<module>.json              the sidecar (below)
 assets/interiors/<module>.<channel>.ktx2    lint, albedo, ext, depth: one 2D array texture each,
-                                            layer = view * K + depth layer, with mips
+                                            layer = view * K + depth layer, with mips (IM2: one level, no ext yet);
+                                            flags: one layer per view
 assets_src/interiors/                       high-poly source models (bake only; never copied to the game)
 ```
 
@@ -160,7 +165,7 @@ assets_src/interiors/                       high-poly source models (bake only; 
 - per-bay mean radiance per channel
 - the seed, the generator and baker versions, and the hash of every input
 
-The engine reads the catalogue at startup, as it reads the adverts (`src/render/adverts.c`). A missing or malformed module is left out, and the floors that would have used it keep interior mapping. The files are generated assets: written by the baker, never edited by hand.
+The engine reads the catalogue at startup, as it reads the adverts (`src/render/adverts.c`): `src/render/interior_def.c` reads the catalogue, the sidecars and the KTX2 headers (`material_test` checks them with it), and `src/render/interiors.c` uploads them. A missing or malformed module is left out, and the floors that would have used it keep interior mapping. The files are generated assets: written by the baker, never edited by hand. IM2's catalogue is a list of names (`{ "modules": [...] }`); IM8 adds each module's inputs.
 
 **Storage** (decided 2026-10-29): the bakes and the high-poly sources both go in Git LFS (`.gitattributes`) while the account has capacity. On 2026-10-29 the repo's LFS objects took about 0.5 GiB of the free 10 GiB. If capacity runs short, the sources stay in LFS and the bakes leave it, since the baker can rebuild them with one command. Every version of an LFS file counts towards storage, so re-bakes are committed at the end of a milestone, not on every iteration.
 
@@ -234,7 +239,7 @@ The working plan is kept outside the repo. In summary:
 |---|---|
 | IM0 | This design, the reference image, the LFS patterns |
 | IM1 | Baker skeleton (headless Vulkan, multi-hit capture under simple light) and the representation spike: views × layers × resolution, layered depth against MPI, measured against true renders. Done: section 13 |
-| IM2 | First light in the engine: loading, the facade trace, a debug selection of floors, cost measured |
+| IM2 | First light in the engine: loading, the facade trace, a debug selection of floors, cost measured. Done: section 14 |
 | IM3 | The path tracer: materials, emitters, NEE and MIS, glass, clearcoat; furnace and Cornell tests |
 | IM4 | Light: the interior kit, the exterior bases and their colouring in the engine, exposure calibration, a beauty render against the reference |
 | IM5 | The office floor generator and its validation |
@@ -319,3 +324,52 @@ None of these is structural: the parts are where they should be. If IM2's close-
 **Images:** `docs/reference/im1/`. For each floor (`through30.png`, `core12.png`, `corner16.png`, `glass20.png`), the truth, the impostor and their error, the error ×4 (black, red, yellow, white). The rows are three cameras: a street camera 2 m below and 10 m out, one 10 m below, 25 m out and 30 m aside, and a level one 10 m out. `through30_im0_start.png` shows IM0's starting point, ghosting, and `glass20_mpi32.png` shows the 32-slice multi-plane image.
 
 **To rerun:** `interior_bake --lab <dir>` (about 12 minutes on the 4080 SUPER), or `--quick` for the choice alone. `interior_bake --scene <name> --out <dir>` bakes a test module with the choice. Its sidecar records the view grid's range and rows and the march's parameters.
+
+## 14. IM2: first light in the engine
+
+IM2 drew the modules on the city's facades, with IM1's march, and measured them there.
+
+**What was built:**
+
+- **The files.** The baker writes what the engine loads (`tools/interior_bake/ktx2.c`, format version 2): `lint` as B10G11R11 float, `albedo` RGBA8, `depth` real BC5 (`bc4_channel`, the encoder IM1's lab simulated), and `flags`, an R8 layer per view holding the full flag. No mips: the march reads texels. A module is 23 MB on disk and 33 MB on the GPU, against section 8's 12.6 MB once `lint` and `albedo` are BC6H and BC7. Each sidecar gains the ceiling's height and a provisional `bake_scale` of 5, which brings a bay's mean through the glass near a lit room's: IM1's light is direct only, and IM4 calibrates it.
+- **The catalogue.** `assets/interiors/catalogue.json` names three of IM1's floors: `through30`, `core12` and `glass20`. The corner floor waits for corner modules (IM7).
+- **Loading.** `src/render/interior_def.c` reads the catalogue, the sidecars and the KTX2 headers without the GPU, so `material_test` checks every module (its sizes, formats, BC4 modes and finite radiance). `src/render/interiors.c` uploads them as the adverts are uploaded, and binds a table (scene binding 11) and each module's four images (binding 12, indexed per floor). Three modules load in 40 to 60 ms.
+- **The trace.** `shaders/city/impostors.glsl` defines the fetches `impostor.glsl` asks for, and `impostorTrace` marches and blends the 3 views as section 7 says. `shadeFacade` calls it from the window branch, in place of `interiorColor`.
+- **The selection** is for debugging until IM7: `--impostors [share]` (default 0.4), and F8 in game, draw that share of the office floors (`tintSel` ≥ 0.5) behind curtain walls and ribbon windows, chosen by the hash of the building, section and floor. Plant floors keep their louvres.
+
+**Fitting a module to a floor.**
+
+- **Across:** the module spans the whole bays nearest its width, so x is stretched by W / (n · bayW), at most about ±20% with today's bay widths. IM7 narrows that to section 3's ±10% by choosing among modules.
+- **Up:** a floor's height (3.3 to 4.2 m) maps to the module's 4 m, so y is stretched by 4 / floorH. The ray's direction is stretched alike, so the map is affine and the parallax stays exact.
+- **Tiling:** a face starts its modules at its own start. Each face of a floor is mirrored in x by a hash, so neighbouring faces don't repeat each other exactly.
+- **The slab:** glass below the floor or above the ceiling (a curtain wall's top 20-30 cm) covers the slab's edge, a dark band, not the module's margin texels.
+- **Depth:** the module's own. The floor-plate depth is IM7's, so a 30 m module can look deeper than its building.
+- **On top:** blinds (on 40% of the bays that would have them), privacy film, frames, mullions, the glass tint and the reflection are drawn as on any window. There are no curtains or televisions on an open-plan floor.
+- **Mid LOD:** each bay's `roomAvg` becomes its module bay's mean (the sidecar's `bay_means`, times `bake_scale`), so the near trace fades into that bay's own light. The far average is unchanged until IM7.
+
+**The march, faster.** `impOverlap` read the full flag and all K layers at every step. It now stops at the first layer beyond the step, and reads the flag only where it decides the answer. The lab's score for IM1's choice rose a little on all four floors (mean 25.87 → 26.02 dB, coarse 29.75 → 29.96). It no longer matches a deeper layer whose BC5-rounded entry lies in front of a nearer one. Its cost for a full 1600 × 900 fell from 0.38-0.67 ms to 0.31-0.53 ms.
+
+**Cost** (`--shot`, the city pass's 64-frame mean, RTX 4080 SUPER, 1600 × 900 with 4× MSAA). The view is a curtain-wall tower filling the middle of the screen, about 45% of it impostor glass, at `--cam 1139.3 262 1.7 0 20` in the default city:
+
+| | city pass |
+|---|---|
+| HEAD before IM2 (two runs) | 0.89, 0.95 ms |
+| IM2, impostors off (two runs) | 0.97, 0.97 ms |
+| every eligible floor an impostor (two runs) | 1.57, 1.59 ms (+0.61) |
+| share 0.4 | 1.22 ms (+0.25) |
+
+The budget (section 8: 0.5 ms with a tower filling the screen) holds at a share of 0.4. A full screen of impostor glass would cost about 1.35 ms with every floor drawn, and about 0.55 ms at a 0.4 share. Off, the code costs at most about 0.05 ms, within the runs' spread.
+
+**What it showed** (`docs/reference/im2/`):
+
+- **`facade_on_off.jpg`:** the same tower with every eligible floor an impostor (above) and with interior mapping (below). The deep floors read as such: desk rows with lamps and screens, columns, pendants, the lounge's plants and orb lamp, and the space carrying on from one window to the next. Interior mapping shows a box room with one panel behind each window.
+- **`level.jpg`:** a level view from 22 m up, 35 m out, with every floor drawn as an impostor.
+- **`track.jpg`:** three views 1 m apart, sideways. Desks, columns and pendants keep their places and move with their depth. There is no tearing or swimming at the view seams.
+- **`street.jpg`:** from the street, looking up, the floors are mostly ceiling. IM1's lights point down, so the ceiling is nearly black, and the ducts show only as pale bars that lean with the angle, as they should. The modules are much darker than the look until IM3's indirect light.
+
+**What remains:**
+
+- **Darkness:** the light is direct only (IM3, IM4).
+- **Repetition:** three modules are few. The lounge's orb lamp recurs every 12 m along a floor (IM5's variety, IM7's choice).
+- **Memory:** `lint` and `albedo` are still uncompressed (BC6H and BC7 with IM3 and IM4), and there are no mips.
+- **Depth, corners and share:** the module's depth ignores the building's, corner bays show the face's module, and the share is a debugging knob (IM7).

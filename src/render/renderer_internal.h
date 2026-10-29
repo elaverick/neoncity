@@ -2,6 +2,7 @@
 #include "renderer.h"
 #include "materials.h"
 #include "adverts.h"
+#include "interiors.h"
 #include "rt.h"
 
 /* Shared between the renderer's files (src/render/renderer*.c). Not part of
@@ -96,6 +97,7 @@ struct Renderer {
     VkSampler    linearClamp, nearestClamp, linearRepeat;
     Materials   *materials;   /* materials.c: authored PBR maps and their property table */
     Adverts     *adverts;     /* adverts.c: the screens' authored adverts, their frames and table */
+    Interiors   *interiors;   /* interiors.c: the baked interior impostors, their images and table */
     Image        cloudNoise;
     Image        shelter;   /* shelter map: top-down depth of the city round the camera (record_shelter) */
     TerrainGpu  *terrain;   /* terrain_gpu.c */

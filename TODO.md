@@ -361,8 +361,13 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
 Deep open-plan office floors, baked offline with global illumination and drawn behind the glass from layered,
 multi-view depth impostors in place of interior mapping. The design is `docs/interior-impostors.md`, and the look
 target is `docs/reference/office_night.png`.
-- **Done:** the design (IM0).
-- **Next:** the baker's skeleton and the representation spike (IM1).
+- **Done:** the design (IM0); the baker's skeleton and the representation spike (IM1); first light in the engine
+  (IM2: `--impostors`, F8), on three of IM1's test floors under direct light.
+- **Next:** the path tracer (IM3): full GI, so the ceilings seen from the street aren't black.
+- **IM2's leftovers:** lint and albedo are uncompressed (B10G11R11, RGBA8) until their contents are final
+  (BC6H and BC7, IM3/IM4), and there are no mips; the exposure (`bake_scale`) is a guess until IM4; floors are
+  chosen by a share for debugging, and the module's depth ignores the building's (IM7: plate and core depths);
+  corner bays show the face's module, not a corner one (IM7).
 - **Waiting on:** the user's high-poly furniture (IM6). Stand-ins are used until it arrives.
 - **Corners:** corner modules may replace `cornerInterior` on impostor floors (see Corner rooms below), but not on
   interior-mapped floors or ground-floor shops.

@@ -131,7 +131,7 @@ void write_buf_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkDescript
 
 void create_layouts(Renderer *r) {
     VkCore *vk = r->vk;
-    VkDescriptorSetLayoutBinding scene[11] = {
+    VkDescriptorSetLayoutBinding scene[13] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
@@ -140,12 +140,14 @@ void create_layouts(Renderer *r) {
         { 8, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' properties (materials.c) */
         { 9, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the adverts' table (adverts.c) */
         { 10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, ADVERT_TABLE_SIZE, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* each advert's frames */
+        { 11, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the interior impostors' table (interiors.c) */
+        { 12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, INTERIOR_IMAGES, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* each module's channels */
         /* ray-traced shadows only */
         { 5, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shadow slot ids */
         { 7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shadow slot visibility */
     };
-    r->sceneLayout = make_set_layout(vk, scene, r->rt ? 11 : 8);
+    r->sceneLayout = make_set_layout(vk, scene, r->rt ? 13 : 10);
     if (r->rt) {
         const VkShaderStageFlags C = VK_SHADER_STAGE_COMPUTE_BIT;
         const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -245,9 +247,9 @@ void create_layouts(Renderer *r) {
     r->proxyPL = make_pipeline_layout(vk, r->proxyLayout, 0, 0);
 
     VkDescriptorPoolSize sizes[4] = {
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (PBR_TEXTURE_COUNT + ADVERT_TABLE_SIZE + 3) * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (PBR_TEXTURE_COUNT + ADVERT_TABLE_SIZE + INTERIOR_IMAGES + 3) * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -271,7 +273,11 @@ void create_layouts(Renderer *r) {
         VkDescriptorBufferInfo ab = { adverts_table(r->adverts), 0, sizeof(AdvertTable) };
         VkDescriptorImageInfo af[ADVERT_TABLE_SIZE];
         adverts_frames(r->adverts, af);
-        VkWriteDescriptorSet w[7] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
+        VkDescriptorBufferInfo ib = { interiors_table(r->interiors), 0, sizeof(InteriorTable) };
+        VkDescriptorImageInfo ii[INTERIOR_IMAGES];
+        interiors_images(r->interiors, ii);
+        VkWriteDescriptorSet w[9] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
+                                      { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
                                       { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
                                       { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
                                       { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
@@ -289,7 +295,11 @@ void create_layouts(Renderer *r) {
         w[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[5].pBufferInfo = &ab;
         w[6].dstSet = r->sceneSet[i]; w[6].dstBinding = 10; w[6].descriptorCount = ADVERT_TABLE_SIZE;
         w[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[6].pImageInfo = af;
-        vkUpdateDescriptorSets(vk->device, 7, w, 0, NULL);
+        w[7].dstSet = r->sceneSet[i]; w[7].dstBinding = 11; w[7].descriptorCount = 1;
+        w[7].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[7].pBufferInfo = &ib;
+        w[8].dstSet = r->sceneSet[i]; w[8].dstBinding = 12; w[8].descriptorCount = INTERIOR_IMAGES;
+        w[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[8].pImageInfo = ii;
+        vkUpdateDescriptorSets(vk->device, 9, w, 0, NULL);
         if (r->rt) write_as_set(vk, r->sceneSet[i], 5, rt_tlas(r->rt, i));
     }
 

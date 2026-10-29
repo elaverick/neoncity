@@ -106,18 +106,20 @@ ivec2 impTexel(ImpGrid g, vec2 p, inout bool outside) {
 
 /* The first layer at texel tx whose interval overlaps depths [a, b]
  * (fractions of D), or -1. unknown: set where [a, b] reaches into depths a
- * full texel doesn't describe. */
+ * full texel doesn't describe. The layers lie nearest first, so a layer
+ * beyond b ends the search, and the full flag is read only where it
+ * matters: most steps cost one fetch. */
 int impOverlap(int view, ivec2 tx, ImpGrid g, float a, float b, inout bool unknown) {
-    bool full = impFetchFull(view, tx);
     float prevExit = 0.0;
     for (int l = 0; l < g.K; ++l) {
         vec2 ex = impFetchDepth(view, l, tx);
         if (ex.x >= 1.0) return -1;   // no more layers: empty to the module's end
-        if (full && g.lastSlot && l == g.K - 1 && b > prevExit && a < ex.x) unknown = true;
-        if (ex.x <= b && ex.y >= a) return l;
+        if (g.lastSlot && l == g.K - 1 && b > prevExit && a < ex.x && impFetchFull(view, tx)) unknown = true;
+        if (ex.x > b) return -1;      // [a, b] lies before this layer, in known empty space
+        if (ex.y >= a) return l;
         prevExit = ex.y;
     }
-    if (full && !g.lastSlot && b > prevExit) unknown = true;
+    if (!g.lastSlot && b > prevExit && impFetchFull(view, tx)) unknown = true;
     return -1;
 }
 

@@ -95,6 +95,8 @@ uint32_t *imp_pack(const Capture *c, const ImpConfig *ic, size_t *bytes);
 /* The capture slot layer l of an impostor keeps at a texel ([view][y][x]), or -1: empty. */
 int       imp_slot(const Capture *c, const ImpConfig *ic, size_t texel, int l);
 uint16_t  half_from_float(float f);
+/* BC4 blocks of a 0..1 image (pack.c); img becomes what they decode to. blocks may be NULL. */
+void      bc4_channel(float *img, int w, int h, uint8_t *blocks, size_t stride);
 
 /* ----------------------------------------------------------------- GPU --- */
 
@@ -122,7 +124,7 @@ const char *gpu_name(const Gpu *g);
 
 /* ---------------------------------------------------------------- output --- */
 
-/* Writes a bake: <dir>/<name>.{lint,albedo,normal,depth}.ktx2 and <name>.json. */
+/* Writes a bake: <dir>/<name>.{lint,albedo,depth,flags}.ktx2 and <name>.json (ktx2.c). */
 bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConfig *ic);
 /* The sweep (lab.c): every scene, against the truth from street and level cameras. */
 int  lab_run(Gpu *g, const char *outDir, const char *assets, bool quick);

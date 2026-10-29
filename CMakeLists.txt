@@ -257,7 +257,7 @@ target_include_directories(world_test PRIVATE ${SRC_DIRS})
 # properties are sound; every model (assets/models/*.glb) reads and has its material; and every
 # advert (assets/adverts/*.json) reads, its sheet holds its frames and it fits a screen's slot
 # (material_test [assets dir]).
-set(MATERIAL_SOURCES src/render/material_def.c src/render/advert_def.c src/core/json.c)
+set(MATERIAL_SOURCES src/render/material_def.c src/render/advert_def.c src/render/interior_def.c src/core/json.c)
 add_executable(material_test tests/material_test.c ${MATERIAL_SOURCES} src/city/models.c src/core/assets.c)
 target_include_directories(material_test PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test world_test material_test)
@@ -439,7 +439,7 @@ list(REMOVE_ITEM GAME_GEN_SOURCES ${WORLD_SOURCES})
 add_library(neoncity_world OBJECT ${WORLD_SOURCES})
 target_include_directories(neoncity_world PRIVATE ${SRC_DIRS})
 add_executable(NeonCity
-  src/app/main.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/road_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/materials.c src/render/adverts.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c)
+  src/app/main.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/road_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/materials.c src/render/adverts.c src/render/interiors.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

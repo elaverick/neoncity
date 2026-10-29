@@ -1,0 +1,26 @@
+{
+  // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.
+  "version": 2,
+  "baker": "im1-direct-2",
+  "module": "through30",
+  "type": "through",
+  "family": "office",
+  "light_state": "im1_direct",
+  "size": [12.000, 4.000, 30.000],        // W, H, D in metres
+  "ceiling": 3.400,                     // the slab's underside above the floor (y = 0)
+  "bays": 4,
+  "bay_width": 3.000,
+  "opening": [0.050, 3.350],     // sill, head
+  // the view grid as shaders/city/impostor.glsl reads it (ImpViews.range), and each row's elevation in degrees
+  "views": { "kind": "slope", "n": [5, 10], "range": [1.047198, -2.033101, 4.066203, 0.120000], "rows": [-24.25, -12.26, -5.01, 0.00, 5.01, 12.26, 24.25, 41.94, 60.61, 74.05] },
+  "layers": 3,
+  "last_slot": false,
+  // how the facade marches it (impMarch, IM1's choice)
+  "march": { "max_steps": 64, "texels_a_step": 1.0, "bisections": 6, "guess_weight": 0.15, "off_grid_weight": 0.10 },
+  "grid": { "origin": [0.0000, -1.0000], "texels_per_metre": 16.000, "size": [192, 86], "wrap_x": true },
+  "bake_scale": 5.000,
+  "bay_means": {
+    "lint": [[0.09369, 0.07432, 0.07881], [0.08530, 0.07139, 0.07967], [0.06190, 0.04691, 0.05834], [0.03545, 0.03113, 0.05101]]
+  },
+  "files": { "lint": "through30.lint.ktx2", "albedo": "through30.albedo.ktx2", "depth": "through30.depth.ktx2", "flags": "through30.flags.ktx2" }
+}

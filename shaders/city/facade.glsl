@@ -246,6 +246,19 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float litChance = litFrac * (0.25 + 1.5 * hfloat(floorH_));
     uint roomHash = hash3i(seed ^ (uint(rk.x) * 0x9E3779B1u), rk.y, int(floorIdx), section);
     Room room = makeRoom(roomHash, litChance, tintSel, false, vec3(0.0));
+    // Some office floors behind full-height glass are open plan, a baked module seen through every window
+    // (impostors.glsl). Their bays keep their own blinds (fewer of them), but no curtains or televisions.
+    bool impMirror = false;
+    int impM = (type == 1 || type == 2) && tintSel >= 0.5 && !plantFloor && floorIdx >= 0.0
+             ? impostorModule(seed, section, int(floorIdx), faceDir, impMirror) : -1;
+    vec2 impS = impM >= 0 ? impostorStretch(impM, bayW, floorH) : vec2(1.0);
+    if (impM >= 0) {
+        float xm = (bayIdx + 0.5) * bayW * impS.x;
+        vec3 mean = impostorBayMean(impM, impMirror ? -xm : xm);
+        room.lit = true; room.tv = false; room.person = false; room.curtain = 0.0;
+        room.light = mean / 0.42; room.bright = 1.0;   // so roomAvg below is the bay's mean
+        if (hf(roomHash, 54u) < 0.6) room.blinds = 0.0;
+    }
 
     // wall surface
     vec3 wspec;
@@ -312,9 +325,18 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float W = bayW, H = floorH;
         float D = glassL && glassR ? min(prevBayW, nextBayW) : glassR ? nextBayW : glassL ? prevBayW : bayW * mix(1.3, 2.4, hf(roomHash, 40u));
         vec3 d = vec3(dot(-V, T), -V.y, -dot(-V, n));
-        vec3 inner = cornerRoom ? cornerInterior(vec2(fu, fv), d, W, H, D, room, glassL, glassR, -V, vAbs,
-                                                 vec2(x0, x1) * D, vec2(x0, x1) * D, vec2(y0, y1) * H)
-                                : interiorColor(vec2(fu, fv), d, W, H, D, room);
+        vec3 inner;
+        if (impM >= 0) {
+            // the floor in the module's frame: its plane point and direction, stretched alike
+            vec2 q = vec2(u, fv * floorH) * impS;
+            vec3 dm = vec3(d.xy * impS, d.z);
+            if (impMirror) { q.x = -q.x; dm.x = -dm.x; }
+            inner = impostorTrace(impM, q, dm, -V, vAbs, vec3(0.012, 0.012, 0.014) * wdiff * 2.0);
+        } else {
+            inner = cornerRoom ? cornerInterior(vec2(fu, fv), d, W, H, D, room, glassL, glassR, -V, vAbs,
+                                                vec2(x0, x1) * D, vec2(x0, x1) * D, vec2(y0, y1) * H)
+                               : interiorColor(vec2(fu, fv), d, W, H, D, room);
+        }
         float wy = (fv - y0) / winH, wx = (fu - x0) / winW;
         // Curtains and blinds hang 8 cm inside the glass: seen at an angle they
         // slide against the frame, apart from the pane and the room.

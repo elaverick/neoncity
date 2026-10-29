@@ -23,10 +23,15 @@ int imp_slot(const Capture *c, const ImpConfig *ic, size_t texel, int l) {
     return l < n && l < CAP_SLOTS - 1 ? l : -1;
 }
 
-/* BC5 as a simple encoder makes it: per 4 x 4 block and channel, endpoints at
- * the block's extremes quantised to 8 bits, each value snapped to the
- * nearest of the 8 levels between them. */
-static void bc5_channel(float *img, int w, int h) {
+/* BC4 (a BC5 channel) as a simple encoder makes it: per 4 x 4 block,
+ * endpoints at the block's extremes quantised to 8 bits, each value snapped
+ * to the nearest of the 8 levels between them (red0 > red1: the 8-level
+ * mode). img (values 0..1) is replaced by what the blocks decode to; with
+ * blocks, each block's 8 bytes go to blocks + stride * its index (blocks in
+ * rows, as the image's). Texels past the edge of a part block repeat the
+ * edge's. */
+void bc4_channel(float *img, int w, int h, uint8_t *blocks, size_t stride) {
+    int bw = (w + 3) / 4;
     for (int by = 0; by < h; by += 4)
         for (int bx = 0; bx < w; bx += 4) {
             float lo = 1.0f, hi = 0.0f;
@@ -35,14 +40,27 @@ static void bc5_channel(float *img, int w, int h) {
                     lo = fminf(lo, img[y * w + x]);
                     hi = fmaxf(hi, img[y * w + x]);
                 }
-            lo = floorf(lo * 255.0f) / 255.0f;
-            hi = ceilf(hi * 255.0f) / 255.0f;
-            for (int y = by; y < by + 4 && y < h; ++y)
-                for (int x = bx; x < bx + 4 && x < w; ++x) {
-                    float *p = &img[y * w + x];
-                    float k = hi > lo ? roundf((*p - lo) / (hi - lo) * 7.0f) : 0.0f;
-                    *p = lo + (hi - lo) * k / 7.0f;
-                }
+            int q0 = (int)floorf(fmaxf(lo, 0.0f) * 255.0f), q1 = (int)ceilf(fminf(hi, 1.0f) * 255.0f);
+            if (q1 < q0) q1 = q0;
+            lo = (float)q0 / 255.0f;
+            hi = (float)q1 / 255.0f;
+            uint64_t bits = 0;
+            for (int j = 0; j < 16; ++j) {
+                int x = bx + (j & 3), y = by + (j >> 2);
+                float *p = &img[(y < h ? y : h - 1) * w + (x < w ? x : w - 1)];
+                int k = hi > lo ? (int)lroundf((*p - lo) / (hi - lo) * 7.0f) : 7;
+                if (k < 0) k = 0;
+                if (k > 7) k = 7;
+                if (x < w && y < h) *p = lo + (hi - lo) * (float)k / 7.0f;
+                /* red0 = hi, red1 = lo: index 0 is hi, 1 is lo, 2..7 step down from hi */
+                uint64_t idx = k == 7 ? 0u : k == 0 ? 1u : (uint64_t)(8 - k);
+                bits |= idx << (3 * j);
+            }
+            if (!blocks) continue;
+            uint8_t *b = blocks + stride * ((size_t)(by / 4) * bw + bx / 4);
+            b[0] = (uint8_t)q1;
+            b[1] = (uint8_t)q0;
+            for (int i = 0; i < 6; ++i) b[2 + i] = (uint8_t)(bits >> (8 * i));
         }
 }
 
@@ -73,8 +91,8 @@ uint32_t *imp_pack(const Capture *c, const ImpConfig *ic, size_t *bytes) {
                     dst[i * 4 + 3] = l == 0 && c->counts[own] > (uint32_t)K ? 1u : 0u;
                 }
             if (ic->depth == DEPTH_BC5) {
-                bc5_channel(e, nx, ny);
-                bc5_channel(x, nx, ny);
+                bc4_channel(e, nx, ny, NULL, 0);
+                bc4_channel(x, nx, ny, NULL, 0);
             }
             for (size_t i = 0; i < plane; ++i) {
                 uint32_t a = (uint32_t)lroundf(fminf(fmaxf(e[i], 0.0f), 1.0f) * 65535.0f);

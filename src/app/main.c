@@ -20,7 +20,7 @@ static bool   g_captured = true;
 static double g_lastMX, g_lastMY;
 static bool   g_haveMouse;
 static float  g_mouseDX, g_mouseDY;
-static bool   g_flyPressed, g_jumpPressed, g_shotPressed, g_shadowPressed, g_debugPressed;
+static bool   g_flyPressed, g_jumpPressed, g_shotPressed, g_shadowPressed, g_debugPressed, g_impostorPressed;
 static int    g_windowed[4];
 
 static void on_resize(GLFWwindow *w, int width, int height) { g_resized = true; }
@@ -63,6 +63,7 @@ static void on_key(GLFWwindow *w, int key, int sc, int action, int mods) {
     }
     if (key == GLFW_KEY_F) g_flyPressed = true;
     if (key == GLFW_KEY_SPACE) g_jumpPressed = true;
+    if (key == GLFW_KEY_F8) g_impostorPressed = true;
     if (key == GLFW_KEY_F9) g_shadowPressed = true;
     if (key == GLFW_KEY_F10) g_debugPressed = true;
     if (key == GLFW_KEY_F11) toggle_fullscreen(w);
@@ -74,7 +75,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--time SECONDS] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -83,6 +84,8 @@ static void usage(void) {
            "  --turn  and turn this fast while walking (degrees a second, + to the right)\n"
            "  --rain  fix the rain intensity (0 drizzle .. 1 downpour); otherwise it drifts\n"
            "  --time  hold the shaders' clock at this many seconds (flames, signs, steam: for captures)\n"
+           "  --impostors  draw this share (default 0.4) of curtain-wall and ribbon-window office floors as baked\n"
+           "               interior impostors (docs/interior-impostors.md; F8 turns them off and on)\n"
            "  --shot  wait for streaming to settle, save a screenshot and exit\n");
 }
 
@@ -95,6 +98,7 @@ typedef struct Options {
     double      cam[5];          /* x, z, yaw, pitch (degrees), height (world Y; with camFly, else walking) */
     float       walkSeconds, turnRate, fixedRain;   /* turnRate: degrees a second while walking */
     double      fixedTime;       /* the shaders' clock held here (< 0: running) */
+    float       impostors;       /* the share of eligible office floors drawn as impostors (0: none) */
 } Options;
 
 static bool parse_args(int argc, char **argv, Options *o) {
@@ -112,6 +116,10 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--turn") == 0 && i + 1 < argc) o->turnRate = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--rain") == 0 && i + 1 < argc) o->fixedRain = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--time") == 0 && i + 1 < argc) o->fixedTime = atof(argv[++i]);
+        else if (strcmp(argv[i], "--impostors") == 0) {
+            o->impostors = 0.4f;
+            if (i + 1 < argc && ((argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') || argv[i + 1][0] == '.')) o->impostors = (float)atof(argv[++i]);
+        }
         else if (strcmp(argv[i], "--cam") == 0 && i + 4 < argc) {
             o->haveCam = true;
             for (int k = 0; k < 4; ++k) o->cam[k] = atof(argv[++i]);
@@ -161,8 +169,16 @@ static PlayerInput read_input(GLFWwindow *win, const Player *player, bool script
     return in;
 }
 
-/* F9 shadows, F10 shadow debug view, F12 screenshot. */
+/* F8 interior impostors, F9 shadows, F10 shadow debug view, F12 screenshot. */
 static void handle_toggles(Renderer *renderer, int *shotCount) {
+    static float impostorShare = 0.4f;   /* what F8 turns them back on to */
+    if (g_impostorPressed) {
+        float now = renderer_impostors(renderer);
+        if (now > 0.0f) impostorShare = now;
+        renderer_set_impostors(renderer, now > 0.0f ? 0.0f : impostorShare);
+        printf("Interior impostors: %s (%d modules)\n", now > 0.0f ? "off" : "on", renderer_impostor_modules(renderer));
+        g_impostorPressed = false;
+    }
     if (g_shadowPressed) {
         renderer_set_shadows(renderer, !renderer_shadows(renderer));
         g_shadowPressed = false;
@@ -438,6 +454,7 @@ int main(int argc, char **argv) {
     ChunkSystem *chunks = chunks_create(&vk);
     Renderer *renderer = renderer_create(&vk, chunks);
     renderer_set_shadow_debug(renderer, opt.shadowDebug);
+    renderer_set_impostors(renderer, opt.impostors);
 
     Player player;
     player_init(&player);

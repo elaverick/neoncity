@@ -9,11 +9,13 @@
  * divides the 64 chunks over which the shaders' world coordinates wrap.
  *
  * The models (test_models) and the adverts (assets/adverts/*.json,
- * src/render/advert_def.c: test_adverts) the same way.
+ * src/render/advert_def.c: test_adverts) and the interior impostor modules
+ * (assets/interiors/, src/render/interior_def.c: test_interiors) the same way.
  *
  * material_test [assets dir] (default: assets). */
 #include "material_def.h"
 #include "advert_def.h"
+#include "interior_def.h"
 #include "json.h"
 #include "common.h"
 #include "models.h"
@@ -218,6 +220,51 @@ static void test_adverts(const char *assets) {
     printf("%d adverts, %d frames, %.1f MB\n", ADVERT_COUNT, frames, mb);
 }
 
+/* Every interior impostor module the catalogue names (assets/interiors/,
+ * src/render/interior_def.c) reads: its sidecar is sound and its four files
+ * hold what it says (interior_image_load checks the format, grid, views and
+ * layers); its depth blocks are the 8-level kind the baker writes, and its
+ * radiance is finite. */
+static void test_interiors(const char *assets) {
+    char path[1100], err[1400], names[INTERIOR_MAX_MODULES][64];
+    int n = 0;
+    snprintf(path, sizeof(path), "%s/interiors/catalogue.json", assets);
+    if (!interior_catalogue_load(path, names, INTERIOR_MAX_MODULES, &n, err, sizeof(err))) { CHECK(0, "interiors: %s", err); return; }
+    double mb = 0.0;
+    for (int i = 0; i < n; ++i) {
+        char mpath[1200];
+        snprintf(mpath, sizeof(mpath), "%s/interiors/%s.json", assets, names[i]);
+        InteriorModule m;
+        if (!interior_module_load(mpath, &m, err, sizeof(err))) { CHECK(0, "interior %s: %s", names[i], err); continue; }
+        CHECK(strcmp(m.name, names[i]) == 0, "interior %s: its sidecar names it %s", names[i], m.name);
+        CHECK(m.opening[0] >= 0.0f && m.opening[0] < m.opening[1] && m.opening[1] <= m.size[1], "interior %s: opening %g..%g", names[i], m.opening[0], m.opening[1]);
+        for (int c = 0; c < INTERIOR_CHANNELS; ++c) {
+            InteriorImage img;
+            if (!interior_image_load(&m, c, &img, err, sizeof(err))) { CHECK(0, "interior %s: %s", names[i], err); continue; }
+            mb += img.size / 1e6;
+            const uint8_t *d = img.data + img.offset;
+            if (c == INTERIOR_DEPTH) {
+                /* red0 >= red1 in each channel's half (red0 < red1 is BC4's 6-level mode, whose
+                 * indices 6 and 7 mean 0 and 1: never written) */
+                uint64_t sixLevel = 0;
+                for (uint64_t h = 0; h < img.length / 8; ++h) sixLevel += d[h * 8] < d[h * 8 + 1];
+                CHECK(sixLevel == 0, "interior %s: %llu depth blocks in BC4's 6-level mode", names[i], (unsigned long long)sixLevel);
+            } else if (c == INTERIOR_LINT) {
+                /* B10G11R11: an exponent of 31 in any channel is infinity or NaN */
+                uint64_t bad = 0;
+                for (uint64_t t = 0; t < img.length / 4; ++t) {
+                    uint32_t v;
+                    memcpy(&v, d + t * 4, 4);
+                    bad += ((v >> 6) & 31u) == 31u || ((v >> 17) & 31u) == 31u || ((v >> 27) & 31u) == 31u;
+                }
+                CHECK(bad == 0, "interior %s: %llu radiance texels not finite", names[i], (unsigned long long)bad);
+            }
+            interior_image_free(&img);
+        }
+    }
+    printf("%d interior modules, %.1f MB\n", n, mb);
+}
+
 int main(int argc, char **argv) {
     const char *assets = argc > 1 ? argv[1] : "assets";
     test_json();
@@ -226,6 +273,7 @@ int main(int argc, char **argv) {
     test_files(assets);
     test_models(assets);
     test_adverts(assets);
+    test_interiors(assets);
     if (g_failures) { printf("%d failures\n", g_failures); return 1; }
     printf("material_test: ok\n");
     return 0;

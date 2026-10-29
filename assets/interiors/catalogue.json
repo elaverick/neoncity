@@ -1,0 +1,8 @@
+{
+  // The interior impostor modules the engine loads (docs/interior-impostors.md, section 8;
+  // src/render/interior_def.h), each <name>.json and its KTX2 files beside this file.
+  // IM2: three of IM1's test floors, baked with direct light only by
+  //   interior_bake --scene <name> --out assets/interiors
+  // IM8 adds each module's generator inputs and seed.
+  "modules": ["through30", "core12", "glass20"]
+}

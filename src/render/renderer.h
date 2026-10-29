@@ -45,6 +45,11 @@ bool      renderer_shadows(Renderer *r);
 /* Shadow debug view: only the city's lights on each surface, so their shadows stand out. */
 void      renderer_set_shadow_debug(Renderer *r, bool on);
 bool      renderer_shadow_debug(Renderer *r);
+/* Baked interior impostors (src/render/interiors.c): the share of eligible office floors
+ * (curtain-wall and ribbon-window offices) drawn with them, 0 for none; and how many modules loaded. */
+void      renderer_set_impostors(Renderer *r, float share);
+float     renderer_impostors(Renderer *r);
+int       renderer_impostor_modules(Renderer *r);
 /* How long the GPU spends on each pass, smoothed over recent frames (one line of text). */
 void      renderer_gpu_times(Renderer *r, char *buf, size_t n);
 /* The same for the latest frame the GPU has finished alone (two frames behind). */

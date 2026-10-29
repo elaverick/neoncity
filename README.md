@@ -45,6 +45,7 @@ procedural look.
 | Shift | Sprint |
 | Space | Jump |
 | F | Toggle fly mode (debug; Space/Ctrl to rise/descend, Shift for speed) |
+| F8 | Toggle the baked interior impostors on office floors (`--impostors`; debug) |
 | F9 | Toggle ray-traced shadows |
 | F10 | Shadow debug view: only the light the city's lamps, shopfronts and lobbies throw on each surface |
 | F11 | Fullscreen |
@@ -53,7 +54,8 @@ procedural look.
 
 Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity, `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
 (otherwise it drifts between drizzle and downpour), `--noshadows` runs without ray-traced shadows (and without the
-ray-query device features they need), `--shadowdebug` starts in the shadow debug view, and `--validation` enables the
+ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--impostors [SHARE]` draws that
+share (default 0.4) of the curtain-wall and ribbon-window office floors as baked interior impostors, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
 
 ## How it works
@@ -665,6 +667,17 @@ and haze over the distance. Blinds and curtains cover both windows, and the furn
 desk in the inner corner, so the room reads consistently from both sides.
 To avoid shimmer at a distance, the shader drops to a box-filtered window glow per room and
 then to an analytic average over the whole facade.
+
+With `--impostors [SHARE]` (or F8 in game), that share of the office floors behind curtain walls
+and ribbon windows shows a deep open-plan floor instead: a module baked offline by
+`tools/interior_bake` (`assets/interiors/`, `src/render/interiors.c`), seen through every
+window of the floor at once. Each module stores 50 views of the floor, each with three depth
+layers, and the facade shader marches the three views nearest the eye's direction and blends
+them (`shaders/city/impostors.glsl`, `impostor.glsl`). The floor is stretched so the module spans
+whole bays, mirrored on some faces, and shows the view out through its far glass. Blinds, film,
+frames and the glass's reflection are drawn over it as on any window, and from mid distance the
+floor glows with each bay's baked mean. The modules are IM1's test floors under direct light
+alone, so for now they are darker than the look they aim at; see `docs/interior-impostors.md`.
 
 ### Streets and light
 Each carriageway is one quad, trimmed at its junctions and clipped to the chunk, over a plain
