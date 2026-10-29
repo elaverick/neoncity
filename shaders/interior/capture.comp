@@ -1,6 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 #include "interior/bake_scene.glsl"
+#include "interior/pathtrace.glsl"
 #define IMP_VIEWS_ONLY
 #include "city/impostor.glsl"
 
@@ -14,11 +15,17 @@
  *
  * Out: slots 0..3, the four nearest intervals, and slot 4, the last, each
  * with its entry's radiance, albedo and normal; and the count of intervals.
- * The lab and the bake choose which K of them an impostor keeps. */
+ * The lab and the bake choose which K of them an impostor keeps.
+ *
+ * The light is IM1's direct light (P_trace2.x = 0: the lab), or path traced
+ * (1: a bake). A path-traced capture runs in passes, each adding its share of
+ * the samples (P_trace) to the radiance of one view (P_trace4.x), and traces
+ * only the first P_trace2.y slots. A pane in front of a slot adds what it
+ * reflects, traced too. */
 layout(local_size_x = 8, local_size_y = 8) in;
 
 struct Layer { vec4 lit; vec2 depth; uint albedo; uint normal; };
-layout(std430, set = 0, binding = 6) writeonly buffer OutLayers { Layer outLayers[]; };
+layout(std430, set = 0, binding = 6) buffer OutLayers { Layer outLayers[]; };
 layout(std430, set = 0, binding = 7) writeonly buffer OutCounts { uint outCounts[]; };
 
 #define NEAR_SLOTS 4
@@ -26,10 +33,36 @@ layout(std430, set = 0, binding = 7) writeonly buffer OutCounts { uint outCounts
 
 ImpViews paramViews() { ImpViews v; v.n = P_views.xy; v.kind = P_views.z; v.range = P_viewRange; return v; }
 
-Layer shadeLayer(vec3 o, vec3 d, Hit h, bool startedInside, float glassT, vec3 glassR, float e) {
+bool pathTraced() { return P_trace2.x != 0; }
+
+// This pass's mean of the radiance leaving surface point p (normal n, material m) towards -d, path traced.
+vec3 tracedSurface(vec3 p, vec3 n, vec3 d, uint m, bool front, uint texel, uint slot) {
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < P_trace.y; ++i) {
+        uint rng = ptSeed(texel, slot, uint(P_trace.x + i));
+        sum += ptRadiance(p, n, -d, m, rng);
+    }
+    vec3 Le = front ? mats[m].emission.rgb : vec3(0.0);
+    return Le * (float(P_trace.y) / float(P_trace.z)) + sum / float(P_trace.z);
+}
+
+// This pass's share of what a pane at q (normal n) reflects of the ray along d.
+vec3 tracedReflection(vec3 q, vec3 n, vec3 d, uint texel, uint pane) {
+    vec3 sum = vec3(0.0), r = reflect(d, n);
+    for (int i = 0; i < P_trace.y; ++i) {
+        uint rng = ptSeed(texel, 16u + pane, uint(P_trace.x + i));
+        sum += ptTrace(q + r * 1e-4, r, rng);
+    }
+    return sum / float(P_trace.z);
+}
+
+Layer shadeLayer(vec3 o, vec3 d, Hit h, bool startedInside, float glassT, vec3 glassR, float e, uint texel, int slot) {
     uint m = insts[h.inst].material;
     vec3 n = h.front ? h.n : -h.n;   // the side the ray sees
-    vec3 lit = startedInside ? mats[m].albedo.rgb * P_volume.z : shadeSurface(o + d * h.t, n, m);
+    vec3 lit;
+    if (!pathTraced()) lit = startedInside ? mats[m].albedo.rgb * P_volume.z : shadeSurface(o + d * h.t, n, m);
+    else if (startedInside || slot >= P_trace2.y) lit = vec3(0.0);   // a slab seen from inside it: the facade covers it
+    else lit = tracedSurface(o + d * h.t, n, d, m, h.front, texel, uint(slot));
     Layer l;
     l.lit = vec4(glassR + glassT * lit, 0.0);
     l.depth = vec2(e, 1.0);
@@ -40,8 +73,9 @@ Layer shadeLayer(vec3 o, vec3 d, Hit h, bool startedInside, float glassT, vec3 g
 
 void main() {
     ivec2 px = ivec2(gl_GlobalInvocationID.xy);
-    int view = int(gl_GlobalInvocationID.z);
+    int view = int(gl_GlobalInvocationID.z) + P_trace4.x;
     if (px.x >= P_gridDim.x || px.y >= P_gridDim.y) return;
+    uint texel = uint((view * P_gridDim.y + px.y) * P_gridDim.x + px.x);
     vec3 d = impViewDirIndex(paramViews(), view);
     vec3 o = vec3(P_grid.xy + (vec2(px) + 0.5) / P_grid.z, 0.0);
     float tEnd = volumeExit(o, d), D = P_module.z, thin = P_volume.w;
@@ -65,7 +99,7 @@ void main() {
         Hit h0;
         if (!traceNext(o, d, 0.0, 1e4, h0)) h0.inst = 0u;   // the slab's material, near enough
         h0.t = 0.0; h0.front = false; h0.n = -d;
-        L[0] = shadeLayer(o, d, h0, true, 1.0, vec3(0.0), 0.0);
+        L[0] = shadeLayer(o, d, h0, true, 1.0, vec3(0.0), 0.0, texel, 0);
         lastHit = h0; lastInside = true; lastEntry = 0.0;
         n = 1;
         inside = 1;
@@ -73,6 +107,7 @@ void main() {
     }
 
     float t = max(min(tRoom, tEnd) - 1e-3, 0.0);   // surfaces inside the slab are the slab's
+    uint panes = 0u;
     for (int it = 0; it < 160; ++it) {
         Hit h;
         if (!traceNext(o, d, t, tEnd, h)) break;
@@ -81,7 +116,9 @@ void main() {
         if ((flags & BF_GLASS) != 0u) {
             if (inside == 0 && h.front) {
                 float R = glassReflect(abs(dot(h.n, d)));
-                glassR += glassT * R * P_glass.z;
+                vec3 seen = pathTraced() ? (n < P_trace2.y ? tracedReflection(o + d * h.t, h.n, d, texel, panes) : vec3(0.0)) : vec3(P_glass.z);
+                glassR += glassT * R * seen;
+                panes++;
                 glassT *= (1.0 - R) * P_glass.y;
             }
             continue;
@@ -97,7 +134,7 @@ void main() {
             if (--inside == 0) end = true;
         }
         if (begin && !(n > 0 && e <= lastExit + 1e-3)) {   // else touching or overlapping the previous interval: one solid
-            if (n < NEAR_SLOTS) L[n] = shadeLayer(o, d, h, false, glassT, glassR, e / D);
+            if (n < NEAR_SLOTS) L[n] = shadeLayer(o, d, h, false, glassT, glassR, e / D, texel, n);
             lastHit = h; lastInside = false; lastGT = glassT; lastGR = glassR; lastEntry = e;
             n++;
         }
@@ -111,13 +148,16 @@ void main() {
         if (n - 1 < NEAR_SLOTS) L[n - 1].depth.y = min(lastExit / D, 1.0);
     }
     if (n > NEAR_SLOTS) {
-        L[NEAR_SLOTS] = shadeLayer(o, d, lastHit, lastInside, lastGT, lastGR, lastEntry / D);
+        L[NEAR_SLOTS] = shadeLayer(o, d, lastHit, lastInside, lastGT, lastGR, lastEntry / D, texel, NEAR_SLOTS);
         L[NEAR_SLOTS].depth.y = min(lastExit / D, 1.0);
     } else if (n > 0) {
         L[NEAR_SLOTS] = L[n - 1];
     }
 
-    uint texel = uint((view * P_gridDim.y + px.y) * P_gridDim.x + px.x);
-    for (int i = 0; i < SLOTS; ++i) outLayers[texel * uint(SLOTS) + uint(i)] = L[i];
+    for (int i = 0; i < SLOTS; ++i) {   // a later pass adds its samples to the earlier passes'
+        uint at = texel * uint(SLOTS) + uint(i);
+        if (pathTraced() && P_trace.x > 0) L[i].lit += outLayers[at].lit;
+        outLayers[at] = L[i];
+    }
     outCounts[texel] = uint(n);
 }

@@ -5,3 +5,4 @@ assets_src/**/*.glb filter=lfs diff=lfs merge=lfs -text
 assets_src/**/*.png filter=lfs diff=lfs merge=lfs -text
 assets_src/**/*.jpg filter=lfs diff=lfs merge=lfs -text
 assets_src/**/*.exr filter=lfs diff=lfs merge=lfs -text
+tests/data/*.pfm binary

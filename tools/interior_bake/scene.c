@@ -12,6 +12,13 @@
  * parts (wires, sprinkler pipes, a rug, the manifestation band on the glass)
  * so the spike sees what the representation drops.
  *
+ * Each material has a roughness, and some a metal's or a clearcoat's sheen
+ * (kit_make), for the path tracer. Its lights are its emissive surfaces: the
+ * diffusers under the pendants' and lamps' dark housings, the orb lamps and
+ * the screens. The point lights beside them stand in for them under IM1's
+ * direct light, which the lab uses: a diffuser or an orb emits as brightly as
+ * its point light shines straight down (intensity over the face's area).
+ *
  *   through30  12 m wide, 30 m deep to far glass: the deep open floor
  *   core12     12 m deep to a core wall with doors
  *   corner16   a corner: glass along the left side too, 16 m to a core wall
@@ -46,13 +53,23 @@ static int mesh_add(Scene *s, const float *v, uint32_t nv, const uint32_t *ix, u
     return s->nmeshes++;
 }
 
+/* A dielectric of roughness 0.7 (F0 0.04); mat_surface changes that. */
 static int mat_add(Scene *s, float r, float g, float b, float er, float eg, float eb) {
     GROW(s->mats, s->nmats, s->capMats, 1);
     BakeMat *m = &s->mats[s->nmats];
     memset(m, 0, sizeof(*m));
-    m->albedo[0] = r; m->albedo[1] = g; m->albedo[2] = b;
+    m->albedo[0] = r; m->albedo[1] = g; m->albedo[2] = b; m->albedo[3] = 0.7f;
     m->emission[0] = er; m->emission[1] = eg; m->emission[2] = eb;
+    m->surface[0] = 0.04f;
     return s->nmats++;
+}
+
+static void mat_surface(Scene *s, int id, float rough, float metal, float coat, float coatRough) {
+    BakeMat *m = &s->mats[id];
+    m->albedo[3] = rough;
+    m->emission[3] = metal;
+    m->surface[1] = coat;
+    m->surface[2] = coatRough;
 }
 
 static void light_add(Scene *s, float x, float y, float z, float r, float g, float b) {
@@ -101,11 +118,29 @@ static void cube_mesh(Scene *s) {
     s->cube = mesh_add(s, v, 8, ix, 36);   /* counter-clockwise seen from outside */
 }
 
+void scene_begin(Scene *s, const char *name) {
+    memset(s, 0, sizeof(*s));
+    snprintf(s->name, sizeof(s->name), "%s", name);
+    cube_mesh(s);
+    s->xmin = -1e9f; s->xmax = 1e9f;
+}
+
+int scene_material(Scene *s, const float albedo[3], const float emission[3], float rough, float metal, float f0, float coat, float coatRough) {
+    int id = mat_add(s, albedo[0], albedo[1], albedo[2], emission[0], emission[1], emission[2]);
+    mat_surface(s, id, rough, metal, coat, coatRough);
+    s->mats[id].surface[0] = f0;
+    return id;
+}
+
+void scene_box(Scene *s, int mat, uint32_t flags, float x0, float y0, float z0, float x1, float y1, float z1) {
+    box(s, mat, flags, x0, y0, z0, x1, y1, z1);
+}
+
 /* ------------------------------------------------------------- the kit --- */
 
 typedef struct Kit {
     int floor, ceiling, concrete, duct, tray, pipe, wood, frame, pedestal, mesh, plastic, screenOn, screenOff;
-    int pendantOn, pendantOff, lampOn, lampOff, wire, mullion, coreWall, door, board, glass, band, rug, marble, orb, pot, leaf, bark, sofa;
+    int pendantOn, pendantUp, pendantOff, lampOn, lampOff, wire, mullion, coreWall, door, board, glass, band, rug, marble, orb, pot, leaf, bark, sofa;
 } Kit;
 
 static Kit kit_make(Scene *s) {
@@ -121,11 +156,12 @@ static Kit kit_make(Scene *s) {
     k.pedestal   = mat_add(s, 0.045f, 0.045f, 0.05f, 0, 0, 0);
     k.mesh       = mat_add(s, 0.025f, 0.025f, 0.028f, 0, 0, 0);
     k.plastic    = mat_add(s, 0.02f, 0.02f, 0.022f, 0, 0, 0);
-    k.screenOn   = mat_add(s, 0.02f, 0.02f, 0.02f, 0.10f, 0.22f, 0.30f);
+    k.screenOn   = mat_add(s, 0.02f, 0.02f, 0.02f, 0.25f, 0.50f, 0.70f);
     k.screenOff  = mat_add(s, 0.01f, 0.01f, 0.012f, 0, 0, 0);
-    k.pendantOn  = mat_add(s, 0.05f, 0.05f, 0.05f, 4.0f, 3.0f, 1.9f);
+    k.pendantOn  = mat_add(s, 0.8f, 0.8f, 0.8f, 57.7f, 43.6f, 27.6f);     /* the diffuser: its light's 9, 6.8, 4.3 over 1.56 x 0.1 m */
+    k.pendantUp  = mat_add(s, 0.8f, 0.8f, 0.8f, 23.1f, 17.4f, 11.0f);     /* its uplight: 40% of the diffuser's, onto the ceiling */
     k.pendantOff = mat_add(s, 0.05f, 0.05f, 0.05f, 0, 0, 0);
-    k.lampOn     = mat_add(s, 0.05f, 0.04f, 0.03f, 6.0f, 3.4f, 1.2f);
+    k.lampOn     = mat_add(s, 0.8f, 0.8f, 0.8f, 83.3f, 48.1f, 20.4f);      /* the diffuser: 0.9, 0.52, 0.22 over 0.18 x 0.06 m */
     k.lampOff    = mat_add(s, 0.05f, 0.04f, 0.03f, 0, 0, 0);
     k.wire       = mat_add(s, 0.02f, 0.02f, 0.02f, 0, 0, 0);
     k.mullion    = mat_add(s, 0.04f, 0.04f, 0.045f, 0, 0, 0);
@@ -136,11 +172,34 @@ static Kit kit_make(Scene *s) {
     k.band       = mat_add(s, 0.60f, 0.60f, 0.60f, 0, 0, 0);    /* frosted manifestation */
     k.rug        = mat_add(s, 0.16f, 0.09f, 0.06f, 0, 0, 0);
     k.marble     = mat_add(s, 0.70f, 0.68f, 0.64f, 0, 0, 0);
-    k.orb        = mat_add(s, 0.8f, 0.8f, 0.8f, 3.0f, 2.2f, 1.3f);
+    k.orb        = mat_add(s, 0.8f, 0.8f, 0.8f, 13.0f, 9.4f, 5.3f);        /* 1.6, 1.15, 0.65 over 0.35 x 0.35 m */
     k.pot        = mat_add(s, 0.06f, 0.06f, 0.065f, 0, 0, 0);
     k.leaf       = mat_add(s, 0.05f, 0.11f, 0.035f, 0, 0, 0);
     k.bark       = mat_add(s, 0.12f, 0.08f, 0.05f, 0, 0, 0);
     k.sofa       = mat_add(s, 0.10f, 0.08f, 0.07f, 0, 0, 0);    /* replaced by the model's material if it loads */
+    /* The path tracer's surfaces (pathtrace.glsl): roughness, metallic, clearcoat and its roughness. The
+     * rest keep mat_add's matt dielectric. */
+    mat_surface(s, k.floor, 0.55f, 0.0f, 1.0f, 0.12f);   /* sealed and polished: it mirrors the lights in long streaks */
+    mat_surface(s, k.ceiling, 0.9f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.concrete, 0.85f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.duct, 0.45f, 1.0f, 0.0f, 0.0f);     /* galvanised */
+    mat_surface(s, k.tray, 0.5f, 1.0f, 0.0f, 0.0f);
+    mat_surface(s, k.pipe, 0.4f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.wood, 0.35f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.frame, 0.45f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.pedestal, 0.45f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.mesh, 0.85f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.plastic, 0.4f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.screenOn, 0.1f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.screenOff, 0.1f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.mullion, 0.35f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.coreWall, 0.85f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.door, 0.45f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.rug, 1.0f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.marble, 0.15f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.pot, 0.4f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.leaf, 0.45f, 0.0f, 0.0f, 0.0f);
+    mat_surface(s, k.bark, 0.8f, 0.0f, 0.0f, 0.0f);
     return k;
 }
 
@@ -167,10 +226,16 @@ static void services(Scene *s, const Kit *k, float x0, float x1, const float *be
     for (float z = 1.5f; z < zEnd - 0.5f; z += 3.0f) box(s, k->pipe, 0, x0, c - 0.15f, z - 0.02f, x1, c - 0.11f, z + 0.02f);
 }
 
-/* A 1.6 m linear pendant centred at (x, z) on two wires. */
+/* A 1.6 m linear pendant centred at (x, z) on two wires: a dark housing, and when it is on a diffuser
+ * under it that lights the desks (and the point light that stands in for it) and a dimmer one on top
+ * that washes the ceiling (path traced only). */
 static void pendant(Scene *s, const Kit *k, float x, float z, bool on) {
     float y = 2.62f;
-    box(s, on ? k->pendantOn : k->pendantOff, BF_EMITTER, x - 0.8f, y, z - 0.06f, x + 0.8f, y + 0.05f, z + 0.06f);
+    box(s, k->pendantOff, BF_EMITTER, x - 0.8f, y, z - 0.06f, x + 0.8f, y + 0.05f, z + 0.06f);
+    if (on) {
+        box(s, k->pendantOn, BF_EMITTER, x - 0.78f, y - 0.004f, z - 0.05f, x + 0.78f, y, z + 0.05f);
+        box(s, k->pendantUp, BF_EMITTER, x - 0.78f, y + 0.05f, z - 0.05f, x + 0.78f, y + 0.054f, z + 0.05f);
+    }
     box(s, k->wire, 0, x - 0.7f, y + 0.05f, z - 0.004f, x - 0.692f, s->ceilY, z + 0.004f);
     box(s, k->wire, 0, x + 0.692f, y + 0.05f, z - 0.004f, x + 0.7f, s->ceilY, z + 0.004f);
     if (on) light_add(s, x, y - 0.03f, z, 9.0f, 6.8f, 4.3f);
@@ -212,7 +277,8 @@ static void desk(Scene *s, const Kit *k, float x, float zBack, float dir, uint32
         float lx = x + 0.15f, lz = zBack + dir * 0.15f;
         box(s, k->plastic, 0, lx - 0.06f, 0.75f, lz - 0.06f, lx + 0.06f, 0.77f, lz + 0.06f);
         box(s, k->plastic, 0, lx - 0.01f, 0.77f, lz - 0.01f, lx + 0.01f, 1.17f, lz + 0.01f);
-        box(s, on ? k->lampOn : k->lampOff, BF_EMITTER, lx - 0.02f, 1.12f, lz - 0.04f, lx + 0.2f, 1.17f, lz + 0.04f);
+        box(s, k->lampOff, BF_EMITTER, lx - 0.02f, 1.12f, lz - 0.04f, lx + 0.2f, 1.17f, lz + 0.04f);
+        if (on) box(s, k->lampOn, BF_EMITTER, lx, 1.116f, lz - 0.03f, lx + 0.18f, 1.12f, lz + 0.03f);
         if (on) light_add(s, lx + 0.12f, 1.1f, lz, 0.9f, 0.52f, 0.22f);
     }
     float jitter = (rnd(rng) - 0.5f) * 0.4f;

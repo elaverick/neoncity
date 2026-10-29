@@ -1,11 +1,12 @@
 {
   // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.
   "version": 2,
-  "baker": "im1-direct-2",
+  "baker": "im3-gi-1",
   "module": "glass20",
   "type": "through",
   "family": "office",
-  "light_state": "im1_direct",
+  "light_state": "im3_gi",
+  "trace": { "samples": 16384, "bounces": 8, "clamp": 16.0, "seed": 1 },
   "size": [12.000, 4.000, 20.000],        // W, H, D in metres
   "ceiling": 3.400,                     // the slab's underside above the floor (y = 0)
   "bays": 4,
@@ -20,7 +21,7 @@
   "grid": { "origin": [0.0000, -1.0000], "texels_per_metre": 16.000, "size": [192, 86], "wrap_x": true },
   "bake_scale": 5.000,
   "bay_means": {
-    "lint": [[0.07402, 0.05801, 0.06181], [0.03024, 0.03107, 0.04760], [0.07209, 0.05827, 0.06383], [0.06776, 0.05661, 0.06302]]
+    "lint": [[0.19782, 0.14949, 0.11566], [0.03472, 0.04268, 0.06506], [0.03244, 0.03196, 0.05108], [0.03647, 0.03681, 0.05512]]
   },
   "files": { "lint": "glass20.lint.ktx2", "albedo": "glass20.albedo.ktx2", "depth": "glass20.depth.ktx2", "flags": "glass20.flags.ktx2" }
 }

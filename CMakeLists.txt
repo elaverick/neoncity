@@ -338,10 +338,10 @@ endif()
 # --- Tools: the interior baker ------------------------------------------------
 # Bakes office floor modules into interior impostors and measures the representation
 # (tools/interior_bake, docs/interior-impostors.md): a headless Vulkan device (vk_init_headless)
-# tracing ray queries. It reads the lounge's sofa through the models' own reader and grows its
-# plants with the lobby's generator.
+# path tracing with ray queries. It reads the lounge's sofa through the models' own reader and
+# grows its plants with the lobby's generator. bake_test checks the path tracer on the GPU.
 add_executable(interior_bake tools/interior_bake/main.c tools/interior_bake/scene.c tools/interior_bake/gpu.c
-               tools/interior_bake/pack.c tools/interior_bake/ktx2.c tools/interior_bake/lab.c
+               tools/interior_bake/pack.c tools/interior_bake/ktx2.c tools/interior_bake/lab.c tools/interior_bake/test.c
                src/render/vkcore.c src/city/models.c src/core/assets.c ${MATERIAL_SOURCES}
                src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c)
 add_dependencies(interior_bake shaders)
@@ -358,6 +358,7 @@ else()
     target_link_libraries(interior_bake PRIVATE pthread dl)
   endif()
 endif()
+add_test(NAME bake_test COMMAND interior_bake --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/data)
 
 # --- Tools: the Earth bake ------------------------------------------------------
 # Bakes the Earth project's staged grid (tools/earth/earth.py stage) onto the six cube

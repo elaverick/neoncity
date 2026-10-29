@@ -1,6 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 #include "interior/bake_scene.glsl"
+#include "interior/pathtrace.glsl"
 
 /* The ground truth (tools/interior_bake: gpu_truth): what a camera at P_cam
  * sees through the module's glass, traced in the full scene. One invocation
@@ -8,10 +9,14 @@
  * ray runs from the camera through the point, through partition glass, to
  * the first opaque surface, or out of the far glass.
  *
- * Out: radiance, and in a the depth of the hit (-1: out of the far glass), averaged over the pixel. */
+ * Out: radiance, and in a the depth of the hit (-1: out of the far glass), averaged over the pixel.
+ *
+ * Path traced (P_trace2.x = 1; the tests, and IM4's look-dev): each pass adds
+ * its share of the samples, each a ray through a random point of the pixel,
+ * and a is 0. */
 layout(local_size_x = 8, local_size_y = 8) in;
 
-layout(std430, set = 0, binding = 6) writeonly buffer OutColor { vec4 outColor[]; };
+layout(std430, set = 0, binding = 6) buffer OutColor { vec4 outColor[]; };
 
 vec4 truthRay(vec3 o) {
     vec3 d = normalize(o - P_cam.xyz);
@@ -45,10 +50,23 @@ vec4 truthRay(vec3 o) {
 void main() {
     ivec2 px = ivec2(gl_GlobalInvocationID.xy);
     if (px.x >= P_evalDim.x || px.y >= P_evalDim.y) return;
+    uint at = uint(px.y * P_evalDim.x + px.x);
+    if (P_trace2.x != 0) {
+        vec3 sum = vec3(0.0);
+        for (int i = 0; i < P_trace.y; ++i) {
+            uint rng = ptSeed(at, 0u, uint(P_trace.x + i));
+            vec2 j = vec2(ptRand(rng), ptRand(rng));
+            vec3 o = vec3(P_eval.xy + (vec2(px) + j) / P_eval.zw, 0.0);
+            sum += ptTrace(o, normalize(o - P_cam.xyz), rng);
+        }
+        vec4 c = vec4(sum / float(P_trace.z), 0.0);
+        outColor[at] = P_trace.x > 0 ? outColor[at] + c : c;
+        return;
+    }
     int n = max(int(P_glass.w), 1);
     vec4 sum = vec4(0.0);
     for (int j = 0; j < n; ++j)
         for (int i = 0; i < n; ++i)
             sum += truthRay(vec3(P_eval.xy + (vec2(px) + (vec2(i, j) + 0.5) / float(n)) / P_eval.zw, 0.0));
-    outColor[px.y * P_evalDim.x + px.x] = sum / float(n * n);
+    outColor[at] = sum / float(n * n);
 }

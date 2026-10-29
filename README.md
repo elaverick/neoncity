@@ -676,8 +676,10 @@ layers, and the facade shader marches the three views nearest the eye's directio
 them (`shaders/city/impostors.glsl`, `impostor.glsl`). The floor is stretched so the module spans
 whole bays, mirrored on some faces, and shows the view out through its far glass. Blinds, film,
 frames and the glass's reflection are drawn over it as on any window, and from mid distance the
-floor glows with each bay's baked mean. The modules are IM1's test floors under direct light
-alone, so for now they are darker than the look they aim at; see `docs/interior-impostors.md`.
+floor glows with each bay's baked mean. The modules are IM1's test floors, path traced with full
+global illumination from their own lamps, pendants and screens (`shaders/interior/pathtrace.glsl`,
+checked by the `bake_test` test); light from outside and the exposure's calibration come next.
+See `docs/interior-impostors.md`.
 
 ### Streets and light
 Each carriageway is one quad, trimmed at its junctions and clipped to the chunk, over a plain

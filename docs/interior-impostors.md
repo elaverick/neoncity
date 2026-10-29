@@ -181,20 +181,21 @@ The baker is `tools/interior_bake/`, an in-house path tracer in C11 and Vulkan c
 - **One BRDF.** The baker shades with the engine's BRDF and reads `assets/materials/*.json`, so baked and live surfaces match. The BRDF is one shared GLSL include, or a byte-checked copy where sharing is impractical.
 - **No external program at bake time.** Cycles or Mitsuba may still serve once, as a reference image to check against.
 
-**Features:**
-- Lambert diffuse plus GGX specular in the metallic-roughness model.
+**Features** (built in IM3: section 15 has the details and the numbers):
+- Lambert diffuse plus GGX specular in the metallic-roughness model. The GGX lobe is `shaders/brdf.glsl`, which the city's lights call too.
 - Clearcoat, for the polished concrete.
 - Thin dielectric glass.
-- Alpha-tested leaves: the lobby plants from `src/gen/plant.c`.
+- Leaves: the lobby plants from `src/gen/plant.c` are cut to shape in their geometry, so they need no alpha test. Textured alpha masks wait for models that need them (IM6).
 - Emissive triangles as lights.
 - Next-event estimation with multiple importance sampling against BSDF sampling, lights chosen by power from an alias table (a light BVH if the count demands it), Russian roulette, and clamping of outlier paths.
-- Accumulation in fp32, with one seeded random stream per texel, so a bake is deterministic on a given GPU and driver.
-- Intel Open Image Denoise, with albedo and normal guides, is an optional dependency of the baker alone, never the game.
+- Accumulation in fp32, with one seeded random stream per sample, so a bake is deterministic on a given GPU and driver.
+- Intel Open Image Denoise, with albedo and normal guides, may be an optional dependency of the baker alone, never the game. IM3 found it unneeded so far: samples are cheap (section 15).
 
 **Modes:**
-- IM1 has two:
-  - `--scene <name> --out <dir>`: bakes one of the test modules to `<dir>`, with IM1's choices as defaults (`--views`, `--grid`, `--res`, `--margin` and `--layers` override them).
-  - `--lab <dir>`: the representation sweep (section 13). With `IMP_SELFTEST` set, it checks the pipeline instead.
+- Built so far:
+  - `--scene <name> --out <dir>`: bakes one of the test modules to `<dir>`, with IM1's choices as defaults (`--views`, `--grid`, `--res`, `--margin` and `--layers` override them). It is path traced (`--spp`, `--bounces`, `--clamp`, `--seed`), or lit by IM1's direct light with `--direct`. `--preview <png>` writes the nearest layer of the straight-on view and of a view 25° up.
+  - `--lab <dir>`: the representation sweep (section 13), under IM1's direct light. With `IMP_SELFTEST` set, it checks the pipeline instead.
+  - `--test <dir>`: the path tracer's tests (ctest `bake_test`); `--write-ref` renders their reference.
 - `--module <name>`: bakes one module from the catalogue.
 - `--catalogue`: bakes whatever changed, by input hash.
 - `--beauty <camera>`: a perspective still from inside a module, for look-dev against the reference.
@@ -202,7 +203,7 @@ The baker is `tools/interior_bake/`, an in-house path tracer in C11 and Vulkan c
 
 A full catalogue is meant to bake overnight.
 
-**Tests** (ctest `bake_test`): a white furnace test (energy conserved to within 1%), a Cornell box against a stored reference image, and determinism (same seed, same bytes).
+**Tests** (ctest `bake_test`, section 15): a furnace test (energy conserved to within 1%), a Cornell box against a stored reference image, and determinism (same seed, same bytes).
 
 ## 10. Office floor layouts
 
@@ -240,7 +241,7 @@ The working plan is kept outside the repo. In summary:
 | IM0 | This design, the reference image, the LFS patterns |
 | IM1 | Baker skeleton (headless Vulkan, multi-hit capture under simple light) and the representation spike: views × layers × resolution, layered depth against MPI, measured against true renders. Done: section 13 |
 | IM2 | First light in the engine: loading, the facade trace, a debug selection of floors, cost measured. Done: section 14 |
-| IM3 | The path tracer: materials, emitters, NEE and MIS, glass, clearcoat; furnace and Cornell tests |
+| IM3 | The path tracer: materials, emitters, NEE and MIS, glass, clearcoat; furnace and Cornell tests. Done: section 15 |
 | IM4 | Light: the interior kit, the exterior bases and their colouring in the engine, exposure calibration, a beauty render against the reference |
 | IM5 | The office floor generator and its validation |
 | IM6 | The high-poly furniture (whenever it arrives) |
@@ -373,3 +374,68 @@ The budget (section 8: 0.5 ms with a tower filling the screen) holds at a share 
 - **Repetition:** three modules are few. The lounge's orb lamp recurs every 12 m along a floor (IM5's variety, IM7's choice).
 - **Memory:** `lint` and `albedo` are still uncompressed (BC6H and BC7 with IM3 and IM4), and there are no mips.
 - **Depth, corners and share:** the module's depth ignores the building's, corner bays show the face's module, and the share is a debugging knob (IM7).
+
+## 15. IM3: the path tracer
+
+IM3 replaced IM1's direct light with a path tracer, re-baked the three modules with full GI, and tested the tracer.
+
+**What was built:**
+
+- **One GGX lobe** (`shaders/brdf.glsl`): the distribution, the height-correlated Smith visibility and Schlick's Fresnel. The city's `ggxSpec` (`shaders/city/lighting.glsl`) now calls it for its isotropic lobe, with the same arithmetic as before, so a baked surface and a live one reflect alike.
+- **The tracer** (`shaders/interior/pathtrace.glsl`), included by the capture and the truth:
+  - Lambert diffuse plus GGX specular, metallic-roughness, under an optional clearcoat. Specular directions come from the visible normals (Dupuy and Benyoub 2023). A lobe is chosen by its share of the reflected light, and the pdf is the mixture's.
+  - Thin glass: Fresnel picks reflection or straight transmission, which keeps 92%. Shadow rays through a pane lose the same.
+  - Lights are the emissive triangles. One is chosen by power from an alias table (Vose's method, built in `gpu.c`), then a point on it, and in a periodic module one of the three copies of it round the point. Next-event estimation and BSDF sampling are weighed by the power heuristic. Emission is one-sided.
+  - Russian roulette after the second bounce. A clamp of 16 on what any one indirect sample brings: from 16 down to 4 it moves a bake's mean by 0.3%.
+  - Every sample has its own random stream, hashed from the texel, the layer and the sample's index.
+- **Leaves need no alpha test.** The lobby plants are cut to shape in their geometry (`src/gen/plant.c`), so a leaf is a two-sided opaque surface. Textured alpha masks wait for models that need them (IM6).
+- **The capture** path traces the K layers the bake keeps (the rest stay dark) and adds what each pane in front of them reflects, traced too. It runs in passes of 256 samples, one view at a time, each pass adding its share, so no submission is long enough for the driver to reset the GPU. A slab seen from inside (the margin texels) is black: the facade covers it.
+- **The kit** (`scene.c`) gives each material a roughness, and some a metal's sheen (ducts, trays) or a clearcoat (the floor: roughness 0.55 under a coat of 0.12). Its lights are emissive surfaces:
+  - each pendant and desk lamp is a dark housing with a diffuser under it, whose radiance is IM1's point light's intensity over the diffuser's area, so the light on the desks is unchanged;
+  - a lit pendant also has a dimmer diffuser on top (40% of the one below) that washes the ceiling, as the reference's linear pendants do;
+  - the orb lamps and the screens glow on every face, the screens a little brighter than before.
+
+  The materials are still set in code: reading `assets/materials` comes with the floor generator and the furniture (IM5, IM6).
+- **The defaults:** 16384 samples, 8 bounces, a clamp of 16 (`--spp`, `--bounces`, `--clamp`, `--seed`); `--direct` keeps IM1's light. The lab still uses IM1's light, which is cheap and noiseless, but the kit's lights changed, so its scores differ a little from section 13's.
+- **The sidecar** records `"light_state": "im3_gi"` and the trace's settings. The format is unchanged (version 2), and `bake_scale` stays 5 until IM4 calibrates it.
+
+**Cost of a bake** (RTX 4080 SUPER, 50 views × 3 layers × 192 × 86 texels, 16384 samples):
+
+| module | time |
+|---|---|
+| through30 | 41 s |
+| core12 | 35 s |
+| glass20 (two glass rooms, two plants) | 132 s |
+
+Samples are cheap, so noise is fought with more of them. At 4096 samples, two seeds' previews differ by 4.1 levels RMS (8 bits, tone-mapped at the bake scale); 16384 samples halve that. A full catalogue of 30 modules would bake in under an hour, so OIDN isn't needed yet. It stays an option if the furniture's polygons (IM6) slow the tracer down.
+
+**The tests** (ctest `bake_test`, `interior_bake --test tests/data`, 1.4 s in all):
+
+- **Furnace.** A sealed room whose walls all emit 0.2 and reflect, seen from inside, 512 samples a pixel:
+
+  | walls | with MIS | BSDF sampling alone | expected |
+  |---|---|---|---|
+  | Lambert, albedo 0.8 | 1.0009 | 0.9996 | 1 |
+  | glossy dielectric under a clearcoat | 0.4434 | 0.4437 | equal |
+  | rough metal | 0.9997 | 0.9996 | equal |
+  | near-mirror metal | 0.7059 | 0.7057 | equal |
+
+  The first checks that energy is conserved. The others check that every lobe's sampling and pdf, and the MIS weights, agree with each other, since both estimators converge to the same answer only if they do. The limit is 1%.
+- **Cornell box** (`docs/reference/im3/cornell.png`): a 1 m box with a rough metal block, a clearcoated block and a pane of glass, at 1024 samples, against `tests/data/cornell_ref.pfm` at 16384 (written by `--write-ref`). The mean agrees within 0.2% (the limit is 1%), and the worst 8 × 8 block within 4.0% (the limit is 5%).
+- **Determinism:** the same truth and the same capture twice give the same bytes, and another seed gives other bytes.
+
+**What it showed in the engine** (`docs/reference/im3/`, each IM2 above and IM3 below, every eligible floor drawn as an impostor):
+
+- **`street_im2_im3.jpg`:** from the street, looking up. IM2's ceilings were black but for the pendants. Now the uplights pool on the slab, the ducts, trays and red sprinkler runs show lit from below, and the desk lamps glow round their desks.
+- **`facade_im2_im3.jpg`:** level with the floors. The polished floor mirrors the pendants in streaks, light pools on it by the glass, the columns and ceilings carry bounce light, and the red pipes show along the ceiling. IM2's flat grey came from a constant ambient term.
+- **`through30_up_direct_gi.png`:** the bake itself, from 25° below, under IM1's direct light (above) and path traced (below). The direct light gives a flat ambient grey. The path tracer lights the ducts warm from the floor and desks, and tints the columns blue from the screens.
+- **`level.jpg`:** the level view of section 14.
+
+The city pass costs the same as with IM2's bakes (1.61 ms against 1.60 at `--cam 1139.3 262 1.7 0 20`): the files and the march are unchanged.
+
+**What remains:**
+
+- **Exposure:** the lights' units are the radiance of IM1's point lights over their areas. IM4 makes them photometric (lumens, kelvin) and calibrates `bake_scale`. Lit fittings bloom at the provisional scale.
+- **Exterior light:** the bases (street, neon, sky, screens) are still to come (IM4). Light from outside doesn't reach the floors yet.
+- **Compression:** `lint` and `albedo` are still uncompressed (BC6H and BC7 with IM4).
+- **Colour:** the test floors are dark and nearly grey, so the colour bleeding is faint: warm from the lamps and desks, blue from the screens, red near the pipes and the rug. The generator's and the furniture's materials (IM5, IM6) will show more.

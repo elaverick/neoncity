@@ -3,9 +3,10 @@
 
 /* The interior baker (docs/interior-impostors.md, section 9): bakes office
  * floor modules into multi-view layered depth impostors, and measures how
- * well they stand in for the real thing (lab.c). IM1 lights a module with
- * direct light alone (N.L from its lights, with shadows); IM3 adds the path
- * tracer.
+ * well they stand in for the real thing (lab.c). A bake is path traced with
+ * full GI from the module's emissive surfaces (shaders/interior/pathtrace.glsl,
+ * IM3); the lab keeps IM1's direct light (N.L from point lights, with
+ * shadows), which is cheap and noiseless. test.c checks the path tracer.
  *
  * Module frame (shaders/city/impostor.glsl): x along the wall, y up, z into
  * the building, the near glass at z = 0. */
@@ -16,7 +17,8 @@ enum { BF_GLASS = 1, BF_OPEN = 2, BF_EMITTER = 4 };   /* instance flags (shaders
 enum { MOD_THROUGH = 0, MOD_CORE, MOD_CORNER };
 
 typedef struct BakeMesh { uint32_t firstIndex, indexCount, baseVertex, vertexCount; } BakeMesh;
-typedef struct BakeMat { float albedo[4], emission[4]; } BakeMat;
+/* albedo[3]: roughness; emission[3]: metallic; surface: a dielectric's F0 (0: no specular lobe), clearcoat, its roughness, - */
+typedef struct BakeMat { float albedo[4], emission[4], surface[4]; } BakeMat;
 typedef struct BakeInst { uint32_t mesh, mat, flags; float xf[12]; } BakeInst;   /* xf: 3x4, row-major */
 typedef struct BakeLight { float pos[4], power[4]; } BakeLight;                /* points emitting downwards */
 
@@ -30,6 +32,7 @@ typedef struct Scene {
     float xmin, xmax;        /* the building's extent across: a corner's side glass */
     float outside[3];        /* radiance seen out of the far glass */
     float ambient;
+    int   sealed;            /* a test box: paths never leave by glass planes */
 
     float    *verts;  uint32_t nverts, capVerts;   /* xyz */
     uint32_t *idx;    uint32_t nidx, capIdx;
@@ -45,6 +48,11 @@ extern const int SCENE_COUNT;
 /* Builds a test module by name; models from assets (the lounge sofa) are skipped if missing. */
 bool scene_build(Scene *s, const char *name, const char *assets);
 void scene_free(Scene *s);
+/* Scenes built by hand (test.c): an empty scene with the unit cube, a material, and a box of it. */
+void scene_begin(Scene *s, const char *name);
+int  scene_material(Scene *s, const float albedo[3], const float emission[3], float rough, float metal, float f0,
+                    float coat, float coatRough);
+void scene_box(Scene *s, int mat, uint32_t flags, float x0, float y0, float z0, float x1, float y1, float z1);
 
 /* ------------------------------------------------------------- impostors --- */
 
@@ -105,11 +113,26 @@ typedef struct Camera { float pos[3]; char name[24]; int street; } Camera;
 typedef struct EvalGrid { float x0, y0, ppmx, ppmy; int w, h, ss; } EvalGrid;   /* ss x ss rays a pixel */
 typedef struct ReconStats { double steps, guessed, offGrid, marched; } ReconStats;
 
+/* How a capture or a truth is lit: path traced (pathtrace.glsl), or IM1's direct light. */
+typedef struct TraceConfig {
+    int      spp, batch;     /* samples a texel or pixel, and how many a pass takes */
+    int      bounces;        /* the most a path makes (at most 64) */
+    int      slots;          /* the capture's layers that are traced (the bake keeps K; the rest stay dark) */
+    float    clamp;          /* the most any indirect sample may bring, in its brightest channel (0: no clamp) */
+    int      nee;            /* next-event estimation with MIS (else BSDF sampling alone: test.c's check) */
+    uint32_t seed;
+} TraceConfig;
+/* The bake's defaults: 16384 samples in passes of 256, 8 bounces, K layers, a clamp of 16 (section 15). */
+TraceConfig trace_defaults(int K);
+
 typedef struct Gpu Gpu;
 Gpu  *gpu_create(bool validation);
 void  gpu_destroy(Gpu *g);
-/* Builds the scene's acceleration structures and uploads its buffers (replacing any before). */
+/* Builds the scene's acceleration structures, its emitters' alias table, and uploads its buffers
+ * (replacing any before). */
 void  gpu_load_scene(Gpu *g, const Scene *s);
+/* The light gpu_capture and gpu_truth use from now on: path traced as t says, or NULL: IM1's direct light. */
+void  gpu_set_trace(Gpu *g, const TraceConfig *t);
 void  gpu_capture(Gpu *g, const Scene *s, const ViewGrid *v, const TexGrid *t, Capture *out);
 void  gpu_capture_mpi(Gpu *g, const Scene *s, const ViewGrid *v, const TexGrid *t, int slices, MpiCapture *out);
 /* rgba: w * h, radiance and hit depth. */
@@ -124,7 +147,14 @@ const char *gpu_name(const Gpu *g);
 
 /* ---------------------------------------------------------------- output --- */
 
-/* Writes a bake: <dir>/<name>.{lint,albedo,depth,flags}.ktx2 and <name>.json (ktx2.c). */
-bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConfig *ic);
+/* Writes a bake: <dir>/<name>.{lint,albedo,depth,flags}.ktx2 and <name>.json (ktx2.c). tc: how it
+ * was lit (NULL: IM1's direct light). */
+bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConfig *ic, const TraceConfig *tc);
+/* A PNG of the bake's view nearest the elevation (radians; > 0: looking up from below), its nearest
+ * layer tone-mapped (main.c --preview). */
+bool bake_preview(const char *path, const Capture *c, float elevation, float exposure);
 /* The sweep (lab.c): every scene, against the truth from street and level cameras. */
 int  lab_run(Gpu *g, const char *outDir, const char *assets, bool quick);
+/* The path tracer's tests (test.c): a furnace, the Cornell box against dataDir's reference, and
+ * determinism. writeRef: render the reference instead. 0 when they pass. */
+int  test_run(Gpu *g, const char *dataDir, bool writeRef);

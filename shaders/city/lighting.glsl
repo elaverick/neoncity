@@ -18,7 +18,9 @@ vec3 ambientLight(vec3 n, float h) {
  * and get GGX (Trowbridge-Reitz distribution, height-correlated Smith
  * visibility, Schlick Fresnel, alpha = rough^2) with F0 = specK. Lighting here
  * leaves the 1/pi out of Lambert diffuse (diffuse is alb * E), so the GGX
- * lobe carries a factor of pi to stay in the same units. */
+ * lobe carries a factor of pi to stay in the same units. The isotropic lobe
+ * is brdf.glsl's, which the interior baker shades with too. */
+#include "brdf.glsl"
 float ggxSpec(vec3 n, vec3 L, vec3 V, float alpha, float f0, float ndl) {
     vec3 H = normalize(L + V);
     float ndh = max(dot(n, H), 0.0), ndv = max(dot(n, V), 1e-4), vdh = max(dot(V, H), 0.0);
@@ -35,12 +37,9 @@ float ggxSpec(vec3 n, vec3 L, vec3 V, float alpha, float f0, float ndl) {
         float q = dot(h, h);
         D = 1.0 / (PI * ax * ay * q * q);
     } else {
-        float dd = ndh * ndh * (a2 - 1.0) + 1.0;
-        D = a2 / (PI * dd * dd);
+        D = brdfGgxD(ndh, a2);
     }
-    float vis = 0.5 / (ndl * sqrt(ndv * ndv * (1.0 - a2) + a2) + ndv * sqrt(ndl * ndl * (1.0 - a2) + a2) + 1e-5);
-    float F = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
-    return PI * D * vis * F * ndl;
+    return PI * D * brdfSmithVis(ndl, ndv, a2) * brdfSchlick(f0, vdh) * ndl;
 }
 
 float specLobe(vec3 n, vec3 L, vec3 V, float shin, float specK, float rough, float ndl) {

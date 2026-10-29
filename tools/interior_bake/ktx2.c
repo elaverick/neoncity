@@ -1,10 +1,11 @@
 #include "bake.h"
+#include "stb_image_write.h"
 
 /* A bake on disk (docs/interior-impostors.md, section 8): one KTX2 2D array
  * per channel, rows bottom up (KTXorientation "ru"), one level, and the JSON
  * sidecar the engine reads (src/render/interior_def.h).
  *
- *   lint    B10G11R11 float   radiance from the module's own lights (IM1: direct light only); layer = view * K + depth layer
+ *   lint    B10G11R11 float   radiance from the module's own lights, path traced (IM3); layer = view * K + depth layer
  *   albedo  RGBA8             base colour; a, the specular share of the exterior light (IM4: 0 until then)
  *   depth   BC5               entry and exit as fractions of D (entry 1: no layer)
  *   flags   R8                one layer per view: 1 where the texel is full (it met more surfaces than K)
@@ -13,9 +14,10 @@
  * are final; the march reads texels, so there are no mips yet. */
 
 #define BAKE_FORMAT_VERSION 2
-#define BAKER_VERSION "im1-direct-2"
+#define BAKER_VERSION "im3-gi-1"
 /* Radiance into the engine's units. Provisional until IM4 calibrates it against the lobby's panels:
- * IM1's direct light alone, scaled so a bay's mean through the glass comes near a lit room's (rooms.glsl). */
+ * chosen so a bay's mean through the glass comes near a lit room's (rooms.glsl). IM2's direct light
+ * alone took 5; IM3's paths add the light that bounces. */
 #define BAKE_SCALE 5.0f
 
 /* A format as KTX2's data format descriptor describes it: a basic block, a sample per channel. */
@@ -118,7 +120,7 @@ static uint32_t ufloat(float f, int mant) {
     return v > largest ? largest : v;
 }
 
-bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConfig *ic) {
+bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConfig *ic, const TraceConfig *tc) {
     int nx = c->grid.nx, ny = c->grid.ny, views = view_count(&c->views), K = ic->K;
     size_t plane = (size_t)nx * ny, n = (size_t)views * K * plane;
     size_t depthLayer = (size_t)level_bytes(&F_DEPTH, (uint32_t)nx, (uint32_t)ny, 1);
@@ -174,7 +176,10 @@ bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConf
     const ViewGrid *vg = &c->views;
     fprintf(f, "{\n  // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.\n");
     fprintf(f, "  \"version\": %d,\n  \"baker\": \"%s\",\n  \"module\": \"%s\",\n", BAKE_FORMAT_VERSION, BAKER_VERSION, s->name);
-    fprintf(f, "  \"type\": \"%s\",\n  \"family\": \"office\",\n  \"light_state\": \"im1_direct\",\n", types[s->type]);
+    fprintf(f, "  \"type\": \"%s\",\n  \"family\": \"office\",\n  \"light_state\": \"%s\",\n", types[s->type], tc ? "im3_gi" : "im1_direct");
+    if (tc)
+        fprintf(f, "  \"trace\": { \"samples\": %d, \"bounces\": %d, \"clamp\": %.1f, \"seed\": %u },\n",
+                tc->spp, tc->bounces, tc->clamp, tc->seed);
     fprintf(f, "  \"size\": [%.3f, %.3f, %.3f],        // W, H, D in metres\n", s->W, s->H, s->D);
     fprintf(f, "  \"ceiling\": %.3f,                     // the slab's underside above the floor (y = 0)\n", s->ceilY);
     fprintf(f, "  \"bays\": %d,\n  \"bay_width\": %.3f,\n  \"opening\": [%.3f, %.3f],     // sill, head\n", bays, bayW, s->sill, s->head);
@@ -220,5 +225,33 @@ bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConf
     ok &= !ferror(f);
     fclose(f);
     printf("wrote %s/%s.{lint,albedo,depth,flags}.ktx2 and .json (%d views x %d layers, %d x %d)\n", dir, s->name, views, K, nx, ny);
+    return ok;
+}
+
+bool bake_preview(const char *path, const Capture *c, float elevation, float exposure) {
+    int front = 0, nx = c->grid.nx, ny = c->grid.ny;
+    float best = -2.0f, want[3] = { 0.0f, sinf(elevation), cosf(elevation) };
+    for (int v = 0; v < view_count(&c->views); ++v) {
+        float d[3];
+        view_dir(&c->views, v, d);
+        float dot = d[0] * want[0] + d[1] * want[1] + d[2] * want[2];
+        if (dot > best) { best = dot; front = v; }
+    }
+    uint8_t *img = malloc((size_t)nx * ny * 3);
+    if (!img) return false;
+    for (int y = 0; y < ny; ++y)
+        for (int x = 0; x < nx; ++x) {
+            size_t texel = ((size_t)front * ny + (ny - 1 - y)) * nx + x;
+            const CapLayer *cl = &c->layers[texel * CAP_SLOTS];
+            for (int k = 0; k < 3; ++k) {
+                float v = c->counts[texel] ? cl->lit[k] * exposure : 0.0f;
+                v = v / (1.0f + v);
+                v = v <= 0.0031308f ? v * 12.92f : 1.055f * powf(v, 1.0f / 2.4f) - 0.055f;
+                img[((size_t)y * nx + x) * 3 + k] = (uint8_t)(fminf(fmaxf(v, 0.0f), 1.0f) * 255.0f + 0.5f);
+            }
+        }
+    bool ok = stbi_write_png(path, nx, ny, 3, img, nx * 3) != 0;
+    free(img);
+    if (ok) printf("wrote %s\n", path);
     return ok;
 }

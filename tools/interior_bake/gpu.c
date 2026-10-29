@@ -3,8 +3,10 @@
 #include <time.h>
 
 /* The baker's GPU work: a headless device (vk_init_headless), the scene's
- * acceleration structures, and four compute passes (shaders/interior/). Every
- * call records, submits and waits: the baker is a batch tool. */
+ * acceleration structures and emitters, and four compute passes
+ * (shaders/interior/). Every call records, submits and waits: the baker is a
+ * batch tool. A path-traced capture or truth runs as many short passes, so no
+ * one submission keeps the GPU long enough for the driver to reset it. */
 
 static const uint32_t SPV_capture[] = {
 #include "interior/capture.comp.inc"
@@ -29,7 +31,14 @@ typedef struct BakeParams {
     int32_t march[4];
     float   march2[4];
     int32_t flags[4];
+    int32_t trace[4], trace2[4];
+    float   trace3[4];
+    int32_t trace4[4];
 } BakeParams;
+
+/* pathtrace.glsl: Emitter */
+typedef struct GpuEmitter { float p0[4], e1[4], e2[4]; uint32_t info[4]; } GpuEmitter;
+static int build_emitters(const Scene *s, uint32_t *inst, GpuEmitter **out);
 
 enum { PIPE_CAPTURE, PIPE_CAPTURE_MPI, PIPE_TRUTH, PIPE_RECON, PIPE_COUNT };
 enum { MASK_CASTER = 1, MASK_GLASS = 2, MASK_EMITTER = 4 };   /* bake_scene.glsl: shadows trace MASK_CASTER */
@@ -52,7 +61,10 @@ struct Gpu {
     VkPipeline pipes[PIPE_COUNT];
     VkQueryPool ts;
     Buffer params, staging;
-    Buffer verts, idx, insts, mats, lights;
+    Buffer verts, idx, insts, mats, lights, emitters;
+    int nemitters;
+    TraceConfig trace;
+    bool traced;
     Buffer *blasBuf;
     VkAccelerationStructureKHR *blas;
     int nblas;
@@ -155,18 +167,18 @@ Gpu *gpu_create(bool validation) {
     VkFenceCreateInfo fi = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
     VK_CHECK(vkCreateFence(d, &fi, NULL, &g->fence));
 
-    /* bake_scene.glsl and the passes: 0 TLAS, 1-8 storage buffers, 10 the parameters */
-    VkDescriptorSetLayoutBinding b[10];
+    /* bake_scene.glsl, pathtrace.glsl and the passes: 0 TLAS, 1-9 storage buffers, 10 the parameters */
+    VkDescriptorSetLayoutBinding b[11];
     memset(b, 0, sizeof(b));
-    for (int i = 0; i < 10; ++i) {
-        b[i].binding = i < 9 ? (uint32_t)i : 10u;
+    for (int i = 0; i < 11; ++i) {
+        b[i].binding = (uint32_t)i;
         b[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR
-                            : i == 9 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                            : i == 10 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         b[i].descriptorCount = 1;
         b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
     VkDescriptorSetLayoutCreateInfo li = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    li.bindingCount = 10;
+    li.bindingCount = 11;
     li.pBindings = b;
     VK_CHECK(vkCreateDescriptorSetLayout(d, &li, NULL, &g->dsl));
     VkPipelineLayoutCreateInfo pli = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
@@ -174,7 +186,7 @@ Gpu *gpu_create(bool validation) {
     pli.pSetLayouts = &g->dsl;
     VK_CHECK(vkCreatePipelineLayout(d, &pli, NULL, &g->pl));
     VkDescriptorPoolSize ps[3] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
-                                   { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8 }, { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 } };
+                                   { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 9 }, { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 } };
     VkDescriptorPoolCreateInfo dpi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     dpi.maxSets = 1;
     dpi.poolSizeCount = 3;
@@ -217,7 +229,8 @@ void gpu_destroy(Gpu *g) {
     VkDevice d = g->vk.device;
     vkDeviceWaitIdle(d);
     free_scene(g);
-    Buffer *bs[] = { &g->params, &g->staging, &g->verts, &g->idx, &g->insts, &g->mats, &g->lights, &g->out0, &g->out1, &g->in0 };
+    Buffer *bs[] = { &g->params, &g->staging, &g->verts, &g->idx, &g->insts, &g->mats, &g->lights, &g->emitters,
+                     &g->out0, &g->out1, &g->in0 };
     for (size_t i = 0; i < sizeof(bs) / sizeof(bs[0]); ++i) vk_buffer_destroy(&g->vk, bs[i]);
     for (int i = 0; i < PIPE_COUNT; ++i) vkDestroyPipeline(d, g->pipes[i], NULL);
     vkDestroyQueryPool(d, g->ts, NULL);
@@ -269,17 +282,23 @@ void gpu_load_scene(Gpu *g, const Scene *s) {
     upload(g, &g->idx, STORE | GEOM, s->idx, sizeof(uint32_t) * s->nidx);
     upload(g, &g->mats, STORE, s->mats, sizeof(BakeMat) * (size_t)s->nmats);
     upload(g, &g->lights, STORE, s->lights, sizeof(BakeLight) * (size_t)s->nlights);
-    uint32_t *inst = malloc(sizeof(uint32_t) * 4 * (size_t)s->ninsts);
+    uint32_t *inst = malloc(sizeof(uint32_t) * 8 * (size_t)s->ninsts);
     if (!inst) fatal("out of memory");
+    GpuEmitter *em = NULL;
+    int nem = build_emitters(s, inst, &em);
     for (int i = 0; i < s->ninsts; ++i) {
         const BakeMesh *m = &s->meshes[s->insts[i].mesh];
-        inst[i * 4 + 0] = m->firstIndex;
-        inst[i * 4 + 1] = m->baseVertex;
-        inst[i * 4 + 2] = s->insts[i].mat;
-        inst[i * 4 + 3] = s->insts[i].flags;
+        inst[i * 8 + 0] = m->firstIndex;
+        inst[i * 8 + 1] = m->baseVertex;
+        inst[i * 8 + 2] = s->insts[i].mat;
+        inst[i * 8 + 3] = s->insts[i].flags;
+        inst[i * 8 + 5] = inst[i * 8 + 6] = inst[i * 8 + 7] = 0;
     }
-    upload(g, &g->insts, STORE, inst, sizeof(uint32_t) * 4 * (size_t)s->ninsts);
+    upload(g, &g->insts, STORE, inst, sizeof(uint32_t) * 8 * (size_t)s->ninsts);
+    upload(g, &g->emitters, STORE, em, sizeof(GpuEmitter) * (size_t)(nem ? nem : 1));
+    g->nemitters = nem;
     free(inst);
+    free(em);
 
     /* a BLAS per mesh */
     g->nblas = s->nmeshes;
@@ -347,6 +366,85 @@ void gpu_load_scene(Gpu *g, const Scene *s) {
     printf("  %u TLAS instances (%d copies a side)\n", n, copies);
 }
 
+/* The emissive triangles, a light each (pathtrace.glsl: Emitter), in world space for the instances
+ * as they stand (the shader finds a periodic module's copies), and the alias table that chooses
+ * one by its power (Vose's method). Sets each instance's first emitter (inst[i * 8 + 4]; its
+ * triangles' follow in order), or ~0u where it doesn't emit. */
+static int build_emitters(const Scene *s, uint32_t *inst, GpuEmitter **out) {
+    int n = 0;
+    for (int i = 0; i < s->ninsts; ++i) {
+        const float *e = s->mats[s->insts[i].mat].emission;
+        inst[i * 8 + 4] = 0xFFFFFFFFu;
+        if (e[0] > 0.0f || e[1] > 0.0f || e[2] > 0.0f) {
+            inst[i * 8 + 4] = (uint32_t)n;
+            n += (int)(s->meshes[s->insts[i].mesh].indexCount / 3);
+        }
+    }
+    size_t cap = (size_t)(n ? n : 1);
+    *out = calloc(cap, sizeof(GpuEmitter));
+    double *power = malloc(sizeof(double) * cap), *q = malloc(sizeof(double) * cap);
+    int *small = malloc(sizeof(int) * cap), *large = malloc(sizeof(int) * cap);
+    if (!*out || !power || !q || !small || !large) fatal("out of memory building the emitters");
+    double total = 0.0;
+    for (int i = 0; i < s->ninsts; ++i) {
+        if (inst[i * 8 + 4] == 0xFFFFFFFFu) continue;
+        const BakeInst *in = &s->insts[i];
+        const BakeMesh *m = &s->meshes[in->mesh];
+        const float *e = s->mats[in->mat].emission;
+        double lum = 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
+        for (uint32_t t = 0; t < m->indexCount / 3; ++t) {
+            float w[3][3];
+            for (int k = 0; k < 3; ++k) {
+                const float *v = s->verts + 3 * (s->idx[m->firstIndex + t * 3 + k] + m->baseVertex);
+                for (int r = 0; r < 3; ++r)
+                    w[k][r] = in->xf[r * 4 + 0] * v[0] + in->xf[r * 4 + 1] * v[1] + in->xf[r * 4 + 2] * v[2] + in->xf[r * 4 + 3];
+            }
+            size_t k = inst[i * 8 + 4] + t;
+            GpuEmitter *o = &(*out)[k];
+            for (int r = 0; r < 3; ++r) {
+                o->p0[r] = w[0][r];
+                o->e1[r] = w[1][r] - w[0][r];
+                o->e2[r] = w[2][r] - w[0][r];
+            }
+            float c[3] = { o->e1[1] * o->e2[2] - o->e1[2] * o->e2[1], o->e1[2] * o->e2[0] - o->e1[0] * o->e2[2],
+                           o->e1[0] * o->e2[1] - o->e1[1] * o->e2[0] };
+            float area = 0.5f * sqrtf(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+            o->p0[3] = area > 1e-12f ? area : 1e-12f;
+            o->info[0] = in->mat;
+            power[k] = area * lum * 3.14159265;
+            total += power[k];
+        }
+    }
+    /* Vose: slot k keeps emitter k with probability e1[3], else gives its alias, info[1] */
+    int ns = 0, nl = 0;
+    for (int k = 0; k < n; ++k) {
+        (*out)[k].e2[3] = (float)(total > 0.0 ? power[k] / total : 1.0 / n);
+        q[k] = total > 0.0 ? power[k] / total * n : 1.0;
+        if (q[k] < 1.0) small[ns++] = k; else large[nl++] = k;
+    }
+    while (ns && nl) {
+        int a = small[--ns], b = large[--nl];
+        (*out)[a].e1[3] = (float)q[a];
+        (*out)[a].info[1] = (uint32_t)b;
+        q[b] -= 1.0 - q[a];
+        if (q[b] < 1.0) small[ns++] = b; else large[nl++] = b;
+    }
+    while (nl) { int b = large[--nl]; (*out)[b].e1[3] = 1.0f; (*out)[b].info[1] = (uint32_t)b; }
+    while (ns) { int a = small[--ns]; (*out)[a].e1[3] = 1.0f; (*out)[a].info[1] = (uint32_t)a; }
+    free(small); free(large); free(q); free(power);
+    return n;
+}
+
+TraceConfig trace_defaults(int K) {
+    TraceConfig t = { 16384, 256, 8, K, 16.0f, 1, 1u };
+    return t;
+}
+
+void gpu_set_trace(Gpu *g, const TraceConfig *t) {
+    g->traced = t != NULL;
+    if (t) g->trace = *t;
+}
+
 static void fill_params(Gpu *g, const Scene *s, const ViewGrid *v, const TexGrid *t, const ImpConfig *ic,
                         const Camera *c, const EvalGrid *e) {
     BakeParams p;
@@ -383,18 +481,37 @@ static void fill_params(Gpu *g, const Scene *s, const ViewGrid *v, const TexGrid
     float out[4] = { s->outside[0], s->outside[1], s->outside[2], LIGHT_RANGE }, gl[4] = { 0.04f, 0.92f, 0.08f, (float)(e ? e->ss : 1) };
     memcpy(p.outside, out, sizeof(out));
     memcpy(p.glass, gl, sizeof(gl));
+    if (g->traced) {
+        p.trace[2] = g->trace.spp;
+        p.trace[3] = g->trace.bounces < 64 ? g->trace.bounces : 64;
+        p.trace2[0] = 1;
+        p.trace2[1] = g->trace.slots;
+        p.trace2[2] = g->nemitters;
+        p.trace2[3] = (int32_t)g->trace.seed;
+        p.trace3[0] = g->trace.clamp;
+        p.trace3[1] = g->trace.nee ? 1.0f : 0.0f;
+    }
+    p.trace4[1] = s->sealed ? 0 : 1;
     memcpy(g->params.mapped, &p, sizeof(p));
+}
+
+/* A path-traced pass: samples [first, first + count) of the bake's, and for a capture its view. */
+static void set_pass(Gpu *g, int first, int count, int view) {
+    BakeParams *p = (BakeParams *)g->params.mapped;
+    p->trace[0] = first;
+    p->trace[1] = count;
+    p->trace4[0] = view;
 }
 
 static void bind(Gpu *g) {
     VkWriteDescriptorSetAccelerationStructureKHR wa = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR };
     wa.accelerationStructureCount = 1;
     wa.pAccelerationStructures = &g->tlas;
-    Buffer *bufs[8] = { &g->verts, &g->idx, &g->insts, &g->mats, &g->lights, &g->out0, &g->out1, &g->in0 };
-    VkDescriptorBufferInfo bi[9];
-    VkWriteDescriptorSet w[10];
+    Buffer *bufs[9] = { &g->verts, &g->idx, &g->insts, &g->mats, &g->lights, &g->out0, &g->out1, &g->in0, &g->emitters };
+    VkDescriptorBufferInfo bi[10];
+    VkWriteDescriptorSet w[11];
     memset(w, 0, sizeof(w));
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < 11; ++i) {
         w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w[i].dstSet = g->set;
         w[i].descriptorCount = 1;
@@ -402,17 +519,17 @@ static void bind(Gpu *g) {
     w[0].dstBinding = 0;
     w[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     w[0].pNext = &wa;
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < 9; ++i) {
         bi[i].buffer = bufs[i]->buf; bi[i].offset = 0; bi[i].range = VK_WHOLE_SIZE;
         w[i + 1].dstBinding = (uint32_t)(i + 1);
         w[i + 1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         w[i + 1].pBufferInfo = &bi[i];
     }
-    bi[8].buffer = g->params.buf; bi[8].offset = 0; bi[8].range = sizeof(BakeParams);
-    w[9].dstBinding = 10;
-    w[9].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    w[9].pBufferInfo = &bi[8];
-    vkUpdateDescriptorSets(g->vk.device, 10, w, 0, NULL);
+    bi[9].buffer = g->params.buf; bi[9].offset = 0; bi[9].range = sizeof(BakeParams);
+    w[10].dstBinding = 10;
+    w[10].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    w[10].pBufferInfo = &bi[9];
+    vkUpdateDescriptorSets(g->vk.device, 11, w, 0, NULL);
 }
 
 static void dispatch(Gpu *g, int pipe, uint32_t x, uint32_t y, uint32_t z) {
@@ -430,9 +547,28 @@ void gpu_capture(Gpu *g, const Scene *s, const ViewGrid *v, const TexGrid *t, Ca
     ensure(g, &g->in0, 16, STORE, DEVICE);
     fill_params(g, s, v, t, NULL, NULL, NULL);
     bind(g);
-    begin(g);
-    dispatch(g, PIPE_CAPTURE, (uint32_t)t->nx, (uint32_t)t->ny, (uint32_t)views);
-    submit(g);
+    if (!g->traced) {
+        begin(g);
+        dispatch(g, PIPE_CAPTURE, (uint32_t)t->nx, (uint32_t)t->ny, (uint32_t)views);
+        submit(g);
+    } else {
+        double t0 = now_seconds();
+        for (int view = 0; view < views; ++view) {
+            for (int first = 0; first < g->trace.spp; first += g->trace.batch) {
+                int count = g->trace.spp - first < g->trace.batch ? g->trace.spp - first : g->trace.batch;
+                set_pass(g, first, count, view);
+                begin(g);
+                dispatch(g, PIPE_CAPTURE, (uint32_t)t->nx, (uint32_t)t->ny, 1);
+                submit(g);
+            }
+            if (views > 4) {
+                double el = now_seconds() - t0;
+                printf("\r  view %d/%d, %.0f s, about %.0f s to go   ", view + 1, views, el, el / (view + 1) * (views - view - 1));
+                fflush(stdout);
+            }
+        }
+        if (views > 4) printf("\n  path traced %d views at %d samples in %.1f s\n", views, g->trace.spp, now_seconds() - t0);
+    }
     out->views = *v;
     out->grid = *t;
     out->layers = malloc(lb);
@@ -470,9 +606,16 @@ void gpu_truth(Gpu *g, const Scene *s, const Camera *c, const EvalGrid *e, float
     ensure(g, &g->in0, 16, STORE, DEVICE);
     fill_params(g, s, NULL, NULL, NULL, c, e);
     bind(g);
-    begin(g);
-    dispatch(g, PIPE_TRUTH, (uint32_t)e->w, (uint32_t)e->h, 1);
-    submit(g);
+    int passes = g->traced ? (g->trace.spp + g->trace.batch - 1) / g->trace.batch : 1;
+    for (int i = 0; i < passes; ++i) {
+        if (g->traced) {
+            int first = i * g->trace.batch;
+            set_pass(g, first, g->trace.spp - first < g->trace.batch ? g->trace.spp - first : g->trace.batch, 0);
+        }
+        begin(g);
+        dispatch(g, PIPE_TRUTH, (uint32_t)e->w, (uint32_t)e->h, 1);
+        submit(g);
+    }
     download(g, &g->out0, rgba, bytes);
 }
 
