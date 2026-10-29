@@ -357,6 +357,16 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   the star brightness are first guesses, tuned by eye from a few `--cam` views.
 - **Star field:** a uniform scatter; no Milky Way band or constellations.
 
+## Interior impostors (next)
+Deep open-plan office floors, baked offline with global illumination and drawn behind the glass from layered,
+multi-view depth impostors in place of interior mapping. The design is `docs/interior-impostors.md`, and the look
+target is `docs/reference/office_night.png`.
+- **Done:** the design (IM0).
+- **Next:** the baker's skeleton and the representation spike (IM1).
+- **Waiting on:** the user's high-poly furniture (IM6). Stand-ins are used until it arrives.
+- **Corners:** corner modules may replace `cornerInterior` on impostor floors (see Corner rooms below), but not on
+  interior-mapped floors or ground-floor shops.
+
 ## Office lobbies (next)
 Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_interior` in `src/city/mesh_lobby.c`).
 - **Furniture** is rough boxes but for the sofas (a model: see Street furniture below); reception,

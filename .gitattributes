@@ -1,2 +1,7 @@
 data/earth/**/*.tif filter=lfs diff=lfs merge=lfs -text
 data/earth/**/*.gpkg filter=lfs diff=lfs merge=lfs -text
+assets/interiors/**/*.ktx2 filter=lfs diff=lfs merge=lfs -text
+assets_src/**/*.glb filter=lfs diff=lfs merge=lfs -text
+assets_src/**/*.png filter=lfs diff=lfs merge=lfs -text
+assets_src/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+assets_src/**/*.exr filter=lfs diff=lfs merge=lfs -text
