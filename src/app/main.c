@@ -379,9 +379,10 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
             renderer_set_frame(renderer, fr->active, player->eye);
             char what[160];
             frames_describe(fr, what, sizeof(what));
-            printf("frame: %s (the change took %.1f ms)\n", what, (glfwGetTime() - t0) * 1000.0);
+            printf("frame: %s (the change took %.1f ms) at --cam %.0f %.0f\n", what, (glfwGetTime() - t0) * 1000.0, player->eye[0], player->eye[2]);
             fflush(stdout);
         }
+        renderer_frame_ahead(renderer, fr->ahead, player->eye);
         handle_toggles(renderer, &shotCount);
         capture_step(&cap, win, chunks, renderer, player, emaDt, totalFrames);
         totalFrames++;

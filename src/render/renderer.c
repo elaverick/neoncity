@@ -14,8 +14,8 @@ uint64_t renderer_frame_index(Renderer *r) { return r->frameIndex; }
 void renderer_set_frame(Renderer *r, const TerrainFrame *f, const double cam[3]) {
     int keep = r->frame && f->lineage == r->frame->lineage;
     chunks_set_frame(r->chunks, f);
-    proxy_gpu_set_frame(r, r->frameIndex, f);
-    if (!keep) terrain_gpu_set_frame(r, cam);   /* within a lineage the clipmap's samples stand (terrain.h, TerrainFrame) */
+    proxy_gpu_set_frame(r, f);
+    if (!keep) terrain_gpu_set_frame(r, f, cam);   /* within a lineage the clipmap's samples stand (terrain.h, TerrainFrame) */
     road_gpu_set_frame(r);
     if (!keep) {
         r->havePrev = false;      /* last frame's view was another frame's: nothing to reproject */
@@ -23,6 +23,8 @@ void renderer_set_frame(Renderer *r, const TerrainFrame *f, const double cam[3])
     }
     r->frame = f;
 }
+
+void renderer_frame_ahead(Renderer *r, const TerrainFrame *f, const double cam[3]) { terrain_gpu_ahead(r, f, cam); }
 
 void renderer_gpu_times(Renderer *r, char *buf, size_t n) {
     float total = 0.0f;

@@ -19,14 +19,22 @@
  *
  * On a change the player is taken into the new frame through the sphere:
  * its feet, its heading and its velocity, the same place and the same way on
- * the planet. The caller tells the renderer (renderer_set_frame). */
+ * the planet. The caller tells the renderer (renderer_set_frame).
+ *
+ * `ahead` is the frame the camera may change into next that throws away what
+ * was made in this one (a settlement's of another lineage): the nearest
+ * settlement's, while the camera is within FRAME_AHEAD of where it would
+ * change into it, else NULL. The renderer makes ready in it beforehand
+ * (renderer_frame_ahead). */
 #define FRAME_SWITCH_MARGIN 2000.0    /* m */
+#define FRAME_AHEAD         20000.0   /* m: 1 s ahead at fly mode's fastest at 20 km up, several minutes at street level */
 #define FRAME_STAY          5000.0    /* a settlement's frame is kept this far past PLAN_FRAME_NEAR of it (m) */
 #define TRAVEL_RECENTRE     20000.0   /* m */
 #define TRAVEL_RING         8         /* travel frames kept alive: the oldest is freed when a new one is made */
 
 typedef struct Frames {
     const TerrainFrame *active;
+    const TerrainFrame *ahead;      /* see above */
     int                 n;          /* settlements */
     TerrainDir          disc[PLAN_MAX_SETTLEMENTS];    /* each one's disc's centre */
     double              reach[PLAN_MAX_SETTLEMENTS];   /* and how far from it its footprint can reach (m) */
@@ -38,7 +46,7 @@ typedef struct Frames {
 /* Starts in settlement k's frame (the world's for 0) and activates it. */
 void frames_init(Frames *f, int settlement);
 /* After the player has moved: the frame it should be in. On a change, takes
- * the player into it, activates it and returns 1. */
+ * the player into it, activates it and returns 1. Sets `ahead` either way. */
 int  frames_update(Frames *f, Player *p);
 /* A line of text: the frame (its settlement's name, or travel) and the switches so far. */
 void frames_describe(const Frames *f, char *buf, size_t n);

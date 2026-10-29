@@ -70,18 +70,28 @@ static const TerrainFrame *make_travel(Frames *f, const Player *p, const Terrain
     return t;
 }
 
+/* The nearest settlement's frame of another lineage than the active one's
+ * whose disc the camera is within PLAN_FRAME_NEAR + FRAME_AHEAD of, or NULL
+ * (b: how far beyond each one's disc the camera is). */
+static const TerrainFrame *frame_ahead(const Frames *f, const double *b) {
+    int k = -1;
+    for (int q = 0; q < f->n; ++q)
+        if (b[q] < PLAN_FRAME_NEAR + FRAME_AHEAD && (k < 0 || b[q] < b[k]) && plan_frame_settlement(q)->lineage != f->active->lineage) k = q;
+    return k < 0 ? NULL : plan_frame_settlement(k);
+}
+
 int frames_update(Frames *f, Player *p) {
     const TerrainFrame *cur = f->active, *next = cur;
     double x = p->feet[0], z = p->feet[2];
     TerrainDir d = terrain_frame_dir(cur, x, z);
     int k = 0;
-    double dk = 1e300;
+    double dk = 1e300, b[PLAN_MAX_SETTLEMENTS];
     for (int q = 0; q < f->n; ++q) {
-        double b = beyond(f, q, d);
-        if (b < dk) { dk = b; k = q; }
+        b[q] = beyond(f, q, d);
+        if (b[q] < dk) { dk = b[q]; k = q; }
     }
     if (cur->settlement >= 0) {
-        double own = beyond(f, cur->settlement, d);
+        double own = b[cur->settlement];
         if (k != cur->settlement && dk < PLAN_FRAME_NEAR && dk < own - FRAME_SWITCH_MARGIN) next = plan_frame_settlement(k);
         else if (own >= PLAN_FRAME_NEAR + FRAME_STAY) next = NULL;   /* out in the land */
     } else if (dk < PLAN_FRAME_NEAR) {
@@ -89,12 +99,16 @@ int frames_update(Frames *f, Player *p) {
     } else if (hypot(x - cur->x0, z - cur->z0) > TRAVEL_RECENTRE) {
         next = NULL;
     }
-    if (next == cur) return 0;
+    if (next == cur) {
+        f->ahead = frame_ahead(f, b);
+        return 0;
+    }
     if (!next) next = make_travel(f, p, cur);   /* the player keeps its place, heading and velocity */
     else carry(p, cur, next);
     f->active = next;
     f->switches++;
     terrain_frame_activate(next);
+    f->ahead = frame_ahead(f, b);   /* the same place on the sphere, so the same distances */
     return 1;
 }
 

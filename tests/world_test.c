@@ -25,7 +25,8 @@
  * world_test --local out.ppm [km [x z]] the land, the footprints and the roads
  * round a point (the megacity by default); world_test --list lists the
  * settlements, their areas, sizes and how much of a disc of their size each
- * keeps.
+ * keeps; world_test --neighbours lists the pairs of cities near each other
+ * and how near each comes in the other's frame (test_neighbours).
  * world_test [--threads n] --earth <bake> ... builds the world on the Earth's
  * bake (src/terrain/terrain_earth.c); without one, on the procedural stand-in. */
 #include "plan.h"
@@ -1040,7 +1041,7 @@ static void test_flight(void) {
     Player pl;
     memset(&pl, 0, sizeof pl);
     TerrainDir ends[2] = { terrain_world_dir(plan_town_centre(0, 0).x, plan_town_centre(0, 0).z), plan_settlement(far).dir };
-    int switches = 0, travel = 0, cities = 0, steps = 0, inFar = 0;
+    int switches = 0, travel = 0, cities = 0, steps = 0, inFar = 0, lineages = 0, unforeseen = 0;
     double posJump = 0.0, turn = 0.0, pop = 0.0, bendTravel = 0.0, bendCity = 0.0;
     char popAt[160] = "";
     for (int leg = 0; leg < 2; ++leg) {
@@ -1051,12 +1052,16 @@ static void test_flight(void) {
             double t = len * s / n / PLANET_RADIUS, th = len / PLANET_RADIUS;
             TerrainDir p = unitd(add3(scale3(a, sin(th - t) / sin(th)), scale3(b, sin(t) / sin(th))));
             flight_place(&pl, p, b);
-            const TerrainFrame *was = terrain_frame();
+            const TerrainFrame *was = terrain_frame(), *ahead = fr.ahead;
             TerrainDir h0 = flight_heading(&pl), g0[FLIGHT_PROBES];
             double gh0[FLIGHT_PROBES];
             flight_ground(&pl, g0, gh0);
             if (!frames_update(&fr, &pl)) continue;
             switches++;
+            if (fr.active->lineage != was->lineage) {   /* the renderer made ready in it beforehand */
+                lineages++;
+                if (ahead != fr.active) unforeseen++;
+            }
             if (fr.active->settlement < 0) travel++; else cities++;
             if (fr.active->settlement == far) inFar = 1;
             /* the same place and the same way */
@@ -1095,18 +1100,133 @@ static void test_flight(void) {
     terrain_frame_bind(NULL);
     frames_shutdown(&fr);
     terrain_frame_activate(NULL);
-    printf("flight: the megacity to %s (%.0f km) and back, %d steps, %d changes of frame (%d into travel frames, %d into cities')\n",
-           plan_settlement_name(far), farD / 1000.0, steps, switches, travel, cities);
+    printf("flight: the megacity to %s (%.0f km) and back, %d steps, %d changes of frame (%d into travel frames, %d into cities'),\n"
+           "  %d into another lineage, %d of them not named ahead the step before\n",
+           plan_settlement_name(far), farD / 1000.0, steps, switches, travel, cities, lineages, unforeseen);
     printf("  at a change the camera moved %.2e m and turned %.2e rad at most; the ground round it moved %.5f m at most%s%s%s\n",
            posJump, turn, pop, pop > 0.0 ? " (at " : "", pop > 0.0 ? popAt : "", pop > 0.0 ? ")" : "");
     printf("  the bend at %.0f km strays %.2f m at most in a travel frame, %.2f m in a city's; %.2f m at %s's spawn\n",
            FLIGHT_EDGE / 1000.0, bendTravel, bendCity, bendFar, plan_settlement_name(far));
     printf("  at %s's spawn (its frame): %d roads, %d blocks within 200 m\n", plan_settlement_name(far), roads, blocks);
     CHECK(inFar, "the flight never worked in %s's frame", plan_settlement_name(far));
+    CHECK(unforeseen == 0, "%d changes into another lineage weren't named ahead", unforeseen);
     CHECK(posJump < 1e-3 && turn < 1e-6, "a change of frame moved the camera %.2e m or turned it %.2e rad", posJump, turn);
     CHECK(pop <= FLIGHT_POP, "a change of frame moved the ground %.3f m (%s)", pop, popAt);
     CHECK(bendTravel <= FLIGHT_BEND && bendCity <= FLIGHT_BEND && bendFar <= FLIGHT_BEND, "the bend strays %.2f / %.2f / %.2f m", bendTravel, bendCity, bendFar);
     CHECK(built && roads > 0 && blocks > 0, "%s's spawn isn't in its built streets", plan_settlement_name(far));
+}
+
+/* Settlement k's built towns that have an unbuilt one beside them, by their
+ * centres in its own frame: how far a point outside its built towns lies
+ * from them is how far it lies from these. */
+typedef struct TownEdge { int n; DVec2 *c; } TownEdge;
+static TownEdge town_edge(int k) {
+    TownEdge e = { 0, NULL };
+    PlanSettlement s = plan_settlement(k);
+    terrain_frame_bind(plan_frame_settlement(k));
+    double r = plan_settlement_reach(k) + TOWN_SIZE;
+    int i0 = (int)floor((s.disc.x - r) / TOWN_SIZE), i1 = (int)floor((s.disc.x + r) / TOWN_SIZE);
+    int j0 = (int)floor((s.disc.z - r) / TOWN_SIZE), j1 = (int)floor((s.disc.z + r) / TOWN_SIZE);
+    int w = i1 - i0 + 3, d = j1 - j0 + 3, cap = 0;
+    unsigned char *built = (unsigned char *)calloc((size_t)w * d, 1);
+    for (int j = j0; j <= j1; ++j)
+        for (int i = i0; i <= i1; ++i) built[(j - j0 + 1) * w + (i - i0 + 1)] = (unsigned char)plan_town_built(i, j);
+    for (int j = 1; j < d - 1; ++j)
+        for (int i = 1; i < w - 1; ++i) {
+            const unsigned char *b = &built[j * w + i];
+            if (!b[0] || (b[-1] && b[1] && b[-w] && b[w])) continue;
+            if (e.n == cap) { cap = cap ? 2 * cap : 256; e.c = (DVec2 *)realloc(e.c, sizeof(DVec2) * cap); }
+            e.c[e.n++] = plan_town_centre(i0 + i - 1, j0 + j - 1);
+        }
+    free(built);
+    terrain_frame_bind(NULL);
+    return e;
+}
+
+/* How far direction p lies from settlement k's built towns (e its town_edge;
+ * p outside them), in k's frame (m). */
+static double built_away(int k, const TownEdge *e, TerrainDir p) {
+    double x, z, best = 1e300;
+    terrain_dir_frame(plan_frame_settlement(k), p, &x, &z);
+    for (int t = 0; t < e->n; ++t) {
+        double dx = fmax(fabs(x - e->c[t].x) - 0.5 * TOWN_SIZE, 0.0), dz = fmax(fabs(z - e->c[t].z) - 0.5 * TOWN_SIZE, 0.0);
+        best = fmin(best, dx * dx + dz * dz);
+    }
+    return sqrt(best);
+}
+
+/* Neighbours: every pair of cities whose discs come within twice
+ * PLAN_FRAME_NEAR, swept on a NEIGHBOUR_STEP grid round them with the game's
+ * rule for which frame the camera is in (frames.c: a city's while within
+ * PLAN_FRAME_NEAR of its disc, kept to FRAME_STAY beyond, left for a nearer
+ * one FRAME_SWITCH_MARGIN nearer). Where the camera may be in one's frame:
+ * how near the other's built towns come (which that frame doesn't lay out).
+ * Where it changes from one's frame to the other's: how near the built towns
+ * of the one it leaves are. Within the proxies' reach (TERRAIN_DISTANCE) a
+ * neighbour is drawn as its proxies, made in its own frame
+ * (src/render/proxy_gpu.c), but its chunks only in its own: so both must be
+ * beyond the chunks' reach (VIEW_DISTANCE), else a neighbour's streets in
+ * view would be boxes, or the city left would turn to boxes as the frame
+ * changes. `list` prints every pair, and a view from the nearest approach. */
+#define NEIGHBOUR_STEP 1000.0
+static double beyond_disc(int k, TerrainDir p) { return sphere_m(p, disc_dir(k)) - plan_settlement_reach(k); }
+static void test_neighbours(int list) {
+    int n = plan_settlement_count(), pairs = 0, seen = 0;
+    double leaveMin = 1e300, otherMin = 1e300;
+    char leaveAt[96] = "", otherAt[96] = "";
+    for (int k = 0; k < n; ++k)
+        for (int q = k + 1; q < n; ++q) {
+            double len = sphere_m(disc_dir(k), disc_dir(q));
+            if (len - plan_settlement_reach(k) - plan_settlement_reach(q) > 2.0 * PLAN_FRAME_NEAR) continue;
+            pairs++;
+            double pairLeave = 1e300, pairOther = 1e300, view[3] = { 0.0, 0.0, 0.0 };
+            int viewIn = k;
+            TownEdge edge[2] = { town_edge(k), town_edge(q) };
+            TerrainDir mid = unitd(add3(disc_dir(k), disc_dir(q)));
+            TerrainChart ch = terrain_chart_about(mid, 0.0);
+            double r = fmax(plan_settlement_reach(k), plan_settlement_reach(q)) + PLAN_FRAME_NEAR + FRAME_STAY;
+            int m = (int)ceil(r / NEIGHBOUR_STEP);
+            for (int j = -m; j <= m; ++j)
+                for (int i = -m; i <= m; ++i) {
+                    double x = i * NEIGHBOUR_STEP, z = j * NEIGHBOUR_STEP;
+                    if (hypot(x, z) > r) continue;
+                    TerrainDir p = terrain_chart_dir(&ch, x, z);
+                    for (int side = 0; side < 2; ++side) {
+                        int in = side ? q : k, other = side ? k : q;   /* the camera in in's frame */
+                        double bi = beyond_disc(in, p), bo = beyond_disc(other, p);
+                        if (bi >= PLAN_FRAME_NEAR + FRAME_STAY) continue;
+                        int stays = !(bo < PLAN_FRAME_NEAR && bo < bi - FRAME_SWITCH_MARGIN);
+                        int changes = !stays && bo > bi - FRAME_SWITCH_MARGIN - NEIGHBOUR_STEP;
+                        double a = stays && bo < pairOther ? built_away(other, &edge[1 - side], p) : 1e300;
+                        if (a < pairOther) {   /* a view from there in in's frame, towards the other's disc */
+                            pairOther = a;
+                            viewIn = in;
+                            const TerrainFrame *f = plan_frame_settlement(in);
+                            TerrainDir o = disc_dir(other), fx, fu, fz;
+                            terrain_dir_frame(f, p, &view[0], &view[1]);
+                            terrain_frame_axes(f, view[0], view[1], &fx, &fu, &fz);
+                            TerrainDir h = { o.x - dot3(o, p) * p.x, o.y - dot3(o, p) * p.y, o.z - dot3(o, p) * p.z };
+                            view[2] = atan2(dot3(h, fx), -dot3(h, fz)) * 180.0 / 3.14159265358979;
+                        }
+                        if (changes) pairLeave = fmin(pairLeave, built_away(in, &edge[side], p));
+                    }
+                }
+            free(edge[0].c);
+            free(edge[1].c);
+            if (list)
+                printf("  %-24s %-24s discs %5.1f km apart: the frame changes %5.1f km from the city left at the nearest; the other's towns %5.1f km off"
+                       " (--city %d --cam %.0f %.0f %.0f)\n",
+                       plan_settlement_name(k), plan_settlement_name(q), (len - plan_settlement_reach(k) - plan_settlement_reach(q)) / 1000.0,
+                       pairLeave / 1000.0, pairOther / 1000.0, viewIn, view[0], view[1], view[2]);
+            if (pairLeave < leaveMin) { leaveMin = pairLeave; snprintf(leaveAt, sizeof leaveAt, "%s / %s", plan_settlement_name(k), plan_settlement_name(q)); }
+            if (pairOther < otherMin) { otherMin = pairOther; snprintf(otherAt, sizeof otherAt, "%s / %s", plan_settlement_name(k), plan_settlement_name(q)); }
+            if (pairOther < TERRAIN_DISTANCE) seen++;
+        }
+    printf("neighbours: %d pairs within %.0f km; a city's frame changes to another's %.1f km from the city left at the nearest (%s);\n"
+           "  in %d pairs one's towns come within the proxies' %.0f km while in the other's frame (drawn as its proxies), %.1f km at the nearest (%s)\n",
+           pairs, 2.0 * PLAN_FRAME_NEAR / 1000.0, leaveMin / 1000.0, leaveAt, seen, TERRAIN_DISTANCE / 1000.0, otherMin / 1000.0, otherAt);
+    CHECK(otherMin > VIEW_DISTANCE, "%s: one's built towns come within %.1f km while in the other's frame", otherAt, otherMin / 1000.0);
+    CHECK(leaveMin > VIEW_DISTANCE, "%s: the frame changes %.1f km from the built towns of the city left", leaveAt, leaveMin / 1000.0);
 }
 
 int main(int argc, char **argv) {
@@ -1126,6 +1246,7 @@ int main(int argc, char **argv) {
     printf("world built on %d threads in %.2f s\n", threads, (double)(clock() - t0) / CLOCKS_PER_SEC);
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
     if (argc > 1 && strcmp(argv[1], "--list") == 0) return list_settlements();
+    if (argc > 1 && strcmp(argv[1], "--neighbours") == 0) { test_neighbours(1); return g_failures != 0; }
     if (argc > 2 && strcmp(argv[1], "--map") == 0) return draw_planet(argv[2], argc > 3 ? atoi(argv[3]) : 1600, threads);
     if (argc > 2 && strcmp(argv[1], "--chart") == 0) return draw_map(argv[2], argc > 3 ? atoi(argv[3]) : 1600, 0.0, 0.0, 5400000.0, 0, threads);
     if (argc > 2 && strcmp(argv[1], "--local") == 0) {
@@ -1141,6 +1262,7 @@ int main(int argc, char **argv) {
     test_road_bridges(threads);
     test_channels();
     test_flight();
+    test_neighbours(0);
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all world tests passed\n");

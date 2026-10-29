@@ -178,8 +178,12 @@ void record_composite(Renderer *r, VkCommandBuffer cmd, uint32_t imageIndex, con
 void terrain_gpu_create(Renderer *r);
 void terrain_gpu_destroy(Renderer *r);
 void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);
-/* The active frame has changed (camera at cam in it): the clipmap refilled at once. */
-void terrain_gpu_set_frame(Renderer *r, const double cam[3]);
+/* The active frame has changed to f, of another lineage (camera at cam in
+ * it): the clipmap made ready in f (terrain_gpu_ahead) is taken, or else the
+ * clipmap is refilled at once. */
+void terrain_gpu_set_frame(Renderer *r, const struct TerrainFrame *f, const double cam[3]);
+/* The frame to make the clipmap ready in, or NULL (cam in the active frame). */
+void terrain_gpu_ahead(Renderer *r, const struct TerrainFrame *f, const double cam[3]);
 void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
 /* The coarsest drawn level's window, world x0, z0, x1, z1; 0 if none is drawn. */
 int  terrain_gpu_window(Renderer *r, double win[4]);
@@ -210,6 +214,6 @@ void planet_gpu_stats(Renderer *r, char *buf, size_t n);
 void proxy_gpu_create(Renderer *r);
 void proxy_gpu_destroy(Renderer *r);
 void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame, const double cam[3], const mat4 *viewProj);
-/* The tiles are made in frame f from now (the active one); those of the old one are dropped. */
-void proxy_gpu_set_frame(Renderer *r, uint64_t frame, const struct TerrainFrame *f);
+/* The active frame is f from now: every tile stands (each is made in its settlement's frame). */
+void proxy_gpu_set_frame(Renderer *r, const struct TerrainFrame *f);
 void proxy_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);

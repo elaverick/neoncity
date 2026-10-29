@@ -202,22 +202,25 @@ Left over:
   edge can clip a built town (1 point in 25 m on the Earth, 3 on the test bake; world_test fails at 50).
 - **Frames** (C4: `TerrainFrame`, `src/app/frames.c`). Each city is laid out in its own frame and the engine
   works in one at a time. Left over:
-  - *Entering a city's frame stalls a frame.* The clipmap is refilled at once in the new frame (the levels
-    drawn, on every core): about 20-25 ms from 20 km up, more near the ground, where every level is drawn.
-    It happens once per city approached, 40-45 km out. A second clipmap drawn through the old frame's
-    transform while the new one fills would hide it; travel frames' recentres keep everything and cost nothing.
-  - *A neighbour's city isn't drawn.* A frame lays out its own settlement's towns only: another city within
-    view shows its ground (its urban weight and relief, read in its own frame) but no streets, buildings or
-    proxies. Footprints are at least 24 km apart and proxies reach 20 km, so where two cities are within about
-    45 km of each other the other's skyline is missing, and at the change between their frames the proxies pop.
-    Proxy tiles keyed by settlement, made in its frame and drawn through a transform into the active one,
-    would fix it.
+  - *Entering a city's frame* no longer stalls: a second clipmap is filled in the frame ahead
+    (`Frames.ahead`, from 20 km before the change; `terrain_gpu_ahead`) and swapped in (0.1-3 ms for the whole
+    change, was about 40 ms). If it isn't ready (the game started inside the change zone, or the camera came
+    faster than the fill, 40-50 ms on a quarter of the cores) the old refill at once still runs. While
+    the camera is within the zone the ahead clipmap is kept moving with it: a second worker's updates, small.
+  - *Neighbours are drawn as their proxies*, each city's made in its own frame and turned into the active
+    one at the camera (`src/render/proxy_gpu.c`, up to `PROXY_LAYERS` 4 cities at once; a fifth within 20 km
+    would go undrawn). On the Earth no neighbour's towns come within 32 km of a camera in another's frame
+    (`world_test --neighbours`), so it shows only on the test bake and the stand-in (Seoul and Daejeon, Milan
+    and Turin, 10-15 km). A neighbour's chunks are never drawn; world_test checks none come within their
+    reach. The proxy pool is full at Los Angeles's edge view (6144 pages, about 36,000 boxes turned away: the
+    S1 city has more boxes within 20 km than it holds), so a neighbour's tiles there would compete for it.
   - *The bend far out in a city's frame.* A city's frame is kept to 45 km beyond the disc its footprint lies
     in; out there the chart's distortion moves the clipmap's edge (32 km off) up to about 4 m from where the
     planet's patches put it (world_test's flight measures it), a tenth of a pixel. Within a travel frame it
     is 0.0 m.
   - *Within a lineage things stand.* A travel frame is made continuous with the last (the same place and axes
-    at the camera), so chunks, proxies, collision and the clipmap's samples made in the one before are kept;
+    at the camera), so chunks, collision and the clipmap's samples made in the one before are kept (the proxies
+    are kept across every change);
     they are off by under a metre at the clipmap's edge, and are replaced as the camera moves on.
   - *Clouds* are noise in the frame's (x, z): entering a city's frame moves their pattern, but only where
     they are out of reach then (CLOUD_REACH, PLAN_FRAME_NEAR). The moon is fixed against the compass now

@@ -48,10 +48,17 @@
  *
  * Frames (TerrainFrame): an update is made in the frame it was asked for in.
  * Within a lineage the samples stand. When the active frame changes lineage
- * every sample is another's, so the render thread waits for the worker,
- * refills the levels the view draws round the camera at once on every core
- * (terrain_clip_refill) and uploads them all in that frame: the ground never
- * goes missing. The finer ones follow as updates fill them. */
+ * every sample is another's. So a second clipmap, `ahead`, is made ready in
+ * the frame the camera may change into next (terrain_gpu_ahead, from
+ * Frames.ahead): a worker of its own refills it round the camera there, from
+ * the level the view draws, on AHEAD_THREADS cores, then keeps it moving with
+ * the camera as the worker does the drawn one. At the change the render
+ * thread waits for both workers, swaps the two and uploads every sample of
+ * the new one. If it isn't ready in that frame, the render thread refills the
+ * levels the view draws round the camera at once on every core
+ * (terrain_clip_refill) instead, a stall of a few tens of ms. Either way the
+ * ground never goes missing, and the finer levels follow as updates fill
+ * them. */
 
 #define CLIP_N TERRAIN_CLIP_N
 #define CLIP_W TERRAIN_CLIP_W
@@ -79,6 +86,19 @@ struct TerrainGpu {
     const TerrainFrame *askFrame;         /* ...in this frame */
     int            evaluated;             /* the last finished update's heights, and its time on the worker */
     double         fillMs;
+    /* the clipmap made ready in the frame ahead: its worker's while aheadBusy,
+     * the render thread's otherwise; the rest guarded by lock */
+    TerrainClipmap ahead;
+    Thread        *aheadWorker;
+    CondVar        aheadWake, aheadIdle;
+    const TerrainFrame *aheadAsk;         /* the frame to make it ready in, NULL for none */
+    double         aheadCam[2];           /* the camera there */
+    int            aheadWant;             /* the level the view draws */
+    uint64_t       aheadSeq, aheadSeen;   /* asks made, and the last its worker has answered */
+    int            aheadBusy, aheadFresh, aheadMore;   /* running, a refill; the last update left work */
+    const TerrainFrame *aheadIn;          /* the frame it holds, NULL for none */
+    int            swaps, refills;        /* changes of lineage met with it, and without */
+    double         aheadFillMs;           /* its last refill's time on its worker */
     TerrainFade    fade;                  /* which levels are drawn, blending as they change */
     double         lastTime;              /* of the last update (s) */
     Buffer         samples;              /* device local: LEVELS * N * N TerrainSamples */
@@ -117,6 +137,41 @@ static int terrain_worker(void *arg) {
         t->busy = 0;
         t->done = 1;
         cond_broadcast(&t->idle);
+    }
+    mutex_unlock(&t->lock);
+    return 0;
+}
+
+/* The ahead clipmap's worker: refilled when asked in a frame it doesn't hold,
+ * else moved with the camera there, an update at a time, while asks come or
+ * the last update left work. */
+#define AHEAD_THREADS (cpu_count() / 4 > 1 ? cpu_count() / 4 : 1)
+static int ahead_worker(void *arg) {
+    TerrainGpu *t = (TerrainGpu *)arg;
+    mutex_lock(&t->lock);
+    for (;;) {
+        while (!t->quit && (!t->aheadAsk || (t->aheadSeen == t->aheadSeq && !t->aheadMore))) cond_wait(&t->aheadWake, &t->lock);
+        if (t->quit) break;
+        const TerrainFrame *f = t->aheadAsk;
+        double x = t->aheadCam[0], z = t->aheadCam[1];
+        int fresh = t->aheadIn != f, more = 0;
+        t->ahead.want = t->aheadWant;
+        t->aheadSeen = t->aheadSeq;
+        t->aheadIn = NULL;   /* until this is done */
+        t->aheadBusy = 1;
+        t->aheadFresh = fresh;
+        mutex_unlock(&t->lock);
+        terrain_frame_bind(f);
+        double t0 = glfwGetTime();
+        if (fresh) terrain_clip_refill(&t->ahead, x, z, t->ahead.want, AHEAD_THREADS);
+        else more = terrain_clip_update(&t->ahead, x, z, TERRAIN_CLIP_BUDGET) > 0;
+        terrain_frame_bind(NULL);
+        mutex_lock(&t->lock);
+        if (fresh) t->aheadFillMs = (glfwGetTime() - t0) * 1000.0;
+        t->aheadIn = f;
+        t->aheadMore = more;
+        t->aheadBusy = 0;
+        cond_broadcast(&t->aheadIdle);
     }
     mutex_unlock(&t->lock);
     return 0;
@@ -256,8 +311,12 @@ void terrain_gpu_create(Renderer *r) {
     mutex_init(&t->lock);
     cond_init(&t->wake);
     cond_init(&t->idle);
+    cond_init(&t->aheadWake);
+    cond_init(&t->aheadIdle);
+    terrain_clip_init(&t->ahead);
     t->askFrame = terrain_frame();
     t->worker = thread_create(terrain_worker, t);
+    t->aheadWorker = thread_create(ahead_worker, t);
 }
 
 void terrain_gpu_destroy(Renderer *r) {
@@ -267,11 +326,16 @@ void terrain_gpu_destroy(Renderer *r) {
     mutex_lock(&t->lock);
     t->quit = 1;
     cond_broadcast(&t->wake);
+    cond_broadcast(&t->aheadWake);
     mutex_unlock(&t->lock);
     thread_join(t->worker);
+    thread_join(t->aheadWorker);
     mutex_destroy(&t->lock);
     cond_destroy(&t->wake);
     cond_destroy(&t->idle);
+    cond_destroy(&t->aheadWake);
+    cond_destroy(&t->aheadIdle);
+    terrain_clip_free(&t->ahead);
     vkDestroyDescriptorPool(vk->device, t->pool, NULL);
     vk_buffer_destroy(vk, &t->indices);
     for (int i = 0; i < MAX_FRAMES; ++i) vk_buffer_destroy(vk, &t->staging[i]);
@@ -430,12 +494,42 @@ void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     }
 }
 
-void terrain_gpu_set_frame(Renderer *r, const double cam[3]) {
+void terrain_gpu_ahead(Renderer *r, const TerrainFrame *f, const double cam[3]) {
+    TerrainGpu *t = r->terrain;
+    double x = 0.0, z = 0.0;
+    if (f) terrain_dir_frame(f, terrain_frame_dir(terrain_frame(), cam[0], cam[2]), &x, &z);
+    mutex_lock(&t->lock);
+    if (f != t->aheadAsk || (f && (x != t->aheadCam[0] || z != t->aheadCam[1] || t->shown.want != t->aheadWant))) {
+        t->aheadAsk = f;
+        t->aheadCam[0] = x;
+        t->aheadCam[1] = z;
+        t->aheadWant = t->shown.want;
+        t->aheadSeq++;
+        cond_signal(&t->aheadWake);
+    }
+    mutex_unlock(&t->lock);
+}
+
+void terrain_gpu_set_frame(Renderer *r, const TerrainFrame *f, const double cam[3]) {
     TerrainGpu *t = r->terrain;
     mutex_lock(&t->lock);
     while (t->busy) cond_wait(&t->idle, &t->lock);
+    while (t->aheadBusy && !t->aheadFresh) cond_wait(&t->aheadIdle, &t->lock);   /* a move, not a refill */
     double t0 = glfwGetTime();
-    terrain_clip_refill(&t->clip, cam[0], cam[2], t->shown.want, cpu_count());
+    if (!t->aheadBusy && t->aheadIn == f) {
+        TerrainClipmap c = t->clip;
+        t->clip = t->ahead;
+        t->ahead = c;
+        t->aheadIn = t->aheadAsk = NULL;   /* it holds the old frame's now */
+        for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {   /* every sample is new to the GPU */
+            t->clip.level[l].n_dirty = 1;
+            t->clip.level[l].dirty[0] = (TerrainRect){ 0, 0, CLIP_N, CLIP_N };
+        }
+        t->swaps++;
+    } else {
+        terrain_clip_refill(&t->clip, cam[0], cam[2], t->shown.want, cpu_count());
+        t->refills++;
+    }
     t->fillMs = (glfwGetTime() - t0) * 1000.0;
     t->evaluated = 0;
     t->done = 1;   /* taken whole by the next update */
@@ -465,19 +559,45 @@ bool renderer_terrain_settled(Renderer *r) {
     return evaluated == 0 && t->shown.finest <= t->shown.want && t->drawn == t->shown.want && t->fade.level < 0 && planet_gpu_settled(r);
 }
 
+/* Each ready level's samples in its window, hashed to 16 bits ("-" for a
+ * level not ready): the same at the same window however the clipmap got
+ * there (each slot holds only its world sample, terrain_lod.c), so two runs
+ * compare. Only while the worker is idle. */
+static void window_hashes(const TerrainGpu *t, char *out, size_t n) {
+    size_t used = 0;
+    out[0] = 0;
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS && used < n; ++l) {
+        const TerrainClipLevel *lv = &t->clip.level[l];
+        uint64_t h = 0xcbf29ce484222325ULL;
+        for (int j = 0; lv->ready && j < CLIP_W; ++j)
+            for (int i = 0; i < CLIP_W; ++i) {
+                const uint8_t *p = (const uint8_t *)&lv->samples[terrain_clip_slot(lv->origin[1] + j) * CLIP_N + terrain_clip_slot(lv->origin[0] + i)];
+                for (size_t k = 0; k < sizeof(TerrainSample); ++k) { h ^= p[k]; h *= 0x100000001b3ULL; }
+            }
+        int w = lv->ready ? snprintf(out + used, n - used, "%s%04x", l ? " " : "", (unsigned)((h ^ h >> 16 ^ h >> 32 ^ h >> 48) & 0xFFFFu))
+                          : snprintf(out + used, n - used, "%s-", l ? " " : "");
+        if (w < 0) break;
+        used += (size_t)w;
+    }
+}
+
 void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
     TerrainGpu *t = r->terrain;
     char fading[48] = "";
     if (t->fade.level >= 0) snprintf(fading, sizeof(fading), ", level %d fading %s", t->fade.level, t->fade.in ? "in" : "out");
     mutex_lock(&t->lock);
-    int evaluated = t->evaluated;
-    double fillMs = t->fillMs, slowestFill = t->slowestFillMs;
+    while (t->busy) cond_wait(&t->idle, &t->lock);
+    int evaluated = t->evaluated, swaps = t->swaps, refills = t->refills;
+    double fillMs = t->fillMs, slowestFill = t->slowestFillMs, aheadMs = t->aheadFillMs;
+    char hashes[64];
+    window_hashes(t, hashes, sizeof(hashes));
     mutex_unlock(&t->lock);
     snprintf(buf, n, "terrain: levels %d-%d drawn (finest ready %d, screen-space error asks for %d%s), %d of %d tiles in view in %d draws,\n"
              "         last fill evaluated %d heights in %.2f ms on its worker (slowest %.2f ms); the frame's part %.2f ms\n"
-             "         (taking an update %.2f, plan %.2f; slowest %.2f ms)",
+             "         (taking an update %.2f, plan %.2f; slowest %.2f ms)\n"
+             "         levels' windows hashed %s; changes of lineage %d made ready (the last fill ahead %.0f ms), %d refilled",
              t->drawn, TERRAIN_CLIP_LEVELS - 1, t->shown.finest, t->shown.want, fading, t->tilesDrawn, t->tilesTotal, t->ndraw,
-             evaluated, fillMs, slowestFill, t->updateMs, t->stageMs, t->planMs, t->slowestMs);
+             evaluated, fillMs, slowestFill, t->updateMs, t->stageMs, t->planMs, t->slowestMs, hashes, swaps, aheadMs, refills);
     size_t used = strlen(buf);
     if (used + 2 < n) {
         buf[used++] = '\n';

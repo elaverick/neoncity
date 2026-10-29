@@ -28,11 +28,16 @@ void      renderer_destroy(Renderer *r);
 void      renderer_frame(Renderer *r, const FrameUBO *ubo, const double cam[3], bool resized);
 /* The active frame (TerrainFrame) has changed to f, the camera now at cam in
  * it. In a frame of another lineage what was built in the old one is dropped
- * (the chunks, the proxies) or refilled at once (the clipmap), and nothing is
+ * (the chunks, the proxies), the clipmap is taken from what was made ready
+ * in f (renderer_frame_ahead) or else refilled at once, and nothing is
  * reprojected from the last frame; in any, the roads are taken again. Call it
  * before the frame's renderer_frame. */
 struct TerrainFrame;
 void      renderer_set_frame(Renderer *r, const struct TerrainFrame *f, const double cam[3]);
+/* The frame the camera may change into next (Frames.ahead), or NULL; cam in
+ * the active frame. In it the clipmap is filled beforehand, round the camera,
+ * on a thread of its own. Call it every frame. */
+void      renderer_frame_ahead(Renderer *r, const struct TerrainFrame *f, const double cam[3]);
 uint64_t  renderer_frame_index(Renderer *r);
 /* Ray-traced shadows on or off (they stay off without ray queries). */
 void      renderer_set_shadows(Renderer *r, bool on);

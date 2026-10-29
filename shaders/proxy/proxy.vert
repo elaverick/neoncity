@@ -18,7 +18,8 @@ struct ProxyBox {
     uint info;   // PX_* fields
 };
 layout(std430, set = 0, binding = 1) readonly buffer Boxes { ProxyBox boxes[]; };
-// Each tile's origin, camera-relative (x, z), by its table slot
+// Each tile's origin, camera-relative (x, z), and the turn (cos, sin) from
+// its settlement's frame into the active one, by its layer and table slot
 layout(std430, set = 0, binding = 2) readonly buffer Tiles { vec4 tileOrigin[]; };
 
 layout(location = 0) out vec3 vRel;          // camera-relative position, bent over the planet (planetBend)
@@ -37,9 +38,12 @@ void main() {
     ProxyBox b = boxes[gl_VertexIndex / 30];
     int k = gl_VertexIndex % 30, face = k / 6;
     vec2 q = QUAD[k % 6];
-    vec2 h = unpackHalf2x16(b.half_), ax = unpackHalf2x16(b.axis);
+    vec4 to = tileOrigin[gl_InstanceIndex];
+    mat2 turn = mat2(to.z, to.w, -to.w, to.z);   // (x, z) -> (c x - s z, s x + c z)
+    vec2 h = unpackHalf2x16(b.half_), ax = turn * unpackHalf2x16(b.axis);
     vec2 az = vec2(-ax.y, ax.x);   // its own +z axis in the world
-    vec3 c = vec3(tileOrigin[gl_InstanceIndex].x + b.xz.x, 0.0, tileOrigin[gl_InstanceIndex].y + b.xz.y);
+    vec2 cxz = to.xy + turn * b.xz;
+    vec3 c = vec3(cxz.x, 0.0, cxz.y);
     // where the building's heights count from (src/city/proxy.c: a section on the ground reaches 1 m into it)
     float floor0 = float(b.info >> 18 & 2047u) * 0.5;
     float base = floor0 <= SIDEWALK_HEIGHT + 0.01 ? b.y.x + 1.0 : b.y.x - floor0;

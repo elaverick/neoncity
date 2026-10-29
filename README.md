@@ -572,8 +572,11 @@ the distant proxies are drawn curving away over the sphere (31 m down at 20 km).
 frame's (`src/app/frames.c`): each city is laid out in a frame of its own, about its centre with north up,
 which is active while the camera is within 40 km of it; out in the land a travel frame about the camera takes
 over, made anew every 20 km so the chart stays true round it. The camera neither moves nor turns as the frame
-changes; entering a city's frame refills the clipmap in it (a stall of about 20 ms, 40 km out). Los Angeles's
-frame is the world's, its chart's origin at central Los Angeles. Its surface is addressed as
+changes. A second clipmap is filled in a city's frame on a thread of its own from 20 km before the camera enters it,
+and swapped in as it does (under a millisecond; a stall of about 40 ms only when it isn't ready). Each city's proxies
+are made in its own frame and kept whichever is active, so a neighbouring city within their 20 km is drawn too,
+turned into the active frame. Los Angeles's frame is the world's, its chart's origin at central Los Angeles. Its
+surface is addressed as
 a cube-sphere (`src/terrain/terrain_cube.c`, which also turns latitude and longitude into directions). The
 real Earth's ground (ETOPO 2022, `data/earth/SOURCE.md`) is baked onto those faces by `tools/earth_bake.c`, and
 `src/terrain/terrain_earth.c` reads the bake (`build/earth.bake`, found beside the executable or under `build/`;
