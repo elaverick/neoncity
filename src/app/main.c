@@ -262,7 +262,9 @@ static float haze_datum(void) {
 
 /* Towards the moon in the camera's local frame: fixed against the compass
  * (east, up, south: MOON_ENU), so it neither turns as the frame changes nor
- * as the camera travels. */
+ * as the camera travels. out[3] is where east lies in the frame there, the
+ * angle from its x towards its z (east is level, so that is all of it): the
+ * stars turn by it (shaders/sky.frag). */
 static const double MOON_ENU[3] = { 0.8547, 0.4223, -0.3017 };
 static void moon_dir(const Player *player, float out[4]) {
     TerrainDir ax, up, az;
@@ -277,7 +279,7 @@ static void moon_dir(const Player *player, float out[4]) {
     out[0] = (float)(m.x * ax.x + m.y * ax.y + m.z * ax.z);
     out[1] = (float)(m.x * up.x + m.y * up.y + m.z * up.z);
     out[2] = (float)(m.x * az.x + m.y * az.y + m.z * az.z);
-    out[3] = 0.0f;
+    out[3] = (float)atan2(east.x * az.x + east.y * az.y, east.x * ax.x + east.y * ax.y);
 }
 
 static void frame_ubo(const Player *player, const VkCore *vk, double t, const Weather *weather, float edge, FrameUBO *ubo) {

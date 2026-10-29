@@ -22,9 +22,14 @@ float skyClear(vec3 dir) {
  * law: most are faint, and a few are bright. Their colour runs from
  * blue-white to orange. Each is drawn as a soft point about a pixel across
  * (px: a pixel's angle, radians), so it neither shimmers nor drops out as it
- * moves over the pixels. Near the horizon they twinkle. */
+ * moves over the pixels. Near the horizon they twinkle. The cube is fixed
+ * against the compass, as the moon is: dir is turned from the frame's axes
+ * into east, up and south (frame.moon.w), so the stars don't turn when the
+ * frame changes. */
 const float STAR_CELLS = 180.0;   // cells along a face's edge
 vec3 stars(vec3 dir, float px) {
+    vec2 e = vec2(cos(frame.moon.w), sin(frame.moon.w));   // east, in the frame's (x, z)
+    dir = vec3(dot(dir.xz, e), dir.y, dot(dir.xz, vec2(-e.y, e.x)));
     vec3 a = abs(dir);
     uint face;
     vec2 uv;
