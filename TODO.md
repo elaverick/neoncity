@@ -34,16 +34,15 @@ same city; screenshots of the same `--cam` with `--rain 0` show the renderer's r
 ## Terrain
 The clipmap is drawn out to its coarsest window (about 32 km; `src/render/terrain_gpu.c`, `shaders/terrain/`), the
 planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the milestones are in the terrain roadmap.
-- **The Earth** (E0-E6: `tools/earth_bake.c`, `src/terrain/terrain_cube.c`, `src/terrain/terrain_earth.c`,
-  `data/earth/SOURCE.md`; the design doc's "Earth data"). The real Earth (ETOPO 2022) is baked onto the cube-sphere's
-  faces; the land's lift, its landforms, the sea to come, the settlements and the roads follow it. Track C of the
-  Earth roadmap (a chart per settlement) is next. Left over:
+- **The Earth** (the Earth roadmap, done: E0-E6, C1-C5, S1, W1-W2; `tools/earth_bake.c`, `src/terrain/terrain_cube.c`,
+  `src/terrain/terrain_earth.c`, `data/earth/SOURCE.md`; the design doc's "Earth data" and "The planet and its
+  frames"). The real Earth (ETOPO 2022) is baked onto the cube-sphere's faces; the land's lift, its landforms, the
+  sea to come, the rivers and lakes, the settlements and the roads follow it, and each city is laid out in a frame
+  of its own. Left over:
   - **From the air at night** the terrain haze hides the far ranges, so a 20 km capture shows haze, not the real
     mountains on the horizon; the haze at altitude wants retuning (asked, not decided).
-  - **The West is nearly empty.** The basins of the American West read as mountains, hills and plateaus, so
-    placement (plains first) puts the 223 cities on the plains and coasts east of the Rockies and in South
-    America. Los Angeles has a neighbour in the Central Valley and its links east cross 1800-2000 km of desert.
-    Smaller towns (Settlements and roads) or a gentler landform reading of the basins would fill it.
+  - **The basins of the American West** read as mountains, hills and plateaus. The cities come from the list now,
+    not from the landforms, but a gentler reading of the basins would suit the smaller towns to come.
   - **The strike's point defect** (E5): where the data's and the default strikes cancel, the ridges' frame swings
     round a point.
   - **The bake's bounds.** The LOD error bound (`terrain_earth_lod_error`) is the width of the
@@ -53,13 +52,9 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     from the finer, so across a seam the two estimates differ (3 m on average at mip 0, 188 m at worst, `--info`
     prints them); `--dump-face` draws each face in its own (u, v), so north isn't up.
 - **The planet** (M9: `src/terrain/terrain_world.c`, `terrain_patch.c`; `terrain_test --planet-map`, `--patches`).
-  World X/Z is an azimuthal-equidistant chart of an Earth-size sphere; the terrain and proxies are drawn bent over
+  World X/Z is an azimuthal-equidistant chart of an Earth-size sphere, the active frame's (each city its own,
+  travel frames between them: C4, see Settlements and roads, "Frames"); the terrain and proxies are drawn bent over
   it, the city's chunks flat. Left over:
-  - **One chart.** The clipmap's bend is exact for a camera at the chart's origin and drifts with distance from it
-    (0.7 m at 32 km for a camera 50 km off, 7 m for one 200 km off); there the clipmap and the patches no longer
-    quite meet at the window's edge (the skirts and the hole's overlap hide it so far). The other settlements (see
-    Settlements and roads) want their own charts, and the camera's chart should follow it between them; until then
-    `--cam` to one works, with that drift.
   - **Horizon culling** is the patches' alone. Against the lowest ground anywhere (about 2 km below the sphere,
     `terrain_planet_lowest`) the horizon from the street lies about 160 km out, beyond every clipmap tile and proxy,
     so it would cull none of them. A local occluder (the lowest ground within the sight line's reach of the camera)
@@ -137,8 +132,9 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   - Steps, not ramps; an arcology's wide portals get one flight across, whose uphill end dips into the sidewalk
     where the street slopes along it (the player stands on whichever is higher).
   - A proxy box reaches 1 m into the ground (`src/city/proxy.c`); in a hilly town a plot can fall further.
-  - The haze thins with height above one datum, the city's ground at its centre (`haze_datum`, `src/app/main.c`).
-    With more settlements it should be the ground of the one the camera is in or nearest, blended between them.
+  - The haze thins with height above one datum, the ground at the centre of the city whose frame is active
+    (`haze_datum`, `src/app/main.c`), kept out in the land. It steps at a change of frame, 40 km out; a blend
+    between the cities near the camera would hide that.
 - **The city's edge** (`plan_town_built`, `plan_fringe`, `PlanArea.ground`/`edges`; see the README). The city is
   the towns whose ground provably lies where `plan_urban` is 1: 142 towns, about 20 km across, in a footprint 25 km
   across (`CITY_RADIUS` 12.5 km). The proxies hold about 590k boxes in their 768k pool when the whole city is in range.
@@ -341,14 +337,15 @@ The start of a weather system (`src/core/clouds.h`, `src/app/weather.c`, `shader
 countryside has a clear sky with stars and a moon, whose light faintly lights the land. Left over:
 - **The deck's height is absolute** (world Y 115-670 m), not over each city's own ground: a city on raised ground
   (`terrain_lift`) would have its clouds in its streets or under them. From hills near a city the deck is at eye
-  level. The deck should hang over each settlement's datum, as the haze will (`haze_datum` in `main.c` is still the
-  megacity's).
+  level. The deck should hang over each settlement's datum, as the haze does (`haze_datum` in `main.c`, the active
+  city's).
 - **The field is static.** The clouds drift through it, but it doesn't move: no fronts, no clouds forming and
   clearing, no rain out in the country. Rain intensity still drifts on one global clock, scaled by the cover over
   the camera.
-- **The moon and stars are fixed in the camera's frame:** they don't wheel through the night or change with where
-  on the planet the camera is (`MOON_DIR` and the star cube would want the planet's frame and a clock). The moon
-  casts no shadows (hills don't shade the land behind them), and its phase is fixed.
+- **The moon and stars are fixed against the compass** (east, up, south at the camera: `moon_dir` in `main.c`,
+  `frame.moon`), so they don't turn as the frame changes; but they don't wheel through the night or change with
+  where on the planet the camera is (they would want the planet's frame and a clock). The moon casts no shadows
+  (hills don't shade the land behind them), and its phase is fixed.
 - **No light dome from afar.** From the countryside a city shows as its clouds, lit sodium-orange underneath near
   it, and its proxies; the haze itself doesn't glow over it, because the haze's colour is one per frame
   (`frame.sky.x`, the air round the camera). A glow in `hazeColor` towards each nearby city would add the dome.

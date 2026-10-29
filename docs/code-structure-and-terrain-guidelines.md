@@ -68,12 +68,12 @@ These are proposed boundaries, not a requirement to create every file immediatel
 | `terrain.h`, `terrain_internal.h`, `terrain_height.c`, `terrain_lod.c`, `terrain_mesh.c`, `tests/terrain_test.c` | As proposed. `terrain_clip.h` holds the clipmap's shape as `#define`s shared with the shaders. |
 | (not proposed) | `terrain_land.c`: the land beyond the city, its regional landforms and canyons (M8), apart from `terrain_height.c`, which blends it with the city's ground. |
 | `terrain.c` (orchestration), `terrain_stream.c` (work queues) | Not needed. The clipmap updates within a per-update budget of heights evaluated (`terrain_clip_update`). Since the landforms made heights dearer (an update up to about 9 ms over the mountains), `terrain_gpu.c` runs it on a worker thread of its own and takes each finished update whole at the start of a frame; the frame's part is a few tenths of a millisecond. |
-| `terrain_world.c` (world addressing) | As proposed (M9): world X/Z is an azimuthal-equidistant chart of the planet about world (0, 0); the bend the shaders mirror, horizon culling. The ground over the whole sphere is `terrain_height_dir` (C2): the land is a function of direction, no chart needed. |
+| `terrain_world.c` (world addressing) | As proposed (M9): charts (azimuthal-equidistant, `TerrainChart`) and frames (`TerrainFrame`, C4: a chart and an offset; world X/Z is the frame this thread works in, bound per job or the active one), the bend the shaders mirror, horizon culling. The ground over the whole sphere is `terrain_height_dir` (C2): the land is a function of direction, no chart needed. Which frame is active is the app's (`src/app/frames.c`); see the design guide's 3.7. |
 | (not proposed) | `terrain_cube.c` (E2, 2026-10): the cube-sphere's equal-angle faces and patches, and latitude and longitude in the planet frame, on their own so `tools/earth_bake.c` links them without the rest of the engine and bakes the real Earth (`data/earth`) onto the faces bit for bit where the engine will read it. |
 | (not proposed) | `terrain_earth.c` (E3, 2026-10): reads the Earth bake (`build/earth.bake`; the procedural macro field stands in without it) and samples it at any direction and spacing, bicubic within a face and blended across the seams, with range and LOD-error bounds from its block tables; `tests/data/earth_test.bake` is the real project at 256 a side for `terrain_test`. |
 | (not proposed) | `terrain_patch.c`: the planet's patches beyond the clipmap (meshes, a cache, the quadtree selection by screen-space error), drawn by `src/render/planet_gpu.c`. |
 | `src/render/terrain.c` | `src/render/terrain_gpu.c`. |
-| (not proposed) | Settlements and roads (2026-10): `src/plan/plan_world.c` places the 223 cities over the planet's land (the sea to come is `terrain_sea_margin`, in `terrain_world.c`); `src/plan/plan_roads.c` designs, routes and grades the roads between them. The terrain takes the roads (`plan_road_ground` in `terrain_height.c`); `src/render/road_gpu.c` and `shaders/terrain/roads.glsl` paint them. |
+| (not proposed) | Settlements and roads (2026-10): `src/plan/plan_world.c` places the cities of the list (`data/earth/largest_metropolitan_areas_227.csv`; 177 on the Earth) over the planet's land, each with its own frame (the sea to come is `terrain_sea_margin_dir`, in `terrain_world.c`); `src/plan/plan_water.c` runs the rivers through them in channels; `src/plan/plan_roads.c` designs, routes and grades the roads between them on the sphere. The terrain takes the roads (`plan_road_ground` in `terrain_height.c`); `src/render/road_gpu.c` and `shaders/terrain/roads.glsl` paint them. |
 
 Decisions taken differently from the original plan, and kept because they proved simpler or exact:
 
@@ -81,10 +81,12 @@ Decisions taken differently from the original plan, and kept because they proved
 - **Heights above the ground in the city's shaders** come from a per-vertex base (`Vertex.base`, the building's or the street's ground), not from a camera-centred ground-height texture. Only the haze uses a single datum (`haze_datum`).
 - **The terrain under the city** sinks below the city's ground by a fixed 0.5 m at fine levels and by a bound on what the level can't follow of the urban relief at coarse ones (`terrain_urban_sink`), so the city's ground always wins the depth test without either surface knowing which chunks are loaded.
 - **Level changes** blend over time (`TerrainFade`) on top of the geomorph, one level at a time.
-- **The planet** is a chart, not a re-projection of the world: the city, the plan and the clipmap keep flat X/Z
-  coordinates, and the terrain, proxies and patches are bent over the sphere in the camera's local frame as they are
-  drawn. The city's chunks are left flat (their drop within the view distance is a tenth of a pixel), so shadows,
-  reflections and collision stay exact.
+- **The planet** is charts, not a re-projection of the world: the city, the plan and the clipmap keep flat X/Z
+  coordinates in a frame (each city its own, travel frames between them), and the terrain and proxies are bent over
+  the sphere in the camera's local frame as they are drawn; the patches are cut about the camera in no chart. The
+  city's chunks are left flat (their drop within the view distance is a tenth of a pixel), so shadows, reflections
+  and collision stay exact. A frame is bound per thread, so every worker's job is done in the frame it was asked for
+  in, and the plan's answers are the same whichever frame asks (`plan_locate`).
 - **Distant city representations** are each building section as a box (`src/city/proxy.c`), sorted largest first per chunk for a screen-size level of detail, and cross-faded with the full chunks by a shared dither.
 - **Plan and terrain read each other** (as section 4.2 of the design guide asks): the terrain reads the plan's
   edge measure, settlements and roads; the plan reads the terrain's landforms, heights and future sea to place

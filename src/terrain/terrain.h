@@ -104,8 +104,8 @@ typedef struct TerrainDir { double x, y, z; } TerrainDir;
 
 /* A chart: the azimuthal-equidistant projection about its origin o, with
  * its x along ex and its z along ez there (unit, ez = ex x o). World X/Z is
- * the world's chart, terrain_world_chart(); any other place can have one of
- * its own. */
+ * a frame's chart (TerrainFrame, below), the world's chart
+ * terrain_world_chart() or any other place's. */
 typedef struct TerrainChart { TerrainDir o, ex, ez; } TerrainChart;
 /* The world's chart: about the Earth bake's origin, or the procedural one. */
 TerrainChart terrain_world_chart(void);
@@ -126,7 +126,7 @@ void       terrain_chart_frame(const TerrainChart *c, double x, double z, Terrai
 /* A frame: what world X/Z means. The engine works in one at a time, the
  * active frame: the frame of the settlement the camera is in or near, whose
  * city is laid out in it, or out in the land a travel frame about the camera
- * (src/app/main.c). A frame's world (x, z) is its chart's (x - x0, z - z0):
+ * (src/app/frames.c). A frame's world (x, z) is its chart's (x - x0, z - z0):
  * the chart about the place world (x0, z0) stands for, so that a
  * settlement's world X/Z (its towns, its streets, the plan's lattice and
  * noise) are the same numbers whichever frame is active. The world's frame

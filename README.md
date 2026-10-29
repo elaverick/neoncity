@@ -51,7 +51,7 @@ procedural look.
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
-Command line: `--cam X Z YAW PITCH [HEIGHT]` sets the start position (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity, `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
+Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity, `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
 (otherwise it drifts between drizzle and downpour), `--noshadows` runs without ray-traced shadows (and without the
 ray-query device features they need), `--shadowdebug` starts in the shadow debug view, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
@@ -139,8 +139,8 @@ the real urban area from the GHSL; read at run time, see `data/earth/SOURCE.md`)
   rivers run in concrete channels, 5 m deep, under bridges at every arterial and boulevard
   (`src/plan/plan_water.c`, `src/city/channels.c`).
 - **The roads.** Every continent's cities, on the sphere (C3b): each link is routed and shaped in a chart
-  of its own about its midpoint, true to within a percent over its length, and the roads are then taken
-  into the world's chart, where the city and the terrain are still drawn. On each continent: candidate
+  of its own about its midpoint, true to within a percent over its length, and each road is then published
+  into the frame of every city it comes near, where the city and the terrain are drawn. On each continent: candidate
   links between the sphere's Delaunay neighbours, each costed by a route over a 4 km grid of the
   landforms (worked out once over the whole sphere); where the routed candidates still leave a continent
   in pieces, the nearest pairs across the gap are tried; their minimum spanning tree; then links a gravity model
@@ -567,19 +567,24 @@ its edge over the next 6 km, and the canyons keep 2.5 km away. `terrain_test --m
 a relief map.
 
 The world is an Earth-size planet (`src/terrain/terrain_world.c`). World X/Z is a chart of it, the
-azimuthal-equidistant projection about the origin, so the city and its plan stay flat while the terrain and
-the distant proxies are drawn curving away over the sphere (31 m down at 20 km). Its surface is addressed as
+azimuthal-equidistant projection about a point, so the city and its plan stay flat while the terrain and
+the distant proxies are drawn curving away over the sphere (31 m down at 20 km). Which chart is the active
+frame's (`src/app/frames.c`): each city is laid out in a frame of its own, about its centre with north up,
+which is active while the camera is within 40 km of it; out in the land a travel frame about the camera takes
+over, made anew every 20 km so the chart stays true round it. The camera neither moves nor turns as the frame
+changes; entering a city's frame refills the clipmap in it (a stall of about 20 ms, 40 km out). Los Angeles's
+frame is the world's, its chart's origin at central Los Angeles. Its surface is addressed as
 a cube-sphere (`src/terrain/terrain_cube.c`, which also turns latitude and longitude into directions). The
 real Earth's ground (ETOPO 2022, `data/earth/SOURCE.md`) is baked onto those faces by `tools/earth_bake.c`, and
 `src/terrain/terrain_earth.c` reads the bake (`build/earth.bake`, found beside the executable or under `build/`;
 without it the procedural field below stands in): the height at any direction, smoothed to the spacing asked for
 and continuous across the faces' seams, with bounds for culling and levels of detail (`terrain_test --earth-map
-out.ppm` draws it). The chart's origin is central Los Angeles. The land, and every city's ground, rises and falls
+out.ppm` draws it). The land, and every city's ground, rises and falls
 with the real Earth, and the landforms follow the data: mountains where it has the relief, plains where
 it is low and level, ridges along its ranges (`terrain_test --landform-map out.ppm`). The settlements stand at the
 world's largest cities and the roads go round its mountains (`world_test --earth build/earth.bake --map out.ppm`). Without a bake,
 broad procedural highlands and basins up to 1.5 km high and low stand in (`terrain_test --planet-map out.ppm` draws all
-six faces). The design is in `docs/neoncity-terrain-and-bounded-city-world-design.md`, "Earth data". Beyond the clipmap's window the ground is the cube-sphere's patches (`src/terrain/terrain_patch.c`,
+six faces). The design is in `docs/neoncity-terrain-and-bounded-city-world-design.md`, "Earth data" and "The planet and its frames". Beyond the clipmap's window the ground is the cube-sphere's patches (`src/terrain/terrain_patch.c`,
 `src/render/planet_gpu.c`): 33 x 33 grids refined as a quadtree by their screen-space error through the haze,
 filled on a worker, each blending onto its parent's surface towards the distance it would merge at. They carry
 the ground out to the horizon, which from fly mode's ceiling of 20 km is 500 km off.
@@ -1183,7 +1188,8 @@ over 2.5 km (`CLOUD_FADE`) along a ragged line into the clear sky over the count
   `terrain/ground.glsl`). It also silvers the clouds from above. Behind it is a procedural star
   field: a jittered grid over a cube, with power-law brightness, colours from blue-white to
   orange, and twinkling near the horizon. Both are dimmed by the haze they shine through.
-  For now the moon stays put in the camera's frame wherever the camera is on the planet.
+  For now the moon and the stars stay put against the compass wherever the camera is on the
+  planet, and as the frame changes.
 
 ### Clouds (`shaders/clouds.comp`)
 Rain clouds hang over the cities: a nimbostratus deck whose underside sits around 200 m, with
