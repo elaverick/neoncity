@@ -246,7 +246,7 @@ The working plan is kept outside the repo. In summary:
 | IM4 | Light: the interior kit, the exterior bases and their colouring in the engine, exposure calibration, a beauty render against the reference. Section 16 |
 | IM5 | The office floor generator and its validation. Done: section 17 |
 | IM6 | The high-poly furniture (whenever it arrives) |
-| IM7 | The city: floor selection, tiling, plate and core depths in the vertex data, corners, LOD, memory |
+| IM7 | The city: floor selection, tiling, plate and core depths in the vertex data, corners, LOD, memory, and a streamed near tier at 32 texels/m (section 18) |
 | IM8 | The catalogue and one-command rebuild; README |
 | IM9 | Animated screens, people, more kits |
 
@@ -602,6 +602,6 @@ A march keeps to a texel a step on a finer grid: the bake scales its step limit 
 
 **What 32 texels/m still shows:** thin bright lights come out sharp but broken, with a red fringe on some edges. That is still unexplained (the bright strip's edge texels, or BC6H's fit in those blocks), and would need looking at before a full bake.
 
-**The decision a near tier needs:** all twelve at 32 texels/m would take about 800 MB of GPU memory if all stay loaded, so a real tier means streaming the few modules nearest the eye, which IM7 needs anyway. Its full bake waits until the furniture is in (IM6).
+**The decision:** a near tier goes in with IM7. All twelve at 32 texels/m would take about 800 MB of GPU memory if all stay loaded, so it streams the few modules nearest the eye, and floors without one keep the base tier. Its full bake is committed only once the furniture is in (IM6), since each committed bake counts against LFS.
 
 Crops: `docs/reference/im5/closeup_lounge.jpg`, `closeup_desks.jpg`, each 16 above 32 texels/m, nearest left, filtered right.

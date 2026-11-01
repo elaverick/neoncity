@@ -365,13 +365,13 @@ target is `docs/reference/office_night.png`.
   (IM2: `--impostors`, F8); the path tracer (IM3: full GI, `bake_test`), with three of IM1's test floors re-baked.
   Light (IM4: photometric kit, exterior bases, exposure, BC6H and BC7). The floor generator (IM5: twelve generated
   modules in the engine, `interior_lab office`, `office_rules`).
-- **Next:** the city (IM7: floor selection, tiling, plate and core depths, corners), or the high-poly furniture
+- **Next:** the city (IM7: floor selection, tiling, plate and core depths, corners, a streamed near tier), or the high-poly furniture
   (IM6) as soon as it arrives.
 - **Leftovers:** no mips; floors are chosen by a share for debugging, and the module's depth ignores the building's,
   so a core module can land in a slab with glass behind it (IM7: plate and core depths); corner bays show the face's
   module (IM7), and the two corner modules are generated and checked but neither committed nor drawn; the floor's
   neon streaks are fainter than the reference's; up close, edges step at the 6 cm texel and thin lights break up (doc,
-  section 18: a 32 texels/m near tier is proven but not built); generator inputs are a table in `floor_gen.c` (IM8: the catalogue).
+  section 18: a 32 texels/m near tier is proven, and IM7 builds it); generator inputs are a table in `floor_gen.c` (IM8: the catalogue).
 - **Waiting on:** the user's high-poly furniture (IM6). Stand-ins are used until it arrives.
 - **Corners:** corner modules may replace `cornerInterior` on impostor floors (see Corner rooms below), but not on
   interior-mapped floors or ground-floor shops.
