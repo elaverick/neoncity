@@ -351,7 +351,13 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             float cMask = 1.0 - band(hx, open, 1.0 - open, 0.01);
             inner = mix(inner, curtainLight(room, 0.75 + 0.25 * sin(hx * 60.0)), cMask);
         }
-        if (room.blinds > 0.0) {
+        if (room.blinds > 0.0 && pbrLoaded(PBR_BLIND) && pbrLoaded(PBR_BLIND_RAIL)) {
+            float up = (hy - (1.0 - room.blinds)) * H * winH;
+            if (up > -0.1) {
+                vec4 b = blindAt(room, hx * W * winW, W * winW, up, d);
+                inner = mix(inner, b.rgb, b.a);
+            }
+        } else if (room.blinds > 0.0) {
             float s = fract((fv * H + hang.y) / 0.055);
             float slat = smoothstep(0.08, 0.2, s) * smoothstep(0.92, 0.8, s);
             slat = mix(slat, 0.75, smoothstep(0.25, 0.7, fwV * H / 0.055));   // slats finer than a pixel blur to their average

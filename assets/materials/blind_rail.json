@@ -1,0 +1,9 @@
+// The foot of a window's venetian blind, below the slats of blind.json: the last slats, the bottom rail
+// and the cord's clip (blindAt in shaders/city/rooms.glsl). Made by tools/blind_pack.py.
+{
+  "maps": {
+    "albedo": "../textures/blind_rail/albedo.png",
+    "normal": "../textures/blind_rail/normal.png",
+    "orm":    "../textures/blind_rail/orm.png"
+  }
+}

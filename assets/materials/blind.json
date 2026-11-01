@@ -1,0 +1,13 @@
+// A window's venetian blind, its slats (blindAt in shaders/city/rooms.glsl): seven of them, repeating up
+// and across, with the pull cord in the middle of each repeat. Made by tools/blind_pack.py; the opacity
+// map in the albedo's alpha, the orm's blue the metalness.
+{
+  "maps": {
+    "albedo": "../textures/blind/albedo.png",
+    "normal": "../textures/blind/normal.png",
+    "orm":    "../textures/blind/orm.png"
+  },
+  "tile": [0.909, 0.385],  // metres per image
+  "albedo_mean": 0.471,    // the slats' mean linear albedo (blind_pack)
+  "params": [0.139]        // the height of what blind_rail covers, below the slats, in metres
+}

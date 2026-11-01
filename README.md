@@ -961,6 +961,11 @@ folders); those from ambientCG are CC0:
   `build/stud_pack <colour.png> <normal.png> <orm.png> assets/textures/tactile_stud 512`.
   The albedo's alpha is the stud's coverage. The shader repeats the stud on its own grid
   and cuts it out with an analytic circle, so the image's background never shows.
+- **Window blinds:** `blind` and `blind_rail`, cut from a picture of one venetian blind by
+  `python tools/blind_pack.py <source dir>`: seven slats that repeat up and across, and the
+  foot with its rail and cord clip. The mask becomes the albedo's alpha, so the room shows
+  between the slats, and the source's magenta key is replaced so mips can't bleed it. Each
+  whole repeat that fits across a window has one cord (`blindAt`, `shaders/city/rooms.glsl`).
 - **Leaves:** `leaf`, a close-up of a glossy blade with its midrib running up the image. It
   tiles along the midrib but not across it. Each blade carries its position across it (a
   fraction of its widest half-width) and its length-to-width ratio (`PlantVertex` in

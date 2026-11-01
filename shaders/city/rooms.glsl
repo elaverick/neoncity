@@ -131,6 +131,34 @@ vec3 blindLight(Room r, float slat) {
     return r.lit ? r.light * r.bright * 0.28 * (0.55 + 0.45 * slat) : vec3(0.45) * gWinE * (0.35 + 0.65 * slat);
 }
 
+/* The authored blind (PBR_BLIND, PBR_BLIND_RAIL; tools/blind_pack.py) on a window: rgb its light, a
+ * how much of it there is, 0 in the gaps between the slats. x: metres across the window, of width W.
+ * up: metres above the blind's foot. d: the view (x along the wall, y up, z into the building).
+ * Each whole repeat that fits across the window has one cord, centred. */
+vec4 blindAt(Room r, float x, float W, float up, vec3 d) {
+    vec2 tile = pbrTile(PBR_BLIND);
+    float railH = pbrParams(PBR_BLIND).x;
+    bool rail = up < railH;
+    int m = (rail ? PBR_BLIND_RAIL : PBR_BLIND) * PBR_MAPS_PER_MATERIAL;
+    float along = x / W * max(round(W / tile.x), 1.0);
+    float span = rail ? railH : tile.y;
+    vec2 st = vec2(along, 1.0 - (rail ? up : up - railH) / span);
+    // from unbroken coordinates, so the join of the two images and the repeats leave no line of low mips
+    vec2 gx = vec2(dFdx(along), dFdx(up) / span), gy = vec2(dFdy(along), dFdy(up) / span);
+    vec4 alb = textureGrad(pbrMaps[m + PBR_ALBEDO], st, gx, gy);
+    float foot = smoothstep(-0.5, 0.5, up / max(abs(gx.y) + abs(gy.y), 1e-5) / span);
+    if (alb.a * foot < 0.004) return vec4(0.0);
+    vec3 tn = textureGrad(pbrMaps[m + PBR_NORMAL], st, gx, gy).xyz * 2.0 - 1.0;
+    vec3 orm = textureGrad(pbrMaps[m + PBR_ORM], st, gx, gy).rgb;
+    // The slats' own shape is in the albedo; a share of its contrast keeps them in the night's palette.
+    vec3 tint = mix(vec3(1.0), alb.rgb / pbrAlbedoMean(PBR_BLIND), 0.7) * orm.r;
+    vec3 c = r.lit ? r.light * r.bright * 0.28 * 0.8 * tint : vec3(0.45) * gWinE * 0.8 * tint;
+    // their sheen, of the street's light coming up from below
+    vec3 h = normalize(normalize(vec3(-d.xy, max(d.z, 0.05))) + vec3(0.0, -0.35, 0.94));
+    c += gWinE * orm.b * 0.6 * pow(max(dot(normalize(tn), h), 0.0), mix(90.0, 12.0, orm.g));
+    return vec4(c, alb.a * foot);
+}
+
 vec3 roomLight(Room r, vec3 p, vec3 alb, bool ceiling, float W, float H, float D, vec2 panel) {
     if (!r.lit) return alb * windowLight(p, ceiling, D);
     if (r.tv) {
@@ -279,13 +307,19 @@ vec3 cornerInterior(vec2 cell, vec3 d, float W, float H, float D, Room r, bool g
             float open = 0.18 + 0.2 * hf(r.h, 41u);
             if (r.curtain > 0.5 && (ax < open || ax > 1.0 - open))
                 return curtainLight(r, 0.75 + 0.25 * sin(ax * 60.0));
-            if (r.blinds > 0.0 && ay > 1.0 - r.blinds) {
+            bool authored = pbrLoaded(PBR_BLIND) && pbrLoaded(PBR_BLIND_RAIL);
+            if (!authored && r.blinds > 0.0 && ay > 1.0 - r.blinds) {
                 float sl = fract(p.y / 0.055);
                 return blindLight(r, smoothstep(0.08, 0.2, sl) * smoothstep(0.92, 0.8, sl));
             }
             float edge = min(min(ax, 1.0 - ax) * (za.y - za.x), min(ay, 1.0 - ay) * (yA.y - yA.x));
             vec3 outside = throughView(worldDir, eyeY) + (r.lit ? r.light * r.bright * 0.025 : vec3(0.0));
-            return mix(vec3(0.012, 0.012, 0.014), outside, smoothstep(0.03, 0.06, edge));
+            vec3 seen = mix(vec3(0.012, 0.012, 0.014), outside, smoothstep(0.03, 0.06, edge));
+            if (authored && r.blinds > 0.0 && ay > 1.0 - r.blinds) {
+                vec4 b = blindAt(r, ax * (za.y - za.x), za.y - za.x, (ay - (1.0 - r.blinds)) * (yA.y - yA.x), d);
+                seen = mix(seen, b.rgb, b.a);
+            }
+            return seen;
         }
         alb = r.shop ? shelves(p.zy, r.wall, r.h ^ 0x55u) : r.wall * 0.85;
     } else if (t == tz) {
