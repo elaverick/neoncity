@@ -154,7 +154,7 @@ vec3 skyLightColor(SkyLight L) {
     if ((L.kind & SKY_KIND_SCREEN) != 0u) {
         uint h = screenAdvert(L.seed, gTime);
         int a = advertPick(h, float((L.kind >> 16u) & 255u) / float(max(L.kind >> 24u, 1u)));
-        if (a >= 0 && advertPhase(L.seed, gTime) >= ADVERT_STATIC) return advert[a].mean.rgb * advert[a].play.y;
+        if (a >= 0) return advert[a].mean.rgb * advert[a].play.y;
         return mix(neonColor(h >> 4), neonColor(h >> 8), 0.5);
     }
     return neonColor(L.kind & 7u) * neonFlicker(L.seed, (L.kind >> 3) & 3u, gTime);

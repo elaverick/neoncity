@@ -13,10 +13,10 @@
  * shows, and shadeAdvert (shaders/city/signs.glsl) draws it. */
 #include "adverts_list.h"   /* ADVERT_COUNT, ADVERT_TABLE_SIZE (at least 1) */
 
-/* A screen changes what it shows every slot, through a burst of static: the
- * first ADVERT_STATIC of the slot (screenAdvert, advertPhase in common.glsl).
- * An advert plays once from the static's end and holds its last frame, so it
- * may last up to (1 - ADVERT_STATIC) slots (material_test checks). */
+/* A screen changes what it shows every slot (screenAdvert, advertPhase in
+ * common.glsl), cutting straight to the next. An advert plays from the slot's
+ * start and loops if it ends early; ADVERT_STATIC is a margin kept so one
+ * still fits in (1 - ADVERT_STATIC) slots (material_test checks). */
 #define ADVERT_SLOT_SECONDS 9.0
 #define ADVERT_STATIC       0.025
 

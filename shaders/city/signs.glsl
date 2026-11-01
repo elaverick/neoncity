@@ -168,7 +168,7 @@ vec3 ledEmitters(vec2 f, float glow, float px) {
  * three emitters; further off, the grid of LEDs; further still they merge into the
  * picture, whose mip chain averages the LEDs under each pixel. Each stage gives off
  * the same light on average, so nothing brightens or dims with distance.
- * t: seconds into the advert, which holds its last frame once it ends. */
+ * t: seconds into the advert, which loops once it ends. */
 vec3 shadeAdvert(int a, vec2 uv, float t) {
     Advert A = advert[a];
     vec2 res = vec2(A.info.yz);
@@ -176,7 +176,7 @@ vec3 shadeAdvert(int a, vec2 uv, float t) {
     vec2 gx = dFdx(q), gy = dFdy(q);
     float px = max(fwidth(q.x), fwidth(q.y));
     vec2 ci = min(floor(q), res - 1.0), f = q - ci;
-    float fr = clamp(floor(t * A.play.x), 0.0, float(A.info.x) - 1.0);
+    float fr = mod(floor(max(t, 0.0) * A.play.x), float(A.info.x));
     vec3 cell = textureGrad(advertFrames[nonuniformEXT(a)], vec3((ci + 0.5) / res, fr), gx / res, gy / res).rgb * A.play.y;
     // The emitters while a cell spans three pixels or more; then, to about two, only the
     // grid of LEDs (the cells' fundamental, mean 1), finer detail than the pixels would alias.
@@ -191,7 +191,7 @@ vec3 shadeScreen(vec2 uv, uint seed, uvec4 prm) {
     uint h = screenAdvert(seed, gTime);
     float ph = advertPhase(seed, gTime);
     int ad = advertPick(h, wM / max(hM, 0.5));
-    if (ad >= 0 && ph >= ADVERT_STATIC) return shadeAdvert(ad, uv, (ph - ADVERT_STATIC) * ADVERT_SLOT_SECONDS) * 1.8;
+    if (ad >= 0) return shadeAdvert(ad, uv, ph * ADVERT_SLOT_SECONDS) * 1.8;
     uint scene = h & 3u;
     vec3 c1 = neonColor(h >> 4), c2 = neonColor(h >> 8);
     vec3 col;
@@ -224,8 +224,6 @@ vec3 shadeScreen(vec2 uv, uint seed, uvec4 prm) {
         float d = glyphDist(h, clamp(cc, 0.0, 1.0));
         col = mix(vec3(0.02, 0.0, 0.03), c2 * 0.15, q.y) + c1 * 2.5 * (1.0 - smoothstep(0.04, 0.1, d)) * (0.8 + 0.2 * sin(t * 4.0));
     }
-    // transition static
-    if (ph < ADVERT_STATIC) col =vec3(hfloat(hash2i(h, int(q.x * 200.0), int(q.y * 120.0 + t * 60.0)))) * 0.8;
     // LED pixel grid and scanline when close
     vec2 pm = uv * vec2(wM, hM) / 0.12;
     float px = max(fwidth(pm.x), fwidth(pm.y));
