@@ -443,7 +443,7 @@ int lab_run(Gpu *g, const char *outDir, const char *assets, bool quick) {
     L->g = g;
     L->out = outDir;
     for (int sc = 0; sc < SCENE_COUNT; ++sc) {
-        if (!scene_build(&L->s, SCENE_NAMES[sc], assets)) return 1;
+        if (!scene_build(&L->s, SCENE_NAMES[sc], LIGHTS_AFTER_HOURS, assets)) return 1;
         gpu_load_scene(g, &L->s);
         Scene *s = &L->s;
         float cx = s->W * 0.5f, cy = (s->sill + s->head) * 0.5f;

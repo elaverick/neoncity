@@ -27,6 +27,29 @@
 
 const char *const SCENE_NAMES[] = { "through30", "core12", "corner16", "glass20" };
 const int SCENE_COUNT = 4;
+const char *const LIGHT_STATE_NAMES[LIGHTS_COUNT] = { "after_hours", "late_shift", "cleaners", "screens" };
+static const char *const STATE_SUFFIX[LIGHTS_COUNT] = { "", "_late", "_cleaners", "_dark" };
+
+/* The kit's lights are photometric (section 16): lumens and a colour
+ * temperature. A surface that emits as Lambert's law says has luminance
+ * lumens / (pi * area), in candelas a square metre. The bake's radiance is
+ * BAKE_NIT of that, which keeps its numbers near 1 (the clamp's and the
+ * lab's), and each module's bake scale takes it to the engine's. */
+#define BAKE_NIT 0.01f
+#define PI_F 3.14159265f
+
+/* The colour at a temperature, as kelvin() in shaders/city/rooms.glsl, at luminance 1. */
+static void kelvin_unit(float k, float c[3]) {
+    static const float T[6] = { 2700, 3000, 3500, 4000, 5000, 6500 };
+    static const float C[6][3] = { { 1.00f, 0.62f, 0.32f }, { 1.00f, 0.69f, 0.42f }, { 1.00f, 0.77f, 0.55f },
+                                   { 1.00f, 0.84f, 0.68f }, { 1.00f, 0.93f, 0.85f }, { 0.93f, 0.97f, 1.00f } };
+    int i = 0;
+    while (i < 4 && k >= T[i + 1]) i++;
+    float t = fminf(fmaxf((k - T[i]) / (T[i + 1] - T[i]), 0.0f), 1.0f), lum = 0.0f;
+    static const float W[3] = { 0.2126f, 0.7152f, 0.0722f };
+    for (int r = 0; r < 3; ++r) { c[r] = C[i][r] + (C[i + 1][r] - C[i][r]) * t; lum += W[r] * c[r]; }
+    for (int r = 0; r < 3; ++r) c[r] /= lum;
+}
 
 #define GROW(arr, n, cap, extra) do { \
     if ((n) + (extra) > (cap)) { \
@@ -139,15 +162,27 @@ void scene_box(Scene *s, int mat, uint32_t flags, float x0, float y0, float z0, 
 /* ------------------------------------------------------------- the kit --- */
 
 typedef struct Kit {
+    int   state;              /* LIGHTS_* */
+    float cx, cz, cr;         /* the late shift's cluster: a circle on the floor */
+    int   trofferOn, trofferOff, stripOn, coveOn, orbOff;
     int floor, ceiling, concrete, duct, tray, pipe, wood, frame, pedestal, mesh, plastic, screenOn, screenOff;
     int pendantOn, pendantUp, pendantOff, lampOn, lampOff, wire, mullion, coreWall, door, board, glass, band, rug, marble, orb, pot, leaf, bark, sofa;
 } Kit;
 
-static Kit kit_make(Scene *s) {
+/* A material emitting lumens over area (the face that lights the room) at a colour temperature. */
+static int mat_light(Scene *s, float lumens, float area, float kelvin, float share) {
+    float c[3], L = lumens / (PI_F * area) * BAKE_NIT * share;
+    kelvin_unit(kelvin, c);
+    return mat_add(s, 0.8f, 0.8f, 0.8f, c[0] * L, c[1] * L, c[2] * L);
+}
+
+static Kit kit_make(Scene *s, int state, float W, float D) {
     Kit k;
+    k.state = state;
+    k.cx = W * 0.3f; k.cz = D * 0.45f; k.cr = 6.5f;
     k.floor      = mat_add(s, 0.16f, 0.155f, 0.15f, 0, 0, 0);    /* polished concrete */
     k.ceiling    = mat_add(s, 0.07f, 0.07f, 0.075f, 0, 0, 0);    /* painted-out exposed slab */
-    k.concrete   = mat_add(s, 0.26f, 0.25f, 0.24f, 0, 0, 0);
+    k.concrete   = mat_add(s, 0.13f, 0.125f, 0.115f, 0, 0, 0);
     k.duct       = mat_add(s, 0.32f, 0.33f, 0.35f, 0, 0, 0);
     k.tray       = mat_add(s, 0.22f, 0.22f, 0.23f, 0, 0, 0);
     k.pipe       = mat_add(s, 0.35f, 0.05f, 0.04f, 0, 0, 0);     /* sprinkler red */
@@ -156,23 +191,29 @@ static Kit kit_make(Scene *s) {
     k.pedestal   = mat_add(s, 0.045f, 0.045f, 0.05f, 0, 0, 0);
     k.mesh       = mat_add(s, 0.025f, 0.025f, 0.028f, 0, 0, 0);
     k.plastic    = mat_add(s, 0.02f, 0.02f, 0.022f, 0, 0, 0);
-    k.screenOn   = mat_add(s, 0.02f, 0.02f, 0.02f, 0.25f, 0.50f, 0.70f);
+    k.screenOn   = mat_add(s, 0.02f, 0.02f, 0.02f, 1.0f, 1.0f, 1.0f);    /* radiance 1: BASIS_SCREENS, which the engine colours */
+    s->mats[k.screenOn].surface[3] = (float)GROUP_SCREEN;
     k.screenOff  = mat_add(s, 0.01f, 0.01f, 0.012f, 0, 0, 0);
-    k.pendantOn  = mat_add(s, 0.8f, 0.8f, 0.8f, 57.7f, 43.6f, 27.6f);     /* the diffuser: its light's 9, 6.8, 4.3 over 1.56 x 0.1 m */
-    k.pendantUp  = mat_add(s, 0.8f, 0.8f, 0.8f, 23.1f, 17.4f, 11.0f);     /* its uplight: 40% of the diffuser's, onto the ceiling */
+    k.pendantOn  = mat_light(s, 3200.0f, 1.56f * 0.1f, 2700.0f, 1.0f);     /* the diffuser, 1.56 x 0.1 m */
+    k.pendantUp  = mat_light(s, 3200.0f, 1.56f * 0.1f, 2700.0f, 0.4f);     /* its uplight: 40% of the diffuser's, onto the ceiling */
     k.pendantOff = mat_add(s, 0.05f, 0.05f, 0.05f, 0, 0, 0);
-    k.lampOn     = mat_add(s, 0.8f, 0.8f, 0.8f, 83.3f, 48.1f, 20.4f);      /* the diffuser: 0.9, 0.52, 0.22 over 0.18 x 0.06 m */
+    k.lampOn     = mat_light(s, 600.0f, 0.18f * 0.06f, 2700.0f, 1.0f);     /* the diffuser, 0.18 x 0.06 m */
     k.lampOff    = mat_add(s, 0.05f, 0.04f, 0.03f, 0, 0, 0);
     k.wire       = mat_add(s, 0.02f, 0.02f, 0.02f, 0, 0, 0);
     k.mullion    = mat_add(s, 0.04f, 0.04f, 0.045f, 0, 0, 0);
-    k.coreWall   = mat_add(s, 0.30f, 0.29f, 0.27f, 0, 0, 0);
+    k.coreWall   = mat_add(s, 0.16f, 0.15f, 0.14f, 0, 0, 0);
     k.door       = mat_add(s, 0.10f, 0.07f, 0.05f, 0, 0, 0);
-    k.board      = mat_add(s, 0.45f, 0.42f, 0.30f, 0, 0, 0);
+    k.board      = mat_add(s, 0.10f, 0.09f, 0.075f, 0, 0, 0);
     k.glass      = mat_add(s, 0.0f, 0.0f, 0.0f, 0, 0, 0);
     k.band       = mat_add(s, 0.60f, 0.60f, 0.60f, 0, 0, 0);    /* frosted manifestation */
     k.rug        = mat_add(s, 0.16f, 0.09f, 0.06f, 0, 0, 0);
-    k.marble     = mat_add(s, 0.70f, 0.68f, 0.64f, 0, 0, 0);
-    k.orb        = mat_add(s, 0.8f, 0.8f, 0.8f, 13.0f, 9.4f, 5.3f);        /* 1.6, 1.15, 0.65 over 0.35 x 0.35 m */
+    k.marble     = mat_add(s, 0.05f, 0.045f, 0.04f, 0, 0, 0);    /* black, as the reference's */
+    k.orb        = mat_light(s, 1400.0f, 4.0f * PI_F * 0.17f * 0.17f, 2700.0f, 1.0f);   /* a globe of 17 cm radius */
+    k.orbOff     = mat_add(s, 0.6f, 0.58f, 0.55f, 0, 0, 0);
+    k.trofferOn  = mat_light(s, 3000.0f, 0.6f * 1.2f, 4000.0f, 1.0f);      /* the ceiling's panels, 0.6 x 1.2 m: on only for the cleaners */
+    k.trofferOff = mat_add(s, 0.5f, 0.5f, 0.5f, 0, 0, 0);
+    k.stripOn    = mat_light(s, 300.0f, 1.4f * 0.015f, 3000.0f, 1.0f);     /* the strip under a desk's back edge */
+    k.coveOn     = mat_light(s, 300.0f, 1.0f * 0.02f, 3000.0f, 1.0f);      /* a cove strip, 300 lumens a metre */
     k.pot        = mat_add(s, 0.06f, 0.06f, 0.065f, 0, 0, 0);
     k.leaf       = mat_add(s, 0.05f, 0.11f, 0.035f, 0, 0, 0);
     k.bark       = mat_add(s, 0.12f, 0.08f, 0.05f, 0, 0, 0);
@@ -203,6 +244,43 @@ static Kit kit_make(Scene *s) {
     return k;
 }
 
+/* Each fitting's state: on by chance after hours, in the cluster on the late shift. r: a draw. */
+static bool cluster(const Kit *k, float x, float z) {
+    float dx = x - k->cx, dz = z - k->cz;
+    return dx * dx + dz * dz < k->cr * k->cr;
+}
+
+static bool pendant_lit(const Kit *k, float x, float z, float r) {
+    return k->state == LIGHTS_AFTER_HOURS ? r < 0.5f : k->state == LIGHTS_LATE_SHIFT ? cluster(k, x, z) : false;
+}
+
+static bool lamp_lit(const Kit *k, float x, float z, float r) {
+    return k->state == LIGHTS_AFTER_HOURS ? r < 0.75f : k->state == LIGHTS_LATE_SHIFT ? cluster(k, x, z) || r < 0.08f : false;
+}
+
+static bool screen_lit(const Kit *k, float x, float z, float r) {
+    switch (k->state) {
+    case LIGHTS_AFTER_HOURS: return r < 0.6f;
+    case LIGHTS_LATE_SHIFT:  return cluster(k, x, z) ? r < 0.95f : r < 0.1f;
+    case LIGHTS_CLEANERS:    return r < 0.08f;
+    default:             return r < 0.5f;
+    }
+}
+
+static bool strip_lit(const Kit *k, float x, float z, float r) {
+    return k->state == LIGHTS_AFTER_HOURS ? r < 0.5f : k->state == LIGHTS_LATE_SHIFT ? cluster(k, x, z) : false;
+}
+
+/* Hung panels between the ducts, on a 3 m by 3.6 m grid: dark unless the cleaners are in. */
+static void troffers(Scene *s, const Kit *k, float x0, float x1, float zEnd) {
+    float y = s->ceilY - 0.6f;
+    for (float z = 1.8f; z < zEnd - 0.7f; z += 3.6f)
+        for (float x = x0 + 1.5f; x < x1 - 0.5f; x += 3.0f) {
+            box(s, k->trofferOff, BF_EMITTER, x - 0.62f, y, z - 0.32f, x + 0.62f, y + 0.08f, z + 0.32f);
+            if (k->state == LIGHTS_CLEANERS) box(s, k->trofferOn, BF_EMITTER, x - 0.6f, y - 0.004f, z - 0.3f, x + 0.6f, y, z + 0.3f);
+        }
+}
+
 static void slabs(Scene *s, const Kit *k, float x0, float x1) {
     box(s, k->floor, 0, x0, -2.0f, -2.0f, x1, 0.0f, s->D + 2.0f);
     box(s, k->ceiling, 0, x0, s->ceilY, -2.0f, x1, s->ceilY + 2.6f, s->D + 2.0f);
@@ -222,6 +300,7 @@ static void services(Scene *s, const Kit *k, float x0, float x1, const float *be
         for (float z = 3.0f; z < zEnd - 1.0f; z += 6.0f)   /* diffusers */
             box(s, k->duct, 0, ductX[i] - 0.2f, c - 1.05f, z - 0.2f, ductX[i] + 0.2f, c - 0.95f, z + 0.2f);
     }
+    troffers(s, k, x0 + 0.5f, x1 - 0.5f, zEnd);
     for (int i = 0; i < ntray; ++i) box(s, k->tray, 0, x0, c - 0.42f, trayZ[i] - 0.18f, x1, c - 0.36f, trayZ[i] + 0.18f);
     for (float z = 1.5f; z < zEnd - 0.5f; z += 3.0f) box(s, k->pipe, 0, x0, c - 0.15f, z - 0.02f, x1, c - 0.11f, z + 0.02f);
 }
@@ -264,17 +343,20 @@ static void desk(Scene *s, const Kit *k, float x, float zBack, float dir, uint32
     int screens = rnd(rng) < 0.4f ? 2 : 1;
     for (int i = 0; i < screens; ++i) {
         float cx = screens == 1 ? x + 0.8f : x + 0.5f + 0.6f * (float)i;
-        bool on = rnd(rng) < 0.6f;
         float zs = zBack + dir * 0.18f;
+        bool on = screen_lit(k, cx, zs, rnd(rng));
         box(s, on ? k->screenOn : k->screenOff, 0, cx - 0.27f, 0.92f, zs - 0.012f, cx + 0.27f, 1.24f, zs + 0.012f);
         box(s, k->plastic, 0, cx - 0.025f, 0.75f, zs - 0.025f + dir * 0.03f, cx + 0.025f, 0.93f, zs + 0.025f + dir * 0.03f);
         box(s, k->plastic, 0, cx - 0.1f, 0.75f, zs - 0.07f + dir * 0.03f, cx + 0.1f, 0.76f, zs + 0.07f + dir * 0.03f);
     }
     float zk = zBack + dir * 0.5f;
     box(s, k->plastic, 0, x + 0.55f, 0.75f, zk - 0.07f, x + 1.0f, 0.77f, zk + 0.07f);
-    if (rnd(rng) < 0.35f) {   /* a task lamp */
-        bool on = rnd(rng) < 0.7f;
+    float zu = zBack + dir * 0.12f;
+    if (strip_lit(k, x + 0.8f, zu, rnd(rng)))   /* the strip under its back edge */
+        box(s, k->stripOn, BF_EMITTER, x + 0.1f, 0.712f, zu - 0.0075f, x + 1.5f, 0.716f, zu + 0.0075f);
+    if (rnd(rng) < 0.45f) {   /* a task lamp */
         float lx = x + 0.15f, lz = zBack + dir * 0.15f;
+        bool on = lamp_lit(k, lx, lz, rnd(rng));
         box(s, k->plastic, 0, lx - 0.06f, 0.75f, lz - 0.06f, lx + 0.06f, 0.77f, lz + 0.06f);
         box(s, k->plastic, 0, lx - 0.01f, 0.77f, lz - 0.01f, lx + 0.01f, 1.17f, lz + 0.01f);
         box(s, k->lampOff, BF_EMITTER, lx - 0.02f, 1.12f, lz - 0.04f, lx + 0.2f, 1.17f, lz + 0.04f);
@@ -291,11 +373,13 @@ static void desk_rows(Scene *s, const Kit *k, float zc, const float *xs, const i
     for (int r = 0; r < runs; ++r) {
         float x0 = xs[r], x1 = xs[r] + 1.6f * (float)n[r];
         box(s, k->board, 0, x0 + 0.05f, 0.75f, zc - 0.01f, x1 - 0.05f, 1.15f, zc + 0.01f);   /* the screen between */
+        if (strip_lit(k, 0.5f * (x0 + x1), zc, rnd(rng)))   /* a cove along its top */
+            box(s, k->coveOn, BF_EMITTER, x0 + 0.05f, 1.15f, zc - 0.01f, x1 - 0.05f, 1.154f, zc + 0.01f);
         for (int i = 0; i < n[r]; ++i) {
             float x = x0 + 1.6f * (float)i;
             desk(s, k, x, zc - 0.01f, -1.0f, rng);
             desk(s, k, x, zc + 0.01f, 1.0f, rng);
-            pendant(s, k, x + 0.8f, zc, rnd(rng) < 0.45f);
+            pendant(s, k, x + 0.8f, zc, pendant_lit(k, x + 0.8f, zc, rnd(rng)));
         }
     }
 }
@@ -316,6 +400,8 @@ static void core_wall(Scene *s, const Kit *k, float x0, float x1, float z, uint3
         box(s, k->frame, 0, x - 0.05f, 2.15f, z - 0.05f, x + 1.0f, 2.2f, z + 0.01f);
     }
     float xb = x0 + (x1 - x0) * 0.55f;
+    if (k->state == LIGHTS_AFTER_HOURS || k->state == LIGHTS_LATE_SHIFT)   /* a cove along its head */
+        box(s, k->coveOn, BF_EMITTER, x0, s->ceilY - 0.3f, z - 0.02f, x1, s->ceilY - 0.28f, z);
     box(s, k->board, 0, xb, 1.0f, z - 0.02f, xb + 1.2f, 1.9f, z);
     box(s, k->pedestal, 0, xb + 1.6f, 0.0f, z - 0.55f, xb + 2.2f, 1.05f, z);   /* a printer */
 }
@@ -369,13 +455,44 @@ static void sofa(Scene *s, Kit *k, float x, float z, float yaw, const char *asse
     inst_add(s, id, k->sofa, 0, x, 0.0f, z, 1, 1, 1, yaw);
 }
 
+/* A globe of radius 1: an octahedron's faces split three times, pushed out to the sphere. */
+static int orb_mesh(Scene *s) {
+    static const float O[6][3] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+    static const int F[8][3] = { { 0, 2, 4 }, { 4, 2, 1 }, { 1, 2, 5 }, { 5, 2, 0 }, { 4, 3, 0 }, { 1, 3, 4 }, { 5, 3, 1 }, { 0, 3, 5 } };
+    enum { N = 8, TRIS = 8 * N * N };
+    float *v = malloc(sizeof(float) * 9 * TRIS);
+    uint32_t *ix = malloc(sizeof(uint32_t) * 3 * TRIS), n = 0;
+    if (!v || !ix) fatal("out of memory building an orb");
+    for (int f = 0; f < 8; ++f)
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N - i; ++j)
+                for (int up = 0; up < (j < N - i - 1 ? 2 : 1); ++up) {
+                    int t[3][2] = { { i, j }, { i + 1, j }, { i, j + 1 } };
+                    if (up) { t[0][0] = i + 1; t[0][1] = j + 1; t[1][0] = i; t[1][1] = j + 1; t[2][0] = i + 1; t[2][1] = j; }
+                    for (int c = 0; c < 3; ++c) {
+                        float a = (float)t[c][0] / N, b = (float)t[c][1] / N, w = 1.0f - a - b, p[3], l = 0.0f;
+                        for (int r = 0; r < 3; ++r) { p[r] = w * O[F[f][0]][r] + a * O[F[f][1]][r] + b * O[F[f][2]][r]; l += p[r] * p[r]; }
+                        l = sqrtf(l);
+                        for (int r = 0; r < 3; ++r) v[n * 3 + r] = p[r] / l;
+                        ix[n] = n;
+                        n++;
+                    }
+                }
+    int id = mesh_add(s, v, n, ix, n);
+    free(v);
+    free(ix);
+    return id;
+}
+
 static void lounge(Scene *s, Kit *k, float x, float z, const char *assets, uint32_t seed) {
     box(s, k->rug, 0, x - 1.4f, 0.0f, z - 1.1f, x + 1.4f, 0.012f, z + 1.1f);
     sofa(s, k, x, z + 0.6f, 3.14159265f, assets);   /* its back to the room, facing the glass */
     box(s, k->marble, 0, x + 1.45f, 0.0f, z + 0.35f, x + 1.95f, 0.5f, z + 0.85f);
     box(s, k->marble, 0, x - 0.45f, 0.0f, z - 0.55f, x + 0.45f, 0.38f, z - 0.15f);   /* a low table */
-    box(s, k->orb, BF_EMITTER, x - 1.9f, 0.0f, z + 0.4f, x - 1.55f, 0.35f, z + 0.75f);
-    light_add(s, x - 1.72f, 0.9f, z + 0.58f, 1.6f, 1.15f, 0.65f);
+    box(s, k->marble, 0, x - 1.97f, 0.0f, z + 0.33f, x - 1.47f, 0.5f, z + 0.83f);   /* the orb lamp, on its plinth */
+    bool lit = k->state == LIGHTS_AFTER_HOURS || k->state == LIGHTS_LATE_SHIFT;
+    inst_add(s, orb_mesh(s), lit ? k->orb : k->orbOff, BF_EMITTER, x - 1.72f, 0.67f, z + 0.58f, 0.17f, 0.17f, 0.17f, 0.0f);
+    if (lit) light_add(s, x - 1.72f, 0.9f, z + 0.58f, 1.6f, 1.15f, 0.65f);
     plant(s, k, x + 2.6f, z - 0.3f, PS_KENTIA, 1.9f, seed);
 }
 
@@ -399,7 +516,10 @@ static void meeting_room(Scene *s, const Kit *k, float xa, float xb, float za, f
         chair(s, k, x, tz0 - 0.45f, (rnd(rng) - 0.5f) * 0.5f);
         chair(s, k, x, tz1 + 0.45f, 3.14159265f + (rnd(rng) - 0.5f) * 0.5f);
     }
-    pendant(s, k, (tx0 + tx1) * 0.5f, (tz0 + tz1) * 0.5f, true);
+    float px = (tx0 + tx1) * 0.5f, pz = (tz0 + tz1) * 0.5f;
+    bool lit = k->state == LIGHTS_AFTER_HOURS || (k->state == LIGHTS_LATE_SHIFT && cluster(k, px, pz));
+    pendant(s, k, px, pz, lit);
+    if (lit) box(s, k->coveOn, BF_EMITTER, xa, top - 0.02f, za + 0.05f, xb, top, za + 0.07f);   /* a cove along its head */
 }
 
 /* ------------------------------------------------------------ the scenes --- */
@@ -416,10 +536,39 @@ static void defaults(Scene *s, const char *name, int type, float W, float D) {
     s->ambient = 0.02f;
 }
 
-bool scene_build(Scene *s, const char *name, const char *assets) {
+/* The depth a scene is built to, for where its late shift's cluster sits. */
+static float scene_depth(const char *name) {
+    return !strcmp(name, "through30") ? 30.0f : !strcmp(name, "glass20") ? 20.0f : !strcmp(name, "corner16") ? 16.5f : 12.5f;
+}
+
+void scene_calibration(Scene *s, float tableY) {
+    scene_begin(s, "calibration");
+    const float W = 14.4f, D = 28.8f, H = 4.2f;
+    s->W = W; s->H = H + 0.6f; s->D = D; s->ceilY = H;
+    s->period = W;
+    s->sealed = 1;
+    const float none[3] = { 0, 0, 0 }, wall[3] = { 0.4f, 0.38f, 0.36f }, ceil_[3] = { 0.045f, 0.044f, 0.042f }, stone[3] = { 0.22f, 0.21f, 0.20f }, table[3] = { 0.5f, 0.5f, 0.5f };
+    float c[3], L = 6000.0f / (PI_F * 1.2f * 1.2f) * BAKE_NIT;   /* the same output a square metre as the office's panels */
+    kelvin_unit(3000.0f, c);
+    float e[3] = { c[0] * L, c[1] * L, c[2] * L };
+    int mw = scene_material(s, wall, none, 0.8f, 0.0f, 0.04f, 0.0f, 0.0f), mc = scene_material(s, ceil_, none, 0.9f, 0.0f, 0.04f, 0.0f, 0.0f);
+    int mf = scene_material(s, stone, none, 0.6f, 0.0f, 0.04f, 0.0f, 0.0f), mt = scene_material(s, table, none, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+    int ml = scene_material(s, wall, e, 0.8f, 0.0f, 0.04f, 0.0f, 0.0f);
+    scene_box(s, mf, 0, -0.5f, -1.0f, -1.0f, W + 0.5f, 0.0f, D + 1.0f);
+    scene_box(s, mc, 0, -0.5f, H, -1.0f, W + 0.5f, H + 1.0f, D + 1.0f);
+    scene_box(s, mw, 0, -0.5f, -1.0f, -1.0f, W + 0.5f, H + 1.0f, 0.0f);
+    scene_box(s, mw, 0, -0.5f, -1.0f, D, W + 0.5f, H + 1.0f, D + 1.0f);
+    for (float z = 1.8f; z < D; z += 3.6f)
+        for (float x = 1.8f; x < W; x += 3.6f)
+            scene_box(s, ml, BF_EMITTER, x - 0.6f, H - 0.01f, z - 0.6f, x + 0.6f, H, z + 0.6f);
+    /* a sheet the camera reads, a table's height over the floor, between four fittings */
+    scene_box(s, mt, 0, W * 0.5f - 0.5f, tableY - 0.02f, D * 0.5f - 0.5f, W * 0.5f + 0.5f, tableY, D * 0.5f + 0.5f);
+}
+
+bool scene_build(Scene *s, const char *name, int state, const char *assets) {
     memset(s, 0, sizeof(*s));
     cube_mesh(s);
-    Kit k = kit_make(s);
+    Kit k = kit_make(s, state, 12.0f, scene_depth(name));
     uint32_t rng = 0x9E3779B9u;
     float W;
 
@@ -490,6 +639,9 @@ bool scene_build(Scene *s, const char *name, const char *assets) {
         return false;
     }
     if (s->type == MOD_CORNER) s->xmax = 1e9f;
+    s->state = state;
+    size_t len = strlen(s->name);
+    snprintf(s->name + len, sizeof(s->name) - len, "%s", STATE_SUFFIX[state]);
     printf("scene %s: %d instances, %d meshes, %u triangles, %d lights\n", s->name, s->ninsts, s->nmeshes, s->nidx / 3, s->nlights);
     return true;
 }

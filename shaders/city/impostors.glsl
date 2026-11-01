@@ -12,7 +12,7 @@
  * ==================================================================== */
 
 #define INTERIOR_MAX_MODULES 8   // src/render/interior_def.h
-#define INTERIOR_CHANNELS    4   // lint, albedo, depth, flags
+#define INTERIOR_CHANNELS    5   // lint, albedo, depth, flags, ext
 #define INTERIOR_MAX_BAYS    8
 
 struct ImpModule {   // InteriorGPU (src/render/interiors.h)
@@ -23,7 +23,8 @@ struct ImpModule {   // InteriorGPU (src/render/interiors.h)
     vec4  size;      // W, H, D; the ceiling (m)
     vec4  march;     // steps at most, texels a step, bisections, a guessing view's weight
     vec4  bays;      // bays, their width (m), the bake scale, an off-grid view's weight
-    vec4  bayMean[INTERIOR_MAX_BAYS];   // rgb each bay's mean radiance through the glass, before the bake scale
+    vec4  bayMean[INTERIOR_MAX_BAYS];   // rgb each bay's mean radiance through the glass, before the bake scale; [0].a what ext's 1 means
+    vec4  bayExt[INTERIOR_MAX_BAYS];    // each bay's mean under the exterior bases: street, neon, sky, screens
 };
 layout(set = 0, binding = 11) uniform Interiors {
     vec4      info;  // x modules loaded, y the share of eligible floors drawn with them
@@ -34,10 +35,22 @@ layout(set = 0, binding = 12) uniform sampler2DArray impTex[INTERIOR_MAX_MODULES
 
 int gImpTex;   // the marched module's first image
 int gImpK;     // its layers per view
+float gImpScale, gImpExtMax;   // its bake scale; what ext's 1 means
+vec3 gImpC[4];                 // the radiance of each basis at this window (impostorLight): street, neon, sky, screens
 
 vec2 impFetchDepth(int view, int layer, ivec2 t) { return texelFetch(impTex[nonuniformEXT(gImpTex + 2)], ivec3(t, view * gImpK + layer), 0).rg; }
 bool impFetchFull(int view, ivec2 t) { return texelFetch(impTex[nonuniformEXT(gImpTex + 3)], ivec3(t, view), 0).r > 0.5; }
-vec3 impFetchColor(int view, int layer, ivec2 t) { return texelFetch(impTex[nonuniformEXT(gImpTex)], ivec3(t, view * gImpK + layer), 0).rgb; }
+/* A hit's radiance, relit for this window (doc, section 6): the module's own light, plus each basis's
+ * luminance in the colour the engine gives it, tinted by the surface where that light came diffusely. */
+vec3 impFetchColor(int view, int layer, ivec2 t) {
+    ivec3 at = ivec3(t, view * gImpK + layer);
+    vec3 lint = texelFetch(impTex[nonuniformEXT(gImpTex)], at, 0).rgb;
+    vec4 alb = texelFetch(impTex[nonuniformEXT(gImpTex + 1)], at, 0);
+    vec4 e = texelFetch(impTex[nonuniformEXT(gImpTex + 4)], at, 0);
+    e *= e * gImpExtMax;
+    vec3 tint = mix(alb.rgb / max(dot(alb.rgb, vec3(0.2126, 0.7152, 0.0722)), 0.01), vec3(1.0), alb.a);
+    return lint * gImpScale + tint * (gImpC[0] * e.r + gImpC[1] * e.g + gImpC[2] * e.b + gImpC[3] * e.a);
+}
 
 #include "city/impostor.glsl"
 
@@ -61,12 +74,30 @@ vec2 impostorStretch(int m, float bayW, float floorH) {
     return vec2(W / (max(1.0, floor(W / bayW + 0.5)) * bayW), interiors.impMod[m].size.y / floorH);
 }
 
-/* The mean radiance through the glass of the module's bay at x (the mid LOD). */
+/* What lights a module at this window (doc, section 16), as the radiance of the source each basis
+ * stands for. lamps: the city's lamps and shops on this facade (wallLighting, less its ambient and
+ * neon). A source filling the half of a wall's view below it puts half its radiance on the wall, so
+ * the street's is twice that. The neon and the towers across carry on above where the lamps give
+ * out. glassT: the near glass the light comes through. floorHash: this floor's own screens. */
+void impostorLight(vec3 lamps, vec3 glassT, float height, uint floorHash) {
+    vec3 across = vec3(0.11, 0.085, 0.06) * 2.5;     // the towers across: paneSheen's lit facades
+    gImpC[0] = (lamps * 2.0 + across * mix(0.25, 1.0, exp(-height / 80.0))) * glassT;
+    // a floor sees signs from afar, even where none stand just below it
+    gImpC[1] = neonHue(gWorld) * mix(0.4, 1.0, neonDensity(gWorld)) * mix(0.35, 1.0, exp(-height / 40.0)) * 5.0 * glassT;
+    gImpC[2] = mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) * 1.4 * glassT;
+    // mostly cool, some warmer or green, breathing as what they show changes
+    float k = hf(floorHash, 30u);
+    vec3 screen = k < 0.65 ? vec3(0.30, 0.50, 0.85) : k < 0.85 ? vec3(0.62, 0.70, 0.80) : vec3(0.32, 0.72, 0.55);
+    gImpC[3] = screen * (0.75 + 0.25 * sin(gTime * (0.2 + 0.2 * hf(floorHash, 31u)) + 6.28 * hf(floorHash, 32u)));
+}
+
+/* The mean radiance through the glass of the module's bay at x (the mid LOD), under gImpC. */
 vec3 impostorBayMean(int m, float x) {
     ImpModule M = interiors.impMod[m];
     float W = M.size.x;
     int b = clamp(int((x - W * floor(x / W)) / M.bays.y), 0, int(M.bays.x) - 1);
-    return M.bayMean[b].rgb * M.bays.z;
+    vec4 e = M.bayExt[b];
+    return M.bayMean[b].rgb * M.bays.z + gImpC[0] * e.r + gImpC[1] * e.g + gImpC[2] * e.b + gImpC[3] * e.a;
 }
 
 /* What the eye sees through the glass of module m, along d (the module's
@@ -81,6 +112,8 @@ vec3 impostorTrace(int m, vec2 q, vec3 d, vec3 worldDir, float eyeY, vec3 slabC)
     if (q.y < 0.0 || q.y > M.size.w) return slabC;
     gImpTex = m * INTERIOR_CHANNELS;
     gImpK = M.dim.z;
+    gImpScale = M.bays.z;
+    gImpExtMax = M.bayMean[0].a;
     ImpViews v;
     v.n = M.views.xy; v.kind = M.views.z; v.range = M.range;
     ImpGrid g;
@@ -99,7 +132,7 @@ vec3 impostorTrace(int m, vec2 q, vec3 d, vec3 worldDir, float eyeY, vec3 slabC)
         vec3 dk = impViewDirIndex(v, views[i]);
         ImpHit h = impMarch(views[i], g, q, sigma - dk.xy / dk.z, g.D, int(M.march.x), M.march.y, int(M.march.z), false);
         float wt = w[i] * (h.unknown ? M.march.w : 1.0) * (h.outside ? M.bays.w : 1.0);
-        if (h.layer >= 0) sum += impFetchColor(views[i], h.layer, h.texel) * (M.bays.z * wt);
+        if (h.layer >= 0) sum += impFetchColor(views[i], h.layer, h.texel) * wt;
         else wOut += wt;
         wsum += wt;
     }

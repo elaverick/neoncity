@@ -250,14 +250,15 @@ static void test_interiors(const char *assets) {
                 for (uint64_t h = 0; h < img.length / 8; ++h) sixLevel += d[h * 8] < d[h * 8 + 1];
                 CHECK(sixLevel == 0, "interior %s: %llu depth blocks in BC4's 6-level mode", names[i], (unsigned long long)sixLevel);
             } else if (c == INTERIOR_LINT) {
-                /* B10G11R11: an exponent of 31 in any channel is infinity or NaN */
+                /* every block in BC6H's mode 11 (00011), the one the baker writes */
                 uint64_t bad = 0;
-                for (uint64_t t = 0; t < img.length / 4; ++t) {
-                    uint32_t v;
-                    memcpy(&v, d + t * 4, 4);
-                    bad += ((v >> 6) & 31u) == 31u || ((v >> 17) & 31u) == 31u || ((v >> 27) & 31u) == 31u;
-                }
-                CHECK(bad == 0, "interior %s: %llu radiance texels not finite", names[i], (unsigned long long)bad);
+                for (uint64_t b = 0; b < img.length / 16; ++b) bad += (d[b * 16] & 31u) != 3u;
+                CHECK(bad == 0, "interior %s: %llu radiance blocks not in BC6H's mode 11", names[i], (unsigned long long)bad);
+            } else if (c == INTERIOR_ALBEDO || c == INTERIOR_EXT) {
+                /* every block in BC7's mode 6 (seven bits, 0000001 from the low end) */
+                uint64_t bad = 0;
+                for (uint64_t b = 0; b < img.length / 16; ++b) bad += (d[b * 16] & 127u) != 64u;
+                CHECK(bad == 0, "interior %s: %llu %s blocks not in BC7's mode 6", names[i], (unsigned long long)bad, INTERIOR_CHANNEL_NAMES[c]);
             }
             interior_image_free(&img);
         }

@@ -3,7 +3,7 @@
 #include "interior_def.h"
 
 /* Baked interior impostors (docs/interior-impostors.md) on the GPU: each
- * module the catalogue names (src/render/interior_def.h) has its four
+ * module the catalogue names (src/render/interior_def.h) has its five
  * channels uploaded as they are in its files, a 2D array texture each. The
  * facade shader (shaders/city/impostors.glsl) marches them behind the glass
  * of chosen office floors. The images are bound as an array (scene binding
@@ -23,7 +23,8 @@ typedef struct InteriorGPU {
     float   size[4];      /* W, H, D; the ceiling (m) */
     float   march[4];     /* steps at most, texels a step, bisections, a guessing view's weight */
     float   bays[4];      /* bays, their width (m), the bake scale, an off-grid view's weight */
-    float   bayMean[INTERIOR_MAX_BAYS][4];   /* rgb each bay's mean radiance through the glass (the mid LOD), before the bake scale */
+    float   bayMean[INTERIOR_MAX_BAYS][4];   /* rgb each bay's mean radiance through the glass (the mid LOD), before the bake scale; a what ext's 1 means */
+    float   bayExt[INTERIOR_MAX_BAYS][4];    /* each bay's mean under the exterior bases: street, neon, sky, screens */
 } InteriorGPU;
 
 typedef struct InteriorTable {

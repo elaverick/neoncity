@@ -14,7 +14,14 @@
  *                samples): its mean within 1%, and every 8 x 8 block of
  *                pixels within the noise.
  *   determinism  The same capture and truth twice: the same bytes. Another
- *                seed: other bytes. */
+ *                seed: other bytes.
+ *   calibration  A reference room: 1.2 m troffers on the lobby's 3.6 m grid, a
+ *                sheet of albedo 0.5 at a table's height. Baked radiance times
+ *                BAKE_SCALE matches the lobby's analytic light on it within
+ *                10% (shaders/city/lobby.glsl: 0.55 * lobbyLight on what faces
+ *                up, at a kelvin(3000) of luminance 0.737 times 1.35).
+ *   encoders     BC6H and BC7 blocks decode near what went in, the anchor's
+ *                implied bit included. */
 
 #define CORNELL_RES  96
 #define CORNELL_SPP  1024
@@ -254,6 +261,67 @@ static void test_determinism(Gpu *g) {
     scene_free(&s);
 }
 
+static void test_calibration(Gpu *g) {
+    printf("calibration\n");
+    const float tableY = 0.75f;
+    Scene s;
+    scene_calibration(&s, tableY);
+    gpu_load_scene(g, &s);
+    TraceConfig t = test_trace(2048, 8, 1);
+    gpu_set_trace(g, &t);
+    float fwd[3] = { 0.0f, -1.0f, 0.0f }, right[3] = { 0.1f, 0.0f, 0.0f }, up[3] = { 0.0f, 0.0f, 0.1f };
+    gpu_set_perspective(g, fwd, right, up);
+    Camera c = { { s.W * 0.5f, tableY + 1.0f, s.D * 0.5f }, "above", 0 };
+    EvalGrid e = { 0.0f, 0.0f, 1.0f, 1.0f, 16, 16, 1 };
+    float *rgba = malloc(sizeof(float) * 4 * e.w * e.h);
+    if (!rgba) fatal("out of memory");
+    gpu_truth(g, &s, &c, &e, rgba);
+    gpu_set_perspective(g, NULL, NULL, NULL);
+    double lum = 0.0;
+    for (int i = 0; i < e.w * e.h; ++i) lum += 0.2126 * rgba[i * 4] + 0.7152 * rgba[i * 4 + 1] + 0.0722 * rgba[i * 4 + 2];
+    lum /= e.w * e.h;
+    free(rgba);
+    double engine = 0.5 * 0.55 * 0.737 * 1.35, baked = lum * BAKE_SCALE;
+    char what[200];
+    snprintf(what, sizeof(what), "the table: %.4f baked (bake units %.4f, scale %.3f), %.4f in the lobby; the scale that matches: %.3f",
+             baked, lum, BAKE_SCALE, engine, engine / lum);
+    check(fabs(baked - engine) < 0.1 * engine, what);
+    scene_free(&s);
+}
+
+static void test_encoders(void) {
+    printf("encoders\n");
+    float rgb[16][3], back[16][3];
+    uint8_t rgba[16][4], out[16][4], block[16];
+    double worstH = 0.0, worstC = 0.0;
+    uint32_t r = 12345u;
+    for (int n = 0; n < 200; ++n) {
+        float a[3], b[3];
+        for (int k = 0; k < 3; ++k) {
+            r = r * 1664525u + 1013904223u; a[k] = (float)(r >> 16) / 65536.0f * (n & 1 ? 40.0f : 1.0f);
+            r = r * 1664525u + 1013904223u; b[k] = (float)(r >> 16) / 65536.0f * (n & 1 ? 40.0f : 1.0f);
+        }
+        for (int i = 0; i < 16; ++i) {
+            float t = (float)i / 15.0f;
+            for (int k = 0; k < 3; ++k) rgb[i][k] = expf(logf(a[k] + 1e-3f) * (1.0f - t) + logf(b[k] + 1e-3f) * t);
+            for (int k = 0; k < 4; ++k) rgba[i][k] = (uint8_t)(k < 3 ? (a[k] + (b[k] - a[k]) * t) / (n & 1 ? 40.0f : 1.0f) * 255.0f : 255.0f * t);
+        }
+        bc6h_encode((const float (*)[3])rgb, NULL, block);
+        bc6h_decode(block, back);
+        for (int i = 0; i < 16; ++i)
+            for (int k = 0; k < 3; ++k) worstH = fmax(worstH, fabs(log(back[i][k] + 1e-2) - log(rgb[i][k] + 1e-2)));
+        bc7_encode((const uint8_t (*)[4])rgba, NULL, block);
+        bc7_decode(block, out);
+        for (int i = 0; i < 16; ++i)
+            for (int k = 0; k < 4; ++k) worstC = fmax(worstC, fabs((double)out[i][k] - rgba[i][k]));
+    }
+    char what[160];
+    snprintf(what, sizeof(what), "BC6H: the worst texel of a smooth block is off by %.1f%%", (exp(worstH) - 1.0) * 100.0);
+    check(worstH < 0.25, what);
+    snprintf(what, sizeof(what), "BC7: the worst channel of a smooth block is off by %.0f levels", worstC);
+    check(worstC <= 20.0, what);
+}
+
 int test_run(Gpu *g, const char *dataDir, bool writeRef) {
     printf("the path tracer's tests on %s\n", gpu_name(g));
     if (writeRef) {
@@ -262,6 +330,8 @@ int test_run(Gpu *g, const char *dataDir, bool writeRef) {
         test_furnace(g);
         test_cornell(g, dataDir, false);
         test_determinism(g);
+        test_calibration(g);
+        test_encoders();
     }
     gpu_set_trace(g, NULL);
     printf(failures ? "%d failed\n" : "all passed\n", failures);

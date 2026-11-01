@@ -5,20 +5,21 @@
  * per channel, rows bottom up (KTXorientation "ru"), one level, and the JSON
  * sidecar the engine reads (src/render/interior_def.h).
  *
- *   lint    B10G11R11 float   radiance from the module's own lights, path traced (IM3); layer = view * K + depth layer
- *   albedo  RGBA8             base colour; a, the specular share of the exterior light (IM4: 0 until then)
- *   depth   BC5               entry and exit as fractions of D (entry 1: no layer)
- *   flags   R8                one layer per view: 1 where the texel is full (it met more surfaces than K)
+ *   lint    BC6H    radiance from the module's own lights, path traced; layer = view * K + depth layer
+ *   albedo  BC7     base colour; a, the specular share of the light in ext
+ *   ext     BC7     sqrt(E / EXT_MAX) under each basis of radiance 1: street, neon, sky, screens
+ *   depth   BC5     entry and exit as fractions of D (entry 1: no layer)
+ *   flags   R8      one layer per view: 1 where the texel is full (it met more surfaces than K)
  *
- * IM3 and IM4 turn lint into BC6H and albedo into BC7 when their contents
- * are final; the march reads texels, so there are no mips yet. */
+ * The march reads texels, so there are no mips yet. */
 
-#define BAKE_FORMAT_VERSION 2
-#define BAKER_VERSION "im3-gi-1"
-/* Radiance into the engine's units. Provisional until IM4 calibrates it against the lobby's panels:
- * chosen so a bay's mean through the glass comes near a lit room's (rooms.glsl). IM2's direct light
- * alone took 5; IM3's paths add the light that bounces. */
-#define BAKE_SCALE 5.0f
+#define BAKE_FORMAT_VERSION 3
+#define BAKER_VERSION "im4-light-1"
+/* Radiance into the engine's units, from the calibration in test.c: 1.2 m troffers on the lobby's
+ * grid light a table's top as the lobby's analytic panels do (section 16). */
+const float BAKE_SCALE = 0.375f;
+/* A lobby diffuser shows about 4 in the engine's units: a real one against the surfaces it lights would bloom. */
+const float BAKE_VISIBLE_CAP = 4.0f / 0.375f;
 
 /* A format as KTX2's data format descriptor describes it: a basic block, a sample per channel. */
 typedef struct Sample { uint16_t offset; uint8_t bits, channel; uint32_t lower, upper; } Sample;
@@ -29,12 +30,12 @@ typedef struct Format {
     Sample   s[4];
 } Format;
 
-enum { DF_RGBSDA = 1, DF_BC5 = 132, DF_FLOAT = 0x80 };
+enum { DF_RGBSDA = 1, DF_BC5 = 132, DF_BC6H = 134, DF_BC7 = 135, DF_FLOAT = 0x80 };
 #define ONE_F 0x3F800000u
-static const Format F_LINT = { 122, 4, DF_RGBSDA, 1, 4, 3,   /* VK_FORMAT_B10G11R11_UFLOAT_PACK32 */
-                               { { 0, 11, 0 | DF_FLOAT, 0, ONE_F }, { 11, 11, 1 | DF_FLOAT, 0, ONE_F }, { 22, 10, 2 | DF_FLOAT, 0, ONE_F } } };
-static const Format F_ALBEDO = { 37, 1, DF_RGBSDA, 1, 4, 4,  /* VK_FORMAT_R8G8B8A8_UNORM */
-                                 { { 0, 8, 0, 0, 255 }, { 8, 8, 1, 0, 255 }, { 16, 8, 2, 0, 255 }, { 24, 8, 15, 0, 255 } } };
+static const Format F_LINT = { 143, 1, DF_BC6H, 4, 16, 1,    /* VK_FORMAT_BC6H_UFLOAT_BLOCK */
+                               { { 0, 128, 0 | DF_FLOAT, 0, ONE_F } } };
+static const Format F_BC7 = { 145, 1, DF_BC7, 4, 16, 1,      /* VK_FORMAT_BC7_UNORM_BLOCK: albedo and ext */
+                              { { 0, 128, 0, 0, 0xFFFFFFFFu } } };
 static const Format F_DEPTH = { 141, 1, DF_BC5, 4, 16, 2,    /* VK_FORMAT_BC5_UNORM_BLOCK */
                                 { { 0, 64, 0, 0, 0xFFFFFFFFu }, { 64, 64, 1, 0, 0xFFFFFFFFu } } };
 static const Format F_FLAGS = { 9, 1, DF_RGBSDA, 1, 1, 1,    /* VK_FORMAT_R8_UNORM */
@@ -111,53 +112,93 @@ static bool write_ktx2(const char *path, const Format *fmt, uint32_t w, uint32_t
     return ok;
 }
 
-/* An unsigned float of B10G11R11: a 5-bit exponent and a mant-bit mantissa, from a half, rounded. */
-static uint32_t ufloat(float f, int mant) {
-    if (!(f > 0.0f)) return 0;   /* negative, zero or NaN */
-    int drop = 10 - mant;
-    uint32_t v = ((uint32_t)half_from_float(f) + (1u << (drop - 1))) >> drop;
-    uint32_t largest = (30u << mant) | ((1u << mant) - 1u);
-    return v > largest ? largest : v;
-}
+/* A value of 0..1 as a byte. */
+static uint8_t unorm8(float v) { return (uint8_t)(fminf(fmaxf(v, 0.0f), 1.0f) * 255.0f + 0.5f); }
 
 bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConfig *ic, const TraceConfig *tc) {
     int nx = c->grid.nx, ny = c->grid.ny, views = view_count(&c->views), K = ic->K;
-    size_t plane = (size_t)nx * ny, n = (size_t)views * K * plane;
-    size_t depthLayer = (size_t)level_bytes(&F_DEPTH, (uint32_t)nx, (uint32_t)ny, 1);
-    uint32_t *lint = malloc(n * 4);
-    uint8_t *albedo = malloc(n * 4), *depth = malloc(depthLayer * views * K), *flags = malloc((size_t)views * plane);
-    float *e = malloc(sizeof(float) * plane), *x = malloc(sizeof(float) * plane);
-    if (!lint || !depth || !albedo || !flags || !e || !x) fatal("out of memory writing a bake");
+    size_t plane = (size_t)nx * ny;
+    size_t blocksLayer = (size_t)level_bytes(&F_DEPTH, (uint32_t)nx, (uint32_t)ny, 1);
+    size_t layers = (size_t)views * K;
+    uint8_t *lint = malloc(blocksLayer * layers), *albedo = malloc(blocksLayer * layers), *ext = malloc(blocksLayer * layers);
+    uint8_t *depth = malloc(blocksLayer * layers), *flags = malloc((size_t)views * plane), *valid = malloc(plane);
+    float *e = malloc(sizeof(float) * plane), *x = malloc(sizeof(float) * plane), *rad = malloc(sizeof(float) * 3 * plane);
+    uint8_t *alb = malloc(plane * 4), *bas = malloc(plane * 4);
+    if (!lint || !depth || !albedo || !ext || !flags || !valid || !e || !x || !rad || !alb || !bas) fatal("out of memory writing a bake");
+    double errLint = 0.0, errExt = 0.0;
+    size_t errN = 0;
     for (int v = 0; v < views; ++v) {
         for (size_t i = 0; i < plane; ++i) flags[(size_t)v * plane + i] = c->counts[(size_t)v * plane + i] > (uint32_t)K ? 255 : 0;
         for (int l = 0; l < K; ++l) {
             for (size_t i = 0; i < plane; ++i) {
-                size_t texel = (size_t)v * plane + i, o = ((size_t)v * K + l) * plane + i;
+                size_t texel = (size_t)v * plane + i;
                 int slot = imp_slot(c, ic, texel, l);
                 const CapLayer *cl = &c->layers[texel * CAP_SLOTS + (slot < 0 ? 0 : slot)];
-                lint[o] = slot < 0 ? 0u : ufloat(cl->lit[0], 6) | ufloat(cl->lit[1], 6) << 11 | ufloat(cl->lit[2], 5) << 22;
+                valid[i] = slot >= 0;
+                for (int k = 0; k < 3; ++k) rad[i * 3 + k] = slot < 0 ? 0.0f : cl->lit[k];
                 e[i] = slot >= 0 ? cl->depth[0] : 1.0f;
                 x[i] = slot >= 0 ? cl->depth[1] : 1.0f;
                 uint32_t a = slot >= 0 ? cl->albedo : 0u;
-                memcpy(albedo + o * 4, &a, 4);
-                albedo[o * 4 + 3] = 0;   /* IM4: the specular share of the exterior light */
+                memcpy(alb + i * 4, &a, 4);
+                const float *b = c->ext && slot >= 0 ? c->ext + (texel * CAP_SLOTS + slot) * (EXT_BASES + 1) : NULL;
+                alb[i * 4 + 3] = b ? unorm8(b[EXT_BASES]) : 0;
+                for (int k = 0; k < EXT_BASES; ++k) bas[i * 4 + k] = b ? unorm8(sqrtf(b[k] / EXT_MAX)) : 0;
             }
-            uint8_t *blocks = depth + depthLayer * ((size_t)v * K + l);
+            /* The colour blocks: a texel with no layer here is never read, so it doesn't pull the fit. */
+            size_t at = ((size_t)v * K + l) * blocksLayer;
+            for (int by = 0; by < ny; by += 4)
+                for (int bx = 0; bx < nx; bx += 4) {
+                    float brgb[16][3];
+                    uint8_t ba[16][4], bb[16][4], bv[16];
+                    for (int j = 0; j < 16; ++j) {
+                        int tx = bx + (j & 3), ty = by + (j >> 2);
+                        bool in = tx < nx && ty < ny;
+                        size_t i = (size_t)(ty < ny ? ty : ny - 1) * nx + (tx < nx ? tx : nx - 1);
+                        bv[j] = in && valid[i];
+                        memcpy(brgb[j], rad + i * 3, 12);
+                        memcpy(ba[j], alb + i * 4, 4);
+                        memcpy(bb[j], bas + i * 4, 4);
+                    }
+                    size_t b = (size_t)(by / 4) * ((nx + 3) / 4) + bx / 4;
+                    bc6h_encode((const float (*)[3])brgb, bv, lint + at + b * 16);
+                    bc7_encode((const uint8_t (*)[4])ba, bv, albedo + at + b * 16);
+                    bc7_encode((const uint8_t (*)[4])bb, bv, ext + at + b * 16);
+                    /* how much they lose, on a sample of the blocks */
+                    if ((b & 15u) == 0u) {
+                        float drgb[16][3];
+                        uint8_t db[16][4];
+                        bc6h_decode(lint + at + b * 16, drgb);
+                        bc7_decode(ext + at + b * 16, db);
+                        for (int j = 0; j < 16; ++j) {
+                            if (!bv[j]) continue;
+                            for (int k = 0; k < 3; ++k) {
+                                double d = log(1.0 + (double)drgb[j][k] * BAKE_SCALE) - log(1.0 + (double)brgb[j][k] * BAKE_SCALE);
+                                errLint += d * d;
+                            }
+                            for (int k = 0; k < 4; ++k) { double d = ((double)db[j][k] - bb[j][k]) / 255.0; errExt += d * d; }
+                            errN++;
+                        }
+                    }
+                }
+            uint8_t *blocks = depth + at;
             bc4_channel(e, nx, ny, blocks, 16);
             bc4_channel(x, nx, ny, blocks + 8, 16);
         }
     }
+    if (errN) printf("  the encoders lose: lint %.4f rms in log radiance, ext %.1f rms levels\n", sqrt(errLint / ((double)errN * 3.0)), sqrt(errExt / ((double)errN * 4.0)) * 255.0);
     char path[1200];
     bool ok = true;
     snprintf(path, sizeof(path), "%s/%s.lint.ktx2", dir, s->name);
     ok &= write_ktx2(path, &F_LINT, (uint32_t)nx, (uint32_t)ny, (uint32_t)(views * K), lint);
     snprintf(path, sizeof(path), "%s/%s.albedo.ktx2", dir, s->name);
-    ok &= write_ktx2(path, &F_ALBEDO, (uint32_t)nx, (uint32_t)ny, (uint32_t)(views * K), albedo);
+    ok &= write_ktx2(path, &F_BC7, (uint32_t)nx, (uint32_t)ny, (uint32_t)(views * K), albedo);
+    snprintf(path, sizeof(path), "%s/%s.ext.ktx2", dir, s->name);
+    ok &= write_ktx2(path, &F_BC7, (uint32_t)nx, (uint32_t)ny, (uint32_t)(views * K), ext);
     snprintf(path, sizeof(path), "%s/%s.depth.ktx2", dir, s->name);
     ok &= write_ktx2(path, &F_DEPTH, (uint32_t)nx, (uint32_t)ny, (uint32_t)(views * K), depth);
     snprintf(path, sizeof(path), "%s/%s.flags.ktx2", dir, s->name);
     ok &= write_ktx2(path, &F_FLAGS, (uint32_t)nx, (uint32_t)ny, (uint32_t)views, flags);
-    free(lint); free(depth); free(albedo); free(flags); free(e); free(x);
+    free(lint); free(depth); free(albedo); free(ext); free(flags); free(valid); free(e); free(x); free(rad); free(alb); free(bas);
 
     /* Per bay, the mean radiance through the opening in the view nearest straight on (the mid LOD). */
     int front = 0;
@@ -176,7 +217,7 @@ bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConf
     const ViewGrid *vg = &c->views;
     fprintf(f, "{\n  // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.\n");
     fprintf(f, "  \"version\": %d,\n  \"baker\": \"%s\",\n  \"module\": \"%s\",\n", BAKE_FORMAT_VERSION, BAKER_VERSION, s->name);
-    fprintf(f, "  \"type\": \"%s\",\n  \"family\": \"office\",\n  \"light_state\": \"%s\",\n", types[s->type], tc ? "im3_gi" : "im1_direct");
+    fprintf(f, "  \"type\": \"%s\",\n  \"family\": \"office\",\n  \"light_state\": \"%s\",\n", types[s->type], tc ? LIGHT_STATE_NAMES[s->state] : "im1_direct");
     if (tc)
         fprintf(f, "  \"trace\": { \"samples\": %d, \"bounces\": %d, \"clamp\": %.1f, \"seed\": %u },\n",
                 tc->spp, tc->bounces, tc->clamp, tc->seed);
@@ -201,9 +242,12 @@ bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConf
             ic->maxSteps, ic->maxTexStep, ic->refine, ic->unknownW, ic->offGridW);
     fprintf(f, "  \"grid\": { \"origin\": [%.4f, %.4f], \"texels_per_metre\": %.3f, \"size\": [%d, %d], \"wrap_x\": %s },\n",
             c->grid.x0, c->grid.y0, c->grid.tpm, nx, ny, c->grid.wrap ? "true" : "false");
-    fprintf(f, "  \"bake_scale\": %.3f,\n  \"bay_means\": {\n    \"lint\": [", BAKE_SCALE);
+    fprintf(f, "  \"bake_scale\": %.3f,\n  \"ext_max\": %.3f,\n  \"bay_means\": {\n    \"lint\": [", BAKE_SCALE, EXT_MAX);
+    char extMeans[1024];
+    int extLen = 0;
+    extMeans[0] = 0;
     for (int b = 0; b < bays; ++b) {
-        double sum[3] = { 0, 0, 0 };
+        double sum[3] = { 0, 0, 0 }, se[EXT_BASES] = { 0, 0, 0, 0 };
         int cnt = 0;
         for (int ty = 0; ty < ny; ++ty) {
             float y = c->grid.y0 + (ty + 0.5f) / c->grid.tpm;
@@ -213,18 +257,23 @@ bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConf
                 if (xx < b * bayW || xx >= (b + 1) * bayW) continue;
                 size_t texel = (size_t)front * plane + (size_t)ty * nx + tx;
                 const CapLayer *cl = &c->layers[texel * CAP_SLOTS];
-                for (int k = 0; k < 3; ++k) sum[k] += c->counts[texel] ? cl->lit[k] : s->outside[k];
+                for (int k = 0; k < 3; ++k) sum[k] += c->counts[texel] ? cl->lit[k] : 0.0f;
+                if (c->ext && c->counts[texel])
+                    for (int k = 0; k < EXT_BASES; ++k) se[k] += c->ext[texel * CAP_SLOTS * (EXT_BASES + 1) + k];
                 cnt++;
             }
         }
         if (!cnt) cnt = 1;
         fprintf(f, "%s[%.5f, %.5f, %.5f]", b ? ", " : "", sum[0] / cnt, sum[1] / cnt, sum[2] / cnt);
+        extLen += snprintf(extMeans + extLen, sizeof(extMeans) - (size_t)extLen, "%s[%.5f, %.5f, %.5f, %.5f]", b ? ", " : "",
+                           se[0] / cnt, se[1] / cnt, se[2] / cnt, se[3] / cnt);
     }
-    fprintf(f, "]\n  },\n  \"files\": { \"lint\": \"%s.lint.ktx2\", \"albedo\": \"%s.albedo.ktx2\", \"depth\": \"%s.depth.ktx2\", \"flags\": \"%s.flags.ktx2\" }\n}\n",
-            s->name, s->name, s->name, s->name);
+    fprintf(f, "],\n    \"ext\": [%s]\n  },\n", extMeans);
+    fprintf(f, "  \"files\": { \"lint\": \"%s.lint.ktx2\", \"albedo\": \"%s.albedo.ktx2\", \"ext\": \"%s.ext.ktx2\", \"depth\": \"%s.depth.ktx2\", \"flags\": \"%s.flags.ktx2\" }\n}\n",
+            s->name, s->name, s->name, s->name, s->name);
     ok &= !ferror(f);
     fclose(f);
-    printf("wrote %s/%s.{lint,albedo,depth,flags}.ktx2 and .json (%d views x %d layers, %d x %d)\n", dir, s->name, views, K, nx, ny);
+    printf("wrote %s/%s.{lint,albedo,ext,depth,flags}.ktx2 and .json (%d views x %d layers, %d x %d)\n", dir, s->name, views, K, nx, ny);
     return ok;
 }
 

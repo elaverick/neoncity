@@ -7,20 +7,21 @@
  * (src/render/interiors.c uploads them; tests/material_test.c checks every
  * file). assets/interiors/catalogue.json names the modules:
  *
- *   { "modules": ["through30", "core12", "glass20"] }
+ *   { "modules": ["through30", "core12", "glass20", "through30_late", ...] }
  *
  * and each module is assets/interiors/<name>.json, the sidecar
- * tools/interior_bake writes (format version 2), beside its four KTX2
+ * tools/interior_bake writes (format version 3), beside its five KTX2
  * files: one 2D array texture each, one level, rows bottom up.
  *
- *   lint    B10G11R11 float   view * K + layer: radiance from the module's own lights
- *   albedo  RGBA8             view * K + layer: base colour; a, the specular share of the exterior light
- *   depth   BC5               view * K + layer: entry and exit as fractions of D (entry 1: no layer)
- *   flags   R8                view: 1 where the texel is full */
+ *   lint    BC6H   view * K + layer: radiance from the module's own lights
+ *   albedo  BC7    view * K + layer: base colour; a, the specular share of the light in ext
+ *   depth   BC5    view * K + layer: entry and exit as fractions of D (entry 1: no layer)
+ *   flags   R8     view: 1 where the texel is full
+ *   ext     BC7    view * K + layer: sqrt(E / ext_max) under each unit basis: street, neon, sky, screens */
 #define INTERIOR_MAX_MODULES 8
 #define INTERIOR_MAX_BAYS    8
-#define INTERIOR_FORMAT_VERSION 2
-enum { INTERIOR_LINT, INTERIOR_ALBEDO, INTERIOR_DEPTH, INTERIOR_FLAGS, INTERIOR_CHANNELS };
+#define INTERIOR_FORMAT_VERSION 3
+enum { INTERIOR_LINT, INTERIOR_ALBEDO, INTERIOR_DEPTH, INTERIOR_FLAGS, INTERIOR_EXT, INTERIOR_CHANNELS };
 enum { INTERIOR_THROUGH, INTERIOR_CORE, INTERIOR_CORNER };   /* InteriorModule.type */
 extern const char *const INTERIOR_CHANNEL_NAMES[INTERIOR_CHANNELS];
 extern const uint32_t INTERIOR_CHANNEL_FORMATS[INTERIOR_CHANNELS];   /* VkFormat */
@@ -43,7 +44,9 @@ typedef struct InteriorModule {
     int   dim[2];
     bool  wrapX;
     float bakeScale;                 /* its radiance into the engine's units */
+    float extMax;                    /* what the ext channel's 1 means */
     float bayMean[INTERIOR_MAX_BAYS][3];
+    float bayExt[INTERIOR_MAX_BAYS][4];   /* each bay's mean under each exterior basis */
     char  files[INTERIOR_CHANNELS][1024];   /* resolved beside the sidecar */
 } InteriorModule;
 

@@ -24,8 +24,13 @@
  *   sample's index, so the samples a bake draws don't depend on how its
  *   passes are split (their sums may differ in the last bits).
  *
- * Units: radiance as the materials' emission gives it; IM4 makes them
- * photometric and calibrates them against the engine. */
+ * - The exterior (ptExterior) is what a path finds when it leaves by a glass
+ *   plane. It is a function of where and which way it left, so it is sampled
+ *   by the BSDF alone, which suits it: it fills the glass, and it is what the
+ *   polished floor mirrors in streaks. A bake traces one basis at a time.
+ *
+ * Units: 0.01 of a candela per square metre (scene.c: BAKE_NIT), or for an
+ * exterior basis and the screens, radiance under sources of radiance 1. */
 #include "brdf.glsl"
 
 #define PT_PI 3.14159265
@@ -149,6 +154,69 @@ vec3 ptSample(Bsdf b, vec3 n, vec3 V, vec3 u, out vec3 L, out float pdf) {
     return pdf > 0.0 ? f / pdf : vec3(0.0);
 }
 
+// The share of f(V, L) that is specular (the base's lobe and the coat), for what ptRadiance tallies.
+float ptSpecShare(Bsdf b, vec3 n, vec3 V, vec3 L) {
+    float ndl = dot(n, L), ndv = max(dot(n, V), 1e-4);
+    if (ndl <= 0.0) return 0.0;
+    vec3 H = normalize(V + L);
+    float ndh = max(dot(n, H), 0.0), vdh = max(dot(V, H), 0.0), s = 0.0;
+    if (b.spec) s += b.kS * brdfGgxD(ndh, b.a2) * brdfSmithVis(ndl, ndv, b.a2) * ptLum(brdfSchlick(b.f0, vdh));
+    if (b.coat > 0.0) s += b.coat * brdfGgxD(ndh, b.coatA2) * brdfSmithVis(ndl, ndv, b.coatA2) * brdfSchlick(0.04, vdh);
+    float d = ptLum(b.diff * b.kD) * (1.0 / PT_PI);
+    return s / max(s + d, 1e-6);
+}
+
+/* ---------------------------------------------------------------- the exterior --- */
+
+float ptNoise(uint a, uint b, uint c) { return float(ptHash(a ^ ptHash(b ^ ptHash(c)))) * (1.0 / 4294967296.0); }
+
+float ptBand(float x, float a, float b) { return step(a, x) * step(x, b); }
+
+/* The radiance of basis P_trace4.z seen by a ray from o along d that leaves
+ * by a glass plane. Street, neon and sky are each white, of radiance 1 at
+ * their brightest; the engine colours them per window.
+ *
+ *   street  what lies below the near glass; and on a plane 28 m beyond either
+ *           glass, the lit windows of the towers across
+ *   neon    beyond the far glass, signs on that plane, repeating along x; beyond
+ *           the near glass an even wash near the horizontal, since signs at
+ *           the 12 m repeat of a module would land there by chance or not at
+ *           all, and what the street sees is lit from that side
+ *   sky     the overcast above the horizon, faint below it
+ *
+ * The plane repeats with P_trace3.w: a bake gives the module's width, so a
+ * module's light is periodic and it tiles without a seam. */
+float ptExterior(vec3 o, vec3 d) {
+    int basis = P_trace4.z;
+    if (P_trace4.y == 0 || basis < BASIS_STREET || basis > BASIS_SKY) return 0.0;
+    if (basis == BASIS_SKY) return mix(0.12, 1.0, smoothstep(-0.03, 0.12, d.y));
+    vec3 p = o + d * pathExit(o, d);
+    float below = d.z < 0.0 ? smoothstep(-0.03, -0.3, d.y) : 0.0;
+    if (basis == BASIS_STREET && below >= 1.0) return 1.0;
+    vec3 q = p + d * (28.0 / max(abs(d.z), 0.02));
+    float P = P_trace3.w > 0.0 ? P_trace3.w : 12.0;
+    uint side = d.z < 0.0 ? 1u : 2u;
+    if (basis == BASIS_NEON) {
+        if (d.z < 0.0) return 0.15 * (1.0 - smoothstep(0.25, 0.6, abs(d.y)));
+        float n = max(round(P / 4.0), 1.0), x = mod(q.x, P) / P * n, y = q.y / 7.0;
+        vec2 c = floor(vec2(x, y)), f = vec2(x, y) - c;
+        if (abs(c.y) > 5.0) return 0.0;
+        uint ix = uint(c.x), iy = uint(c.y + 8.0);
+        if (ptNoise(side, ix, iy + 0x51u) > 0.3) return 0.0;
+        return ptBand(f.x, 0.15, 0.85) * ptBand(f.y, 0.08, 0.92);
+    }
+    // the towers across: a roofline per 8 m or so, and their lit windows
+    float nt = max(round(P / 8.0), 1.0), xt = mod(q.x, P) / P * nt;
+    float roof = 8.0 + 40.0 * ptNoise(side, uint(floor(xt)), 0x70u);
+    float win = 0.0;
+    if (q.y < roof) {
+        float nw = max(round(P / 2.8), 1.0), x = mod(q.x, P) / P * nw, y = q.y / 3.5;
+        vec2 c = floor(vec2(x, y)), f = vec2(x, y) - c;
+        if (ptNoise(side, uint(c.x), uint(c.y + 64.0) + 0x77u) < 0.4) win = ptBand(f.x, 0.2, 0.8) * ptBand(f.y, 0.25, 0.75) * 0.6;
+    }
+    return max(below, win);
+}
+
 /* ------------------------------------------------------------------ lights --- */
 
 // What a sample brings, at most cap in its brightest channel (cap 0: no limit).
@@ -192,7 +260,8 @@ float ptEmitterPdf(Emitter e, vec3 p, vec3 q, float cosL) {
 }
 
 // Next-event estimation at surface point p (normal n, offset start o) seen from V: a point on a light, MIS-weighted.
-vec3 ptNee(vec3 p, vec3 o, vec3 n, vec3 V, Bsdf b, inout uint rng) {
+vec3 ptNee(vec3 p, vec3 o, vec3 n, vec3 V, Bsdf b, inout uint rng, out vec3 toLight) {
+    toLight = n;
     int count = P_trace2.z;
     float x = ptRand(rng) * float(count);
     int i = min(int(x), count - 1);
@@ -205,6 +274,7 @@ vec3 ptNee(vec3 p, vec3 o, vec3 n, vec3 V, Bsdf b, inout uint rng) {
     float dist = length(d);
     if (dist < 1e-5) return vec3(0.0);
     vec3 l = d / dist;
+    toLight = l;
     float cosL = -dot(nq, l);
     if (cosL <= 0.0 || dot(n, l) <= 0.0) return vec3(0.0);
     float pdfB;
@@ -238,28 +308,43 @@ bool ptFollow(inout vec3 o, inout vec3 d, inout vec3 thr, inout bool delta, inou
     return false;
 }
 
+// The luminance of ptRadiance's latest result that came by a specular first bounce.
+float gPtSpec;
+
 /* The radiance leaving surface point p (normal n on V's side, material m)
- * towards V, from the lights by every path of up to P_trace.w bounces. The
- * surface's own emission is not included. */
+ * towards V, from the lights and the exterior by every path of up to P_trace.w
+ * bounces. The surface's own emission is not included. */
 vec3 ptRadiance(vec3 p, vec3 n, vec3 V, uint m, inout uint rng) {
     vec3 L = vec3(0.0), thr = vec3(1.0);
-    float cap = P_trace3.x;
+    float cap = P_trace3.x, firstSpec = 0.0;
     bool nee = P_trace3.y > 0.5 && P_trace2.z > 0;
+    gPtSpec = 0.0;
     for (int bounce = 0; bounce < 64; ++bounce) {
         if (bounce >= P_trace.w) break;
         float capNow = bounce > 0 ? cap : 0.0;   // the first bounce's light is direct: never clamped
         Bsdf b = ptBsdf(m, max(dot(n, V), 1e-4));
         vec3 o = p + n * 1e-3;
-        if (nee) L += ptClamp(thr * ptNee(p, o, n, V, b, rng), capNow);
+        if (nee) {
+            vec3 toLight;
+            vec3 add = ptClamp(thr * ptNee(p, o, n, V, b, rng, toLight), capNow);
+            L += add;
+            gPtSpec += ptLum(add) * (bounce == 0 ? ptSpecShare(b, n, V, toLight) : firstSpec);
+        }
         vec3 wi;
         float pdf;
         vec3 w = ptSample(b, n, V, vec3(ptRand(rng), ptRand(rng), ptRand(rng)), wi, pdf);
         if (pdf <= 0.0 || max(w.r, max(w.g, w.b)) <= 0.0) break;
+        if (bounce == 0) firstSpec = ptSpecShare(b, n, V, wi);
         thr *= w;
         vec3 ro = o, rd = wi;
         bool delta = false;
         Hit h;
-        if (!ptFollow(ro, rd, thr, delta, rng, h)) break;
+        if (!ptFollow(ro, rd, thr, delta, rng, h)) {
+            vec3 add = ptClamp(thr * ptExterior(ro, rd), capNow);
+            L += add;
+            gPtSpec += ptLum(add) * firstSpec;
+            break;
+        }
         uint hf = insts[h.inst].flags;
         if (!h.front && (hf & BF_OPEN) == 0u) break;   // inside a solid
         vec3 q = ro + rd * h.t;
@@ -272,7 +357,9 @@ vec3 ptRadiance(vec3 p, vec3 n, vec3 V, uint m, inout uint rng) {
                 float pl = ptEmitterPdf(emitters[first + h.prim], p, q, abs(dot(h.n, rd)));
                 wMis = pdf * pdf / (pdf * pdf + pl * pl);
             }
-            L += ptClamp(thr * Le * wMis, capNow);
+            vec3 add = ptClamp(thr * Le * wMis, capNow);
+            L += add;
+            gPtSpec += ptLum(add) * firstSpec;
         }
         if (bounce >= 2) {   // Russian roulette
             float keep = min(max(thr.r, max(thr.g, thr.b)), 0.95);
@@ -284,7 +371,20 @@ vec3 ptRadiance(vec3 p, vec3 n, vec3 V, uint m, inout uint rng) {
         V = -rd;
         m = hm;
     }
+    // a light's pdf can underflow a hair from its own surface: one such sample would black out the whole texel
+    if (any(isnan(L)) || any(isinf(L)) || isnan(gPtSpec) || isinf(gPtSpec)) { gPtSpec = 0.0; return vec3(0.0); }
     return L;
+}
+
+/* A light as the eye sees it, at most P_trace3.z in its brightest channel: the
+ * engine's own fittings are far dimmer against the surfaces they light than
+ * real ones are, and a real one would bloom (doc, section 16). The light it
+ * sheds is untouched. A screen shows mostly dark, code on black, though it lights the desk as a whole. */
+vec3 ptVisibleEmission(uint mat) {
+    vec3 Le = mats[mat].emission.rgb;
+    if (mats[mat].surface.w > 0.5) Le *= 0.3;
+    float m = max(Le.r, max(Le.g, Le.b));
+    return P_trace3.z > 0.0 && m > P_trace3.z ? Le * (P_trace3.z / m) : Le;
 }
 
 // The radiance arriving at o from direction -d: what a camera ray sees, through panes, emission and all.
@@ -292,9 +392,9 @@ vec3 ptTrace(vec3 o, vec3 d, inout uint rng) {
     vec3 thr = vec3(1.0);
     bool delta = false;
     Hit h;
-    if (!ptFollow(o, d, thr, delta, rng, h)) return vec3(0.0);
+    if (!ptFollow(o, d, thr, delta, rng, h)) return thr * ptExterior(o, d);
     if (!h.front && (insts[h.inst].flags & BF_OPEN) == 0u) return vec3(0.0);
     uint m = insts[h.inst].material;
-    vec3 Le = h.front ? mats[m].emission.rgb : vec3(0.0);
+    vec3 Le = h.front ? ptVisibleEmission(m) : vec3(0.0);
     return thr * (Le + ptRadiance(o + d * h.t, h.front ? h.n : -h.n, -d, m, rng));
 }

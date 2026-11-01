@@ -35,15 +35,17 @@ ImpViews paramViews() { ImpViews v; v.n = P_views.xy; v.kind = P_views.z; v.rang
 
 bool pathTraced() { return P_trace2.x != 0; }
 
-// This pass's mean of the radiance leaving surface point p (normal n, material m) towards -d, path traced.
-vec3 tracedSurface(vec3 p, vec3 n, vec3 d, uint m, bool front, uint texel, uint slot) {
-    vec3 sum = vec3(0.0);
+// This pass's mean of the radiance leaving surface point p (normal n, material m) towards -d, path
+// traced; a, the luminance of it that came by a specular first bounce.
+vec4 tracedSurface(vec3 p, vec3 n, vec3 d, uint m, bool front, uint texel, uint slot) {
+    vec4 sum = vec4(0.0);
     for (int i = 0; i < P_trace.y; ++i) {
         uint rng = ptSeed(texel, slot, uint(P_trace.x + i));
-        sum += ptRadiance(p, n, -d, m, rng);
+        vec3 c = ptRadiance(p, n, -d, m, rng);
+        sum += vec4(c, gPtSpec);
     }
-    vec3 Le = front ? mats[m].emission.rgb : vec3(0.0);
-    return Le * (float(P_trace.y) / float(P_trace.z)) + sum / float(P_trace.z);
+    vec3 Le = front ? ptVisibleEmission(m) : vec3(0.0);
+    return vec4(Le * (float(P_trace.y) / float(P_trace.z)), 0.0) + sum / float(P_trace.z);
 }
 
 // This pass's share of what a pane at q (normal n) reflects of the ray along d.
@@ -59,12 +61,13 @@ vec3 tracedReflection(vec3 q, vec3 n, vec3 d, uint texel, uint pane) {
 Layer shadeLayer(vec3 o, vec3 d, Hit h, bool startedInside, float glassT, vec3 glassR, float e, uint texel, int slot) {
     uint m = insts[h.inst].material;
     vec3 n = h.front ? h.n : -h.n;   // the side the ray sees
-    vec3 lit;
-    if (!pathTraced()) lit = startedInside ? mats[m].albedo.rgb * P_volume.z : shadeSurface(o + d * h.t, n, m);
-    else if (startedInside || slot >= P_trace2.y) lit = vec3(0.0);   // a slab seen from inside it: the facade covers it
+    vec4 lit;
+    if (!pathTraced()) lit = vec4(startedInside ? mats[m].albedo.rgb * P_volume.z : shadeSurface(o + d * h.t, n, m), 0.0);
+    else if (startedInside || slot >= P_trace2.y) lit = vec4(0.0);   // a slab seen from inside it: the facade covers it
     else lit = tracedSurface(o + d * h.t, n, d, m, h.front, texel, uint(slot));
     Layer l;
-    l.lit = vec4(glassR + glassT * lit, 0.0);
+    // a pane's reflection is specular, whatever it reflects
+    l.lit = vec4(glassR + glassT * lit.rgb, ptLum(glassR) + glassT * lit.a);
     l.depth = vec2(e, 1.0);
     l.albedo = packAlbedo(mats[m].albedo.rgb);
     l.normal = packNormal(n);

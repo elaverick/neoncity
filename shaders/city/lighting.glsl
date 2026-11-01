@@ -235,13 +235,12 @@ void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, in
     }
 }
 
+// The sea of signs here: its colour across the city, and how thick they are (0..1).
+vec3 neonHue(vec3 w) { return mix(vec3(1.0, 0.1, 0.5), vec3(0.1, 0.8, 1.0), smoothstep(0.3, 0.7, vnoise(w.xz / 23.0, 0xB0B0u))); }
+float neonDensity(vec3 w) { return smoothstep(0.35, 0.8, vnoise(w.xz / 17.0 + 7.3, 0xB0B1u)); }
+
 // Soft coloured light from the sea of signs, strongest near street level.
-vec3 neonBounce(vec3 w, float h) {
-    float m = vnoise(w.xz / 23.0, 0xB0B0u);
-    float k = vnoise(w.xz / 17.0 + 7.3, 0xB0B1u);
-    vec3 c = mix(vec3(1.0, 0.1, 0.5), vec3(0.1, 0.8, 1.0), smoothstep(0.3, 0.7, m));
-    return c * smoothstep(0.35, 0.8, k) * exp(-h / 14.0) * 0.035;
-}
+vec3 neonBounce(vec3 w, float h) { return neonHue(w) * neonDensity(w) * exp(-h / 14.0) * 0.035; }
 
 /* Pane sheen: a soft, blurred reflection that gives glass its presence where
  * screen-space reflections can't reach (glass seen near head-on reflects the

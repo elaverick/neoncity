@@ -1,11 +1,11 @@
 {
   // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.
-  "version": 2,
-  "baker": "im3-gi-1",
+  "version": 3,
+  "baker": "im4-light-1",
   "module": "through30",
   "type": "through",
   "family": "office",
-  "light_state": "im3_gi",
+  "light_state": "after_hours",
   "trace": { "samples": 16384, "bounces": 8, "clamp": 16.0, "seed": 1 },
   "size": [12.000, 4.000, 30.000],        // W, H, D in metres
   "ceiling": 3.400,                     // the slab's underside above the floor (y = 0)
@@ -19,9 +19,11 @@
   // how the facade marches it (impMarch, IM1's choice)
   "march": { "max_steps": 64, "texels_a_step": 1.0, "bisections": 6, "guess_weight": 0.15, "off_grid_weight": 0.10 },
   "grid": { "origin": [0.0000, -1.0000], "texels_per_metre": 16.000, "size": [192, 86], "wrap_x": true },
-  "bake_scale": 5.000,
+  "bake_scale": 0.375,
+  "ext_max": 2.000,
   "bay_means": {
-    "lint": [[0.04241, 0.04016, 0.06225], [0.04007, 0.04315, 0.06883], [0.05488, 0.04726, 0.06489], [0.03435, 0.03336, 0.05594]]
+    "lint": [[0.00924, 0.00621, 0.00369], [0.00490, 0.00331, 0.00198], [0.00549, 0.00372, 0.00223], [0.00613, 0.00407, 0.00239]],
+    "ext": [[0.00835, 0.00294, 0.01061, 0.00980], [0.00839, 0.00303, 0.01102, 0.00969], [0.00838, 0.00293, 0.01073, 0.00121], [0.00840, 0.00300, 0.01109, 0.00334]]
   },
-  "files": { "lint": "through30.lint.ktx2", "albedo": "through30.albedo.ktx2", "depth": "through30.depth.ktx2", "flags": "through30.flags.ktx2" }
+  "files": { "lint": "through30.lint.ktx2", "albedo": "through30.albedo.ktx2", "ext": "through30.ext.ktx2", "depth": "through30.depth.ktx2", "flags": "through30.flags.ktx2" }
 }

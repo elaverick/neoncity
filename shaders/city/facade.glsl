@@ -253,10 +253,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
              ? impostorModule(seed, section, int(floorIdx), faceDir, impMirror) : -1;
     vec2 impS = impM >= 0 ? impostorStretch(impM, bayW, floorH) : vec2(1.0);
     if (impM >= 0) {
-        float xm = (bayIdx + 0.5) * bayW * impS.x;
-        vec3 mean = impostorBayMean(impM, impMirror ? -xm : xm);
         room.lit = true; room.tv = false; room.person = false; room.curtain = 0.0;
-        room.light = mean / 0.42; room.bright = 1.0;   // so roomAvg below is the bay's mean
         if (hf(roomHash, 54u) < 0.6) room.blinds = 0.0;
     }
 
@@ -267,6 +264,13 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 wdiff = wallLighting(p, n, V, wallShin, wallSpecK, vAbs, wspec);
     // a dark room has only what reaches its window: the lamps, neon and city glow on the facade, through the glass
     gWinE = (wdiff + mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) * 0.45) * glassT;   // the window's view: overcast and facades across
+    if (impM >= 0) {
+        // the module relit for this window (impostors.glsl), and its bay's mean under that light
+        vec3 lamps = max(wdiff - ambientLight(n, vAbs) - neonBounce(gWorld, vAbs) * 1.5, vec3(0.0));
+        impostorLight(lamps, glassT, vAbs, floorH_);
+        float xm = (bayIdx + 0.5) * bayW * impS.x;
+        room.light = impostorBayMean(impM, impMirror ? -xm : xm) / 0.42; room.bright = 1.0;   // so roomAvg below is the bay's mean
+    }
     float streak = vnoise(vec2(u * 1.3, vAbs * 0.04), seed & 0xFFFFu);
     float grime = mix(0.65, 1.15, streak) * mix(0.8, 1.0, smoothstep(0.0, 25.0, vAbs));
     vec3 wallC = wallAlb * grime;

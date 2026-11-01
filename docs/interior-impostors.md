@@ -1,6 +1,6 @@
 # Baked Interior Impostors for Deep Office Floors
 
-**Status:** design (IM0), with the representation fixed by the IM1 spike (section 13), and drawn in the engine since IM2 (section 14). The milestones are summarised in section 12.
+**Status:** design (IM0), with the representation fixed by the IM1 spike (section 13), drawn in the engine since IM2 (section 14), path traced since IM3 (section 15) and relit since IM4 (section 16). The milestones are summarised in section 12.
 
 ## 1. Purpose
 
@@ -87,7 +87,7 @@ The baked light is split so that a module can be relit by the place it lands in.
 | `depth` | BC5 (RG) | Entry and exit depth as fractions of D (IM1: BC5 costs 0.3 dB against RG16 and saves 43% of the memory) |
 | `flags` | R8, a layer per view | 1 where the texel is full (section 5). A byte per texel and view leaves room for IM9's screen mask |
 
-**Until IM3 and IM4** (section 14), `lint` is B10G11R11 float and `albedo` RGBA8, both uncompressed: their contents change in those milestones, and a block encoder for BC6H and BC7 comes with the final ones. The depth is real BC5 already (`bc4_channel` in `tools/interior_bake/pack.c`, the encoder IM1's lab simulated).
+All four are real block formats since IM4 (section 16). The encoders are the baker's own: `bc4_channel` in `tools/interior_bake/pack.c` for the depth, and `tools/interior_bake/bc.c` for BC6H and BC7. `ext` holds sqrt(E / `ext_max`), which keeps its precision in the dark.
 
 **The exterior bases.**
 
@@ -100,19 +100,19 @@ The baked light is split so that a module can be relit by the place it lands in.
 
 ```
 tint = mix(albedo / max(lum(albedo), eps), vec3(1), albedo.a)
-L    = lint * bakeScale + tint * (c_street * E.r + c_neon * E.g + c_sky * E.b + c_screen * E.a) * bakeScale
+L    = lint * bakeScale + tint * (c_street * E.r + c_neon * E.g + c_sky * E.b + c_screen * E.a)
 ```
 
 **Where the coefficients come from.** Each c is an RGB colour the engine computes at the window:
 
-- `c_street`: the lamps and shopfronts below, from the chunk's light tiles (`cityLights` evaluated at the sill, facing out).
-- `c_neon`: the facade's neon and shop colour and `neonBounce` at the window.
-- `c_sky`: the cloud-deck part of `gWinE` (`facade.glsl`).
+- `c_street`: the lamps and shopfronts on this facade, from the chunk's light tiles, and the lit towers across.
+- `c_neon`: the city's neon colour and density at the window (`neonHue`, `neonDensity`).
+- `c_sky`: the overcast, from the cloud-deck part of `gWinE` (`facade.glsl`).
 - `c_screen`: a per-floor screen colour, animated by time.
 
-IM4 fixes the exact evaluation.
+The bases are baked under sources of radiance 1, so each c is already in the engine's units and only `lint` takes `bakeScale`. `impostorLight` in `shaders/city/impostors.glsl` is the exact evaluation (section 16).
 
-**Exposure.** The baker works in physical units: lights in lumens, colour temperature in kelvin through the same curve as `kelvin()` in `rooms.glsl`. Each module records one `bakeScale` that maps its radiance into the engine's lighting units. IM4 calibrates it so that a reference troffer baked and seen in the engine matches the lobby's analytic panels (`interior_lights.c`, `shaders/city/lobby.glsl`) to within 10%.
+**Exposure.** The baker works in physical units: lights in lumens, colour temperature in kelvin through the same curve as `kelvin()` in `rooms.glsl`. Each module records one `bakeScale` that maps its radiance into the engine's lighting units, calibrated against the lobby's analytic panels (section 16).
 
 ## 7. Run time
 
@@ -196,10 +196,11 @@ The baker is `tools/interior_bake/`, an in-house path tracer in C11 and Vulkan c
   - `--scene <name> --out <dir>`: bakes one of the test modules to `<dir>`, with IM1's choices as defaults (`--views`, `--grid`, `--res`, `--margin` and `--layers` override them). It is path traced (`--spp`, `--bounces`, `--clamp`, `--seed`), or lit by IM1's direct light with `--direct`. `--preview <png>` writes the nearest layer of the straight-on view and of a view 25° up.
   - `--lab <dir>`: the representation sweep (section 13), under IM1's direct light. With `IMP_SELFTEST` set, it checks the pipeline instead.
   - `--test <dir>`: the path tracer's tests (ctest `bake_test`); `--write-ref` renders their reference.
-- `--module <name>`: bakes one module from the catalogue.
-- `--catalogue`: bakes whatever changed, by input hash.
-- `--beauty <camera>`: a perspective still from inside a module, for look-dev against the reference.
-- `--check`: validates the catalogue's files.
+  - `--beauty x,y,z,yaw,pitch[,fov] --image <png>`: a perspective still from inside a module, for look-dev against the reference (section 16).
+- Still to come:
+  - `--module <name>`: bakes one module from the catalogue.
+  - `--catalogue`: bakes whatever changed, by input hash.
+  - `--check`: validates the catalogue's files.
 
 A full catalogue is meant to bake overnight.
 
@@ -242,7 +243,7 @@ The working plan is kept outside the repo. In summary:
 | IM1 | Baker skeleton (headless Vulkan, multi-hit capture under simple light) and the representation spike: views × layers × resolution, layered depth against MPI, measured against true renders. Done: section 13 |
 | IM2 | First light in the engine: loading, the facade trace, a debug selection of floors, cost measured. Done: section 14 |
 | IM3 | The path tracer: materials, emitters, NEE and MIS, glass, clearcoat; furnace and Cornell tests. Done: section 15 |
-| IM4 | Light: the interior kit, the exterior bases and their colouring in the engine, exposure calibration, a beauty render against the reference |
+| IM4 | Light: the interior kit, the exterior bases and their colouring in the engine, exposure calibration, a beauty render against the reference. Section 16 |
 | IM5 | The office floor generator and its validation |
 | IM6 | The high-poly furniture (whenever it arrives) |
 | IM7 | The city: floor selection, tiling, plate and core depths in the vertex data, corners, LOD, memory |
@@ -439,3 +440,66 @@ The city pass costs the same as with IM2's bakes (1.61 ms against 1.60 at `--cam
 - **Exterior light:** the bases (street, neon, sky, screens) are still to come (IM4). Light from outside doesn't reach the floors yet.
 - **Compression:** `lint` and `albedo` are still uncompressed (BC6H and BC7 with IM4).
 - **Colour:** the test floors are dark and nearly grey, so the colour bleeding is faint: warm from the lamps and desks, blue from the screens, red near the pipes and the rug. The generator's and the furniture's materials (IM5, IM6) will show more.
+
+## 16. IM4: light
+
+IM4 made the modules' light photometric, split it into the bases the engine colours, calibrated it against the lobby, and compressed the colour channels.
+
+**What was built:**
+
+- **The kit is photometric** (`scene.c`). A light is lumens over the area that emits, at a colour temperature, through the same curve as `kelvin()`. A bake's radiance is 0.01 of a candela per square metre.
+
+  | fitting | lumens | kelvin |
+  |---|---|---|
+  | hung panel, 0.6 x 1.2 m | 3000 | 4000 |
+  | linear pendant, 1.56 m | 3200, and 40% more upwards | 2700 |
+  | task lamp | 600 | 2700 |
+  | orb lamp (a real globe, on a black plinth) | 1400 | 2700 |
+  | strip under a desk's back edge, 1.4 m | 300 | 3000 |
+  | cove strip | 300 a metre | 3000 |
+
+  Monitors emit radiance 1 in the screens basis.
+- **Four light states** (`--state`, a module named `through30_late` and so on):
+  - `after_hours`: half the pendants, most task lamps, some strips, screens, the orb lamp
+  - `late_shift`: everything on in one circle of floor, a few stragglers elsewhere
+  - `cleaners`: all the hung panels, and nothing else but the odd screen
+  - `screens`: only monitors
+- **The bases.** A bake traces five times, one light at a time: the module's own lights into `lint`, and street, neon, sky and screens into `ext`. Each pass keeps the same geometry and turns off the other emitters (`gpu_set_basis`). `albedo.a` is the share of `ext`'s light that came by a specular first bounce (`ptSpecShare`), or from a pane's reflection.
+- **The exterior is a function, not geometry** (`ptExterior`). A path that leaves by a glass plane reads it from where and which way it left, so it is sampled by the BSDF alone. It fills the glass, so that costs little.
+  - Street: what lies below the near glass, and the lit windows of towers on a plane 28 m beyond either glass.
+  - Neon: beyond the far glass, signs on that plane. Beyond the near glass, an even wash near the horizontal. Signs there at a module's 12 m repeat landed by chance: the first bake had almost none, and the channel read 200 times weaker than the others.
+  - Sky: the overcast above the horizon, faint below it.
+- **The engine relights** (`impFetchColor`, `impostorLight`). The bay means gain an `ext` entry, so the mid LOD is relit too. The sidecar is format version 3.
+- **Compression** (`bc.c`). BC6H's mode 11 and BC7's mode 6 fitted to the block's principal axis, ignoring texels no march reads. The bake reports what they lose, on a sample of blocks: 0.2-0.3% rms in radiance, about 1 level in 255 in `ext`. A module is now 11 MB on disk (23 MB before, without `ext`) and 15 MB on the GPU, so six modules take 91 MB.
+- **A guard against NaN** in `ptRadiance`. A light's pdf can underflow a hair from its own surface, and one such sample blacked out a whole texel in `core12`.
+
+**Exposure.** `bake_test` builds a room of 1.2 m panels on the lobby's 3.6 m grid, 4.2 m up, with the office panels' output per square metre, and reads a sheet of albedo 0.5 at a table's height. The lobby's analytic light on it is 0.5 x 0.55 x `lobbyLight` (luminance 0.2736). The bake reads 0.7324, so **`bake_scale` is 0.375**, which the test holds within 10% (it reads 0.2747). This compares the bake with the shader's formula: it is not a reading of pixels in a captured frame.
+
+The same scale would make a real fitting look about 100 times brighter than the surfaces it lights, where the engine's lobby panels show about 4 (`ceilingFixture`). So what the eye sees of a light is capped at 4 in the engine's units (`BAKE_VISIBLE_CAP`), and a screen shows at 30% of the light it sheds, being mostly dark. The light they shed is untouched.
+
+**Cost** (`--shot`, the city pass's 64-frame mean, RTX 4080 SUPER, 1600 x 900 with 4x MSAA, `--cam 1139.3 262 1.7 0 20`):
+
+| | city pass |
+|---|---|
+| impostors off | 0.92 ms |
+| share 0.4 | 1.34 ms (+0.42) |
+| every eligible floor | 1.76-1.81 ms (+0.84 to +0.89; IM2's was +0.61) |
+
+Three more texture reads a hit take it to +0.42 ms at a share of 0.4, still inside section 8's 0.5 ms. The share is the margin: IM7 should not go above about 0.45 without another saving.
+
+A bake of the three layouts takes 2 to 6 minutes a module (5 passes, 16384 samples for `lint` and 8192 for each basis), six modules 16 minutes.
+
+**What it showed** (`docs/reference/im4/`):
+
+- **`beauty_glass20.jpg`, `beauty_through30.jpg`:** the reference above, a still below (`--beauty 3.5,1.5,0.6,8,-3,62` and `4,1.45,3,5,-4,62`). Dark amber, pendants and lamps pooling on the polished floor, the ceiling lit from below and by the street, the signs and lit windows through the far glass.
+- **`neon_off_on.jpg`:** one facade, with the near-side neon nearly absent (above) and with it (below). The ceilings and ducts take the colour of the neon at this spot, teal here; the desks and pendants are unchanged.
+- **`street.jpg`, `level.jpg`:** every eligible floor drawn as an impostor, floors in different light states side by side.
+
+**What remains:**
+
+- **The look against the reference.** The floor's mirrored neon streaks are much fainter than the reference's, which are its main feature. Screens are flat colour with no code on them (IM9). The sofa takes too much of the near wash. The skyline through the glass exists only in the still; the engine draws `throughView`.
+- **Floors read dark from the street**, as the look asks. Whether that holds at 30-50% of a tower is IM7's to judge.
+- **The materials** are still set in code, and the test floors are the only layouts (IM5, IM6).
+- **Mips:** still none, since the march reads texels.
+
+**To rerun:** `interior_bake --scene <name> [--state <state>] --out assets/interiors` for a module, `--beauty` for a still (it writes each pass as `.pfm` beside the PNG). `ctest -R bake_test` runs the calibration and the encoders' tests with the rest.

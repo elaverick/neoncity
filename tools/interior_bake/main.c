@@ -5,11 +5,14 @@
  *
  *   interior_bake --scene <name> --out <dir> [--views NxM] [--grid slope|azel|hemioct]
  *                 [--res texels/m] [--margin m] [--layers K] [--last]
- *                 [--spp n] [--bounces n] [--clamp c] [--seed n] [--direct] [--preview png]
+ *                 [--state after_hours|late_shift|cleaners|screens]
+ *                 [--spp n] [--ext-spp n] [--bounces n] [--clamp c] [--seed n] [--direct] [--preview png]
  *       bakes one test module (scene.c) to <dir>/<name>.*.ktx2 and .json, path traced
- *       (pathtrace.glsl: 16384 samples, 8 bounces, a clamp of 16), or with IM1's direct
- *       light (--direct); --preview writes the nearest layer of the straight-on view, and
- *       of the view 25 degrees up as <png>_up
+ *       (pathtrace.glsl: 16384 samples for its own lights, 8192 for each other light basis,
+ *       8 bounces, a clamp of 16), or with IM1's direct light (--direct); --preview writes the
+ *       nearest layer of the straight-on view, and of the view 25 degrees up as <png>_up
+ *   interior_bake --scene <name> --beauty x,y,z,yaw,pitch[,fov] --image out.png [--size WxH] [--state s] [--spp n]
+ *       a perspective still from inside the module (beauty.c)
  *   interior_bake --lab <dir> [--quick]
  *       the representation sweep (lab.c): error and cost of each way of baking, sheets and tables in <dir>
  *   interior_bake --test <dir> [--write-ref]
@@ -27,15 +30,16 @@
 
 static void usage(void) {
     fprintf(stderr, "usage: interior_bake --scene <name> --out <dir> [--views NxM] [--grid slope|azel|hemioct] [--res t] [--margin m]\n"
-                    "                     [--layers K] [--last] [--spp n] [--bounces n] [--clamp c] [--seed n] [--direct]\n"
+                    "                     [--layers K] [--last] [--state s] [--spp n] [--ext-spp n] [--bounces n] [--clamp c] [--seed n] [--direct]\n"
                     "                     [--preview png] [--assets dir] [--validation]\n"
+                    "       interior_bake --scene <name> --beauty x,y,z,yaw,pitch[,fov] --image png [--size WxH] [--state s] [--spp n]\n"
                     "       interior_bake --lab <dir> [--quick] [--assets dir] [--validation]\n"
                     "       interior_bake --test <dir> [--write-ref] [--validation]\n"
                     "       interior_bake --list\n");
 }
 
 int main(int argc, char **argv) {
-    const char *scene = NULL, *out = NULL, *lab = NULL, *test = NULL, *preview = NULL, *assets = NEONCITY_ASSETS;
+    const char *scene = NULL, *out = NULL, *lab = NULL, *test = NULL, *preview = NULL, *assets = NEONCITY_ASSETS, *beauty = NULL, *image = NULL;
     bool validation = false, quick = false, writeRef = false, direct = false;
     /* the defaults IM1 chose (docs/interior-impostors.md, section 13) */
     ViewGrid v = { 5, 10, GRID_SLOPE, 60.0f, -30.0f, 70.0f, 0.8f, 0.12f };
@@ -44,6 +48,8 @@ int main(int argc, char **argv) {
     ic.K = 3; ic.lastSlot = 0;
     ic.maxSteps = 64; ic.maxTexStep = 1.0f; ic.refine = 6; ic.unknownW = 0.15f; ic.offGridW = 0.1f;
     TraceConfig tc = trace_defaults(ic.K);
+    tc.visibleCap = BAKE_VISIBLE_CAP;
+    int extSpp = 8192, state = LIGHTS_AFTER_HOURS, imgW = 1280, imgH = 534;
     for (int i = 1; i < argc; ++i) {
         const char *a = argv[i], *next = i + 1 < argc ? argv[i + 1] : NULL;
         if (!strcmp(a, "--scene") && next) scene = argv[++i];
@@ -54,6 +60,16 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--preview") && next) preview = argv[++i];
         else if (!strcmp(a, "--direct")) direct = true;
         else if (!strcmp(a, "--spp") && next) tc.spp = atoi(argv[++i]);
+        else if (!strcmp(a, "--ext-spp") && next) extSpp = atoi(argv[++i]);
+        else if (!strcmp(a, "--beauty") && next) beauty = argv[++i];
+        else if (!strcmp(a, "--image") && next) image = argv[++i];
+        else if (!strcmp(a, "--size") && next) {
+            if (sscanf(argv[++i], "%dx%d", &imgW, &imgH) != 2 || imgW < 1 || imgH < 1) { usage(); return 2; }
+        } else if (!strcmp(a, "--state") && next) {
+            const char *n = argv[++i];
+            for (state = 0; state < LIGHTS_COUNT && strcmp(n, LIGHT_STATE_NAMES[state]); ++state) {}
+            if (state == LIGHTS_COUNT) { usage(); return 2; }
+        }
         else if (!strcmp(a, "--bounces") && next) tc.bounces = atoi(argv[++i]);
         else if (!strcmp(a, "--clamp") && next) tc.clamp = (float)atof(argv[++i]);
         else if (!strcmp(a, "--seed") && next) tc.seed = (uint32_t)strtoul(argv[++i], NULL, 10);
@@ -87,15 +103,22 @@ int main(int argc, char **argv) {
         gpu_destroy(g);
         return r;
     }
-    if (!scene || !out) { usage(); return 2; }
+    if (!scene || (!out && !beauty) || (beauty && !image) || extSpp < 1) { usage(); return 2; }
     Scene s;
-    if (!scene_build(&s, scene, assets)) return 1;
+    if (!scene_build(&s, scene, state, assets)) return 1;
     Gpu *g = gpu_create(validation);
     gpu_load_scene(g, &s);
+    if (beauty) {
+        bool done = beauty_render(g, &s, &tc, beauty, imgW, imgH, image);
+        gpu_destroy(g);
+        scene_free(&s);
+        return done ? 0 : 1;
+    }
     gpu_set_trace(g, direct ? NULL : &tc);
     TexGrid t = tex_grid(&s, tpm, margin);
     Capture c;
-    gpu_capture(g, &s, &v, &t, &c);
+    if (direct) gpu_capture(g, &s, &v, &t, &c);
+    else gpu_capture_bases(g, &s, &v, &t, extSpp, &c);
     bool ok = bake_write(out, &s, &c, &ic, direct ? NULL : &tc);
     if (ok && preview) {   /* straight on, and as the street sees it, 25 degrees up */
         char up[1200];
@@ -105,6 +128,7 @@ int main(int argc, char **argv) {
     }
     free(c.layers);
     free(c.counts);
+    free(c.ext);
     gpu_destroy(g);
     scene_free(&s);
     return ok ? 0 : 1;

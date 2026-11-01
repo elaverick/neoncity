@@ -37,12 +37,26 @@ layout(set = 0, binding = 10, std140) uniform Params {
     vec4  P_glass;      // partition glass: R0, transmittance, radiance it reflects; rays a pixel across (truth, recon)
     ivec4 P_march;      // max steps, bisection steps, MPI slices, -
     vec4  P_march2;     // max texels a step, the weight of a view that looked off its grid, nearest-hit sigma (m; 0 off), both ends
-    ivec4 P_flags;      // the hit's colour filtered (impHitColor), -, -, -
+    ivec4 P_flags;      // the hit's colour filtered (impHitColor), a perspective camera (truth.comp: the beauty render), -, -
     ivec4 P_trace;      // the path tracer: this pass's first sample, its samples, the samples in all, most bounces
     ivec4 P_trace2;     // light (0: IM1's direct, 1: path traced), layers path traced (capture), emitters, seed
-    vec4  P_trace3;     // the most an indirect sample may bring (0: no clamp), next-event estimation (1) or BSDF sampling alone (0), -, -
-    ivec4 P_trace4;     // the first view of this pass (capture), whether paths leave by the glass planes (0: a sealed test box), -, -
+    vec4  P_trace3;     // the most an indirect sample may bring (0: no clamp), next-event estimation (1) or BSDF sampling alone (0),
+                        // the brightest a light may look to the eye (0: as it shines), the exterior's period along x (m)
+    ivec4 P_trace4;     // the first view of this pass (capture), whether paths leave by the glass planes (0: a sealed test box),
+                        // the light basis this pass bakes (BASIS_*), -
+    vec4  P_camRight;   // the perspective camera's axes; right and up are scaled by the half-size of the view at 1 m
+    vec4  P_camUp;
+    vec4  P_camFwd;
 };
+
+/* The light bases (bake.h: BASIS_*): a bake traces each alone, so the engine can colour the exterior
+ * ones and the screens by where the module lands. BASIS_ALL: every emitter and no exterior (the tests). */
+#define BASIS_INTERIOR 0
+#define BASIS_STREET   1
+#define BASIS_NEON     2
+#define BASIS_SKY      3
+#define BASIS_SCREENS  4
+#define BASIS_ALL      5
 
 /* Instance flags (bake.h: BF_*) and masks (gpu.c). */
 #define BF_GLASS   1u

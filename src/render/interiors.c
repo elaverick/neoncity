@@ -84,7 +84,11 @@ static void fill_gpu(InteriorGPU *g, const InteriorModule *m) {
     g->march[0] = (float)m->maxSteps; g->march[1] = m->texStep; g->march[2] = (float)m->bisections; g->march[3] = m->guessWeight;
     g->bays[0] = (float)m->bays; g->bays[1] = m->bayWidth; g->bays[2] = m->bakeScale; g->bays[3] = m->offGridWeight;
     for (int b = 0; b < m->bays; ++b)
-        for (int k = 0; k < 3; ++k) g->bayMean[b][k] = m->bayMean[b][k];
+        for (int k = 0; k < 4; ++k) {
+            if (k < 3) g->bayMean[b][k] = m->bayMean[b][k];
+            g->bayExt[b][k] = m->bayExt[b][k];
+        }
+    g->bayMean[0][3] = m->extMax;
 }
 
 Interiors *interiors_create(VkCore *vk) {

@@ -342,6 +342,7 @@ endif()
 # grows its plants with the lobby's generator. bake_test checks the path tracer on the GPU.
 add_executable(interior_bake tools/interior_bake/main.c tools/interior_bake/scene.c tools/interior_bake/gpu.c
                tools/interior_bake/pack.c tools/interior_bake/ktx2.c tools/interior_bake/lab.c tools/interior_bake/test.c
+               tools/interior_bake/bc.c tools/interior_bake/beauty.c
                src/render/vkcore.c src/city/models.c src/core/assets.c ${MATERIAL_SOURCES}
                src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c)
 add_dependencies(interior_bake shaders)

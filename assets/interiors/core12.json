@@ -1,11 +1,11 @@
 {
   // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.
-  "version": 2,
-  "baker": "im3-gi-1",
+  "version": 3,
+  "baker": "im4-light-1",
   "module": "core12",
   "type": "core",
   "family": "office",
-  "light_state": "im3_gi",
+  "light_state": "after_hours",
   "trace": { "samples": 16384, "bounces": 8, "clamp": 16.0, "seed": 1 },
   "size": [12.000, 4.000, 12.500],        // W, H, D in metres
   "ceiling": 3.400,                     // the slab's underside above the floor (y = 0)
@@ -19,9 +19,11 @@
   // how the facade marches it (impMarch, IM1's choice)
   "march": { "max_steps": 64, "texels_a_step": 1.0, "bisections": 6, "guess_weight": 0.15, "off_grid_weight": 0.10 },
   "grid": { "origin": [0.0000, -1.0000], "texels_per_metre": 16.000, "size": [192, 86], "wrap_x": true },
-  "bake_scale": 5.000,
+  "bake_scale": 0.375,
+  "ext_max": 2.000,
   "bay_means": {
-    "lint": [[0.04278, 0.03783, 0.03155], [0.04391, 0.04373, 0.04056], [0.05301, 0.04279, 0.03188], [0.03368, 0.02924, 0.02315]]
+    "lint": [[0.04653, 0.02816, 0.01469], [0.03977, 0.02378, 0.01227], [0.03431, 0.02048, 0.01052], [0.03485, 0.02105, 0.01091]],
+    "ext": [[0.00761, 0.00349, 0.01215, 0.01166], [0.00765, 0.00359, 0.01272, 0.01135], [0.00769, 0.00344, 0.01228, 0.00277], [0.00771, 0.00357, 0.01294, 0.00387]]
   },
-  "files": { "lint": "core12.lint.ktx2", "albedo": "core12.albedo.ktx2", "depth": "core12.depth.ktx2", "flags": "core12.flags.ktx2" }
+  "files": { "lint": "core12.lint.ktx2", "albedo": "core12.albedo.ktx2", "ext": "core12.ext.ktx2", "depth": "core12.depth.ktx2", "flags": "core12.flags.ktx2" }
 }

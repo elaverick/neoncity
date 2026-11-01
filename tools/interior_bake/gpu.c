@@ -34,11 +34,12 @@ typedef struct BakeParams {
     int32_t trace[4], trace2[4];
     float   trace3[4];
     int32_t trace4[4];
+    float   camRight[4], camUp[4], camFwd[4];
 } BakeParams;
 
 /* pathtrace.glsl: Emitter */
 typedef struct GpuEmitter { float p0[4], e1[4], e2[4]; uint32_t info[4]; } GpuEmitter;
-static int build_emitters(const Scene *s, uint32_t *inst, GpuEmitter **out);
+static int build_emitters(const Scene *s, const BakeMat *mats, uint32_t *inst, GpuEmitter **out);
 
 enum { PIPE_CAPTURE, PIPE_CAPTURE_MPI, PIPE_TRUTH, PIPE_RECON, PIPE_COUNT };
 enum { MASK_CASTER = 1, MASK_GLASS = 2, MASK_EMITTER = 4 };   /* bake_scene.glsl: shadows trace MASK_CASTER */
@@ -65,6 +66,9 @@ struct Gpu {
     int nemitters;
     TraceConfig trace;
     bool traced;
+    int basis;
+    bool perspective;
+    float camAxes[3][3];   /* forward, right, up */
     Buffer *blasBuf;
     VkAccelerationStructureKHR *blas;
     int nblas;
@@ -276,16 +280,21 @@ static VkDeviceAddress as_address(Gpu *g, VkAccelerationStructureKHR as) {
     return vkGetAccelerationStructureDeviceAddressKHR(g->vk.device, &ai);
 }
 
-void gpu_load_scene(Gpu *g, const Scene *s) {
-    free_scene(g);
-    upload(g, &g->verts, STORE | GEOM, s->verts, sizeof(float) * 3 * s->nverts);
-    upload(g, &g->idx, STORE | GEOM, s->idx, sizeof(uint32_t) * s->nidx);
-    upload(g, &g->mats, STORE, s->mats, sizeof(BakeMat) * (size_t)s->nmats);
-    upload(g, &g->lights, STORE, s->lights, sizeof(BakeLight) * (size_t)s->nlights);
+/* The materials as this basis sees them (emitters not of it are dark), and its emitters. The
+ * acceleration structures don't change: a dark emitter still blocks light. */
+void gpu_set_basis(Gpu *g, const Scene *s, int basis) {
+    g->basis = basis;
+    BakeMat *mats = malloc(sizeof(BakeMat) * (size_t)(s->nmats ? s->nmats : 1));
     uint32_t *inst = malloc(sizeof(uint32_t) * 8 * (size_t)s->ninsts);
-    if (!inst) fatal("out of memory");
+    if (!mats || !inst) fatal("out of memory");
+    for (int i = 0; i < s->nmats; ++i) {
+        mats[i] = s->mats[i];
+        int group = (int)mats[i].surface[3];
+        bool lit = basis == BASIS_ALL || (basis == BASIS_INTERIOR && group == GROUP_INTERIOR) || (basis == BASIS_SCREENS && group == GROUP_SCREEN);
+        if (!lit) mats[i].emission[0] = mats[i].emission[1] = mats[i].emission[2] = 0.0f;
+    }
     GpuEmitter *em = NULL;
-    int nem = build_emitters(s, inst, &em);
+    int nem = build_emitters(s, mats, inst, &em);
     for (int i = 0; i < s->ninsts; ++i) {
         const BakeMesh *m = &s->meshes[s->insts[i].mesh];
         inst[i * 8 + 0] = m->firstIndex;
@@ -294,11 +303,29 @@ void gpu_load_scene(Gpu *g, const Scene *s) {
         inst[i * 8 + 3] = s->insts[i].flags;
         inst[i * 8 + 5] = inst[i * 8 + 6] = inst[i * 8 + 7] = 0;
     }
+    upload(g, &g->mats, STORE, mats, sizeof(BakeMat) * (size_t)s->nmats);
     upload(g, &g->insts, STORE, inst, sizeof(uint32_t) * 8 * (size_t)s->ninsts);
     upload(g, &g->emitters, STORE, em, sizeof(GpuEmitter) * (size_t)(nem ? nem : 1));
     g->nemitters = nem;
+    free(mats);
     free(inst);
     free(em);
+}
+
+void gpu_set_perspective(Gpu *g, const float *fwd, const float *right, const float *up) {
+    g->perspective = fwd != NULL;
+    if (!fwd) return;
+    memcpy(g->camAxes[0], fwd, sizeof(float) * 3);
+    memcpy(g->camAxes[1], right, sizeof(float) * 3);
+    memcpy(g->camAxes[2], up, sizeof(float) * 3);
+}
+
+void gpu_load_scene(Gpu *g, const Scene *s) {
+    free_scene(g);
+    upload(g, &g->verts, STORE | GEOM, s->verts, sizeof(float) * 3 * s->nverts);
+    upload(g, &g->idx, STORE | GEOM, s->idx, sizeof(uint32_t) * s->nidx);
+    upload(g, &g->lights, STORE, s->lights, sizeof(BakeLight) * (size_t)s->nlights);
+    gpu_set_basis(g, s, BASIS_ALL);
 
     /* a BLAS per mesh */
     g->nblas = s->nmeshes;
@@ -370,10 +397,10 @@ void gpu_load_scene(Gpu *g, const Scene *s) {
  * as they stand (the shader finds a periodic module's copies), and the alias table that chooses
  * one by its power (Vose's method). Sets each instance's first emitter (inst[i * 8 + 4]; its
  * triangles' follow in order), or ~0u where it doesn't emit. */
-static int build_emitters(const Scene *s, uint32_t *inst, GpuEmitter **out) {
+static int build_emitters(const Scene *s, const BakeMat *mats, uint32_t *inst, GpuEmitter **out) {
     int n = 0;
     for (int i = 0; i < s->ninsts; ++i) {
-        const float *e = s->mats[s->insts[i].mat].emission;
+        const float *e = mats[s->insts[i].mat].emission;
         inst[i * 8 + 4] = 0xFFFFFFFFu;
         if (e[0] > 0.0f || e[1] > 0.0f || e[2] > 0.0f) {
             inst[i * 8 + 4] = (uint32_t)n;
@@ -390,7 +417,7 @@ static int build_emitters(const Scene *s, uint32_t *inst, GpuEmitter **out) {
         if (inst[i * 8 + 4] == 0xFFFFFFFFu) continue;
         const BakeInst *in = &s->insts[i];
         const BakeMesh *m = &s->meshes[in->mesh];
-        const float *e = s->mats[in->mat].emission;
+        const float *e = mats[in->mat].emission;
         double lum = 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
         for (uint32_t t = 0; t < m->indexCount / 3; ++t) {
             float w[3][3];
@@ -436,7 +463,7 @@ static int build_emitters(const Scene *s, uint32_t *inst, GpuEmitter **out) {
 }
 
 TraceConfig trace_defaults(int K) {
-    TraceConfig t = { 16384, 256, 8, K, 16.0f, 1, 1u };
+    TraceConfig t = { 16384, 256, 8, K, 16.0f, 1, 1u, 0.0f, 0.0f };
     return t;
 }
 
@@ -490,8 +517,17 @@ static void fill_params(Gpu *g, const Scene *s, const ViewGrid *v, const TexGrid
         p.trace2[3] = (int32_t)g->trace.seed;
         p.trace3[0] = g->trace.clamp;
         p.trace3[1] = g->trace.nee ? 1.0f : 0.0f;
+        p.trace3[2] = g->trace.visibleCap;
+        p.trace3[3] = g->trace.extPeriod > 0.0f ? g->trace.extPeriod : s->period > 0.0f ? s->period : 12.0f;
     }
     p.trace4[1] = s->sealed ? 0 : 1;
+    p.trace4[2] = g->basis;
+    if (g->perspective) {
+        p.flags[1] = 1;
+        memcpy(p.camFwd, g->camAxes[0], sizeof(float) * 3);
+        memcpy(p.camRight, g->camAxes[1], sizeof(float) * 3);
+        memcpy(p.camUp, g->camAxes[2], sizeof(float) * 3);
+    }
     memcpy(g->params.mapped, &p, sizeof(p));
 }
 
@@ -571,11 +607,46 @@ void gpu_capture(Gpu *g, const Scene *s, const ViewGrid *v, const TexGrid *t, Ca
     }
     out->views = *v;
     out->grid = *t;
+    out->ext = NULL;
     out->layers = malloc(lb);
     out->counts = malloc(cb);
     if (!out->layers || !out->counts) fatal("out of memory reading a capture");
     download(g, &g->out0, out->layers, lb);
     download(g, &g->out1, out->counts, cb);
+}
+
+void gpu_capture_bases(Gpu *g, const Scene *s, const ViewGrid *v, const TexGrid *t, int extSpp, Capture *out) {
+    int spp = g->trace.spp;
+    size_t texels = (size_t)view_count(v) * t->nx * t->ny, n = texels * CAP_SLOTS;
+    float *ext = calloc(n * (EXT_BASES + 1), sizeof(float));
+    if (!ext) fatal("out of memory holding a bake's bases");
+    gpu_set_basis(g, s, BASIS_INTERIOR);
+    printf("  the module's own lights\n");
+    gpu_capture(g, s, v, t, out);
+    static const int order[EXT_BASES] = { BASIS_STREET, BASIS_NEON, BASIS_SKY, BASIS_SCREENS };
+    static const char *const names[EXT_BASES] = { "street", "neon", "sky", "screens" };
+    g->trace.spp = extSpp;
+    for (int b = 0; b < EXT_BASES; ++b) {
+        printf("  %s\n", names[b]);
+        gpu_set_basis(g, s, order[b]);
+        Capture c;
+        gpu_capture(g, s, v, t, &c);
+        for (size_t i = 0; i < n; ++i) {
+            const float *l = c.layers[i].lit;
+            float *e = ext + i * (EXT_BASES + 1);
+            e[b] = 0.2126f * l[0] + 0.7152f * l[1] + 0.0722f * l[2];
+            e[EXT_BASES] += l[3];   /* the specular luminance, a share after the loop */
+        }
+        free(c.layers);
+        free(c.counts);
+    }
+    for (size_t i = 0; i < n; ++i) {
+        float *e = ext + i * (EXT_BASES + 1), sum = e[0] + e[1] + e[2] + e[3];
+        e[EXT_BASES] = sum > 1e-6f ? fminf(e[EXT_BASES] / sum, 1.0f) : 0.0f;
+    }
+    g->trace.spp = spp;
+    gpu_set_basis(g, s, BASIS_ALL);
+    out->ext = ext;
 }
 
 void gpu_capture_mpi(Gpu *g, const Scene *s, const ViewGrid *v, const TexGrid *t, int slices, MpiCapture *out) {

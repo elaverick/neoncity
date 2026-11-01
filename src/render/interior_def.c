@@ -4,9 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-const char *const INTERIOR_CHANNEL_NAMES[INTERIOR_CHANNELS] = { "lint", "albedo", "depth", "flags" };
-/* VK_FORMAT_B10G11R11_UFLOAT_PACK32, R8G8B8A8_UNORM, BC5_UNORM_BLOCK, R8_UNORM */
-const uint32_t INTERIOR_CHANNEL_FORMATS[INTERIOR_CHANNELS] = { 122u, 37u, 141u, 9u };
+const char *const INTERIOR_CHANNEL_NAMES[INTERIOR_CHANNELS] = { "lint", "albedo", "depth", "flags", "ext" };
+/* VK_FORMAT_BC6H_UFLOAT_BLOCK, BC7_UNORM_BLOCK, BC5_UNORM_BLOCK, R8_UNORM, BC7_UNORM_BLOCK */
+const uint32_t INTERIOR_CHANNEL_FORMATS[INTERIOR_CHANNELS] = { 143u, 145u, 141u, 9u, 145u };
 
 bool interior_catalogue_load(const char *path, char names[][64], int max, int *count, char *err, size_t errSize) {
     *count = 0;
@@ -60,16 +60,17 @@ bool interior_module_load(const char *path, InteriorModule *m, char *err, size_t
     const char *bad = NULL;
     float f[4];
     const Json *views = json_get(doc, "views"), *march = json_get(doc, "march"), *grid = json_get(doc, "grid");
-    const Json *means = json_get(json_get(doc, "bay_means"), "lint"), *files = json_get(doc, "files");
+    const Json *means = json_get(json_get(doc, "bay_means"), "lint"), *extMeans = json_get(json_get(doc, "bay_means"), "ext"), *files = json_get(doc, "files");
     const char *type = str(doc, "type"), *kind = views ? str(views, "kind") : NULL, *name = str(doc, "module");
-    if (!nums(doc, "version", f, 1) || (int)f[0] != INTERIOR_FORMAT_VERSION) bad = "is not format version 2 (re-bake it)";
+    if (!nums(doc, "version", f, 1) || (int)f[0] != INTERIOR_FORMAT_VERSION) bad = "is not format version 3 (re-bake it)";
     else if (!name || strlen(name) >= sizeof(m->name)) bad = "has no \"module\" name";
     else if (!type || (strcmp(type, "through") && strcmp(type, "core") && strcmp(type, "corner"))) bad = "has no \"type\" (through, core or corner)";
     else if (!nums(doc, "size", m->size, 3) || !nums(doc, "ceiling", &m->ceiling, 1) || !nums(doc, "opening", m->opening, 2)) bad = "lacks its size, ceiling or opening";
     else if (!nums(doc, "bays", f, 1) || !nums(doc, "bay_width", &m->bayWidth, 1) || !nums(doc, "bake_scale", &m->bakeScale, 1)) bad = "lacks its bays or bake scale";
     else if (!views || !kind || !nums(views, "n", f + 2, 2) || !nums(views, "range", m->viewRange, 4)) bad = "lacks its view grid";
     else if (!nums(doc, "layers", &f[1], 1) || !flag(doc, "last_slot", &m->lastSlot)) bad = "lacks its layers";
-    else if (!march || !grid || !files || !means) bad = "lacks its march, grid, files or bay means";
+    else if (!march || !grid || !files || !means || !extMeans) bad = "lacks its march, grid, files or bay means";
+    else if (!nums(doc, "ext_max", &m->extMax, 1) || !(m->extMax > 0.0f)) bad = "lacks its ext_max";
     if (!bad) {
         snprintf(m->name, sizeof(m->name), "%s", name);
         m->type = !strcmp(type, "through") ? INTERIOR_THROUGH : !strcmp(type, "core") ? INTERIOR_CORE : INTERIOR_CORNER;
@@ -94,7 +95,7 @@ bool interior_module_load(const char *path, InteriorModule *m, char *err, size_t
         else if (m->layers < 1 || m->layers > 4) bad = "has layers out of range (1 to 4)";
         else if (m->dim[0] < 4 || m->dim[1] < 4 || m->dim[0] > 4096 || m->dim[1] > 4096 || !(m->tpm > 0.0f)) bad = "has a texel grid out of range";
         else if (!(m->size[0] > 0.0f && m->size[1] > 0.0f && m->size[2] > 0.0f) || !(m->ceiling > 0.0f && m->ceiling <= m->size[1])) bad = "has a size out of range";
-        else if (m->bays < 1 || m->bays > INTERIOR_MAX_BAYS || json_count(means) != m->bays || !(m->bayWidth > 0.0f)) bad = "has bays out of range, or not a mean for each";
+        else if (m->bays < 1 || m->bays > INTERIOR_MAX_BAYS || json_count(means) != m->bays || json_count(extMeans) != m->bays || !(m->bayWidth > 0.0f)) bad = "has bays out of range, or not a mean for each";
         else if (!(m->bakeScale > 0.0f) || m->maxSteps < 1 || m->maxSteps > 256 || !(m->texStep > 0.0f)) bad = "has a scale or march out of range";
     }
     for (int b = 0; !bad && b < m->bays; ++b) {
@@ -105,6 +106,13 @@ bool interior_module_load(const char *path, InteriorModule *m, char *err, size_t
             if (ok) m->bayMean[b][k] = (float)json_at(e, k)->number;
         }
         if (!ok) bad = "has a bay mean that isn't three non-negative numbers";
+        const Json *x = json_at(extMeans, b);
+        ok = x->type == JSON_ARRAY && json_count(x) == 4;
+        for (int k = 0; ok && k < 4; ++k) {
+            ok = json_at(x, k)->type == JSON_NUMBER && json_at(x, k)->number >= 0.0;
+            if (ok) m->bayExt[b][k] = (float)json_at(x, k)->number;
+        }
+        if (!ok && !bad) bad = "has an exterior bay mean that isn't four non-negative numbers";
     }
     /* the files beside the sidecar */
     const char *slash = strrchr(path, '/'), *bs = strrchr(path, '\\');
@@ -153,10 +161,10 @@ bool interior_image_load(const InteriorModule *m, int c, InteriorImage *img, cha
         uint32_t depth = u32(d + 28), faces = u32(d + 36), levels = u32(d + 40), super = u32(d + 44);
         img->offset = u64(d + 80);
         img->length = u64(d + 88);
-        uint32_t block = c == INTERIOR_DEPTH ? 4u : 1u, bytes = c == INTERIOR_DEPTH ? 16u : c == INTERIOR_FLAGS ? 1u : 4u;
+        uint32_t block = c == INTERIOR_FLAGS ? 1u : 4u, bytes = c == INTERIOR_FLAGS ? 1u : 16u;
         uint64_t want = (uint64_t)((img->width + block - 1) / block) * ((img->height + block - 1) / block) * bytes * img->layers;
         if (img->format != INTERIOR_CHANNEL_FORMATS[c]) why = "isn't in its channel's format";
-        else if (depth != 0 || faces != 1 || levels != 1 || super != 0) why = "isn't a 2D array of one level, uncompressed";
+        else if (depth != 0 || faces != 1 || levels != 1 || super != 0) why = "isn't a 2D array of one level, without supercompression";
         else if (img->width != (uint32_t)m->dim[0] || img->height != (uint32_t)m->dim[1] || img->layers != (uint32_t)interior_channel_layers(m, c))
             why = "doesn't match the sidecar's grid, views and layers";
         else if (img->length != want) why = "has a level of the wrong size";

@@ -56,8 +56,16 @@ void main() {
         for (int i = 0; i < P_trace.y; ++i) {
             uint rng = ptSeed(at, 0u, uint(P_trace.x + i));
             vec2 j = vec2(ptRand(rng), ptRand(rng));
-            vec3 o = vec3(P_eval.xy + (vec2(px) + j) / P_eval.zw, 0.0);
-            sum += ptTrace(o, normalize(o - P_cam.xyz), rng);
+            vec3 o, d;
+            if (P_flags.y != 0) {   // the beauty render: a perspective camera at P_cam, inside the module
+                vec2 c = (vec2(px) + j) / vec2(P_evalDim.xy) * 2.0 - 1.0;
+                o = P_cam.xyz;
+                d = normalize(P_camFwd.xyz + P_camRight.xyz * c.x + P_camUp.xyz * c.y);
+            } else {
+                o = vec3(P_eval.xy + (vec2(px) + j) / P_eval.zw, 0.0);
+                d = normalize(o - P_cam.xyz);
+            }
+            sum += ptTrace(o, d, rng);
         }
         vec4 c = vec4(sum / float(P_trace.z), 0.0);
         outColor[at] = P_trace.x > 0 ? outColor[at] + c : c;
