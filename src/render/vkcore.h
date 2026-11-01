@@ -70,6 +70,7 @@ VkDeviceAddress vk_buffer_address(VkCore *vk, VkBuffer b);
 Image    vk_image(VkCore *vk, uint32_t w, uint32_t h, uint32_t mips, VkFormat fmt, VkImageUsageFlags usage,
                   VkSampleCountFlagBits samples, VkImageAspectFlags aspect);
 Image    vk_image_3d(VkCore *vk, uint32_t w, uint32_t h, uint32_t d, VkFormat fmt, VkImageUsageFlags usage);
+Image    vk_image_array(VkCore *vk, uint32_t w, uint32_t h, uint32_t layers, uint32_t mips, VkFormat fmt, VkImageUsageFlags usage);
 void     vk_image_destroy(VkCore *vk, Image *img);
 VkImageView vk_view(VkCore *vk, VkImage img, VkFormat fmt, VkImageAspectFlags aspect, uint32_t baseMip, uint32_t mipCount);
 VkShaderModule vk_shader(VkCore *vk, const uint32_t *code, size_t bytes);

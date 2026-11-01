@@ -480,7 +480,7 @@ static void light_list(FloorPlan *P, float pendantY) {
             break;
         }
         case FI_PANEL:
-            PUSH(it->ox, 1.15f, it->oz, LM_COVE_M * maxf_(it->x1 - it->x0, it->z1 - it->z0), it->bit[0]);
+            PUSH(it->ox, FLOOR_PANEL_H, it->oz, LM_COVE_M * maxf_(it->x1 - it->x0, it->z1 - it->z0), it->bit[0]);
             break;
         case FI_ROOM:
             PUSH(it->ox, 2.68f, it->z0, LM_COVE_M * (it->x1 - it->x0), it->bit[0]);
@@ -786,10 +786,10 @@ static void plan_once(FloorPlan *P, const FloorParams *p, uint32_t seed) {
             for (int k = 0; k < P->nitem && clear; ++k) {
                 const FloorItem *it = &P->item[k];
                 bool wall = it->kind == FI_ROOM || it->kind == FI_CORE || it->kind == FI_WALL;
-                if (wall && x + 0.7f > it->x0 && x - 0.7f < it->x1 && z + 0.4f > it->z0 && z - 0.4f < it->z1 &&
-                    !(it->kind == FI_ROOM && x - 0.7f > it->x0 && x + 0.7f < it->x1 && z - 0.4f > it->z0 && z + 0.4f < it->z1)) clear = false;
+                if (wall && x + 0.7f > it->x0 && x - 0.7f < it->x1 && z + 0.7f > it->z0 && z - 0.7f < it->z1 &&
+                    !(it->kind == FI_ROOM && x - 0.7f > it->x0 && x + 0.7f < it->x1 && z - 0.7f > it->z0 && z + 0.7f < it->z1)) clear = false;
             }
-            if (clear) item_add(g, FI_TROFFER, -1, 0, x - 0.62f, z - 0.32f, x + 0.62f, z + 0.32f);
+            if (clear) item_add(g, FI_TROFFER, -1, 0, x - 0.62f, z - 0.62f, x + 0.62f, z + 0.62f);
         }
 
     /* plants, where a pot and a person both still fit */

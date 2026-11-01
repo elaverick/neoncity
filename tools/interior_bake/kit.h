@@ -21,6 +21,7 @@ typedef struct Kit {
 /* Primitives */
 void  kelvin_unit(float k, float c[3]);
 int   mesh_add(Scene *s, const float *v, uint32_t nv, const uint32_t *ix, uint32_t ni);
+int   mesh_add_attr(Scene *s, const float *v, const float *attr, uint32_t nv, const uint32_t *ix, uint32_t ni);
 int   mat_add(Scene *s, float r, float g, float b, float er, float eg, float eb);
 void  mat_surface(Scene *s, int id, float rough, float metal, float coat, float coatRough);
 int   mat_light(Scene *s, float lumens, float area, float kelvin, float share);

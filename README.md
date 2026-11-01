@@ -21,6 +21,7 @@ build/building_lab 3000 5      # building archetypes, retries and rejections; 5 
 build/interior_lab 3000 12 out # office lobbies: pass rate, attempts, rejections; 12 plan renders and cameras
 build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders, cameras
 build/interior_lab office 400 out        # baked office floors: the generator's catalogue and a sweep; plans
+python tools/interior_models.py check    # the bake-only furniture (assets_src/interiors): stance and leaks
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)

@@ -75,6 +75,7 @@ void ptBasis(vec3 n, out vec3 t, out vec3 b) {
 }
 
 struct Bsdf {
+    vec3  ng;             // the triangle's normal: nothing passes below it, whatever the shading normal says
     vec3  diff, f0, kD;   // the diffuse colour, the specular F0, and what reaches the diffuse past the specular and the coat
     float a2, alpha, kS;  // the base's GGX; kS what reaches it past the coat
     float coat, coatA2, coatAlpha;
@@ -84,17 +85,17 @@ struct Bsdf {
 
 float ptG1(float ndv, float a2) { return 2.0 * ndv / (ndv + sqrt(a2 + (1.0 - a2) * ndv * ndv)); }
 
-Bsdf ptBsdf(uint m, float ndv) {
-    Mat mt = mats[m];
+Bsdf ptBsdf(Surf s, float ndv) {
     Bsdf b;
-    float metal = mt.emission.a;
-    b.diff = mt.albedo.rgb * (1.0 - metal);
-    b.f0 = mix(vec3(mt.surface.x), mt.albedo.rgb, metal);
-    b.spec = metal > 0.0 || mt.surface.x > 0.0;
-    b.alpha = max(mt.albedo.a * mt.albedo.a, 0.002);
+    float metal = s.metal;
+    b.ng = s.ng;
+    b.diff = s.albedo * (1.0 - metal);
+    b.f0 = mix(vec3(s.f0), s.albedo, metal);
+    b.spec = metal > 0.0 || s.f0 > 0.0;
+    b.alpha = max(s.rough * s.rough, 0.002);
     b.a2 = b.alpha * b.alpha;
-    b.coat = mt.surface.y;
-    b.coatAlpha = max(mt.surface.z * mt.surface.z, 0.002);
+    b.coat = s.coat;
+    b.coatAlpha = max(s.coatRough * s.coatRough, 0.002);
     b.coatA2 = b.coatAlpha * b.coatAlpha;
     vec3 Fv = b.spec ? brdfSchlick(b.f0, ndv) : vec3(0.0);
     float Fc = b.coat * brdfSchlick(0.04, ndv);
@@ -110,7 +111,7 @@ Bsdf ptBsdf(uint m, float ndv) {
 vec3 ptEval(Bsdf b, vec3 n, vec3 V, vec3 L, out float pdf) {
     float ndl = dot(n, L), ndv = max(dot(n, V), 1e-4);
     pdf = 0.0;
-    if (ndl <= 0.0) return vec3(0.0);
+    if (ndl <= 0.0 || dot(b.ng, L) <= 0.0) return vec3(0.0);
     vec3 H = normalize(V + L);
     float ndh = max(dot(n, H), 0.0), vdh = max(dot(V, H), 0.0);
     vec3 f = b.diff * b.kD * (1.0 / PT_PI);
@@ -311,10 +312,11 @@ bool ptFollow(inout vec3 o, inout vec3 d, inout vec3 thr, inout bool delta, inou
 // The luminance of ptRadiance's latest result that came by a specular first bounce.
 float gPtSpec;
 
-/* The radiance leaving surface point p (normal n on V's side, material m)
- * towards V, from the lights and the exterior by every path of up to P_trace.w
- * bounces. The surface's own emission is not included. */
-vec3 ptRadiance(vec3 p, vec3 n, vec3 V, uint m, inout uint rng) {
+/* The radiance leaving surface point p (surface s, on V's side) towards V, from
+ * the lights and the exterior by every path of up to P_trace.w bounces. The
+ * surface's own emission is not included. */
+#define PT_BOUNCE_FOOTPRINT 0.02   // metres: what a bounced ray's texture lookup covers
+vec3 ptRadiance(vec3 p, Surf s, vec3 V, inout uint rng) {
     vec3 L = vec3(0.0), thr = vec3(1.0);
     float cap = P_trace3.x, firstSpec = 0.0;
     bool nee = P_trace3.y > 0.5 && P_trace2.z > 0;
@@ -322,8 +324,9 @@ vec3 ptRadiance(vec3 p, vec3 n, vec3 V, uint m, inout uint rng) {
     for (int bounce = 0; bounce < 64; ++bounce) {
         if (bounce >= P_trace.w) break;
         float capNow = bounce > 0 ? cap : 0.0;   // the first bounce's light is direct: never clamped
-        Bsdf b = ptBsdf(m, max(dot(n, V), 1e-4));
-        vec3 o = p + n * 1e-3;
+        vec3 n = s.ns;
+        Bsdf b = ptBsdf(s, max(dot(n, V), 1e-4));
+        vec3 o = p + s.ng * 1e-3;
         if (nee) {
             vec3 toLight;
             vec3 add = ptClamp(thr * ptNee(p, o, n, V, b, rng, toLight), capNow);
@@ -346,7 +349,7 @@ vec3 ptRadiance(vec3 p, vec3 n, vec3 V, uint m, inout uint rng) {
             break;
         }
         uint hf = insts[h.inst].flags;
-        if (!h.front && (hf & BF_OPEN) == 0u) break;   // inside a solid
+        if (!h.front && (hf & (BF_OPEN | BF_LEAKY)) == 0u) break;   // inside a solid
         vec3 q = ro + rd * h.t;
         uint hm = insts[h.inst].material;
         vec3 Le = mats[hm].emission.rgb;
@@ -367,9 +370,8 @@ vec3 ptRadiance(vec3 p, vec3 n, vec3 V, uint m, inout uint rng) {
             thr /= keep;
         }
         p = q;
-        n = h.front ? h.n : -h.n;
         V = -rd;
-        m = hm;
+        s = surfAt(h, q, rd, PT_BOUNCE_FOOTPRINT);
     }
     // a light's pdf can underflow a hair from its own surface: one such sample would black out the whole texel
     if (any(isnan(L)) || any(isinf(L)) || isnan(gPtSpec) || isinf(gPtSpec)) { gPtSpec = 0.0; return vec3(0.0); }
@@ -380,9 +382,10 @@ vec3 ptRadiance(vec3 p, vec3 n, vec3 V, uint m, inout uint rng) {
  * engine's own fittings are far dimmer against the surfaces they light than
  * real ones are, and a real one would bloom (doc, section 16). The light it
  * sheds is untouched. A screen shows mostly dark, code on black, though it lights the desk as a whole. */
-vec3 ptVisibleEmission(uint mat) {
+vec3 ptVisibleEmission(uint mat, vec3 look) {
     vec3 Le = mats[mat].emission.rgb;
-    if (mats[mat].surface.w > 0.5) Le *= 0.3;
+    if (mats[mat].tex.w >= 0) Le *= look;   // what it shows; the light it sheds is even
+    else if (mats[mat].surface.w > 0.5) Le *= 0.3;
     float m = max(Le.r, max(Le.g, Le.b));
     return P_trace3.z > 0.0 && m > P_trace3.z ? Le * (P_trace3.z / m) : Le;
 }
@@ -393,8 +396,10 @@ vec3 ptTrace(vec3 o, vec3 d, inout uint rng) {
     bool delta = false;
     Hit h;
     if (!ptFollow(o, d, thr, delta, rng, h)) return thr * ptExterior(o, d);
-    if (!h.front && (insts[h.inst].flags & BF_OPEN) == 0u) return vec3(0.0);
+    if (!h.front && (insts[h.inst].flags & (BF_OPEN | BF_LEAKY)) == 0u) return vec3(0.0);
     uint m = insts[h.inst].material;
-    vec3 Le = h.front ? ptVisibleEmission(m) : vec3(0.0);
-    return thr * (Le + ptRadiance(o + d * h.t, h.front ? h.n : -h.n, -d, m, rng));
+    vec3 p = o + d * h.t;
+    Surf s = surfAt(h, p, d, max(h.t * 0.0015, 0.0005));   // about a pixel of the stills
+    vec3 Le = h.front ? ptVisibleEmission(m, s.look) : vec3(0.0);
+    return thr * (Le + ptRadiance(p, s, -d, rng));
 }

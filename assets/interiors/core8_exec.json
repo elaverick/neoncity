@@ -1,13 +1,13 @@
 {
   // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.
   "version": 3,
-  "baker": "im5-floors-1",
+  "baker": "im6-furniture-1",
   "module": "core8_exec",
   "type": "core",
   "family": "office",
   "light_state": "after_hours",
   "trace": { "samples": 16384, "bounces": 8, "clamp": 16.0, "seed": 1 },
-  "floor": { "style": "exec", "core": "back", "seed": 20905, "attempts": 1, "layout": "3e8dd7f6301670fa" },     // the generator's inputs (tools/interior_bake/floor_gen.c)
+  "floor": { "style": "exec", "core": "back", "seed": 20905, "attempts": 1, "layout": "e3574a198e4e0cb2" },     // the generator's inputs (tools/interior_bake/floor_gen.c)
   "size": [10.800, 4.200, 8.500],        // W, H, D in metres
   "ceiling": 3.600,                     // the slab's underside above the floor (y = 0)
   "bays": 3,
@@ -23,8 +23,8 @@
   "bake_scale": 0.375,
   "ext_max": 2.000,
   "bay_means": {
-    "lint": [[0.02576, 0.01597, 0.00858], [0.09504, 0.05902, 0.03058], [0.00874, 0.00544, 0.00299]],
-    "ext": [[0.01070, 0.00448, 0.01540, 0.00436], [0.01367, 0.00711, 0.02788, 0.00143], [0.01097, 0.00580, 0.02388, 0.00001]]
+    "lint": [[0.02315, 0.01265, 0.00646], [0.09656, 0.05957, 0.03076], [0.00941, 0.00577, 0.00314]],
+    "ext": [[0.01169, 0.00539, 0.01967, 0.00006], [0.01366, 0.00707, 0.02803, 0.00003], [0.01119, 0.00578, 0.02378, 0.00000]]
   },
   "files": { "lint": "core8_exec.lint.ktx2", "albedo": "core8_exec.albedo.ktx2", "ext": "core8_exec.ext.ktx2", "depth": "core8_exec.depth.ktx2", "flags": "core8_exec.flags.ktx2" }
 }

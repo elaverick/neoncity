@@ -39,12 +39,27 @@ static float rnd(uint32_t *s) {   /* xorshift32, one draw a statement */
 }
 
 int mesh_add(Scene *s, const float *v, uint32_t nv, const uint32_t *ix, uint32_t ni) {
+    return mesh_add_attr(s, v, NULL, nv, ix, ni);
+}
+
+/* attr: nx, ny, nz, u, v per vertex, or NULL. */
+int mesh_add_attr(Scene *s, const float *v, const float *attr, uint32_t nv, const uint32_t *ix, uint32_t ni) {
     GROW(s->verts, s->nverts * 3, s->capVerts, nv * 3);
+    GROW(s->attrs, s->nverts * 5, s->capAttrs, nv * 5);
     GROW(s->idx, s->nidx, s->capIdx, ni);
     GROW(s->meshes, s->nmeshes, s->capMeshes, 1);
     BakeMesh *m = &s->meshes[s->nmeshes];
     m->firstIndex = s->nidx; m->indexCount = ni; m->baseVertex = s->nverts; m->vertexCount = nv;
+    m->attrs = attr != NULL;
+    for (int r = 0; r < 3; ++r) { m->mn[r] = 1e30f; m->mx[r] = -1e30f; }
+    for (uint32_t i = 0; i < nv; ++i)
+        for (int r = 0; r < 3; ++r) {
+            m->mn[r] = fminf(m->mn[r], v[i * 3 + r]);
+            m->mx[r] = fmaxf(m->mx[r], v[i * 3 + r]);
+        }
     memcpy(s->verts + s->nverts * 3, v, sizeof(float) * 3 * nv);
+    if (attr) memcpy(s->attrs + s->nverts * 5, attr, sizeof(float) * 5 * nv);
+    else memset(s->attrs + s->nverts * 5, 0, sizeof(float) * 5 * nv);
     memcpy(s->idx + s->nidx, ix, sizeof(uint32_t) * ni);
     s->nverts += nv;
     s->nidx += ni;
@@ -59,6 +74,7 @@ int mat_add(Scene *s, float r, float g, float b, float er, float eg, float eb) {
     m->albedo[0] = r; m->albedo[1] = g; m->albedo[2] = b; m->albedo[3] = 0.7f;
     m->emission[0] = er; m->emission[1] = eg; m->emission[2] = eb;
     m->surface[0] = 0.04f;
+    m->tex[0] = m->tex[1] = m->tex[2] = m->tex[3] = -1;
     return s->nmats++;
 }
 

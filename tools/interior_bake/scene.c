@@ -173,10 +173,14 @@ uint64_t scene_hash(const Scene *s) {
     h = fnv(h, s->meshes, sizeof(BakeMesh) * (size_t)s->nmeshes);
     h = fnv(h, s->mats, sizeof(BakeMat) * (size_t)s->nmats);
     h = fnv(h, s->insts, sizeof(BakeInst) * (size_t)s->ninsts);
+    h = fnv(h, s->attrs, sizeof(float) * 5 * s->nverts);
+    for (int i = 0; i < s->nimages; ++i) h = fnv(h, s->images[i].bytes, s->images[i].size);
     return h;
 }
 
 void scene_free(Scene *s) {
+    for (int i = 0; i < s->nimages; ++i) free(s->images[i].bytes);
+    free(s->images); free(s->attrs);
     free(s->verts); free(s->idx); free(s->meshes); free(s->mats); free(s->insts); free(s->lights);
     memset(s, 0, sizeof(*s));
 }

@@ -14,12 +14,19 @@
 
 /* ------------------------------------------------------------------ scene --- */
 
-enum { BF_GLASS = 1, BF_OPEN = 2, BF_EMITTER = 4 };   /* instance flags (shaders/interior/bake_scene.glsl) */
+/* Instance flags (shaders/interior/bake_scene.glsl). BF_OPEN: every surface a thin shell. BF_LEAKY: a
+ * mesh that is nearly closed, counted as a solid by capture.comp, but what it leaves open ends at
+ * its bounds, not at the far side of the building. */
+enum { BF_GLASS = 1, BF_OPEN = 2, BF_EMITTER = 4, BF_LEAKY = 8 };
 enum { MOD_THROUGH = 0, MOD_CORE, MOD_CORNER };
 
-typedef struct BakeMesh { uint32_t firstIndex, indexCount, baseVertex, vertexCount; } BakeMesh;
-/* albedo[3]: roughness; emission[3]: metallic; surface: a dielectric's F0 (0: no specular lobe), clearcoat, its roughness, GROUP_* */
-typedef struct BakeMat { float albedo[4], emission[4], surface[4]; } BakeMat;
+typedef struct BakeMesh { uint32_t firstIndex, indexCount, baseVertex, vertexCount; float mn[3], mx[3]; uint32_t attrs; } BakeMesh;   /* attrs: it has normals and UVs */
+/* albedo[3]: roughness; emission[3]: metallic; surface: a dielectric's F0 (0: no specular lobe), clearcoat, its roughness, GROUP_*;
+ * tex: its texture layers (-1: none): colour and how an emitter looks in the colour array, metal-roughness and normal in the
+ * data array: { colour, orm, normal, look }; tile[0]: metres a tile of box mapping (0: the mesh's UVs) */
+typedef struct BakeMat { float albedo[4], emission[4], surface[4]; int32_t tex[4]; float tile[4]; } BakeMat;
+/* A texture of the scene's, its encoded file held until the GPU loads it. */
+typedef struct BakeImage { uint8_t *bytes; size_t size; bool colour; char name[64]; } BakeImage;
 typedef struct BakeInst { uint32_t mesh, mat, flags; float xf[12]; } BakeInst;   /* xf: 3x4, row-major */
 typedef struct BakeLight { float pos[4], power[4]; } BakeLight;                /* points emitting downwards */
 
@@ -54,6 +61,9 @@ typedef struct Scene {
     char  floorInfo[160];    /* a generated floor's inputs, for its sidecar */
 
     float    *verts;  uint32_t nverts, capVerts;   /* xyz */
+    float    *attrs;  uint32_t capAttrs;           /* a normal and a UV per vertex (zero: the triangle's own normal) */
+    BakeImage *images; int nimages, capImages;
+    int ncolour, ndata;      /* layers in each texture array */
     uint32_t *idx;    uint32_t nidx, capIdx;
     BakeMesh  *meshes; int nmeshes, capMeshes;
     BakeMat   *mats;   int nmats, capMats;

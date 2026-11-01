@@ -372,6 +372,39 @@ Image vk_image(VkCore *vk, uint32_t w, uint32_t h, uint32_t mips, VkFormat fmt, 
     return im;
 }
 
+/* A 2D array of colour images, with a view of all of it. */
+Image vk_image_array(VkCore *vk, uint32_t w, uint32_t h, uint32_t layers, uint32_t mips, VkFormat fmt, VkImageUsageFlags usage) {
+    Image im = { 0 };
+    im.fmt = fmt; im.w = w; im.h = h; im.mips = mips;
+    VkImageCreateInfo ci = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+    ci.imageType = VK_IMAGE_TYPE_2D;
+    ci.format = fmt;
+    ci.extent.width = w; ci.extent.height = h; ci.extent.depth = 1;
+    ci.mipLevels = mips;
+    ci.arrayLayers = layers;
+    ci.samples = VK_SAMPLE_COUNT_1_BIT;
+    ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ci.usage = usage;
+    ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VK_CHECK(vkCreateImage(vk->device, &ci, NULL, &im.img));
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(vk->device, im.img, &req);
+    VkMemoryAllocateInfo ai = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = find_memory(vk, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK_CHECK(vkAllocateMemory(vk->device, &ai, NULL, &im.mem));
+    VK_CHECK(vkBindImageMemory(vk->device, im.img, im.mem, 0));
+    VkImageViewCreateInfo vi = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+    vi.image = im.img;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    vi.format = fmt;
+    vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vi.subresourceRange.levelCount = mips;
+    vi.subresourceRange.layerCount = layers;
+    VK_CHECK(vkCreateImageView(vk->device, &vi, NULL, &im.view));
+    return im;
+}
+
 /* Single-mip 3D colour image with a 3D view. */
 Image vk_image_3d(VkCore *vk, uint32_t w, uint32_t h, uint32_t d, VkFormat fmt, VkImageUsageFlags usage) {
     Image im = { 0 };

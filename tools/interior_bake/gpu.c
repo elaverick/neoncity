@@ -1,5 +1,9 @@
 #include "bake.h"
 #include "vkcore.h"
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
+#include <stb_image.h>
 #include <time.h>
 
 /* The baker's GPU work: a headless device (vk_init_headless), the scene's
@@ -48,6 +52,8 @@ enum { MASK_CASTER = 1, MASK_GLASS = 2, MASK_EMITTER = 4 };   /* bake_scene.glsl
 #define TIMED_RUNS  20
 #define TIMED_ROUNDS 3
 #define WARM_SECONDS 0.4
+#define INST_WORDS  16        /* bake_scene.glsl: Inst */
+#define TEX_SIZE    2048      /* the texture arrays' size: past what a bake's 3 cm texels or a still can show */
 #define MAX_SLOPE   8.0f      /* the steepest sideways slope (dx / dz) a ray may have: copies of a periodic module cover it */
 
 struct Gpu {
@@ -62,7 +68,9 @@ struct Gpu {
     VkPipeline pipes[PIPE_COUNT];
     VkQueryPool ts;
     Buffer params, staging;
-    Buffer verts, idx, insts, mats, lights, emitters;
+    Buffer verts, idx, insts, mats, lights, emitters, attrs;
+    Image colour, data;
+    VkSampler sampler;
     int nemitters;
     TraceConfig trace;
     bool traced;
@@ -171,29 +179,31 @@ Gpu *gpu_create(bool validation) {
     VkFenceCreateInfo fi = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
     VK_CHECK(vkCreateFence(d, &fi, NULL, &g->fence));
 
-    /* bake_scene.glsl, pathtrace.glsl and the passes: 0 TLAS, 1-9 storage buffers, 10 the parameters */
-    VkDescriptorSetLayoutBinding b[11];
+    /* bake_scene.glsl, pathtrace.glsl and the passes: 0 TLAS, 1-9 and 11 storage buffers, 10 the parameters, 12-13 the textures */
+    VkDescriptorSetLayoutBinding b[14];
     memset(b, 0, sizeof(b));
-    for (int i = 0; i < 11; ++i) {
+    for (int i = 0; i < 14; ++i) {
         b[i].binding = (uint32_t)i;
         b[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR
-                            : i == 10 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                            : i == 10 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                            : i >= 12 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         b[i].descriptorCount = 1;
         b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
     VkDescriptorSetLayoutCreateInfo li = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    li.bindingCount = 11;
+    li.bindingCount = 14;
     li.pBindings = b;
     VK_CHECK(vkCreateDescriptorSetLayout(d, &li, NULL, &g->dsl));
     VkPipelineLayoutCreateInfo pli = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
     pli.setLayoutCount = 1;
     pli.pSetLayouts = &g->dsl;
     VK_CHECK(vkCreatePipelineLayout(d, &pli, NULL, &g->pl));
-    VkDescriptorPoolSize ps[3] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
-                                   { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 9 }, { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 } };
+    VkDescriptorPoolSize ps[4] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
+                                   { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10 }, { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
+                                   { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 } };
     VkDescriptorPoolCreateInfo dpi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     dpi.maxSets = 1;
-    dpi.poolSizeCount = 3;
+    dpi.poolSizeCount = 4;
     dpi.pPoolSizes = ps;
     VK_CHECK(vkCreateDescriptorPool(d, &dpi, NULL, &g->dpool));
     VkDescriptorSetAllocateInfo dai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
@@ -212,6 +222,12 @@ Gpu *gpu_create(bool validation) {
     qi.queryCount = 2 * TIMED_RUNS;
     VK_CHECK(vkCreateQueryPool(d, &qi, NULL, &g->ts));
     g->params = vk_buffer(&g->vk, sizeof(BakeParams), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, HOST);
+    VkSamplerCreateInfo si = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+    si.magFilter = si.minFilter = VK_FILTER_LINEAR;
+    si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.maxLod = VK_LOD_CLAMP_NONE;
+    VK_CHECK(vkCreateSampler(d, &si, NULL, &g->sampler));
     return g;
 }
 
@@ -234,8 +250,11 @@ void gpu_destroy(Gpu *g) {
     vkDeviceWaitIdle(d);
     free_scene(g);
     Buffer *bs[] = { &g->params, &g->staging, &g->verts, &g->idx, &g->insts, &g->mats, &g->lights, &g->emitters,
-                     &g->out0, &g->out1, &g->in0 };
+                     &g->attrs, &g->out0, &g->out1, &g->in0 };
     for (size_t i = 0; i < sizeof(bs) / sizeof(bs[0]); ++i) vk_buffer_destroy(&g->vk, bs[i]);
+    if (g->colour.img) vk_image_destroy(&g->vk, &g->colour);
+    if (g->data.img) vk_image_destroy(&g->vk, &g->data);
+    vkDestroySampler(d, g->sampler, NULL);
     for (int i = 0; i < PIPE_COUNT; ++i) vkDestroyPipeline(d, g->pipes[i], NULL);
     vkDestroyQueryPool(d, g->ts, NULL);
     vkDestroyDescriptorPool(d, g->dpool, NULL);
@@ -285,7 +304,7 @@ static VkDeviceAddress as_address(Gpu *g, VkAccelerationStructureKHR as) {
 void gpu_set_basis(Gpu *g, const Scene *s, int basis) {
     g->basis = basis;
     BakeMat *mats = malloc(sizeof(BakeMat) * (size_t)(s->nmats ? s->nmats : 1));
-    uint32_t *inst = malloc(sizeof(uint32_t) * 8 * (size_t)s->ninsts);
+    uint32_t *inst = malloc(sizeof(uint32_t) * INST_WORDS * (size_t)s->ninsts);
     if (!mats || !inst) fatal("out of memory");
     for (int i = 0; i < s->nmats; ++i) {
         mats[i] = s->mats[i];
@@ -297,14 +316,18 @@ void gpu_set_basis(Gpu *g, const Scene *s, int basis) {
     int nem = build_emitters(s, mats, inst, &em);
     for (int i = 0; i < s->ninsts; ++i) {
         const BakeMesh *m = &s->meshes[s->insts[i].mesh];
-        inst[i * 8 + 0] = m->firstIndex;
-        inst[i * 8 + 1] = m->baseVertex;
-        inst[i * 8 + 2] = s->insts[i].mat;
-        inst[i * 8 + 3] = s->insts[i].flags;
-        inst[i * 8 + 5] = inst[i * 8 + 6] = inst[i * 8 + 7] = 0;
+        uint32_t *o = inst + i * INST_WORDS;
+        o[0] = m->firstIndex;
+        o[1] = m->baseVertex;
+        o[2] = s->insts[i].mat;
+        o[3] = s->insts[i].flags;
+        o[5] = m->attrs;
+        o[6] = o[7] = 0;
+        float bounds[8] = { m->mn[0], m->mn[1], m->mn[2], 0.0f, m->mx[0], m->mx[1], m->mx[2], 0.0f };
+        memcpy(o + 8, bounds, sizeof(bounds));
     }
     upload(g, &g->mats, STORE, mats, sizeof(BakeMat) * (size_t)s->nmats);
-    upload(g, &g->insts, STORE, inst, sizeof(uint32_t) * 8 * (size_t)s->ninsts);
+    upload(g, &g->insts, STORE, inst, sizeof(uint32_t) * INST_WORDS * (size_t)s->ninsts);
     upload(g, &g->emitters, STORE, em, sizeof(GpuEmitter) * (size_t)(nem ? nem : 1));
     g->nemitters = nem;
     free(mats);
@@ -320,11 +343,127 @@ void gpu_set_perspective(Gpu *g, const float *fwd, const float *right, const flo
     memcpy(g->camAxes[2], up, sizeof(float) * 3);
 }
 
+/* Resamples an RGBA image to size x size: by box where it divides evenly, else bilinear. */
+static void resample(const uint8_t *src, int w, int h, uint8_t *dst, int size) {
+    if (w == size && h == size) { memcpy(dst, src, (size_t)size * size * 4); return; }
+    if (w % size == 0 && h % size == 0) {
+        int fx = w / size, fy = h / size;
+        for (int y = 0; y < size; ++y)
+            for (int x = 0; x < size; ++x)
+                for (int c = 0; c < 4; ++c) {
+                    uint32_t sum = 0;
+                    for (int j = 0; j < fy; ++j)
+                        for (int i = 0; i < fx; ++i) sum += src[((size_t)(y * fy + j) * w + x * fx + i) * 4 + c];
+                    dst[((size_t)y * size + x) * 4 + c] = (uint8_t)((sum + (uint32_t)(fx * fy) / 2) / (uint32_t)(fx * fy));
+                }
+        return;
+    }
+    for (int y = 0; y < size; ++y) {
+        float fy = ((float)y + 0.5f) / (float)size * (float)h - 0.5f;
+        int y0 = (int)floorf(fy), y1 = y0 + 1;
+        float ty = fy - (float)y0;
+        y0 = y0 < 0 ? 0 : y0; y1 = y1 >= h ? h - 1 : y1;
+        for (int x = 0; x < size; ++x) {
+            float fx = ((float)x + 0.5f) / (float)size * (float)w - 0.5f;
+            int x0 = (int)floorf(fx), x1 = x0 + 1;
+            float tx = fx - (float)x0;
+            x0 = x0 < 0 ? 0 : x0; x1 = x1 >= w ? w - 1 : x1;
+            for (int c = 0; c < 4; ++c) {
+                float a = src[((size_t)y0 * w + x0) * 4 + c] * (1.0f - tx) + src[((size_t)y0 * w + x1) * 4 + c] * tx;
+                float b = src[((size_t)y1 * w + x0) * 4 + c] * (1.0f - tx) + src[((size_t)y1 * w + x1) * 4 + c] * tx;
+                dst[((size_t)y * size + x) * 4 + c] = (uint8_t)(a * (1.0f - ty) + b * ty + 0.5f);
+            }
+        }
+    }
+}
+
+static void array_barrier(Gpu *g, VkImage img, uint32_t mip, uint32_t mips, VkImageLayout from, VkImageLayout to) {
+    VkImageMemoryBarrier2 b = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+    b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    b.oldLayout = from;
+    b.newLayout = to;
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = img;
+    b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    b.subresourceRange.baseMipLevel = mip;
+    b.subresourceRange.levelCount = mips;
+    b.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+    di.imageMemoryBarrierCount = 1;
+    di.pImageMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(g->cmd, &di);
+}
+
+/* One texture array, its layers decoded from the scene's files. With none it is one black texel. */
+static Image load_array(Gpu *g, const Scene *s, bool colour) {
+    int layers = colour ? s->ncolour : s->ndata, size = layers ? TEX_SIZE : 1, mips = 1;
+    while ((size >> mips) > 0) mips++;
+    Image im = vk_image_array(&g->vk, (uint32_t)size, (uint32_t)size, (uint32_t)(layers ? layers : 1), (uint32_t)mips,
+                              colour ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM,
+                              VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    size_t bytes = (size_t)size * size * 4;
+    ensure(g, &g->staging, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, HOST);
+    begin(g);
+    array_barrier(g, im.img, 0, (uint32_t)mips, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    submit(g);
+    int layer = 0;
+    for (int i = 0; i < s->nimages || (i == 0 && !layers); ++i) {
+        if (layers && s->images[i].colour != colour) continue;
+        if (!layers) memset(g->staging.mapped, 0, bytes);
+        else {
+            int w, h, c;
+            uint8_t *px = stbi_load_from_memory(s->images[i].bytes, (int)s->images[i].size, &w, &h, &c, 4);
+            if (!px) { fprintf(stderr, "texture %s: %s\n", s->images[i].name, stbi_failure_reason()); exit(1); }
+            resample(px, w, h, (uint8_t *)g->staging.mapped, size);
+            stbi_image_free(px);
+        }
+        begin(g);
+        VkBufferImageCopy c = { 0 };
+        c.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        c.imageSubresource.baseArrayLayer = (uint32_t)layer++;
+        c.imageSubresource.layerCount = 1;
+        c.imageExtent.width = c.imageExtent.height = (uint32_t)size;
+        c.imageExtent.depth = 1;
+        vkCmdCopyBufferToImage(g->cmd, g->staging.buf, im.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+        submit(g);
+    }
+    /* the mips, each from the one above: an sRGB format filters in linear light */
+    begin(g);
+    for (int m = 1; m < mips; ++m) {
+        array_barrier(g, im.img, (uint32_t)m - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkImageBlit b = { 0 };
+        b.srcSubresource.aspectMask = b.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        b.srcSubresource.mipLevel = (uint32_t)m - 1;
+        b.dstSubresource.mipLevel = (uint32_t)m;
+        b.srcSubresource.layerCount = b.dstSubresource.layerCount = (uint32_t)(layers ? layers : 1);
+        b.srcOffsets[1].x = size >> (m - 1); b.srcOffsets[1].y = size >> (m - 1); b.srcOffsets[1].z = 1;
+        b.dstOffsets[1].x = size >> m; b.dstOffsets[1].y = size >> m; b.dstOffsets[1].z = 1;
+        vkCmdBlitImage(g->cmd, im.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, im.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
+    }
+    if (mips > 1) array_barrier(g, im.img, 0, (uint32_t)mips - 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    array_barrier(g, im.img, (uint32_t)mips - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    submit(g);
+    return im;
+}
+
+static void load_textures(Gpu *g, const Scene *s) {
+    double t0 = now_seconds();
+    if (g->colour.img) vk_image_destroy(&g->vk, &g->colour);
+    if (g->data.img) vk_image_destroy(&g->vk, &g->data);
+    g->colour = load_array(g, s, true);
+    g->data = load_array(g, s, false);
+    if (s->nimages) printf("  %d textures (%d colour, %d data) in %.1f s\n", s->nimages, s->ncolour, s->ndata, now_seconds() - t0);
+}
+
 void gpu_load_scene(Gpu *g, const Scene *s) {
     free_scene(g);
     upload(g, &g->verts, STORE | GEOM, s->verts, sizeof(float) * 3 * s->nverts);
     upload(g, &g->idx, STORE | GEOM, s->idx, sizeof(uint32_t) * s->nidx);
     upload(g, &g->lights, STORE, s->lights, sizeof(BakeLight) * (size_t)s->nlights);
+    upload(g, &g->attrs, STORE, s->attrs, sizeof(float) * 5 * s->nverts);
+    load_textures(g, s);
     gpu_set_basis(g, s, BASIS_ALL);
 
     /* a BLAS per mesh */
@@ -395,15 +534,15 @@ void gpu_load_scene(Gpu *g, const Scene *s) {
 
 /* The emissive triangles, a light each (pathtrace.glsl: Emitter), in world space for the instances
  * as they stand (the shader finds a periodic module's copies), and the alias table that chooses
- * one by its power (Vose's method). Sets each instance's first emitter (inst[i * 8 + 4]; its
+ * one by its power (Vose's method). Sets each instance's first emitter (inst[i * INST_WORDS + 4]; its
  * triangles' follow in order), or ~0u where it doesn't emit. */
 static int build_emitters(const Scene *s, const BakeMat *mats, uint32_t *inst, GpuEmitter **out) {
     int n = 0;
     for (int i = 0; i < s->ninsts; ++i) {
         const float *e = mats[s->insts[i].mat].emission;
-        inst[i * 8 + 4] = 0xFFFFFFFFu;
+        inst[i * INST_WORDS + 4] = 0xFFFFFFFFu;
         if (e[0] > 0.0f || e[1] > 0.0f || e[2] > 0.0f) {
-            inst[i * 8 + 4] = (uint32_t)n;
+            inst[i * INST_WORDS + 4] = (uint32_t)n;
             n += (int)(s->meshes[s->insts[i].mesh].indexCount / 3);
         }
     }
@@ -414,7 +553,7 @@ static int build_emitters(const Scene *s, const BakeMat *mats, uint32_t *inst, G
     if (!*out || !power || !q || !small || !large) fatal("out of memory building the emitters");
     double total = 0.0;
     for (int i = 0; i < s->ninsts; ++i) {
-        if (inst[i * 8 + 4] == 0xFFFFFFFFu) continue;
+        if (inst[i * INST_WORDS + 4] == 0xFFFFFFFFu) continue;
         const BakeInst *in = &s->insts[i];
         const BakeMesh *m = &s->meshes[in->mesh];
         const float *e = mats[in->mat].emission;
@@ -426,7 +565,7 @@ static int build_emitters(const Scene *s, const BakeMat *mats, uint32_t *inst, G
                 for (int r = 0; r < 3; ++r)
                     w[k][r] = in->xf[r * 4 + 0] * v[0] + in->xf[r * 4 + 1] * v[1] + in->xf[r * 4 + 2] * v[2] + in->xf[r * 4 + 3];
             }
-            size_t k = inst[i * 8 + 4] + t;
+            size_t k = inst[i * INST_WORDS + 4] + t;
             GpuEmitter *o = &(*out)[k];
             for (int r = 0; r < 3; ++r) {
                 o->p0[r] = w[0][r];
@@ -544,10 +683,12 @@ static void bind(Gpu *g) {
     wa.accelerationStructureCount = 1;
     wa.pAccelerationStructures = &g->tlas;
     Buffer *bufs[9] = { &g->verts, &g->idx, &g->insts, &g->mats, &g->lights, &g->out0, &g->out1, &g->in0, &g->emitters };
-    VkDescriptorBufferInfo bi[10];
-    VkWriteDescriptorSet w[11];
+    VkDescriptorBufferInfo bi[11];
+    VkDescriptorImageInfo ii[2] = { { g->sampler, g->colour.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+                                    { g->sampler, g->data.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
+    VkWriteDescriptorSet w[14];
     memset(w, 0, sizeof(w));
-    for (int i = 0; i < 11; ++i) {
+    for (int i = 0; i < 14; ++i) {
         w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w[i].dstSet = g->set;
         w[i].descriptorCount = 1;
@@ -565,7 +706,16 @@ static void bind(Gpu *g) {
     w[10].dstBinding = 10;
     w[10].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     w[10].pBufferInfo = &bi[9];
-    vkUpdateDescriptorSets(g->vk.device, 11, w, 0, NULL);
+    bi[10].buffer = g->attrs.buf; bi[10].offset = 0; bi[10].range = VK_WHOLE_SIZE;
+    w[11].dstBinding = 11;
+    w[11].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    w[11].pBufferInfo = &bi[10];
+    for (int i = 0; i < 2; ++i) {
+        w[12 + i].dstBinding = (uint32_t)(12 + i);
+        w[12 + i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w[12 + i].pImageInfo = &ii[i];
+    }
+    vkUpdateDescriptorSets(g->vk.device, 14, w, 0, NULL);
 }
 
 static void dispatch(Gpu *g, int pipe, uint32_t x, uint32_t y, uint32_t z) {

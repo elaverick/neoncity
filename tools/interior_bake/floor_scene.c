@@ -1,14 +1,15 @@
 #include "kit.h"
 #include "floor_gen.h"
+#include "furniture.h"
 #include "plant.h"
 
-/* A planned floor (floor_gen.c) as a scene: each item built from the kit's boxes and meshes, its
- * lights on as the module's light state says. The furniture is stand-ins until the user's models
- * arrive (IM6); its materials are still set here and in kit.c. */
+/* A planned floor (floor_gen.c) as a scene: each item built from the furniture (furniture.h) and the
+ * kit's boxes and meshes, its lights on as the module's light state says. What has no model of its
+ * own (books, printers, tables, sofas' neighbours) stays boxes. */
 
 /* What a generated floor adds to the kit. */
 typedef struct Extra {
-    int pedLight, paper, mug, book[4], canvas, ink[5], panel, leather, rugs[3], handle;
+    int pedLight, mug, book[4], canvas, ink[5], panel, leather, rugs[3];
     int cyl;      /* a cylinder of radius 1, height 1, standing on y = 0 */
 } Extra;
 
@@ -36,7 +37,6 @@ static Extra extra_make(Scene *s, Kit *k, int style) {
     Extra e;
     e.pedLight = mat_add(s, 0.62f, 0.60f, 0.56f, 0, 0, 0);      /* the reference's pale pedestals */
     mat_surface(s, e.pedLight, 0.4f, 0.0f, 0.0f, 0.0f);
-    e.paper = mat_add(s, 0.8f, 0.78f, 0.72f, 0, 0, 0);
     e.mug = mat_add(s, 0.05f, 0.05f, 0.055f, 0, 0, 0);
     mat_surface(s, e.mug, 0.25f, 0.0f, 0.0f, 0.0f);
     static const float B[4][3] = { { 0.28f, 0.10f, 0.07f }, { 0.08f, 0.13f, 0.22f }, { 0.45f, 0.40f, 0.30f }, { 0.10f, 0.16f, 0.10f } };
@@ -50,8 +50,6 @@ static Extra extra_make(Scene *s, Kit *k, int style) {
     mat_surface(s, e.leather, 0.45f, 0.0f, 0.0f, 0.0f);
     static const float R[3][3] = { { 0.16f, 0.09f, 0.06f }, { 0.07f, 0.09f, 0.12f }, { 0.13f, 0.12f, 0.10f } };
     for (int i = 0; i < 3; ++i) { e.rugs[i] = mat_add(s, R[i][0], R[i][1], R[i][2], 0, 0, 0); mat_surface(s, e.rugs[i], 1.0f, 0.0f, 0.0f, 0.0f); }
-    e.handle = mat_add(s, 0.5f, 0.5f, 0.5f, 0, 0, 0);
-    mat_surface(s, e.handle, 0.35f, 1.0f, 0.0f, 0.0f);
     e.cyl = cylinder_mesh(s);
     /* the styles' surfaces */
     if (style == FS_EXEC) {
@@ -75,70 +73,112 @@ static float look(uint32_t seed, uint32_t tag) {
     return (float)(s >> 8) * (1.0f / 16777216.0f);
 }
 
-static void build_desk(Scene *s, const Kit *k, const Extra *e, const FloorItem *it, int state) {
-    float yaw = yaw_of(it->dir), w = it->a, ox = it->ox, oz = it->oz;
+/* A variant for one piece: mostly the one its floor's run of them shares, the odd one out of step. */
+static int variant_of(uint32_t seed, uint32_t tag) {
+    return look(seed, tag) < 0.7f ? (int)(look(seed & 0xFFFFFF00u, tag + 1u) * 2.99f) : (int)(look(seed, tag + 2u) * 2.99f);
+}
+
+/* A thin card of a material, centred at (x, y, z) in the frame turned by yaw; its image on the face to look at. */
+static void card_at(Scene *s, const Furniture *f, int mat, float x, float y, float z, float yaw, float w, float h, float d) {
+    inst_add(s, f->card, mat, 0, x, y, z, w, h, d, yaw);
+}
+
+static void build_desk(Scene *s, const Kit *k, const Extra *e, const Furniture *f, const FloorItem *it, int state) {
+    float yaw = yaw_of(it->dir), w = it->a, ox = it->ox, oz = it->oz, c = cosf(yaw), n = sinf(yaw);
     uint32_t sd = it->seed;
-#define B(M, F, X, Y, Z, SX, SY, SZ) box_local(s, (M), (F), ox, oz, yaw, (X), (Y), (Z), (SX), (SY), (SZ), 0.0f)
-    B(k->wood, 0, 0.0f, 0.735f, 0.4f, w, 0.03f, 0.8f);
-    B(k->frame, 0, -w * 0.5f + 0.035f, 0.36f, 0.4f, 0.03f, 0.72f, 0.7f);
-    B(k->frame, 0, w * 0.5f - 0.035f, 0.36f, 0.4f, 0.03f, 0.72f, 0.7f);
-    B(k->frame, 0, 0.0f, 0.51f, 0.07f, w - 0.1f, 0.42f, 0.02f);
-    /* a pedestal: pale on some floors, with its three drawers' gaps and handles on the side you sit */
-    float side = look(sd, 1u) < 0.5f ? 1.0f : -1.0f, px = side * (w * 0.5f - 0.29f);
-    int ped = look(it->seed & 0xFFFFFF00u, 2u) < 0.35f ? e->pedLight : k->pedestal;
-    B(ped, 0, px, 0.3f, 0.425f, 0.42f, 0.6f, 0.55f);
-    for (int d = 1; d <= 2; ++d) B(k->frame, 0, px, (float)d * 0.2f, 0.702f, 0.40f, 0.006f, 0.006f);
-    for (int d = 0; d < 3; ++d) B(e->handle, 0, px, 0.14f + (float)d * 0.2f, 0.708f, 0.12f, 0.012f, 0.012f);
-    if (it->variant > 0) {
-        /* the screens, on stands, facing their user; only the panel emits */
-        for (int i = 0; i < it->variant; ++i) {
-            float cx = it->variant == 1 ? 0.0f : -0.3f + 0.6f * (float)i;
-            bool on = (it->bit[i] >> state) & 1u;
-            B(k->plastic, 0, cx, 1.08f, 0.17f, 0.54f, 0.32f, 0.03f);
-            B(on ? k->screenOn : k->screenOff, 0, cx, 1.08f, 0.187f, 0.51f, 0.29f, 0.004f);
-            B(k->plastic, 0, cx, 0.84f, 0.15f, 0.05f, 0.18f, 0.05f);
-            B(k->plastic, 0, cx, 0.755f, 0.15f, 0.2f, 0.01f, 0.14f);
-        }
-        B(k->plastic, 0, 0.0f, 0.76f, 0.5f, 0.45f, 0.02f, 0.14f);      /* keyboard */
-        B(k->plastic, 0, 0.3f, 0.76f, 0.5f, 0.06f, 0.02f, 0.1f);       /* mouse */
+#define WX(LX, LZ) (ox + c * (LX) + n * (LZ))
+#define WZ(LX, LZ) (oz - n * (LX) + c * (LZ))
+#define B(M, FL, X, Y, Z, SX, SY, SZ) box_local(s, (M), (FL), ox, oz, yaw, (X), (Y), (Z), (SX), (SY), (SZ), 0.0f)
+    /* The desk, stretched to its plan: back 5 cm clear of the line it stands on, where a partition's feet go. */
+    const float back = 0.05f, depth = 0.75f, top = f->desk.mx[1];
+    float dw = f->desk.mx[0] - f->desk.mn[0], dd = f->desk.mx[2] - f->desk.mn[2];
+    piece_place(s, &f->desk, variant_of(sd, 70u), BF_LEAKY, WX(0.0f, back + depth * 0.5f), 0.0f, WZ(0.0f, back + depth * 0.5f), yaw, w / dw, 1.0f, depth / dd);
+    if ((it->bit[3] >> state) & 1u) B(k->stripOn, BF_EMITTER, 0.0f, top - 0.056f, 0.3f, 0.6f, 0.004f, 0.015f);   /* in the kneehole, under the top */
+
+    /* the computers, facing their user */
+    const Piece *pc = &f->computer;
+    float cz = back + 0.02f + (pc->mx[2] - pc->mn[2]) * 0.5f;
+    for (int i = 0; i < it->variant; ++i) {
+        float cx = it->variant == 1 ? 0.0f : (i == 0 ? -0.28f : 0.28f);
+        piece_place(s, pc, 0, 0, WX(cx, cz), top, WZ(cx, cz), yaw, 1.0f, 1.0f, 1.0f);
+        if ((it->bit[i] >> state) & 1u)
+            inst_add(s, pc->extra, f->screen[(int)(look(sd, 80u + (uint32_t)i) * 3.99f)], BF_EMITTER, WX(cx, cz), top, WZ(cx, cz), 1, 1, 1, yaw);
     }
-    if ((it->bit[3] >> state) & 1u) B(k->stripOn, BF_EMITTER, 0.0f, 0.714f, 0.12f, w - 0.2f, 0.004f, 0.015f);
-    if (it->b != 0.0f) {   /* a task lamp */
-        float lx = it->b * w * 0.4f, hd = lx - it->b * 0.09f;
+
+    /* a banker's lamp at the back corner, its shade towards the user */
+    float free = it->b != 0.0f ? -it->b : (look(sd, 1u) < 0.5f ? 1.0f : -1.0f);   /* the side without it */
+    if (it->b != 0.0f) {
+        float lx = it->b * (w * 0.5f - 0.16f), lz = back + 0.17f;
         bool on = (it->bit[2] >> state) & 1u;
-        B(k->plastic, 0, lx, 0.76f, 0.15f, 0.12f, 0.02f, 0.12f);
-        B(k->plastic, 0, lx, 0.97f, 0.15f, 0.02f, 0.4f, 0.02f);
-        B(k->lampOff, BF_EMITTER, hd, 1.145f, 0.15f, 0.22f, 0.05f, 0.08f);
+        piece_place(s, &f->lamp, 0, 0, WX(lx, lz), top, WZ(lx, lz), yaw, 1.0f, 1.0f, 1.0f);
         if (on) {
-            B(k->lampOn, BF_EMITTER, hd, 1.118f, 0.15f, 0.18f, 0.004f, 0.06f);
-            float c = cosf(yaw), n = sinf(yaw);
-            light_add(s, ox + c * hd + n * 0.15f, 1.1f, oz - n * hd + c * 0.15f, 0.9f, 0.52f, 0.22f);
+            inst_add(s, f->lamp.extra, k->lampOn, BF_EMITTER, WX(lx, lz), top, WZ(lx, lz), 1, 1, 1, yaw);
+            light_add(s, WX(lx, lz + 0.05f), top + 0.25f, WZ(lx, lz + 0.05f), 0.9f, 0.52f, 0.22f);
         }
     }
-    /* what people leave out: a stack of books, papers, a mug */
-    if (it->variant > 0) {
-        float bx = -side * 0.0f + (it->b != 0.0f ? -it->b * w * 0.36f : -side * w * 0.36f);
-        if (look(sd, 3u) < 0.45f) {
-            int books = 2 + (int)(look(sd, 4u) * 3.0f);
-            for (int i = 0; i < books; ++i)
-                box_local(s, e->book[(int)(look(sd, 10u + (uint32_t)i) * 3.99f)], 0, ox, oz, yaw, bx, 0.77f + 0.036f * (float)i, 0.28f,
-                          0.20f + 0.04f * look(sd, 20u + (uint32_t)i), 0.034f, 0.27f, (look(sd, 30u + (uint32_t)i) - 0.5f) * 0.5f);
-        }
-        if (look(sd, 5u) < 0.5f) B(e->paper, 0, 0.45f * (look(sd, 6u) - 0.5f) * w, 0.752f, 0.6f, 0.21f, 0.002f, 0.3f);
-        if (look(sd, 7u) < 0.6f) {
-            float mx = (look(sd, 8u) < 0.5f ? 0.42f : -0.42f) * w * 0.8f, c = cosf(yaw), n = sinf(yaw);
-            inst_add(s, e->cyl, e->mug, 0, ox + c * mx + n * 0.55f, 0.75f, oz - n * mx + c * 0.55f, 0.04f, 0.095f, 0.04f, 0.0f);
-        }
+
+    /* what people leave out */
+    float y = top + 0.0015f;
+    int sheets = it->variant == 0 ? (look(sd, 5u) < 0.3f ? 1 : 0) : (look(sd, 5u) < 0.7f ? 1 + (int)(look(sd, 6u) * 2.99f) : 0);
+    float px = -free * w * (0.1f + 0.22f * look(sd, 7u));
+    for (int i = 0; i < sheets; ++i) {   /* A4, on its side across the desk's front */
+        float spin = PI_F * 0.5f + (look(sd, 90u + (uint32_t)i) - 0.5f) * 0.4f;
+        float sx = px + (look(sd, 95u + (uint32_t)i) - 0.5f) * 0.05f, sz = back + 0.62f + (look(sd, 99u + (uint32_t)i) - 0.5f) * 0.04f;
+        card_at(s, f, f->paper[(int)(look(sd, 103u + (uint32_t)i) * 3.99f)], WX(sx, sz), y, WZ(sx, sz), yaw + spin, 0.297f, 0.0012f, 0.21f);
+        y += 0.0014f;
     }
-    /* the chair, somewhere near its desk */
-    float jx = (look(sd, 9u) - 0.5f) * 0.35f, sp = (look(sd, 40u) - 0.5f) * 0.9f, c = cosf(yaw), n = sinf(yaw), lz = 1.1f;
-    chair(s, k, ox + c * jx + n * lz, oz - n * jx + c * lz, yaw + sp);
+    if (sheets && look(sd, 8u) < 0.5f)
+        piece_place(s, &f->pen, 0, 0, WX(px, back + 0.62f), y, WZ(px, back + 0.62f), yaw + look(sd, 9u) * 6.28f, 1.0f, 1.0f, 1.0f);
+    if (look(sd, 50u) < 0.5f) {
+        float x = free * (w * 0.5f - 0.13f), z = back + 0.58f;
+        piece_place(s, &f->phone, 0, 0, WX(x, z), top, WZ(x, z), yaw + (look(sd, 51u) - 0.5f) * 0.6f, 1.0f, 1.0f, 1.0f);
+    }
+    if (it->variant < 2 && w >= 1.5f && look(sd, 52u) < 0.45f) {
+        float x = free * (w * 0.5f - 0.2f), z = back + 0.16f;
+        piece_place(s, &f->intray, 0, BF_OPEN, WX(x, z), top, WZ(x, z), yaw + (look(sd, 53u) - 0.5f) * 0.2f, 1.0f, 1.0f, 1.0f);
+    } else if (it->variant == 1 && look(sd, 3u) < 0.45f) {   /* or a stack of books */
+        float bx = free * (w * 0.5f - 0.16f);
+        int books = 2 + (int)(look(sd, 4u) * 3.0f);
+        for (int i = 0; i < books; ++i)
+            box_local(s, e->book[(int)(look(sd, 10u + (uint32_t)i) * 3.99f)], 0, ox, oz, yaw, bx, top + 0.017f + 0.036f * (float)i, back + 0.2f,
+                      0.20f + 0.04f * look(sd, 20u + (uint32_t)i), 0.034f, 0.27f, (look(sd, 30u + (uint32_t)i) - 0.5f) * 0.5f);
+    }
+    if (it->variant > 0 && look(sd, 54u) < 0.6f) {
+        float mx = free * w * 0.3f, mz = back + 0.48f;
+        inst_add(s, e->cyl, e->mug, 0, WX(mx, mz), top, WZ(mx, mz), 0.04f, 0.095f, 0.04f, 0.0f);
+    }
+
+    /* the chair, somewhere near its desk, facing it */
+    float jx = (look(sd, 55u) - 0.5f) * 0.3f, sp = (look(sd, 40u) - 0.5f) * 0.7f, lz = 1.22f;
+    piece_place(s, &f->chair, variant_of(sd, 60u), BF_LEAKY, WX(jx, lz), 0.0f, WZ(jx, lz), yaw + PI_F + sp, 1.0f, 1.0f, 1.0f);
 #undef B
 }
 
-static void build_panel(Scene *s, const Kit *k, const FloorItem *it, int state) {
-    box(s, k->board, 0, it->x0, 0.75f, it->z0, it->x1, 1.15f, it->z1);
-    if ((it->bit[0] >> state) & 1u) box(s, k->coveOn, BF_EMITTER, it->x0, 1.15f, it->z0, it->x1, 1.154f, it->z1);
+/* A run of partitions on their feet between the desks: one per desk's width or so, stretched to the
+ * run's share and the plan's height, narrow in the foot so it stands between the desks' backs. A chart
+ * or two pinned on the pale upper panels. */
+static void build_panel(Scene *s, const Kit *k, const Furniture *f, const FloorItem *it, int state) {
+    const Piece *p = &f->partition;
+    bool alongZ = it->dir == 1;
+    float len = alongZ ? it->z1 - it->z0 : it->x1 - it->x0, yaw = alongZ ? PI_F * 0.5f : 0.0f;
+    int n = (int)fmaxf(roundf(len / 1.7f), 1.0f);
+    float seg = len / (float)n, pw = p->mx[0] - p->mn[0], ph = p->mx[1] - p->mn[1], pd = p->mx[2] - p->mn[2];
+    float sz = 0.09f / pd, face = 0.0177f * 0.84f * sz + 0.0015f;   /* the panel's half thickness, as packed, stretched: and a card's */
+    float c = cosf(yaw), m = sinf(yaw);
+    for (int i = 0; i < n; ++i) {
+        float along = ((float)i + 0.5f) * seg;
+        float x = alongZ ? (it->x0 + it->x1) * 0.5f : it->x0 + along, z = alongZ ? it->z0 + along : (it->z0 + it->z1) * 0.5f;
+        piece_place(s, p, 0, 0, x, 0.0f, z, yaw, seg / pw, FLOOR_PANEL_H / ph, sz);
+        uint32_t sd = (uint32_t)(i * 2654435761u) ^ (uint32_t)(x * 97.0f) ^ ((uint32_t)(z * 89.0f) << 12);
+        for (int side = 0; side < 2; ++side) {
+            uint32_t t = (uint32_t)side * 16u;
+            if (look(sd, 1u + t) > 0.55f) continue;
+            float lx = (look(sd, 2u + t) - 0.5f) * (seg - 0.6f), lz = side ? -face : face;
+            float wx = x + c * lx + m * lz, wz = z - m * lx + c * lz;
+            inst_add(s, f->card, f->chart[(int)(look(sd, 3u + t) * 5.99f)], 0, wx, 1.08f + (look(sd, 4u + t) - 0.5f) * 0.05f, wz, 0.42f, 0.297f, 0.002f, yaw + (side ? PI_F : 0.0f));
+        }
+    }
+    if ((it->bit[0] >> state) & 1u) box(s, k->coveOn, BF_EMITTER, it->x0, FLOOR_PANEL_H, it->z0, it->x1, FLOOR_PANEL_H + 0.004f, it->z1);
 }
 
 static void build_pendant(Scene *s, const Kit *k, const FloorItem *it, float y, int state) {
@@ -155,7 +195,7 @@ static void build_pendant(Scene *s, const Kit *k, const FloorItem *it, float y, 
         box(s, k->wire, 0, x + wx * (float)w - 0.004f, y + 0.05f, z + wz * (float)w - 0.004f, x + wx * (float)w + 0.004f, s->ceilY, z + wz * (float)w + 0.004f);
 }
 
-static void build_room(Scene *s, const Kit *k, const FloorItem *it, int state) {
+static void build_room(Scene *s, const Kit *k, const Furniture *f, const FloorItem *it, int state) {
     float xa = it->x0, xb = it->x1, za = it->z0, zb = it->z1, g = 0.006f, c = s->ceilY, top = fminf(2.7f, c - 0.2f), door = it->a;
     float zd = it->dir == 0 ? za : zb, zo = it->dir == 0 ? zb : za;
     box(s, k->glass, BF_GLASS, xa, 0.0f, zo - g, xb, top, zo + g);
@@ -186,8 +226,16 @@ static void build_room(Scene *s, const Kit *k, const FloorItem *it, int state) {
     box(s, k->frame, 0, t.x0 + 0.4f, 0.0f, (t.z0 + t.z1) * 0.5f - 0.1f, t.x1 - 0.4f, 0.72f, (t.z0 + t.z1) * 0.5f + 0.1f);
     uint32_t i = 0;
     for (float x = t.x0 + 0.5f; x < t.x1 - 0.2f; x += 1.0f, ++i) {
-        chair(s, k, x, t.z0 - 0.45f, (look(it->seed, 100u + i) - 0.5f) * 0.5f);
-        chair(s, k, x, t.z1 + 0.45f, PI_F + (look(it->seed, 200u + i) - 0.5f) * 0.5f);
+        /* a chair's front is its +z: towards the table */
+        piece_place(s, &f->chair, variant_of(it->seed, 300u), BF_LEAKY, x, 0.0f, t.z0 - 0.48f, (look(it->seed, 100u + i) - 0.5f) * 0.5f, 1.0f, 1.0f, 1.0f);
+        piece_place(s, &f->chair, variant_of(it->seed, 300u), BF_LEAKY, x, 0.0f, t.z1 + 0.48f, PI_F + (look(it->seed, 200u + i) - 0.5f) * 0.5f, 1.0f, 1.0f, 1.0f);
+    }
+    /* a blackboard at the room's far end from its door, facing the table, where there's room for it and its feet */
+    float bw = f->blackboard.mx[0] - f->blackboard.mn[0];
+    if (zb - za >= bw + 0.3f && look(it->seed, 400u) < 0.75f) {
+        bool atMax = fabsf(door - xa) < fabsf(door - xb);
+        float bx = atMax ? xb - 0.4f : xa + 0.4f;
+        piece_place(s, &f->blackboard, 0, 0, bx, 0.0f, (za + zb) * 0.5f, atMax ? -PI_F * 0.5f : PI_F * 0.5f, 1.0f, 1.0f, 1.0f);
     }
     if ((it->bit[0] >> state) & 1u) box(s, k->coveOn, BF_EMITTER, xa, top - 0.02f, za + 0.05f, xb, top, za + 0.07f);
 }
@@ -236,27 +284,29 @@ static void build_art(Scene *s, const Kit *k, const Extra *e, const FloorItem *i
 #undef SLAB
 }
 
-static void build_filing(Scene *s, const Kit *k, const Extra *e, const FloorItem *it) {
+/* The cabinets, one a slot, stretched to the slot and the run's height; back to back in two rows where the plan has them. */
+static void build_filing(Scene *s, const Kit *k, const Extra *e, const Furniture *f, const FloorItem *it) {
+    const Piece *p = &f->cabinet;
     float h = it->variant ? 1.9f : 1.05f, zc = (it->z0 + it->z1) * 0.5f;
-    int drawers = it->variant ? 5 : 3, n = (int)floorf((it->x1 - it->x0) / 0.8f + 0.01f), mat = look(it->seed, 1u) < 0.5f ? e->pedLight : k->pedestal;
+    int n = (int)floorf((it->x1 - it->x0) / 0.8f + 0.01f);
+    float sx = 0.79f / (p->mx[0] - p->mn[0]), sy = h / (p->mx[1] - p->mn[1]), pd = p->mx[2] - p->mn[2];
+    bool two = it->b > 0.5f;
+    float depth = two ? (it->z1 - it->z0) * 0.5f - 0.005f : it->z1 - it->z0;
     for (int i = 0; i < n; ++i) {
-        float x0 = it->x0 + 0.8f * (float)i, x1 = x0 + 0.79f;
-        box(s, mat, 0, x0, 0.0f, it->z0, x1, h, it->z1);
-        for (int side = 0; side < (it->b > 0.5f ? 2 : 1); ++side) {
-            bool nearFace = it->b > 0.5f ? side == 0 : it->dir == 2;
-            float z = nearFace ? it->z0 : it->z1, sgn = nearFace ? -1.0f : 1.0f;
-            for (int d = 0; d < drawers; ++d) {
-                float y = (float)(d + 1) * h / (float)drawers;
-                if (d < drawers - 1) box(s, k->frame, 0, x0 + 0.01f, y - 0.004f, fminf(z, z + sgn * 0.004f), x1 - 0.01f, y + 0.004f, fmaxf(z, z + sgn * 0.004f));
-                box(s, e->handle, 0, x0 + 0.3f, y - h / (float)drawers * 0.5f, fminf(z, z + sgn * 0.02f), x1 - 0.3f, y - h / (float)drawers * 0.5f + 0.015f, fmaxf(z, z + sgn * 0.02f));
-            }
+        float x = it->x0 + 0.8f * (float)i + 0.395f;
+        if (two) {
+            piece_place(s, p, 0, 0, x, 0.0f, zc + depth * 0.5f + 0.005f, 0.0f, sx, sy, depth / pd);
+            piece_place(s, p, 0, 0, x, 0.0f, zc - depth * 0.5f - 0.005f, PI_F, sx, sy, depth / pd);
+        } else {
+            piece_place(s, p, 0, 0, x, 0.0f, zc, it->dir == 2 ? PI_F : 0.0f, sx, sy, depth / pd);
         }
         if (!it->variant && look(it->seed, 20u + (uint32_t)i) < 0.5f) {   /* box files on the low ones */
             int nb = 3 + (int)(look(it->seed, 40u + (uint32_t)i) * 5.0f);
             for (int b = 0; b < nb; ++b)
-                box(s, e->book[b & 3], 0, x0 + 0.08f + 0.075f * (float)b, h, zc - 0.13f, x0 + 0.145f + 0.075f * (float)b, h + 0.26f + 0.04f * look(it->seed, 60u + (uint32_t)b), zc + 0.13f);
+                box(s, e->book[b & 3], 0, x - 0.31f + 0.075f * (float)b, h, zc - 0.13f, x - 0.245f + 0.075f * (float)b, h + 0.26f + 0.04f * look(it->seed, 60u + (uint32_t)b), zc + 0.13f);
         }
     }
+    (void)k;
 }
 
 static void build_core(Scene *s, const Kit *k, const FloorItem *it, int state) {
@@ -284,6 +334,16 @@ static void build_services(Scene *s, const Kit *k, const FloorPlan *P, float x0,
         float dx = P->ductX[i];
         box(s, k->duct, 0, dx - 0.35f, db, 0.4f, dx + 0.35f, dt, zEnd - 0.4f);
         for (float z = 3.0f; z < zEnd - 1.0f; z += 6.0f) box(s, k->duct, 0, dx - 0.2f, db - 0.1f, z - 0.2f, dx + 0.2f, db, z + 0.2f);
+        /* its joints: a collar every 1.5 m, and a rod each side of every other one up to the slab */
+        int j = 0;
+        for (float z = 1.15f; z < zEnd - 0.5f; z += 1.5f, ++j) {
+            box(s, k->duct, 0, dx - 0.365f, db - 0.015f, z - 0.02f, dx + 0.365f, dt + 0.015f, z + 0.02f);
+            if (dt + 0.02f < c && (j & 1) == 0) {
+                box(s, k->wire, 0, dx - 0.39f, db - 0.03f, z + 0.1f, dx + 0.39f, db - 0.01f, z + 0.12f);
+                for (int side = -1; side <= 1; side += 2)
+                    box(s, k->wire, 0, dx + 0.38f * (float)side - 0.005f, db - 0.03f, z + 0.105f, dx + 0.38f * (float)side + 0.005f, c, z + 0.115f);
+            }
+        }
     }
     for (int i = 0; i < P->ntray; ++i) box(s, k->tray, 0, x0, c - 0.42f, P->trayZ[i] - 0.18f, x1, c - 0.36f, P->trayZ[i] + 0.18f);
     for (float z = 1.5f; z < zEnd - 0.5f; z += 3.0f) box(s, k->pipe, 0, x0, c - 0.15f, z - 0.02f, x1, c - 0.11f, z + 0.02f);
@@ -307,6 +367,8 @@ bool floor_scene_build(Scene *s, const char *name, int state, const char *assets
     float W = P->W, D = en->p.D;
     Kit k = kit_make(s, st, W, D);
     Extra e = extra_make(s, &k, en->p.style);
+    Furniture fu;
+    if (!furniture_load(s, &k, &fu, assets)) { free(P); return false; }
     scene_defaults(s, name, en->p.corner ? MOD_CORNER : en->p.core == FLOOR_CORE_BACK ? MOD_CORE : MOD_THROUGH, W, D);
     s->H = en->p.H;
     s->ceilY = P->ceil;
@@ -339,21 +401,21 @@ bool floor_scene_build(Scene *s, const char *name, int state, const char *assets
         case FI_COLUMN:  box(s, k.concrete, 0, it->x0, -0.1f, it->z0, it->x1, s->ceilY + 0.1f, it->z1); break;
         case FI_CORE:    build_core(s, &k, it, st); break;
         case FI_DOOR:    build_door(s, &k, it); break;
-        case FI_DESK:    build_desk(s, &k, &e, it, st); break;
-        case FI_PANEL:   build_panel(s, &k, it, st); break;
+        case FI_DESK:    build_desk(s, &k, &e, &fu, it, st); break;
+        case FI_PANEL:   build_panel(s, &k, &fu, it, st); break;
         case FI_PENDANT: build_pendant(s, &k, it, pendantY, st); break;
         case FI_TROFFER:
-            box(s, k.trofferOff, BF_EMITTER, it->x0, trofferY, it->z0, it->x1, trofferY + 0.08f, it->z1);
-            if ((it->bit[0] >> st) & 1u) box(s, k.trofferOn, BF_EMITTER, it->x0 + 0.02f, trofferY - 0.004f, it->z0 + 0.02f, it->x1 - 0.02f, trofferY, it->z1 - 0.02f);
+            inst_add(s, fu.card, k.trofferOff, BF_EMITTER, it->ox, trofferY + 0.04f, it->oz, it->x1 - it->x0, 0.08f, it->z1 - it->z0, 0.0f);
+            if ((it->bit[0] >> st) & 1u) inst_add(s, fu.card, k.trofferOn, BF_EMITTER, it->ox, trofferY - 0.002f, it->oz, 1.2f, 0.004f, 1.2f, 0.0f);
             break;
-        case FI_ROOM:    build_room(s, &k, it, st); break;
+        case FI_ROOM:    build_room(s, &k, &fu, it, st); break;
         case FI_LOUNGE:  build_lounge(s, &k, &e, it, assets, st); break;
         case FI_WALL:
             box(s, e.panel, 0, it->x0, 0.0f, it->z0, it->x1, it->b, it->z1);
             if ((it->bit[0] >> st) & 1u) box(s, k.coveOn, BF_EMITTER, it->x0, it->b, it->z0, it->x1, it->b + 0.004f, it->z1);
             break;
         case FI_ART:     build_art(s, &k, &e, it); break;
-        case FI_FILING:  build_filing(s, &k, &e, it); break;
+        case FI_FILING:  build_filing(s, &k, &e, &fu, it); break;
         case FI_PRINTER:
             box(s, k.pedestal, 0, it->x0, 0.0f, it->z0, it->x1, 0.95f, it->z1);
             box(s, e.pedLight, 0, it->x0 + 0.03f, 0.95f, it->z0 + 0.03f, it->x1 - 0.03f, 1.1f, it->z1 - 0.03f);

@@ -224,7 +224,7 @@ Floor layouts are procedural, in code, and used only by the baker: they are the 
 
 **Validation:** walkways stay clear, nothing intersects, and every zone is lit by something in each light state.
 
-**Furniture.** The models are authored assets: the user's high-poly furniture once it arrives, simple stand-ins until then. They are glTF 2.0 binaries, in metres, y-up, with the front towards +z, standing on y = 0, with full glTF PBR textures embedded and no polygon limit. They are bake-only, so they don't follow the engine's rule of naming their materials (`src/city/models.h`); the baker reads their textures directly. Where an engine material fits (`assets/materials`), the generator may use it instead. The baker instances them: one bottom-level structure per model, thousands of instances.
+**Furniture.** The models are authored assets: the user's high-poly furniture (section 19). They are glTF 2.0 binaries, in metres, y-up, with the front towards +z, standing on y = 0, with full glTF PBR textures embedded and no polygon limit. They are bake-only, so they don't follow the engine's rule of naming their materials (`src/city/models.h`); the baker reads their textures directly. Where an engine material fits (`assets/materials`), the generator may use it instead. The baker instances them: one bottom-level structure per model, thousands of instances.
 
 ## 11. Risks
 
@@ -245,7 +245,7 @@ The working plan is kept outside the repo. In summary:
 | IM3 | The path tracer: materials, emitters, NEE and MIS, glass, clearcoat; furnace and Cornell tests. Done: section 15 |
 | IM4 | Light: the interior kit, the exterior bases and their colouring in the engine, exposure calibration, a beauty render against the reference. Section 16 |
 | IM5 | The office floor generator and its validation. Done: section 17 |
-| IM6 | The high-poly furniture (whenever it arrives) |
+| IM6 | The high-poly furniture, textures in the path tracer, printed matter. Done: section 19 |
 | IM7 | The city: floor selection, tiling, plate and core depths in the vertex data, corners, LOD, memory, and a streamed near tier at 32 texels/m (section 18) |
 | IM8 | The catalogue and one-command rebuild; README |
 | IM9 | Animated screens, people, more kits |
@@ -605,3 +605,61 @@ A march keeps to a texel a step on a finer grid: the bake scales its step limit 
 **The decision:** a near tier goes in with IM7. All twelve at 32 texels/m would take about 800 MB of GPU memory if all stay loaded, so it streams the few modules nearest the eye, and floors without one keep the base tier. Its full bake is committed only once the furniture is in (IM6), since each committed bake counts against LFS.
 
 Crops: `docs/reference/im5/closeup_lounge.jpg`, `closeup_desks.jpg`, each 16 above 32 texels/m, nearest left, filtered right.
+
+## 19. IM6: the furniture
+
+The floors' boxes gave way to the user's high-poly models. The path tracer gained what those need, and the bakes were made again.
+
+**The models** (`assets_src/interiors/*.glb`, in LFS, read only by the baker): chair, desk, computer, lamp, partition, filing cabinet, blackboard, in-tray, phone and fountain pen, 2.3 million triangles and 150 MB in all. `tools/interior_models.py pack <source dir>` makes them from the supplied files:
+
+- Metres, y up, standing on y = 0, centred on x and z, front towards +z (each was centred in a box about 1.9 units across). Scales are a table in the tool.
+- One mesh a model. The texture variants (three chairs, three desks) become materials of it (`KHR_materials_variants`). The desks' variants share their UVs. The chairs' are one shape, triangle for triangle, with their UVs laid out differently, so chairs 1 and 2 are redrawn on chair 0's layout, turning their normal maps from one layout's tangent frame to the other's.
+- Textures embedded, base colour at 4096 and the rest at 2048. The supplied 8192s can't show in a bake of 3 cm texels, and this takes the sources from 564 MB to 150 MB. The originals stay outside the repo.
+- The shapes are untouched. The computer and the lamp each gain one extra primitive, a flat panel for the part that lights up (materials named `screen` and `diffuser`).
+
+**Printed matter** (`assets_src/interiors/textures/`, by `tools/interior_props.py`, seeded): four papers (memo, schedule of accounts, work order, legal pad), six charts for the partitions (bars, lines, Gantt, organisation chart, pie, floor plan) and four things for screens to show. All made up.
+
+**The ducts** wear the supplied steel (Metal055A), box mapped at 1.5 m a tile, dulled by material factors from its clean sheet (albedo 0.74, roughness 0.27) to about albedo 0.37, roughness 0.49. As supplied, duct undersides mirrored the screens below as bright cyan blocks in the engine. They gained collars every 1.5 m and hanger rods.
+
+**The ceiling lights** are the lobby's fitting (`assets/textures/light_fixture`), so a hung panel went from 1.24 x 0.64 m to a 1.24 m square, the shape of the image. This moved the layouts' hashes, but nothing on the floor. Lit, it shows the image's emissive tubes.
+
+**Textures in the path tracer** (`surfAt` in `shaders/interior/bake_scene.glsl`, `Surf`):
+
+- Meshes have a normal and a UV per vertex, in a buffer beside the positions. A mesh without them shades as before. The Cornell and furnace tests pass unchanged, and an untextured surface draws the same random numbers as it did.
+- Two texture arrays of 2048 x 2048 with mips, one sRGB and one linear (31 and 32 layers), load in about 3 s.
+- Mips come from a footprint, not ray differentials: a capture's first hit covers one texel (1 / texels per metre), a bounce 2 cm, and a still's first hit about a pixel. The density comes from the triangle's UV and world areas.
+- Shading normals come from the mesh and the normal map. Nothing passes below the triangle's own normal, and a normal past the horizon falls back on it. Tangents come from the triangle's UVs.
+- An emitter's light is even, whatever its face shows: `look` changes only what the eye sees (a CRT's text, a troffer's tubes), so next-event estimation needs no change.
+
+**Open meshes: no repair.** The chair, desk and in-tray aren't watertight. A review capped every hole (24 on the chair, 177 on the desk) and walked rays through the result as `capture.comp` does:
+
+| | rays left stuck inside, as supplied | capped |
+|---|---|---|
+| chair | 23.8% | 3.0% |
+| desk | 23.2% | 22.5% |
+| in-tray | 67.7% | not tried: its loops are long slivers of paper |
+| the other seven | 0.0-0.2% | |
+
+`interior_models.py check` draws its own sample of rays, so it reads a little differently (chair and desk 20.2%, in-tray 68.0%).
+
+Capping hardly helps the desk, whose remaining failures are coincident sheets, not holes. So the capture was changed instead (`BF_LEAKY`): a mesh's count of entries ends where the ray leaves that mesh's bounds, so a leak is bounded by the model, where a plain count would run on to the far side of the building. A back seen with nothing to close is a thin shell, so a lone sheet shows from both sides. The chair and desk are `BF_LEAKY`, the in-tray `BF_OPEN`. Paths treat both as two-sided. No model's geometry changed, and captures show no streaks.
+
+**In the scene** (`floor_scene.c`, `furniture.c`): a desk stretches to its plan's width, its back 5 cm off the line it stands on, where a partition's narrowed feet go. Partitions tile about one per desk, to 1.3 m. Charts pin to their pale upper panels. Computers (one or two by the plan), lamps, papers, pens, phones, in-trays and mugs follow the item's seed; desk and chair variants mostly follow the run with an odd one out. A room gets a blackboard at the end away from its door if it fits. Filing cabinets stretch to their slots. A bake fails if a model is missing: no quiet fallback on stand-ins. Books, printers, meeting tables, rugs and the lounge's side tables and armchairs stay boxes, having no models.
+
+**Results:**
+
+- **Cost:** the city pass at the facade-filling view (`--cam 1139.3 262 1.7 0 20`) is 0.89 ms without impostors, 1.30 ms at a share of 0.4 and 1.84 ms on every floor: +0.41 and +0.95 ms, against IM5's +0.25 and +0.68. Finer depth gives the march more to walk. A share of 0.4 is inside the 0.5 ms budget, though an earlier run of nearly the same bakes read +0.5. Looking up from the street at every floor, the pass takes 2.68 ms against IM5's 2.58 (`--cam 1139.3 268 1.7 32`). One 64-frame mean each, with about 0.2 ms of noise.
+- **Memory:** unchanged: the channels and their sizes are fixed by the grid, 185 MB on the GPU for the twelve.
+- **Bake:** about 70 minutes for the twelve, 3 to 11 a module, against IM5's 42. 131 MB on disk.
+- **Tests:** ctest `furniture_scene` builds a floor from the models. `tools/interior_models.py check` reports each model's stance and stuck rays. `bake_test` and `office_rules` pass.
+
+**What it can't do yet:**
+
+- At 16 texels/m a CRT's face is 4 x 3 texels: text and chart detail are for the near tier (IM7), which bakes after this. The stills show what a texel can't.
+- Thin parts below a texel (chair legs, lamp stems, pens) are hit or missed by a capture's single ray a texel, as thin boxes were.
+- Screens are brighter and smaller, shedding about a third of the light on the desk that the old flat panels did.
+
+**Images** (`docs/reference/im6/`):
+
+- **`engine_level.jpg`, `engine_street.jpg`:** the facade in the engine, at a share of 0.4 and on every floor (the two `--cam` views above).
+- **`still_desks.jpg`, `still_room.jpg`, `still_dense.jpg`:** 4096-sample stills of `through16_collab` (`--beauty auto`, then `5.8,1.5,12.6,-90,-3,70`) and `through16_dense` (`6,1.55,1.2,10,3,70`).

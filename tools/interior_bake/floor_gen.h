@@ -24,6 +24,7 @@ enum { LIGHTS_AFTER_HOURS = 0, LIGHTS_LATE_SHIFT, LIGHTS_CLEANERS, LIGHTS_SCREEN
 #define LM_ORB     1400.0f
 #define LM_STRIP    300.0f
 #define LM_COVE_M   300.0f   /* a metre */
+#define FLOOR_PANEL_H 1.3f   /* a partition's height */
 
 enum { FLOOR_CORE_NONE = 0, FLOOR_CORE_BACK, FLOOR_CORE_CENTRE };
 enum { FS_OPEN = 0,   /* rows of desks along the glass, as the reference */

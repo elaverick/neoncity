@@ -37,14 +37,14 @@ bool pathTraced() { return P_trace2.x != 0; }
 
 // This pass's mean of the radiance leaving surface point p (normal n, material m) towards -d, path
 // traced; a, the luminance of it that came by a specular first bounce.
-vec4 tracedSurface(vec3 p, vec3 n, vec3 d, uint m, bool front, uint texel, uint slot) {
+vec4 tracedSurface(vec3 p, Surf s, vec3 d, uint m, bool front, uint texel, uint slot) {
     vec4 sum = vec4(0.0);
     for (int i = 0; i < P_trace.y; ++i) {
         uint rng = ptSeed(texel, slot, uint(P_trace.x + i));
-        vec3 c = ptRadiance(p, n, -d, m, rng);
+        vec3 c = ptRadiance(p, s, -d, rng);
         sum += vec4(c, gPtSpec);
     }
-    vec3 Le = front ? ptVisibleEmission(m) : vec3(0.0);
+    vec3 Le = front ? ptVisibleEmission(m, s.look) : vec3(0.0);
     return vec4(Le * (float(P_trace.y) / float(P_trace.z)), 0.0) + sum / float(P_trace.z);
 }
 
@@ -61,17 +61,33 @@ vec3 tracedReflection(vec3 q, vec3 n, vec3 d, uint texel, uint pane) {
 Layer shadeLayer(vec3 o, vec3 d, Hit h, bool startedInside, float glassT, vec3 glassR, float e, uint texel, int slot) {
     uint m = insts[h.inst].material;
     vec3 n = h.front ? h.n : -h.n;   // the side the ray sees
+    vec3 p = o + d * h.t;
+    Surf s = surfAt(h, p, d, 1.0 / P_grid.z);   // a texel's width: its albedo and normal stand for the whole texel
     vec4 lit;
     if (!pathTraced()) lit = vec4(startedInside ? mats[m].albedo.rgb * P_volume.z : shadeSurface(o + d * h.t, n, m), 0.0);
     else if (startedInside || slot >= P_trace2.y) lit = vec4(0.0);   // a slab seen from inside it: the facade covers it
-    else lit = tracedSurface(o + d * h.t, n, d, m, h.front, texel, uint(slot));
+    else lit = tracedSurface(p, s, d, m, h.front, texel, uint(slot));
     Layer l;
     // a pane's reflection is specular, whatever it reflects
     l.lit = vec4(glassR + glassT * lit.rgb, ptLum(glassR) + glassT * lit.a);
     l.depth = vec2(e, 1.0);
-    l.albedo = packAlbedo(mats[m].albedo.rgb);
-    l.normal = packNormal(n);
+    l.albedo = packAlbedo(s.albedo);
+    l.normal = packNormal(s.ns);
     return l;
+}
+
+/* A BF_LEAKY mesh, as the ray entered it: how many of its fronts it has yet to leave by a back,
+ * and where it leaves the mesh's bounds, past which it can't still be in that mesh. */
+struct Leak { uint inst; int count; float tExit; };
+#define MAX_LEAKS 8
+Leak gLeaks[MAX_LEAKS];
+int gNLeaks = 0;
+
+float leakExit(Hit h, vec3 o, vec3 d) {
+    vec3 ro = h.w2o * vec4(o, 1.0), rd = h.w2o * vec4(d, 0.0) + vec3(1e-9);
+    Inst in_ = insts[h.inst];
+    vec3 a = (in_.bmin.xyz - ro) / rd, b = (in_.bmax.xyz - ro) / rd, far_ = max(a, b);
+    return min(far_.x, min(far_.y, far_.z));
 }
 
 void main() {
@@ -113,7 +129,21 @@ void main() {
     uint panes = 0u;
     for (int it = 0; it < 160; ++it) {
         Hit h;
-        if (!traceNext(o, d, t, tEnd, h)) break;
+        bool more = traceNext(o, d, t, tEnd, h);
+        // a mesh whose bounds the ray has left, with what it never closed: it ends there
+        float upTo = more ? h.t : 1e30;
+        for (int l = gNLeaks - 1; l >= 0; --l) {
+            if (gLeaks[l].tExit >= upTo) continue;
+            float tx = min(gLeaks[l].tExit, tEnd);
+            bool wasIn = inside > 0;
+            inside = max(inside - gLeaks[l].count, 0);
+            if (wasIn && inside == 0 && n > 0) {
+                lastExit = max(lastExit, tx * d.z);
+                if (n - 1 < NEAR_SLOTS) L[n - 1].depth.y = min(lastExit / D, 1.0);
+            }
+            gLeaks[l] = gLeaks[--gNLeaks];
+        }
+        if (!more) break;
         t = h.t + max(1e-4, h.t * 1e-5);
         uint flags = insts[h.inst].flags;
         if ((flags & BF_GLASS) != 0u) {
@@ -131,6 +161,19 @@ void main() {
         float e = z, x = z;
         if ((flags & BF_OPEN) != 0u) {
             if (inside == 0) { begin = true; end = true; x = z + thin; }
+        } else if ((flags & BF_LEAKY) != 0u) {
+            int e = -1;
+            for (int l = 0; l < gNLeaks; ++l) if (gLeaks[l].inst == h.inst) e = l;
+            if (h.front) {
+                if (e < 0 && gNLeaks < MAX_LEAKS) { e = gNLeaks++; gLeaks[e].inst = h.inst; gLeaks[e].count = 0; gLeaks[e].tExit = leakExit(h, o, d) + 1e-3; }
+                if (e >= 0) { gLeaks[e].count++; if (inside++ == 0) begin = true; }
+                else if (inside == 0) { begin = true; end = true; x = z + thin; }
+            } else if (e >= 0 && gLeaks[e].count > 0) {
+                gLeaks[e].count--;
+                if (--inside == 0) end = true;
+            } else if (inside == 0) {   // the back of a sheet with no front: seen as a shell
+                begin = true; end = true; x = z + thin;
+            }
         } else if (h.front) {
             if (inside++ == 0) begin = true;
         } else if (inside > 0) {
