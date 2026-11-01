@@ -28,8 +28,12 @@ static bool write_pfm(const char *path, const float *rgba, int w, int h) {
 
 bool beauty_render(Gpu *g, const Scene *s, const TraceConfig *tc, const char *camera, int w, int h, const char *png) {
     float c[6] = { 0, 0, 0, 0, 0, 55.0f };
-    int got = sscanf(camera, "%f,%f,%f,%f,%f,%f", &c[0], &c[1], &c[2], &c[3], &c[4], &c[5]);
-    if (got < 5) { fprintf(stderr, "--beauty wants x,y,z,yaw,pitch[,fov]\n"); return false; }
+    int got = 0;
+    if (!strcmp(camera, "auto") && s->floorInfo[0]) {   /* the place the floor's plan left for a still */
+        c[0] = s->view[0]; c[1] = 1.5f; c[2] = s->view[1]; c[3] = s->view[2]; c[4] = -4.0f; c[5] = 62.0f;
+        got = 6;
+    } else got = sscanf(camera, "%f,%f,%f,%f,%f,%f", &c[0], &c[1], &c[2], &c[3], &c[4], &c[5]);
+    if (got < 5) { fprintf(stderr, "--beauty wants x,y,z,yaw,pitch[,fov], or auto for a generated floor\n"); return false; }
     const float rad = 3.14159265f / 180.0f;
     float yaw = c[3] * rad, pitch = c[4] * rad, th = tanf(c[5] * rad * 0.5f), aspect = (float)w / (float)h;
     float fwd[3] = { sinf(yaw) * cosf(pitch), sinf(pitch), cosf(yaw) * cosf(pitch) };

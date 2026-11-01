@@ -18,7 +18,7 @@
  *   depth   BC5    view * K + layer: entry and exit as fractions of D (entry 1: no layer)
  *   flags   R8     view: 1 where the texel is full
  *   ext     BC7    view * K + layer: sqrt(E / ext_max) under each unit basis: street, neon, sky, screens */
-#define INTERIOR_MAX_MODULES 8
+#define INTERIOR_MAX_MODULES 16
 #define INTERIOR_MAX_BAYS    8
 #define INTERIOR_FORMAT_VERSION 3
 enum { INTERIOR_LINT, INTERIOR_ALBEDO, INTERIOR_DEPTH, INTERIOR_FLAGS, INTERIOR_EXT, INTERIOR_CHANNELS };

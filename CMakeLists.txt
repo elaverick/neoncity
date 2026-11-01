@@ -238,9 +238,10 @@ add_executable(building_lab tests/building_lab.c ${GEN_SOURCES})
 target_include_directories(building_lab PRIVATE ${SRC_DIRS})
 # Office lobby interiors: pass rate, attempts, rejections; optional plan renders
 # (interior_lab [size_m] [renders] [out_dir] [verbose_count] [x z]); arcologies with
-# plan and section renders (interior_lab arcology [size_m] [renders] [out_dir] [verbose_count] [x z]).
-add_executable(interior_lab tests/interior_lab.c ${GEN_SOURCES})
-target_include_directories(interior_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
+# plan and section renders (interior_lab arcology [size_m] [renders] [out_dir] [verbose_count] [x z]); the baked
+# office floors' generator (interior_lab office [layouts] [out_dir]: tests/office_lab.c).
+add_executable(interior_lab tests/interior_lab.c tests/office_lab.c tools/interior_bake/floor_gen.c ${GEN_SOURCES})
+target_include_directories(interior_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR} tools/interior_bake)
 # Lobby plants (src/gen/plant.c): every archetype over seeds, tiers and gravities; optional contact sheets
 # (plant_lab [seeds] [out_dir]).
 add_executable(plant_lab tests/plant_lab.c src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c)
@@ -277,6 +278,8 @@ add_test(NAME building_rules COMMAND building_lab 2000)
 # Industrial plants and substations, over the fringe where the industrial zones lie.
 add_test(NAME industry_rules COMMAND building_lab industry 14000)
 add_test(NAME interior_rules COMMAND interior_lab 1500)
+# The generated office floors behind the impostors: the catalogue and a sweep of inputs.
+add_test(NAME office_rules COMMAND interior_lab office 400)
 add_test(NAME plant_rules COMMAND plant_lab 12)
 # Arcology interiors over a wide area (only mega plots are generated, so it is quick).
 add_test(NAME arcology_rules COMMAND interior_lab arcology 12000)
@@ -342,7 +345,8 @@ endif()
 # grows its plants with the lobby's generator. bake_test checks the path tracer on the GPU.
 add_executable(interior_bake tools/interior_bake/main.c tools/interior_bake/scene.c tools/interior_bake/gpu.c
                tools/interior_bake/pack.c tools/interior_bake/ktx2.c tools/interior_bake/lab.c tools/interior_bake/test.c
-               tools/interior_bake/bc.c tools/interior_bake/beauty.c
+               tools/interior_bake/bc.c tools/interior_bake/beauty.c tools/interior_bake/kit.c
+               tools/interior_bake/floor_gen.c tools/interior_bake/floor_scene.c
                src/render/vkcore.c src/city/models.c src/core/assets.c ${MATERIAL_SOURCES}
                src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c)
 add_dependencies(interior_bake shaders)

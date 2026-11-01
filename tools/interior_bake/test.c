@@ -322,6 +322,25 @@ static void test_encoders(void) {
     check(worstC <= 20.0, what);
 }
 
+/* The generated floors: a module's scene comes out the same each time it is built (the plan's own
+ * checks are interior_lab office's). */
+static void test_floors(void) {
+    printf("floors\n");
+    int same = 0;
+    for (int i = 0; i < FLOOR_CATALOGUE_COUNT; ++i) {
+        Scene a, b;
+        if (!scene_build(&a, FLOOR_CATALOGUE[i].name, -1, NEONCITY_ASSETS)) continue;
+        if (scene_build(&b, FLOOR_CATALOGUE[i].name, -1, NEONCITY_ASSETS)) {
+            same += scene_hash(&a) == scene_hash(&b);
+            scene_free(&b);
+        }
+        scene_free(&a);
+    }
+    char what[120];
+    snprintf(what, sizeof(what), "%d of %d generated floors build the same scene twice", same, FLOOR_CATALOGUE_COUNT);
+    check(same == FLOOR_CATALOGUE_COUNT, what);
+}
+
 int test_run(Gpu *g, const char *dataDir, bool writeRef) {
     printf("the path tracer's tests on %s\n", gpu_name(g));
     if (writeRef) {
@@ -332,6 +351,7 @@ int test_run(Gpu *g, const char *dataDir, bool writeRef) {
         test_determinism(g);
         test_calibration(g);
         test_encoders();
+        test_floors();
     }
     gpu_set_trace(g, NULL);
     printf(failures ? "%d failed\n" : "all passed\n", failures);

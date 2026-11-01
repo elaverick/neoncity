@@ -12,13 +12,15 @@
  *       8 bounces, a clamp of 16), or with IM1's direct light (--direct); --preview writes the
  *       nearest layer of the straight-on view, and of the view 25 degrees up as <png>_up
  *   interior_bake --scene <name> --beauty x,y,z,yaw,pitch[,fov] --image out.png [--size WxH] [--state s] [--spp n]
- *       a perspective still from inside the module (beauty.c)
+ *       a perspective still from inside the module (beauty.c); a generated floor also takes --beauty auto
  *   interior_bake --lab <dir> [--quick]
  *       the representation sweep (lab.c): error and cost of each way of baking, sheets and tables in <dir>
  *   interior_bake --test <dir> [--write-ref]
  *       the path tracer's tests (test.c) against the reference in <dir> (ctest bake_test),
  *       or render that reference
  *   interior_bake --list
+ *   interior_bake --hash <name> [--state s]
+ *       a hash of the scene's geometry and materials, without the GPU
  *
  * --assets <dir> reads the models from there (default: the source tree's
  * assets); --validation turns on the Vulkan validation layer. With
@@ -35,12 +37,13 @@ static void usage(void) {
                     "       interior_bake --scene <name> --beauty x,y,z,yaw,pitch[,fov] --image png [--size WxH] [--state s] [--spp n]\n"
                     "       interior_bake --lab <dir> [--quick] [--assets dir] [--validation]\n"
                     "       interior_bake --test <dir> [--write-ref] [--validation]\n"
-                    "       interior_bake --list\n");
+                    "       interior_bake --list\n"
+                    "       interior_bake --hash <name> [--state s]\n");
 }
 
 int main(int argc, char **argv) {
     const char *scene = NULL, *out = NULL, *lab = NULL, *test = NULL, *preview = NULL, *assets = NEONCITY_ASSETS, *beauty = NULL, *image = NULL;
-    bool validation = false, quick = false, writeRef = false, direct = false;
+    bool validation = false, quick = false, writeRef = false, direct = false, hashOnly = false;
     /* the defaults IM1 chose (docs/interior-impostors.md, section 13) */
     ViewGrid v = { 5, 10, GRID_SLOPE, 60.0f, -30.0f, 70.0f, 0.8f, 0.12f };
     float tpm = 16.0f, margin = 1.0f;
@@ -49,10 +52,11 @@ int main(int argc, char **argv) {
     ic.maxSteps = 64; ic.maxTexStep = 1.0f; ic.refine = 6; ic.unknownW = 0.15f; ic.offGridW = 0.1f;
     TraceConfig tc = trace_defaults(ic.K);
     tc.visibleCap = BAKE_VISIBLE_CAP;
-    int extSpp = 8192, state = LIGHTS_AFTER_HOURS, imgW = 1280, imgH = 534;
+    int extSpp = 8192, state = -1, imgW = 1280, imgH = 534;
     for (int i = 1; i < argc; ++i) {
         const char *a = argv[i], *next = i + 1 < argc ? argv[i + 1] : NULL;
         if (!strcmp(a, "--scene") && next) scene = argv[++i];
+        else if (!strcmp(a, "--hash") && next) { scene = argv[++i]; hashOnly = true; }
         else if (!strcmp(a, "--out") && next) out = argv[++i];
         else if (!strcmp(a, "--lab") && next) lab = argv[++i];
         else if (!strcmp(a, "--test") && next) test = argv[++i];
@@ -87,6 +91,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--validation")) validation = true;
         else if (!strcmp(a, "--list")) {
             for (int s = 0; s < SCENE_COUNT; ++s) printf("%s\n", SCENE_NAMES[s]);
+            for (int s = 0; s < FLOOR_CATALOGUE_COUNT; ++s) printf("%s\n", FLOOR_CATALOGUE[s].name);
             return 0;
         } else { usage(); return 2; }
     }
@@ -102,6 +107,13 @@ int main(int argc, char **argv) {
         int r = lab ? lab_run(g, lab, assets, quick) : test_run(g, test, writeRef);
         gpu_destroy(g);
         return r;
+    }
+    if (hashOnly) {
+        Scene s;
+        if (!scene_build(&s, scene, state, assets)) return 1;
+        printf("%s %016llx\n", s.name, (unsigned long long)scene_hash(&s));
+        scene_free(&s);
+        return 0;
     }
     if (!scene || (!out && !beauty) || (beauty && !image) || extSpp < 1) { usage(); return 2; }
     Scene s;

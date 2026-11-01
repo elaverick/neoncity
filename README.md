@@ -20,6 +20,7 @@ build/city_map map.bmp         # top-down map of the plan (6 km around the spawn
 build/building_lab 3000 5      # building archetypes, retries and rejections; 5 decision logs
 build/interior_lab 3000 12 out # office lobbies: pass rate, attempts, rejections; 12 plan renders and cameras
 build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders, cameras
+build/interior_lab office 400 out        # baked office floors: the generator's catalogue and a sweep; plans
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
@@ -676,10 +677,12 @@ layers, and the facade shader marches the three views nearest the eye's directio
 them (`shaders/city/impostors.glsl`, `impostor.glsl`). The floor is stretched so the module spans
 whole bays, mirrored on some faces, and shows the view out through its far glass. Blinds, film,
 frames and the glass's reflection are drawn over it as on any window, and from mid distance the
-floor glows with each bay's baked mean. The modules are IM1's test floors, path traced with full
-global illumination from their own lamps, pendants and screens (`shaders/interior/pathtrace.glsl`,
-checked by the `bake_test` test); light from outside and the exposure's calibration come next.
-See `docs/interior-impostors.md`.
+floor glows with each bay's baked mean. The modules are twelve floors from a generator
+(`tools/interior_bake/floor_gen.c`, checked by the `office_rules` test): a column grid, bands of
+desks, glass rooms, lounges and filing, in five styles, eight to 32 m deep, through to far glass or
+up to a core. They are path traced with full global illumination from their own lamps, pendants and
+screens (`shaders/interior/pathtrace.glsl`, checked by `bake_test`), and from what lies outside, each
+in a colour of the place they land. See `docs/interior-impostors.md`.
 
 ### Streets and light
 Each carriageway is one quad, trimmed at its junctions and clipped to the chunk, over a plain

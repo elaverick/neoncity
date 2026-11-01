@@ -322,6 +322,8 @@ static void render_arcology_section(const ALayout *A, const char *path) {
     free(im.p);
 }
 
+int office_mode(int argc, char **argv);   /* interior_lab office: office_lab.c */
+
 /* interior_lab arcology [size_m] [renders] [out_dir] [verbose_count] [x z]:
  * plans every arcology in the area (only mega plots are generated, so wide
  * areas are cheap), checks each replans identically, prints statistics and
@@ -475,6 +477,7 @@ static int same_layout(const ILayout *a, const ILayout *b) {
 int main(int argc, char **argv) {
     models_load(NEONCITY_ASSETS);   /* the lobbies' sofas */
     if (argc > 1 && !strcmp(argv[1], "arcology")) return arcology_mode(argc, argv);
+    if (argc > 1 && !strcmp(argv[1], "office")) return office_mode(argc, argv);
     double size = argc > 1 ? atof(argv[1]) : 2000.0;
     int renders = argc > 2 ? atoi(argv[2]) : 0;
     const char *outDir = argc > 3 ? argv[3] : ".";

@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "floor_gen.h"
 
 /* The interior baker (docs/interior-impostors.md, section 9): bakes office
  * floor modules into multi-view layered depth impostors, and measures how
@@ -32,8 +33,8 @@ enum { BASIS_INTERIOR = 0, BASIS_STREET, BASIS_NEON, BASIS_SKY, BASIS_SCREENS, B
 enum { GROUP_INTERIOR = 0, GROUP_SCREEN = 1 };
 
 /* A module's light state (docs/interior-impostors.md, section 3). */
-enum { LIGHTS_AFTER_HOURS = 0, LIGHTS_LATE_SHIFT, LIGHTS_CLEANERS, LIGHTS_SCREENS, LIGHTS_COUNT };
 extern const char *const LIGHT_STATE_NAMES[LIGHTS_COUNT];
+extern const char *const LIGHT_STATE_SUFFIX[LIGHTS_COUNT];
 
 typedef struct Scene {
     char  name[32];
@@ -47,6 +48,10 @@ typedef struct Scene {
     float outside[3];        /* radiance seen out of the far glass */
     float ambient;
     int   sealed;            /* a test box: paths never leave by glass planes */
+    int   bays;              /* the module's width in facade bays */
+    float bayW;              /* metres */
+    float view[3];           /* a generated floor's place for a still: x, z, yaw (degrees) */
+    char  floorInfo[160];    /* a generated floor's inputs, for its sidecar */
 
     float    *verts;  uint32_t nverts, capVerts;   /* xyz */
     uint32_t *idx;    uint32_t nidx, capIdx;
@@ -59,10 +64,13 @@ typedef struct Scene {
 
 extern const char *const SCENE_NAMES[];
 extern const int SCENE_COUNT;
-/* Builds a test module by name, in a light state; models from assets (the lounge sofa) are skipped
- * if missing. A state other than after hours adds its name to the module's (through30_late). */
+/* Builds a module by name, a test floor or one from the generator's catalogue (floor_gen.h), in a light
+ * state; models from assets (the lounge sofa) are skipped if missing. A state other than its own adds
+ * the state's name to the module's (through30_late). state < 0: its own (a test floor's: after hours). */
 bool scene_build(Scene *s, const char *name, int state, const char *assets);
 void scene_free(Scene *s);
+/* A hash of the geometry and materials a bake sees. */
+uint64_t scene_hash(const Scene *s);
 /* The room that calibrates the bake scale (test.c): 1.2 m troffers on the lobby's 3.6 m grid. */
 void scene_calibration(Scene *s, float tableY);
 /* Scenes built by hand (test.c): an empty scene with the unit cube, a material, and a box of it. */

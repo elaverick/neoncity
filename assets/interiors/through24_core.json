@@ -1,0 +1,30 @@
+{
+  // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.
+  "version": 3,
+  "baker": "im5-floors-1",
+  "module": "through24_core",
+  "type": "through",
+  "family": "office",
+  "light_state": "after_hours",
+  "trace": { "samples": 16384, "bounces": 8, "clamp": 16.0, "seed": 1 },
+  "floor": { "style": "collab", "core": "centre", "seed": 20902, "attempts": 6, "layout": "ef5b90758885f9ae" },     // the generator's inputs (tools/interior_bake/floor_gen.c)
+  "size": [12.000, 3.900, 24.000],        // W, H, D in metres
+  "ceiling": 3.300,                     // the slab's underside above the floor (y = 0)
+  "bays": 4,
+  "bay_width": 3.000,
+  "opening": [0.050, 3.250],     // sill, head
+  // the view grid as shaders/city/impostor.glsl reads it (ImpViews.range), and each row's elevation in degrees
+  "views": { "kind": "slope", "n": [5, 10], "range": [1.047198, -2.033101, 4.066203, 0.120000], "rows": [-24.25, -12.26, -5.01, 0.00, 5.01, 12.26, 24.25, 41.94, 60.61, 74.05] },
+  "layers": 3,
+  "last_slot": false,
+  // how the facade marches it (impMarch, IM1's choice)
+  "march": { "max_steps": 64, "texels_a_step": 1.0, "bisections": 6, "guess_weight": 0.15, "off_grid_weight": 0.10 },
+  "grid": { "origin": [0.0000, -1.0000], "texels_per_metre": 16.000, "size": [192, 85], "wrap_x": true },
+  "bake_scale": 0.375,
+  "ext_max": 2.000,
+  "bay_means": {
+    "lint": [[0.00607, 0.00396, 0.00207], [0.03873, 0.02312, 0.01142], [0.01322, 0.00806, 0.00419], [0.01273, 0.00755, 0.00389]],
+    "ext": [[0.00797, 0.00300, 0.01129, 0.00089], [0.00851, 0.00329, 0.01295, 0.00100], [0.01461, 0.00785, 0.02370, 0.00007], [0.01946, 0.01144, 0.03307, 0.00002]]
+  },
+  "files": { "lint": "through24_core.lint.ktx2", "albedo": "through24_core.albedo.ktx2", "ext": "through24_core.ext.ktx2", "depth": "through24_core.depth.ktx2", "flags": "through24_core.flags.ktx2" }
+}

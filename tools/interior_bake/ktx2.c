@@ -14,7 +14,7 @@
  * The march reads texels, so there are no mips yet. */
 
 #define BAKE_FORMAT_VERSION 3
-#define BAKER_VERSION "im4-light-1"
+#define BAKER_VERSION "im5-floors-1"
 /* Radiance into the engine's units, from the calibration in test.c: 1.2 m troffers on the lobby's
  * grid light a table's top as the lobby's analytic panels do (section 16). */
 const float BAKE_SCALE = 0.375f;
@@ -208,8 +208,8 @@ bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConf
         view_dir(&c->views, v, d);
         if (d[2] > best) { best = d[2]; front = v; }
     }
-    const float bayW = 3.0f;
-    int bays = (int)lroundf(s->W / bayW);
+    const float bayW = s->bayW;
+    int bays = s->bays;
     snprintf(path, sizeof(path), "%s/%s.json", dir, s->name);
     FILE *f = fopen(path, "w");
     if (!f) { fprintf(stderr, "can't write %s\n", path); return false; }
@@ -221,6 +221,7 @@ bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConf
     if (tc)
         fprintf(f, "  \"trace\": { \"samples\": %d, \"bounces\": %d, \"clamp\": %.1f, \"seed\": %u },\n",
                 tc->spp, tc->bounces, tc->clamp, tc->seed);
+    if (s->floorInfo[0]) fprintf(f, "  \"floor\": { %s },     // the generator's inputs (tools/interior_bake/floor_gen.c)\n", s->floorInfo);
     fprintf(f, "  \"size\": [%.3f, %.3f, %.3f],        // W, H, D in metres\n", s->W, s->H, s->D);
     fprintf(f, "  \"ceiling\": %.3f,                     // the slab's underside above the floor (y = 0)\n", s->ceilY);
     fprintf(f, "  \"bays\": %d,\n  \"bay_width\": %.3f,\n  \"opening\": [%.3f, %.3f],     // sill, head\n", bays, bayW, s->sill, s->head);

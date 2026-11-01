@@ -36,7 +36,7 @@ It uses the same tangent frame as `rooms.glsl`: x along the wall in the facade's
 
 **Modules are periodic in x.** A module's scene repeats with period W, and the baker wraps rays across x = 0 and x = W. So a module tiles seamlessly with itself, and a ray that runs sideways through it finds plausible content instead of the module's edge. Module boundaries are put at structural lines (a column line or a partition), and neighbouring modules are drawn from the same family (same depth class, core type and light state). That way, where two different modules meet, an oblique view crosses from one into a plausible continuation of the other.
 
-**Depth classes.** The catalogue covers depths of about 8, 12, 16, 24 and 32 m for each of through and core *(IM5 settles the list)*. At run time, a face takes the class nearest its own floor-plate depth and scales z within ±15%; the parallax error that leaves is under a few centimetres at the glass.
+**Depth classes.** IM5 settled the list: through modules 8, 12, 16, 24 and 32 m deep, core modules 8, 12 and 16 m (a core further in than that is a through module with a core standing in it: section 17). At run time, a face takes the class nearest its own floor-plate depth and scales z within ±15%; the parallax error that leaves is under a few centimetres at the glass.
 
 **Light states.** Each module is baked in one light state: after hours (the reference), a late shift in one cluster, cleaners (all panels on), or dark with screens. The engine chooses among them per floor, as it chooses lit and dark rooms today.
 
@@ -196,9 +196,9 @@ The baker is `tools/interior_bake/`, an in-house path tracer in C11 and Vulkan c
   - `--scene <name> --out <dir>`: bakes one of the test modules to `<dir>`, with IM1's choices as defaults (`--views`, `--grid`, `--res`, `--margin` and `--layers` override them). It is path traced (`--spp`, `--bounces`, `--clamp`, `--seed`), or lit by IM1's direct light with `--direct`. `--preview <png>` writes the nearest layer of the straight-on view and of a view 25° up.
   - `--lab <dir>`: the representation sweep (section 13), under IM1's direct light. With `IMP_SELFTEST` set, it checks the pipeline instead.
   - `--test <dir>`: the path tracer's tests (ctest `bake_test`); `--write-ref` renders their reference.
-  - `--beauty x,y,z,yaw,pitch[,fov] --image <png>`: a perspective still from inside a module, for look-dev against the reference (section 16).
+  - `--beauty x,y,z,yaw,pitch[,fov] --image <png>`: a perspective still from inside a module, for look-dev against the reference (section 16). A generated floor also takes `--beauty auto`, a place its plan chooses.
+  - `--scene` takes a generated floor by name as well as a test floor (`--list` gives them), and `--state` bakes it in another light state. `--hash <name>` prints a hash of a scene's geometry and materials without the GPU.
 - Still to come:
-  - `--module <name>`: bakes one module from the catalogue.
   - `--catalogue`: bakes whatever changed, by input hash.
   - `--check`: validates the catalogue's files.
 
@@ -208,7 +208,7 @@ A full catalogue is meant to bake overnight.
 
 ## 10. Office floor layouts
 
-Floor layouts are procedural, in code, and used only by the baker: they are the modules' scenes. The baker has its own generator, in the spirit of the lobby planner (`docs/procedural-office-atrium-generation.md`): a grid plan, zones, then fixtures, then validation.
+Floor layouts are procedural, in code, and used only by the baker: they are the modules' scenes. The baker has its own generator (`tools/interior_bake/floor_gen.c`, built in IM5: section 17), in the spirit of the lobby planner (`docs/procedural-office-atrium-generation.md`): a grid plan, zones, then fixtures, then validation.
 
 **Inputs:**
 - the bay count and width, the depth and the floor height
@@ -244,7 +244,7 @@ The working plan is kept outside the repo. In summary:
 | IM2 | First light in the engine: loading, the facade trace, a debug selection of floors, cost measured. Done: section 14 |
 | IM3 | The path tracer: materials, emitters, NEE and MIS, glass, clearcoat; furnace and Cornell tests. Done: section 15 |
 | IM4 | Light: the interior kit, the exterior bases and their colouring in the engine, exposure calibration, a beauty render against the reference. Section 16 |
-| IM5 | The office floor generator and its validation |
+| IM5 | The office floor generator and its validation. Done: section 17 |
 | IM6 | The high-poly furniture (whenever it arrives) |
 | IM7 | The city: floor selection, tiling, plate and core depths in the vertex data, corners, LOD, memory |
 | IM8 | The catalogue and one-command rebuild; README |
@@ -503,3 +503,81 @@ A bake of the three layouts takes 2 to 6 minutes a module (5 passes, 16384 sampl
 - **Mips:** still none, since the march reads texels.
 
 **To rerun:** `interior_bake --scene <name> [--state <state>] --out assets/interiors` for a module, `--beauty` for a still (it writes each pass as `.pfm` beside the PNG). `ctest -R bake_test` runs the calibration and the encoders' tests with the rest.
+
+## 17. IM5: the floor generator
+
+IM5 replaced the hand-placed test floors in the engine with twelve generated ones.
+
+**What was built:**
+
+- **The plan** (`tools/interior_bake/floor_gen.c`, `floor_gen.h`) is a pure function of its inputs, with no GPU: bays, bay width, depth, floor height, the core (none, back, centre), corner or not, style, seed. It builds:
+  1. column lines, and between them a cell per structural bay. A 0.9 m lane runs beside each column line, so the cells stop 1.2 m from a column on one side and 0.35 m on the other.
+  2. bands of floor along x with aisles of at least 1.2 m between them, chosen by the style's weights. Slack goes to the aisles.
+  3. column rows, moved to stand inside bands, never across an aisle.
+  4. a program in each cell: back-to-back desks along x, one row with a backlit screen, runs of desks into the building, a glass room with its door on an aisle, a lounge (with a feature wall and a canvas on some), or filing and a printer. A cell 8 m wide or more takes a room or lounge at one end and desks at the other.
+  5. the core, its doors and a canvas; ducts, trays, sprinkler runs and hung panels clear of the ducts and walls.
+  6. plants where a pot and a person both still fit.
+  7. which light is on in which state, as a bit per state on each fitting, drawn from the item's seed. So one layout can bake in any state, and a state can't move the furniture.
+- **Five styles:** `open` (rows along the glass, as the reference), `lanes` (runs into the building, with long sight lines), `collab` (rooms and lounges among desks), `exec` (big desks far apart, walnut, more plants, a wider walk along the glass) and `dense` (tight benches, filing, carpet: the one floor that doesn't mirror).
+- **Validation** (`floor_validate`) checks the result without trusting how it was made, on a 0.1 m grid. Eight attempts, each from a new seed, then it gives up.
+  - Nothing intersects, across the tile's seam too.
+  - Every lane and aisle is walkable at 0.8 m wide (5% of points may miss, where a column or pot crowds one), every seat, door and cabinet front at 0.7 m, and 80% of the free floor can be walked to.
+  - Ducts clear 2.3 m.
+  - It's an office: at least one desk per 30 m² (50 m² for `exec`).
+  - Every zone is lit by something in every state: 8 lux after hours and 20 for the cleaners, by inverse square with no shadows; on the late shift and in the screens state, a zone beyond 8 m of glass needs a screen within 10 m (or, on the late shift, 2 lux).
+- **The scene** (`floor_scene.c`) builds a plan from the kit, which moved from `scene.c` to `kit.c`. `--hash` showed all four test floors in all four states unchanged by the move. New parts: pedestals with drawers (dark or the reference's pale ones), monitors that emit only from the front, books, papers, mugs, armchairs, feature walls, canvases of coloured bands, cabinets, printers, a run of mullions on the half-bay so a tile's seam can't show.
+- **The sidecar** takes its bays and width from the scene (they were fixed at 3 m) and records the floor's inputs and a hash of its layout. The format is still version 3; the engine ignores the new entry.
+- **The engine** holds 16 modules (`INTERIOR_MAX_MODULES`, it was 8).
+- **Tests.** `interior_lab office [layouts] [out_dir]` (ctest `office_rules`, 400 layouts, 2 s) plans the catalogue and a sweep of random inputs, and fails if a catalogue module fails, a plan differs when replanned, two catalogue modules match, or over 1% of inputs find no layout. With a directory it draws the plans. `bake_test` also builds each catalogue scene twice and compares hashes.
+
+**The catalogue** (a table in `floor_gen.c` until IM8):
+
+| module | W x D (m) | H | core | style | state | desks | rooms | lounges |
+|---|---|---|---|---|---|---|---|---|
+| `through8_lounge` | 10.8 x 8 | 3.9 | | exec | after hours | 4 | 0 | 1 |
+| `through12_collab` | 12 x 12 | 4.0 | | collab | screens | 8 | 0 | 2 |
+| `through16_collab` | 13.2 x 16 | 4.2 | | collab | after hours | 18 | 2 | 1 |
+| `through16_dense` | 10.8 x 16 | 3.7 | | dense | cleaners | 26 | 1 | 0 |
+| `through24_lanes` | 13.2 x 24 | 4.0 | | lanes | late shift | 46 | 0 | 0 |
+| `through24_core` | 12 x 24 | 3.9 | centre | collab | after hours | 12 | 2 | 0 |
+| `through32_open` | 12 x 32 | 4.0 | | open | after hours | 68 | 0 | 0 |
+| `through32_lanes` | 10.8 x 32 | 4.2 | | lanes | screens | 60 | 0 | 0 |
+| `core8_exec` | 10.8 x 8.5 | 4.2 | back | exec | after hours | 2 | 0 | 1 |
+| `core12_open` | 12 x 12.5 | 4.0 | back | open | late shift | 16 | 0 | 0 |
+| `core12_collab` | 13.2 x 12.5 | 3.7 | back | collab | cleaners | 12 | 2 | 0 |
+| `core16_lanes` | 10.8 x 16.5 | 4.0 | back | lanes | after hours | 12 | 1 | 0 |
+
+Two corner modules, `corner12_collab` and `corner16_open`, generate, validate and bake, but aren't committed or in `catalogue.json`: a corner doesn't tile, and the engine can't key one until IM7.
+
+**Numbers:**
+
+- The sweep: 1999 of 2000 random inputs find a layout, 90% on the first attempt, 1.6 ms on average and 115 ms at worst.
+- A bake takes 91 to 445 s a module (glass rooms cost the most), 42 minutes for the twelve.
+- The twelve take 131 MB on disk and 185 MB on the GPU, inside the 200 MB budget, with no room for a fourteenth. IM7 must stream, or raise the budget, or use K = 2 if the catalogue grows.
+- The city pass (`--shot`, 64-frame mean, 1600 x 900 with 4x MSAA, `--cam 1139.3 262 1.7 0 20`):
+
+  | | city pass |
+  |---|---|
+  | impostors off | 1.07 ms |
+  | share 0.4 | 1.32 ms (+0.25) |
+  | every eligible floor | 1.75 ms (+0.68) |
+
+  A different mix of modules lands on this facade than IM4's, so these don't compare directly with section 16's. Looking up from the street at every eligible floor, the pass takes 2.58 ms (`--cam 1139.3 268 1.7 32`), with no off run to set against it.
+
+**What it showed** (`docs/reference/im5/`):
+
+- **`plans_through.jpg`, `plans_core_corner.jpg`:** every plan, glass in blue, tile seams dashed red. Lighter floor can be walked to. Desks are brown, rooms blue, lounges terracotta, columns white, plants green, canvases red; yellow marks a fitting on in the module's state, blue a screen.
+- **`states_through32_open.jpg`:** one layout's four light states.
+- **`stills.jpg`:** every module from `--beauty auto`, at 2048 samples.
+- **`beauty_through16_collab.jpg`, `beauty_core12_open.jpg`:** the reference above, a still below, at 8192 samples.
+- **`engine.jpg`:** a share of 0.4, every floor, up from the street, and from the side, at the capture spot.
+
+**What remains:**
+
+- **Against the reference:** the furniture is boxes (IM6). The composition reads as the reference's: columns, ducts, desk runs, pools of lamp light on the floor. But the near-glass neon in the still's rig tints walls and ceilings oxblood where the reference is amber, the floor's streaks are still fainter than its own, and screens are flat colour (IM9).
+- **Layouts are regular.** Bands run straight across the module and the cells line up. That suits a tile and reads as an office, but real floors are looser. IM7's 10-tower view will show whether it repeats.
+- **Lounges and rooms are few at the deep end:** the two deepest floors are all desks by their style's dice. A catalogue seed can change that.
+- **Lit share.** After hours, more of a floor's fittings are on than on IM4's test floors, but there are half as many pendants. From the street floors still read dark; IM7 judges that at 30-50% of a tower.
+- **`core` modules land anywhere:** the engine still picks by hash, so a core wall can show in a slab with glass behind it until IM7.
+
+**To rerun:** `interior_lab office 400 <dir>` for the plans, `interior_bake --scene <name> --out assets/interiors` for a module, `interior_bake --scene <name> --beauty auto --image <png> --spp 2048` for a still.

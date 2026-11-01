@@ -11,7 +11,7 @@
  * F8), every floor keeps interior mapping (rooms.glsl).
  * ==================================================================== */
 
-#define INTERIOR_MAX_MODULES 8   // src/render/interior_def.h
+#define INTERIOR_MAX_MODULES 16  // src/render/interior_def.h
 #define INTERIOR_CHANNELS    5   // lint, albedo, depth, flags, ext
 #define INTERIOR_MAX_BAYS    8
 
