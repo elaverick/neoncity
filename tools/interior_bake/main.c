@@ -98,6 +98,8 @@ int main(int argc, char **argv) {
     if (ic.K < 1 || ic.K > (ic.lastSlot ? CAP_SLOTS : CAP_SLOTS - 1) || tpm <= 0.0f || margin < 0.0f) { usage(); return 2; }
     if (tc.spp < 1 || tc.bounces < 1 || tc.bounces > 64 || tc.clamp < 0.0f) { usage(); return 2; }
     tc.slots = ic.lastSlot ? CAP_SLOTS : ic.K;
+    /* a march keeps to a texel a step on a finer grid: as many more steps */
+    ic.maxSteps = (int)ceilf((float)ic.maxSteps * fmaxf(tpm / 16.0f, 1.0f));
     v.azMax *= 3.14159265f / 180.0f;
     v.elMin *= 3.14159265f / 180.0f;
     v.elMax *= 3.14159265f / 180.0f;

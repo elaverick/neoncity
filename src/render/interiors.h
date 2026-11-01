@@ -28,7 +28,7 @@ typedef struct InteriorGPU {
 } InteriorGPU;
 
 typedef struct InteriorTable {
-    float       info[4];  /* x modules loaded, y the share of eligible office floors drawn with them (0: none) */
+    float       info[4];  /* x modules loaded, y the share of eligible office floors drawn with them (0: none), z how near (m) colour is filtered */
     InteriorGPU mod[INTERIOR_MAX_MODULES];
 } InteriorTable;
 

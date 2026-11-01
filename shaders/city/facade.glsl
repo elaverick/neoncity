@@ -335,7 +335,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             vec2 q = vec2(u, fv * floorH) * impS;
             vec3 dm = vec3(d.xy * impS, d.z);
             if (impMirror) { q.x = -q.x; dm.x = -dm.x; }
-            inner = impostorTrace(impM, q, dm, -V, vAbs, vec3(0.012, 0.012, 0.014) * wdiff * 2.0);
+            inner = impostorTrace(impM, q, dm, -V, vAbs, length(rel), vec3(0.012, 0.012, 0.014) * wdiff * 2.0);
         } else {
             inner = cornerRoom ? cornerInterior(vec2(fu, fv), d, W, H, D, room, glassL, glassR, -V, vAbs,
                                                 vec2(x0, x1) * D, vec2(x0, x1) * D, vec2(y0, y1) * H)

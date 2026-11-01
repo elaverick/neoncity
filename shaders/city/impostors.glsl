@@ -27,7 +27,7 @@ struct ImpModule {   // InteriorGPU (src/render/interiors.h)
     vec4  bayExt[INTERIOR_MAX_BAYS];    // each bay's mean under the exterior bases: street, neon, sky, screens
 };
 layout(set = 0, binding = 11) uniform Interiors {
-    vec4      info;  // x modules loaded, y the share of eligible floors drawn with them
+    vec4      info;  // x modules loaded, y the share of eligible floors drawn with them, z how near (m) colour is filtered
     ImpModule impMod[INTERIOR_MAX_MODULES];
 } interiors;
 // Each module's channels, module * INTERIOR_CHANNELS + channel; the module is chosen per floor.
@@ -106,8 +106,10 @@ vec3 impostorBayMean(int m, float x) {
  * weight, less for a view that guessed or looked off its grid; a ray that
  * leaves by the far glass of a through module sees the view out (throughView,
  * from worldDir and the window's height eyeY). Below the floor or above the
- * ceiling the glass covers the slab's edge, slabC. */
-vec3 impostorTrace(int m, vec2 q, vec3 d, vec3 worldDir, float eyeY, vec3 slabC) {
+ * ceiling the glass covers the slab's edge, slabC. Near the eye (eyeDist) a hit's colour is
+ * filtered over its 2 x 2 texels, so a texel doesn't show as a block; further off it isn't
+ * worth the fetches. */
+vec3 impostorTrace(int m, vec2 q, vec3 d, vec3 worldDir, float eyeY, float eyeDist, vec3 slabC) {
     ImpModule M = interiors.impMod[m];
     if (q.y < 0.0 || q.y > M.size.w) return slabC;
     gImpTex = m * INTERIOR_CHANNELS;
@@ -121,6 +123,7 @@ vec3 impostorTrace(int m, vec2 q, vec3 d, vec3 worldDir, float eyeY, vec3 slabC)
     g.D = M.size.z; g.K = M.dim.z; g.lastSlot = M.views.w != 0;
     d.z = max(d.z, 1e-3);
     vec2 sigma = d.xy / d.z;
+    float near = interiors.info.z, filt = near > 0.0 ? 1.0 - smoothstep(near * 0.75, near, eyeDist) : 0.0;
 
     ivec3 views;
     vec3 w;
@@ -132,7 +135,11 @@ vec3 impostorTrace(int m, vec2 q, vec3 d, vec3 worldDir, float eyeY, vec3 slabC)
         vec3 dk = impViewDirIndex(v, views[i]);
         ImpHit h = impMarch(views[i], g, q, sigma - dk.xy / dk.z, g.D, int(M.march.x), M.march.y, int(M.march.z), false);
         float wt = w[i] * (h.unknown ? M.march.w : 1.0) * (h.outside ? M.bays.w : 1.0);
-        if (h.layer >= 0) sum += impFetchColor(views[i], h.layer, h.texel) * wt;
+        if (h.layer >= 0) {
+            vec3 c = impFetchColor(views[i], h.layer, h.texel);
+            if (filt > 0.0) c = mix(c, impHitColor(views[i], g, h, q, sigma - dk.xy / dk.z, true, 0.15), filt);
+            sum += c * wt;
+        }
         else wOut += wt;
         wsum += wt;
     }

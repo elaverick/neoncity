@@ -180,6 +180,7 @@ Interiors *interiors_create(VkCore *vk) {
         in->count++;
     }
     tab->info[0] = (float)in->count;
+    tab->info[2] = 18.0f;   /* how near a hit's colour is filtered, metres (docs/interior-impostors.md, section 18) */
 
     VK_CHECK(vkEndCommandBuffer(cmd));
     VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };

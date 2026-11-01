@@ -581,3 +581,27 @@ Two corner modules, `corner12_collab` and `corner16_open`, generate, validate an
 - **`core` modules land anywhere:** the engine still picks by hash, so a core wall can show in a slab with glass behind it until IM7.
 
 **To rerun:** `interior_lab office 400 <dir>` for the plans, `interior_bake --scene <name> --out assets/interiors` for a module, `interior_bake --scene <name> --beauty auto --image <png> --spp 2048` for a still.
+
+## 18. Close up: filtering, and what a finer bake would add
+
+Seen from a few metres, a floor showed its 6 cm texels as blocks. This compares four ways of drawing one module (`through16_collab`) on every eligible floor.
+
+**Filtered colour is now on.** Within 18 m of the eye, fading out from 13.5 m, a hit's colour is the depth-aware 2 x 2 filter the lab already had (`impHitColor`), in place of its one texel. Further off it isn't worth the fetches. It removes the blocks on floors, reflections and lit surfaces. It doesn't move an edge: silhouettes still step at the texel.
+
+**A second bake at 32 texels/m is proven but not built.** It is the only thing here that adds detail: `--res 32` keeps pendants, strips and desk tops that break up or vanish at 16, and straightens edges. Mips can't do that, since they only remove detail.
+
+| city pass, every floor (ms) | 16, nearest | 16, filtered | 32, nearest | 32, filtered |
+|---|---|---|---|---|
+| close, 4 m from the glass (`--cam 1141 253 28 -3 19`) | 1.99 | 2.12 | 2.78 | 2.88 |
+| level (`--cam 1139.3 262 1.7 0 20`) | 1.84 | 1.84 | 2.34 | 2.44 |
+| from the street (`--cam 1139.3 268 1.7 32`) | 2.56 | 2.55 | 3.56 | 3.38 |
+
+The module on the GPU goes from 18 MB to 69 MB, on disk from about 12 MB to 50 MB, and its bake from about 5 to 8.5 minutes. These are one 64-frame mean each, and the street row shows they carry about 0.2 ms of noise. The 32 texels/m columns draw every floor at every distance at that density, which overstates what a tier used only near the eye would cost.
+
+A march keeps to a texel a step on a finer grid: the bake scales its step limit with the resolution (128 at 32 texels/m).
+
+**What 32 texels/m still shows:** thin bright lights come out sharp but broken, with a red fringe on some edges. That is still unexplained (the bright strip's edge texels, or BC6H's fit in those blocks), and would need looking at before a full bake.
+
+**The decision a near tier needs:** all twelve at 32 texels/m would take about 800 MB of GPU memory if all stay loaded, so a real tier means streaming the few modules nearest the eye, which IM7 needs anyway. Its full bake waits until the furniture is in (IM6).
+
+Crops: `docs/reference/im5/closeup_lounge.jpg`, `closeup_desks.jpg`, each 16 above 32 texels/m, nearest left, filtered right.
