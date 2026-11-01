@@ -179,6 +179,7 @@ static void create_device(VkCore *vk, bool wantRt) {
     f2.features.drawIndirectFirstInstance = vk->mdi ? VK_TRUE : VK_FALSE;
     f2.features.samplerAnisotropy = supported.samplerAnisotropy;
     f2.features.textureCompressionBC = vk->adverts ? VK_TRUE : VK_FALSE;
+    f2.features.fragmentStoresAndAtomics = supported.fragmentStoresAndAtomics;   /* city.frag counts the interior modules drawn near the eye */
 
     const char *exts[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
                            VK_KHR_RAY_QUERY_EXTENSION_NAME, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME };

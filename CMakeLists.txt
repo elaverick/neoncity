@@ -165,7 +165,7 @@ set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/spv)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain ${SHADER_OUT_DIR}/proxy ${SHADER_OUT_DIR}/interior)
 set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp
             cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
-            prepass.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag
+            prepass.frag impostor_demand.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag
             terrain/planet.vert terrain/planet.frag
             proxy/proxy.vert proxy/proxy.frag flame.vert flame.frag smoke.vert smoke.frag
             interior/capture.comp interior/capture_mpi.comp interior/truth.comp interior/recon.comp)   # the interior baker's

@@ -270,6 +270,8 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         vec3 lamps = max(wdiff - ambientLight(n, vAbs) - neonBounce(gWorld, vAbs) * 1.5, vec3(0.0));
         impostorLight(lamps, glassT, vAbs, floorH_, litChance);
         room.light = impostorBayMean(imp.m, impostorX(imp, (bayIdx + 0.5) * bayW)) / 0.42; room.bright = 1.0;   // so roomAvg below is the bay's mean
+        // too small to tell apart, a floor settles to the average the far term draws, so nothing pops there
+        room.light = mix(room.light, kelvin(3600.0) * 1.15 * litFrac, smoothstep(0.15, 0.45, max(fwU, fwV)));
     }
     float streak = vnoise(vec2(u * 1.3, vAbs * 0.04), seed & 0xFFFFu);
     float grime = mix(0.65, 1.15, streak) * mix(0.8, 1.0, smoothstep(0.0, 25.0, vAbs));

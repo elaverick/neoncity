@@ -151,7 +151,7 @@ void renderer_destroy(Renderer *r) {
     planet_gpu_destroy(r);
     proxy_gpu_destroy(r);
     vk_buffer_destroy(vk, &r->shotBuf);
-    VkPipeline pipes[] = { r->cityPipe, r->plantPipe, r->terrainPipe, r->planetPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
+    VkPipeline pipes[] = { r->impDemandPipe, r->cityPipe, r->plantPipe, r->terrainPipe, r->planetPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
                            r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->flamePipe, r->smokePipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
@@ -344,6 +344,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
 
     vkCmdResetQueryPool(cmd, r->timeQ[slot], 0, GT_COUNT);
     timestamp(r, cmd, slot, GT_START);
+    interiors_update(r->interiors, cmd, slot);
     chunks_update(r->chunks, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     chunks_sky_lights(r->chunks, cam, (SkyGrid *)r->skyBuf[slot].mapped);
     r->flameCount[slot] = chunks_flames(r->chunks, cam, (FlameSet *)r->flameBuf[slot].mapped);
@@ -382,6 +383,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     record_composite(r, cmd, imageIndex, &ubo);
     timestamp(r, cmd, slot, GT_POST);
     r->timeWritten[slot] = true;
+    interiors_end_frame(cmd);
     VkImage swapImg = vk->images[imageIndex];
     bool shot = record_present_barrier(r, cmd, swapImg, W, H);
     VK_CHECK(vkEndCommandBuffer(cmd));

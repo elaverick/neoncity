@@ -230,18 +230,35 @@ static void test_interiors(const char *assets) {
     int n = 0;
     snprintf(path, sizeof(path), "%s/interiors/catalogue.json", assets);
     if (!interior_catalogue_load(path, names, INTERIOR_MAX_MODULES, &n, err, sizeof(err))) { CHECK(0, "interiors: %s", err); return; }
-    double mb = 0.0;
-    for (int i = 0; i < n; ++i) {
-        char mpath[1200];
-        snprintf(mpath, sizeof(mpath), "%s/interiors/%s.json", assets, names[i]);
+    double mb = 0.0, nearMb = 0.0;
+    int nears = 0;
+    for (int t = 0; t < 2 * n; ++t) {
+        /* each module, then each one's near tier, if it has one: the same floor at twice the texels */
+        int i = t % n;
+        bool isNear = t >= n;
+        char mpath[1200], want[80];
+        snprintf(want, sizeof(want), "%s%s", names[i], isNear ? ".near" : "");
+        snprintf(mpath, sizeof(mpath), "%s/interiors/%s.json", assets, want);
+        if (isNear) { FILE *fp = fopen(mpath, "rb"); if (!fp) continue; fclose(fp); nears++; }
         InteriorModule m;
-        if (!interior_module_load(mpath, &m, err, sizeof(err))) { CHECK(0, "interior %s: %s", names[i], err); continue; }
-        CHECK(strcmp(m.name, names[i]) == 0, "interior %s: its sidecar names it %s", names[i], m.name);
+        if (!interior_module_load(mpath, &m, err, sizeof(err))) { CHECK(0, "interior %s: %s", want, err); continue; }
+        CHECK(strcmp(m.name, want) == 0, "interior %s: its sidecar names it %s", want, m.name);
+        if (isNear) {
+            InteriorModule b;
+            char bpath[1200];
+            snprintf(bpath, sizeof(bpath), "%s/interiors/%s.json", assets, names[i]);
+            if (interior_module_load(bpath, &b, err, sizeof(err))) {
+                CHECK(m.tpm == 2.0f * b.tpm, "interior %s: %g texels a metre, its base has %g", want, m.tpm, b.tpm);
+                CHECK(m.size[0] == b.size[0] && m.size[1] == b.size[1] && m.size[2] == b.size[2] && m.ceiling == b.ceiling && m.type == b.type && m.state == b.state,
+                      "interior %s: isn't the same floor as its base", want);
+                CHECK(m.viewN[0] == b.viewN[0] && m.viewN[1] == b.viewN[1] && m.layers == b.layers, "interior %s: its views or layers differ from its base's", want);
+            }
+        }
         CHECK(m.opening[0] >= 0.0f && m.opening[0] < m.opening[1] && m.opening[1] <= m.size[1], "interior %s: opening %g..%g", names[i], m.opening[0], m.opening[1]);
         for (int c = 0; c < INTERIOR_CHANNELS; ++c) {
             InteriorImage img;
             if (!interior_image_load(&m, c, &img, err, sizeof(err))) { CHECK(0, "interior %s: %s", names[i], err); continue; }
-            mb += img.size / 1e6;
+            if (isNear) nearMb += img.size / 1e6; else mb += img.size / 1e6;
             const uint8_t *d = img.data + img.offset;
             if (c == INTERIOR_DEPTH) {
                 /* red0 >= red1 in each channel's half (red0 < red1 is BC4's 6-level mode, whose
@@ -263,7 +280,7 @@ static void test_interiors(const char *assets) {
             interior_image_free(&img);
         }
     }
-    printf("%d interior modules, %.1f MB\n", n, mb);
+    printf("%d interior modules, %.1f MB; %d near tiers, %.1f MB\n", n, mb, nears, nearMb);
 }
 
 int main(int argc, char **argv) {

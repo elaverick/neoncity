@@ -5,7 +5,8 @@
  * bases. Each uses one mode, a single line through the block's colours: BC6H's
  * mode 11 (10-bit endpoints, 16 weights) and BC7's mode 6 (8-bit endpoints in
  * RGBA, 16 weights). The line is the texels' principal axis, then refined by
- * least squares. Slow encoders with many modes would gain little here: a bake
+ * least squares (BC6H also tries one between its bright and dark texels' means,
+ * and keeps what looks nearer). Slow encoders with many modes would gain little here: a bake
  * is noise-free and mostly smooth, and these run in seconds. The decoders
  * measure what the encoders lose (ktx2.c, test.c). */
 
@@ -100,35 +101,65 @@ static float float_from_half(int h) {
     return e == 0 ? (float)m / 16777216.0f : ldexpf(1.0f + (float)m / 1024.0f, e - 15);
 }
 
+/* How far apart two radiances look, for choosing a block's line: nearly linear in the dark, where a
+ * small slip doesn't show, and logarithmic in the light, where a slip of a stop in one channel shows
+ * as a change of hue. */
+static float bc6_look(float v) { return logf(1.0f + 8.0f * BAKE_SCALE * v); }
+
 void bc6h_encode(const float rgb[16][3], const uint8_t *valid, uint8_t out[16]) {
-    float p[16][4];
+    float p[16][4], look[16][3];
+    float lumMin = 1e30f, lumMax = -1e30f, lum[16];
     for (int i = 0; i < 16; ++i) {
         for (int k = 0; k < 3; ++k) {
             float v = rgb[i][k];
             int h = v > 0.0f ? half_from_float(v) : 0;
             if (h > 0x7BFF) h = 0x7BFF;
             p[i][k] = (float)h * (64.0f / 31.0f);
+            look[i][k] = bc6_look(v > 0.0f ? v : 0.0f);
         }
         p[i][3] = 0.0f;
+        lum[i] = p[i][0] + p[i][1] + p[i][2];
+        if (!valid || valid[i]) { lumMin = fminf(lumMin, lum[i]); lumMax = fmaxf(lumMax, lum[i]); }
     }
-    float a[4], b[4];
-    fit_line((const float (*)[4])p, valid, 3, a, b);
-    int e[2][3], u[2][3];
-    for (int k = 0; k < 3; ++k) {
-        e[0][k] = (int)lroundf(fminf(fmaxf(a[k], 0.0f), 65535.0f) * (1023.0f / 65535.0f));
-        e[1][k] = (int)lroundf(fminf(fmaxf(b[k], 0.0f), 65535.0f) * (1023.0f / 65535.0f));
-        u[0][k] = bc6_unquant(e[0][k]);
-        u[1][k] = bc6_unquant(e[1][k]);
-    }
-    int idx[16];
+    /* Two lines to try. The least-squares one treats every texel's bits alike, and a block holding a bright
+     * strip, the dark floor and a third colour can leave the strip's texels a stop out in one channel: a red
+     * fringe. The other runs from the bright texels' mean to the dark texels' mean, so both ends are right. */
+    float cand[2][2][4];
+    fit_line((const float (*)[4])p, valid, 3, cand[0][0], cand[0][1]);
+    float hi[3] = { 0, 0, 0 }, lo[3] = { 0, 0, 0 }, mid = 0.5f * (lumMin + lumMax);
+    int nh = 0, nl = 0;
     for (int i = 0; i < 16; ++i) {
-        float best = 1e30f;
-        idx[i] = 0;
-        for (int w = 0; w < 16; ++w) {
-            float err = 0.0f;
-            for (int k = 0; k < 3; ++k) { float d = (float)bc6_interp(u[0][k], u[1][k], WEIGHTS[w]) - p[i][k]; err += d * d; }
-            if (err < best) { best = err; idx[i] = w; }
+        if (valid && !valid[i]) continue;
+        bool up = lum[i] > mid;
+        for (int k = 0; k < 3; ++k) { if (up) hi[k] += p[i][k]; else lo[k] += p[i][k]; }
+        if (up) nh++; else nl++;
+    }
+    for (int k = 0; k < 3; ++k) {
+        cand[1][0][k] = nl ? lo[k] / (float)nl : (nh ? hi[k] / (float)nh : 0.0f);
+        cand[1][1][k] = nh ? hi[k] / (float)nh : cand[1][0][k];
+    }
+    int e[2][3], idx[16];
+    float bestAll = 1e30f;
+    for (int c = 0; c < 2; ++c) {
+        int ec[2][3], ic[16];
+        float dec[16][3], total = 0.0f;
+        for (int k = 0; k < 3; ++k) {
+            ec[0][k] = (int)lroundf(fminf(fmaxf(cand[c][0][k], 0.0f), 65535.0f) * (1023.0f / 65535.0f));
+            ec[1][k] = (int)lroundf(fminf(fmaxf(cand[c][1][k], 0.0f), 65535.0f) * (1023.0f / 65535.0f));
+            int u0 = bc6_unquant(ec[0][k]), u1 = bc6_unquant(ec[1][k]);
+            for (int w = 0; w < 16; ++w) dec[w][k] = bc6_look(float_from_half(bc6_finish(bc6_interp(u0, u1, WEIGHTS[w]))));
         }
+        for (int i = 0; i < 16; ++i) {
+            float best = 1e30f;
+            ic[i] = 0;
+            for (int w = 0; w < 16; ++w) {
+                float err = 0.0f;
+                for (int k = 0; k < 3; ++k) { float d = dec[w][k] - look[i][k]; err += d * d; }
+                if (err < best) { best = err; ic[i] = w; }
+            }
+            if (!valid || valid[i]) total += best;
+        }
+        if (total < bestAll) { bestAll = total; memcpy(e, ec, sizeof(e)); memcpy(idx, ic, sizeof(idx)); }
     }
     if (idx[0] >= 8) {   /* the anchor's top bit is implied 0: swap the ends */
         for (int k = 0; k < 3; ++k) { int t = e[0][k]; e[0][k] = e[1][k]; e[1][k] = t; }

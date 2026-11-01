@@ -11,29 +11,10 @@
  * F8), every floor keeps interior mapping (rooms.glsl).
  * ==================================================================== */
 
-#define INTERIOR_MAX_MODULES 16  // src/render/interior_def.h
-#define INTERIOR_CHANNELS    5   // lint, albedo, depth, flags, ext
-#define INTERIOR_MAX_BAYS    8
+#include "city/impostor_pick.glsl"
 
-struct ImpModule {   // InteriorGPU (src/render/interiors.h)
-    vec4  grid;      // the texel grid's origin x, y (m); texels a metre; 1 if it wraps in x
-    ivec4 dim;       // texels across, up; K; the module type (0 through, 1 core, 2 corner)
-    ivec4 views;     // the view grid's nodes across, up; its kind (IMP_GRID_*); 1 if the last slot holds the last surface
-    vec4  range;     // ImpViews.range
-    vec4  size;      // W, H, D; the ceiling (m)
-    vec4  march;     // steps at most, texels a step, bisections, a guessing view's weight
-    vec4  bays;      // bays, their width (m), the bake scale, an off-grid view's weight
-    vec4  bayMean[INTERIOR_MAX_BAYS];   // rgb each bay's mean radiance through the glass, before the bake scale; [0].a what ext's 1 means
-    vec4  bayExt[INTERIOR_MAX_BAYS];    // each bay's mean under the exterior bases: street, neon, sky, screens
-};
-layout(set = 0, binding = 11) uniform Interiors {
-    vec4      info;  // x modules loaded, y the share of eligible floors drawn with them, z how near (m) colour is filtered
-    uvec4     pick[16];    // by the plate's depth in whole metres (4 to a vec4): a bit per module that suits it
-    uvec4     states;      // the modules baked in each light state, a bit each: after hours, late shift, cleaners, screens
-    ImpModule impMod[INTERIOR_MAX_MODULES];
-} interiors;
 // Each module's channels, module * INTERIOR_CHANNELS + channel; the module is chosen per floor.
-layout(set = 0, binding = 12) uniform sampler2DArray impTex[INTERIOR_MAX_MODULES * INTERIOR_CHANNELS];
+layout(set = 0, binding = 12) uniform sampler2DArray impTex[INTERIOR_TABLE_SIZE * INTERIOR_CHANNELS];
 
 int gImpTex;   // the marched module's first image
 int gImpK;     // its layers per view
@@ -66,27 +47,16 @@ struct ImpPick {
     float u0;       // where along the face it starts, m
 };
 
-/* The module a floor shows behind this face. A share of the floors are open plan, the same on every
- * face. Each takes a module that suits the plate behind the face (pick), in the floor's light state
- * where one does. It repeats along the floor (modules are periodic in x), but every span of about a
- * module's width gets its own start and may flip, so the tile's period doesn't show; the seam falls on
- * a mullion. It stretches so its width is whole bays, if that takes under 10%, so its columns meet the
- * mullions; else not at all. z stretches so a through module's far glass is the far face. */
+/* How a floor shows its module (impostorModule) behind this face. It repeats along the floor (modules
+ * are periodic in x), but every span of about a module's width gets its own start and may flip, so the
+ * tile's period doesn't show; the seam falls on a mullion. It stretches so its width is whole bays, if
+ * that takes under 10%, so its columns meet the mullions; else not at all. z stretches so a through
+ * module's far glass is the far face. */
 ImpPick impostorPick(uint seed, int section, int floorIdx, int faceDir, int bay, float bayW, float floorH, uint plate) {
     ImpPick p;
-    p.m = -1; p.mirror = false; p.scale = vec3(1.0); p.x0 = 0.0; p.u0 = 0.0;
-    if (int(interiors.info.x) <= 0) return p;
-    uint h = hash3i(seed ^ 0x1A7Eu, section, floorIdx, 0);
-    if (hfloat(h) >= interiors.info.y) return p;
-    int metres = clamp(int(plate >> 1u), 0, 63);
-    uint mask = interiors.pick[metres >> 2][metres & 3];
-    if (mask == 0u) return p;
-    // the floor's light state, if a module for this plate has it: mostly after hours
-    float s = hf(h, 2u);
-    uint inState = mask & interiors.states[s < 0.55 ? 0 : s < 0.75 ? 1 : s < 0.87 ? 2 : 3];
-    if (inState != 0u) mask = inState;
-    for (int k = int(hf(h, 1u) * float(bitCount(mask))); k > 0; --k) mask &= mask - 1u;
-    p.m = findLSB(mask);
+    p.mirror = false; p.scale = vec3(1.0); p.x0 = 0.0; p.u0 = 0.0;
+    p.m = impostorModule(seed, section, floorIdx, plate);
+    if (p.m < 0) return p;
 
     ImpModule M = interiors.impMod[p.m];
     float W = M.size.x, n = max(1.0, floor(W / bayW + 0.5)), sx = W / (n * bayW);
@@ -146,6 +116,15 @@ vec3 impostorBayMean(int m, float x) {
 vec3 impostorTrace(ImpPick p, float u, float y, vec3 d, vec3 worldDir, float eyeY, float eyeDist, float zSide, vec3 slabC) {
     int m = p.m;
     ImpModule M = interiors.impMod[m];
+    /* The near tier, where it's resident: the same floor at twice the texels. Whole within info.w; from
+     * there it dithers away to the base tier, and likewise as it arrives, so neither pops. */
+    if (M.tier.x >= 0.0) {
+        float whole = interiors.info.w, k = (1.0 - smoothstep(whole, whole * 1.5, eyeDist)) * M.tier.y;
+        if (k > 0.0 && fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) < k) {
+            m = int(M.tier.x);
+            M = interiors.impMod[m];
+        }
+    }
     vec2 q = vec2(impostorX(p, u), y * p.scale.y);
     if (q.y < 0.0 || q.y > M.size.w) return slabC;
     d *= p.scale;

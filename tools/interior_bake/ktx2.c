@@ -14,7 +14,7 @@
  * The march reads texels, so there are no mips yet. */
 
 #define BAKE_FORMAT_VERSION 3
-#define BAKER_VERSION "im6-furniture-1"
+#define BAKER_VERSION "im7-near-1"
 /* Radiance into the engine's units, from the calibration in test.c: 1.2 m troffers on the lobby's
  * grid light a table's top as the lobby's analytic panels do (section 16). */
 const float BAKE_SCALE = 0.375f;

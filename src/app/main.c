@@ -84,8 +84,8 @@ static void usage(void) {
            "  --turn  and turn this fast while walking (degrees a second, + to the right)\n"
            "  --rain  fix the rain intensity (0 drizzle .. 1 downpour); otherwise it drifts\n"
            "  --time  hold the shaders' clock at this many seconds (flames, signs, steam: for captures)\n"
-           "  --impostors  draw this share (default 0.4) of curtain-wall and ribbon-window office floors as baked\n"
-           "               interior impostors (docs/interior-impostors.md; F8 turns them off and on)\n"
+           "  --impostors  draw this share (default 0.4; 0 turns them off) of the office towers' floors behind curtain\n"
+           "               walls and ribbon windows as baked interior impostors (docs/interior-impostors.md; F8 toggles)\n"
            "  --shot  wait for streaming to settle, save a screenshot and exit\n");
 }
 
@@ -106,6 +106,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
     o->shadows = true;
     o->fixedRain = -1.0f;
     o->fixedTime = -1.0;
+    o->impostors = 0.4f;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--validation") == 0) o->validation = true;
         else if (strcmp(argv[i], "--noshadows") == 0) o->shadows = false;

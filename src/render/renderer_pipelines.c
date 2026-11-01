@@ -47,6 +47,9 @@ static const uint32_t SPV_city_rt_frag[] = {
 static const uint32_t SPV_city_pre_vert[] = {
 #include "city_pre.vert.inc"
 };
+static const uint32_t SPV_impostor_demand_frag[] = {
+#include "impostor_demand.frag.inc"
+};
 static const uint32_t SPV_prepass_frag[] = {
 #include "prepass.frag.inc"
 };
@@ -131,7 +134,7 @@ void write_buf_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkDescript
 
 void create_layouts(Renderer *r) {
     VkCore *vk = r->vk;
-    VkDescriptorSetLayoutBinding scene[13] = {
+    VkDescriptorSetLayoutBinding scene[14] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
@@ -142,12 +145,13 @@ void create_layouts(Renderer *r) {
         { 10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, ADVERT_TABLE_SIZE, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* each advert's frames */
         { 11, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the interior impostors' table (interiors.c) */
         { 12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, INTERIOR_IMAGES, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* each module's channels */
+        { 13, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* which modules were drawn near the eye */
         /* ray-traced shadows only */
         { 5, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shadow slot ids */
         { 7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* shadow slot visibility */
     };
-    r->sceneLayout = make_set_layout(vk, scene, r->rt ? 13 : 10);
+    r->sceneLayout = make_set_layout(vk, scene, r->rt ? 14 : 11);
     if (r->rt) {
         const VkShaderStageFlags C = VK_SHADER_STAGE_COMPUTE_BIT;
         const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -248,7 +252,7 @@ void create_layouts(Renderer *r) {
 
     VkDescriptorPoolSize sizes[4] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (PBR_TEXTURE_COUNT + ADVERT_TABLE_SIZE + INTERIOR_IMAGES + 3) * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES },
     };
@@ -276,7 +280,8 @@ void create_layouts(Renderer *r) {
         VkDescriptorBufferInfo ib = { interiors_table(r->interiors), 0, sizeof(InteriorTable) };
         VkDescriptorImageInfo ii[INTERIOR_IMAGES];
         interiors_images(r->interiors, ii);
-        VkWriteDescriptorSet w[9] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
+        VkDescriptorBufferInfo db = { interiors_demand(r->interiors, i), 0, sizeof(InteriorDemand) };
+        VkWriteDescriptorSet w[10] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
                                       { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
                                       { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
                                       { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET },
@@ -299,9 +304,12 @@ void create_layouts(Renderer *r) {
         w[7].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[7].pBufferInfo = &ib;
         w[8].dstSet = r->sceneSet[i]; w[8].dstBinding = 12; w[8].descriptorCount = INTERIOR_IMAGES;
         w[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[8].pImageInfo = ii;
-        vkUpdateDescriptorSets(vk->device, 9, w, 0, NULL);
+        w[9].dstSet = r->sceneSet[i]; w[9].dstBinding = 13; w[9].descriptorCount = 1;
+        w[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w[9].pBufferInfo = &db;
+        vkUpdateDescriptorSets(vk->device, 10, w, 0, NULL);
         if (r->rt) write_as_set(vk, r->sceneSet[i], 5, rt_tlas(r->rt, i));
     }
+    interiors_set_descriptors(r->interiors, r->sceneSet, 12);
 
     VkSamplerCreateInfo si = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
     si.magFilter = si.minFilter = VK_FILTER_LINEAR;
@@ -335,6 +343,7 @@ typedef struct GfxDesc {
     bool additive;           /* out = src.rgb + dst.rgb */
     VkFormat colorFormat2;   /* a second colour attachment (UNDEFINED: none), written unblended */
     bool positionOnly;       /* the vertex shader reads only the position attribute */
+    bool noColor;            /* writes no colour */
 } GfxDesc;
 
 static VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
@@ -374,7 +383,7 @@ static VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
     ds.depthWriteEnable = d->depthWrite;
     ds.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;   /* reverse-Z */
     VkPipelineColorBlendAttachmentState cba[2] = { { 0 }, { 0 } };
-    cba[0].colorWriteMask = cba[1].colorWriteMask = 0xF;
+    cba[0].colorWriteMask = cba[1].colorWriteMask = d->noColor ? 0 : 0xF;
     if (d->blend || d->additive) {
         cba[0].blendEnable = VK_TRUE;
         cba[0].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
@@ -436,6 +445,11 @@ void create_pipelines(Renderer *r) {
                      r->scenePL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, true, true, true, true };
     city.colorFormat2 = HDR_FORMAT;   /* reflection G-buffer */
     r->cityPipe = make_graphics(vk, &city);
+    GfxDesc demand = city;            /* which interior modules are near the eye: over the city's depth, drawing nothing */
+    demand.fs = SPV_impostor_demand_frag; demand.fsBytes = sizeof(SPV_impostor_demand_frag);
+    demand.depthWrite = false;
+    demand.noColor = true;
+    r->impDemandPipe = make_graphics(vk, &demand);
     city.cull = false;                /* lobby plants: a leaf is a single surface, seen from both sides */
     r->plantPipe = make_graphics(vk, &city);
     GfxDesc sky = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_sky_frag, sizeof(SPV_sky_frag),

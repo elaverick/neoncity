@@ -19,6 +19,8 @@
  *   flags   R8     view: 1 where the texel is full
  *   ext     BC7    view * K + layer: sqrt(E / ext_max) under each unit basis: street, neon, sky, screens */
 #define INTERIOR_MAX_MODULES 16
+#define INTERIOR_NEAR_SLOTS  4    /* modules' near tiers (<name>.near.*, 32 texels a metre) resident at once */
+#define INTERIOR_TABLE_SIZE  (INTERIOR_MAX_MODULES + INTERIOR_NEAR_SLOTS)
 #define INTERIOR_MAX_BAYS    8
 #define INTERIOR_FORMAT_VERSION 3
 #define INTERIOR_PLATE_METRES 64   /* the plate depths a module is chosen for: 0 to 63 m */
