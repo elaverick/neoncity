@@ -91,6 +91,30 @@ static void fill_gpu(InteriorGPU *g, const InteriorModule *m) {
     g->bayMean[0][3] = m->extMax;
 }
 
+/* Which modules suit a floor plate of each depth, in whole metres (docs/interior-impostors.md, section 20).
+ * A through module runs to the far glass, so it stretches in z to fit, by up to a fifth (or to the nearest,
+ * for a plate that falls between two). A core module stands in front of a core: anything deep enough to hold
+ * one such floor each side of a core 4 m across or more. Corner modules aren't drawn: they don't tile. */
+static void pick_modules(InteriorTable *tab, const InteriorModule *mods, int n) {
+    for (int d = 0; d < INTERIOR_PLATE_METRES; ++d) {
+        float depth = (float)d + 0.5f, nearest = 1e9f;
+        uint32_t mask = 0, closest = 0;
+        for (int i = 0; i < n; ++i) {
+            const InteriorModule *m = &mods[i];
+            float D = m->size[2];
+            if (m->type == INTERIOR_CORE && depth >= 2.0f * D + 4.0f) mask |= 1u << i;
+            if (m->type != INTERIOR_THROUGH) continue;
+            float k = depth > D ? depth / D : D / depth;
+            if (k <= 1.2f) mask |= 1u << i;
+            if (k < nearest - 0.01f) { nearest = k; closest = 1u << i; }
+            else if (k < nearest + 0.01f) closest |= 1u << i;
+        }
+        if (!mask && nearest <= 1.4f) mask = closest;
+        tab->pick[d] = mask;
+    }
+    for (int i = 0; i < n; ++i) tab->states[mods[i].state] |= 1u << i;
+}
+
 Interiors *interiors_create(VkCore *vk) {
     Interiors *in = (Interiors *)calloc(1, sizeof(Interiors));
     in->vk = vk;
@@ -138,6 +162,7 @@ Interiors *interiors_create(VkCore *vk) {
     }
     char names[INTERIOR_MAX_MODULES][64];
     int named = 0;
+    InteriorModule *mods = (InteriorModule *)calloc(INTERIOR_MAX_MODULES, sizeof(InteriorModule));
     if (!vk->adverts) fprintf(stderr, "Interiors: the GPU lacks BC textures or non-uniform texture indexing; no impostors\n");
     else if (!interior_catalogue_load(path, names, INTERIOR_MAX_MODULES, &named, err, sizeof(err)))
         fprintf(stderr, "Interiors: %s; no impostors\n", err);
@@ -177,9 +202,12 @@ Interiors *interiors_create(VkCore *vk) {
             interior_image_free(&imgs[c]);
         }
         fill_gpu(&tab->mod[slot], &m);
+        mods[slot] = m;
         in->count++;
     }
     tab->info[0] = (float)in->count;
+    pick_modules(tab, mods, in->count);
+    free(mods);
     tab->info[2] = 18.0f;   /* how near a hit's colour is filtered, metres (docs/interior-impostors.md, section 18) */
 
     VK_CHECK(vkEndCommandBuffer(cmd));

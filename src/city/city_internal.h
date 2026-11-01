@@ -78,7 +78,8 @@ static inline int inside_building(const Building *b, double wx, double wz, doubl
 #define DROP_DEPTH    (KERB_STONE_WIDTH + DROP_RAMP_RUN)
 
 /* A surface's material: the vertex seed, params (material and its parameters) and aux. */
-typedef struct Mat { uint32_t seed; uint8_t p[4]; uint32_t aux; } Mat;
+/* w: the normal's fourth component (a facade: the floor plate's depth behind it, facade_mat). */
+typedef struct Mat { uint32_t seed; uint8_t p[4]; uint32_t aux; int8_t w; } Mat;
 /* Emission frames compose: a building's frame inside the chunk, raised to its
  * base, then a face's frame inside the building (x along the face, z out of it). */
 typedef struct Xf { int on; float c, s, x, z, y; } Xf;

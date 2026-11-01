@@ -61,10 +61,12 @@ bool interior_module_load(const char *path, InteriorModule *m, char *err, size_t
     float f[4];
     const Json *views = json_get(doc, "views"), *march = json_get(doc, "march"), *grid = json_get(doc, "grid");
     const Json *means = json_get(json_get(doc, "bay_means"), "lint"), *extMeans = json_get(json_get(doc, "bay_means"), "ext"), *files = json_get(doc, "files");
-    const char *type = str(doc, "type"), *kind = views ? str(views, "kind") : NULL, *name = str(doc, "module");
+    const char *type = str(doc, "type"), *kind = views ? str(views, "kind") : NULL, *name = str(doc, "module"), *state = str(doc, "light_state");
     if (!nums(doc, "version", f, 1) || (int)f[0] != INTERIOR_FORMAT_VERSION) bad = "is not format version 3 (re-bake it)";
     else if (!name || strlen(name) >= sizeof(m->name)) bad = "has no \"module\" name";
     else if (!type || (strcmp(type, "through") && strcmp(type, "core") && strcmp(type, "corner"))) bad = "has no \"type\" (through, core or corner)";
+    else if (!state || (strncmp(state, "after", 5) && strncmp(state, "late", 4) && strcmp(state, "cleaners") && strcmp(state, "screens")))
+        bad = "has no \"light_state\"";
     else if (!nums(doc, "size", m->size, 3) || !nums(doc, "ceiling", &m->ceiling, 1) || !nums(doc, "opening", m->opening, 2)) bad = "lacks its size, ceiling or opening";
     else if (!nums(doc, "bays", f, 1) || !nums(doc, "bay_width", &m->bayWidth, 1) || !nums(doc, "bake_scale", &m->bakeScale, 1)) bad = "lacks its bays or bake scale";
     else if (!views || !kind || !nums(views, "n", f + 2, 2) || !nums(views, "range", m->viewRange, 4)) bad = "lacks its view grid";
@@ -74,6 +76,8 @@ bool interior_module_load(const char *path, InteriorModule *m, char *err, size_t
     if (!bad) {
         snprintf(m->name, sizeof(m->name), "%s", name);
         m->type = !strcmp(type, "through") ? INTERIOR_THROUGH : !strcmp(type, "core") ? INTERIOR_CORE : INTERIOR_CORNER;
+        m->state = !strncmp(state, "after", 5) ? INTERIOR_STATE_AFTER_HOURS : !strncmp(state, "late", 4) ? INTERIOR_STATE_LATE_SHIFT :
+                   !strcmp(state, "cleaners") ? INTERIOR_STATE_CLEANERS : INTERIOR_STATE_SCREENS;
         m->bays = (int)f[0];
         m->layers = (int)f[1];
         m->viewN[0] = (int)f[2]; m->viewN[1] = (int)f[3];

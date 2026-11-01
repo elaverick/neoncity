@@ -131,6 +131,37 @@ int loops_intersect(const BLoop *a, const BLoop *b) {
     return 0;
 }
 
+/* How far from (x, z) along (dx, dz) the ray first meets the loop's edges (1e30 if it doesn't). */
+static float loop_ray(const BLoop *l, float x, float z, float dx, float dz) {
+    float best = 1e30f;
+    for (int i = 0; i < l->n; ++i) {
+        int j = (i + 1) % l->n;
+        float ex = l->x[j] - l->x[i], ez = l->z[j] - l->z[i], fx = l->x[i] - x, fz = l->z[i] - z;
+        float det = dx * ez - dz * ex;
+        if (fabsf(det) < 1e-6f) continue;
+        float t = (fx * ez - fz * ex) / det, s = (fx * dz - fz * dx) / det;
+        if (t > 0.0f && s >= 0.0f && s <= 1.0f && t < best) best = t;
+    }
+    return best;
+}
+
+float bfoot_depth_across(const BFoot *f, const BLoop *l, int k) {
+    int j = (k + 1) % l->n;
+    float ex = l->x[j] - l->x[k], ez = l->z[j] - l->z[k], len = sqrtf(ex * ex + ez * ez);
+    if (len < 1e-4f) return 0.0f;
+    float dx = ez / len, dz = -ex / len;   /* into the building: the outward normal is (-ez, ex) */
+    float d[3];
+    for (int i = 0; i < 3; ++i) {
+        float t = (float)(2 * i + 1) / 6.0f;
+        float x = l->x[k] + ex * t + dx * 0.01f, z = l->z[k] + ez * t + dz * 0.01f;
+        float a = loop_ray(&f->outer, x, z, dx, dz), b = f->hole.n ? loop_ray(&f->hole, x, z, dx, dz) : 1e30f;
+        d[i] = minf(a, b);
+        if (d[i] >= 1e29f) d[i] = 0.0f;
+    }
+    /* the middle of the three */
+    return maxf(minf(d[0], d[1]), minf(maxf(d[0], d[1]), d[2]));
+}
+
 /* The narrowest calliper width: the least extent across any direction, which
  * is the least over the convex hull's edges of the farthest vertex from it. */
 float bloop_width(const BLoop *l) {

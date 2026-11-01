@@ -21,14 +21,17 @@
 #define INTERIOR_MAX_MODULES 16
 #define INTERIOR_MAX_BAYS    8
 #define INTERIOR_FORMAT_VERSION 3
+#define INTERIOR_PLATE_METRES 64   /* the plate depths a module is chosen for: 0 to 63 m */
 enum { INTERIOR_LINT, INTERIOR_ALBEDO, INTERIOR_DEPTH, INTERIOR_FLAGS, INTERIOR_EXT, INTERIOR_CHANNELS };
 enum { INTERIOR_THROUGH, INTERIOR_CORE, INTERIOR_CORNER };   /* InteriorModule.type */
+enum { INTERIOR_STATE_AFTER_HOURS, INTERIOR_STATE_LATE_SHIFT, INTERIOR_STATE_CLEANERS, INTERIOR_STATE_SCREENS };   /* InteriorModule.state */
 extern const char *const INTERIOR_CHANNEL_NAMES[INTERIOR_CHANNELS];
 extern const uint32_t INTERIOR_CHANNEL_FORMATS[INTERIOR_CHANNELS];   /* VkFormat */
 
 typedef struct InteriorModule {
     char  name[64];
     int   type;                      /* INTERIOR_* */
+    int   state;                     /* INTERIOR_STATE_* */
     float size[3];                   /* W, H, D in metres */
     float ceiling;                   /* the slab's underside above the floor */
     float opening[2];                /* the glass: sill, head */

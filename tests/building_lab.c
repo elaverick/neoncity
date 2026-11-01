@@ -38,10 +38,31 @@ static void count_reasons(const char *log) {
     }
 }
 
+/* building_lab plates: how deep the floor plates are behind full-height glass, by archetype and in
+ * 4 m steps, weighted by the glass's area (what interior impostors have to cover). */
+enum { PLATE_BINS = 16 };
+static void count_plates(const BGraph *g, double n[ARCH_COUNT][PLATE_BINS]) {
+    for (int s = 0; s < g->nsec; ++s) {
+        const BSection *S = &g->sec[s];
+        if (!bsec_facade(S) || (S->win != WIN_CURTAIN && S->win != WIN_RIBBON)) continue;
+        const BLoop *loops[2] = { &S->foot.outer, &S->foot.hole };
+        for (int li = 0; li < 2; ++li)
+            for (int k = 0; k < loops[li]->n; ++k) {
+                const BLoop *l = loops[li];
+                int j = (k + 1) % l->n;
+                float d = bfoot_depth_across(&S->foot, l, k), w = hypotf(l->x[j] - l->x[k], l->z[j] - l->z[k]);
+                int b = (int)(d / 4.0f);
+                n[g->archetype][b >= PLATE_BINS ? PLATE_BINS - 1 : b] += (double)(w * (S->y1 - S->y0));
+            }
+    }
+}
+
 int main(int argc, char **argv) {
     int industry = argc > 1 && !strcmp(argv[1], "industry");
+    int plates = argc > 1 && !strcmp(argv[1], "plates");
+    static double plateN[ARCH_COUNT][PLATE_BINS];
     models_load(NEONCITY_ASSETS);   /* the chunks' meshes it measures set the models down */
-    if (industry) { argv++; argc--; }
+    if (industry || plates) { argv++; argc--; }
     double size = argc > 1 ? atof(argv[1]) : 3000.0;
     int verbose = argc > 2 ? atoi(argv[2]) : 0;
     DVec2 c = plan_town_centre(0, 0);
@@ -84,6 +105,7 @@ int main(int argc, char **argv) {
                     total++;
                     counts[g->district][g->archetype]++;
                     attempts += g->attempts;
+                    if (plates) count_plates(g, plateN);
                     if (g->attempts > 1) retried++;
                     if (g->simplified) simplified++;
                     ground[g->groundMode]++;
@@ -161,6 +183,17 @@ int main(int argc, char **argv) {
             }
         }
     printf("%d buildings in a %.0f m square around the spawn\n", total, size);
+    if (plates) {
+        printf("full-height glass by the floor plate's depth behind it, thousand m2\n%-12s", "depth from");
+        for (int b = 0; b < PLATE_BINS; ++b) printf("%5d", b * 4);
+        printf("\n");
+        for (int a = 0; a < ARCH_COUNT; ++a) {
+            printf("%-12s", bgen_archetype_name(a));
+            for (int b = 0; b < PLATE_BINS; ++b) printf("%5.0f", plateN[a][b] / 1000.0);
+            printf("\n");
+        }
+        return 0;
+    }
     printf("%-22s", "");
     for (int d = 0; d < DIST_COUNT; ++d) printf("%11s", bgen_district_name(d));
     printf("\n");

@@ -28,6 +28,8 @@ struct ImpModule {   // InteriorGPU (src/render/interiors.h)
 };
 layout(set = 0, binding = 11) uniform Interiors {
     vec4      info;  // x modules loaded, y the share of eligible floors drawn with them, z how near (m) colour is filtered
+    uvec4     pick[16];    // by the plate's depth in whole metres (4 to a vec4): a bit per module that suits it
+    uvec4     states;      // the modules baked in each light state, a bit each: after hours, late shift, cleaners, screens
     ImpModule impMod[INTERIOR_MAX_MODULES];
 } interiors;
 // Each module's channels, module * INTERIOR_CHANNELS + channel; the module is chosen per floor.
@@ -35,7 +37,8 @@ layout(set = 0, binding = 12) uniform sampler2DArray impTex[INTERIOR_MAX_MODULES
 
 int gImpTex;   // the marched module's first image
 int gImpK;     // its layers per view
-float gImpScale, gImpExtMax;   // its bake scale; what ext's 1 means
+float gImpScale, gImpExtMax;   // its bake scale (and this floor's lights: gImpLit); what ext's 1 means
+float gImpLit;                 // how far this floor's own lights are on (impostorLight)
 vec3 gImpC[4];                 // the radiance of each basis at this window (impostorLight): street, neon, sky, screens
 
 vec2 impFetchDepth(int view, int layer, ivec2 t) { return texelFetch(impTex[nonuniformEXT(gImpTex + 2)], ivec3(t, view * gImpK + layer), 0).rg; }
@@ -54,24 +57,54 @@ vec3 impFetchColor(int view, int layer, ivec2 t) {
 
 #include "city/impostor.glsl"
 
-/* The module a floor shows, or -1: a share of the floors (the same on every
- * face), each a module by its hash. mirror: this face shows it flipped in x. */
-int impostorModule(uint seed, int section, int floorIdx, int faceDir, out bool mirror) {
-    mirror = false;
-    int n = int(interiors.info.x);
-    if (n <= 0) return -1;
+/* What a span of bays of a floor shows. */
+struct ImpPick {
+    int   m;        // the module, or -1: this floor keeps interior mapping
+    bool  mirror;   // flipped in x
+    vec3  scale;    // the face's metres to the module's (x along the wall, y up, z in)
+    float x0;       // where along the module the span starts, at u0, m
+    float u0;       // where along the face it starts, m
+};
+
+/* The module a floor shows behind this face. A share of the floors are open plan, the same on every
+ * face. Each takes a module that suits the plate behind the face (pick), in the floor's light state
+ * where one does. It repeats along the floor (modules are periodic in x), but every span of about a
+ * module's width gets its own start and may flip, so the tile's period doesn't show; the seam falls on
+ * a mullion. It stretches so its width is whole bays, if that takes under 10%, so its columns meet the
+ * mullions; else not at all. z stretches so a through module's far glass is the far face. */
+ImpPick impostorPick(uint seed, int section, int floorIdx, int faceDir, int bay, float bayW, float floorH, uint plate) {
+    ImpPick p;
+    p.m = -1; p.mirror = false; p.scale = vec3(1.0); p.x0 = 0.0; p.u0 = 0.0;
+    if (int(interiors.info.x) <= 0) return p;
     uint h = hash3i(seed ^ 0x1A7Eu, section, floorIdx, 0);
-    if (hfloat(h) >= interiors.info.y) return -1;
-    mirror = hfloat(hash3i(seed ^ 0x1A7Fu, section, floorIdx, faceDir)) < 0.5;
-    return min(int(hf(h, 1u) * float(n)), n - 1);
+    if (hfloat(h) >= interiors.info.y) return p;
+    int metres = clamp(int(plate >> 1u), 0, 63);
+    uint mask = interiors.pick[metres >> 2][metres & 3];
+    if (mask == 0u) return p;
+    // the floor's light state, if a module for this plate has it: mostly after hours
+    float s = hf(h, 2u);
+    uint inState = mask & interiors.states[s < 0.55 ? 0 : s < 0.75 ? 1 : s < 0.87 ? 2 : 3];
+    if (inState != 0u) mask = inState;
+    for (int k = int(hf(h, 1u) * float(bitCount(mask))); k > 0; --k) mask &= mask - 1u;
+    p.m = findLSB(mask);
+
+    ImpModule M = interiors.impMod[p.m];
+    float W = M.size.x, n = max(1.0, floor(W / bayW + 0.5)), sx = W / (n * bayW);
+    p.scale.x = abs(sx - 1.0) <= 0.1 ? sx : 1.0;
+    p.scale.y = M.size.y / floorH;
+    if (M.dim.w == 0) p.scale.z = M.size.z / (float(plate) * 0.5);
+    int span = bay / int(n);
+    p.u0 = float(span * int(n)) * bayW;
+    uint hs = hash3i(seed ^ 0x1A7Fu, section, floorIdx, faceDir * 1024 + span);
+    p.mirror = hfloat(hs) < 0.5;
+    p.x0 = floor(hf(hs, 1u) * float(M.bays.x)) * M.bays.y;   // on one of its bays
+    return p;
 }
 
-/* How a face's floor maps onto module m: x scaled so the module spans whole
- * bays of the face (bayW apart), y so a floor matches the module's floor to
- * floor. */
-vec2 impostorStretch(int m, float bayW, float floorH) {
-    float W = interiors.impMod[m].size.x;
-    return vec2(W / (max(1.0, floor(W / bayW + 0.5)) * bayW), interiors.impMod[m].size.y / floorH);
+/* A place along the face as a place along the module. */
+float impostorX(ImpPick p, float u) {
+    float x = p.x0 + (u - p.u0) * p.scale.x;
+    return p.mirror ? -x : x;
 }
 
 /* What lights a module at this window (doc, section 16), as the radiance of the source each basis
@@ -79,7 +112,9 @@ vec2 impostorStretch(int m, float bayW, float floorH) {
  * neon). A source filling the half of a wall's view below it puts half its radiance on the wall, so
  * the street's is twice that. The neon and the towers across carry on above where the lamps give
  * out. glassT: the near glass the light comes through. floorHash: this floor's own screens. */
-void impostorLight(vec3 lamps, vec3 glassT, float height, uint floorHash) {
+void impostorLight(vec3 lamps, vec3 glassT, float height, uint floorHash, float litChance) {
+    // the floor's own lights: on or off as a room's are, and no two floors quite alike
+    gImpLit = hf(floorHash, 33u) < mix(0.45, 1.0, clamp(litChance, 0.0, 1.0)) ? mix(0.75, 1.25, hf(floorHash, 34u)) : 0.0;
     vec3 across = vec3(0.11, 0.085, 0.06) * 2.5;     // the towers across: paneSheen's lit facades
     gImpC[0] = (lamps * 2.0 + across * mix(0.25, 1.0, exp(-height / 80.0))) * glassT;
     // a floor sees signs from afar, even where none stand just below it
@@ -97,24 +132,27 @@ vec3 impostorBayMean(int m, float x) {
     float W = M.size.x;
     int b = clamp(int((x - W * floor(x / W)) / M.bays.y), 0, int(M.bays.x) - 1);
     vec4 e = M.bayExt[b];
-    return M.bayMean[b].rgb * M.bays.z + gImpC[0] * e.r + gImpC[1] * e.g + gImpC[2] * e.b + gImpC[3] * e.a;
+    return M.bayMean[b].rgb * M.bays.z * gImpLit + gImpC[0] * e.r + gImpC[1] * e.g + gImpC[2] * e.b + gImpC[3] * e.a;
 }
 
-/* What the eye sees through the glass of module m, along d (the module's
- * frame: x along the wall, y up, z into the building), entering at q on the
- * glass plane (metres). The 3 views round d are each marched and blended by
- * weight, less for a view that guessed or looked off its grid; a ray that
- * leaves by the far glass of a through module sees the view out (throughView,
- * from worldDir and the window's height eyeY). Below the floor or above the
- * ceiling the glass covers the slab's edge, slabC. Near the eye (eyeDist) a hit's colour is
- * filtered over its 2 x 2 texels, so a texel doesn't show as a block; further off it isn't
- * worth the fetches. */
-vec3 impostorTrace(int m, vec2 q, vec3 d, vec3 worldDir, float eyeY, float eyeDist, vec3 slabC) {
+/* What the eye sees through the glass of a pick, along d (the face's frame: x along the wall, y up, z
+ * into the building), entering at (u, y) on the glass (metres). The 3 views round d are each marched
+ * and blended by weight, less for a view that guessed or looked off its grid. zSide: how deep (the
+ * face's metres) the ray reaches the side of the building; a ray that gets that far, or to the far
+ * glass of a through module, sees the view out (throughView, from worldDir and the window's height
+ * eyeY). Below the floor or above the ceiling the glass covers the slab's edge, slabC. Near the eye
+ * (eyeDist) a hit's colour is filtered over its 2 x 2 texels, so a texel doesn't show as a block;
+ * further off it isn't worth the fetches. */
+vec3 impostorTrace(ImpPick p, float u, float y, vec3 d, vec3 worldDir, float eyeY, float eyeDist, float zSide, vec3 slabC) {
+    int m = p.m;
     ImpModule M = interiors.impMod[m];
+    vec2 q = vec2(impostorX(p, u), y * p.scale.y);
     if (q.y < 0.0 || q.y > M.size.w) return slabC;
+    d *= p.scale;
+    if (p.mirror) d.x = -d.x;
     gImpTex = m * INTERIOR_CHANNELS;
     gImpK = M.dim.z;
-    gImpScale = M.bays.z;
+    gImpScale = M.bays.z * gImpLit;
     gImpExtMax = M.bayMean[0].a;
     ImpViews v;
     v.n = M.views.xy; v.kind = M.views.z; v.range = M.range;
@@ -124,16 +162,20 @@ vec3 impostorTrace(int m, vec2 q, vec3 d, vec3 worldDir, float eyeY, float eyeDi
     d.z = max(d.z, 1e-3);
     vec2 sigma = d.xy / d.z;
     float near = interiors.info.z, filt = near > 0.0 ? 1.0 - smoothstep(near * 0.75, near, eyeDist) : 0.0;
+    float zExit = min(g.D, zSide * p.scale.z);
 
     ivec3 views;
     vec3 w;
     impPickViews(v, d, views, w);
+    // a view with little say isn't worth its march: the weights narrow towards the nearest, smoothly
+    w = max(w - 0.12, vec3(0.0));
+    w /= w.x + w.y + w.z;
     vec3 sum = vec3(0.0);
     float wsum = 0.0, wOut = 0.0;
     for (int i = 0; i < 3; ++i) {
         if (w[i] <= 1e-4) continue;
         vec3 dk = impViewDirIndex(v, views[i]);
-        ImpHit h = impMarch(views[i], g, q, sigma - dk.xy / dk.z, g.D, int(M.march.x), M.march.y, int(M.march.z), false);
+        ImpHit h = impMarch(views[i], g, q, sigma - dk.xy / dk.z, zExit, int(M.march.x), M.march.y, int(M.march.z), false);
         float wt = w[i] * (h.unknown ? M.march.w : 1.0) * (h.outside ? M.bays.w : 1.0);
         if (h.layer >= 0) {
             vec3 c = impFetchColor(views[i], h.layer, h.texel);
@@ -143,7 +185,7 @@ vec3 impostorTrace(int m, vec2 q, vec3 d, vec3 worldDir, float eyeY, float eyeDi
         else wOut += wt;
         wsum += wt;
     }
-    // past the last layer: the far glass of a through module, else the core wall's dark
-    if (wOut > 0.0) sum += (M.dim.w == 0 ? throughView(worldDir, eyeY) : vec3(0.004)) * wOut;
+    // past the last layer: the far glass of a through module or the building's side, else the core wall's dark
+    if (wOut > 0.0) sum += (M.dim.w == 0 || zExit < g.D ? throughView(worldDir, eyeY) : vec3(0.004)) * wOut;
     return sum / max(wsum, 1e-6);
 }

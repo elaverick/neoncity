@@ -172,6 +172,10 @@ int   bfoot_contains(const BFoot *f, float x, float z);
 float bfoot_boundary_dist(const BFoot *f, float x, float z, float *qx, float *qz);
 /* The narrowest calliper width of an outline: its least extent across any direction (m). */
 float bloop_width(const BLoop *l);
+/* The floor plate's depth behind edge k of loop l (the footprint's outer loop or its courtyard): how far
+ * across the footprint a straight line runs from the edge, in from it square, the middle of three
+ * such lines along the edge (m; 0 if none finds the far side). */
+float bfoot_depth_across(const BFoot *f, const BLoop *l, int k);
 /* Triangulates a footprint (with its courtyard) into indices over pts; returns triangle count. */
 int   bfoot_triangulate(const BFoot *f, float (*pts)[2], int *npts, int (*tri)[3], int maxTri);
 

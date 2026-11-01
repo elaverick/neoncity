@@ -143,7 +143,7 @@ static void emit_draped(Mesh *m, const DrapeV *p, int n, vec3 nrm, Mat mt) {
 }
 
 Mat mat(uint8_t id, uint32_t seed, uint8_t a, uint8_t b, uint8_t c) {
-    Mat m; m.seed = seed; m.p[0] = id; m.p[1] = a; m.p[2] = b; m.p[3] = c; m.aux = 0;
+    Mat m; m.seed = seed; m.p[0] = id; m.p[1] = a; m.p[2] = b; m.p[3] = c; m.aux = 0; m.w = 0;
     return m;
 }
 
@@ -162,7 +162,7 @@ void emit_quad(Mesh *m, vec3 a, vec3 b, vec3 c, vec3 d, vec3 n, const float uv[4
     static const int tri[6] = { 0, 1, 2, 0, 2, 3 };
     for (int i = 0; i < 6; ++i) {
         int k = idx[tri[i]];
-        mesh_push(m, p[k], n, uv[k][0], uv[k][1], mt.seed, mt.p, mt.aux);
+        mesh_push_w(m, p[k], n, mt.w, uv[k][0], uv[k][1], mt.seed, mt.p, mt.aux);
     }
 }
 

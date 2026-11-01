@@ -10,7 +10,8 @@
  *       bakes one test module (scene.c) to <dir>/<name>.*.ktx2 and .json, path traced
  *       (pathtrace.glsl: 16384 samples for its own lights, 8192 for each other light basis,
  *       8 bounces, a clamp of 16), or with IM1's direct light (--direct); --preview writes the
- *       nearest layer of the straight-on view, and of the view 25 degrees up as <png>_up
+ *       nearest layer of the straight-on view, and of the view 25 degrees up as <png>_up;
+ *       --near bakes its near tier (32 texels a metre) to <dir>/<name>.near.*
  *   interior_bake --scene <name> --beauty x,y,z,yaw,pitch[,fov] --image out.png [--size WxH] [--state s] [--spp n]
  *       a perspective still from inside the module (beauty.c); a generated floor also takes --beauty auto
  *   interior_bake --lab <dir> [--quick]
@@ -33,7 +34,7 @@
 static void usage(void) {
     fprintf(stderr, "usage: interior_bake --scene <name> --out <dir> [--views NxM] [--grid slope|azel|hemioct] [--res t] [--margin m]\n"
                     "                     [--layers K] [--last] [--state s] [--spp n] [--ext-spp n] [--bounces n] [--clamp c] [--seed n] [--direct]\n"
-                    "                     [--preview png] [--assets dir] [--validation]\n"
+                    "                     [--near] [--preview png] [--assets dir] [--validation]\n"
                     "       interior_bake --scene <name> --beauty x,y,z,yaw,pitch[,fov] --image png [--size WxH] [--state s] [--spp n]\n"
                     "       interior_bake --lab <dir> [--quick] [--assets dir] [--validation]\n"
                     "       interior_bake --test <dir> [--write-ref] [--validation]\n"
@@ -43,7 +44,7 @@ static void usage(void) {
 
 int main(int argc, char **argv) {
     const char *scene = NULL, *out = NULL, *lab = NULL, *test = NULL, *preview = NULL, *assets = NEONCITY_ASSETS, *beauty = NULL, *image = NULL;
-    bool validation = false, quick = false, writeRef = false, direct = false, hashOnly = false;
+    bool validation = false, quick = false, writeRef = false, direct = false, hashOnly = false, near = false;
     /* the defaults IM1 chose (docs/interior-impostors.md, section 13) */
     ViewGrid v = { 5, 10, GRID_SLOPE, 60.0f, -30.0f, 70.0f, 0.8f, 0.12f };
     float tpm = 16.0f, margin = 1.0f;
@@ -84,6 +85,7 @@ int main(int argc, char **argv) {
             const char *k = argv[++i];
             v.kind = !strcmp(k, "hemioct") ? GRID_HEMIOCT : !strcmp(k, "azel") ? GRID_AZEL : GRID_SLOPE;
         } else if (!strcmp(a, "--res") && next) tpm = (float)atof(argv[++i]);
+        else if (!strcmp(a, "--near")) { near = true; tpm = 32.0f; }
         else if (!strcmp(a, "--margin") && next) margin = (float)atof(argv[++i]);
         else if (!strcmp(a, "--layers") && next) ic.K = atoi(argv[++i]);
         else if (!strcmp(a, "--last")) ic.lastSlot = 1;
@@ -120,6 +122,7 @@ int main(int argc, char **argv) {
     if (!scene || (!out && !beauty) || (beauty && !image) || extSpp < 1) { usage(); return 2; }
     Scene s;
     if (!scene_build(&s, scene, state, assets)) return 1;
+    if (near) { size_t len = strlen(s.name); snprintf(s.name + len, sizeof(s.name) - len, ".near"); }
     Gpu *g = gpu_create(validation);
     gpu_load_scene(g, &s);
     if (beauty) {

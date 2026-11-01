@@ -16,7 +16,8 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 V = -normalize(rel);
     // Facade data (facade_mat in src/city/mesh_building.c):
     //   prm.y section; prm.z at-ground | ground mode << 1 | window << 3 | bands << 5 | fine bays << 6;
-    //   prm.w palette | shop level << 3 | room or core behind the lobby glass << 6; vFacePack face width | next face width << 12 (1/16 m);
+    //   prm.w palette | shop level << 3 | room or core behind the lobby glass << 6;
+    //   vFacePack face width | next face width << 12 (1/16 m) | the plate's depth where it may be open plan << 24 (1/2 m);
     //   vAux previous face width | face << 12 | next face << 18 | corners << 24 | plant floors << 28.
     int section = int(prm.y);
     bool atGround = (prm.z & 1u) == 1u;
@@ -63,7 +64,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
 
     // uv.x = metres along the face; vAbs the height above the building's base.
     float u = uv.x, vAbs = p.y - gBase;
-    float faceW = float(vFacePack & 4095u) / 16.0, nextW = float(vFacePack >> 12) / 16.0, prevW = float(vAux & 4095u) / 16.0;
+    float faceW = float(vFacePack & 4095u) / 16.0, nextW = float((vFacePack >> 12) & 4095u) / 16.0, prevW = float(vAux & 4095u) / 16.0;
     float relV = vAbs - SIDEWALK_HEIGHT - groundH;
     // Derivatives must be taken in uniform control flow, before any per-pixel branching.
     float dU = fwidth(u), dV = fwidth(vAbs);
@@ -247,12 +248,13 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     uint roomHash = hash3i(seed ^ (uint(rk.x) * 0x9E3779B1u), rk.y, int(floorIdx), section);
     Room room = makeRoom(roomHash, litChance, tintSel, false, vec3(0.0));
     // Some office floors behind full-height glass are open plan, a baked module seen through every window
-    // (impostors.glsl). Their bays keep their own blinds, but no curtains or televisions.
-    bool impMirror = false;
-    int impM = (type == 1 || type == 2) && tintSel >= 0.5 && !plantFloor && floorIdx >= 0.0
-             ? impostorModule(seed, section, int(floorIdx), faceDir, impMirror) : -1;
-    vec2 impS = impM >= 0 ? impostorStretch(impM, bayW, floorH) : vec2(1.0);
-    if (impM >= 0) {
+    // (impostors.glsl), chosen for the plate behind this face. Their bays keep their own blinds, but no
+    // curtains or televisions.
+    uint plate = vFacePack >> 24;
+    ImpPick imp;
+    imp.m = -1;
+    if (plate != 0u && !plantFloor && floorIdx >= 0.0) imp = impostorPick(seed, section, int(floorIdx), faceDir, int(bayIdx), bayW, floorH, plate);
+    if (imp.m >= 0) {
         room.lit = true; room.tv = false; room.person = false; room.curtain = 0.0;
     }
 
@@ -263,12 +265,11 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 wdiff = wallLighting(p, n, V, wallShin, wallSpecK, vAbs, wspec);
     // a dark room has only what reaches its window: the lamps, neon and city glow on the facade, through the glass
     gWinE = (wdiff + mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) * 0.45) * glassT;   // the window's view: overcast and facades across
-    if (impM >= 0) {
+    if (imp.m >= 0) {
         // the module relit for this window (impostors.glsl), and its bay's mean under that light
         vec3 lamps = max(wdiff - ambientLight(n, vAbs) - neonBounce(gWorld, vAbs) * 1.5, vec3(0.0));
-        impostorLight(lamps, glassT, vAbs, floorH_);
-        float xm = (bayIdx + 0.5) * bayW * impS.x;
-        room.light = impostorBayMean(impM, impMirror ? -xm : xm) / 0.42; room.bright = 1.0;   // so roomAvg below is the bay's mean
+        impostorLight(lamps, glassT, vAbs, floorH_, litChance);
+        room.light = impostorBayMean(imp.m, impostorX(imp, (bayIdx + 0.5) * bayW)) / 0.42; room.bright = 1.0;   // so roomAvg below is the bay's mean
     }
     float streak = vnoise(vec2(u * 1.3, vAbs * 0.04), seed & 0xFFFFu);
     float grime = mix(0.65, 1.15, streak) * mix(0.8, 1.0, smoothstep(0.0, 25.0, vAbs));
@@ -329,12 +330,11 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float D = glassL && glassR ? min(prevBayW, nextBayW) : glassR ? nextBayW : glassL ? prevBayW : bayW * mix(1.3, 2.4, hf(roomHash, 40u));
         vec3 d = vec3(dot(-V, T), -V.y, -dot(-V, n));
         vec3 inner;
-        if (impM >= 0) {
-            // the floor in the module's frame: its plane point and direction, stretched alike
-            vec2 q = vec2(u, fv * floorH) * impS;
-            vec3 dm = vec3(d.xy * impS, d.z);
-            if (impMirror) { q.x = -q.x; dm.x = -dm.x; }
-            inner = impostorTrace(impM, q, dm, -V, vAbs, length(rel), vec3(0.012, 0.012, 0.014) * wdiff * 2.0);
+        if (imp.m >= 0) {
+            // A convex corner ends the floor: the glass round it is where a ray going that way leaves.
+            float sideX = d.x > 0.0 ? ((corners & 2u) != 0u ? faceW - u : 1e6) : ((corners & 1u) != 0u ? u : 1e6);
+            float zSide = sideX / max(abs(d.x), 1e-5) * d.z;
+            inner = impostorTrace(imp, u, fv * floorH, d, -V, vAbs, length(rel), zSide, vec3(0.012, 0.012, 0.014) * wdiff * 2.0);
         } else {
             inner = cornerRoom ? cornerInterior(vec2(fu, fv), d, W, H, D, room, glassL, glassR, -V, vAbs,
                                                 vec2(x0, x1) * D, vec2(x0, x1) * D, vec2(y0, y1) * H)

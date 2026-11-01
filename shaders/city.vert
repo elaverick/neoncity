@@ -18,7 +18,7 @@ layout(location = 4) flat out uint  vSeed;
 layout(location = 5) flat out uvec4 vParams;
 layout(location = 6) flat out uint  vChunk;
 #ifndef PREPASS   // (prepass.frag reads neither)
-layout(location = 7) flat out uint  vFacePack;   // facades: packed face widths (exact, so not interpolated)
+layout(location = 7) flat out uint  vFacePack;   // facades: packed face widths (exact, so not interpolated), the plate's depth
 layout(location = 8) flat out uint  vAux;        // facades: face identity, neighbour width, corners
 #endif
 layout(location = 9) out vec2 vLitter;           // litter: ambient occlusion, how soaked
@@ -166,6 +166,7 @@ void main() {
     vChunk = uint(gl_InstanceIndex);
 #ifndef PREPASS
     vFacePack = uint(max(inUV.y, 0.0) + 0.5);
+    if (inParams.x == MAT_FACADE) vFacePack |= uint(inNrm.w * 127.0 + 0.5) << 24;   // facade_mat (src/city/mesh_building.c)
     vAux = inAux;
 #endif
     gl_Position = frame.viewProj * vec4(rel, 1.0);

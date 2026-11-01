@@ -135,8 +135,16 @@ int envelope_spans(const BGraph *g, const Behind *bh, const BLoop *l, int li, in
  *   params y section, z at-ground | ground mode << 1 | window << 3 | bands << 5 | fine bays << 6 |
  *          a real interior behind the ground floor << 7, w palette | shop level << 3 |
  *          a room or core behind this stretch of the ground floor << 6, an arcology's
- *          market block (lightboxes in the glass) << 7 (both set by emit_walls) */
-static Mat facade_mat(const Building *b, const BGraph *g, int si, const FaceKey *fk, int real, float *packW) {
+ *          market block (lightboxes in the glass) << 7 (both set by emit_walls)
+ *   nrm.w  the floor plate's depth behind this face, half metres, where its upper floors may be
+ *          open plan (interior impostors: office towers behind full-height glass), else 0 */
+static int open_plan_section(const BGraph *g, const BSection *s) {
+    int a = g->archetype;
+    return (a == ARCH_OFFICE || a == ARCH_SKYSCRAPER || a == ARCH_PROJECTION || a == ARCH_TWIN || a == ARCH_GATEWAY) &&
+           bsec_facade(s) && (s->win == WIN_CURTAIN || s->win == WIN_RIBBON);
+}
+
+static Mat facade_mat(const Building *b, const BGraph *g, int si, const FaceKey *fk, const BLoop *l, int k, int real, float *packW) {
     const BSection *s = &g->sec[si];
     int shop = bgen_industrial(g) ? 0 : b->shop;   /* a plant's buildings have no shopfronts */
     Mat mt = mat(MAT_FACADE, g->seed, (uint8_t)si,
@@ -146,6 +154,7 @@ static Mat facade_mat(const Building *b, const BGraph *g, int si, const FaceKey 
     mt.aux = w16(fk->prevLen) | (uint32_t)fk->face << 12 | (uint32_t)fk->next << 18 |
              (uint32_t)(fk->startConvex | fk->endConvex << 1 | fk->start90 << 2 | fk->end90 << 3) << 24 |
              (uint32_t)(s->plant & 15) << 28;
+    if (open_plan_section(g, s)) mt.w = (int8_t)clampf(bfoot_depth_across(&s->foot, l, k) * 2.0f + 0.5f, 0.0f, 127.0f);
     *packW = (float)(w16(fk->len) | w16(fk->nextLen) << 12);
     return mt;
 }
@@ -162,7 +171,7 @@ static void emit_walls(Mesh *m, const Building *b, const BGraph *g, int si, cons
         for (int k = 0; k < l->n; ++k) {
             FaceKey fk = face_key(l, k, base);
             float pw, op[8][3];
-            Mat mt = facade_mat(b, g, si, &fk, bh != NULL, &pw);
+            Mat mt = facade_mat(b, g, si, &fk, l, k, bh != NULL, &pw);
             Xf sv = xf_save(m);
             float len = enter_face(m, l, k);
             int nop = face_openings(g, bh, li, k, op, 8);
