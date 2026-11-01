@@ -966,6 +966,8 @@ folders); those from ambientCG are CC0:
   foot with its rail and cord clip. The mask becomes the albedo's alpha, so the room shows
   between the slats, and the source's magenta key is replaced so mips can't bleed it. Each
   whole repeat that fits across a window has one cord (`blindAt`, `shaders/city/rooms.glsl`).
+  Above the flat foot, each slat is a tilted strip met by the view's ray, so gaps close from
+  below and open from above. Tilt varies by room; pitch and width are in `blind.json`.
 - **Leaves:** `leaf`, a close-up of a glossy blade with its midrib running up the image. It
   tiles along the midrib but not across it. Each blade carries its position across it (a
   fraction of its widest half-width) and its length-to-width ratio (`PlantVertex` in

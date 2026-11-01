@@ -131,32 +131,86 @@ vec3 blindLight(Room r, float slat) {
     return r.lit ? r.light * r.bright * 0.28 * (0.55 + 0.45 * slat) : vec3(0.45) * gWinE * (0.35 + 0.65 * slat);
 }
 
-/* The authored blind (PBR_BLIND, PBR_BLIND_RAIL; tools/blind_pack.py) on a window: rgb its light, a
- * how much of it there is, 0 in the gaps between the slats. x: metres across the window, of width W.
- * up: metres above the blind's foot. d: the view (x along the wall, y up, z into the building).
- * Each whole repeat that fits across the window has one cord, centred. */
-vec4 blindAt(Room r, float x, float W, float up, vec3 d) {
-    vec2 tile = pbrTile(PBR_BLIND);
-    float railH = pbrParams(PBR_BLIND).x;
-    bool rail = up < railH;
-    int m = (rail ? PBR_BLIND_RAIL : PBR_BLIND) * PBR_MAPS_PER_MATERIAL;
-    float along = x / W * max(round(W / tile.x), 1.0);
-    float span = rail ? railH : tile.y;
-    vec2 st = vec2(along, 1.0 - (rail ? up : up - railH) / span);
-    // from unbroken coordinates, so the join of the two images and the repeats leave no line of low mips
-    vec2 gx = vec2(dFdx(along), dFdx(up) / span), gy = vec2(dFdy(along), dFdy(up) / span);
-    vec4 alb = textureGrad(pbrMaps[m + PBR_ALBEDO], st, gx, gy);
-    float foot = smoothstep(-0.5, 0.5, up / max(abs(gx.y) + abs(gy.y), 1e-5) / span);
-    if (alb.a * foot < 0.004) return vec4(0.0);
-    vec3 tn = textureGrad(pbrMaps[m + PBR_NORMAL], st, gx, gy).xyz * 2.0 - 1.0;
-    vec3 orm = textureGrad(pbrMaps[m + PBR_ORM], st, gx, gy).rgb;
+// A blind's light where it's seen: the map's maps, in its own frame turned so z faces the viewer.
+vec3 blindLit(Room r, vec3 alb, vec3 tn, vec3 orm, vec3 d) {
     // The slats' own shape is in the albedo; a share of its contrast keeps them in the night's palette.
-    vec3 tint = mix(vec3(1.0), alb.rgb / pbrAlbedoMean(PBR_BLIND), 0.7) * orm.r;
-    vec3 c = r.lit ? r.light * r.bright * 0.28 * 0.8 * tint : vec3(0.45) * gWinE * 0.8 * tint;
+    vec3 tint = mix(vec3(1.0), alb / pbrAlbedoMean(PBR_BLIND), 0.7) * orm.r;
+    // A dim room (an impostor's bay mean, say) is lifted to a floor of light, in its own colour, so its blind still reads as one.
+    vec3 L = r.light * r.bright;
+    L *= max(0.3 / max(dot(L, vec3(0.2126, 0.7152, 0.0722)), 0.02), 1.0);
+    vec3 c = r.lit ? L * 0.28 * 0.8 * tint : vec3(0.45) * gWinE * 0.8 * tint;
     // their sheen, of the street's light coming up from below
     vec3 h = normalize(normalize(vec3(-d.xy, max(d.z, 0.05))) + vec3(0.0, -0.35, 0.94));
-    c += gWinE * orm.b * 0.6 * pow(max(dot(normalize(tn), h), 0.0), mix(90.0, 12.0, orm.g));
-    return vec4(c, alb.a * foot);
+    return c + gWinE * orm.b * 0.6 * pow(max(dot(normalize(tn), h), 0.0), mix(90.0, 12.0, orm.g));
+}
+
+/* The authored blind (PBR_BLIND, PBR_BLIND_RAIL; tools/blind_pack.py) on a window: rgb its light, a
+ * how much of it there is. x: metres across the window, of width W. up: metres above the blind's
+ * foot. d: the view (x along the wall, y up, z into the building). Each whole repeat that fits across
+ * the window has one cord, centred.
+ *
+ * The foot (rail and clip) is flat. Above it each slat is a strip of half-width a, pivoting about its
+ * centre on the blind's plane, its upper edge tipped out towards the glass by this blind's tilt, so a
+ * view from below finds the gaps closing, and one from above finds them opening until it looks along
+ * the slats. In the plane across the slats, the view's ray meets slat k at
+ *     t = (y - y_k) / D,   D = cos(tilt) + slope * sin(tilt)
+ * along the strip, which is what picks the texture's row. D is also how wide a slat looks. */
+vec4 blindAt(Room r, float x, float W, float up, vec3 d) {
+    vec2 tile = pbrTile(PBR_BLIND);
+    vec4 P = pbrParams(PBR_BLIND);
+    float railH = P.x, footH = P.y, pitch = P.z, a = P.w;
+    float along = x / W * max(round(W / tile.x), 1.0);
+    float fy = max(abs(dFdx(up)) + abs(dFdy(up)), 1e-5);   // a pixel, in metres up the blind
+    vec2 gxs = vec2(dFdx(along), dFdx(up)), gys = vec2(dFdy(along), dFdy(up));
+    if (up < footH) {
+        int m = PBR_BLIND_RAIL * PBR_MAPS_PER_MATERIAL;
+        vec2 st = vec2(along, 1.0 - up / railH), gx = gxs / vec2(1.0, railH), gy = gys / vec2(1.0, railH);
+        vec4 alb = textureGrad(pbrMaps[m + PBR_ALBEDO], st, gx, gy);
+        float foot = clamp(up / fy + 0.5, 0.0, 1.0);
+        if (alb.a * foot < 0.004) return vec4(0.0);
+        vec3 tn = textureGrad(pbrMaps[m + PBR_NORMAL], st, gx, gy).xyz * 2.0 - 1.0;
+        return vec4(blindLit(r, alb.rgb, tn, textureGrad(pbrMaps[m + PBR_ORM], st, gx, gy).rgb, d), alb.a * foot);
+    }
+    float tilt = mix(0.25, 1.0, hf(r.h, 57u));             // about 15 degrees, nearly shut, to 57
+    float slope = d.y / max(d.z, 0.05), ct = cos(tilt), st_ = sin(tilt);
+    float D = ct + slope * st_, absD = max(abs(D), 1e-3);
+    float wide = 2.0 * a * absD, y = up - footH;           // how much of the blind's height a slat covers
+    // The slat in front here: the nearest while they don't overlap, the foremost once they do.
+    float k = wide < pitch ? round(y / pitch - 0.5)
+            : D > 0.0 ? ceil((y - a * absD) / pitch - 0.5) : floor((y + a * absD) / pitch - 0.5);
+    k = max(k, 0.0);
+    float off = y - (k + 0.5) * pitch;
+    float t = off / (D < 0.0 ? -absD : absD);
+    // A pixel's worth of soft edge; once slats are finer than a pixel, the share they cover.
+    float cov = max(clamp((a * absD - abs(off)) / fy + 0.5, 0.0, 1.0), clamp((wide - pitch) / fy, 0.0, 1.0));
+    float fine = smoothstep(0.1, 0.35, fy / pitch);        // starts well before a slat is a pixel: edges alias from there
+    cov = mix(cov, min(wide / pitch, 1.0), fine);
+
+    int m = PBR_BLIND * PBR_MAPS_PER_MATERIAL;
+    // A pixel covers more of a slat as it foreshortens; the footprint grows to the whole slat as they go fine.
+    float rows = 0.33 * pitch / a / absD / tile.y, whole = fine * 0.66 * pitch / tile.y;
+    vec2 gx = vec2(gxs.x, max(abs(gxs.y) * rows, whole)), gy = vec2(gys.x, max(abs(gys.y) * rows, whole));
+    vec3 c = vec3(0.0);
+    if (cov > 0.004) {
+        // Slats are centred mid-pitch in the image, with a third of a pitch either side of that safely on the slat.
+        vec2 st = vec2(along, 1.0 - ((k + 0.5) * pitch + clamp(t / a, -1.0, 1.0) * 0.33 * pitch) / tile.y);
+        vec3 tn = textureGrad(pbrMaps[m + PBR_NORMAL], st, gx, gy).xyz * 2.0 - 1.0;
+        // turned with the slat, which faces out and down; seen from behind, its other face
+        tn = vec3(tn.x, tn.y * ct - tn.z * st_, tn.y * st_ + tn.z * ct);
+        if (D < 0.0) tn.yz = -tn.yz;
+        c = blindLit(r, textureGrad(pbrMaps[m + PBR_ALBEDO], st, gx, gy).rgb, tn, textureGrad(pbrMaps[m + PBR_ORM], st, gx, gy).rgb, d);
+    }
+    // The cord runs on through the gaps: the image's top row is mid-gap, where only the cord is solid.
+    float cord = 0.0;
+    vec3 cordC = vec3(0.0);
+    if (cov < 0.996) {
+        vec4 alb = textureGrad(pbrMaps[m + PBR_ALBEDO], vec2(along, 0.002), vec2(gx.x, 0.0), vec2(gy.x, 0.0));
+        cord = alb.a;
+        if (cord > 0.004) cordC = blindLit(r, alb.rgb, vec3(0.0, 0.0, 1.0), vec3(1.0, 0.5, 0.0), d);
+    }
+    float alpha = cov + cord * (1.0 - cov);
+    if (alpha < 0.004) return vec4(0.0);
+    return vec4((c * cov + cordC * cord * (1.0 - cov)) / alpha, alpha);
 }
 
 vec3 roomLight(Room r, vec3 p, vec3 alb, bool ceiling, float W, float H, float D, vec2 panel) {

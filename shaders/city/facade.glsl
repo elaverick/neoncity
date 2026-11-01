@@ -247,14 +247,13 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     uint roomHash = hash3i(seed ^ (uint(rk.x) * 0x9E3779B1u), rk.y, int(floorIdx), section);
     Room room = makeRoom(roomHash, litChance, tintSel, false, vec3(0.0));
     // Some office floors behind full-height glass are open plan, a baked module seen through every window
-    // (impostors.glsl). Their bays keep their own blinds (fewer of them), but no curtains or televisions.
+    // (impostors.glsl). Their bays keep their own blinds, but no curtains or televisions.
     bool impMirror = false;
     int impM = (type == 1 || type == 2) && tintSel >= 0.5 && !plantFloor && floorIdx >= 0.0
              ? impostorModule(seed, section, int(floorIdx), faceDir, impMirror) : -1;
     vec2 impS = impM >= 0 ? impostorStretch(impM, bayW, floorH) : vec2(1.0);
     if (impM >= 0) {
         room.lit = true; room.tv = false; room.person = false; room.curtain = 0.0;
-        if (hf(roomHash, 54u) < 0.6) room.blinds = 0.0;
     }
 
     // wall surface

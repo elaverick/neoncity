@@ -346,7 +346,7 @@ IM2 drew the modules on the city's facades, with IM1's march, and measured them 
 - **Tiling:** a face starts its modules at its own start. Each face of a floor is mirrored in x by a hash, so neighbouring faces don't repeat each other exactly.
 - **The slab:** glass below the floor or above the ceiling (a curtain wall's top 20-30 cm) covers the slab's edge, a dark band, not the module's margin texels.
 - **Depth:** the module's own. The floor-plate depth is IM7's, so a 30 m module can look deeper than its building.
-- **On top:** blinds (on 40% of the bays that would have them), privacy film, frames, mullions, the glass tint and the reflection are drawn as on any window. There are no curtains or televisions on an open-plan floor.
+- **On top:** blinds (at first on 40% of the bays that would have them, since on all of them), privacy film, frames, mullions, the glass tint and the reflection are drawn as on any window. There are no curtains or televisions on an open-plan floor.
 - **Mid LOD:** each bay's `roomAvg` becomes its module bay's mean (the sidecar's `bay_means`, times `bake_scale`), so the near trace fades into that bay's own light. The far average is unchanged until IM7.
 
 **The march, faster.** `impOverlap` read the full flag and all K layers at every step. It now stops at the first layer beyond the step, and reads the flag only where it decides the answer. The lab's score for IM1's choice rose a little on all four floors (mean 25.87 → 26.02 dB, coarse 29.75 → 29.96). It no longer matches a deeper layer whose BC5-rounded entry lies in front of a nearer one. Its cost for a full 1600 × 900 fell from 0.38-0.67 ms to 0.31-0.53 ms.
