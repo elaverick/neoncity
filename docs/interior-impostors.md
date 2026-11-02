@@ -246,7 +246,7 @@ The working plan is kept outside the repo. In summary:
 | IM4 | Light: the interior kit, the exterior bases and their colouring in the engine, exposure calibration, a beauty render against the reference. Section 16 |
 | IM5 | The office floor generator and its validation. Done: section 17 |
 | IM6 | The high-poly furniture, textures in the path tracer, printed matter. Done: section 19 |
-| IM7 | The city: floor selection, tiling, plate and core depths in the vertex data, corners, LOD, memory, and a streamed near tier at 32 texels/m (section 18) |
+| IM7 | The city: floor selection, tiling, plate depths in the vertex data, corners, LOD, memory, and a streamed near tier at 32 texels/m. Done: section 20 |
 | IM8 | The catalogue and one-command rebuild; README |
 | IM9 | Animated screens, people, more kits |
 
@@ -663,3 +663,69 @@ Capping hardly helps the desk, whose remaining failures are coincident sheets, n
 
 - **`engine_level.jpg`, `engine_street.jpg`:** the facade in the engine, at a share of 0.4 and on every floor (the two `--cam` views above).
 - **`still_desks.jpg`, `still_room.jpg`, `still_dense.jpg`:** 4096-sample stills of `through16_collab` (`--beauty auto`, then `5.8,1.5,12.6,-90,-3,70`) and `through16_dense` (`6,1.55,1.2,10,3,70`).
+
+## 20. IM7: the city
+
+The floors now belong to the buildings they stand in: a module is chosen for the plate behind each face, it ends where the building ends, and a second, finer bake streams in near the eye. Impostors are on by default, at a share of 0.4 (`--impostors 0` or F8 turns them off).
+
+**Which floors.** Office blocks, skyscrapers, podiums with projections, twin towers and gateways, in sections behind curtain walls and ribbon windows (`open_plan_section` in `src/city/mesh_building.c`). The CPU decides, so shophouses and sheds no longer qualify, however their style hash falls. Twin towers and gateways weren't in the plan's list; they are office towers too. All of a tower's eligible floors now count, where `tintSel` used to rule out about half, so a share of 0.4 draws about twice the floors it did.
+
+**The plate.** `bfoot_depth_across` (`src/gen/building_poly.c`) measures how far a line runs across the footprint from a face, the middle of three lines along it. The depth goes in the facade vertices' `nrm.w`, in half metres, 0 meaning not eligible; `city.vert` adds it to `vFacePack`. `building_lab plates` prints the survey:
+
+| depth (m) | 4 | 8 | 12 | 16 | 20 | 24 | 28 | 32 | 36 | 40+ |
+|---|---|---|---|---|---|---|---|---|---|---|
+| office block (thousand m² of glass) | 61 | 562 | 812 | 893 | 634 | 366 | 254 | 146 | 55 | 91 |
+| skyscraper | 0 | 198 | 1435 | 805 | 336 | 214 | 83 | 36 | 27 | 19 |
+| podium with projection | 0 | 43 | 427 | 376 | 303 | 197 | 109 | 52 | 24 | 18 |
+
+**The fingerprint moved** with the vertex data: `mesh`, `home`, `+arcology` and `edge` change, and every other layer stays as it was. Now `mesh 975ccb33a4f9c6cb`, `home 8da720962a62e421`, `+arcology c814e49276f4fa5b`, `edge 59d5571842d5b00d`.
+
+**Choosing a module** (`impostorModule`, `shaders/city/impostor_pick.glsl`). The table holds a mask of modules for each whole metre of plate (`pick_modules`, `src/render/interiors.c`):
+
+- A through module suits a plate within a fifth of its depth, and stretches in z to fit, so its far glass is the far face. Section 3's ±15% left gaps between the classes. A plate between two classes takes the nearest.
+- A core module suits a plate of at least twice its depth plus 4 m, room for such a floor each side of a core. It doesn't stretch.
+- A floor draws a light state (55% after hours, 20% late shift, 12% cleaners, 13% screens) and keeps to it where a module for this plate has it, so a floor's faces agree.
+- A plate under about 6 m keeps interior mapping.
+
+**Tiling** (`impostorPick`, `shaders/city/impostors.glsl`). There's one module to a floor and face. The catalogue has too few modules of one depth and light state to change module within a floor without a floor half lit one way, half another. So each span of about a module's width restarts the tile on a random bay and may flip it. The seam falls on a mullion. The module stretches to whole bays if that takes under 10%, so its columns meet the mullions; otherwise it isn't stretched at all, and the columns land where they land. Nothing falls back to interior mapping for want of a fit.
+
+**The building's side.** A convex corner ends the floor. `impostorTrace` stops a ray where it reaches that side and shows the view out, so a floor no longer carries on past the corner of the building.
+
+**Corner modules aren't drawn: a change from the plan.** `corner12_collab` and `corner16_open` have a texel grid only one tile wide (section 4), and a ray running inwards from a corner leaves it within a few metres. A grid that held their three tiles of floor would take about 46 MB each, and the ray's stop above already gives every floor a correct corner, without them. They still generate and bake. What's lost is the light that side glass would bring, and desks that keep clear of it: a desk can be cut by the side glass, seen at a grazing angle.
+
+**Lights.** Each floor's own light is on or off by the building's lit share and the floor's hash (`impostorLight`), and varies by ±25%. An unlit floor shows only what comes in from outside.
+
+**LOD.** Under 4.5 pixels a bay the trace gives way to the bay's mean, as before. Modules are much dimmer than rooms (a tenth or so), so where the far term's average takes over, a dim floor would have stepped up to it. From 0.15 to 0.45 of a bay to the pixel, a floor's mean now settles towards that average. Towers at distance look about the same with impostors on and off, in stills at 320, 560 and 910 m; no walk was judged by eye for a pop.
+
+**The near tier.** `<module>.near.*` is the same floor at 32 texels a metre (`interior_bake --near`).
+
+- **Which modules.** The plan was to mirror the shader's hash in C and work out the floors near the camera. It was simpler and more exact to ask the GPU. Every 16 frames, a pass over the city's depth (`shaders/impostor_demand.frag`) counts one pixel in 16 of each module's floors within 60 m. It has to be its own pass: a buffer write in `city.frag` lost early depth testing, and the city pass went from 2.3 to 18 ms. The pass costs one extra draw of the city's vertices in 16 frames, and shares the choice of module with the facade (`impostor_pick.glsl`), so there's nothing to keep in step.
+- **Streaming** (`src/render/interiors.c`). Four slots, with one load at a time. A thread reads the files, makes the images and fills staging buffers. Each frame uploads at most 8 MB, then each frame's descriptor set is written once its fence has passed, and only then does the table publish the slot. Retiring runs the same steps backwards. A tier unwanted for 10 s makes way for one that's wanted, and at 60 s it goes anyway.
+- **Switching.** Whole within 24 m of the eye, dithered away to the base tier by 36 m, and faded in over a second on arrival. A pixel is 3 cm at about 34 m, which is where the finer texels stop showing. `dolly.jpg` crosses the band with no visible seam.
+- **Files.** A near tier is optional per module. With none, the engine does as before.
+
+**The red fringe was the encoder.** BC6H's mode 11 interpolates in the half float's bits, almost logarithmically. A block with a bright strip, the dark floor and a third colour left the strip's texels a stop out in one channel. `bc6h_encode` now also tries the line between the bright and dark texels' means, and keeps whichever looks nearer, judged on a curve that's linear in the dark and logarithmic in the light. The fringe is gone, and the remaining red lines are the sprinkler pipes, which are red. The base tier's files keep the old encoder until they are next baked.
+
+**Numbers** (one 64-frame mean each, 1600 x 900, 4x MSAA, about 0.2 ms of noise; all near tiers on disk):
+
+| city pass (ms) | off | share 0.4 | every floor |
+|---|---|---|---|
+| level (`--cam 1139.3 262 1.7 0 20`) | 1.01 | 2.04 (+1.03) | 2.92 (+1.91) |
+| from the street (`--cam 1139.3 268 1.7 32`) | 1.64 | 2.64 (+1.00) | 3.08 (+1.44) |
+| close (`--cam 1141 253 28 -3 19`) | 1.00 | 1.96 (+0.96) | 2.71 (+1.71) |
+
+- **This is over the 0.5 ms target, by about double.** Before the near tier, the level view read +0.71 at a share of 0.4 and the street about +0.75 to +1.0. Most of the rise from IM6's +0.41 is probably the doubled coverage (not measured apart). About 0.3 ms at level is the near tier. A frame at these views is 4.5 to 5.5 ms. The share and `NEAR_WHOLE_METRES` are the levers if it matters.
+- Skipping views that have little weight (view weights narrowed by 0.12) saved 0.2 ms from the street and nothing at level. Stubbing out the march shows 0.18 ms of the cost at level isn't the march.
+- **Memory:** 185 MB resident for the base tier, plus 56 to 69 MB for each near tier, at most about 276 MB for four, with one staging copy of up to 69 MB in passing. That's about 460 MB, against a budget of 200 MB plus the plan's 240 MB.
+- **Streaming:** a near tier is resident about 0.1 s after it's asked for. A 100 s walk through downtown (`--walk 100 --turn 4`) streamed 15, evicting as it went, and reported no hitch but the screenshot's own. Under `--validation` the same walk streamed 18, with no errors. The layer's only messages are two notes about vertex outputs that the demand pass doesn't read.
+- **Bake:** 5 to 15 minutes a near tier, 115 minutes for the twelve, 491 MB on disk.
+
+**What remains:**
+
+- **The view out shows far more.** Plates are now mostly 12 to 20 m deep, so a level ray often reaches the far glass, and `throughView`'s flat sky and blurred window fill many bays: see `engine_level.jpg`. Module depths were doing more to hide this than they should have. IM10 B (real windows) needs this plate data, and is now the most visible thing left.
+- **Thin bright strips** at 32 texels/m are straight but can still break up where one is under a texel: a capture takes one ray a texel.
+- **Floors still read dark** against interior-mapped rooms, as at IM5.
+- **L-shaped plates** have one depth per face, the middle of three, so part of a long face has the wrong depth behind it. Nothing shows until real windows.
+
+**Images** (`docs/reference/im7/`): `engine_level.jpg`, `engine_street.jpg` (share 0.4), `downtown.jpg` (ten towers from the air, no repeat to see), `near_close.jpg` (every floor, 4 m from the glass), `dolly.jpg` (share 0.4, walking towards a tower through the band).
+

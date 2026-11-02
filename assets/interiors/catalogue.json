@@ -4,6 +4,7 @@
   // IM5: the floor generator's twelve (tools/interior_bake/floor_gen.c, which holds their inputs
   // until IM8 moves them here), each baked by
   //   interior_bake --scene <name> --out assets/interiors
+  // and each one's near tier, <name>.near.*, which the engine finds for itself, by adding --near.
   "modules": ["through8_lounge", "through12_collab", "through16_collab", "through16_dense", "through24_lanes", "through24_core",
               "through32_open", "through32_lanes", "core8_exec", "core12_open", "core12_collab", "core16_lanes"]
 }

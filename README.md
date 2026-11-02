@@ -47,7 +47,7 @@ procedural look.
 | Shift | Sprint |
 | Space | Jump |
 | F | Toggle fly mode (debug; Space/Ctrl to rise/descend, Shift for speed) |
-| F8 | Toggle the baked interior impostors on office floors (`--impostors`; debug) |
+| F8 | Toggle the baked interior impostors on office floors (`--impostors`) |
 | F9 | Toggle ray-traced shadows |
 | F10 | Shadow debug view: only the light the city's lamps, shopfronts and lobbies throw on each surface |
 | F11 | Fullscreen |
@@ -57,7 +57,7 @@ procedural look.
 Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity, `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
 (otherwise it drifts between drizzle and downpour), `--noshadows` runs without ray-traced shadows (and without the
 ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--impostors [SHARE]` draws that
-share (default 0.4) of the curtain-wall and ribbon-window office floors as baked interior impostors, and `--validation` enables the
+share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
 
 ## How it works
@@ -670,15 +670,20 @@ desk in the inner corner, so the room reads consistently from both sides.
 To avoid shimmer at a distance, the shader drops to a box-filtered window glow per room and
 then to an analytic average over the whole facade.
 
-With `--impostors [SHARE]` (or F8 in game), that share of the office floors behind curtain walls
-and ribbon windows shows a deep open-plan floor instead: a module baked offline by
+A share of the office towers' floors behind curtain walls and ribbon windows (`--impostors [SHARE]`,
+default 0.4; F8 toggles them) shows a deep open-plan floor instead: a module baked offline by
 `tools/interior_bake` (`assets/interiors/`, `src/render/interiors.c`), seen through every
 window of the floor at once. Each module stores 50 views of the floor, each with three depth
 layers, and the facade shader marches the three views nearest the eye's direction and blends
-them (`shaders/city/impostors.glsl`, `impostor.glsl`). The floor is stretched so the module spans
-whole bays, mirrored on some faces, and shows the view out through its far glass. Blinds, film,
-frames and the glass's reflection are drawn over it as on any window, and from mid distance the
-floor glows with each bay's baked mean. The modules are twelve floors from a generator
+them (`shaders/city/impostors.glsl`, `impostor.glsl`). The facade's vertices carry the depth of the
+floor plate behind them, and each floor takes a module that suits it: a through module stretched so
+its far glass is the far face, or a core module where the plate has room for a core. Spans of bays
+restart and flip the tile, and a ray that reaches the building's side or far glass shows the view
+out. Blinds, film, frames and the glass's reflection are drawn over it as on any window, and from mid
+distance the floor glows with each bay's baked mean, settling to the tower's average further off.
+Within about 30 m of the eye a finer bake takes over (`<module>.near.*`, 32 texels a metre): a pass
+every 16 frames counts which modules are on show nearby, and the four most wanted stream in on a
+thread and over a few frames, so nothing hitches. The modules are twelve floors from a generator
 (`tools/interior_bake/floor_gen.c`, checked by the `office_rules` test): a column grid, bands of
 desks, glass rooms, lounges and filing, in five styles, eight to 32 m deep, through to far glass or
 up to a core. They are path traced with full global illumination from their own lamps, pendants and

@@ -12,14 +12,9 @@ layout(early_fragment_tests) in;
 
 layout(location = 0) in vec3 vRel;
 layout(location = 1) in vec3 vLocal;
-layout(location = 2) in vec3 vNrm;       // (what city.vert writes, unused here)
-layout(location = 3) in vec2 vUV;
 layout(location = 4) flat in uint vSeed;
 layout(location = 5) flat in uvec4 vParams;
-layout(location = 6) flat in uint vChunk;
 layout(location = 7) flat in uint vFacePack;
-layout(location = 8) flat in uint vAux;
-layout(location = 9) in vec2 vLitter;
 layout(location = 10) in float vBase;
 
 float hf(uint h, uint k) { return hfloat(hash_combine(h, k)); }   // as city.frag's

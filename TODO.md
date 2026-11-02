@@ -365,14 +365,12 @@ target is `docs/reference/office_night.png`.
   (IM2: `--impostors`, F8); the path tracer (IM3: full GI, `bake_test`), with three of IM1's test floors re-baked.
   Light (IM4: photometric kit, exterior bases, exposure, BC6H and BC7). The floor generator (IM5: twelve generated
   modules in the engine, `interior_lab office`, `office_rules`).
-- **Next:** the city (IM7: floor selection, tiling, plate and core depths, corners, a streamed near tier, whose full bake now can go ahead).
-- **Leftovers:** no mips; floors are chosen by a share for debugging, and the module's depth ignores the building's,
-  so a core module can land in a slab with glass behind it (IM7: plate and core depths); corner bays show the face's
-  module (IM7), and the two corner modules are generated and checked but neither committed nor drawn; the floor's
-  neon streaks are fainter than the reference's; up close, edges step at the 6 cm texel and thin lights break up (doc,
-  section 18: a 32 texels/m near tier is proven, and IM7 builds it); generator inputs are a table in `floor_gen.c` (IM8: the catalogue).
+  The city (IM7, doc section 20: modules chosen by the plate behind each face, the building's side, on by default, a streamed near tier).
+- **Next:** the catalogue and one-command rebuild (IM8). Real windows (IM10 B) are the most visible thing left: plates are shallower than the modules were, so `throughView` fills many bays at level.
+- **Leftovers:** no mips; the city pass is about +1 ms at a share of 0.4, twice the 0.5 ms target; the two corner modules are generated and checked but neither committed nor drawn (doc, section 20, says why), so a desk can be cut by the side glass; a long L-shaped face has one plate depth; the base tier keeps the old BC6H fit until it is next baked; the floor's
+  neon streaks are fainter than the reference's; up close, thin lights under a texel still break up; generator inputs are a table in `floor_gen.c` (IM8: the catalogue).
 - **The furniture is in** (IM6, doc section 19). Books, printers, meeting tables and the lounge's tables and armchairs are still boxes, for want of models.
-- **Corners:** corner modules may replace `cornerInterior` on impostor floors (see Corner rooms below), but not on
+- **Corners:** corner modules would need a grid of three tiles to replace the side stop (doc, section 20), and not on
   interior-mapped floors or ground-floor shops.
 
 ## Office lobbies (next)
