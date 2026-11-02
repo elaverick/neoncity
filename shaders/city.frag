@@ -1,6 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_nonuniform_qualifier : require   // the screens' adverts (city/signs.glsl)
+#extension GL_EXT_control_flow_attributes : require   // a rare, costly branch kept a branch (city/impostors.glsl)
 #ifdef RT_SHADOWS
 #extension GL_EXT_ray_query : require
 #endif

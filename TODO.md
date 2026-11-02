@@ -368,7 +368,11 @@ target is `docs/reference/office_night.png`.
   The city (IM7, doc section 20: modules chosen by the plate behind each face, the building's side, on by default, a streamed near tier).
   The last furniture and real windows (IM10, doc section 21: glass that can see out shows the city behind it).
   The catalogue and one command (IM8, doc section 22: `interior_bake --catalogue`, `--check`).
-- **Next:** polish (IM9). Unchecked from IM10: the fade at 112-150 m on a walk, L-shaped plates. Impostors now cost +1.8 ms on the city pass at level, against a 0.5 ms target.
+  Screens, rain and dark floors (IM9a, doc section 23).
+- **Next:** people and new kits (IM9b), which need art first. Unchecked from IM10: the fade at 112-150 m on a walk, L-shaped plates. Impostors now cost +1.8 ms on the city pass at level, against a 0.5 ms target.
+- **Screens hardly show from outside** (IM9a): small, often facing away, and their light is faint. Brighter ones would change the approved look.
+- **No drops or running water on any building's glass,** impostor or not.
+- **No time of night:** window light is fixed per building, so floors can't go dark as the night goes on.
 - **Check smoke and flames behind real windows.** They depend on `depthResolve`, which takes the pane's sample 0, so they probably stop at the pane.
 - **Reflections on side windows get masked out** where you can see through the window to the other side (real windows, IM10).
 - **Leftovers:** no mips; the city pass is about +1 ms at a share of 0.4, twice the 0.5 ms target; the two corner modules are generated and checked but neither committed nor drawn (doc, section 20, says why), so a desk can be cut by the side glass; a long L-shaped face has one plate depth; the base tier keeps the old BC6H fit until it is next baked; the floor's

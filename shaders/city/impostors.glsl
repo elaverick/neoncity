@@ -22,6 +22,32 @@ float gImpScale, gImpExtMax;   // its bake scale (and this floor's lights: gImpL
 float gImpLit;                 // how far this floor's own lights are on (impostorLight)
 vec3 gImpC[4];                 // the radiance of each basis at this window (impostorLight): street, neon, sky, screens
 float gImpOut;                 // the share of this pixel that left through a real window (impostorTrace)
+vec3 gImpHit;                  // where the march being shaded hit, in the module's metres
+uint gImpFloor;                // this floor's hash (impostorLight)
+float gImpShownE;              // how much of the fetched colour is a screen's own face, under gImpC[3]'s unit
+
+/* What a screen is showing now, as a tint on its baked image (doc, section 23). There is no per-screen
+ * data in a bake, so "which screen" is a smooth field over the floor's plan, about a desk across. Its
+ * values set each screen's programme: a share are off, and they come and go; code scrolls in jumps up
+ * most; a few cycle through colours, a screensaver. */
+vec3 impScreenShow() {
+    float id = vnoise(gImpHit.xz * 1.4, gImpFloor & 0xFFFFu), k = fract(id * 17.0), t = gTime;
+    vec3 c = gImpC[3];
+    // a dark floor has fewer left on (gImpLit), and any of them goes off now and then
+    float on = smoothstep(gImpLit > 0.0 ? 0.08 : 0.68, gImpLit > 0.0 ? 0.14 : 0.74, fract(id * 5.0 + t * 0.006));
+    float show;
+    if (k < 0.18) {
+        c = max(dot(c, vec3(0.2126, 0.7152, 0.0722)), 0.1) * (0.65 + 0.55 * cos(t * 0.35 + id * 30.0 + vec3(0.0, 2.1, 4.2)));
+        show = 1.1;
+    } else {
+        // lines of text, one screenful climbing in jumps, as a terminal does
+        float rate = 2.0 + 7.0 * k, scroll = floor(t * rate) / rate * 0.09;
+        show = 0.6 + 0.75 * smoothstep(0.25, 0.45, fract((gImpHit.y + scroll) / 0.09 + id * 9.0));
+    }
+    return c * show * on * (1.0 + 0.04 * sin(t * 47.0 + id * 90.0));
+}
+
+#define IMP_SCREEN_RATIO 1.2  // screens-basis radiance over albedo where a surface is certainly a screen; what it lights stays well under 1
 
 vec2 impFetchDepth(int view, int layer, ivec2 t) { return texelFetch(impTex[nonuniformEXT(gImpTex + 2)], ivec3(t, view * gImpK + layer), 0).rg; }
 bool impFetchFull(int view, ivec2 t) { return texelFetch(impTex[nonuniformEXT(gImpTex + 3)], ivec3(t, view), 0).r > 0.5; }
@@ -33,7 +59,12 @@ vec3 impFetchColor(int view, int layer, ivec2 t) {
     vec4 alb = texelFetch(impTex[nonuniformEXT(gImpTex + 1)], at, 0);
     vec4 e = texelFetch(impTex[nonuniformEXT(gImpTex + 4)], at, 0);
     e *= e * gImpExtMax;
-    vec3 tint = mix(alb.rgb / max(dot(alb.rgb, vec3(0.2126, 0.7152, 0.0722)), 0.01), vec3(1.0), alb.a);
+    float albL = dot(alb.rgb, vec3(0.2126, 0.7152, 0.0722));
+    vec3 tint = mix(alb.rgb / max(albL, 0.01), vec3(1.0), alb.a);
+    /* A screen is the one surface far brighter under the screens basis than its albedo could reflect:
+     * it's nearly black and emits. What it sheds stays with the floor's gImpC[3]. Its programme is worked out
+     * once a view, by impostorTrace: in here it would run for every fetch. */
+    gImpShownE = max(gImpShownE, smoothstep(IMP_SCREEN_RATIO * 0.5, IMP_SCREEN_RATIO, e.a / max(albL, 0.005)) * e.a);
     return lint * gImpScale + tint * (gImpC[0] * e.r + gImpC[1] * e.g + gImpC[2] * e.b + gImpC[3] * e.a);
 }
 
@@ -84,8 +115,10 @@ float impostorX(ImpPick p, float u) {
  * the street's is twice that. The neon and the towers across carry on above where the lamps give
  * out. glassT: the near glass the light comes through. floorHash: this floor's own screens. */
 void impostorLight(vec3 lamps, vec3 glassT, float height, uint floorHash, float litChance) {
-    // the floor's own lights: on or off as a room's are, and no two floors quite alike
-    gImpLit = hf(floorHash, 33u) < mix(0.45, 1.0, clamp(litChance, 0.0, 1.0)) ? mix(0.75, 1.25, hf(floorHash, 34u)) : 0.0;
+    // the floor's own lights: on as often as a room's in this building are (makeRoom), which is also what the
+    // far term averages, and no two floors quite alike. Most of a dark floor's screens are off too.
+    gImpFloor = floorHash;
+    gImpLit = hf(floorHash, 33u) < litChance ? mix(0.75, 1.25, hf(floorHash, 34u)) : 0.0;
     vec3 across = vec3(0.11, 0.085, 0.06) * 2.5;     // the towers across: paneSheen's lit facades
     gImpC[0] = (lamps * 2.0 + across * mix(0.25, 1.0, exp(-height / 80.0))) * glassT;
     // a floor sees signs from afar, even where none stand just below it
@@ -94,7 +127,11 @@ void impostorLight(vec3 lamps, vec3 glassT, float height, uint floorHash, float 
     // mostly cool, some warmer or green, breathing as what they show changes
     float k = hf(floorHash, 30u);
     vec3 screen = k < 0.65 ? vec3(0.30, 0.50, 0.85) : k < 0.85 ? vec3(0.62, 0.70, 0.80) : vec3(0.32, 0.72, 0.55);
-    gImpC[3] = screen * (0.75 + 0.25 * sin(gTime * (0.2 + 0.2 * hf(floorHash, 31u)) + 6.28 * hf(floorHash, 32u)));
+    // and what they show changes every few seconds: the light they shed steps, over a quarter of a second
+    float beat = gTime * (0.15 + 0.2 * hf(floorHash, 35u)) + hf(floorHash, 36u), scene = floor(beat);
+    float was = hfloat(floorHash ^ (uint(scene) * 0x9E3779B1u)), now = hfloat(floorHash ^ (uint(scene + 1.0) * 0x9E3779B1u));
+    float shows = mix(0.6, 1.2, mix(was, now, smoothstep(0.0, 0.08, fract(beat))));
+    gImpC[3] = screen * shows * (0.75 + 0.25 * sin(gTime * (0.2 + 0.2 * hf(floorHash, 31u)) + 6.28 * hf(floorHash, 32u))) * (gImpLit > 0.0 ? 1.0 : 0.35);
 }
 
 /* The mean radiance through the glass of the module's bay at x (the mid LOD), under gImpC. */
@@ -160,8 +197,13 @@ vec3 impostorTrace(ImpPick p, float u, float y, vec3 d, vec3 worldDir, float eye
         ImpHit h = impMarch(views[i], g, q, sigma - dk.xy / dk.z, zExit, int(M.march.x), M.march.y, int(M.march.z), false);
         float wt = w[i] * (h.unknown ? M.march.w : 1.0) * (h.outside ? M.bays.w : 1.0);
         if (h.layer >= 0) {
+            gImpShownE = 0.0;
             vec3 c = impFetchColor(views[i], h.layer, h.texel);
             if (filt > 0.0) c = mix(c, impHitColor(views[i], g, h, q, sigma - dk.xy / dk.z, true, 0.15), filt);
+            [[dont_flatten]] if (gImpShownE > 0.0) {
+                gImpHit = vec3(q + sigma * h.z, h.z);
+                c = max(c + (impScreenShow() - gImpC[3]) * gImpShownE, vec3(0.0));
+            }
             sum += c * wt;
         }
         else wOut += wt;

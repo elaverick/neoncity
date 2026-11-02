@@ -794,3 +794,29 @@ Prepass and shadow passes don't move. Frame totals for modelled and real views a
 **The test of the one command.** In a clean worktree with its own configure and build, `core8_exec`'s files were deleted and `interior_bake --catalogue` was run. It found the two tiers missing and the other 22 up to date, baked them in 7.9 min, and all twelve files, both tiers' KTX2 and sidecars, came back byte for byte as committed. `git status` was clean and `--check` passed. **The whole catalogue was not re-baked:** that is the one module, plus the other modules' hashes matching. Bytes match on this GPU and driver; another may differ, and a hash can differ on another compiler.
 
 Also tried: one seed changed makes that module's two tiers stale, one byte on a book's cover makes all 24 stale, and an unknown style stops the tools with its line number.
+
+## 23. IM9a: screens, rain and dark floors
+
+Shader only: no re-bake and no new LFS data beyond the images in `docs/reference/im9/`.
+
+**Screens.** A bake has no per-screen data, and adding it would mean re-baking everything (3 h 25 min, 615 MB), so the existing channels do the work. The plan's flags channel isn't used: it holds one value per view, not per layer.
+- *Finding a screen.* A screen is the one surface far brighter under the screens basis than its albedo could reflect (`IMP_SCREEN_RATIO`: basis radiance over albedo, 0.6 to 1.2). A boosted capture showed no false matches at the level or street view; that is two views, not a survey of the catalogue.
+- *Which screen.* A smooth noise field over the floor's plan, about a desk across. So one monitor can straddle two programmes, with a soft change across it, not a seam.
+- *What it shows* (`impScreenShow`): text climbing in jumps on most, a colour cycle on about 18%, a small flicker, and a share switched off that slowly changes.
+- *The light they shed* (`impostorLight`): each floor's `gImpC[3]` steps to a new level every few seconds, over about a quarter of a second, on top of its slow breathing. Shed light is floor-wide, not per monitor.
+
+**How much shows.** Very little of the screen faces does. Even boosted 25 times, only a few clusters of pixels changed at the level and street views: monitors are small, half face away from the glass, and many are hidden by desks and partitions. The shed light is what a viewer can notice, and that is faint too (a bay's mean under this basis is about 1e-4, against 1e-2 for the others). Making screens read from the street would take brighter emission, and that changes the approved look.
+
+**Cost.** Run per fetch, the programme added 0.65 ms even though few hits use it, apparently because the branch was flattened. It now runs once per view after the colour is fetched, in a `[[dont_flatten]]` branch (`GL_EXT_control_flow_attributes`). City pass at `--cam 1139.3 262 1.7 0 20`, default share: 2.79, 2.80 and 2.96 ms, against 2.86 and 2.87 before.
+
+**Rain.** Checked at `--rain 1`, level and close. Streaks draw over the panes and the floors behind stay readable, with no tearing or missing depth at real windows. Whether a streak behind a real window is hidden couldn't be told from stills. No building's glass has drops or running water, impostor or not; that would be a new feature for all glass (`TODO.md`).
+
+**Dark floors.** A floor's own lights now come on with the same chance as a room's in that building (`litChance`, from `litFrac`), where before at least 45% came on whatever the building. Dark floors show the exterior light and keep 35% of their screens' light, with most screens off. It matches the far term, which already averages `litFrac`. It also means fewer lit impostor floors: about a third on average, against about two thirds before (`lit_before_after.jpg`).
+
+**No night clock.** The plan asked for "the city's window-light curve over the night", but the engine has no time of night: `litFrac` is fixed per building and nothing changes with the hour. The floors follow that per-building figure.
+
+**Checks.** All 19 ctest tests pass. The module files and sidecars are untouched, and so is the generator (`--fingerprint` hashes generated layers, which this doesn't touch; it wasn't re-run).
+
+**Images** (`docs/reference/im9/`):
+- **`lit_before_after.jpg`:** the same view before (above) and after (below).
+- **`rain_level.jpg`, `rain_close.jpg`:** every eligible floor an impostor, at `--rain 1`, from a build before the final threshold and shed-light changes, neither of which touches rain.
