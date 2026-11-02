@@ -787,6 +787,10 @@ Prepass and shadow passes don't move. Frame totals for modelled and real views a
 - `--adopt` writes today's hash into a sidecar that has none, without baking, if the sidecar's floor layout and trace settings are what they would be now. It exists for the bakes that were made before the hash, and it was used once, for IM10's bakes, so as not to re-bake them. It refuses a sidecar that already has a hash.
 - `--check` (ctest `interior_catalogue`, no GPU, about 10 s): each tier's sidecar and KTX2 headers load, and agree with the catalogue on name, type, light state, bays, size and texels; near tiers are twice the base's texels; bay means are in range and not all zero; the engine's reader and the baker's agree on the modules. A bake that's merely old is reported, not failed: re-bakes are committed at a milestone's end, so old bakes are normal between. `material_rules` keeps the deeper checks of the blocks themselves.
 
-**Timings** (RTX 4080 SUPER): `core8_exec`, the smallest, takes 3 min for its base tier. The whole catalogue took 3 h 25 min with other work on the GPU (section 21). A clean run writes 615 MB.
+**Timings** (RTX 4080 SUPER): `core8_exec` takes 3.2 min for its base tier and 4.5 for its near tier. The whole catalogue took 3 h 25 min with other work on the GPU (section 21). A clean run writes 615 MB.
 
-RESULTS
+**Moving the inputs changed nothing:** all 18 scenes (`--hash`) gave the same hash before and after, so no module needed re-baking, and this milestone adds no LFS data: only each sidecar's one new line.
+
+**The test of the one command.** In a clean worktree with its own configure and build, `core8_exec`'s files were deleted and `interior_bake --catalogue` was run. It found the two tiers missing and the other 22 up to date, baked them in 7.9 min, and all twelve files, both tiers' KTX2 and sidecars, came back byte for byte as committed. `git status` was clean and `--check` passed. **The whole catalogue was not re-baked:** that is the one module, plus the other modules' hashes matching. Bytes match on this GPU and driver; another may differ, and a hash can differ on another compiler.
+
+Also tried: one seed changed makes that module's two tiers stale, one byte on a book's cover makes all 24 stale, and an unknown style stops the tools with its line number.
