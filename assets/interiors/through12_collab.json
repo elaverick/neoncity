@@ -1,7 +1,7 @@
 {
   // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.
   "version": 3,
-  "baker": "im6-furniture-1",
+  "baker": "im7-near-1",
   "module": "through12_collab",
   "type": "through",
   "family": "office",
@@ -24,7 +24,7 @@
   "ext_max": 2.000,
   "bay_means": {
     "lint": [[0.00000, 0.00000, 0.00000], [0.00000, 0.00000, 0.00000], [0.00000, 0.00000, 0.00000], [0.00000, 0.00000, 0.00000]],
-    "ext": [[0.00927, 0.00423, 0.01641, 0.00001], [0.01028, 0.00525, 0.02059, 0.00001], [0.00931, 0.00397, 0.01746, 0.00004], [0.01020, 0.00466, 0.02042, 0.00002]]
+    "ext": [[0.00928, 0.00417, 0.01645, 0.00001], [0.01027, 0.00518, 0.02052, 0.00001], [0.00933, 0.00399, 0.01753, 0.00004], [0.01021, 0.00467, 0.02047, 0.00002]]
   },
   "files": { "lint": "through12_collab.lint.ktx2", "albedo": "through12_collab.albedo.ktx2", "ext": "through12_collab.ext.ktx2", "depth": "through12_collab.depth.ktx2", "flags": "through12_collab.flags.ktx2" }
 }

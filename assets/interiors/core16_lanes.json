@@ -1,7 +1,7 @@
 {
   // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.
   "version": 3,
-  "baker": "im6-furniture-1",
+  "baker": "im7-near-1",
   "module": "core16_lanes",
   "type": "core",
   "family": "office",
@@ -23,8 +23,8 @@
   "bake_scale": 0.375,
   "ext_max": 2.000,
   "bay_means": {
-    "lint": [[0.01140, 0.00626, 0.00324], [0.01979, 0.01055, 0.00512], [0.03401, 0.01938, 0.00917]],
-    "ext": [[0.00813, 0.00454, 0.01757, 0.00009], [0.01055, 0.00918, 0.02881, 0.00002], [0.00762, 0.00644, 0.01772, 0.00001]]
+    "lint": [[0.01144, 0.00626, 0.00323], [0.01981, 0.01050, 0.00510], [0.03413, 0.01938, 0.00917]],
+    "ext": [[0.00813, 0.00454, 0.01757, 0.00009], [0.01057, 0.00921, 0.02895, 0.00002], [0.00762, 0.00645, 0.01773, 0.00001]]
   },
   "files": { "lint": "core16_lanes.lint.ktx2", "albedo": "core16_lanes.albedo.ktx2", "ext": "core16_lanes.ext.ktx2", "depth": "core16_lanes.depth.ktx2", "flags": "core16_lanes.flags.ktx2" }
 }
