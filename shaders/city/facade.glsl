@@ -258,6 +258,14 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         room.lit = true; room.tv = false; room.person = false; room.curtain = 0.0;
     }
 
+    // A real window (impostorSeesOut) is its glass over what stands behind it, which the prepass and so the
+    // shadow rays saw instead. The lamps' light here only tints the floor: it goes unshadowed.
+    bool realWindow = imp.m >= 0 && impostorSeesOut(seed, prm, vAux, vFacePack, rel, n, u, vAbs, 0.01);
+#ifdef RT_SHADOWS
+    if (realWindow) gShadowFade = 1.0;
+#endif
+    float through = 0.0;     // the share of this pixel seen through it
+
     // wall surface
     vec3 wspec;
     float wallShin = glassWall ? 80.0 : 12.0;
@@ -336,7 +344,8 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             // A convex corner ends the floor: the glass round it is where a ray going that way leaves.
             float sideX = d.x > 0.0 ? ((corners & 2u) != 0u ? faceW - u : 1e6) : ((corners & 1u) != 0u ? u : 1e6);
             float zSide = sideX / max(abs(d.x), 1e-5) * d.z;
-            inner = impostorTrace(imp, u, fv * floorH, d, -V, vAbs, length(rel), zSide, vec3(0.012, 0.012, 0.014) * wdiff * 2.0);
+            inner = impostorTrace(imp, u, fv * floorH, d, -V, vAbs, length(rel), zSide, vec3(0.012, 0.012, 0.014) * wdiff * 2.0, realWindow);
+            through = gImpOut;
         } else {
             inner = cornerRoom ? cornerInterior(vec2(fu, fv), d, W, H, D, room, glassL, glassR, -V, vAbs,
                                                 vec2(x0, x1) * D, vec2(x0, x1) * D, vec2(y0, y1) * H)
@@ -357,6 +366,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             if (up > -0.1) {
                 vec4 b = blindAt(room, hx * W * winW, W * winW, up, d);
                 inner = mix(inner, b.rgb, b.a);
+                through *= 1.0 - b.a;
             }
         } else if (room.blinds > 0.0) {
             float s = fract((fv * H + hang.y) / 0.055);
@@ -364,9 +374,11 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             slat = mix(slat, 0.75, smoothstep(0.25, 0.7, fwV * H / 0.055));   // slats finer than a pixel blur to their average
             float bMask = smoothstep(1.0 - room.blinds - 0.004, 1.0 - room.blinds + 0.004, hy);
             inner = mix(inner, blindLight(room, slat), bMask * (0.7 + 0.25 * slat));   // the room shows between the slats
+            through *= 1.0 - bMask * (0.7 + 0.25 * slat);
         }
         float filmM = 1.0 - smoothstep(film - fwV / winH - 0.003, film + fwV / winH + 0.003, wy);
         inner *= 1.0 - 0.92 * filmM * step(0.001, film);
+        through *= 1.0 - 0.92 * filmM * step(0.001, film);
         winNear = inner * glassT * (1.0 - F) + refl * F + sheen;
         // window frame & mullions
         float fw = 0.05;
@@ -375,6 +387,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         if (type == 2) frame = max(frame, band(fract(u / 1.25), 0.0, 0.03, dU / 1.25 + 0.002));
         winNear = mix(winNear, vec3(0.012, 0.012, 0.014) * wdiff * 2.0, clamp(frame, 0.0, 1.0));
         nearW = F * (1.0 - clamp(frame, 0.0, 1.0));
+        through *= 1.0 - clamp(frame, 0.0, 1.0);
     }
 
     vec3 near = mix(wallLit, winNear, cov);
@@ -388,6 +401,13 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         vec3 far_ = mix(wallLit, avgWin, winW * winH);
         col = mix(col, far_, farT);
         reflW = mix(reflW, mix(wallW, F, winW * winH), farT);
+    }
+    // the window's own light goes on the samples it covers; the city behind is on the rest
+    through *= cov * (1.0 - lodT) * (1.0 - farT);
+    if (realWindow && through > 0.01) {
+        float covered = windowCoverage(through, F);
+        col /= covered;
+        reflW = min(reflW / covered, 1.0);
     }
     glassRefl(n, reflW);
     return col;

@@ -21,6 +21,7 @@ int gImpK;     // its layers per view
 float gImpScale, gImpExtMax;   // its bake scale (and this floor's lights: gImpLit); what ext's 1 means
 float gImpLit;                 // how far this floor's own lights are on (impostorLight)
 vec3 gImpC[4];                 // the radiance of each basis at this window (impostorLight): street, neon, sky, screens
+float gImpOut;                 // the share of this pixel that left through a real window (impostorTrace)
 
 vec2 impFetchDepth(int view, int layer, ivec2 t) { return texelFetch(impTex[nonuniformEXT(gImpTex + 2)], ivec3(t, view * gImpK + layer), 0).rg; }
 bool impFetchFull(int view, ivec2 t) { return texelFetch(impTex[nonuniformEXT(gImpTex + 3)], ivec3(t, view), 0).r > 0.5; }
@@ -109,12 +110,14 @@ vec3 impostorBayMean(int m, float x) {
  * into the building), entering at (u, y) on the glass (metres). The 3 views round d are each marched
  * and blended by weight, less for a view that guessed or looked off its grid. zSide: how deep (the
  * face's metres) the ray reaches the side of the building; a ray that gets that far, or to the far
- * glass of a through module, sees the view out (throughView, from worldDir and the window's height
- * eyeY). Below the floor or above the ceiling the glass covers the slab's edge, slabC. Near the eye
- * (eyeDist) a hit's colour is filtered over its 2 x 2 texels, so a texel doesn't show as a block;
- * further off it isn't worth the fetches. */
-vec3 impostorTrace(ImpPick p, float u, float y, vec3 d, vec3 worldDir, float eyeY, float eyeDist, float zSide, vec3 slabC) {
+ * glass of a through module, leaves: through a real window (realWindow) gImpOut says the share of the
+ * pixel that does, and the rest is what's returned; else it sees the view out (throughView, from
+ * worldDir and the window's height eyeY). Below the floor or above the ceiling the glass covers the
+ * slab's edge, slabC. Near the eye (eyeDist) a hit's colour is filtered over its 2 x 2 texels, so a
+ * texel doesn't show as a block; further off it isn't worth the fetches. */
+vec3 impostorTrace(ImpPick p, float u, float y, vec3 d, vec3 worldDir, float eyeY, float eyeDist, float zSide, vec3 slabC, bool realWindow) {
     int m = p.m;
+    gImpOut = 0.0;
     ImpModule M = interiors.impMod[m];
     /* The near tier, where it's resident: the same floor at twice the texels. Whole within info.w; from
      * there it dithers away to the base tier, and likewise as it arrives, so neither pops. */
@@ -164,7 +167,26 @@ vec3 impostorTrace(ImpPick p, float u, float y, vec3 d, vec3 worldDir, float eye
         else wOut += wt;
         wsum += wt;
     }
-    // past the last layer: the far glass of a through module or the building's side, else the core wall's dark
-    if (wOut > 0.0) sum += (M.dim.w == 0 || zExit < g.D ? throughView(worldDir, eyeY) : vec3(0.004)) * wOut;
+    // past the last layer: the far glass of a through module or the building's side, else the core wall's dark.
+    // With real windows the city behind shows there, by the samples the glass leaves uncovered (windowCoverage);
+    // they fade to the modelled view out as they reach their limit.
+    gImpOut = 0.0;
+    if (wOut > 0.0) {
+        bool leaves = M.dim.w == 0 || zExit < g.D;
+        float real = leaves && realWindow ? 1.0 - smoothstep(interiors.windows.y, interiors.windows.x, eyeDist) : 0.0;
+        gImpOut = real * wOut / max(wsum, 1e-6);
+        sum += (leaves ? throughView(worldDir, eyeY) : vec3(0.004)) * wOut * (1.0 - real);
+    }
     return sum / max(wsum, 1e-6);
+}
+
+/* A real window's pixel: the glass covers the share of its samples that isn't seen through, and always
+ * sample 0 and paneCoverage's share at least, so depth and reflections see a pane. through: the share of
+ * the pixel looking out. A pixel between two shares dithers, where the views part or a window nears its
+ * limit. Returns the covered share, to divide the pixel's own light by. */
+float windowCoverage(float through, float F) {
+    float dither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    int k = clamp(int(floor((1.0 - through) * 4.0 + dither)), F < 0.25 ? 1 : F < 0.5 ? 2 : 3, 4);
+    gl_SampleMask[0] = (1 << k) - 1;
+    return float(k) * 0.25;
 }

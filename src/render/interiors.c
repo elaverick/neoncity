@@ -61,6 +61,7 @@ struct Interiors {
 #define NEAR_DROP_SECONDS  60.0        /* ... and this long, goes anyway */
 #define NEAR_FADE_SECONDS  1.0
 #define NEAR_WHOLE_METRES  24.0f       /* the near tier is whole within this of the eye; shaders/city/impostors.glsl fades it out from there */
+#define WINDOW_REACH_METRES 150.0f     /* real windows, as far as the lobbies' panes (REAL_GLASS_DIST); they fade to the modelled view from 3/4 of it */
 
 static void barrier(VkCommandBuffer cmd, VkImage img, VkImageLayout from, VkImageLayout to,
                     VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess, VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess) {
@@ -471,6 +472,12 @@ Interiors *interiors_create(VkCore *vk) {
     free(mods);
     tab->info[2] = 18.0f;   /* how near a hit's colour is filtered, metres (docs/interior-impostors.md, section 18) */
     tab->info[3] = NEAR_WHOLE_METRES;
+    /* a pane covering some of a pixel's samples needs samples; else floors keep the modelled view out */
+    if (vk->msaa != VK_SAMPLE_COUNT_1_BIT) {
+        const char *reach = getenv("NEONCITY_WINDOW_REACH");   /* to compare costs: metres, 0 for none */
+        tab->windows[0] = reach ? (float)atof(reach) : WINDOW_REACH_METRES;
+        tab->windows[1] = tab->windows[0] * 0.75f;
+    }
 
     VK_CHECK(vkEndCommandBuffer(cmd));
     VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };

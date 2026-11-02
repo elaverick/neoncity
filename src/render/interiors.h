@@ -43,6 +43,7 @@ typedef struct InteriorTable {
     float       info[4];  /* x modules loaded, y the share of eligible office floors drawn with them (0: none), z how near (m) colour is filtered, w how near (m) the near tier is whole */
     uint32_t    pick[INTERIOR_PLATE_METRES];   /* by the plate's depth in whole metres: a bit per module that suits it (pick_modules) */
     uint32_t    states[4];                     /* the modules baked in each light state (INTERIOR_STATE_*), a bit each */
+    float       windows[4];                    /* real windows (impostorSeesOut): x how far (m) they reach, 0 for none; y where they start to fade */
     InteriorGPU mod[INTERIOR_TABLE_SIZE];
 } InteriorTable;
 

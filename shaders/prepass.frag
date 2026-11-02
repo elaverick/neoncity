@@ -12,12 +12,20 @@ layout(location = 3) in vec2 vUV;
 layout(location = 4) flat in uint vSeed;
 layout(location = 5) flat in uvec4 vParams;
 layout(location = 6) flat in uint vChunk;
+layout(location = 7) flat in uint vFacePack;
+layout(location = 8) flat in uint vAux;
 layout(location = 10) in float vBase;
 
 layout(location = 0) out uvec2 outG;
 
+float hf(uint h, uint k) { return hfloat(hash_combine(h, k)); }   // as city.frag's
+
+#include "city/impostor_pick.glsl"
+
 void main() {
     uint m = vParams.x;
+    // An open-plan floor's glass that can see out (impostorSeesOut): what stands behind it gets the prepass.
+    if (m == MAT_FACADE && impostorSeesOut(vSeed, vParams, vAux, vFacePack, vRel, normalize(vNrm), vUV.x, vLocal.y - vBase, 0.0)) discard;
     // The panes of a lobby's glazed ground floor, near enough to cover only part
     // of a pixel: what stands behind them gets the prepass instead. As city.frag
     // (shadeFacade: the lobby's inWin, lodR and paneCoverage) lays them out.
