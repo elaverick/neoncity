@@ -144,6 +144,43 @@ static int card_mesh(Scene *s) {
     return mesh_add_attr(s, v, a, 24, ix, 36);
 }
 
+/* A book, a cuboid wearing interior_models.py's layout: covers on the image's left 5/8, the spine in the
+ * next 1/8, page edges on the last 1/4. Lying flat (cover on +y, head towards -z, spine on -x), or standing
+ * (head up, spine on +z, covers on +-x). A unit cube; instances scale it to the book. */
+static int book_mesh(Scene *s, bool standing) {
+    /* lying flat; corners from image top left, counter-clockwise from outside */
+    static const float C[6][12] = {
+        { -0.5f, 0.5f, -0.5f,  -0.5f, 0.5f, 0.5f,  0.5f, 0.5f, 0.5f,  0.5f, 0.5f, -0.5f },       /* +y: the front cover */
+        { 0.5f, -0.5f, -0.5f,  0.5f, -0.5f, 0.5f,  -0.5f, -0.5f, 0.5f,  -0.5f, -0.5f, -0.5f },   /* -y: the back cover */
+        { -0.5f, -0.5f, -0.5f,  -0.5f, -0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,  -0.5f, 0.5f, -0.5f },   /* -x: the spine */
+        { 0.5f, 0.5f, -0.5f,  0.5f, 0.5f, 0.5f,  0.5f, -0.5f, 0.5f,  0.5f, -0.5f, -0.5f },       /* +x: the fore-edge */
+        { 0.5f, 0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,  -0.5f, -0.5f, 0.5f,  0.5f, -0.5f, 0.5f },       /* +z: the tail */
+        { -0.5f, 0.5f, -0.5f,  0.5f, 0.5f, -0.5f,  0.5f, -0.5f, -0.5f,  -0.5f, -0.5f, -0.5f },   /* -z: the head */
+    };
+    const float cover[4] = { 0.0f, 0.0f, 0.625f, 1.0f }, spine[4] = { 0.625f, 0.0f, 0.75f, 1.0f }, pages[4] = { 0.75f, 0.0f, 1.0f, 1.0f };
+    const float *R[6] = { cover, cover, spine, pages, pages, pages };
+    float v[72], a[120];
+    uint32_t ix[36];
+    memset(a, 0, sizeof(a));
+    for (int f = 0; f < 6; ++f) {
+        const float *r = R[f];
+        const float uv[4][2] = { { r[0], r[1] }, { r[0], r[3] }, { r[2], r[3] }, { r[2], r[1] } };
+        for (int c = 0; c < 4; ++c) {
+            float x = C[f][c * 3], y = C[f][c * 3 + 1], z = C[f][c * 3 + 2];
+            /* standing: the flat book's spine edge (-x) turns to +z, its cover (+y) to +x, its head (-z) up */
+            float *o = v + (f * 4 + c) * 3;
+            if (standing) { o[0] = y; o[1] = -z; o[2] = -x; }
+            else          { o[0] = x; o[1] = y;  o[2] = z; }
+            a[(f * 4 + c) * 5 + 3] = uv[c][0];
+            a[(f * 4 + c) * 5 + 4] = uv[c][1];
+        }
+        uint32_t b = (uint32_t)f * 4;
+        uint32_t t[6] = { b, b + 1, b + 2, b, b + 2, b + 3 };
+        memcpy(ix + f * 6, t, sizeof(t));
+    }
+    return mesh_add_attr(s, v, a, 24, ix, 36);
+}
+
 static int sheet_mat(Scene *s, int layer, float rough) {
     int id = mat_add(s, 1.0f, 1.0f, 1.0f, 0, 0, 0);
     mat_surface(s, id, rough, 0.0f, 0.0f, 0.0f);
@@ -166,10 +203,23 @@ bool furniture_load(Scene *s, Kit *k, Furniture *f, const char *assets) {
     bool ok = piece_load(s, &f->chair, dir, "chair") && piece_load(s, &f->desk, dir, "desk") && piece_load(s, &f->computer, dir, "computer")
            && piece_load(s, &f->lamp, dir, "lamp") && piece_load(s, &f->partition, dir, "partition") && piece_load(s, &f->cabinet, dir, "filing_cabinet")
            && piece_load(s, &f->blackboard, dir, "blackboard") && piece_load(s, &f->intray, dir, "intray") && piece_load(s, &f->phone, dir, "phone")
-           && piece_load(s, &f->pen, dir, "fountain_pen");
+           && piece_load(s, &f->pen, dir, "fountain_pen") && piece_load(s, &f->armchair, dir, "armchair") && piece_load(s, &f->printer, dir, "printer")
+           && piece_load(s, &f->sideTable, dir, "side_table") && piece_load(s, &f->table, dir, "conference_table");
     if (!ok) return false;
     f->card = card_mesh(s);
+    f->bookFlat = book_mesh(s, false);
+    f->bookUp = book_mesh(s, true);
     char name[64];
+    for (int i = 0; i < FURNITURE_BOOKS; ++i) {
+        snprintf(name, sizeof(name), "book_%d.jpg", i);
+        int l = image_file(s, tex, name, true);
+        if (l < 0) return false;
+        f->book[i] = sheet_mat(s, l, 0.42f);
+    }
+    int rc = image_file(s, tex, "rug_albedo.jpg", true), rn = image_file(s, tex, "rug_normal.jpg", false);
+    if (rc < 0 || rn < 0) return false;
+    f->rug = sheet_mat(s, rc, 1.0f);
+    s->mats[f->rug].tex[2] = rn;
     for (int i = 0; i < 4; ++i) {
         snprintf(name, sizeof(name), "paper_%d.png", i);
         int l = image_file(s, tex, name, true);

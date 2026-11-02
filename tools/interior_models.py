@@ -7,7 +7,8 @@ y = 0, centred on x and z, front towards +z, textures embedded, one file a model
 become materials of one mesh (KHR_materials_variants). The shapes are the supplied ones: nothing is
 simplified or repaired (leaks are the capture's to bound, BF_LEAKY in shaders/interior/capture.comp).
 
-  python tools/interior_models.py pack  <source dir> [--metal <dir>] [--dest assets_src/interiors]
+  python tools/interior_models.py pack  <source dir> [--metal <dir>] [--rug <dir>] [--only a,b] [--dest assets_src/interiors]
+  python tools/interior_models.py books <dir of chosen covers, one per colour> [--dest assets_src/interiors]
   python tools/interior_models.py check [--dest assets_src/interiors]
 
 The computer and the lamp gain one extra primitive each, a flat panel for what lights up, wearing a
@@ -39,6 +40,10 @@ MODELS = [
     ("intray", ["intray"], 0.36),                      # 34 cm wide, two tiers
     ("phone", ["phone"], 0.115),                       # 22 cm deep
     ("fountain_pen", ["fountain pen"], 0.074),         # 14 cm long
+    ("armchair", ["armchair"], 0.369),                 # a club chair, 0.70 wide and tall
+    ("printer", ["printer"], 0.315),                   # a dot-matrix on its stand, 0.60 wide, 0.30 tall
+    ("side_table", ["sidet table"], 0.263),            # 0.50 wide; each stretches to its plan's height
+    ("conference_table", ["conference table"], 1.343), # 0.76 to the top; each stretches to its room
 ]
 
 
@@ -312,10 +317,52 @@ def to_metres(mesh, scale):
     return out, shift
 
 
-def pack(src, dest, metal):
+def book_atlas(cover):
+    """One book's texture from a generated cover (furniture.c's book mesh reads this layout): the cover
+    on the left 5/8, a spine made from the same leather in the next 1/8, with raised bands, and the page
+    block's edges on the last 1/4."""
+    S = 2048
+    w, spine = S * 5 // 8, S // 8
+    im = cover.convert("RGB")
+    cw, ch = im.size
+    m = min(cw, ch) // 20                                    # the generator's margins are its least reliable part
+    im = im.crop((m, m, cw - m, ch - m))
+    out = Image.new("RGB", (S, S), (222, 212, 188))
+    out.paste(im.resize((w, S), Image.LANCZOS), (0, 0))
+    # the spine: a strip down the cover's middle, rounded by shading across it, its bands caught by the light
+    a = np.asarray(im.crop((im.size[0] * 2 // 5, 0, im.size[0] * 3 // 5, im.size[1])).resize((spine, S), Image.LANCZOS), dtype=np.float32)
+    across = np.linspace(-1.0, 1.0, spine)[None, :, None]
+    a = a * (1.05 - 0.45 * across ** 2)
+    for k in range(1, 6):
+        y = S * k // 6
+        for r in range(-22, 23):
+            a[y + r] *= 1.0 + 0.5 * np.exp(-(r / 9.0) ** 2) - 0.35 * np.exp(-((abs(r) - 18) / 3.0) ** 2)
+    out.paste(Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)), (w, 0))
+    # the pages: fine lines running along the block, a little uneven, darkening towards the boards
+    rng = np.random.default_rng(int(a.mean() * 16))
+    pw = S - w - spine
+    lines = 0.86 + 0.14 * rng.random((1, pw)) * rng.random((1, pw))
+    edge = 1.0 - 0.3 * np.abs(np.linspace(-1.0, 1.0, pw))[None, :] ** 6
+    pg = np.repeat(lines * edge, S, axis=0)[..., None] * np.array([232.0, 222.0, 198.0])
+    out.paste(Image.fromarray(pg.astype(np.uint8)), (w + spine, 0))
+    return out
+
+
+def books(src, dest):
+    tex = os.path.join(dest, "textures")
+    os.makedirs(tex, exist_ok=True)
+    names = sorted(f for f in os.listdir(src) if f.lower().endswith((".png", ".jpg")))
+    for i, f in enumerate(names):
+        book_atlas(Image.open(os.path.join(src, f))).save(os.path.join(tex, f"book_{i}.jpg"), quality=92, subsampling=0)
+        print(f"book_{i}: {f}")
+
+
+def pack(src, dest, metal, rug=None, only=None):
     os.makedirs(dest, exist_ok=True)
     total = 0
     for name, files, scale in MODELS:
+        if only and name not in only:
+            continue
         meshes = [read_glb(os.path.join(src, f + ".glb")) for f in files]
         base = meshes[0]
         sets = []
@@ -350,6 +397,12 @@ def pack(src, dest, metal):
             im = Image.fromarray((np.asarray(im, dtype=np.float32) / 257.0).astype(np.uint8))
         im.convert("RGB").resize(S).save(os.path.join(tex, "metal_normal.jpg"), quality=95, subsampling=0)
         print("metal: textures written", flush=True)
+    if rug:
+        tex = os.path.join(dest, "textures")
+        os.makedirs(tex, exist_ok=True)
+        Image.open(os.path.join(rug, "albedo.png")).convert("RGB").save(os.path.join(tex, "rug_albedo.jpg"), quality=92)
+        Image.open(os.path.join(rug, "normal.png")).convert("RGB").save(os.path.join(tex, "rug_normal.jpg"), quality=95, subsampling=0)
+        print("rug: textures written", flush=True)
     print(f"{total / 1e6:.0f} MB of models in {dest}")
 
 
@@ -427,10 +480,22 @@ def main():
         i = args.index("--metal")
         metal = args[i + 1]
         del args[i:i + 2]
+    rug = only = None
+    if "--rug" in args:
+        i = args.index("--rug")
+        rug = args[i + 1]
+        del args[i:i + 2]
+    if "--only" in args:
+        i = args.index("--only")
+        only = args[i + 1].split(",")
+        del args[i:i + 2]
     if args and args[0] == "check":
         return check(dest)
     if len(args) == 2 and args[0] == "pack":
-        pack(args[1], dest, metal)
+        pack(args[1], dest, metal, rug, only)
+        return 0
+    if len(args) == 2 and args[0] == "books":
+        books(args[1], dest)
         return 0
     print(__doc__)
     return 2

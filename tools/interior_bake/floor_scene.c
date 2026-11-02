@@ -4,12 +4,11 @@
 #include "plant.h"
 
 /* A planned floor (floor_gen.c) as a scene: each item built from the furniture (furniture.h) and the
- * kit's boxes and meshes, its lights on as the module's light state says. What has no model of its
- * own (books, printers, tables, sofas' neighbours) stays boxes. */
+ * kit's boxes and meshes, its lights on as the module's light state says. */
 
 /* What a generated floor adds to the kit. */
 typedef struct Extra {
-    int pedLight, mug, book[4], canvas, ink[5], panel, leather, rugs[3];
+    int pedLight, mug, canvas, ink[5], panel;
     int cyl;      /* a cylinder of radius 1, height 1, standing on y = 0 */
 } Extra;
 
@@ -39,17 +38,11 @@ static Extra extra_make(Scene *s, Kit *k, int style) {
     mat_surface(s, e.pedLight, 0.4f, 0.0f, 0.0f, 0.0f);
     e.mug = mat_add(s, 0.05f, 0.05f, 0.055f, 0, 0, 0);
     mat_surface(s, e.mug, 0.25f, 0.0f, 0.0f, 0.0f);
-    static const float B[4][3] = { { 0.28f, 0.10f, 0.07f }, { 0.08f, 0.13f, 0.22f }, { 0.45f, 0.40f, 0.30f }, { 0.10f, 0.16f, 0.10f } };
-    for (int i = 0; i < 4; ++i) e.book[i] = mat_add(s, B[i][0], B[i][1], B[i][2], 0, 0, 0);
     e.canvas = mat_add(s, 0.62f, 0.58f, 0.50f, 0, 0, 0);
     static const float I[5][3] = { { 0.03f, 0.03f, 0.035f }, { 0.55f, 0.14f, 0.06f }, { 0.65f, 0.38f, 0.10f }, { 0.08f, 0.16f, 0.25f }, { 0.20f, 0.05f, 0.16f } };
     for (int i = 0; i < 5; ++i) e.ink[i] = mat_add(s, I[i][0], I[i][1], I[i][2], 0, 0, 0);
     e.panel = mat_add(s, 0.09f, 0.06f, 0.04f, 0, 0, 0);          /* a wood-panelled wall */
     mat_surface(s, e.panel, 0.4f, 0.0f, 0.0f, 0.0f);
-    e.leather = mat_add(s, 0.05f, 0.03f, 0.022f, 0, 0, 0);
-    mat_surface(s, e.leather, 0.45f, 0.0f, 0.0f, 0.0f);
-    static const float R[3][3] = { { 0.16f, 0.09f, 0.06f }, { 0.07f, 0.09f, 0.12f }, { 0.13f, 0.12f, 0.10f } };
-    for (int i = 0; i < 3; ++i) { e.rugs[i] = mat_add(s, R[i][0], R[i][1], R[i][2], 0, 0, 0); mat_surface(s, e.rugs[i], 1.0f, 0.0f, 0.0f, 0.0f); }
     e.cyl = cylinder_mesh(s);
     /* the styles' surfaces */
     if (style == FS_EXEC) {
@@ -139,9 +132,11 @@ static void build_desk(Scene *s, const Kit *k, const Extra *e, const Furniture *
     } else if (it->variant == 1 && look(sd, 3u) < 0.45f) {   /* or a stack of books */
         float bx = free * (w * 0.5f - 0.16f);
         int books = 2 + (int)(look(sd, 4u) * 3.0f);
-        for (int i = 0; i < books; ++i)
-            box_local(s, e->book[(int)(look(sd, 10u + (uint32_t)i) * 3.99f)], 0, ox, oz, yaw, bx, top + 0.017f + 0.036f * (float)i, back + 0.2f,
-                      0.20f + 0.04f * look(sd, 20u + (uint32_t)i), 0.034f, 0.27f, (look(sd, 30u + (uint32_t)i) - 0.5f) * 0.5f);
+        for (int i = 0; i < books; ++i) {
+            float by = top + 0.017f + 0.036f * (float)i, bz = back + 0.2f;
+            inst_add(s, f->bookFlat, f->book[(int)(look(sd, 10u + (uint32_t)i) * ((float)FURNITURE_BOOKS - 0.01f))], 0, WX(bx, bz), by, WZ(bx, bz),
+                     0.20f + 0.04f * look(sd, 20u + (uint32_t)i), 0.034f, 0.27f, yaw + (look(sd, 30u + (uint32_t)i) - 0.5f) * 0.5f);
+        }
     }
     if (it->variant > 0 && look(sd, 54u) < 0.6f) {
         float mx = free * w * 0.3f, mz = back + 0.48f;
@@ -222,8 +217,9 @@ static void build_room(Scene *s, const Kit *k, const Furniture *f, const FloorIt
     box(s, k->frame, 0, door + 0.5f, 0.0f, zd - 0.03f, door + 0.53f, 2.15f, zd + 0.03f);
     box(s, k->frame, 0, door - 0.53f, 2.15f, zd - 0.03f, door + 0.53f, 2.2f, zd + 0.03f);
     FloorTable t = floor_room_table(it);
-    box(s, k->wood, 0, t.x0, 0.72f, t.z0, t.x1, 0.76f, t.z1);
-    box(s, k->frame, 0, t.x0 + 0.4f, 0.0f, (t.z0 + t.z1) * 0.5f - 0.1f, t.x1 - 0.4f, 0.72f, (t.z0 + t.z1) * 0.5f + 0.1f);
+    const Piece *tb = &f->table;
+    piece_place(s, tb, 0, 0, (t.x0 + t.x1) * 0.5f, 0.0f, (t.z0 + t.z1) * 0.5f, 0.0f,
+                (t.x1 - t.x0) / (tb->mx[0] - tb->mn[0]), 0.76f / (tb->mx[1] - tb->mn[1]), (t.z1 - t.z0) / (tb->mx[2] - tb->mn[2]));
     uint32_t i = 0;
     for (float x = t.x0 + 0.5f; x < t.x1 - 0.2f; x += 1.0f, ++i) {
         /* a chair's front is its +z: towards the table */
@@ -240,30 +236,29 @@ static void build_room(Scene *s, const Kit *k, const Furniture *f, const FloorIt
     if ((it->bit[0] >> state) & 1u) box(s, k->coveOn, BF_EMITTER, xa, top - 0.02f, za + 0.05f, xb, top, za + 0.07f);
 }
 
-static void build_lounge(Scene *s, Kit *k, const Extra *e, const FloorItem *it, const char *assets, int state) {
+static void build_lounge(Scene *s, Kit *k, const Furniture *fu, const FloorItem *it, const char *assets, int state) {
     float x = it->ox, z = it->oz, f = it->dir == 2 ? -1.0f : 1.0f;
-#define ZB(A, B) fminf(z + f * (A), z + f * (B)), fmaxf(z + f * (A), z + f * (B))
     float a, b;
-    box(s, e->rugs[(int)(look(it->seed, 1u) * 2.99f)], 0, x - 1.4f, 0.0f, z - 1.1f, x + 1.4f, 0.012f, z + 1.1f);
+    /* the rug, either way round, its image's long side along the sofa */
+    inst_add(s, fu->card, fu->rug, 0, x, 0.006f, z, 2.8f, 0.012f, 2.2f, look(it->seed, 1u) < 0.5f ? 0.0f : PI_F);
     sofa(s, k, x, z - f * 0.6f, it->dir == 2 ? PI_F : 0.0f, assets);
     a = fminf(z + f * 0.15f, z + f * 0.55f); b = fmaxf(z + f * 0.15f, z + f * 0.55f);
     box(s, k->marble, 0, x - 0.45f, 0.0f, a, x + 0.45f, 0.38f, b);
-    a = fminf(z - f * 0.35f, z - f * 0.85f); b = fmaxf(z - f * 0.35f, z - f * 0.85f);
-    box(s, k->marble, 0, x + 1.45f, 0.0f, a, x + 1.95f, 0.5f, b);
-    box(s, k->marble, 0, x - 1.97f, 0.0f, a, x - 1.47f, 0.5f, b);
+    /* the side tables, one with the orb lamp on it: 0.5 m tall */
+    const Piece *st = &fu->sideTable;
+    float sy = 0.5f / (st->mx[1] - st->mn[1]), tz = z - f * 0.6f, yawT = it->dir == 2 ? PI_F : 0.0f;
+    piece_place(s, st, 0, 0, x + 1.7f, 0.0f, tz, yawT, 1.0f, sy, 1.0f);
+    piece_place(s, st, 0, 0, x - 1.72f, 0.0f, tz, yawT, 1.0f, sy, 1.0f);
     bool lit = (it->bit[0] >> state) & 1u;
     inst_add(s, orb_mesh(s), lit ? k->orb : k->orbOff, BF_EMITTER, x - 1.72f, 0.67f, z - f * 0.6f, 0.17f, 0.17f, 0.17f, 0.0f);
     if (lit) light_add(s, x - 1.72f, 0.9f, z - f * 0.6f, 1.6f, 1.15f, 0.65f);
-    if (it->variant) {   /* two armchairs, facing the sofa */
+    if (it->variant) {   /* two armchairs, facing the sofa and turned a little towards each other */
         for (int side = -1; side <= 1; side += 2) {
-            float cx = x + (float)side * 0.9f, cz = z + f * 1.05f, turn = (it->dir == 2 ? 0.0f : PI_F) + (float)side * 0.25f;
-            box_local(s, e->leather, 0, cx, cz, turn, 0.0f, 0.22f, 0.0f, 0.68f, 0.3f, 0.62f, 0.0f);
-            box_local(s, e->leather, 0, cx, cz, turn, 0.0f, 0.55f, 0.28f, 0.68f, 0.42f, 0.1f, 0.0f);
-            box_local(s, e->leather, 0, cx, cz, turn, -0.31f, 0.42f, 0.0f, 0.08f, 0.2f, 0.6f, 0.0f);
-            box_local(s, e->leather, 0, cx, cz, turn, 0.31f, 0.42f, 0.0f, 0.08f, 0.2f, 0.6f, 0.0f);
+            float cx = x + (float)side * 0.9f, cz = z + f * 1.05f;
+            float turn = it->dir == 2 ? -(float)side * 0.25f : PI_F + (float)side * 0.25f;
+            piece_place(s, &fu->armchair, 0, 0, cx, 0.0f, cz, turn, 1.0f, 1.0f, 1.0f);
         }
     }
-#undef ZB
 }
 
 /* A canvas facing dir (0 +z, 2 -z) on the wall at (ox, oz): a frame, and bands of colour. */
@@ -302,11 +297,22 @@ static void build_filing(Scene *s, const Kit *k, const Extra *e, const Furniture
         }
         if (!it->variant && look(it->seed, 20u + (uint32_t)i) < 0.5f) {   /* box files on the low ones */
             int nb = 3 + (int)(look(it->seed, 40u + (uint32_t)i) * 5.0f);
-            for (int b = 0; b < nb; ++b)
-                box(s, e->book[b & 3], 0, x - 0.31f + 0.075f * (float)b, h, zc - 0.13f, x - 0.245f + 0.075f * (float)b, h + 0.26f + 0.04f * look(it->seed, 60u + (uint32_t)b), zc + 0.13f);
+            for (int b = 0; b < nb; ++b) {   /* spines towards the side the cabinets face */
+                float bh = 0.26f + 0.04f * look(it->seed, 60u + (uint32_t)b);
+                inst_add(s, f->bookUp, f->book[(int)(look(it->seed, 80u + (uint32_t)(i * 8 + b)) * ((float)FURNITURE_BOOKS - 0.01f))], 0,
+                         x - 0.2775f + 0.075f * (float)b, h + bh * 0.5f, zc, 0.065f, bh, 0.26f, it->dir == 2 ? PI_F : 0.0f);
+            }
         }
     }
-    (void)k;
+    (void)k; (void)e;
+}
+
+/* A printer on a stand, its paper to the back: the plan's rect, the cabinet stretched to a stand's height. */
+static void build_printer(Scene *s, const Furniture *f, const FloorItem *it) {
+    const Piece *c = &f->cabinet;
+    float x = (it->x0 + it->x1) * 0.5f, z = (it->z0 + it->z1) * 0.5f, standH = 0.72f;
+    piece_place(s, c, 0, 0, x, 0.0f, z, 0.0f, (it->x1 - it->x0) / (c->mx[0] - c->mn[0]), standH / (c->mx[1] - c->mn[1]), (it->z1 - it->z0) / (c->mx[2] - c->mn[2]));
+    piece_place(s, &f->printer, 0, 0, x, standH, z, 0.0f, 1.0f, 1.0f, 1.0f);
 }
 
 static void build_core(Scene *s, const Kit *k, const FloorItem *it, int state) {
@@ -409,17 +415,14 @@ bool floor_scene_build(Scene *s, const char *name, int state, const char *assets
             if ((it->bit[0] >> st) & 1u) inst_add(s, fu.card, k.trofferOn, BF_EMITTER, it->ox, trofferY - 0.002f, it->oz, 1.2f, 0.004f, 1.2f, 0.0f);
             break;
         case FI_ROOM:    build_room(s, &k, &fu, it, st); break;
-        case FI_LOUNGE:  build_lounge(s, &k, &e, it, assets, st); break;
+        case FI_LOUNGE:  build_lounge(s, &k, &fu, it, assets, st); break;
         case FI_WALL:
             box(s, e.panel, 0, it->x0, 0.0f, it->z0, it->x1, it->b, it->z1);
             if ((it->bit[0] >> st) & 1u) box(s, k.coveOn, BF_EMITTER, it->x0, it->b, it->z0, it->x1, it->b + 0.004f, it->z1);
             break;
         case FI_ART:     build_art(s, &k, &e, it); break;
         case FI_FILING:  build_filing(s, &k, &e, &fu, it); break;
-        case FI_PRINTER:
-            box(s, k.pedestal, 0, it->x0, 0.0f, it->z0, it->x1, 0.95f, it->z1);
-            box(s, e.pedLight, 0, it->x0 + 0.03f, 0.95f, it->z0 + 0.03f, it->x1 - 0.03f, 1.1f, it->z1 - 0.03f);
-            break;
+        case FI_PRINTER: build_printer(s, &fu, it); break;
         case FI_PLANT:   plant(s, &k, it->ox, it->oz, it->variant, it->a, it->seed); break;
         default: break;
         }

@@ -7,6 +7,7 @@
  * textures; the game never loads any of this. */
 
 #define PIECE_VARIANTS 3
+#define FURNITURE_BOOKS 7   /* textures/book_<n>.jpg (interior_models.py books) */
 typedef struct Piece {
     int   mesh;
     int   mats[PIECE_VARIANTS], nmats;   /* its texture variants */
@@ -16,9 +17,10 @@ typedef struct Piece {
 } Piece;
 
 typedef struct Furniture {
-    Piece chair, desk, computer, lamp, partition, cabinet, blackboard, intray, phone, pen;
+    Piece chair, desk, computer, lamp, partition, cabinet, blackboard, intray, phone, pen, armchair, printer, sideTable, table;
     int   card;            /* a unit cube whose every face carries a whole image */
-    int   paper[4], chart[6], screen[4];   /* materials */
+    int   bookFlat, bookUp;   /* unit cuboids in a book's layout: lying with its cover up and spine to -x; standing, spine to +z */
+    int   paper[4], chart[6], screen[4], book[FURNITURE_BOOKS], rug;   /* materials */
 } Furniture;
 
 /* Loads them into s, and dresses the kit's ducts and ceiling lights in their textures. assets: the
