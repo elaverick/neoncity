@@ -249,6 +249,7 @@ The working plan is kept outside the repo. In summary:
 | IM7 | The city: floor selection, tiling, plate depths in the vertex data, corners, LOD, memory, and a streamed near tier at 32 texels/m. Done: section 20 |
 | IM8 | The catalogue and one-command rebuild; README |
 | IM9 | Animated screens, people, more kits |
+| IM10 | The last furniture and real windows. Done before IM8: section 21 |
 
 ## 13. IM1: the representation spike
 
@@ -728,4 +729,43 @@ The floors now belong to the buildings they stand in: a module is chosen for the
 - **L-shaped plates** have one depth per face, the middle of three, so part of a long face has the wrong depth behind it. Nothing shows until real windows.
 
 **Images** (`docs/reference/im7/`): `engine_level.jpg`, `engine_street.jpg` (share 0.4), `downtown.jpg` (ten towers from the air, no repeat to see), `near_close.jpg` (every floor, 4 m from the glass), `dolly.jpg` (share 0.4, walking towards a tower through the band).
+
+## 21. IM10: the last furniture, and real windows
+
+**The furniture.** Four more of the user's models join `assets_src/interiors` by `tools/interior_models.py pack`: armchair (0.70 m wide and tall), printer (a dot-matrix, 0.60 m wide), side table (0.50 m wide, stretched to 0.5 m tall) and conference table (stretched to each room's table). All four are watertight (0% of rays stuck), so nothing was repaired and none needs `BF_LEAKY`.
+
+- **In the scene:** the conference table replaces the room's boxes, and a side table replaces both the lounge's side table and the orb lamp's plinth. The printer stands on a filing cabinet stretched to 0.72 m as a stand, since it is a desktop machine. The lounge's low table stays a marble box: no model was supplied, and the side table stretched that far would distort its inlay. Layouts didn't change.
+- **The rug** is the user's texture (albedo and normal), on a 2.8 x 2.2 m card, either way round by seed. The three flat rug colours are gone.
+- **The books** stay cuboids. Their covers came from Stable Diffusion XL 1.0, run locally: 7 colours of 4 seeds each, no text (`docs/reference/im10/book_candidates.jpg`). The tool's `books` command lays the chosen seven out as `textures/book_<n>.jpg`: cover, a spine made from the cover's own leather with raised bands, and page edges. The prompt and the choice aren't reproducible from the repo: the images are the source. Chosen: oxblood 0, navy 3, forest green 0, tan 2, black 3, chestnut 3, burgundy 2.
+- **The bake:** all twelve modules, both tiers, in 3 h 25 min with other work on the GPU; 615 MB on disk.
+
+**Real windows.** Glass that can see out is now glass over the real city, where `throughView` used to paint a street.
+
+- `impostorSeesOut` (`shaders/city/impostor_pick.glsl`) asks whether a ray through this point reaches the far glass or the building's side before a slab, for a window of an open-plan floor. It is the one test shared by `prepass.frag`, which discards such glass, and `shadeFacade`. The scene asks with a 1 cm margin, so it never leaves a sample uncovered where the prepass kept depth.
+- `impostorTrace` leaves the out-going share out of its colour and reports it in `gImpOut`. Blinds, film, the frame and the LOD reduce it. `windowCoverage` then covers that share of the samples, dithered between steps, and always at least `paneCoverage`'s share and sample 0. A ray that the march finds blocked is just covered.
+- Lamp light on such glass goes unshadowed, since the shadow rays saw what's behind it. It only tints the floor.
+- From 112 m to the 150 m limit, and without MSAA, floors fade to `throughView` (`InteriorTable.windows`). `NEONCITY_WINDOW_REACH` sets the limit, 0 for none, to compare costs.
+- `city.vert` now gives the prepass `vFacePack` and `vAux`. Validation caught their absence: the prepass read garbage and never discarded, so windows looked dark rather than wrong. Run `--validation` after touching this path.
+
+**Cost at a share of 0.4** (1600 x 900, 4x MSAA, means of two 64-frame runs, about 0.2 ms of noise; the "off" level figure is one run):
+
+| city pass (ms) | impostors off | modelled view | real windows |
+|---|---|---|---|
+| level | 1.02 | 2.24 | 2.82 (+0.58) |
+| from the street | 1.76 | 2.76 | 2.86 (+0.10) |
+| close | 1.15 | 2.05 | 2.34 (+0.29) |
+
+Prepass and shadow passes don't move. Frame totals for modelled and real views are 4.18 and 4.70 ms at level, 5.45 and 5.44 from the street, 4.51 and 4.24 close (noise). **Against the plan's gate, this adds to a cost already over the 0.5 ms target:** impostors now cost +1.8 ms at level. The distance limit doesn't help there, because the cost is near the eye: a reach of 100 m reads 2.84 and 60 m reads 2.81.
+
+**Seen:** a neon line and a sign behind a block line up through its windows with the same things outside it (`through_high.jpg`), and rain over the glass looks right (`engine_rain.jpg`). A 60 s `--validation` walk gave no validation errors. The jagged patch on a canopy in the rain shots is there with real windows off too.
+
+**Not checked:**
+
+- Smoke and flames behind glass. They depend on `depthResolve`, which takes the pane's sample 0, so they probably stop at the pane.
+- The fade by eye on a walk: only stills at three distances were captured.
+- L-shaped plates: one depth a face, so a ray may leave early or late.
+
+**Known limits:** what's seen through isn't tinted by the glass, as with lobby panes; side glass has no mullions of its own, where the far glass has the bake's; and floors read darker, since a night city behind a floor is darker than the old painted sky.
+
+**Images** (`docs/reference/im10/`): `engine_level.jpg`, `engine_rain.jpg` (share 0.4), `through_high.jpg`, `through_side.jpg`, `through_far.jpg` (every floor), `still_lounge.jpg`, `still_room.jpg`, `still_printer.jpg`, `book_candidates.jpg`.
 
