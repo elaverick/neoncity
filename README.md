@@ -22,6 +22,7 @@ build/interior_lab 3000 12 out # office lobbies: pass rate, attempts, rejections
 build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders, cameras
 build/interior_lab office 400 out        # baked office floors: the generator's catalogue and a sweep; plans
 python tools/interior_models.py check    # the bake-only furniture (assets_src/interiors): stance and leaks
+build/interior_bake --check              # the baked office floors against assets/interiors/catalogue.json
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
@@ -689,6 +690,35 @@ desks, glass rooms, lounges and filing, in five styles, eight to 32 m deep, thro
 up to a core. They are path traced with full global illumination from their own lamps, pendants and
 screens (`shaders/interior/pathtrace.glsl`, checked by `bake_test`), and from what lies outside, each
 in a colour of the place they land. See `docs/interior-impostors.md`.
+
+#### Interior impostors: baking (`tools/interior_bake`)
+`assets/interiors/catalogue.json` is the list of modules and what each is made from: bays, bay width,
+depth, floor height, core, style, light state and seed. It is the only hand-written file in that folder.
+One command makes the rest:
+
+```
+build/interior_bake --catalogue             # bake both tiers of whatever changed
+build/interior_bake --catalogue --dry-run   # say what that would be
+build/interior_bake --check                 # validate the files against the catalogue (no GPU)
+```
+
+Each sidecar records a hash of the bake's inputs: the scene as generated (so the floor code, the models
+and the textures), the module's inputs and the settings. A module bakes again when that hash changes.
+The code that traces and encodes isn't in the hash: change `BAKER_VERSION` in `bake.h` when it changes a
+bake's result. A bake that stops carries on from where it stopped when run again. The same inputs on the
+same GPU and driver give the same bytes.
+
+**How long.** About 3 h 25 min for the twelve modules' two tiers on an RTX 4080 SUPER, so run it
+overnight, and 615 MB, all in Git LFS. Every version of those files counts against the LFS quota, so
+commit re-bakes at the end of a piece of work, not as you go. `--only <name>` takes one module, and
+`--spp 64 --ext-spp 64 --out <dir>` makes a quick draft elsewhere. `--scene <name> --out <dir> --preview p.png`
+bakes a single floor and writes pictures of it.
+
+**Models.** The furniture in `assets_src/interiors` is used by the bake alone, and never loaded by the game:
+glTF 2.0 binary, metres, y up, front +z, standing on y = 0, with full PBR textures embedded and no polygon
+limit. `tools/interior_models.py pack` makes them from the originals, and its `check` reports stance and
+leaks. Changing one re-bakes every module that uses it. Needs: the Vulkan SDK, a GPU with ray queries, and
+`git lfs pull` for the sources.
 
 ### Streets and light
 Each carriageway is one quad, trimmed at its junctions and clipped to the chunk, over a plain

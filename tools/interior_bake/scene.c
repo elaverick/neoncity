@@ -26,7 +26,6 @@
 
 const char *const SCENE_NAMES[] = { "through30", "core12", "corner16", "glass20" };
 const int SCENE_COUNT = 4;
-const char *const LIGHT_STATE_NAMES[LIGHTS_COUNT] = { "after_hours", "late_shift", "cleaners", "screens" };
 const char *const LIGHT_STATE_SUFFIX[LIGHTS_COUNT] = { "", "_late", "_cleaners", "_dark" };
 
 /* ------------------------------------------------------------ the scenes --- */
@@ -175,6 +174,26 @@ uint64_t scene_hash(const Scene *s) {
     h = fnv(h, s->insts, sizeof(BakeInst) * (size_t)s->ninsts);
     h = fnv(h, s->attrs, sizeof(float) * 5 * s->nverts);
     for (int i = 0; i < s->nimages; ++i) h = fnv(h, s->images[i].bytes, s->images[i].size);
+    return h;
+}
+
+uint64_t scene_input_hash(const Scene *s, const BakeSettings *b) {
+    uint64_t h = 14695981039346656037ull, sh = scene_hash(s);
+    int format = BAKE_FORMAT_VERSION;
+    h = fnv(h, BAKER_VERSION, strlen(BAKER_VERSION));
+    h = fnv(h, &format, sizeof(format));
+    h = fnv(h, &sh, sizeof(sh));
+    /* the rest of the scene that isn't its geometry and materials; not its name, which a tier adds to */
+    const float f[] = { s->W, s->H, s->D, s->ceilY, s->sill, s->head, s->period, s->xmin, s->xmax, s->outside[0], s->outside[1], s->outside[2], s->ambient, s->bayW };
+    const int   n[] = { s->type, s->state, s->sealed, s->bays };
+    h = fnv(h, f, sizeof(f));
+    h = fnv(h, n, sizeof(n));
+    h = fnv(h, s->floorInfo, strlen(s->floorInfo));
+    /* how it is baked: each field by name, since these structs may have padding */
+    const float bf[] = { b->v.azMax, b->v.elMin, b->v.elMax, b->v.inset, b->v.s0, b->tpm, b->margin, b->ic.maxTexStep, b->ic.unknownW, b->ic.offGridW, b->tc.clamp, b->tc.visibleCap, b->tc.extPeriod };
+    const int   bn[] = { b->v.nu, b->v.nv, b->v.kind, b->ic.K, b->ic.lastSlot, b->ic.maxSteps, b->ic.refine, b->tc.spp, b->tc.batch, b->tc.bounces, b->tc.slots, b->tc.nee, (int)b->tc.seed, b->extSpp };
+    h = fnv(h, bf, sizeof(bf));
+    h = fnv(h, bn, sizeof(bn));
     return h;
 }
 

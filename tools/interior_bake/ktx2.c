@@ -13,8 +13,6 @@
  *
  * The march reads texels, so there are no mips yet. */
 
-#define BAKE_FORMAT_VERSION 3
-#define BAKER_VERSION "im7-near-1"
 /* Radiance into the engine's units, from the calibration in test.c: 1.2 m troffers on the lobby's
  * grid light a table's top as the lobby's analytic panels do (section 16). */
 const float BAKE_SCALE = 0.375f;
@@ -216,7 +214,9 @@ bool bake_write(const char *dir, const Scene *s, const Capture *c, const ImpConf
     static const char *types[] = { "through", "core", "corner" };
     const ViewGrid *vg = &c->views;
     fprintf(f, "{\n  // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.\n");
-    fprintf(f, "  \"version\": %d,\n  \"baker\": \"%s\",\n  \"module\": \"%s\",\n", BAKE_FORMAT_VERSION, BAKER_VERSION, s->name);
+    fprintf(f, "  \"version\": %d,\n  \"baker\": \"%s\",\n", BAKE_FORMAT_VERSION, BAKER_VERSION);
+    if (s->inputHash) fprintf(f, "  \"input_hash\": \"%016llx\",\n", (unsigned long long)s->inputHash);
+    fprintf(f, "  \"module\": \"%s\",\n", s->name);
     fprintf(f, "  \"type\": \"%s\",\n  \"family\": \"office\",\n  \"light_state\": \"%s\",\n", types[s->type], tc ? LIGHT_STATE_NAMES[s->state] : "im1_direct");
     if (tc)
         fprintf(f, "  \"trace\": { \"samples\": %d, \"bounces\": %d, \"clamp\": %.1f, \"seed\": %u },\n",

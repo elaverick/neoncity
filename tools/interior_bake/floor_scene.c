@@ -357,6 +357,7 @@ static void build_services(Scene *s, const Kit *k, const FloorPlan *P, float x0,
 
 bool floor_scene_build(Scene *s, const char *name, int state, const char *assets, bool *found) {
     const FloorEntry *en = NULL;
+    floor_catalogue_load(assets);
     for (int i = 0; i < FLOOR_CATALOGUE_COUNT && !en; ++i) if (!strcmp(FLOOR_CATALOGUE[i].name, name)) en = &FLOOR_CATALOGUE[i];
     *found = en != NULL;
     if (!en) return false;

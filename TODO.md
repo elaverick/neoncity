@@ -367,11 +367,13 @@ target is `docs/reference/office_night.png`.
   modules in the engine, `interior_lab office`, `office_rules`).
   The city (IM7, doc section 20: modules chosen by the plate behind each face, the building's side, on by default, a streamed near tier).
   The last furniture and real windows (IM10, doc section 21: glass that can see out shows the city behind it).
-- **Next:** the catalogue and one-command rebuild (IM8). Unchecked from IM10: the fade at 112-150 m on a walk, L-shaped plates. Impostors now cost +1.8 ms on the city pass at level, against a 0.5 ms target.
+  The catalogue and one command (IM8, doc section 22: `interior_bake --catalogue`, `--check`).
+- **Next:** polish (IM9). Unchecked from IM10: the fade at 112-150 m on a walk, L-shaped plates. Impostors now cost +1.8 ms on the city pass at level, against a 0.5 ms target.
 - **Check smoke and flames behind real windows.** They depend on `depthResolve`, which takes the pane's sample 0, so they probably stop at the pane.
 - **Reflections on side windows get masked out** where you can see through the window to the other side (real windows, IM10).
 - **Leftovers:** no mips; the city pass is about +1 ms at a share of 0.4, twice the 0.5 ms target; the two corner modules are generated and checked but neither committed nor drawn (doc, section 20, says why), so a desk can be cut by the side glass; a long L-shaped face has one plate depth; the base tier keeps the old BC6H fit until it is next baked; the floor's
-  neon streaks are fainter than the reference's; up close, thin lights under a texel still break up; generator inputs are a table in `floor_gen.c` (IM8: the catalogue).
+  neon streaks are fainter than the reference's; up close, thin lights under a texel still break up.
+- **`BAKER_VERSION` is changed by hand** (`tools/interior_bake/bake.h`): a change to the tracer or the encoders that forgets it leaves old bakes reported as up to date.
 - **The furniture is in** (IM6 and IM10, doc sections 19 and 21). Only the lounge's low table is still a box, and books are textured cuboids by choice.
 - **Corners:** corner modules would need a grid of three tiles to replace the side stop (doc, section 20), and not on
   interior-mapped floors or ground-floor shops.

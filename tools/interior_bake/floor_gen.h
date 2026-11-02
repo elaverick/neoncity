@@ -110,11 +110,16 @@ typedef struct FloorPlan {
     float      viewYaw;          /* degrees */
 } FloorPlan;
 
-typedef struct FloorEntry { const char *name; FloorParams p; int state; } FloorEntry;
-/* The modules the baker knows (IM8 moves their inputs to assets/interiors/catalogue.json). Those
- * with p.corner are baked and checked but not drawn: the engine has no corner keying until IM7. */
-extern const FloorEntry FLOOR_CATALOGUE[];
-extern const int FLOOR_CATALOGUE_COUNT;
+typedef struct FloorEntry { char name[24]; FloorParams p; int state; bool drawn; } FloorEntry;
+/* The modules the baker knows: their inputs are assets/interiors/catalogue.json, which
+ * floor_catalogue_load reads into this table. Those not drawn (the corners: the engine doesn't draw
+ * them, doc section 20) are planned and checked, and baked only by name. */
+#define FLOOR_CATALOGUE_MAX 64
+extern FloorEntry FLOOR_CATALOGUE[FLOOR_CATALOGUE_MAX];
+extern int FLOOR_CATALOGUE_COUNT;
+/* Reads <assets>/interiors/catalogue.json, once. False, with the reason on stderr, if it won't do. */
+bool floor_catalogue_load(const char *assets);
+extern const char *const LIGHT_STATE_NAMES[LIGHTS_COUNT];
 
 /* Plans a floor. plan is large: don't put one on the stack. False if eight attempts all fail
  * validation (plan->why says how; the last attempt is left in plan). */

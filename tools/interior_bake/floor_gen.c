@@ -1,4 +1,5 @@
 #include "floor_gen.h"
+#include "json.h"
 #include "plant.h"
 #include <math.h>
 #include <stdio.h>
@@ -13,25 +14,69 @@
 const char *const FLOOR_STYLE_NAMES[FS_COUNT] = { "open", "lanes", "collab", "exec", "dense" };
 const char *const FLOOR_CORE_NAMES[3] = { "none", "back", "centre" };
 
-/* The catalogue. Depth classes (section 3) through 8, 12, 16, 24, 32 and core 8, 12, 16; three
- * widths, three floor heights. Most stay after hours; the other states are one module in six each. */
-const FloorEntry FLOOR_CATALOGUE[] = {
-    { "through8_lounge",  { 3, 3.6f,  8.0f, 3.9f, FLOOR_CORE_NONE,   0, FS_EXEC,   0x51A1u }, LIGHTS_AFTER_HOURS },
-    { "through12_collab", { 4, 3.0f, 12.0f, 4.0f, FLOOR_CORE_NONE,   0, FS_COLLAB, 0x51A2u }, LIGHTS_SCREENS },
-    { "through16_collab", { 4, 3.3f, 16.0f, 4.2f, FLOOR_CORE_NONE,   0, FS_COLLAB, 0x51A3u }, LIGHTS_AFTER_HOURS },
-    { "through16_dense",  { 3, 3.6f, 16.0f, 3.7f, FLOOR_CORE_NONE,   0, FS_DENSE,  0x51A4u }, LIGHTS_CLEANERS },
-    { "through24_lanes",  { 4, 3.3f, 24.0f, 4.0f, FLOOR_CORE_NONE,   0, FS_LANES,  0x51A5u }, LIGHTS_LATE_SHIFT },
-    { "through24_core",   { 4, 3.0f, 24.0f, 3.9f, FLOOR_CORE_CENTRE, 0, FS_COLLAB, 0x51A6u }, LIGHTS_AFTER_HOURS },
-    { "through32_open",   { 4, 3.0f, 32.0f, 4.0f, FLOOR_CORE_NONE,   0, FS_OPEN,   0x51A7u }, LIGHTS_AFTER_HOURS },
-    { "through32_lanes",  { 3, 3.6f, 32.0f, 4.2f, FLOOR_CORE_NONE,   0, FS_LANES,  0x51A8u }, LIGHTS_SCREENS },
-    { "core8_exec",       { 3, 3.6f,  8.5f, 4.2f, FLOOR_CORE_BACK,   0, FS_EXEC,   0x51A9u }, LIGHTS_AFTER_HOURS },
-    { "core12_open",      { 4, 3.0f, 12.5f, 4.0f, FLOOR_CORE_BACK,   0, FS_OPEN,   0x51AAu }, LIGHTS_LATE_SHIFT },
-    { "core12_collab",    { 4, 3.3f, 12.5f, 3.7f, FLOOR_CORE_BACK,   0, FS_COLLAB, 0x51ABu }, LIGHTS_CLEANERS },
-    { "core16_lanes",     { 3, 3.6f, 16.5f, 4.0f, FLOOR_CORE_BACK,   0, FS_LANES,  0x51ACu }, LIGHTS_AFTER_HOURS },
-    { "corner12_collab",  { 4, 3.0f, 12.5f, 4.0f, FLOOR_CORE_BACK,   1, FS_COLLAB, 0x51ADu }, LIGHTS_AFTER_HOURS },
-    { "corner16_open",    { 4, 3.3f, 16.5f, 4.0f, FLOOR_CORE_BACK,   1, FS_OPEN,   0x51AEu }, LIGHTS_LATE_SHIFT },
-};
-const int FLOOR_CATALOGUE_COUNT = (int)(sizeof(FLOOR_CATALOGUE) / sizeof(FLOOR_CATALOGUE[0]));
+const char *const LIGHT_STATE_NAMES[LIGHTS_COUNT] = { "after_hours", "late_shift", "cleaners", "screens" };
+
+FloorEntry FLOOR_CATALOGUE[FLOOR_CATALOGUE_MAX];
+int FLOOR_CATALOGUE_COUNT = 0;
+
+static int name_index(const Json *e, const char *key, const char *const *names, int n) {
+    const Json *j = json_get(e, key);
+    if (!j || j->type != JSON_STRING) return -1;
+    for (int i = 0; i < n; ++i) if (!strcmp(j->string, names[i])) return i;
+    return -1;
+}
+
+static bool number_of(const Json *e, const char *key, double *v) {
+    const Json *j = json_get(e, key);
+    if (!j || j->type != JSON_NUMBER) return false;
+    *v = j->number;
+    return true;
+}
+
+static const char *entry_read(const Json *e, FloorEntry *out) {
+    const Json *name = json_get(e, "name"), *corner = json_get(e, "corner"), *drawn = json_get(e, "drawn");
+    double bays, bayW, depth, height, seed;
+    if (!name || name->type != JSON_STRING || !name->string[0] || strlen(name->string) >= sizeof(out->name)) return "needs a \"name\", under 24 characters";
+    if (!number_of(e, "bays", &bays) || !number_of(e, "bay_width", &bayW) || !number_of(e, "depth", &depth) || !number_of(e, "floor_height", &height) || !number_of(e, "seed", &seed))
+        return "needs \"bays\", \"bay_width\", \"depth\", \"floor_height\" and \"seed\"";
+    if (bays < 1.0 || bayW <= 0.0 || depth <= 0.0 || height <= 0.0 || seed < 0.0 || seed > 4294967295.0) return "has a number out of range";
+    int core = name_index(e, "core", FLOOR_CORE_NAMES, 3), style = name_index(e, "style", FLOOR_STYLE_NAMES, FS_COUNT);
+    int state = name_index(e, "light_state", LIGHT_STATE_NAMES, LIGHTS_COUNT);
+    if (core < 0 || style < 0 || state < 0) return "has an unknown \"core\", \"style\" or \"light_state\"";
+    if ((corner && corner->type != JSON_BOOL) || (drawn && drawn->type != JSON_BOOL)) return "has a \"corner\" or \"drawn\" that isn't true or false";
+    memset(out, 0, sizeof(*out));
+    snprintf(out->name, sizeof(out->name), "%s", name->string);
+    out->p = (FloorParams){ (int)bays, (float)bayW, (float)depth, (float)height, core, corner && corner->number != 0.0, style, (uint32_t)seed };
+    out->state = state;
+    out->drawn = !drawn || drawn->number != 0.0;
+    return NULL;
+}
+
+bool floor_catalogue_load(const char *assets) {
+    static bool loaded = false;
+    if (loaded) return true;
+    char path[1100], err[256];
+    snprintf(path, sizeof(path), "%s/interiors/catalogue.json", assets);
+    Json *doc = json_load(path, err, sizeof(err));
+    if (!doc) { fprintf(stderr, "%s: %s\n", path, err); return false; }
+    const Json *mods = json_get(doc, "modules");
+    const char *bad = mods && mods->type == JSON_ARRAY ? NULL : "no \"modules\" list";
+    int line = 0, n = 0;
+    for (int i = 0; !bad && i < json_count(mods); ++i) {
+        const Json *e = json_at(mods, i);
+        line = e->line;
+        if (n >= FLOOR_CATALOGUE_MAX) bad = "more modules than the baker holds";
+        else if (e->type != JSON_OBJECT) bad = "a module must be an object";
+        else bad = entry_read(e, &FLOOR_CATALOGUE[n]);
+        for (int k = 0; !bad && k < n; ++k) if (!strcmp(FLOOR_CATALOGUE[k].name, FLOOR_CATALOGUE[n].name)) bad = "names a module twice";
+        n++;
+    }
+    json_free(doc);
+    if (bad) { fprintf(stderr, "%s: line %d: %s\n", path, line, bad); return false; }
+    FLOOR_CATALOGUE_COUNT = n;
+    loaded = true;
+    return true;
+}
 
 const char *floor_zone_name(int kind) {
     static const char *const N[FZ_COUNT] = { "work", "room", "lounge", "store" };

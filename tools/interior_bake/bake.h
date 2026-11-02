@@ -40,7 +40,6 @@ enum { BASIS_INTERIOR = 0, BASIS_STREET, BASIS_NEON, BASIS_SKY, BASIS_SCREENS, B
 enum { GROUP_INTERIOR = 0, GROUP_SCREEN = 1 };
 
 /* A module's light state (docs/interior-impostors.md, section 3). */
-extern const char *const LIGHT_STATE_NAMES[LIGHTS_COUNT];
 extern const char *const LIGHT_STATE_SUFFIX[LIGHTS_COUNT];
 
 typedef struct Scene {
@@ -59,6 +58,7 @@ typedef struct Scene {
     float bayW;              /* metres */
     float view[3];           /* a generated floor's place for a still: x, z, yaw (degrees) */
     char  floorInfo[160];    /* a generated floor's inputs, for its sidecar */
+    uint64_t inputHash;      /* for its sidecar (scene_input_hash; 0: none) */
 
     float    *verts;  uint32_t nverts, capVerts;   /* xyz */
     float    *attrs;  uint32_t capAttrs;           /* a normal and a UV per vertex (zero: the triangle's own normal) */
@@ -81,6 +81,10 @@ bool scene_build(Scene *s, const char *name, int state, const char *assets);
 void scene_free(Scene *s);
 /* A hash of the geometry and materials a bake sees. */
 uint64_t scene_hash(const Scene *s);
+struct BakeSettings;
+/* A hash of all that goes into a bake: the scene (so the generator's output and the models and textures
+ * it read), the settings and the tracer's version. A sidecar records it (catalogue.c). */
+uint64_t scene_input_hash(const Scene *s, const struct BakeSettings *b);
 /* The room that calibrates the bake scale (test.c): 1.2 m troffers on the lobby's 3.6 m grid. */
 void scene_calibration(Scene *s, float tableY);
 /* Scenes built by hand (test.c): an empty scene with the unit cube, a material, and a box of it. */
@@ -195,6 +199,22 @@ const char *gpu_name(const Gpu *g);
 
 /* ---------------------------------------------------------------- output --- */
 
+/* The sidecars' format, and the tracer's version. BAKER_VERSION goes into every bake's input hash, and
+ * is the one thing that stands for the code of the bake: change it when the path tracer, the capture,
+ * shaders/brdf.glsl or the encoders change what a bake comes out as, or the catalogue won't re-bake. */
+#define BAKE_FORMAT_VERSION 3
+#define BAKER_VERSION "im7-near-1"
+
+/* Everything that says how a bake is made, apart from its scene. */
+typedef struct BakeSettings {
+    ViewGrid    v;
+    float       tpm, margin;
+    ImpConfig   ic;
+    TraceConfig tc;
+    int         extSpp;
+    bool        direct;   /* IM1's direct light, not path traced */
+} BakeSettings;
+
 /* Radiance into the engine's units (ktx2.c): set by the calibration in test.c. */
 extern const float BAKE_SCALE;
 /* The brightest a fitting looks in the bake's units: a lobby's diffuser in the engine's, over BAKE_SCALE. */
@@ -215,6 +235,21 @@ bool beauty_render(Gpu *g, const Scene *s, const TraceConfig *tc, const char *ca
 /* A PNG of the bake's view nearest the elevation (radians; > 0: looking up from below), its nearest
  * layer tone-mapped (main.c --preview). */
 bool bake_preview(const char *path, const Capture *c, float elevation, float exposure);
+/* The defaults (view grid in degrees, until bake_settings_finish: any flags go between). */
+BakeSettings bake_settings_default(void);
+void bake_settings_finish(BakeSettings *b);
+/* Bakes a scene to dir on a GPU of its own, stamping its input hash; preview may be NULL (catalogue.c). */
+bool bake_module(const char *dir, Scene *s, const BakeSettings *b, bool validation, const char *preview);
+typedef struct CatalogueRun {
+    const char *assets, *out;
+    const char *only;    /* one module (it may be one not drawn), or NULL: every module drawn */
+    bool dry, force, adopt, validation;
+} CatalogueRun;
+/* Bakes each tier of each module whose input hash isn't in its sidecar. base: its view grid in degrees.
+ * dry: says what it would do. adopt: writes the hash into a sidecar that has none, in place of baking. */
+int catalogue_bake(const BakeSettings *base, const CatalogueRun *run);
+/* Validates what's on disk against the catalogue. 0 if sound; a bake that's merely old is reported, not failed. */
+int catalogue_check(const BakeSettings *base, const char *assets, const char *out);
 /* The sweep (lab.c): every scene, against the truth from street and level cameras. */
 int  lab_run(Gpu *g, const char *outDir, const char *assets, bool quick);
 /* The path tracer's tests (test.c): a furnace, the Cornell box against dataDir's reference, and

@@ -2,6 +2,7 @@
   // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.
   "version": 3,
   "baker": "im7-near-1",
+  "input_hash": "c72612de009db1dd",
   "module": "core12_open",
   "type": "core",
   "family": "office",

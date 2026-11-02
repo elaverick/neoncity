@@ -5,9 +5,10 @@
 
 /* Baked interior impostors (docs/interior-impostors.md), read without the GPU
  * (src/render/interiors.c uploads them; tests/material_test.c checks every
- * file). assets/interiors/catalogue.json names the modules:
+ * file). assets/interiors/catalogue.json names the modules, with what the baker
+ * makes each from (tools/interior_bake/floor_gen.c reads those):
  *
- *   { "modules": ["through30", "core12", "glass20", "through30_late", ...] }
+ *   { "modules": [{ "name": "through8_lounge", ..., "drawn": true }, ...] }
  *
  * and each module is assets/interiors/<name>.json, the sidecar
  * tools/interior_bake writes (format version 3), beside its five KTX2

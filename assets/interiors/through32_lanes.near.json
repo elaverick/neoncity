@@ -2,6 +2,7 @@
   // An interior impostor module (docs/interior-impostors.md), written by tools/interior_bake: don't edit.
   "version": 3,
   "baker": "im7-near-1",
+  "input_hash": "5f7db9a5f7fa1bd0",
   "module": "through32_lanes.near",
   "type": "through",
   "family": "office",

@@ -240,7 +240,7 @@ target_include_directories(building_lab PRIVATE ${SRC_DIRS})
 # (interior_lab [size_m] [renders] [out_dir] [verbose_count] [x z]); arcologies with
 # plan and section renders (interior_lab arcology [size_m] [renders] [out_dir] [verbose_count] [x z]); the baked
 # office floors' generator (interior_lab office [layouts] [out_dir]: tests/office_lab.c).
-add_executable(interior_lab tests/interior_lab.c tests/office_lab.c tools/interior_bake/floor_gen.c ${GEN_SOURCES})
+add_executable(interior_lab tests/interior_lab.c tests/office_lab.c tools/interior_bake/floor_gen.c src/core/json.c ${GEN_SOURCES})
 target_include_directories(interior_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR} tools/interior_bake)
 # Lobby plants (src/gen/plant.c): every archetype over seeds, tiers and gravities; optional contact sheets
 # (plant_lab [seeds] [out_dir]).
@@ -346,7 +346,7 @@ endif()
 add_executable(interior_bake tools/interior_bake/main.c tools/interior_bake/scene.c tools/interior_bake/gpu.c
                tools/interior_bake/pack.c tools/interior_bake/ktx2.c tools/interior_bake/lab.c tools/interior_bake/test.c
                tools/interior_bake/bc.c tools/interior_bake/beauty.c tools/interior_bake/kit.c
-               tools/interior_bake/floor_gen.c tools/interior_bake/floor_scene.c tools/interior_bake/furniture.c
+               tools/interior_bake/floor_gen.c tools/interior_bake/floor_scene.c tools/interior_bake/furniture.c tools/interior_bake/catalogue.c
                src/render/vkcore.c src/city/models.c src/core/assets.c ${MATERIAL_SOURCES}
                src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c)
 add_dependencies(interior_bake shaders)
@@ -366,6 +366,8 @@ endif()
 add_test(NAME bake_test COMMAND interior_bake --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/data)
 # A floor built from the furniture's models (assets_src/interiors, in LFS): CPU only.
 add_test(NAME furniture_scene COMMAND interior_bake --hash through8_lounge)
+# The bakes on disk against the catalogue's modules: CPU only. A bake that's merely old is reported, not failed.
+add_test(NAME interior_catalogue COMMAND interior_bake --check)
 
 # --- Tools: the Earth bake ------------------------------------------------------
 # Bakes the Earth project's staged grid (tools/earth/earth.py stage) onto the six cube

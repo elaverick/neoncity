@@ -327,6 +327,7 @@ static void test_encoders(void) {
 static void test_floors(void) {
     printf("floors\n");
     int same = 0;
+    check(floor_catalogue_load(NEONCITY_ASSETS), "the catalogue reads");
     for (int i = 0; i < FLOOR_CATALOGUE_COUNT; ++i) {
         Scene a, b;
         if (!scene_build(&a, FLOOR_CATALOGUE[i].name, -1, NEONCITY_ASSETS)) continue;

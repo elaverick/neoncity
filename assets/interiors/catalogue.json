@@ -1,10 +1,27 @@
 {
-  // The interior impostor modules the engine loads (docs/interior-impostors.md, section 8;
-  // src/render/interior_def.h), each <name>.json and its KTX2 files beside this file.
-  // IM5: the floor generator's twelve (tools/interior_bake/floor_gen.c, which holds their inputs
-  // until IM8 moves them here), each baked by
-  //   interior_bake --scene <name> --out assets/interiors
-  // and each one's near tier, <name>.near.*, which the engine finds for itself, by adding --near.
-  "modules": ["through8_lounge", "through12_collab", "through16_collab", "through16_dense", "through24_lanes", "through24_core",
-              "through32_open", "through32_lanes", "core8_exec", "core12_open", "core12_collab", "core16_lanes"]
+  // The interior impostor modules (docs/interior-impostors.md, sections 8 and 22): hand-written, the one
+  // file here that is. Each is what the floor generator (tools/interior_bake/floor_gen.c) makes it from;
+  // the baker writes <name>.json and its KTX2 files, and <name>.near.* for its near tier, beside this file.
+  // After changing anything here, or the floors' code, models or textures:
+  //   interior_bake --catalogue
+  // bakes what that changed. Depth classes (section 3): through 8, 12, 16, 24, 32 and core 8, 12, 16;
+  // three widths, three floor heights; most stay after hours, the other states one module in six each.
+  // "drawn": false: the generator plans it and tests check it, but the engine doesn't draw it and
+  // --catalogue bakes it only with --only (a corner doesn't tile: section 20).
+  "modules": [
+    { "name": "through8_lounge"  , "bays": 3, "bay_width": 3.6, "depth":  8.0, "floor_height": 3.9, "core": "none"  , "style": "exec"  , "light_state": "after_hours", "seed": 20897 },
+    { "name": "through12_collab" , "bays": 4, "bay_width": 3.0, "depth": 12.0, "floor_height": 4.0, "core": "none"  , "style": "collab", "light_state": "screens"    , "seed": 20898 },
+    { "name": "through16_collab" , "bays": 4, "bay_width": 3.3, "depth": 16.0, "floor_height": 4.2, "core": "none"  , "style": "collab", "light_state": "after_hours", "seed": 20899 },
+    { "name": "through16_dense"  , "bays": 3, "bay_width": 3.6, "depth": 16.0, "floor_height": 3.7, "core": "none"  , "style": "dense" , "light_state": "cleaners"   , "seed": 20900 },
+    { "name": "through24_lanes"  , "bays": 4, "bay_width": 3.3, "depth": 24.0, "floor_height": 4.0, "core": "none"  , "style": "lanes" , "light_state": "late_shift" , "seed": 20901 },
+    { "name": "through24_core"   , "bays": 4, "bay_width": 3.0, "depth": 24.0, "floor_height": 3.9, "core": "centre", "style": "collab", "light_state": "after_hours", "seed": 20902 },
+    { "name": "through32_open"   , "bays": 4, "bay_width": 3.0, "depth": 32.0, "floor_height": 4.0, "core": "none"  , "style": "open"  , "light_state": "after_hours", "seed": 20903 },
+    { "name": "through32_lanes"  , "bays": 3, "bay_width": 3.6, "depth": 32.0, "floor_height": 4.2, "core": "none"  , "style": "lanes" , "light_state": "screens"    , "seed": 20904 },
+    { "name": "core8_exec"       , "bays": 3, "bay_width": 3.6, "depth":  8.5, "floor_height": 4.2, "core": "back"  , "style": "exec"  , "light_state": "after_hours", "seed": 20905 },
+    { "name": "core12_open"      , "bays": 4, "bay_width": 3.0, "depth": 12.5, "floor_height": 4.0, "core": "back"  , "style": "open"  , "light_state": "late_shift" , "seed": 20906 },
+    { "name": "core12_collab"    , "bays": 4, "bay_width": 3.3, "depth": 12.5, "floor_height": 3.7, "core": "back"  , "style": "collab", "light_state": "cleaners"   , "seed": 20907 },
+    { "name": "core16_lanes"     , "bays": 3, "bay_width": 3.6, "depth": 16.5, "floor_height": 4.0, "core": "back"  , "style": "lanes" , "light_state": "after_hours", "seed": 20908 },
+    { "name": "corner12_collab"  , "bays": 4, "bay_width": 3.0, "depth": 12.5, "floor_height": 4.0, "core": "back"  , "style": "collab", "light_state": "after_hours", "seed": 20909, "corner": true, "drawn": false },
+    { "name": "corner16_open"    , "bays": 4, "bay_width": 3.3, "depth": 16.5, "floor_height": 4.0, "core": "back"  , "style": "open"  , "light_state": "late_shift" , "seed": 20910, "corner": true, "drawn": false }
+  ]
 }

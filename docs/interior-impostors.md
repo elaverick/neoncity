@@ -147,7 +147,7 @@ The mid and far terms are matched so nothing pops at the transitions.
 ## 8. Files and storage
 
 ```
-assets/interiors/catalogue.json             every module's generator inputs, seed and input hash
+assets/interiors/catalogue.json             every module's generator inputs and seed (hand-written)
 assets/interiors/<module>.json              the sidecar (below)
 assets/interiors/<module>.<channel>.ktx2    lint, albedo, ext, depth: one 2D array texture each,
                                             layer = view * K + depth layer, with mips (IM2: one level, no ext yet);
@@ -163,9 +163,9 @@ assets_src/interiors/                       high-poly source models (bake only; 
 - the view grid (Nu, Nv and the warp), K, and the resolution per layer
 - `bakeScale`
 - per-bay mean radiance per channel
-- the seed, the generator and baker versions, and the hash of every input
+- the seed, the baker's version, and `input_hash`, the hash of every input (section 22)
 
-The engine reads the catalogue at startup, as it reads the adverts (`src/render/adverts.c`): `src/render/interior_def.c` reads the catalogue, the sidecars and the KTX2 headers (`material_test` checks them with it), and `src/render/interiors.c` uploads them. A missing or malformed module is left out, and the floors that would have used it keep interior mapping. The files are generated assets: written by the baker, never edited by hand. IM2's catalogue is a list of names (`{ "modules": [...] }`); IM8 adds each module's inputs.
+The engine reads the catalogue at startup, as it reads the adverts (`src/render/adverts.c`): `src/render/interior_def.c` reads the catalogue, the sidecars and the KTX2 headers (`material_test` checks them with it), and `src/render/interiors.c` uploads them. A missing or malformed module is left out, and the floors that would have used it keep interior mapping. The sidecars and KTX2 files are generated assets: written by the baker, never edited by hand. The catalogue is the one hand-written file: each module's name and generator inputs (section 22).
 
 **Storage** (decided 2026-10-29): the bakes and the high-poly sources both go in Git LFS (`.gitattributes`) while the account has capacity. On 2026-10-29 the repo's LFS objects took about 0.5 GiB of the free 10 GiB. If capacity runs short, the sources stay in LFS and the bakes leave it, since the baker can rebuild them with one command. Every version of an LFS file counts towards storage, so re-bakes are committed at the end of a milestone, not on every iteration.
 
@@ -198,11 +198,9 @@ The baker is `tools/interior_bake/`, an in-house path tracer in C11 and Vulkan c
   - `--test <dir>`: the path tracer's tests (ctest `bake_test`); `--write-ref` renders their reference.
   - `--beauty x,y,z,yaw,pitch[,fov] --image <png>`: a perspective still from inside a module, for look-dev against the reference (section 16). A generated floor also takes `--beauty auto`, a place its plan chooses.
   - `--scene` takes a generated floor by name as well as a test floor (`--list` gives them), and `--state` bakes it in another light state. `--hash <name>` prints a hash of a scene's geometry and materials without the GPU.
-- Still to come:
-  - `--catalogue`: bakes whatever changed, by input hash.
-  - `--check`: validates the catalogue's files.
+  - `--catalogue`: bakes whatever changed, by input hash; `--check`: validates the catalogue's files (section 22).
 
-A full catalogue is meant to bake overnight.
+A full catalogue bakes overnight: 3 h 25 min for the twelve, both tiers (section 21).
 
 **Tests** (ctest `bake_test`, section 15): a furnace test (energy conserved to within 1%), a Cornell box against a stored reference image, and determinism (same seed, same bytes).
 
@@ -247,7 +245,7 @@ The working plan is kept outside the repo. In summary:
 | IM5 | The office floor generator and its validation. Done: section 17 |
 | IM6 | The high-poly furniture, textures in the path tracer, printed matter. Done: section 19 |
 | IM7 | The city: floor selection, tiling, plate depths in the vertex data, corners, LOD, memory, and a streamed near tier at 32 texels/m. Done: section 20 |
-| IM8 | The catalogue and one-command rebuild; README |
+| IM8 | The catalogue and one-command rebuild; README (done: section 22) |
 | IM9 | Animated screens, people, more kits |
 | IM10 | The last furniture and real windows. Done before IM8: section 21 |
 
@@ -531,7 +529,7 @@ IM5 replaced the hand-placed test floors in the engine with twelve generated one
 - **The engine** holds 16 modules (`INTERIOR_MAX_MODULES`, it was 8).
 - **Tests.** `interior_lab office [layouts] [out_dir]` (ctest `office_rules`, 400 layouts, 2 s) plans the catalogue and a sweep of random inputs, and fails if a catalogue module fails, a plan differs when replanned, two catalogue modules match, or over 1% of inputs find no layout. With a directory it draws the plans. `bake_test` also builds each catalogue scene twice and compares hashes.
 
-**The catalogue** (a table in `floor_gen.c` until IM8):
+**The catalogue** (a table in `floor_gen.c` until IM8; now `assets/interiors/catalogue.json`):
 
 | module | W x D (m) | H | core | style | state | desks | rooms | lounges |
 |---|---|---|---|---|---|---|---|---|
@@ -769,3 +767,26 @@ Prepass and shadow passes don't move. Frame totals for modelled and real views a
 
 **Images** (`docs/reference/im10/`): `engine_level.jpg`, `engine_rain.jpg` (share 0.4), `through_high.jpg`, `through_side.jpg`, `through_far.jpg` (every floor), `still_lounge.jpg`, `still_room.jpg`, `still_printer.jpg`, `book_candidates.jpg`.
 
+## 22. IM8: the catalogue and one command
+
+`interior_bake --catalogue` is the one command: given the source tree (the generator, `assets/interiors/catalogue.json`, `assets_src/interiors`), it makes every bake the engine needs, and bakes only what changed.
+
+**The catalogue** is now where a module's inputs live: bays, bay width, depth, floor height, core, style, light state and seed, one line a module. It is hand-written, with comments. The table that was in `floor_gen.c` is gone, and `floor_catalogue_load` reads the file strictly: an unknown style, a missing number or a repeated name stops the tools with its line. The engine's reader takes only the names. The two corner modules are listed with `"drawn": false`: `office_rules` and `bake_test` still check them, the engine skips them, and only `--only` bakes them.
+
+**The input hash.** Each sidecar records `input_hash`, written last of a bake's files, and taken away before a bake starts, so a bake that dies leaves no sidecar claiming its files are good. The hash covers:
+- the scene as built: every vertex, index, instance, material and image the bake sees (`scene_hash`). So it follows the generator's and the kit's code, and the bytes of the models and textures, through what they produce, without needing a generator version to be bumped by hand. Changing one byte of a book's cover makes all twelve modules stale, as they should be, since all of them load it. Changing one seed makes one module stale, both tiers.
+- the module's size, opening, type, state and floor inputs
+- the settings: views, resolution, layers, march, samples, bounces, clamp, seed
+- `BAKER_VERSION` and the format version
+
+**What the hash can't see** is the code that turns a scene into pixels. `BAKER_VERSION` (`bake.h`) stands for that: change it when the path tracer, the capture, `shaders/brdf.glsl` or the encoders change a bake's result. Hashing the compiled shaders instead would re-bake everything, at 3 h 25 min, on any new `glslc`, and still miss the C side. The cost of this choice is that forgetting to change the version leaves old bakes reported as up to date.
+
+**The modes:**
+- `--catalogue`: both tiers of every drawn module whose hash is missing or differs, or whose files are missing or broken. It takes a fresh GPU device for each tier, prints each one's time and the total, and carries on from where it stopped if run again.
+- `--dry-run` says what would bake, `--force` bakes anyway, `--only <name>` takes one module, `--out <dir>` writes elsewhere. `--spp` and the other settings apply and count as inputs, so a draft catalogue can't pass for a final one.
+- `--adopt` writes today's hash into a sidecar that has none, without baking, if the sidecar's floor layout and trace settings are what they would be now. It exists for the bakes that were made before the hash, and it was used once, for IM10's bakes, so as not to re-bake them. It refuses a sidecar that already has a hash.
+- `--check` (ctest `interior_catalogue`, no GPU, about 10 s): each tier's sidecar and KTX2 headers load, and agree with the catalogue on name, type, light state, bays, size and texels; near tiers are twice the base's texels; bay means are in range and not all zero; the engine's reader and the baker's agree on the modules. A bake that's merely old is reported, not failed: re-bakes are committed at a milestone's end, so old bakes are normal between. `material_rules` keeps the deeper checks of the blocks themselves.
+
+**Timings** (RTX 4080 SUPER): `core8_exec`, the smallest, takes 3 min for its base tier. The whole catalogue took 3 h 25 min with other work on the GPU (section 21). A clean run writes 615 MB.
+
+RESULTS

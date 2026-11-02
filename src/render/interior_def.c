@@ -18,9 +18,11 @@ bool interior_catalogue_load(const char *path, char names[][64], int max, int *c
     if (!ok) snprintf(err, errSize, "%s: no \"modules\" list", path);
     for (int i = 0; ok && i < json_count(mods); ++i) {
         const Json *e = json_at(mods, i);
-        if (e->type != JSON_STRING || !e->string[0] || strlen(e->string) >= 64) { snprintf(err, errSize, "line %d: a module must be a name", e->line); ok = false; }
+        const Json *name = json_get(e, "name"), *drawn = json_get(e, "drawn");
+        if (!name || name->type != JSON_STRING || !name->string[0] || strlen(name->string) >= 64) { snprintf(err, errSize, "line %d: a module must have a \"name\"", e->line); ok = false; }
+        else if (drawn && drawn->type == JSON_BOOL && drawn->number == 0.0) continue;
         else if (*count >= max) { snprintf(err, errSize, "%s: more than %d modules", path, max); ok = false; }
-        else snprintf(names[(*count)++], 64, "%s", e->string);
+        else snprintf(names[(*count)++], 64, "%s", name->string);
     }
     json_free(doc);
     return ok;

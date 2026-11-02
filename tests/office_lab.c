@@ -113,6 +113,7 @@ int office_mode(int argc, char **argv) {
     FloorPlan *P = malloc(sizeof(FloorPlan)), *Q = malloc(sizeof(FloorPlan));
     if (!P || !Q) return 1;
     int failures = 0, firsts = 0, passed = 0, attempts[9] = { 0 }, kinds[FI_COUNT] = { 0 }, zones[FZ_COUNT] = { 0 };
+    if (!floor_catalogue_load(NEONCITY_ASSETS)) return 1;
     uint64_t *hashes = malloc(sizeof(uint64_t) * (size_t)FLOOR_CATALOGUE_COUNT);
     if (!hashes) return 1;
 
