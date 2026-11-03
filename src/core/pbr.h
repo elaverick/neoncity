@@ -12,7 +12,7 @@
  * configures (CMakeLists.txt, "Materials"), and reconfigures when a file is
  * added or removed, so the files, the C code and the shaders can't disagree.
  * The renderer (src/render/materials.c) loads the maps and uploads the
- * properties; shaders/city/surface.glsl reads them. */
+ * properties; shaders/pbr.glsl reads them. */
 #include "pbr_materials.h"   /* PBR_<NAME>, PBR_MATERIAL_COUNT */
 
 /* A material's maps, bound at material * PBR_MAPS_PER_MATERIAL + map. */

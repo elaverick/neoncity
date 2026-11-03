@@ -22,6 +22,7 @@ typedef struct FrameUBO {
     uint32_t doorInfo[4];  /* how many doors (src/app/lobby_doors.c: lobby_doors_frame), unused */
     uint32_t doorKey[DOOR_SLOTS / 4][4];   /* their keys, four to a vector */
     float   doorState[DOOR_SLOTS][4];      /* how far each is open (0..1, eased), a revolving one's angle (rad), unused */
+    float   ground[4];     /* the camera's x, z wrapped to 64 chunks (renderer.c: the land's textures), unused, unused */
 } FrameUBO;
 
 typedef struct Renderer Renderer;

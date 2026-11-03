@@ -153,6 +153,7 @@ VkDescriptorSetLayout make_set_layout(VkCore *vk, const VkDescriptorSetLayoutBin
 VkPipelineLayout make_pipeline_layout(VkCore *vk, VkDescriptorSetLayout set, uint32_t pushSize, VkShaderStageFlags pushStages);
 void write_as_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkAccelerationStructureKHR as);
 void write_buf_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkDescriptorType type, VkBuffer b, VkDeviceSize size);
+void write_material_set(Renderer *r, VkDescriptorSet set);
 void create_layouts(Renderer *r);
 VkPipeline make_compute(VkCore *vk, const uint32_t *code, size_t bytes, VkPipelineLayout layout);
 void create_pipelines(Renderer *r);

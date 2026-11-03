@@ -172,26 +172,28 @@ void planet_gpu_create(Renderer *r) {
     printf("Planet: patches of %d cells, %d slots (%.0f MB of vertices) out to %.0f km\n", TERRAIN_PATCH_CELLS, TERRAIN_PLANET_SLOTS,
            (double)vertBytes / (1024.0 * 1024.0), HORIZON_DISTANCE / 1000.0);
 
-    VkDescriptorPoolSize sizes[2] = {
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
+    VkDescriptorPoolSize sizes[3] = {
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = MAX_FRAMES;
-    pci.poolSizeCount = 2;
+    pci.poolSizeCount = 3;
     pci.pPoolSizes = sizes;
     VK_CHECK(vkCreateDescriptorPool(vk->device, &pci, NULL, &p->pool));
     for (int i = 0; i < MAX_FRAMES; ++i) {
         VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
         ai.descriptorPool = p->pool;
         ai.descriptorSetCount = 1;
-        ai.pSetLayouts = &r->terrainLayout;   /* the same bindings as the clipmap's: frame, vertices, roads (unused here) */
+        ai.pSetLayouts = &r->terrainLayout;   /* the same bindings as the clipmap's: frame, vertices, roads (unused here), the materials */
         VK_CHECK(vkAllocateDescriptorSets(vk->device, &ai, &p->set[i]));
         write_buf_set(vk, p->set[i], 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, r->ubo[i].buf, sizeof(FrameUBO));
         write_buf_set(vk, p->set[i], 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, p->verts.buf, vertBytes);
         VkDeviceSize roadBytes;
         VkBuffer roads = road_gpu_buffer(r, i, &roadBytes);
         write_buf_set(vk, p->set[i], 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, roads, roadBytes);
+        write_material_set(r, p->set[i]);
     }
     mutex_init(&p->lock);
     cond_init(&p->wake);

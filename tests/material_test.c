@@ -5,8 +5,9 @@
  * required map, a value of the wrong kind) are caught.
  *
  * The files: every material CMake found (PBR_MATERIAL_NAMES) reads; each map
- * it names is a PNG that decodes; its properties are sound; the road's tile
- * divides the 64 chunks over which the shaders' world coordinates wrap.
+ * it names is a PNG that decodes; its properties are sound; the tiles of
+ * what is mapped in world x and z (the road, the lawns, the land's cover)
+ * divide the 64 chunks over which the shaders' world coordinates wrap.
  *
  * The models (test_models) and the adverts (assets/adverts/*.json,
  * src/render/advert_def.c: test_adverts) and the interior impostor modules
@@ -124,8 +125,10 @@ static void test_files(const char *assets) {
         for (int i = 0; i < 3; ++i) CHECK(d.albedoMean[i] <= 1.0f, "%s: albedo_mean %g", name, d.albedoMean[i]);
     }
     /* The shaders' world coordinates wrap every 64 chunks (ground.glsl): what is mapped in world x and z
-     * (the roads, and the lots', lawns' and flat roofs' grain: planarFrame) must repeat a whole number of times in them. */
-    static const char *const WORLD_MAPPED[] = { "road", "lot_asphalt", "grass", "roof_gravel" };
+     * (the roads, and the lots', lawns' and flat roofs' grain: planarFrame; the land's ground cover: terrain/ground.glsl)
+     * must repeat a whole number of times in them. */
+    static const char *const WORLD_MAPPED[] = { "road", "lot_asphalt", "grass", "roof_gravel", "land_rock", "land_scree", "land_soil",
+                                                "land_grass", "land_sand", "land_mud", "land_snow" };
     for (size_t k = 0; k < sizeof(WORLD_MAPPED) / sizeof(WORLD_MAPPED[0]); ++k) {
         char path[1100], err[512];
         snprintf(path, sizeof(path), "%s/materials/%s.json", assets, WORLD_MAPPED[k]);

@@ -288,13 +288,14 @@ void terrain_gpu_create(Renderer *r) {
     if (!t->copies) fatal("out of memory allocating the terrain");
     upload_indices(r, t);
 
-    VkDescriptorPoolSize sizes[2] = {
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES },
+    VkDescriptorPoolSize sizes[3] = {
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = MAX_FRAMES;
-    pci.poolSizeCount = 2;
+    pci.poolSizeCount = 3;
     pci.pPoolSizes = sizes;
     VK_CHECK(vkCreateDescriptorPool(vk->device, &pci, NULL, &t->pool));
     for (int i = 0; i < MAX_FRAMES; ++i) {
@@ -308,6 +309,7 @@ void terrain_gpu_create(Renderer *r) {
         VkDeviceSize roadBytes;
         VkBuffer roads = road_gpu_buffer(r, i, &roadBytes);
         write_buf_set(vk, t->set[i], 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, roads, roadBytes);
+        write_material_set(r, t->set[i]);
     }
 
     mutex_init(&t->lock);

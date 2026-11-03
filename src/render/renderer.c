@@ -240,6 +240,14 @@ static void frame_uniforms(Renderer *r, int slot, const FrameUBO *uboIn, const d
     td.m[9] = 1.0f / SHELTER_RADIUS;  td.m[13] = -scz / SHELTER_RADIUS;
     td.m[6] = 1.0f / (SHELTER_HI - SHELTER_LO);  td.m[14] = -SHELTER_LO / (SHELTER_HI - SHELTER_LO);
     td.m[15] = 1.0f;
+    /* The camera's x, z wrapped to 64 chunks, as the city's world coordinates
+     * wrap (city.frag gWorld), from the doubles: the terrain maps its ground
+     * cover's textures in world x and z (shaders/terrain/ground.glsl) without
+     * the float camera's jitter, and in step with the city's. */
+    const double WRAP = 64.0 * CHUNK_SIZE;
+    ubo->ground[0] = (float)(cam[0] - floor(cam[0] / WRAP) * WRAP);
+    ubo->ground[1] = (float)(cam[2] - floor(cam[2] / WRAP) * WRAP);
+    ubo->ground[2] = ubo->ground[3] = 0.0f;
     /* Ray-traced shadows: the frame number turns the rays' sample points; the
      * shadow passes rebuild positions at sample 0 (Vulkan's standard sample
      * locations); the denoiser reprojects this frame's camera-relative

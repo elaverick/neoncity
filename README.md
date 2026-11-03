@@ -656,9 +656,30 @@ rest is grass, thinner on slopes and thicker by water, in patches, with soil bet
 line set by latitude (about 4.8 km at the equator, 2.8 km at 46 degrees, the sea by 80), and the ground is
 wet near water. Every rule is smooth, so the classes blend without edges. Whatever depends on distance is
 blurred over the spacing it is sampled at, so a coarse level shows about what its ground holds. Each clipmap
-sample and each patch vertex carries the cover in two packed words, and `shaders/terrain/ground.glsl` colours
-the land by it, for now with each class's flat colour; textures are to follow.
-`terrain_test --cover-map out.ppm [km [x z]]` draws it.
+sample and each patch vertex carries the cover in two packed words, and `shaders/terrain/ground.glsl` draws
+the land by it. `terrain_test --cover-map out.ppm [km [x z]]` draws it.
+
+Each class is an authored material, `assets/materials/land_<class>.json` (ambientCG, CC0, packed at 1024 from the
+2K downloads), mapped in world x and z, wrapped every 64 chunks as the city's are (`FrameUBO.ground`, from the
+camera's doubles, so the textures neither jitter nor slip against the city's):
+
+| Class | Material | ambientCG | Tile |
+|---|---|---|---|
+| rock | `land_rock` | [Rock028](https://ambientcg.com/view?id=Rock028) | 4 m; from all three axes (triplanar) where the ground is steeper than ny 0.92 |
+| scree | `land_scree` | [Ground110](https://ambientcg.com/view?id=Ground110) | 2.2 m |
+| soil | `land_soil` | [Ground106](https://ambientcg.com/view?id=Ground106) | 2.5 m |
+| grass | `land_grass` | [Ground037](https://ambientcg.com/view?id=Ground037) | 2.2 m; moss and short grass with soil showing, the ground grass blades will stand on |
+| sand | `land_sand` | [Ground054](https://ambientcg.com/view?id=Ground054) | 3.52 m |
+| mud | `land_mud` | [Ground051](https://ambientcg.com/view?id=Ground051) | 2 m |
+| snow | `land_snow` | [Snow014](https://ambientcg.com/view?id=Snow014) | 3.2 m |
+
+A class's colour is its albedo's mean times its `albedo_scale` (chosen to keep the land as bright as its flat
+colours were), or its `params` rgb where given: the grass takes the park lawns' hue, so the land's grass meets
+the city's. Near the camera each class's albedo and normal map are sampled by its weight (a class under 1/64 of
+a pixel is its colour, unsampled) and drawn about that colour, so the texture's mean is the colour; as a pixel
+comes to span 0.2 to 0.32 m (about 190 to 300 m away at 1080 lines), they fade into the flat colours, which is
+all the planet's patches and the far clipmap draw. The lighting stays diffuse. At ground level the textures add
+about 0.05-0.15 ms to the terrain pass.
 
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the
@@ -1172,8 +1193,9 @@ glass's metres per pixel, grown with how deep into the room the ray went. A lobb
 take the tint alone (`pbrTint`), as their lighting has no normal map; so do the vents' louvres,
 plants' gratings and a wing's sweep, whose relief is their own.
 
-Glass, neon, signs, screens, an arcology's spine and unit fronts, shop shelving, and the
-terrain stay procedural, as do the roads out in the land (drawn by the terrain's shader).
+Glass, neon, signs, screens, an arcology's spine and unit fronts, and shop shelving stay
+procedural, as do the roads out in the land (drawn by the terrain's shader). The land's own
+ground cover takes the `land_*` materials (see the terrain, above).
 
 Road markings and manhole covers stay procedural masks. `layer()` paints them over the base
 surface, whether textured or procedural. Within the mask it blends in the coat's colour and
@@ -1191,7 +1213,7 @@ To add a material from an ambientCG download (any resolution):
 2. Write `assets/materials/<name>.json`, naming the maps and giving the properties
    (`paving_stones.json` is an example). Build: CMake picks the file up and defines
    `PBR_<NAME>`. `material_test` checks the file.
-3. In the shader, guard the surface with `pbrLoaded(PBR_X)` and call
+3. In the shader (the helpers are in `shaders/pbr.glsl`, shared by the city and the terrain), guard the surface with `pbrLoaded(PBR_X)` and call
    `samplePBR(PBR_X, st / pbrTile(PBR_X), T, B, n)`. `T` and `B` are the world directions of
    image right and image up. The paving branch in `shadeGround` is the example.
 

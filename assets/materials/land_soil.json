@@ -1,0 +1,16 @@
+// Bare soil: brown earth with grit, what the other classes leave (soil).
+// One of the land's ground-cover classes (src/terrain/terrain_cover.c), textured near the
+// camera and drawn as its colour beyond (shaders/terrain/ground.glsl), mapped in world x and z.
+// Ground106 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/ground_106/albedo.png",
+    "normal": "../textures/ground_106/normal.png",
+    "orm":    "../textures/ground_106/orm.png"
+  },
+  "tile": 2.5,                // metres per image: divides 64 chunks (7040 m), where the shaders' world coordinates wrap
+  "albedo_mean": [0.194, 0.130, 0.069],   // per channel (pbr_pack)
+  "albedo_scale": 0.48,        // to the night's palette: keeps the flat colours the land had before it was textured
+  // the colour (linear) its mean is drawn as (0: its own mean times albedo_scale); how strongly the normal map bends the ground (1 as authored)
+  "params": [0.000, 0.000, 0.000, 1.0]
+}

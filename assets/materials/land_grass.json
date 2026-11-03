@@ -1,0 +1,17 @@
+// Moss and short grass with soil showing (grass): the ground grass blades will stand on, not a lawn.
+// One of the land's ground-cover classes (src/terrain/terrain_cover.c), textured near the
+// camera and drawn as its colour beyond (shaders/terrain/ground.glsl), mapped in world x and z.
+// Ground037 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/ground_037/albedo.png",
+    "normal": "../textures/ground_037/normal.png",
+    "orm":    "../textures/ground_037/orm.png"
+  },
+  "tile": 2.2,                // metres per image: divides 64 chunks (7040 m), where the shaders' world coordinates wrap
+  "albedo_mean": [0.338, 0.315, 0.118],   // per channel (pbr_pack)
+  "albedo_scale": 1.00,        // to the night's palette: keeps the flat colours the land had before it was textured
+  // the colour (linear) its mean is drawn as: the park lawns' hue (shaders/city/ground.glsl), so the
+  // land's grass meets the city's at its edge; how strongly the normal map bends the ground (1 as authored)
+  "params": [0.050, 0.066, 0.034, 1.0]
+}

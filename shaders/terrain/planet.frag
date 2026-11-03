@@ -23,6 +23,7 @@ void main() {
         const float M = TERRAIN_PLANET_HOLE_M;
         if (vChart.x > pc.window.x + M && vChart.x < pc.window.z - M && vChart.y > pc.window.y + M && vChart.y < pc.window.w - M) discard;
     }
-    outColor = vec4(shadeGround(vRel, normalize(vNrm), vUrban, Cover(vCoverA, vCoverB)), 1.0);
+    // beyond the clipmap's window: the cover's flat colours only
+    outColor = vec4(shadeGround(vRel, normalize(vNrm), vUrban, Cover(vCoverA, vCoverB), false), 1.0);
     outRefl = vec4(0.0);
 }

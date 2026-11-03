@@ -12,7 +12,7 @@
 typedef struct Materials Materials;
 
 /* One material's properties as the shaders see them (std140; Material in
- * shaders/city/surface.glsl). */
+ * shaders/pbr.glsl). */
 typedef struct MaterialGPU {
     float    tile[4];     /* xy metres per image repeat */
     float    albedo[4];   /* rgb the albedo map's mean (linear), a the albedo's scale */

@@ -1,0 +1,16 @@
+// Untrodden snow over high and cold ground (snow).
+// One of the land's ground-cover classes (src/terrain/terrain_cover.c), textured near the
+// camera and drawn as its colour beyond (shaders/terrain/ground.glsl), mapped in world x and z.
+// Snow014 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/snow_014/albedo.png",
+    "normal": "../textures/snow_014/normal.png",
+    "orm":    "../textures/snow_014/orm.png"
+  },
+  "tile": 3.2,                // metres per image: divides 64 chunks (7040 m), where the shaders' world coordinates wrap
+  "albedo_mean": [0.424, 0.456, 0.530],   // per channel (pbr_pack)
+  "albedo_scale": 1.27,        // to the night's palette: keeps the flat colours the land had before it was textured
+  // the colour (linear) its mean is drawn as (0: its own mean times albedo_scale); how strongly the normal map bends the ground (1 as authored)
+  "params": [0.000, 0.000, 0.000, 1.0]
+}

@@ -70,6 +70,7 @@ layout(set = 0, binding = 0) uniform Frame {
     uvec4 doorInfo;  // x how many doors near the camera (src/app/lobby_doors.c)
     uvec4 doorKey[DOOR_SLOTS / 4];   // their keys, four to a vector
     vec4 doorState[DOOR_SLOTS];      // x how far open (0..1, eased), y a revolving door's angle (rad)
+    vec4 ground;     // xy the camera's x, z wrapped to 64 chunks, from doubles (src/render/renderer.c): the land's texture coordinates (terrain/ground.glsl)
 } frame;
 
 struct ChunkGPU {

@@ -1,0 +1,16 @@
+// Bare rock: the land's cliffs and steep slopes (rock), triplanar where steep.
+// One of the land's ground-cover classes (src/terrain/terrain_cover.c), textured near the
+// camera and drawn as its colour beyond (shaders/terrain/ground.glsl), mapped in world x and z.
+// Rock028 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/rock_028/albedo.png",
+    "normal": "../textures/rock_028/normal.png",
+    "orm":    "../textures/rock_028/orm.png"
+  },
+  "tile": 4.0,                // metres per image: divides 64 chunks (7040 m), where the shaders' world coordinates wrap
+  "albedo_mean": [0.087, 0.083, 0.065],   // per channel (pbr_pack)
+  "albedo_scale": 1.40,        // to the night's palette: keeps the flat colours the land had before it was textured
+  // the colour (linear) its mean is drawn as (0: its own mean times albedo_scale); how strongly the normal map bends the ground (1 as authored)
+  "params": [0.000, 0.000, 0.000, 1.0]
+}

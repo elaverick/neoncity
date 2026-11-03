@@ -132,6 +132,20 @@ void write_buf_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkDescript
     vkUpdateDescriptorSets(vk->device, 1, &w, 0, NULL);
 }
 
+/* The authored materials' maps (binding 3) and properties (binding 8), as the
+ * scene set has them, into another set: the terrain's (shaders/pbr.glsl). */
+void write_material_set(Renderer *r, VkDescriptorSet set) {
+    VkDescriptorImageInfo maps[PBR_TEXTURE_COUNT];
+    materials_descriptors(r->materials, maps);
+    VkDescriptorBufferInfo mb = { materials_table(r->materials), 0, sizeof(MaterialGPU) * PBR_MATERIAL_COUNT };
+    VkWriteDescriptorSet w[2] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
+    w[0].dstSet = set; w[0].dstBinding = 3; w[0].descriptorCount = PBR_TEXTURE_COUNT;
+    w[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[0].pImageInfo = maps;
+    w[1].dstSet = set; w[1].dstBinding = 8; w[1].descriptorCount = 1;
+    w[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[1].pBufferInfo = &mb;
+    vkUpdateDescriptorSets(r->vk->device, 2, w, 0, NULL);
+}
+
 void create_layouts(Renderer *r) {
     VkCore *vk = r->vk;
     VkDescriptorSetLayoutBinding scene[14] = {
@@ -224,12 +238,14 @@ void create_layouts(Renderer *r) {
         { 6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* PlumeSet */
     };
     r->flameLayout = make_set_layout(vk, flame, 5);
-    VkDescriptorSetLayoutBinding terrain[3] = {
+    VkDescriptorSetLayoutBinding terrain[5] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },     /* clipmap samples */
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* roads (road_gpu.c; the clipmap's only) */
+        { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' maps, as the scene set's */
+        { 8, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' properties */
     };
-    r->terrainLayout = make_set_layout(vk, terrain, 3);
+    r->terrainLayout = make_set_layout(vk, terrain, 5);
     VkDescriptorSetLayoutBinding proxy[3] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* boxes */
