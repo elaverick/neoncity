@@ -112,26 +112,120 @@ vec3 landAxes(int k, vec3 N) {
     return b * keep / dot(b * keep, vec3(1.0));
 }
 
-// Axis a's mapping at world point p (x, z wrapped as the city's) for a tile:
-// texture coordinates st and their screen derivatives (from p's, dpx and
-// dpy), and the image's right and up in the world, T and B.
-void landFrame(int a, vec3 p, vec3 dpx, vec3 dpy, vec3 N, vec2 tile, out vec2 st, out vec2 gx, out vec2 gy, out vec3 T, out vec3 B) {
+// a mod m for any sign of a, in 0 .. m - 1 (GLSL's % leaves negative a undefined)
+int imod(int a, int m) { int r = a - m * (a / m); return r < 0 ? r + m : r; }
+
+// Value noise on the integer lattice, repeating every period cells: fed the
+// wrapped x and z (frame.ground) in cells dividing 7040 m, it doesn't change
+// when the wrap moves.
+float vnoiseWrap(vec2 q, int period, uint salt) {
+    vec2 i = floor(q), f = q - i;
+    f = f * f * (3.0 - 2.0 * f);
+    ivec2 a = ivec2(imod(int(i.x), period), imod(int(i.y), period));
+    ivec2 b = ivec2(imod(a.x + 1, period), imod(a.y + 1, period));
+    float v00 = hfloat(hash2i(salt, a.x, a.y)), v10 = hfloat(hash2i(salt, b.x, a.y));
+    float v01 = hfloat(hash2i(salt, a.x, b.y)), v11 = hfloat(hash2i(salt, b.x, b.y));
+    return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
+}
+
+/* No tile repeats in a grid (hex tiling, after Mikkelsen 2022): the ground
+ * is laid on a triangular grid of points LAND_HEX_S apart, about a tile, and
+ * each point takes the textures turned (any angle), mirrored or not and
+ * shifted, by its hash, about the point itself. A pixel blends the copies of
+ * its triangle's three points by their barycentric weights raised to
+ * LAND_HEX_SHARP, and near the camera by a noise of each copy's own too
+ * (LAND_HEX_NOISE), so that where copies meet one or the other shows, along a
+ * ragged line, rather than both faintly. Not by their height maps, as the
+ * classes meet: that keeps each material's mean (a blend by height picks
+ * each copy's higher texels, the lighter ones: +17% on the scree, +6% on the
+ * soil), where the noise, knowing nothing of the textures, does. Most pixels
+ * show one copy; a copy lighter than LAND_HEX_MIN is dropped and its share
+ * given to the rest. x and z wrap every 7040 m (frame.ground), and the grid's
+ * LAND_HEX_NU columns and LAND_HEX_NV rows (an even number: a row's points sit
+ * half a column on from the last's) repeat with them; as each copy is mapped
+ * about its own point, the ground doesn't change when the wrap moves. */
+const float LAND_HEX_S = 2.2;
+const int LAND_HEX_NU = 3200, LAND_HEX_NV = 3696;
+const float LAND_HEX_ROW = 7040.0 / float(LAND_HEX_NV);   // metres between rows (0.8658 S)
+const float LAND_HEX_SHARP = 8.0, LAND_HEX_MIN = 1.0 / 32.0;
+// The noise: its weight against the barycentric weights' logs, its two
+// octaves (0.32 m and 0.11 m cells: 22000 and 64000 to 7040 m), faded out as
+// a pixel comes to span 3 cm to 10 cm (where it would shimmer).
+const float LAND_HEX_NOISE = 24.0, LAND_HEX_NOISE_PX0 = 0.03, LAND_HEX_NOISE_PX1 = 0.10;
+
+// One copy: image coordinates (metres, before the tile) along r0 and r1 in
+// the world's x and z from its point c (wrapped x and z), then shifted by o;
+// w its share of the pixel, salt its noise's.
+struct HexTap { vec2 r0; vec2 r1; vec2 c; vec2 o; float w; uint salt; };
+
+// Grid point (u, v) (u along x, v the row), its hash as the point it is a
+// wrap from.
+HexTap landHexPoint(int u, int v) {
+    HexTap t;
+    t.c = vec2((float(u) + 0.5 * float(v)) * LAND_HEX_S, float(v) * LAND_HEX_ROW);
+    int kv = (v - imod(v, LAND_HEX_NV)) / LAND_HEX_NV;
+    v -= kv * LAND_HEX_NV;
+    u = imod(u + kv * (LAND_HEX_NV / 2), LAND_HEX_NU);
+    uint h = hash2i(0x4E7Au, u, v);
+    float a = hfloat(h) * 6.2831853, mirror = (hash2i(0x4E7Du, u, v) & 1u) != 0u ? -1.0 : 1.0;
+    t.r0 = vec2(cos(a), -sin(a));
+    t.r1 = vec2(sin(a), cos(a)) * mirror;
+    t.o = vec2(hfloat(hash2i(0x4E7Bu, u, v)), hfloat(hash2i(0x4E7Cu, u, v))) * 8.8;
+    t.w = 0.0;
+    t.salt = hash2i(0x4E7Eu, u, v);
+    return t;
+}
+
+// The copies at ground point xz (wrapped), where a pixel spans px metres,
+// their shares summing to 1.
+void landHex(vec2 xz, float px, out HexTap tap[3]) {
+    float v = xz.y / LAND_HEX_ROW, u = xz.x / LAND_HEX_S - 0.5 * v;
+    vec2 i = floor(vec2(u, v)), f = vec2(u, v) - i;
+    ivec2 c = ivec2(i);
+    vec3 w;
+    if (f.x + f.y > 1.0) {   // the upper triangle: (1,1), (0,1), (1,0)
+        w = vec3(f.x + f.y - 1.0, 1.0 - f.x, 1.0 - f.y);
+        tap[0] = landHexPoint(c.x + 1, c.y + 1); tap[1] = landHexPoint(c.x, c.y + 1); tap[2] = landHexPoint(c.x + 1, c.y);
+    } else {                 // the lower: (0,0), (1,0), (0,1)
+        w = vec3(1.0 - f.x - f.y, f.x, f.y);
+        tap[0] = landHexPoint(c.x, c.y); tap[1] = landHexPoint(c.x + 1, c.y); tap[2] = landHexPoint(c.x, c.y + 1);
+    }
+    vec3 s = LAND_HEX_SHARP * log(max(w, vec3(1e-6)));
+    float amp = LAND_HEX_NOISE * (1.0 - smoothstep(LAND_HEX_NOISE_PX0, LAND_HEX_NOISE_PX1, px));
+    if (amp > 0.0)
+        for (int k = 0; k < 3; ++k)
+            s[k] += amp * (0.6 * vnoiseWrap(xz / 0.32, 22000, tap[k].salt) + 0.4 * vnoiseWrap(xz / 0.11, 64000, tap[k].salt + 1u) - 0.5);
+    w = exp(s - max(s.x, max(s.y, s.z)));
+    w /= dot(w, vec3(1.0));
+    w *= step(vec3(LAND_HEX_MIN), w);
+    w /= dot(w, vec3(1.0));
+    tap[0].w = w.x; tap[1].w = w.y; tap[2].w = w.z;
+}
+
+// Axis a's mapping at world point p (x, z wrapped as the city's) for a tile,
+// in copy t: texture coordinates st and their screen derivatives (from p's,
+// dpx and dpy), and the image's right and up in the world, T and B. The level
+// mapping takes the copy's turn and shift about its point; the steep ones
+// (rock's) its shift alone.
+void landFrame(int a, vec3 p, vec3 dpx, vec3 dpy, vec3 N, vec2 tile, HexTap t, out vec2 st, out vec2 gx, out vec2 gy, out vec3 T, out vec3 B) {
     vec3 s = sign(N);
-    if (a == 1) {          // level: +x image right, -z image up
-        st = p.xz; gx = dpx.xz; gy = dpy.xz;
-        T = vec3(1.0, 0.0, 0.0); B = vec3(0.0, 0.0, -1.0);
+    if (a == 1) {          // level: image right along r0 (+x unturned), image up along -r1 (-z)
+        vec2 q = p.xz - t.c;
+        st = vec2(dot(t.r0, q), dot(t.r1, q)) + t.o;
+        gx = vec2(dot(t.r0, dpx.xz), dot(t.r1, dpx.xz)); gy = vec2(dot(t.r0, dpy.xz), dot(t.r1, dpy.xz));
+        T = vec3(t.r0.x, 0.0, t.r0.y); B = -vec3(t.r1.x, 0.0, t.r1.y);
     } else if (a == 0) {   // facing +-x: image right along z, up the world's up
-        st = vec2(s.x * p.z, -p.y); gx = vec2(s.x * dpx.z, -dpx.y); gy = vec2(s.x * dpy.z, -dpy.y);
+        st = vec2(s.x * p.z, -p.y) + t.o; gx = vec2(s.x * dpx.z, -dpx.y); gy = vec2(s.x * dpy.z, -dpy.y);
         T = vec3(0.0, 0.0, s.x); B = vec3(0.0, 1.0, 0.0);
     } else {               // facing +-z: image right along -x
-        st = vec2(-s.z * p.x, -p.y); gx = vec2(-s.z * dpx.x, -dpx.y); gy = vec2(-s.z * dpy.x, -dpy.y);
+        st = vec2(-s.z * p.x, -p.y) + t.o; gx = vec2(-s.z * dpx.x, -dpx.y); gy = vec2(-s.z * dpy.x, -dpy.y);
         T = vec3(-s.z, 0.0, 0.0); B = vec3(0.0, 1.0, 0.0);
     }
     st /= tile; gx /= tile; gy /= tile;
 }
 
-// Class k's height at p, in its map's spreads (pbrRelief); 0 if it didn't load.
-float landHeight(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N) {
+// Class k's height at p in copy t, in its map's spreads (pbrRelief); 0 if it didn't load.
+float landHeight(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N, HexTap t) {
     int m = LAND_MAT[k];
     if (!pbrLoaded(m)) return 0.0;
     vec3 ax = landAxes(k, N);
@@ -139,16 +233,16 @@ float landHeight(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N) {
     for (int a = 0; a < 3; ++a) {
         if (ax[a] <= 0.0) continue;
         vec2 st, gx, gy; vec3 T, B;
-        landFrame(a, p, dpx, dpy, N, pbrTile(m), st, gx, gy, T, B);
+        landFrame(a, p, dpx, dpy, N, pbrTile(m), t, st, gx, gy, T, B);
         r += ax[a] * pbrRelief(m, textureGrad(pbrMaps[m * PBR_MAPS_PER_MATERIAL + PBR_ORM], st, gx, gy).b);
     }
     return r;
 }
 
-// Class k's surface at p, taken by w: its albedo drawn about its colour into
-// alb, and how far its normal map bends the ground's normal N into bend
-// (added to N, then normalised).
-void landSurface(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N, float w, inout vec3 alb, inout vec3 bend) {
+// Class k's surface at p in copy t, taken by w: its albedo drawn about its
+// colour into alb, and how far its normal map bends the ground's normal N
+// into bend (added to N, then normalised).
+void landSurface(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N, HexTap t, float w, inout vec3 alb, inout vec3 bend) {
     int m = LAND_MAT[k], i = m * PBR_MAPS_PER_MATERIAL;
     if (!pbrLoaded(m)) { alb += w * LAND_FALLBACK[k]; return; }
     vec3 ax = landAxes(k, N), tint = landColour(k) / max(pbrAlbedoMean(m), vec3(1e-3));
@@ -156,7 +250,7 @@ void landSurface(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N, float w, inout vec3 
     for (int a = 0; a < 3; ++a) {
         if (ax[a] <= 0.0) continue;
         vec2 st, gx, gy; vec3 T, B;
-        landFrame(a, p, dpx, dpy, N, pbrTile(m), st, gx, gy, T, B);
+        landFrame(a, p, dpx, dpy, N, pbrTile(m), t, st, gx, gy, T, B);
         float wa = w * ax[a];
         alb += wa * textureGrad(pbrMaps[i + PBR_ALBEDO], st, gx, gy).rgb * tint;
         vec3 tn = textureGrad(pbrMaps[i + PBR_NORMAL], st, gx, gy).xyz * 2.0 - 1.0;
@@ -167,12 +261,17 @@ void landSurface(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N, float w, inout vec3 
 // A class's score where classes meet (LAND_RELIEF): log w + r / LAND_RELIEF.
 float landScore(float w, float relief) { return log(max(w, 1e-6)) + relief / LAND_RELIEF; }
 
-// The cover textured at p: the classes met by their heights (the slight ones
-// as their colours, by weight), damp ground darker, the snow over it all,
-// lying in the ground's hollows first; the normal bent by their normal maps.
-// The heights are read first, then the albedo and normal maps of the classes
-// that show.
-vec3 coverTextured(Cover c, vec3 p, vec3 dpx, vec3 dpy, inout vec3 n) {
+// The cover textured at p in copy t (landHex): the classes met by their
+// heights (the slight ones as their colours, by weight), damp ground darker,
+// the snow over it all, lying in the ground's hollows first; the normal's bend
+// from their normal maps added to bend. The heights are read first, then the
+// albedo and normal maps of the classes that show. lin, from 0 to 1, takes
+// the classes' shares from their heights' to their weights' own: as a pixel
+// grows, so that where the textures fade into the flat colours (coverAlbedo,
+// by weight) the classes already show in those shares. (Met by their
+// heights, the larger class takes more than its weight once the heights
+// have averaged out in the maps' mips.)
+vec3 coverTap(Cover c, vec3 p, vec3 dpx, vec3 dpy, vec3 n, HexTap t, float lin, inout vec3 bend) {
     float w[LAND_CLASSES];
     landWeights(c, w);
     // the slight classes' colours by weight, and the share they leave
@@ -183,45 +282,81 @@ vec3 coverTextured(Cover c, vec3 p, vec3 dpx, vec3 dpy, inout vec3 n) {
     for (int k = 0; k < LAND_CLASSES; ++k) {
         score[k] = -1e30; height[k] = 0.0;
         if (w[k] < LAND_MIN_WEIGHT) { slight += w[k] * landColour(k); rest -= w[k]; continue; }
-        height[k] = landHeight(k, p, dpx, dpy, n);
+        if (lin < 1.0) height[k] = landHeight(k, p, dpx, dpy, n, t);
         score[k] = landScore(w[k], height[k]);
         top = max(top, score[k]);
     }
-    // each one's share, exp((score - top) / LAND_BLEND) of their total; the
-    // ground's height, theirs by share
+    // each one's share, exp((score - top) / LAND_BLEND) of their total, and
+    // toward its weight by lin; the ground's height, theirs by share
     float share[LAND_CLASSES], sum = 0.0, relief = 0.0;
     for (int k = 0; k < LAND_CLASSES; ++k) {
         share[k] = score[k] > -1e29 ? exp((score[k] - top) / LAND_BLEND) : 0.0;
         sum += share[k];
+    }
+    for (int k = 0; k < LAND_CLASSES; ++k) {
+        float byWeight = score[k] > -1e29 ? w[k] / max(rest, 1e-6) : 0.0;
+        share[k] = mix(share[k] / max(sum, 1e-6), byWeight, lin);
         relief += share[k] * height[k];
     }
-    relief /= max(sum, 1e-6);
     // the snow: one more class over the ground, by its weight and the
     // ground's height against its own
     float snow = c.b.y, f = snow;
-    if (snow >= LAND_MIN_WEIGHT)
-        f = 1.0 / (1.0 + exp((landScore(1.0 - snow, relief) - landScore(snow, landHeight(LAND_CLASSES, p, dpx, dpy, n))) / LAND_BLEND));
+    if (snow >= LAND_MIN_WEIGHT && lin < 1.0)
+        f = mix(1.0 / (1.0 + exp((landScore(1.0 - snow, relief) - landScore(snow, landHeight(LAND_CLASSES, p, dpx, dpy, n, t))) / LAND_BLEND)), snow, lin);
     // the classes that show, by their shares among them
     float kept = 0.0;
     for (int k = 0; k < LAND_CLASSES; ++k) {
-        if (share[k] < LAND_MIN_SHARE * sum) share[k] = 0.0;
+        if (share[k] < LAND_MIN_SHARE) share[k] = 0.0;
         kept += share[k];
     }
-    vec3 alb = slight, bend = vec3(0.0);
+    vec3 alb = slight, b = vec3(0.0);
     if (f < 1.0 - LAND_MIN_SHARE && kept > 0.0)
         for (int k = 0; k < LAND_CLASSES; ++k)
-            if (share[k] > 0.0) landSurface(k, p, dpx, dpy, n, max(rest, 0.0) * share[k] / kept, alb, bend);
+            if (share[k] > 0.0) landSurface(k, p, dpx, dpy, n, t, max(rest, 0.0) * share[k] / kept, alb, b);
     alb *= 1.0 - 0.25 * c.b.z;
     if (snow >= LAND_MIN_WEIGHT && f >= LAND_MIN_SHARE) {
         vec3 sa = vec3(0.0), sb = vec3(0.0);
-        landSurface(LAND_CLASSES, p, dpx, dpy, n, 1.0, sa, sb);
+        landSurface(LAND_CLASSES, p, dpx, dpy, n, t, 1.0, sa, sb);
         alb = mix(alb, sa, f);
-        bend = mix(bend, sb, f);
+        b = mix(b, sb, f);
     } else {
         alb = mix(alb, landColour(LAND_CLASSES), f);
     }
+    bend += t.w * b;
+    return t.w * alb;
+}
+
+// The classes' shares go from their heights' to their weights' (coverTap's
+// lin) as a pixel comes to span this many metres (about 110 m to 250 m
+// away): done before the textures have faded far into the flat colours.
+const float LAND_LIN_PX0 = 0.12, LAND_LIN_PX1 = 0.26;
+
+// The cover textured at p, where a pixel spans px metres: its copies
+// (landHex) by their shares, the normal bent by their normal maps.
+vec3 coverTextured(Cover c, vec3 p, vec3 dpx, vec3 dpy, float px, inout vec3 n) {
+    HexTap tap[3];
+    landHex(p.xz, px, tap);
+    float lin = smoothstep(LAND_LIN_PX0, LAND_LIN_PX1, px);
+    vec3 alb = vec3(0.0), bend = vec3(0.0);
+    for (int i = 0; i < 3; ++i)
+        if (tap[i].w > 0.0) alb += coverTap(c, p, dpx, dpy, n, tap[i], lin, bend);
     n = normalize(n + bend);
     return alb;
+}
+
+/* ---- variation on the large scale ------------------------------------- */
+
+// What the cover's albedo is scaled by on scales the textures don't reach,
+// about 1 on average, drawn alike on the clipmap and the planet's patches
+// (beside groundLit's patches at 37 m and 211 m): a 7.04 m octave (g, the
+// wrapped x and z) that the textures' own repeats are lost in, fading out as
+// a pixel comes to span a metre (some 900 m off); and a drier or lusher hue
+// over 1.6 km (wp, the world's x and z), not on the snow.
+vec3 landMacro(vec2 g, vec2 wp, float px, float snow) {
+    float a = 0.16 * (1.0 - smoothstep(0.6, 1.4, px));
+    float near = 1.0 + a * (vnoiseWrap(g / 7.04, 1000, 0x7E23u) - 0.5);
+    vec3 hue = mix(vec3(0.93, 1.0, 1.10), vec3(1.07, 1.0, 0.88), vnoise(wp / 1600.0, 0x7E24u));
+    return near * mix(hue, vec3(1.0), snow);
 }
 
 // The land lit, before the haze. textured: whether the cover's textures may
@@ -232,17 +367,19 @@ vec3 groundLit(vec3 rel, vec3 n, float urban, Cover cover, bool textured) {
     // city's (frame.ground, from doubles), taken here in uniform control flow
     vec3 p = vec3(frame.ground.xy + rel.xz, frame.camPos.y + rel.y).xzy;
     vec3 dpx = dFdx(p), dpy = dFdy(p);
+    // the metres of ground a pixel spans
+    float px = length(rel) * 2.0 * length(frame.rayBasis[1].xyz) * frame.screen.w;
     vec3 albedo = coverAlbedo(cover);
     if (textured && urban < 0.99) {
-        float px = length(rel) * 2.0 * length(frame.rayBasis[1].xyz) * frame.screen.w;
         float tex = 1.0 - smoothstep(LAND_TEX_PX0, LAND_TEX_PX1, px);
         if (tex > 0.0) {
             vec3 tn = n;
-            vec3 t = coverTextured(cover, p, dpx, dpy, tn);
+            vec3 t = coverTextured(cover, p, dpx, dpy, px, tn);
             albedo = mix(albedo, t, tex);
             n = normalize(mix(n, tn, tex));
         }
     }
+    albedo *= landMacro(p.xz, wp, px, cover.b.y);
     // patchy within each class; darker in the rain, but for the snow
     float patches = 0.6 * vnoise(wp / 37.0, 0x7E21u) + 0.4 * vnoise(wp / 211.0, 0x7E22u);
     albedo *= 0.8 + 0.4 * patches;

@@ -687,6 +687,21 @@ and the near ground's mean colour is the flat cover's. The heights are read firs
 maps of only the classes that show in the pixel (1/64 of it or more), so a pixel of one class reads one
 class's maps. As a pixel comes to span 0.2 to 0.32 m (about 190 to 300 m away at 1080 lines), the textures fade
 into the flat colours, which is all the planet's patches and the far clipmap draw. The lighting stays diffuse.
+
+The textures don't repeat in a grid (hex tiling, after Mikkelsen 2022). The ground is laid on a triangular grid
+of points 2.2 m apart, about a tile, and each point takes every class's textures turned by any angle, mirrored or
+not and shifted, by its hash, mapped about the point itself. A pixel blends the copies of its triangle's three
+points by their barycentric weights to the power 8, plus, near the camera, a noise of each copy's own, so that
+where copies meet one or the other shows along a ragged line rather than both faintly; most pixels show one copy,
+and about 1.4 on average are drawn. The copies are not met by their height maps as the classes are: picking
+each copy's higher texels picks its lighter ones (it brightened the scree by 17% and the soil by 6%), where the
+weights and the noise keep every material's mean. The grid repeats with the wrap (3200 columns, 3696 rows to
+7040 m), and as each copy is mapped about its own point, the ground doesn't change when the wrap moves. From
+about 110 m to 250 m away the classes' shares go from their heights' to their weights' own, so that where the
+textures fade the near ground already has the flat cover's mix (met by their heights once the mips have averaged
+them out, the larger class took more than its weight). Beyond the textures, on the clipmap and the patches
+alike, the cover is varied by a 7 m noise (±8%, gone by about 900 m off), groundLit's 37 m and 211 m patches,
+and a drier or lusher hue over 1.6 km (±7%, not on the snow).
 At ground level the textures add about 0.05-0.15 ms to the terrain pass.
 
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
