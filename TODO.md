@@ -357,6 +357,25 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   the star brightness are first guesses, tuned by eye from a few `--cam` views.
 - **Star field:** a uniform scatter; no Milky Way band or constellations.
 
+## Curtain wall relief
+Piers, beams, mullions and a coping on office towers' curtain walls (`src/city/mesh_relief.c`, `shadeTrim`), after
+`Bishopsgate.png`; see "Surfaces and roofs" in the README. Calls made that could go the other way:
+- **Which buildings:** every office-tower curtain wall (`relief_on`). Ribbon, punched and slit windows stay flat, as do
+  curtain walls on shophouses and the like. A ribbon-window version (beams only) would be the natural next one.
+- **Mullions on one tower in six** (`relief_style`'s glazed and `reliefLights`, salt 76 on the style hash), with the
+  pane rail; the rest keep whole-bay panes. Where narrow bays put a pier on every second line, the line between keeps
+  its heavier mullion on every tower, since it sits on the bay's frame.
+- **Memory:** `POOL_PAGES` went from 3640 to 4300 (427 to 504 MB) to hold the chunks' reach, and the bottom-level
+  structures from about 45 to 55 MB. The relief has no level of detail of its own beyond the mullions: a far chunk
+  keeps every beam. Beams are the bulk of it; a chunk could leave them out past 300 m or so if memory matters.
+- **Proxies** don't show the piers, so a relief tower's near mesh is a little paler than its proxy where they meet
+  (`shaders/proxy/proxy.frag`).
+- **Cables and blade signs** still run back to the glass's line, through a beam or pier they happen to meet; cheap to
+  leave, and hard to see.
+- **Seen through a real window**, a far facade shows its piers (they have backs) but only the sill and soffit of its beams.
+- **No shop piers:** a shopfront ground floor stops its piers above the fascia, because its 6 m bays and boards don't
+  line up with the tower's; a lobby's land on the pavement, and stop short of its doors.
+
 ## Interior impostors (next)
 Deep open-plan office floors, baked offline with global illumination and drawn behind the glass from layered,
 multi-view depth impostors in place of interior mapping. The design is `docs/interior-impostors.md`, and the look

@@ -44,7 +44,7 @@
  * triangles so a chunk may occupy any set of free pages (no fragmentation). */
 #define PAGE_VERTS        3072          /* multiple of 3: pages hold whole triangles */
 #ifndef POOL_PAGES
-#define POOL_PAGES        3640          /* 3640 * 3072 * 40B = 427 MB */
+#define POOL_PAGES        4300          /* 4300 * 3072 * 40B = 504 MB */
 #endif
 #define MAX_CHUNK_PAGES   64
 #define MAX_FRAMES        2
@@ -118,7 +118,7 @@ enum {
     MAT_FACADE, MAT_ROOF, MAT_NEON, MAT_METAL,
     MAT_EMISSIVE, MAT_SCREEN, MAT_LEDSTRIP, MAT_DOOR,
     MAT_INTERIOR, MAT_LITTER, MAT_ARCOLOGY, MAT_INDUSTRY,
-    MAT_PROP
+    MAT_PROP, MAT_TRIM
 };
 
 /* Industrial plants' surfaces (MAT_INDUSTRY params.y; src/city/mesh_industry.c):

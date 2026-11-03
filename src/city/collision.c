@@ -317,6 +317,23 @@ static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg
         for (int k = 0; k < loops[1]->n; ++k) coll_vertex(L, b, loops[1]->x[k], loops[1]->z[k]);
     }
     interiors_free(&in);
+    /* the piers of a curtain wall's relief that reach the street (emit_relief) */
+    for (int si = 0; si < bg->nsec; ++si) {
+        const BLoop *l = &bg->sec[si].foot.outer;
+        for (int k = 0; k < l->n && bsec_grounded(&bg->sec[si]); ++k) {
+            float span[64][2], d = 0.0f;
+            int np = relief_ground_piers(bg, si, k, span, &d, 64);
+            EdgeInfo e = edge_of(l, k);
+            float ox = -e.ez * d, oz = e.ex * d;   /* out of the building */
+            for (int p = 0; p < np && coll_begin(L, 4); ++p) {
+                float ua = span[p][0], ub = span[p][1];
+                coll_vertex(L, b, e.ax + e.ex * ua + ox, e.az + e.ez * ua + oz);
+                coll_vertex(L, b, e.ax + e.ex * ub + ox, e.az + e.ez * ub + oz);
+                coll_vertex(L, b, e.ax + e.ex * ub, e.az + e.ez * ub);
+                coll_vertex(L, b, e.ax + e.ex * ua, e.az + e.ez * ua);
+            }
+        }
+    }
     for (int k = 0; k < bg->nsup; ++k) {
         const BSupport *sp = &bg->sup[k];
         if ((sp->type != SUP_COLUMN && sp->type != SUP_LEG) || sp->y0 > SIDEWALK_HEIGHT + 0.5f) continue;

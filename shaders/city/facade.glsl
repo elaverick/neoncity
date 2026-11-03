@@ -12,6 +12,23 @@ vec3 wallLighting(vec3 p, vec3 n, vec3 V, float shin, float specK, float height,
     return diff;
 }
 
+// A section's wall material: its palette (choose_surfaces in src/gen/building.c), varied by building
+vec3 facadeWallAlbedo(uint palette, uint sh) {
+    vec3 a = palette == 0u ? vec3(0.085, 0.080, 0.075) :   // concrete
+             palette == 1u ? vec3(0.080, 0.060, 0.045) :   // grimy brick-brown
+             palette == 2u ? vec3(0.035, 0.055, 0.060) :   // teal metal panels
+             palette == 3u ? vec3(0.110, 0.105, 0.095) :   // pale tile
+             palette == 4u ? vec3(0.020, 0.022, 0.028) :   // black glass
+             palette == 5u ? vec3(0.105, 0.090, 0.068) :   // warm stone
+             palette == 6u ? vec3(0.070, 0.050, 0.030) :   // bronze
+                             vec3(0.014, 0.024, 0.040);    // blue glass
+    return a * (0.7 + 0.6 * hf(sh, 10u)) * 1.4;
+}
+
+// How many lights a curtain wall's bay is glazed in: src/city/mesh_relief.c puts mullions between them.
+// One building in six (relief_style's glazed) has them, and the rail; the rest a bay is one pane.
+float reliefLights(uint sh, float bayW) { return hf(sh, 76u) >= 1.0 / 6.0 ? 1.0 : bayW >= 3.6 ? 3.0 : bayW >= 2.4 ? 2.0 : 1.0; }
+
 vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 V = -normalize(rel);
     // Facade data (facade_mat in src/city/mesh_building.c):
@@ -44,16 +61,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float litFrac = 0.16 + 0.42 * hf(sh, 6u);
     float tintSel = hf(sh, 8u);
 
-    // Wall material: the section's palette (choose_surfaces in src/gen/building.c)
-    vec3 wallAlb = palette == 0u ? vec3(0.085, 0.080, 0.075) :   // concrete
-                   palette == 1u ? vec3(0.080, 0.060, 0.045) :   // grimy brick-brown
-                   palette == 2u ? vec3(0.035, 0.055, 0.060) :   // teal metal panels
-                   palette == 3u ? vec3(0.110, 0.105, 0.095) :   // pale tile
-                   palette == 4u ? vec3(0.020, 0.022, 0.028) :   // black glass
-                   palette == 5u ? vec3(0.105, 0.090, 0.068) :   // warm stone
-                   palette == 6u ? vec3(0.070, 0.050, 0.030) :   // bronze
-                                   vec3(0.014, 0.024, 0.040);    // blue glass
-    wallAlb *= (0.7 + 0.6 * hf(sh, 10u)) * 1.4;
+    vec3 wallAlb = facadeWallAlbedo(palette, sh);
     bool glassWall = palette == 4u || palette == 7u || type == 1;
     // Window glass transmission: clear float glass is faintly green; tinted
     // curtain walls and bronze-clad towers carry their tint into the rooms.
@@ -320,6 +328,22 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     // window: near = full interior mapping, mid = per-room flat glow, far = average
     vec3 R = reflect(-V, n);
     float F = glassFresnel(n, V);
+    // Behind relief (src/city/mesh_relief.c): the piers and beams stand in the way of the sky at the glass's edges,
+    // and where the bays are glazed in several lights (one building in six), each pane has a rail standing 5 cm
+    // off it near its foot, and mullions (far off, only these painted lines).
+    bool relief = type == 1 && plate != 0u;
+    float barCov = 0.0, railCov = 0.0;
+    if (relief) {
+        float reveal = smoothstep(0.1, 0.9, min(fu, 1.0 - fu) * bayW) * smoothstep(0.0, 0.7, min(fv - y0, y1 - fv) * floorH);
+        F *= mix(0.4, 1.0, reveal);
+        float lights = reliefLights(sh, bayW), lightW = bayW / lights, wM = 0.09 / lightW;
+        if (lights > 1.0) {
+            barCov = filteredPulse(u / lightW + 0.5, 0.5 - wM * 0.5, 0.5 + wM * 0.5, dU / lightW * 1.2);
+            // the rail, seen past the glass's plane: where the ray to here crosses the plane it stands in
+            float y = fv * floorH + V.y / max(dot(V, n), 0.05) * 0.05 - (y0 * floorH + 1.0);
+            railCov = (1.0 - smoothstep(0.025 - dV * 0.7, 0.025 + dV * 0.7, abs(y))) * (1.0 - lodT);
+        }
+    }
     vec3 refl = envReflection(R);
     // Privacy film across the bottom of some panes: dark, on the glass itself.
     float film = hf(roomHash, 52u) < 0.3 ? mix(0.2, 0.38, hf(roomHash, 53u)) : 0.0;
@@ -402,6 +426,13 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         col = mix(col, far_, farT);
         reflW = mix(reflW, mix(wallW, F, winW * winH), farT);
     }
+    if (relief) {
+        // what's painted over the glass: dark metal, its rail catching what light falls on the wall
+        float bar = max(barCov, railCov) * cov * (1.0 - farT);
+        col = mix(col, vec3(0.03, 0.033, 0.032) * wdiff * mix(1.0, 2.5, railCov), bar);
+        reflW *= 1.0 - bar;
+        through *= 1.0 - max(barCov, railCov);
+    }
     // the window's own light goes on the samples it covers; the city behind is on the rest
     through *= cov * (1.0 - lodT) * (1.0 - farT);
     if (realWindow && through > 0.01) {
@@ -410,5 +441,98 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         reflW = min(reflW / covered, 1.0);
     }
     glassRefl(n, reflW);
+    return col;
+}
+
+/* ---------------- a curtain wall's relief ----------------
+ * Piers, beams, copings and mullions standing proud of the glass (MAT_TRIM: src/city/mesh_relief.c).
+ * At night their depth reads by what lights them: the street's lamps from below, with their ray-traced
+ * shadows, and the rooms behind the glass, on the faces of the reveal looking across it. */
+
+// The mean light through the window in bay `bay` of floor floorIdx of this face: as shadeFacade picks its rooms.
+vec3 trimWindowLight(uint seed, int section, int faceDir, int nextFace, bool endShare, int bay, int nBays, int floorIdx, float bayW, float floorH, uint plate) {
+    uint sh = styleHash(seed);
+    ivec2 rk = cornerKey(faceDir, nextFace, endShare, bay, nBays - 1);
+    float litFrac = 0.16 + 0.42 * hf(sh, 6u);
+    uint floorHash = hash3i(seed ^ 0xF100u, floorIdx, rk.x, section);
+    float litChance = litFrac * (0.25 + 1.5 * hfloat(floorHash));
+    uint roomHash = hash3i(seed ^ (uint(rk.x) * 0x9E3779B1u), rk.y, floorIdx, section);
+    if (plate != 0u) {
+        ImpPick imp = impostorPick(seed, section, floorIdx, faceDir, bay, bayW, floorH, plate);
+        if (imp.m >= 0) {
+            // its bay's own mean, under the floor's own lights
+            ImpModule M = interiors.impMod[imp.m];
+            float x = impostorX(imp, (float(bay) + 0.5) * bayW), W = M.size.x;
+            int b = clamp(int((x - W * floor(x / W)) / M.bays.y), 0, int(M.bays.x) - 1);
+            float on = hf(floorHash, 33u) < litChance ? mix(0.75, 1.25, hf(floorHash, 34u)) : 0.0;
+            return M.bayMean[b].rgb * M.bays.z * on;
+        }
+    }
+    Room room = makeRoom(roomHash, litChance, hf(sh, 8u), false, vec3(0.0));
+    return room.lit ? room.light * room.bright * 0.42 * (1.0 - 0.4 * room.blinds) : vec3(0.0);
+}
+
+vec3 shadeTrim(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
+    vec3 V = -normalize(rel);
+    uint kind = prm.z & 3u, groundMode = (prm.z >> 2) & 3u, palette = prm.w & 7u, facing = (prm.w >> 3) & 7u, sh = styleHash(seed);
+    float vAbs = p.y - gBase;
+    if (kind == TRIM_MULLION) {
+        // pale metal, as what holds the glass
+        vec3 spec;
+        vec3 diff = wallLighting(p, n, V, 60.0, 0.35, vAbs, spec);
+        return vec3(0.12, 0.135, 0.125) * diff + spec;
+    }
+    // The piers are pale against the dark glass: stone on a stone or tile building, anodised metal on a glass or metal one, each
+    // building its own shade. Beams and copings are dark bronze against them.
+    bool metal = palette == 2u || palette == 4u || palette == 6u || palette == 7u;
+    float tone = hf(sh, 71u);
+    vec3 pier = metal ? (palette == 6u ? vec3(0.30, 0.235, 0.16)                                   // bronze-gold
+                       : palette == 2u ? vec3(0.17, 0.25, 0.25)                                    // verdigris
+                       : tone < 0.5 ? vec3(0.27, 0.285, 0.31) : vec3(0.31, 0.29, 0.26))            // silver, champagne
+                      : (tone < 0.5 ? vec3(0.33, 0.30, 0.25) : vec3(0.29, 0.285, 0.27));           // warm stone, grey stone
+    pier *= 0.72 + 0.26 * hf(sh, 72u);
+    vec3 alb = kind == TRIM_PIER ? pier : pier * vec3(0.30, 0.27, 0.24);
+
+    float faceW = float(vFacePack & 4095u) / 16.0, u = uv.x;
+    uint plate = vAux & 127u;
+    int section = int(prm.y), faceDir = int((vAux >> 12) & 63u), nextFace = int((vAux >> 18) & 63u);
+    bool endShare = ((vAux >> 24) & 2u) != 0u;
+    float floorH = facadeFloorH(seed), groundH = facadeGroundH(seed) * (groundMode == 2u ? 2.0 : 1.0);
+    float relV = vAbs - SIDEWALK_HEIGHT - groundH;
+    float dU = fwidth(u), dV = fwidth(vAbs);
+
+    // stone coursed floor by floor, each course its own shade; streaked with grime down the building
+    if (kind == TRIM_PIER && !metal) {
+        float course = floor(relV / (floorH * 0.5));
+        alb *= 0.88 + 0.24 * hfloat(hash3i(seed ^ 0x7A1Cu, int(course), faceDir, int(floor(u / 4.0))));
+    }
+    alb *= mix(0.72, 1.12, vnoise(vec2(u * 1.3, vAbs * 0.04), seed & 0xFFFFu));
+    if (kind == TRIM_PIER) {
+        // the joint at each floor's line, and the head and foot of its panel
+        float fv = fract(relV / floorH), w = max(0.012, dV * 0.7) / floorH;
+        float joint = max(1.0 - smoothstep(0.0, w * 1.5, min(fv, 1.0 - fv)), 0.6 * (1.0 - smoothstep(0.0, w * 1.5, abs(fv - 0.5))));
+        alb *= 1.0 - 0.55 * joint * (1.0 - smoothstep(0.1, 0.5, dV));
+    }
+
+    // how far out of the glass this is (city.vert): the sky and street reach less of a reveal's depths
+    float z = vLitter.x * 0.6;   // RELIEF_Z_UNIT
+    float ao = facing == 0u ? mix(0.72, 1.0, smoothstep(0.1, 0.35, z)) : mix(0.38, 0.9, smoothstep(0.0, 0.3, z));
+    if (facing == 3u) ao = mix(0.6, 1.0, ao);   // a sill looks up at the sky
+    vec3 spec;
+    vec3 diff = wallLighting(p, n, V, metal ? 48.0 : 14.0, metal ? 0.35 : 0.07, vAbs, spec);
+    vec3 col = alb * diff * ao + spec * ao;
+    // the overcast's and the city's glow: what lets a pale pier stand out from dark glass where no lamp reaches
+    vec3 glowSky = envReflection(reflect(-V, n));
+    col += glowSky * ao * (alb * 0.7 + (metal ? 0.06 : 0.015));
+
+    // A face of the reveal looks across the glass beside it, into the room: lit, it lights this, most near the glass.
+    float lod = smoothstep(0.1, 0.35, dU);
+    if (facing != 0u && lod < 1.0) {
+        float baseBay = (prm.z & 16u) != 0u ? 1.6 + 0.8 * hf(sh, 4u) : 2.4 + 2.6 * hf(sh, 4u);   // as shadeFacade
+        float nBays = max(1.0, floor(faceW / baseBay + 0.5)), bayW = faceW / nBays, floorIdx = floor(relV / floorH);
+        vec3 glow = floorIdx < 0.0 ? (groundMode != 0u ? LOBBY_SPILL * 0.4 : vec3(0.0))
+                                   : trimWindowLight(seed, section, faceDir, nextFace, endShare, clamp(int(floor(u / bayW)), 0, int(nBays) - 1), int(nBays), int(floorIdx), bayW, floorH, plate);
+        col += alb * glow * exp(-z / 0.3) * 3.0 * (1.0 - lod);
+    }
     return col;
 }

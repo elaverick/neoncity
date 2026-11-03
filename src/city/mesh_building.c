@@ -138,7 +138,7 @@ int envelope_spans(const BGraph *g, const Behind *bh, const BLoop *l, int li, in
  *          market block (lightboxes in the glass) << 7 (both set by emit_walls)
  *   nrm.w  the floor plate's depth behind this face, half metres, where its upper floors may be
  *          open plan (interior impostors: office towers behind full-height glass), else 0 */
-static int open_plan_section(const BGraph *g, const BSection *s) {
+int open_plan_section(const BGraph *g, const BSection *s) {
     int a = g->archetype;
     return (a == ARCH_OFFICE || a == ARCH_SKYSCRAPER || a == ARCH_PROJECTION || a == ARCH_TWIN || a == ARCH_GATEWAY) &&
            bsec_facade(s) && (s->win == WIN_CURTAIN || s->win == WIN_RIBBON);
@@ -248,8 +248,7 @@ void emit_cap(Mesh *m, const BFoot *f, float y, int down, Mat mt) {
     }
 }
 
-/* Is (x, z) on the open roof of section si (not under anything standing on it)? */
-static int roof_free(const BGraph *g, int si, float x, float z, float clear) {
+int roof_free(const BGraph *g, int si, float x, float z, float clear) {
     const BSection *s = &g->sec[si];
     if (!bfoot_contains(&s->foot, x, z) || bfoot_boundary_dist(&s->foot, x, z, NULL, NULL) < clear) return 0;
     for (int t = 0; t < g->nsec; ++t) {
@@ -550,6 +549,7 @@ static void face_signs(Mesh *m, const Building *b, const BGraph *g, int si, cons
     float gh = g->groundH, fh = g->floorH;
     Face f = face_local(fk->len);
     int retail = g->groundMode == GF_RETAIL;
+    float clear = relief_out(g);   /* in front of the building's piers, if it has them */
 
     /* Shop boards above most lit storefronts (6 m bays along the face). */
     if (retail && b->shop) {
@@ -601,7 +601,7 @@ static void face_signs(Mesh *m, const Building *b, const BGraph *g, int si, cons
             float y0 = gy + gh + fl * fh + 1.1f;
             uint8_t col = (uint8_t)(rng_u32(r) & 7);
             uint8_t flick = (uint8_t)(rng_float(r) < 0.2f ? 1 : 0);
-            emit_face_panel(m, &f, u, u + w, y0, y0 + h, 0.1f,
+            emit_face_panel(m, &f, u, u + w, y0, y0 + h, maxf(0.1f, clear),
                             mat(MAT_NEON, rng_u32(r), (uint8_t)(col | (1 << 3) | (flick << 6)), q_half(w), q_half(h)));
         }
     }
@@ -625,8 +625,9 @@ static void face_feature(Mesh *m, const BGraph *g, const BSection *s, float widt
         if (h < 8.0f) return;
         float u0 = rng_range(r, 2.0f, width - 2.0f - w);
         float y0 = s->y0 + rng_range(r, 0.3f, 0.9f) * (th - h - 2.0f) + 1.0f;
-        emit_box(m, v3(u0 - 0.6f, y0 - 0.6f, 0.0f), v3(u0 + w + 0.6f, y0 + h + 0.6f, 0.45f), F_NOBOT | F_BOT, mat(MAT_METAL, g->seed, 3, 0, 0), UV_FACADE);
-        emit_face_panel(m, &tf, u0, u0 + w, y0, y0 + h, 0.5f, mat(MAT_SCREEN, rng_u32(r), 0, q_half(w), q_half(h)));
+        float clear = maxf(0.0f, relief_out(g) - 0.45f);   /* the screen's box stands clear of any piers */
+        emit_box(m, v3(u0 - 0.6f, y0 - 0.6f, 0.0f), v3(u0 + w + 0.6f, y0 + h + 0.6f, 0.45f + clear), F_NOBOT | F_BOT, mat(MAT_METAL, g->seed, 3, 0, 0), UV_FACADE);
+        emit_face_panel(m, &tf, u0, u0 + w, y0, y0 + h, 0.5f + clear, mat(MAT_SCREEN, rng_u32(r), 0, q_half(w), q_half(h)));
     } else if (roll < 0.42f && g->archetype != ARCH_ARCOLOGY) {
         float w = rng_range(r, 3.0f, 6.0f);
         float h = minf(rng_range(r, 12.0f, 45.0f), th * 0.7f);
@@ -635,7 +636,7 @@ static void face_feature(Mesh *m, const BGraph *g, const BSection *s, float widt
         if (s->y0 <= gy + 0.01f) y0 = maxf(y0, gy + g->groundH + 1.0f);
         if (y0 + h > s->y1 - 0.5f) return;
         uint8_t col = (uint8_t)(rng_u32(r) & 7);
-        emit_face_panel(m, &tf, u0, u0 + w, y0, y0 + h, 0.3f, mat(MAT_NEON, rng_u32(r), (uint8_t)(col | (2 << 3)), q_half(w), q_half(h)));
+        emit_face_panel(m, &tf, u0, u0 + w, y0, y0 + h, maxf(0.3f, relief_out(g)), mat(MAT_NEON, rng_u32(r), (uint8_t)(col | (2 << 3)), q_half(w), q_half(h)));
     }
 }
 
@@ -724,24 +725,29 @@ static void emit_face_trims(Mesh *m, const BGraph *g, int si, float bay, int *fi
     const BSection *s = &g->sec[si];
     const BLoop *l = &s->foot.outer;
     uint8_t ledCol = (uint8_t)(hash_combine(g->seed, (uint32_t)si) & 7);
+    /* with relief, the bands run in front of the piers, and round the corners they stand out to */
+    int relief = relief_on(g, s);
+    float clear = relief ? relief_out(g) : 0.0f;
     for (int k = 0; k < l->n; ++k) {
         Xf sv = xf_save(m);
         float len = enter_face(m, l, k);
+        float a = -clear, c = len + clear;
         /* LED strip under the top edge, and an accent band where a tower meets its base */
         int pitched = s->roof == ROOF_HIP || s->roof == ROOF_PYRAMID || s->roof == ROOF_GABLE || s->roof == ROOF_SAWTOOTH;
         if (s->ledTop && !pitched) {
-            float uv[4][2] = { { 0, 0 }, { len, 0 }, { len, 1 }, { 0, 1 } };
-            emit_quad(m, v3(0, s->y1 - 0.75f, 0.06f), v3(len, s->y1 - 0.75f, 0.06f), v3(len, s->y1 - 0.45f, 0.06f),
-                      v3(0, s->y1 - 0.45f, 0.06f), v3(0, 0, 1), uv, mat(MAT_LEDSTRIP, g->seed, ledCol, (uint8_t)(ledCol & 1), 0));
+            float uv[4][2] = { { 0, 0 }, { len, 0 }, { len, 1 }, { 0, 1 } }, z = maxf(0.06f, clear);
+            emit_quad(m, v3(a, s->y1 - 0.75f, z), v3(c, s->y1 - 0.75f, z), v3(c, s->y1 - 0.45f, z),
+                      v3(a, s->y1 - 0.45f, z), v3(0, 0, 1), uv, mat(MAT_LEDSTRIP, g->seed, ledCol, (uint8_t)(ledCol & 1), 0));
         }
         if (s->accent) {
-            emit_box(m, v3(0, s->y0, 0), v3(len, s->y0 + 0.9f, 0.3f), F_NOBOT | F_BOT, mat(MAT_METAL, g->seed, 3, 0, 0), UV_FACADE);
+            float z = maxf(0.3f, clear);
+            emit_box(m, v3(a, s->y0, 0), v3(c, s->y0 + 0.9f, z), F_NOBOT | F_BOT, mat(MAT_METAL, g->seed, 3, 0, 0), UV_FACADE);
             float uv[4][2] = { { 0, 0 }, { len, 0 }, { len, 1 }, { 0, 1 } };
-            emit_quad(m, v3(0, s->y0 + 0.35f, 0.31f), v3(len, s->y0 + 0.35f, 0.31f), v3(len, s->y0 + 0.55f, 0.31f),
-                      v3(0, s->y0 + 0.55f, 0.31f), v3(0, 0, 1), uv, mat(MAT_LEDSTRIP, g->seed, (uint8_t)(ledCol + 3), 1, 0));
+            emit_quad(m, v3(a, s->y0 + 0.35f, z + 0.01f), v3(c, s->y0 + 0.35f, z + 0.01f), v3(c, s->y0 + 0.55f, z + 0.01f),
+                      v3(a, s->y0 + 0.55f, z + 0.01f), v3(0, 0, 1), uv, mat(MAT_LEDSTRIP, g->seed, (uint8_t)(ledCol + 3), 1, 0));
         }
-        /* vertical fins on the bay lines (the shader stretches bays to fit the face) */
-        if (s->fins && *fins < 320) {
+        /* vertical fins on the bay lines (the shader stretches bays to fit the face); relief has piers there */
+        if (s->fins && !relief && *fins < 320) {
             int nB = (int)maxf(1.0f, floorf(len / bay + 0.5f));
             float ys = s->y0 <= gy + 0.01f ? gy + g->groundH : s->y0;
             for (int j = 1; j < nB && *fins < 320; ++j, ++*fins) {
@@ -879,6 +885,7 @@ void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors 
         emit_walls(m, b, g, si, behind_of(in, si, &bh) ? &bh : NULL);
         emit_section_caps(m, g, si, in);
         emit_face_trims(m, g, si, bay, &fins);
+        emit_relief(m, g, si);
         dress_roof(m, g, si, &r);
         if (!has_above(g, si) && !plant) emit_tops(m, g, si, &r);
     }

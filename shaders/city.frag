@@ -116,6 +116,7 @@ void main() {
     vec3 col;
     if (mat <= MAT_LOT)            col = shadeGround(mat, vLocal, n, V, vUV, vSeed, vParams);
     else if (mat == MAT_FACADE)    col = shadeFacade(vLocal, vRel, n, vUV, vSeed, vParams);
+    else if (mat == MAT_TRIM)      col = shadeTrim(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_ROOF)      col = shadeRoof(vLocal, vRel, n, vUV, vParams);
     else if (mat == MAT_DOOR)      col = shadeDoor(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_NEON)      col = shadeNeon(vUV, vSeed, vParams, vRel);

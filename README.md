@@ -255,6 +255,27 @@ fins, parapets and doors are emitted in each face's own frame. Collision uses wh
 street level (ground floors, piers, lift cores and columns), so you can walk under arcades,
 through void decks and through gateways.
 
+**Curtain wall relief.** Office towers' curtain walls have real depth (`src/city/mesh_relief.c`, after
+`Bishopsgate.png`): stepped piers on the bay lines, mitred round the corners, a raked beam over each
+spandrel, a deep fascia over the ground floor
+and a coping along an open roof edge. A lobby's piers land on the pavement (and are solid), clear of its
+doors. One tower in six also divides each bay into two or three lights with slim mullions; the rest
+show each bay as one pane between its piers. The glass stays on the footprint's line and the relief is built out from it by up to half a metre,
+so what stands behind the glass (rooms, baked interiors, real windows) is untouched, and signs and LED
+bands are moved out to clear it. A pier or mullion is one extrusion whatever the floors, and a beam one
+whatever the bays, to keep the vertices down.
+
+The shader adds what geometry would waste vertices on (`shadeFacade`, `shadeTrim`): on the towers with
+mullions, a rail near each pane's foot, shifted for parallax; the piers' stone courses, and less sky reflected at the glass's edges.
+Each mullion shrinks away between 90 and 170 m (`city.vert`), leaving a painted line that stays stable far off. At night
+the depth reads by what lights it: the lamps, with their ray-traced shadows, and each room, whose mean
+light falls on the sides of the reveal beside its window, so a lit window has a lit frame. Piers are pale
+stone or anodised metal by the building's palette, beams and copings dark bronze.
+
+Against the commit before it, with the pool enlarged to hold the chunks' reach (`--shot`, 1600 x 900, 4x
+MSAA, RTX 4080 SUPER): the frame goes from 4.72 to 5.24 ms facing a relief tower (`--cam 1139.3 262 1.7 0 20`),
+and from 5.31 to 5.82 ms along the street (`--cam 1100 262 38 18`).
+
 Neon signs (`shadeNeon`) are glass tubes bent into pseudo-kanji, with a border tube on boards
 and banners, standing a few centimetres off a dark painted board. The view ray meets the tubes'
 layer before the board (its tangent frame comes from screen derivatives), so seen at an angle
@@ -1302,7 +1323,8 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
   the `specK` term in `shadeGround`. The textured road's sheen follows its roughness map under
   GGX; wet streets are the next step (`TODO.md`).
 - **Pool size and view distance**: `POOL_PAGES` and `VIEW_DISTANCE` in `src/core/common.h`.
-  The default pool is 384 MB.
+  The default pool is 504 MB. What a chunk's meshes cost sets how far its chunks reach before
+  proxies stand in (`relax_reach`), so more geometry on every building wants a larger pool.
 - **Assets**: authored content (textures, materials, models) is a file in `assets/`, read at run
   time through its shared pipeline; never compile it into the code. See "Assets" in
   `docs/code-structure-and-terrain-guidelines.md`.

@@ -208,6 +208,22 @@ int face_openings(const BGraph *g, const Behind *bh, int li, int k, float (*op)[
 int envelope_spans(const BGraph *g, const Behind *bh, const BLoop *l, int li, int k, float (*span)[2], uint8_t *lined, int max);
 void emit_cap(Mesh *m, const BFoot *f, float y, int down, Mat mt);
 void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors *in);
+/* Are section s's upper floors open plan behind full-height glass (interior impostors)? */
+int open_plan_section(const BGraph *g, const BSection *s);
+/* Is (x, z) on the open roof of section si (not under anything standing on it)? */
+int roof_free(const BGraph *g, int si, float x, float z, float clear);
+
+/* mesh_relief.c */
+/* MAT_TRIM params z's low bits (shadeTrim in shaders/city/facade.glsl). */
+enum { TRIM_PIER = 0, TRIM_BEAM, TRIM_COPING, TRIM_MULLION };
+/* Does section s stand behind relief (piers, beams, mullions and a coping)? */
+int relief_on(const BGraph *g, const BSection *s);
+/* How far in front of the glass a thing must stand to clear a building's relief (m; 0 for none). */
+float relief_out(const BGraph *g);
+/* Section si's relief, standing out from its faces in the current frame. */
+void emit_relief(Mesh *m, const BGraph *g, int si);
+/* The spans (u0, u1 along outer face k of section si) of the piers that reach the street, and how far they stand out. */
+int relief_ground_piers(const BGraph *g, int si, int k, float (*span)[2], float *depth, int max);
 
 /* mesh_lobby.c */
 void interiors_plan(const Building *b, const BGraph *g, Interiors *in);

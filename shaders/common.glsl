@@ -43,7 +43,9 @@ const uint MAT_ROAD = 0u, MAT_SIDEWALK = 1u, MAT_CURB = 2u, MAT_LOT = 3u,
            MAT_FACADE = 4u, MAT_ROOF = 5u, MAT_NEON = 6u, MAT_METAL = 7u,
            MAT_EMISSIVE = 8u, MAT_SCREEN = 9u, MAT_LEDSTRIP = 10u, MAT_DOOR = 11u,
            MAT_INTERIOR = 12u, MAT_LITTER = 13u, MAT_ARCOLOGY = 14u, MAT_INDUSTRY = 15u,
-           MAT_PROP = 16u;
+           MAT_PROP = 16u, MAT_TRIM = 17u;
+const uint TRIM_PIER = 0u, TRIM_BEAM = 1u, TRIM_COPING = 2u, TRIM_MULLION = 3u;   // MAT_TRIM params z's low bits (src/city/mesh_relief.c)
+const float TRIM_FADE_NEAR = 90.0, TRIM_FADE_FAR = 170.0;   // a mullion shrinks away over these distances (m): city.vert, where the facade's painted line takes over
 // Litter kinds (src/core/common.h)
 const uint LK_SHADOW = 0u, LK_NEWS = 1u, LK_FLYER = 2u, LK_SCRAP = 3u, LK_CARDBOARD = 4u, LK_WAD = 5u, LK_CAN = 6u,
            LK_BOTTLE = 7u, LK_BUTT = 8u, LK_CUP = 9u, LK_BOX = 10u, LK_BAG = 11u, LK_BINBAG = 12u;

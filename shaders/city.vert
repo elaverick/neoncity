@@ -152,6 +152,20 @@ void main() {
         float ns2 = ns * c - nrm.y * sn;
         nrm = vec3(nq.x + ns2 * S.x, ns * sn + nrm.y * c, nq.y + ns2 * S.y);
         lit = vec2(float(inAux & 0xFFFFu) / 65535.0, 0.0);
+    } else if (inParams.x == MAT_TRIM) {
+        /* Relief on a curtain wall (src/city/mesh_relief.c). A mullion is too slight to draw far off, where it would
+         * break up into dashes: it shrinks onto its foot's line, and the facade's painted line (shadeFacade) is what's
+         * left. Each vertex by its own distance, so a tall one tapers away up the building and costs nothing there.
+         * uv: the vertex's offset from that line, across and out; aux: the face's direction along u. */
+        if ((inParams.z & 3u) == TRIM_MULLION) {
+            float a = (float(inAux & 0xFFFFu) / 65535.0 - 0.5) * 6.2831853;
+            vec2 along = vec2(cos(a), sin(a)), out_ = vec2(-along.y, along.x);
+            vec2 off = -(along * inUV.x + out_ * inUV.y) * smoothstep(TRIM_FADE_NEAR, TRIM_FADE_FAR, length(rel));
+            rel.xz += off;
+            local.xz += off;
+        } else {
+            lit = vec2(inNrm.w, 0.0);   // how far out of the glass (interpolated)
+        }
     }
     vRel = rel;
     vLocal = local;
