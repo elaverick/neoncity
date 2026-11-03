@@ -25,6 +25,7 @@ static void set3(float out[3], TerrainDir v) { out[0] = (float)v.x; out[1] = (fl
 
 int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
     TerrainDir pt[AS * AS], dir[PS * PS], par[PP * PP];
+    TerrainCoverSite site[PS * PS];
     double sp = terrain_patch_spacing(t.level);
     int evals = 0;
     TerrainPatchInfo *in = &m->info;
@@ -34,14 +35,16 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
     in->centre = scale3(dc, PLANET_RADIUS);
     in->lo = 1e30f; in->hi = -1e30f;
 
-    /* The grid and its apron: heights at the patch's spacing. */
+    /* The grid and its apron: heights at the patch's spacing (and the grid's
+     * cover sites). */
     for (int gj = -1; gj <= PC + 1; ++gj)
         for (int gi = -1; gi <= PC + 1; ++gi) {
             TerrainDir d = terrain_patch_dir(t, PC, gi, gj);
-            double h = terrain_surface_dir(d, sp);
+            int grid = gi >= 0 && gi <= PC && gj >= 0 && gj <= PC;
+            double h = grid ? terrain_surface_site_dir(d, sp, &site[gj * PS + gi]) : terrain_surface_dir(d, sp);
             evals++;
             pt[(gj + 1) * AS + gi + 1] = point_at(d, h);
-            if (gi >= 0 && gi <= PC && gj >= 0 && gj <= PC) {
+            if (grid) {
                 dir[gj * PS + gi] = d;
                 in->lo = fminf(in->lo, (float)h);
                 in->hi = fmaxf(in->hi, (float)h);
@@ -90,6 +93,11 @@ int terrain_patch_fill(TerrainPatch t, TerrainPatchMesh *m) {
             set3(v->morph, sub3(target, P));
             set3(v->n, n);
             v->urban = plan_urban_dir(dir[gj * PS + gi]);
+            TerrainCoverSite *cs = &site[gj * PS + gi];
+            TerrainCover cv;
+            cs->ny = dot3(n, cs->d);   /* the sphere's up there */
+            terrain_cover_at(cs, sp, &cv);
+            terrain_cover_pack(&cv, v->cover);
             r2 = fmax(r2, dot3(rel, rel));
         }
 

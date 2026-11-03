@@ -8,7 +8,8 @@
  *
  * Then the region's landforms: weights that blend, every type present, each
  * with its own character, belts along their strike, sharp escarpments, and
- * continuous canyons.
+ * continuous canyons. Then the ground cover: weights that sum to 1, the rules
+ * where they should hold, smooth in every input, packed within a byte.
  *
  * Then levels of detail and the clipmap: coarse spacings drop only fine
  * detail; filled samples are the ground at their level, each level's parent
@@ -35,6 +36,7 @@
  * terrain_test --fingerprint prints a hash of the heights, the footprint and
  * some filled clipmaps instead, to compare what two builds generate;
  * terrain_test --map out.ppm [km [x z]] draws the land round the city or a place (see map);
+ * terrain_test --cover-map out.ppm [km [x z]] its ground cover (see cover_map);
  * terrain_test --planet-map out.ppm [px] the whole planet (see planet_map);
  * terrain_test --earth-map out.ppm [px] the Earth's bake (see earth_map);
  * terrain_test --landform-map out.ppm [px] its landforms (see landform_map);
@@ -301,12 +303,17 @@ static void check_contents(const TerrainClipmap *c, int l) {
             double gx = (terrain_surface_lod((double)(i + 1) * s, (double)j * s, s, NULL) - terrain_surface_lod((double)(i - 1) * s, (double)j * s, s, NULL)) / (2.0 * s);
             double gz = (terrain_surface_lod((double)i * s, (double)(j + 1) * s, s, NULL) - terrain_surface_lod((double)i * s, (double)(j - 1) * s, s, NULL)) / (2.0 * s);
             double inv = 1.0 / sqrt(1.0 + gx * gx + gz * gz);
+            TerrainCover cv;
+            uint32_t cover[2];
+            terrain_cover((double)i * s, (double)j * s, s, &cv);
+            terrain_cover_pack(&cv, cover);
             int ok = memcmp(&t->h, &h, sizeof(float)) == 0 && memcmp(&t->hc, &hc, sizeof(float)) == 0 &&
                      fabs(t->nx + gx * inv) <= 1e-6 && fabs(t->nz + gz * inv) <= 1e-6 && t->urban == urban &&
-                     urban == plan_urban((double)i * s, (double)j * s);
+                     urban == plan_urban((double)i * s, (double)j * s) && memcmp(t->cover, cover, sizeof(cover)) == 0;
             if (!ok && bad++ < 5)
-                CHECK(0, "level %d sample (%lld, %lld) holds h %.6f hc %.6f n (%.5f, %.5f) urban %.4f, wants %.6f %.6f (%.5f, %.5f) %.4f", l,
-                      (long long)i, (long long)j, t->h, t->hc, t->nx, t->nz, t->urban, h, hc, -gx * inv, -gz * inv, urban);
+                CHECK(0, "level %d sample (%lld, %lld) holds h %.6f hc %.6f n (%.5f, %.5f) urban %.4f cover %08x %08x, wants %.6f %.6f (%.5f, %.5f) %.4f %08x %08x", l,
+                      (long long)i, (long long)j, t->h, t->hc, t->nx, t->nz, t->urban, t->cover[0], t->cover[1], h, hc, -gx * inv, -gz * inv, urban,
+                      cover[0], cover[1]);
         }
 }
 
@@ -439,6 +446,7 @@ static uint64_t hash_clipmap(const TerrainClipmap *c, uint64_t h) {
                 h = fnv(&t->nx, sizeof(float), h);
                 h = fnv(&t->nz, sizeof(float), h);
                 h = fnv(&t->urban, sizeof(float), h);
+                h = fnv(t->cover, sizeof(t->cover), h);
             }
     }
     return h;
@@ -918,6 +926,224 @@ static int planet_map(const char *path, int F) {
     printf("planet map, %d px a face (%.0f km a pixel): heights %.0f .. %.0f m; the city on face %d\n", F, sp / 1000.0, lo, hi, cf);
     free(img);
     free(hgt);
+    return 0;
+}
+
+/* --- Ground cover ---------------------------------------------------------------- */
+
+static const char *const COVER_NAMES[TERRAIN_COVERS] = { "rock", "scree", "soil", "grass", "sand", "mud" };
+
+/* Some of the bake's rivers and streams: their segments' midpoints, on the centre line. */
+#define COVER_RIVERS 400
+#define COVER_NARROW_M 60.0
+typedef struct CoverRivers { int n, seen[2], taken[2]; TerrainDir mid[COVER_RIVERS]; double width[COVER_RIVERS]; } CoverRivers;
+static void cover_river(void *ctx, TerrainDir a, TerrainDir b, double width, int kind) {
+    CoverRivers *cr = (CoverRivers *)ctx;
+    int s = kind == 3;   /* every 37th segment, half the rivers and half the streams */
+    if ((kind != 1 && kind != 3) || cr->taken[s] == COVER_RIVERS / 2 || cr->seen[s]++ % 37 != 0) return;
+    cr->taken[s]++;
+    cr->mid[cr->n] = unit3(add3(a, b));
+    cr->width[cr->n++] = width;
+}
+
+/* A site on its own: level ground at lat, elev, far from water. */
+static TerrainCoverSite cover_site(double lat, double elev) {
+    TerrainCoverSite s;
+    s.d = terrain_latlon_dir(lat, 20.0);
+    s.elev = elev;
+    s.ny = 1.0;
+    s.edge = 2000.0;
+    s.size = 0.0;
+    return s;
+}
+
+static float cover_of(const TerrainCoverSite *s, int k, double spacing) {
+    TerrainCover c;
+    terrain_cover_at(s, spacing, &c);
+    return k == -1 ? c.snow : k == -2 ? c.wet : c.w[k];
+}
+
+/* The most any weight (or the snow or wetness) differs between two covers. */
+static double cover_diff(const TerrainCover *a, const TerrainCover *b) {
+    double d = fmax(fabs(a->snow - b->snow), fabs(a->wet - b->wet));
+    for (int k = 0; k < TERRAIN_COVERS; ++k) d = fmax(d, fabs(a->w[k] - b->w[k]));
+    return d;
+}
+
+/* 5d. The ground cover: weights in [0, 1] summing to 1 everywhere and at
+ *     every spacing; steep ground rock, the water's banks sand by wide water
+ *     and mud by small, high and cold ground snow, level ground far from water
+ *     grass and soil; smooth in every input; packed and unpacked to within a
+ *     byte. Then over the points: every class somewhere. */
+static void test_cover(Rng *r) {
+    static const double spacings[] = { 0.0, 1.0, 16.0, 256.0, 4096.0 };
+    int bad = 0, packBad = 0;
+    double share[TERRAIN_COVERS] = { 0 }, most[TERRAIN_COVERS] = { 0 }, snowMost = 0.0, wetMost = 0.0;
+    int n = 0;
+    for (int i = 0; i < N_POINTS; i += 4) {
+        double sp = spacings[(i / 4) % 5];
+        TerrainCover c, u;
+        terrain_cover(g_x[i], g_z[i], sp, &c);
+        double sum = 0.0;
+        int ok = c.snow >= 0.0f && c.snow <= 1.0f && c.wet >= 0.0f && c.wet <= 1.0f;
+        for (int k = 0; k < TERRAIN_COVERS; ++k) {
+            ok &= c.w[k] >= 0.0f && c.w[k] <= 1.0f;
+            sum += c.w[k];
+            share[k] += c.w[k];
+            most[k] = fmax(most[k], c.w[k]);
+        }
+        snowMost = fmax(snowMost, c.snow);
+        wetMost = fmax(wetMost, c.wet);
+        n++;
+        if ((!ok || fabs(sum - 1.0) > 1e-5) && bad++ < 3) CHECK(0, "cover at (%.0f, %.0f) out of range or summing to %.7f", g_x[i], g_z[i], sum);
+        uint32_t p[2];
+        terrain_cover_pack(&c, p);
+        terrain_cover_unpack(p, &u);
+        uint32_t bytes = (p[0] & 255u) + (p[0] >> 8 & 255u) + (p[0] >> 16 & 255u) + (p[0] >> 24) + (p[1] & 255u);
+        if ((cover_diff(&c, &u) > 1.0 / 255.0 + 1e-6 || bytes > 255u || p[1] >> 24) && packBad++ < 3)
+            CHECK(0, "cover at (%.0f, %.0f) unpacks %.4f off (bytes %u)", g_x[i], g_z[i], cover_diff(&c, &u), bytes);
+    }
+    printf("ground cover over %d points:", n);
+    for (int k = 0; k < TERRAIN_COVERS; ++k) printf(" %s %.1f%%", COVER_NAMES[k], 100.0 * share[k] / n);
+    printf("; snow up to %.2f, wet up to %.2f\n", snowMost, wetMost);
+    /* the classes the points' own ground holds (mud only by the water: below) */
+    for (int k = 0; k < TERRAIN_COVERS; ++k)
+        if (k != TERRAIN_COVER_MUD) CHECK(most[k] > 0.5, "no point is mostly %s (at most %.2f)", COVER_NAMES[k], most[k]);
+    CHECK(snowMost > 0.5, "no point has snow (at most %.2f)", snowMost);
+
+    /* The bake's rivers: in their beds, sand or mud, and mud in the narrow
+     * ones (the streams, where they are loaded: the bake's rivers are wide). */
+    CoverRivers cr = { 0 };
+    terrain_earth_water_segments(cover_river, &cr);
+    int beds = 0, muddy = 0, narrow = 0;
+    for (int k = 0; k < cr.n; ++k) {
+        double x, z;
+        terrain_dir_world(cr.mid[k], &x, &z);
+        TerrainCover c;
+        terrain_cover(x, z, 0.0, &c);
+        beds += c.w[TERRAIN_COVER_SAND] + c.w[TERRAIN_COVER_MUD] > 0.5;
+        if (cr.width[k] < COVER_NARROW_M) { narrow++; muddy += c.w[TERRAIN_COVER_MUD] > 0.5; }
+    }
+    if (cr.n) printf("ground cover in %d rivers' beds: %d sand or mud; in %d narrower than %.0f m, %d mud\n", cr.n, beds, narrow, COVER_NARROW_M, muddy);
+    int streams = terrain_earth_stream_points() > 0;
+    CHECK(!terrain_earth_loaded() || (cr.n >= 100 && beds * 10 >= cr.n * 8 && (!streams || (narrow >= 20 && muddy * 10 >= narrow * 6))),
+          "rivers' beds aren't sand or mud: %d of %d, mud in %d of %d narrow ones", beds, cr.n, muddy, narrow);
+
+    /* The rules, at sites made to order. */
+    for (int k = 0; k < 2; ++k) {
+        double sp = k ? 64.0 : 0.0, band = k ? 0.4 : 0.6;   /* a band's edge blurs over the spacing */
+        TerrainCoverSite s = cover_site(34.0, 300.0);
+        TerrainCover c;
+        terrain_cover_at(&s, sp, &c);
+        CHECK(c.w[TERRAIN_COVER_GRASS] + c.w[TERRAIN_COVER_SOIL] > 0.95 && c.snow == 0.0f && c.wet == 0.0f,
+              "level lowland far from water isn't grass and soil (spacing %.0f: grass %.2f soil %.2f snow %.2f wet %.2f)", sp,
+              c.w[TERRAIN_COVER_GRASS], c.w[TERRAIN_COVER_SOIL], c.snow, c.wet);
+        s.ny = 0.5;   /* 60 degrees */
+        CHECK(cover_of(&s, TERRAIN_COVER_ROCK, sp) > 0.99, "60-degree ground is %.2f rock (spacing %.0f)", cover_of(&s, TERRAIN_COVER_ROCK, sp), sp);
+        s.ny = 0.70;  /* 46 degrees: mostly */
+        CHECK(cover_of(&s, TERRAIN_COVER_ROCK, sp) > 0.5, "46-degree ground is %.2f rock", cover_of(&s, TERRAIN_COVER_ROCK, sp));
+        s = cover_site(34.0, 300.0);
+        s.edge = 2.0; s.size = TERRAIN_COVER_LAKE_M;
+        CHECK(cover_of(&s, TERRAIN_COVER_SAND, sp) > band && cover_of(&s, -2, sp) > 0.9, "a lake's shore is %.2f sand, %.2f wet (spacing %.0f)",
+              cover_of(&s, TERRAIN_COVER_SAND, sp), cover_of(&s, -2, sp), sp);
+        s.size = 3.0;
+        CHECK(cover_of(&s, TERRAIN_COVER_MUD, sp) > band, "a stream's bank is %.2f mud (spacing %.0f)", cover_of(&s, TERRAIN_COVER_MUD, sp), sp);
+        s.edge = -1.0;
+        CHECK(cover_of(&s, TERRAIN_COVER_MUD, sp) > band, "a stream's bed is %.2f mud (spacing %.0f)", cover_of(&s, TERRAIN_COVER_MUD, sp), sp);
+        s = cover_site(34.0, 1.0);
+        CHECK(cover_of(&s, TERRAIN_COVER_SAND, sp) > 0.9, "the coast to come is %.2f sand", cover_of(&s, TERRAIN_COVER_SAND, sp));
+        s = cover_site(34.0, -500.0);
+        s.ny = 0.85;
+        CHECK(cover_of(&s, TERRAIN_COVER_MUD, sp) > 0.95, "the sea's floor to come is %.2f silt", cover_of(&s, TERRAIN_COVER_MUD, sp));
+        s = cover_site(60.0, terrain_snowline(60.0) + 500.0);
+        CHECK(cover_of(&s, -1, sp) > 0.95, "level ground 500 m over the snow line at 60 N has %.2f snow", cover_of(&s, -1, sp));
+        s = cover_site(-80.0, 300.0);
+        CHECK(cover_of(&s, -1, sp) > 0.95, "low ground at 80 S has %.2f snow", cover_of(&s, -1, sp));
+        s = cover_site(5.0, 3000.0);
+        CHECK(cover_of(&s, -1, sp) == 0.0f, "3000 m at 5 N has %.2f snow", cover_of(&s, -1, sp));
+        s = cover_site(46.0, terrain_snowline(46.0) - 200.0);
+        CHECK(cover_of(&s, TERRAIN_COVER_GRASS, sp) < 0.05, "just under the snow line the ground is %.2f grass", cover_of(&s, TERRAIN_COVER_GRASS, sp));
+    }
+    CHECK(terrain_snowline(0.0) > 4000.0 && terrain_snowline(46.0) > 2000.0 && terrain_snowline(46.0) < 3500.0 && terrain_snowline(-80.0) < 200.0 &&
+          terrain_snowline(30.0) == terrain_snowline(-30.0), "the snow line (%.0f m at the equator, %.0f at 46, %.0f at 80 S) isn't the Earth's",
+          terrain_snowline(0.0), terrain_snowline(46.0), terrain_snowline(-80.0));
+
+    /* Smooth: a small change in any input moves every weight a little. The
+     * steepest rules: in ny the rock's (the cliff's 1.5 / 0.18 and the bare
+     * highland's 1.5 / 0.12 a unit together); in the water's distance its
+     * bands, blurred over 2 m at least (0.375 a metre); in elevation the
+     * coast's, 1.5 / 6 a metre. */
+    double worst[4] = { 0 };
+    for (int k = 0; k < 4000; ++k) {
+        float u = rng_float(r), v = rng_float(r), w = rng_float(r), q = rng_float(r), e = rng_float(r);
+        TerrainCoverSite s = cover_site(-90.0 + 180.0 * u, -50.0 + 7000.0 * v);
+        s.ny = 0.4 + 0.6 * w;
+        s.edge = -20.0 + 400.0 * q * q;
+        s.size = 500.0 * e * e;
+        double sp = spacings[k % 5];
+        TerrainCover a, b;
+        terrain_cover_at(&s, sp, &a);
+        static const double step[4] = { 1e-3, 0.01, 0.01, 1e-5 };   /* ny, edge (m), elevation (m), latitude (deg, about a metre) */
+        for (int in = 0; in < 4; ++in) {
+            TerrainCoverSite t = s;
+            if (in == 0) t.ny = fmin(1.0, s.ny + step[0]);
+            if (in == 1) t.edge += step[1];
+            if (in == 2) t.elev += step[2];
+            if (in == 3) { double lat, lon; terrain_dir_latlon(s.d, &lat, &lon); t.d = terrain_latlon_dir(fmin(90.0, lat + step[3]), lon); }
+            terrain_cover_at(&t, sp, &b);
+            worst[in] = fmax(worst[in], cover_diff(&a, &b));
+        }
+    }
+    printf("ground cover's largest change: %.4f for ny + 0.001, %.4f for 1 cm nearer the water, %.4f for 1 cm higher, %.5f for a metre north\n",
+           worst[0], worst[1], worst[2], worst[3]);
+    CHECK(worst[0] < 0.03 && worst[1] < 0.01 && worst[2] < 0.01 && worst[3] < 0.01, "the ground cover jumps: %.4f, %.4f, %.4f, %.4f", worst[0], worst[1], worst[2], worst[3]);
+}
+
+/* terrain_test --cover-map out.ppm [km [x z]]: the ground cover round the city
+ * centre, or the world's (x, z), `km` across (60 by default), 800 pixels
+ * square, each pixel the cover sampled at its size: rock grey, scree pale
+ * grey, soil brown, grass green, sand yellow, mud dark brown, snow white, the
+ * wet bluer, shaded by the relief; the city dark. North (-z) is up. */
+typedef struct CoverMap { DVec2 c; double px; int W; uint8_t *img; } CoverMap;
+static void cover_map_row(void *ctx, int j) {
+    const CoverMap *m = (const CoverMap *)ctx;
+    static const float col[TERRAIN_COVERS][3] = { { 0.50f, 0.50f, 0.50f }, { 0.72f, 0.70f, 0.66f }, { 0.55f, 0.38f, 0.22f },
+                                                  { 0.30f, 0.55f, 0.18f }, { 0.92f, 0.82f, 0.50f }, { 0.28f, 0.20f, 0.13f } };
+    int W = m->W;
+    for (int i = 0; i < W; ++i) {
+        double x = m->c.x + (i - W / 2) * m->px, z = m->c.z + (j - W / 2) * m->px;
+        TerrainCover c;
+        terrain_cover(x, z, m->px, &c);
+        double h = terrain_surface_lod(x, z, m->px, NULL), gx = (terrain_surface_lod(x + m->px, z, m->px, NULL) - h) / m->px,
+               gz = (terrain_surface_lod(x, z + m->px, m->px, NULL) - h) / m->px;
+        float shade = clampf(0.85f - (float)(0.8 * (gx + gz) / sqrt(1.0 + gx * gx + gz * gz)), 0.25f, 1.3f);
+        float city = plan_city_edge(x, z) < 0.0 ? 1.0f : 0.0f;
+        for (int q = 0; q < 3; ++q) {
+            float v = 0.0f;
+            for (int k = 0; k < TERRAIN_COVERS; ++k) v += c.w[k] * col[k][q];
+            v = v * (1.0f - 0.3f * c.wet) + (q == 2 ? 0.25f : 0.0f) * c.wet;
+            v = v * (1.0f - c.snow) + 0.97f * c.snow;
+            v *= shade * (1.0f - 0.7f * city);
+            m->img[((size_t)j * W + i) * 3 + q] = (uint8_t)clampf(v * 255.0f, 0.0f, 255.0f);
+        }
+    }
+}
+
+static int cover_map(const char *path, double km, const double *centre) {
+    CoverMap m;
+    m.W = 800;
+    m.c = centre ? dv(centre[0], centre[1]) : plan_town_centre(0, 0);
+    m.px = km * 1000.0 / m.W;
+    m.img = (uint8_t *)malloc((size_t)m.W * m.W * 3);
+    if (!m.img) return 1;
+    thread_parallel_for(m.W, cpu_count(), cover_map_row, &m);
+    FILE *f = fopen(path, "wb");
+    if (!f) return 1;
+    fprintf(f, "P6\n%d %d\n255\n", m.W, m.W);
+    fwrite(m.img, 1, (size_t)m.W * m.W * 3, f);
+    fclose(f);
+    printf("cover map of %.0f km round (%.0f, %.0f), sampled every %.0f m\n", km, m.c.x, m.c.z, m.px);
+    free(m.img);
     return 0;
 }
 
@@ -1409,10 +1635,13 @@ static void test_planet_patches(Rng *r) {
         /* (the info and the vertices; the struct's tail padding is never written) */
         CHECK(memcmp(&a[0].info, &a[1].info, sizeof(TerrainPatchInfo)) == 0 && memcmp(a[0].v, a[1].v, sizeof(a[0].v)) == 0, "patch %d/%d/%lld,%lld fills differently twice", t.face, t.level, (long long)t.i, (long long)t.j);
         CHECK(isfinite(a[0].info.err) && a[0].info.err >= 0.0f && a[0].info.radius > 0.0f, "patch err %.3f radius %.1f", a[0].info.err, a[0].info.radius);
-        /* every vertex within the radius */
+        /* every vertex within the radius, its cover packed whole (the classes no more than 1, the top byte clear) */
         for (int v = 0; v < TERRAIN_PATCH_VERTS; ++v) {
             TerrainDir q = vabs(&a[0], v, 0);
             CHECK(pdist(q, a[0].info.centre) <= a[0].info.radius, "a vertex lies outside its patch's radius");
+            const uint32_t *cv = a[0].v[v].cover;
+            uint32_t sum = (cv[0] & 255u) + (cv[0] >> 8 & 255u) + (cv[0] >> 16 & 255u) + (cv[0] >> 24) + (cv[1] & 255u);
+            CHECK(sum <= 255u && cv[1] >> 24 == 0u, "a patch vertex's cover is packed wrong (%08x %08x)", cv[0], cv[1]);
         }
         /* seams: each edge vertex is a vertex of the neighbour across it */
         for (int side = 0; side < 4; ++side) {
@@ -2190,6 +2419,10 @@ int main(int argc, char **argv) {
         double at[2] = { argc > 5 ? atof(argv[4]) : 0.0, argc > 5 ? atof(argv[5]) : 0.0 };
         return map(argv[2], argc > 3 ? atof(argv[3]) : 60.0, argc > 5 ? at : NULL);
     }
+    if (argc > 2 && strcmp(argv[1], "--cover-map") == 0) {   /* [km] [x z], as --map */
+        double at[2] = { argc > 5 ? atof(argv[4]) : 0.0, argc > 5 ? atof(argv[5]) : 0.0 };
+        return cover_map(argv[2], argc > 3 ? atof(argv[3]) : 60.0, argc > 5 ? at : NULL);
+    }
     if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
     if (argc > 2 && strcmp(argv[1], "--earth-map") == 0) return earth_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
     if (argc > 2 && strcmp(argv[1], "--landform-map") == 0) return landform_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
@@ -2377,6 +2610,7 @@ int main(int argc, char **argv) {
           "the megacity isn't settlement 0, of its size's relief");
 
     test_landforms(&r);
+    test_cover(&r);
     test_lod_heights();
     test_clipmap(&r);
     test_select();

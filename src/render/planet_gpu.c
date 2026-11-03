@@ -30,7 +30,7 @@
 #define PATCH_BYTES ((VkDeviceSize)TERRAIN_PATCH_VERTS * sizeof(TerrainPatchVertex))
 
 _Static_assert(TERRAIN_PATCH_VERTS <= 65536, "a patch's vertices don't fit 16-bit indices");
-_Static_assert(sizeof(TerrainPatchVertex) == 10 * sizeof(float), "planet.vert reads a patch vertex as 10 floats");
+_Static_assert(sizeof(TerrainPatchVertex) == 12 * sizeof(uint32_t), "planet.vert reads a patch vertex as 12 words");
 _Static_assert(sizeof(PlanetPush) <= 128, "the planet's push constants must fit the guaranteed 128 bytes");
 
 struct PlanetGpu {

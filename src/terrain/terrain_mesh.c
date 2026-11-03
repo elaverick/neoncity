@@ -13,19 +13,24 @@ static int64_t parent_below(int64_t i) { return (i - is_odd(i)) / 2; }
  * spacing, from which hc is interpolated in float exactly as from the
  * parent's own stored heights. */
 int terrain_mesh_fill(TerrainClipmap *c, int level, TerrainSpan sp) {
-    return terrain_mesh_fill_in(&c->level[level], level == TERRAIN_CLIP_LEVELS - 1, sp, c->scratch_h, c->scratch_p);
+    return terrain_mesh_fill_in(&c->level[level], level == TERRAIN_CLIP_LEVELS - 1, sp, c->scratch_h, c->scratch_p, c->scratch_s);
 }
 
-int terrain_mesh_fill_in(TerrainClipLevel *lv, int top, TerrainSpan sp, double *H, float *P) {
+/* The span's own samples keep their cover's site (S) from their height, and
+ * take its slope from their normal. */
+int terrain_mesh_fill_in(TerrainClipLevel *lv, int top, TerrainSpan sp, double *H, float *P, TerrainCoverSite *S) {
     double s = lv->spacing, ps = 2.0 * s;
     if (sp.w < 1 || sp.d < 1 || sp.w > TERRAIN_CLIP_W || sp.d > TERRAIN_CLIP_W) fatal("terrain_mesh_fill: span out of range");
 
     int hw = sp.w + 2;
     for (int jj = 0; jj < sp.d + 2; ++jj)
         for (int ii = 0; ii < hw; ++ii) {
-            int inside = ii >= 1 && ii <= sp.w && jj >= 1 && jj <= sp.d;
-            float *urban = inside ? &terrain_clip_sample(lv, sp.i0 + ii - 1, sp.j0 + jj - 1)->urban : NULL;
-            H[jj * hw + ii] = terrain_surface_lod((double)(sp.i0 + ii - 1) * s, (double)(sp.j0 + jj - 1) * s, s, urban);
+            double x = (double)(sp.i0 + ii - 1) * s, z = (double)(sp.j0 + jj - 1) * s;
+            if (ii >= 1 && ii <= sp.w && jj >= 1 && jj <= sp.d)
+                H[jj * hw + ii] = terrain_surface_site_lod(x, z, s, &terrain_clip_sample(lv, sp.i0 + ii - 1, sp.j0 + jj - 1)->urban,
+                                                           &S[(jj - 1) * sp.w + ii - 1]);
+            else
+                H[jj * hw + ii] = terrain_surface_lod(x, z, s, NULL);
         }
 
     int64_t pi0 = parent_below(sp.i0), pj0 = parent_below(sp.j0);
@@ -46,6 +51,11 @@ int terrain_mesh_fill_in(TerrainClipLevel *lv, int top, TerrainSpan sp, double *
             o->h = (float)hp[0];
             o->nx = (float)(-gx * inv);
             o->nz = (float)(-gz * inv);
+            TerrainCoverSite *site = &S[jj * sp.w + ii];
+            TerrainCover cv;
+            site->ny = inv;
+            terrain_cover_at(site, s, &cv);
+            terrain_cover_pack(&cv, o->cover);
             if (top) { o->hc = o->h; continue; }
             int ox = is_odd(i), oz = is_odd(j);
             const float *p = &P[(int)(parent_below(j) - pj0) * pw + (int)(parent_below(i) - pi0)];

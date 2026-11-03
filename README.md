@@ -29,6 +29,7 @@ build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (
 build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the world chart within 5400 km; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
 cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)
 build/terrain_test --earth-map earth.ppm # the bake as the engine reads it (--earth <bake> for another; the tests use tests/data/earth_test.bake)
+build/terrain_test --earth build/earth.bake --cover-map cover.ppm 300  # the ground cover 300 km round the megacity ([km [x z]])
 ```
 
 CMake fetches its dependencies at configure time: Vulkan-Headers, volk, GLFW and stb.
@@ -646,6 +647,18 @@ six faces). The design is in `docs/neoncity-terrain-and-bounded-city-world-desig
 `src/render/planet_gpu.c`): 33 x 33 grids refined as a quadtree by their screen-space error through the haze,
 filled on a worker, each blending onto its parent's surface towards the distance it would merge at. They carry
 the ground out to the horizon, which from fly mode's ceiling of 20 km is 500 km off.
+
+What the land is covered with comes from its own shape and place (`src/terrain/terrain_cover.c`; there is no
+land-cover or climate dataset). Steep ground is rock, and so is all but level ground above the treeline. The
+highlands' steeper slopes are scree. Sand lies by wide rivers and lakes, in their beds, at the coast to come
+and in the sea's shallows; mud by streams and small rivers, in their beds, and as silt on the sea's floor. The
+rest is grass, thinner on slopes and thicker by water, in patches, with soil between. Snow lies above a snow
+line set by latitude (about 4.8 km at the equator, 2.8 km at 46 degrees, the sea by 80), and the ground is
+wet near water. Every rule is smooth, so the classes blend without edges. Whatever depends on distance is
+blurred over the spacing it is sampled at, so a coarse level shows about what its ground holds. Each clipmap
+sample and each patch vertex carries the cover in two packed words, and `shaders/terrain/ground.glsl` colours
+the land by it, for now with each class's flat colour; textures are to follow.
+`terrain_test --cover-map out.ppm [km [x z]]` draws it.
 
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the

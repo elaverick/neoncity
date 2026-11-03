@@ -190,6 +190,8 @@ double terrain_shore(TerrainDir p, double spacing) {
     return terrain_earth_loaded() ? terrain_earth_height(p, spacing) : TERRAIN_MACRO_M * (terrain_macro(p, 0.0) - SEA_LEVEL_MACRO);
 }
 
+double terrain_sea_y(void) { return terrain_earth_loaded() ? -terrain_earth_datum() : TERRAIN_MACRO_M * SEA_LEVEL_MACRO; }
+
 double terrain_sea_margin_dir(TerrainDir p) {
     return terrain_shore(p, TERRAIN_LIFT_SPACING) - (terrain_earth_loaded() ? SEA_MARGIN_M : 0.0);
 }

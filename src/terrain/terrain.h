@@ -380,6 +380,56 @@ double terrain_shore(TerrainDir p, double spacing);
  * reports hidden is hidden. */
 int        terrain_horizon_hidden(TerrainDir cam, TerrainDir centre, double radius, double occluder);
 
+/* --- Ground cover (src/terrain/terrain_cover.c) ---------------------------------
+ * What the bare land is covered with at a point: a share of each base class
+ * (w, each in [0, 1], summing to 1) and, over them, how much snow lies there
+ * and how wet the ground is (each 0 .. 1). It comes from the ground's shape and
+ * place alone, by rules (there is no land-cover or climate dataset):
+ *   rock   where it is steep (from about 37 degrees, all of it by 52), and
+ *          on all but level ground above the treeline;
+ *   scree  above the treeline, and on steepish slopes of the highlands;
+ *   sand   on level ground by wide rivers and lakes, in their beds, and at
+ *          the coast to come (the land within a few metres of the sea's
+ *          level, and the sea's shallows);
+ *   mud    on level ground by small rivers and streams, in their beds, and
+ *          as silt on the sea's floor below its shallows;
+ *   grass  on the rest, thinner on slopes, thicker near water, patchy by a
+ *          slow noise; soil is what the grass leaves;
+ *   snow   above the snow line (terrain_snowline), less of it on cliffs;
+ *   wet    near water, out to a few hundred metres from a wide river.
+ * Every rule is smooth in its inputs, which are continuous, so there are no
+ * hard edges between classes. What depends on distance is blurred over the
+ * spacing it is sampled at (the water's banks, the noise's octaves, as
+ * terrain_height_lod drops them), so a coarse sample shows about what the
+ * ground round it is covered with. Pure: a function of the direction (for the
+ * noise and the latitude) and the site's values. */
+enum { TERRAIN_COVER_ROCK = 0, TERRAIN_COVER_SCREE, TERRAIN_COVER_SOIL, TERRAIN_COVER_GRASS, TERRAIN_COVER_SAND, TERRAIN_COVER_MUD,
+       TERRAIN_COVERS };
+typedef struct TerrainCover { float w[TERRAIN_COVERS]; float snow, wet; } TerrainCover;
+/* What the rules read at a point: its direction (planet frame, unit), its
+ * elevation above the sea to come (m), the up component of the drawn
+ * ground's unit normal there, and the water near it (terrain_earth_water):
+ * the signed distance to the nearest water's edge (m, negative in it; the
+ * water's reach or more where none is near) and that water's size, a river's
+ * width or TERRAIN_COVER_LAKE_M for a lake's shore (m). */
+#define TERRAIN_COVER_LAKE_M 400.0
+typedef struct TerrainCoverSite { TerrainDir d; double elev, ny, edge, size; } TerrainCoverSite;
+/* The cover at a site, as sampled every `spacing` metres (0: a point). */
+void   terrain_cover_at(const TerrainCoverSite *s, double spacing, TerrainCover *out);
+/* The cover of the drawn ground (terrain_surface_lod) at world (x, z) and
+ * `spacing`, its normal from the heights `spacing` either side (1 m at 0):
+ * what the clipmap's sample there holds, bit for bit. */
+void   terrain_cover(double x, double z, double spacing, TerrainCover *out);
+/* The permanent snow line at a latitude (degrees): its elevation above the sea (m). */
+double terrain_snowline(double lat_deg);
+/* The cover packed for the GPU, as TerrainSample and TerrainPatchVertex carry
+ * it: word 0 rock, scree, grass and sand, word 1 mud, snow and wet, a byte
+ * each from the lowest (unpackUnorm4x8's x, y, z, w), the top byte of word 1
+ * 0. Soil is what the five classes leave. The classes are rounded as running
+ * sums, so they never sum past 1. Unpacking gives each class to within 1/255. */
+void   terrain_cover_pack(const TerrainCover *c, uint32_t out[2]);
+void   terrain_cover_unpack(const uint32_t in[2], TerrainCover *c);
+
 /* --- Planet patches (src/terrain/terrain_patch.c) -------------------------------
  * Beyond the clipmap's coarsest window the ground is drawn as cube-sphere
  * patches: each a grid of TERRAIN_PATCH_CELLS cells a side over its square of
@@ -398,7 +448,9 @@ int        terrain_horizon_hidden(TerrainDir cam, TerrainDir centre, double radi
  *   morph  where it moves to on the parent's surface, less pos (0 on the
  *          six top patches);
  *   n      the unit normal, in the planet frame;
- *   urban  plan_urban there (1 in the city, 0 beyond its belt).
+ *   urban  plan_urban there (1 in the city, 0 beyond its belt);
+ *   cover  the ground cover there at the patch's spacing, packed
+ *          (terrain_cover_pack), its slope from n.
  * Nothing in it depends on the frame (TerrainFrame): a patch is drawn as it
  * is whichever frame is active.
  * err is how far the surface strays from its children's, at the cells'
@@ -408,7 +460,7 @@ int        terrain_horizon_hidden(TerrainDir cam, TerrainDir centre, double radi
 #define TERRAIN_PATCH_VERTS (TERRAIN_PATCH_SIDE * TERRAIN_PATCH_SIDE + 4 * TERRAIN_PATCH_SIDE)
 #define TERRAIN_PATCH_LEVELS 15   /* the finest the selection goes: level 14, cells about 76 m */
 
-typedef struct TerrainPatchVertex { float pos[3], morph[3], n[3], urban; } TerrainPatchVertex;
+typedef struct TerrainPatchVertex { float pos[3], morph[3], n[3], urban; uint32_t cover[2]; } TerrainPatchVertex;
 typedef struct TerrainPatchInfo {
     TerrainPatch id;
     TerrainDir   centre;           /* planet frame (m): on the sphere, under the patch's middle */
@@ -551,8 +603,10 @@ int  terrain_planet_find(const TerrainPlanet *tp, TerrainPatch t);
  * of the two ends of the cell's diagonal from (i - 1, j - 1) to
  * (i + 1, j + 1), which is how the parent's grid must be triangulated. On the
  * coarsest level hc = h. urban is plan_urban there: 1 in the city, 0 beyond
- * its belt (the renderer hazes the two differently). */
-typedef struct TerrainSample { float h, hc, nx, nz, urban; } TerrainSample;
+ * its belt (the renderer hazes the two differently). cover is the ground
+ * cover there at the level's spacing, packed (terrain_cover_pack; its slope
+ * from this normal): terrain_cover at the sample, bit for bit. */
+typedef struct TerrainSample { float h, hc, nx, nz, urban; uint32_t cover[2]; } TerrainSample;
 
 /* Bounds over a block of a level's storage: the TERRAIN_CLIP_BLOCK^2 slots
  * from (bx, bz) * BLOCK. Storage blocks are world-aligned: world sample (i, j)
@@ -600,6 +654,7 @@ typedef struct TerrainClipmap {
     TerrainSample   *storage;  /* every level's samples, one allocation */
     double          *scratch_h;
     float           *scratch_p;
+    TerrainCoverSite *scratch_s;
 } TerrainClipmap;
 
 /* Allocates the levels, all empty; free with terrain_clip_free. */

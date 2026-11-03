@@ -9,10 +9,11 @@
  * level's. Each vertex reads its sample from the level's toroidal storage
  * and blends into the parent's surface towards the window's edge, exactly as
  * terrain_clip_morph (src/terrain/terrain_lod.c), so rings meet without cracks
- * or pops. */
+ * or pops; its normal and ground cover blend with it. */
 
-// Every level's TERRAIN_CLIP_N^2 slots, five floats each: TerrainSample (src/terrain/terrain.h).
-layout(std430, set = 0, binding = 1) readonly buffer Samples { float samples[]; };
+// Every level's TERRAIN_CLIP_N^2 slots, seven words each: TerrainSample (src/terrain/terrain.h),
+// five floats and the cover's two packed words, read as bits so no float rounds them.
+layout(std430, set = 0, binding = 1) readonly buffer Samples { uint samples[]; };
 
 // TerrainPush (src/render/renderer_internal.h)
 layout(push_constant) uniform Level {
@@ -30,20 +31,29 @@ layout(push_constant) uniform Level {
 layout(location = 0) out vec3  vRel;     // camera-relative position, bent over the planet (planetBend)
 layout(location = 1) out vec3  vNrm;
 layout(location = 2) out float vUrban;   // plan_urban: 1 in the city, 0 beyond its belt
+layout(location = 3) out vec4  vCoverA;  // the ground cover (ground.glsl, Cover): rock, scree, grass, sand
+layout(location = 4) out vec4  vCoverB;  // mud, snow, wet, 0
 
 const int N = TERRAIN_CLIP_N, W = TERRAIN_CLIP_W;
 
-int slotBase(int level, ivec2 s) { return (((level * N) + (s.y & (N - 1))) * N + (s.x & (N - 1))) * 5; }
+int slotBase(int level, ivec2 s) { return (((level * N) + (s.y & (N - 1))) * N + (s.x & (N - 1))) * 7; }
+
+float word(int i) { return uintBitsToFloat(samples[i]); }
 
 vec3 normalAt(int base) {
-    vec2 n = vec2(samples[base + 2], samples[base + 3]);
+    vec2 n = vec2(word(base + 2), word(base + 3));
     return vec3(n.x, sqrt(max(1.0 - dot(n, n), 0.0)), n.y);
+}
+
+void coverAt(int base, out vec4 a, out vec4 b) {
+    a = unpackUnorm4x8(samples[base + 5]);
+    b = unpackUnorm4x8(samples[base + 6]);
 }
 
 void main() {
     ivec2 g = ivec2(gl_VertexIndex % W, gl_VertexIndex / W);
     int base = slotBase(lv.level, lv.slot + g);
-    float h = samples[base], hc = samples[base + 1];
+    float h = word(base), hc = word(base + 1);
     // The anchor is shared and the offset exact, so a point two levels share
     // gets the same position from both.
     precise vec2 xz = lv.anchor + (lv.offset + vec2(g) * lv.spacing);
@@ -57,16 +67,32 @@ void main() {
     morph = max(morph, lv.fade);
 
     vec3 n = normalAt(base);
+    vec4 ca, cb;
+    coverAt(base, ca, cb);
     if (morph > 0.0 && lv.top == 0) {
-        // the parent's normal here, interpolated as hc is (window corners are even samples)
+        // the parent's normal and cover here, interpolated as hc is (window corners are even samples)
         ivec2 o = g & 1, p = lv.pslot + (g >> 1);
-        vec3 pn = normalAt(slotBase(lv.level + 1, p));
-        if (o.x != 0 || o.y != 0) pn += normalAt(slotBase(lv.level + 1, p + o));
+        int pb = slotBase(lv.level + 1, p);
+        vec3 pn = normalAt(pb);
+        vec4 pa, pq;
+        coverAt(pb, pa, pq);
+        if (o.x != 0 || o.y != 0) {
+            int pb2 = slotBase(lv.level + 1, p + o);
+            vec4 pa2, pq2;
+            coverAt(pb2, pa2, pq2);
+            pn += normalAt(pb2);
+            pa = 0.5 * (pa + pa2);
+            pq = 0.5 * (pq + pq2);
+        }
         n = normalize(mix(n, normalize(pn), morph));
+        ca = mix(ca, pa, morph);
+        cb = mix(cb, pq, morph);
     }
 
     vRel = planetBend(xz, h + morph * (hc - h));
     vNrm = planetTilt(xz, n);
-    vUrban = samples[base + 4];
+    vUrban = word(base + 4);
+    vCoverA = ca;
+    vCoverB = cb;
     gl_Position = frame.viewProj * vec4(vRel, 1.0);
 }

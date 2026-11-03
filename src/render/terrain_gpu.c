@@ -6,7 +6,7 @@
  * camera and never generates terrain itself.
  *
  * Samples: every level's N x N slots in one device-local storage buffer, laid
- * out as the clipmap stores them (toroidally, TerrainSample's five floats
+ * out as the clipmap stores them (toroidally, TerrainSample's seven words
  * each), so a move uploads only the rectangles terrain_clip_update reports
  * dirty: a copy per row, through this frame slot's staging buffer.
  *
@@ -74,6 +74,7 @@ _Static_assert(TILES * TILE == CLIP_W - 1 && TILE % 2 == 0, "terrain tiles must 
 _Static_assert(TERRAIN_DISTANCE <= ((TERRAIN_CLIP_W - 1) / 2 - 1) * TERRAIN_CLIP_SPACING0 * (1 << (TERRAIN_CLIP_LEVELS - 1)),
                "TERRAIN_DISTANCE reaches past the coarsest clipmap window");
 _Static_assert(TERRAIN_CLIP_W * TERRAIN_CLIP_W <= 65536, "the grid's vertices don't fit 16-bit indices");
+_Static_assert(sizeof(TerrainSample) == 7 * sizeof(uint32_t), "terrain.vert reads a sample as 7 words");
 
 struct TerrainGpu {
     TerrainClipmap clip;                  /* the worker's while it is busy; the render thread's while it is idle */
@@ -186,6 +187,7 @@ static void take_levels(TerrainGpu *t) {
     t->shown.storage = NULL;
     t->shown.scratch_h = NULL;
     t->shown.scratch_p = NULL;
+    t->shown.scratch_s = NULL;
     for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) t->shown.level[l].samples = NULL;
 }
 

@@ -14,7 +14,8 @@
  * clipmap draws the ground, it sinks a little (and planet.frag discards it),
  * so the clipmap wins the depth test where the two overlap. */
 
-struct PatchVertex { float p[10]; };   // pos[3], morph[3], n[3], urban
+// pos[3], morph[3], n[3], urban (floats, as bits), then the cover's two packed words
+struct PatchVertex { uint p[12]; };
 layout(std430, set = 0, binding = 1) readonly buffer Verts { PatchVertex verts[]; };
 
 // PlanetPush (src/render/renderer_internal.h)
@@ -29,12 +30,14 @@ layout(location = 0) out vec3  vRel;     // camera-relative position
 layout(location = 1) out vec3  vNrm;
 layout(location = 2) out float vUrban;
 layout(location = 3) out vec2  vChart;   // camera-relative chart position (the projection about the camera)
+layout(location = 4) out vec4  vCoverA;  // the ground cover (ground.glsl, Cover): rock, scree, grass, sand
+layout(location = 5) out vec4  vCoverB;  // mud, snow, wet, 0
 
 vec3 toLocal(vec3 v) { return vec3(dot(v, pc.ax.xyz), dot(v, pc.up.xyz), dot(v, pc.az.xyz)); }
 
 void main() {
     PatchVertex v = verts[gl_VertexIndex];
-    vec3 pos = vec3(v.p[0], v.p[1], v.p[2]), mv = vec3(v.p[3], v.p[4], v.p[5]);
+    vec3 pos = uintBitsToFloat(uvec3(v.p[0], v.p[1], v.p[2])), mv = uintBitsToFloat(uvec3(v.p[3], v.p[4], v.p[5]));
     vec3 rel = pc.centre.xyz + toLocal(pos);
     if (pc.morph.y > 0.0) {
         float m = clamp((length(rel) - pc.morph.x) / (pc.morph.y - pc.morph.x), 0.0, 1.0);
@@ -52,7 +55,9 @@ void main() {
                * pc.centre.w * clamp(inside / TERRAIN_PLANET_HOLE_M, 0.0, 1.0);
     }
     vRel = rel;
-    vNrm = toLocal(vec3(v.p[6], v.p[7], v.p[8]));
-    vUrban = v.p[9];
+    vNrm = toLocal(uintBitsToFloat(uvec3(v.p[6], v.p[7], v.p[8])));
+    vUrban = uintBitsToFloat(v.p[9]);
+    vCoverA = unpackUnorm4x8(v.p[10]);
+    vCoverB = unpackUnorm4x8(v.p[11]);
     gl_Position = frame.viewProj * vec4(rel, 1.0);
 }

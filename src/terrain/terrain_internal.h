@@ -8,7 +8,8 @@
  *   terrain_lod.c      the clipmap: where each level's window goes, the strips
  *                      a move exposes, the per-update budget, readiness, morph,
  *                      block bounds and the screen-space error's choice of levels
- *   terrain_mesh.c     filling a strip of a level: heights, parent heights, normals
+ *   terrain_mesh.c     filling a strip of a level: heights, parent heights, normals, cover
+ *   terrain_cover.c    the ground cover: rock, scree, soil, grass, sand, mud, snow, wet
  *   terrain_world.c    the planet: the chart world X/Z is, the bend, the horizon and
  *                      the lowest ground (the cube-sphere is terrain_cube.c)
  *   terrain_patch.c    the planet's patches: their meshes, the cache of them and the
@@ -269,6 +270,18 @@ int terrain_octaves(double wave, int octaves, double spacing);
 /* The drawn surface: terrain_height_lod less the urban sink. *urban, if not
  * NULL, gets plan_urban at the point. */
 double terrain_surface_lod(double x, double z, double spacing, float *urban);
+/* terrain_surface_lod, bit for bit, and the ground cover's site there but its
+ * slope (site->ny is left 0): its direction, its elevation (the drawn height
+ * above the sea to come) and the water near, which is the query the height
+ * made where it made one (with the water's beds), else one of its own beyond
+ * the city (none under it, where plan_urban is 1: the water reads far). */
+double terrain_surface_site_lod(double x, double z, double spacing, float *urban, TerrainCoverSite *site);
+/* The same at a direction (terrain_surface_dir). */
+double terrain_surface_site_dir(TerrainDir p, double spacing, TerrainCoverSite *site);
+/* The sea to come stands at this world Y (m): the Earth's sea level less the
+ * datum, or the stand-in's without a bake (terrain_world.c). */
+double terrain_sea_y(void);
+
 /* A bound on how far urban relief of amplitude `relief` (m) drawn at
  * `spacing` strays from the city's ground (m); 0 at spacing 0. */
 double terrain_urban_lod_error(double spacing, double relief);
@@ -294,11 +307,11 @@ static inline TerrainDir unit3(TerrainDir a) { return scale3(a, 1.0 / sqrt(dot3(
 
 /* Fills the samples of `span` (which must not wrap in storage; see
  * terrain_lod.c) on level `level` of c: heights at the level's spacing, the
- * parent's surface (hc), normals and urban weights. Every value written is a pure function of
+ * parent's surface (hc), normals, urban weights and the ground cover. Every value written is a pure function of
  * the level and the world sample. Returns the heights it evaluated (at most
  * terrain_clip_fill_cost). */
 int  terrain_mesh_fill(TerrainClipmap *c, int level, TerrainSpan span);
 /* The same into level lv (the top level if `top`) with scratch of the
  * caller's: H (span.w + 2) * (span.d + 2) doubles, P (span.w / 2 + 3) *
- * (span.d / 2 + 3) floats. */
-int  terrain_mesh_fill_in(TerrainClipLevel *lv, int top, TerrainSpan span, double *H, float *P);
+ * (span.d / 2 + 3) floats, S span.w * span.d cover sites. */
+int  terrain_mesh_fill_in(TerrainClipLevel *lv, int top, TerrainSpan span, double *H, float *P, TerrainCoverSite *S);

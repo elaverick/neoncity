@@ -13,6 +13,8 @@ layout(location = 0) in vec3  vRel;
 layout(location = 1) in vec3  vNrm;
 layout(location = 2) in float vUrban;
 layout(location = 3) in vec2  vChart;
+layout(location = 4) in vec4  vCoverA;
+layout(location = 5) in vec4  vCoverB;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outRefl;   // nothing reflective (city.frag)
 
@@ -21,6 +23,6 @@ void main() {
         const float M = TERRAIN_PLANET_HOLE_M;
         if (vChart.x > pc.window.x + M && vChart.x < pc.window.z - M && vChart.y > pc.window.y + M && vChart.y < pc.window.w - M) discard;
     }
-    outColor = vec4(shadeGround(vRel, normalize(vNrm), vUrban), 1.0);
+    outColor = vec4(shadeGround(vRel, normalize(vNrm), vUrban, Cover(vCoverA, vCoverB)), 1.0);
     outRefl = vec4(0.0);
 }

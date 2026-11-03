@@ -126,7 +126,8 @@ void terrain_clip_init(TerrainClipmap *c) {
     c->storage = (TerrainSample *)calloc((size_t)TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_N * TERRAIN_CLIP_N, sizeof(TerrainSample));
     c->scratch_h = (double *)malloc(sizeof(double) * TERRAIN_FILL_SIDE * TERRAIN_FILL_SIDE);
     c->scratch_p = (float *)malloc(sizeof(float) * TERRAIN_PARENT_SIDE * TERRAIN_PARENT_SIDE);
-    if (!c->storage || !c->scratch_h || !c->scratch_p) fatal("out of memory allocating the terrain clipmap");
+    c->scratch_s = (TerrainCoverSite *)malloc(sizeof(TerrainCoverSite) * TERRAIN_CLIP_W * TERRAIN_CLIP_W);
+    if (!c->storage || !c->scratch_h || !c->scratch_p || !c->scratch_s) fatal("out of memory allocating the terrain clipmap");
     for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
         c->level[l].spacing = terrain_clip_spacing(l);
         c->level[l].samples = c->storage + (size_t)l * TERRAIN_CLIP_N * TERRAIN_CLIP_N;
@@ -138,6 +139,7 @@ void terrain_clip_free(TerrainClipmap *c) {
     free(c->storage);
     free(c->scratch_h);
     free(c->scratch_p);
+    free(c->scratch_s);
     memset(c, 0, sizeof(*c));
 }
 
@@ -196,7 +198,8 @@ static void refill_job(void *ctx, int job) {
                        TERRAIN_CLIP_W - b * REFILL_ROWS < REFILL_ROWS ? TERRAIN_CLIP_W - b * REFILL_ROWS : REFILL_ROWS };
     double *H = (double *)malloc(sizeof(double) * (TERRAIN_CLIP_W + 2) * (REFILL_ROWS + 2));
     float *P = (float *)malloc(sizeof(float) * (TERRAIN_CLIP_W / 2 + 3) * (REFILL_ROWS / 2 + 3));
-    if (!H || !P) fatal("out of memory refilling the terrain clipmap");
+    TerrainCoverSite *S = (TerrainCoverSite *)malloc(sizeof(TerrainCoverSite) * TERRAIN_CLIP_W * REFILL_ROWS);
+    if (!H || !P || !S) fatal("out of memory refilling the terrain clipmap");
     const TerrainFrame *was = terrain_frame_bound();
     terrain_frame_bind(rf->f);
     /* split where the band wraps in storage, as push_span splits a move */
@@ -207,11 +210,12 @@ static void refill_job(void *ctx, int job) {
             int wa = sx + sp.w > TERRAIN_CLIP_N ? TERRAIN_CLIP_N - sx : sp.w, da = sz + sp.d > TERRAIN_CLIP_N ? TERRAIN_CLIP_N - sz : sp.d;
             if (px) { q.i0 += wa; q.w = sp.w - wa; } else q.w = wa;
             if (pz) { q.j0 += da; q.d = sp.d - da; } else q.d = da;
-            if (q.w > 0 && q.d > 0) terrain_mesh_fill_in(&rf->c->level[l], l == TERRAIN_CLIP_LEVELS - 1, q, H, P);
+            if (q.w > 0 && q.d > 0) terrain_mesh_fill_in(&rf->c->level[l], l == TERRAIN_CLIP_LEVELS - 1, q, H, P, S);
         }
     terrain_frame_bind(was);
     free(H);
     free(P);
+    free(S);
 }
 
 void terrain_clip_refill(TerrainClipmap *c, double cam_x, double cam_z, int from, int threads) {

@@ -64,12 +64,20 @@ static double channel_cut(double x, double z, double spacing, double h, double w
  * own frame (plan_locate), so they are the same whichever frame asks. The
  * water's beds are carved into the land, never under the city's own ground:
  * down to the water's floor (terrain_earth_water), by no more than
- * TERRAIN_WATER_CARVE_M; as the land moves, so does that, by no more. */
-static double height_lod(double x, double z, const TerrainDir *p, double spacing, double *w, double *relief, int parts) {
+ * TERRAIN_WATER_CARVE_M; as the land moves, so does that, by no more.
+ * A site, if asked for, gets the direction and the water near (as
+ * terrain_surface_site_lod), the height none of it. */
+static void site_water(TerrainCoverSite *s, const TerrainEarthWater *wt) {
+    s->edge = wt->edge;
+    s->size = wt->lake || wt->edge == wt->shore ? TERRAIN_COVER_LAKE_M : wt->width;   /* nearest a lake's shore, or a river's bank */
+}
+
+static double height_lod(double x, double z, const TerrainDir *p, double spacing, double *w, double *relief, int parts, TerrainCoverSite *site) {
     double edge = plan_city_edge(x, z), h = 0.0, lift = 0.0, ux = x, uz = z;
     int roads = parts & GROUND_ROADS;
     *w = plan_urban_weight(edge);
     *relief = *w > 0.0 ? urban_relief(plan_locate(x, z, &ux, &uz)) : 0.0;
+    if (site) { site->edge = 1e30; site->size = 0.0; }
     if (*w < 1.0) {
         TerrainDir d = p ? *p : terrain_world_dir(x, z);
         double land;
@@ -77,9 +85,17 @@ static double height_lod(double x, double z, const TerrainDir *p, double spacing
         if ((parts & GROUND_WATER) && terrain_earth_beds() && terrain_earth_water(d, &wt)) {   /* one query for the valley and the beds */
             land = terrain_land_parts_at(d, edge, spacing, wt.valley, &lift);
             if (wt.floor < land) land = fmax(wt.floor, land - TERRAIN_WATER_CARVE_M);
-        } else land = terrain_land_parts(d, edge, spacing, &lift);
+            if (site) site_water(site, &wt);
+        } else {
+            land = terrain_land_parts(d, edge, spacing, &lift);
+            if (site && terrain_earth_water(d, &wt)) site_water(site, &wt);
+        }
         h += (1.0 - *w) * land;
-    } else lift = terrain_lift(x, z, spacing);
+        if (site) site->d = d;
+    } else {
+        lift = terrain_lift(x, z, spacing);
+        if (site) site->d = p ? *p : terrain_world_dir(x, z);
+    }
     if (*w > 0.0) {
         double urban = (*relief > 0.0 ? *relief * urban_shape_lod(ux, uz, spacing) : 0.0) + lift;
         h += *w * urban;
@@ -96,12 +112,12 @@ static double height_lod(double x, double z, const TerrainDir *p, double spacing
 
 double terrain_height_lod(double x, double z, double spacing) {
     double w, relief;
-    return height_lod(x, z, NULL, spacing, &w, &relief, GROUND_ALL);
+    return height_lod(x, z, NULL, spacing, &w, &relief, GROUND_ALL, NULL);
 }
 
 double terrain_height_dry_lod(double x, double z, double spacing) {
     double w, relief;
-    return height_lod(x, z, NULL, spacing, &w, &relief, GROUND_ROADS);
+    return height_lod(x, z, NULL, spacing, &w, &relief, GROUND_ROADS, NULL);
 }
 
 double terrain_height(double x, double z) { return terrain_height_lod(x, z, 0.0); }
@@ -164,38 +180,50 @@ double terrain_urban_lod_error(double spacing, double relief) {
     return err;
 }
 
-static double surface_lod(double x, double z, const TerrainDir *p, double spacing, float *urban) {
-    double w, relief, h = height_lod(x, z, p, spacing, &w, &relief, GROUND_ALL);
+static double surface_lod(double x, double z, const TerrainDir *p, double spacing, float *urban, TerrainCoverSite *site) {
+    double w, relief, h = height_lod(x, z, p, spacing, &w, &relief, GROUND_ALL, site);
     if (urban) *urban = (float)w;
-    return h - terrain_urban_sink(spacing, relief) * w;
+    h -= terrain_urban_sink(spacing, relief) * w;
+    if (site) { site->elev = h - terrain_sea_y(); site->ny = 0.0; }
+    return h;
 }
 
-double terrain_surface_lod(double x, double z, double spacing, float *urban) { return surface_lod(x, z, NULL, spacing, urban); }
+double terrain_surface_lod(double x, double z, double spacing, float *urban) { return surface_lod(x, z, NULL, spacing, urban, NULL); }
+
+double terrain_surface_site_lod(double x, double z, double spacing, float *urban, TerrainCoverSite *site) {
+    return surface_lod(x, z, NULL, spacing, urban, site);
+}
+
+double terrain_surface_site_dir(TerrainDir p, double spacing, TerrainCoverSite *site) {
+    double x, z;
+    terrain_dir_world(p, &x, &z);
+    return surface_lod(x, z, &p, spacing, NULL, site);
+}
 
 /* The land at p itself; the settlements, their ground and the roads at its
  * place in this thread's frame. */
 double terrain_height_dir(TerrainDir p, double spacing) {
     double x, z, w, relief;
     terrain_dir_world(p, &x, &z);
-    return height_lod(x, z, &p, spacing, &w, &relief, GROUND_ALL);
+    return height_lod(x, z, &p, spacing, &w, &relief, GROUND_ALL, NULL);
 }
 
 double terrain_height_dry_dir(TerrainDir p, double spacing) {
     double x, z, w, relief;
     terrain_dir_world(p, &x, &z);
-    return height_lod(x, z, &p, spacing, &w, &relief, GROUND_ROADS);
+    return height_lod(x, z, &p, spacing, &w, &relief, GROUND_ROADS, NULL);
 }
 
 double terrain_ground_bare_dir(TerrainDir p, double spacing) {
     double x, z, w, relief;
     terrain_dir_world(p, &x, &z);
-    return height_lod(x, z, &p, spacing, &w, &relief, 0);
+    return height_lod(x, z, &p, spacing, &w, &relief, 0, NULL);
 }
 
 double terrain_surface_dir(TerrainDir p, double spacing) {
     double x, z;
     terrain_dir_world(p, &x, &z);
-    return surface_lod(x, z, &p, spacing, NULL);
+    return surface_lod(x, z, &p, spacing, NULL, NULL);
 }
 
 double terrain_urban_sink(double spacing, double relief) {
@@ -239,7 +267,7 @@ void terrain_height_range(double x0, double z0, double x1, double z1, double *lo
 
 double terrain_height_bare(double x, double z, double spacing) {
     double w, relief;
-    return height_lod(x, z, NULL, spacing, &w, &relief, GROUND_WATER);
+    return height_lod(x, z, NULL, spacing, &w, &relief, GROUND_WATER, NULL);
 }
 
 /* The roads move the ground at a spacing by wr (1 - w) (rh - g) from the bare
@@ -248,7 +276,7 @@ double terrain_height_bare(double x, double z, double spacing) {
 double terrain_road_lod_error(double x, double z, double spacing) {
     double e = 0.0;
     for (int k = 0; k < 2; ++k) {
-        double sp = k ? spacing : 0.0, w, relief, rh, g = height_lod(x, z, NULL, sp, &w, &relief, GROUND_WATER | GROUND_CHANNELS);
+        double sp = k ? spacing : 0.0, w, relief, rh, g = height_lod(x, z, NULL, sp, &w, &relief, GROUND_WATER | GROUND_CHANNELS, NULL);
         if (w >= 1.0 || sp > PLAN_ROAD_LOD_SPACING) continue;
         double wr = plan_road_ground(x, z, g, sp, &rh);
         e += wr * (1.0 - w) * fabs(rh - g);
@@ -263,7 +291,7 @@ double terrain_channel_lod_error(double x, double z, double spacing) {
     double e = 0.0;
     for (int k = 0; k < 2; ++k) {
         double sp = k ? spacing : 0.0, w, relief;
-        e += fabs(height_lod(x, z, NULL, sp, &w, &relief, GROUND_WATER | GROUND_CHANNELS) - height_lod(x, z, NULL, sp, &w, &relief, GROUND_WATER));
+        e += fabs(height_lod(x, z, NULL, sp, &w, &relief, GROUND_WATER | GROUND_CHANNELS, NULL) - height_lod(x, z, NULL, sp, &w, &relief, GROUND_WATER, NULL));
     }
     return e;
 }
