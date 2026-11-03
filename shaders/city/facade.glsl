@@ -76,6 +76,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float relV = vAbs - SIDEWALK_HEIGHT - groundH;
     // Derivatives must be taken in uniform control flow, before any per-pixel branching.
     float dU = fwidth(u), dV = fwidth(vAbs);
+    gRoomPx = max(dU, dV); gRoomEye = length(rel);   // for the rooms' grain behind the glass (roomGrain)
     // The wall's authored grain (pbrGrain, assets/materials/facade_*.json): concrete, brick, sheet metal, tile,
     // stone or bronze by the palette, under the building's own shade; glass walls have none. Its coordinates'
     // derivatives are taken here too, for the ground floor's shutters and base course below.
@@ -401,7 +402,10 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         if (room.curtain > 0.5) {
             float open = 0.18 + 0.2 * hf(roomHash, 41u);
             float cMask = 1.0 - band(hx, open, 1.0 - open, 0.01);
-            inner = mix(inner, curtainLight(room, 0.75 + 0.25 * sin(hx * 60.0)), cMask);
+            vec3 cl = curtainLight(room, 0.75 + 0.25 * sin(hx * 60.0));
+            float cr;   // the cloth's weave (pbrTint), hanging just inside the glass: the wall's derivatives serve
+            if (pbrLoaded(PBR_FABRIC)) cl *= pbrTint(PBR_FABRIC, vec2(hx * W * winW, -hy * H * winH), gqx, gqy, cr);
+            inner = mix(inner, cl, cMask);
         }
         if (room.blinds > 0.0 && pbrLoaded(PBR_BLIND) && pbrLoaded(PBR_BLIND_RAIL)) {
             float up = (hy - (1.0 - room.blinds)) * H * winH;

@@ -1,0 +1,14 @@
+// Wood chips: the bark-mulch top dressing of a lobby plant's pot (shadePlant), in its
+// own dark brown (pbrGrain).
+// WoodChips003 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/wood_chips_003/albedo.png",
+    "normal": "../textures/wood_chips_003/normal.png",
+    "orm":    "../textures/wood_chips_003/orm.png"
+  },
+  "tile": 0.6,                 // metres per image: finer chips than the 1.6 m ambientCG gives, for a pot
+  "albedo_mean": [0.391, 0.255, 0.140],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

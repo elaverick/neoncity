@@ -1,4 +1,5 @@
-// White marble (the lobby floors' chequer, pale core cladding).
+// White marble (the lobby floors' chequer, pale core cladding); also the grain (pbrGrain) of a
+// lobby's vanities.
 {
   "maps": {
     "albedo": "../textures/marble_012/albedo.png",
@@ -6,5 +7,7 @@
     "orm":    "../textures/marble_012/orm.png"
   },
   "tile": 2.0,
-  "albedo_scale": 0.5
+  "albedo_scale": 0.5,
+  "albedo_mean": [0.421, 0.427, 0.476],   // per channel: the grain (pbrGrain) divides by it
+  "params": [1.0, 1.0]    // the grain's albedo contrast and normal strength
 }

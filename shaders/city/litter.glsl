@@ -239,6 +239,23 @@ vec3 shadeLitter(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         }
     }
 
+    // Authored grain (pbrGrain) under the print: creased paper on newspapers, flyers, receipts, wads, cups
+    // and noodle boxes, corrugated card on flattened boxes and pizza boxes. uv run 0..1 over a piece, so a
+    // sheet takes the image once; each piece its own part of it. The frame from the screen derivatives.
+    int gm = kind == LK_CARDBOARD || (kind == LK_BOX && var == 1u) ? PBR_CARDBOARD
+           : kind == LK_NEWS || kind == LK_FLYER || kind == LK_WAD || (kind == LK_SCRAP && (var & 1u) == 0u)
+             || (kind == LK_CUP && uv.y <= 0.9) || (kind == LK_BOX && var == 0u) ? PBR_PAPER : -1;
+    vec3 gT, gB;
+    modelFrame(p, uv, n, gT, gB);   // derivatives out here: a cup's lid is decided per pixel
+    vec2 gqx = dFdx(uv) * vec2(1.0, -1.0), gqy = dFdy(uv) * vec2(1.0, -1.0);
+    if (gm >= 0 && pbrLoaded(gm)) {
+        vec2 q = vec2(uv.x, -uv.y) + vec2(hf(h, 70u), hf(h, 71u));
+        Grain g = pbrGrain(gm, q, gqx, gqy, gT, -gB, n);
+        alb *= g.tint * mix(1.0, g.ao, 0.6);
+        n = g.n;
+        rough = clamp(rough + 0.5 * (g.rough - 0.5), 0.05, 1.0);
+    }
+
     alb *= mix(1.0, 0.6, hf(h, 21u) * hf(h, 21u));   // the longer it has lain there, the dirtier
     if (porous) {
         // Soaks in patches as the rain goes on, a sheet from its edges in:

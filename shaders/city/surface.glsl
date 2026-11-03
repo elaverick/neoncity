@@ -82,6 +82,15 @@ vec3 pbrTint(int m, vec2 q, vec2 gx, vec2 gy, out float rough) {
     return mix(vec3(1.0), textureGrad(pbrMaps[i + PBR_ALBEDO], q / tile, gx / tile, gy / tile).rgb / max(pbrAlbedoMean(m), vec3(1e-3)), pbrParams(m).x);
 }
 
+// pbrTint's tint by a footprint instead of screen derivatives, for surfaces found per pixel along a ray
+// (the rooms seen through windows), where none can be taken: px, the metres of surface a pixel spans.
+vec3 pbrTintLod(int m, vec2 q, float px) {
+    int i = m * PBR_MAPS_PER_MATERIAL;
+    vec2 tile = pbrTile(m);
+    float lod = log2(max(px / min(tile.x, tile.y) * float(textureSize(pbrMaps[i + PBR_ALBEDO], 0).x), 1.0));
+    return mix(vec3(1.0), textureLod(pbrMaps[i + PBR_ALBEDO], q / tile, lod).rgb / max(pbrAlbedoMean(m), vec3(1e-3)), pbrParams(m).x);
+}
+
 // What a procedural surface's Blinn-Phong highlight is scaled by where the grain's roughness map is
 // glossier or duller than middling: 1 at roughness 0.5.
 float grainSpec(Grain g) { return mix(1.75, 0.25, g.rough); }

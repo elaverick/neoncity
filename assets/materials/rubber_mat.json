@@ -1,0 +1,14 @@
+// Flecked rubber matting: a lobby's vestibule floor (shadeInterior), its flecks kept faint
+// (the albedo's contrast, params x) since the map's mean is so dark (pbrGrain).
+// Rubber001 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/rubber_001/albedo.png",
+    "normal": "../textures/rubber_001/normal.png",
+    "orm":    "../textures/rubber_001/orm.png"
+  },
+  "tile": 0.75,                // metres per image (75 cm, as ambientCG gives it)
+  "albedo_mean": [0.016, 0.018, 0.019],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.25, 1.0]
+}

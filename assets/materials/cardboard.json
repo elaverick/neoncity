@@ -1,0 +1,14 @@
+// Corrugated kraft card: litter's flattened boxes and pizza boxes (shadeLitter), under their
+// print and stains (pbrGrain). Litter's uv run 0..1 over each piece.
+// Cardboard002 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/cardboard_002/albedo.png",
+    "normal": "../textures/cardboard_002/normal.png",
+    "orm":    "../textures/cardboard_002/orm.png"
+  },
+  "tile": 1.0,                 // uv units per image
+  "albedo_mean": [0.494, 0.278, 0.074],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

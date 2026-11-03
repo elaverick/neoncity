@@ -1125,22 +1125,42 @@ procedural noise. All are ambientCG (CC0), packed at 1024 from the 2K downloads:
 |---|---|---|
 | `facade_concrete` | [Concrete008](https://ambientcg.com/view?id=Concrete008) | concrete facades (palette 0) |
 | `facade_brick` | [Bricks085](https://ambientcg.com/view?id=Bricks085) | brick facades (palette 1) |
-| `facade_metal` | [CorrugatedSteel005](https://ambientcg.com/view?id=CorrugatedSteel005) | metal-panelled facades (palette 2), plants' profiled cladding, arcology market blocks |
+| `facade_metal` | [CorrugatedSteel005](https://ambientcg.com/view?id=CorrugatedSteel005) | metal-panelled facades (palette 2), plants' profiled cladding, arcology market blocks and stall canopies |
 | `facade_tile` | [Tiles133A](https://ambientcg.com/view?id=Tiles133A) | tiled facades (palette 3) |
 | `facade_stone` | [Tiles143](https://ambientcg.com/view?id=Tiles143) | warm-stone facades (palette 5) |
-| `brushed_metal` | [Metal038](https://ambientcg.com/view?id=Metal038) | bronze facades (palette 6), metal piers, steel doors, street and roof metalwork, lobby bronze panels |
-| `granite` | [Granite003A](https://ambientcg.com/view?id=Granite003A) | buildings' base course, stone piers, lobby granite floors, arcology black stone |
+| `brushed_metal` | [Metal038](https://ambientcg.com/view?id=Metal038) | bronze facades (palette 6), metal piers, steel doors, street and roof metalwork, lobby bronze panels, frames, lift doors and door frames; arcology rails, fascias, lift doors, linings, ducts, counters and kiosks |
+| `granite` | [Granite003A](https://ambientcg.com/view?id=Granite003A) | buildings' base course, stone piers, lobby granite floors and planters, arcology black stone, polished floors and stone decks |
 | `shutter` | [CorrugatedSteel009](https://ambientcg.com/view?id=CorrugatedSteel009) | shut shopfronts, loading bays, arcology stalls |
 | `roof_gravel` | [Gravel043](https://ambientcg.com/view?id=Gravel043) | flat roofs |
 | `roof_tiles` | [RoofingTiles012A](https://ambientcg.com/view?id=RoofingTiles012A) | hip roofs |
 | `lot_asphalt` | [Asphalt033](https://ambientcg.com/view?id=Asphalt033) | lots, yards, verges, bridge soffits |
-| `grass` | [Grass001](https://ambientcg.com/view?id=Grass001) | parks and lawns |
-| `painted_steel` | [Metal016](https://ambientcg.com/view?id=Metal016) | plants' tanks and frames, rooftop plant |
-| `plaster` | [Plaster001](https://ambientcg.com/view?id=Plaster001) | lobby charcoal plaster |
-| `concrete_board` | [Concrete028](https://ambientcg.com/view?id=Concrete028) | arcology columns, beams, cores |
-| `concrete` | [Concrete034](https://ambientcg.com/view?id=Concrete034) | concrete pads and plinths, roof soffits, arcology blocks |
+| `grass` | [Grass001](https://ambientcg.com/view?id=Grass001) | parks and lawns, arcology terrace planting |
+| `painted_steel` | [Metal016](https://ambientcg.com/view?id=Metal016) | plants' tanks, frames and gratings, rooftop plant and vents, lobby shelving, bins, lockers, steel doors and linings; arcology ducts, pipes, kiosks, crates and AC units |
+| `plaster` | [Plaster001](https://ambientcg.com/view?id=Plaster001) | lobby charcoal plaster and ceilings, arcology pale fascias, the walls and ceilings of rooms seen through windows |
+| `concrete_board` | [Concrete028](https://ambientcg.com/view?id=Concrete028) | arcology columns, beams, cores, ceilings |
+| `concrete` | [Concrete034](https://ambientcg.com/view?id=Concrete034) | concrete pads and plinths, roof soffits, arcology blocks, streets, floors, decks, soffits, fascias, stairs and planters; lobby service floors and slab edges |
+| `carpet` | [Carpet012](https://ambientcg.com/view?id=Carpet012) | lobby meeting, security, facilities and mail rooms; half the floors of rooms seen through windows |
+| `terrazzo` | [Terrazzo005](https://ambientcg.com/view?id=Terrazzo005) | arcology terrazzo floors, lobby pale stone fittings |
+| `floor_tile` | [Tiles107](https://ambientcg.com/view?id=Tiles107) | lobby toilets and showers, arcology small-tiled floors (its joints replace the procedural ones, on the same 0.3 m grid) |
+| `rubber_mat` | [Rubber001](https://ambientcg.com/view?id=Rubber001) | lobby vestibule floors, revolving doors' sweeps |
+| `fabric` | [Fabric031](https://ambientcg.com/view?id=Fabric031) | lobby upholstery, arcology awnings, curtains seen through windows |
+| `bark` | [Bark002](https://ambientcg.com/view?id=Bark002) | lobby plants' woody stems and trunks |
+| `pebbles` | [Rocks022](https://ambientcg.com/view?id=Rocks022) | lobby pots' black pebble dressing |
+| `mulch` | [WoodChips003](https://ambientcg.com/view?id=WoodChips003) | lobby pots' bark-mulch dressing |
+| `paper` | [Paper003](https://ambientcg.com/view?id=Paper003) | litter's newspapers, flyers, receipts, wads, cups and noodle boxes |
+| `cardboard` | [Cardboard002](https://ambientcg.com/view?id=Cardboard002) | litter's flattened boxes and pizza boxes |
 
-Glass, neon, signs, screens, rooms seen through windows and the terrain stay procedural.
+The lobby woods and white marble (`wood_mid`, `wood_dark`, `wood_light`, `marble_white`) also
+carry an `albedo_mean` and grain `params`, so they serve as grain too: arcology timber soffits,
+decks, counters and crates, lobby timber doors and vanities, and the floors and desks of rooms
+seen through windows. Those rooms are found per pixel along the view ray, where no screen
+derivatives can be taken, so they sample by a footprint instead (`pbrTintLod`, `roomGrain`): the
+glass's metres per pixel, grown with how deep into the room the ray went. A lobby's finishes
+take the tint alone (`pbrTint`), as their lighting has no normal map; so do the vents' louvres,
+plants' gratings and a wing's sweep, whose relief is their own.
+
+Glass, neon, signs, screens, an arcology's spine and unit fronts, shop shelving, and the
+terrain stay procedural, as do the roads out in the land (drawn by the terrain's shader).
 
 Road markings and manhole covers stay procedural masks. `layer()` paints them over the base
 surface, whether textured or procedural. Within the mask it blends in the coat's colour and

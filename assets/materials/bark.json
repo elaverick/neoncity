@@ -1,0 +1,14 @@
+// Smooth, finely fissured bark: a lobby plant's stems and trunks (shadePlant), in each
+// species' own colour (pbrGrain).
+// Bark002 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/bark_002/albedo.png",
+    "normal": "../textures/bark_002/normal.png",
+    "orm":    "../textures/bark_002/orm.png"
+  },
+  "tile": 0.4,                 // metres per image: young trunks are a few centimetres across
+  "albedo_mean": [0.220, 0.185, 0.124],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

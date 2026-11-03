@@ -440,10 +440,31 @@ vec3 shadePlant(vec3 p, vec3 V, vec3 n, vec2 uv, uint seed, uint surf, uint kind
         } else {
             alb = vec3(0.14, 0.10, 0.07);
         }
+        // woody stems take the authored bark's grain (pbrGrain), mapped in the world round and up the stem
+        if (kind != WM_GREEN && kind != WM_ZZ && pbrLoaded(PBR_BARK)) {
+            vec3 gT, gB;
+            vec2 q;
+            planarFrame(n, gWorld, gT, gB, q);
+            Grain g = pbrGrain(PBR_BARK, q, dFdx(q), dFdy(q), gT, gB, n);
+            alb *= g.tint * mix(1.0, g.ao, 0.6);
+            n = g.n;
+            gloss *= mix(1.5, 0.5, g.rough);
+        }
     } else {                                     // the pot's top dressing: polished black pebbles, or bark
         occ = 1.0;
         uint sh = styleHash(seed);
-        if (hf(sh, 81u) < 0.6) {
+        int dm = hf(sh, 81u) < 0.6 ? PBR_PEBBLES : PBR_MULCH;
+        if (pbrLoaded(dm)) {                     // authored (pbrGrain), level in the world
+            vec3 gT, gB;
+            vec2 q;
+            planarFrame(n, gWorld, gT, gB, q);
+            Grain g = pbrGrain(dm, q + vec2(hf(sh, 82u), hf(sh, 83u)) * 7.0, dFdx(q), dFdy(q), gT, gB, n);
+            bool peb = dm == PBR_PEBBLES;
+            alb = (peb ? vec3(0.03, 0.03, 0.033) : vec3(0.035, 0.024, 0.016)) * g.tint * g.ao;
+            n = g.n;
+            gloss = peb ? 0.6 * (1.0 - g.rough) : 0.03;
+            shin = peb ? 60.0 : 20.0;
+        } else if (hf(sh, 81u) < 0.6) {
             vec2 q = uv / 0.03, c = floor(q), f = fract(q) - 0.5;
             float k = hfloat(hash2i(sh, int(c.x), int(c.y)));
             float d = length(f + (vec2(k, fract(k * 7.3)) - 0.5) * 0.3);
@@ -518,6 +539,7 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         } else if (sub == IR_TOILET || sub == IR_WC || sub == IR_SHOWER) {
             vec2 t = fract(uv / 0.3);
             float j = max(1.0 - smoothstep(0.0, 0.03 + aa * 3.0, min(t.x, 1.0 - t.x)), 1.0 - smoothstep(0.0, 0.03 + aa * 3.0, min(t.y, 1.0 - t.y)));
+            if (pbrLoaded(PBR_FLOOR_TILE)) j = 0.0;    // the authored tiles' own joints (below), on the same grid
             alb = mix(vec3(0.52, 0.52, 0.50), vec3(0.22), j);
             gloss = 0.3;
         } else if (sub == IR_MEETING || sub == IR_SECURITY || sub == IR_FACILITIES || sub == IR_MAIL) {
@@ -679,6 +701,33 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         vec3 room = Lc * (0.08 + 0.5 * smoothstep(fh - 0.7, fh - 0.4, fy)) * lit + vec3(0.004);
         vec3 c = fy < 0.9 ? vec3(0.03) * diff : room;
         return mix(c, vec3(0.02), mull);
+    }
+
+    // Authored grain (pbrTint: a lobby's finishes take no normal map) under the colours above, where nothing
+    // authored stood: the back rooms' matting, tile, carpet and concrete, the slab edges round a void, the
+    // ceiling's plaster; and on the fittings (in the world, planarFrame, as their uv may run 0..1 over a
+    // box) metalwork, door frames and sweeps, lift doors, doors, linings, upholstery, planters and vanities.
+    int gm = -1;
+    bool fitting = true;
+    if (surf == IS_ROOMFLOOR && sub != IR_HALL && sub != IR_SECURE) {
+        gm = sub == IR_VESTIBULE ? PBR_RUBBER_MAT : sub == IR_TOILET || sub == IR_WC || sub == IR_SHOWER ? PBR_FLOOR_TILE
+           : sub == IR_MEETING || sub == IR_SECURITY || sub == IR_FACILITIES || sub == IR_MAIL ? PBR_CARPET : PBR_CONCRETE;
+        fitting = false;
+    } else if (surf == IS_CEILING && sub != 2u) { gm = PBR_PLASTER; fitting = false; }
+    else if (surf == IS_WALL && sub == 1u) gm = PBR_CONCRETE;
+    else if (surf == IS_METAL) gm = sub == 20u || sub == 22u || sub == 25u ? PBR_PAINTED_STEEL : PBR_BRUSHED_METAL;
+    else if (surf == IS_LEAFFRAME) gm = (sub >> 1u) == 4u ? PBR_RUBBER_MAT : (sub >> 1u) == 3u ? -1 : PBR_BRUSHED_METAL;   // not the frosted band
+    else if (surf == IS_LIFTDOOR) gm = PBR_BRUSHED_METAL;
+    else if (surf == IS_DOOR) gm = sub == 1u ? PBR_PAINTED_STEEL : PBR_WOOD_DARK;
+    else if (surf == IS_FABRIC) gm = PBR_FABRIC;
+    else if (surf == IS_LINING && sub == 1u) gm = PBR_PAINTED_STEEL;
+    else if (surf == IS_STONE && sub != 2u && sub != 4u) gm = sub == 1u ? PBR_GRANITE : sub == 3u ? PBR_MARBLE_WHITE : PBR_TERRAZZO;
+    if (gm >= 0 && pbrLoaded(gm)) {
+        vec2 q = uv;
+        if (fitting) { vec3 gT, gB; planarFrame(n, gWorld, gT, gB, q); }
+        float rough;
+        alb *= pbrTint(gm, q, dFdx(q), dFdy(q), rough);
+        gloss *= mix(1.4, 0.6, rough);
     }
 
     vec3 col = alb * (diff + irr) + Lc * specB * gloss * 0.08 * panels + emit;

@@ -1,0 +1,14 @@
+// Rounded pebbles: the polished black top dressing of a lobby plant's pot (shadePlant),
+// in its own black (pbrGrain).
+// Rocks022 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/rocks_022/albedo.png",
+    "normal": "../textures/rocks_022/normal.png",
+    "orm":    "../textures/rocks_022/orm.png"
+  },
+  "tile": 0.5,                 // metres per image (50 cm, as ambientCG gives it)
+  "albedo_mean": [0.339, 0.312, 0.280],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

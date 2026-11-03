@@ -1,0 +1,15 @@
+// Glazed square tiles, eight by eight to the image, the joints on its edges: a lobby's toilets
+// (shadeInterior) and an arcology's small-tiled floors (shadeArcology), the procedural joints
+// giving way to these (pbrGrain).
+// Tiles107 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/tiles_107/albedo.png",
+    "normal": "../textures/tiles_107/normal.png",
+    "orm":    "../textures/tiles_107/orm.png"
+  },
+  "tile": 2.4,                 // metres per image: 0.3 m tiles, on the procedural grid
+  "albedo_mean": [0.943, 0.942, 0.941],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

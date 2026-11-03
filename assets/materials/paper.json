@@ -1,0 +1,14 @@
+// Creased white paper: litter's newspapers, flyers, receipts, wads, cups and boxes
+// (shadeLitter), under their print (pbrGrain). Litter's uv run 0..1 over each piece.
+// Paper003 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/paper_003/albedo.png",
+    "normal": "../textures/paper_003/normal.png",
+    "orm":    "../textures/paper_003/orm.png"
+  },
+  "tile": 1.0,                 // uv units per image: one sheet's creases
+  "albedo_mean": [0.739, 0.739, 0.739],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

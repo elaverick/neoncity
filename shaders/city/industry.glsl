@@ -94,17 +94,18 @@ vec3 shadeIndustry(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float fh = fract(y / 2.4), aa = fwidth(y / 2.4) + 0.002;
         alb *= 1.0 - 0.45 * band(fh, 0.0, 0.05, aa);
     }
-    // Authored grain (pbrGrain) under the paint: profiled sheet on cladding, painted steel on the rest (not
-    // gratings, whose bars are their own). uv are metres (round a shell, along a box's face; up), or the
-    // world's x and z on what faces up or down; the frame from the screen derivatives (modelFrame).
-    int gm = (pat & 2u) != 0u ? PBR_FACADE_METAL : PBR_PAINTED_STEEL;
+    // Authored grain (pbrGrain) under the paint: profiled sheet on cladding, painted steel on the rest (on
+    // gratings the tint alone: their bars are their own relief). uv are metres (round a shell, along a box's
+    // face; up), or the world's x and z on what faces up or down; the frame from the screen derivatives (modelFrame).
+    int gm = (pat & 2u) != 0u && surf != IND_GRATING ? PBR_FACADE_METAL : PBR_PAINTED_STEEL;
     Grain gr = Grain(vec3(1.0), n, 1.0, 0.5);
-    if (surf != IND_GRATING && pbrLoaded(gm)) {
+    if (pbrLoaded(gm)) {
         vec3 gT, gB;
         modelFrame(p, uv, n, gT, gB);
         vec2 q = vec2(uv.x, -uv.y);   // upright: down the image is down the surface (-gB, along +v)
         gr = pbrGrain(gm, q, dFdx(q), dFdy(q), gT, -gB, n);
         alb *= gr.tint * mix(1.0, gr.ao, 0.7);
+        if (surf == IND_GRATING) gr.n = n;
     } else if ((pat & 2u) != 0u) {   // profiled cladding
         float r = fract(uv.x / 0.25), aa = fwidth(uv.x / 0.25) + 0.002;
         alb *= 0.82 + 0.18 * band(r, 0.15, 0.55, aa);

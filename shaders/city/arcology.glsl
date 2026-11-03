@@ -175,7 +175,10 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         if (surf == ARS_FLOOR) {
             if (var == 2u) { alb = vec3(0.03, 0.028, 0.03) * (1.0 - 0.6 * joint); alb += vec3(0.25, 0.17, 0.06) * grid(q, 3.6, 0.02, aa) * 0.6; rough = 0.12; }
             else if (var == 1u) { alb = vec3(0.06, 0.058, 0.055) * (0.6 + 0.8 * fbm(w.xz * 0.8, 0xA5F3u)); rough = 0.45; }
-            else if (var == 3u || var == 7u) { vec2 tl = fract(q / 0.3); float j = grid(q, 0.3, 0.008, aa); alb = mix(vec3(0.20, 0.19, 0.17), vec3(0.04), j) * (var == 7u ? 0.5 : 1.0); rough = 0.4; }
+            else if (var == 3u || var == 7u) {   // 0.3 m tiles: their joints authored where floor_tile loaded (below)
+                float j = pbrLoaded(PBR_FLOOR_TILE) ? 0.0 : grid(q, 0.3, 0.008, aa);
+                alb = mix(vec3(0.20, 0.19, 0.17), vec3(0.04), j) * (var == 7u ? 0.5 : 1.0); rough = 0.4;
+            }
             else if (var == 4u) { alb = vec3(0.045, 0.043, 0.042) * (1.0 - 0.5 * grid(q, 0.6, 0.01, aa)); rough = 0.38; }
             else if (var == 6u) { alb = vec3(0.12, 0.115, 0.11) * (0.8 + 0.4 * vnoise(q * 6.0, 0xA5F4u)); rough = 0.25; }
             else if (var == 5u) { alb = vec3(0.05, 0.048, 0.046) * (0.7 + 0.6 * fbm(w.xz * 0.5, 0xA5F5u)); rough = 0.6; wet = false; }
@@ -418,8 +421,10 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     }
 
     // Authored grain (pbrGrain) under the colours above: the megastructure's board-marked concrete, its dark
-    // stone and bronze, the blocks' concrete and sheet metal, the shutters' slats and the roofs' gravel.
-    // uv are metres; the frame from the screen derivatives (modelFrame), the image upright.
+    // stone and bronze, the blocks' concrete and sheet metal, the shutters' slats, the roofs' gravel; the
+    // floors' concrete, stone, tile and terrazzo; the decks', soffits' and fascias' concrete, stone, timber and
+    // metal; the metalwork, crates, awnings, counters, kiosks and lift doors. uv are metres; the frame from the
+    // screen derivatives (modelFrame), the image upright. (A gallery's unit fronts stay procedural.)
     int gm = -1;
     if (surf == ARS_COLUMN || surf == ARS_CAPITAL || surf == ARS_BEAM || surf == ARS_CORE)
         gm = surf == ARS_COLUMN && var == 1u ? PBR_GRANITE : PBR_CONCRETE_BOARD;
@@ -427,6 +432,21 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     else if (surf == ARS_BLOCK) gm = var == AB_MARKET || var == AB_REPAIR ? PBR_FACADE_METAL : PBR_CONCRETE;
     else if (surf == ARS_SHUTTER) gm = PBR_SHUTTER;
     else if (surf == ARS_ROOF) gm = PBR_ROOF_GRAVEL;
+    else if (surf == ARS_STREET || surf == ARS_SLAT) gm = PBR_CONCRETE;
+    else if (surf == ARS_FLOOR)
+        gm = var == 2u || var == 4u ? PBR_GRANITE : var == 3u || var == 7u ? PBR_FLOOR_TILE : var == 6u ? PBR_TERRAZZO : PBR_CONCRETE;
+    else if (surf == ARS_CEILING) gm = PBR_CONCRETE_BOARD;
+    else if (surf == ARS_STAIR) gm = PBR_CONCRETE;
+    else if (surf == ARS_GALLERY || surf == ARS_BRIDGE) gm = var == 3u ? PBR_WOOD_DARK : var == 2u ? PBR_GRANITE : PBR_CONCRETE;
+    else if (surf == ARS_SOFFIT) gm = var == 3u ? PBR_WOOD_MID : PBR_CONCRETE;
+    else if (surf == ARS_FASCIA) gm = var == 9u ? PBR_PLASTER : var == 0u ? PBR_CONCRETE : PBR_BRUSHED_METAL;
+    else if (surf == ARS_METAL) gm = var == 0u || var == 2u ? PBR_PAINTED_STEEL : PBR_BRUSHED_METAL;
+    else if (surf == ARS_RAIL || surf == ARS_LIFTDOOR || surf == ARS_LINING) gm = PBR_BRUSHED_METAL;
+    else if (surf == ARS_STALLROOF) gm = PBR_FACADE_METAL;
+    else if (surf == ARS_COUNTER) gm = hf(seed, 9u) < 0.5 ? PBR_BRUSHED_METAL : PBR_WOOD_MID;
+    else if (surf == ARS_KIOSK) gm = var == 1u ? PBR_BRUSHED_METAL : PBR_PAINTED_STEEL;
+    else if (surf == ARS_CRATE)
+        gm = var == 10u ? PBR_FABRIC : var == 12u ? PBR_CONCRETE : var == 13u ? PBR_GRASS : var == 6u || var == 9u ? PBR_WOOD_DARK : PBR_PAINTED_STEEL;
     if (gm >= 0 && pbrLoaded(gm)) {
         vec3 gT, gB;
         modelFrame(p, uv, n, gT, gB);

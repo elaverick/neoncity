@@ -265,16 +265,17 @@ vec3 shadeMetal(vec3 p, vec3 rel, vec3 n, vec2 uv, uvec4 prm) {
         glassRefl(n, F * (1.0 - mull * 0.8));
         return mix(glow * (1.0 - F) + envReflection(reflect(-V, n)) * F, vec3(0.02), mull * 0.8);
     }
-    // authored grain (pbrGrain): painted steel on a roof's plant, concrete, dark sheet steel on the rest
-    // (not the vents, whose louvres are their own), in the world on each face
-    int m = v == 0u ? PBR_PAINTED_STEEL : v == 5u ? PBR_CONCRETE : v == 1u ? -1 : PBR_BRUSHED_METAL;
+    // authored grain (pbrGrain): painted steel on a roof's plant and its vents, concrete, dark sheet steel
+    // on the rest, in the world on each face (the vents' louvres keep their own relief: their tint only)
+    int m = v == 0u || v == 1u ? PBR_PAINTED_STEEL : v == 5u ? PBR_CONCRETE : PBR_BRUSHED_METAL;
     Grain g = Grain(vec3(1.0), n, 1.0, 0.5);
-    if (m >= 0 && pbrLoaded(m)) {
+    if (pbrLoaded(m)) {
         vec3 gT, gB;
         vec2 q;
         planarFrame(n, gWorld, gT, gB, q);
         g = pbrGrain(m, q, dFdx(q), dFdy(q), gT, gB, n);
         alb *= g.tint * mix(1.0, g.ao, 0.6);
+        if (v == 1u) g.n = n;
     }
     vec3 spec;
     vec3 diff = wallLighting(p, g.n, V, 40.0, 0.25 * grainSpec(g), p.y - gBase, spec);

@@ -25,6 +25,27 @@ struct Room {
     uint  h;
 };
 
+// Where the window is, for the rooms' authored grain (roomGrain): the metres of glass a pixel spans and
+// the eye's distance to it (shadeFacade sets them, in uniform control flow).
+float gRoomPx = 0.0, gRoomEye = 1.0;
+
+// A room's surfaces under their own colours take an authored grain (pbrTintLod): plaster walls and
+// ceiling, carpet or timber floors, a desk's oak. q: metres in the surface; t: how far along the ray
+// (d, in the room's metres) it was met, so the footprint grows with the depth seen into the room.
+vec3 roomGrain(int m, vec2 q, float t, vec3 d, uint h) {
+    if (!pbrLoaded(m) || gRoomPx <= 0.0) return vec3(1.0);
+    float px = gRoomPx * (1.0 + t * length(d) / max(gRoomEye, 0.5)) * 1.5;
+    return pbrTintLod(m, q + vec2(hf(h, 44u), hf(h, 45u)) * 5.0, px);
+}
+
+// The grain of a room box's face at p: plaster on the ceiling and (but a shop's shelving) the walls,
+// back (z = D) or side; carpet or timber on the floor, by the room.
+vec3 roomSurfaceGrain(Room r, vec3 p, float t, vec3 d, bool ceiling, bool back, bool side) {
+    if (ceiling) return roomGrain(PBR_PLASTER, p.xz, t, d, r.h);
+    if (back || side) return r.shop ? vec3(1.0) : roomGrain(PBR_PLASTER, back ? vec2(p.x, -p.y) : vec2(p.z, -p.y), t, d, r.h);
+    return roomGrain(hf(r.h, 43u) < 0.5 ? PBR_CARPET : PBR_WOOD_MID, p.xz, t, d, r.h);
+}
+
 // Shop walls: shelving with rows of colourful stock.
 vec3 shelves(vec2 w, vec3 base, uint h) {
     float row = floor(w.y / 0.42);
@@ -256,6 +277,7 @@ vec3 interiorColor(vec2 cell, vec3 d, float W, float H, float D, Room r) {
     } else {
         alb = r.floorC;
     }
+    alb *= roomSurfaceGrain(r, p, t, d, ceiling, t == tz, t == tx);
 
     vec3 col = roomLight(r, p, alb, ceiling, W, H, D, vec2(W * 0.2, min(D * 0.15, 0.6)));
 
@@ -386,6 +408,9 @@ vec3 cornerInterior(vec2 cell, vec3 d, float W, float H, float D, Room r, bool g
     } else {
         alb = r.floorC;
     }
+    // authored grain under the room's colours (not a shop's shelving): the desk's oak on its top and sides
+    if (desk) alb *= roomGrain(PBR_WOOD_LIGHT, tin == tn.y ? p.xz : tin == tn.x ? vec2(p.z, -p.y) : vec2(p.x, -p.y), t, d, r.h);
+    else alb *= roomSurfaceGrain(r, p, t, d, ceiling, t == tz, t == tx);
 
     float panel = min(min(W, D) * 0.2, 0.6);   // square, so it matches from both faces
     return roomLight(r, p, alb, ceiling, W, H, D, vec2(panel));
