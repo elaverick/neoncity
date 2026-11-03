@@ -191,8 +191,10 @@ Left over:
   bridges (W2c) are the only structures so far.
 - **Only the near ground is graded.** The roads are in the terrain at spacings up to 64 m (`PLAN_ROAD_LOD_SPACING`),
   so beyond about 4 km the paint lies on the bare ground's coarse levels, and the planet's patches don't draw roads
-  at all. Lamp heads, poles, barriers, signs and traffic aren't modelled: the freeways' light is pools on the
-  asphalt. Freeway junctions are level, without slip roads or interchanges.
+  at all. Lamp heads, poles, signs and traffic aren't modelled, and the median barrier is painted on the ground
+  (concrete, its faces shaded by a bent normal): the freeways' light is pools on the asphalt and the land beside
+  it. Freeway junctions are level, without slip roads or interchanges. The land roads' asphalt isn't anti-tiled
+  (its 4 m tile is low-contrast) and takes no wet sheen but the lamps' (terrain textures TX6).
 - **Roads on the sphere.** Each link is built in a chart of its own and published in every frame it comes
   near (C4: each settlement's frame holds the roads within its reach, a travel frame those within 90 km of
   it, the world's all of them), so the paint and the decks are drawn true to width near any city. Miami has

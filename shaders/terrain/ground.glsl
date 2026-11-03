@@ -359,36 +359,54 @@ vec3 landMacro(vec2 g, vec2 wp, float px, float snow) {
     return near * mix(hue, vec3(1.0), snow);
 }
 
-// The land lit, before the haze. textured: whether the cover's textures may
-// be drawn (the clipmap's ground; the planet's patches all lie beyond them).
-vec3 groundLit(vec3 rel, vec3 n, float urban, Cover cover, bool textured) {
+// Where on the ground the textures are mapped: p the ground's own coordinates,
+// x and z wrapped as the city's (frame.ground, from doubles), and their screen
+// derivatives; px the metres of ground a pixel spans. Taken in uniform control
+// flow (the derivatives), and passed to what samples inside branches.
+struct LandPoint { vec3 p; vec3 dpx; vec3 dpy; float px; };
+LandPoint landPoint(vec3 rel) {
+    LandPoint l;
+    l.p = vec3(frame.ground.xy + rel.xz, frame.camPos.y + rel.y).xzy;
+    l.dpx = dFdx(l.p); l.dpy = dFdy(l.p);
+    l.px = length(rel) * 2.0 * length(frame.rayBasis[1].xyz) * frame.screen.w;
+    return l;
+}
+
+// The land's albedo at rel, its normal n bent by the textures' normal maps.
+// textured: whether the cover's textures may be drawn (the clipmap's ground,
+// where no road's asphalt covers it; the planet's patches all lie beyond them).
+vec3 groundAlbedo(vec3 rel, LandPoint l, float urban, Cover cover, bool textured, inout vec3 n) {
     vec2 wp = frame.camPos.xz + rel.xz;
-    // the ground's own coordinates for the textures: x and z wrapped as the
-    // city's (frame.ground, from doubles), taken here in uniform control flow
-    vec3 p = vec3(frame.ground.xy + rel.xz, frame.camPos.y + rel.y).xzy;
-    vec3 dpx = dFdx(p), dpy = dFdy(p);
-    // the metres of ground a pixel spans
-    float px = length(rel) * 2.0 * length(frame.rayBasis[1].xyz) * frame.screen.w;
     vec3 albedo = coverAlbedo(cover);
     if (textured && urban < 0.99) {
-        float tex = 1.0 - smoothstep(LAND_TEX_PX0, LAND_TEX_PX1, px);
+        float tex = 1.0 - smoothstep(LAND_TEX_PX0, LAND_TEX_PX1, l.px);
         if (tex > 0.0) {
             vec3 tn = n;
-            vec3 t = coverTextured(cover, p, dpx, dpy, px, tn);
+            vec3 t = coverTextured(cover, l.p, l.dpx, l.dpy, l.px, tn);
             albedo = mix(albedo, t, tex);
             n = normalize(mix(n, tn, tex));
         }
     }
-    albedo *= landMacro(p.xz, wp, px, cover.b.y);
+    albedo *= landMacro(l.p.xz, wp, l.px, cover.b.y);
     // patchy within each class; darker in the rain, but for the snow
     float patches = 0.6 * vnoise(wp / 37.0, 0x7E21u) + 0.4 * vnoise(wp / 211.0, 0x7E22u);
     albedo *= 0.8 + 0.4 * patches;
     albedo *= 1.0 - 0.35 * frame.weather.y * (1.0 - cover.b.y);
-    vec3 col = albedo * groundLight(rel, n);
-    // Under the city, where its chunks aren't drawn (beyond their view
-    // distance, between the distant proxies), the streets: dark wet asphalt
-    // under the sodium lamps, seen from afar as their average glow.
+    return albedo;
+}
+
+// Under the city, where its chunks aren't drawn (beyond their view distance,
+// between the distant proxies), the lit land col gives way to the streets:
+// dark wet asphalt under the sodium lamps, seen from afar as their average glow.
+vec3 groundUrban(vec3 col, float urban) {
     return mix(col, vec3(0.02, 0.018, 0.017) * CLOUD_DECK * 2.0 + vec3(1.0, 0.55, 0.25) * 0.012, urban);
+}
+
+// The land lit, before the haze.
+vec3 groundLit(vec3 rel, vec3 n, float urban, Cover cover, bool textured) {
+    vec3 albedo = groundAlbedo(rel, landPoint(rel), urban, cover, textured, n);
+    vec3 col = albedo * groundLight(rel, n);
+    return groundUrban(col, urban);
 }
 
 // What is lit at rel, seen through the haze.

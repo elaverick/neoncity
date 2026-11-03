@@ -1,5 +1,6 @@
-// The carriageways (shadeGround): Road012A (ambientCG, CC0), mapped in world
-// space so carriageways and the junction fill match across their seams.
+// The carriageways (shadeGround), and the roads out in the land (shaders/terrain/roads.glsl):
+// Road012A (ambientCG, CC0), mapped in world space so carriageways and the junction fill
+// match across their seams, and a land road runs on unbroken from a bridge's deck.
 {
   "maps": {
     "albedo": "../textures/road_012a/albedo.png",
@@ -7,6 +8,7 @@
     "orm":    "../textures/road_012a/orm.png"
   },
   "tile": 4.0,             // metres per repeat: must divide 64 chunks (7040 m), where the shader's world coordinates wrap
+  "albedo_mean": [0.054, 0.053, 0.049],   // per channel (pbr_pack): the land's roads draw the map about it, flat beyond its reach
   "albedo_scale": 1.0,
   "relief": [0.80, 0.13]   // the height map's median and spread: where water stands
 }

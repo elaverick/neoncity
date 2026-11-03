@@ -125,10 +125,10 @@ static void test_files(const char *assets) {
         for (int i = 0; i < 3; ++i) CHECK(d.albedoMean[i] <= 1.0f, "%s: albedo_mean %g", name, d.albedoMean[i]);
     }
     /* The shaders' world coordinates wrap every 64 chunks (ground.glsl): what is mapped in world x and z
-     * (the roads, and the lots', lawns' and flat roofs' grain: planarFrame; the land's ground cover: terrain/ground.glsl)
-     * must repeat a whole number of times in them. */
-    static const char *const WORLD_MAPPED[] = { "road", "lot_asphalt", "grass", "roof_gravel", "land_rock", "land_scree", "land_soil",
-                                                "land_grass", "land_sand", "land_mud", "land_snow" };
+     * (the roads, and the lots', lawns' and flat roofs' grain: planarFrame; the land's ground cover: terrain/ground.glsl;
+     * the land roads' barriers: terrain/roads.glsl) must repeat a whole number of times in them. */
+    static const char *const WORLD_MAPPED[] = { "road", "lot_asphalt", "grass", "roof_gravel", "concrete", "land_rock", "land_scree",
+                                                "land_soil", "land_grass", "land_sand", "land_mud", "land_snow" };
     for (size_t k = 0; k < sizeof(WORLD_MAPPED) / sizeof(WORLD_MAPPED[0]); ++k) {
         char path[1100], err[512];
         snprintf(path, sizeof(path), "%s/materials/%s.json", assets, WORLD_MAPPED[k]);
@@ -136,7 +136,8 @@ static void test_files(const char *assets) {
         if (!material_def_load(path, &def, err, sizeof(err))) continue;   /* reported above */
         for (int i = 0; i < 2; ++i) {
             double n = 64.0 * CHUNK_SIZE / def.tile[i];
-            CHECK(fabs(n - floor(n + 0.5)) < 1e-4, "%s: the tile %g doesn't divide 64 chunks", WORLD_MAPPED[k], def.tile[i]);
+            /* to within the float tile's own rounding (1.1 is 1.1000000238: 6399.99986 repeats) */
+            CHECK(fabs(n - floor(n + 0.5)) < 1e-4 + 1e-7 * n, "%s: the tile %g doesn't divide 64 chunks", WORLD_MAPPED[k], def.tile[i]);
         }
     }
     printf("%d materials, %d maps from %d image files\n", PBR_MATERIAL_COUNT, images, nSeen);

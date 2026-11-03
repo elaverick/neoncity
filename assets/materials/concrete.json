@@ -1,6 +1,7 @@
 // Plain smooth concrete: plinths, pads and kerbs of plant (shadeMetal), the soffits
 // under roofs' overhangs (shadeRoof) and an arcology's painted blocks (shadeArcology),
-// in their own shade (pbrGrain).
+// in their own shade (pbrGrain); and the median barrier of a freeway out in the land, mapped
+// in world x and z (shaders/terrain/roads.glsl).
 // Concrete034 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
 {
   "maps": {

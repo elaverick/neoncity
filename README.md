@@ -178,8 +178,14 @@ the real urban area from the GHSL; read at run time, see `data/earth/SOURCE.md`)
   piers every 40 m at most) out to 1.9 km; beyond, the road's paint stands in for it on the ground below.
   Streams pass under the roads in culverts (the embankment fills their beds). On the Earth 340 bridges,
   57 km of span, the longest 1.7 km.
-- **Drawn** by the terrain shader (`shaders/terrain/roads.glsl`, `src/render/road_gpu.c`): asphalt,
-  lane lines and freeways' sodium lamps every 60 m, from the segments within 16 km of the camera.
+- **Drawn** by the terrain shader (`shaders/terrain/roads.glsl`, `src/render/road_gpu.c`), from the
+  segments within 16 km of the camera. Both kinds are laid in the city's own asphalt (`road`, mapped in
+  the world as the city's, so it runs on unbroken from a bridge's deck), with its patches, worn wheel
+  paths and resurfaced lengths, and procedural lane lines. A freeway has a concrete median barrier
+  (`concrete`) and hard shoulders; a trunk road has gravel shoulders (`roof_gravel`). Beyond the paved
+  edge a strip of the gravel on the level verge gives way to the land's cover by the two's height maps.
+  The freeways' sodium lamps every 60 m light the carriageways and the land beside them. Past 1.9 km a
+  bridge's paint is paved to its edge, as the deck, with nothing beyond.
 
 `world_test` checks them; `world_test --threads 1 --fingerprint` hashes what was placed and built, the
 same on any number of threads, and prints `--cam` views out along the megacity's roads. Without a bake

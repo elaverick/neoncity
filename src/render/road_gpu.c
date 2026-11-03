@@ -28,7 +28,9 @@
 #define ROAD_HEADER    8
 #define ROAD_SEG_WORDS 8
 #define ROAD_SEG_BRIDGE 4         /* in a segment's class: it is on a bridge (shaders/terrain/roads.glsl) */
-#define ROAD_CELL_REACH (PLAN_FREEWAY_HALF + 2.0)   /* a segment is filed in each cell within this of it (m) */
+/* A segment is filed in each cell within this of it (m): a freeway's half-width and its reach
+ * beyond (roads.glsl's FREEWAY_REACH: its lamps' light on the land), and a metre over. */
+#define ROAD_CELL_REACH (PLAN_FREEWAY_HALF + 15.0)
 #define ROAD_WORDS     (ROAD_HEADER + 2 * ROAD_GDIM * ROAD_GDIM + ROAD_MAX_LIST + ROAD_SEG_WORDS * ROAD_MAX_SEGS)
 
 _Static_assert(ROAD_GDIM * ROAD_GCELL == ROAD_WINDOW, "the road grid must cover its window");
