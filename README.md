@@ -410,6 +410,35 @@ room or core stands against it; the facade is split there and drawn as opaque ba
 and cores and partitions stop short of it), atrium slabs and balustrades, and box furniture. The entrance is a real
 opening and collision follows the plan, so you can walk in.
 
+**Automatic doors** (`src/gen/interior_doors.c`, `src/city/mesh_doors.c`, `src/app/lobby_doors.c`). An
+office lobby's entrance slides open, or about one time in six (where the opening is 2.2-3.6 m and
+no taller than a single storey) revolves; a vestibule's inner screen always slides. Sliding leaves
+run on tracks just inside the facade (clear of its mullions), or on the vestibule's side of its
+screen, under an operator's header, and part to park behind the glass beside the opening:
+bi-parting where the opening is narrow and the face has room, telescopic (two leaves a side on
+two tracks, parking in half the room) where it is wide or tight. A revolving drum (three wings
+over 2.8 m, else four) stands just inside the facade, glass flanking the way in to its middle,
+its curved walls as wide as a compartment so a wing always seals them, with a canopy and a ring
+of light over it. Where the face has no room for either, the entrance stays an open doorway
+(about 1 in 80). The planner keeps where leaves park and drums stand clear (the entrance's
+keep-clear grows to cover them, and to a vestibule's width so cores keep out of its way); a
+vestibule is made wide enough for its doors' parked leaves and deeper for a drum, and if that
+will not fit it tries telescopic leaves, narrower inner doors, and sliding for a drum before it
+is given up. Validation sweeps every moving part against partitions, cores, columns, furniture
+and the envelope, so nothing moves through anything that stands.
+
+What moves is drawn shut, or at rest, and moved by `shaders/city.vert`: its vertices carry the
+door's key (aux), how far they slide or their offset from the drum's axis (uv), and whether they
+turn. `src/app/lobby_doors.c` keeps the doors in the 3 x 3 chunks round the walker: a sliding
+door opens (0.9 s) when the walker comes within 3 m of it and 1.2 m past its edges, from
+either side, and shuts (1.6 s) 1.5 s after they leave; a revolving door turns at 4 rpm. The
+frame carries the 16 nearest doors' states (`FrameUBO.doorKey`, `doorState`); a door not among
+them is drawn shut, or turning at its own pace from its key. Leaves and wings collide where they
+stand at the time (a wing pushes the walker round with it); the drum's walls, flanking glass and
+post are static collision. Moving parts cast no ray-traced shadow. Doors can be locked
+(`lobby_doors_lock`, `lobby_doors_lock_all`; `--lockdoors` locks every one): a locked sliding door
+shuts and stays shut, a locked revolving door stops where it stands. Nothing locks one yet.
+
 Lobbies are a second layer of chunk meshes, streamed only within `INTERIOR_DISTANCE` (260 m).
 Within `REAL_GLASS_DIST` (150 m) the lobby glass covers only part of each pixel's MSAA samples
 (`paneCoverage` writes `gl_SampleMask`), so the geometry shows through a reflective pane; farther

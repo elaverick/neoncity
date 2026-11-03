@@ -166,12 +166,12 @@ static int place_entry(Gen *G, int ed, int q, float cx, float cz, float nx, floa
         if (c >= 0 && L->occ[c] == IO_USABLE && !(G->baseFlag[c] & IF_EDGE)) G->entryCell = c;
     }
     if (G->entryCell < 0) return fail(G, "no usable floor behind the entrance");
-    /* keep the first 3 m inside the door clear */
+    /* keep the first 3 m inside the door clear, and where its door's leaves park or its drum stands */
     for (int j = 0; j < L->nz; ++j)
         for (int i = 0; i < L->nx; ++i) {
             float dx = ccx(L, i) - e->x, dz = ccz(L, j) - e->z;
             float along = fabsf(dx * -e->nz + dz * e->nx), in = -(dx * e->nx + dz * e->nz);
-            if (in > -0.3f && in < 3.0f && along < e->w * 0.5f + 1.0f) G->baseFlag[IDX(L, i, j)] |= IF_ENTRY;
+            if (in > -0.3f && ((in < 3.0f && along < e->w * 0.5f + 1.0f) || entry_door_keep(L, e->w, along, in))) G->baseFlag[IDX(L, i, j)] |= IF_ENTRY;
         }
 
     return 1;
@@ -260,6 +260,7 @@ static int prepare(Gen *G) {
     int q;
     if (!frame_and_grid(G, nx, nz, &q)) return 0;
     mark_occupancy(G);
+    choose_entry_door(G, ed, u, len, w);
     if (!place_entry(G, ed, q, cx, cz, nx, nz, w)) return 0;
     find_service_doors(G, ed, q);
     find_towers(G, q);
@@ -394,6 +395,7 @@ static void reset_attempt(Gen *G) {
     int N = L->nx * L->nz;
     for (int c = 0; c < N; ++c) { L->own[c] = NONE; L->flag[c] = G->baseFlag[c]; }
     L->nreg = L->ndoor = L->nfix = L->nzone = L->ncore = L->ncol = 0;
+    L->entryDoor = G->entryDoor; L->entryLeaves = G->entryLeaves;
     memset(&L->atrium, 0, sizeof(L->atrium));
     memset(G->npath, 0, sizeof(G->npath));
     memset(G->gateAt, 0, sizeof(G->gateAt));
@@ -511,6 +513,7 @@ int interior_plan(const Building *b, const BGraph *g, int si, int variant, ILayo
         L->atrium.topY = L->ceilY;
         L->routeStart = G->entryCell;
         blog_printf(log, "  simplify: six attempts failed; open floor plate\n");
+        if (!doors_clear(G)) { blog_printf(log, "  simplify: %s; the entrance stays an open doorway\n", G->why); L->entryDoor = IE_NONE; }
     }
     for (int k = 0; k < IN_MAX_CORE; ++k) free(G->path[k]);
     for (int k = 0; k < 4; ++k) free(G->sat[k]);

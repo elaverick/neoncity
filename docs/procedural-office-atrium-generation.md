@@ -284,6 +284,7 @@ Realisation reads the layout and the boundary table:
 - **Floor:** the true footprint polygon as a slab, with region finishes laid over it as row runs clipped to the polygon.
 - **Partitions:** collect boundary edges by type, merge them into straight runs, and extend runs that end against the facade until they meet the envelope polygon. Doors leave gaps, with lintels. Gates become turnstile cabinets.
 - **Envelope:** the true polygon, glazed with mullions at the building's bay width, with gaps at openings and fire exits.
+- **Automatic doors:** the entrance gets sliding doors (bi-parting, or telescopic where the opening is wide or the face tight) or, now and then, a revolving door whose drum stands just inside the facade; a vestibule's inner screen always slides. The planner keeps where leaves park and drums stand clear, sizes the vestibule to its doors, and validation sweeps every moving part against what stands (README, Automatic doors).
 - **Core:** lift shafts as solids with metal doors on the hall face, stairs as enclosures with two flights inside, risers and obstructions as solids.
 - **Atrium:** at each level, the footprint of the floor above with the void cut out, a glass balustrade round the void, and a glazed roof at the top.
 - **View modes:** a cutaway (walls stop at about 2.4 m), a plan cut (wall footprints only) and full height. Cutaway is the default for inspection.

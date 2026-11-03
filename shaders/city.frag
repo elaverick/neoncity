@@ -103,7 +103,7 @@ void main() {
         // shadow debug view (F10): only the light the lamps, shopfronts and lobbies throw on each surface
         vec3 d = vec3(0.0), sp = vec3(0.0);
         cityLights(vLocal, n, V, 1.0, 0.0, -1.0, d, sp);
-        if (mat == MAT_INTERIOR && vParams.y != IS_GLASS) {
+        if (mat == MAT_INTERIOR && vParams.y != IS_GLASS && vParams.y != IS_LEAF) {
             // and in a lobby, the ceiling panels' light on what faces up or sideways
             vec3 nv = dot(n, V) < 0.0 ? -n : n;
             if (nv.y > -0.5) d += LOBBY_SPILL * (nv.y > 0.5 ? 0.55 : 0.3) * 3.0 * ceilingVis();

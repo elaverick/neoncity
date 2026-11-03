@@ -3,6 +3,7 @@
 #include "mathlib.h"
 #include "chunks.h"
 #include "clouds.h"
+#include "doors.h"
 
 /* Per-frame globals; layout must match `Frame` in shaders/common.glsl (std140). */
 typedef struct FrameUBO {
@@ -18,6 +19,9 @@ typedef struct FrameUBO {
     float   sky[4];        /* the city's light in the air round the camera (0 countryside .. 1 city), how many cities[], cloud cover over the camera, unused (src/app/weather.c) */
     float   cities[CLOUD_CITIES][4];   /* the settlements whose clouds are drawn: camera-relative centre x, z; footprint radius; unused */
     float   moon[4];       /* towards the moon, in the camera's local frame (src/app/main.c); east's angle there from x towards z */
+    uint32_t doorInfo[4];  /* how many doors (src/app/lobby_doors.c: lobby_doors_frame), unused */
+    uint32_t doorKey[DOOR_SLOTS / 4][4];   /* their keys, four to a vector */
+    float   doorState[DOOR_SLOTS][4];      /* how far each is open (0..1, eased), a revolving one's angle (rad), unused */
 } FrameUBO;
 
 typedef struct Renderer Renderer;

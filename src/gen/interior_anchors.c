@@ -283,21 +283,47 @@ int place_vestibule(Gen *G) {
     const SDoor *e = &G->entry;
     int start = G->entryCell;
     if (G->vestibule && e->side == 0) {
-        float W = e->w + 2.0f;
-        int wv = cells_of(W), dv = cells_of(rng_range(&G->rp, 2.5f, 3.2f));
-        int i0 = (int)floorf((e->x - W * 0.5f - L->gx0) / CELL + 0.5f), j0 = (int)floorf((e->z - L->gz0) / CELL + 0.5f);
-        int ok = i0 >= 0 && j0 >= 0 && i0 + wv <= L->nx && j0 + dv < L->nz;
-        for (int j = j0; ok && j < j0 + dv; ++j)
-            for (int i = i0; ok && i < i0 + wv; ++i) {
-                int c = IDX(L, i, j);
-                if (L->occ[c] != IO_USABLE || L->own[c] != NONE || (L->flag[c] & IF_VOID)) ok = 0;
-                if (j > j0 && (L->flag[c] & IF_EDGE)) ok = 0;
+        /* wide enough for its doors' parked leaves (or the drum) clear of its side screens; with a
+           drum, deep enough for it and a landing before the inner doors. Where that does not fit, the
+           entrance's leaves slide telescopically (parking in half the room), then the inner ones do
+           too, then the inner opening narrows, and a drum too deep for it gives way to sliding doors,
+           before the vestibule is given up. */
+        float D0 = rng_range(&G->rp, 2.5f, 3.2f), D = D0, full = minf(e->w, IE_INNER_MAX);
+        if (L->entryDoor == IE_REVOLVE) D = maxf(D, e->w + IE_DRUM_GAP + 1.6f);
+        int dv = cells_of(D), wv = 0, i0 = 0, j0 = 0, din = 0, di = 0, sc = -1, ok = 0;
+        uint8_t type = L->entryDoor, leaves = L->entryLeaves;
+        int tele = interior_door_reach(IE_SLIDE, 4, e->w) <= G->entryRoom;
+        static const char *const WHY[6] = { "", "the entrance's leaves slide telescopically", "the inner doors' leaves slide telescopically",
+                                            "the vestibule's inner opening narrows", "the entrance slides rather than revolves", "and its inner opening narrows" };
+        for (int step = 0; step < 6 && !ok; ++step) {
+            if (step == 1 && L->entryDoor == IE_SLIDE) L->entryLeaves = 4;
+            if (step == 4) {
+                if (type != IE_REVOLVE || !tele) break;
+                L->entryDoor = IE_SLIDE; L->entryLeaves = 4; dv = cells_of(D0);
             }
-        int din = cells_of(e->w);
-        if (din > wv - 2) din = wv - 2;
-        int di = i0 + (wv - din) / 2;
-        int sc = ok ? IDX(L, di + din / 2, j0 + dv) : -1;
-        if (ok && (L->occ[sc] != IO_USABLE || L->own[sc] != NONE || (L->flag[sc] & IF_EDGE))) ok = 0;
+            float inner = step == 3 || step == 5 ? 2.0f : full;
+            L->innerLeaves = (uint8_t)(step >= 2 || (float)cells_of(inner) * CELL > IE_TELESCOPIC ? 4 : 2);
+            /* each side screen out past what the entrance's door needs, then wide enough for the inner door's */
+            float ho = vestibule_half(L, e->w);
+            i0 = (int)floorf((e->x - ho - L->gx0) / CELL + 1e-3f); j0 = (int)floorf((e->z - L->gz0) / CELL + 0.5f);
+            wv = (int)ceilf((e->x + ho - L->gx0) / CELL - 1e-3f) - i0;
+            din = cells_of(inner);
+            int side = cells_of(maxf(0.0f, interior_door_reach(IE_SLIDE, L->innerLeaves, (float)din * CELL) + IE_SCREEN_GAP - (float)din * CELL * 0.5f));
+            if (din + 2 * side > wv) { int grow = din + 2 * side - wv; i0 -= grow / 2; wv += grow; }
+            ok = i0 >= 0 && j0 >= 0 && i0 + wv <= L->nx && j0 + dv < L->nz;
+            for (int j = j0; ok && j < j0 + dv; ++j)
+                for (int i = i0; ok && i < i0 + wv; ++i) {
+                    int c = IDX(L, i, j);
+                    if (L->occ[c] != IO_USABLE || L->own[c] != NONE || (L->flag[c] & IF_VOID)) ok = 0;
+                    if (j > j0 && (L->flag[c] & IF_EDGE)) ok = 0;
+                }
+            if (din > wv - 2) din = wv - 2;
+            di = i0 + (wv - din) / 2;
+            sc = ok ? IDX(L, di + din / 2, j0 + dv) : -1;
+            if (ok && (L->occ[sc] != IO_USABLE || L->own[sc] != NONE || (L->flag[sc] & IF_EDGE))) ok = 0;
+            if (ok && step) alog(G, "  simplify: %s so the vestibule fits\n", WHY[step]);
+        }
+        if (!ok) { L->entryDoor = type; L->entryLeaves = leaves; }
         if (ok) {
             absorb_columns(G, i0, j0, i0 + wv, j0 + dv, "the vestibule");
             int r = add_region(G, IR_VESTIBULE, 0);

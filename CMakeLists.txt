@@ -211,14 +211,14 @@ add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 # generated headers (the materials' ids).
 set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/render src/app ${GEN_DIR} ${cgltf_SOURCE_DIR})
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
-                src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_relief.c src/city/mesh_lobby.c src/city/mesh_planting.c
+                src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_relief.c src/city/mesh_lobby.c src/city/mesh_doors.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/channels.c src/city/road_bridges.c src/city/light_tiles.c src/city/cables.c
                 src/city/litter.c src/city/props.c src/city/models.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c src/plan/plan_water.c
                 src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c src/core/thread.c src/core/assets.c
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
-                src/gen/interior_fixtures.c src/gen/interior_validate.c src/gen/interior_lights.c
+                src/gen/interior_fixtures.c src/gen/interior_validate.c src/gen/interior_lights.c src/gen/interior_doors.c
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c)
 # Terrain (src/terrain): the ground everywhere, a pure function of position over the planet the world's
 # X/Z is a chart of (terrain_height.c, terrain_land.c, terrain_world.c, terrain_cube.c and terrain_earth.c, in GEN_SOURCES:
@@ -449,7 +449,7 @@ list(REMOVE_ITEM GAME_GEN_SOURCES ${WORLD_SOURCES})
 add_library(neoncity_world OBJECT ${WORLD_SOURCES})
 target_include_directories(neoncity_world PRIVATE ${SRC_DIRS})
 add_executable(NeonCity
-  src/app/main.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/road_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/materials.c src/render/adverts.c src/render/interiors.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c)
+  src/app/main.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/road_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/materials.c src/render/adverts.c src/render/interiors.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c src/app/lobby_doors.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

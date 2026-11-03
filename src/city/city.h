@@ -31,6 +31,7 @@
 #define MAX_DECKS       24
 #define MAX_BARRIERS    256
 #define MAX_ROAD_DECKS  32
+#define MAX_LOBBY_DOORS 24
 #define CITY_OVERHANG   70.0f
 
 typedef struct Rect { float x0, z0, x1, z1; } Rect;
@@ -106,6 +107,20 @@ typedef struct CollPoly { int first, n, holeFirst, holeN; } CollPoly;
  * street's ground by as much as the plot falls. */
 typedef struct FloorPoly { CollPoly at; float y; } FloorPoly;
 
+/* An automatic door at a lobby's entrance or its vestibule's inner screen
+ * (IAutoDoor, src/gen/interior_doors.c) in world terms, for src/app/doors.c to
+ * open, turn and collide with: c the middle of its opening (a revolving
+ * door's drum's centre), a along the opening and n across it into the
+ * building (world x, z), y its floor (world Y). What stands still of it is
+ * in coll; what moves, src/app/doors.c pushes the walker out of. */
+typedef struct LobbyDoor {
+    uint32_t key;
+    uint8_t  type, leaves, outer;   /* IE_SLIDE or IE_REVOLVE; leaves or wings; in the facade (1) or a vestibule's screen */
+    double   c[2];
+    float    a[2], n[2];
+    float    width, height, y, radius;
+} LobbyDoor;
+
 /* Everything the player collides with in one chunk (world coordinates). */
 typedef struct BlockLayout {
     int      cx, cz;
@@ -131,6 +146,8 @@ typedef struct BlockLayout {
     Barrier  barrier[MAX_BARRIERS]; /* and their walls and parapets; and the roads' bridges' parapets */
     int      nrdeck;
     RoadDeckSpan rdeck[MAX_ROAD_DECKS]; /* the roads' bridges' decks touching this chunk */
+    int      ndoor;
+    LobbyDoor door[MAX_LOBBY_DOORS]; /* the automatic doors of the lobbies of the buildings in this chunk */
     double   collv[MAX_COLL_VERTS][2];
 } BlockLayout;
 

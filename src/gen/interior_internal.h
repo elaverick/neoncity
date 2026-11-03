@@ -17,7 +17,8 @@
  *   interior_anchors.c   step 3: columns, core, vestibule, void, route, gates
  *   interior_rooms.c     step 5: back of house, cut from bands along the facades
  *   interior_fixtures.c  step 6: doors and fixtures, and the access rule
- *   interior_validate.c  boundaries and realised runs, step 7 validation */
+ *   interior_validate.c  boundaries and realised runs, step 7 validation
+ *   interior_doors.c     the automatic doors: choice, geometry, keep-clear and their check */
 
 /* ---------------------------------------------------------------------------
  * Shared definitions
@@ -55,6 +56,8 @@ typedef struct Gen {
     int   nserv;
     SDoor serv[BG_MAX_DOOR];
     int   entryCell;
+    float entryRoom;          /* room along the facade beside the entrance's opening, from its middle (choose_entry_door) */
+    uint8_t entryDoor, entryLeaves;   /* its door as chosen, which each attempt starts from (a vestibule may change it) */
     uint16_t baseFlag[IN_MAX_DIM * IN_MAX_DIM];
     /* parameters (section 7, step 2) */
     int   vestibule, reception, recSide, waiting, cafe, gated, lanes, expansive, atrium, levels;
@@ -162,3 +165,9 @@ void furnish_room(Gen *G, int r);
 
 /* interior_validate.c */
 int validate(Gen *G);
+
+/* interior_doors.c */
+void choose_entry_door(Gen *G, int ed, float u, float len, float w);
+float vestibule_half(const ILayout *L, float w);
+int entry_door_keep(const ILayout *L, float w, float along, float in);
+int doors_clear(Gen *G);

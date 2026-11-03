@@ -8,6 +8,17 @@ Every light in the chunks' light tables casts ray-traced shadows (`src/render/rt
   so it would need their motion too, or to drop its history where they are (its fast path assumes shadows don't move).
 - **Vertex animation** isn't in the structures: cables cast from where they hang at rest, and the litter whose shape
   changes casts nothing.
+- **Lobby doors** (`src/city/mesh_doors.c`): the leaves and wings that `city.vert` slides and turns cast nothing
+  (`city_casts_shadow` leaves out `IS_LEAF` and `IS_LEAFFRAME`): their glass wouldn't anyway, but their frames, a
+  revolving door's post and wings, and a sliding door's leaves parked or shut cast no shadow. Same remedy as dynamic
+  shadows: instances whose transforms follow the door's state (`src/app/lobby_doors.c`). The drums, headers and
+  flanking glass stand still and do cast.
+- **Smearing on moving surfaces:** the denoiser reprojects its history (`shadow_denoise.comp`, `prevViewProj`) by the
+  camera alone, so a surface that moves by itself (a door leaf sliding, a wing turning, a swaying cable) takes last
+  frame's shadow from where something else stood there, and may smear or lag while it moves. There is no TAA, so this
+  is the only place it shows. Not yet seen in captures: check it walking through a revolving door. The fix is per-pixel
+  motion (the vertex shader knows the previous position: the door states, cable sway and litter are all functions of
+  time) or dropping history on surfaces flagged as moving.
 - **Lobby light** is shadowed as one glowing ceiling (see the README), so furniture and plants cast soft shadows but not
   the separate shadows of each panel; the panels' grid (the floor and ceiling uv, in the building's frame) could go in
   the G-buffer so the rays aim at real panels. The coves and wall slots are still unshadowed. Filtering lobby pixels
@@ -408,6 +419,11 @@ Real lobbies stand behind office ground floors (`src/gen/interior.c`, `emit_inte
 - **Vertical circulation:** the gallery, feature stair and escape stairs can't be climbed (collision
   is 2D); lift doors don't open.
 - **Glazed courtyard atria** (the design's fifth atrium mode) and a mezzanine planned as its own level.
+- **Automatic doors** (see the README): moving parts cast no shadow, and a moving surface may smear its shadow (both
+  under Shadows above). Also to check: a wing pushing the walker round its drum has only been reasoned about, not
+  walked; 10 entrances in 818 have no room for doors and stay open doorways; vestibules came to 467 against 472 before
+  doors (the rest stand where a lift core is right beside the entrance). Locking is in (`lobby_doors_lock`,
+  `--lockdoors`), but nothing locks a door yet.
 - **Light:** interiors are lit analytically by their ceiling panels; street lamps don't reach in,
   and the lobby doesn't throw its real layout's light onto the street.
 - **Glass** over real interiors needs MSAA (`paneCoverage`); without it the panes vanish.

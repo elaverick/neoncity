@@ -468,6 +468,11 @@ static int arcology_mode(int argc, char **argv) {
 
 /* ------------------------------------------------------------------ main -- */
 
+static int vest_of(const ILayout *L) {
+    for (int r = 0; r < L->nreg; ++r) if (L->reg[r].type == IR_VESTIBULE) return 1;
+    return 0;
+}
+
 static int same_layout(const ILayout *a, const ILayout *b) {
     if (memcmp(a, b, offsetof(ILayout, occ))) return 0;
     size_t n = (size_t)a->nx * (size_t)a->nz;
@@ -491,6 +496,7 @@ int main(int argc, char **argv) {
     ILayout *L = (ILayout *)calloc(1, sizeof(ILayout)), *L2 = (ILayout *)calloc(1, sizeof(ILayout));
     char *buf = (char *)malloc(1 << 17);
     int planned = 0, passed = 0, first = 0, plates = 0, failures = 0, gated = 0, vest = 0, rooms = 0, fixtures = 0, cores = 0, services = 0;
+    int doorKind[4] = { 0 }, innerDoors = 0, offices = 0;   /* the entrances' doors: none, bi-parting, telescopic, revolving */
     int attempts[IN_ATTEMPTS + 1] = { 0 }, atrium[4] = { 0 }, rendered = 0, seen = 0, moved = 0, lights = 0, unlit = 0, darkPlates = 0, darkRooms[IR_COUNT] = { 0 }, allRooms[IR_COUNT] = { 0 };
     ILight *lt = (ILight *)malloc(sizeof(ILight) * IL_MAX);
     double worst = 0.0, total = 0.0;
@@ -525,6 +531,13 @@ int main(int argc, char **argv) {
                         total += dt;
                         if (dt > worst) worst = dt;
                         if (L->grammar == IG_SERVICE) services++;
+                        else {
+                            offices++;
+                            doorKind[L->entryDoor == IE_REVOLVE ? 3 : L->entryDoor == IE_SLIDE ? (L->entryLeaves == 4 ? 2 : 1) : 0]++;
+                            IAutoDoor dd[IE_MAX_DOORS];
+                            int nd = interior_auto_doors(g, L, dd, IE_MAX_DOORS);
+                            for (int q = 0; q < nd; ++q) innerDoors += !dd[q].outer;
+                        }
                         if (!L->ok) { plates++; darkPlates += !interior_lobby_lit(L); if (verbose > 0) { printf("%s\n", buf); verbose--; } continue; }
                         passed++;
                         first += L->attempts == 1;
@@ -563,9 +576,11 @@ int main(int argc, char **argv) {
                             char path[512];
                             snprintf(path, sizeof(path), "%s/plan_%02d_%08x_s%d.png", outDir, rendered, b->seed, secs[k]);
                             render(L, path);
-                            printf("plan %s: %.0f m2, %s, %d core(s), %d regions, %d fixtures, %d attempt(s)\n", path, L->area,
+                            printf("plan %s: %.0f m2, %s, %d core(s), %d regions, %d fixtures, %d attempt(s), %s%s\n", path, L->area,
                                    L->atrium.mode == IA_GALLERY ? "gallery" : L->atrium.mode == IA_PODIUM ? "podium atrium" : L->atrium.mode == IA_DOUBLE ? "double height" : "single storey",
-                                   L->ncore, L->nreg, L->nfix, L->attempts);
+                                   L->ncore, L->nreg, L->nfix, L->attempts,
+                                   L->entryDoor == IE_REVOLVE ? "revolving door" : L->entryDoor == IE_SLIDE ? (L->entryLeaves == 4 ? "telescopic doors" : "bi-parting doors") : "open doorway",
+                                   vest_of(L) ? " behind a vestibule" : "");
                             /* cameras: outside the entrance looking in, and inside looking at the core */
                             float fx = L->gx0 + ((float)(L->routeStart % L->nx) + 0.5f) * IN_CELL, fz = L->gz0 + ((float)(L->routeStart / L->nx) + 0.5f) * IN_CELL;
                             float ox, oz, ix, iz, hx = fx, hz = fz + 8.0f, tx, tz;
@@ -620,6 +635,8 @@ int main(int argc, char **argv) {
     printf("  %.2f cores, %d gated halls, %d vestibules, %.1f rooms and %.1f fixtures per layout\n", passed ? (double)cores / passed : 0.0, gated, vest,
            passed ? (double)rooms / passed : 0.0, passed ? (double)fixtures / passed : 0.0);
     printf("  %d layouts moved a fixture group so the desk, bays and doors stay reachable\n", moved);
+    printf("  entrances: %d bi-parting sliding, %d telescopic sliding, %d revolving, %d open doorways of %d; %d vestibules' inner doors\n",
+           doorKind[1], doorKind[2], doorKind[3], doorKind[0], offices, innerDoors);
     printf("  %.1f ceiling lights per layout, %d layouts and %d open plates with none; rooms without one:", passed ? (double)lights / passed : 0.0, unlit, darkPlates);
     for (int t = 0; t < IR_COUNT; ++t) if (darkRooms[t]) printf(" %d of %d %s,", darkRooms[t], allRooms[t], interior_region_name(t));
     printf("\n");

@@ -96,6 +96,32 @@ void litter(inout vec3 rel, inout vec3 nrm, out vec2 lit) {
     lit = vec2(inNrm.w, soak);
 }
 
+/* A lobby's automatic doors (src/city/mesh_doors.c). params z bit 0: the
+ * vertex turns (a revolving door's wings) or slides (a sliding door's
+ * leaves); aux its door's key; uv how far it slides when the door is open,
+ * or its offset from the drum's axis (chunk-local x, z). A door near the
+ * camera has its state in the frame (src/app/lobby_doors.c: how far open,
+ * eased, and the angle a revolving one stands at); one not there is shut,
+ * or turns at its own pace from its key's phase (interior_revolve_angle in
+ * src/gen/interior_doors.c). Turning is x towards z, as the walker's
+ * collision with the wings has it. */
+vec2 doorState(uint key) {
+    uint n = min(frame.doorInfo.x, uint(DOOR_SLOTS));
+    for (uint i = 0u; i < n; ++i)
+        if (frame.doorKey[i >> 2u][i & 3u] == key) return frame.doorState[i].xy;
+    return vec2(0.0, mod(DOOR_REVOLVE_RATE * frame.camPos.w + float(key & 0xFFFFu) / 65536.0 * 6.2831853, 6.2831853));
+}
+
+vec3 doorMove(inout vec3 nrm) {
+    vec2 st = doorState(inAux);
+    if ((inParams.z & 1u) == 0u) return vec3(inUV.x, 0.0, inUV.y) * st.x;
+    float c = cos(st.y), s = sin(st.y);
+    mat2 R = mat2(c, s, -s, c);   // columns: (c, s), (-s, c)
+    vec2 o = R * inUV;
+    nrm.xz = R * nrm.xz;
+    return vec3(o.x - inUV.x, 0.0, o.y - inUV.y);
+}
+
 #ifdef PREPASS
 /* The prepass leaves out what city.frag draws over only some of a pixel's
  * samples, or discards: glass over real interiors (paneCoverage), veils of
@@ -104,7 +130,7 @@ void litter(inout vec3 rel, inout vec3 nrm, out vec2 lit) {
  * floors of facades with a real lobby behind are cut out by prepass.frag.) */
 bool partialCoverage() {
     uint m = inParams.x, y = inParams.y;
-    if (m == MAT_INTERIOR) return y == 8u;                     // IS_GLASS
+    if (m == MAT_INTERIOR) return y == 8u || y == 23u;         // IS_GLASS, IS_LEAF
     if (m == MAT_LITTER) return y == LK_SHADOW;
     if (m == MAT_ARCOLOGY)                                     // ARS_SHAFT, ARS_SEARCH, ARS_PUDDLE, ARS_STEAM; ARS_RAIL's glass
         return (y >= 22u && y <= 25u) || (y == 19u && (inParams.z == 0u || inParams.z == 3u));
@@ -127,6 +153,10 @@ void main() {
         vec3 r0 = rel;
         litter(rel, nrm, lit);
         local += rel - r0;
+    } else if (inParams.x == MAT_INTERIOR && (inParams.y == 23u || inParams.y == 24u)) {   // IS_LEAF, IS_LEAFFRAME
+        vec3 d = doorMove(nrm);
+        rel += d;
+        local += d;
     } else if (inParams.x == MAT_INTERIOR && (inParams.y == 10u || inParams.y == 20u)) {
         lit = vec2(inNrm.w, 0.0);   // lobby plants (grow_plants in src/city/mesh_planting.c): how open the crown is there
     } else if (inParams.x == MAT_ARCOLOGY && inParams.y == 23u) {

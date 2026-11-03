@@ -347,6 +347,8 @@ float emblemDist(uint h, vec2 q) {
 const uint IS_BARK = 20u, IS_SOIL = 21u;
 // A baked model (src/city/props.c: emit_model), a lobby's sofa: sub is its material (PBR_*).
 const uint IS_MODEL = 22u;
+// An automatic door's moving glass, and the rest of what moves of it (src/city/mesh_doors.c; city.vert moves them).
+const uint IS_LEAF = 23u, IS_LEAFFRAME = 24u;
 const uint LS_KENTIA = 0u, LS_LINEAR = 1u, LS_FIDDLE = 2u, LS_ELLIPTIC = 3u, LS_UMBRELLA = 4u, LS_ZZ = 5u;
 const uint WM_PALM = 0u, WM_CANE = 1u, WM_FICUS = 2u, WM_UMBRELLA = 3u, WM_GREEN = 4u, WM_ZZ = 5u, WM_ROOT = 6u;
 
@@ -459,6 +461,7 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     bool flipped = dot(n, V) < 0.0;
     if (flipped) n = -n;                               // thin panes and panels are seen from both sides
     uint surf = prm.y, sub = prm.z;
+    if (surf == IS_LEAF) { surf = IS_GLASS; sub = 0u; }   // a door's glass is glass (params z: whether it slides or turns)
     float ceilH = max(float(prm.w) * 0.5, 2.6), y = p.y - gBase - SIDEWALK_HEIGHT;
     // the panels' light, where furniture, plants and walls let it through (ray-traced shadows); the room's bounce fills the shade
     float panels = mix(PANEL_FILL, 1.0, ceilingVis());
@@ -593,6 +596,12 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         if (sub == 10u + 12u) alb = hf(seed, 25u) < 0.5 ? vec3(0.05, 0.15, 0.06) : vec3(0.2, 0.2, 0.21);   // bins
         if (sub == 10u + 15u) alb = vec3(0.30, 0.32, 0.35) * (0.7 + 0.3 * step(0.03, fract(uv.x / 0.5)));  // lockers
         gloss = 0.5;
+    } else if (surf == IS_LEAFFRAME) {
+        // a door's frames (params z >> 1, DF_* in src/city/mesh_doors.c): dark anodised, bronze or steel; the frosted
+        // band across its glass; a wing's rubber sweep. No glossier than 0.4: their tops would mirror the ceiling's panels.
+        uint f = sub >> 1u;
+        alb = f == 1u ? vec3(0.30, 0.20, 0.10) : f == 2u ? vec3(0.18) : f == 3u ? vec3(0.40, 0.41, 0.42) : f == 4u ? vec3(0.012) : vec3(0.06, 0.065, 0.07);
+        gloss = f >= 3u ? 0.05 : 0.4;
     } else if (surf == IS_WOOD) {
         // sub 1 counters in pale oak; other pieces in dark or light veneer
         bool pale = sub == 1u || hfloat(h) >= 0.5;

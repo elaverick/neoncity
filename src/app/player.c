@@ -1,6 +1,7 @@
 #include "player.h"
 #include "layouts.h"
 #include "terrain.h"
+#include "lobby_doors.h"
 
 #define EYE_HEIGHT    1.68f
 #define RADIUS        0.32f
@@ -232,7 +233,8 @@ static void push_out_barrier(double *x, double *z, const Barrier *b) {
 /* Buildings belong to the chunk holding their centre and overhang by less
  * than a chunk, so the 3x3 chunks around the player cover everything. What
  * stands at street level (walls, piers, lift cores, columns) is solid; the
- * space under arcades, void decks and gateways is open. */
+ * space under arcades, void decks and gateways is open; lobbies' doors stop
+ * the walker where their leaves and wings stand now. */
 static void collide(double *x, double *z, double feet) {
     int ccx = (int)floor(*x / CHUNK_SIZE), ccz = (int)floor(*z / CHUNK_SIZE);
     const Rect pole = { -0.2f, -0.2f, 0.2f, 0.2f };
@@ -242,6 +244,7 @@ static void collide(double *x, double *z, double feet) {
             for (int dx = -1; dx <= 1; ++dx) {
                 const BlockLayout *L = layouts_get(ccx + dx, ccz + dz);
                 for (int i = 0; i < L->ncoll; ++i) push_out_poly(x, z, L, &L->coll[i]);
+                if (dx == 0 && dz == 0) lobby_doors_collide(x, z, feet, RADIUS);   /* every door near: lobby_doors_update's */
                 for (int i = 0; i < L->nlamps; ++i) push_out_frame(x, z, L->lamp[i].x, L->lamp[i].z, 1.0f, 0.0f, pole);
                 for (int i = 0; i < L->nbarrier; ++i) {
                     const Barrier *b = &L->barrier[i];

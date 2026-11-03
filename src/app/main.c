@@ -14,6 +14,7 @@
 #include "weather.h"
 #include "models.h"
 #include "frames.h"
+#include "lobby_doors.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -75,7 +76,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--lockdoors] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -86,12 +87,13 @@ static void usage(void) {
            "  --time  hold the shaders' clock at this many seconds (flames, signs, steam: for captures)\n"
            "  --impostors  draw this share (default 0.4; 0 turns them off) of the office towers' floors behind curtain\n"
            "               walls and ribbon windows as baked interior impostors (docs/interior-impostors.md; F8 toggles)\n"
+           "  --lockdoors  lock every lobby's automatic doors: sliding ones stay shut, revolving ones stand still\n"
            "  --shot  wait for streaming to settle, save a screenshot and exit\n");
 }
 
 /* Command-line options. */
 typedef struct Options {
-    bool        validation, shadows, shadowDebug;
+    bool        validation, shadows, shadowDebug, lockDoors;
     const char *shotPath;
     const char *city;            /* --city: a name's beginning, or a number */
     bool        haveCam, camFly;
@@ -111,6 +113,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
         if (strcmp(argv[i], "--validation") == 0) o->validation = true;
         else if (strcmp(argv[i], "--noshadows") == 0) o->shadows = false;
         else if (strcmp(argv[i], "--shadowdebug") == 0) o->shadowDebug = true;
+        else if (strcmp(argv[i], "--lockdoors") == 0) o->lockDoors = true;
         else if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) o->shotPath = argv[++i];
         else if (strcmp(argv[i], "--city") == 0 && i + 1 < argc) o->city = argv[++i];
         else if (strcmp(argv[i], "--walk") == 0 && i + 1 < argc) o->walkSeconds = (float)atof(argv[++i]);
@@ -391,6 +394,8 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
         PlayerInput in = read_input(win, player, opt->shotPath != NULL);
         capture_walk(&cap, &in, dt, totalFrames);
         player_update(player, &in, dt);
+        double shaderTime = opt->fixedTime >= 0.0 ? opt->fixedTime : now - startTime;
+        lobby_doors_update(player, shaderTime, dt);
         double t0 = glfwGetTime();
         if (frames_update(fr, player)) {   /* into another frame (renderer_set_frame says what stands) */
             renderer_set_frame(renderer, fr->active, player->eye);
@@ -407,7 +412,10 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
         weather_update(&weather, now - startTime, dt, opt->fixedRain);
         FrameUBO ubo;
         edge = chunk_edge(chunks, edge, dt);
-        frame_ubo(player, vk, opt->fixedTime >= 0.0 ? opt->fixedTime : now - startTime, &weather, edge, &ubo);
+        frame_ubo(player, vk, shaderTime, &weather, edge, &ubo);
+        uint32_t keys[DOOR_SLOTS];
+        ubo.doorInfo[0] = (uint32_t)lobby_doors_frame(keys, ubo.doorState);
+        for (uint32_t k = 0; k < ubo.doorInfo[0]; ++k) ubo.doorKey[k / 4][k % 4] = keys[k];
         bool resized = g_resized;
         g_resized = false;
         renderer_frame(renderer, &ubo, player->eye, resized);
@@ -456,6 +464,7 @@ int main(int argc, char **argv) {
     Renderer *renderer = renderer_create(&vk, chunks);
     renderer_set_shadow_debug(renderer, opt.shadowDebug);
     renderer_set_impostors(renderer, opt.impostors);
+    lobby_doors_lock_all(opt.lockDoors);
 
     Player player;
     player_init(&player);

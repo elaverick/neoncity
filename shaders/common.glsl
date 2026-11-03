@@ -12,6 +12,8 @@
 #include "pbr.h"
 // Authored adverts: ADVERT_COUNT, ADVERT_TABLE_SIZE, the screens' slots: shared with C
 #include "advert_slots.h"
+// DOOR_SLOTS, DOOR_REVOLVE_RATE: shared with C
+#include "doors.h"
 
 /* Must match src/core/common.h */
 const float CHUNK_SIZE      = 110.0;
@@ -65,6 +67,9 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 sky;        // x the city's light in the air round the camera (0 countryside .. 1 city), y how many cities[], z cloud cover over the camera (src/app/weather.c)
     vec4 cities[CLOUD_CITIES];   // the settlements whose clouds are drawn: camera-relative centre x, z; footprint radius (clouds.h)
     vec4 moon;       // xyz towards the moon, in the camera's local frame (src/app/main.c: moon_dir); w east's angle there, from x towards z
+    uvec4 doorInfo;  // x how many doors near the camera (src/app/lobby_doors.c)
+    uvec4 doorKey[DOOR_SLOTS / 4];   // their keys, four to a vector
+    vec4 doorState[DOOR_SLOTS];      // x how far open (0..1, eased), y a revolving door's angle (rad)
 } frame;
 
 struct ChunkGPU {

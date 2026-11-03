@@ -100,6 +100,10 @@ typedef struct ILayout {
     float    floors;          /* floors served by the cores */
     BFoot    foot;            /* the section's footprint in the frame */
     int      routeStart;      /* cell where the main route starts (inside the vestibule's inner door, or the entrance) */
+    /* The entrance's automatic door (IE_*; interior_auto_doors): sliding leaves (2 bi-parting, 4
+     * telescopic) or a revolving door's wings (3 or 4). A vestibule's inner screen always slides,
+     * on innerLeaves leaves. */
+    uint8_t  entryDoor, entryLeaves, innerLeaves;
     /* An entrance the building graph did not have (service grammar): face k of the section, centred at u. */
     int      synthFace;       /* -1: none */
     float    synthU, synthW;
@@ -146,6 +150,49 @@ int         interior_lights(const ILayout *L, ILight *out, int max);
 int         interior_lobby_lit(const ILayout *L);
 /* The open floor's grid: fitting centres at q * IL_PITCH / 256 + k * IL_PITCH along x and z. */
 void        interior_light_grid(const ILayout *L, uint8_t q[2]);
+/* Automatic doors (src/gen/interior_doors.c): an office lobby's entrance
+ * slides open, or now and then (IE_REVOLVE_SHARE of those that can) revolves;
+ * a vestibule's inner screen always slides. Sliding leaves run on tracks
+ * inside the facade (or on the vestibule's side of its inner screen) and part
+ * clear of the opening, parking behind the glass beside it; bi-parting where
+ * the opening is narrow, telescopic (two leaves a side on two tracks, so
+ * they park in half the room) where it is wide or a corner leaves no room.
+ * A revolving door's drum stands just inside the facade, flanked from the
+ * facade to its middle by glass. The planner keeps where the leaves park and
+ * the drum stands clear (IF_ENTRY, a wider vestibule) and validation checks
+ * it, so nothing moving passes through anything standing. */
+enum { IE_NONE = 0, IE_SLIDE, IE_REVOLVE };
+#define IE_REVOLVE_SHARE 0.22f
+#define IE_TRACK       0.22f   /* an entrance's leaves run this far inside the facade, clear of its mullions (m) */
+#define IE_INNER_TRACK 0.13f   /* a vestibule's inner leaves, this far to the vestibule's side of its screen */
+#define IE_TRACK_GAP   0.07f   /* a telescopic door's second track, beyond its first */
+#define IE_TELESCOPIC  2.6f    /* openings wider than this slide telescopically */
+#define IE_HEADER      0.3f    /* the operator's box over the leaves, its height (m) */
+#define IE_DRUM_GAP    0.12f   /* a revolving door's drum, this far inside the facade */
+#define IE_INNER_MAX   3.0f    /* a vestibule's inner opening, at most */
+#define IE_SCREEN_GAP  0.12f   /* from a door's parts to a vestibule's side screen, at least */
+/* A door in the building frame. Sliding: c the middle of the opening on its
+ * line. Revolving: c the drum's centre, `radius` its radius. a runs along the
+ * opening, n across it into the building (into the lobby, for an inner door). */
+typedef struct IAutoDoor {
+    uint32_t key;              /* the door's identity (FrameUBO.doorKey, the leaves' aux) */
+    uint8_t  type, leaves, outer;
+    float    cx, cz, ax, az, nx, nz;
+    float    width, height, y0, radius;   /* the clear opening; leaves' height; floor (building-frame Y) */
+} IAutoDoor;
+#define IE_MAX_DOORS 2
+int         interior_auto_doors(const BGraph *g, const ILayout *L, IAutoDoor *out, int max);
+/* Sliding leaf k of a door `leaves` wide open at t (0 shut .. 1 open): its
+ * span along a from the opening's middle (s0 < s1), and its track's distance
+ * along n from the opening's line. */
+void        interior_leaf(int leaves, int outer, float width, int k, float t, float *s0, float *s1, float *track);
+/* How far along the opening, either side of its middle, the door's parts
+ * reach: its parked leaves and the header over them, or its drum. */
+float       interior_door_reach(int type, int leaves, float width);
+/* A revolving door's wing k's angle at rest (from -n towards a), and the
+ * angle the whole turns through by time t (radians) when not held. */
+float       interior_wing_angle(int leaves, int k);
+float       interior_revolve_angle(uint32_t key, double t);
 /* Frame <-> building frame. */
 void        interior_to_local(const ILayout *L, float fx, float fz, float *x, float *z);
 void        interior_to_frame(const ILayout *L, float x, float z, float *fx, float *fz);

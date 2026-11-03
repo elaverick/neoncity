@@ -242,6 +242,9 @@ int validate(Gen *G) {
     for (int c = 0; c < N; ++c)
         if ((L->flag[c] & IF_VOID) && L->own[c] != NONE && interior_kind(L->reg[L->own[c]].type) != IK_OPEN) return fail(G, "a room or core stands in the void");
 
+    /* the doors' leaves and drums move through nothing that stands */
+    if (!doors_clear(G)) return 0;
+
     /* every use zone can be walked to */
     if (G->nneed && !access_ok(G, NULL, NULL, 0)) return fail(G, "a fixture's use zone is cut off");
     if (!interior_lobby_lit(L)) return fail(G, "no ceiling light fits the lobby");

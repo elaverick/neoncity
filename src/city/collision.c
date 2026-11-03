@@ -160,6 +160,12 @@ static void coll_frame_box(BlockLayout *BL, const Building *b, const ILayout *L,
     coll_vertex(BL, b, lx0, lz0); coll_vertex(BL, b, lx0, lz1); coll_vertex(BL, b, lx1, lz1); coll_vertex(BL, b, lx1, lz0);
 }
 
+/* A box given in building-frame metres. */
+static void coll_frame_box_local(BlockLayout *BL, const Building *b, float x0, float z0, float x1, float z1) {
+    if (!coll_begin(BL, 4)) return;
+    coll_vertex(BL, b, x0, z0); coll_vertex(BL, b, x0, z1); coll_vertex(BL, b, x1, z1); coll_vertex(BL, b, x1, z0);
+}
+
 /* The treads of the steps up to an opening from u0 to u1 along edge e of
  * grounded section s, as floors, where the sill is too high a step from the
  * sidewalk (entrance_risers; emit_walls draws them). */
@@ -258,11 +264,58 @@ static void collide_arcology(BlockLayout *BL, const Building *b, const BGraph *g
     }
 }
 
+/* A thin wall along the building-frame segment (ax, az)-(bx, bz), `half` either side of it. */
+static void coll_segment(BlockLayout *BL, const Building *b, float ax, float az, float bx, float bz, float half) {
+    float dx = bx - ax, dz = bz - az, len = sqrtf(dx * dx + dz * dz);
+    if (len < 1e-4f || !coll_begin(BL, 4)) return;
+    float ox = -dz / len * half, oz = dx / len * half;
+    coll_vertex(BL, b, ax + ox, az + oz); coll_vertex(BL, b, bx + ox, bz + oz);
+    coll_vertex(BL, b, bx - ox, bz - oz); coll_vertex(BL, b, ax - ox, az - oz);
+}
+
+/* A lobby's automatic doors: each recorded, in world terms, for src/app/doors.c,
+ * which moves what moves of them and pushes the walker out of it; and what
+ * stands still of a revolving door, its drum's walls (as emit_revolving draws
+ * them), the glass flanking the way in to it and its post, solid here. */
+static void collide_doors(BlockLayout *BL, const Building *b, const BGraph *g, const ILayout *L) {
+    IAutoDoor dd[IE_MAX_DOORS];
+    int nd = interior_auto_doors(g, L, dd, IE_MAX_DOORS);
+    for (int k = 0; k < nd; ++k) {
+        const IAutoDoor *d = &dd[k];
+        if (BL->ndoor < MAX_LOBBY_DOORS) {
+            LobbyDoor *o = &BL->door[BL->ndoor++];
+            DVec2 c = to_world(b, d->cx, d->cz);
+            o->key = d->key; o->type = d->type; o->leaves = d->leaves; o->outer = d->outer;
+            o->c[0] = c.x; o->c[1] = c.z;
+            o->a[0] = (float)(b->c * d->ax - b->s * d->az); o->a[1] = (float)(b->s * d->ax + b->c * d->az);
+            o->n[0] = (float)(b->c * d->nx - b->s * d->nz); o->n[1] = (float)(b->s * d->nx + b->c * d->nz);
+            o->width = d->width; o->height = d->height; o->y = building_base(b) + d->y0; o->radius = d->radius;
+        }
+        if (d->type != IE_REVOLVE) continue;
+        float R = d->radius, front = R + IE_DRUM_GAP, span = PI_F / (float)d->leaves;
+#define DRUM_AT(p, r, X, Z) do { X = d->cx + (r) * (-cosf(p) * d->nx + sinf(p) * d->ax); Z = d->cz + (r) * (-cosf(p) * d->nz + sinf(p) * d->az); } while (0)
+        for (int side = -1; side <= 1; side += 2) {
+            float p0 = (float)side * PI_F * 0.5f - span;
+            for (int i = 0; i < 8; ++i) {
+                float pa = p0 + 2.0f * span * (float)i / 8.0f, pb = p0 + 2.0f * span * (float)(i + 1) / 8.0f, ax, az, bx, bz;
+                DRUM_AT(pa, R + 0.016f, ax, az);
+                DRUM_AT(pb, R + 0.016f, bx, bz);
+                coll_segment(BL, b, ax, az, bx, bz, 0.03f);
+            }
+            float s = (float)side * (R + 0.03f);
+            coll_segment(BL, b, d->cx + d->ax * s - d->nx * front, d->cz + d->az * s - d->nz * front, d->cx + d->ax * s, d->cz + d->az * s, 0.03f);
+        }
+#undef DRUM_AT
+        coll_frame_box_local(BL, b, d->cx - 0.07f, d->cz - 0.07f, d->cx + 0.07f, d->cz + 0.07f);
+    }
+}
+
 /* A lobby is walked into: its envelope (open at the entrance), partitions,
  * cores and furniture are solid, the rest of the floor is not. */
 static void collide_interior(BlockLayout *BL, const Building *b, const BGraph *g, const ILayout *L) {
     Behind bh = { L, NULL, L->section };
     collide_envelope(BL, b, g, &bh);
+    collide_doors(BL, b, g, L);
     IWall *w = (IWall *)malloc(sizeof(IWall) * 4096);
     int16_t (*rc)[4] = (int16_t (*)[4])malloc(sizeof(int16_t) * 4 * 512);
     if (!w || !rc) fatal("out of memory building collision");

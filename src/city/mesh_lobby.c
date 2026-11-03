@@ -48,8 +48,8 @@ int behind_of(const Interiors *in, int si, Behind *bh) {
 int city_casts_shadow(const Vertex *v) {
     const uint8_t *p = v->params;
     switch (p[0]) {
-    case MAT_INTERIOR:
-        return p[1] != IS_GLASS;
+    case MAT_INTERIOR:   /* not glass, nor what moves with a door (city.vert moves it; the shadows' geometry stands still) */
+        return p[1] != IS_GLASS && p[1] != IS_LEAF && p[1] != IS_LEAFFRAME;
     case MAT_ARCOLOGY:
         if (p[1] == ARS_RAIL) return p[2] != 0 && p[2] != 3;   /* glass balustrades */
         return p[1] != ARS_SHAFT && p[1] != ARS_SEARCH && p[1] != ARS_STEAM && p[1] != ARS_PUDDLE;
@@ -671,6 +671,7 @@ void emit_interior(Mesh *m, const BGraph *g, const ILayout *L) {
     emit_envelope_inside(m, g, L, s, L->section);
     emit_partitions(m, g, L);
     emit_solids(m, g, L);
+    emit_auto_doors(m, g, L);
     emit_emblem(m, g, L);
     const IFixture *stair = NULL;
     for (int f = 0; f < L->nfix; ++f) {

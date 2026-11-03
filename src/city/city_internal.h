@@ -103,7 +103,9 @@ typedef struct Interiors { int n; ILayout *lay[2]; ALayout *arc; } Interiors;
 /* MAT_INTERIOR surfaces (params y; shadeInterior in shaders/city.frag). */
 enum { IS_FLOOR = 0, IS_ROOMFLOOR, IS_WALL, IS_CEILING, IS_CORE, IS_METAL, IS_WOOD, IS_FABRIC, IS_GLASS,
        IS_LIGHT, IS_PLANT, IS_LINING, IS_STONE, IS_LIFTDOOR, IS_DOOR, IS_SCREEN, IS_SKYLIGHT, IS_OFFICE, IS_SIGN, IS_EMBLEM,
-       IS_BARK, IS_SOIL, IS_MODEL };   /* IS_PLANT: leaves; IS_BARK: stems (grow_plants); IS_MODEL: a model's own maps (emit_model), params z its PBR_* */
+       IS_BARK, IS_SOIL, IS_MODEL, IS_LEAF, IS_LEAFFRAME };
+/* IS_PLANT: leaves; IS_BARK: stems (grow_plants); IS_MODEL: a model's own maps (emit_model), params z its PBR_*;
+ * IS_LEAF, IS_LEAFFRAME: an automatic door's moving glass and the rest of what moves (src/city/mesh_doors.c) */
 #define POT_HEIGHT 0.55f   /* lobby planters: the pot's rim above the floor */
 #define PLANT_BUDGET 188000   /* plant vertices per chunk, inside MAX_CHUNK_PAGES * PAGE_VERTS */
 
@@ -237,6 +239,9 @@ void emit_cap_minus(Mesh *m, const ILayout *L, const BLoop *outer, float vx0, fl
 void run_strip(const IWall *r, float t, float *x0, float *z0, float *x1, float *z1);
 void emit_interior(Mesh *m, const BGraph *g, const ILayout *L);
 void emit_interior_doors(Mesh *m, const BGraph *g, const ILayout *L);
+
+/* mesh_doors.c */
+void emit_auto_doors(Mesh *m, const BGraph *g, const ILayout *L);
 
 /* mesh_planting.c */
 void grow_plants(Mesh *m, Planting *pl);
