@@ -1106,8 +1106,41 @@ folders); those from ambientCG are CC0:
   cans), the albedo tinting the specular. The metalness map is not used. Without the
   textures, the procedural chain-link stands in.
 
-The lobby stone and wood finishes are covered under Office lobbies. Everything else stays
-procedural.
+The lobby stone and wood finishes are covered under Office lobbies.
+
+**Grain under procedural colour.** Most of the city's other surfaces keep their procedural
+colour (a building's palette and grime, a plant's paint, a lobby's tone) and take an authored
+material's grain under it: `pbrGrain` (`shaders/city/surface.glsl`) returns the albedo divided
+by its per-channel mean (`albedo_mean`, which `pbr_pack` prints), so the photograph's own hue
+drops out and only its variation is left to multiply the surface's colour by, with the normal,
+occlusion and roughness maps as they are. The surfaces stay on their Blinn-Phong lobes; the
+roughness map scales the highlight (`grainSpec`). Each such file's `params` are how much of the
+albedo's variation shows (1 all) and how strongly the normal map bends the surface (1 as
+authored). Flat surfaces with no texture coordinates of their own are mapped by `planarFrame`:
+level ones in world x and z, so those tiles divide 64 chunks (`material_test` checks), others
+along their level line and up their slope. Where a file doesn't load, the surface keeps its
+procedural noise. All are ambientCG (CC0), packed at 1024 from the 2K downloads:
+
+| Material | ambientCG | Surfaces |
+|---|---|---|
+| `facade_concrete` | [Concrete008](https://ambientcg.com/view?id=Concrete008) | concrete facades (palette 0) |
+| `facade_brick` | [Bricks085](https://ambientcg.com/view?id=Bricks085) | brick facades (palette 1) |
+| `facade_metal` | [CorrugatedSteel005](https://ambientcg.com/view?id=CorrugatedSteel005) | metal-panelled facades (palette 2), plants' profiled cladding, arcology market blocks |
+| `facade_tile` | [Tiles133A](https://ambientcg.com/view?id=Tiles133A) | tiled facades (palette 3) |
+| `facade_stone` | [Tiles143](https://ambientcg.com/view?id=Tiles143) | warm-stone facades (palette 5) |
+| `brushed_metal` | [Metal038](https://ambientcg.com/view?id=Metal038) | bronze facades (palette 6), metal piers, steel doors, street and roof metalwork, lobby bronze panels |
+| `granite` | [Granite003A](https://ambientcg.com/view?id=Granite003A) | buildings' base course, stone piers, lobby granite floors, arcology black stone |
+| `shutter` | [CorrugatedSteel009](https://ambientcg.com/view?id=CorrugatedSteel009) | shut shopfronts, loading bays, arcology stalls |
+| `roof_gravel` | [Gravel043](https://ambientcg.com/view?id=Gravel043) | flat roofs |
+| `roof_tiles` | [RoofingTiles012A](https://ambientcg.com/view?id=RoofingTiles012A) | hip roofs |
+| `lot_asphalt` | [Asphalt033](https://ambientcg.com/view?id=Asphalt033) | lots, yards, verges, bridge soffits |
+| `grass` | [Grass001](https://ambientcg.com/view?id=Grass001) | parks and lawns |
+| `painted_steel` | [Metal016](https://ambientcg.com/view?id=Metal016) | plants' tanks and frames, rooftop plant |
+| `plaster` | [Plaster001](https://ambientcg.com/view?id=Plaster001) | lobby charcoal plaster |
+| `concrete_board` | [Concrete028](https://ambientcg.com/view?id=Concrete028) | arcology columns, beams, cores |
+| `concrete` | [Concrete034](https://ambientcg.com/view?id=Concrete034) | concrete pads and plinths, roof soffits, arcology blocks |
+
+Glass, neon, signs, screens, rooms seen through windows and the terrain stay procedural.
 
 Road markings and manhole covers stay procedural masks. `layer()` paints them over the base
 surface, whether textured or procedural. Within the mask it blends in the coat's colour and
@@ -1118,7 +1151,9 @@ To add a material from an ambientCG download (any resolution):
 1. Pack it: `build/pbr_pack <download>/<Name>_4K-PNG assets/textures/<folder> 2048`. This
    reads `_Color`, `_NormalGL`, `_Roughness`, and `_AmbientOcclusion` / `_Displacement` /
    `_Opacity` when present (the opacity goes into the albedo's alpha). It box-filters them
-   down to the given width and writes the three maps.
+   down to the given width and writes the three maps, and prints the albedo's mean (luminance
+   and per channel) and roughness. The maps are uploaded uncompressed (RGBA8, about 5 MB a map
+   at 1024 with mips, 21 MB at 2048), so 1024 is enough for anything repeating every few metres.
    The `.blend`, `.mtlx`, `.tres`, `.usdc`, `_NormalDX` and preview files are not needed.
 2. Write `assets/materials/<name>.json`, naming the maps and giving the properties
    (`paving_stones.json` is an example). Build: CMake picks the file up and defines

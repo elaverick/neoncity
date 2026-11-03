@@ -746,6 +746,43 @@ static int props_cams(void) {
     return 0;
 }
 
+/* city_test --facades: --cam views from the street of buildings round the spawn in each
+ * walled palette (facadeWallAlbedo in shaders/city/facade.glsl: 0 concrete, 1 brick, 2 metal
+ * panels, 3 tile, 5 stone, 6 bronze), each 12 m out from a grounded face and looking up a
+ * little at its first floors, to judge their authored grain (assets/materials/facade_*.json). */
+static int facades_cams(void) {
+    static const char *const NAMES[8] = { "concrete", "brick", "metal", "tile", "glass", "stone", "bronze", "glass" };
+    double sx, sz;
+    float yaw;
+    city_spawn(&sx, &sz, &yaw);
+    int hx = (int)floor(sx / CHUNK_SIZE), hz = (int)floor(sz / CHUNK_SIZE), shown[8] = { 0 };
+    uint32_t seen[8][3] = { { 0 } };
+    for (int ring = 0; ring <= 6; ++ring)
+        for (int cz = hz - ring; cz <= hz + ring; ++cz)
+            for (int cx = hx - ring; cx <= hx + ring; ++cx) {
+                if (abs(cx - hx) != ring && abs(cz - hz) != ring) continue;
+                Mesh m = { 0 };
+                city_build_mesh(cx, cz, &m);
+                for (uint32_t i = 0; i < m.count; ++i) {
+                    const Vertex *v = &m.v[i];
+                    int pal = v->params[3] & 7;
+                    if (v->params[0] != MAT_FACADE || !(v->params[2] & 1) || pal == 4 || pal == 7 || shown[pal] >= 3) continue;
+                    if (((v->params[2] >> 3) & 3) == 1) continue;   /* a curtain wall: glass */
+                    float nx = v->nrm[0] / 127.0f, ny = v->nrm[1] / 127.0f, nz = v->nrm[2] / 127.0f;
+                    if (fabsf(ny) > 0.1f || v->pos[1] - v->base < 7.0f || v->uv[0] < 6.0f) continue;
+                    bool dup = false;
+                    for (int k = 0; k < shown[pal]; ++k) dup |= seen[pal][k] == v->seed;
+                    if (dup) continue;
+                    seen[pal][shown[pal]++] = v->seed;
+                    double x = m.ox + v->pos[0] + nx * 12.0, z = m.oz + v->pos[2] + nz * 12.0;
+                    printf("%-8s face at (%.1f, %.1f): --cam %.2f %.2f %.1f 18\n", NAMES[pal], m.ox + v->pos[0], m.oz + v->pos[2],
+                           x, z, atan2(-nx, nz) * 57.2958);
+                }
+                mesh_free(&m);
+            }
+    return 0;
+}
+
 /* city_test --screens: how many of the video screens round the spawn each authored
  * advert fits (its aspect ratio within ADVERT_ASPECT_FIT of theirs), then --cam views
  * of the nearest it fits, from close in front (the LEDs' emitters), 25 m and 90 m off,
@@ -850,6 +887,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--proxies") == 0) return proxy_survey();
     if (argc > 1 && strcmp(argv[1], "--props") == 0) return props_cams();
     if (argc > 1 && strcmp(argv[1], "--screens") == 0) return screens_cams();
+    if (argc > 1 && strcmp(argv[1], "--facades") == 0) return facades_cams();
 
     /* 1. Reference pass, in order. Track mesh sizes against the GPU page budget. */
     uint32_t maxVerts = 0, maxLights = 0, maxInterior = 0, maxLitter = 0, maxPlants = 0, maxProps = 0;

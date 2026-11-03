@@ -1,0 +1,14 @@
+// Limestone ashlar in staggered courses: the warm-stone facades (palette 5, shadeFacade),
+// under each building's own shade (pbrGrain).
+// Tiles143 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/tiles_143/albedo.png",
+    "normal": "../textures/tiles_143/normal.png",
+    "orm":    "../textures/tiles_143/orm.png"
+  },
+  "tile": 2.0,                 // metres per image
+  "albedo_mean": [0.704, 0.463, 0.272],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.8, 1.0]
+}

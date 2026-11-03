@@ -1,0 +1,14 @@
+// Worn asphalt: the lots, yards and verges (MAT_LOT in shadeGround), mapped in world x
+// and z, under the ground's own shade (pbrGrain, planarFrame).
+// Asphalt033 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/asphalt_033/albedo.png",
+    "normal": "../textures/asphalt_033/normal.png",
+    "orm":    "../textures/asphalt_033/orm.png"
+  },
+  "tile": 2.5,                 // metres per image: divides 64 chunks (7040 m), where the shader's world coordinates wrap
+  "albedo_mean": [0.094, 0.085, 0.065],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

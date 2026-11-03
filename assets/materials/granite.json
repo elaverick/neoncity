@@ -1,0 +1,15 @@
+// Speckled granite: a building's dark base course (the plinth, shadeFacade), a curtain
+// wall's stone piers (shadeTrim), the lobbies' dark granite floors (lobbyStone) and an
+// arcology's black stone (shadeArcology), each in its own tone (pbrGrain).
+// Granite003A (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/granite_003a/albedo.png",
+    "normal": "../textures/granite_003a/normal.png",
+    "orm":    "../textures/granite_003a/orm.png"
+  },
+  "tile": 1.0,                 // metres per image
+  "albedo_mean": [0.383, 0.362, 0.364],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

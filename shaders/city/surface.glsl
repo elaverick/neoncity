@@ -49,6 +49,53 @@ Surface samplePBR(int m, vec2 st, vec3 T, vec3 B, vec3 N) {
     return s;
 }
 
+/* An authored material under a procedural surface's own colour (a building's palette, a plant's
+ * paint, a lobby's tone): the surface keeps its colour and takes the material's grain. tint is
+ * the albedo over its mean (albedo_mean, per channel), so the photograph's own hue drops out and
+ * only its variation is left: multiply the surface's colour by it. The file's params give how much
+ * of that variation shows (x, 1 all) and how strongly the normal map bends the surface (y, 1 as
+ * authored). q: metres in the surface (image right, image down: texture rows run down the image,
+ * so an upright image on a wall takes q.y = -height and B = +y); gx, gy: q's screen derivatives,
+ * taken in uniform control flow, so it can be called from inside per-pixel branches. T, B: the
+ * world directions of image right and up. */
+struct Grain { vec3 tint; vec3 n; float ao; float rough; };
+Grain pbrGrain(int m, vec2 q, vec2 gx, vec2 gy, vec3 T, vec3 B, vec3 N) {
+    int i = m * PBR_MAPS_PER_MATERIAL;
+    vec2 tile = pbrTile(m);
+    vec2 st = q / tile;
+    gx /= tile; gy /= tile;
+    vec4 k = pbrParams(m);
+    Grain g;
+    g.tint = mix(vec3(1.0), textureGrad(pbrMaps[i + PBR_ALBEDO], st, gx, gy).rgb / max(pbrAlbedoMean(m), vec3(1e-3)), k.x);
+    vec3 tn = textureGrad(pbrMaps[i + PBR_NORMAL], st, gx, gy).xyz * 2.0 - 1.0;
+    g.n = normalize(N + (T * tn.x + B * tn.y) * k.y / max(tn.z, 0.2));
+    vec3 orm = textureGrad(pbrMaps[i + PBR_ORM], st, gx, gy).rgb;
+    g.ao = orm.r; g.rough = orm.g;
+    return g;
+}
+// pbrGrain's tint alone (where a surface's lighting takes no normal map, as a lobby's finishes), and the
+// roughness map in rough.
+vec3 pbrTint(int m, vec2 q, vec2 gx, vec2 gy, out float rough) {
+    int i = m * PBR_MAPS_PER_MATERIAL;
+    vec2 tile = pbrTile(m);
+    rough = textureGrad(pbrMaps[i + PBR_ORM], q / tile, gx / tile, gy / tile).g;
+    return mix(vec3(1.0), textureGrad(pbrMaps[i + PBR_ALBEDO], q / tile, gx / tile, gy / tile).rgb / max(pbrAlbedoMean(m), vec3(1e-3)), pbrParams(m).x);
+}
+
+// What a procedural surface's Blinn-Phong highlight is scaled by where the grain's roughness map is
+// glossier or duller than middling: 1 at roughness 0.5.
+float grainSpec(Grain g) { return mix(1.75, 0.25, g.rough); }
+
+// The frame a flat procedural surface takes an authored grain in, from its normal: a level one
+// is mapped in world x and z (+x image right, -z image up, as the roads), any other runs along
+// its level line (image right) and up its slope (image up). q: metres, in that frame (q.y runs
+// down the image, as texture rows do).
+void planarFrame(vec3 n, vec3 w, out vec3 T, out vec3 B, out vec2 q) {
+    if (abs(n.y) > 0.9) { T = vec3(1.0, 0.0, 0.0); B = vec3(0.0, 0.0, -1.0); }
+    else { T = normalize(vec3(n.z, 0.0, -n.x)); B = cross(n, T); }
+    q = vec2(dot(w, T), -dot(w, B));
+}
+
 // A baked model's tangent frame (tools/model_pack.c; src/city/props.c): T along
 // +u, B along -v, both square to the interpolated normal n, from dp/du and dp/dv,
 // which the screen derivatives give (a triangle's own: they never cross an edge).

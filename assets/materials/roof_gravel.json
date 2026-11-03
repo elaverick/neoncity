@@ -1,0 +1,14 @@
+// Fine gravel ballast over a flat roof's membrane: the flat roofs (shadeRoof) and an
+// arcology's (shadeArcology), mapped in world x and z (pbrGrain, planarFrame).
+// Gravel043 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/gravel_043/albedo.png",
+    "normal": "../textures/gravel_043/normal.png",
+    "orm":    "../textures/gravel_043/orm.png"
+  },
+  "tile": 1.6,                 // metres per image: divides 64 chunks (7040 m), where the shader's world coordinates wrap
+  "albedo_mean": [0.158, 0.159, 0.146],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

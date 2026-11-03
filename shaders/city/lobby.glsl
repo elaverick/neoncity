@@ -182,9 +182,14 @@ vec3 lobbyStone(uint seed, vec2 q, vec2 gx, vec2 gy, float aa, out float joint, 
             c = dark ? marble(q, vec3(0.028, 0.028, 0.03), vec3(0.20, 0.19, 0.18), salt, aa)
                      : marble(q, vec3(0.22, 0.215, 0.20), vec3(0.09, 0.085, 0.08), salt + 5u, aa);
         }
-    } else if (pick < 0.6) {          // dark granite
-        float speck = mix(vnoise(q * 40.0, salt), 0.5, smoothstep(0.005, 0.03, aa));
-        c = vec3(0.045, 0.043, 0.042) * (0.6 + 0.8 * speck);
+    } else if (pick < 0.6) {          // dark granite, each slab its own piece of the stone
+        if (pbrLoaded(PBR_GRANITE)) {
+            c = vec3(0.045, 0.043, 0.042) * pbrTint(PBR_GRANITE, q + off * pbrTile(PBR_GRANITE), gx, gy, rough);
+            polish *= polishOf(rough);
+        } else {
+            float speck = mix(vnoise(q * 40.0, salt), 0.5, smoothstep(0.005, 0.03, aa));
+            c = vec3(0.045, 0.043, 0.042) * (0.6 + 0.8 * speck);
+        }
     } else if (pick < 0.8) {          // veined dark marble
         if (pbrLoaded(PBR_MARBLE_DARK)) {
             c = finish(PBR_MARBLE_DARK, q, 1.0, off, turn, gx, gy, rough) * 1.25;
@@ -223,7 +228,12 @@ vec3 lobbyWall(uint seed, vec2 q, vec2 gx, vec2 gy, float aa, out float gloss) {
     if (pick < 0.6) {                 // smoked bronze panels with shadow gaps
         gloss = 0.45;
         float gap = 1.0 - band(fract(q.x / 1.2), 0.008, 0.992, aa / 1.2 + 0.002);
-        return vec3(0.075, 0.052, 0.032) * (0.85 + 0.3 * vnoise(vec2(q.x * 0.3, q.y * 6.0), salt)) * (1.0 - 0.8 * gap);
+        vec3 grain = vec3(0.85 + 0.3 * vnoise(vec2(q.x * 0.3, q.y * 6.0), salt));
+        if (pbrLoaded(PBR_BRUSHED_METAL)) {   // each panel its own piece of the sheet
+            grain = pbrTint(PBR_BRUSHED_METAL, q + vec2(0.0, 0.37 * floor(q.x / 1.2)), gx, gy, rough);
+            gloss *= mix(1.3, 0.6, rough);
+        }
+        return vec3(0.075, 0.052, 0.032) * grain * (1.0 - 0.8 * gap);
     }
     if (pick < 0.8) {                 // walnut slats, the grain running up them
         gloss = 0.2;
@@ -234,6 +244,7 @@ vec3 lobbyWall(uint seed, vec2 q, vec2 gx, vec2 gy, float aa, out float gloss) {
         return c * mix(0.25, 1.0, slat);
     }
     gloss = 0.1;                      // charcoal plaster
+    if (pbrLoaded(PBR_PLASTER)) return vec3(0.06, 0.058, 0.055) * pbrTint(PBR_PLASTER, q, gx, gy, rough);
     return vec3(0.06, 0.058, 0.055) * (0.85 + 0.3 * fbm(q * 0.8, salt));
 }
 

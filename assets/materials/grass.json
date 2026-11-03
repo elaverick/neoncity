@@ -1,0 +1,14 @@
+// Dense short grass: the parks' and plazas' lawns (MAT_LOT in shadeGround), mapped in
+// world x and z, under the night's dark greens (pbrGrain, planarFrame).
+// Grass001 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/grass_001/albedo.png",
+    "normal": "../textures/grass_001/normal.png",
+    "orm":    "../textures/grass_001/orm.png"
+  },
+  "tile": 1.408,               // metres per image: divides 64 chunks (7040 m), where the shader's world coordinates wrap
+  "albedo_mean": [0.061, 0.110, 0.023],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

@@ -208,7 +208,7 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     } else if (surf == ARS_COLUMN || surf == ARS_CAPITAL || surf == ARS_BEAM || surf == ARS_PORTAL) {
         // megastructure concrete: board marks, grime rising from the floor, wet streaks
         alb = vec3(0.085, 0.082, 0.078) * (0.8 + 0.4 * fbm(vec2(uv.x * 0.7, uv.y * 0.15), 0xA5D1u));
-        alb *= 0.85 + 0.15 * step(0.5, fract(uv.y / 0.3));
+        if (!pbrLoaded(PBR_CONCRETE_BOARD)) alb *= 0.85 + 0.15 * step(0.5, fract(uv.y / 0.3));   // its board marks (else authored, below)
         alb *= mix(0.55, 1.0, smoothstep(0.0, 1.5, y));
         float streaks = smoothstep(0.55, 0.8, vnoise(vec2(uv.x * 3.0, 0.0), 0xA5D2u)) * smoothstep(4.0, 0.5, y);
         rough = mix(0.7, 0.2, streaks);
@@ -240,7 +240,7 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
                   : vec3(0.07, 0.06, 0.05);
         alb = base * (0.7 + 0.6 * fbm(vec2(uv.x * 0.5, uv.y * 0.8), seed & 0xFFFFu));
         alb *= mix(0.6, 1.0, smoothstep(0.0, 1.2, uv.y));
-        if (u == AB_MARKET || u == AB_REPAIR) alb *= 0.8 + 0.2 * step(0.5, fract(uv.x / 0.12));   // corrugated sheet
+        if ((u == AB_MARKET || u == AB_REPAIR) && !pbrLoaded(PBR_FACADE_METAL)) alb *= 0.8 + 0.2 * step(0.5, fract(uv.x / 0.12));   // corrugated sheet (else authored, below)
         float ups = step(3.5, uv.y);
         vec2 cell = floor(vec2(uv.x / 1.6, (uv.y - 3.5) / 1.1));
         uint hw = hash3i(seed, int(cell.x), int(cell.y), 13);
@@ -286,7 +286,7 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             emit = kelvin(3000.0 + 3000.0 * hf(seed, 5u)) * (0.35 + 2.2 * tube);
         }
     } else if (surf == ARS_SHUTTER) {
-        float rib = 0.6 + 0.4 * smoothstep(0.3, 0.5, abs(fract(uv.y / 0.09) - 0.5) * 2.0);
+        float rib = pbrLoaded(PBR_SHUTTER) ? 0.85 : 0.6 + 0.4 * smoothstep(0.3, 0.5, abs(fract(uv.y / 0.09) - 0.5) * 2.0);   // (authored below)
         alb = vec3(0.07, 0.072, 0.075) * rib * (0.5 + 0.7 * fbm(uv * 0.8, seed & 0xFFFFu));
         float graf = smoothstep(0.6, 0.65, fbm(uv * 0.9, seed));
         alb = mix(alb, neonColor(seed >> 6) * 0.1, graf * 0.8);
@@ -415,6 +415,26 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         alb = var == 0u ? vec3(0.42, 0.30, 0.14) : var == 1u ? vec3(0.30, 0.31, 0.32) : vec3(0.12, 0.14, 0.15);
         alb *= (0.9 + 0.1 * vnoise(vec2(uv.x * 40.0, y * 2.0), 0xA551u)) * (1.0 - 0.7 * seam);
         rough = var == 0u ? 0.15 : 0.3; specK = 0.5;
+    }
+
+    // Authored grain (pbrGrain) under the colours above: the megastructure's board-marked concrete, its dark
+    // stone and bronze, the blocks' concrete and sheet metal, the shutters' slats and the roofs' gravel.
+    // uv are metres; the frame from the screen derivatives (modelFrame), the image upright.
+    int gm = -1;
+    if (surf == ARS_COLUMN || surf == ARS_CAPITAL || surf == ARS_BEAM || surf == ARS_CORE)
+        gm = surf == ARS_COLUMN && var == 1u ? PBR_GRANITE : PBR_CONCRETE_BOARD;
+    else if (surf == ARS_PORTAL) gm = var == 1u ? PBR_BRUSHED_METAL : PBR_GRANITE;
+    else if (surf == ARS_BLOCK) gm = var == AB_MARKET || var == AB_REPAIR ? PBR_FACADE_METAL : PBR_CONCRETE;
+    else if (surf == ARS_SHUTTER) gm = PBR_SHUTTER;
+    else if (surf == ARS_ROOF) gm = PBR_ROOF_GRAVEL;
+    if (gm >= 0 && pbrLoaded(gm)) {
+        vec3 gT, gB;
+        modelFrame(p, uv, n, gT, gB);
+        vec2 q = vec2(uv.x, -uv.y);
+        Grain g = pbrGrain(gm, q, dFdx(q), dFdy(q), gT, -gB, n);
+        alb *= g.tint * mix(1.0, g.ao, 0.7);
+        n = g.n;
+        rough = clamp(rough + 0.5 * (g.rough - 0.5), 0.02, 1.0);
     }
 
     cityLights(p, n, V, 30.0, specK, rough, diff, spec);

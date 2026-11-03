@@ -1,0 +1,15 @@
+// Profiled steel sheet, its ribs running up the image: the metal-panelled facades
+// (palette 2, shadeFacade), a plant's profiled cladding (shadeIndustry) and an arcology's market and
+// repair blocks (shadeArcology), under their paint (pbrGrain).
+// CorrugatedSteel005 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/corrugated_steel_005/albedo.png",
+    "normal": "../textures/corrugated_steel_005/normal.png",
+    "orm":    "../textures/corrugated_steel_005/orm.png"
+  },
+  "tile": 4.0,                 // metres per image: ribs a quarter metre apart
+  "albedo_mean": [0.322, 0.330, 0.341],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.6, 1.0]
+}

@@ -265,22 +265,44 @@ vec3 shadeMetal(vec3 p, vec3 rel, vec3 n, vec2 uv, uvec4 prm) {
         glassRefl(n, F * (1.0 - mull * 0.8));
         return mix(glow * (1.0 - F) + envReflection(reflect(-V, n)) * F, vec3(0.02), mull * 0.8);
     }
+    // authored grain (pbrGrain): painted steel on a roof's plant, concrete, dark sheet steel on the rest
+    // (not the vents, whose louvres are their own), in the world on each face
+    int m = v == 0u ? PBR_PAINTED_STEEL : v == 5u ? PBR_CONCRETE : v == 1u ? -1 : PBR_BRUSHED_METAL;
+    Grain g = Grain(vec3(1.0), n, 1.0, 0.5);
+    if (m >= 0 && pbrLoaded(m)) {
+        vec3 gT, gB;
+        vec2 q;
+        planarFrame(n, gWorld, gT, gB, q);
+        g = pbrGrain(m, q, dFdx(q), dFdy(q), gT, gB, n);
+        alb *= g.tint * mix(1.0, g.ao, 0.6);
+    }
     vec3 spec;
-    vec3 diff = wallLighting(p, n, V, 40.0, 0.25, p.y - gBase, spec);
+    vec3 diff = wallLighting(p, g.n, V, 40.0, 0.25 * grainSpec(g), p.y - gBase, spec);
     return alb * diff + spec;
 }
 
 vec3 shadeRoof(vec3 p, vec3 rel, vec3 n, vec2 uv, uvec4 prm) {
     vec3 V = -normalize(rel);
-    float g = fbm(gWorld.xz * 0.6, 0x400Fu);
+    // authored grain (pbrGrain): gravel ballast on a flat roof, clay tiles on a hip roof, concrete under an
+    // overhang; the broad blotches stay, for the grime and the ballast's drifts
+    float g = fbm(gWorld.xz * 0.15, 0x400Fu);
     vec3 alb = vec3(0.04, 0.04, 0.042) * (0.6 + 0.8 * g);
-    if (prm.w == 1u) {   // clay tiles on a hip roof
-        float row = fract(p.y / 0.32);
-        alb = vec3(0.075, 0.035, 0.025) * (0.6 + 0.4 * smoothstep(0.0, 0.25, row)) * (0.75 + 0.5 * g);
-    }
+    if (prm.w == 1u) alb = vec3(0.075, 0.035, 0.025) * (0.75 + 0.5 * g);   // clay tiles on a hip roof
     if (prm.z == 1u) alb *= 0.8;   // soffit under an overhang
+    int m = prm.z == 1u ? PBR_CONCRETE : prm.w == 1u ? PBR_ROOF_TILES : PBR_ROOF_GRAVEL;
+    Grain gr = Grain(vec3(1.0), n, 1.0, 0.5);
+    if (pbrLoaded(m)) {
+        vec3 gT, gB;
+        vec2 q;
+        planarFrame(n, gWorld, gT, gB, q);
+        gr = pbrGrain(m, q, dFdx(q), dFdy(q), gT, gB, n);
+        alb *= gr.tint * gr.ao;
+    } else {
+        alb *= 0.6 + 0.8 * fbm(gWorld.xz * 0.6, 0x4010u);
+        if (prm.w == 1u) alb *= 0.6 + 0.4 * smoothstep(0.0, 0.25, fract(p.y / 0.32));
+    }
     vec3 spec;
-    vec3 diff = wallLighting(p, n, V, 10.0, 0.05, p.y - gBase, spec);
+    vec3 diff = wallLighting(p, gr.n, V, 10.0, 0.05 * grainSpec(gr), p.y - gBase, spec);
     return alb * diff + spec;
 }
 
@@ -304,13 +326,21 @@ vec3 shadeDoor(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         glassRefl(n, F * (1.0 - clamp(frame + bar, 0.0, 1.0)));
         return mix(glass, vec3(0.03) * diff + spec, clamp(frame + bar, 0.0, 1.0));
     }
+    // A steel door's sheet or a loading bay's shutter slats (pbrGrain), m metres across and up the door.
+    int mt = prm.y == 1u ? PBR_BRUSHED_METAL : PBR_SHUTTER;
+    Grain g = Grain(vec3(1.0), n, 1.0, 0.5);
+    if (pbrLoaded(mt)) {
+        vec2 q = vec2(m.x, -m.y);   // upright: down the image is down the door
+        g = pbrGrain(mt, q, dFdx(q), dFdy(q), normalize(vec3(n.z, 0.0, -n.x)), vec3(0.0, 1.0, 0.0), n);
+        diff = wallLighting(p, g.n, V, 60.0, 0.3 * grainSpec(g), p.y - gBase, spec);
+    }
     if (prm.y == 1u) {
-        vec3 steel = vec3(0.06, 0.065, 0.07) * (0.8 + 0.4 * fbm(m * 3.0, seed & 0xFFFFu));
+        vec3 steel = vec3(0.06, 0.065, 0.07) * (pbrLoaded(mt) ? g.tint * g.ao : vec3(0.8 + 0.4 * fbm(m * 3.0, seed & 0xFFFFu)));
         float win = band(m.x, wM * 0.3, wM * 0.7, aa) * band(m.y, hM * 0.6, hM * 0.85, aa);
         return mix(steel * diff + spec, vec3(0.5, 0.45, 0.35) * 0.4, win);
     }
-    float rib = 0.6 + 0.4 * smoothstep(0.3, 0.5, abs(fract(m.y / 0.12) - 0.5) * 2.0);
-    vec3 shutter = vec3(0.075, 0.07, 0.06) * rib * (0.6 + 0.6 * fbm(m * 0.8, seed & 0xFFFFu));
+    float rib = pbrLoaded(mt) ? 0.85 : 0.6 + 0.4 * smoothstep(0.3, 0.5, abs(fract(m.y / 0.12) - 0.5) * 2.0);
+    vec3 shutter = vec3(0.075, 0.07, 0.06) * rib * g.tint * g.ao * (0.6 + 0.6 * fbm(m * 0.8, seed & 0xFFFFu));
     float stripe = step(hM - 0.35, m.y) * step(0.5, fract(m.x / 0.6 + m.y / 0.6));   // hazard stripes at the top
     shutter = mix(shutter, vec3(0.12, 0.09, 0.0), stripe);
     return shutter * diff + spec;

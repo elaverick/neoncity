@@ -1,0 +1,14 @@
+// Small square glazed tiles: the tile-clad facades (palette 3, shadeFacade), under
+// each building's own shade (pbrGrain).
+// Tiles133A (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/tiles_133a/albedo.png",
+    "normal": "../textures/tiles_133a/normal.png",
+    "orm":    "../textures/tiles_133a/orm.png"
+  },
+  "tile": 1.0,                 // metres per image: ten 10 cm tiles
+  "albedo_mean": [0.648, 0.738, 0.757],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.8, 1.0]
+}

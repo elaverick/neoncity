@@ -1,0 +1,14 @@
+// Architectural concrete cast in 1.2 m formwork panels: the concrete facades
+// (palette 0, shadeFacade in shaders/city/facade.glsl), under each building's own shade (pbrGrain).
+// Concrete008 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/concrete_008/albedo.png",
+    "normal": "../textures/concrete_008/normal.png",
+    "orm":    "../textures/concrete_008/orm.png"
+  },
+  "tile": 3.6,                 // metres per image: three panels
+  "albedo_mean": [0.356, 0.356, 0.359],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.8, 1.0]
+}

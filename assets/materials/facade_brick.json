@@ -1,0 +1,14 @@
+// Factory brick in stretcher bond: the brick facades (palette 1, shadeFacade), under
+// each building's own brown (pbrGrain).
+// Bricks085 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/bricks_085/albedo.png",
+    "normal": "../textures/bricks_085/normal.png",
+    "orm":    "../textures/bricks_085/orm.png"
+  },
+  "tile": [2.4, 1.2],          // metres per image (a 2:1 image of 24 cm bricks)
+  "albedo_mean": [0.311, 0.200, 0.145],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

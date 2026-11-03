@@ -420,13 +420,29 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         shin = 24.0; specK = 0.1;
     } else if (mat == MAT_CURB) {
         alb = vec3(0.11, 0.105, 0.10) * (0.7 + 0.5 * fbm(w.xz * 2.0 + w.y, 0x7115u));
-    } else if (prm.y == 1u) {
-        // park: rough dark grass with worn patches
-        float gr = fbm(w.xz * 0.9, 0x7117u);
-        alb = mix(vec3(0.020, 0.032, 0.018), vec3(0.034, 0.040, 0.022), gr) * (0.6 + 0.8 * fbm(w.xz * 4.0, 0x7118u));
-        shin = 8.0; specK = 0.03;
     } else {
-        alb = vec3(0.045, 0.043, 0.04) * (0.6 + 0.8 * fbm(w.xz * 0.5, 0x7116u));
+        // Lots, yards and verges (asphalt), and the parks' grass (prm.y 1): the broad patches procedural,
+        // the grain authored (pbrGrain) where it loaded, in the world on each face (a bridge's soffit too).
+        bool park = prm.y == 1u;
+        int m = park ? PBR_GRASS : PBR_LOT_ASPHALT;
+        vec3 fine = vec3(0.6 + 0.8 * fbm(w.xz * (park ? 4.0 : 0.5), park ? 0x7118u : 0x7116u));
+        if (pbrLoaded(m)) {
+            vec3 gT, gB;
+            vec2 q;
+            planarFrame(n, w, gT, gB, q);
+            Grain g = pbrGrain(m, q, dFdx(q), dFdy(q), gT, gB, n);
+            fine = g.tint * (0.75 + 0.5 * fbm(w.xz * 0.12, park ? 0x7118u : 0x7116u));
+            n = g.n; ao = g.ao;
+            specK *= grainSpec(g);
+        }
+        if (park) {
+            // rough dark grass with worn patches
+            float gr = fbm(w.xz * 0.9, 0x7117u);
+            alb = mix(vec3(0.020, 0.032, 0.018), vec3(0.034, 0.040, 0.022), gr) * fine;
+            shin = 8.0; specK *= 0.03 / 0.08;
+        } else {
+            alb = vec3(0.045, 0.043, 0.04) * fine;
+        }
     }
 
     // fine debris on the paving and lots: thicker along the kerb, none on the kerb face

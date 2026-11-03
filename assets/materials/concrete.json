@@ -1,0 +1,15 @@
+// Plain smooth concrete: plinths, pads and kerbs of plant (shadeMetal), the soffits
+// under roofs' overhangs (shadeRoof) and an arcology's painted blocks (shadeArcology),
+// in their own shade (pbrGrain).
+// Concrete034 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/concrete_034/albedo.png",
+    "normal": "../textures/concrete_034/normal.png",
+    "orm":    "../textures/concrete_034/orm.png"
+  },
+  "tile": [1.1, 0.55],         // metres per image (a 2:1 image)
+  "albedo_mean": [0.482, 0.482, 0.482],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

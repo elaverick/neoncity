@@ -76,6 +76,16 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float relV = vAbs - SIDEWALK_HEIGHT - groundH;
     // Derivatives must be taken in uniform control flow, before any per-pixel branching.
     float dU = fwidth(u), dV = fwidth(vAbs);
+    // The wall's authored grain (pbrGrain, assets/materials/facade_*.json): concrete, brick, sheet metal, tile,
+    // stone or bronze by the palette, under the building's own shade; glass walls have none. Its coordinates'
+    // derivatives are taken here too, for the ground floor's shutters and base course below.
+    const vec3 IMG_UP = vec3(0.0, 1.0, 0.0);   // the image upright: gq.y (down the image) runs down the wall
+    vec2 gq = vec2(u, -vAbs), gqx = dFdx(gq), gqy = dFdy(gq);
+    int wallM = palette == 0u ? PBR_FACADE_CONCRETE : palette == 1u ? PBR_FACADE_BRICK : palette == 2u ? PBR_FACADE_METAL
+              : palette == 3u ? PBR_FACADE_TILE : palette == 5u ? PBR_FACADE_STONE : palette == 6u ? PBR_BRUSHED_METAL : -1;
+    Grain wallG = Grain(vec3(1.0), n, 1.0, 0.5);
+    if (wallM >= 0 && !glassWall && pbrLoaded(wallM)) wallG = pbrGrain(wallM, gq, gqx, gqy, T, IMG_UP, n);
+    vec3 wallTint = wallG.tint * mix(1.0, wallG.ao, 0.6);
     // Whole bays only: stretch the bay so every face ends on a full window at its corners.
     float baseBayW = bayW;
     float nBays = max(1.0, floor(faceW / bayW + 0.5));
@@ -86,12 +96,13 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     // ---------------- plinth ----------------
     // Below the ground floor, where the street falls away from the building's
     // base (Mesh.footing, and the steps up to its entrances: src/city/mesh_building.c):
-    // a dark stone base course.
+    // a dark stone base course: granite where its material loaded.
     if (atGround && vAbs < SIDEWALK_HEIGHT) {
         vec3 spec = vec3(0.0);
-        vec3 diffL = wallLighting(p, n, V, 20.0, 0.12, vAbs, spec);
-        float grain = 0.8 + 0.4 * vnoise(vec2(u * 2.0, vAbs * 6.0), seed & 0xFFFFu);
-        return vec3(0.055, 0.052, 0.048) * grain * diffL + spec;
+        Grain g = Grain(vec3(0.8 + 0.4 * vnoise(vec2(u * 2.0, vAbs * 6.0), seed & 0xFFFFu)), n, 1.0, 0.5);
+        if (pbrLoaded(PBR_GRANITE)) g = pbrGrain(PBR_GRANITE, gq, gqx, gqy, T, IMG_UP, n);
+        vec3 diffL = wallLighting(p, g.n, V, 20.0, 0.12 * grainSpec(g), vAbs, spec);
+        return vec3(0.055, 0.052, 0.048) * g.tint * g.ao * diffL + spec;
     }
 
     // ---------------- lobbies and void decks ----------------
@@ -106,7 +117,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         bool realPane = (prm.z & 128u) != 0u && (prm.w & 64u) == 0u && inWin > 0.5 && length(rel) < REAL_GLASS_DIST && lodR < 0.75;
         vec3 spec = vec3(0.0);
         vec3 diffL = realPane ? vec3(0.0) : wallLighting(p, n, V, 30.0, 0.15, vAbs, spec);
-        vec3 wallC = wallAlb * 0.9 * diffL + spec;
+        vec3 wallC = wallAlb * wallTint * 0.9 * diffL + spec;
         // light lines set into the mullions (every first, second or third) in the lobby's accent colour
         if (groundMode != 3u && hf(sh, 63u) < 0.8) {
             float every = 1.0 + floor(hf(sh, 62u) * 3.0), k = floor(u / 1.5 + 0.5);
@@ -185,7 +196,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float inWin = band(fs, 0.05, 0.95, aa) * band(yy, 0.45, winTop, dV + 0.01);
         vec3 spec;
         vec3 diffL = wallLighting(p, n, V, 20.0, 0.1, vAbs, spec);
-        vec3 wallC = wallAlb * 0.8 * diffL + spec;
+        vec3 wallC = wallAlb * wallTint * 0.8 * diffL + spec;
         if (lit) {
             Room r = makeRoom(h, 1.0, 0.0, true, shopColor(h));
             vec3 d = vec3(dot(-V, T), -V.y, -dot(-V, n));
@@ -216,11 +227,18 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             glassRefl(n, F * (1.0 - clamp(mull, 0.0, 1.0)) * (1.0 - lod) * inWin);
             return mix(wallC, glass, inWin);
         } else {
-            // rolled-down shutter
-            float rib = 0.6 + 0.4 * smoothstep(0.3, 0.5, abs(fract(yy / 0.09) - 0.5) * 2.0);
+            // rolled-down shutter: its slats authored (shutter.json) where they loaded, lit by their own relief
             float grime = 0.5 + 0.7 * fbm(vec2(along * 0.8, yy * 0.8), 0x5417u);
-            vec3 shut = vec3(0.07, 0.072, 0.075) * rib * grime;
             float graf = smoothstep(0.62, 0.66, fbm(vec2(along, yy) * 0.9, h));
+            if (pbrLoaded(PBR_SHUTTER)) {
+                Grain g = pbrGrain(PBR_SHUTTER, vec2(along, -yy), gqx, gqy, T, IMG_UP, n);
+                vec3 shut = mix(vec3(0.06, 0.062, 0.065) * g.tint * g.ao * grime, neonColor(h >> 6) * 0.08, graf * 0.8);
+                vec3 sSpec;
+                vec3 sDiff = wallLighting(p, g.n, V, 20.0, 0.1 * grainSpec(g), vAbs, sSpec);
+                return mix(wallC, shut * sDiff + sSpec, inWin);
+            }
+            float rib = 0.6 + 0.4 * smoothstep(0.3, 0.5, abs(fract(yy / 0.09) - 0.5) * 2.0);
+            vec3 shut = vec3(0.07, 0.072, 0.075) * rib * grime;
             shut = mix(shut, neonColor(h >> 6) * 0.08, graf * 0.8);
             vec3 sc = shut * diffL + spec;
             return mix(wallC, sc, inWin);
@@ -277,8 +295,8 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     // wall surface
     vec3 wspec;
     float wallShin = glassWall ? 80.0 : 12.0;
-    float wallSpecK = glassWall ? 0.4 : 0.05;
-    vec3 wdiff = wallLighting(p, n, V, wallShin, wallSpecK, vAbs, wspec);
+    float wallSpecK = glassWall ? 0.4 : 0.05 * grainSpec(wallG);
+    vec3 wdiff = wallLighting(p, wallG.n, V, wallShin, wallSpecK, vAbs, wspec);   // the wall's relief (flat on glass)
     // a dark room has only what reaches its window: the lamps, neon and city glow on the facade, through the glass
     gWinE = (wdiff + mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) * 0.45) * glassT;   // the window's view: overcast and facades across
     if (imp.m >= 0) {
@@ -291,7 +309,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     }
     float streak = vnoise(vec2(u * 1.3, vAbs * 0.04), seed & 0xFFFFu);
     float grime = mix(0.65, 1.15, streak) * mix(0.8, 1.0, smoothstep(0.0, 25.0, vAbs));
-    vec3 wallC = wallAlb * grime;
+    vec3 wallC = wallAlb * grime * wallTint;
     if (type == 0 || type == 3) {
         // slab edges and pilasters
         float slab = band(fv, 0.0, 0.05, fwV + 0.005) + band(fv, 0.95, 1.0, fwV + 0.005);
@@ -518,8 +536,18 @@ vec3 shadeTrim(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float z = vLitter.x * 0.6;   // RELIEF_Z_UNIT
     float ao = facing == 0u ? mix(0.72, 1.0, smoothstep(0.1, 0.35, z)) : mix(0.38, 0.9, smoothstep(0.0, 0.3, z));
     if (facing == 3u) ao = mix(0.6, 1.0, ao);   // a sill looks up at the sky
+    // the stone's or metal's authored grain (granite.json, brushed_metal.json), in the world on each face
+    Grain g = Grain(vec3(1.0), n, 1.0, 0.5);
+    int trimM = metal ? PBR_BRUSHED_METAL : PBR_GRANITE;
+    if (pbrLoaded(trimM)) {
+        vec3 gT, gB;
+        vec2 q;
+        planarFrame(n, gWorld, gT, gB, q);
+        g = pbrGrain(trimM, q, dFdx(q), dFdy(q), gT, gB, n);
+        alb *= mix(vec3(1.0), g.tint, metal ? 0.6 : 0.5) * mix(1.0, g.ao, 0.6);
+    }
     vec3 spec;
-    vec3 diff = wallLighting(p, n, V, metal ? 48.0 : 14.0, metal ? 0.35 : 0.07, vAbs, spec);
+    vec3 diff = wallLighting(p, g.n, V, metal ? 48.0 : 14.0, (metal ? 0.35 : 0.07) * grainSpec(g), vAbs, spec);
     vec3 col = alb * diff * ao + spec * ao;
     // the overcast's and the city's glow: what lets a pale pier stand out from dark glass where no lamp reaches
     vec3 glowSky = envReflection(reflect(-V, n));

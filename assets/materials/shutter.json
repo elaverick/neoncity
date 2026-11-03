@@ -1,0 +1,14 @@
+// Roller-shutter slats, running across the image: shut shopfronts (shadeFacade), loading
+// bays (shadeDoor) and an arcology's stalls (shadeArcology), under their own grime (pbrGrain).
+// CorrugatedSteel009 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/corrugated_steel_009/albedo.png",
+    "normal": "../textures/corrugated_steel_009/normal.png",
+    "orm":    "../textures/corrugated_steel_009/orm.png"
+  },
+  "tile": [7.2, 3.6],          // metres per image (a 2:1 image): slats 8 cm apart
+  "albedo_mean": [0.230, 0.228, 0.228],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.8, 1.0]
+}

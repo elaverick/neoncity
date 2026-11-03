@@ -135,7 +135,7 @@ int main(int argc, char **argv) {
     int w = color.w, h = color.h;
     n = (size_t)w * h;
     unsigned char *px = (unsigned char *)malloc(n * 4);
-    double meanAlb = 0.0, meanRough = 0.0, cover = 0.0;
+    double meanAlb = 0.0, meanRGB[3] = { 0.0, 0.0, 0.0 }, meanRough = 0.0, cover = 0.0;
 
     /* With an opacity map the mean albedo is over what is there, weighted by its opacity. */
     make_dir(outDir);
@@ -144,6 +144,7 @@ int main(int argc, char **argv) {
         const float *c = &color.px[i * 3];
         float a = haveOpacity ? opacity.px[i] : 1.0f;
         meanAlb += a * (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]);
+        for (int k = 0; k < 3; ++k) meanRGB[k] += a * c[k];
         cover += a;
         for (int k = 0; k < 3; ++k) px[i * ca + k] = to8(linear_to_srgb(c[k]));
         if (haveOpacity) px[i * ca + 3] = to8(a);
@@ -166,7 +167,9 @@ int main(int argc, char **argv) {
     }
     if (!write_png(outDir, "orm.png", w, h, 3, px)) return 1;
 
-    printf("%dx%d, mean linear albedo %.3f, mean roughness %.3f%s%s", w, h, meanAlb / (cover > 0.0 ? cover : 1.0), meanRough / n,
+    double inv = 1.0 / (cover > 0.0 ? cover : 1.0);   /* the RGB mean is what albedo_mean wants, for a surface tinting the map */
+    printf("%dx%d, mean linear albedo %.3f [%.3f, %.3f, %.3f], mean roughness %.3f%s%s", w, h, meanAlb * inv,
+           meanRGB[0] * inv, meanRGB[1] * inv, meanRGB[2] * inv, meanRough / n,
            haveAO ? "" : ", no AO (white)", haveHeight ? "" : ", no height (flat)");
     if (haveOpacity) printf(", opacity %.3f", cover / n);
     printf("\n");
