@@ -977,8 +977,8 @@ static double cover_diff(const TerrainCover *a, const TerrainCover *b) {
  *     byte. Then over the points: every class somewhere. */
 static void test_cover(Rng *r) {
     static const double spacings[] = { 0.0, 1.0, 16.0, 256.0, 4096.0 };
-    int bad = 0, packBad = 0;
-    double share[TERRAIN_COVERS] = { 0 }, most[TERRAIN_COVERS] = { 0 }, snowMost = 0.0, wetMost = 0.0;
+    int bad = 0, packBad = 0, seaN = 0, seaBad = 0;
+    double share[TERRAIN_COVERS] = { 0 }, most[TERRAIN_COVERS] = { 0 }, snowMost = 0.0, wetMost = 0.0, seaRock = 0.0;
     int n = 0;
     for (int i = 0; i < N_POINTS; i += 4) {
         double sp = spacings[(i / 4) % 5];
@@ -996,6 +996,12 @@ static void test_cover(Rng *r) {
         wetMost = fmax(wetMost, c.wet);
         n++;
         if ((!ok || fabs(sum - 1.0) > 1e-5) && bad++ < 3) CHECK(0, "cover at (%.0f, %.0f) out of range or summing to %.7f", g_x[i], g_z[i], sum);
+        if (terrain_surface_lod(g_x[i], g_z[i], sp, NULL) - terrain_sea_y() < -10.0) {   /* the sea's floor to come: sand and rock */
+            seaN++;
+            seaRock += c.w[TERRAIN_COVER_ROCK];
+            if (c.w[TERRAIN_COVER_SAND] + c.w[TERRAIN_COVER_ROCK] < 0.999f && seaBad++ < 3)
+                CHECK(0, "the sea's floor to come at (%.0f, %.0f) is %.2f sand, %.2f rock", g_x[i], g_z[i], c.w[TERRAIN_COVER_SAND], c.w[TERRAIN_COVER_ROCK]);
+        }
         uint32_t p[2];
         terrain_cover_pack(&c, p);
         terrain_cover_unpack(p, &u);
@@ -1005,7 +1011,8 @@ static void test_cover(Rng *r) {
     }
     printf("ground cover over %d points:", n);
     for (int k = 0; k < TERRAIN_COVERS; ++k) printf(" %s %.1f%%", COVER_NAMES[k], 100.0 * share[k] / n);
-    printf("; snow up to %.2f, wet up to %.2f\n", snowMost, wetMost);
+    printf("; snow up to %.2f, wet up to %.2f; %d on the sea's floor to come, %.1f%% rock\n", snowMost, wetMost, seaN,
+           seaN ? 100.0 * seaRock / seaN : 0.0);
     /* the classes the points' own ground holds (mud only by the water: below) */
     for (int k = 0; k < TERRAIN_COVERS; ++k)
         if (k != TERRAIN_COVER_MUD) CHECK(most[k] > 0.5, "no point is mostly %s (at most %.2f)", COVER_NAMES[k], most[k]);
@@ -1052,9 +1059,15 @@ static void test_cover(Rng *r) {
         CHECK(cover_of(&s, TERRAIN_COVER_MUD, sp) > band, "a stream's bed is %.2f mud (spacing %.0f)", cover_of(&s, TERRAIN_COVER_MUD, sp), sp);
         s = cover_site(34.0, 1.0);
         CHECK(cover_of(&s, TERRAIN_COVER_SAND, sp) > 0.9, "the coast to come is %.2f sand", cover_of(&s, TERRAIN_COVER_SAND, sp));
-        s = cover_site(34.0, -500.0);
-        s.ny = 0.85;
-        CHECK(cover_of(&s, TERRAIN_COVER_MUD, sp) > 0.95, "the sea's floor to come is %.2f silt", cover_of(&s, TERRAIN_COVER_MUD, sp));
+        /* the sea's floor to come: sand and rock, none of anything else; rock on its slopes */
+        for (int f = 0; f < 2; ++f) {
+            s = cover_site(34.0, f ? -12.0 : -500.0);
+            s.edge = 3.0; s.size = 5.0;   /* by a stream's mouth, whose banks would be mud on land */
+            float sand = cover_of(&s, TERRAIN_COVER_SAND, sp), rock = cover_of(&s, TERRAIN_COVER_ROCK, sp);
+            CHECK(sand > 0.3 && sand + rock > 0.999, "the sea's level floor to come %.0f m down is %.2f sand, %.2f rock", s.elev, sand, rock);
+            s.ny = 0.85;
+            CHECK(cover_of(&s, TERRAIN_COVER_ROCK, sp) > 0.99, "the sea's steep floor to come is %.2f rock", cover_of(&s, TERRAIN_COVER_ROCK, sp));
+        }
         s = cover_site(60.0, terrain_snowline(60.0) + 500.0);
         CHECK(cover_of(&s, -1, sp) > 0.95, "level ground 500 m over the snow line at 60 N has %.2f snow", cover_of(&s, -1, sp));
         s = cover_site(-80.0, 300.0);

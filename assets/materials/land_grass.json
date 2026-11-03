@@ -13,5 +13,7 @@
   "albedo_scale": 1.00,        // to the night's palette: keeps the flat colours the land had before it was textured
   // the colour (linear) its mean is drawn as: the park lawns' hue (shaders/city/ground.glsl), so the
   // land's grass meets the city's at its edge; how strongly the normal map bends the ground (1 as authored)
-  "params": [0.050, 0.066, 0.034, 1.0]
+  "params": [0.050, 0.066, 0.034, 1.0],
+  // the height map's median and spread (its 5th to 95th percentile): where the classes meet (shaders/terrain/ground.glsl), and where water stands
+  "relief": [0.529, 0.173]
 }

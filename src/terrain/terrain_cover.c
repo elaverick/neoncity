@@ -22,8 +22,13 @@
 #define COVER_HIGH_FULL_M  2000.0  /* ...to here */
 #define COVER_COAST_M      2.0     /* the coast to come: sand up to this above the sea... */
 #define COVER_COAST_TOP_M  8.0     /* ...none above this */
-#define COVER_SHELF_M      -15.0   /* the sea's floor to come: sand in its shallows down to here... */
-#define COVER_SILT_M       -40.0   /* ...and silt (mud) from here down */
+#define COVER_SHORE_M      -2.0    /* the sea's floor to come: sand and rock from here down... */
+#define COVER_FLOOR_M      -10.0   /* ...and nothing else from here */
+#define COVER_FLOOR_FROM   0.99    /* the floor's slopes are rock from about 8 degrees... */
+#define COVER_FLOOR_FULL   0.90    /* ...all of it by about 26 (the currents sweep them bare) */
+#define COVER_OUTCROP_FROM 0.0     /* rock in the sand where the patch noise is over this... */
+#define COVER_OUTCROP_FULL 0.45    /* ...up to COVER_OUTCROP of it from here */
+#define COVER_OUTCROP      0.6
 /* The water: a river's banks by its width (m). */
 #define COVER_BIG_FROM_M   15.0    /* sand by rivers from this wide... */
 #define COVER_BIG_FULL_M   150.0   /* ...all sand, no mud, by this wide (and lakes) */
@@ -75,18 +80,23 @@ void terrain_cover_at(const TerrainCoverSite *s, double spacing, TerrainCover *o
     double nearSand = 1.0 - ease(sandBand - soft, sandBand + soft, edge);
     double nearMud = 1.0 - ease(mudBand - soft, mudBand + soft, edge);
     double wet = 1.0 - ease(-soft, wetBand + soft, edge);
-    double silt = 1.0 - ease(COVER_SILT_M, COVER_SHELF_M, elev);
-    double coast = (1.0 - ease(COVER_COAST_M, COVER_COAST_TOP_M, elev)) * (1.0 - silt);
+    double coast = 1.0 - ease(COVER_COAST_M, COVER_COAST_TOP_M, elev);
+    double seaF = 1.0 - ease(COVER_FLOOR_M, COVER_SHORE_M, elev);   /* under the sea to come */
 
     TerrainDir P = scale3(s->d, PLANET_RADIUS / COVER_PATCH_WAVE);
     double patch = noise_fbm3_band(WORLD_SEED ^ 0x7EC1u, P.x, P.y, P.z, COVER_PATCH_OCTAVES,
                                    terrain_octaves(COVER_PATCH_WAVE, COVER_PATCH_OCTAVES, spacing));   /* -1 .. 1, 0 coarse */
 
+    /* The sea's floor is sand and rock: rock on its slopes, and outcrops of it
+     * in the sand where the patch noise is high, sand on the rest (whose
+     * textures then fill the rock's hollows: shaders/terrain/ground.glsl). */
+    double floorRock = sat(ease(COVER_FLOOR_FROM, COVER_FLOOR_FULL, ny) + COVER_OUTCROP * ease(COVER_OUTCROP_FROM, COVER_OUTCROP_FULL, patch));
+
     /* Each class takes its share of what the ones before it leave, so the
      * shares sum to 1 by construction. */
-    double rock = cliff + (1.0 - cliff) * alpine * ease(0.97, 0.85, ny);   /* above the treeline, all but level ground */
-    double sandF = fmax(nearSand * big, coast) * level;
-    double mudF = fmax(nearMud * (1.0 - 0.6 * big) * level, silt);   /* the sea's floor, however steep */
+    double rock = cliff + (1.0 - cliff) * fmax(alpine * ease(0.97, 0.85, ny), seaF * floorRock);   /* above the treeline, all but level ground; the sea's floor's */
+    double sandF = fmax(fmax(nearSand * big, coast) * level, seaF);   /* under the sea, all the rock leaves */
+    double mudF = nearMud * (1.0 - 0.6 * big) * level * (1.0 - seaF);
     double screeF = fmax(alpine, steep * (0.2 + 0.6 * high));
     double grassF = sat(0.62 + 0.45 * patch + 0.35 * wet - 0.55 * steep) * (1.0 - alpine);
 

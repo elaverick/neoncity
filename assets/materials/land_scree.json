@@ -12,5 +12,7 @@
   "albedo_mean": [0.148, 0.121, 0.094],   // per channel (pbr_pack)
   "albedo_scale": 0.74,        // to the night's palette: keeps the flat colours the land had before it was textured
   // the colour (linear) its mean is drawn as (0: its own mean times albedo_scale); how strongly the normal map bends the ground (1 as authored)
-  "params": [0.000, 0.000, 0.000, 1.0]
+  "params": [0.000, 0.000, 0.000, 1.0],
+  // the height map's median and spread (its 5th to 95th percentile): where the classes meet (shaders/terrain/ground.glsl), and where water stands
+  "relief": [0.420, 0.376]
 }

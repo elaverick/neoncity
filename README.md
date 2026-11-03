@@ -650,8 +650,9 @@ the ground out to the horizon, which from fly mode's ceiling of 20 km is 500 km 
 
 What the land is covered with comes from its own shape and place (`src/terrain/terrain_cover.c`; there is no
 land-cover or climate dataset). Steep ground is rock, and so is all but level ground above the treeline. The
-highlands' steeper slopes are scree. Sand lies by wide rivers and lakes, in their beds, at the coast to come
-and in the sea's shallows; mud by streams and small rivers, in their beds, and as silt on the sea's floor. The
+highlands' steeper slopes are scree. Sand lies by wide rivers and lakes, in their beds and at the coast to
+come; mud by streams and small rivers, in their beds. The sea's floor to come is sand and rock: rock on its
+slopes (from about 8 degrees) and in outcrops where a slow noise says, sand on the rest, and no mud. The
 rest is grass, thinner on slopes and thicker by water, in patches, with soil between. Snow lies above a snow
 line set by latitude (about 4.8 km at the equator, 2.8 km at 46 degrees, the sea by 80), and the ground is
 wet near water. Every rule is smooth, so the classes blend without edges. Whatever depends on distance is
@@ -675,11 +676,18 @@ camera's doubles, so the textures neither jitter nor slip against the city's):
 
 A class's colour is its albedo's mean times its `albedo_scale` (chosen to keep the land as bright as its flat
 colours were), or its `params` rgb where given: the grass takes the park lawns' hue, so the land's grass meets
-the city's. Near the camera each class's albedo and normal map are sampled by its weight (a class under 1/64 of
-a pixel is its colour, unsampled) and drawn about that colour, so the texture's mean is the colour; as a pixel
-comes to span 0.2 to 0.32 m (about 190 to 300 m away at 1080 lines), they fade into the flat colours, which is
-all the planet's patches and the far clipmap draw. The lighting stays diffuse. At ground level the textures add
-about 0.05-0.15 ms to the terrain pass.
+the city's. Near the camera each class's albedo and normal map are drawn about that colour, so the texture's
+mean is the colour (a class under 1/64 of a pixel is its colour, unsampled). Where classes meet, each shows
+where its own height map stands higher: rock through the soil in its cracks, sand filling the rock's hollows,
+snow lying in the ground's. A pixel takes class k by w_k exp(r_k / 0.24), sharpened by a power of 4, r_k its
+height in its map's spreads (the file's `relief`, measured as the height map's median and 5th to 95th
+percentile). That is the soft form of picking the largest of log w plus a random height, which picks each class
+as often as its weight, so each class still covers about its weight of the ground (within 0.05 with these maps)
+and the near ground's mean colour is the flat cover's. The heights are read first, then the albedo and normal
+maps of only the classes that show in the pixel (1/64 of it or more), so a pixel of one class reads one
+class's maps. As a pixel comes to span 0.2 to 0.32 m (about 190 to 300 m away at 1080 lines), the textures fade
+into the flat colours, which is all the planet's patches and the far clipmap draw. The lighting stays diffuse.
+At ground level the textures add about 0.05-0.15 ms to the terrain pass.
 
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the

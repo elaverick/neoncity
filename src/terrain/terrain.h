@@ -385,14 +385,16 @@ int        terrain_horizon_hidden(TerrainDir cam, TerrainDir centre, double radi
  * (w, each in [0, 1], summing to 1) and, over them, how much snow lies there
  * and how wet the ground is (each 0 .. 1). It comes from the ground's shape and
  * place alone, by rules (there is no land-cover or climate dataset):
- *   rock   where it is steep (from about 37 degrees, all of it by 52), and
- *          on all but level ground above the treeline;
+ *   rock   where it is steep (from about 37 degrees, all of it by 52), on
+ *          all but level ground above the treeline, and on the sea's floor
+ *          to come where it slopes (from about 8 degrees, all by 26) and in
+ *          outcrops where a slow noise says;
  *   scree  above the treeline, and on steepish slopes of the highlands;
- *   sand   on level ground by wide rivers and lakes, in their beds, and at
- *          the coast to come (the land within a few metres of the sea's
- *          level, and the sea's shallows);
- *   mud    on level ground by small rivers and streams, in their beds, and
- *          as silt on the sea's floor below its shallows;
+ *   sand   on level ground by wide rivers and lakes, in their beds, at the
+ *          coast to come (the land within a few metres of the sea's level),
+ *          and all of the sea's floor the rock leaves;
+ *   mud    on level ground by small rivers and streams, in their beds, but
+ *          none under the sea;
  *   grass  on the rest, thinner on slopes, thicker near water, patchy by a
  *          slow noise; soil is what the grass leaves;
  *   snow   above the snow line (terrain_snowline), less of it on cliffs;

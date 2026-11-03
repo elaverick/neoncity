@@ -84,65 +84,141 @@ const float LAND_MIN_WEIGHT = 1.0 / 64.0;
 // (the normal's y), else, as every other class, in world x and z.
 const float LAND_TRIPLANAR_NY = 0.92;
 
-// One class's texture at st (st's screen derivatives gx, gy), its image right
-// and up T and B in the world: its albedo drawn about its colour, and how far
-// its normal map bends the ground's normal N (added to N, then normalised).
-void landTexel(int k, vec2 st, vec2 gx, vec2 gy, vec3 T, vec3 B, vec3 N, inout vec3 alb, inout vec3 bend, float w) {
-    int m = LAND_MAT[k], i = m * PBR_MAPS_PER_MATERIAL;
-    vec3 a = textureGrad(pbrMaps[i + PBR_ALBEDO], st, gx, gy).rgb;
-    alb += w * a / max(pbrAlbedoMean(m), vec3(1e-3)) * landColour(k);
-    vec3 tn = textureGrad(pbrMaps[i + PBR_NORMAL], st, gx, gy).xyz * 2.0 - 1.0;
-    bend += w * (T * tn.x + B * tn.y) * (pbrParams(m).w / max(tn.z, 0.2));
-}
+// Where classes meet, each shows where its own height map stands higher (rock
+// through the soil in its cracks, sand filling the hollows, snow lying in the
+// rock's): a pixel takes class k by w_k exp(r_k / LAND_RELIEF), sharpened by
+// 1 / LAND_BLEND, with r_k the height there in the map's spreads (pbrRelief).
+// That is the soft form of picking the largest log(w) plus a random height,
+// which picks each class as often as its weight. These two keep each class's
+// share of the ground within about 0.05 of its weight with the land's own maps
+// (and so its mean colour what the flat cover draws beyond), the pixels almost
+// all one class or another.
+const float LAND_RELIEF = 0.24, LAND_BLEND = 0.25;
 
-// Class k at world point p (x, z wrapped as the city's), weight w: in world x
-// and z, or for rock on steep ground from all three axes, blended by the
-// normal. dpx, dpy: p's screen derivatives.
-void landClass(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N, float w, inout vec3 alb, inout vec3 bend) {
-    vec2 tile = pbrTile(LAND_MAT[k]);
-    if (!pbrLoaded(LAND_MAT[k])) { alb += w * LAND_FALLBACK[k]; return; }
-    if (k != 0 || N.y > LAND_TRIPLANAR_NY) {
-        landTexel(k, p.xz / tile, dpx.xz / tile, dpy.xz / tile, vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0), N, alb, bend, w);
-        return;
-    }
+// A class whose share of a pixel, once the classes have met, is less than
+// this is left out of it, and its share given to the rest: most pixels show
+// one class, so its albedo and normal maps alone are read there.
+const float LAND_MIN_SHARE = 1.0 / 64.0;
+
+// The axes class k is mapped along where the ground's normal is N, as weights
+// (x, y, z) summing to 1: world x and z alone (y), or for rock on steep ground
+// all three, by the normal (an axis carrying little of it left out, its share
+// given to the rest).
+vec3 landAxes(int k, vec3 N) {
+    if (k != 0 || N.y > LAND_TRIPLANAR_NY) return vec3(0.0, 1.0, 0.0);
     vec3 b = pow(abs(N), vec3(4.0));
     b /= dot(b, vec3(1.0));
-    vec3 s = sign(N);
-    // an axis carrying little of the normal is left out, and its share given to the rest
     vec3 keep = step(vec3(0.05), b);
-    b = b * keep / dot(b * keep, vec3(1.0));
-    if (b.y > 0.0)
-        landTexel(k, p.xz / tile, dpx.xz / tile, dpy.xz / tile, vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0), N, alb, bend, w * b.y);
-    if (b.x > 0.0) {   // facing +-x: image right along z, up the world's up
-        vec2 st = vec2(s.x * p.z, -p.y) / tile;
-        landTexel(k, st, vec2(s.x * dpx.z, -dpx.y) / tile, vec2(s.x * dpy.z, -dpy.y) / tile, vec3(0.0, 0.0, s.x), vec3(0.0, 1.0, 0.0), N, alb, bend, w * b.x);
+    return b * keep / dot(b * keep, vec3(1.0));
+}
+
+// Axis a's mapping at world point p (x, z wrapped as the city's) for a tile:
+// texture coordinates st and their screen derivatives (from p's, dpx and
+// dpy), and the image's right and up in the world, T and B.
+void landFrame(int a, vec3 p, vec3 dpx, vec3 dpy, vec3 N, vec2 tile, out vec2 st, out vec2 gx, out vec2 gy, out vec3 T, out vec3 B) {
+    vec3 s = sign(N);
+    if (a == 1) {          // level: +x image right, -z image up
+        st = p.xz; gx = dpx.xz; gy = dpy.xz;
+        T = vec3(1.0, 0.0, 0.0); B = vec3(0.0, 0.0, -1.0);
+    } else if (a == 0) {   // facing +-x: image right along z, up the world's up
+        st = vec2(s.x * p.z, -p.y); gx = vec2(s.x * dpx.z, -dpx.y); gy = vec2(s.x * dpy.z, -dpy.y);
+        T = vec3(0.0, 0.0, s.x); B = vec3(0.0, 1.0, 0.0);
+    } else {               // facing +-z: image right along -x
+        st = vec2(-s.z * p.x, -p.y); gx = vec2(-s.z * dpx.x, -dpx.y); gy = vec2(-s.z * dpy.x, -dpy.y);
+        T = vec3(-s.z, 0.0, 0.0); B = vec3(0.0, 1.0, 0.0);
     }
-    if (b.z > 0.0) {   // facing +-z: image right along -x
-        vec2 st = vec2(-s.z * p.x, -p.y) / tile;
-        landTexel(k, st, vec2(-s.z * dpx.x, -dpx.y) / tile, vec2(-s.z * dpy.x, -dpy.y) / tile, vec3(-s.z, 0.0, 0.0), vec3(0.0, 1.0, 0.0), N, alb, bend, w * b.z);
+    st /= tile; gx /= tile; gy /= tile;
+}
+
+// Class k's height at p, in its map's spreads (pbrRelief); 0 if it didn't load.
+float landHeight(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N) {
+    int m = LAND_MAT[k];
+    if (!pbrLoaded(m)) return 0.0;
+    vec3 ax = landAxes(k, N);
+    float r = 0.0;
+    for (int a = 0; a < 3; ++a) {
+        if (ax[a] <= 0.0) continue;
+        vec2 st, gx, gy; vec3 T, B;
+        landFrame(a, p, dpx, dpy, N, pbrTile(m), st, gx, gy, T, B);
+        r += ax[a] * pbrRelief(m, textureGrad(pbrMaps[m * PBR_MAPS_PER_MATERIAL + PBR_ORM], st, gx, gy).b);
+    }
+    return r;
+}
+
+// Class k's surface at p, taken by w: its albedo drawn about its colour into
+// alb, and how far its normal map bends the ground's normal N into bend
+// (added to N, then normalised).
+void landSurface(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N, float w, inout vec3 alb, inout vec3 bend) {
+    int m = LAND_MAT[k], i = m * PBR_MAPS_PER_MATERIAL;
+    if (!pbrLoaded(m)) { alb += w * LAND_FALLBACK[k]; return; }
+    vec3 ax = landAxes(k, N), tint = landColour(k) / max(pbrAlbedoMean(m), vec3(1e-3));
+    float strength = pbrParams(m).w;
+    for (int a = 0; a < 3; ++a) {
+        if (ax[a] <= 0.0) continue;
+        vec2 st, gx, gy; vec3 T, B;
+        landFrame(a, p, dpx, dpy, N, pbrTile(m), st, gx, gy, T, B);
+        float wa = w * ax[a];
+        alb += wa * textureGrad(pbrMaps[i + PBR_ALBEDO], st, gx, gy).rgb * tint;
+        vec3 tn = textureGrad(pbrMaps[i + PBR_NORMAL], st, gx, gy).xyz * 2.0 - 1.0;
+        bend += wa * (T * tn.x + B * tn.y) * (strength / max(tn.z, 0.2));
     }
 }
 
-// The cover textured at p: each class sampled by its weight (the slight ones
-// as their colours), damp ground darker, the snow over it all; the normal
-// bent by their normal maps.
+// A class's score where classes meet (LAND_RELIEF): log w + r / LAND_RELIEF.
+float landScore(float w, float relief) { return log(max(w, 1e-6)) + relief / LAND_RELIEF; }
+
+// The cover textured at p: the classes met by their heights (the slight ones
+// as their colours, by weight), damp ground darker, the snow over it all,
+// lying in the ground's hollows first; the normal bent by their normal maps.
+// The heights are read first, then the albedo and normal maps of the classes
+// that show.
 vec3 coverTextured(Cover c, vec3 p, vec3 dpx, vec3 dpy, inout vec3 n) {
     float w[LAND_CLASSES];
     landWeights(c, w);
-    vec3 alb = vec3(0.0), bend = vec3(0.0);
+    // the slight classes' colours by weight, and the share they leave
+    vec3 slight = vec3(0.0);
+    float rest = 1.0;
+    // the others' scores (-1e30 for the slight), the highest and their heights
+    float score[LAND_CLASSES], height[LAND_CLASSES], top = -1e30;
     for (int k = 0; k < LAND_CLASSES; ++k) {
-        if (w[k] < LAND_MIN_WEIGHT) alb += w[k] * landColour(k);
-        else landClass(k, p, dpx, dpy, n, w[k], alb, bend);
+        score[k] = -1e30; height[k] = 0.0;
+        if (w[k] < LAND_MIN_WEIGHT) { slight += w[k] * landColour(k); rest -= w[k]; continue; }
+        height[k] = landHeight(k, p, dpx, dpy, n);
+        score[k] = landScore(w[k], height[k]);
+        top = max(top, score[k]);
     }
+    // each one's share, exp((score - top) / LAND_BLEND) of their total; the
+    // ground's height, theirs by share
+    float share[LAND_CLASSES], sum = 0.0, relief = 0.0;
+    for (int k = 0; k < LAND_CLASSES; ++k) {
+        share[k] = score[k] > -1e29 ? exp((score[k] - top) / LAND_BLEND) : 0.0;
+        sum += share[k];
+        relief += share[k] * height[k];
+    }
+    relief /= max(sum, 1e-6);
+    // the snow: one more class over the ground, by its weight and the
+    // ground's height against its own
+    float snow = c.b.y, f = snow;
+    if (snow >= LAND_MIN_WEIGHT)
+        f = 1.0 / (1.0 + exp((landScore(1.0 - snow, relief) - landScore(snow, landHeight(LAND_CLASSES, p, dpx, dpy, n))) / LAND_BLEND));
+    // the classes that show, by their shares among them
+    float kept = 0.0;
+    for (int k = 0; k < LAND_CLASSES; ++k) {
+        if (share[k] < LAND_MIN_SHARE * sum) share[k] = 0.0;
+        kept += share[k];
+    }
+    vec3 alb = slight, bend = vec3(0.0);
+    if (f < 1.0 - LAND_MIN_SHARE && kept > 0.0)
+        for (int k = 0; k < LAND_CLASSES; ++k)
+            if (share[k] > 0.0) landSurface(k, p, dpx, dpy, n, max(rest, 0.0) * share[k] / kept, alb, bend);
     alb *= 1.0 - 0.25 * c.b.z;
-    float snow = c.b.y;
-    if (snow >= LAND_MIN_WEIGHT) {
+    if (snow >= LAND_MIN_WEIGHT && f >= LAND_MIN_SHARE) {
         vec3 sa = vec3(0.0), sb = vec3(0.0);
-        landClass(LAND_CLASSES, p, dpx, dpy, n, 1.0, sa, sb);
-        alb = mix(alb, sa, snow);
-        bend = mix(bend, sb, snow);
+        landSurface(LAND_CLASSES, p, dpx, dpy, n, 1.0, sa, sb);
+        alb = mix(alb, sa, f);
+        bend = mix(bend, sb, f);
     } else {
-        alb = mix(alb, landColour(LAND_CLASSES), snow);
+        alb = mix(alb, landColour(LAND_CLASSES), f);
     }
     n = normalize(n + bend);
     return alb;
