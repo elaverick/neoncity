@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "clouds.h"   // RAIN_DRIZZLE
 layout(location = 0) in vec2 vUV;
 layout(location = 0) out vec4 outColor;
 layout(set = 0, binding = 0) uniform sampler2D hdrTex;
@@ -69,7 +71,7 @@ float rainCover(vec3 dir, float sceneFwd, float t, float rain) {
         uint hc = hash3u(uint(int(cx)), uint(k), 0x2A1Eu);
         float vv = q.y / L + hf(hc, 1u);
         uint hd = hash3u(hc, uint(int(floor(vv))), 0x2A1Fu);
-        if (hf(hd, 0u) > 0.25 + 0.55 * rain) continue;
+        if (hf(hd, 0u) > 0.25 * min(rain / RAIN_DRIZZLE, 1.0) + 0.55 * rain) continue;   // none when dry
         if (sheltered(dir * (D / hz))) continue;
         float dx = abs(q.x - (cx + 0.15 + 0.7 * hf(hd, 1u)) * CW);
         float pxw = D * pixAngle;                          // metres per pixel at this distance

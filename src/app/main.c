@@ -83,7 +83,7 @@ static void usage(void) {
            "  --cam   start position (world metres, in the city's frame); a HEIGHT starts in fly mode at that altitude\n"
            "  --walk  hold W for this many seconds before a --shot\n"
            "  --turn  and turn this fast while walking (degrees a second, + to the right)\n"
-           "  --rain  fix the rain intensity (0 drizzle .. 1 downpour); otherwise it drifts\n"
+           "  --rain  fix the rain intensity (0 dry, 0.1 drizzle .. 1 downpour); otherwise it drifts\n"
            "  --time  hold the shaders' clock at this many seconds (flames, signs, steam: for captures)\n"
            "  --impostors  draw this share (default 0.4; 0 turns them off) of the office towers' floors behind curtain\n"
            "               walls and ribbon windows as baked interior impostors (docs/interior-impostors.md; F8 toggles)\n"

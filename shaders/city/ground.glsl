@@ -509,7 +509,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         rough = mix(rough, 0.03, pool);
         n = normalize(mix(n, nGeom, pool));
         // drops ringing the standing water, and faintly the film (none under cover)
-        vec2 rg = ripples(w.xz, gTime, 0.25 + 0.6 * frame.weather.x);
+        vec2 rg = ripples(w.xz, gTime, rainRate());
         n = normalize(n + vec3(rg.x, 0.0, rg.y) * mix(0.15, 1.0, pool) * open);
         ao = mix(ao, 1.0, pool);
         specK = mix(specK, 0.02, pool);   // water's F0

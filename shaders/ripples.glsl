@@ -29,4 +29,11 @@ vec2 ripples(vec2 xz, float t, float rate) {
     return g * 0.3;
 }
 
+// The share of cells the falling rain hits (frame.weather.x where the camera
+// is): none when dry, a quarter in a drizzle, most in a downpour.
+float rainRate() {
+    float r = frame.weather.x;
+    return 0.25 * min(r / RAIN_DRIZZLE, 1.0) + 0.6 * r;
+}
+
 #endif

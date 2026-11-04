@@ -16,11 +16,14 @@
  * CLOUD_CITIES: how many of the settlements nearest the camera bring their
  * clouds into the frame (FrameUBO.cities).
  * CLOUD_REACH: how far across the ground the deck is marched (clouds.comp),
- * so that from out in the countryside a city's clouds stand on the skyline. */
+ * so that from out in the countryside a city's clouds stand on the skyline.
+ * RAIN_DRIZZLE: the rain intensity (0 dry .. 1 downpour) of a drizzle. Below
+ * it the drops, the ripples and the wetness fade out to dry at 0. */
 #define CLOUD_CITIES   8
 #define CLOUD_BORDER   3000.0f
 #define CLOUD_FADE     2500.0f
 #define CLOUD_RAGGED   1500.0f
 #define CLOUD_REACH    30000.0f
+#define RAIN_DRIZZLE   0.1f
 
 #endif

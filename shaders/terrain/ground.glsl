@@ -509,7 +509,7 @@ float landGgx(vec3 n, vec3 L, vec3 V, float alpha, float f0) {
 // rough widened by w.aa, shining by w.film) giving way, by the puddles'
 // share, to theirs (level, nGeom the ground's own normal, ringed near the
 // camera by the drops as the city's puddles are, as hard as the rain falls
-// where the camera is: frame.weather.x; smooth, shining fully). A pixel is
+// where the camera is: rainRate; smooth, shining fully). A pixel is
 // almost always one or the other. Its normal nW, roughness rW and how much
 // it shines (returned).
 float wetSurface(LandPoint l, vec3 n, vec3 nGeom, float rough, LandWater w, out vec3 nW, out float rW) {
@@ -519,7 +519,7 @@ float wetSurface(LandPoint l, vec3 n, vec3 nGeom, float rough, LandWater w, out 
     vec3 nP = nGeom;
     float near = 1.0 - smoothstep(0.02, 0.08, l.px);
     if (near > 0.0) {
-        vec2 g = ripples(l.p.xz, frame.camPos.w, 0.25 + 0.6 * frame.weather.x);
+        vec2 g = ripples(l.p.xz, frame.camPos.w, rainRate());
         nP = normalize(nGeom + vec3(g.x, 0.0, g.y) * near);
     }
     nW = normalize(mix(n, nP, w.pool));

@@ -60,7 +60,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 camPos;     // xyz world (approx), w = time
     vec4 camFwd;     // xyz forward, w = view distance
     vec4 screen;
-    vec4 weather;    // x rain intensity, y street wetness (src/app/main.c: weather_update), z haze datum (hazeAmount), w the chunks' edge (edgeFog)
+    vec4 weather;    // x rain intensity (0 dry, RAIN_DRIZZLE drizzle .. 1 downpour), y street wetness (src/app/main.c: weather_update), z haze datum (hazeAmount), w the chunks' edge (edgeFog)
     vec4 shelter;    // shelter map: camera-relative centre x, z; half-width
     vec4 shadow;     // ray-traced shadows: x frame number, y SHADOWS_ON | SHADOWS_DEBUG, zw where sample 0 lies in a pixel
     mat4 prevViewProj;   // the previous frame's viewProj, taking this frame's camera-relative positions

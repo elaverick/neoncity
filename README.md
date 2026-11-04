@@ -56,8 +56,8 @@ procedural look.
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
-Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity, `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
-(otherwise it drifts between drizzle and downpour), `--noshadows` runs without ray-traced shadows (and without the
+Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
+`--noshadows` runs without ray-traced shadows (and without the
 ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--impostors [SHARE]` draws that
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
@@ -1073,8 +1073,11 @@ Textured surfaces are lit with GGX:
   storefront's size, as a cheap area light.
 - **Sky and haze:** reflected through Karis's analytic split-sum BRDF.
 - **Ambient occlusion:** darkens only the ambient, neon-bounce and sky terms.
-- **Rain:** it always rains. The weather (`weather_update` in `src/app/main.c`, passed to the
-  shaders as `frame.weather`) drifts between drizzle and downpour over minutes. Street
+- **Rain:** it always rains on the megacities (the rest of the world is to get a weather
+  system of its own). The weather (`weather_update` in `src/app/weather.c`, passed to the
+  shaders as `frame.weather`) drifts between drizzle and downpour over minutes. Its
+  intensity runs from 0, dry, through `RAIN_DRIZZLE` (0.1, `src/core/clouds.h`), a drizzle, to
+  1, a downpour; below a drizzle the drops, ripples and wetness fade out. Street
   wetness follows it, wetting quickly and drying slowly. Rain thickens the haze, and fills the air with a mist
   (`mistLight` in `clouds.comp`) lit by every nearby lamp, shopfront and sign: halos round
   the lamps, glowing cones beneath them and coloured haze before the neon and the

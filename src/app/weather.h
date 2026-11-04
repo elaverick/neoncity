@@ -1,8 +1,9 @@
 #pragma once
 #include "renderer.h"
 
-/* The weather. Rain falls steadily, and its intensity drifts between drizzle
- * and downpour over minutes without quite stopping. The streets wet quickly as
+/* The weather. Rain falls steadily on the megacities, and its intensity
+ * (0 dry, RAIN_DRIZZLE a drizzle, 1 a downpour: src/core/clouds.h) drifts
+ * between drizzle and downpour over minutes without stopping. The streets wet quickly as
  * the rain strengthens and dry slowly as it eases. All of it falls from the
  * clouds the cities gather (src/core/clouds.h), so out in the countryside,
  * under a clear sky, it is dry. */

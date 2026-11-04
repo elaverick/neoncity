@@ -3,9 +3,14 @@
 #include "plan.h"
 
 void weather_update(Weather *w, double t, float dt, float fixedRain) {
-    float rain = fixedRain >= 0.0f ? fixedRain
-               : (float)(0.6 + 0.25 * sin(t / 53.0) + 0.15 * sin(t / 31.0 + 1.7));
-    float target = 0.55f + 0.45f * rain;
+    /* The megacities' rain never stops: left to drift, it stays between a
+     * heavy drizzle and a downpour. (The rest of the world is to get weather
+     * of its own, dry spells included.) */
+    float rain = fixedRain >= 0.0f ? fminf(fixedRain, 1.0f)
+               : RAIN_DRIZZLE + (1.0f - RAIN_DRIZZLE) * (float)(0.6 + 0.25 * sin(t / 53.0) + 0.15 * sin(t / 31.0 + 1.7));
+    /* Dry at 0; a drizzle leaves the ground damp (0.55), a downpour soaked. */
+    float target = rain < RAIN_DRIZZLE ? 0.55f * rain / RAIN_DRIZZLE
+                 : 0.55f + 0.45f * (rain - RAIN_DRIZZLE) / (1.0f - RAIN_DRIZZLE);
     if (w->wet < 0.0f) w->wet = target;   /* first frame: it has already been raining for a while */
     float tau = target > w->wet ? 15.0f : 120.0f;
     w->wet += (target - w->wet) * (1.0f - expf(-dt / tau));

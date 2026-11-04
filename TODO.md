@@ -378,7 +378,8 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   city's).
 - **The field is static.** The clouds drift through it, but it doesn't move: no fronts, no clouds forming and
   clearing, no rain out in the country. Rain intensity still drifts on one global clock, scaled by the cover over
-  the camera.
+  the camera. The megacities' constant rain is meant to stay; the rest of the world is to get a full weather system
+  (fronts, dry spells, snowfall), for which `--rain 0` (dry) and the fade below `RAIN_DRIZZLE` are the start.
 - **The moon and stars are fixed against the compass** (east, up, south at the camera: `moon_dir` in `main.c`,
   `frame.moon`), so they don't turn as the frame changes; but they don't wheel through the night or change with
   where on the planet the camera is (they would want the planet's frame and a clock). The moon casts no shadows
@@ -627,9 +628,9 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 - **Rain on glass** (optional): rivulets and beads running down windows and shopfronts.
   A temporal pass would let the trace run at half resolution and stay smooth in motion.
 **Done:** rain.
-- **Weather** (`weather_update` in `src/app/main.c`): rain intensity drifts between drizzle and
+- **Weather** (`weather_update` in `src/app/weather.c`): rain intensity drifts between drizzle and
   downpour over minutes without stopping. Street wetness follows it, quickly up and slowly
-  down, so puddles grow and shrink. `--rain X` pins the intensity.
+  down, so puddles grow and shrink. `--rain X` pins the intensity: 0 dry, 0.1 drizzle, 1 downpour.
 - **Ripples** (`ripples()`): rings from drops landing at random, strong in standing water
   and faint on the film, at a rate set by the rain. They also distort the reflections.
 - **Rain mist** (`mistLight` in `clouds.comp`): lamps, shopfronts and signs light the
