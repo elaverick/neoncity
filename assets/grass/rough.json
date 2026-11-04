@@ -1,0 +1,25 @@
+// Rough: the city's unkept grass on fields and the edge verge (src/grass/grass_species.h;
+// drawn from GR6). Medium, splayed, patchy.
+{
+  "density":     120,
+  "root_grid":   48,            // 0.167 m apart
+  "tuft":        [5, 7],
+  "tuft_radius": 0.05,
+  "height":      [0.25, 0.45],
+  "width":       0.025,
+  "lean":        0.35,
+  "bend":        0.45,
+  "curl":        0.5,
+  "taper":       0.8,
+  "segments":    [5, 3, 2],
+  "clumps": { "cells": 3, "bare": 0.12, "vary": 0.35, "edge": 0.50 },   // 2.67 m clumps
+  "stiffness":   0.9,
+  "interaction": 1.0,
+  "colour": {
+    "root": [0.018, 0.022, 0.011],
+    "tip":  [0.074, 0.084, 0.040],
+    "dry":  [0.110, 0.095, 0.050],
+    "dry_share": 0.45
+  },
+  "fullness":    0.35
+}

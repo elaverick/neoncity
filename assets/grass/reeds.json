@@ -1,0 +1,25 @@
+// Reeds: by water and in mud (src/grass/grass_species.h). Tall, narrow, nearly
+// upright, broad most of the way up, bending only near the tip; sparser.
+{
+  "density":     40,
+  "root_grid":   28,            // 0.286 m apart
+  "tuft":        [6, 10],
+  "tuft_radius": 0.10,
+  "height":      [0.80, 1.50],
+  "width":       0.012,
+  "lean":        0.10,
+  "bend":        0.20,
+  "curl":        0.8,
+  "taper":       0.5,
+  "segments":    [5, 3, 2],
+  "clumps": { "cells": 4, "bare": 0.15, "vary": 0.35, "edge": 0.60 },   // 2 m clumps
+  "stiffness":   1.6,
+  "interaction": 0.6,
+  "colour": {
+    "root": [0.022, 0.025, 0.012],
+    "tip":  [0.085, 0.088, 0.044],
+    "dry":  [0.120, 0.100, 0.055],
+    "dry_share": 0.5
+  },
+  "fullness":    0.25
+}

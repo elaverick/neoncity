@@ -750,11 +750,13 @@ Snow lies on each class as `1 - (1 - s)^soon`, s the cover's snow weight, so sof
 against the ground's height, in soft ground's hollows first and on rock's and scree's tops.
 
 ### Grass (`src/grass`, `shaders/grass`; in progress)
-Grass blades are being built to `docs/procedural_grass_rendering_implementation.md`. So far the rules and the GPU
-path exist, and the land's grass is drawn with stand-in blades (straight strips; curved blades come next). The rules
+Grass blades are being built to `docs/procedural_grass_rendering_implementation.md`. So far the rules, the GPU
+path and the blades exist, and the land's grass is drawn as curved, tapered blades in tufts (the hand-offs between
+levels of detail, wind, the city's grass and proper light come next). The rules
 say where grass grows, how thick, of which species, in which clumps and tufts. They are
 written twice, as pure C (`src/grass/grass.c`) and as GLSL (`shaders/grass/rules.glsl`). The two copies take the same
-float steps, and their constants are one header (`src/grass/grass_rules.h`).
+float steps. Their shared constants are one header (`src/grass/grass_rules.h`), and each species' numbers are its
+profile, an asset file (below).
 - **Identity.** The world is cut into 8 m patches in the terrain's frame, never the camera's. Each species cuts a patch
   into a grid of root cells and puts one candidate root anywhere in each cell (stratified, so the grid leaves no
   peak in the roots' spectrum). A root is named by its cell's world index, so the same root always gives the same
@@ -773,6 +775,23 @@ float steps, and their constants are one header (`src/grass/grass_rules.h`).
 Density is set as effective blades per m² where every rule says yes: meadow 150, reeds 40, lawn 250, rough 120. A
 species' density scale is worked out from its root grid, its mean tuft and its clumps' mean, so that blades/m² =
 target × suitability × the species' share holds on average.
+
+**Species profiles** (`assets/grass/<name>.json`, `src/grass/grass_species.h`, which documents every key). They are read at
+run time; the GPU gets them in the frame's uniforms (`FrameUBO.grassSpecies`). A species whose file is missing or wrong
+is left out (no root of it is kept), and the log says so once. `material_test` reads every file and refuses a missing
+key or an out-of-range value. All keys are required.
+
+| Species | Blades/m² | Roots a patch side | Tuft | Height (m) | Width | Lean, bend | Curl, taper | Segments full/mid/clump | Clumps (m) | Used |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `meadow` | 150 | 48 | 5-9 | 0.35-0.65 | 0.020 | 0.25, 0.35 | 0.55, 0.8 | 5/3/2 | 2.7 | the land |
+| `reeds` | 40 | 28 | 6-10 | 0.80-1.50 | 0.012 | 0.10, 0.20 | 0.8, 0.5 | 5/3/2 | 2 | mud, by water |
+| `lawn` | 250 | 64 | 4-6 | 0.08-0.14 | 0.040 | 0.15, 0.25 | 0.3, 0.6 | 3/2/1 | 4 | the city's parks (GR6) |
+| `rough` | 120 | 48 | 5-7 | 0.25-0.45 | 0.025 | 0.35, 0.45 | 0.5, 0.8 | 5/3/2 | 2.7 | fields, the verge (GR6) |
+
+Width is a share of the height. Lean is in radians, and bend is a share of the height. Each file also gives its clumps'
+bare chance, variation and edge thinning, a stiffness (GR5), an interaction response (GR8), the colours (root, tip, and
+the driest clump's, with how far towards dry a clump can go) and a fullness. Blade colour is procedural; there is no
+blade texture.
 
 `grass_test` checks the rules (ctest `grass_rules`):
 - the density over wide areas matches that formula (within 0.6% for every species);
@@ -804,15 +823,26 @@ chooses, makes and draws the land's blades; the CPU does no per-blade work and n
   never takes a near one's. `finish.comp` writes the three indirect draws and counts the blades each bucket wanted by
   2 m of distance. If they overflow the room, the next frame keeps only those nearer than the distance that fits 90%
   of it, so the far blades give way and a still view keeps the same ones. `--grass-cap N` shrinks the room to test this.
-- **Draw.** One indirect draw per bucket after the terrain, in the scene pass. GR2's blade is a straight two-triangle
-  strip, lit by the land's light (`blade.frag`).
+- **Draw.** One indexed indirect draw per bucket after the terrain, in the scene pass. All the ribbon topologies
+  (1-7 segments: two triangles a segment, one at the tip) sit in one small index buffer. A bucket draws the most
+  segments any species asks of it, and a species asking fewer folds its spare rows into its tip.
+- **Blades** (`blade.vert`, spec 5.2-5.5). Each blade is a cubic Bézier ribbon from the root. It rises along the
+  ground's normal, leaned towards its lean's direction, and its tip falls further over that way by its bend. The curl
+  says whether the bend runs evenly up the blade or gathers near the tip. The control points are scaled about the root
+  so the curve's length is the blade's height, so bending never stretches a blade. The width lies across the bend's
+  plane (a blade folds over its face), twisted by up to 0.5 rad from its facing. It tapers as w0/2 (1 - t)^p to a point.
+  The normal is the face's, turned to the camera's side for the whole blade and bent outward across the width by the
+  fullness (shading only). The colour runs from root to tip and towards the dry colour by the blade's tint, which is
+  mostly its clump's. Until GR7 a blade takes the land's light at its point, facing the ground's normal (`blade.frag`).
 - The counters come back a frame slot late and the `--shot` log prints them: patches in range, in view and with
-  grass; roots evaluated and kept; blades drawn per bucket, and those refused. `--grass-debug lod` colours the blades by
+  grass; roots evaluated and kept; blades drawn per bucket, and those refused; triangles; and each land species'
+  effective blades/m² over the ground it was evaluated on. `--grass-debug lod` colours the blades by
   bucket (full red, mid yellow, clump blue) and the land by the bucket a typical meadow root would take. `--grass-debug
   cull` colours the blades by patch and the land by its patch's state.
 
-At walking height over the meadow it draws about 570k blades (1.1M triangles): prepare 0.25-0.30 ms, draw 0.4 ms on an
-RTX 4080 SUPER at 1600 x 900. `grass_test --gpu` also runs prepare and finish headless on a made-up clipmap. With every
+At walking height over the meadow it draws about 590k blades (3.3M triangles): prepare 0.24 ms and draw 0.69 ms on an
+RTX 4080 SUPER at 1600 x 900, against a 1.5 ms budget. The log gives the meadow there as 118 blades/m², its 150 times
+the cover's suitability. `grass_test --gpu` also runs prepare and finish headless on a made-up clipmap. With every
 root evaluated and every blade written, its blade counts equal C's `grass_keep` exactly over 4,096 m² for meadow, reeds
 and mud, a slope and thin snow, with none on the city's ground or steep ground. The blades stand on the ground and inside
 their patches. With too little room, the second frame keeps exactly the blades nearer than the distance set, within 90% of

@@ -3,7 +3,8 @@
 #include "grass/frame.glsl"
 
 /* Stage D of the grass's GPU path (src/render/grass_gpu.c), after
- * prepare.comp: each bucket's draw (a VkDrawIndirectCommand: the blades it
+ * prepare.comp: each bucket's draw (a VkDrawIndexedIndirectCommand: its
+ * ribbon's topology from the index buffer, GRASS_SEG_FIRST; the blades it
  * reserved, as far as its room goes), and the distance the next frame keeps
  * its blades to. Each bucket's room is its own, so a far bucket never takes a
  * near one's. While the blades a bucket wanted (counted by distance, those
@@ -20,10 +21,13 @@ layout(std430, set = 0, binding = 9) buffer KeepTo { float keepTo[]; };
 void main() {
     for (int b = 0; b < GRASS_BUCKETS; ++b) {
         uint want = counters[GRASS_C_WANT + b], drawn = min(want, gf.cap[b]);
-        draws[4 * b + 0] = uint(GRASS_BLADE_VERTS);
-        draws[4 * b + 1] = drawn;
-        draws[4 * b + 2] = 0u;
-        draws[4 * b + 3] = 0u;
+        int s = clamp(gf.seg[b], 1, GRASS_SEG_MAX);
+        uint d = uint(GRASS_DRAW_WORDS * b);
+        draws[d + 0u] = uint(6 * s - 3);              // indexCount
+        draws[d + 1u] = drawn;                        // instanceCount
+        draws[d + 2u] = uint(GRASS_SEG_FIRST(s));     // firstIndex
+        draws[d + 3u] = 0u;                           // vertexOffset
+        draws[d + 4u] = 0u;                           // firstInstance
         counters[GRASS_C_DRAWN + b] = drawn;
         counters[GRASS_C_OVER + b] = want - drawn;
         uint all = 0u;

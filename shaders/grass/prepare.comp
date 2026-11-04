@@ -42,6 +42,7 @@ shared uint sHLo, sHHi, sFound;
 shared uint sBase, sSlope, sSnow, sUrban;           // each factor's most over the patch (float bits)
 shared uint sShareLo, sShareHi, sWetLo, sWetHi;      // the mud's share and the wet, least and most
 shared uint sCand, sEval, sKept, sCut[GRASS_BUCKETS];
+shared uint sSpEval[2], sSpBlades[2];                // meadow's and reeds': candidates evaluated, their kept roots' blades
 
 // Floats as uints in their order.
 uint fkey(float f) { uint u = floatBitsToUint(f); return (u & 0x80000000u) != 0u ? ~u : u | 0x80000000u; }
@@ -61,7 +62,7 @@ bool inView(vec3 mn, vec3 mx) {
     return true;
 }
 
-float rootTallest(int k) { return GRASS_HEIGHT_MAX[k] * (1.0 + GRASS_CLUMP_VAR[k]); }
+float rootTallest(int k) { return GRASS_HEIGHT_MAX(k) * (1.0 + GRASS_CLUMP_VAR(k)); }
 float reedsWeight(float share, float wet) { return grassSat(float(GRASS_REEDS_MUD) * share + float(GRASS_REEDS_WET) * grassEase(GRASS_REEDS_WET0, GRASS_REEDS_WET1, wet)); }
 
 void main() {
@@ -89,6 +90,7 @@ void main() {
         sShareLo = sWetLo = floatBitsToUint(1.0); sShareHi = sWetHi = 0u;
         sCand = sEval = sKept = 0u;
         for (int b = 0; b < GRASS_BUCKETS; ++b) sCut[b] = 0u;
+        sSpEval[0] = sSpEval[1] = sSpBlades[0] = sSpBlades[1] = 0u;
     }
     for (uint i = tid; i < uint(GRASS_BUCKETS * GRASS_BINS); i += uint(GRASS_WG)) sHist[i] = 0u;
     barrier();
@@ -117,9 +119,11 @@ void main() {
     float camY = frame.camPos.y;
     float hLo = funkey(sHLo), hHi = funkey(sHHi);
     if (tid == 0u) atomicAdd(counters[GRASS_C_PATCHES_RANGE], 1u);
-    // (the planet's bend drops the ground a few mm this near: the margin holds it)
-    vec3 mn = vec3(corner.x - 0.2, hLo - camY - 0.2, corner.y - 0.2);
-    vec3 mx = vec3(corner.x + S + 0.2, hHi - camY + 1.25 * tallest + 0.2, corner.y + S + 0.2);
+    // (the planet's bend drops the ground a few mm this near: the margin holds
+    // it; a blade leans and bends over by under 0.9 of its height)
+    float side = 0.2 + 0.9 * tallest;
+    vec3 mn = vec3(corner.x - side, hLo - camY - 0.2, corner.y - side);
+    vec3 mx = vec3(corner.x + S + side, hHi - camY + 1.25 * tallest + 0.2, corner.y + S + side);
     if ((gf.info.z & GRASS_MODE_ALL_IN_VIEW) == 0 && !inView(mn, mx)) {
         if (tid == 0u) patchState[pidx] = GRASS_PATCH_HIDDEN;
         return;
@@ -140,8 +144,8 @@ void main() {
 
     for (int ki = 0; ki < 2; ++ki) {
         int k = ki == 0 ? GRASS_MEADOW : GRASS_REEDS;
-        if (!((k == GRASS_MEADOW ? meadowMost : reedsMost) > 0.0)) continue;
-        int n = GRASS_GRID[k], total = n * n, rounds = (total + GRASS_WG - 1) / GRASS_WG;
+        if (!GRASS_PRESENT(k) || !((k == GRASS_MEADOW ? meadowMost : reedsMost) > 0.0)) continue;
+        int n = GRASS_GRID(k), total = n * n, rounds = (total + GRASS_WG - 1) / GRASS_WG;
         float hk = rootTallest(k);
         if (tid == 0u) atomicAdd(sCand, uint(total));
         for (int r = 0; r < rounds; ++r) {
@@ -170,7 +174,9 @@ void main() {
                         if (roadNear(rel, h)) s.road = roadPaved(h, 0.0) ? -1.0 : abs(h.off) - h.hw;
                     }
                     atomicAdd(sEval, 1u);
+                    atomicAdd(sSpEval[ki], 1u);
                     if (grassKeep(cand, s, root)) {
+                        atomicAdd(sSpBlades[ki], uint(root.blades));
                         float dist = length(planetBend(rel, gg.h));
                         float px = root.height * fy / max(dist, 1e-3);
                         tier = allFull || px >= float(GRASS_LOD_FULL_PX) ? GRASS_LOD_FULL
@@ -222,6 +228,11 @@ void main() {
         atomicAdd(counters[GRASS_C_EVALUATED], sEval);
         atomicAdd(counters[GRASS_C_KEPT], sKept);
         for (int b = 0; b < GRASS_BUCKETS; ++b) if (sCut[b] != 0u) atomicAdd(counters[GRASS_C_CUT + b], sCut[b]);
+        for (int q = 0; q < 2; ++q) {
+            int k = q == 0 ? GRASS_MEADOW : GRASS_REEDS;
+            if (sSpEval[q] != 0u) atomicAdd(counters[GRASS_C_SP_EVAL + k], sSpEval[q]);
+            if (sSpBlades[q] != 0u) atomicAdd(counters[GRASS_C_SP_BLADES + k], sSpBlades[q]);
+        }
         patchState[pidx] = sKept > 0u ? GRASS_PATCH_DRAWN : GRASS_PATCH_NONE;
     }
 }

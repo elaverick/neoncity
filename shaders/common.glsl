@@ -14,6 +14,8 @@
 #include "advert_slots.h"
 // DOOR_SLOTS, DOOR_REVOLVE_RATE: shared with C
 #include "doors.h"
+// GRASS_SPECIES and the grass's rules' constants: shared with C
+#include "grass_rules.h"
 
 /* Must match src/core/common.h */
 const float CHUNK_SIZE      = 110.0;
@@ -54,6 +56,19 @@ const uint LK_SHADOW = 0u, LK_NEWS = 1u, LK_FLYER = 2u, LK_SCRAP = 3u, LK_CARDBO
 // Closer than this, a lobby's glass shows its real interior (src/core/common.h INTERIOR_DISTANCE).
 const float REAL_GLASS_DIST = 150.0;
 
+// A grass species' profile (src/grass/grass_species.h GrassSpeciesGPU, from assets/grass/<name>.json).
+struct GrassSpecies {
+    vec4  a;      // density (effective blades / m^2), tuft radius (m), height least, most (m)
+    vec4  b;      // width (a share of the height), lean (rad), bend (a share of the height), a clump's chance of being bare
+    vec4  c;      // clumps' vary, clumps' edge, taper exponent, curl
+    ivec4 n;      // root grid, tuft fewest, most, clump cells
+    ivec4 seg;    // segments full, mid, clump; present (1: its file was read)
+    vec4  root;   // rgb the root's colour, w stiffness
+    vec4  tip;    // rgb the tip's colour, w interaction
+    vec4  dry;    // rgb the driest clump's colour, w how far towards it
+    vec4  misc;   // x fullness
+};
+
 layout(set = 0, binding = 0) uniform Frame {
     mat4 viewProj;
     mat4 rayBasis;   // col0 right*tanX, col1 up*tanY, col2 forward
@@ -73,6 +88,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 ground;     // xy the camera's x, z wrapped to 64 chunks, from doubles (src/render/renderer.c): the land's texture coordinates (terrain/ground.glsl)
     vec4 grass;      // xy the camera's place in its grass patch (m, 0 .. GRASS_PATCH_M), z the --grass-debug view (grass/debug.glsl), w unused
     ivec4 grassPatch;   // xy the camera's grass patch (src/grass/grass_rules.h: world x, z over GRASS_PATCH_M, rounded down)
+    GrassSpecies grassSpecies[GRASS_SPECIES];   // the species' profiles (grass/rules.glsl reads them)
 } frame;
 
 struct ChunkGPU {

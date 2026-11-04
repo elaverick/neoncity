@@ -1,0 +1,26 @@
+// Meadow: the land's grass (src/grass/grass_species.h), wherever the cover says
+// grass and it isn't wet enough for reeds. Long, leaning, bending over at the tip.
+{
+  "density":     150,           // effective blades per m^2 (GR0's target)
+  "root_grid":   48,            // 0.167 m apart
+  "tuft":        [5, 9],
+  "tuft_radius": 0.06,
+  "height":      [0.35, 0.65],
+  "width":       0.020,
+  "lean":        0.25,
+  "bend":        0.35,
+  "curl":        0.55,
+  "taper":       0.8,
+  "segments":    [5, 3, 2],
+  "clumps": { "cells": 3, "bare": 0.08, "vary": 0.30, "edge": 0.55 },   // 2.67 m clumps
+  "stiffness":   1.0,
+  "interaction": 1.0,
+  "colour": {
+    // about land_grass's tint (assets/materials/land_grass.json), darker in, lighter out
+    "root": [0.016, 0.022, 0.010],
+    "tip":  [0.068, 0.090, 0.040],
+    "dry":  [0.100, 0.088, 0.046],
+    "dry_share": 0.35
+  },
+  "fullness":    0.35
+}

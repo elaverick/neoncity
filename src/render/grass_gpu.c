@@ -16,8 +16,12 @@
  * the slots: frames run in order on the queue). The counters are copied to a
  * host buffer, read when the slot comes round again (the --shot log).
  *
- * Draw (in the scene pass after the terrain): a draw per bucket, its count
- * the GPU's; GR2's stand-in blade is two triangles (shaders/grass/blade.*).
+ * Draw (in the scene pass after the terrain): an indexed draw per bucket,
+ * its count the GPU's: each blade a curved ribbon (shaders/grass/blade.*)
+ * of the bucket's segments, its topology from one index buffer holding them
+ * all (GRASS_SEG_FIRST). The species' profiles (assets/grass/*.json,
+ * src/grass/grass_species.h) are read here and go to the shaders in the
+ * frame's uniforms.
  *
  * Each bucket's room is its own (GRASS_CAPS, or --grass-cap), so a far
  * bucket can't take a near one's; within one, finish.comp's distance keeps
@@ -36,7 +40,7 @@ static const uint32_t SPV_blade_frag[] = {
 #include "grass/blade.frag.inc"
 };
 
-typedef struct BladePush { uint32_t base; int32_t lod; } BladePush;
+typedef struct BladePush { uint32_t base; int32_t lod, segs; } BladePush;
 
 struct GrassGpu {
     bool supported, on;
@@ -53,6 +57,8 @@ struct GrassGpu {
     Buffer patches[MAX_FRAMES];    /* GRASS_PATCH_* per patch of the square */
     Buffer readback[MAX_FRAMES];   /* the counters, host visible */
     Buffer keepTo;                 /* per bucket: the distance blades are kept to (m) */
+    Buffer indices;                /* every ribbon topology, GRASS_SEG_FIRST(s) on (uint16) */
+    int segs[GRASS_BUCKETS];       /* each bucket's (grass_bucket_segments) */
     bool keepToFresh, ran[MAX_FRAMES], drawing;
     uint32_t stats[GRASS_C_STATS];
     bool haveStats;
@@ -73,11 +79,14 @@ void grass_gpu_create(Renderer *r) {
     if (!g) fatal("out of memory allocating the grass");
     r->grass = g;
     g->supported = subgroups_do_sums(vk);
-    g->on = g->supported;
+    int species = grass_profiles_load_assets(NULL);
+    g->on = g->supported && species > 0;
+    for (int b = 0; b < GRASS_BUCKETS; ++b) g->segs[b] = grass_bucket_segments(b);
     uint32_t total = 0;
     for (int b = 0; b < GRASS_BUCKETS; ++b) { g->cap[b] = GRASS_CAPS[b]; g->base[b] = total; total += GRASS_CAPS[b]; }
-    printf("Grass: %s (room for %u blades a frame, %.0f MB a frame slot)\n", g->supported ? "on" : "off (the GPU's subgroups can't add up)",
-           total, (double)total * sizeof(GrassInstanceGPU) / (1024.0 * 1024.0));
+    printf("Grass: %s (%d species; room for %u blades a frame, %.0f MB a frame slot; segments %d, %d, %d)\n",
+           g->on ? "on" : !g->supported ? "off (the GPU's subgroups can't add up)" : "off (no species' profiles)", species,
+           total, (double)total * sizeof(GrassInstanceGPU) / (1024.0 * 1024.0), g->segs[0], g->segs[1], g->segs[2]);
 
     const VkShaderStageFlags C = VK_SHADER_STAGE_COMPUTE_BIT, V = VK_SHADER_STAGE_VERTEX_BIT, F = VK_SHADER_STAGE_FRAGMENT_BIT;
     const VkDescriptorType UB = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -117,12 +126,26 @@ void grass_gpu_create(Renderer *r) {
         g->instances[i] = vk_buffer(vk, (VkDeviceSize)total * sizeof(GrassInstanceGPU), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, DEV);
         g->counters[i] = vk_buffer(vk, GRASS_C_WORDS * sizeof(uint32_t),
                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, DEV);
-        g->draws[i] = vk_buffer(vk, GRASS_BUCKETS * sizeof(VkDrawIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, DEV);
+        g->draws[i] = vk_buffer(vk, GRASS_BUCKETS * sizeof(VkDrawIndexedIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, DEV);
         g->patches[i] = vk_buffer(vk, patchBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, DEV);
         g->readback[i] = vk_buffer(vk, GRASS_C_WORDS * sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT, HOST);
     }
     g->keepTo = vk_buffer(vk, 4 * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, DEV);
     g->keepToFresh = true;
+    /* the ribbons: s segments are rows 0 .. s - 1 of a left (2 r) and right (2 r + 1)
+     * vertex and the tip (2 s); two triangles a segment, one at the tip */
+    g->indices = vk_buffer(vk, GRASS_SEG_INDICES * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, HOST);
+    uint16_t *ix = (uint16_t *)g->indices.mapped;
+    for (int s = 1; s <= GRASS_SEG_MAX; ++s) {
+        uint16_t *o = ix + GRASS_SEG_FIRST(s);
+        for (int r = 0; r < s - 1; ++r) {
+            uint16_t a = (uint16_t)(2 * r);
+            *o++ = a; *o++ = (uint16_t)(a + 1); *o++ = (uint16_t)(a + 2);
+            *o++ = (uint16_t)(a + 2); *o++ = (uint16_t)(a + 1); *o++ = (uint16_t)(a + 3);
+        }
+        uint16_t a = (uint16_t)(2 * (s - 1));
+        *o++ = a; *o++ = (uint16_t)(a + 1); *o++ = (uint16_t)(a + 2);
+    }
 
     VkDescriptorPoolSize sizes[3] = {
         { UB, 4 * MAX_FRAMES },
@@ -185,11 +208,12 @@ void grass_gpu_destroy(Renderer *r) {
         vk_buffer_destroy(vk, &g->readback[i]);
     }
     vk_buffer_destroy(vk, &g->keepTo);
+    vk_buffer_destroy(vk, &g->indices);
     free(g);
     r->grass = NULL;
 }
 
-void renderer_set_grass(Renderer *r, bool on) { r->grass->on = on && r->grass->supported; }
+void renderer_set_grass(Renderer *r, bool on) { r->grass->on = on && r->grass->supported && (grass_profile(GRASS_MEADOW)->present || grass_profile(GRASS_REEDS)->present); }
 
 void renderer_set_grass_cap(Renderer *r, uint32_t cap) {
     for (int b = 0; b < GRASS_BUCKETS; ++b) r->grass->cap[b] = cap > 0 && cap < GRASS_CAPS[b] ? cap : GRASS_CAPS[b];
@@ -217,7 +241,7 @@ void grass_gpu_prepare(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *v
     const float *m = viewProj->m;
     f->view[0] = (float)GRASS_RADIUS;
     f->view[1] = (float)(0.5 * r->vk->extent.height * sqrt((double)m[1] * m[1] + (double)m[5] * m[5] + (double)m[9] * m[9]));
-    for (int b = 0; b < GRASS_BUCKETS; ++b) { f->cap[b] = g->cap[b]; f->base[b] = g->base[b]; }
+    for (int b = 0; b < GRASS_BUCKETS; ++b) { f->cap[b] = g->cap[b]; f->base[b] = g->base[b]; f->seg[b] = g->segs[b]; }
     for (int l = drawn; l < TERRAIN_CLIP_LEVELS; ++l) {
         const TerrainPush *p = &push[l];
         GrassLevelGPU *o = &f->lv[l];
@@ -261,10 +285,11 @@ void grass_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     if (!g->drawing) return;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->bladePipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->drawPL, 0, 1, &g->drawSet[slot], 0, NULL);
+    vkCmdBindIndexBuffer(cmd, g->indices.buf, 0, VK_INDEX_TYPE_UINT16);
     for (int b = 0; b < GRASS_BUCKETS; ++b) {
-        BladePush pc = { g->base[b], b };
+        BladePush pc = { g->base[b], b, g->segs[b] };
         vkCmdPushConstants(cmd, g->drawPL, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
-        vkCmdDrawIndirect(cmd, g->draws[slot].buf, (VkDeviceSize)b * sizeof(VkDrawIndirectCommand), 1, sizeof(VkDrawIndirectCommand));
+        vkCmdDrawIndexedIndirect(cmd, g->draws[slot].buf, (VkDeviceSize)b * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
     }
 }
 
@@ -278,7 +303,7 @@ void renderer_grass_stats(Renderer *r, char *buf, size_t n) {
                      "       roots %u candidates, %u evaluated, %u kept;", MAX_FRAMES, GRASS_PATCH_GRID * GRASS_PATCH_GRID,
                      s[GRASS_C_PATCHES_RANGE], s[GRASS_C_PATCHES_VIEW], s[GRASS_C_PATCHES_GRASS], s[GRASS_C_CANDIDATES],
                      s[GRASS_C_EVALUATED], s[GRASS_C_KEPT]);
-    uint64_t blades = 0;
+    uint64_t blades = 0, tris = 0;
     for (int b = 0; b < GRASS_BUCKETS && k > 0 && (size_t)k < n; ++b) {
         float to;
         memcpy(&to, &s[GRASS_C_KEEP_TO + b], sizeof(to));
@@ -287,7 +312,20 @@ void renderer_grass_stats(Renderer *r, char *buf, size_t n) {
         k += snprintf(buf + k, n - k, "\n       %-5s %u blades drawn of %u room (%u past the room, %u past the distance kept to; next kept %s)",
                       NAMES[b], s[GRASS_C_DRAWN + b], g->cap[b], s[GRASS_C_OVER + b], s[GRASS_C_CUT + b], keep);
         blades += s[GRASS_C_DRAWN + b];
+        tris += (uint64_t)s[GRASS_C_DRAWN + b] * (uint64_t)(2 * g->segs[b] - 1);
     }
     if (k > 0 && (size_t)k < n)
-        snprintf(buf + k, n - k, "\n       %llu blades, %llu triangles", (unsigned long long)blades, (unsigned long long)(2 * blades));
+        k += snprintf(buf + k, n - k, "\n       %llu blades, %llu triangles", (unsigned long long)blades, (unsigned long long)tris);
+    /* the effective density over the ground each species was evaluated on (every
+     * kept root's tuft, as if all were drawn in full): the profile's density x the
+     * suitability and the species' share there, on average */
+    for (int q = 0; q < 2 && k > 0 && (size_t)k < n; ++q) {
+        int sp = q == 0 ? GRASS_MEADOW : GRASS_REEDS;
+        const GrassProfile *p = grass_profile(sp);
+        if (!p->present || s[GRASS_C_SP_EVAL + sp] == 0) continue;
+        double cell = GRASS_PATCH_M / (double)p->rootGrid;
+        double area = (double)s[GRASS_C_SP_EVAL + sp] * cell * cell;
+        k += snprintf(buf + k, n - k, "\n       %-6s %.1f blades/m2 over the %.0f m2 evaluated (its profile's %.0f where every rule says yes)",
+                      GRASS_SPECIES_NAMES[sp], s[GRASS_C_SP_BLADES + sp] / area, area, p->density);
+    }
 }

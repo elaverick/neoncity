@@ -6,11 +6,12 @@
 /* grass_test --gpu (tests/grass_test.c): the rules (rules.glsl) on a list of
  * cases, answers read back and compared with src/grass/grass.c's. A case is
  * GRASS_TEST_IN words, its answer GRASS_TEST_OUT, laid out as tests/grass_test.c
- * gpu_case and gpu_answer. */
+ * gpu_case and gpu_answer. The species' profiles are the frame's (binding 0),
+ * as the renderer gives them. */
 
 layout(local_size_x = 64) in;
-layout(std430, set = 0, binding = 0) readonly buffer Cases { uint cases[]; };
-layout(std430, set = 0, binding = 1) writeonly buffer Answers { uint answers[]; };
+layout(std430, set = 0, binding = 11) readonly buffer Cases { uint cases[]; };
+layout(std430, set = 0, binding = 12) writeonly buffer Answers { uint answers[]; };
 layout(push_constant) uniform Count { uint n; } pc;
 
 const uint IN = 16u, OUT = 32u;

@@ -4,18 +4,18 @@
 /* The grass's rules (src/grass/grass.c, shaders/grass/rules.glsl): where
  * grass grows, how thick, of which species, in which clumps and tufts. The
  * constants both copies read, as #defines in syntax C and GLSL both accept
- * (as terrain_clip.h). A *_LIST is one value per species in species order:
- * C braces it ({ GRASS_TARGET_LIST }), GLSL wraps it (float[](GRASS_TARGET_LIST)).
- * Species profiles move to asset files in GR3; these are their defaults.
+ * (as terrain_clip.h). Each species' own numbers are its profile, an asset
+ * file (assets/grass/<name>.json, src/grass/grass_species.h), which C reads
+ * and the GPU sees in the frame's uniforms (FrameUBO.grassSpecies).
  *
  * Identity. The world is cut into GRASS_PATCH_M squares, patch (px, pz)
  * covering x in [px, px + 1) GRASS_PATCH_M and the same in z, in the
  * terrain's frame (the clipmap's: level 0's samples lie on whole metres, so a
  * patch is 8 x 8 of them), never the camera's: grass doesn't crawl. Each
- * species cuts a patch into GRASS_GRID_LIST cells a side, one candidate root
+ * species cuts a patch into its profile's root_grid cells a side, one candidate root
  * in each, anywhere in it (stratified: the root grid leaves no peak in the
  * roots' spectrum), named by the cell's world index (patch * grid + i, j).
- * A clump is a cell of a coarser grid of GRASS_CLUMP_LIST a side per patch,
+ * A clump is a cell of a coarser grid of its clumps' cells a side per patch,
  * its seed jittered in it; a point belongs to its nearest seed (Voronoi).
  *
  * Density. A root of species k is kept where
@@ -24,46 +24,22 @@
  * with s the suitability there, c its clump's density there (in [0, 1],
  * mean GRASS_CLUMP_MEAN(k) over the ground) and d_k the species' density
  * scale, chosen so that the effective density is
- *     blades / m^2 = GRASS_TARGET_LIST[k] s w_k
+ *     blades / m^2 = target_k s w_k   (the profile's "density")
  * that is d_k = target / (roots per m^2 x mean blades per tuft x clump mean).
  * Every factor is at most 1, so nothing clamps and the formula holds exactly
  * on average (grass_test measures it). */
 
 #define GRASS_PATCH_M    8.0          /* a patch's side (m): whole metres, so level 0's samples tile it */
-#define GRASS_SPECIES    4
+#define GRASS_SPECIES    4            /* in this order; each profile's file is its name (grass_species.h) */
 #define GRASS_MEADOW     0            /* the land's grass */
 #define GRASS_REEDS      1            /* by water and in mud, taller and sparser */
 #define GRASS_LAWN       2            /* the city's parks (GR6) */
 #define GRASS_ROUGH      3            /* the city's fields and edge verge (GR6) */
 
-/* Effective blades per m^2 where every rule says yes (GR0's targets). */
-#define GRASS_TARGET_LIST      150.0, 40.0, 250.0, 120.0
-/* Root cells per patch side: 0.167, 0.286, 0.125 and 0.167 m apart. */
-#define GRASS_GRID_LIST        48, 28, 64, 48
-/* Blades per tuft, fewest and most (uniform between). */
-#define GRASS_TUFT_MIN_LIST    5, 6, 4, 5
-#define GRASS_TUFT_MAX_LIST    9, 10, 6, 7
-/* How far a tuft's blades stand from its root, at most (m). */
-#define GRASS_TUFT_R_LIST      0.06, 0.10, 0.03, 0.05
-/* A root's blade height, least and most (m), before its clump and the ground scale it. */
-#define GRASS_HEIGHT_MIN_LIST  0.35, 0.80, 0.08, 0.25
-#define GRASS_HEIGHT_MAX_LIST  0.65, 1.50, 0.14, 0.45
-/* A blade's width at its base as a share of its height. */
-#define GRASS_WIDTH_LIST       0.020, 0.012, 0.040, 0.025
-/* Lean from the normal (rad) and the rest bend of the tip (a share of the height), typical. */
-#define GRASS_LEAN_LIST        0.25, 0.10, 0.15, 0.35
-#define GRASS_BEND_LIST        0.35, 0.20, 0.25, 0.45
-
-/* Clumps: cells per patch side (2.67, 2, 4 and 2.67 m); the chance a clump is
- * a bare spot (its density then GRASS_BARE_KEEP); how much clumps differ in
- * height and density (a clump's factor is 1 - var u, u uniform in [0, 1)
- * for density, 1 + var (2u - 1) for height); and how far the roots thin
- * towards a clump's border with the next (1 - edge x edgeness, below). A
- * mown lawn is nearly even. */
-#define GRASS_CLUMP_LIST       3, 4, 2, 3
-#define GRASS_BARE_LIST        0.08, 0.15, 0.0, 0.12
-#define GRASS_CLUMP_VAR_LIST   0.30, 0.35, 0.08, 0.35
-#define GRASS_CLUMP_EDGE_LIST  0.55, 0.60, 0.10, 0.50
+/* Clumps (each profile's "clumps": cells per patch side, the chance a clump is
+ * a bare spot, how much clumps differ in height and density, how far the
+ * roots thin towards a clump's border): a bare spot keeps GRASS_BARE_KEEP of
+ * its roots. */
 #define GRASS_BARE_KEEP        0.1
 /* A clump's seed lies anywhere in its cell (1: as Worley noise's). One seed
  * to a cell still leaves the borders' mean a little periodic with the cells
@@ -141,7 +117,16 @@
 #define GRASS_BINS             128
 #define GRASS_BIN_M            2.0          /* GRASS_BINS * GRASS_BIN_M >= GRASS_RADIUS + its height */
 #define GRASS_INSTANCE_WORDS   8            /* a blade instance: 32 bytes (shaders/grass/instance.glsl) */
-#define GRASS_BLADE_VERTS      6            /* GR2's stand-in: a flat strip, two triangles */
+/* A blade is a ribbon of s segments (a profile's "segments", per bucket, 1 ..
+ * GRASS_SEG_MAX): 2 s + 1 vertices, a pair a row from the root and one at the
+ * tip, and 6 s - 3 indices (two triangles a segment, one at the tip). The
+ * index buffer holds every topology, s's from GRASS_SEG_FIRST(s); a bucket
+ * draws the most segments any species asks of it, and a species asking fewer
+ * folds its spare rows into its tip. */
+#define GRASS_SEG_MAX          7
+#define GRASS_SEG_FIRST(s)     (3 * ((s) - 1) * ((s) - 1))   /* the sum of 6 j - 3 for j < s */
+#define GRASS_SEG_INDICES      GRASS_SEG_FIRST(GRASS_SEG_MAX + 1)
+#define GRASS_DRAW_WORDS       5            /* a VkDrawIndexedIndirectCommand */
 /* GrassFrame.info.z: the prepare pass's modes (grass_test). */
 #define GRASS_MODE_ALL_IN_VIEW 1            /* no frustum test */
 #define GRASS_MODE_ALL_FULL    2            /* every root full, every blade: the count test */
@@ -158,7 +143,9 @@
 #define GRASS_C_DRAWN          12           /* + bucket: instances drawn (finish) */
 #define GRASS_C_OVER           15           /* + bucket: reserved past the room (finish) */
 #define GRASS_C_KEEP_TO        18           /* + bucket: the distance the next frame keeps to (float bits, finish) */
-#define GRASS_C_STATS          24
+#define GRASS_C_SP_EVAL        24           /* + species: its candidates evaluated (their cells' ground) */
+#define GRASS_C_SP_BLADES      28           /* + species: the blades of its roots kept there, every one (as if all were full) */
+#define GRASS_C_STATS          32
 #define GRASS_C_HIST           32           /* + bucket * GRASS_BINS + bin: blades wanted by distance */
 #define GRASS_C_WORDS          (GRASS_C_HIST + GRASS_BUCKETS * GRASS_BINS)
 /* The patch states (--grass-debug cull). */

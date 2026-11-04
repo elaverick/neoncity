@@ -260,15 +260,15 @@ add_executable(world_test tests/world_test.c src/app/frames.c ${GEN_SOURCES})
 target_include_directories(world_test PRIVATE ${SRC_DIRS})
 # Materials (assets/materials/*.json): every file reads, its maps exist and decode, and its
 # properties are sound; every model (assets/models/*.glb) reads and has its material; and every
-# advert (assets/adverts/*.json) reads, its sheet holds its frames and it fits a screen's slot
-# (material_test [assets dir]).
-set(MATERIAL_SOURCES src/render/material_def.c src/render/advert_def.c src/render/interior_def.c src/core/json.c)
+# advert (assets/adverts/*.json) reads, its sheet holds its frames and it fits a screen's slot;
+# and every grass species' profile (assets/grass/*.json) reads (material_test [assets dir]).
+set(MATERIAL_SOURCES src/render/material_def.c src/render/advert_def.c src/render/interior_def.c src/grass/grass_species.c src/core/json.c)
 add_executable(material_test tests/material_test.c ${MATERIAL_SOURCES} src/city/models.c src/core/assets.c)
 target_include_directories(material_test PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # The grass's rules (src/grass): the numbers, density against the formula, nothing where nothing may
 # grow, determinism and no visible grid (grass_test [--earth <bake>]); the GPU's copy of the rules
 # against C's (grass_test --gpu); a density map (grass_test --density-map out.ppm [km [x z]]).
-add_executable(grass_test tests/grass_test.c src/grass/grass.c src/render/vkcore.c ${TERRAIN_SOURCES} ${GEN_SOURCES})
+add_executable(grass_test tests/grass_test.c src/grass/grass.c src/grass/grass_species.c src/core/json.c src/render/vkcore.c ${TERRAIN_SOURCES} ${GEN_SOURCES})
 add_dependencies(grass_test shaders)
 target_include_directories(grass_test PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR})
 target_link_libraries(grass_test PRIVATE volk glfw)

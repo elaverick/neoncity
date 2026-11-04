@@ -414,7 +414,6 @@ static double spectrum_peak(const double peak[SPECTRA], const double near[SPECTR
 static void test_pattern(void) {
     GrassSite land = site_land(1.0f, 0.0f, 0.0f), lawnS = site_city(1.0f), roughS = site_city(0.0f);
     double between[GRASS_SPECIES] = { 0 };
-    static const int CL[GRASS_SPECIES] = { GRASS_CLUMP_LIST };
     for (int k = 0; k < GRASS_SPECIES; ++k) {
         const GrassSite *s = k == GRASS_LAWN ? &lawnS : k == GRASS_ROUGH ? &roughS : &land;
         if (k == GRASS_REEDS) continue;
@@ -433,7 +432,7 @@ static void test_pattern(void) {
             roots += m;
             grid_spectrum(xs, zs, m, GRASS_PATCH_M / grass_grid(k), pr, nr);
             grid_spectrum(xs, zs, m, GRASS_PATCH_M, pp, np);
-            grid_spectrum(xs, zs, m, GRASS_PATCH_M / CL[k], pc, nc);
+            grid_spectrum(xs, zs, m, GRASS_PATCH_M / grass_profile(k)->clumpCells, pc, nc);
 
             /* clumps' mean heights: their spread against what the roots' own spread would give alone */
             typedef struct Acc { uint32_t id; double s, s2; int n; } Acc;
@@ -604,13 +603,18 @@ static int gpu_check(int validation) {
     Rng r = rng_make(2468);
     for (uint32_t c = 0; c < N; ++c) gpu_case(&r, in + (size_t)c * GPU_IN);
 
-    VkDescriptorSetLayoutBinding b[2] = { 0 };
-    for (int i = 0; i < 2; ++i) {
-        b[i].binding = (uint32_t)i; b[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    /* the frame's uniforms carry the species' profiles (binding 0); the cases and answers, 11 and 12 */
+    Buffer bframe = vk_buffer(&vk, sizeof(FrameUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, HOST);
+    memset(bframe.mapped, 0, sizeof(FrameUBO));
+    grass_profiles_gpu(((FrameUBO *)bframe.mapped)->grassSpecies);
+    static const uint32_t BIND[3] = { 0, 11, 12 };
+    VkDescriptorSetLayoutBinding b[3] = { 0 };
+    for (int i = 0; i < 3; ++i) {
+        b[i].binding = BIND[i]; b[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         b[i].descriptorCount = 1; b[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
     VkDescriptorSetLayoutCreateInfo li = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    li.bindingCount = 2; li.pBindings = b;
+    li.bindingCount = 3; li.pBindings = b;
     VkDescriptorSetLayout dsl;
     VK_CHECK(vkCreateDescriptorSetLayout(d, &li, NULL, &dsl));
     VkPushConstantRange pr = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 4 };
@@ -625,22 +629,22 @@ static int gpu_check(int validation) {
     ci.layout = pl;
     VkPipeline pipe;
     VK_CHECK(vkCreateComputePipelines(d, VK_NULL_HANDLE, 1, &ci, NULL, &pipe));
-    VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 };
+    VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 }, { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 } };
     VkDescriptorPoolCreateInfo dpi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-    dpi.maxSets = 1; dpi.poolSizeCount = 1; dpi.pPoolSizes = &ps;
+    dpi.maxSets = 1; dpi.poolSizeCount = 2; dpi.pPoolSizes = ps;
     VkDescriptorPool dp;
     VK_CHECK(vkCreateDescriptorPool(d, &dpi, NULL, &dp));
     VkDescriptorSetAllocateInfo dai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
     dai.descriptorPool = dp; dai.descriptorSetCount = 1; dai.pSetLayouts = &dsl;
     VkDescriptorSet set;
     VK_CHECK(vkAllocateDescriptorSets(d, &dai, &set));
-    VkDescriptorBufferInfo bi[2] = { { bin.buf, 0, VK_WHOLE_SIZE }, { bout.buf, 0, VK_WHOLE_SIZE } };
-    VkWriteDescriptorSet wr[2] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
-    for (int i = 0; i < 2; ++i) {
-        wr[i].dstSet = set; wr[i].dstBinding = (uint32_t)i; wr[i].descriptorCount = 1;
-        wr[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; wr[i].pBufferInfo = &bi[i];
+    VkDescriptorBufferInfo bi[3] = { { bframe.buf, 0, VK_WHOLE_SIZE }, { bin.buf, 0, VK_WHOLE_SIZE }, { bout.buf, 0, VK_WHOLE_SIZE } };
+    VkWriteDescriptorSet wr[3] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
+    for (int i = 0; i < 3; ++i) {
+        wr[i].dstSet = set; wr[i].dstBinding = BIND[i]; wr[i].descriptorCount = 1;
+        wr[i].descriptorType = b[i].descriptorType; wr[i].pBufferInfo = &bi[i];
     }
-    vkUpdateDescriptorSets(d, 2, wr, 0, NULL);
+    vkUpdateDescriptorSets(d, 3, wr, 0, NULL);
 
     VkCommandPoolCreateInfo cpi = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     cpi.queueFamilyIndex = vk.queueFamily;
@@ -714,6 +718,7 @@ static int gpu_check(int validation) {
     vkDestroyDescriptorSetLayout(d, dsl, NULL);
     vk_buffer_destroy(&vk, &bin);
     vk_buffer_destroy(&vk, &bout);
+    vk_buffer_destroy(&vk, &bframe);
     vk_shutdown(&vk);
     return g_failures != 0;
 }
@@ -776,7 +781,7 @@ static void gp_init(GpuPass *g, int validation) {
     g->roads = vk_buffer(&g->vk, 64 * 4, SB, HOST);
     g->inst = vk_buffer(&g->vk, (VkDeviceSize)GP_ROOM * sizeof(GrassInstanceGPU), SB, HOST);
     g->counters = vk_buffer(&g->vk, GRASS_C_WORDS * 4, SB, HOST);
-    g->draws = vk_buffer(&g->vk, GRASS_BUCKETS * 16, SB, HOST);
+    g->draws = vk_buffer(&g->vk, GRASS_BUCKETS * GRASS_DRAW_WORDS * 4, SB, HOST);
     g->keepTo = vk_buffer(&g->vk, 16, SB, HOST);
     g->patches = vk_buffer(&g->vk, GP_SIDE * GP_SIDE * 4, SB, HOST);
     memset(g->roads.mapped, 0, 64 * 4);   /* no cells: no roads */
@@ -826,11 +831,13 @@ static void gp_init(GpuPass *g, int validation) {
     f->camPos[1] = GP_EYE;
     f->grass[0] = GP_IN[0]; f->grass[1] = GP_IN[1];
     f->grassPatch[0] = GP_PATCH[0]; f->grassPatch[1] = GP_PATCH[1];
+    grass_profiles_gpu(f->grassSpecies);
     GrassFrameGPU *gf = (GrassFrameGPU *)g->grass.mapped;
     memset(gf, 0, sizeof(*gf));
     gf->info[0] = 0; gf->info[1] = GP_SIDE; gf->info[2] = GRASS_MODE_ALL_FULL | GRASS_MODE_ALL_IN_VIEW;
     gf->view[0] = 1e6f; gf->view[1] = 1000.0f;
     gf->cap[0] = GP_ROOM;   /* everything is full (GRASS_MODE_ALL_FULL) */
+    for (int b = 0; b < GRASS_BUCKETS; ++b) gf->seg[b] = grass_bucket_segments(b);
     for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {   /* only level 0 holds the patches; the rest, far away */
         GrassLevelGPU *o = &gf->lv[l];
         float half = 0.5f * (TERRAIN_CLIP_W - 1);
@@ -948,8 +955,8 @@ static int gpu_prepare_check(int validation) {
     printf("GPU path: %u blades written, %ld off the ground or the block; heights %.2f to %.2f m\n", n, off, hMin, hMax);
     CHECK(n == c[GRASS_C_WANT + GRASS_LOD_FULL] && n > 0, "the GPU path wrote %u blades of the %u it reserved", n, c[GRASS_C_WANT]);
     CHECK(off == 0, "%ld blades stand off the ground or outside their patches", off);
-    static const double HMAX[GRASS_SPECIES] = { GRASS_HEIGHT_MAX_LIST }, VAR[GRASS_SPECIES] = { GRASS_CLUMP_VAR_LIST };
-    CHECK(hMin > 0.1 && hMax <= 1.25 * HMAX[GRASS_MEADOW] * (1.0 + VAR[GRASS_MEADOW]) + 1e-3, "the blades' heights run %.2f to %.2f m", hMin, hMax);
+    const GrassProfile *meadow = grass_profile(GRASS_MEADOW);
+    CHECK(hMin > 0.1 && hMax <= 1.25 * meadow->height[1] * (1.0 + meadow->clumpVary) + 1e-3, "the blades' heights run %.2f to %.2f m", hMin, hMax);
 
     /* Too little room: the first frame writes what fits and sets the
      * distance to keep to; the next keeps the blades nearer than that (and
@@ -973,14 +980,18 @@ static int gpu_prepare_check(int validation) {
     CHECK(keep1 < 1e8f && keep2 == keep1, "the distance kept to moved: %.1f then %.1f m", keep1, keep2);
     CHECK(over2 == 0 && drawn2 == want2 && (double)want2 <= GRASS_CAP_FILL * ROOM && want2 + cut2 == want1,
           "the second frame reserved %u (%u over, %u past the distance) of %u", want2, over2, cut2, want1);
-    static const double TUFT[GRASS_SPECIES] = { GRASS_TUFT_R_LIST };
-    CHECK(far < keep2 + TUFT[GRASS_MEADOW] + 0.01, "a blade %.2f m off is drawn past the distance kept to, %.1f m", far, keep2);
+    CHECK(far < keep2 + meadow->tuftRadius + 0.01, "a blade %.2f m off is drawn past the distance kept to, %.1f m", far, keep2);
     gf->cap[0] = GP_ROOM;
     gp_free(&g);
     return g_failures != 0;
 }
 
 int main(int argc, char **argv) {
+    /* the species' profiles, from the source tree (assets/grass) */
+    if (grass_profiles_load_assets(NEONCITY_ASSETS) != GRASS_SPECIES) {
+        printf("grass_test: the species' profiles (%s/grass) didn't all read\n", NEONCITY_ASSETS);
+        return 1;
+    }
     if (argc > 1 && strcmp(argv[1], "--gpu") == 0) {
         gpu_check(argc > 2 && strcmp(argv[2], "--validation") == 0);
         gpu_prepare_check(argc > 2 && strcmp(argv[2], "--validation") == 0);

@@ -21,9 +21,10 @@ typedef struct GrassFrameGPU {
     float         view[4];   /* radius (m), f_y (pixels per unit of height over distance), 0, 0 */
     uint32_t      cap[4];    /* each bucket's room */
     uint32_t      base[4];   /* each bucket's first instance */
+    int32_t       seg[4];    /* each bucket's segments (grass_bucket_segments) */
     GrassLevelGPU lv[TERRAIN_CLIP_LEVELS];
 } GrassFrameGPU;
-_Static_assert(sizeof(GrassLevelGPU) == 64 && sizeof(GrassFrameGPU) == 64 + 64 * TERRAIN_CLIP_LEVELS, "GrassFrame's std140 layout");
+_Static_assert(sizeof(GrassLevelGPU) == 64 && sizeof(GrassFrameGPU) == 80 + 64 * TERRAIN_CLIP_LEVELS, "GrassFrame's std140 layout");
 
 /* A blade instance (GrassInstance). */
 typedef struct GrassInstanceGPU {

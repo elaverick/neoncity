@@ -1,0 +1,25 @@
+// Lawn: the city's mown grass in parks (src/grass/grass_species.h; drawn from GR6).
+// Short, dense, even.
+{
+  "density":     250,
+  "root_grid":   64,            // 0.125 m apart
+  "tuft":        [4, 6],
+  "tuft_radius": 0.03,
+  "height":      [0.08, 0.14],
+  "width":       0.040,
+  "lean":        0.15,
+  "bend":        0.25,
+  "curl":        0.3,
+  "taper":       0.6,
+  "segments":    [3, 2, 1],
+  "clumps": { "cells": 2, "bare": 0.0, "vary": 0.08, "edge": 0.10 },    // 4 m, nearly even
+  "stiffness":   2.0,
+  "interaction": 0.4,
+  "colour": {
+    "root": [0.018, 0.030, 0.011],
+    "tip":  [0.058, 0.088, 0.032],
+    "dry":  [0.080, 0.080, 0.040],
+    "dry_share": 0.15
+  },
+  "fullness":    0.4
+}

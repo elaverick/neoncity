@@ -4,6 +4,7 @@
 #include "chunks.h"
 #include "clouds.h"
 #include "doors.h"
+#include "grass_species.h"
 
 /* Per-frame globals; layout must match `Frame` in shaders/common.glsl (std140). */
 typedef struct FrameUBO {
@@ -25,6 +26,7 @@ typedef struct FrameUBO {
     float   ground[4];     /* the camera's x, z wrapped to 64 chunks (renderer.c: the land's textures), unused, unused */
     float   grass[4];      /* the camera's x, z in its grass patch (m), the --grass-debug view (GRASS_DEBUG_*), unused (renderer.c) */
     int32_t grassPatch[4]; /* the camera's grass patch: world x, z over GRASS_PATCH_M, rounded down; unused, unused (renderer.c) */
+    GrassSpeciesGPU grassSpecies[GRASS_SPECIES];   /* the species' profiles (src/grass/grass_species.h; renderer.c) */
 } FrameUBO;
 
 typedef struct Renderer Renderer;

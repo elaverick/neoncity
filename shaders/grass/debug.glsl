@@ -47,11 +47,11 @@ vec3 grassHue(uint h) {
 // The kept roots of species k round the point: how much of the pixel (px m
 // across) their dots cover, the dots GRASS_TUFT_R (at least a pixel) across.
 float grassDebugRoots(int k, GrassSite s, ivec2 gpatch, vec2 local, float px) {
-    int n = GRASS_GRID[k];
+    int n = GRASS_GRID(k);
     float cs = float(GRASS_PATCH_M) / float(n);
     if (px > 0.5 * cs) return 0.0;   // too far to tell one root from the next
     ivec2 cell = ivec2(floor(local / cs));
-    float cover = 0.0, r = max(GRASS_TUFT_R[k], 0.5 * px);
+    float cover = 0.0, r = max(GRASS_TUFT_R(k), 0.5 * px);
     for (int dj = -1; dj <= 1; ++dj)
         for (int di = -1; di <= 1; ++di) {
             ivec2 c = cell + ivec2(di, dj), p = gpatch;

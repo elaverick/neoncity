@@ -1,27 +1,28 @@
 #include "grass.h"
+#include "grass_species.h"
 #include "hash.h"
 #include <math.h>
-#ifdef _MSC_VER
-#pragma warning(disable : 4305)   /* the shared lists' double literals into float tables, as GLSL reads them */
-#endif
 
 /* The grass's rules (grass.h, grass_rules.h). Every step is float arithmetic,
- * in the order shaders/grass/rules.glsl takes it: change one, change both. */
+ * in the order shaders/grass/rules.glsl takes it: change one, change both.
+ * Each species' numbers are its profile (grass_species.h); a species left out
+ * keeps no root. */
 
-static const float TARGET[GRASS_SPECIES] = { GRASS_TARGET_LIST };
-static const int   GRID[GRASS_SPECIES] = { GRASS_GRID_LIST };
-static const int   TUFT_MIN[GRASS_SPECIES] = { GRASS_TUFT_MIN_LIST };
-static const int   TUFT_MAX[GRASS_SPECIES] = { GRASS_TUFT_MAX_LIST };
-static const float TUFT_R[GRASS_SPECIES] = { GRASS_TUFT_R_LIST };
-static const float HEIGHT_MIN[GRASS_SPECIES] = { GRASS_HEIGHT_MIN_LIST };
-static const float HEIGHT_MAX[GRASS_SPECIES] = { GRASS_HEIGHT_MAX_LIST };
-static const float WIDTH[GRASS_SPECIES] = { GRASS_WIDTH_LIST };
-static const float LEAN[GRASS_SPECIES] = { GRASS_LEAN_LIST };
-static const float BEND[GRASS_SPECIES] = { GRASS_BEND_LIST };
-static const int   CLUMP[GRASS_SPECIES] = { GRASS_CLUMP_LIST };
-static const float BARE[GRASS_SPECIES] = { GRASS_BARE_LIST };
-static const float CLUMP_VAR[GRASS_SPECIES] = { GRASS_CLUMP_VAR_LIST };
-static const float CLUMP_EDGE[GRASS_SPECIES] = { GRASS_CLUMP_EDGE_LIST };
+#define SP(k) grass_profile(k)
+#define TARGET(k)     (SP(k)->present ? SP(k)->density : 0.0f)
+#define GRID(k)       (SP(k)->present ? SP(k)->rootGrid : 1)
+#define TUFT_MIN(k)   SP(k)->tuft[0]
+#define TUFT_MAX(k)   SP(k)->tuft[1]
+#define TUFT_R(k)     SP(k)->tuftRadius
+#define HEIGHT_MIN(k) SP(k)->height[0]
+#define HEIGHT_MAX(k) SP(k)->height[1]
+#define WIDTH(k)      SP(k)->width
+#define LEAN(k)       SP(k)->lean
+#define BEND(k)       SP(k)->bend
+#define CLUMP(k)      (SP(k)->present ? SP(k)->clumpCells : 1)
+#define BARE(k)       SP(k)->bare
+#define CLUMP_VAR(k)  SP(k)->clumpVary
+#define CLUMP_EDGE(k) SP(k)->clumpEdge
 
 static const float TWO_PI = 6.28318531f;
 
@@ -63,18 +64,18 @@ void grass_species(const GrassSite *s, float w[GRASS_SPECIES]) {
 float grass_expected(const GrassSite *s) {
     float w[GRASS_SPECIES], suit = grass_suitability(s), sum = 0.0f;
     grass_species(s, w);
-    for (int k = 0; k < GRASS_SPECIES; ++k) sum += TARGET[k] * suit * w[k];
+    for (int k = 0; k < GRASS_SPECIES; ++k) sum += TARGET(k) * suit * w[k];
     return sum;
 }
 
-float grass_target(int k) { return TARGET[k]; }
-int   grass_grid(int k) { return GRID[k]; }
-float grass_roots_m2(int k) { float n = (float)GRID[k] / (float)GRASS_PATCH_M; return n * n; }
-float grass_tuft_mean(int k) { return 0.5f * (float)(TUFT_MIN[k] + TUFT_MAX[k]); }
+float grass_target(int k) { return TARGET(k); }
+int   grass_grid(int k) { return GRID(k); }
+float grass_roots_m2(int k) { float n = (float)GRID(k) / (float)GRASS_PATCH_M; return n * n; }
+float grass_tuft_mean(int k) { return 0.5f * (float)(TUFT_MIN(k) + TUFT_MAX(k)); }
 float grass_clump_mean(int k) {
-    return (1.0f - BARE[k] * (1.0f - (float)GRASS_BARE_KEEP)) * (1.0f - 0.5f * CLUMP_VAR[k]) * (1.0f - CLUMP_EDGE[k] * (float)GRASS_EDGE_MEAN);
+    return (1.0f - BARE(k) * (1.0f - (float)GRASS_BARE_KEEP)) * (1.0f - 0.5f * CLUMP_VAR(k)) * (1.0f - CLUMP_EDGE(k) * (float)GRASS_EDGE_MEAN);
 }
-float grass_density_scale(int k) { return TARGET[k] / (grass_roots_m2(k) * grass_tuft_mean(k) * grass_clump_mean(k)); }
+float grass_density_scale(int k) { return !SP(k)->present ? 0.0f : TARGET(k) /(grass_roots_m2(k) * grass_tuft_mean(k) * grass_clump_mean(k)); }
 
 /* The clumps' warp (grass_rules.h GRASS_CLUMP_WARP): a value noise over the
  * world's clump cells (gx, gz the point's; fx, fz where in it), a node every
@@ -91,7 +92,7 @@ static float warp(int k, int32_t gx, int32_t gz, float fx, float fz, uint32_t sa
 }
 
 void grass_clump(int k, int32_t px, int32_t pz, float lx, float lz, GrassClump *c) {
-    int n = CLUMP[k];
+    int n = CLUMP(k);
     float cs = (float)GRASS_PATCH_M / (float)n;
     /* in cells: the point's cell (relative to the patch's corner and in the
      * world) and where in it, then warped */
@@ -120,16 +121,16 @@ void grass_clump(int k, int32_t px, int32_t pz, float lx, float lz, GrassClump *
     float uBare = drawf(&st), uDens = drawf(&st), uHeight = drawf(&st), uLean = drawf(&st), uStiff = drawf(&st), uTint = drawf(&st);
     c->id = best;
     c->edge = 1.0f - ease(0.0f, (float)GRASS_EDGE_BAND, f2 - f1);
-    c->bare = uBare < BARE[k];
-    c->density = (1.0f - CLUMP_VAR[k] * uDens) * (1.0f - CLUMP_EDGE[k] * c->edge) * (c->bare ? (float)GRASS_BARE_KEEP : 1.0f);
-    c->height = 1.0f + CLUMP_VAR[k] * (2.0f * uHeight - 1.0f);
+    c->bare = uBare < BARE(k);
+    c->density = (1.0f - CLUMP_VAR(k) * uDens) * (1.0f - CLUMP_EDGE(k) * c->edge) * (c->bare ? (float)GRASS_BARE_KEEP : 1.0f);
+    c->height = 1.0f + CLUMP_VAR(k) * (2.0f * uHeight - 1.0f);
     c->lean = TWO_PI * uLean;
     c->stiffness = 0.7f + 0.6f * uStiff;
     c->tint = uTint - 0.5f;
 }
 
 void grass_candidate(int k, int32_t px, int32_t pz, int i, int j, GrassCandidate *c) {
-    int n = GRID[k];
+    int n = GRID(k);
     float cs = (float)GRASS_PATCH_M / (float)n;
     c->id = hash3i(GRASS_SALT_ROOT, px * n + i, pz * n + j, k);
     c->state = rng_make(c->id).state;
@@ -154,8 +155,8 @@ int grass_keep(const GrassCandidate *c, const GrassSite *s, GrassRoot *r) {
     if (!(uKeep < suit * grass_density_scale(k) * cl.density)) return 0;
     r->at = *c;
     r->clump = cl;
-    r->height = (HEIGHT_MIN[k] + (HEIGHT_MAX[k] - HEIGHT_MIN[k]) * uHeight) * cl.height * ((float)GRASS_SHORT + (1.0f - (float)GRASS_SHORT) * suit);
-    r->blades = TUFT_MIN[k] + (int)(uTuft % (uint32_t)(TUFT_MAX[k] - TUFT_MIN[k] + 1));
+    r->height = (HEIGHT_MIN(k) + (HEIGHT_MAX(k) - HEIGHT_MIN(k)) * uHeight) * cl.height * ((float)GRASS_SHORT + (1.0f - (float)GRASS_SHORT) * suit);
+    r->blades = TUFT_MIN(k) + (int)(uTuft % (uint32_t)(TUFT_MAX(k) - TUFT_MIN(k) + 1));
     return 1;
 }
 
@@ -166,10 +167,10 @@ void grass_blade(const GrassRoot *r, int b, GrassBlade *o) {
     float u6 = drawf(&st), u7 = drawf(&st), u8 = drawf(&st), u9 = drawf(&st), u10 = drawf(&st);
     float rr = sqrtf(u1), a = TWO_PI * u2;   /* uniform over the tuft's disc */
     float ox = cosf(a), oz = sinf(a);
-    o->x = r->at.x + TUFT_R[k] * rr * ox;
-    o->z = r->at.z + TUFT_R[k] * rr * oz;
+    o->x = r->at.x + TUFT_R(k) * rr * ox;
+    o->z = r->at.z + TUFT_R(k) * rr * oz;
     o->height = r->height * (0.75f + 0.5f * u3) * (1.0f - 0.25f * rr);   /* the outer blades shorter */
-    o->width = o->height * WIDTH[k] * (0.8f + 0.4f * u4);
+    o->width = o->height * WIDTH(k) * (0.8f + 0.4f * u4);
     o->facing = TWO_PI * u5;
     /* leaning the clump's way, splayed out from the tuft's middle, and a little at random */
     float g = TWO_PI * u6;
@@ -178,8 +179,8 @@ void grass_blade(const GrassRoot *r, int b, GrassBlade *o) {
     float ll = sqrtf(lx * lx + lz * lz);
     o->leanX = ll > 1e-4f ? lx / ll : 1.0f;
     o->leanZ = ll > 1e-4f ? lz / ll : 0.0f;
-    o->lean = LEAN[k] * (0.5f + u7);
-    o->bend = BEND[k] * (0.6f + 0.8f * u8);
+    o->lean = LEAN(k) * (0.5f + u7);
+    o->bend = BEND(k) * (0.6f + 0.8f * u8);
     o->phase = u9;
     o->tint = 0.7f * r->clump.tint + 0.3f * (u10 - 0.5f);
     o->seed = st;

@@ -17,6 +17,7 @@
 #include "material_def.h"
 #include "advert_def.h"
 #include "interior_def.h"
+#include "grass_species.h"
 #include "json.h"
 #include "common.h"
 #include "models.h"
@@ -298,6 +299,38 @@ static void test_interiors(const char *assets) {
     printf("%d interior modules, %.1f MB; %d near tiers, %.1f MB\n", n, mb, nears, nearMb);
 }
 
+/* Every grass species' profile (assets/grass/<name>.json, src/grass/grass_species.h)
+ * reads; a key missing or out of range is refused. Its numbers against the
+ * rules are grass_test's. */
+static void test_grass(const char *assets) {
+    for (int k = 0; k < GRASS_SPECIES; ++k) {
+        char path[1200], err[300];
+        GrassProfile p;
+        snprintf(path, sizeof(path), "%s/grass/%s.json", assets, GRASS_SPECIES_NAMES[k]);
+        bool ok = grass_profile_load(path, &p, err, sizeof(err));
+        CHECK(ok, "grass %s: %s", GRASS_SPECIES_NAMES[k], err);
+        if (ok) printf("grass %-6s %4.0f blades/m2, roots %2d a patch side, tufts %d-%d, %.2f-%.2f m, segments %d/%d/%d\n", GRASS_SPECIES_NAMES[k],
+                       p.density, p.rootGrid, p.tuft[0], p.tuft[1], p.height[0], p.height[1], p.segments[0], p.segments[1], p.segments[2]);
+    }
+    static const char *const BAD[] = {
+        "{ \"density\": 1 }",   /* most keys missing */
+        "{ \"density\": 150, \"root_grid\": 48, \"tuft\": [5, 9], \"tuft_radius\": 0.06, \"height\": [0.35, 0.65], \"width\": 0.02, \"lean\": 0.25,"
+        "  \"bend\": 0.35, \"curl\": 0.5, \"taper\": 0.8, \"segments\": [5, 3, 9], \"clumps\": { \"cells\": 3, \"bare\": 0.1, \"vary\": 0.3, \"edge\": 0.5 },"
+        "  \"stiffness\": 1, \"interaction\": 1, \"colour\": { \"root\": [0, 0, 0], \"tip\": [0.1, 0.1, 0.1], \"dry\": [0.1, 0.1, 0.1], \"dry_share\": 0.3 }, \"fullness\": 0.3 }",
+    };
+    for (int i = 0; i < 2; ++i) {
+        char path[1100], err[300];
+        snprintf(path, sizeof(path), "material_test_grass_%d.json", i);
+        FILE *f = fopen(path, "wb");
+        if (!f) continue;
+        fputs(BAD[i], f);
+        fclose(f);
+        GrassProfile p;
+        CHECK(!grass_profile_load(path, &p, err, sizeof(err)), "a grass profile with %s was read", i == 0 ? "keys missing" : "too many segments");
+        remove(path);
+    }
+}
+
 int main(int argc, char **argv) {
     const char *assets = argc > 1 ? argv[1] : "assets";
     test_json();
@@ -307,6 +340,7 @@ int main(int argc, char **argv) {
     test_models(assets);
     test_adverts(assets);
     test_interiors(assets);
+    test_grass(assets);
     if (g_failures) { printf("%d failures\n", g_failures); return 1; }
     printf("material_test: ok\n");
     return 0;

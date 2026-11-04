@@ -21,6 +21,7 @@ layout(std140, set = 0, binding = 4) uniform GrassFrame {
     vec4  view;      // x the radius (m), y f_y: pixels per unit of height over distance, zw unused
     uvec4 cap;       // each bucket's room (instances)
     uvec4 base;      // each bucket's first instance
+    ivec4 seg;       // each bucket's segments (the most any species asks: grass_bucket_segments)
     GrassLevel lv[TERRAIN_CLIP_LEVELS];
 } gf;
 
