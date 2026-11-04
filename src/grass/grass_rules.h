@@ -216,5 +216,20 @@
 #define GRASS_DEBUG_LOD        5            /* blades by bucket; the land by a meadow root's bucket there */
 #define GRASS_DEBUG_CULL       6            /* blades by patch; the land by its patch's state */
 #define GRASS_DEBUG_WIND       7            /* blades and land by the wind's strength (shaders/grass/wind.glsl) */
+#define GRASS_DEBUG_WAKE       8            /* blades and land by the player's wake (shaders/grass/wake.glsl) */
+
+/* The player's wake (GR8; src/grass/grass_wake.c keeps the trail, shaders/grass/wake.glsl
+ * bends the blades by it, FrameUBO.wake carries it). The trail is the feet now and the
+ * points laid behind them, GRASS_WAKE_STEP apart; a blade within GRASS_WAKE_RADIUS of the
+ * path bends away from it by (1 - r^2)^2 and recovers as a damped spring released when the
+ * feet passed, e^(-l a) (cos w a + l / w sin w a) at age a (spec 9.1-9.2). */
+#define GRASS_WAKE_POINTS      32           /* the feet and 31 laid points, newest first */
+#define GRASS_WAKE_STEP        0.8          /* m between laid points (a chord on a walking turn is 3 cm off the arc) */
+#define GRASS_WAKE_RADIUS      0.6          /* m from the path: past it a blade is untouched */
+#define GRASS_WAKE_DAMP        0.9          /* 1/s: the recovery's damping (1% left after about 5 s) */
+#define GRASS_WAKE_OMEGA       2.0          /* rad/s: its spring (it swings back past upright by about a quarter at 1.6 s) */
+#define GRASS_WAKE_LIFE        6.0          /* s: a laid point fades out over the last 1.5 s of this, then goes */
+#define GRASS_WAKE_BEND        0.85         /* the tip's push at the path, a share of the height, at interaction 1 */
+#define GRASS_WAKE_JUMP        5.0          /* m: feet this far from the newest point start a new trail (a teleport, a landing) */
 
 #endif

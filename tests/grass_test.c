@@ -11,7 +11,10 @@
  * in, and clumps that run on across a patch's side. Then the pattern: no
  * peak in the roots' spectrum at their grid's, the patches' or the clumps'
  * frequencies (a visible grid would make one); clumps whose roots' heights
- * differ from one clump to the next, a lawn's less than a meadow's.
+ * differ from one clump to the next, a lawn's less than a meadow's. Then the
+ * player's wake (grass_wake.c): blades beside a walk are pushed and recover,
+ * none past its reach, nothing jumps from one frame to the next while the
+ * ring laps itself, and a teleport starts a new trail.
  *
  * grass_test --gpu evaluates the rules in shaders/grass/rules.glsl on the GPU
  * (rules_test.comp) over random cases and compares every answer with C's;
@@ -20,6 +23,7 @@
  * density over the land (see density_map). --earth <bake> names the Earth
  * bake to load (the test bake by default). */
 #include "grass.h"
+#include "grass_wake.h"
 #include "terrain_internal.h"
 #include "plan.h"
 #include "hash.h"
@@ -1101,6 +1105,137 @@ static int gpu_prepare_check(int validation) {
     return g_failures != 0;
 }
 
+/* --- the player's wake ---------------------------------------------------------------- */
+
+static float wake_len(const float v[2]) { return sqrtf(v[0] * v[0] + v[1] * v[1]); }
+
+/* Walks (speed m/s, turning at turn rad/s) for secs at 60 frames a second from the origin along +x, then
+ * stands still for rest s, and watches probe roots. From one frame to the next a probe's push may grow or
+ * shrink by no more than the feet's step over the falloff's steepest slope allows, plus the spring's own
+ * pace (jump: the worst excess); a probe more than a metre from the feet, where the path is laid points
+ * alone (the ring's laps, the ranks' and ages' fades), may move by the spring's pace alone (farJump). Near
+ * the feet the push turns as they pass a root, as a passing foot's does. */
+typedef struct WakeRun { float most[64], last[64], jump, farJump, laps; double end[3]; int n; } WakeRun;
+static void wake_walk(float speed, float turn, float secs, float rest, const float (*probe)[3], int nProbe, WakeRun *out) {
+    GrassWake w;
+    grass_wake_reset(&w);
+    memset(out, 0, sizeof(*out));
+    const double dt = 1.0 / 60.0;
+    double feet[3] = { 0.0, 0.0, 0.0 }, yaw = 0.0, cam[3];
+    float prev[64][2] = { { 0 } }, prevLen[64] = { 0 };
+    int lays = 0, lastHead = -1;
+    for (int f = 0; f * dt < secs + rest; ++f) {
+        double t = f * dt;
+        if (t < secs) {
+            feet[0] += cos(yaw) * speed * dt; feet[2] += sin(yaw) * speed * dt;
+            yaw += turn * dt;
+        }
+        grass_wake_step(&w, feet, true, t);
+        if (w.head != lastHead) { lays++; lastHead = w.head; }
+        cam[0] = feet[0] + 3.0; cam[1] = feet[1] + 1.7; cam[2] = feet[2] - 2.0;   /* camera-relative, as the game */
+        GrassWakeFrame fr;
+        grass_wake_frame(&w, cam, t, &fr);
+        /* the steepest the falloff moves a root as the feet pass, a frame's step, and the spring's own pace */
+        const float SPRING = 0.03f;   /* the recovery's steepest (about 1.6 a second), a frame's */
+        float allow = 1.54f * (float)(speed * dt / GRASS_WAKE_RADIUS) + SPRING;
+        for (int i = 0; i < nProbe; ++i) {
+            float rel[3] = { (float)(probe[i][0] - cam[0]), (float)(probe[i][1] - cam[1]), (float)(probe[i][2] - cam[2]) };
+            float v[2];
+            grass_wake_push(&fr, rel, 0.5f, v);
+            float l = wake_len(v);
+            if (l > out->most[i]) out->most[i] = l;
+            if (f > 0) {
+                float d = sqrtf((v[0] - prev[i][0]) * (v[0] - prev[i][0]) + (v[1] - prev[i][1]) * (v[1] - prev[i][1]));
+                double fx = probe[i][0] - feet[0], fz = probe[i][2] - feet[2];
+                if (fx * fx + fz * fz > 1.0 && d - SPRING > out->farJump) out->farJump = d - SPRING;
+                if (fabsf(l - prevLen[i]) - allow > out->jump) out->jump = fabsf(l - prevLen[i]) - allow;
+            }
+            prev[i][0] = v[0]; prev[i][1] = v[1]; prevLen[i] = l;
+            out->last[i] = l;
+        }
+    }
+    out->laps = (float)lays / GRASS_WAKE_LAID;
+    memcpy(out->end, feet, sizeof(out->end));
+    out->n = nProbe;
+}
+
+static void test_wake(void) {
+    /* the recovery: 1 at once, back past upright by about a quarter, 1% left by 5 s */
+    float lowest = 1.0f;
+    for (float a = 0.0f; a < 6.0f; a += 0.01f) lowest = fminf(lowest, grass_wake_recover(a, 0.5f));
+    CHECK(fabsf(grass_wake_recover(0.0f, 0.5f) - 1.0f) < 1e-6f, "wake: recovery at 0 is %g, not 1", grass_wake_recover(0.0f, 0.5f));
+    CHECK(lowest > -0.3f && lowest < -0.15f, "wake: the swing back past upright is %g (about -0.24)", lowest);
+    CHECK(fabsf(grass_wake_recover(5.0f, 0.0f)) < 0.02f && fabsf(grass_wake_recover(5.0f, 1.0f)) < 0.02f, "wake: recovery at 5 s %g, %g", grass_wake_recover(5.0f, 0.0f), grass_wake_recover(5.0f, 1.0f));
+
+    /* a straight walk, 20 s at 1.9 m/s: probes beside it at 0.1 m, 0.3 m, 0.55 m (pushed) and 0.65 m (not),
+     * at 5 m, 20 m and 36 m along; and one where the walk ends */
+    static const float probes[][3] = {
+        { 5.0f, 0.0f, 0.1f }, { 5.0f, 0.0f, 0.3f }, { 5.0f, 0.0f, 0.55f }, { 5.0f, 0.0f, 0.65f },
+        { 20.0f, 0.0f, -0.2f }, { 36.0f, 0.0f, 0.2f }, { 38.0f, 0.0f, 0.1f },
+        { 5.0f, 2.0f, 0.1f },    /* 2 m above the feet: a bank higher than the body */
+    };
+    WakeRun r;
+    wake_walk(1.9f, 0.0f, 20.0f, 0.0f, probes, 8, &r);
+    printf("wake: walk 1.9 m/s 20 s (%.1f laps of the ring): most push at 0.1/0.3/0.55/0.65 m %.2f %.2f %.2f %.2f; now at 5, 20, 36, 38 m %.3f %.3f %.3f %.3f; worst jump past the slope's %.4f, a metre off the feet %.4f\n",
+           r.laps, r.most[0], r.most[1], r.most[2], r.most[3], r.last[0], r.last[4], r.last[5], r.last[6], r.jump, r.farJump);
+    CHECK(r.most[0] > 0.9f && r.most[1] > 0.5f && r.most[2] > 0.02f && r.most[2] < 0.3f, "wake: beside the path pushed %g %g %g", r.most[0], r.most[1], r.most[2]);
+    CHECK(r.most[3] == 0.0f, "wake: 0.65 m off the path pushed %g", r.most[3]);
+    CHECK(r.most[7] == 0.0f, "wake: a root 2 m over the feet pushed %g", r.most[7]);
+    CHECK(r.last[0] < 0.01f, "wake: 5 m back (17 s ago) still pushed %g", r.last[0]);
+    CHECK(r.last[6] > 0.5f, "wake: under the feet pushed only %g", r.last[6]);
+    CHECK(r.jump <= 0.0f, "wake: a push jumped %g more than the feet's step allows", r.jump);
+    CHECK(r.farJump <= 0.0f, "wake: a metre off the feet, a push jumped %g more than the spring allows", r.farJump);
+
+    /* sprinting in a circle (5.4 m/s, 0.6 rad/s: 9 m across) for 40 s, the ring lapping itself 10 times over,
+     * then standing 8 s: probes on the circle and inside and outside it */
+    float ring[16][3];
+    for (int i = 0; i < 16; ++i) {
+        double a = i * 0.4, R = 5.4 / 0.6, rr = R + (i % 4 - 1.5) * 0.25;   /* about the centre (0, R) */
+        ring[i][0] = (float)(rr * sin(a)); ring[i][1] = 0.0f; ring[i][2] = (float)(R - rr * cos(a));
+    }
+    wake_walk(5.4f, 0.6f, 40.0f, 8.0f, ring, 16, &r);
+    float mostAny = 0.0f, lastAny = 0.0f;
+    for (int i = 0; i < 16; ++i) {
+        mostAny = fmaxf(mostAny, r.most[i]);
+        double fx = ring[i][0] - r.end[0], fz = ring[i][2] - r.end[2];
+        if (fx * fx + fz * fz > 1.0) lastAny = fmaxf(lastAny, r.last[i]);   /* not where the feet stand */
+    }
+    printf("wake: a sprinting circle 40 s (%.1f laps of the ring): most push %.2f, 8 s after stopping %.4f, worst jump past the slope's %.4f, a metre off the feet %.4f\n",
+           r.laps, mostAny, lastAny, r.jump, r.farJump);
+    CHECK(r.laps > 5.0f, "wake: the ring lapped only %g times", r.laps);
+    CHECK(mostAny > 0.9f, "wake: the circle pushed at most %g", mostAny);
+    CHECK(r.jump <= 0.0f, "wake: lapping the ring, a push jumped %g more than the feet's step allows", r.jump);
+    CHECK(r.farJump <= 0.0f, "wake: lapping the ring, a metre off the feet, a push jumped %g more than the spring allows", r.farJump);
+    CHECK(lastAny < 0.01f, "wake: 8 s after stopping, a probe off the feet still pushed %g", lastAny);
+
+    /* a teleport starts again; flying keeps the trail without its head; fading points go before the ring drops them */
+    GrassWake w;
+    grass_wake_reset(&w);
+    double feet[3] = { 0, 0, 0 }, cam[3] = { 0, 0, 0 };
+    for (int f = 0; f < 120; ++f) { feet[0] = f * 0.05; grass_wake_step(&w, feet, true, f / 60.0); }
+    int before = w.count;
+    feet[0] += 50.0;
+    grass_wake_step(&w, feet, true, 2.0);
+    CHECK(before > 5 && w.count == 1, "wake: a 50 m teleport left %d of %d points", w.count, before);
+    GrassWakeFrame fr;
+    grass_wake_step(&w, feet, false, 2.1);
+    grass_wake_frame(&w, cam, 2.1, &fr);
+    CHECK(fr.n == 1 && fr.p[0][3] > 0.09f, "wake: flying, the frame has %d points, the first %g s old", fr.n, fr.n ? fr.p[0][3] : -1.0f);
+    grass_wake_step(&w, feet, false, 2.0 + GRASS_WAKE_LIFE + 0.01);
+    grass_wake_frame(&w, cam, 2.0 + GRASS_WAKE_LIFE + 0.01, &fr);
+    CHECK(w.count == 0 && fr.n == 0, "wake: after its life the trail holds %d, the frame %d", w.count, fr.n);
+    grass_wake_reset(&w);
+    float worstDropped = 0.0f;
+    for (int f = 0; f < 600; ++f) {
+        feet[0] = f * 0.09;   /* 5.4 m/s */
+        int had = w.count, head = w.head;
+        grass_wake_frame(&w, cam, f / 60.0, &fr);
+        grass_wake_step(&w, feet, true, f / 60.0 + 1.0 / 60.0);
+        if (had == GRASS_WAKE_LAID && w.head != head) worstDropped = fmaxf(worstDropped, fr.w[fr.n - 1]);   /* the oldest, as it goes */
+    }
+    CHECK(worstDropped < 1e-3f, "wake: a point the ring dropped still weighed %g", worstDropped);
+}
+
 int main(int argc, char **argv) {
     /* the species' profiles, from the source tree (assets/grass) */
     if (grass_profiles_load_assets(NEONCITY_ASSETS) != GRASS_SPECIES) {
@@ -1141,6 +1276,7 @@ int main(int argc, char **argv) {
     test_real();
     test_determinism();
     test_pattern();
+    test_wake();
     printf(g_failures ? "grass_test: %d failure(s)\n" : "grass_test: all passed\n", g_failures);
     return g_failures != 0;
 }

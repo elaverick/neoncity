@@ -2,6 +2,7 @@
 #define GRASS_DEBUG_GLSL
 #include "grass/lod.glsl"
 #include "grass/wind.glsl"
+#include "grass/wake.glsl"
 
 /* --grass-debug (spec 11.1): the grass's rules painted on the land, unlit,
  * before any blade exists (terrain.frag). FrameUBO.grass.z picks the view:
@@ -108,6 +109,9 @@ vec3 grassDebug(int mode, vec3 rel, vec3 n, float urban, Cover cover, bool onRoa
 
     if (mode == GRASS_DEBUG_WIND)
         return 0.5 * grassWindColour(grassWindAt(rel.xz).strength) * (suit > 0.0 ? 1.0 : 0.3);
+
+    if (mode == GRASS_DEBUG_WAKE)
+        return 0.5 * grassWakeColour(length(grassWakeAt(rel, 0.5))) * (suit > 0.0 ? 1.0 : 0.3);
 
     if (mode == GRASS_DEBUG_DENSITY) {
         float d = grassExpected(s) / GRASS_DEBUG_DENSE;

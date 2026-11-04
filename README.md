@@ -57,9 +57,9 @@ procedural look.
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
-Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
+Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
 `--noshadows` runs without ray-traced shadows (and without the
-ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull|wind` paints the grass's rules on the land (or its levels of detail, culling and wind), `--nograss` draws no grass blades, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
+ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull|wind|wake` paints the grass's rules on the land (or its levels of detail, culling, wind and the player's wake), `--nograss` draws no grass blades, `--nowake` leaves the grass unparted where the player walks, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
 
@@ -924,6 +924,22 @@ chooses, makes and draws the land's blades; the CPU does no per-blade work and n
   On the land it is as wet as the ground under the cloud; in the city as the streets, but dry where something stands
   over it (the shelter map). The park's ground darkens with the rain too. Colour varies by clump (its tint) and by the
   land's 1.6 km dry or lush hue and patches at the root, as the ground does.
+- **The player's wake** (GR8, spec 9; `src/grass/grass_wake.c`, `shaders/grass/wake.glsl`). The grass parts where the
+  player walks and closes up behind. The CPU keeps the path the feet took: the feet themselves (while on foot, not
+  flying) and a point laid every 0.8 m walked, 31 in a ring, each with the real time it was laid (the shaders' clock
+  may be held; the trail's isn't). Each frame the path goes to the GPU in the frame's uniforms, camera-relative, with
+  each point's age and weight and the box it reaches. A blade whose root is within 0.6 m of the path bends away from
+  its nearest point by (1 - r²)², up to 0.85 of its height times the species' `interaction` (meadow and rough 1,
+  reeds 0.6, lawn 0.4), added to the wind's push through the same control points (the two held to 0.95 of the height,
+  and the length kept, so a trodden blade lies over rather than stretching). It recovers from the moment the feet
+  passed as a damped spring, e^(-0.9 a) (cos ω a + 0.9/ω sin ω a), ω 2 rad/s tuned ±15% by the blade's phase so a
+  strip doesn't spring back in step: it swings about a quarter back past upright at 1.6 s and is within 1% by 5 s.
+  The segments' pushes are summed and held to the largest's size, so a bend or crossing in the path doesn't push a
+  blade twice. Only roots inside the path's box evaluate it; the legs reach roots up to 1.2 m below the feet and a
+  bank up to 1.8 m above them. Nothing pops: a point is laid where the feet are, a point fades out over its last ranks
+  in the ring (counted on smoothly from the feet) and its last 1.5 s of life before it is dropped, and feet more than
+  5 m from the newest point (a teleport, landing from flight) start a new trail. `--grass-debug wake` colours the
+  blades and the land by the push (blue none, orange to white pushed flat).
 - The counters come back a frame slot late and the `--shot` log prints them: patches in range, in view and with
   grass; roots evaluated and kept; blades drawn per bucket, and those refused; triangles; and each land species'
   effective blades/m² over the ground it was evaluated on. `--grass-debug lod` colours the blades by

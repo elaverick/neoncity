@@ -8,6 +8,7 @@
 #include "grass/instance.glsl"
 #include "terrain/macro.glsl"
 #include "grass/wind.glsl"
+#include "grass/wake.glsl"
 #include "grass/patch_light.glsl"
 
 /* A grass blade (docs/procedural_grass_rendering_implementation.md 5.2-5.5;
@@ -60,7 +61,15 @@
  * from the shelter map (the city round the camera from above, the scene
  * set's binding 4): what stands over the root, and how high what stands
  * upwind of it rises for its distance. The land is open. A city blade's draw
- * chunk goes to the fragment shader, for its chunk's lights. */
+ * chunk goes to the fragment shader, for its chunk's lights.
+ *
+ * The player's wake (GR8, spec 9; grass/wake.glsl): where the feet have
+ * passed, a blade is pushed away from the path, up to GRASS_WAKE_BEND of its
+ * height times its species' interaction, and springs back over a few
+ * seconds. The push adds to the wind's (the wind still moves a trodden
+ * blade), the two held to GRASS_PUSH_MOST of the height together, and goes
+ * through the same control points and length scale, so a pushed blade lies
+ * over rather than stretching. */
 
 layout(push_constant) uniform Bucket { uint base; int lod; int segs; } pc;
 
@@ -88,6 +97,7 @@ const float GRASS_WIND_MOST = 0.9;    // the most, a share of the height
 const float GRASS_SWAY = 0.3;         // a blade's own sway, a share of its push
 const float GRASS_SWAY_HZ = 0.9;      // for a 0.5 m blade of stiffness 1
 const vec2  GRASS_SWAY_PX = vec2(4.0, 12.0);   // the sway fades in over these heights on screen (px)
+const float GRASS_PUSH_MOST = 0.95;   // the wind's and the wake's pushes together, at most, a share of the height
 const float GRASS_SHELTER = 0.8;      // the most of the wind cover and a lee take away
 const vec2  GRASS_THIN_PX = vec2(4.0, 12.0);   // a blade's own light (its face, the light through it, its sheen: blade.frag) fades in over these heights on screen (px)
 
@@ -177,6 +187,16 @@ void main() {
     vec3 D = vec3(wd.dir.x, 0.0, wd.dir.y);
     D -= n * dot(D, n);
     D *= H * min(GRASS_WIND_BEND * (wd.strength + 0.15) * (1.0 + sway) / stiff, GRASS_WIND_MOST) / max(length(D), 1e-4);
+    // the player's wake, along the ground's plane too
+    vec2 wk = grassWakeAt(b.p, b.phase);
+    float wkl = length(wk);
+    if (wkl > 1e-4) {
+        vec3 E = vec3(wk.x, 0.0, wk.y);
+        E -= n * dot(E, n);
+        D += E * (H * float(GRASS_WAKE_BEND) * frame.grassSpecies[k].tip.w * wkl / max(length(E), 1e-4));
+        float dl = length(D);
+        if (dl > GRASS_PUSH_MOST * H) D *= GRASS_PUSH_MOST * H / dl;
+    }
     q1 += D * 0.08;
     q2 += D * 0.45;
     q3 += D;
@@ -220,7 +240,7 @@ void main() {
     vN = N;
     vGround = n;
     float px = length(b.p) * 2.0 * length(frame.rayBasis[1].xyz) * frame.screen.w;   // ground.glsl landPoint's
-    vWind = wd.strength;
+    vWind = int(frame.grass.z + 0.5) == GRASS_DEBUG_WAKE ? wkl : wd.strength;   // --grass-debug wind or wake
     vChunk = city ? instChunk[slot] : GRASS_CHUNK_NONE;
     if (city && vChunk != GRASS_CHUNK_NONE) {
         // the park's own worn patches (city/ground.glsl: its grass's broad tone), by the city's world position (city.frag gWorld)

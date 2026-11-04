@@ -27,6 +27,10 @@ typedef struct FrameUBO {
     float   grass[4];      /* the camera's x, z in its grass patch (m), the --grass-debug view (GRASS_DEBUG_*), unused (renderer.c) */
     int32_t grassPatch[4]; /* the camera's grass patch: world x, z over GRASS_PATCH_M, rounded down; unused, unused (renderer.c) */
     GrassSpeciesGPU grassSpecies[GRASS_SPECIES];   /* the species' profiles (src/grass/grass_species.h; renderer.c) */
+    float   wake[GRASS_WAKE_POINTS][4];       /* the player's wake through the grass, newest first: camera-relative x, y, z, age (s) (src/grass/grass_wake.h: src/app/main.c) */
+    float   wakeW[GRASS_WAKE_POINTS / 4][4];  /* each point's weight, four to a vector */
+    float   wakeBox[4];    /* camera-relative min x, min z, max x, max z the wake reaches */
+    float   wakeInfo[4];   /* how many points, unused, unused, unused */
 } FrameUBO;
 
 typedef struct Renderer Renderer;

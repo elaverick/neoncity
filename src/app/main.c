@@ -16,6 +16,7 @@
 #include "frames.h"
 #include "lobby_doors.h"
 #include "grass_rules.h"
+#include "grass_wake.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -77,24 +78,26 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--lockdoors] [--nograss] [--grass-cap N] [--grass-debug VIEW] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug VIEW] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
            "  --cam   start position (world metres, in the city's frame); a HEIGHT starts in fly mode at that altitude\n"
            "  --walk  hold W for this many seconds before a --shot\n"
            "  --turn  and turn this fast while walking (degrees a second, + to the right)\n"
+           "  --walk-shot  take the --shot as the walk ends, not once streaming settles again (to catch the grass's wake)\n"
            "  --rain  fix the rain intensity (0 dry, 0.1 drizzle .. 1 downpour); otherwise it drifts\n"
            "  --time  hold the shaders' clock at this many seconds (flames, signs, steam: for captures)\n"
            "  --impostors  draw this share (default 0.4; 0 turns them off) of the office towers' floors behind curtain\n"
            "               walls and ribbon windows as baked interior impostors (docs/interior-impostors.md; F8 toggles)\n"
            "  --lockdoors  lock every lobby's automatic doors: sliding ones stay shut, revolving ones stand still\n"
            "  --nograss  draw no grass blades\n"
+           "  --nowake  the grass doesn't part where the player walks\n"
            "  --grass-cap  give each of the grass's levels of detail room for at most N blades (the far ones give way)\n"
            "  --grass-debug  paint the grass's rules on the land, unlit: suit (suitability), density (blades per m^2 and\n"
            "                 the kept roots), species, clump; or colour the blades and the land by level of detail (lod)\n"
            "                 or by patch, the land by what the grass's culling made of its patch (cull); or both by\n"
-           "                 the wind's strength (wind)\n"
+           "                 the wind's strength (wind), or by the player's wake through the grass (wake)\n"
            "  --shot  wait for streaming to settle, save a screenshot and exit\n");
 }
 
@@ -107,6 +110,8 @@ typedef struct Options {
     bool        haveCam, camFly;
     double      cam[5];          /* x, z, yaw, pitch (degrees), height (world Y; with camFly, else walking) */
     float       walkSeconds, turnRate, fixedRain;   /* turnRate: degrees a second while walking */
+    bool        walkShot;        /* --walk-shot: the shot as the walk ends */
+    bool        noWake;          /* --nowake: no wake through the grass */
     double      fixedTime;       /* the shaders' clock held here (< 0: running) */
     float       impostors;       /* the share of eligible office floors drawn as impostors (0: none) */
     int         grassDebug;      /* --grass-debug: GRASS_DEBUG_* (src/grass/grass_rules.h) */
@@ -126,15 +131,17 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--nograss") == 0) o->noGrass = true;
         else if (strcmp(argv[i], "--grass-cap") == 0 && i + 1 < argc) o->grassCap = (uint32_t)strtoul(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--grass-debug") == 0 && i + 1 < argc) {
-            static const char *const VIEWS[] = { "suit", "density", "species", "clump", "lod", "cull", "wind" };   /* GRASS_DEBUG_SUIT on */
+            static const char *const VIEWS[] = { "suit", "density", "species", "clump", "lod", "cull", "wind", "wake" };   /* GRASS_DEBUG_SUIT on */
             const char *v = argv[++i];
-            for (int k = 0; k < 7; ++k) if (strcmp(v, VIEWS[k]) == 0) o->grassDebug = GRASS_DEBUG_SUIT + k;
+            for (int k = 0; k < (int)(sizeof(VIEWS) / sizeof(VIEWS[0])); ++k) if (strcmp(v, VIEWS[k]) == 0) o->grassDebug = GRASS_DEBUG_SUIT + k;
             if (o->grassDebug == GRASS_DEBUG_OFF) return false;
         }
         else if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) o->shotPath = argv[++i];
         else if (strcmp(argv[i], "--city") == 0 && i + 1 < argc) o->city = argv[++i];
         else if (strcmp(argv[i], "--walk") == 0 && i + 1 < argc) o->walkSeconds = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--turn") == 0 && i + 1 < argc) o->turnRate = (float)atof(argv[++i]);
+        else if (strcmp(argv[i], "--walk-shot") == 0) o->walkShot = true;
+        else if (strcmp(argv[i], "--nowake") == 0) o->noWake = true;
         else if (strcmp(argv[i], "--rain") == 0 && i + 1 < argc) o->fixedRain = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--time") == 0 && i + 1 < argc) o->fixedTime = atof(argv[++i]);
         else if (strcmp(argv[i], "--impostors") == 0) {
@@ -223,7 +230,7 @@ typedef struct Capture {
     const char *path;
     float       walkSeconds, turnRate;
     int         settledFrames, framesAfterWalk;
-    bool        walkStarted, shotTaken;
+    bool        walkStarted, shotTaken, atWalkEnd;   /* atWalkEnd: shoot as the walk ends (--walk-shot) */
     /* during the walk: in-view chunks near enough to miss (ChunkStats.inViewMissing), summed over frames, and the most */
     long        missingSum;
     int         missingFrames, missingMost;
@@ -254,7 +261,7 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
      * their pool is full, so after 900 frames they are let off; the proxies
      * and the terrain still have to be ready (bar a last timeout). */
     if (c->shotTaken) glfwSetWindowShouldClose(win, GLFW_TRUE);
-    else if (c->walkSeconds <= 0.0f && (c->settledFrames > 60 || (c->framesAfterWalk > 900 && distant) || c->framesAfterWalk > 20000)) {
+    else if (c->walkSeconds <= 0.0f && ((c->atWalkEnd && c->walkStarted) || c->settledFrames > 60 || (c->framesAfterWalk > 900 && distant) || c->framesAfterWalk > 20000)) {
         renderer_request_screenshot(renderer, c->path);
         c->shotTaken = true;
         printf("frame time %.2f ms (avg), drawn chunks %d, draws %d, resident %d, pool %d/%d pages\n",
@@ -344,6 +351,17 @@ static void frame_ubo(const Player *player, const VkCore *vk, double t, const We
     moon_dir(player, ubo->moon);
 }
 
+/* The player's wake for the grass's blades (shaders/grass/wake.glsl), in real
+ * time: the shaders' clock may be held (--time), the trail's ages never are. */
+static void wake_ubo(const GrassWake *wake, const double cam[3], double now, FrameUBO *ubo) {
+    GrassWakeFrame f;
+    grass_wake_frame(wake, cam, now, &f);
+    memcpy(ubo->wake, f.p, sizeof(ubo->wake));
+    for (int i = 0; i < GRASS_WAKE_POINTS; ++i) ubo->wakeW[i / 4][i % 4] = f.w[i];
+    memcpy(ubo->wakeBox, f.box, sizeof(ubo->wakeBox));
+    ubo->wakeInfo[0] = (float)f.n;
+}
+
 /* Where the chunks hand over to their proxies (edgeFog in shaders/common.glsl):
  * the view distance, or the chunk pool's reach while that is nearer, eased at
  * EDGE_SPEED so the band doesn't jump when the reach does. */
@@ -400,8 +418,10 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
     int frames = 0, shotCount = 0;
     uint64_t totalFrames = 0;
     float emaDt = 0.0f, edge = 0.0f;
-    Capture cap = { .path = opt->shotPath, .walkSeconds = opt->walkSeconds, .turnRate = opt->turnRate };
+    Capture cap = { .path = opt->shotPath, .walkSeconds = opt->walkSeconds, .turnRate = opt->turnRate, .atWalkEnd = opt->walkShot };
     Weather weather = { 0.0f, -1.0f };
+    GrassWake wake;   /* the player's path through the grass (src/grass/grass_wake.h) */
+    grass_wake_reset(&wake);
     while (!glfwWindowShouldClose(win)) {
         glfwPollEvents();
         double now = glfwGetTime();
@@ -413,6 +433,7 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
         PlayerInput in = read_input(win, player, opt->shotPath != NULL);
         capture_walk(&cap, &in, dt, totalFrames);
         player_update(player, &in, dt);
+        if (!opt->noWake) grass_wake_step(&wake, player->feet, !player->fly, now - startTime);
         double shaderTime = opt->fixedTime >= 0.0 ? opt->fixedTime : now - startTime;
         lobby_doors_update(player, shaderTime, dt);
         double t0 = glfwGetTime();
@@ -435,6 +456,7 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
         uint32_t keys[DOOR_SLOTS];
         ubo.doorInfo[0] = (uint32_t)lobby_doors_frame(keys, ubo.doorState);
         for (uint32_t k = 0; k < ubo.doorInfo[0]; ++k) ubo.doorKey[k / 4][k % 4] = keys[k];
+        wake_ubo(&wake, player->eye, now - startTime, &ubo);
         bool resized = g_resized;
         g_resized = false;
         renderer_frame(renderer, &ubo, player->eye, resized);

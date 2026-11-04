@@ -4,6 +4,7 @@
 #include "terrain/ground.glsl"
 #include "grass_rules.h"
 #include "grass/wind.glsl"
+#include "grass/wake.glsl"
 
 /* Grass blades (blade.vert). Coloured by the species' profile
  * (frame.grassSpecies: assets/grass/<name>.json): root to tip, and towards
@@ -172,6 +173,8 @@ void main() {
         col = (0.15 + 0.6 * vec3(hfloat(h), hfloat(hash_u32(h)), hfloat(hash_u32(h + 7u)))) * (0.4 + 0.6 * vT);
     } else if (view == GRASS_DEBUG_WIND) {
         col = grassWindColour(vWind) * (0.5 + 0.5 * vT);
+    } else if (view == GRASS_DEBUG_WAKE) {
+        col = grassWakeColour(vWind) * (0.5 + 0.5 * vT);
     } else {
         GrassSpecies sp = frame.grassSpecies[k];
         float up = pow(clamp(vT, 0.0, 1.0), 0.7);

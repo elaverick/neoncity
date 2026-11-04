@@ -92,6 +92,10 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 grass;      // xy the camera's place in its grass patch (m, 0 .. GRASS_PATCH_M), z the --grass-debug view (grass/debug.glsl), w 1 where the blades are drawn (else the ground stands for them: grass/field.glsl)
     ivec4 grassPatch;   // xy the camera's grass patch (src/grass/grass_rules.h: world x, z over GRASS_PATCH_M, rounded down)
     GrassSpecies grassSpecies[GRASS_SPECIES];   // the species' profiles (grass/rules.glsl reads them)
+    vec4 wake[GRASS_WAKE_POINTS];      // the player's wake, newest first: camera-relative xyz, w age (s) (grass/wake.glsl; src/grass/grass_wake.h)
+    vec4 wakeW[GRASS_WAKE_POINTS / 4]; // each point's weight, four to a vector
+    vec4 wakeBox;    // camera-relative min x, min z, max x, max z the wake reaches
+    vec4 wakeInfo;   // x how many points
 } frame;
 
 struct ChunkGPU {
