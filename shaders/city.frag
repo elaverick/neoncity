@@ -135,6 +135,11 @@ void main() {
         col = neonColor(vParams.y) * 6.0 * chase;
     }
 
+    if (mat <= MAT_LOT && int(frame.grass.z + 0.5) == GRASS_DEBUG_ALBEDO) {   // --grass-debug albedo: the ground unhazed
+        outColor = vec4(col, 1.0);
+        outRefl = vec4(0.0);
+        return;
+    }
     float dist = length(vRel);
     float fog = fogAmount(vRel, dist);
     outColor = vec4(mix(col, hazeColor(vRel / max(dist, 1e-4)), fog), 1.0);

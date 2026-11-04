@@ -24,8 +24,11 @@
  *    and the rules' inputs, so a patch where nothing may grow (the city, rock,
  *    snow, steep) or a species can't is dropped before its roots.
  * B: each candidate root of each species there (grass_rules.h): skipped if
- *    even its tallest is too small on screen for the bucket it could be in;
- *    else the ground under it (grass/surface.glsl), the road near it, and the
+ *    even its tallest is too small on screen for the bucket it could be in,
+ *    or if its species' and keeping's draws already lose to the most the
+ *    patch's bounds allow; the rest are queued (grass/prepare_common.glsl),
+ *    and taken off the queue a workgroup's worth at a time for the dear part:
+ *    the ground under it (grass/surface.glsl), the road near it, and the
  *    rules (grass/rules.glsl, grass_keep). A kept root's level of detail
  *    (grass/lod.glsl) comes from its height's size on screen at its
  *    distance: its bucket, how many of its blades are drawn and how much
@@ -145,16 +148,14 @@ void main() {
         if (!GRASS_PRESENT(k) || !((k == GRASS_MEADOW ? meadowMost : reedsMost) > 0.0)) continue;
         int n = GRASS_GRID(k), total = n * n, rounds = (total + GRASS_WG - 1) / GRASS_WG;
         float hk = rootTallest(k), tk = grassTypical(k, 1.0);
-        if (tid == 0u) atomicAdd(sCand, uint(total));
-        for (int r = 0; r < rounds; ++r) {
+        float wMost = k == GRASS_MEADOW ? meadowMost : reedsMost;
+        if (tid == 0u) { atomicAdd(sCand, uint(total)); sQn = 0u; }
+        barrier();
+        for (int r = 0; r <= rounds; ++r) {
+            // B, cheaply: this round's candidates that may be drawn and kept go on the queue
+            // (the evaluated count, the area the blades/m2 is over, is of those not too small)
             int idx = r * GRASS_WG + int(tid);
-            int tier = -1;
-            uint nb = 0u;
-            GrassLod lod;
-            float endK = 1.0;
-            GrassRoot root;
-            GrassGround gg;
-            if (idx < total) {
+            if (r < rounds && idx < total) {
                 ivec2 cell = ivec2(idx % n, idx / n);
                 bool sub = ((cell.x | cell.y) & 1) == 0;   // the clump bucket's roots
                 GrassCandidate cand = grassCandidate(k, gpatch, cell);
@@ -164,7 +165,29 @@ void main() {
                     float dLo = max(length(vec3(rel.x, dy, rel.y)), 1e-3);
                     maybe = grassEnd(tk, dLo, fy, gf.view.x) > 0.0 && (sub || hk * fy / dLo >= float(GRASS_LOD_MID_PX));
                 }
-                if (maybe && grassSurface(rel, gg)) {
+                if (maybe) {
+                    atomicAdd(sEval, 1u);
+                    atomicAdd(sSpEval[ki], 1u);
+                    if (grassMayKeep(k, cand, wMost, suitMost)) sQ[atomicAdd(sQn, 1u)] = uint(idx);
+                }
+            }
+            barrier();
+            uint qn = sQn;
+            uint take = qn >= uint(GRASS_WG) || r == rounds ? min(qn, uint(GRASS_WG)) : 0u;
+            if (take == 0u) { barrier(); continue; }   // (uniform: every invocation read the same qn)
+            int tier = -1;
+            uint nb = 0u;
+            GrassLod lod;
+            float endK = 1.0;
+            GrassRoot root;
+            GrassGround gg;
+            if (tid < take) {
+                int qi = int(sQ[qn - take + tid]);
+                ivec2 cell = ivec2(qi % n, qi / n);
+                bool sub = ((cell.x | cell.y) & 1) == 0;
+                GrassCandidate cand = grassCandidate(k, gpatch, cell);
+                vec2 rel = corner + cand.p;
+                if (grassSurface(rel, gg)) {
                     GrassSite s;
                     s.grass = gg.ca.z; s.mud = gg.cb.x; s.snow = gg.cb.y; s.wet = gg.cb.z;
                     s.ny = gg.n.y; s.urban = gg.urban; s.maintained = 0.0; s.city = 0;
@@ -173,8 +196,6 @@ void main() {
                         RoadHit h;
                         if (roadNear(rel, h)) s.road = roadPaved(h, 0.0) ? -1.0 : abs(h.off) - h.hw;
                     }
-                    atomicAdd(sEval, 1u);
-                    atomicAdd(sSpEval[ki], 1u);
                     if (grassKeep(cand, s, root)) {
                         atomicAdd(sSpBlades[ki], uint(root.blades));
                         float dist = length(planetBend(rel, gg.h));
@@ -215,6 +236,9 @@ void main() {
                     inst[gf.base[tier] + at + bi] = o;
                 }
             }
+            barrier();   // every invocation has read its entry and qn
+            if (tid == 0u) sQn = qn - take;
+            barrier();
         }
     }
     barrier();

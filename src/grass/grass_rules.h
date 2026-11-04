@@ -217,6 +217,8 @@
 #define GRASS_DEBUG_CULL       6            /* blades by patch; the land by its patch's state */
 #define GRASS_DEBUG_WIND       7            /* blades and land by the wind's strength (shaders/grass/wind.glsl) */
 #define GRASS_DEBUG_WAKE       8            /* blades and land by the player's wake (shaders/grass/wake.glsl) */
+#define GRASS_DEBUG_ALBEDO     9            /* blades, the land and the city's ground by their albedo, unlit and unhazed (GR9) */
+#define GRASS_DEBUG_ALBEDO_GAIN 6.0         /* that view's albedo x this (the grass's is about 0.04) */
 
 /* The player's wake (GR8; src/grass/grass_wake.c keeps the trail, shaders/grass/wake.glsl
  * bends the blades by it, FrameUBO.wake carries it). The trail is the feet now and the

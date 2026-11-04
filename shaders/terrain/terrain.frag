@@ -28,7 +28,7 @@ void main() {
     // the pixel's width across and along the road, in uniform control flow
     float px = max(fwidth(road.off), 1e-3), pxs = max(fwidth(road.s), 1e-3);
     int grassView = int(frame.grass.z + 0.5);
-    if (grassView != GRASS_DEBUG_OFF) {   // --grass-debug: the grass's rules, unlit
+    if (grassView != GRASS_DEBUG_OFF && grassView != GRASS_DEBUG_ALBEDO) {   // --grass-debug: the grass's rules, unlit
         outColor = vec4(grassDebug(grassView, vRel, n, vUrban, cover, onRoad, road, l.px), 1.0);
         outRefl = vec4(0.0);
         return;
@@ -38,6 +38,11 @@ void main() {
     bool paved = onRoad && roadPaved(road, px);
     float beyond = !onRoad ? float(GRASS_ROAD_FAR) : paved ? -1.0 : abs(road.off) - road.hw;   // for the grass's field
     vec3 land = groundAlbedo(vRel, l, vUrban, cover, !paved, beyond, nLand, w);
+    if (grassView == GRASS_DEBUG_ALBEDO) {   // --grass-debug albedo: the ground's (the grass's field in it), unlit; the asphalt dark grey
+        outColor = vec4((paved ? vec3(0.03) : land) * float(GRASS_DEBUG_ALBEDO_GAIN), 1.0);
+        outRefl = vec4(0.0);
+        return;
+    }
     // lit, then the wet ground's sheen over it (the road's, and the land's beside it)
     vec3 nS = nLand, col;
     float roughS = LAND_FILM_ROUGH, lamps = 0.0;

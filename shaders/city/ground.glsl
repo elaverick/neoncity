@@ -534,6 +534,8 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         rough = pow(rough * rough * rough * rough + kernel, 0.25);
     }
 
+    // --grass-debug albedo: the albedo, unlit (city.frag leaves it unhazed), as the blades show theirs
+    if (int(frame.grass.z + 0.5) == GRASS_DEBUG_ALBEDO) return alb * float(GRASS_DEBUG_ALBEDO_GAIN);
     vec3 diff = ambientLight(n, p.y - gBase) * ao;
     vec3 spec = vec3(0.0);
     cityLights(p, n, V, shin, specK, rough, diff, spec);

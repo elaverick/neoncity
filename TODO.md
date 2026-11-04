@@ -179,20 +179,33 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
 - **Ground cover and its materials** (the terrain textures roadmap, TX0-TX6, done: `src/terrain/terrain_cover.c`,
   `shaders/terrain/ground.glsl`, `assets/materials/land_*.json`; see the README). Left over:
-  - **Grass blades** are under way (the grass roadmap, GR0-GR9: rules, GPU path, curved blades, their levels of
-    detail, the wind, the city's grass and their light and wet so far, README "Grass"). They read the cover's grass weight and wetness for density and height, and stand
-    on `land_grass` (chosen as ground under blades, not a lawn). Since GR4 the land's grass at range is drawn in the
-    blades' field colour, darker than `land_grass`. Left from GR4:
+  - **Grass blades** are done (the grass roadmap, GR0-GR9, README "Grass"). They read the cover's grass weight and
+    wetness for density and height, and stand on `land_grass` (chosen as ground under blades, not a lawn). Since GR4
+    the land's grass at range is drawn in the blades' field colour, darker than `land_grass`. Left over:
+    - Not built (out of the roadmap's scope): weeds in cracks and derelict lots, flowers, ferns and shrubs (more
+      profiles in `assets/grass/` until they need geometry of their own), grass on roof gardens, grass in ray tracing
+      (M11: a hit on grassy ground should take the field colour), blades casting shadows, traffic in the wake (more
+      trails, or a spatial index), the player's legs (the wake is the path's centre line), ridge exposure in the wind.
+    - The draw is the larger cost and is bound by its vertices, not its shading (GR9: the meadow draws in the same
+      0.72 ms with the debug views' flat colour). Each of a blade's 2s + 1 vertices redoes its blade's setup (the
+      wind's noises, the wake, the curve's length); a mesh-shader or compute-expanded path would do it once a blade.
+      Not needed within the 1.5 ms budget.
+    - The candidate queue (GR9) costs a city park at walking height 0.02 ms, where almost every candidate passes
+      the cheap tests; it saves 0.04-0.12 ms everywhere else.
+    - `--grass-debug albedo` still has the cloud deck's haze over it (the composite draws it after the land).
     - At walking height the drawn blades were 2-16% brighter than the field model says, in the last 30-80 m. Since
       GR7's root shade (in the blades and the field alike) they are 2% darker to 5% brighter there, and from 40 m up
-      0-3.5%, with no step. The model still leaves out what is seen between blades at grazing angles.
+      0-3.5%, with no step. The model still leaves out what is seen between blades at grazing angles. Unlit
+      (`--grass-debug albedo`, GR9) the meadow at 1.7 m is 1.00-1.06 of its bare ground to the hand-off and 1.09-1.23
+      in the last rows at the horizon, where blades stand against the sky; from 40 m 1.03-1.04 throughout.
     - GR7: a blade's own light (its face to a light, the light through it, its sheen) shifts the near field's mean
       with the light's direction (a moonlit bank backlit is 4% under its bare ground). It fades out by 4 px, before
       the ground takes over. A land patch takes the freeway nearest its middle, so at a bridge's end the blades' lamp
       light can step at an 8 m patch side where the ground's changes per pixel.
     - Blades are hazed with urban 0, but the ground in the last 40 m before the city takes the city's haze. There are
       no instance bits left to carry urban.
-    - Lawn's clump blades lose 8% of their width to the 0.8 x height cap. It matters from GR6, when lawn is drawn.
+    - Lawn's clump blades lose 8% of their width to the 0.8 x height cap; the mown park's bands (GR6) show no step
+      from it.
   - **The picks are mine:** the seven ambientCG sets, each class's `albedo_scale` (chosen to keep the flat colours the
     land had, not the photos' relative albedos), the grass's park-lawn hue, and the wet and snow numbers in each file.
   - **Snow is cover, not weather:** static, on high or cold ground (TX1's rule). No snowfall, and rain over snow

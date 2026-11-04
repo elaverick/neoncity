@@ -78,7 +78,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug VIEW] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -131,7 +131,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--nograss") == 0) o->noGrass = true;
         else if (strcmp(argv[i], "--grass-cap") == 0 && i + 1 < argc) o->grassCap = (uint32_t)strtoul(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--grass-debug") == 0 && i + 1 < argc) {
-            static const char *const VIEWS[] = { "suit", "density", "species", "clump", "lod", "cull", "wind", "wake" };   /* GRASS_DEBUG_SUIT on */
+            static const char *const VIEWS[] = { "suit", "density", "species", "clump", "lod", "cull", "wind", "wake", "albedo" };   /* GRASS_DEBUG_SUIT on */
             const char *v = argv[++i];
             for (int k = 0; k < (int)(sizeof(VIEWS) / sizeof(VIEWS[0])); ++k) if (strcmp(v, VIEWS[k]) == 0) o->grassDebug = GRASS_DEBUG_SUIT + k;
             if (o->grassDebug == GRASS_DEBUG_OFF) return false;

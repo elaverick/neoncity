@@ -30,6 +30,32 @@ bool inView(vec3 mn, vec3 mx) {
     return true;
 }
 
+/* The candidates' queue (GR9). A round tests GRASS_WG candidates cheaply (their
+ * size on screen, and bounds on their species' and keeping draws), and those
+ * that may be kept go on the queue; once it holds GRASS_WG, or at the end, the
+ * workgroup takes GRASS_WG off its top and runs the dear part on them (the
+ * ground, the rules, the blades) with every invocation busy. Without it a far
+ * patch, where three roots in four are too small, ran each subgroup's dear
+ * part for its quarter. The kept roots are the same; only the order their
+ * blades are written in changes. At most 2 GRASS_WG - 1 wait. */
+shared uint sQ[2 * GRASS_WG];
+shared uint sQn;
+
+// a candidate's first two draws, as grassKeep makes them: its species' and its keeping's
+void grassFirstDraws(GrassCandidate c, out float uSpecies, out float uKeep) {
+    uint st = c.state;
+    uSpecies = grassDrawf(st);
+    uKeep = grassDrawf(st);
+}
+// Whether a candidate may yet be kept, against the most its species' weight
+// and its suitability can be over its patch (a little over, for the ground's
+// morph between the metre points the bounds come from).
+bool grassMayKeep(int k, GrassCandidate c, float wMost, float suitMost) {
+    float uSpecies, uKeep;
+    grassFirstDraws(c, uSpecies, uKeep);
+    return uSpecies < wMost + 0.02 && uKeep < (suitMost * 1.02 + 0.01) * grassDensityScale(k);
+}
+
 float rootTallest(int k) { return GRASS_HEIGHT_MAX(k) * (1.0 + GRASS_CLUMP_VAR(k)); }
 // the species' typical root on the best ground, for its end (grassEnd); 0 if it is left out
 float typicalMost(int k) { return GRASS_PRESENT(k) ? grassTypical(k, 1.0) : 0.0; }

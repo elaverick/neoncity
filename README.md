@@ -59,7 +59,7 @@ procedural look.
 
 Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
 `--noshadows` runs without ray-traced shadows (and without the
-ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull|wind|wake` paints the grass's rules on the land (or its levels of detail, culling, wind and the player's wake), `--nograss` draws no grass blades, `--nowake` leaves the grass unparted where the player walks, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
+ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo` paints the grass's rules on the land (or its levels of detail, culling, wind, the player's wake, or the blades' and ground's albedo unlit), `--nograss` draws no grass blades, `--nowake` leaves the grass unparted where the player walks, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
 
@@ -749,11 +749,11 @@ the terrain pass on dry ground near the camera and 0.25 ms on wet ground with pu
 Snow lies on each class as `1 - (1 - s)^soon`, s the cover's snow weight, so soft ground whitens before rock;
 against the ground's height, in soft ground's hollows first and on rock's and scree's tops.
 
-### Grass (`src/grass`, `shaders/grass`; in progress)
-Grass blades are being built to `docs/procedural_grass_rendering_implementation.md`. So far the rules, the GPU
-path, the blades, their levels of detail, the wind and the city's grass exist: the land's grass and the city's parks,
-fields and edge verge are drawn as curved, tapered blades in tufts that blow in the wind, thinning with distance into
-the ground's own colour with no front (proper light, the wet and the player's wake come next). The rules
+### Grass (`src/grass`, `shaders/grass`)
+Grass blades, built to `docs/procedural_grass_rendering_implementation.md` (the spec; the grass roadmap GR0-GR9). The
+land's grass and the city's parks, fields and edge verge are drawn as curved, tapered blades in tufts, made on the GPU
+every frame from world-fixed hashes. They blow in a shared wind, take the light and the rain as the ground under them
+does, part where the player walks, and thin with distance into the ground's own colour with no front. The rules
 say where grass grows, how thick, of which species, in which clumps and tufts. They are
 written twice, as pure C (`src/grass/grass.c`) and as GLSL (`shaders/grass/rules.glsl`). The two copies take the same
 float steps. Their shared constants are one header (`src/grass/grass_rules.h`), and each species' numbers are its
@@ -825,7 +825,13 @@ with the kept roots as dots; species; clumps.
 chooses, makes and draws the land's blades; the CPU does no per-blade work and never sees a count.
 - **Prepare** runs one workgroup per 8 m patch in a 52 x 52 square round the camera. A patch is dropped if it is beyond
   200 m, if every species there would already have given way to the ground (below), if it is out of view (its heights bounded from
-  its 9 x 9 metre points), or if nothing may grow anywhere in it. Then each candidate root is evaluated on the ground
+  its 9 x 9 metre points), or if nothing may grow anywhere in it. Each candidate root is first tested cheaply: whether
+  even its species' tallest would be big enough on screen, and whether its species' and keeping's draws could win
+  against the most the patch's bounds allow. Those that pass wait in a queue in shared memory, and the workgroup takes
+  128 at a time for the dear part, with every thread busy (GR9: before, a far patch, where three roots in four are too
+  small, ran each subgroup's dear part for its quarter; the mixed park's prepare fell from 0.30 to 0.18 ms, the bank's
+  from 0.26 to 0.18). The roots kept are the same; only the order their blades are written in changes. Then each
+  queued root is evaluated on the ground
   the terrain draws there: the clipmap's samples are read as `terrain.vert` reads them, with the morph into the parent
   level, and interpolated across the same triangle (`shaders/grass/surface.glsl`). The road near it comes from the
   road buffer (`terrain/road_lookup.glsl`).
@@ -945,12 +951,38 @@ chooses, makes and draws the land's blades; the CPU does no per-blade work and n
   effective blades/m² over the ground it was evaluated on. `--grass-debug lod` colours the blades by
   bucket (full red, mid yellow, clump blue) and the land by the bucket a typical meadow root would take, greying as
   the ground takes over. `--grass-debug
-  cull` colours the blades by patch and the land by its patch's state.
+  cull` colours the blades by patch and the land by its patch's state. `--grass-debug albedo` shows the blades, the
+  land and the city's ground by their albedo alone (x 6, unlit, unhazed, darkened by the rain as they are), so the
+  hand-off to the ground's field can be judged without the light.
 
-At walking height over the meadow it draws about 530k blades (2.9M triangles): prepare 0.22 ms and draw 0.60 ms on an
-RTX 4080 SUPER at 1600 x 900, against a 1.5 ms budget; the field costs the terrain pass 0.03-0.07 ms. In a rough park at
-walking height it draws about 270k blades (1.5M triangles): prepare 0.20 ms and draw 0.39 ms. The log gives the meadow there as 118 blades/m², its 150 times
-the cover's suitability. `grass_test --gpu` also runs prepare and finish headless on a made-up clipmap. With every
+**Cost** (GR9; RTX 4080 SUPER, 1600 x 900, MSAA x4; each pass the best of four interleaved 64-frame averages, `--rain 0
+--time 0`). The budget is 1.5 ms of grass in the worst view, 0.25 ms of it prepare. The worst view is the meadow at walking
+height, at 0.91 ms.
+
+| View | Blades full / mid / clump | Triangles | Prepare ms | Draw ms | Grass ms |
+|---|---|---|---|---|---|
+| meadow (land, 1.7 m) | 127k / 272k / 130k | 2.90M | 0.19 | 0.72 | 0.91 |
+| meadow40 (40 m up) | 0 / 235k / 140k | 1.60M | 0.16 | 0.40 | 0.56 |
+| slope (15 degrees) | 110k / 266k / 118k | 2.68M | 0.18 | 0.63 | 0.81 |
+| bank (meadow and reeds) | 75k / 135k / 47k | 1.50M | 0.18 | 0.38 | 0.56 |
+| freeway (its lit verge) | 0 / 75k / 66k | 0.58M | 0.14 | 0.14 | 0.28 |
+| over (150 m up) | 0 / 0 / 58k | 0.18M | 0.06 | 0.04 | 0.10 |
+| overfw (150 m up) | 0 / 0 / 1k | 0.00M | 0.07 | 0.00 | 0.07 |
+| park (rough, 1.7 m) | 63k / 169k / 34k | 1.52M | 0.18 | 0.49 | 0.67 |
+| park40 | 0 / 82k / 47k | 0.55M | 0.15 | 0.20 | 0.35 |
+| field | 63k / 143k / 20k | 1.35M | 0.17 | 0.37 | 0.54 |
+| lawn (a mown park) | 13k / 50k / 25k | 0.45M | 0.21 | 0.10 | 0.31 |
+| mixed (lawn and rough) | 42k / 115k / 25k | 1.03M | 0.18 | 0.31 | 0.49 |
+| edge (a park's edge by the lamps) | 37k / 1k / 0 | 0.34M | 0.15 | 0.17 | 0.32 |
+| verge | 12k / 2k / 0 | 0.13M | 0.09 | 0.05 | 0.14 |
+
+The blades cast no shadows and aren't in the depth prepass, so there is no grass shadow pass. The prepass, the shadow
+rays and the shadow filter take the same time with `--nograss`, to within ±0.06 ms with no consistent sign. The draw is
+bound by its vertices and rasterising, not by its shading: the meadow draws in 0.73 ms with `--grass-debug lod`'s flat
+colour. In the city the light loop adds about 0.06 ms. A mesh shader would set each blade up once rather than once a
+vertex, but the vertex path fits the budget, so there is none. The 32-byte instances (17 MB a frame in the meadow) cost
+about 0.05 ms of memory traffic, so they are left as they are. The log gives the meadow as 118 blades/m², its 150 times the
+cover's suitability. `grass_test --gpu` also runs prepare and finish headless on a made-up clipmap. With every
 root evaluated and every blade written, its blade counts equal C's `grass_keep` exactly over 4,096 m² for meadow, reeds
 and mud, a slope and thin snow, with none on the city's ground or steep ground. The blades stand on the ground and inside
 their patches. With too little room, the second frame keeps exactly the blades nearer than the distance set, within 90% of

@@ -24,7 +24,12 @@
  *            view dark blue, bare dark red, no root kept olive, drawn green;
  *            the patches' outlines drawn;
  *   wind     the wind's strength (grass/wind.glsl), blue still to red a full
- *            gust, dimmed where nothing grows (the blades show it too).
+ *            gust, dimmed where nothing grows (the blades show it too);
+ *   wake     the player's wake (grass/wake.glsl), blue none to white flat;
+ *   albedo   not here: terrain.frag paints the ground's own albedo (the
+ *            field's where the blades give way), unlit and unhazed, and the
+ *            blades and the city's ground theirs, so the hand-off can be
+ *            judged without the light.
  * The ground's site is the pixel's, also for the roots near it: close enough
  * for a picture. */
 

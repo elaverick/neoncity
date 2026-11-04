@@ -30,7 +30,8 @@
  *   variant, blade_rt.frag). The ambient, the signs' bounce and the city's
  *   haze as the ground's.
  * --grass-debug lod colours them by bucket (full red, mid yellow, clump
- * blue), cull by patch, wind by the wind's strength at the root; F10's
+ * blue), cull by patch, wind by the wind's strength at the root, albedo
+ * by the albedo alone (as the ground's, to check the hand-off unlit); F10's
  * shadow view, a city blade's light alone. Two-sided. Nothing for the
  * reflections. */
 
@@ -186,6 +187,12 @@ void main() {
         vec3 albedo = mix(lush, dry, dryness) * (1.0 + 0.3 * vTint) * vVary;
         float t = clamp(vT, 0.0, 1.0);
         albedo *= 1.0 - sp.light.x * (1.0 - t) * (1.0 - t);   // darker into the tuft (grass.c grass_field's too)
+        if (view == GRASS_DEBUG_ALBEDO) {   // unlit, unhazed, darkened by the rain as below (the ground's view alike)
+            float wetA = city ? frame.weather.y * (1.0 - vLight.z) : landSky(vRel).wet;
+            outColor = vec4(albedo * landDarken(2, wetA) * float(GRASS_DEBUG_ALBEDO_GAIN), 1.0);
+            outRefl = vec4(0.0);
+            return;
+        }
         vec3 N = normalize(vN);
         float face = 0.8 + 0.2 * max(dot(N, vGround), 0.0);
         gN = N; gNg = vGround; gV = -normalize(vRel);
