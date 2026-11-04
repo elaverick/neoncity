@@ -77,7 +77,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--lockdoors] [--grass-debug VIEW] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--lockdoors] [--nograss] [--grass-cap N] [--grass-debug VIEW] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -89,14 +89,18 @@ static void usage(void) {
            "  --impostors  draw this share (default 0.4; 0 turns them off) of the office towers' floors behind curtain\n"
            "               walls and ribbon windows as baked interior impostors (docs/interior-impostors.md; F8 toggles)\n"
            "  --lockdoors  lock every lobby's automatic doors: sliding ones stay shut, revolving ones stand still\n"
+           "  --nograss  draw no grass blades\n"
+           "  --grass-cap  give each of the grass's levels of detail room for at most N blades (the far ones give way)\n"
            "  --grass-debug  paint the grass's rules on the land, unlit: suit (suitability), density (blades per m^2 and\n"
-           "                 the kept roots), species, clump\n"
+           "                 the kept roots), species, clump; or colour the blades and the land by level of detail (lod)\n"
+           "                 or by patch, the land by what the grass's culling made of its patch (cull)\n"
            "  --shot  wait for streaming to settle, save a screenshot and exit\n");
 }
 
 /* Command-line options. */
 typedef struct Options {
-    bool        validation, shadows, shadowDebug, lockDoors;
+    bool        validation, shadows, shadowDebug, lockDoors, noGrass;
+    uint32_t    grassCap;        /* --grass-cap: each level of detail's room (0: its own) */
     const char *shotPath;
     const char *city;            /* --city: a name's beginning, or a number */
     bool        haveCam, camFly;
@@ -118,10 +122,12 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--noshadows") == 0) o->shadows = false;
         else if (strcmp(argv[i], "--shadowdebug") == 0) o->shadowDebug = true;
         else if (strcmp(argv[i], "--lockdoors") == 0) o->lockDoors = true;
+        else if (strcmp(argv[i], "--nograss") == 0) o->noGrass = true;
+        else if (strcmp(argv[i], "--grass-cap") == 0 && i + 1 < argc) o->grassCap = (uint32_t)strtoul(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--grass-debug") == 0 && i + 1 < argc) {
-            static const char *const VIEWS[] = { "suit", "density", "species", "clump" };   /* GRASS_DEBUG_SUIT on */
+            static const char *const VIEWS[] = { "suit", "density", "species", "clump", "lod", "cull" };   /* GRASS_DEBUG_SUIT on */
             const char *v = argv[++i];
-            for (int k = 0; k < 4; ++k) if (strcmp(v, VIEWS[k]) == 0) o->grassDebug = GRASS_DEBUG_SUIT + k;
+            for (int k = 0; k < 6; ++k) if (strcmp(v, VIEWS[k]) == 0) o->grassDebug = GRASS_DEBUG_SUIT + k;
             if (o->grassDebug == GRASS_DEBUG_OFF) return false;
         }
         else if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) o->shotPath = argv[++i];
@@ -264,6 +270,8 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
         renderer_terrain_stats(renderer, gpu, sizeof(gpu));
         printf("%s\n", gpu);
         renderer_proxy_stats(renderer, gpu, sizeof(gpu));
+        printf("%s\n", gpu);
+        renderer_grass_stats(renderer, gpu, sizeof(gpu));
         printf("%s\n", gpu);
         layouts_stats(gpu, sizeof(gpu));
         printf("%s\n", gpu);
@@ -474,6 +482,8 @@ int main(int argc, char **argv) {
     Renderer *renderer = renderer_create(&vk, chunks);
     renderer_set_shadow_debug(renderer, opt.shadowDebug);
     renderer_set_grass_debug(renderer, opt.grassDebug);
+    renderer_set_grass(renderer, !opt.noGrass);
+    renderer_set_grass_cap(renderer, opt.grassCap);
     renderer_set_impostors(renderer, opt.impostors);
     lobby_doors_lock_all(opt.lockDoors);
 

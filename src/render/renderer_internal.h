@@ -58,11 +58,13 @@ typedef struct PlanetPush {
 typedef struct PlanetGpu PlanetGpu;
 typedef struct ProxyGpu ProxyGpu;
 typedef struct RoadGpu RoadGpu;
+typedef struct GrassGpu GrassGpu;
 /* GPU timestamps between the frame's passes (renderer_gpu_times). The scene
  * pass is stamped inside: the city (GT_CITY), plants (GT_PLANTS) and proxies
- * (GT_SCENE), the terrain (GT_TERRAIN), then the sky and the resolve (GT_SKY). */
-enum { GT_START = 0, GT_STREAM, GT_TERRAIN_UPLOAD, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_CITY, GT_PLANTS, GT_SCENE, GT_TERRAIN, GT_SKY,
-       GT_CLOUDS, GT_FLAMES, GT_POST, GT_COUNT };   /* GT_CLOUDS: the reflections and the clouds; GT_FLAMES: the smoke and flame pass */
+ * (GT_SCENE), the terrain (GT_TERRAIN), the grass (GT_GRASS), then the sky
+ * and the resolve (GT_SKY). GT_GRASS_PREP: the grass's compute passes. */
+enum { GT_START = 0, GT_STREAM, GT_TERRAIN_UPLOAD, GT_GRASS_PREP, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_CITY, GT_PLANTS, GT_SCENE,
+       GT_TERRAIN, GT_GRASS, GT_SKY, GT_CLOUDS, GT_FLAMES, GT_POST, GT_COUNT };   /* GT_CLOUDS: the reflections and the clouds; GT_FLAMES: the smoke and flame pass */
 struct Renderer {
     VkCore      *vk;
     ChunkSystem *chunks;
@@ -108,6 +110,7 @@ struct Renderer {
     PlanetGpu   *planet;    /* planet_gpu.c; the clipmap's descriptor set layout */
     VkPipelineLayout      planetPL;
     VkPipeline            planetPipe;
+    GrassGpu    *grass;     /* grass_gpu.c */
     ProxyGpu    *proxies;   /* proxy_gpu.c */
     VkDescriptorSetLayout proxyLayout;
     VkPipelineLayout      proxyPL;
@@ -150,6 +153,22 @@ struct Renderer {
 void timestamp(Renderer *r, VkCommandBuffer cmd, int slot, int which);
 
 /* renderer_pipelines.c */
+typedef struct GfxDesc {
+    const uint32_t *vs; size_t vsBytes;
+    const uint32_t *fs; size_t fsBytes;
+    VkPipelineLayout layout;
+    VkFormat colorFormat;
+    VkFormat depthFormat;
+    VkSampleCountFlagBits samples;
+    bool vertexInput, depthTest, depthWrite, cull;
+    bool blend;   /* out = src.rgb + dst.rgb * src.a (premultiplied transmittance) */
+    /* colorFormat UNDEFINED: depth only */
+    bool additive;           /* out = src.rgb + dst.rgb */
+    VkFormat colorFormat2;   /* a second colour attachment (UNDEFINED: none), written unblended */
+    bool positionOnly;       /* the vertex shader reads only the position attribute */
+    bool noColor;            /* writes no colour */
+} GfxDesc;
+VkPipeline make_graphics(VkCore *vk, const GfxDesc *d);
 VkDescriptorSetLayout make_set_layout(VkCore *vk, const VkDescriptorSetLayoutBinding *b, uint32_t n);
 VkPipelineLayout make_pipeline_layout(VkCore *vk, VkDescriptorSetLayout set, uint32_t pushSize, VkShaderStageFlags pushStages);
 void write_as_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkAccelerationStructureKHR as);
@@ -192,6 +211,22 @@ void terrain_gpu_ahead(Renderer *r, const struct TerrainFrame *f, const double c
 void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
 /* The coarsest drawn level's window, world x0, z0, x1, z1; 0 if none is drawn. */
 int  terrain_gpu_window(Renderer *r, double win[4]);
+/* For the grass, which stands on the ground drawn: the samples' buffer, a
+ * frame slot's descriptor set (its binding 10 is the grass's), and this
+ * frame's drawn levels (after terrain_gpu_update): the finest drawn, or
+ * TERRAIN_CLIP_LEVELS if none is, each level from it on as pushed. */
+VkBuffer        terrain_gpu_samples(Renderer *r, VkDeviceSize *size);
+VkDescriptorSet terrain_gpu_set(Renderer *r, int slot);
+int             terrain_gpu_levels(Renderer *r, const TerrainPush **push);
+
+/* grass_gpu.c. Prepare (after the terrain's and the roads' updates, outside
+ * any rendering) runs the compute passes that choose and write this frame's
+ * blades and their draws; draw records them into the scene pass after the
+ * terrain. Off where the GPU's subgroups can't do the sums. */
+void grass_gpu_create(Renderer *r);
+void grass_gpu_destroy(Renderer *r);
+void grass_gpu_prepare(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *viewProj);
+void grass_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
 
 /* road_gpu.c. Update (each frame, before the scene pass) moves the window of
  * roads round the camera when it has strayed and writes the frame slot's. */

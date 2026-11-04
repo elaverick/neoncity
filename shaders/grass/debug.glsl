@@ -13,10 +13,21 @@
  *   clump    the clumps of the species with the most of the ground: a colour
  *            each, darker towards their borders, bare spots dark red; dim
  *            where nothing grows.
+ *   lod      the bucket a meadow root of typical height (GRASS_DEBUG_TYPICAL)
+ *            would go in at the pixel's distance: full red, mid yellow, clump
+ *            blue, none grey (the blades take their own bucket's colour);
+ *   cull     each patch's state in the grass's prepare pass this frame
+ *            (GRASS_PATCH_*): out of range or too small dark grey, out of
+ *            view dark blue, bare dark red, no root kept olive, drawn green;
+ *            the patches' outlines drawn.
  * The ground's site is the pixel's, also for the roots near it: close enough
  * for a picture. */
 
+// The prepare pass's patch states (src/render/grass_gpu.c), the square round the camera's patch.
+layout(std430, set = 0, binding = 10) readonly buffer GrassPatches { uint grassPatchState[]; };
+
 const float GRASS_DEBUG_DENSE = 250.0;
+const float GRASS_DEBUG_TYPICAL = 0.5;
 const vec3  GRASS_DEBUG_COLOUR[GRASS_SPECIES] = vec3[](vec3(0.10, 0.55, 0.08), vec3(0.05, 0.45, 0.55), vec3(0.60, 0.65, 0.10), vec3(0.35, 0.32, 0.08));
 
 // The grass patch and the point in it under camera-relative x, z: the camera's
@@ -73,6 +84,24 @@ vec3 grassDebug(int mode, vec3 rel, vec3 n, float urban, Cover cover, bool onRoa
 
     if (mode == GRASS_DEBUG_SUIT)
         return suit <= 0.0 ? vec3(0.03) : mix(vec3(0.35, 0.03, 0.02), vec3(0.08, 0.50, 0.06), suit);
+
+    if (mode == GRASS_DEBUG_LOD) {   // f_y: pixels per unit of height over distance (rayBasis' up is tan(fovy / 2))
+        float fy = 0.5 * frame.screen.y / length(frame.rayBasis[1].xyz);
+        float hpx = GRASS_DEBUG_TYPICAL * fy / max(length(rel), 1e-3);
+        vec3 c = length(rel.xz) > float(GRASS_RADIUS) || hpx < float(GRASS_LOD_CLUMP_PX) ? vec3(0.03)
+               : hpx >= float(GRASS_LOD_FULL_PX) ? vec3(0.30, 0.04, 0.03) : hpx >= float(GRASS_LOD_MID_PX) ? vec3(0.30, 0.25, 0.02) : vec3(0.04, 0.10, 0.30);
+        return c * (suit > 0.0 ? 1.0 : 0.3);
+    }
+
+    if (mode == GRASS_DEBUG_CULL) {
+        ivec2 g = gpatch - frame.grassPatch.xy + ivec2(GRASS_PATCH_GRID / 2);
+        uint st = g.x < 0 || g.y < 0 || g.x >= GRASS_PATCH_GRID || g.y >= GRASS_PATCH_GRID ? GRASS_PATCH_OUT
+                : grassPatchState[g.y * GRASS_PATCH_GRID + g.x];
+        vec3 c = st == GRASS_PATCH_HIDDEN ? vec3(0.02, 0.03, 0.18) : st == GRASS_PATCH_BARE ? vec3(0.20, 0.02, 0.02)
+               : st == GRASS_PATCH_NONE ? vec3(0.18, 0.18, 0.03) : st == GRASS_PATCH_DRAWN ? vec3(0.04, 0.30, 0.04) : vec3(0.03);
+        vec2 e = min(local, float(GRASS_PATCH_M) - local);
+        return mix(c, vec3(0.5), clamp(1.0 - min(e.x, e.y) / max(px, 1e-3), 0.0, 1.0));
+    }
 
     if (mode == GRASS_DEBUG_DENSITY) {
         float d = grassExpected(s) / GRASS_DEBUG_DENSE;

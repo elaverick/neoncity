@@ -238,14 +238,15 @@ void create_layouts(Renderer *r) {
         { 6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* PlumeSet */
     };
     r->flameLayout = make_set_layout(vk, flame, 5);
-    VkDescriptorSetLayoutBinding terrain[5] = {
+    VkDescriptorSetLayoutBinding terrain[6] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },     /* clipmap samples */
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* roads (road_gpu.c; the clipmap's only) */
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' maps, as the scene set's */
         { 8, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' properties */
+        { 10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },  /* the grass's patch states (grass_gpu.c: --grass-debug cull; the clipmap's only) */
     };
-    r->terrainLayout = make_set_layout(vk, terrain, 5);
+    r->terrainLayout = make_set_layout(vk, terrain, 6);
     VkDescriptorSetLayoutBinding proxy[3] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* boxes */
@@ -346,23 +347,7 @@ void create_layouts(Renderer *r) {
 
 /* ---------------------------------------------------------- pipelines --- */
 
-typedef struct GfxDesc {
-    const uint32_t *vs; size_t vsBytes;
-    const uint32_t *fs; size_t fsBytes;
-    VkPipelineLayout layout;
-    VkFormat colorFormat;
-    VkFormat depthFormat;
-    VkSampleCountFlagBits samples;
-    bool vertexInput, depthTest, depthWrite, cull;
-    bool blend;   /* out = src.rgb + dst.rgb * src.a (premultiplied transmittance) */
-    /* colorFormat UNDEFINED: depth only */
-    bool additive;           /* out = src.rgb + dst.rgb */
-    VkFormat colorFormat2;   /* a second colour attachment (UNDEFINED: none), written unblended */
-    bool positionOnly;       /* the vertex shader reads only the position attribute */
-    bool noColor;            /* writes no colour */
-} GfxDesc;
-
-static VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
+VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
     VkShaderModule vs = vk_shader(vk, d->vs, d->vsBytes), fs = vk_shader(vk, d->fs, d->fsBytes);
     VkPipelineShaderStageCreateInfo st[2] = {
         { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_VERTEX_BIT, vs, "main", NULL },

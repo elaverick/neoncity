@@ -177,8 +177,11 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
 - **Ground cover and its materials** (the terrain textures roadmap, TX0-TX6, done: `src/terrain/terrain_cover.c`,
   `shaders/terrain/ground.glsl`, `assets/materials/land_*.json`; see the README). Left over:
-  - **Grass blades** are the next piece, separate: they read the cover's grass weight and wetness for density and
-    height, and stand on `land_grass` (chosen as ground under blades, not a lawn).
+  - **Grass blades** are under way (the grass roadmap, GR0-GR9: rules and GPU path so far, README "Grass"). They read
+    the cover's grass weight and wetness for density and height, and stand on `land_grass` (chosen as ground under
+    blades, not a lawn). As of GR2 the blades are straight stand-ins that stop dead at 200 m and pop between levels
+    of detail (GR3 curves them, GR4 blends the hand-offs into the ground), and the prepare pass takes 0.25-0.30 ms in
+    the meadow against its 0.25 ms budget (GR9).
   - **The picks are mine:** the seven ambientCG sets, each class's `albedo_scale` (chosen to keep the flat colours the
     land had, not the photos' relative albedos), the grass's park-lawn hue, and the wet and snow numbers in each file.
   - **Snow is cover, not weather:** static, on high or cold ground (TX1's rule). No snowfall, and rain over snow

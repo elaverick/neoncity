@@ -115,6 +115,59 @@
 #define GRASS_LOD_MID_PX       4.0
 #define GRASS_LOD_CLUMP_PX     1.5
 
+/* The GPU path (src/render/grass_gpu.c, shaders/grass/prepare.comp). Blades
+ * grow within GRASS_RADIUS of the camera, in a square of GRASS_PATCH_GRID
+ * patches a side round its patch (one workgroup each, GRASS_WG threads). Each
+ * kept root goes to a bucket by its level of detail (GRASS_LOD_*: by its
+ * height's size on screen at its distance, so turning doesn't change it):
+ * full, all its tuft's blades; mid, the first half of them; clump, its first
+ * blade, and only for roots in one cell in four (both cell indices even).
+ * Each bucket has GRASS_CAP_* instances of room, its own, so a far bucket
+ * never takes a near one's; past that its far blades give way: the finish
+ * pass counts the blades each bucket wanted by distance (GRASS_BINS bins of
+ * GRASS_BIN_M) and, once they overflow the room, sets the distance the next
+ * frame keeps them to so they fit in GRASS_CAP_FILL of it. */
+#define GRASS_RADIUS           200.0
+#define GRASS_PATCH_GRID       52           /* 2 * ceil(GRASS_RADIUS / GRASS_PATCH_M) + 2 */
+#define GRASS_WG               128
+#define GRASS_BUCKETS          3
+#define GRASS_LOD_FULL         0
+#define GRASS_LOD_MID          1
+#define GRASS_LOD_CLUMP        2
+#define GRASS_CAP_FULL         196608u      /* meadow at walking height wants about 120k */
+#define GRASS_CAP_MID          524288u
+#define GRASS_CAP_CLUMP        262144u
+#define GRASS_CAP_FILL         0.9
+#define GRASS_BINS             128
+#define GRASS_BIN_M            2.0          /* GRASS_BINS * GRASS_BIN_M >= GRASS_RADIUS + its height */
+#define GRASS_INSTANCE_WORDS   8            /* a blade instance: 32 bytes (shaders/grass/instance.glsl) */
+#define GRASS_BLADE_VERTS      6            /* GR2's stand-in: a flat strip, two triangles */
+/* GrassFrame.info.z: the prepare pass's modes (grass_test). */
+#define GRASS_MODE_ALL_IN_VIEW 1            /* no frustum test */
+#define GRASS_MODE_ALL_FULL    2            /* every root full, every blade: the count test */
+/* The counters (GrassCounters, src/render/grass_gpu.h), words: what grass_test and the
+ * --shot log read back, then the bins. */
+#define GRASS_C_PATCHES_RANGE  0            /* in range and big enough on screen */
+#define GRASS_C_PATCHES_VIEW   1            /* ...and in the view */
+#define GRASS_C_PATCHES_GRASS  2            /* ...where grass may grow */
+#define GRASS_C_CANDIDATES     3            /* candidate roots in those patches */
+#define GRASS_C_EVALUATED      4            /* ...whose rules were evaluated */
+#define GRASS_C_KEPT           5            /* ...kept, with a bucket */
+#define GRASS_C_WANT           6            /* + bucket: blades reserved (within the distance kept to) */
+#define GRASS_C_CUT            9            /* + bucket: blades past the distance kept to */
+#define GRASS_C_DRAWN          12           /* + bucket: instances drawn (finish) */
+#define GRASS_C_OVER           15           /* + bucket: reserved past the room (finish) */
+#define GRASS_C_KEEP_TO        18           /* + bucket: the distance the next frame keeps to (float bits, finish) */
+#define GRASS_C_STATS          24
+#define GRASS_C_HIST           32           /* + bucket * GRASS_BINS + bin: blades wanted by distance */
+#define GRASS_C_WORDS          (GRASS_C_HIST + GRASS_BUCKETS * GRASS_BINS)
+/* The patch states (--grass-debug cull). */
+#define GRASS_PATCH_OUT        0            /* out of range, or too small on screen */
+#define GRASS_PATCH_HIDDEN     1            /* out of view */
+#define GRASS_PATCH_BARE       2            /* nothing may grow there */
+#define GRASS_PATCH_NONE       3            /* evaluated, no root kept */
+#define GRASS_PATCH_DRAWN      4
+
 /* Hash salts. */
 #define GRASS_SALT_ROOT        0x6A55E1u
 #define GRASS_SALT_CLUMP       0x6C0B95u
@@ -127,5 +180,7 @@
 #define GRASS_DEBUG_DENSITY    2
 #define GRASS_DEBUG_SPECIES    3
 #define GRASS_DEBUG_CLUMP      4
+#define GRASS_DEBUG_LOD        5            /* blades by bucket; the land by a meadow root's bucket there */
+#define GRASS_DEBUG_CULL       6            /* blades by patch; the land by its patch's state */
 
 #endif

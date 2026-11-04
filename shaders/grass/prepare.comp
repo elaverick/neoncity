@@ -1,0 +1,227 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#include "common.glsl"
+#include "terrain/road_lookup.glsl"
+#include "grass/rules.glsl"
+#include "grass/surface.glsl"
+#define GRASS_INSTANCE_ACCESS writeonly
+#include "grass/instance.glsl"
+
+/* The grass's GPU path (src/render/grass_gpu.c), the land's grass: one
+ * workgroup per patch of the GRASS_PATCH_GRID square round the camera's.
+ *
+ * A: the patch is dropped if it lies beyond GRASS_RADIUS, if its tallest
+ *    possible root would be under GRASS_LOD_CLUMP_PX on screen at its nearest
+ *    point, or off the drawn ground; then its 9 x 9 metre points (every
+ *    vertex of the levels it can lie in) bound its heights, for the frustum,
+ *    and the rules' inputs, so a patch where nothing may grow (the city, rock,
+ *    snow, steep) or a species can't is dropped before its roots.
+ * B: each candidate root of each species there (grass_rules.h): skipped if
+ *    even its tallest is too small on screen for the bucket it could be in;
+ *    else the ground under it (grass/surface.glsl), the road near it, and the
+ *    rules (grass/rules.glsl, grass_keep). A kept root's bucket is chosen by
+ *    its height's size on screen at its distance; past the distance the last
+ *    frame's finish keeps its bucket to, its blades are counted and dropped.
+ * C: the blades of the roots kept: each subgroup reserves room in each bucket
+ *    with one atomic, and each root writes its tuft's blades (the bucket's
+ *    share of them) there, as far as the room goes.
+ * The blades each bucket wanted are counted by distance for finish.comp,
+ * which writes the draws (stage D). Nothing is kept from frame to frame but
+ * the distance kept to: the roots come from their hashes every frame. */
+
+layout(local_size_x = GRASS_WG) in;
+layout(std430, set = 0, binding = 6) buffer Counters { uint counters[]; };
+layout(std430, set = 0, binding = 9) readonly buffer KeepTo { float keepTo[]; };
+layout(std430, set = 0, binding = 10) writeonly buffer Patches { uint patchState[]; };
+
+shared uint sHist[GRASS_BUCKETS * GRASS_BINS];
+shared uint sHLo, sHHi, sFound;
+shared uint sBase, sSlope, sSnow, sUrban;           // each factor's most over the patch (float bits)
+shared uint sShareLo, sShareHi, sWetLo, sWetHi;      // the mud's share and the wet, least and most
+shared uint sCand, sEval, sKept, sCut[GRASS_BUCKETS];
+
+// Floats as uints in their order.
+uint fkey(float f) { uint u = floatBitsToUint(f); return (u & 0x80000000u) != 0u ? ~u : u | 0x80000000u; }
+float funkey(uint k) { return uintBitsToFloat((k & 0x80000000u) != 0u ? k & 0x7FFFFFFFu : ~k); }
+
+// The box against the view's four sides (frame.viewProj's rows; together they
+// also put it in front of the camera).
+bool inView(vec3 mn, vec3 mx) {
+    mat4 M = frame.viewProj;
+    vec4 r0 = vec4(M[0][0], M[1][0], M[2][0], M[3][0]), r1 = vec4(M[0][1], M[1][1], M[2][1], M[3][1]);
+    vec4 r3 = vec4(M[0][3], M[1][3], M[2][3], M[3][3]);
+    vec4 pl[4] = vec4[](r3 + r0, r3 - r0, r3 + r1, r3 - r1);
+    for (int i = 0; i < 4; ++i) {
+        vec3 p = mix(mn, mx, step(vec3(0.0), pl[i].xyz));
+        if (dot(pl[i].xyz, p) + pl[i].w < 0.0) return false;
+    }
+    return true;
+}
+
+float rootTallest(int k) { return GRASS_HEIGHT_MAX[k] * (1.0 + GRASS_CLUMP_VAR[k]); }
+float reedsWeight(float share, float wet) { return grassSat(float(GRASS_REEDS_MUD) * share + float(GRASS_REEDS_WET) * grassEase(GRASS_REEDS_WET0, GRASS_REEDS_WET1, wet)); }
+
+void main() {
+    uint tid = gl_LocalInvocationIndex;
+    const float S = float(GRASS_PATCH_M);
+    int P = gf.info.y;
+    ivec2 wg = ivec2(gl_WorkGroupID.xy);
+    ivec2 rp = wg - ivec2(P / 2);                      // patches from the camera's
+    ivec2 gpatch = frame.grassPatch.xy + rp;
+    uint pidx = uint(wg.y * P + wg.x);
+    vec2 corner = vec2(rp) * S - frame.grass.xy;       // camera-relative
+    bool allFull = (gf.info.z & GRASS_MODE_ALL_FULL) != 0;
+    float fy = gf.view.y;
+
+    // A: range and size on screen
+    float dNear = length(clamp(vec2(0.0), corner, corner + S));
+    float tallest = max(rootTallest(GRASS_MEADOW), rootTallest(GRASS_REEDS));
+    if (dNear > gf.view.x || gf.info.x >= TERRAIN_CLIP_LEVELS || (!allFull && tallest * fy < float(GRASS_LOD_CLUMP_PX) * dNear)) {
+        if (tid == 0u) patchState[pidx] = GRASS_PATCH_OUT;
+        return;
+    }
+    if (tid == 0u) {
+        sHLo = 0xFFFFFFFFu; sHHi = 0u; sFound = 0u;
+        sBase = sSlope = sSnow = sUrban = 0u;
+        sShareLo = sWetLo = floatBitsToUint(1.0); sShareHi = sWetHi = 0u;
+        sCand = sEval = sKept = 0u;
+        for (int b = 0; b < GRASS_BUCKETS; ++b) sCut[b] = 0u;
+    }
+    for (uint i = tid; i < uint(GRASS_BUCKETS * GRASS_BINS); i += uint(GRASS_WG)) sHist[i] = 0u;
+    barrier();
+
+    // A: the patch's heights and the rules' inputs at its metre points
+    for (uint i = tid; i < 81u; i += uint(GRASS_WG)) {
+        GrassGround g;
+        if (!grassSurface(corner + vec2(float(i % 9u), float(i / 9u)), g)) continue;
+        atomicOr(sFound, 1u);
+        atomicMin(sHLo, fkey(g.h));
+        atomicMax(sHHi, fkey(g.h));
+        float mud = g.cb.x;
+        atomicMax(sBase, floatBitsToUint(min(g.ca.z + float(GRASS_SUIT_MUD) * mud, 1.0)));
+        atomicMax(sSlope, floatBitsToUint(grassEase(GRASS_SLOPE_NONE, GRASS_SLOPE_FULL, g.n.y)));
+        atomicMax(sSnow, floatBitsToUint(1.0 - grassEase(GRASS_SNOW_FROM, GRASS_SNOW_NONE, g.cb.y)));
+        atomicMax(sUrban, floatBitsToUint(1.0 - grassEase(GRASS_URBAN_FROM, GRASS_URBAN_NONE, g.urban)));
+        float share = mud / max(g.ca.z + mud, 1e-4);
+        atomicMin(sShareLo, floatBitsToUint(share)); atomicMax(sShareHi, floatBitsToUint(share));
+        atomicMin(sWetLo, floatBitsToUint(g.cb.z));  atomicMax(sWetHi, floatBitsToUint(g.cb.z));
+    }
+    barrier();
+    if (sFound == 0u) {
+        if (tid == 0u) patchState[pidx] = GRASS_PATCH_OUT;
+        return;
+    }
+    float camY = frame.camPos.y;
+    float hLo = funkey(sHLo), hHi = funkey(sHHi);
+    if (tid == 0u) atomicAdd(counters[GRASS_C_PATCHES_RANGE], 1u);
+    // (the planet's bend drops the ground a few mm this near: the margin holds it)
+    vec3 mn = vec3(corner.x - 0.2, hLo - camY - 0.2, corner.y - 0.2);
+    vec3 mx = vec3(corner.x + S + 0.2, hHi - camY + 1.25 * tallest + 0.2, corner.y + S + 0.2);
+    if ((gf.info.z & GRASS_MODE_ALL_IN_VIEW) == 0 && !inView(mn, mx)) {
+        if (tid == 0u) patchState[pidx] = GRASS_PATCH_HIDDEN;
+        return;
+    }
+    if (tid == 0u) atomicAdd(counters[GRASS_C_PATCHES_VIEW], 1u);
+    float suitMost = uintBitsToFloat(sBase) * uintBitsToFloat(sSlope) * uintBitsToFloat(sSnow) * uintBitsToFloat(sUrban);
+    float reedsMost = reedsWeight(uintBitsToFloat(sShareHi), uintBitsToFloat(sWetHi));
+    float meadowMost = 1.0 - reedsWeight(uintBitsToFloat(sShareLo), uintBitsToFloat(sWetLo));
+    if (!(suitMost > 0.0)) {
+        if (tid == 0u) patchState[pidx] = GRASS_PATCH_BARE;
+        return;
+    }
+    if (tid == 0u) atomicAdd(counters[GRASS_C_PATCHES_GRASS], 1u);
+    // a road near enough to thin any root here (roadEdgeNear: from the patch's middle)
+    bool nearRoad = roadEdgeNear(corner + 0.5 * S) < 0.7072 * S + float(GRASS_ROAD_FULL) + 0.5;
+    // the camera's height off the patch's heights: the least it can be from a root
+    float dy = max(max(hLo - camY, camY - hHi), 0.0);
+
+    for (int ki = 0; ki < 2; ++ki) {
+        int k = ki == 0 ? GRASS_MEADOW : GRASS_REEDS;
+        if (!((k == GRASS_MEADOW ? meadowMost : reedsMost) > 0.0)) continue;
+        int n = GRASS_GRID[k], total = n * n, rounds = (total + GRASS_WG - 1) / GRASS_WG;
+        float hk = rootTallest(k);
+        if (tid == 0u) atomicAdd(sCand, uint(total));
+        for (int r = 0; r < rounds; ++r) {
+            int idx = r * GRASS_WG + int(tid);
+            int tier = -1;
+            uint nb = 0u;
+            GrassRoot root;
+            GrassGround gg;
+            if (idx < total) {
+                ivec2 cell = ivec2(idx % n, idx / n);
+                bool sub = ((cell.x | cell.y) & 1) == 0;   // the clump bucket's roots
+                GrassCandidate cand = grassCandidate(k, gpatch, cell);
+                vec2 rel = corner + cand.p;
+                bool maybe = true;
+                if (!allFull) {   // the most it could be on screen
+                    float px = hk * fy / max(length(vec3(rel.x, dy, rel.y)), 1e-3);
+                    maybe = px >= float(GRASS_LOD_CLUMP_PX) && (sub || px >= float(GRASS_LOD_MID_PX));
+                }
+                if (maybe && grassSurface(rel, gg)) {
+                    GrassSite s;
+                    s.grass = gg.ca.z; s.mud = gg.cb.x; s.snow = gg.cb.y; s.wet = gg.cb.z;
+                    s.ny = gg.n.y; s.urban = gg.urban; s.maintained = 0.0; s.city = 0;
+                    s.road = float(GRASS_ROAD_FAR);
+                    if (nearRoad) {
+                        RoadHit h;
+                        if (roadNear(rel, h)) s.road = roadPaved(h, 0.0) ? -1.0 : abs(h.off) - h.hw;
+                    }
+                    atomicAdd(sEval, 1u);
+                    if (grassKeep(cand, s, root)) {
+                        float dist = length(planetBend(rel, gg.h));
+                        float px = root.height * fy / max(dist, 1e-3);
+                        tier = allFull || px >= float(GRASS_LOD_FULL_PX) ? GRASS_LOD_FULL
+                             : px >= float(GRASS_LOD_MID_PX) ? GRASS_LOD_MID
+                             : px >= float(GRASS_LOD_CLUMP_PX) && sub ? GRASS_LOD_CLUMP : -1;
+                        if (tier >= 0) {
+                            nb = tier == GRASS_LOD_FULL ? uint(root.blades) : tier == GRASS_LOD_MID ? uint(root.blades + 1) / 2u : 1u;
+                            atomicAdd(sKept, 1u);
+                            atomicAdd(sHist[tier * GRASS_BINS + min(int(dist / float(GRASS_BIN_M)), GRASS_BINS - 1)], nb);
+                            if (dist >= keepTo[tier]) {   // past the distance kept to: counted, not drawn
+                                atomicAdd(sCut[tier], nb);
+                                nb = 0u;
+                                tier = -1;
+                            }
+                        }
+                    }
+                }
+            }
+            // C: room in each bucket, one atomic a subgroup
+            uint at = 0u;
+            for (int b = 0; b < GRASS_BUCKETS; ++b) {
+                uint c = tier == b ? nb : 0u;
+                uint pre = subgroupExclusiveAdd(c), tot = subgroupAdd(c);
+                uint got = 0u;
+                if (tot > 0u && subgroupElect()) got = atomicAdd(counters[GRASS_C_WANT + b], tot);
+                got = subgroupBroadcastFirst(got);
+                if (tier == b) at = got + pre;
+            }
+            if (tier >= 0) {
+                uint room = gf.cap[tier];
+                for (uint bi = 0u; bi < nb && at + bi < room; ++bi) {
+                    GrassBlade g = grassBlade(root, int(bi));
+                    vec2 off = g.p - root.at.p;
+                    // the ground's plane under the root, to the blade (within a tuft's width)
+                    float hb = gg.h - (gg.n.x * off.x + gg.n.z * off.y) / max(gg.n.y, 0.2);
+                    GrassInstance o;
+                    grassPack(planetBend(corner + g.p, hb), g.height, gg.n, g.facing, g.leanDir, g.width, g.lean, g.bend, g.phase,
+                              g.tint, k, tier, o);
+                    inst[gf.base[tier] + at + bi] = o;
+                }
+            }
+        }
+    }
+    barrier();
+    for (uint i = tid; i < uint(GRASS_BUCKETS * GRASS_BINS); i += uint(GRASS_WG))
+        if (sHist[i] != 0u) atomicAdd(counters[GRASS_C_HIST + i], sHist[i]);
+    if (tid == 0u) {
+        atomicAdd(counters[GRASS_C_CANDIDATES], sCand);
+        atomicAdd(counters[GRASS_C_EVALUATED], sEval);
+        atomicAdd(counters[GRASS_C_KEPT], sKept);
+        for (int b = 0; b < GRASS_BUCKETS; ++b) if (sCut[b] != 0u) atomicAdd(counters[GRASS_C_CUT + b], sCut[b]);
+        patchState[pidx] = sKept > 0u ? GRASS_PATCH_DRAWN : GRASS_PATCH_NONE;
+    }
+}

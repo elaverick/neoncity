@@ -174,7 +174,7 @@ void planet_gpu_create(Renderer *r) {
 
     VkDescriptorPoolSize sizes[3] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * MAX_FRAMES },   /* the layout's binding 10 too (the grass's patches: the clipmap's only) */
         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };

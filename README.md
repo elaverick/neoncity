@@ -59,7 +59,7 @@ procedural look.
 
 Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
 `--noshadows` runs without ray-traced shadows (and without the
-ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump` paints the grass's rules on the land, `--impostors [SHARE]` draws that
+ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull` paints the grass's rules on the land (or its levels of detail and culling), `--nograss` draws no grass blades, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
 
@@ -750,8 +750,9 @@ Snow lies on each class as `1 - (1 - s)^soon`, s the cover's snow weight, so sof
 against the ground's height, in soft ground's hollows first and on rock's and scree's tops.
 
 ### Grass (`src/grass`, `shaders/grass`; in progress)
-Grass blades are being built to `docs/procedural_grass_rendering_implementation.md`. So far the rules exist, with no
-blades drawn yet. The rules say where grass grows, how thick, of which species, in which clumps and tufts. They are
+Grass blades are being built to `docs/procedural_grass_rendering_implementation.md`. So far the rules and the GPU
+path exist, and the land's grass is drawn with stand-in blades (straight strips; curved blades come next). The rules
+say where grass grows, how thick, of which species, in which clumps and tufts. They are
 written twice, as pure C (`src/grass/grass.c`) and as GLSL (`shaders/grass/rules.glsl`). The two copies take the same
 float steps, and their constants are one header (`src/grass/grass_rules.h`).
 - **Identity.** The world is cut into 8 m patches in the terrain's frame, never the camera's. Each species cuts a patch
@@ -786,6 +787,36 @@ target × suitability × the species' share holds on average.
 every answer with C's. `grass_test --density-map out.ppm [km [x z]]` draws the effective density over the land.
 `--grass-debug suit|density|species|clump` paints the rules on the land in the game, unlit: suitability; density
 with the kept roots as dots; species; clumps.
+
+**The GPU path** (`src/render/grass_gpu.c`, `shaders/grass/prepare.comp`, `finish.comp`). Every frame the GPU
+chooses, makes and draws the land's blades; the CPU does no per-blade work and never sees a count.
+- **Prepare** runs one workgroup per 8 m patch in a 52 x 52 square round the camera. A patch is dropped if it is beyond
+  200 m, if its tallest possible root would be under 1.5 px on screen, if it is out of view (its heights bounded from
+  its 9 x 9 metre points), or if nothing may grow anywhere in it. Then each candidate root is evaluated on the ground
+  the terrain draws there: the clipmap's samples are read as `terrain.vert` reads them, with the morph into the parent
+  level, and interpolated across the same triangle (`shaders/grass/surface.glsl`). The road near it comes from the
+  road buffer (`terrain/road_lookup.glsl`).
+- **Levels of detail.** A kept root goes to a bucket by its height's size on screen at its distance (distance, not
+  depth, so turning doesn't change it): full (12 px or more) draws its whole tuft, mid (4-12 px) the first half, and
+  clump (1.5-4 px) its first blade, for one root cell in four. Each subgroup reserves room in each bucket with one
+  atomic. GR4 will blend the hand-offs.
+- **Room.** Each bucket has its own room (full 192k, mid 512k, clump 256k blades: 30 MB a frame slot), so a far bucket
+  never takes a near one's. `finish.comp` writes the three indirect draws and counts the blades each bucket wanted by
+  2 m of distance. If they overflow the room, the next frame keeps only those nearer than the distance that fits 90%
+  of it, so the far blades give way and a still view keeps the same ones. `--grass-cap N` shrinks the room to test this.
+- **Draw.** One indirect draw per bucket after the terrain, in the scene pass. GR2's blade is a straight two-triangle
+  strip, lit by the land's light (`blade.frag`).
+- The counters come back a frame slot late and the `--shot` log prints them: patches in range, in view and with
+  grass; roots evaluated and kept; blades drawn per bucket, and those refused. `--grass-debug lod` colours the blades by
+  bucket (full red, mid yellow, clump blue) and the land by the bucket a typical meadow root would take. `--grass-debug
+  cull` colours the blades by patch and the land by its patch's state.
+
+At walking height over the meadow it draws about 570k blades (1.1M triangles): prepare 0.25-0.30 ms, draw 0.4 ms on an
+RTX 4080 SUPER at 1600 x 900. `grass_test --gpu` also runs prepare and finish headless on a made-up clipmap. With every
+root evaluated and every blade written, its blade counts equal C's `grass_keep` exactly over 4,096 m² for meadow, reeds
+and mud, a slope and thin snow, with none on the city's ground or steep ground. The blades stand on the ground and inside
+their patches. With too little room, the second frame keeps exactly the blades nearer than the distance set, within 90% of
+the room, and sets the same distance again.
 
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the

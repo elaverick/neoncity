@@ -54,6 +54,12 @@ void      renderer_set_shadow_debug(Renderer *r, bool on);
 bool      renderer_shadow_debug(Renderer *r);
 /* The --grass-debug view painted on the land (GRASS_DEBUG_*: src/grass/grass_rules.h; 0 off). */
 void      renderer_set_grass_debug(Renderer *r, int view);
+/* The grass's blades on or off (src/render/grass_gpu.c; off where the GPU can't), and each
+ * level of detail's room, at most this many blades (0: their own, GRASS_CAP_*). */
+void      renderer_set_grass(Renderer *r, bool on);
+void      renderer_set_grass_cap(Renderer *r, uint32_t cap);
+/* The grass's patches, roots and blades a frame slot ago (a few lines of text). */
+void      renderer_grass_stats(Renderer *r, char *buf, size_t n);
 /* Baked interior impostors (src/render/interiors.c): the share of eligible office floors
  * (curtain-wall and ribbon-window offices) drawn with them, 0 for none; and how many modules loaded. */
 void      renderer_set_impostors(Renderer *r, float share);

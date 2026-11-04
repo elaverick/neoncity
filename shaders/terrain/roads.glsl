@@ -1,6 +1,8 @@
 #ifndef ROADS_GLSL
 #define ROADS_GLSL
 #include "ground.glsl"
+// the Roads buffer (binding 2), RoadHit and roadNear
+#include "road_lookup.glsl"
 
 /* The roads between the settlements (src/plan/plan_roads.c), painted onto the
  * clipmap's ground, which already follows their graded surfaces
@@ -19,20 +21,9 @@
  * paint stands in for it on the ground below: paved to its edge, as the deck,
  * and nothing beyond. */
 
-layout(std430, set = 0, binding = 2) readonly buffer Roads { uint roadData[]; };
-
 const float FREEWAY_LAMP_SPACING = 60.0;   // m
 const vec3  ROAD_SODIUM = vec3(1.0, 0.55, 0.22);
 
-// How far beyond a road's paved edge it is shaded (m): a trunk road's verge,
-// and beside a freeway its lamps' light on the land, faded out from
-// FREEWAY_LIGHT_FADE. road_gpu.c files each segment in the cells within
-// ROAD_CELL_REACH of it, to cover the farther.
-const float FREEWAY_REACH = 14.0, TRUNK_REACH = 3.0, FREEWAY_LIGHT_FADE = 6.0;
-
-// A trunk road's asphalt runs this far either side of its centre line (just
-// past the edge line), its gravel shoulders beyond to the paved edge.
-const float TRUNK_ASPHALT = 4.0;
 // The gravel runs on this far beyond the paved edge, give or take
 // ROAD_VERGE_VARY along the road, then gives way to the cover over ROAD_VERGE_SOFT.
 const float ROAD_VERGE = 0.8, ROAD_VERGE_VARY = 0.4, ROAD_VERGE_SOFT = 0.5;
@@ -58,54 +49,6 @@ const float ROAD_FILM_ROUGH = 0.35;
 // Material m in the rain (its file's wet: pbrWet), or where it didn't load, a third darker, no puddles, a sheen.
 vec3 roadWet(int m) { return pbrLoaded(m) ? pbrWet(m) : vec3(0.35, 0.0, 0.5); }
 
-float roadF(uint i) { return uintBitsToFloat(roadData[i]); }
-
-struct RoadHit {
-    float off;    // signed distance from the centre line (m)
-    float s;      // distance along the road (m)
-    float hw;     // half the paved width (m)
-    int   cls;    // 1 trunk, 2 freeway
-    bool  bridge; // on a bridge's span
-    vec2  across; // the world's x, z direction of increasing off
-};
-
-const int ROAD_SEG_BRIDGE = 4;   // in a segment's class (src/render/road_gpu.c)
-
-// The road nearest rel (camera-relative x, z) whose paved edge is within its
-// reach (FREEWAY_REACH, TRUNK_REACH) of it, if any.
-bool roadNear(vec2 rel, out RoadHit h) {
-    h.off = 1e9; h.s = 0.0; h.hw = 0.0; h.cls = 0; h.bridge = false; h.across = vec2(1.0, 0.0);
-    vec2 p = rel - vec2(roadF(0u), roadF(1u));
-    float cell = roadF(2u);
-    int dim = int(roadData[3]);
-    if (dim <= 0) return false;
-    ivec2 c = ivec2(floor(p / cell));
-    if (c.x < 0 || c.y < 0 || c.x >= dim || c.y >= dim) return false;
-    uint ci = 8u + 2u * uint(c.y * dim + c.x);
-    uint start = roadData[ci], count = roadData[ci + 1u], listAt = roadData[5], segAt = roadData[6];
-    float best = 1e9;
-    for (uint k = 0u; k < count; ++k) {
-        uint b = segAt + 8u * roadData[listAt + start + k];
-        vec2 a = vec2(roadF(b), roadF(b + 1u)), e = vec2(roadF(b + 2u), roadF(b + 3u)) - a;
-        float l2 = max(dot(e, e), 1e-6), t = clamp(dot(p - a, e) / l2, 0.0, 1.0);
-        vec2 d = p - (a + e * t);
-        float hw = roadF(b + 6u), edge = length(d) - hw;
-        if (edge < best) {
-            best = edge;
-            h.off = (e.x * d.y - e.y * d.x) * inversesqrt(l2);
-            h.s = roadF(b + 4u) + t * roadF(b + 5u);
-            h.hw = hw;
-            h.across = vec2(-e.y, e.x) * inversesqrt(l2);
-            int c = int(roadF(b + 7u) + 0.5);
-            h.cls = c & 3;
-            h.bridge = (c & ROAD_SEG_BRIDGE) != 0;
-        }
-    }
-    // under a deck the chunks draw, the ground is the water's
-    if (h.bridge && dot(rel, rel) < VIEW_DISTANCE * VIEW_DISTANCE) return false;
-    return best < (h.cls == 2 ? FREEWAY_REACH : TRUNK_REACH);
-}
-
 // A painted line `w` wide centred `at` across, anti-aliased over a pixel's
 // width px, and faded to its share of the pixel once it is narrower.
 float roadLine(float a, float at, float w, float px) {
@@ -129,10 +72,6 @@ float roadAsphaltEdge(RoadHit r, vec2 wp) {
     float e = r.cls == 2 ? r.hw : TRUNK_ASPHALT;
     return e + 0.06 * (vnoise(wp / 0.6, 0x5A31u) - 0.5) + 0.05 * (vnoise(wp / 2.3, 0x5A32u) - 0.5);
 }
-
-// Whether the asphalt covers the whole pixel (px its width across the road):
-// the land under it needn't be textured.
-bool roadPaved(RoadHit r, float px) { return abs(r.off) + 0.5 * px < (r.bridge || r.cls == 2 ? r.hw : TRUNK_ASPHALT) - 0.06; }
 
 // Material m mapped in the world's x and z (q, wrapped as the city's, so it
 // runs on unbroken from a bridge's deck; +x image right, -z image up; gx, gy

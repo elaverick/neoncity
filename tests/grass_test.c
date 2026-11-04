@@ -25,6 +25,9 @@
 #include "hash.h"
 #include "thread.h"
 #include "vkcore.h"
+#include "renderer.h"     /* FrameUBO */
+#include "grass_gpu.h"
+#include "terrain_planet.h"
 #include <float.h>
 
 static const uint32_t SPV_rules_test[] = {
@@ -715,10 +718,273 @@ static int gpu_check(int validation) {
     return g_failures != 0;
 }
 
+/* --- the GPU path (prepare.comp, finish.comp) against C's count ------------------- */
+
+/* The renderer's grass pass run headless on a made-up clipmap: one level, flat
+ * ground at GP_GROUND under the camera at GP_EYE, the same cover everywhere,
+ * no roads. With GRASS_MODE_ALL_FULL | GRASS_MODE_ALL_IN_VIEW every root of a
+ * GP_SIDE x GP_SIDE block of patches is evaluated and all its blades written,
+ * so the blades it reserves are grass_test's count over the same patches. */
+#define GP_SIDE   8
+#define GP_GROUND 10.0f
+#define GP_EYE    12.0f
+static const int32_t GP_PATCH[2] = { 1000, -2000 };    /* the camera's patch */
+static const float   GP_IN[2] = { 3.0f, 5.0f };        /* ...and where in it */
+#define GP_ROOM   (1u << 20)
+
+static const uint32_t SPV_prepare[] = {
+#include "grass/prepare.comp.inc"
+};
+static const uint32_t SPV_finish[] = {
+#include "grass/finish.comp.inc"
+};
+
+typedef struct GpuPass {
+    VkCore vk;
+    VkDescriptorSetLayout dsl;
+    VkPipelineLayout pl;
+    VkPipeline prepare, finish;
+    VkDescriptorPool dp;
+    VkDescriptorSet set;
+    VkCommandPool pool;
+    VkCommandBuffer cmd;
+    VkFence fence;
+    Buffer frame, grass, samples, roads, inst, counters, draws, keepTo, patches;
+} GpuPass;
+
+static VkPipeline gp_pipeline(GpuPass *g, const uint32_t *code, size_t bytes) {
+    VkShaderModule sm = vk_shader(&g->vk, code, bytes);
+    VkComputePipelineCreateInfo ci = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT; ci.stage.module = sm; ci.stage.pName = "main";
+    ci.layout = g->pl;
+    VkPipeline p;
+    VK_CHECK(vkCreateComputePipelines(g->vk.device, VK_NULL_HANDLE, 1, &ci, NULL, &p));
+    vkDestroyShaderModule(g->vk.device, sm, NULL);
+    return p;
+}
+
+static void gp_init(GpuPass *g, int validation) {
+    memset(g, 0, sizeof(*g));
+    vk_init_headless(&g->vk, validation != 0, false);
+    VkDevice d = g->vk.device;
+    const VkMemoryPropertyFlags HOST = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    const VkBufferUsageFlags SB = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, UB = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    g->frame = vk_buffer(&g->vk, sizeof(FrameUBO), UB, HOST);
+    g->grass = vk_buffer(&g->vk, sizeof(GrassFrameGPU), UB, HOST);
+    g->samples = vk_buffer(&g->vk, (VkDeviceSize)TERRAIN_CLIP_N * TERRAIN_CLIP_N * 7 * 4, SB, HOST);
+    g->roads = vk_buffer(&g->vk, 64 * 4, SB, HOST);
+    g->inst = vk_buffer(&g->vk, (VkDeviceSize)GP_ROOM * sizeof(GrassInstanceGPU), SB, HOST);
+    g->counters = vk_buffer(&g->vk, GRASS_C_WORDS * 4, SB, HOST);
+    g->draws = vk_buffer(&g->vk, GRASS_BUCKETS * 16, SB, HOST);
+    g->keepTo = vk_buffer(&g->vk, 16, SB, HOST);
+    g->patches = vk_buffer(&g->vk, GP_SIDE * GP_SIDE * 4, SB, HOST);
+    memset(g->roads.mapped, 0, 64 * 4);   /* no cells: no roads */
+
+    static const uint32_t BIND[9] = { 0, 1, 2, 4, 5, 6, 7, 9, 10 };
+    VkDescriptorSetLayoutBinding b[9];
+    Buffer *bufs[9] = { &g->frame, &g->samples, &g->roads, &g->grass, &g->inst, &g->counters, &g->draws, &g->keepTo, &g->patches };
+    for (int i = 0; i < 9; ++i) {
+        b[i] = (VkDescriptorSetLayoutBinding){ BIND[i], BIND[i] == 0 || BIND[i] == 4 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                               1, VK_SHADER_STAGE_COMPUTE_BIT, NULL };
+    }
+    VkDescriptorSetLayoutCreateInfo li = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+    li.bindingCount = 9; li.pBindings = b;
+    VK_CHECK(vkCreateDescriptorSetLayout(d, &li, NULL, &g->dsl));
+    VkPipelineLayoutCreateInfo pli = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    pli.setLayoutCount = 1; pli.pSetLayouts = &g->dsl;
+    VK_CHECK(vkCreatePipelineLayout(d, &pli, NULL, &g->pl));
+    g->prepare = gp_pipeline(g, SPV_prepare, sizeof(SPV_prepare));
+    g->finish = gp_pipeline(g, SPV_finish, sizeof(SPV_finish));
+    VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7 } };
+    VkDescriptorPoolCreateInfo dpi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+    dpi.maxSets = 1; dpi.poolSizeCount = 2; dpi.pPoolSizes = ps;
+    VK_CHECK(vkCreateDescriptorPool(d, &dpi, NULL, &g->dp));
+    VkDescriptorSetAllocateInfo dai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+    dai.descriptorPool = g->dp; dai.descriptorSetCount = 1; dai.pSetLayouts = &g->dsl;
+    VK_CHECK(vkAllocateDescriptorSets(d, &dai, &g->set));
+    for (int i = 0; i < 9; ++i) {
+        VkDescriptorBufferInfo bi = { bufs[i]->buf, 0, VK_WHOLE_SIZE };
+        VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        w.dstSet = g->set; w.dstBinding = BIND[i]; w.descriptorCount = 1; w.descriptorType = b[i].descriptorType; w.pBufferInfo = &bi;
+        vkUpdateDescriptorSets(d, 1, &w, 0, NULL);
+    }
+    VkCommandPoolCreateInfo cpi = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+    cpi.queueFamilyIndex = g->vk.queueFamily;
+    cpi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    VK_CHECK(vkCreateCommandPool(d, &cpi, NULL, &g->pool));
+    VkCommandBufferAllocateInfo cai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    cai.commandPool = g->pool; cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; cai.commandBufferCount = 1;
+    VK_CHECK(vkAllocateCommandBuffers(d, &cai, &g->cmd));
+    VkFenceCreateInfo fi = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    VK_CHECK(vkCreateFence(d, &fi, NULL, &g->fence));
+
+    /* the camera, and the one level round it (terrain.vert's push, as plan_draws makes it) */
+    FrameUBO *f = (FrameUBO *)g->frame.mapped;
+    memset(f, 0, sizeof(*f));
+    f->viewProj = mat4_identity();
+    f->camPos[1] = GP_EYE;
+    f->grass[0] = GP_IN[0]; f->grass[1] = GP_IN[1];
+    f->grassPatch[0] = GP_PATCH[0]; f->grassPatch[1] = GP_PATCH[1];
+    GrassFrameGPU *gf = (GrassFrameGPU *)g->grass.mapped;
+    memset(gf, 0, sizeof(*gf));
+    gf->info[0] = 0; gf->info[1] = GP_SIDE; gf->info[2] = GRASS_MODE_ALL_FULL | GRASS_MODE_ALL_IN_VIEW;
+    gf->view[0] = 1e6f; gf->view[1] = 1000.0f;
+    gf->cap[0] = GP_ROOM;   /* everything is full (GRASS_MODE_ALL_FULL) */
+    for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {   /* only level 0 holds the patches; the rest, far away */
+        GrassLevelGPU *o = &gf->lv[l];
+        float half = 0.5f * (TERRAIN_CLIP_W - 1);
+        o->a[0] = o->a[1] = o->a[2] = o->a[3] = -half;   /* the window centred on the camera, its update's too */
+        o->b[2] = 1.0f;
+        o->d[0] = l; o->d[1] = 1;                          /* top: no parent */
+        if (l > 0) o->b[0] = o->b[1] = 1e7f;
+    }
+}
+
+static void gp_free(GpuPass *g) {
+    VkDevice d = g->vk.device;
+    vkDestroyFence(d, g->fence, NULL);
+    vkDestroyCommandPool(d, g->pool, NULL);
+    vkDestroyDescriptorPool(d, g->dp, NULL);
+    vkDestroyPipeline(d, g->prepare, NULL);
+    vkDestroyPipeline(d, g->finish, NULL);
+    vkDestroyPipelineLayout(d, g->pl, NULL);
+    vkDestroyDescriptorSetLayout(d, g->dsl, NULL);
+    Buffer *bufs[9] = { &g->frame, &g->grass, &g->samples, &g->roads, &g->inst, &g->counters, &g->draws, &g->keepTo, &g->patches };
+    for (int i = 0; i < 9; ++i) vk_buffer_destroy(&g->vk, bufs[i]);
+    vk_shutdown(&g->vk);
+}
+
+/* Every sample of the level: the ground, its normal's x and z, urban, the cover's two words. */
+static void gp_ground(GpuPass *g, float nx, float nz, float urban, uint32_t coverA, uint32_t coverB) {
+    uint32_t *s = (uint32_t *)g->samples.mapped;
+    for (int i = 0; i < TERRAIN_CLIP_N * TERRAIN_CLIP_N; ++i) {
+        uint32_t *w = s + (size_t)i * 7;
+        w[0] = w[1] = fbits(GP_GROUND);
+        w[2] = fbits(nx); w[3] = fbits(nz); w[4] = fbits(urban);
+        w[5] = coverA; w[6] = coverB;
+    }
+}
+
+/* One frame: counters cleared, prepare over the block, finish. keepTo carries over. */
+static void gp_frame(GpuPass *g) {
+    memset(g->counters.mapped, 0, GRASS_C_WORDS * 4);
+    VK_CHECK(vkResetCommandBuffer(g->cmd, 0));
+    VkCommandBufferBeginInfo bgi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    bgi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    VK_CHECK(vkBeginCommandBuffer(g->cmd, &bgi));
+    vkCmdBindDescriptorSets(g->cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g->pl, 0, 1, &g->set, 0, NULL);
+    vkCmdBindPipeline(g->cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g->prepare);
+    vkCmdDispatch(g->cmd, GP_SIDE, GP_SIDE, 1);
+    vk_memory_barrier(g->cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+    vkCmdBindPipeline(g->cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g->finish);
+    vkCmdDispatch(g->cmd, 1, 1, 1);
+    vk_memory_barrier(g->cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);
+    VK_CHECK(vkEndCommandBuffer(g->cmd));
+    VK_CHECK(vkResetFences(g->vk.device, 1, &g->fence));
+    VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    si.commandBufferCount = 1; si.pCommandBuffers = &g->cmd;
+    VK_CHECK(vkQueueSubmit(g->vk.queue, 1, &si, g->fence));
+    VK_CHECK(vkWaitForFences(g->vk.device, 1, &g->fence, VK_TRUE, UINT64_MAX));
+}
+
+static void gp_keep_all(GpuPass *g) { float *k = (float *)g->keepTo.mapped; for (int b = 0; b < 4; ++b) k[b] = 1e9f; }
+
+/* The cover's word from four shares, as terrain_cover_pack packs them (unorm8 each). */
+static uint32_t gp_pack(int a, int b, int c, int d) { return (uint32_t)a | (uint32_t)b << 8 | (uint32_t)c << 16 | (uint32_t)d << 24; }
+
+/* The GPU's blades over the block against count_region's over the same patches, the site as the GPU reads it. */
+static void gp_count_case(GpuPass *g, const char *what, float nx, float nz, float urban, int grass, int mud, int snow, int wet) {
+    gp_ground(g, nx, nz, urban, gp_pack(0, 0, grass, 0), gp_pack(mud, snow, wet, 0));
+    gp_keep_all(g);
+    gp_frame(g);
+    const uint32_t *c = (const uint32_t *)g->counters.mapped;
+    GrassSite s = { 0 };
+    s.grass = (float)grass / 255.0f; s.mud = (float)mud / 255.0f; s.snow = (float)snow / 255.0f; s.wet = (float)wet / 255.0f;
+    s.ny = sqrtf(fmaxf(1.0f - nx * nx - nz * nz, 0.0f)); s.urban = urban; s.road = (float)GRASS_ROAD_FAR;
+    long want = 0;
+    for (int k = 0; k < GRASS_SPECIES; ++k)
+        want += count_region(k, GP_PATCH[0] - GP_SIDE / 2, GP_PATCH[1] - GP_SIDE / 2, GP_SIDE, &s).blades;
+    long got = (long)c[GRASS_C_WANT + GRASS_LOD_FULL];
+    double area = (double)GP_SIDE * GP_SIDE * GRASS_PATCH_M * GRASS_PATCH_M, formula = grass_expected(&s) * area;
+    printf("GPU path, %-22s %8ld blades (C %8ld, %+.3f%%; the formula %+.2f%%), %u roots kept of %u evaluated\n", what, got, want,
+           want ? 100.0 * ((double)got / want - 1.0) : 0.0, formula > 0 ? 100.0 * (got / formula - 1.0) : 0.0, c[GRASS_C_KEPT], c[GRASS_C_EVALUATED]);
+    if (want == 0) CHECK(got == 0, "GPU path, %s: %ld blades where C has none", what, got);
+    else CHECK(labs(got - want) <= want / 1000 + 2, "GPU path, %s: %ld blades where C counts %ld", what, got, want);
+    if (formula > 0) CHECK(fabs(got / formula - 1.0) < 0.03, "GPU path, %s: %.1f blades/m2 where the formula gives %.1f", what, got / area, formula / area);
+}
+
+static double gp_dist(const GrassInstanceGPU *o) { return sqrt((double)o->p[0] * o->p[0] + (double)o->p[1] * o->p[1] + (double)o->p[2] * o->p[2]); }
+
+static int gpu_prepare_check(int validation) {
+    GpuPass g;
+    gp_init(&g, validation);
+    printf("GPU: %s\n", g.vk.props.deviceName);
+    gp_count_case(&g, "meadow", 0.0f, 0.0f, 0.0f, 255, 0, 0, 0);
+    gp_count_case(&g, "grass 0.5, mud, by water", 0.0f, 0.0f, 0.0f, 128, 77, 0, 230);
+    gp_count_case(&g, "a 25 degree slope", 0.42f, 0.0f, 0.0f, 230, 0, 0, 0);
+    gp_count_case(&g, "thin snow", 0.0f, 0.0f, 0.0f, 255, 0, 64, 0);
+    gp_count_case(&g, "the city's ground", 0.0f, 0.0f, 1.0f, 255, 0, 0, 0);
+    gp_count_case(&g, "steep", 0.75f, 0.0f, 0.0f, 255, 0, 0, 0);
+
+    /* The blades stand on the ground, in the block, each a root's tuft. */
+    gp_ground(&g, 0.0f, 0.0f, 0.0f, gp_pack(0, 0, 255, 0), gp_pack(0, 0, 0, 0));
+    gp_keep_all(&g);
+    gp_frame(&g);
+    const uint32_t *c = (const uint32_t *)g.counters.mapped;
+    const GrassInstanceGPU *in = (const GrassInstanceGPU *)g.inst.mapped;
+    uint32_t n = c[GRASS_C_DRAWN + GRASS_LOD_FULL];
+    double x0 = -GP_SIDE / 2 * GRASS_PATCH_M - GP_IN[0] - 0.2, x1 = GP_SIDE / 2 * GRASS_PATCH_M - GP_IN[0] + 0.2;
+    double z0 = -GP_SIDE / 2 * GRASS_PATCH_M - GP_IN[1] - 0.2, z1 = GP_SIDE / 2 * GRASS_PATCH_M - GP_IN[1] + 0.2;
+    long off = 0;
+    double hMin = 1e9, hMax = 0.0;
+    for (uint32_t i = 0; i < n; ++i) {
+        const GrassInstanceGPU *o = &in[i];
+        double drop = ((double)o->p[0] * o->p[0] + (double)o->p[2] * o->p[2]) * 0.5 / PLANET_RADIUS;
+        if (o->p[0] < x0 || o->p[0] > x1 || o->p[2] < z0 || o->p[2] > z1 || fabs(o->p[1] - (GP_GROUND - GP_EYE - drop)) > 1e-3) off++;
+        hMin = fmin(hMin, o->height); hMax = fmax(hMax, o->height);
+    }
+    printf("GPU path: %u blades written, %ld off the ground or the block; heights %.2f to %.2f m\n", n, off, hMin, hMax);
+    CHECK(n == c[GRASS_C_WANT + GRASS_LOD_FULL] && n > 0, "the GPU path wrote %u blades of the %u it reserved", n, c[GRASS_C_WANT]);
+    CHECK(off == 0, "%ld blades stand off the ground or outside their patches", off);
+    static const double HMAX[GRASS_SPECIES] = { GRASS_HEIGHT_MAX_LIST }, VAR[GRASS_SPECIES] = { GRASS_CLUMP_VAR_LIST };
+    CHECK(hMin > 0.1 && hMax <= 1.25 * HMAX[GRASS_MEADOW] * (1.0 + VAR[GRASS_MEADOW]) + 1e-3, "the blades' heights run %.2f to %.2f m", hMin, hMax);
+
+    /* Too little room: the first frame writes what fits and sets the
+     * distance to keep to; the next keeps the blades nearer than that (and
+     * all of them), within GRASS_CAP_FILL of the room, and says the same
+     * distance again. */
+    const uint32_t ROOM = 60000;
+    GrassFrameGPU *gf = (GrassFrameGPU *)g.grass.mapped;
+    gf->cap[0] = ROOM;
+    gp_keep_all(&g);
+    gp_frame(&g);
+    uint32_t want1 = c[GRASS_C_WANT], drawn1 = c[GRASS_C_DRAWN], over1 = c[GRASS_C_OVER];
+    float keep1 = bitsf(c[GRASS_C_KEEP_TO]);
+    gp_frame(&g);
+    uint32_t want2 = c[GRASS_C_WANT], drawn2 = c[GRASS_C_DRAWN], over2 = c[GRASS_C_OVER], cut2 = c[GRASS_C_CUT];
+    float keep2 = bitsf(c[GRASS_C_KEEP_TO]);
+    double far = 0.0;
+    for (uint32_t i = 0; i < drawn2; ++i) far = fmax(far, gp_dist(&in[i]));
+    printf("GPU path, room for %u: frame 1 reserved %u, drew %u (%u over), keeps to %.0f m; frame 2 reserved %u, drew %u (%u over, %u past %.0f m), "
+           "the farthest drawn %.2f m\n", ROOM, want1, drawn1, over1, keep1, want2, drawn2, over2, cut2, keep2, far);
+    CHECK(drawn1 == ROOM && over1 == want1 - ROOM, "with too little room the first frame drew %u of %u reserved", drawn1, want1);
+    CHECK(keep1 < 1e8f && keep2 == keep1, "the distance kept to moved: %.1f then %.1f m", keep1, keep2);
+    CHECK(over2 == 0 && drawn2 == want2 && (double)want2 <= GRASS_CAP_FILL * ROOM && want2 + cut2 == want1,
+          "the second frame reserved %u (%u over, %u past the distance) of %u", want2, over2, cut2, want1);
+    static const double TUFT[GRASS_SPECIES] = { GRASS_TUFT_R_LIST };
+    CHECK(far < keep2 + TUFT[GRASS_MEADOW] + 0.01, "a blade %.2f m off is drawn past the distance kept to, %.1f m", far, keep2);
+    gf->cap[0] = GP_ROOM;
+    gp_free(&g);
+    return g_failures != 0;
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--gpu") == 0) {
         gpu_check(argc > 2 && strcmp(argv[2], "--validation") == 0);
-        printf(g_failures ? "grass_test --gpu: %d failure(s)\n" : "grass_test --gpu: the GPU's rules are C's\n", g_failures);
+        gpu_prepare_check(argc > 2 && strcmp(argv[2], "--validation") == 0);
+        printf(g_failures ? "grass_test --gpu: %d failure(s)\n" : "grass_test --gpu: the GPU's rules and its path are C's\n", g_failures);
         return g_failures != 0;
     }
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();

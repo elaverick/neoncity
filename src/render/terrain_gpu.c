@@ -290,7 +290,7 @@ void terrain_gpu_create(Renderer *r) {
 
     VkDescriptorPoolSize sizes[3] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * MAX_FRAMES },   /* samples, roads, the grass's patches (grass_gpu.c writes it) */
         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -540,6 +540,19 @@ void terrain_gpu_set_frame(Renderer *r, const TerrainFrame *f, const double cam[
     mutex_unlock(&t->lock);
     terrain_fade_init(&t->fade);
     t->lastTime = 0.0;
+}
+
+VkBuffer terrain_gpu_samples(Renderer *r, VkDeviceSize *size) {
+    *size = r->terrain->samples.size;
+    return r->terrain->samples.buf;
+}
+
+VkDescriptorSet terrain_gpu_set(Renderer *r, int slot) { return r->terrain->set[slot]; }
+
+int terrain_gpu_levels(Renderer *r, const TerrainPush **push) {
+    TerrainGpu *t = r->terrain;
+    *push = t->push;
+    return t->ndraw > 0 ? t->drawn : TERRAIN_CLIP_LEVELS;
 }
 
 int terrain_gpu_window(Renderer *r, double win[4]) {

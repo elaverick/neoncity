@@ -1,0 +1,43 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "grass/frame.glsl"
+
+/* Stage D of the grass's GPU path (src/render/grass_gpu.c), after
+ * prepare.comp: each bucket's draw (a VkDrawIndirectCommand: the blades it
+ * reserved, as far as its room goes), and the distance the next frame keeps
+ * its blades to. Each bucket's room is its own, so a far bucket never takes a
+ * near one's. While the blades a bucket wanted (counted by distance, those
+ * past the distance kept to as well, so the count doesn't depend on it) fit
+ * its room, all are kept; once they don't, the next frame keeps those nearer
+ * than the farthest whole bin that fits in GRASS_CAP_FILL of it, and the far
+ * ones give way. A still view keeps the same blades frame after frame. */
+
+layout(local_size_x = 1) in;
+layout(std430, set = 0, binding = 6) buffer Counters { uint counters[]; };
+layout(std430, set = 0, binding = 7) writeonly buffer Draws { uint draws[]; };
+layout(std430, set = 0, binding = 9) buffer KeepTo { float keepTo[]; };
+
+void main() {
+    for (int b = 0; b < GRASS_BUCKETS; ++b) {
+        uint want = counters[GRASS_C_WANT + b], drawn = min(want, gf.cap[b]);
+        draws[4 * b + 0] = uint(GRASS_BLADE_VERTS);
+        draws[4 * b + 1] = drawn;
+        draws[4 * b + 2] = 0u;
+        draws[4 * b + 3] = 0u;
+        counters[GRASS_C_DRAWN + b] = drawn;
+        counters[GRASS_C_OVER + b] = want - drawn;
+        uint all = 0u;
+        for (int i = 0; i < GRASS_BINS; ++i) all += counters[GRASS_C_HIST + b * GRASS_BINS + i];
+        float to = 1e9;
+        if (all > gf.cap[b]) {
+            float limit = float(gf.cap[b]) * float(GRASS_CAP_FILL);
+            uint sum = 0u;
+            for (int i = 0; i < GRASS_BINS; ++i) {
+                sum += counters[GRASS_C_HIST + b * GRASS_BINS + i];
+                if (float(sum) > limit) { to = float(i) * float(GRASS_BIN_M); break; }
+            }
+        }
+        keepTo[b] = to;
+        counters[GRASS_C_KEEP_TO + b] = floatBitsToUint(to);
+    }
+}

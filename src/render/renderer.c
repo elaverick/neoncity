@@ -2,8 +2,8 @@
 #include "terrain.h"
 #include "grass_rules.h"
 
-static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "terrain upload", "shelter", "prepass", "shadow rays", "shadow filter",
-                                                "city", "plants", "proxies", "terrain", "sky", "clouds", "flames", "post" };
+static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "terrain upload", "grass prepare", "shelter", "prepass", "shadow rays", "shadow filter",
+                                                "city", "plants", "proxies", "terrain", "grass", "sky", "clouds", "flames", "post" };
 
 void renderer_set_shadows(Renderer *r, bool on) { r->shadowsOn = on && r->rt; }
 bool renderer_shadows(Renderer *r) { return r->shadowsOn; }
@@ -137,6 +137,7 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
     road_gpu_create(r);   /* before the terrain, whose descriptor sets bind it */
     terrain_gpu_create(r);
     planet_gpu_create(r);
+    grass_gpu_create(r);   /* after the terrain and the roads, whose buffers it reads */
     r->frame = terrain_frame();
     proxy_gpu_create(r);
     build_cloud_noise(r);
@@ -148,6 +149,7 @@ void renderer_destroy(Renderer *r) {
     VkCore *vk = r->vk;
     vkDeviceWaitIdle(vk->device);
     destroy_targets(r);
+    grass_gpu_destroy(r);
     terrain_gpu_destroy(r);
     road_gpu_destroy(r);
     planet_gpu_destroy(r);
@@ -375,6 +377,8 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     road_gpu_update(r, slot, cam);
     planet_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_TERRAIN_UPLOAD);
+    grass_gpu_prepare(r, cmd, slot, &ubo.viewProj);
+    timestamp(r, cmd, slot, GT_GRASS_PREP);
     record_shelter(r, cmd, slot, &topDown);
     timestamp(r, cmd, slot, GT_SHELTER);
     if (shadows) record_prepass(r, cmd, slot);

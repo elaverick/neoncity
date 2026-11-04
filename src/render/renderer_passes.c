@@ -356,6 +356,8 @@ void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows) {
     terrain_gpu_draw(r, cmd, slot);
     planet_gpu_draw(r, cmd, slot);
     timestamp(r, cmd, slot, GT_TERRAIN);
+    grass_gpu_draw(r, cmd, slot);   /* on the ground the terrain drew (shaders/grass/prepare.comp) */
+    timestamp(r, cmd, slot, GT_GRASS);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->scenePL, 0, 1, &r->sceneSet[slot], 0, NULL);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->skyPipe);
     vkCmdDraw(cmd, 3, 1, 0, 0);

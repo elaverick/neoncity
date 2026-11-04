@@ -169,7 +169,8 @@ set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_do
             terrain/planet.vert terrain/planet.frag
             proxy/proxy.vert proxy/proxy.frag flame.vert flame.frag smoke.vert smoke.frag
             interior/capture.comp interior/capture_mpi.comp interior/truth.comp interior/recon.comp   # the interior baker's
-            grass/rules_test.comp)   # grass_test --gpu's
+            grass/rules_test.comp   # grass_test --gpu's
+            grass/prepare.comp grass/finish.comp grass/blade.vert grass/blade.frag)
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)
@@ -466,7 +467,7 @@ list(REMOVE_ITEM GAME_GEN_SOURCES ${WORLD_SOURCES})
 add_library(neoncity_world OBJECT ${WORLD_SOURCES})
 target_include_directories(neoncity_world PRIVATE ${SRC_DIRS})
 add_executable(NeonCity
-  src/app/main.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/road_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/materials.c src/render/adverts.c src/render/interiors.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c src/app/lobby_doors.c)
+  src/app/main.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/road_gpu.c src/render/planet_gpu.c src/render/proxy_gpu.c src/render/grass_gpu.c src/render/materials.c src/render/adverts.c src/render/interiors.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c src/app/lobby_doors.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.
