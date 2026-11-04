@@ -178,6 +178,8 @@ Materials *materials_create(VkCore *vk) {
         g->albedo[3] = def.albedoScale;
         g->relief[0] = def.relief[0]; g->relief[1] = def.relief[1];
         memcpy(g->params, def.params, sizeof(def.params));
+        memcpy(g->wet, def.wet, sizeof(def.wet));
+        g->snow[0] = def.snow[0]; g->snow[1] = def.snow[1];
         g->info[0] = PBR_LOADED | (def.maps[PBR_EMISSIVE][0] ? PBR_HAS_EMISSIVE : 0u);
         loaded++;
     }

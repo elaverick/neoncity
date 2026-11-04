@@ -22,6 +22,8 @@ struct Material {
     vec4  albedo;   // rgb the albedo map's mean (linear), a the albedo's scale
     vec4  relief;   // x the height map's median, y its spread
     vec4  params;   // the material's own (its file says what they are)
+    vec4  wet;      // its file's wet and snow: read by the land's shaders
+    vec4  snow;
     uvec4 info;     // x PBR_LOADED | PBR_HAS_EMISSIVE
 };
 layout(std140, set = 0, binding = 8) uniform Materials { Material materials[PBR_MATERIAL_COUNT]; };
@@ -40,6 +42,12 @@ vec3 pbrAlbedoMean(int m) { return materials[m].albedo.rgb; }
 // hollows) to 0.5.
 float pbrRelief(int m, float h) { return (h - materials[m].relief.x) / materials[m].relief.y; }
 vec4 pbrParams(int m) { return materials[m].params; }
+// In the rain: how much of its albedo it loses (x), how readily water stands
+// in its hollows (y, 0 none .. 1 most), and how its wet film shines (z).
+vec3 pbrWet(int m) { return materials[m].wet.xyz; }
+// Snow over it: how soon it lies (x: the cover's snow weight s lies as
+// 1 - (1 - s)^x), and where first (y: 0 in its height map's hollows .. 1 on its tops).
+vec2 pbrSnow(int m) { return materials[m].snow.xy; }
 
 // st: texture coordinates. T, B: world directions of image right and image up
 // (normal maps are OpenGL convention, +Y green = up the image).

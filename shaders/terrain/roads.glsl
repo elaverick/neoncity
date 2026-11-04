@@ -47,6 +47,17 @@ const vec3 ROAD_BARRIER = vec3(0.11);
 // this many metres: by then their mips have all but reached their means.
 const float ROAD_TEX_PX0 = 0.3, ROAD_TEX_PX1 = 0.6;
 
+// The freeway's lamps (their pools' light; no heads are drawn): this high over
+// the median, each a sphere this wide. Their highlights on wet ground are kept
+// at least this rough (alpha), so a puddle shows a lamp's glow, not the image
+// of a lamp that isn't there.
+const float FREEWAY_LAMP_H = 12.0, FREEWAY_LAMP_R = 0.35, FREEWAY_GLINT_ALPHA = 0.08;
+// The wet asphalt's film's roughness (GGX's).
+const float ROAD_FILM_ROUGH = 0.35;
+
+// Material m in the rain (its file's wet: pbrWet), or where it didn't load, a third darker, no puddles, a sheen.
+vec3 roadWet(int m) { return pbrLoaded(m) ? pbrWet(m) : vec3(0.35, 0.0, 0.5); }
+
 float roadF(uint i) { return uintBitsToFloat(roadData[i]); }
 
 struct RoadHit {
@@ -151,15 +162,51 @@ float laneWear(float x, float px) {
     return mix(f, 1.0 - 0.10 * 0.206 + 0.06 * 0.343, clamp(px / 0.8, 0.0, 1.0));
 }
 
+// The wheel paths' ruts at x across a lane from its centre (m): 1 deepest.
+float laneRut(float x) { float wx = abs(x) - 0.9; return exp(-wx * wx / (2.0 * 0.3 * 0.3)); }
+
+// The freeway's lamps' highlights on a wet surface (normal n, roughness
+// rough) seen along V, beside road r: the five nearest down the median, each
+// lighting it as its pool does beneath it (1.4 ROAD_SODIUM) over the square
+// of its distance, the lobe widened by its size (Karis's sphere lights).
+vec3 freewayGlints(RoadHit r, vec3 n, vec3 V, float rough) {
+    vec2 along = vec2(r.across.y, -r.across.x);   // the way s grows
+    float ds = r.s - FREEWAY_LAMP_SPACING * floor(r.s / FREEWAY_LAMP_SPACING + 0.5);
+    float alpha = max(rough * rough, FREEWAY_GLINT_ALPHA), g = 0.0;
+    for (int j = -2; j <= 2; ++j) {
+        vec2 q = along * (float(j) * FREEWAY_LAMP_SPACING - ds) - r.across * r.off;
+        vec3 d = vec3(q.x, FREEWAY_LAMP_H, q.y);
+        float d2 = dot(d, d), dist = sqrt(d2);
+        g += FREEWAY_LAMP_H * FREEWAY_LAMP_H / d2 * landGgx(n, d / dist, V, min(alpha + FREEWAY_LAMP_R / (2.0 * dist), 1.0), WATER_F0);
+    }
+    return ROAD_SODIUM * 1.4 * g;
+}
+
+// The wet ground's sheen at rel (landSheen), beside a road r (onRoad) with
+// its freeway's lamps' glints in it, by lamps (0 .. 1: none off a freeway,
+// fading as its pool does, and as a pixel comes to span several lamps). The
+// clipmap's one call (terrain.frag), so each part of it is compiled once.
+vec3 wetSheen(vec3 rel, LandPoint l, vec3 n, vec3 nGeom, float rough, LandWater w, bool onRoad, RoadHit r, float lamps) {
+    if (w.film + w.pool <= 0.0) return vec3(0.0);
+    vec3 nW, V = -normalize(rel);
+    float rW, k = wetSurface(l, n, nGeom, rough, w, nW, rW);
+    vec3 c = wetHighlight(nW, V, rW, l.sky);
+    if (onRoad && lamps > 0.0) c += lamps * freewayGlints(r, nW, V, rW);
+    return k * c;
+}
+
 // The road r at rel, over the land there: its albedo land (groundAlbedo, the
-// normal nLand bent by its textures) and the ground's own normal n. l: where
-// the textures are mapped (landPoint); urban plan_urban there; px and pxs the
-// pixel's width across and along the road (taken in uniform control flow).
-// The land lit, before the haze.
-vec3 shadeRoad(vec3 land, vec3 nLand, vec3 n, vec3 rel, LandPoint l, float urban, RoadHit r, float px, float pxs) {
+// normal nLand bent by its textures, the water on it w) and the ground's own
+// normal n. l: where the textures are mapped (landPoint); urban plan_urban
+// there; px and pxs the pixel's width across and along the road (taken in
+// uniform control flow). The land lit by its diffuse light, before the haze;
+// for its sheen (wetSheen), the water on the road and the land beside it into
+// w, their normal nS and the film's roughness roughS, and the lamps' share.
+vec3 shadeRoad(vec3 land, vec3 nLand, vec3 n, vec3 rel, LandPoint l, float urban, RoadHit r, float px, float pxs,
+               inout LandWater w, out vec3 nS, out float roughS, out float lampShare) {
     vec2 wp = frame.camPos.xz + rel.xz, q = l.p.xz, gx = l.dpx.xz, gy = l.dpy.xz;
     float a = abs(r.off), side = r.off < 0.0 ? -1.0 : 1.0;
-    float wet = frame.weather.y;
+    float wet = l.sky.wet;
     float tex = 1.0 - smoothstep(ROAD_TEX_PX0, ROAD_TEX_PX1, l.px);
     float edge = roadAsphaltEdge(r, wp);
     float asph = clamp(0.5 + (edge - a) / px, 0.0, 1.0);
@@ -171,45 +218,52 @@ vec3 shadeRoad(vec3 land, vec3 nLand, vec3 n, vec3 rel, LandPoint l, float urban
     vec3 gAlb = ROAD_GRAVEL, nGrav = n;
     if (!r.bridge && asph < 1.0) {
         float reach = ROAD_VERGE + ROAD_VERGE_VARY * (2.0 * vnoise(wp / 9.0, 0x5A33u) - 1.0);
-        float w = 1.0 - smoothstep(reach - ROAD_VERGE_SOFT, reach + ROAD_VERGE_SOFT, a - r.hw + 0.3 * (vnoise(wp / 0.9, 0x5A34u) - 0.5));
-        if (w > 0.0) {
+        float wg = 1.0 - smoothstep(reach - ROAD_VERGE_SOFT, reach + ROAD_VERGE_SOFT, a - r.hw + 0.3 * (vnoise(wp / 0.9, 0x5A34u) - 0.5));
+        if (wg > 0.0) {
             float h;
             gAlb = roadSurface(PBR_ROOF_GRAVEL, q, gx, gy, ROAD_GRAVEL, tex, n, nGrav, h);
-            gAlb *= 1.0 - 0.3 * wet;
-            w = clamp(w, 1e-4, 1.0 - 1e-4);
-            float byHeight = 1.0 / (1.0 + exp((landScore(1.0 - w, 0.0) - landScore(w, h)) / LAND_BLEND));
-            grav = w >= 1.0 - 1e-4 ? 1.0 : mix(w, byHeight, tex);
+            gAlb *= 1.0 - wet * roadWet(PBR_ROOF_GRAVEL).x;
+            wg = clamp(wg, 1e-4, 1.0 - 1e-4);
+            float byHeight = 1.0 / (1.0 + exp((landScore(1.0 - wg, 0.0) - landScore(wg, h)) / LAND_BLEND));
+            grav = wg >= 1.0 - 1e-4 ? 1.0 : mix(wg, byHeight, tex);
         }
     }
 
-    // the asphalt, its paint, the median's barrier
+    // the asphalt, its paint, the median's barrier, and the water standing in
+    // the asphalt's hollows and the wheel paths' ruts
     vec3 alb = vec3(0.0), nA = n;
     float paint = 0.0, barrier = 0.0;
+    LandWater wr = LandWater(0.0, 0.0, w.aa);
     if (asph > 0.0) {
-        float h;
+        float h, rut = 0.0;
         vec3 colour = pbrLoaded(PBR_ROAD) ? pbrAlbedoMean(PBR_ROAD) * pbrAlbedoScale(PBR_ROAD) : vec3(0.032);
         alb = roadSurface(PBR_ROAD, q, gx, gy, colour, tex, n, nA, h);
         if (r.cls == 2) {
             barrier = roadLine(a, 0.0, 1.6, px);
             paint += roadLine(a, 1.6, 0.2, px) + roadLine(a, 12.55, 0.2, px);
             paint += (roadLine(a, 5.25, 0.15, px) + roadLine(a, 8.9, 0.15, px)) * roadDash(r.s, 3.0, 12.0, pxs);
-            if (a > 1.6 && a < 12.55) alb *= laneWear(mod(a - 1.6, 3.65) - 1.825, px);
+            if (a > 1.6 && a < 12.55) {
+                alb *= laneWear(mod(a - 1.6, 3.65) - 1.825, px);
+                rut = laneRut(mod(a - 1.6, 3.65) - 1.825);
+            }
             alb *= a > 12.6 ? 1.25 : 1.0;   // the hard shoulders' lighter strip
             // grime at the barrier's foot
             alb *= 1.0 - 0.3 * exp(-(a - 0.85) * (a - 0.85) / (2.0 * 0.12 * 0.12)) * (1.0 - clamp(px / 0.5, 0.0, 1.0)) * step(0.8, a);
         } else {
             paint += roadLine(a, 0.0, 0.15, px) * roadDash(r.s, 3.0, 12.0, pxs);
             paint += roadLine(a, 3.6, 0.15, px);
-            if (a < 3.6) alb *= laneWear(a - 1.8, px);
+            if (a < 3.6) { alb *= laneWear(a - 1.8, px); rut = laneRut(a - 1.8); }
             alb *= r.bridge && a > 3.7 ? 1.2 : 1.0;   // a deck's shoulders, asphalt
         }
         // resurfaced lengths, each carriageway its own (not on a deck, which the city draws without)
         if (!r.bridge) alb *= 0.93 + 0.14 * hfloat(hash2i(0x5A35u, int(floor(r.s / 180.0)), int(side)));
-        alb *= 1.0 - 0.35 * wet;
+        alb *= 1.0 - wet * roadWet(PBR_ROAD).x;
         paint = clamp(paint, 0.0, 1.0);
         // the barrier: concrete, its top level and its faces sloping down to the carriageways
         if (barrier > 0.0) {
-            vec3 nB, bAlb = roadSurface(PBR_CONCRETE, q, gx, gy, ROAD_BARRIER, tex, n, nB, h);
+            float hb;
+            vec3 nB, bAlb = roadSurface(PBR_CONCRETE, q, gx, gy, ROAD_BARRIER, tex, n, nB, hb);
+            bAlb *= 1.0 - wet * roadWet(PBR_CONCRETE).x;
             float face = smoothstep(0.2, 0.3, a) * (1.0 - clamp(px / 0.6, 0.0, 1.0));
             nB = normalize(nB + vec3(r.across.x, 0.0, r.across.y) * side * 0.9 * face);
             alb = mix(alb, bAlb, barrier);
@@ -219,6 +273,11 @@ vec3 shadeRoad(vec3 land, vec3 nLand, vec3 n, vec3 rel, LandPoint l, float urban
         vec3 pAlb = vec3(0.45 * (1.0 - 0.3 * wet)) * mix(vec3(1.0), alb / max(colour, vec3(1e-3)), 0.25);
         alb = mix(alb, pAlb, paint * (1.0 - barrier));
         nA = normalize(mix(nA, n, 0.7 * paint * (1.0 - barrier)));
+        // the water: a film (the barrier's its own), puddles (none on the barrier)
+        wr.film = wet * mix(roadWet(PBR_ROAD).z, roadWet(PBR_CONCRETE).z, barrier);
+        if (wet > 0.0) wr.pool = landPool(l, h - 0.6 * rut, roadWet(PBR_ROAD).y, n.y, wet) * (1.0 - barrier);
+        alb *= 1.0 - 0.1 * wr.pool;
+        nA = normalize(mix(nA, n, wr.pool));
     }
 
     // the light: the ground's, and beside a freeway its median's lamps, a pool
@@ -226,23 +285,32 @@ vec3 shadeRoad(vec3 land, vec3 nLand, vec3 n, vec3 rel, LandPoint l, float urban
     // (not off a bridge's deck)
     float cov = 1.0 - asph, gv = cov * grav;
     vec3 nl = normalize(asph * nA + gv * nGrav + (cov - gv) * nLand);
-    vec3 light = groundLight(rel, nl);
-    float pool = 0.0;
+    vec3 light = groundLightIn(l.sky, nl);
+    float pool = 0.0, lamps = 0.0, lampsLand = 0.0;
     if (r.cls == 2) {
         float ds = r.s - FREEWAY_LAMP_SPACING * floor(r.s / FREEWAY_LAMP_SPACING + 0.5);
         pool = exp(-ds * ds / (2.0 * 14.0 * 14.0) - a * a / (2.0 * 11.0 * 11.0));
         // seen from afar a pixel spans several lamps: their mean
         float mean = 2.5066 * 14.0 / FREEWAY_LAMP_SPACING * exp(-a * a / (2.0 * 11.0 * 11.0));
-        pool = mix(pool, mean, clamp(pxs / (0.5 * FREEWAY_LAMP_SPACING), 0.0, 1.0));
-        pool *= r.bridge ? asph : 1.0 - smoothstep(r.hw + FREEWAY_LIGHT_FADE, r.hw + FREEWAY_REACH, a);
+        float afar = clamp(pxs / (0.5 * FREEWAY_LAMP_SPACING), 0.0, 1.0);
+        pool = mix(pool, mean, afar);
+        float beside = r.bridge ? 0.0 : 1.0 - smoothstep(r.hw + FREEWAY_LIGHT_FADE, r.hw + FREEWAY_REACH, a);
+        pool *= r.bridge ? asph : beside;
+        // their highlights on the wet ground, until a pixel spans several
+        lamps = 1.0 - afar;
+        lampsLand = lamps * beside;
     }
     light += ROAD_SODIUM * 1.4 * pool;
 
+    // the water on the land beside the road, and on the gravel; then the road's over them
+    float landFilm = mix(w.film, wet * roadWet(PBR_ROOF_GRAVEL).z * (1.0 - urban), grav), poolLand = w.pool * (1.0 - grav);
+    w.film = mix(landFilm, wr.film, asph);
+    w.pool = mix(poolLand, wr.pool, asph);
+    nS = normalize(mix(normalize(mix(nLand, nGrav, grav)), nA, asph));
+    roughS = mix(LAND_FILM_ROUGH, ROAD_FILM_ROUGH, asph);
+    lampShare = mix(lampsLand, lamps, asph);
     vec3 ground = mix(land, gAlb, grav);
-    vec3 col = groundUrban(ground * light, urban);
-    // the wet asphalt's sheen under the lamps
-    vec3 road = alb * light + ROAD_SODIUM * 0.25 * wet * pool;
-    return mix(col, road, asph);
+    return mix(groundUrban(ground * light, urban), alb * light, asph);
 }
 
 #endif

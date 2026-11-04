@@ -16,7 +16,7 @@ typedef struct FrameUBO {
     float   shelter[4];    /* shelter map: camera-relative centre x, z; half-width; unused (renderer.c) */
     float   shadow[4];     /* ray-traced shadows: frame number, on (1) / off (0), where sample 0 lies in a pixel (renderer.c) */
     mat4    prevViewProj;  /* the previous frame's viewProj for this frame's camera-relative positions (renderer.c) */
-    float   sky[4];        /* the city's light in the air round the camera (0 countryside .. 1 city), how many cities[], cloud cover over the camera, unused (src/app/weather.c) */
+    float   sky[4];        /* the city's light in the air round the camera (0 countryside .. 1 city), how many cities[], cloud cover over the camera, how wet the ground is under the cloud (src/app/weather.c) */
     float   cities[CLOUD_CITIES][4];   /* the settlements whose clouds are drawn: camera-relative centre x, z; footprint radius; unused */
     float   moon[4];       /* towards the moon, in the camera's local frame (src/app/main.c); east's angle there from x towards z */
     uint32_t doorInfo[4];  /* how many doors (src/app/lobby_doors.c: lobby_doors_frame), unused */

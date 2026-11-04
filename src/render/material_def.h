@@ -18,12 +18,15 @@
  *     "albedo_scale": 1.0,          // what the albedo is multiplied by in the city's palette
  *     "albedo_mean":  [r, g, b],    // the albedo map's mean, linear (or one number): to normalise it
  *     "relief":       [0.8, 0.13],  // the height map's median and spread
+ *     "wet":          [0.35, 0.5, 1], // in the rain: how much darker it goes, how readily water stands on it, how its film shines (0 .. 1)
+ *     "snow":         [1.4, 0.0],   // snow on it: how soon it lies (1 as the cover's weight), where (0 hollows .. 1 tops)
  *     "params":       [ ... ]       // up to four numbers of the material's own, read by its shader
  *   }
  *
  * Only the albedo, normal and orm maps are required; every other key has a
- * default (tile 1, albedo_scale 1, albedo_mean 0.5, relief [0.5, 1], params
- * 0). The maps are formats the renderer knows (pbr.h); a material shares an
+ * default (tile 1, albedo_scale 1, albedo_mean 0.5, relief [0.5, 1], wet
+ * [0, 0, 0], snow [1, 0], params 0). Only the land's shaders read wet and snow
+ * (shaders/terrain/ground.glsl, roads.glsl). The maps are formats the renderer knows (pbr.h); a material shares an
  * image with another by naming the same file, and the image loads once. */
 typedef struct MaterialDef {
     char  maps[PBR_MAPS_PER_MATERIAL][1024];   /* each map's file, "" where the material has none */
@@ -31,6 +34,8 @@ typedef struct MaterialDef {
     float albedoScale;
     float albedoMean[3];
     float relief[2];
+    float wet[3];
+    float snow[2];
     float params[4];
 } MaterialDef;
 

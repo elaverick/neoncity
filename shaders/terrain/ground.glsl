@@ -3,24 +3,41 @@
 
 // The authored materials (the land's ground cover: assets/materials/land_*.json)
 #include "pbr.glsl"
+// The wet ground's sheen (GGX, as the city's), and the drops ringing its puddles
+#include "brdf.glsl"
+#include "ripples.glsl"
 
 /* The bare land, as the clipmap (terrain.frag) and the planet's patches
  * (planet.frag) both draw it: lit by the overcast the city lights from below
  * where the cities' clouds hang, by the moon and the stars beyond them, and
- * seen through the haze. rel is the camera-relative position (as drawn, bent
- * over the planet), n the normal, urban plan_urban there, cover the ground's
- * cover there (Cover, below). */
+ * seen through the haze. Under the cloud it rains: the ground darkens, takes
+ * a wet sheen and holds puddles. rel is the camera-relative position (as
+ * drawn, bent over the planet), n the normal, urban plan_urban there, cover
+ * the ground's cover there (Cover, below). */
 
-// The light falling on ground at rel facing n. Under the cities' cloud
-// (cloudCover) it is the deck's glow, sodium-orange over a city and dying
-// away over the border beyond it (cityLight), where only a little moonlight
-// gets through. Under a clear sky it is the moon, and the stars' faint glow.
-vec3 groundLight(vec3 rel, vec3 n) {
-    float edge = cityEdge(rel.xz), cover = cloudCover(rel.xz, edge);
-    vec3 deck = CLOUD_DECK * cityLight(edge) * (0.6 + 1.4 * max(n.y, 0.0));
-    vec3 clear = MOON_LIGHT * max(dot(n, MOON_DIR), 0.0) + STARLIGHT * (0.5 + 0.5 * n.y);
-    return deck * cover + clear * (1.0 - 0.9 * cover);
+// The sky over ground at rel: the cities' cloud over it (cloudCover), the
+// city's light in that cloud (cityLight), and how wet the ground under it is
+// (the rain's wetness, frame.sky.w, where the cloud is; dry under a clear sky).
+struct LandSky { float cover; float city; float wet; };
+LandSky landSky(vec3 rel) {
+    float edge = cityEdge(rel.xz);
+    LandSky s;
+    s.cover = cloudCover(rel.xz, edge);
+    s.city = cityLight(edge);
+    s.wet = frame.sky.w * s.cover;
+    return s;
 }
+
+// The light falling on ground under sky s facing n. Under the cities' cloud
+// it is the deck's glow, sodium-orange over a city and dying away over the
+// border beyond it, where only a little moonlight gets through. Under a clear
+// sky it is the moon, and the stars' faint glow.
+vec3 groundLightIn(LandSky s, vec3 n) {
+    vec3 deck = CLOUD_DECK * s.city * (0.6 + 1.4 * max(n.y, 0.0));
+    vec3 clear = MOON_LIGHT * max(dot(n, MOON_DIR), 0.0) + STARLIGHT * (0.5 + 0.5 * n.y);
+    return deck * s.cover + clear * (1.0 - 0.9 * s.cover);
+}
+vec3 groundLight(vec3 rel, vec3 n) { return groundLightIn(landSky(rel), n); }
 
 // Beyond the city the air is clearer than over its streets, so far ridges
 // stand out above the haze: TERRAIN_HAZE (distances.h) against the city's
@@ -63,13 +80,45 @@ void landWeights(Cover c, out float w[LAND_CLASSES]) {
     w[0] = c.a.x; w[1] = c.a.y; w[2] = c.a.z; w[3] = c.a.w; w[4] = c.b.x;
     w[5] = max(1.0 - dot(c.a, vec4(1.0)) - c.b.x, 0.0);}
 
-// The cover's flat albedo: damp ground by the water darker, the snow over it all.
-vec3 coverAlbedo(Cover c) {
+// Class k in the rain (its file's wet: pbrWet): how much of its albedo it
+// loses, how readily water stands on it, how its film shines. Where its
+// material didn't load, darker by a third, no puddles, a faint sheen.
+vec3 landWet(int k) { return pbrLoaded(LAND_MAT[k]) ? pbrWet(LAND_MAT[k]) : vec3(0.35, 0.0, 0.3); }
+// Class k's albedo darkened by the rain, wetness wet.
+float landDarken(int k, float wet) { return 1.0 - wet * landWet(k).x; }
+
+// The snow on class k where the cover's snow weight is s (its file's snow:
+// pbrSnow): soft ground takes it sooner than its weight, rock later; and
+// where on it it lies first (0 in its height map's hollows, 1 on its tops).
+float landSnowOn(int k, float s) {
+    float soon = pbrLoaded(LAND_MAT[k]) ? pbrSnow(LAND_MAT[k]).x : 1.0;
+    return s <= 0.0 ? 0.0 : 1.0 - pow(max(1.0 - s, 0.0), soon);
+}
+float landSnowTops(int k) { return pbrLoaded(LAND_MAT[k]) ? pbrSnow(LAND_MAT[k]).y : 0.0; }
+
+// What the rain finds at a pixel of ground, the cover's classes by their
+// shares there: how readily water stands on them (stand) and how their film
+// shines (sheen), neither on the snow; the snow's share; and the ground's
+// height under it (relief, in its maps' spreads: pbrRelief; 0 where the
+// textures aren't read).
+struct LandWet { float stand; float sheen; float snow; float relief; };
+
+// The cover's flat albedo, in the rain, wetness wet: each class darkened by
+// it, damp ground by the water darker, the snow over each class as it takes
+// it (landSnowOn). What the rain finds there into lw.
+vec3 coverAlbedo(Cover c, float wet, out LandWet lw) {
     float w[LAND_CLASSES];
     landWeights(c, w);
-    vec3 base = vec3(0.0);
-    for (int k = 0; k < LAND_CLASSES; ++k) base += w[k] * landColour(k);
-    return mix(base * (1.0 - 0.25 * c.b.z), landColour(LAND_CLASSES), c.b.y);
+    vec3 snow = landColour(LAND_CLASSES) * landDarken(LAND_CLASSES, wet), alb = vec3(0.0);
+    lw = LandWet(0.0, 0.0, 0.0, 0.0);
+    for (int k = 0; k < LAND_CLASSES; ++k) {
+        float s = landSnowOn(k, c.b.y);
+        alb += w[k] * mix(landColour(k) * landDarken(k, wet) * (1.0 - 0.25 * c.b.z), snow, s);
+        lw.stand += w[k] * (1.0 - s) * landWet(k).y;
+        lw.sheen += w[k] * (1.0 - s) * landWet(k).z;
+        lw.snow += w[k] * s;
+    }
+    return alb;
 }
 
 /* ---- the textures near the camera ------------------------------------- */
@@ -239,13 +288,14 @@ float landHeight(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N, HexTap t) {
     return r;
 }
 
-// Class k's surface at p in copy t, taken by w: its albedo drawn about its
-// colour into alb, and how far its normal map bends the ground's normal N
-// into bend (added to N, then normalised).
-void landSurface(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N, HexTap t, float w, inout vec3 alb, inout vec3 bend) {
+// Class k's surface at p in copy t, taken by w, in the rain, wetness wet: its
+// albedo drawn about its colour (darkened by the rain: landDarken) into alb,
+// and how far its normal map bends the ground's normal N into bend (added to
+// N, then normalised).
+void landSurface(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N, HexTap t, float w, float wet, inout vec3 alb, inout vec3 bend) {
     int m = LAND_MAT[k], i = m * PBR_MAPS_PER_MATERIAL;
-    if (!pbrLoaded(m)) { alb += w * LAND_FALLBACK[k]; return; }
-    vec3 ax = landAxes(k, N), tint = landColour(k) / max(pbrAlbedoMean(m), vec3(1e-3));
+    if (!pbrLoaded(m)) { alb += w * LAND_FALLBACK[k] * landDarken(k, wet); return; }
+    vec3 ax = landAxes(k, N), tint = landColour(k) * landDarken(k, wet) / max(pbrAlbedoMean(m), vec3(1e-3));
     float strength = pbrParams(m).w;
     for (int a = 0; a < 3; ++a) {
         if (ax[a] <= 0.0) continue;
@@ -261,34 +311,45 @@ void landSurface(int k, vec3 p, vec3 dpx, vec3 dpy, vec3 N, HexTap t, float w, i
 // A class's score where classes meet (LAND_RELIEF): log w + r / LAND_RELIEF.
 float landScore(float w, float relief) { return log(max(w, 1e-6)) + relief / LAND_RELIEF; }
 
-// The cover textured at p in copy t (landHex): the classes met by their
-// heights (the slight ones as their colours, by weight), damp ground darker,
-// the snow over it all, lying in the ground's hollows first; the normal's bend
-// from their normal maps added to bend. The heights are read first, then the
-// albedo and normal maps of the classes that show. lin, from 0 to 1, takes
-// the classes' shares from their heights' to their weights' own: as a pixel
-// grows, so that where the textures fade into the flat colours (coverAlbedo,
-// by weight) the classes already show in those shares. (Met by their
-// heights, the larger class takes more than its weight once the heights
-// have averaged out in the maps' mips.)
-vec3 coverTap(Cover c, vec3 p, vec3 dpx, vec3 dpy, vec3 n, HexTap t, float lin, inout vec3 bend) {
+// The cover textured at p in copy t (landHex), in the rain, wetness wet: the
+// classes met by their heights (the slight ones as their colours, by
+// weight), each darkened by the rain, damp ground darker, the snow over it
+// all; the normal's bend from their normal maps added to bend, and what the
+// rain finds there (by the copy's share) to lw. The heights are read first,
+// then the albedo and normal maps of the classes that show. lin, from 0 to
+// 1, takes the classes' shares from their heights' to their weights' own: as
+// a pixel grows, so that where the textures fade into the flat colours
+// (coverAlbedo, by weight) the classes already show in those shares. (Met by
+// their heights, the larger class takes more than its weight once the
+// heights have averaged out in the maps' mips.)
+vec3 coverTap(Cover c, vec3 p, vec3 dpx, vec3 dpy, vec3 n, HexTap t, float lin, float wet, inout vec3 bend, inout LandWet lw) {
     float w[LAND_CLASSES];
     landWeights(c, w);
-    // the slight classes' colours by weight, and the share they leave
+    // the slight classes' colours by weight, the share they leave, and their
+    // snow and standing water
     vec3 slight = vec3(0.0);
-    float rest = 1.0;
+    float rest = 1.0, snow = 0.0, stand = 0.0, sheen = 0.0;
     // the others' scores (-1e30 for the slight), the highest and their heights
     float score[LAND_CLASSES], height[LAND_CLASSES], top = -1e30;
     for (int k = 0; k < LAND_CLASSES; ++k) {
         score[k] = -1e30; height[k] = 0.0;
-        if (w[k] < LAND_MIN_WEIGHT) { slight += w[k] * landColour(k); rest -= w[k]; continue; }
+        if (w[k] < LAND_MIN_WEIGHT) {
+            slight += w[k] * landColour(k) * landDarken(k, wet);
+            snow += w[k] * landSnowOn(k, c.b.y);
+            stand += w[k] * landWet(k).y;
+            sheen += w[k] * landWet(k).z;
+            rest -= w[k];
+            continue;
+        }
         if (lin < 1.0) height[k] = landHeight(k, p, dpx, dpy, n, t);
         score[k] = landScore(w[k], height[k]);
         top = max(top, score[k]);
     }
     // each one's share, exp((score - top) / LAND_BLEND) of their total, and
-    // toward its weight by lin; the ground's height, theirs by share
-    float share[LAND_CLASSES], sum = 0.0, relief = 0.0;
+    // toward its weight by lin; the ground's height, theirs by share; under
+    // the snow, the ground's height turned over where it lies on the tops
+    // (landSnowTops)
+    float share[LAND_CLASSES], sum = 0.0, relief = 0.0, under = 0.0;
     for (int k = 0; k < LAND_CLASSES; ++k) {
         share[k] = score[k] > -1e29 ? exp((score[k] - top) / LAND_BLEND) : 0.0;
         sum += share[k];
@@ -297,12 +358,20 @@ vec3 coverTap(Cover c, vec3 p, vec3 dpx, vec3 dpy, vec3 n, HexTap t, float lin, 
         float byWeight = score[k] > -1e29 ? w[k] / max(rest, 1e-6) : 0.0;
         share[k] = mix(share[k] / max(sum, 1e-6), byWeight, lin);
         relief += share[k] * height[k];
+        under += share[k] * mix(height[k], -height[k], landSnowTops(k));
+        if (share[k] > 0.0) {
+            float r = max(rest, 0.0) * share[k];
+            snow += r * landSnowOn(k, c.b.y);
+            stand += r * landWet(k).y;
+            sheen += r * landWet(k).z;
+        }
     }
-    // the snow: one more class over the ground, by its weight and the
-    // ground's height against its own
-    float snow = c.b.y, f = snow;
+    // the snow: one more class over the ground, by its share of the pixel
+    // and the ground's height (under) against its own
+    snow = min(snow, 1.0);
+    float f = snow;
     if (snow >= LAND_MIN_WEIGHT && lin < 1.0)
-        f = mix(1.0 / (1.0 + exp((landScore(1.0 - snow, relief) - landScore(snow, landHeight(LAND_CLASSES, p, dpx, dpy, n, t))) / LAND_BLEND)), snow, lin);
+        f = mix(1.0 / (1.0 + exp((landScore(1.0 - snow, under) - landScore(snow, landHeight(LAND_CLASSES, p, dpx, dpy, n, t))) / LAND_BLEND)), snow, lin);
     // the classes that show, by their shares among them
     float kept = 0.0;
     for (int k = 0; k < LAND_CLASSES; ++k) {
@@ -312,17 +381,21 @@ vec3 coverTap(Cover c, vec3 p, vec3 dpx, vec3 dpy, vec3 n, HexTap t, float lin, 
     vec3 alb = slight, b = vec3(0.0);
     if (f < 1.0 - LAND_MIN_SHARE && kept > 0.0)
         for (int k = 0; k < LAND_CLASSES; ++k)
-            if (share[k] > 0.0) landSurface(k, p, dpx, dpy, n, t, max(rest, 0.0) * share[k] / kept, alb, b);
+            if (share[k] > 0.0) landSurface(k, p, dpx, dpy, n, t, max(rest, 0.0) * share[k] / kept, wet, alb, b);
     alb *= 1.0 - 0.25 * c.b.z;
     if (snow >= LAND_MIN_WEIGHT && f >= LAND_MIN_SHARE) {
         vec3 sa = vec3(0.0), sb = vec3(0.0);
-        landSurface(LAND_CLASSES, p, dpx, dpy, n, t, 1.0, sa, sb);
+        landSurface(LAND_CLASSES, p, dpx, dpy, n, t, 1.0, wet, sa, sb);
         alb = mix(alb, sa, f);
         b = mix(b, sb, f);
     } else {
-        alb = mix(alb, landColour(LAND_CLASSES), f);
+        alb = mix(alb, landColour(LAND_CLASSES) * landDarken(LAND_CLASSES, wet), f);
     }
     bend += t.w * b;
+    lw.stand += t.w * stand * (1.0 - f);
+    lw.sheen += t.w * sheen * (1.0 - f);
+    lw.snow += t.w * f;
+    lw.relief += t.w * relief;
     return t.w * alb;
 }
 
@@ -331,15 +404,17 @@ vec3 coverTap(Cover c, vec3 p, vec3 dpx, vec3 dpy, vec3 n, HexTap t, float lin, 
 // away): done before the textures have faded far into the flat colours.
 const float LAND_LIN_PX0 = 0.12, LAND_LIN_PX1 = 0.26;
 
-// The cover textured at p, where a pixel spans px metres: its copies
-// (landHex) by their shares, the normal bent by their normal maps.
-vec3 coverTextured(Cover c, vec3 p, vec3 dpx, vec3 dpy, float px, inout vec3 n) {
+// The cover textured at p, where a pixel spans px metres, in the rain,
+// wetness wet: its copies (landHex) by their shares, the normal bent by
+// their normal maps; what the rain finds there into lw.
+vec3 coverTextured(Cover c, vec3 p, vec3 dpx, vec3 dpy, float px, float wet, inout vec3 n, out LandWet lw) {
     HexTap tap[3];
     landHex(p.xz, px, tap);
     float lin = smoothstep(LAND_LIN_PX0, LAND_LIN_PX1, px);
     vec3 alb = vec3(0.0), bend = vec3(0.0);
+    lw = LandWet(0.0, 0.0, 0.0, 0.0);
     for (int i = 0; i < 3; ++i)
-        if (tap[i].w > 0.0) alb += coverTap(c, p, dpx, dpy, n, tap[i], lin, bend);
+        if (tap[i].w > 0.0) alb += coverTap(c, p, dpx, dpy, n, tap[i], lin, wet, bend, lw);
     n = normalize(n + bend);
     return alb;
 }
@@ -361,37 +436,156 @@ vec3 landMacro(vec2 g, vec2 wp, float px, float snow) {
 
 // Where on the ground the textures are mapped: p the ground's own coordinates,
 // x and z wrapped as the city's (frame.ground, from doubles), and their screen
-// derivatives; px the metres of ground a pixel spans. Taken in uniform control
-// flow (the derivatives), and passed to what samples inside branches.
-struct LandPoint { vec3 p; vec3 dpx; vec3 dpy; float px; };
+// derivatives; px the metres of ground a pixel spans; the sky over it. Taken
+// in uniform control flow (the derivatives), and passed to what samples
+// inside branches.
+struct LandPoint { vec3 p; vec3 dpx; vec3 dpy; float px; LandSky sky; };
 LandPoint landPoint(vec3 rel) {
     LandPoint l;
     l.p = vec3(frame.ground.xy + rel.xz, frame.camPos.y + rel.y).xzy;
     l.dpx = dFdx(l.p); l.dpy = dFdy(l.p);
     l.px = length(rel) * 2.0 * length(frame.rayBasis[1].xyz) * frame.screen.w;
+    l.sky = landSky(rel);
     return l;
 }
 
-// The land's albedo at rel, its normal n bent by the textures' normal maps.
-// textured: whether the cover's textures may be drawn (the clipmap's ground,
-// where no road's asphalt covers it; the planet's patches all lie beyond them).
-vec3 groundAlbedo(vec3 rel, LandPoint l, float urban, Cover cover, bool textured, inout vec3 n) {
+/* ---- the rain ---------------------------------------------------------- */
+
+// The water on a pixel of ground: the share of it standing in puddles
+// (pool), how much the film over the rest shines (film: the wetness by the
+// classes' sheen), and how far the ground's normal turns across the pixel
+// (aa: its highlights widened by it, as the city's, rather than sparkling).
+struct LandWater { float pool; float film; float aa; };
+
+// Water stands in the ground's hollows: where its height (relief, from its
+// maps, plus a broad noise of a 3.2 m and an 11 m octave) lies below a level
+// that rises with the wetness wet and how readily the ground holds water
+// (stand), on level ground (ny, its normal's y: none past about 7 degrees),
+// once the rain has settled in (wet 0.3 to 0.6). From none (stand 0) to about
+// 14% of the ground under water (mud in a downpour); as a pixel comes to span
+// the hollows, their share of the ground (the noise's, fit: 2.2 (level + 0.6)^3).
+float landPool(LandPoint l, float relief, float stand, float ny, float wet) {
+    float level = -0.55 + 0.35 * wet * stand;
+    float on = smoothstep(0.3, 0.6, wet) * smoothstep(0.993, 0.999, ny);
+    if (on <= 0.0 || level <= -0.6) return 0.0;
+    float pool = min(2.2 * pow(level + 0.6, 3.0), 0.5), far = smoothstep(0.5, 2.0, l.px);
+    if (far < 1.0) {
+        float broad = 0.6 * vnoiseWrap(l.p.xz / 3.2, 2200, 0x7E31u) + 0.4 * vnoiseWrap(l.p.xz / 11.0, 640, 0x7E32u);
+        pool = mix(smoothstep(0.0, 0.05, level - (0.3 * relief + 1.2 * (broad - 0.5))), pool, far);
+    }
+    return pool * on;
+}
+
+// The wet film's roughness and a puddle's (GGX's, alpha their square), and
+// water's reflectance square on (F0).
+const float LAND_FILM_ROUGH = 0.45, LAND_POOL_ROUGH = 0.04, WATER_F0 = 0.02;
+
+// The moon as a highlight sees it: its disc's radiance as the sky draws it
+// (sky.frag: about 1.75 where lit) times the disc's solid angle (MOON_RADIUS),
+// in MOON_LIGHT's colour. Far less than MOON_LIGHT, the diffuse light, which
+// is made strong enough for a moonlit night to read.
+const vec3 MOON_GLINT = MOON_LIGHT * 0.003;
+
+// The sky a wet surface reflects in direction R under sky s: the haze and the
+// moon's aureole (hazeColor) about the horizon, and above, where the cities'
+// cloud hangs, the cloud lit by the city (as the city's surfaces see it:
+// envReflection, but for the lit streets and facades it has round its
+// horizon, which the land hasn't).
+vec3 landReflection(vec3 R, LandSky s) {
+    return mix(hazeColor(R) * 1.5, CLOUD_DECK * s.city, smoothstep(0.03, 0.3, R.y) * 0.85 * s.cover);
+}
+
+// GGX's highlight from a light square on to its direction L (pi carried in,
+// as the city's: diffuse here is albedo times the light, without the 1 / pi).
+float landGgx(vec3 n, vec3 L, vec3 V, float alpha, float f0) {
+    float ndl = dot(n, L);
+    if (ndl <= 0.0) return 0.0;
+    vec3 H = normalize(L + V);
+    float a2 = max(alpha * alpha, 1e-6);
+    return 3.14159265 * brdfGgxD(max(dot(n, H), 0.0), a2) * brdfSmithVis(ndl, max(dot(n, V), 1e-4), a2) * brdfSchlick(f0, max(dot(V, H), 0.0)) * ndl;
+}
+
+// The wet surface a pixel shows, as one layer: the film (normal n, roughness
+// rough widened by w.aa, shining by w.film) giving way, by the puddles'
+// share, to theirs (level, nGeom the ground's own normal, ringed near the
+// camera by the drops as the city's puddles are, as hard as the rain falls
+// where the camera is: frame.weather.x; smooth, shining fully). A pixel is
+// almost always one or the other. Its normal nW, roughness rW and how much
+// it shines (returned).
+float wetSurface(LandPoint l, vec3 n, vec3 nGeom, float rough, LandWater w, out vec3 nW, out float rW) {
+    nW = n;
+    rW = pow(pow(rough, 4.0) + w.aa, 0.25);
+    if (w.pool <= 0.0) return w.film;
+    vec3 nP = nGeom;
+    float near = 1.0 - smoothstep(0.02, 0.08, l.px);
+    if (near > 0.0) {
+        vec2 g = ripples(l.p.xz, frame.camPos.w, 0.25 + 0.6 * frame.weather.x);
+        nP = normalize(nGeom + vec3(g.x, 0.0, g.y) * near);
+    }
+    nW = normalize(mix(n, nP, w.pool));
+    rW = mix(rW, LAND_POOL_ROUGH, w.pool);
+    return mix(w.film, 1.0, w.pool);
+}
+
+// The highlight of a wet surface (normal n, roughness rough) seen along V under
+// sky s: the sky it reflects (landReflection) and the moon's glint through the
+// cloud.
+vec3 wetHighlight(vec3 n, vec3 V, float rough, LandSky s) {
+    vec3 R = normalize(mix(reflect(-V, n), n, rough * rough));
+    vec3 c = landReflection(R, s) * envBRDF(WATER_F0, rough, max(dot(n, V), 1e-4));
+    return c + MOON_GLINT * (1.0 - 0.9 * s.cover) * landGgx(n, MOON_DIR, V, max(rough * rough, MOON_RADIUS), WATER_F0);
+}
+
+// The wet ground's sheen at rel (wetSurface, wetHighlight).
+vec3 landSheen(vec3 rel, LandPoint l, vec3 n, vec3 nGeom, float rough, LandWater w) {
+    if (w.film + w.pool <= 0.0) return vec3(0.0);
+    vec3 nW;
+    float rW, k = wetSurface(l, n, nGeom, rough, w, nW, rW);
+    return k * wetHighlight(nW, -normalize(rel), rW, l.sky);
+}
+
+// How far a normal turns across the pixel, for widening highlights (the
+// city's specular anti-aliasing). Taken in uniform control flow.
+float normalKernel(vec3 n) {
+    vec3 dnx = dFdx(n), dny = dFdy(n);
+    return min(0.5 * (dot(dnx, dnx) + dot(dny, dny)), 0.2);
+}
+
+/* ---- the land, lit ------------------------------------------------------ */
+
+// The land's albedo at rel, its normal n bent by the textures' normal maps,
+// darkened by the rain, and the water on it (w). textured: whether the
+// cover's textures may be drawn (the clipmap's ground, where no road's asphalt
+// covers it; the planet's patches all lie beyond them). Called in uniform
+// control flow (normalKernel).
+vec3 groundAlbedo(vec3 rel, LandPoint l, float urban, Cover cover, bool textured, inout vec3 n, out LandWater w) {
     vec2 wp = frame.camPos.xz + rel.xz;
-    vec3 albedo = coverAlbedo(cover);
+    vec3 nGeom = n;
+    float wet = l.sky.wet;
+    LandWet lw;
+    vec3 albedo = coverAlbedo(cover, wet, lw);
     if (textured && urban < 0.99) {
         float tex = 1.0 - smoothstep(LAND_TEX_PX0, LAND_TEX_PX1, l.px);
         if (tex > 0.0) {
             vec3 tn = n;
-            vec3 t = coverTextured(cover, l.p, l.dpx, l.dpy, l.px, tn);
+            LandWet tw;
+            vec3 t = coverTextured(cover, l.p, l.dpx, l.dpy, l.px, wet, tn, tw);
             albedo = mix(albedo, t, tex);
             n = normalize(mix(n, tn, tex));
+            lw = LandWet(mix(lw.stand, tw.stand, tex), mix(lw.sheen, tw.sheen, tex), mix(lw.snow, tw.snow, tex), tw.relief * tex);
         }
     }
-    albedo *= landMacro(l.p.xz, wp, l.px, cover.b.y);
-    // patchy within each class; darker in the rain, but for the snow
+    albedo *= landMacro(l.p.xz, wp, l.px, lw.snow);
+    // patchy within each class
     float patches = 0.6 * vnoise(wp / 37.0, 0x7E21u) + 0.4 * vnoise(wp / 211.0, 0x7E22u);
     albedo *= 0.8 + 0.4 * patches;
-    albedo *= 1.0 - 0.35 * frame.weather.y * (1.0 - cover.b.y);
+    // the water: in puddles a little darker beneath (silt in it) and level, a
+    // film elsewhere; none where the city's streets take over (groundUrban)
+    w.aa = normalKernel(n);
+    w.film = wet * lw.sheen * (1.0 - urban);
+    w.pool = wet > 0.0 && urban < 0.99 ? landPool(l, lw.relief, lw.stand, nGeom.y, wet) * (1.0 - urban) : 0.0;
+    albedo *= 1.0 - 0.15 * w.pool;
+    n = normalize(mix(n, nGeom, w.pool));
     return albedo;
 }
 
@@ -402,11 +596,13 @@ vec3 groundUrban(vec3 col, float urban) {
     return mix(col, vec3(0.02, 0.018, 0.017) * CLOUD_DECK * 2.0 + vec3(1.0, 0.55, 0.25) * 0.012, urban);
 }
 
-// The land lit, before the haze.
+// The land lit, before the haze: its diffuse light, and the wet ground's sheen.
 vec3 groundLit(vec3 rel, vec3 n, float urban, Cover cover, bool textured) {
-    vec3 albedo = groundAlbedo(rel, landPoint(rel), urban, cover, textured, n);
-    vec3 col = albedo * groundLight(rel, n);
-    return groundUrban(col, urban);
+    LandPoint l = landPoint(rel);
+    LandWater w;
+    vec3 nB = n;
+    vec3 albedo = groundAlbedo(rel, l, urban, cover, textured, nB, w);
+    return groundUrban(albedo * groundLightIn(l.sky, nB), urban) + landSheen(rel, l, nB, n, LAND_FILM_ROUGH, w);
 }
 
 // What is lit at rel, seen through the haze.

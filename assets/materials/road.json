@@ -10,5 +10,7 @@
   "tile": 4.0,             // metres per repeat: must divide 64 chunks (7040 m), where the shader's world coordinates wrap
   "albedo_mean": [0.054, 0.053, 0.049],   // per channel (pbr_pack): the land's roads draw the map about it, flat beyond its reach
   "albedo_scale": 1.0,
-  "relief": [0.80, 0.13]   // the height map's median and spread: where water stands
+  "relief": [0.80, 0.13],   // the height map's median and spread: where water stands
+  // in the rain (the land roads' shaders): how much darker it goes, how readily water stands in its hollows, how its wet film shines (0 .. 1)
+  "wet": [0.35, 0.50, 1.00]
 }

@@ -13,5 +13,7 @@
   // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
   "params": [1.0, 1.0],
   // the height map's median and spread (its 5th to 95th percentile): where the verge's gravel meets the land's cover
-  "relief": [0.361, 0.216]
+  "relief": [0.361, 0.216],
+  // in the rain (the land roads' shaders): how much darker it goes, how readily water stands in its hollows, how its wet film shines (0 .. 1)
+  "wet": [0.30, 0.00, 0.40]
 }

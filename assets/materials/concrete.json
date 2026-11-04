@@ -12,5 +12,7 @@
   "tile": [1.1, 0.55],         // metres per image (a 2:1 image)
   "albedo_mean": [0.482, 0.482, 0.482],   // per channel (pbr_pack): the tint divides by it
   // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
-  "params": [1.0, 1.0]
+  "params": [1.0, 1.0],
+  // in the rain (the land roads' shaders): how much darker it goes, how readily water stands in its hollows, how its wet film shines (0 .. 1)
+  "wet": [0.25, 0.00, 0.60]
 }

@@ -48,15 +48,7 @@ float specLobe(vec3 n, vec3 L, vec3 V, float shin, float specK, float rough, flo
     return pow(max(dot(n, H), 0.0), shin) * specK * ndl * (shin + 8.0) / 25.0;
 }
 
-// Split-sum environment BRDF, analytic fit (Karis, "Physically Based Shading on Mobile").
-float envBRDF(float f0, float rough, float ndv) {
-    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
-    const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
-    vec4 r = rough * c0 + c1;
-    float a004 = min(r.x * r.x, exp2(-9.28 * ndv)) * r.x + r.y;
-    vec2 AB = vec2(-1.04, 1.04) * a004 + r.zw;
-    return f0 * AB.x + AB.y;
-}
+// envBRDF (the split-sum environment BRDF) is brdf.glsl's.
 
 void addLamp(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, vec3 lpos, vec3 lcol,
              inout vec3 diff, inout vec3 spec) {

@@ -81,7 +81,11 @@ static void test_def(void) {
     snprintf(text, sizeof(text), "{ %s, \"tile\": [2, 1], \"albedo_mean\": 0.3, \"params\": [1, 2] }", MAPS);
     CHECK(def_from(text, &d, err, sizeof(err)), "a good material: %s", err);
     CHECK(d.tile[0] == 2.0f && d.tile[1] == 1.0f && d.albedoScale == 1.0f && d.albedoMean[2] == 0.3f
-          && d.relief[1] == 1.0f && d.params[1] == 2.0f && d.params[2] == 0.0f, "values and defaults");
+          && d.relief[1] == 1.0f && d.params[1] == 2.0f && d.params[2] == 0.0f
+          && d.wet[0] == 0.0f && d.wet[1] == 0.0f && d.wet[2] == 0.0f && d.snow[0] == 1.0f && d.snow[1] == 0.0f, "values and defaults");
+    snprintf(text, sizeof(text), "{ %s, \"wet\": [0.4, 0.7, 0.2], \"snow\": [0.6, 1] }", MAPS);
+    CHECK(def_from(text, &d, err, sizeof(err)) && d.wet[0] == 0.4f && d.wet[1] == 0.7f && d.wet[2] == 0.2f && d.snow[0] == 0.6f && d.snow[1] == 1.0f,
+          "wet and snow read: %s", err);
     CHECK(strcmp(d.maps[PBR_NORMAL], "t/n.png") == 0 && strcmp(d.maps[PBR_ORM], "../x/t/o.png") == 0 && !d.maps[PBR_EMISSIVE][0],
           "map paths resolved (%s, %s)", d.maps[PBR_NORMAL], d.maps[PBR_ORM]);
 
@@ -92,6 +96,10 @@ static void test_def(void) {
         "{ %s, \"tile\": -1 }",
         "{ %s, \"albedo_scale\": \"bright\" }",
         "{ %s, \"params\": [1, 2, 3, 4, 5] }",
+        "{ %s, \"wet\": [0.5] }",
+        "{ %s, \"wet\": [1.5, 0, 0] }",
+        "{ %s, \"snow\": [0, 0] }",
+        "{ %s, \"snow\": [1, 2] }",
         "{ \"maps\": { \"albedo\": \"a.png\", \"normal\": \"n.png\", \"orm\": \"o.png\", \"height\": \"h.png\" } }",
         "[ %s ]",
     };

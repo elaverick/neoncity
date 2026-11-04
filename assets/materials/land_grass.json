@@ -15,5 +15,9 @@
   // land's grass meets the city's at its edge; how strongly the normal map bends the ground (1 as authored)
   "params": [0.050, 0.066, 0.034, 1.0],
   // the height map's median and spread (its 5th to 95th percentile): where the classes meet (shaders/terrain/ground.glsl), and where water stands
-  "relief": [0.529, 0.173]
+  "relief": [0.529, 0.173],
+  // in the rain (the land's shaders): how much darker it goes, how readily water stands in its hollows, how its wet film shines (0 .. 1)
+  "wet": [0.30, 0.25, 0.15],
+  // the snow over it: how soon it lies (1 as the cover's snow weight), and where first (0 its height map's hollows .. 1 its tops)
+  "snow": [1.4, 0.0]
 }

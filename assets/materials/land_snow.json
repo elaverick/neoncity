@@ -14,5 +14,7 @@
   // the colour (linear) its mean is drawn as (0: its own mean times albedo_scale); how strongly the normal map bends the ground (1 as authored)
   "params": [0.000, 0.000, 0.000, 1.0],
   // the height map's median and spread (its 5th to 95th percentile): where the classes meet (shaders/terrain/ground.glsl), and where water stands
-  "relief": [0.533, 0.337]
+  "relief": [0.533, 0.337],
+  // in the rain (the land's shaders): how much darker it goes, how readily water stands in its hollows, how its wet film shines (0 .. 1)
+  "wet": [0.00, 0.00, 0.00]
 }

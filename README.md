@@ -184,7 +184,8 @@ the real urban area from the GHSL; read at run time, see `data/earth/SOURCE.md`)
   paths and resurfaced lengths, and procedural lane lines. A freeway has a concrete median barrier
   (`concrete`) and hard shoulders; a trunk road has gravel shoulders (`roof_gravel`). Beyond the paved
   edge a strip of the gravel on the level verge gives way to the land's cover by the two's height maps.
-  The freeways' sodium lamps every 60 m light the carriageways and the land beside them. Past 1.9 km a
+  The freeways' sodium lamps every 60 m light the carriageways and the land beside them, and glint in
+  them when they are wet; water stands in the asphalt's hollows and the wheel paths. Past 1.9 km a
   bridge's paint is paved to its edge, as the deck, with nothing beyond.
 
 `world_test` checks them; `world_test --threads 1 --fingerprint` hashes what was placed and built, the
@@ -685,14 +686,15 @@ colours were), or its `params` rgb where given: the grass takes the park lawns' 
 the city's. Near the camera each class's albedo and normal map are drawn about that colour, so the texture's
 mean is the colour (a class under 1/64 of a pixel is its colour, unsampled). Where classes meet, each shows
 where its own height map stands higher: rock through the soil in its cracks, sand filling the rock's hollows,
-snow lying in the ground's. A pixel takes class k by w_k exp(r_k / 0.24), sharpened by a power of 4, r_k its
+snow lying in soft ground's hollows and on rock's tops. A pixel takes class k by w_k exp(r_k / 0.24), sharpened by a power of 4, r_k its
 height in its map's spreads (the file's `relief`, measured as the height map's median and 5th to 95th
 percentile). That is the soft form of picking the largest of log w plus a random height, which picks each class
 as often as its weight, so each class still covers about its weight of the ground (within 0.05 with these maps)
 and the near ground's mean colour is the flat cover's. The heights are read first, then the albedo and normal
 maps of only the classes that show in the pixel (1/64 of it or more), so a pixel of one class reads one
 class's maps. As a pixel comes to span 0.2 to 0.32 m (about 190 to 300 m away at 1080 lines), the textures fade
-into the flat colours, which is all the planet's patches and the far clipmap draw. The lighting stays diffuse.
+into the flat colours, which is all the planet's patches and the far clipmap draw. The dry ground is lit
+diffusely; the wet ground takes a sheen (below).
 
 The textures don't repeat in a grid (hex tiling, after Mikkelsen 2022). The ground is laid on a triangular grid
 of points 2.2 m apart, about a tile, and each point takes every class's textures turned by any angle, mirrored or
@@ -709,6 +711,42 @@ them out, the larger class took more than its weight). Beyond the textures, on t
 alike, the cover is varied by a 7 m noise (±8%, gone by about 900 m off), groundLit's 37 m and 211 m patches,
 and a drier or lusher hue over 1.6 km (±7%, not on the snow).
 At ground level the textures add about 0.05-0.15 ms to the terrain pass.
+
+It rains only from the cities' cloud, so only the ground under it is wet (`FrameUBO.sky.w`, the rain's wetness,
+times the cloud's cover at the point; `src/app/weather.c`); the land under a clear sky beyond is dry. Each
+material's file says how it takes the rain and the snow (`"wet": [darken, stand, sheen]`, `"snow": [soon, tops]`,
+read only by the land's shaders):
+
+| Class | Darker in the rain | Water stands | Film's sheen | Snow lies | Snow first |
+|---|---|---|---|---|---|
+| rock | 20% | no | 0.8 | late (0.6) | on its tops |
+| scree | 30% | a little (0.1) | 0.5 | late (0.8) | on its tops |
+| grass | 30% | a little (0.25) | 0.15 | soon (1.4) | in its hollows |
+| sand | 40% | no (it drains) | 0.3 | soon (1.2) | in its hollows |
+| mud | 45% | most (1) | 0.9 | soon (1.2) | in its hollows |
+| soil | 45% | 0.7 | 0.4 | soon (1.4) | in its hollows |
+| road asphalt | 35% | 0.5 | 1 | | |
+
+A class darkens by its share of the wetness. A wet film over the ground shines by the classes' sheen
+(GGX, roughness 0.45, 0.35 on asphalt, water's F0 0.02), reflecting the sky it faces: the cloud lit by the
+city overhead, the haze and the moon's aureole about the horizon (`landReflection`), and the moon's own glint
+through the cloud. Its strength is the moon disc's drawn radiance times its solid angle, far less than the
+light the moon throws for the diffuse. Water stands where the ground's height lies below a level that rises
+with the wetness and the classes' `stand`: their height maps plus a 3.2 m and an 11 m noise, on ground under
+about 7 degrees, from a wetness of 0.3. Mud in a downpour is about 14% puddles, soil 6%; on the roads the wheel
+paths' ruts take the water first. The puddles are smooth (roughness 0.04), a little darker beneath, and near
+the camera the drops ring them (`ripples`, shared with the city's puddles). From about 0.5 m a pixel the
+puddles fade into their share of the ground. Beside a freeway the five nearest lamps glint in the wet ground
+as small spheres, their highlights kept broad (alpha at least 0.08), since their heads aren't drawn. The land
+writes nothing for the screen-space reflections: it reflects its own sky, not the city's (`envReflection`),
+which they replace.
+
+A pixel shows one wet layer: the film giving way to the puddle by the puddle's share, which is nearly always 0 or 1,
+so the highlight, the glints and the ripples are each worked out once. In a downpour the wet adds about 0.1 ms to
+the terrain pass on dry ground near the camera and 0.25 ms on wet ground with puddles.
+
+Snow lies on each class as `1 - (1 - s)^soon`, s the cover's snow weight, so soft ground whitens before rock;
+against the ground's height, in soft ground's hollows first and on rock's and scree's tops.
 
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the

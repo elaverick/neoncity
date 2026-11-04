@@ -59,7 +59,8 @@ void weather_frame(const Weather *w, const double eye[3], FrameUBO *ubo) {
     ubo->sky[0] = 1.0f - smoothstepf(0.0f, CLOUD_BORDER + CLOUD_FADE, (float)edge);
     ubo->sky[1] = (float)n;
     ubo->sky[2] = cover;
-    ubo->sky[3] = 0.0f;
+    /* how wet the ground is under the cloud, wherever it is (the land's: shaders/terrain/ground.glsl) */
+    ubo->sky[3] = w->wet > 0.0f ? w->wet : 0.0f;   /* (-1 before the first update) */
     /* It rains only from the cloud overhead. */
     ubo->weather[0] = w->rain * cover;
     ubo->weather[1] = w->wet * cover;

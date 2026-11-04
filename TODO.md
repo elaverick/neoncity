@@ -175,6 +175,27 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     them a fall. Canyons don't yet join into systems.
   - **Value noise's lattice** still shows faintly in the mountains' finer octaves as rounded bumps; a gradient noise
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
+- **Ground cover and its materials** (the terrain textures roadmap, TX0-TX6, done: `src/terrain/terrain_cover.c`,
+  `shaders/terrain/ground.glsl`, `assets/materials/land_*.json`; see the README). Left over:
+  - **Grass blades** are the next piece, separate: they read the cover's grass weight and wetness for density and
+    height, and stand on `land_grass` (chosen as ground under blades, not a lawn).
+  - **The picks are mine:** the seven ambientCG sets, each class's `albedo_scale` (chosen to keep the flat colours the
+    land had, not the photos' relative albedos), the grass's park-lawn hue, and the wet and snow numbers in each file.
+  - **Snow is cover, not weather:** static, on high or cold ground (TX1's rule). No snowfall, and rain over snow
+    doesn't change it. The cover's snow is computed on the CPU; the patches don't morph their cover.
+  - **The land's wet sheen has no screen-space reflections:** its sky (`landReflection`) isn't the city's
+    (`envReflection`), which `ssr_apply.frag` swaps them in for, so it writes none and its puddles don't mirror the
+    city's lights. A flag in the reflection G-buffer for the land's sky would let them.
+  - **Freeway lamps glint without heads:** their highlights are kept broad (alpha at least 0.08) so a puddle doesn't
+    mirror a lamp that isn't drawn. With lamp heads modelled, that floor can go.
+  - **Wetness is the camera's weather** (`frame.sky.w`) under the cloud anywhere; drying and rain moving across the
+    land aren't modelled.
+  - **Textures upload uncompressed** (RGBA8, about 17 MB a material at 1024); BC7 would quarter it.
+  - **The terrain pass** near the ground costs 0.25-0.8 ms in rain (TX6 added about 0.1 ms on dry ground and 0.25 ms
+    on wet ground with puddles), over TX0's 0.6 ms target in the riverbank view (0.77 ms). Looking the classes' wet
+    and snow numbers up once a pixel rather than once a hex copy saved at most 0.04 ms, so it wasn't kept.
+  - **Later inputs:** erosion (M10) gives sediment and flow (scree under cliffs, alluvium in valleys; the cover's
+    spare byte is for it), and terrain in ray tracing (M11) shades hits with the same cover and material functions.
 
 ## Settlements and roads
 The world's largest metropolitan areas over the planet, megacities of the future 60-150 km across (177 of a
@@ -194,7 +215,7 @@ Left over:
   at all. Lamp heads, poles, signs and traffic aren't modelled, and the median barrier is painted on the ground
   (concrete, its faces shaded by a bent normal): the freeways' light is pools on the asphalt and the land beside
   it. Freeway junctions are level, without slip roads or interchanges. The land roads' asphalt isn't anti-tiled
-  (its 4 m tile is low-contrast) and takes no wet sheen but the lamps' (terrain textures TX6).
+  (its 4 m tile is low-contrast).
 - **Roads on the sphere.** Each link is built in a chart of its own and published in every frame it comes
   near (C4: each settlement's frame holds the roads within its reach, a travel frame those within 90 km of
   it, the world's all of them), so the paint and the decks are drawn true to width near any city. Miami has
