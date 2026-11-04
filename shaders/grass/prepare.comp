@@ -126,8 +126,9 @@ void main() {
     float hLo = funkey(sHLo), hHi = funkey(sHHi);
     if (tid == 0u) atomicAdd(counters[GRASS_C_PATCHES_RANGE], 1u);
     // (the planet's bend drops the ground a few mm this near: the margin holds
-    // it; a blade leans and bends over by under 0.9 of its height)
-    float side = 0.2 + 0.9 * tallest;
+    // it; a blade is no longer than its height however it leans, bends and
+    // blows over, and its width tapers faster than its length rises)
+    float side = 0.2 + tallest;
     vec3 mn = vec3(corner.x - side, hLo - camY - 0.2, corner.y - side);
     vec3 mx = vec3(corner.x + S + side, hHi - camY + 1.25 * tallest + 0.2, corner.y + S + side);
     if ((gf.info.z & GRASS_MODE_ALL_IN_VIEW) == 0 && !inView(mn, mx)) {
@@ -227,7 +228,7 @@ void main() {
                     float hb = gg.h - (gg.n.x * off.x + gg.n.z * off.y) / max(gg.n.y, 0.2);
                     GrassInstance o;
                     grassPack(planetBend(corner + g.p, hb), g.height, gg.n, g.facing, g.leanDir, width, g.lean, g.bend, g.phase,
-                              g.tint, k, tier, lod.morph, o);
+                              g.tint, root.clump.stiffness, k, tier, lod.morph, o);
                     inst[gf.base[tier] + at + bi] = o;
                 }
             }

@@ -199,5 +199,6 @@
 #define GRASS_DEBUG_CLUMP      4
 #define GRASS_DEBUG_LOD        5            /* blades by bucket; the land by a meadow root's bucket there */
 #define GRASS_DEBUG_CULL       6            /* blades by patch; the land by its patch's state */
+#define GRASS_DEBUG_WIND       7            /* blades and land by the wind's strength (shaders/grass/wind.glsl) */
 
 #endif

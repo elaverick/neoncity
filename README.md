@@ -59,7 +59,7 @@ procedural look.
 
 Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
 `--noshadows` runs without ray-traced shadows (and without the
-ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull` paints the grass's rules on the land (or its levels of detail and culling), `--nograss` draws no grass blades, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
+ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull|wind` paints the grass's rules on the land (or its levels of detail, culling and wind), `--nograss` draws no grass blades, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
 
@@ -865,6 +865,17 @@ chooses, makes and draws the land's blades; the CPU does no per-blade work and n
   The normal is the face's, turned to the camera's side for the whole blade and bent outward across the width by the
   fullness (shading only). The colour runs from root to tip and towards the dry colour by the blade's tint, which is
   mostly its clump's. Until GR7 a blade takes the land's light at its point, facing the ground's normal (`blade.frag`).
+- **Wind** (`shaders/grass/wind.glsl`, spec 8). The wind is a steady breeze along the clouds' wind, plus `gustAt`'s
+  gusts (the same 70 m field, drifting at about 6 m/s, that swings the cables and bends the plumes), plus a finer
+  flutter (4 m and 2 m value noise running at 7-9 m/s) whose ripples cross a field as waves. Its direction veers by up
+  to 0.35 rad. The fine layers sit on the grass patches' integer frame, so they hold anywhere on the planet. The wind
+  at the root pushes the control points along the ground's plane, with the root held: P1 8%, P2 45% and the tip all of
+  it. In a full wind the tip moves 0.55 of the height, over the species' stiffness and its clump's (packed in the
+  instance), and never more than 0.9 of it. The length is kept to the height as before, so blades blow over and
+  don't stretch. Each blade sways on top at its own phase and rate (faster when short and stiff); the sway fades
+  out between 12 and 4 px tall, so the far field moves only with the wind's waves. Every bucket blows alike, so the
+  geomorph's targets move with it. `--grass-debug wind` colours the blades and the land by the wind's strength. The
+  city's sheltered grass comes with GR6.
 - The counters come back a frame slot late and the `--shot` log prints them: patches in range, in view and with
   grass; roots evaluated and kept; blades drawn per bucket, and those refused; triangles; and each land species'
   effective blades/m² over the ground it was evaluated on. `--grass-debug lod` colours the blades by

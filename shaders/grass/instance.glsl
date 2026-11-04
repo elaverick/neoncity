@@ -9,7 +9,8 @@ struct GrassInstance {
     vec3  p;        // its root (m)
     float height;   // m
     uint  nrm;      // the ground's normal there: x, z as snorm16 (y up, positive)
-    uint  dir;      // unorm16 x2: its face's direction, its lean's direction (turns, from +x towards +z)
+    uint  dir;      // unorm8 its face's direction (turns, from +x towards +z), unorm8 its stiffness / 2 (its clump's: GR5's wind),
+                    // unorm16 its lean's direction (turns)
     uint  shape;    // half x2: its width at the base (m), its lean (rad)
     uint  misc;     // unorm8 bend (share of its height), unorm8 phase, unorm8 tint + 0.5, then the species (2 bits), its bucket (2 bits),
                     // its morph to the next bucket's shape (4 bits, in GRASS_MORPH_STEPS)
@@ -24,16 +25,17 @@ layout(std430, set = 0, binding = 5) GRASS_INSTANCE_ACCESS buffer Instances { Gr
 
 struct GrassBladeDraw {
     vec3  p, n;
-    float height, width, facing, leanAngle, lean, bend, phase, tint, morph;
+    float height, width, facing, leanAngle, lean, bend, phase, tint, morph, stiffness;
     int   species, lod;
 };
 
-void grassPack(vec3 p, float height, vec3 n, float facing, vec2 leanDir, float width, float lean, float bend, float phase, float tint, int species, int lod, float morph, out GrassInstance g) {
+void grassPack(vec3 p, float height, vec3 n, float facing, vec2 leanDir, float width, float lean, float bend, float phase, float tint, float stiffness, int species, int lod, float morph, out GrassInstance g) {
     const float TURN = 1.0 / 6.28318531;
     g.p = p;
     g.height = height;
     g.nrm = packSnorm2x16(n.xz);
-    g.dir = packUnorm2x16(vec2(fract(facing * TURN), fract(atan(leanDir.y, leanDir.x) * TURN)));
+    uint faceU = uint(fract(facing * TURN) * 256.0) & 255u, stiffU = uint(clamp(0.5 * stiffness, 0.0, 1.0) * 255.0 + 0.5);
+    g.dir = faceU | (stiffU << 8) | (uint(fract(atan(leanDir.y, leanDir.x) * TURN) * 65535.0 + 0.5) << 16);
     g.shape = packHalf2x16(vec2(width, lean));
     uint bendU = uint(clamp(bend, 0.0, 1.0) * 255.0 + 0.5), phaseU = uint(clamp(phase, 0.0, 1.0) * 255.0 + 0.5);
     uint tintU = uint(clamp(tint + 0.5, 0.0, 1.0) * 255.0 + 0.5);
@@ -47,9 +49,9 @@ GrassBladeDraw grassUnpack(GrassInstance g) {
     b.height = g.height;
     vec2 nxz = unpackSnorm2x16(g.nrm);
     b.n = vec3(nxz.x, sqrt(max(1.0 - dot(nxz, nxz), 0.0)), nxz.y);
-    vec2 d = unpackUnorm2x16(g.dir) * 6.28318531;
-    b.facing = d.x;
-    b.leanAngle = d.y;
+    b.facing = float(g.dir & 255u) * (6.28318531 / 256.0);
+    b.stiffness = float((g.dir >> 8) & 255u) * (2.0 / 255.0);
+    b.leanAngle = float(g.dir >> 16) * (6.28318531 / 65535.0);
     vec2 s = unpackHalf2x16(g.shape);
     b.width = s.x;
     b.lean = s.y;

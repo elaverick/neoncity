@@ -4,6 +4,7 @@
 #include "grass_rules.h"
 #include "grass/instance.glsl"
 #include "terrain/macro.glsl"
+#include "grass/wind.glsl"
 
 /* A grass blade (docs/procedural_grass_rendering_implementation.md 5.2-5.5;
  * src/render/grass_gpu.c draws a bucket at a time): a ribbon along a cubic
@@ -36,7 +37,19 @@
  * row of the ribbon those fewer segments make, lerped between its vertices,
  * so that when the root goes to that bucket nothing moves. And it takes the
  * land's large-scale variation at its root (terrain/macro.glsl), as the
- * ground does, so the two agree where the blades give way to it. */
+ * ground does, so the two agree where the blades give way to it.
+ *
+ * Wind (GR5, spec 8.2-8.3; grass/wind.glsl). The wind at the root, along the
+ * ground's plane, pushes the control points with the root held: P1 a little,
+ * P2 about half, P3 all of it, by GRASS_WIND_BEND of the height in a full
+ * wind over the species' stiffness and its clump's. The length is then kept to
+ * the height as before, so a blade blows over rather than stretching, and the
+ * push lies in the ground's plane, so its tip never goes under. Each blade
+ * sways on top at its own phase, faster when short and stiff; the sway fades
+ * out as the blade shrinks on screen (GRASS_SWAY_PX), so the far field moves
+ * with the wind's waves alone and doesn't shimmer. Every bucket blows the
+ * same way, so the morph's targets (rebuilt from the same control points)
+ * move with it and a hand-off still moves nothing. */
 
 layout(push_constant) uniform Bucket { uint base; int lod; int segs; } pc;
 
@@ -48,8 +61,14 @@ layout(location = 4) flat out float vTint;
 layout(location = 5) out vec3 vN;            // the blade's normal, the camera's side
 layout(location = 6) flat out vec3 vGround;  // the ground's normal at the root
 layout(location = 7) flat out vec3 vVary;    // the land's variation at the root (landVary)
+layout(location = 8) flat out float vWind;   // the wind's strength at the root (--grass-debug wind)
 
-const float GRASS_TWIST = 0.5;   // rad, either way
+const float GRASS_TWIST = 0.5;        // rad, either way
+const float GRASS_WIND_BEND = 0.55;   // the tip's push in a full wind (strength 1), a share of the height, at stiffness 1
+const float GRASS_WIND_MOST = 0.9;    // the most, a share of the height
+const float GRASS_SWAY = 0.3;         // a blade's own sway, a share of its push
+const float GRASS_SWAY_HZ = 0.9;      // for a 0.5 m blade of stiffness 1
+const vec2  GRASS_SWAY_PX = vec2(4.0, 12.0);   // the sway fades in over these heights on screen (px)
 
 vec3 bezier(vec3 p0, vec3 p1, vec3 p2, vec3 p3, float t) {
     float s = 1.0 - t;
@@ -101,6 +120,19 @@ void main() {
     vec3 q1 = U * (H / 3.0);
     vec3 q2 = U * (0.72 * H) + L * (0.5 * bend * (1.0 - curl));
     vec3 q3 = U * H + L * bend;
+    // the wind, along the ground's plane, the root held
+    GrassWind wd = grassWindAt(b.p.xz);
+    float stiff = max(frame.grassSpecies[k].root.w * b.stiffness, 0.2);
+    float fy = 0.5 * frame.screen.y / length(frame.rayBasis[1].xyz);
+    float hpx = H * fy / max(length(b.p), 1e-3);
+    float hz = GRASS_SWAY_HZ * sqrt(stiff * 0.5 / max(H, 0.05));
+    float sway = GRASS_SWAY * sin(6.28318531 * (hz * frame.camPos.w + b.phase)) * smoothstep(GRASS_SWAY_PX.x, GRASS_SWAY_PX.y, hpx);
+    vec3 D = vec3(wd.dir.x, 0.0, wd.dir.y);
+    D -= n * dot(D, n);
+    D *= H * min(GRASS_WIND_BEND * (wd.strength + 0.15) * (1.0 + sway) / stiff, GRASS_WIND_MOST) / max(length(D), 1e-4);
+    q1 += D * 0.08;
+    q2 += D * 0.45;
+    q3 += D;
     // the curve's length, about (chord + control polygon) / 2 for a cubic (Gravesen), kept to H
     float len = 0.5 * (length(q3) + length(q1) + length(q2 - q1) + length(q3 - q2));
     float scale = H / max(len, 1e-5);
@@ -141,6 +173,7 @@ void main() {
     vN = N;
     vGround = n;
     float px = length(b.p) * 2.0 * length(frame.rayBasis[1].xyz) * frame.screen.w;   // ground.glsl landPoint's
+    vWind = wd.strength;
     vVary = landVary(frame.ground.xy + b.p.xz, frame.camPos.xz + b.p.xz, px, 0.0);
     gl_Position = frame.viewProj * vec4(p, 1.0);
 }

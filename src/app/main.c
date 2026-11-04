@@ -93,7 +93,8 @@ static void usage(void) {
            "  --grass-cap  give each of the grass's levels of detail room for at most N blades (the far ones give way)\n"
            "  --grass-debug  paint the grass's rules on the land, unlit: suit (suitability), density (blades per m^2 and\n"
            "                 the kept roots), species, clump; or colour the blades and the land by level of detail (lod)\n"
-           "                 or by patch, the land by what the grass's culling made of its patch (cull)\n"
+           "                 or by patch, the land by what the grass's culling made of its patch (cull); or both by\n"
+           "                 the wind's strength (wind)\n"
            "  --shot  wait for streaming to settle, save a screenshot and exit\n");
 }
 
@@ -125,9 +126,9 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--nograss") == 0) o->noGrass = true;
         else if (strcmp(argv[i], "--grass-cap") == 0 && i + 1 < argc) o->grassCap = (uint32_t)strtoul(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--grass-debug") == 0 && i + 1 < argc) {
-            static const char *const VIEWS[] = { "suit", "density", "species", "clump", "lod", "cull" };   /* GRASS_DEBUG_SUIT on */
+            static const char *const VIEWS[] = { "suit", "density", "species", "clump", "lod", "cull", "wind" };   /* GRASS_DEBUG_SUIT on */
             const char *v = argv[++i];
-            for (int k = 0; k < 6; ++k) if (strcmp(v, VIEWS[k]) == 0) o->grassDebug = GRASS_DEBUG_SUIT + k;
+            for (int k = 0; k < 7; ++k) if (strcmp(v, VIEWS[k]) == 0) o->grassDebug = GRASS_DEBUG_SUIT + k;
             if (o->grassDebug == GRASS_DEBUG_OFF) return false;
         }
         else if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) o->shotPath = argv[++i];

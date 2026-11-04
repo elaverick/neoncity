@@ -3,6 +3,7 @@
 #include "common.glsl"
 #include "terrain/ground.glsl"
 #include "grass_rules.h"
+#include "grass/wind.glsl"
 
 /* Grass blades (blade.vert). Coloured by the species' profile
  * (frame.grassSpecies: assets/grass/<name>.json): root to tip, and towards
@@ -13,7 +14,7 @@
  * where the blades give way to it. Lit, until GR7, by the light the land
  * takes at that point facing the ground's normal (groundLightIn), a little
  * more where the blade's face turns up to it, and hazed as the land is. --grass-debug lod colours them by bucket (full red, mid yellow, clump
- * blue), cull by patch. Two-sided. Nothing for the reflections. */
+ * blue), cull by patch, wind by the wind's strength at the root. Two-sided. Nothing for the reflections. */
 
 layout(location = 0) in vec3 vRel;
 layout(location = 1) in float vT;
@@ -23,6 +24,7 @@ layout(location = 4) flat in float vTint;
 layout(location = 5) in vec3 vN;
 layout(location = 6) flat in vec3 vGround;
 layout(location = 7) flat in vec3 vVary;
+layout(location = 8) flat in float vWind;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outRefl;
 
@@ -40,6 +42,8 @@ void main() {
         ivec2 gp = frame.grassPatch.xy + ivec2(floor(q / float(GRASS_PATCH_M)));
         uint h = hash2i(0x9A7C4u, gp.x, gp.y);
         col = (0.15 + 0.6 * vec3(hfloat(h), hfloat(hash_u32(h)), hfloat(hash_u32(h + 7u)))) * (0.4 + 0.6 * vT);
+    } else if (view == GRASS_DEBUG_WIND) {
+        col = grassWindColour(vWind) * (0.5 + 0.5 * vT);
     } else {
         GrassSpecies sp = frame.grassSpecies[clamp(vKind.x, 0, GRASS_SPECIES - 1)];
         float up = pow(clamp(vT, 0.0, 1.0), 0.7);

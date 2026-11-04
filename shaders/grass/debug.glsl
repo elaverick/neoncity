@@ -1,6 +1,7 @@
 #ifndef GRASS_DEBUG_GLSL
 #define GRASS_DEBUG_GLSL
 #include "grass/lod.glsl"
+#include "grass/wind.glsl"
 
 /* --grass-debug (spec 11.1): the grass's rules painted on the land, unlit,
  * before any blade exists (terrain.frag). FrameUBO.grass.z picks the view:
@@ -20,7 +21,9 @@
  *   cull     each patch's state in the grass's prepare pass this frame
  *            (GRASS_PATCH_*): out of range or too small dark grey, out of
  *            view dark blue, bare dark red, no root kept olive, drawn green;
- *            the patches' outlines drawn.
+ *            the patches' outlines drawn;
+ *   wind     the wind's strength (grass/wind.glsl), blue still to red a full
+ *            gust, dimmed where nothing grows (the blades show it too).
  * The ground's site is the pixel's, also for the roots near it: close enough
  * for a picture. */
 
@@ -102,6 +105,9 @@ vec3 grassDebug(int mode, vec3 rel, vec3 n, float urban, Cover cover, bool onRoa
         vec2 e = min(local, float(GRASS_PATCH_M) - local);
         return mix(c, vec3(0.5), clamp(1.0 - min(e.x, e.y) / max(px, 1e-3), 0.0, 1.0));
     }
+
+    if (mode == GRASS_DEBUG_WIND)
+        return 0.5 * grassWindColour(grassWindAt(rel.xz).strength) * (suit > 0.0 ? 1.0 : 0.3);
 
     if (mode == GRASS_DEBUG_DENSITY) {
         float d = grassExpected(s) / GRASS_DEBUG_DENSE;
