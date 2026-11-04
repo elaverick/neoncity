@@ -1,0 +1,58 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "grass/rules.glsl"
+
+/* grass_test --gpu (tests/grass_test.c): the rules (rules.glsl) on a list of
+ * cases, answers read back and compared with src/grass/grass.c's. A case is
+ * GRASS_TEST_IN words, its answer GRASS_TEST_OUT, laid out as tests/grass_test.c
+ * gpu_case and gpu_answer. */
+
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) readonly buffer Cases { uint cases[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Answers { uint answers[]; };
+layout(push_constant) uniform Count { uint n; } pc;
+
+const uint IN = 16u, OUT = 32u;
+
+float inF(uint b, uint k) { return uintBitsToFloat(cases[b + k]); }
+void outF(uint b, uint k, float v) { answers[b + k] = floatBitsToUint(v); }
+
+void main() {
+    uint c = gl_GlobalInvocationID.x;
+    if (c >= pc.n) return;
+    uint b = c * IN, o = c * OUT;
+    int k = int(cases[b]);
+    ivec2 gpatch = ivec2(int(cases[b + 1u]), int(cases[b + 2u]));
+    ivec2 cell = ivec2(int(cases[b + 3u]), int(cases[b + 4u]));
+    GrassSite s;
+    s.grass = inF(b, 5u); s.mud = inF(b, 6u); s.snow = inF(b, 7u); s.wet = inF(b, 8u);
+    s.ny = inF(b, 9u); s.urban = inF(b, 10u); s.road = inF(b, 11u); s.maintained = inF(b, 12u);
+    s.city = int(cases[b + 13u]);
+    int blade = int(cases[b + 14u]);
+
+    for (uint q = 0u; q < OUT; ++q) answers[o + q] = 0u;
+    outF(o, 0u, grassSuitability(s));
+    float w[GRASS_SPECIES];
+    grassSpecies(s, w);
+    for (int q = 0; q < GRASS_SPECIES; ++q) outF(o, 1u + uint(q), w[q]);
+    outF(o, 5u, grassExpected(s));
+    GrassCandidate cand = grassCandidate(k, gpatch, cell);
+    answers[o + 6u] = cand.id;
+    outF(o, 7u, cand.p.x); outF(o, 8u, cand.p.y);
+    GrassClump cl = grassClump(k, gpatch, cand.p);
+    answers[o + 12u] = cl.id;
+    outF(o, 13u, cl.edge); outF(o, 14u, cl.density); outF(o, 15u, cl.height);
+    outF(o, 16u, cl.lean); outF(o, 17u, cl.stiffness); outF(o, 18u, cl.tint);
+    answers[o + 19u] = cl.bare ? 1u : 0u;
+    GrassRoot r;
+    if (!grassKeep(cand, s, r)) return;
+    answers[o + 9u] = 1u;
+    outF(o, 10u, r.height);
+    answers[o + 11u] = uint(r.blades);
+    GrassBlade g = grassBlade(r, min(blade, r.blades - 1));
+    outF(o, 20u, g.p.x); outF(o, 21u, g.p.y); outF(o, 22u, g.height); outF(o, 23u, g.width);
+    outF(o, 24u, g.facing); outF(o, 25u, g.leanDir.x); outF(o, 26u, g.leanDir.y); outF(o, 27u, g.lean);
+    outF(o, 28u, g.bend); outF(o, 29u, g.phase); outF(o, 30u, g.tint);
+    answers[o + 31u] = g.seed;
+}

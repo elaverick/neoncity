@@ -71,6 +71,8 @@ layout(set = 0, binding = 0) uniform Frame {
     uvec4 doorKey[DOOR_SLOTS / 4];   // their keys, four to a vector
     vec4 doorState[DOOR_SLOTS];      // x how far open (0..1, eased), y a revolving door's angle (rad)
     vec4 ground;     // xy the camera's x, z wrapped to 64 chunks, from doubles (src/render/renderer.c): the land's texture coordinates (terrain/ground.glsl)
+    vec4 grass;      // xy the camera's place in its grass patch (m, 0 .. GRASS_PATCH_M), z the --grass-debug view (grass/debug.glsl), w unused
+    ivec4 grassPatch;   // xy the camera's grass patch (src/grass/grass_rules.h: world x, z over GRASS_PATCH_M, rounded down)
 } frame;
 
 struct ChunkGPU {

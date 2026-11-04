@@ -1,5 +1,6 @@
 #include "renderer_internal.h"
 #include "terrain.h"
+#include "grass_rules.h"
 
 static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "terrain upload", "shelter", "prepass", "shadow rays", "shadow filter",
                                                 "city", "plants", "proxies", "terrain", "sky", "clouds", "flames", "post" };
@@ -8,6 +9,7 @@ void renderer_set_shadows(Renderer *r, bool on) { r->shadowsOn = on && r->rt; }
 bool renderer_shadows(Renderer *r) { return r->shadowsOn; }
 void renderer_set_shadow_debug(Renderer *r, bool on) { r->shadowDebug = on; }
 bool renderer_shadow_debug(Renderer *r) { return r->shadowDebug; }
+void renderer_set_grass_debug(Renderer *r, int view) { r->grassDebug = view; }
 void renderer_set_impostors(Renderer *r, float share) { interiors_set_share(r->interiors, share); }
 float renderer_impostors(Renderer *r) { return interiors_share(r->interiors); }
 int renderer_impostor_modules(Renderer *r) { return interiors_count(r->interiors); }
@@ -248,6 +250,16 @@ static void frame_uniforms(Renderer *r, int slot, const FrameUBO *uboIn, const d
     ubo->ground[0] = (float)(cam[0] - floor(cam[0] / WRAP) * WRAP);
     ubo->ground[1] = (float)(cam[2] - floor(cam[2] / WRAP) * WRAP);
     ubo->ground[2] = ubo->ground[3] = 0.0f;
+    /* The camera's grass patch and its place in it, from the doubles: the
+     * grass's identities are world-aligned (src/grass/grass_rules.h), and a
+     * pixel's patch is the camera's plus whole patches. */
+    double gpx = floor(cam[0] / GRASS_PATCH_M), gpz = floor(cam[2] / GRASS_PATCH_M);
+    ubo->grassPatch[0] = (int32_t)gpx; ubo->grassPatch[1] = (int32_t)gpz;
+    ubo->grassPatch[2] = ubo->grassPatch[3] = 0;
+    ubo->grass[0] = (float)(cam[0] - gpx * GRASS_PATCH_M);
+    ubo->grass[1] = (float)(cam[2] - gpz * GRASS_PATCH_M);
+    ubo->grass[2] = (float)r->grassDebug;
+    ubo->grass[3] = 0.0f;
     /* Ray-traced shadows: the frame number turns the rays' sample points; the
      * shadow passes rebuild positions at sample 0 (Vulkan's standard sample
      * locations); the denoiser reprojects this frame's camera-relative

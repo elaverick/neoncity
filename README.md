@@ -30,6 +30,7 @@ build/world_test --map world.ppm         # the settlements and roads over the pl
 cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)
 build/terrain_test --earth-map earth.ppm # the bake as the engine reads it (--earth <bake> for another; the tests use tests/data/earth_test.bake)
 build/terrain_test --earth build/earth.bake --cover-map cover.ppm 300  # the ground cover 300 km round the megacity ([km [x z]])
+build/grass_test --earth build/earth.bake --density-map grass.ppm    # the grass's effective density past the eastern gate ([km [x z]]; --gpu: the shader's rules against C's)
 ```
 
 CMake fetches its dependencies at configure time: Vulkan-Headers, volk, GLFW and stb.
@@ -58,7 +59,7 @@ procedural look.
 
 Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
 `--noshadows` runs without ray-traced shadows (and without the
-ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--impostors [SHARE]` draws that
+ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump` paints the grass's rules on the land, `--impostors [SHARE]` draws that
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
 
@@ -747,6 +748,44 @@ the terrain pass on dry ground near the camera and 0.25 ms on wet ground with pu
 
 Snow lies on each class as `1 - (1 - s)^soon`, s the cover's snow weight, so soft ground whitens before rock;
 against the ground's height, in soft ground's hollows first and on rock's and scree's tops.
+
+### Grass (`src/grass`, `shaders/grass`; in progress)
+Grass blades are being built to `docs/procedural_grass_rendering_implementation.md`. So far the rules exist, with no
+blades drawn yet. The rules say where grass grows, how thick, of which species, in which clumps and tufts. They are
+written twice, as pure C (`src/grass/grass.c`) and as GLSL (`shaders/grass/rules.glsl`). The two copies take the same
+float steps, and their constants are one header (`src/grass/grass_rules.h`).
+- **Identity.** The world is cut into 8 m patches in the terrain's frame, never the camera's. Each species cuts a patch
+  into a grid of root cells and puts one candidate root anywhere in each cell (stratified, so the grid leaves no
+  peak in the roots' spectrum). A root is named by its cell's world index, so the same root always gives the same
+  tuft.
+- **Suitability.** It comes from the land's cover: the grass, and the mud at 0.7. It thins on slopes from 35 degrees
+  to none by 46, under snow, and into the last 40 m before the city's ground. There is none on a road or its gravel.
+- **Species.** Each root makes a weighted choice of species, never an interpolated id. Reeds grow in mud and right by
+  the water, and meadow grows on the rest of the land. Lawn (parks) and rough (fields and the verge) are for the
+  city's own grass.
+- **Clumps.** Clumps are Voronoi cells, 2-4 m across by species. Each gives its roots a height, a density, a lean, a
+  stiffness and a tint. Some clumps are bare spots, and roots thin towards a clump's border. The clump lookup is
+  warped by a smooth noise, so the clumps' lattice leaves no trace either.
+- **Tufts.** A tuft has 4-10 blades by species. Each blade's offset, height, width, facing, lean, bend, phase and tint
+  come from the root's id and the blade's index.
+
+Density is set as effective blades per m² where every rule says yes: meadow 150, reeds 40, lawn 250, rough 120. A
+species' density scale is worked out from its root grid, its mean tuft and its clumps' mean, so that blades/m² =
+target × suitability × the species' share holds on average.
+
+`grass_test` checks the rules (ctest `grass_rules`):
+- the density over wide areas matches that formula (within 0.6% for every species);
+- nothing grows where the rules say nothing may, on made-up ground and on the real land round the eastern gate,
+  roads included;
+- the same roots and blades come back whatever order they are asked in, and clumps run on across patch sides;
+- there is no peak in the roots' spectrum at the root grid's, the patches' or the clumps' frequencies (a 0.8
+  jitter would give one about 100 times its level);
+- clumps' heights differ (a lawn's less than a meadow's).
+
+`grass_test --gpu` (ctest `grass_rules_gpu`) runs the GLSL copy on the GPU over 65,536 random cases and compares
+every answer with C's. `grass_test --density-map out.ppm [km [x z]]` draws the effective density over the land.
+`--grass-debug suit|density|species|clump` paints the rules on the land in the game, unlit: suitability; density
+with the kept roots as dots; species; clumps.
 
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the

@@ -127,6 +127,7 @@ struct Renderer {
      * alternate between frames: the denoiser blends in the previous frame's. */
     Rt          *rt;
     bool         shadowsOn, shadowDebug, historyValid, shadowTargetsFresh, havePrev;
+    int          grassDebug;     /* the --grass-debug view (GRASS_DEBUG_*) */
     Image        gbufMsaa, gbuf, sIds[MAX_FRAMES], sRaw, sVis[MAX_FRAMES];
     VkDescriptorSetLayout shadowLayout;
     VkPipelineLayout      shadowPL;

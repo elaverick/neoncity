@@ -162,13 +162,14 @@ file(CONFIGURE OUTPUT ${GEN_DIR}/advert_names.inc CONTENT
 # the executable, so the game is a single self-contained binary.
 set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/spv)
-file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain ${SHADER_OUT_DIR}/proxy ${SHADER_OUT_DIR}/interior)
+file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain ${SHADER_OUT_DIR}/proxy ${SHADER_OUT_DIR}/interior ${SHADER_OUT_DIR}/grass)
 set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp
             cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
             prepass.frag impostor_demand.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag
             terrain/planet.vert terrain/planet.frag
             proxy/proxy.vert proxy/proxy.frag flame.vert flame.frag smoke.vert smoke.frag
-            interior/capture.comp interior/capture_mpi.comp interior/truth.comp interior/recon.comp)   # the interior baker's
+            interior/capture.comp interior/capture_mpi.comp interior/truth.comp interior/recon.comp   # the interior baker's
+            grass/rules_test.comp)   # grass_test --gpu's
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)
@@ -176,9 +177,10 @@ set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PR
 set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/core/clouds.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_clip.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_planet.h
+                          ${CMAKE_CURRENT_SOURCE_DIR}/src/grass/grass_rules.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/core/pbr.h ${GEN_DIR}/pbr_materials.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/core/advert_slots.h ${GEN_DIR}/adverts_list.h)
-set(SHADER_SHARED_INC -I${CMAKE_CURRENT_SOURCE_DIR}/src/core -I${CMAKE_CURRENT_SOURCE_DIR}/src/terrain -I${GEN_DIR})
+set(SHADER_SHARED_INC -I${CMAKE_CURRENT_SOURCE_DIR}/src/core -I${CMAKE_CURRENT_SOURCE_DIR}/src/terrain -I${CMAKE_CURRENT_SOURCE_DIR}/src/grass -I${GEN_DIR})
 file(GLOB_RECURSE SHADER_INCLUDES ${SHADER_SRC_DIR}/*.glsl)
 list(APPEND SHADER_INCLUDES ${SHADER_SHARED_HEADERS})
 set(SPV_OUTPUTS "")
@@ -209,7 +211,7 @@ add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 # builds them with /fp:fast and the static runtime, the tests and labs without.
 # Sources live in src/<module>/; every module directory is on the include path, and the
 # generated headers (the materials' ids).
-set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/render src/app ${GEN_DIR} ${cgltf_SOURCE_DIR})
+set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/grass src/render src/app ${GEN_DIR} ${cgltf_SOURCE_DIR})
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_relief.c src/city/mesh_lobby.c src/city/mesh_doors.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/channels.c src/city/road_bridges.c src/city/light_tiles.c src/city/cables.c
@@ -262,7 +264,19 @@ target_include_directories(world_test PRIVATE ${SRC_DIRS})
 set(MATERIAL_SOURCES src/render/material_def.c src/render/advert_def.c src/render/interior_def.c src/core/json.c)
 add_executable(material_test tests/material_test.c ${MATERIAL_SOURCES} src/city/models.c src/core/assets.c)
 target_include_directories(material_test PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
-foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test world_test material_test)
+# The grass's rules (src/grass): the numbers, density against the formula, nothing where nothing may
+# grow, determinism and no visible grid (grass_test [--earth <bake>]); the GPU's copy of the rules
+# against C's (grass_test --gpu); a density map (grass_test --density-map out.ppm [km [x z]]).
+add_executable(grass_test tests/grass_test.c src/grass/grass.c src/render/vkcore.c ${TERRAIN_SOURCES} ${GEN_SOURCES})
+add_dependencies(grass_test shaders)
+target_include_directories(grass_test PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR})
+target_link_libraries(grass_test PRIVATE volk glfw)
+if(MSVC)
+  set_property(TARGET grass_test PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+elseif(UNIX)
+  target_link_libraries(grass_test PRIVATE dl)   # volk loads the Vulkan loader
+endif()
+foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test world_test material_test grass_test)
   # the assets the tests read (the models: src/city/models.h), from the source tree
   target_compile_definitions(${T} PRIVATE NEONCITY_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets")
   if(MSVC)
@@ -288,6 +302,8 @@ add_test(NAME terrain_rules COMMAND terrain_test --earth ${CMAKE_CURRENT_SOURCE_
 add_test(NAME terrain_rules_procedural COMMAND terrain_test --earth none)
 add_test(NAME world_rules COMMAND world_test)
 add_test(NAME material_rules COMMAND material_test ${CMAKE_CURRENT_SOURCE_DIR}/assets)
+add_test(NAME grass_rules COMMAND grass_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake)
+add_test(NAME grass_rules_gpu COMMAND grass_test --gpu)
 add_test(NAME world_rules_earth COMMAND world_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake)
 
 # --- Tools: PBR texture packer --------------------------------------------------

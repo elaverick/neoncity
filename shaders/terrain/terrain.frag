@@ -3,6 +3,7 @@
 #include "common.glsl"
 #include "ground.glsl"
 #include "roads.glsl"
+#include "grass/debug.glsl"
 
 /* The terrain clipmap (terrain.vert): the bare land (ground.glsl) and the
  * roads between the settlements laid on it (roads.glsl). */
@@ -26,6 +27,12 @@ void main() {
     bool onRoad = roadNear(vRel.xz, road);
     // the pixel's width across and along the road, in uniform control flow
     float px = max(fwidth(road.off), 1e-3), pxs = max(fwidth(road.s), 1e-3);
+    int grassView = int(frame.grass.z + 0.5);
+    if (grassView != GRASS_DEBUG_OFF) {   // --grass-debug: the grass's rules, unlit
+        outColor = vec4(grassDebug(grassView, vRel, n, vUrban, cover, onRoad, road, l.px), 1.0);
+        outRefl = vec4(0.0);
+        return;
+    }
     // under the asphalt the land's textures aren't read
     LandWater w;
     vec3 land = groundAlbedo(vRel, l, vUrban, cover, !(onRoad && roadPaved(road, px)), nLand, w);

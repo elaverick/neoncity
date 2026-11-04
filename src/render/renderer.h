@@ -23,6 +23,8 @@ typedef struct FrameUBO {
     uint32_t doorKey[DOOR_SLOTS / 4][4];   /* their keys, four to a vector */
     float   doorState[DOOR_SLOTS][4];      /* how far each is open (0..1, eased), a revolving one's angle (rad), unused */
     float   ground[4];     /* the camera's x, z wrapped to 64 chunks (renderer.c: the land's textures), unused, unused */
+    float   grass[4];      /* the camera's x, z in its grass patch (m), the --grass-debug view (GRASS_DEBUG_*), unused (renderer.c) */
+    int32_t grassPatch[4]; /* the camera's grass patch: world x, z over GRASS_PATCH_M, rounded down; unused, unused (renderer.c) */
 } FrameUBO;
 
 typedef struct Renderer Renderer;
@@ -50,6 +52,8 @@ bool      renderer_shadows(Renderer *r);
 /* Shadow debug view: only the city's lights on each surface, so their shadows stand out. */
 void      renderer_set_shadow_debug(Renderer *r, bool on);
 bool      renderer_shadow_debug(Renderer *r);
+/* The --grass-debug view painted on the land (GRASS_DEBUG_*: src/grass/grass_rules.h; 0 off). */
+void      renderer_set_grass_debug(Renderer *r, int view);
 /* Baked interior impostors (src/render/interiors.c): the share of eligible office floors
  * (curtain-wall and ribbon-window offices) drawn with them, 0 for none; and how many modules loaded. */
 void      renderer_set_impostors(Renderer *r, float share);
