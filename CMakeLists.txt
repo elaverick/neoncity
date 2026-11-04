@@ -228,7 +228,8 @@ set(TERRAIN_SOURCES src/terrain/terrain_lod.c src/terrain/terrain_mesh.c src/ter
 
 # --- Tests: generator determinism ------------------------------------------------
 enable_testing()
-add_executable(city_test tests/city_test.c ${GEN_SOURCES} src/render/advert_def.c src/core/json.c)   # --screens reads the adverts
+add_executable(city_test tests/city_test.c ${GEN_SOURCES} src/render/advert_def.c src/core/json.c   # --screens reads the adverts
+               src/terrain/terrain_cover.c)   # --grass reads the land's cover
 target_include_directories(city_test PRIVATE ${SRC_DIRS})
 # Top-down map of the generated plan (city_map out.bmp [x z] [size] [m/px]).
 add_executable(city_map tests/city_map.c ${GEN_SOURCES})

@@ -8,7 +8,8 @@
  * city_test --fingerprint prints a hash of each layer over a fixed set of
  * chunks instead, to compare what two builds generate; city_test --proxies
  * surveys the distant proxies of the whole city; --props and --screens print
- * views of the street furniture and the video screens. */
+ * views of the street furniture and the video screens; --grass views of the
+ * parks, fields, verge and land grass round a point. */
 #include "city.h"
 #include "terrain.h"
 #include "hash.h"
@@ -872,6 +873,95 @@ static int screens_cams(void) {
     return 0;
 }
 
+/* city_test --grass [X Z]: --cam views of grass round (X, Z) (by default the
+ * boulevard at the eastern freeway gate) for the grass roadmap's captures: the
+ * biggest parks and fields (ZONE_PARK, ZONE_RURAL) within 3 km, at walking
+ * height and 40 m up; and on the land past the edge (urban 0) the grassiest
+ * level point (a meadow) and the grassiest slope (15 to 30 degrees), each at
+ * walking height, 40 m up and 150 m up. */
+static void grass_land_cams(const char *what, double x, double z, double yawDeg, double grass, double ny) {
+    double h = terrain_height(x, z);
+    printf("%s: grass %.2f, slope %.0f deg, ground %.1f m\n", what, grass, acos(ny) * 57.2958, h);
+    printf("  --cam %.1f %.1f %.0f -10\n", x, z, yawDeg);
+    printf("  --cam %.1f %.1f %.0f -25 %.1f\n", x, z, yawDeg, h + 40.0);
+    printf("  --cam %.1f %.1f %.0f -35 %.1f\n", x, z, yawDeg, h + 150.0);
+}
+
+static int grass_cams(double ax, double az) {
+    const double R = 3000.0, STEP = 1000.0;
+    PlanArea *a = (PlanArea *)malloc(sizeof(PlanArea));
+    struct { double area, x, z; int zone; } best[2][4] = { 0 };
+    for (double bz = az - R; bz < az + R; bz += STEP)
+        for (double bx = ax - R; bx < ax + R; bx += STEP) {
+            plan_area(bx, bz, bx + STEP, bz + STEP, a);
+            for (int i = 0; i < a->nblocks; ++i) {
+                const Block *b = &a->blocks[i];
+                int k = b->zone == ZONE_PARK ? 0 : b->zone == ZONE_RURAL ? 1 : -1;
+                if (k < 0 || b->lot.n < 3) continue;
+                DVec2 c = poly_centroid(&b->lot);
+                if (c.x < bx || c.x >= bx + STEP || c.z < bz || c.z >= bz + STEP) continue;   /* each block once */
+                if (!poly_contains(&b->lot, c.x, c.z, 0.0)) continue;
+                double ar = poly_area(&b->lot);
+                for (int s = 0; s < 4; ++s)
+                    if (ar > best[k][s].area) {
+                        memmove(&best[k][s + 1], &best[k][s], (size_t)(3 - s) * sizeof(best[k][0]));
+                        best[k][s].area = ar; best[k][s].x = c.x; best[k][s].z = c.z; best[k][s].zone = b->zone;
+                        break;
+                    }
+            }
+        }
+    /* the edge verge: the nearest piece of the outline at least 60 m from (X, Z)
+     * (off the gate's road), from 8 m inside it looking out, the eye fixed at
+     * walking height (fly mode: walking would move the player off the spot) */
+    plan_area(ax - 500.0, az - 500.0, ax + 500.0, az + 500.0, a);
+    double vd = 1e30, vx = 0, vz = 0, vnx = 0, vnz = 0;
+    for (int i = 0; i < a->nedges; ++i) {
+        const PlanEdge *e = &a->edges[i];
+        double len = hypot(e->b.x - e->a.x, e->b.z - e->a.z);
+        for (double s = 0.0; s <= len; s += 5.0) {
+            double px = e->a.x + (e->b.x - e->a.x) * s / len, pz = e->a.z + (e->b.z - e->a.z) * s / len, d = hypot(px - ax, pz - az);
+            if (d >= 60.0 && d < vd) { vd = d; vx = px; vz = pz; vnx = e->n.x; vnz = e->n.z; }
+        }
+    }
+    if (vd < 1e30) {
+        double x = vx - vnx * 8.0, z = vz - vnz * 8.0;
+        printf("verge at (%.1f, %.1f), %.0f m from (X, Z), facing out (%.2f, %.2f)\n", vx, vz, vd, vnx, vnz);
+        printf("  --cam %.1f %.1f %.0f -20 %.1f\n", x, z, atan2(vnx, -vnz) * 57.2958, city_ground_y(x, z));
+    }
+    free(a);
+    for (int k = 0; k < 2; ++k)
+        for (int s = 0; s < 4 && best[k][s].area > 0.0; ++s) {
+            double x = best[k][s].x, z = best[k][s].z, y = city_ground_y(x, z);
+            printf("%s %.0f m2 at (%.1f, %.1f), ground %.1f m, %.0f m from (X, Z)\n", k ? "field" : "park", best[k][s].area, x, z, y,
+                   hypot(x - ax, z - az));
+            printf("  --cam %.1f %.1f 0 -10\n", x, z);
+            printf("  --cam %.1f %.1f 0 -30 %.1f\n", x, z, y + 40.0);
+        }
+    /* the land past the edge, under the deck's glow (within 600 m of it): a 25 m
+     * lattice out to 3 km for the meadow; the slope, rarer, the nearest within
+     * 15 km on a 100 m lattice with grass over half */
+    double mx = 0, mz = 0, mg = -1, my = 1, sx = 0, sz = 0, sg = -1, sy = 1, sd = 1e30;
+    for (int pass = 0; pass < 2; ++pass) {
+        double RR = pass ? 15000.0 : R, st = pass ? 100.0 : 25.0;
+        for (double z = az - RR; z <= az + RR; z += st)
+        for (double x = ax - RR; x <= ax + RR; x += st) {
+            if (plan_urban(x, z) > 0.0f || (!pass && plan_city_edge(x, z) > 600.0)) continue;
+            TerrainCover c;
+            terrain_cover(x, z, 1.0, &c);
+            if (c.snow > 0.0f) continue;
+            double e = 1.0, hx = terrain_height(x + e, z) - terrain_height(x - e, z), hz = terrain_height(x, z + e) - terrain_height(x, z - e);
+            double ny = 2.0 * e / sqrt(hx * hx + hz * hz + 4.0 * e * e);
+            double g = c.w[TERRAIN_COVER_GRASS];
+            if (!pass && ny > 0.995 && g > mg) { mg = g; mx = x; mz = z; my = ny; }
+            double d = hypot(x - ax, z - az);
+            if (pass && ny < cos(15.0 / 57.2958) && ny > cos(30.0 / 57.2958) && g > 0.5 && d < sd) { sd = d; sg = g; sx = x; sz = z; sy = ny; }
+        }
+    }
+    if (mg >= 0) grass_land_cams("meadow", mx, mz, atan2(mx - ax, -(mz - az)) * 57.2958, mg, my);   /* looking away from (X, Z) */
+    if (sg >= 0) grass_land_cams("slope", sx, sz, atan2(sx - ax, -(sz - az)) * 57.2958, sg, sy);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     terrain_earth_load(NULL);
     plan_world_init(cpu_count());   /* before the workers below ask the plan */
@@ -888,6 +978,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--props") == 0) return props_cams();
     if (argc > 1 && strcmp(argv[1], "--screens") == 0) return screens_cams();
     if (argc > 1 && strcmp(argv[1], "--facades") == 0) return facades_cams();
+    if (argc > 1 && strcmp(argv[1], "--grass") == 0) return grass_cams(argc > 3 ? atof(argv[2]) : 64598.0, argc > 3 ? atof(argv[3]) : 11010.0);
 
     /* 1. Reference pass, in order. Track mesh sizes against the GPU page budget. */
     uint32_t maxVerts = 0, maxLights = 0, maxInterior = 0, maxLitter = 0, maxPlants = 0, maxProps = 0;
