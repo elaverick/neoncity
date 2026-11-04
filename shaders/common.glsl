@@ -69,6 +69,7 @@ struct GrassSpecies {
     vec4  misc;   // x fullness, y z the cover one blade gives the field, upright and lying (grass.h grass_field)
     vec4  field;  // rgb the field's albedo from afar, seen through little of it
     vec4  fieldTop;   // rgb seen through much of it, w the scale of its optical depth it goes over in (grass/field.glsl)
+    vec4  light;  // x root shade, y transmission, z dry roughness (grass/blade.frag)
 };
 
 layout(set = 0, binding = 0) uniform Frame {

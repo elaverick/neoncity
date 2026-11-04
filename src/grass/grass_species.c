@@ -73,7 +73,11 @@ bool grass_profile_load(const char *path, GrassProfile *p, char *err, size_t err
     };
     static const Key CLUMPS[] = { I("cells", 1, clumpCells), F("bare", 1, bare), F("vary", 1, clumpVary), F("edge", 1, clumpEdge) };
     static const Key COLOUR[] = { F("root", 3, root), F("tip", 3, tip), F("dry", 3, dry), F("dry_share", 1, dryShare) };
-    static const char *const NESTED[] = { "clumps", "colour" };
+    static const Key LIGHT[] = { F("root_shade", 1, rootShade), F("transmission", 1, transmission), F("rough", 1, rough) };
+    static const char *const NESTED[] = { "clumps", "colour", "light" };
+    static const Key *const NESTED_KEYS[] = { CLUMPS, COLOUR, LIGHT };
+    static const int NESTED_N[] = { (int)(sizeof(CLUMPS) / sizeof(CLUMPS[0])), (int)(sizeof(COLOUR) / sizeof(COLOUR[0])), (int)(sizeof(LIGHT) / sizeof(LIGHT[0])) };
+    const int nNested = (int)(sizeof(NESTED) / sizeof(NESTED[0]));
     memset(p, 0, sizeof(*p));
     char why[256];
     Json *doc = json_load(path, why, sizeof(why));
@@ -84,15 +88,15 @@ bool grass_profile_load(const char *path, GrassProfile *p, char *err, size_t err
     for (const Json *m = ok ? doc->child : NULL; m && ok; m = m->next) {
         bool known = false;
         for (int k = 0; k < nTop; ++k) known |= strcmp(m->key, TOP[k].name) == 0;
-        for (int k = 0; k < 2; ++k) known |= strcmp(m->key, NESTED[k]) == 0;
+        for (int k = 0; k < nNested; ++k) known |= strcmp(m->key, NESTED[k]) == 0;
         if (!known) { snprintf(err, errSize, "line %d: unknown key \"%s\"", m->line, m->key); ok = false; }
     }
     ok = ok && members(doc, "the file", TOP, nTop, p, err, errSize);
-    for (int q = 0; q < 2 && ok; ++q) {
+    for (int q = 0; q < nNested && ok; ++q) {
         const Json *o = json_get(doc, NESTED[q]);
         if (!o) { snprintf(err, errSize, "no \"%s\"", NESTED[q]); ok = false; break; }
-        const Key *keys = q == 0 ? CLUMPS : COLOUR;
-        const int nk = q == 0 ? (int)(sizeof(CLUMPS) / sizeof(CLUMPS[0])) : (int)(sizeof(COLOUR) / sizeof(COLOUR[0]));
+        const Key *keys = NESTED_KEYS[q];
+        const int nk = NESTED_N[q];
         for (const Json *m = o->type == JSON_OBJECT ? o->child : NULL; m && ok; m = m->next) {
             bool known = false;
             for (int k = 0; k < nk; ++k) known |= strcmp(m->key, keys[k].name) == 0;
@@ -118,6 +122,9 @@ bool grass_profile_load(const char *path, GrassProfile *p, char *err, size_t err
     ok = ok && range(p->stiffness > 0.0f && p->interaction >= 0.0f && p->fullness >= 0.0f && p->fullness <= 1.0f, "stiffness, interaction or fullness", err, errSize);
     ok = ok && range(p->dryShare >= 0.0f && p->dryShare <= 1.0f, "colour.dry_share", err, errSize);
     for (int i = 0; i < 3 && ok; ++i) ok = range(p->root[i] >= 0.0f && p->tip[i] >= 0.0f && p->dry[i] >= 0.0f && p->root[i] <= 1.0f && p->tip[i] <= 1.0f && p->dry[i] <= 1.0f, "colour", err, errSize);
+    ok = ok && range(p->rootShade >= 0.0f && p->rootShade < 1.0f, "light.root_shade", err, errSize);
+    ok = ok && range(p->transmission >= 0.0f && p->transmission <= 1.0f, "light.transmission", err, errSize);
+    ok = ok && range(p->rough >= 0.05f && p->rough <= 1.0f, "light.rough", err, errSize);
     json_free(doc);
     p->present = ok;
     return ok;
@@ -166,6 +173,7 @@ void grass_profiles_gpu(GrassSpeciesGPU out[GRASS_SPECIES]) {
         for (int i = 0; i < 3; ++i) { o->root[i] = p->root[i]; o->tip[i] = p->tip[i]; o->dry[i] = p->dry[i]; }
         o->root[3] = p->stiffness; o->tip[3] = p->interaction; o->dry[3] = p->dryShare;
         o->misc[0] = p->fullness;
+        o->light[0] = p->rootShade; o->light[1] = p->transmission; o->light[2] = p->rough;
     }
 }
 

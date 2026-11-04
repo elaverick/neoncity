@@ -180,12 +180,16 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
 - **Ground cover and its materials** (the terrain textures roadmap, TX0-TX6, done: `src/terrain/terrain_cover.c`,
   `shaders/terrain/ground.glsl`, `assets/materials/land_*.json`; see the README). Left over:
   - **Grass blades** are under way (the grass roadmap, GR0-GR9: rules, GPU path, curved blades, their levels of
-    detail, the wind and the city's grass so far, README "Grass"). They read the cover's grass weight and wetness for density and height, and stand
+    detail, the wind, the city's grass and their light and wet so far, README "Grass"). They read the cover's grass weight and wetness for density and height, and stand
     on `land_grass` (chosen as ground under blades, not a lawn). Since GR4 the land's grass at range is drawn in the
     blades' field colour, darker than `land_grass`. Left from GR4:
-    - At walking height the drawn blades are 2-16% brighter than the field model says, in the last 30-80 m. The
-      model leaves out their lighting and what is seen between them at grazing angles. The end fade lands in the
-      horizon's last few rows there, so it doesn't show; from 40 m up the gap is 2-5%, with no step.
+    - At walking height the drawn blades were 2-16% brighter than the field model says, in the last 30-80 m. Since
+      GR7's root shade (in the blades and the field alike) they are 2% darker to 5% brighter there, and from 40 m up
+      0-3.5%, with no step. The model still leaves out what is seen between blades at grazing angles.
+    - GR7: a blade's own light (its face to a light, the light through it, its sheen) shifts the near field's mean
+      with the light's direction (a moonlit bank backlit is 4% under its bare ground). It fades out by 4 px, before
+      the ground takes over. A land patch takes the freeway nearest its middle, so at a bridge's end the blades' lamp
+      light can step at an 8 m patch side where the ground's changes per pixel.
     - Blades are hazed with urban 0, but the ground in the last 40 m before the city takes the city's haze. There are
       no instance bits left to carry urban.
     - Lawn's clump blades lose 8% of their width to the 0.8 x height cap. It matters from GR6, when lawn is drawn.

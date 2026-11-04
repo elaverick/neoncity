@@ -72,6 +72,7 @@ struct GrassGpu {
     Buffer counters[MAX_FRAMES];   /* GRASS_C_WORDS */
     Buffer draws[MAX_FRAMES];      /* a VkDrawIndirectCommand per bucket */
     Buffer patches[MAX_FRAMES];    /* GRASS_PATCH_* per patch of the square */
+    Buffer patchLight[MAX_FRAMES]; /* a uvec4 per patch: its freeway (shaders/grass/patch_light.glsl) */
     Buffer readback[MAX_FRAMES];   /* the counters, host visible */
     Buffer instChunk[MAX_FRAMES];  /* each instance's draw chunk (a city blade's) */
     Buffer cityPatch[MAX_FRAMES];  /* GrassCityPatchGPU, host visible (chunks_city_grass) */
@@ -111,7 +112,7 @@ void grass_gpu_create(Renderer *r) {
 
     const VkShaderStageFlags C = VK_SHADER_STAGE_COMPUTE_BIT, V = VK_SHADER_STAGE_VERTEX_BIT, F = VK_SHADER_STAGE_FRAGMENT_BIT;
     const VkDescriptorType UB = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    VkDescriptorSetLayoutBinding comp[12] = {
+    VkDescriptorSetLayoutBinding comp[13] = {
         { 0, UB, 1, C, NULL },    /* FrameUBO */
         { 1, SB, 1, C, NULL },    /* the clipmap's samples */
         { 2, SB, 1, C, NULL },    /* the roads (road_gpu.c) */
@@ -124,13 +125,15 @@ void grass_gpu_create(Renderer *r) {
         { 13, SB, 1, C, NULL },   /* the city's patch records */
         { 14, SB, 1, C, NULL },   /* their triangles */
         { 15, SB, 1, C, NULL },   /* each instance's draw chunk */
+        { 16, SB, 1, C, NULL },   /* the patches' freeways */
     };
-    g->compLayout = make_set_layout(vk, comp, 12);
-    VkDescriptorSetLayoutBinding draw[2] = {
+    g->compLayout = make_set_layout(vk, comp, 13);
+    VkDescriptorSetLayoutBinding draw[3] = {
         { 0, SB, 1, V, NULL },    /* the instances */
         { 1, SB, 1, V, NULL },    /* their draw chunks */
+        { 2, SB, 1, V, NULL },    /* the patches' freeways */
     };
-    g->drawLayout = make_set_layout(vk, draw, 2);
+    g->drawLayout = make_set_layout(vk, draw, 3);
     g->compPL = make_pipeline_layout(vk, g->compLayout, 0, 0);
     {   /* set 0 the scene's (the frame, the chunks, the lights, the shelter map, the shadow slots, the materials), set 1 the blades' */
         VkDescriptorSetLayout sets[2] = { r->sceneLayout, g->drawLayout };
@@ -162,6 +165,7 @@ void grass_gpu_create(Renderer *r) {
                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, DEV);
         g->draws[i] = vk_buffer(vk, GRASS_BUCKETS * sizeof(VkDrawIndexedIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, DEV);
         g->patches[i] = vk_buffer(vk, patchBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, DEV);
+        g->patchLight[i] = vk_buffer(vk, patchBytes * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, DEV);
         g->readback[i] = vk_buffer(vk, GRASS_C_WORDS * sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT, HOST);
         g->instChunk[i] = vk_buffer(vk, (VkDeviceSize)total * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, DEV);
         g->cityPatch[i] = vk_buffer(vk, (VkDeviceSize)GRASS_CITY_PATCHES * sizeof(GrassCityPatchGPU), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, HOST);
@@ -186,7 +190,7 @@ void grass_gpu_create(Renderer *r) {
 
     VkDescriptorPoolSize sizes[2] = {
         { UB, 2 * MAX_FRAMES },
-        { SB, 12 * MAX_FRAMES },
+        { SB, 14 * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = 2 * MAX_FRAMES;
@@ -218,9 +222,11 @@ void grass_gpu_create(Renderer *r) {
         write_buf_set(vk, s, 13, SB, g->cityPatch[i].buf, VK_WHOLE_SIZE);
         write_buf_set(vk, s, 14, SB, g->cityTri[i].buf, VK_WHOLE_SIZE);
         write_buf_set(vk, s, 15, SB, g->instChunk[i].buf, VK_WHOLE_SIZE);
+        write_buf_set(vk, s, 16, SB, g->patchLight[i].buf, VK_WHOLE_SIZE);
         s = g->drawSet[i];
         write_buf_set(vk, s, 0, SB, g->instances[i].buf, VK_WHOLE_SIZE);
         write_buf_set(vk, s, 1, SB, g->instChunk[i].buf, VK_WHOLE_SIZE);
+        write_buf_set(vk, s, 2, SB, g->patchLight[i].buf, VK_WHOLE_SIZE);
         write_buf_set(vk, terrain_gpu_set(r, i), 10, SB, g->patches[i].buf, VK_WHOLE_SIZE);   /* --grass-debug cull */
     }
 }
@@ -244,6 +250,7 @@ void grass_gpu_destroy(Renderer *r) {
         vk_buffer_destroy(vk, &g->counters[i]);
         vk_buffer_destroy(vk, &g->draws[i]);
         vk_buffer_destroy(vk, &g->patches[i]);
+        vk_buffer_destroy(vk, &g->patchLight[i]);
         vk_buffer_destroy(vk, &g->readback[i]);
         vk_buffer_destroy(vk, &g->instChunk[i]);
         vk_buffer_destroy(vk, &g->cityPatch[i]);

@@ -868,7 +868,7 @@ typedef struct GpuPass {
     VkCommandPool pool;
     VkCommandBuffer cmd;
     VkFence fence;
-    Buffer frame, grass, samples, roads, inst, counters, draws, keepTo, patches;
+    Buffer frame, grass, samples, roads, inst, counters, draws, keepTo, patches, patchLight;
 } GpuPass;
 
 static VkPipeline gp_pipeline(GpuPass *g, const uint32_t *code, size_t bytes) {
@@ -898,31 +898,32 @@ static void gp_init(GpuPass *g, int validation) {
     g->draws = vk_buffer(&g->vk, GRASS_BUCKETS * GRASS_DRAW_WORDS * 4, SB, HOST);
     g->keepTo = vk_buffer(&g->vk, 16, SB, HOST);
     g->patches = vk_buffer(&g->vk, GP_SIDE * GP_SIDE * 4, SB, HOST);
+    g->patchLight = vk_buffer(&g->vk, GP_SIDE * GP_SIDE * 16, SB, HOST);   /* each patch's freeway (none: no roads) */
     memset(g->roads.mapped, 0, 64 * 4);   /* no cells: no roads */
 
-    static const uint32_t BIND[9] = { 0, 1, 2, 4, 5, 6, 7, 9, 10 };
-    VkDescriptorSetLayoutBinding b[9];
-    Buffer *bufs[9] = { &g->frame, &g->samples, &g->roads, &g->grass, &g->inst, &g->counters, &g->draws, &g->keepTo, &g->patches };
-    for (int i = 0; i < 9; ++i) {
+    static const uint32_t BIND[10] = { 0, 1, 2, 4, 5, 6, 7, 9, 10, 16 };
+    VkDescriptorSetLayoutBinding b[10];
+    Buffer *bufs[10] = { &g->frame, &g->samples, &g->roads, &g->grass, &g->inst, &g->counters, &g->draws, &g->keepTo, &g->patches, &g->patchLight };
+    for (int i = 0; i < 10; ++i) {
         b[i] = (VkDescriptorSetLayoutBinding){ BIND[i], BIND[i] == 0 || BIND[i] == 4 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                                1, VK_SHADER_STAGE_COMPUTE_BIT, NULL };
     }
     VkDescriptorSetLayoutCreateInfo li = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    li.bindingCount = 9; li.pBindings = b;
+    li.bindingCount = 10; li.pBindings = b;
     VK_CHECK(vkCreateDescriptorSetLayout(d, &li, NULL, &g->dsl));
     VkPipelineLayoutCreateInfo pli = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
     pli.setLayoutCount = 1; pli.pSetLayouts = &g->dsl;
     VK_CHECK(vkCreatePipelineLayout(d, &pli, NULL, &g->pl));
     g->prepare = gp_pipeline(g, SPV_prepare, sizeof(SPV_prepare));
     g->finish = gp_pipeline(g, SPV_finish, sizeof(SPV_finish));
-    VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7 } };
+    VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8 } };
     VkDescriptorPoolCreateInfo dpi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     dpi.maxSets = 1; dpi.poolSizeCount = 2; dpi.pPoolSizes = ps;
     VK_CHECK(vkCreateDescriptorPool(d, &dpi, NULL, &g->dp));
     VkDescriptorSetAllocateInfo dai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
     dai.descriptorPool = g->dp; dai.descriptorSetCount = 1; dai.pSetLayouts = &g->dsl;
     VK_CHECK(vkAllocateDescriptorSets(d, &dai, &g->set));
-    for (int i = 0; i < 9; ++i) {
+    for (int i = 0; i < 10; ++i) {
         VkDescriptorBufferInfo bi = { bufs[i]->buf, 0, VK_WHOLE_SIZE };
         VkWriteDescriptorSet w = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
         w.dstSet = g->set; w.dstBinding = BIND[i]; w.descriptorCount = 1; w.descriptorType = b[i].descriptorType; w.pBufferInfo = &bi;
@@ -971,8 +972,8 @@ static void gp_free(GpuPass *g) {
     vkDestroyPipeline(d, g->finish, NULL);
     vkDestroyPipelineLayout(d, g->pl, NULL);
     vkDestroyDescriptorSetLayout(d, g->dsl, NULL);
-    Buffer *bufs[9] = { &g->frame, &g->grass, &g->samples, &g->roads, &g->inst, &g->counters, &g->draws, &g->keepTo, &g->patches };
-    for (int i = 0; i < 9; ++i) vk_buffer_destroy(&g->vk, bufs[i]);
+    Buffer *bufs[10] = { &g->frame, &g->grass, &g->samples, &g->roads, &g->inst, &g->counters, &g->draws, &g->keepTo, &g->patches, &g->patchLight };
+    for (int i = 0; i < 10; ++i) vk_buffer_destroy(&g->vk, bufs[i]);
     vk_shutdown(&g->vk);
 }
 

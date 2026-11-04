@@ -22,5 +22,6 @@
     "dry":  [0.100, 0.088, 0.046],
     "dry_share": 0.35
   },
-  "fullness":    0.35
+  "fullness":    0.35,
+  "light": { "root_shade": 0.35, "transmission": 0.35, "rough": 0.55 }
 }

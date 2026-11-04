@@ -8,7 +8,12 @@
  * grass_species), its suitability the city's (grass everywhere but the too
  * steep), and the blades the GPU grows there (prepare_city.comp) give way to
  * it by the same ends, so through every hand-off the mean is the field's.
- * No rain darkens it: the city's grass isn't wettable yet (GR7). */
+ * The rain darkens the green ground and the blades alike (grassWetDarken). */
+
+// How far the rain (wet 0 .. 1) darkens the city's grass, its ground and its
+// blades (grass/blade.frag), as the land's grass (terrain/ground.glsl
+// landDarken: land_grass.json's wet). Needs pbr.glsl.
+float grassWetDarken(float wet) { return 1.0 - wet * (pbrLoaded(PBR_LAND_GRASS) ? pbrWet(PBR_LAND_GRASS).x : 0.35); }
 
 // The share of the city's green ground at rel (normal n; maintained, how well
 // kept it is) that is the field's, and the field's albedo there into alb.

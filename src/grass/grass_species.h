@@ -33,7 +33,12 @@
  *       "dry":  [r, g, b],         // the driest clump's colour (tip; the root darkens as the lush one's)
  *       "dry_share": 0.3           // how far towards dry the driest clump goes, 0 .. 1
  *     },
- *     "fullness":    0.35          // the normal bent across the blade's width (shading only, spec 5.5)
+ *     "fullness":    0.35,         // the normal bent across the blade's width (shading only, spec 5.5)
+ *     "light": {                   // how it takes the light (GR7, spec 10.1-10.3: shaders/grass/blade.frag)
+ *       "root_shade":   0.35,      // darker into the tuft: albedo x (1 - root_shade (1 - t)^2), t 0 at the root
+ *       "transmission": 0.35,      // the light through a blade from behind it, a share of what its face would take
+ *       "rough":        0.55       // its face's roughness dry (GGX's, alpha its square); wet, smoother
+ *     }
  *   }
  *
  * A species whose file is missing or wrong is left out (no root of it is
@@ -55,6 +60,7 @@ typedef struct GrassProfile {
     float stiffness, interaction;
     float root[3], tip[3], dry[3];
     float dryShare, fullness;
+    float rootShade, transmission, rough;
 } GrassProfile;
 
 /* A profile as the shaders see it (std140; common.glsl GrassSpecies). */
@@ -70,8 +76,9 @@ typedef struct GrassSpeciesGPU {
     float   misc[4];  /* fullness; the field's cover a blade, upright and lying (grass.h grass_field, filled by grass_field_gpu); 0 */
     float   field[4]; /* rgb the field's albedo from afar, seen through little of it (grass_field_gpu); 0 */
     float   fieldTop[4]; /* rgb seen through much of it (its top), w the scale of tau it goes over in */
+    float   light[4]; /* root shade, transmission, dry roughness; 0 */
 } GrassSpeciesGPU;
-_Static_assert(sizeof(GrassSpeciesGPU) == 11 * 16, "GrassSpecies's std140 layout");
+_Static_assert(sizeof(GrassSpeciesGPU) == 12 * 16, "GrassSpecies's std140 layout");
 
 extern const char *const GRASS_SPECIES_NAMES[GRASS_SPECIES];
 

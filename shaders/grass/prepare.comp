@@ -10,10 +10,13 @@
 #define GRASS_INSTANCE_ACCESS writeonly
 #include "grass/instance.glsl"
 #include "grass/prepare_common.glsl"
+#include "grass/patch_light.glsl"
 
 /* The grass's GPU path (src/render/grass_gpu.c), the land's grass: one
  * workgroup per patch of the GRASS_PATCH_GRID square round the camera's.
  *
+ * First, for every patch, the freeway whose lamps light it, for its blades'
+ * light (grass/patch_light.glsl, GR7).
  * A: the patch is dropped if it lies beyond GRASS_RADIUS, if every species'
  *    blades would have given way to the ground (grassEnd) at its nearest
  *    point, or it is off the drawn ground; then its 9 x 9 metre points (every
@@ -38,6 +41,8 @@
 
 layout(local_size_x = GRASS_WG) in;
 layout(std430, set = 0, binding = 10) writeonly buffer Patches { uint patchState[]; };
+// Each patch's freeway (grass/patch_light.glsl): its blades take its lamps' light as the ground beside it does.
+layout(std430, set = 0, binding = 16) writeonly buffer PatchLights { uvec4 patchLight[]; };
 
 shared uint sHist[GRASS_BUCKETS * GRASS_BINS];
 shared uint sHLo, sHHi, sFound;
@@ -59,6 +64,14 @@ void main() {
     vec2 corner = vec2(rp) * S - frame.grass.xy;       // camera-relative
     bool allFull = (gf.info.z & GRASS_MODE_ALL_FULL) != 0;
     float fy = gf.view.y;
+
+    // the freeway whose lamps light the patch, from its middle (every patch,
+    // so a blade leaning over from a neighbour's root finds its own)
+    if (tid == 0u) {
+        RoadHit fw;
+        bool lit = roadFreewayNear(corner + 0.5 * S, FREEWAY_REACH + 0.7072 * S + 0.5, fw);
+        patchLight[pidx] = lit ? grassPatchLightPack(fw) : uvec4(0u);
+    }
 
     // A: range and size on screen
     float dNear = length(clamp(vec2(0.0), corner, corner + S));

@@ -237,7 +237,8 @@ static float lum3(const float c[3]) { return 0.2126f * c[0] + 0.7152f * c[1] + 0
 /* The blades of species k on suitable ground, as blade.vert shapes them
  * (on level ground) and blade.frag colours them: each sampled along its
  * length, each element by its area (width x length), the face light's mean
- * (0.8 + 0.2 max(N.n, 0), its up face seen half the time) folded in. Roots
+ * (0.8 + 0.2 max(N.n, 0), its up face seen half the time) and the shade into
+ * the tuft (1 - root_shade (1 - t)^2) folded in. Roots
  * weighed by their chance of being kept (their clump's density). */
 void grass_field(int k, GrassField *f) {
     const GrassProfile *p = SP(k);
@@ -289,6 +290,7 @@ void grass_field(int k, GrassField *f) {
                     up += wr * (2.0 / 3.14159265) * w * cosT * dl;
                     lie += wr * w * sinT * dl;
                     float ut = powf(t, 0.7f), face = 0.8f + 0.1f * sinT;
+                    face *= 1.0f - p->rootShade * u * u;   /* darker into the tuft (GR7) */
                     float y = sc * (3.0f * u * u * t * q1[1] + 3.0f * u * t * t * q2[1] + t * t * t * q3[1]);
                     int li = (int)(y / top * (float)GRASS_FIELD_LAYERS);
                     li = li < 0 ? 0 : li >= GRASS_FIELD_LAYERS ? GRASS_FIELD_LAYERS - 1 : li;

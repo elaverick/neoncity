@@ -21,5 +21,6 @@
     "dry":  [0.080, 0.080, 0.040],
     "dry_share": 0.15
   },
-  "fullness":    0.4
+  "fullness":    0.4,
+  "light": { "root_shade": 0.30, "transmission": 0.25, "rough": 0.60 }   // short and dense: little light through
 }

@@ -50,6 +50,17 @@ float specLobe(vec3 n, vec3 L, vec3 V, float shin, float specK, float rough, flo
 
 // envBRDF (the split-sum environment BRDF) is brdf.glsl's.
 
+// With LIGHTING_FOR_GRASS, each light also goes to the includer's
+// grassThinLight (shaders/grass/blade.frag): its direction L and the light it
+// throws square on to it, c, for a thin blade's own terms (its face turned
+// to or from it, the light through it, its sheen).
+#ifdef LIGHTING_FOR_GRASS
+void grassThinLight(vec3 L, vec3 c);
+#define GRASS_THIN(L, c) grassThinLight(L, c)
+#else
+#define GRASS_THIN(L, c)
+#endif
+
 void addLamp(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, vec3 lpos, vec3 lcol,
              inout vec3 diff, inout vec3 spec) {
     vec3 l = lpos - p;
@@ -59,6 +70,7 @@ void addLamp(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, vec3 
     if (att <= 0.0) return;
     vec3 L = normalize(l);
     float ndl = max(dot(n, L), 0.0);
+    GRASS_THIN(L, lcol * att);
     diff += lcol * att * ndl;
     spec += lcol * att * specLobe(n, L, V, shin, specK, rough, ndl);
 }
@@ -71,6 +83,7 @@ void addFlame(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, vec3
     if (att <= 0.0) return;
     vec3 L = normalize(l);
     float ndl = max(dot(n, L), 0.0);
+    GRASS_THIN(L, lcol * att);
     diff += lcol * att * ndl;
     spec += lcol * att * specLobe(n, L, V, shin, specK, rough, ndl);
 }
@@ -86,6 +99,7 @@ void addShop(vec3 p, vec3 n, vec3 V, float specK, float rough, vec3 lpos, vec3 c
     vec3 L = l / max(d, 1e-3);
     float ndl = max(dot(n, L), 0.0);
     vec3 c = col * shopFalloff(d);
+    GRASS_THIN(L, c * 0.65);   // its wrapped share (0.35) is the glow all round, not from its direction
     diff += c * (0.35 + 0.65 * ndl);
     if (rough >= 0.0) spec += c * ggxSpec(n, L, V, min(max(rough * rough, 0.002) + 0.75 / max(d, 0.5), 1.0), specK, ndl);
     else spec += c * specK * 0.6;

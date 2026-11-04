@@ -8,6 +8,7 @@
 #include "grass/instance.glsl"
 #include "terrain/macro.glsl"
 #include "grass/wind.glsl"
+#include "grass/patch_light.glsl"
 
 /* A grass blade (docs/procedural_grass_rendering_implementation.md 5.2-5.5;
  * src/render/grass_gpu.c draws a bucket at a time): a ribbon along a cubic
@@ -74,8 +75,12 @@ layout(location = 7) flat out vec3 vVary;    // the land's variation at the root
 layout(location = 8) flat out float vWind;   // the wind's strength at the root (--grass-debug wind)
 layout(location = 9) flat out uint vChunk;   // a city blade's draw chunk (GRASS_CHUNK_NONE on the land)
 layout(location = 10) flat out vec3 vRootPx; // the root's pixel (xy) and forward distance (z)
+layout(location = 11) flat out vec4 vFwy;    // the root by its patch's freeway: off, s, across (grass/patch_light.glsl)
+layout(location = 12) flat out vec4 vLight;  // x the blade's own light's share (GRASS_THIN_PX), y the freeway's half width (0: none),
+                                             // z how sheltered from the rain a city root is
 
 layout(set = 0, binding = 4) uniform sampler2D shelterMap;   // as city.vert's
+layout(std430, set = 1, binding = 2) readonly buffer PatchLights { uvec4 patchLight[]; };   // prepare.comp's
 
 const float GRASS_TWIST = 0.5;        // rad, either way
 const float GRASS_WIND_BEND = 0.55;   // the tip's push in a full wind (strength 1), a share of the height, at stiffness 1
@@ -84,6 +89,7 @@ const float GRASS_SWAY = 0.3;         // a blade's own sway, a share of its push
 const float GRASS_SWAY_HZ = 0.9;      // for a 0.5 m blade of stiffness 1
 const vec2  GRASS_SWAY_PX = vec2(4.0, 12.0);   // the sway fades in over these heights on screen (px)
 const float GRASS_SHELTER = 0.8;      // the most of the wind cover and a lee take away
+const vec2  GRASS_THIN_PX = vec2(4.0, 12.0);   // a blade's own light (its face, the light through it, its sheen: blade.frag) fades in over these heights on screen (px)
 
 // The top of what stands at camera-relative x, z, camera-relative (m), from
 // the shelter map; and how far (0 .. 1) into its square the point lies.
@@ -228,5 +234,22 @@ void main() {
     vec4 rc = frame.viewProj * vec4(b.p, 1.0);
     vec2 ndc = rc.w > 1e-4 ? rc.xy / rc.w : vec2(-2.0);
     vRootPx = vec3(floor((ndc * 0.5 + 0.5) * frame.screen.xy), dot(b.p, frame.camFwd.xyz));
+    // its light (GR7): its own terms' share by its size on screen; on the land
+    // the freeway by its root's patch; in the city, what stands over it from the rain
+    vLight = vec4(smoothstep(GRASS_THIN_PX.x, GRASS_THIN_PX.y, hpx), 0.0, 0.0, 0.0);
+    vFwy = vec4(1e9, 0.0, 1.0, 0.0);
+    if (city) {
+        float e;
+        vLight.z = smoothstep(0.25, 0.6, shelterTop(b.p.xz, e) - b.p.y) * (1.0 - smoothstep(0.85, 1.0, e));
+    } else {
+        const float S = float(GRASS_PATCH_M);
+        ivec2 rp = ivec2(floor((frame.grass.xy + b.p.xz) / S));
+        ivec2 at = clamp(rp + ivec2(GRASS_PATCH_GRID / 2), ivec2(0), ivec2(GRASS_PATCH_GRID - 1));
+        GrassFreeway fw;
+        if (grassPatchFreeway(patchLight[at.y * GRASS_PATCH_GRID + at.x], (vec2(at - ivec2(GRASS_PATCH_GRID / 2)) + 0.5) * S - frame.grass.xy, b.p.xz, fw)) {
+            vFwy = vec4(fw.off, fw.s, fw.across);
+            vLight.y = fw.hw;
+        }
+    }
     gl_Position = frame.viewProj * vec4(p, 1.0);
 }

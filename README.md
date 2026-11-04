@@ -792,8 +792,16 @@ key or an out-of-range value. All keys are required.
 
 Width is a share of the height. Lean is in radians, and bend is a share of the height. Each file also gives its clumps'
 bare chance, variation and edge thinning, a stiffness (GR5), an interaction response (GR8), the colours (root, tip, and
-the driest clump's, with how far towards dry a clump can go) and a fullness. Blade colour is procedural; there is no
-blade texture.
+the driest clump's, with how far towards dry a clump can go), a fullness, and how it takes the light (GR7: how much
+darker it is into the tuft, how much light passes through it, and its roughness dry). Blade colour is procedural;
+there is no blade texture.
+
+| Species | Root shade | Transmission | Roughness dry |
+|---|---|---|---|
+| `meadow` | 0.35 | 0.35 | 0.55 |
+| `reeds` | 0.30 | 0.30 | 0.45 |
+| `lawn` | 0.30 | 0.25 | 0.60 |
+| `rough` | 0.35 | 0.35 | 0.55 |
 
 `grass_test` checks the rules (ctest `grass_rules`):
 - the density over wide areas matches that formula (within 0.6% for every species);
@@ -805,7 +813,7 @@ blade texture.
 - clumps' heights differ (a lawn's less than a meadow's);
 - the levels of detail keep the cover (to 1e-7) at every size on screen, with no width jumping and the ribbon fully
   morphed where it changes bucket; the end comes to 0 smoothly by the radius; each species' field gives cover, its
-  albedo lies between its colours, the shaders' fit of it is within 2.4%, and the cap takes under 5% of its clump
+  albedo lies between its colours, the shaders' fit of it is within 3% (the test allows 6%), and the cap takes under 5% of its clump
   blades' width (lawn's 8%, for GR6).
 
 `grass_test --gpu` (ctest `grass_rules_gpu`) runs the GLSL copy on the GPU over 65,536 random cases and compares
@@ -865,7 +873,7 @@ chooses, makes and draws the land's blades; the CPU does no per-blade work and n
   plane (a blade folds over its face), twisted by up to 0.5 rad from its facing. It tapers as w0/2 (1 - t)^p to a point.
   The normal is the face's, turned to the camera's side for the whole blade and bent outward across the width by the
   fullness (shading only). The colour runs from root to tip and towards the dry colour by the blade's tint, which is
-  mostly its clump's. Until GR7 a blade takes the land's light at its point, facing the ground's normal (`blade.frag`).
+  mostly its clump's. It is lit in `blade.frag` (below: light and wet).
 - **Wind** (`shaders/grass/wind.glsl`, spec 8). The wind is a steady breeze along the clouds' wind, plus `gustAt`'s
   gusts (the same 70 m field, drifting at about 6 m/s, that swings the cables and bends the plumes), plus a finer
   flutter (4 m and 2 m value noise running at 7-9 m/s) whose ripples cross a field as waves. Its direction veers by up
@@ -895,6 +903,27 @@ chooses, makes and draws the land's blades; the CPU does no per-blade work and n
   a blade takes the soft shadows the ray-traced shadows left for the ground at its root's pixel (if that pixel shows
   its chunk's ground at the root's distance), and traces no rays: a light the slots don't hold is unshadowed. The
   park's ground takes the field the blades leave where they give way (`grass/field_city.glsl`), as the land's does.
+- **Light and wet** (GR7, spec 10; `blade.frag`). A blade has no light of its own. It takes the light the ground at its
+  root takes: on the land the deck's glow, the moon and stars, and beside a freeway its lamps' pools; in the city the
+  lamps, shopfronts, lobbies and flares of its chunk's light table, the ambient and the signs' bounce. Then, for each
+  light with a direction (the moon, the freeway's lamps, the city's lights, through `city/lighting.glsl`'s
+  `grassThinLight` hook, so the light loop runs once), it adds three things of its own:
+  - its face: lit by its own normal's part across the ground added to the ground's normal, so a blade turned to a low
+    lamp takes more of it and one turned away less, about the ground's mean over every way a blade faces;
+  - the light through it, where the face seen is turned from the light (its species' transmission, more towards the
+    thin tip, strongest looking towards the light): blades against a lamp;
+  - a restrained GGX sheen on its own normal, widened where the normal turns across the pixel.
+  All three fade out as the blade's root goes from 12 px to 4 px tall, so the field far off is the ground's and nothing
+  fine sparkles there. A blade is darker into its tuft (1 - root shade (1 - t)^2), and the field's colour in C
+  (`grass_field`) takes the same shade, so the hand-off to the ground still matches. The land's prepare pass gives each
+  patch the freeway nearest its middle (`grass/patch_light.glsl`: where the middle lies on it, which way it runs), and a
+  blade lights itself by that freeway's lamps as the ground beside it is lit (`terrain/freeway_light.glsl`, shared with
+  `roads.glsl`); before GR7 the blades on a lit verge hid the lamps' pools.
+  In the rain a blade darkens as the land's grass does (its `wet`), smooths (roughness x 0.45) and shines more (its
+  sheen x 3, and the sky's reflection: the land's `wetHighlight`, the city's `envReflection`), wetter towards the tip.
+  On the land it is as wet as the ground under the cloud; in the city as the streets, but dry where something stands
+  over it (the shelter map). The park's ground darkens with the rain too. Colour varies by clump (its tint) and by the
+  land's 1.6 km dry or lush hue and patches at the root, as the ground does.
 - The counters come back a frame slot late and the `--shot` log prints them: patches in range, in view and with
   grass; roots evaluated and kept; blades drawn per bucket, and those refused; triangles; and each land species'
   effective blades/m² over the ground it was evaluated on. `--grass-debug lod` colours the blades by

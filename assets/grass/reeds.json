@@ -21,5 +21,6 @@
     "dry":  [0.120, 0.100, 0.055],
     "dry_share": 0.5
   },
-  "fullness":    0.25
+  "fullness":    0.25,
+  "light": { "root_shade": 0.30, "transmission": 0.30, "rough": 0.45 }   // waxier, a little glossier
 }

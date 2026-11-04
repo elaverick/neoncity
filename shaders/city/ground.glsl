@@ -446,6 +446,9 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
                 vec3 fieldAlb;
                 float field = grassFieldCity(vRel, nGeom, float(prm.w - 1u) / 254.0, fieldAlb);
                 alb = mix(alb, fieldAlb * (0.8 + 0.4 * gr), field);
+                // darkened by the rain as its blades are (under cover too, where the
+                // water runs in, though the blades there stay dry)
+                alb *= grassWetDarken(WETNESS);
             }
         } else {
             alb = vec3(0.045, 0.043, 0.04) * fine;

@@ -21,8 +21,9 @@
  * paint stands in for it on the ground below: paved to its edge, as the deck,
  * and nothing beyond. */
 
-const float FREEWAY_LAMP_SPACING = 60.0;   // m
-const vec3  ROAD_SODIUM = vec3(1.0, 0.55, 0.22);
+// The freeway's lamps (FREEWAY_LAMP_*, ROAD_SODIUM, their pools) are
+// terrain/freeway_light.glsl's (road_lookup.glsl includes it), shared with the
+// grass's blades.
 
 // The gravel runs on this far beyond the paved edge, give or take
 // ROAD_VERGE_VARY along the road, then gives way to the cover over ROAD_VERGE_SOFT.
@@ -38,11 +39,6 @@ const vec3 ROAD_BARRIER = vec3(0.11);
 // this many metres: by then their mips have all but reached their means.
 const float ROAD_TEX_PX0 = 0.3, ROAD_TEX_PX1 = 0.6;
 
-// The freeway's lamps (their pools' light; no heads are drawn): this high over
-// the median, each a sphere this wide. Their highlights on wet ground are kept
-// at least this rough (alpha), so a puddle shows a lamp's glow, not the image
-// of a lamp that isn't there.
-const float FREEWAY_LAMP_H = 12.0, FREEWAY_LAMP_R = 0.35, FREEWAY_GLINT_ALPHA = 0.08;
 // The wet asphalt's film's roughness (GGX's).
 const float ROAD_FILM_ROUGH = 0.35;
 
@@ -110,15 +106,14 @@ float laneRut(float x) { float wx = abs(x) - 0.9; return exp(-wx * wx / (2.0 * 0
 // of its distance, the lobe widened by its size (Karis's sphere lights).
 vec3 freewayGlints(RoadHit r, vec3 n, vec3 V, float rough) {
     vec2 along = vec2(r.across.y, -r.across.x);   // the way s grows
-    float ds = r.s - FREEWAY_LAMP_SPACING * floor(r.s / FREEWAY_LAMP_SPACING + 0.5);
+    float ds = freewayLampDs(r.s);
     float alpha = max(rough * rough, FREEWAY_GLINT_ALPHA), g = 0.0;
     for (int j = -2; j <= 2; ++j) {
-        vec2 q = along * (float(j) * FREEWAY_LAMP_SPACING - ds) - r.across * r.off;
-        vec3 d = vec3(q.x, FREEWAY_LAMP_H, q.y);
+        vec3 d = freewayLampVec(along, r.across, ds, r.off, j);
         float d2 = dot(d, d), dist = sqrt(d2);
         g += FREEWAY_LAMP_H * FREEWAY_LAMP_H / d2 * landGgx(n, d / dist, V, min(alpha + FREEWAY_LAMP_R / (2.0 * dist), 1.0), WATER_F0);
     }
-    return ROAD_SODIUM * 1.4 * g;
+    return ROAD_SODIUM * FREEWAY_POOL * g;
 }
 
 // The wet ground's sheen at rel (landSheen), beside a road r (onRoad) with
@@ -227,19 +222,15 @@ vec3 shadeRoad(vec3 land, vec3 nLand, vec3 n, vec3 rel, LandPoint l, float urban
     vec3 light = groundLightIn(l.sky, nl);
     float pool = 0.0, lamps = 0.0, lampsLand = 0.0;
     if (r.cls == 2) {
-        float ds = r.s - FREEWAY_LAMP_SPACING * floor(r.s / FREEWAY_LAMP_SPACING + 0.5);
-        pool = exp(-ds * ds / (2.0 * 14.0 * 14.0) - a * a / (2.0 * 11.0 * 11.0));
-        // seen from afar a pixel spans several lamps: their mean
-        float mean = 2.5066 * 14.0 / FREEWAY_LAMP_SPACING * exp(-a * a / (2.0 * 11.0 * 11.0));
-        float afar = clamp(pxs / (0.5 * FREEWAY_LAMP_SPACING), 0.0, 1.0);
-        pool = mix(pool, mean, afar);
-        float beside = r.bridge ? 0.0 : 1.0 - smoothstep(r.hw + FREEWAY_LIGHT_FADE, r.hw + FREEWAY_REACH, a);
+        // (terrain/freeway_light.glsl; the grass's blades beside it take the same)
+        pool = freewayPool(freewayLampDs(r.s), a, pxs);
+        float beside = r.bridge ? 0.0 : freewayBeside(a, r.hw);
         pool *= r.bridge ? asph : beside;
         // their highlights on the wet ground, until a pixel spans several
-        lamps = 1.0 - afar;
+        lamps = 1.0 - clamp(pxs / (0.5 * FREEWAY_LAMP_SPACING), 0.0, 1.0);
         lampsLand = lamps * beside;
     }
-    light += ROAD_SODIUM * 1.4 * pool;
+    light += ROAD_SODIUM * FREEWAY_POOL * pool;
 
     // the water on the land beside the road, and on the gravel; then the road's over them
     float landFilm = mix(w.film, wet * roadWet(PBR_ROOF_GRAVEL).z * (1.0 - urban), grav), poolLand = w.pool * (1.0 - grav);
