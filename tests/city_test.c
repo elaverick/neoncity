@@ -11,6 +11,7 @@
  * views of the street furniture and the video screens; --grass views of the
  * parks, fields, verge and land grass round a point. */
 #include "city.h"
+#include "grass_rules.h"
 #include "terrain.h"
 #include "hash.h"
 #include "mathlib.h"
@@ -41,6 +42,7 @@ static uint64_t chunk_checksum(int cx, int cz, uint32_t *countOut, uint32_t *lig
     h = fnv(m.mn, sizeof(m.mn), h);
     h = fnv(m.mx, sizeof(m.mx), h);
     h = fnv(m.lights, (size_t)m.nlights * 16, h);
+    h = fnv(m.grass, (size_t)m.ngrass * sizeof(CityGrassTri), h);   /* the grass the blades grow on */
     if (countOut) *countOut = m.count;
     if (lightsOut) *lightsOut = m.nlights;
     mesh_free(&m);
@@ -111,6 +113,77 @@ static int point_in_building(const Building *b, double x, double z, double shrin
     return lx > b->foot.x0 + shrink && lx < b->foot.x1 - shrink && lz > b->foot.z0 + shrink && lz < b->foot.z1 - shrink;
 }
 
+/* The grass the blades grow on (Mesh.grass, src/city/grass_city.c), over the
+ * chunks round (x, z): each piece lies in its patch and on the ground the
+ * chunk draws (its centroid at the height of the green triangle it lies in),
+ * none inside a building's site, and together they cover the green ground
+ * that grows blades less the sites standing on it; where none stand, all of
+ * it. Adds to *area the grass's area (m^2). */
+static void check_city_grass(double x, double z, int rad, double *area, int *pieces, int *built) {
+    int cx0 = (int)floor(x / CHUNK_SIZE), cz0 = (int)floor(z / CHUNK_SIZE);
+    static BlockLayout L[9];
+    for (int cz = cz0 - rad; cz <= cz0 + rad; ++cz)
+        for (int cx = cx0 - rad; cx <= cx0 + rad; ++cx) {
+            Mesh m = { 0 };
+            city_build_mesh(cx, cz, &m);
+            int nl = 0;
+            for (int dz = -1; dz <= 1; ++dz)
+                for (int dx = -1; dx <= 1; ++dx) city_layout(cx + dx, cz + dz, &L[nl++]);
+            double ox = cx * (double)CHUNK_SIZE, oz = cz * (double)CHUNK_SIZE, src = 0.0, got = 0.0;
+            int sites = 0;
+            uint32_t *green = (uint32_t *)malloc(sizeof(uint32_t) * (m.count / 3 + 1)), ng = 0;
+            for (uint32_t t = 0; t + 2 < m.count; t += 3) {
+                const Vertex *v = &m.v[t];
+                if (v[0].params[0] != MAT_LOT || v[0].params[1] != 1 || v[0].params[3] == CITY_GRASS_NONE || v[0].nrm[1] < 32) continue;
+                src += 0.5 * fabs((v[1].pos[0] - v[0].pos[0]) * (v[2].pos[2] - v[0].pos[2]) - (v[2].pos[0] - v[0].pos[0]) * (v[1].pos[2] - v[0].pos[2]));
+                green[ng++] = t;
+            }
+            for (int l = 0; l < nl; ++l)
+                for (int i = 0; i < L[l].nbuild; ++i) {
+                    const Building *b = &L[l].build[i];
+                    double reach = 0.5 * CHUNK_SIZE + CITY_OVERHANG;   /* might stand on the chunk's ground */
+                    if (fabs(b->ox - (ox + 0.5 * CHUNK_SIZE)) < reach && fabs(b->oz - (oz + 0.5 * CHUNK_SIZE)) < reach) sites++;
+                }
+            for (uint32_t i = 0; i < m.ngrass; ++i) {
+                const CityGrassTri *g = &m.grass[i];
+                const float (*p)[3] = g->v;
+                double ar = 0.5 * fabs((p[1][0] - p[0][0]) * (p[2][2] - p[0][2]) - (p[2][0] - p[0][0]) * (p[1][2] - p[0][2]));
+                got += ar;
+                int inPatch = 1;
+                for (int q = 0; q < 3; ++q)
+                    inPatch &= p[q][0] >= -1e-3f && p[q][0] <= GRASS_PATCH_M + 1e-3f && p[q][2] >= -1e-3f && p[q][2] <= GRASS_PATCH_M + 1e-3f;
+                CHECK(inPatch, "chunk (%d,%d) grass piece %u strays out of its patch", cx, cz, i);
+                double wx = g->px * GRASS_PATCH_M + (p[0][0] + p[1][0] + p[2][0]) / 3.0;
+                double wz = g->pz * GRASS_PATCH_M + (p[0][2] + p[1][2] + p[2][2]) / 3.0;
+                double wy = (p[0][1] + p[1][1] + p[2][1]) / 3.0;
+                CHECK(g->maintained >= 0.0f && g->maintained <= 1.0f, "chunk (%d,%d) grass piece %u kept %.2f", cx, cz, i, g->maintained);
+                for (int l = 0; l < nl; ++l)
+                    for (int b = 0; b < L[l].nbuild; ++b)
+                        CHECK(!point_in_building(&L[l].build[b], wx, wz, 0.0), "chunk (%d,%d) grass piece %u in a building's site", cx, cz, i);
+                /* on the green triangle drawn there, at its height */
+                double lx = wx - ox, lz = wz - oz, best = 1e9;
+                for (uint32_t gi = 0; gi < ng; ++gi) {
+                    const Vertex *v = &m.v[green[gi]];
+                    double ax = v[0].pos[0], az = v[0].pos[2], bx = v[1].pos[0], bz = v[1].pos[2], qx = v[2].pos[0], qz = v[2].pos[2];
+                    double d = (bz - qz) * (ax - qx) + (qx - bx) * (az - qz);
+                    if (fabs(d) < 1e-9) continue;
+                    double u = ((bz - qz) * (lx - qx) + (qx - bx) * (lz - qz)) / d, w = ((qz - az) * (lx - qx) + (ax - qx) * (lz - qz)) / d;
+                    if (u < -1e-4 || w < -1e-4 || u + w > 1.0 + 1e-4) continue;
+                    double y = u * v[0].pos[1] + w * v[1].pos[1] + (1.0 - u - w) * v[2].pos[1];
+                    if (fabs(y - wy) < fabs(best)) best = y - wy;
+                }
+                CHECK(fabs(best) < 2e-3, "chunk (%d,%d) grass piece %u at (%.2f, %.2f) stands %.3f m off the green ground", cx, cz, i, wx, wz, best);
+            }
+            CHECK(got <= src * (1.0 + 1e-4) + 1e-3, "chunk (%d,%d) grass covers %.1f m2 of %.1f m2 green", cx, cz, got, src);
+            if (!sites) CHECK(fabs(got - src) <= src * 1e-4 + 1e-2, "chunk (%d,%d) with no buildings: grass %.2f m2 of %.2f m2 green", cx, cz, got, src);
+            else (*built)++;
+            *area += got;
+            *pieces += (int)m.ngrass;
+            free(green);
+            mesh_free(&m);
+        }
+}
+
 /* Separating-axis test on two oriented footprints, allowing a small touch. */
 static int buildings_overlap(const Building *a, const Building *b) {
     double ca[4][2], cb[4][2];
@@ -135,8 +208,8 @@ static int buildings_overlap(const Building *a, const Building *b) {
  * structs are hashed field by field: their padding is not deterministic.
  * ------------------------------------------------------------------------- */
 
-enum { FP_MESH, FP_LIGHTS, FP_SKY, FP_AIR, FP_INTERIORS, FP_PLANTS, FP_LITTER, FP_LAYOUT, FP_PROPS, FP_COUNT };
-static const char *const FP_NAMES[FP_COUNT] = { "mesh", "lights", "sky", "air", "interiors", "plants", "litter", "layout", "props" };
+enum { FP_MESH, FP_LIGHTS, FP_SKY, FP_AIR, FP_INTERIORS, FP_PLANTS, FP_LITTER, FP_LAYOUT, FP_PROPS, FP_GRASS, FP_COUNT };
+static const char *const FP_NAMES[FP_COUNT] = { "mesh", "lights", "sky", "air", "interiors", "plants", "litter", "layout", "props", "grass" };
 
 #define FNV_FIELD(h, x) ((h) = fnv(&(x), sizeof(x), (h)))
 
@@ -202,6 +275,8 @@ static void fingerprint_chunk(int cx, int cz, uint64_t fp[FP_COUNT]) {
     fp[FP_SKY] = fnv(m.sky, (size_t)m.nsky * sizeof(SkyLight), fp[FP_SKY]);
     fp[FP_AIR] = fnv(&m.nair, sizeof(m.nair), fp[FP_AIR]);
     fp[FP_AIR] = fnv(m.air, (size_t)m.nair * sizeof(SkyLight), fp[FP_AIR]);
+    fp[FP_GRASS] = fnv(&m.ngrass, sizeof(m.ngrass), fp[FP_GRASS]);
+    fp[FP_GRASS] = fnv(m.grass, (size_t)m.ngrass * sizeof(CityGrassTri), fp[FP_GRASS]);
     mesh_free(&m);
     city_build_interiors(cx, cz, &m);
     fp[FP_INTERIORS] = fnv_mesh(&m, fp[FP_INTERIORS]);
@@ -890,7 +965,7 @@ static void grass_land_cams(const char *what, double x, double z, double yawDeg,
 static int grass_cams(double ax, double az) {
     const double R = 3000.0, STEP = 1000.0;
     PlanArea *a = (PlanArea *)malloc(sizeof(PlanArea));
-    struct { double area, x, z; int zone; } best[2][4] = { 0 };
+    struct { double area, x, z; int zone; float kept; } best[3][4] = { 0 };   /* parks, fields, and parks mown (lawn) */
     for (double bz = az - R; bz < az + R; bz += STEP)
         for (double bx = ax - R; bx < ax + R; bx += STEP) {
             plan_area(bx, bz, bx + STEP, bz + STEP, a);
@@ -902,12 +977,20 @@ static int grass_cams(double ax, double az) {
                 if (c.x < bx || c.x >= bx + STEP || c.z < bz || c.z >= bz + STEP) continue;   /* each block once */
                 if (!poly_contains(&b->lot, c.x, c.z, 0.0)) continue;
                 double ar = poly_area(&b->lot);
-                for (int s = 0; s < 4; ++s)
-                    if (ar > best[k][s].area) {
-                        memmove(&best[k][s + 1], &best[k][s], (size_t)(3 - s) * sizeof(best[k][0]));
-                        best[k][s].area = ar; best[k][s].x = c.x; best[k][s].z = c.z; best[k][s].zone = b->zone;
-                        break;
-                    }
+                /* how well kept its grass is, as streets.c emit_lot has it (city_grass_param) */
+                DVec2 bc = poly_centroid(&b->curb);
+                float sq = (float)(uint8_t)(city_squalor(b->zone, bc.x, bc.z) * 255.0f + 0.5f) / 255.0f;
+                float kept = k == 0 ? 1.0f - smoothstepf(0.45f, 0.8f, sq) : 0.0f;
+                for (int pass = 0; pass < 2; ++pass) {
+                    int kk = pass ? 2 : k;
+                    if (pass && !(k == 0 && kept > 0.9f)) break;
+                    for (int s = 0; s < 4; ++s)
+                        if (ar > best[kk][s].area) {
+                            memmove(&best[kk][s + 1], &best[kk][s], (size_t)(3 - s) * sizeof(best[kk][0]));
+                            best[kk][s].area = ar; best[kk][s].x = c.x; best[kk][s].z = c.z; best[kk][s].zone = b->zone; best[kk][s].kept = kept;
+                            break;
+                        }
+                }
             }
         }
     /* the edge verge: the nearest piece of the outline at least 60 m from (X, Z)
@@ -929,11 +1012,12 @@ static int grass_cams(double ax, double az) {
         printf("  --cam %.1f %.1f %.0f -20 %.1f\n", x, z, atan2(vnx, -vnz) * 57.2958, city_ground_y(x, z));
     }
     free(a);
-    for (int k = 0; k < 2; ++k)
+    static const char *const KIND[3] = { "park", "field", "mown park" };
+    for (int k = 0; k < 3; ++k)
         for (int s = 0; s < 4 && best[k][s].area > 0.0; ++s) {
             double x = best[k][s].x, z = best[k][s].z, y = city_ground_y(x, z);
-            printf("%s %.0f m2 at (%.1f, %.1f), ground %.1f m, %.0f m from (X, Z)\n", k ? "field" : "park", best[k][s].area, x, z, y,
-                   hypot(x - ax, z - az));
+            printf("%s %.0f m2 at (%.1f, %.1f), ground %.1f m, %.0f m from (X, Z), kept %.2f\n", KIND[k], best[k][s].area, x, z, y,
+                   hypot(x - ax, z - az), best[k][s].kept);
             printf("  --cam %.1f %.1f 0 -10\n", x, z);
             printf("  --cam %.1f %.1f 0 -30 %.1f\n", x, z, y + 40.0);
         }
@@ -1031,6 +1115,17 @@ int main(int argc, char **argv) {
     for (int k = 0; k < THREADS; ++k)
         for (int i = 0; i < N_CHUNKS; ++i)
             CHECK(work[k].out[i] == g_ref[i], "thread %d: chunk (%d,%d) differs", k, g_cx[i], g_cz[i]);
+
+    /* 3b. The grass the blades grow on, round the grass roadmap's park, field and verge (city_test --grass). */
+    {
+        double area = 0.0;
+        int pieces = 0, built = 0;
+        check_city_grass(62653.5, 12524.9, 1, &area, &pieces, &built);
+        check_city_grass(64282.6, 11755.5, 1, &area, &pieces, &built);
+        check_city_grass(64623.7, 11060.8, 1, &area, &pieces, &built);
+        printf("city grass: %.0f m2 in %d pieces over 27 chunks (%d with buildings near)\n", area, pieces, built);
+        CHECK(area > 10000.0, "too little city grass round the park, field and verge (%.0f m2)", area);
+    }
 
     /* 4. Layout sanity around the spawn: buildings stand on blocks (never on a
      *    road), do not overlap, and fit in the overhang budget; lamps stand on

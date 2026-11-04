@@ -61,6 +61,12 @@ int           chunk_gen_owns(const ChunkGen *g, double x, double z);
 /* Whether a world rectangle comes within pad of the chunk. */
 int           chunk_gen_near(const ChunkGen *g, double x0, double z0, double x1, double z1, double pad);
 
+/* grass_city.c: the grass the blades grow on (Mesh.grass), from the green
+ * lots' triangles among m's vertices first .. end (the streets', draped),
+ * less the sites of g's buildings standing on them, cut along the grass's
+ * patches. */
+void          city_grass_collect(Mesh *m, const ChunkGen *g, uint32_t first, uint32_t end);
+
 /* A building's plot frame. */
 static inline DVec2 to_world(const Building *b, double lx, double lz) {
     return dv(b->ox + b->c * lx - b->s * lz, b->oz + b->s * lx + b->c * lz);

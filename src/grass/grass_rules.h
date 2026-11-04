@@ -157,6 +157,19 @@
 #define GRASS_SEG_FIRST(s)     (3 * ((s) - 1) * ((s) - 1))   /* the sum of 6 j - 3 for j < s */
 #define GRASS_SEG_INDICES      GRASS_SEG_FIRST(GRASS_SEG_MAX + 1)
 #define GRASS_DRAW_WORDS       5            /* a VkDrawIndexedIndirectCommand */
+/* The city's grass (GR6): its parks', fields' and edge verge's ground, as
+ * the chunks draw it, cut along the patches (src/city/grass_city.c). Each
+ * frame the renderer hands the GPU the pieces of the patches within
+ * GRASS_RADIUS (src/render/chunks.c chunks_city_grass), a record a patch of
+ * a chunk, of at most GRASS_CITY_RUN triangles (a longer run is split), and
+ * shaders/grass/prepare_city.comp grows lawn and rough on them, a workgroup a
+ * record, from the same root cells, rules and levels of detail as the land's. */
+#define GRASS_CITY_PATCHES     8192         /* records a frame */
+#define GRASS_CITY_TRIS        65536        /* their triangles */
+#define GRASS_CITY_RUN         32
+/* A blade's draw chunk (its chunk's record in the view's draws: its light
+ * table and origin), in the instance's own word beside it; none on the land. */
+#define GRASS_CHUNK_NONE       0xFFFFFFFFu
 /* GrassFrame.info.z: the prepare pass's modes (grass_test). */
 #define GRASS_MODE_ALL_IN_VIEW 1            /* no frustum test */
 #define GRASS_MODE_ALL_FULL    2            /* every root full, every blade, none narrowed: the count test */
@@ -173,6 +186,9 @@
 #define GRASS_C_DRAWN          12           /* + bucket: instances drawn (finish) */
 #define GRASS_C_OVER           15           /* + bucket: reserved past the room (finish) */
 #define GRASS_C_KEEP_TO        18           /* + bucket: the distance the next frame keeps to (float bits, finish) */
+#define GRASS_C_CITY_RANGE     21           /* the city's patch records in range and big enough on screen */
+#define GRASS_C_CITY_VIEW      22           /* ...and in the view */
+#define GRASS_C_CITY_KEPT      23           /* the city's roots kept (in GRASS_C_KEPT too) */
 #define GRASS_C_SP_EVAL        24           /* + species: its candidates evaluated (their cells' ground) */
 #define GRASS_C_SP_BLADES      28           /* + species: the blades of its roots kept there, every one (as if all were full) */
 #define GRASS_C_STATS          32

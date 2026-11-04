@@ -17,11 +17,22 @@ struct GrassInstance {
 };
 
 // The prepare pass writes them, the vertex shader reads them (where a storage
-// buffer must be read-only): GRASS_INSTANCE_ACCESS says which, before this is included.
+// buffer must be read-only): GRASS_INSTANCE_ACCESS says which, before this is
+// included; and where they are bound (the prepare passes' set 0, bindings 5
+// and 15; the blades' set 1, bindings 0 and 1). Beside each instance, in a
+// word of its own, a city blade's draw chunk (grass_rules.h GRASS_CHUNK_NONE
+// on the land, where nothing reads it): its chunk's record in the view's
+// draws, for the chunk's light table (shaders/grass/blade.frag).
 #ifndef GRASS_INSTANCE_ACCESS
 #define GRASS_INSTANCE_ACCESS readonly
 #endif
-layout(std430, set = 0, binding = 5) GRASS_INSTANCE_ACCESS buffer Instances { GrassInstance inst[]; };
+#ifndef GRASS_INSTANCE_SET
+#define GRASS_INSTANCE_SET 0
+#define GRASS_INSTANCE_BINDING 5
+#define GRASS_CHUNK_BINDING 15
+#endif
+layout(std430, set = GRASS_INSTANCE_SET, binding = GRASS_INSTANCE_BINDING) GRASS_INSTANCE_ACCESS buffer Instances { GrassInstance inst[]; };
+layout(std430, set = GRASS_INSTANCE_SET, binding = GRASS_CHUNK_BINDING) GRASS_INSTANCE_ACCESS buffer InstanceChunks { uint instChunk[]; };
 
 struct GrassBladeDraw {
     vec3  p, n;

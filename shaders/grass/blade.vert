@@ -2,6 +2,9 @@
 #extension GL_GOOGLE_include_directive : require
 #include "common.glsl"
 #include "grass_rules.h"
+#define GRASS_INSTANCE_SET 1      // set 0 is the scene's (renderer_pipelines.c create_layouts)
+#define GRASS_INSTANCE_BINDING 0
+#define GRASS_CHUNK_BINDING 1
 #include "grass/instance.glsl"
 #include "terrain/macro.glsl"
 #include "grass/wind.glsl"
@@ -49,7 +52,14 @@
  * out as the blade shrinks on screen (GRASS_SWAY_PX), so the far field moves
  * with the wind's waves alone and doesn't shimmer. Every bucket blows the
  * same way, so the morph's targets (rebuilt from the same control points)
- * move with it and a hand-off still moves nothing. */
+ * move with it and a hand-off still moves nothing.
+ *
+ * The city's blades (GR6: lawn and rough, prepare_city.comp) stand among
+ * buildings: the wind drops under cover and in a building's lee (spec 8.4),
+ * from the shelter map (the city round the camera from above, the scene
+ * set's binding 4): what stands over the root, and how high what stands
+ * upwind of it rises for its distance. The land is open. A city blade's draw
+ * chunk goes to the fragment shader, for its chunk's lights. */
 
 layout(push_constant) uniform Bucket { uint base; int lod; int segs; } pc;
 
@@ -62,6 +72,10 @@ layout(location = 5) out vec3 vN;            // the blade's normal, the camera's
 layout(location = 6) flat out vec3 vGround;  // the ground's normal at the root
 layout(location = 7) flat out vec3 vVary;    // the land's variation at the root (landVary)
 layout(location = 8) flat out float vWind;   // the wind's strength at the root (--grass-debug wind)
+layout(location = 9) flat out uint vChunk;   // a city blade's draw chunk (GRASS_CHUNK_NONE on the land)
+layout(location = 10) flat out vec3 vRootPx; // the root's pixel (xy) and forward distance (z)
+
+layout(set = 0, binding = 4) uniform sampler2D shelterMap;   // as city.vert's
 
 const float GRASS_TWIST = 0.5;        // rad, either way
 const float GRASS_WIND_BEND = 0.55;   // the tip's push in a full wind (strength 1), a share of the height, at stiffness 1
@@ -69,6 +83,30 @@ const float GRASS_WIND_MOST = 0.9;    // the most, a share of the height
 const float GRASS_SWAY = 0.3;         // a blade's own sway, a share of its push
 const float GRASS_SWAY_HZ = 0.9;      // for a 0.5 m blade of stiffness 1
 const vec2  GRASS_SWAY_PX = vec2(4.0, 12.0);   // the sway fades in over these heights on screen (px)
+const float GRASS_SHELTER = 0.8;      // the most of the wind cover and a lee take away
+
+// The top of what stands at camera-relative x, z, camera-relative (m), from
+// the shelter map; and how far (0 .. 1) into its square the point lies.
+float shelterTop(vec2 q, out float edge) {
+    vec2 uv = (q - frame.shelter.xy) / frame.shelter.z * 0.5 + 0.5;
+    edge = max(abs(uv.x * 2.0 - 1.0), abs(uv.y * 2.0 - 1.0));
+    if (edge >= 1.0) return SHELTER_LO;
+    return SHELTER_LO + textureLod(shelterMap, uv, 0.0).r * (SHELTER_HI - SHELTER_LO);
+}
+// How sheltered a root at camera-relative p is from wind blowing along dir:
+// something over it, or something upwind rising more than a third of its
+// distance (a building's lee runs some times its height downwind).
+float grassShelter(vec3 p, vec2 dir) {
+    float e;
+    float s = smoothstep(0.25, 0.6, shelterTop(p.xz, e) - p.y);
+    const float D[3] = float[](2.0, 5.0, 12.0);
+    for (int i = 0; i < 3; ++i) {
+        float ei;
+        float rise = shelterTop(p.xz - dir * D[i], ei) - p.y;
+        s = max(s, smoothstep(0.15, 0.45, rise / D[i]) * (1.0 - smoothstep(0.85, 1.0, ei)));
+    }
+    return s * (1.0 - smoothstep(0.85, 1.0, e));
+}
 
 vec3 bezier(vec3 p0, vec3 p1, vec3 p2, vec3 p3, float t) {
     float s = 1.0 - t;
@@ -96,8 +134,10 @@ void ribbonAt(Ribbon r, float t, float side, out vec3 p, out vec3 N) {
 }
 
 void main() {
-    GrassBladeDraw b = grassUnpack(inst[pc.base + uint(gl_InstanceIndex)]);
+    uint slot = pc.base + uint(gl_InstanceIndex);
+    GrassBladeDraw b = grassUnpack(inst[slot]);
     int k = b.species;
+    bool city = k == GRASS_LAWN || k == GRASS_ROUGH;
     int S = max(pc.segs, 1);
     int row = gl_VertexIndex >> 1;
     float side = (gl_VertexIndex & 1) != 0 ? 1.0 : -1.0;
@@ -122,6 +162,7 @@ void main() {
     vec3 q3 = U * H + L * bend;
     // the wind, along the ground's plane, the root held
     GrassWind wd = grassWindAt(b.p.xz);
+    if (city) wd.strength *= 1.0 - GRASS_SHELTER * grassShelter(b.p, wd.dir);
     float stiff = max(frame.grassSpecies[k].root.w * b.stiffness, 0.2);
     float fy = 0.5 * frame.screen.y / length(frame.rayBasis[1].xyz);
     float hpx = H * fy / max(length(b.p), 1e-3);
@@ -174,6 +215,18 @@ void main() {
     vGround = n;
     float px = length(b.p) * 2.0 * length(frame.rayBasis[1].xyz) * frame.screen.w;   // ground.glsl landPoint's
     vWind = wd.strength;
-    vVary = landVary(frame.ground.xy + b.p.xz, frame.camPos.xz + b.p.xz, px, 0.0);
+    vChunk = city ? instChunk[slot] : GRASS_CHUNK_NONE;
+    if (city && vChunk != GRASS_CHUNK_NONE) {
+        // the park's own worn patches (city/ground.glsl: its grass's broad tone), by the city's world position (city.frag gWorld)
+        ChunkGPU c = chunks[vChunk];
+        vec2 w = b.p.xz - c.origin.xz + vec2(float(c.info.x & 63), float(c.info.y & 63)) * CHUNK_SIZE;
+        vVary = vec3(0.8 + 0.4 * fbm(w * 0.9, 0x7117u));
+    } else {
+        vVary = landVary(frame.ground.xy + b.p.xz, frame.camPos.xz + b.p.xz, px, 0.0);
+    }
+    // the pixel the root lies in (the ground's shadow slots there: blade.frag), and its forward distance
+    vec4 rc = frame.viewProj * vec4(b.p, 1.0);
+    vec2 ndc = rc.w > 1e-4 ? rc.xy / rc.w : vec2(-2.0);
+    vRootPx = vec3(floor((ndc * 0.5 + 0.5) * frame.screen.xy), dot(b.p, frame.camFwd.xyz));
     gl_Position = frame.viewProj * vec4(p, 1.0);
 }

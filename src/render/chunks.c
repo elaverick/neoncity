@@ -2,6 +2,7 @@
 #include "city.h"
 #include "rt.h"
 #include "thread.h"
+#include "grass_gpu.h"
 
 #define MAX_ENTRIES    8192
 #define HASH_BUCKETS   16384
@@ -63,6 +64,10 @@ typedef struct Entry {
     uint32_t  nflame;
     Plume    *plume;        /* kept while RESIDENT (chunks_plumes) */
     uint32_t  nplume;
+    CityGrassTri *grass;    /* kept while RESIDENT (chunks_city_grass) */
+    uint32_t  ngrass;
+    int       drawRec;      /* its chunk record in the view's draws, when drawRecFrame is this frame's + 1 */
+    uint64_t  drawRecFrame;
     /* ray-traced shadows (src/render/rt.c): the casting triangles of each page, as
      * page-local vertex indices, kept while resident so the BLAS can be
      * rebuilt whenever the chunk comes back within RT_RANGE */
@@ -192,8 +197,11 @@ static void table_remove(ChunkSystem *cs, int idx) {
     free(e->air);
     free(e->flame);
     free(e->plume);
+    free(e->grass);
     free(e->rtIdx);
     e->rtIdx = NULL;
+    e->grass = NULL;
+    e->ngrass = 0;
     e->sky = e->air = NULL;
     e->flame = NULL;
     e->plume = NULL;
@@ -289,6 +297,7 @@ void chunks_destroy(ChunkSystem *cs) {
     free(cs->done);
     for (int i = 0; i < MAX_ENTRIES; ++i) {
         mesh_free(&cs->entries[i].mesh); free(cs->entries[i].sky); free(cs->entries[i].air); free(cs->entries[i].flame); free(cs->entries[i].plume); free(cs->entries[i].rtIdx);
+        free(cs->entries[i].grass);
     }
     rt_destroy(cs->rt);
     for (int i = 0; i < MAX_FRAMES; ++i) {
@@ -770,6 +779,9 @@ static int upload_ready(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t
         e->plume = e->mesh.plume;
         e->nplume = e->mesh.nplume;
         e->mesh.plume = NULL;
+        e->grass = e->mesh.grass;
+        e->ngrass = e->mesh.ngrass;
+        e->mesh.grass = NULL;
         mesh_free(&e->mesh);
         e->state = CS_RESIDENT;
         uploads++;
@@ -819,6 +831,8 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
         if (!frustum_test_aabb(&fr, mn, mx)) continue;
 
         e->drawn = cs->frame + 1;
+        e->drawRec = (int)nchunk;
+        e->drawRecFrame = cs->frame + 1;
         ChunkGPU *g = &gpu[nchunk];
         g->origin[0] = x0; g->origin[1] = y0; g->origin[2] = z0; g->origin[3] = 0;
         g->info[0] = e->cx; g->info[1] = e->cz;
@@ -954,6 +968,55 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     build_prepass_draws(cs, slot, ndraw);
     if (cs->rt) update_shadows(cs, cmd, slot, frame, cam);
     update_stats(cs, slot, queued, viewChunks, uploads);
+}
+
+/* The city's grass for the GPU (grass_gpu.c: prepare_city.comp): of every
+ * chunk drawn this frame, its patches within radius of the camera (by their
+ * squares' nearest points), a record a patch, its run of triangles split
+ * every GRASS_CITY_RUN, each triangle camera-relative in height. Returns the
+ * records; *ntri, the triangles. */
+uint32_t chunks_city_grass(ChunkSystem *cs, const double cam[3], double radius, GrassCityPatchGPU *pat, uint32_t maxPat,
+                           GrassCityTriGPU *tri, uint32_t maxTri, uint32_t *ntri) {
+    const double S = GRASS_PATCH_M;
+    const int32_t cpx = (int32_t)floor(cam[0] / S), cpz = (int32_t)floor(cam[2] / S);
+    uint32_t np = 0, nt = 0;
+    for (int i = 0; i < MAX_ENTRIES; ++i) {
+        const Entry *e = &cs->entries[i];
+        if (e->state != CS_RESIDENT || e->layer != 0 || !e->ngrass || e->drawRecFrame != cs->frame + 1) continue;
+        if (chunk_dist(e, cam) > radius) continue;
+        for (uint32_t k = 0; k < e->ngrass;) {
+            const CityGrassTri *t0 = &e->grass[k];
+            uint32_t end = k + 1;
+            while (end < e->ngrass && e->grass[end].px == t0->px && e->grass[end].pz == t0->pz) ++end;
+            double x0 = t0->px * S - cam[0], z0 = t0->pz * S - cam[2];
+            double nx = fmin(fmax(0.0, x0), x0 + S), nz = fmin(fmax(0.0, z0), z0 + S);
+            if (nx * nx + nz * nz <= radius * radius) {
+                for (uint32_t r = k; r < end; r += GRASS_CITY_RUN) {
+                    uint32_t n = end - r < GRASS_CITY_RUN ? end - r : GRASS_CITY_RUN;
+                    if (np >= maxPat || nt + n > maxTri) { *ntri = nt; return np; }
+                    GrassCityPatchGPU *p = &pat[np++];
+                    p->rel[0] = t0->px - cpx; p->rel[1] = t0->pz - cpz;
+                    p->first = nt;
+                    p->info = n | (uint32_t)e->drawRec << 8;
+                    for (uint32_t q = 0; q < n; ++q) {
+                        const CityGrassTri *s = &e->grass[r + q];
+                        GrassCityTriGPU *o = &tri[nt++];
+                        float *v[3] = { o->a, o->b, o->c };
+                        for (int c = 0; c < 3; ++c) {
+                            v[c][0] = s->v[c][0];
+                            v[c][1] = (float)((double)s->v[c][1] - cam[1]);
+                            v[c][2] = s->v[c][2];
+                            v[c][3] = 0.0f;
+                        }
+                        o->a[3] = s->maintained;
+                    }
+                }
+            }
+            k = end;
+        }
+    }
+    *ntri = nt;
+    return np;
 }
 
 static const float *g_airScore;

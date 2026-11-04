@@ -751,9 +751,9 @@ against the ground's height, in soft ground's hollows first and on rock's and sc
 
 ### Grass (`src/grass`, `shaders/grass`; in progress)
 Grass blades are being built to `docs/procedural_grass_rendering_implementation.md`. So far the rules, the GPU
-path, the blades and their levels of detail exist: the land's grass is drawn as curved, tapered blades in tufts,
-thinning with distance into the ground's own colour with no front (wind, the city's grass and proper light come
-next). The rules
+path, the blades, their levels of detail, the wind and the city's grass exist: the land's grass and the city's parks,
+fields and edge verge are drawn as curved, tapered blades in tufts that blow in the wind, thinning with distance into
+the ground's own colour with no front (proper light, the wet and the player's wake come next). The rules
 say where grass grows, how thick, of which species, in which clumps and tufts. They are
 written twice, as pure C (`src/grass/grass.c`) and as GLSL (`shaders/grass/rules.glsl`). The two copies take the same
 float steps. Their shared constants are one header (`src/grass/grass_rules.h`), and each species' numbers are its
@@ -765,8 +765,9 @@ profile, an asset file (below).
 - **Suitability.** It comes from the land's cover: the grass, and the mud at 0.7. It thins on slopes from 35 degrees
   to none by 46, under snow, and into the last 40 m before the city's ground. There is none on a road or its gravel.
 - **Species.** Each root makes a weighted choice of species, never an interpolated id. Reeds grow in mud and right by
-  the water, and meadow grows on the rest of the land. Lawn (parks) and rough (fields and the verge) are for the
-  city's own grass.
+  the water, and meadow grows on the rest of the land. In the city, lawn grows where the grass is kept and rough
+  where it isn't: a park is mown unless it lies in squalor (kept from 1 at squalor 0.45 to 0 at 0.8, so a park in the
+  poor fringe goes rough and one in between is a mix), and the fields and the edge verge are rough.
 - **Clumps.** Clumps are Voronoi cells, 2-4 m across by species. Each gives its roots a height, a density, a lean, a
   stiffness and a tint. Some clumps are bare spots, and roots thin towards a clump's border. The clump lookup is
   warped by a smooth noise, so the clumps' lattice leaves no trace either.
@@ -874,8 +875,26 @@ chooses, makes and draws the land's blades; the CPU does no per-blade work and n
   instance), and never more than 0.9 of it. The length is kept to the height as before, so blades blow over and
   don't stretch. Each blade sways on top at its own phase and rate (faster when short and stiff); the sway fades
   out between 12 and 4 px tall, so the far field moves only with the wind's waves. Every bucket blows alike, so the
-  geomorph's targets move with it. `--grass-debug wind` colours the blades and the land by the wind's strength. The
-  city's sheltered grass comes with GR6.
+  geomorph's targets move with it. `--grass-debug wind` colours the blades and the land by the wind's strength. In
+  the city the wind drops by up to 80% under cover and in a building's lee (spec 8.4): from the shelter map, what
+  stands over the root, and anything upwind (2, 5 and 12 m) rising more than about a third of its distance. The land
+  is open.
+- **The city's grass** (GR6: `src/city/grass_city.c`, `shaders/grass/prepare_city.comp`). Chunk generation keeps the
+  grass the blades grow on (`Mesh.grass`): the triangles of the parks', fields' and edge verge's ground, as the chunk
+  draws them (draped on the ground), less the sites of the buildings standing on a farmstead's field (with 0.3 m
+  round them), cut along the 8 m patches. A green lot's params carry whether blades grow there and how well it is
+  kept (`city_grass_param`: a roof garden grows none). Each frame the renderer hands the GPU the patches within 200 m
+  of the chunks it draws (`chunks_city_grass`: a record a patch of a chunk, at most 32 triangles, their heights
+  camera-relative). `prepare_city.comp`, a workgroup a record, grows lawn and rough on them from the patch's own
+  world-fixed root cells, so there is no seam where triangles meet and nothing crawls: each candidate root stands on
+  the triangle it falls in (none, no root) at its height and normal, the rules are the city's, and the levels of
+  detail, the end and the room are the land's (the same buckets). A city blade's chunk record rides beside its
+  instance (`instChunk`). The blades are drawn with the scene's descriptor set beside their own, so a city blade is lit
+  as the ground at its root is: the city's lamps, shopfronts and lobbies from its chunk's light table
+  (`city/lighting.glsl`), the ambient, the signs' bounce and the city's haze. The blades aren't in the depth prepass;
+  a blade takes the soft shadows the ray-traced shadows left for the ground at its root's pixel (if that pixel shows
+  its chunk's ground at the root's distance), and traces no rays: a light the slots don't hold is unshadowed. The
+  park's ground takes the field the blades leave where they give way (`grass/field_city.glsl`), as the land's does.
 - The counters come back a frame slot late and the `--shot` log prints them: patches in range, in view and with
   grass; roots evaluated and kept; blades drawn per bucket, and those refused; triangles; and each land species'
   effective blades/m² over the ground it was evaluated on. `--grass-debug lod` colours the blades by
@@ -884,12 +903,15 @@ chooses, makes and draws the land's blades; the CPU does no per-blade work and n
   cull` colours the blades by patch and the land by its patch's state.
 
 At walking height over the meadow it draws about 530k blades (2.9M triangles): prepare 0.22 ms and draw 0.60 ms on an
-RTX 4080 SUPER at 1600 x 900, against a 1.5 ms budget; the field costs the terrain pass 0.03-0.07 ms. The log gives the meadow there as 118 blades/m², its 150 times
+RTX 4080 SUPER at 1600 x 900, against a 1.5 ms budget; the field costs the terrain pass 0.03-0.07 ms. In a rough park at
+walking height it draws about 270k blades (1.5M triangles): prepare 0.20 ms and draw 0.39 ms. The log gives the meadow there as 118 blades/m², its 150 times
 the cover's suitability. `grass_test --gpu` also runs prepare and finish headless on a made-up clipmap. With every
 root evaluated and every blade written, its blade counts equal C's `grass_keep` exactly over 4,096 m² for meadow, reeds
 and mud, a slope and thin snow, with none on the city's ground or steep ground. The blades stand on the ground and inside
 their patches. With too little room, the second frame keeps exactly the blades nearer than the distance set, within 90% of
-the room, and sets the same distance again.
+the room, and sets the same distance again. `city_test` checks the city's grass round the park, field and verge: every
+piece in its patch, on the green ground drawn there to 2 mm, none in a building's site, and all the green ground
+covered where no building can stand; the grass is in its determinism checks and fingerprint (`grass`).
 
 ### Shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`, `shaders/shadow_denoise.comp`)
 Every light in a chunk's light table casts ray-traced shadows: street lamps, lit shopfronts, the lobbies' spill and the

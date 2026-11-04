@@ -1,0 +1,206 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#include "common.glsl"
+#include "grass/lod.glsl"
+#include "grass/frame.glsl"
+#define GRASS_INSTANCE_ACCESS writeonly
+#include "grass/instance.glsl"
+#include "grass/prepare_common.glsl"
+
+/* The grass's GPU path (src/render/grass_gpu.c), the city's grass (GR6):
+ * one workgroup per record of a patch of a chunk's grass, its pieces of the
+ * parks', fields' and edge verge's ground as the chunk draws them
+ * (src/city/grass_city.c; the renderer hands over the patches within
+ * GRASS_RADIUS each frame, src/render/chunks.c chunks_city_grass).
+ *
+ * As the land's (prepare.comp), and into the same buckets: the record is
+ * dropped if every species' blades would have given way to the ground at its
+ * patch's nearest point, or if its pieces' box (padded by the tallest blade)
+ * is out of view. Each candidate root of lawn and rough, from the patch's
+ * world-fixed root cells, stands on the piece it falls in (none: no root),
+ * at the piece's height, its normal the piece's; the rules are the city's
+ * (grass grows wherever the city says, as steep as the slope allows; lawn
+ * where the piece is kept, rough where not: grass_species), and its level of
+ * detail and blades as the land's. Each blade's instance has its chunk's
+ * draw record beside it (instChunk), for its light. No planet's bend: the
+ * city's chunks are drawn flat (common.glsl planetBend). */
+
+layout(local_size_x = GRASS_WG) in;
+struct CityPatch { ivec2 rel; uint first; uint info; };   // grass_gpu.h GrassCityPatchGPU
+struct CityTri { vec4 a, b, c; };                         // GrassCityTriGPU
+layout(std430, set = 0, binding = 13) readonly buffer CityPatches { CityPatch cityPatch[]; };
+layout(std430, set = 0, binding = 14) readonly buffer CityTris { CityTri cityTri[]; };
+
+shared vec4 sEdge[GRASS_CITY_RUN];    // a piece's corners a, b in x, z (patch-local)
+shared vec4 sEdge2[GRASS_CITY_RUN];   // c in x, z; maintained; 0
+shared vec4 sPlane[GRASS_CITY_RUN];   // y = w + x gx + z gz (camera-relative): gx, gz, its normal's y, w
+shared uint sHist[GRASS_BUCKETS * GRASS_BINS];
+shared uint sCand, sEval, sKept, sCut[GRASS_BUCKETS];
+shared uint sSpEval[2], sSpBlades[2];   // lawn's and rough's
+
+float edgeFn(vec2 a, vec2 b, vec2 p) { return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x); }
+
+void main() {
+    uint tid = gl_LocalInvocationIndex;
+    const float S = float(GRASS_PATCH_M);
+    CityPatch P = cityPatch[gl_WorkGroupID.x];
+    int ntri = int(min(P.info & 255u, uint(GRASS_CITY_RUN)));
+    uint chunk = P.info >> 8;
+    ivec2 gpatch = frame.grassPatch.xy + P.rel;
+    vec2 corner = vec2(P.rel) * S - frame.grass.xy;   // camera-relative
+    float fy = gf.view.y;
+    bool allFull = (gf.info.z & GRASS_MODE_ALL_FULL) != 0;
+
+    // A: range and size on screen
+    float dNear = length(clamp(vec2(0.0), corner, corner + S));
+    float tallest = max(rootTallest(GRASS_LAWN), rootTallest(GRASS_ROUGH));
+    float typical = max(typicalMost(GRASS_LAWN), typicalMost(GRASS_ROUGH));
+    if (dNear > gf.view.x || (!allFull && !(grassEnd(typical, dNear, fy, gf.view.x) > 0.0))) return;
+    if (tid < uint(ntri)) {
+        CityTri t = cityTri[P.first + tid];
+        vec3 a = t.a.xyz, b = t.b.xyz, c = t.c.xyz;
+        vec3 n = cross(b - a, c - a);
+        n *= n.y < 0.0 ? -1.0 : 1.0;
+        n = normalize(n);
+        float ny = max(n.y, 1e-3);
+        float gx = -n.x / ny, gz = -n.z / ny;
+        sEdge[tid] = vec4(a.xz, b.xz);
+        sEdge2[tid] = vec4(c.xz, t.a.w, 0.0);
+        sPlane[tid] = vec4(gx, gz, n.y, a.y - gx * a.x - gz * a.z);
+    }
+    if (tid == 0u) {
+        sCand = sEval = sKept = 0u;
+        for (int b = 0; b < GRASS_BUCKETS; ++b) sCut[b] = 0u;
+        sSpEval[0] = sSpEval[1] = sSpBlades[0] = sSpBlades[1] = 0u;
+    }
+    for (uint i = tid; i < uint(GRASS_BUCKETS * GRASS_BINS); i += uint(GRASS_WG)) sHist[i] = 0u;
+    barrier();
+    // the pieces' box, how well kept they are and how steep, as every thread sees them
+    vec2 lo = vec2(S), hi = vec2(0.0);
+    float yLo = 1e9, yHi = -1e9, keptLo = 1.0, keptHi = 0.0, nyHi = 0.0;
+    for (int i = 0; i < ntri; ++i) {
+        vec4 e = sEdge[i], e2 = sEdge2[i], pl = sPlane[i];
+        vec2 v[3] = vec2[](e.xy, e.zw, e2.xy);
+        for (int q = 0; q < 3; ++q) {
+            lo = min(lo, v[q]); hi = max(hi, v[q]);
+            float y = pl.w + pl.x * v[q].x + pl.y * v[q].y;
+            yLo = min(yLo, y); yHi = max(yHi, y);
+        }
+        keptLo = min(keptLo, e2.z); keptHi = max(keptHi, e2.z);
+        nyHi = max(nyHi, pl.z);
+    }
+    if (tid == 0u) atomicAdd(counters[GRASS_C_CITY_RANGE], 1u);
+    float side = 0.2 + tallest;
+    vec3 mn = vec3(corner.x + lo.x - side, yLo - 0.2, corner.y + lo.y - side);
+    vec3 mx = vec3(corner.x + hi.x + side, yHi + 1.25 * tallest + 0.2, corner.y + hi.y + side);
+    if ((gf.info.z & GRASS_MODE_ALL_IN_VIEW) == 0 && !inView(mn, mx)) return;
+    if (tid == 0u) atomicAdd(counters[GRASS_C_CITY_VIEW], 1u);
+    if (!(grassEase(GRASS_SLOPE_NONE, GRASS_SLOPE_FULL, nyHi) > 0.0)) return;   // every piece too steep
+    // the camera's height off the pieces: the least it can be from a root
+    float dy = max(max(yLo, -yHi), 0.0);
+
+    for (int ki = 0; ki < 2; ++ki) {
+        int k = ki == 0 ? GRASS_LAWN : GRASS_ROUGH;
+        // lawn where kept, rough where not (grass_species): none of a species where no piece can have it
+        if (!GRASS_PRESENT(k) || !(k == GRASS_LAWN ? keptHi > 0.0 : keptLo < 1.0)) continue;
+        int n = GRASS_GRID(k), total = n * n, rounds = (total + GRASS_WG - 1) / GRASS_WG;
+        float hk = rootTallest(k), tk = grassTypical(k, 1.0);
+        if (tid == 0u) atomicAdd(sCand, uint(total));
+        for (int r = 0; r < rounds; ++r) {
+            int idx = r * GRASS_WG + int(tid);
+            int tier = -1;
+            uint nb = 0u;
+            GrassLod lod;
+            float endK = 1.0;
+            GrassRoot root;
+            vec4 pl = vec4(0.0);
+            if (idx < total) {
+                ivec2 cell = ivec2(idx % n, idx / n);
+                bool sub = ((cell.x | cell.y) & 1) == 0;   // the clump bucket's roots
+                GrassCandidate cand = grassCandidate(k, gpatch, cell);
+                vec2 rel = corner + cand.p;
+                bool maybe = cand.p.x >= lo.x && cand.p.x <= hi.x && cand.p.y >= lo.y && cand.p.y <= hi.y;
+                if (maybe && !allFull) {   // the most it could be on screen; its species not yet given way
+                    float dLo = max(length(vec3(rel.x, dy, rel.y)), 1e-3);
+                    maybe = grassEnd(tk, dLo, fy, gf.view.x) > 0.0 && (sub || hk * fy / dLo >= float(GRASS_LOD_MID_PX));
+                }
+                // the piece it stands on
+                int at = -1;
+                for (int i = 0; maybe && i < ntri && at < 0; ++i) {
+                    vec4 e = sEdge[i];
+                    vec2 c2 = sEdge2[i].xy;
+                    float d1 = edgeFn(e.xy, e.zw, cand.p), d2 = edgeFn(e.zw, c2, cand.p), d3 = edgeFn(c2, e.xy, cand.p);
+                    if ((d1 >= 0.0 && d2 >= 0.0 && d3 >= 0.0) || (d1 <= 0.0 && d2 <= 0.0 && d3 <= 0.0)) at = i;
+                }
+                if (at >= 0) {
+                    pl = sPlane[at];
+                    GrassSite s;
+                    s.grass = 1.0; s.mud = 0.0; s.snow = 0.0; s.wet = 0.0;
+                    s.ny = pl.z; s.urban = 1.0; s.maintained = sEdge2[at].z; s.city = 1;
+                    s.road = float(GRASS_ROAD_FAR);
+                    atomicAdd(sEval, 1u);
+                    atomicAdd(sSpEval[ki], 1u);
+                    if (grassKeep(cand, s, root)) {
+                        atomicAdd(sSpBlades[ki], uint(root.blades));
+                        float h = pl.w + pl.x * cand.p.x + pl.y * cand.p.y;
+                        float dist = length(vec3(rel.x, h, rel.y));
+                        if (allFull) lod = grassLodAll(root.blades);
+                        else {
+                            endK = grassEnd(grassTypical(k, grassSuitability(s)), dist, fy, gf.view.x);
+                            lod = grassLod(root.height * fy / max(dist, 1e-3), root.blades, sub);
+                            if (!(endK > 0.0)) lod.count = 0;
+                        }
+                        if (lod.count > 0) {
+                            tier = lod.bucket;
+                            nb = uint(lod.count);
+                            atomicAdd(sKept, 1u);
+                            atomicAdd(sHist[tier * GRASS_BINS + min(int(dist / float(GRASS_BIN_M)), GRASS_BINS - 1)], nb);
+                            if (dist >= keepTo[tier]) {   // past the distance kept to: counted, not drawn
+                                atomicAdd(sCut[tier], nb);
+                                nb = 0u;
+                                tier = -1;
+                            }
+                        }
+                    }
+                }
+            }
+            // C: room in each bucket, one atomic a subgroup
+            uint at0 = grassReserve(tier, nb);
+            if (tier >= 0) {
+                uint room = gf.cap[tier];
+                vec3 nrm = normalize(vec3(-pl.x, 1.0, -pl.y));
+                for (uint bi = 0u; bi < nb && at0 + bi < room; ++bi) {
+                    GrassBlade g = grassBlade(root, int(bi));
+                    // narrowed away, or widened for those gone (grass/lod.glsl), and by the species' end
+                    float width = min(g.width * grassLodWidth(lod, int(bi)) * endK, float(GRASS_WIDE_MAX) * g.height);
+                    // the piece's plane, to the blade (within a tuft's width)
+                    float hb = pl.w + pl.x * g.p.x + pl.y * g.p.y;
+                    GrassInstance o;
+                    grassPack(vec3(corner.x + g.p.x, hb, corner.y + g.p.y), g.height, nrm, g.facing, g.leanDir, width, g.lean, g.bend, g.phase,
+                              g.tint, root.clump.stiffness, k, tier, lod.morph, o);
+                    uint slot = gf.base[tier] + at0 + bi;
+                    inst[slot] = o;
+                    instChunk[slot] = chunk;
+                }
+            }
+        }
+    }
+    barrier();
+    for (uint i = tid; i < uint(GRASS_BUCKETS * GRASS_BINS); i += uint(GRASS_WG))
+        if (sHist[i] != 0u) atomicAdd(counters[GRASS_C_HIST + i], sHist[i]);
+    if (tid == 0u) {
+        atomicAdd(counters[GRASS_C_CANDIDATES], sCand);
+        atomicAdd(counters[GRASS_C_EVALUATED], sEval);
+        atomicAdd(counters[GRASS_C_KEPT], sKept);
+        atomicAdd(counters[GRASS_C_CITY_KEPT], sKept);
+        for (int b = 0; b < GRASS_BUCKETS; ++b) if (sCut[b] != 0u) atomicAdd(counters[GRASS_C_CUT + b], sCut[b]);
+        for (int q = 0; q < 2; ++q) {
+            int k = q == 0 ? GRASS_LAWN : GRASS_ROUGH;
+            if (sSpEval[q] != 0u) atomicAdd(counters[GRASS_C_SP_EVAL + k], sSpEval[q]);
+            if (sSpBlades[q] != 0u) atomicAdd(counters[GRASS_C_SP_BLADES + k], sSpBlades[q]);
+        }
+    }
+}

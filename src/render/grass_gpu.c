@@ -25,10 +25,27 @@
  *
  * Each bucket's room is its own (GRASS_CAPS, or --grass-cap), so a far
  * bucket can't take a near one's; within one, finish.comp's distance keeps
- * the near blades and lets the far ones go. */
+ * the near blades and lets the far ones go.
+ *
+ * The city's grass (GR6): the chunks drawn this frame hand over their grass
+ * patches within GRASS_RADIUS (chunks_city_grass: their parks', fields' and
+ * edge verge's ground, cut along the patches by src/city/grass_city.c) into
+ * the frame slot's host-visible records, and prepare_city.comp, a workgroup
+ * a record, grows lawn and rough on them into the same buckets, before
+ * finish.comp. Each blade's draw chunk goes beside it (instChunk), and the
+ * blades are drawn with the scene's set (set 0: the chunks' records and
+ * light tables, the shelter map, the shadow slots, the materials) beside
+ * their own (set 1: the instances), so a city blade is lit as the city's
+ * ground is (blade.frag). */
 
 static const uint32_t SPV_prepare[] = {
 #include "grass/prepare.comp.inc"
+};
+static const uint32_t SPV_prepare_city[] = {
+#include "grass/prepare_city.comp.inc"
+};
+static const uint32_t SPV_blade_rt_frag[] = {
+#include "grass/blade_rt.frag.inc"
 };
 static const uint32_t SPV_finish[] = {
 #include "grass/finish.comp.inc"
@@ -47,7 +64,7 @@ struct GrassGpu {
     uint32_t cap[GRASS_BUCKETS], base[GRASS_BUCKETS];
     VkDescriptorSetLayout compLayout, drawLayout;
     VkPipelineLayout compPL, drawPL;
-    VkPipeline preparePipe, finishPipe, bladePipe;
+    VkPipeline preparePipe, prepareCityPipe, finishPipe, bladePipe;
     VkDescriptorPool pool;
     VkDescriptorSet compSet[MAX_FRAMES], drawSet[MAX_FRAMES];
     Buffer frame[MAX_FRAMES];      /* GrassFrameGPU, host visible */
@@ -56,6 +73,10 @@ struct GrassGpu {
     Buffer draws[MAX_FRAMES];      /* a VkDrawIndirectCommand per bucket */
     Buffer patches[MAX_FRAMES];    /* GRASS_PATCH_* per patch of the square */
     Buffer readback[MAX_FRAMES];   /* the counters, host visible */
+    Buffer instChunk[MAX_FRAMES];  /* each instance's draw chunk (a city blade's) */
+    Buffer cityPatch[MAX_FRAMES];  /* GrassCityPatchGPU, host visible (chunks_city_grass) */
+    Buffer cityTri[MAX_FRAMES];    /* GrassCityTriGPU, host visible */
+    uint32_t cityRecords;          /* the city's patch records this frame */
     Buffer keepTo;                 /* per bucket: the distance blades are kept to (m) */
     Buffer indices;                /* every ribbon topology, GRASS_SEG_FIRST(s) on (uint16) */
     int segs[GRASS_BUCKETS];       /* each bucket's (grass_bucket_segments) */
@@ -90,7 +111,7 @@ void grass_gpu_create(Renderer *r) {
 
     const VkShaderStageFlags C = VK_SHADER_STAGE_COMPUTE_BIT, V = VK_SHADER_STAGE_VERTEX_BIT, F = VK_SHADER_STAGE_FRAGMENT_BIT;
     const VkDescriptorType UB = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    VkDescriptorSetLayoutBinding comp[9] = {
+    VkDescriptorSetLayoutBinding comp[12] = {
         { 0, UB, 1, C, NULL },    /* FrameUBO */
         { 1, SB, 1, C, NULL },    /* the clipmap's samples */
         { 2, SB, 1, C, NULL },    /* the roads (road_gpu.c) */
@@ -100,20 +121,33 @@ void grass_gpu_create(Renderer *r) {
         { 7, SB, 1, C, NULL },    /* the draws */
         { 9, SB, 1, C, NULL },    /* keepTo */
         { 10, SB, 1, C, NULL },   /* the patch states */
+        { 13, SB, 1, C, NULL },   /* the city's patch records */
+        { 14, SB, 1, C, NULL },   /* their triangles */
+        { 15, SB, 1, C, NULL },   /* each instance's draw chunk */
     };
-    g->compLayout = make_set_layout(vk, comp, 9);
-    VkDescriptorSetLayoutBinding draw[4] = {
-        { 0, UB, 1, V | F, NULL },
-        { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, F, NULL },   /* the materials (ground.glsl's light and haze) */
-        { 5, SB, 1, V, NULL },
-        { 8, UB, 1, F, NULL },
+    g->compLayout = make_set_layout(vk, comp, 12);
+    VkDescriptorSetLayoutBinding draw[2] = {
+        { 0, SB, 1, V, NULL },    /* the instances */
+        { 1, SB, 1, V, NULL },    /* their draw chunks */
     };
-    g->drawLayout = make_set_layout(vk, draw, 4);
+    g->drawLayout = make_set_layout(vk, draw, 2);
     g->compPL = make_pipeline_layout(vk, g->compLayout, 0, 0);
-    g->drawPL = make_pipeline_layout(vk, g->drawLayout, sizeof(BladePush), V);
+    {   /* set 0 the scene's (the frame, the chunks, the lights, the shelter map, the shadow slots, the materials), set 1 the blades' */
+        VkDescriptorSetLayout sets[2] = { r->sceneLayout, g->drawLayout };
+        VkPushConstantRange pr = { V, 0, sizeof(BladePush) };
+        VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+        li.setLayoutCount = 2;
+        li.pSetLayouts = sets;
+        li.pushConstantRangeCount = 1;
+        li.pPushConstantRanges = &pr;
+        VK_CHECK(vkCreatePipelineLayout(vk->device, &li, NULL, &g->drawPL));
+    }
     g->preparePipe = make_compute(vk, SPV_prepare, sizeof(SPV_prepare), g->compPL);
+    g->prepareCityPipe = make_compute(vk, SPV_prepare_city, sizeof(SPV_prepare_city), g->compPL);
     g->finishPipe = make_compute(vk, SPV_finish, sizeof(SPV_finish), g->compPL);
-    GfxDesc blade = { SPV_blade_vert, sizeof(SPV_blade_vert), SPV_blade_frag, sizeof(SPV_blade_frag),
+    /* with ray-traced shadows the scene's set has the slots, and a city blade takes its root's */
+    GfxDesc blade = { SPV_blade_vert, sizeof(SPV_blade_vert), r->rt ? SPV_blade_rt_frag : SPV_blade_frag,
+                      r->rt ? sizeof(SPV_blade_rt_frag) : sizeof(SPV_blade_frag),
                       g->drawPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, false };   /* two-sided */
     blade.colorFormat2 = HDR_FORMAT;   /* the reflection G-buffer: nothing */
     g->bladePipe = make_graphics(vk, &blade);
@@ -129,6 +163,9 @@ void grass_gpu_create(Renderer *r) {
         g->draws[i] = vk_buffer(vk, GRASS_BUCKETS * sizeof(VkDrawIndexedIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, DEV);
         g->patches[i] = vk_buffer(vk, patchBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, DEV);
         g->readback[i] = vk_buffer(vk, GRASS_C_WORDS * sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT, HOST);
+        g->instChunk[i] = vk_buffer(vk, (VkDeviceSize)total * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, DEV);
+        g->cityPatch[i] = vk_buffer(vk, (VkDeviceSize)GRASS_CITY_PATCHES * sizeof(GrassCityPatchGPU), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, HOST);
+        g->cityTri[i] = vk_buffer(vk, (VkDeviceSize)GRASS_CITY_TRIS * sizeof(GrassCityTriGPU), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, HOST);
     }
     g->keepTo = vk_buffer(vk, 4 * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, DEV);
     g->keepToFresh = true;
@@ -147,14 +184,13 @@ void grass_gpu_create(Renderer *r) {
         *o++ = a; *o++ = (uint16_t)(a + 1); *o++ = (uint16_t)(a + 2);
     }
 
-    VkDescriptorPoolSize sizes[3] = {
-        { UB, 4 * MAX_FRAMES },
-        { SB, 8 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT * MAX_FRAMES },
+    VkDescriptorPoolSize sizes[2] = {
+        { UB, 2 * MAX_FRAMES },
+        { SB, 12 * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = 2 * MAX_FRAMES;
-    pci.poolSizeCount = 3;
+    pci.poolSizeCount = 2;
     pci.pPoolSizes = sizes;
     VK_CHECK(vkCreateDescriptorPool(vk->device, &pci, NULL, &g->pool));
     VkDeviceSize sampleBytes;
@@ -179,10 +215,12 @@ void grass_gpu_create(Renderer *r) {
         write_buf_set(vk, s, 7, SB, g->draws[i].buf, VK_WHOLE_SIZE);
         write_buf_set(vk, s, 9, SB, g->keepTo.buf, VK_WHOLE_SIZE);
         write_buf_set(vk, s, 10, SB, g->patches[i].buf, VK_WHOLE_SIZE);
+        write_buf_set(vk, s, 13, SB, g->cityPatch[i].buf, VK_WHOLE_SIZE);
+        write_buf_set(vk, s, 14, SB, g->cityTri[i].buf, VK_WHOLE_SIZE);
+        write_buf_set(vk, s, 15, SB, g->instChunk[i].buf, VK_WHOLE_SIZE);
         s = g->drawSet[i];
-        write_buf_set(vk, s, 0, UB, r->ubo[i].buf, sizeof(FrameUBO));
-        write_buf_set(vk, s, 5, SB, g->instances[i].buf, VK_WHOLE_SIZE);
-        write_material_set(r, s);
+        write_buf_set(vk, s, 0, SB, g->instances[i].buf, VK_WHOLE_SIZE);
+        write_buf_set(vk, s, 1, SB, g->instChunk[i].buf, VK_WHOLE_SIZE);
         write_buf_set(vk, terrain_gpu_set(r, i), 10, SB, g->patches[i].buf, VK_WHOLE_SIZE);   /* --grass-debug cull */
     }
 }
@@ -192,6 +230,7 @@ void grass_gpu_destroy(Renderer *r) {
     GrassGpu *g = r->grass;
     if (!g) return;
     vkDestroyPipeline(vk->device, g->preparePipe, NULL);
+    vkDestroyPipeline(vk->device, g->prepareCityPipe, NULL);
     vkDestroyPipeline(vk->device, g->finishPipe, NULL);
     vkDestroyPipeline(vk->device, g->bladePipe, NULL);
     vkDestroyPipelineLayout(vk->device, g->compPL, NULL);
@@ -206,6 +245,9 @@ void grass_gpu_destroy(Renderer *r) {
         vk_buffer_destroy(vk, &g->draws[i]);
         vk_buffer_destroy(vk, &g->patches[i]);
         vk_buffer_destroy(vk, &g->readback[i]);
+        vk_buffer_destroy(vk, &g->instChunk[i]);
+        vk_buffer_destroy(vk, &g->cityPatch[i]);
+        vk_buffer_destroy(vk, &g->cityTri[i]);
     }
     vk_buffer_destroy(vk, &g->keepTo);
     vk_buffer_destroy(vk, &g->indices);
@@ -213,7 +255,11 @@ void grass_gpu_destroy(Renderer *r) {
     r->grass = NULL;
 }
 
-void renderer_set_grass(Renderer *r, bool on) { r->grass->on = on && r->grass->supported && (grass_profile(GRASS_MEADOW)->present || grass_profile(GRASS_REEDS)->present); }
+void renderer_set_grass(Renderer *r, bool on) {
+    bool any = false;
+    for (int k = 0; k < GRASS_SPECIES; ++k) any = any || grass_profile(k)->present;
+    r->grass->on = on && r->grass->supported && any;
+}
 
 bool grass_gpu_drawn(Renderer *r) { return r->grass && r->grass->on; }
 
@@ -221,7 +267,7 @@ void renderer_set_grass_cap(Renderer *r, uint32_t cap) {
     for (int b = 0; b < GRASS_BUCKETS; ++b) r->grass->cap[b] = cap > 0 && cap < GRASS_CAPS[b] ? cap : GRASS_CAPS[b];
 }
 
-void grass_gpu_prepare(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *viewProj) {
+void grass_gpu_prepare(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj) {
     GrassGpu *g = r->grass;
     g->drawing = false;
     /* this slot's last frame has finished (frame_acquire): its counters are in */
@@ -233,7 +279,10 @@ void grass_gpu_prepare(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *v
     if (!g->on) return;
     const TerrainPush *push;
     int drawn = terrain_gpu_levels(r, &push);
-    if (drawn >= TERRAIN_CLIP_LEVELS) return;
+    /* the city's grass round the camera, from the chunks this frame draws */
+    uint32_t ntri = 0, records = chunks_city_grass(r->chunks, cam, GRASS_RADIUS, (GrassCityPatchGPU *)g->cityPatch[slot].mapped,
+                                                   GRASS_CITY_PATCHES, (GrassCityTriGPU *)g->cityTri[slot].mapped, GRASS_CITY_TRIS, &ntri);
+    if (drawn >= TERRAIN_CLIP_LEVELS && !records) return;
 
     GrassFrameGPU *f = (GrassFrameGPU *)g->frame[slot].mapped;
     memset(f, 0, sizeof(*f));
@@ -267,8 +316,15 @@ void grass_gpu_prepare(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *v
     vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_CLEAR_BIT | VK_PIPELINE_STAGE_2_COPY_BIT | CS,
                       VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, CS, RW);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g->compPL, 0, 1, &g->compSet[slot], 0, NULL);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g->preparePipe);
-    vkCmdDispatch(cmd, GRASS_PATCH_GRID, GRASS_PATCH_GRID, 1);
+    if (drawn < TERRAIN_CLIP_LEVELS) {   /* the land's */
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g->preparePipe);
+        vkCmdDispatch(cmd, GRASS_PATCH_GRID, GRASS_PATCH_GRID, 1);
+    }
+    if (records) {   /* the city's, into the same buckets (their reservations are atomic) */
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g->prepareCityPipe);
+        vkCmdDispatch(cmd, records, 1, 1);
+    }
+    g->cityRecords = records;
     vk_memory_barrier(cmd, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, CS, RW);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g->finishPipe);
     vkCmdDispatch(cmd, 1, 1, 1);
@@ -286,7 +342,8 @@ void grass_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     GrassGpu *g = r->grass;
     if (!g->drawing) return;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->bladePipe);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->drawPL, 0, 1, &g->drawSet[slot], 0, NULL);
+    VkDescriptorSet sets[2] = { r->sceneSet[slot], g->drawSet[slot] };
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->drawPL, 0, 2, sets, 0, NULL);
     vkCmdBindIndexBuffer(cmd, g->indices.buf, 0, VK_INDEX_TYPE_UINT16);
     for (int b = 0; b < GRASS_BUCKETS; ++b) {
         BladePush pc = { g->base[b], b, g->segs[b] };
@@ -305,6 +362,9 @@ void renderer_grass_stats(Renderer *r, char *buf, size_t n) {
                      "       roots %u candidates, %u evaluated, %u kept;", MAX_FRAMES, GRASS_PATCH_GRID * GRASS_PATCH_GRID,
                      s[GRASS_C_PATCHES_RANGE], s[GRASS_C_PATCHES_VIEW], s[GRASS_C_PATCHES_GRASS], s[GRASS_C_CANDIDATES],
                      s[GRASS_C_EVALUATED], s[GRASS_C_KEPT]);
+    if (k > 0 && (size_t)k < n)
+        k += snprintf(buf + k, n - k, "\n       the city's: %u patch records in range, %u in view, %u roots kept (this frame handed over %u records)",
+                      s[GRASS_C_CITY_RANGE], s[GRASS_C_CITY_VIEW], s[GRASS_C_CITY_KEPT], g->cityRecords);
     uint64_t blades = 0, tris = 0;
     for (int b = 0; b < GRASS_BUCKETS && k > 0 && (size_t)k < n; ++b) {
         float to;
@@ -321,8 +381,7 @@ void renderer_grass_stats(Renderer *r, char *buf, size_t n) {
     /* the effective density over the ground each species was evaluated on (every
      * kept root's tuft, as if all were drawn in full): the profile's density x the
      * suitability and the species' share there, on average */
-    for (int q = 0; q < 2 && k > 0 && (size_t)k < n; ++q) {
-        int sp = q == 0 ? GRASS_MEADOW : GRASS_REEDS;
+    for (int sp = 0; sp < GRASS_SPECIES && k > 0 && (size_t)k < n; ++sp) {
         const GrassProfile *p = grass_profile(sp);
         if (!p->present || s[GRASS_C_SP_EVAL + sp] == 0) continue;
         double cell = GRASS_PATCH_M / (double)p->rootGrid;

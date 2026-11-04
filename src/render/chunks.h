@@ -58,3 +58,10 @@ uint32_t     chunks_flames(ChunkSystem *cs, const double cam[3], FlameSet *out);
 /* Plumes (src/core/common.h) of resident chunks: the PLUME_STACKS stacks' nearest within PLUME_RANGE
  * and the PLUME_VENTS manholes' within VENT_RANGE, camera-relative and farthest first; returns how many. */
 uint32_t     chunks_plumes(ChunkSystem *cs, const double cam[3], PlumeSet *out);
+/* The city's grass round the camera for the blades (src/render/grass_gpu.c), after chunks_update: of the
+ * chunks this frame draws, their grass patches within radius, as GrassCityPatchGPU records (at most
+ * maxPat) of GrassCityTriGPU triangles (at most maxTri; *ntri of them); returns the records. */
+struct GrassCityPatchGPU;
+struct GrassCityTriGPU;
+uint32_t     chunks_city_grass(ChunkSystem *cs, const double cam[3], double radius, struct GrassCityPatchGPU *pat, uint32_t maxPat,
+                              struct GrassCityTriGPU *tri, uint32_t maxTri, uint32_t *ntri);

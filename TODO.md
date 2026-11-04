@@ -161,8 +161,10 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     junction markings there, and the gate is plain asphalt down the verge.
   - Beyond the 1.5 m asphalt shoulder a 4 m grass verge slopes down to the land (`city_verge_height`; strips along
     the outline, cones at its corners, a skirt underneath), and the player walks down it. There is no barrier on the
-    shoulder: one would want a collision outline too. The verge is the parks' dark grass, which hardly reads at night.
-  - Fields (`ZONE_RURAL`) reuse the parks' grass; neither has trees.
+    shoulder: one would want a collision outline too. Since GR6 rough grass blades grow on it, which stand out as a
+    ragged edge against the lit land beyond; under no lamp they are as dark as the ground.
+  - Fields (`ZONE_RURAL`) reuse the parks' grass, rough blades and all; neither has trees. The middles of large parks
+    stay dark: the lamps stand along the roads round them, and their light hardly reaches the grass.
 - **Landforms** (`src/terrain/terrain_land.c`, M8; see the README and `terrain_test --map`). Plains, hills, mountain
   belts and plateaus blend by region; canyons are explicit paths. Left over:
   - **Seen from the city** the mountains mostly vanish: the cloud deck's underside is at about 200 m
@@ -177,8 +179,8 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
 - **Ground cover and its materials** (the terrain textures roadmap, TX0-TX6, done: `src/terrain/terrain_cover.c`,
   `shaders/terrain/ground.glsl`, `assets/materials/land_*.json`; see the README). Left over:
-  - **Grass blades** are under way (the grass roadmap, GR0-GR9: rules, GPU path, curved blades and their levels of
-    detail so far, README "Grass"). They read the cover's grass weight and wetness for density and height, and stand
+  - **Grass blades** are under way (the grass roadmap, GR0-GR9: rules, GPU path, curved blades, their levels of
+    detail, the wind and the city's grass so far, README "Grass"). They read the cover's grass weight and wetness for density and height, and stand
     on `land_grass` (chosen as ground under blades, not a lawn). Since GR4 the land's grass at range is drawn in the
     blades' field colour, darker than `land_grass`. Left from GR4:
     - At walking height the drawn blades are 2-16% brighter than the field model says, in the last 30-80 m. The

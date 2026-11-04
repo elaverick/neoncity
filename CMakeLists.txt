@@ -170,10 +170,11 @@ set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_do
             proxy/proxy.vert proxy/proxy.frag flame.vert flame.frag smoke.vert smoke.frag
             interior/capture.comp interior/capture_mpi.comp interior/truth.comp interior/recon.comp   # the interior baker's
             grass/rules_test.comp   # grass_test --gpu's
-            grass/prepare.comp grass/finish.comp grass/blade.vert grass/blade.frag)
+            grass/prepare.comp grass/prepare_city.comp grass/finish.comp grass/blade.vert grass/blade.frag)
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
-set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS)
+set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS
+                    grass/blade_rt.frag:grass/blade.frag:GRASS_SLOTS)   # a city blade reads its root's shadow slots
 # Shaders also include the #define-only headers they share with C.
 set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/core/clouds.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_clip.h
@@ -216,7 +217,7 @@ set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/grass src/render
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_relief.c src/city/mesh_lobby.c src/city/mesh_doors.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/channels.c src/city/road_bridges.c src/city/light_tiles.c src/city/cables.c
-                src/city/litter.c src/city/props.c src/city/models.c src/city/proxy.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c src/plan/plan_water.c
+                src/city/litter.c src/city/props.c src/city/models.c src/city/proxy.c src/city/grass_city.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c src/plan/plan_water.c
                 src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c src/core/thread.c src/core/assets.c
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c

@@ -110,9 +110,18 @@ uint shopHash(uint seed, int section, int face, int next, bool endShare, float a
  * shadowsBegin (in main) reads them and checks they are this surface's. Any
  * other light bright enough to matter, and every light on a surface the
  * prepass didn't draw (glass, veils, a triangle's edge that misses sample 0),
- * gets a hard shadow traced here, to the middle of its emitter. */
+ * gets a hard shadow traced here, to the middle of its emitter.
+ *
+ * With SLOT_SHADOWS and LIGHTING_FOR_GRASS (the grass's blades:
+ * shaders/grass/blade.frag) the slots are read but nothing is traced: the
+ * includer sets gSlotsOurs, gSlotIds, gSlotVis and gShadowFade itself (the
+ * slots of the ground at a blade's root), and a light the slots don't hold is
+ * unshadowed. */
 #ifdef RT_SHADOWS
+#define SLOT_SHADOWS 1
 layout(set = 0, binding = 5) uniform accelerationStructureEXT tlas;
+#endif
+#ifdef SLOT_SHADOWS
 layout(set = 0, binding = 6) uniform usampler2D shadowIdsTex;   // shadow_trace.comp: slot light ids
 layout(set = 0, binding = 7) uniform usampler2D shadowVisTex;   // shadow_denoise.comp: slot visibility
 uvec4 gSlotIds = uvec4(0u), gSlotVis = uvec4(0u);
@@ -123,6 +132,7 @@ float gFwd, gFwdTol;             // this fragment's forward distance, and how ne
 #endif
 float gShadowFade = 1.0;         // 1: unshadowed (shadows off, or faded out with distance)
 
+#ifndef LIGHTING_FOR_GRASS
 void shadowsBegin() {
 #ifdef RT_SHADOWS
     float fwd = dot(vRel, frame.camFwd.xyz);
@@ -138,6 +148,7 @@ void shadowsBegin() {
     if (gSlotsOurs) gSlotIds = texelFetch(shadowIdsTex, px, 0);
 #endif
 }
+#endif
 
 #ifdef RT_SHADOWS
 // 1 if nothing stands between this fragment (p, chunk-local) and the middle of the light's emitter.
@@ -156,7 +167,7 @@ float traceShadow(vec3 p, vec3 lp, uint w) {
 
 // How much of light record w (at lp, chunk-local) reaches this fragment.
 float shadowVis(vec3 p, vec3 n, vec3 V, vec3 lp, uint w) {
-#ifdef RT_SHADOWS
+#ifdef SLOT_SHADOWS
     if (gShadowFade >= 1.0 || !castsShadow(w)) return 1.0;
     float v = -1.0;
     if (gSlotsOurs) {
@@ -165,7 +176,11 @@ float shadowVis(vec3 p, vec3 n, vec3 V, vec3 lp, uint w) {
             if (((gSlotIds[k >> 1] >> (16u * uint(k & 1))) & 0xFFFFu) == id) v = float((gSlotVis[k >> 2] >> (8u * uint(k & 3))) & 255u) / 255.0;
         if (v < 0.0 && (gSlotVis.w & SH_OVERFLOW) == 0u) return 1.0;   // too faint here to show a shadow
     }
+#ifdef RT_SHADOWS
     if (v < 0.0) v = lightImportance(p, n, V, lp, w) < LIGHT_NEGLIGIBLE ? 1.0 : traceShadow(p, lp, w);
+#else
+    if (v < 0.0) v = 1.0;
+#endif
     return mix(v, 1.0, gShadowFade);
 #else
     return 1.0;
@@ -177,7 +192,7 @@ float shadowVis(vec3 p, vec3 n, vec3 V, vec3 lp, uint w) {
  * prepass didn't see at sample 0 (the floor at a desk's edge) borrows a
  * neighbouring pixel's slots if they are its surface's, else is unshadowed. */
 float ceilingVis() {
-#ifdef RT_SHADOWS
+#if defined(RT_SHADOWS) && !defined(LIGHTING_FOR_GRASS)
     if (gShadowFade >= 1.0) return 1.0;
     uvec4 ids = gSlotIds, vis = gSlotVis;
     bool ours = gSlotsOurs;

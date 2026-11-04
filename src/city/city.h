@@ -151,6 +151,27 @@ typedef struct BlockLayout {
     double   collv[MAX_COLL_VERTS][2];
 } BlockLayout;
 
+/* A piece of the city's grass the blades grow on (src/city/grass_city.c; GR6
+ * of the grass, src/grass/grass_rules.h): a triangle of a park's, a field's
+ * or the edge verge's ground, as the chunk's mesh draws it, less what stands
+ * on it, within one grass patch (world x, z over GRASS_PATCH_M, rounded
+ * down). Its corners: x and z metres from the patch's corner, y world Y. */
+typedef struct CityGrassTri {
+    int32_t px, pz;
+    float   v[3][3];
+    float   maintained;   /* 1 mown (lawn) .. 0 neglected (rough) */
+} CityGrassTri;
+/* A green lot's vertices (MAT_LOT, params y 1) carry in params w whether
+ * blades grow there and how well it is kept: 0 none (a roof garden), else
+ * 1 + 254 x maintained. shaders/city/ground.glsl reads it too, for the field
+ * the blades leave at range (grass/field.glsl). */
+#define CITY_GRASS_NONE 0
+static inline uint8_t city_grass_param(float maintained) {
+    float m = maintained < 0.0f ? 0.0f : maintained > 1.0f ? 1.0f : maintained;
+    return (uint8_t)(1.0f + 254.0f * m + 0.5f);
+}
+static inline float city_grass_maintained(uint8_t w) { return w ? (float)(w - 1) / 254.0f : 0.0f; }
+
 typedef struct Mesh {
     Vertex  *v;
     uint32_t count, cap;
@@ -165,6 +186,8 @@ typedef struct Mesh {
     uint32_t  nflame, capflame;
     Plume    *plume;     /* stacks' smoke and steam in this chunk (chunk-local) */
     uint32_t  nplume, capplume;
+    CityGrassTri *grass; /* the grass the blades grow on, by patch (pz, then px; city_build_mesh) */
+    uint32_t  ngrass;
     int       xf;        /* emission transform: local frame -> chunk-local */
     float     xc, xs, xx, xz;
     float     xy;        /* ...raised this far: a building's or a lamp's base on the ground (city_ground_y),

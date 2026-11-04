@@ -75,6 +75,7 @@ float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + 
 
 #include "city/lighting.glsl"
 #include "city/surface.glsl"
+#include "grass/field_city.glsl"   // the field the city's grass blades leave (city/ground.glsl)
 #include "city/ground.glsl"
 #include "city/rooms.glsl"
 #include "city/impostors.glsl"

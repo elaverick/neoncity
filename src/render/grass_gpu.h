@@ -33,4 +33,13 @@ typedef struct GrassInstanceGPU {
 } GrassInstanceGPU;
 _Static_assert(sizeof(GrassInstanceGPU) == 4 * GRASS_INSTANCE_WORDS, "a grass instance is GRASS_INSTANCE_WORDS words");
 
+/* The city's grass (std430, shaders/grass/prepare_city.comp): a patch's
+ * record, its patch less the camera's (FrameUBO.grassPatch), its triangles'
+ * first and count (at most GRASS_CITY_RUN) | its chunk's draw record << 8;
+ * a triangle, its corners' x and z from the patch's corner and y from the
+ * camera (m), a.w how well kept it is (1 mown .. 0 neglected). */
+typedef struct GrassCityPatchGPU { int32_t rel[2]; uint32_t first, info; } GrassCityPatchGPU;
+typedef struct GrassCityTriGPU { float a[4], b[4], c[4]; } GrassCityTriGPU;
+_Static_assert(sizeof(GrassCityPatchGPU) == 16 && sizeof(GrassCityTriGPU) == 48, "the city grass's std430 layout");
+
 static const uint32_t GRASS_CAPS[GRASS_BUCKETS] = { GRASS_CAP_FULL, GRASS_CAP_MID, GRASS_CAP_CLUMP };

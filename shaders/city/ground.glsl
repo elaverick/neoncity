@@ -440,6 +440,13 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
             float gr = fbm(w.xz * 0.9, 0x7117u);
             alb = mix(vec3(0.020, 0.032, 0.018), vec3(0.034, 0.040, 0.022), gr) * fine;
             shin = 8.0; specK *= 0.03 / 0.08;
+            if (prm.w != 0u) {
+                // where blades grow (params w: src/city/city.h city_grass_param), the field they leave where
+                // they give way and beyond (grass/field_city.glsl), patchy as they are (blade.vert's vVary)
+                vec3 fieldAlb;
+                float field = grassFieldCity(vRel, nGeom, float(prm.w - 1u) / 254.0, fieldAlb);
+                alb = mix(alb, fieldAlb * (0.8 + 0.4 * gr), field);
+            }
         } else {
             alb = vec3(0.045, 0.043, 0.04) * fine;
         }

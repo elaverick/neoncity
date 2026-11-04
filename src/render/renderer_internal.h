@@ -225,7 +225,7 @@ int             terrain_gpu_levels(Renderer *r, const TerrainPush **push);
  * terrain. Off where the GPU's subgroups can't do the sums. */
 void grass_gpu_create(Renderer *r);
 void grass_gpu_destroy(Renderer *r);
-void grass_gpu_prepare(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *viewProj);
+void grass_gpu_prepare(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);
 void grass_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
 bool grass_gpu_drawn(Renderer *r);   /* the blades are on (FrameUBO.grass.w) */
 

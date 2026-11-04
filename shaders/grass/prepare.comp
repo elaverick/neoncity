@@ -9,6 +9,7 @@
 #include "grass/surface.glsl"
 #define GRASS_INSTANCE_ACCESS writeonly
 #include "grass/instance.glsl"
+#include "grass/prepare_common.glsl"
 
 /* The grass's GPU path (src/render/grass_gpu.c), the land's grass: one
  * workgroup per patch of the GRASS_PATCH_GRID square round the camera's.
@@ -36,8 +37,6 @@
  * the distance kept to: the roots come from their hashes every frame. */
 
 layout(local_size_x = GRASS_WG) in;
-layout(std430, set = 0, binding = 6) buffer Counters { uint counters[]; };
-layout(std430, set = 0, binding = 9) readonly buffer KeepTo { float keepTo[]; };
 layout(std430, set = 0, binding = 10) writeonly buffer Patches { uint patchState[]; };
 
 shared uint sHist[GRASS_BUCKETS * GRASS_BINS];
@@ -47,27 +46,6 @@ shared uint sShareLo, sShareHi, sWetLo, sWetHi;      // the mud's share and the 
 shared uint sCand, sEval, sKept, sCut[GRASS_BUCKETS];
 shared uint sSpEval[2], sSpBlades[2];                // meadow's and reeds': candidates evaluated, their kept roots' blades
 
-// Floats as uints in their order.
-uint fkey(float f) { uint u = floatBitsToUint(f); return (u & 0x80000000u) != 0u ? ~u : u | 0x80000000u; }
-float funkey(uint k) { return uintBitsToFloat((k & 0x80000000u) != 0u ? k & 0x7FFFFFFFu : ~k); }
-
-// The box against the view's four sides (frame.viewProj's rows; together they
-// also put it in front of the camera).
-bool inView(vec3 mn, vec3 mx) {
-    mat4 M = frame.viewProj;
-    vec4 r0 = vec4(M[0][0], M[1][0], M[2][0], M[3][0]), r1 = vec4(M[0][1], M[1][1], M[2][1], M[3][1]);
-    vec4 r3 = vec4(M[0][3], M[1][3], M[2][3], M[3][3]);
-    vec4 pl[4] = vec4[](r3 + r0, r3 - r0, r3 + r1, r3 - r1);
-    for (int i = 0; i < 4; ++i) {
-        vec3 p = mix(mn, mx, step(vec3(0.0), pl[i].xyz));
-        if (dot(pl[i].xyz, p) + pl[i].w < 0.0) return false;
-    }
-    return true;
-}
-
-float rootTallest(int k) { return GRASS_HEIGHT_MAX(k) * (1.0 + GRASS_CLUMP_VAR(k)); }
-// the species' typical root on the best ground, for its end (grassEnd); 0 if it is left out
-float typicalMost(int k) { return GRASS_PRESENT(k) ? grassTypical(k, 1.0) : 0.0; }
 float reedsWeight(float share, float wet) { return grassSat(float(GRASS_REEDS_MUD) * share + float(GRASS_REEDS_WET) * grassEase(GRASS_REEDS_WET0, GRASS_REEDS_WET1, wet)); }
 
 void main() {
@@ -208,15 +186,7 @@ void main() {
                 }
             }
             // C: room in each bucket, one atomic a subgroup
-            uint at = 0u;
-            for (int b = 0; b < GRASS_BUCKETS; ++b) {
-                uint c = tier == b ? nb : 0u;
-                uint pre = subgroupExclusiveAdd(c), tot = subgroupAdd(c);
-                uint got = 0u;
-                if (tot > 0u && subgroupElect()) got = atomicAdd(counters[GRASS_C_WANT + b], tot);
-                got = subgroupBroadcastFirst(got);
-                if (tier == b) at = got + pre;
-            }
+            uint at = grassReserve(tier, nb);
             if (tier >= 0) {
                 uint room = gf.cap[tier];
                 for (uint bi = 0u; bi < nb && at + bi < room; ++bi) {

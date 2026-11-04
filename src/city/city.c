@@ -124,6 +124,7 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
     build_channels(m, &g);
     build_blocks(m, &g);
     m->drape = 0;
+    city_grass_collect(m, &g, 0, m->count);   /* the grass the blades grow on, from the streets' own triangles */
     build_road_bridges(m, &g);
     build_vents(m, &g);
     for (int i = 0; i < g.nl; ++i)

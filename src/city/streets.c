@@ -207,7 +207,7 @@ static void build_city_edge(Mesh *m, const ChunkGen *g) {
         if (k) base_asphalt(m, g, cl, k);
     }
     const float W = CITY_VERGE_W, top = city_verge_height(0.0f) - 0.01f, foot = city_verge_height(W);
-    const Mat grass = mat(MAT_LOT, 0, 1, 0, 0);   /* the parks' grass (emit_lot) */
+    const Mat grass = mat(MAT_LOT, 0, 1, 0, city_grass_param(0.0f));   /* the parks' grass (emit_lot), left rough */
     const Mat asphalt = mat(MAT_ROAD, 0, 0, 0, 0); /* a gate: the road out, as the city's plain asphalt */
     const float vuv3[3][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 } };
     for (int i = 0; i < pa->nedges; ++i) {
@@ -661,7 +661,10 @@ static void emit_lot(Mesh *m, const ChunkGen *g, const BlockFrame *F) {
     int k = clip_chunk(l, bk->lot.n, cl);
     pave_uv(F, cl, k, uv);
     uint8_t green = bk->zone == ZONE_PARK || bk->zone == ZONE_RURAL;   /* open land is grass, as a park is */
-    if (k) emit_flat(m, cl, k, SIDEWALK_HEIGHT + 0.006f, (const float (*)[2])uv, mat(MAT_LOT, 0, green, F->sq, 0));
+    /* its blades (city.h city_grass_param): a park is mown unless it lies in squalor, a field left rough */
+    float kept = bk->zone == ZONE_PARK ? 1.0f - smoothstepf(0.45f, 0.8f, (float)F->sq / 255.0f) : 0.0f;
+    uint8_t blades = green ? city_grass_param(kept) : CITY_GRASS_NONE;
+    if (k) emit_flat(m, cl, k, SIDEWALK_HEIGHT + 0.006f, (const float (*)[2])uv, mat(MAT_LOT, 0, green, F->sq, blades));
 }
 
 /* Raised blocks: sidewalk, kerb stones, kerb faces, drop kerbs and the lot

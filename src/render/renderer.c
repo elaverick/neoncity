@@ -380,7 +380,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     road_gpu_update(r, slot, cam);
     planet_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_TERRAIN_UPLOAD);
-    grass_gpu_prepare(r, cmd, slot, &ubo.viewProj);
+    grass_gpu_prepare(r, cmd, slot, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_GRASS_PREP);
     record_shelter(r, cmd, slot, &topDown);
     timestamp(r, cmd, slot, GT_SHELTER);
