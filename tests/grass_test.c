@@ -61,6 +61,120 @@ static void test_numbers(void) {
     }
 }
 
+/* --- levels of detail (GR4) ------------------------------------------------------ */
+
+/* The coverage contract (grass_rules.h GRASS_LOD_*): over a root in one cell
+ * of four and the three beside it, the blades' widths add up to their 4 n
+ * blades' at every size on screen (before grass_end and the width's cap);
+ * nothing jumps as the size changes; the ribbon has morphed all the way to
+ * the next bucket's shape where it goes to that bucket; and the end comes
+ * smoothly to 0 by the radius. Then each species' field, and how much of its
+ * widest blades the cap cuts. */
+static void test_lod(void) {
+    double worstCover = 0.0, worstJump = 0.0, worstMorph = 0.0;
+    for (int n = 1; n <= 12; ++n) {
+        float last[2][12];
+        int have = 0;
+        for (float px = 0.5f; px < 60.0f; px *= 1.0001f) {
+            GrassLod l[2];
+            grass_lod(px, n, 1, &l[0]);
+            grass_lod(px, n, 0, &l[1]);
+            double cover = 0.0;
+            for (int q = 0; q < 2; ++q)
+                for (int b = 0; b < n; ++b) {
+                    /* the blades past count are left out: their widths are under 1e-3 of the survivors' */
+                    float w = grass_lod_width(&l[q], b);
+                    CHECK(b < l[q].count || w <= 1e-3f * l[q].widen * l[q].root + 1e-9f, "n %d px %.3f: blade %d isn't drawn but has width %.4f", n, px, b, w);
+                    cover += (q == 0 ? 1.0 : 3.0) * w;
+                    if (have) {
+                        double j = fabs((double)w - last[q][b]) / (4.0 * n);
+                        if (j > worstJump) worstJump = j;
+                    }
+                    last[q][b] = w;
+                }
+            double e = fabs(cover / (4.0 * n) - 1.0);
+            if (e > worstCover) worstCover = e;
+            have = 1;
+        }
+        /* the morph is whole at each bucket's switch, none past its band */
+        static const float AT[2] = { (float)GRASS_LOD_FULL_PX, (float)GRASS_LOD_MID_PX };
+        for (int t = 0; t < 2; ++t) {
+            GrassLod a, b;
+            grass_lod(AT[t] * 1.0001f, n, 1, &a);
+            grass_lod(AT[t] * (float)GRASS_LOD_BAND, n, 1, &b);
+            double m = fmax(1.0 - a.morph, b.morph);
+            if (m > worstMorph) worstMorph = m;
+            CHECK(a.bucket == (t == 0 ? GRASS_LOD_FULL : GRASS_LOD_MID), "n %d: the bucket above %.0f px", n, AT[t]);
+        }
+    }
+    printf("lod: cover off its blades' by at most %.2e; the most a width moves in a 0.01%% step %.4f of the cover; morph short by %.2e\n",
+           worstCover, worstJump, worstMorph);
+    CHECK(worstCover < 1e-5, "the cover isn't kept through the levels of detail (%.2e)", worstCover);
+    CHECK(worstJump < 1e-3, "a blade's width jumps (%.4f of the cover)", worstJump);
+    CHECK(worstMorph < 1e-3, "the ribbon isn't morphed to the next bucket's shape where it goes to it (%.2e)", worstMorph);
+
+    /* the end: whole near, nothing by the radius or under GRASS_LOD_CLUMP_PX, no jump */
+    float fy = 619.0f, R = (float)GRASS_RADIUS, prev = 1.0f, jump = 0.0f;
+    for (float d = 1.0f; d < 1.1f * R; d += 0.05f) {
+        float e = grass_end(0.5f, d, fy, R);
+        jump = fmaxf(jump, fabsf(e - prev));
+        prev = e;
+        CHECK(d < R || e == 0.0f, "the end isn't 0 at the radius");
+        CHECK(0.5f * fy / d > (float)GRASS_LOD_CLUMP_PX || e == 0.0f, "blades past the end at %.1f m", d);
+    }
+    CHECK(grass_end(0.5f, 10.0f, fy, R) == 1.0f, "the end thins blades near the camera");
+    CHECK(jump < 0.01f, "the end jumps by %.3f in 5 cm", jump);
+
+    printf("species   field albedo (linear)     a blade's cover: upright  lying   tau at 1.7 m / 100 m, 40 m / 100 m;  widest blade cut by the cap\n");
+    for (int k = 0; k < GRASS_SPECIES; ++k) {
+        GrassField f;
+        grass_field(k, &f);
+        const GrassProfile *p = grass_profile(k);
+        float cot0 = 100.0f / 1.7f, cot1 = 100.0f / 40.0f;
+        float t0 = p->density * (f.upright * cot0 + f.lying), t1 = p->density * (f.upright * cot1 + f.lying);
+        /* the widest a root's clump blade gets: its tuft's n widths, 4 n of them, against the cap */
+        GrassSite s = site_land(1.0f, 0.0f, 0.0f);
+        if (k == GRASS_REEDS) s = site_land(0.0f, 1.0f, 1.0f);
+        if (k >= GRASS_LAWN) s = site_city(k == GRASS_LAWN ? 1.0f : 0.0f);
+        double cut = 0.0, all = 0.0;
+        for (int j = 0; j < 64; ++j)
+            for (int i = 0; i < 64; ++i) {
+                GrassCandidate c;
+                grass_candidate(k, 40 + i / grass_grid(k), 9 + j / grass_grid(k), i % grass_grid(k), j % grass_grid(k), &c);
+                GrassRoot r;
+                if (!grass_keep(&c, &s, &r)) continue;
+                GrassLod l;
+                grass_lod(2.0f, r.blades, 1, &l);
+                GrassBlade g;
+                grass_blade(&r, 0, &g);
+                double w = g.width * grass_lod_width(&l, 0), cap = GRASS_WIDE_MAX * g.height;
+                all += w;
+                if (w > cap) cut += w - cap;
+            }
+        printf("%-8s  %.4f %.4f %.4f   %.2e  %.2e   %5.2f / %5.2f               %.1f%%\n", NAMES[k], f.albedo[0], f.albedo[1], f.albedo[2],
+               f.upright, f.lying, t0, t1, 100.0 * cut / fmax(all, 1e-12));
+        /* the field seen through more of it, and the shaders' fit of that */
+        double fitWorst = 0.0;
+        printf("          seen through tau:");
+        for (float tau = 0.25f; tau <= 16.0f; tau *= 2.0f) {
+            float c[3];
+            grass_field_seen(&f, tau, c);
+            float lf = 0.0f, l = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
+            float m = 1.0f - expf(-tau / f.scale);
+            for (int q = 0; q < 3; ++q) lf += (q == 0 ? 0.2126f : q == 1 ? 0.7152f : 0.0722f) * (f.albedo[q] + (f.top[q] - f.albedo[q]) * m);
+            fitWorst = fmax(fitWorst, fabs(lf / l - 1.0));
+            printf(" %.2g %.4f", tau, l);
+        }
+        printf(" (fit's scale %.2f, worst %.1f%% off)\n", f.scale, 100.0 * fitWorst);
+        CHECK(fitWorst < 0.06, "%s's fit of the field seen through it is %.1f%% off", NAMES[k], 100.0 * fitWorst);
+        CHECK(f.upright > 0.0f && f.lying > 0.0f, "%s's field gives no cover", NAMES[k]);
+        float lo = fminf(p->root[1], p->dry[1] * 0.3f), hi = fmaxf(p->tip[1], p->dry[1]) * 1.3f;
+        CHECK(f.albedo[1] > lo && f.albedo[1] < hi, "%s's field albedo %.4f isn't between its colours", NAMES[k], f.albedo[1]);
+        /* (lawn's broad blades are cut more: GR6's, which draws it) */
+        CHECK(k == GRASS_LAWN || cut < 0.05 * all, "%s's clump blades lose %.1f%% of their width to the cap", NAMES[k], 100.0 * cut / fmax(all, 1e-12));
+    }
+}
+
 /* The mean edgeness over uniformly spread points, for each species' clumps
  * (it shouldn't depend on their size): GRASS_EDGE_MEAN. */
 static void test_edge_mean(void) {
@@ -1019,6 +1133,7 @@ int main(int argc, char **argv) {
         return density_map(argv[2], argc > 3 ? atof(argv[3]) : 4.0, argc > 5 ? atof(argv[4]) : 65600.0, argc > 5 ? atof(argv[5]) : 12100.0);
 
     test_numbers();
+    test_lod();
     test_edge_mean();
     test_density();
     test_zero();

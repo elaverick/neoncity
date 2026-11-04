@@ -35,7 +35,9 @@ void main() {
     }
     // under the asphalt the land's textures aren't read
     LandWater w;
-    vec3 land = groundAlbedo(vRel, l, vUrban, cover, !(onRoad && roadPaved(road, px)), nLand, w);
+    bool paved = onRoad && roadPaved(road, px);
+    float beyond = !onRoad ? float(GRASS_ROAD_FAR) : paved ? -1.0 : abs(road.off) - road.hw;   // for the grass's field
+    vec3 land = groundAlbedo(vRel, l, vUrban, cover, !paved, beyond, nLand, w);
     // lit, then the wet ground's sheen over it (the road's, and the land's beside it)
     vec3 nS = nLand, col;
     float roughS = LAND_FILM_ROUGH, lamps = 0.0;

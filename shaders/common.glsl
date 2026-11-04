@@ -66,7 +66,9 @@ struct GrassSpecies {
     vec4  root;   // rgb the root's colour, w stiffness
     vec4  tip;    // rgb the tip's colour, w interaction
     vec4  dry;    // rgb the driest clump's colour, w how far towards it
-    vec4  misc;   // x fullness
+    vec4  misc;   // x fullness, y z the cover one blade gives the field, upright and lying (grass.h grass_field)
+    vec4  field;  // rgb the field's albedo from afar, seen through little of it
+    vec4  fieldTop;   // rgb seen through much of it, w the scale of its optical depth it goes over in (grass/field.glsl)
 };
 
 layout(set = 0, binding = 0) uniform Frame {
@@ -86,7 +88,7 @@ layout(set = 0, binding = 0) uniform Frame {
     uvec4 doorKey[DOOR_SLOTS / 4];   // their keys, four to a vector
     vec4 doorState[DOOR_SLOTS];      // x how far open (0..1, eased), y a revolving door's angle (rad)
     vec4 ground;     // xy the camera's x, z wrapped to 64 chunks, from doubles (src/render/renderer.c): the land's texture coordinates (terrain/ground.glsl)
-    vec4 grass;      // xy the camera's place in its grass patch (m, 0 .. GRASS_PATCH_M), z the --grass-debug view (grass/debug.glsl), w unused
+    vec4 grass;      // xy the camera's place in its grass patch (m, 0 .. GRASS_PATCH_M), z the --grass-debug view (grass/debug.glsl), w 1 where the blades are drawn (else the ground stands for them: grass/field.glsl)
     ivec4 grassPatch;   // xy the camera's grass patch (src/grass/grass_rules.h: world x, z over GRASS_PATCH_M, rounded down)
     GrassSpecies grassSpecies[GRASS_SPECIES];   // the species' profiles (grass/rules.glsl reads them)
 } frame;

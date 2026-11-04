@@ -2,6 +2,7 @@
 #include "grass_species.h"
 #include "hash.h"
 #include <math.h>
+#include <string.h>
 
 /* The grass's rules (grass.h, grass_rules.h). Every step is float arithmetic,
  * in the order shaders/grass/rules.glsl takes it: change one, change both.
@@ -184,4 +185,178 @@ void grass_blade(const GrassRoot *r, int b, GrassBlade *o) {
     o->phase = u9;
     o->tint = 0.7f * r->clump.tint + 0.3f * (u10 - 0.5f);
     o->seed = st;
+}
+
+/* ---- levels of detail ---------------------------------------------------- */
+
+float grass_typical(int k, float suit) {
+    return 0.5f * (HEIGHT_MIN(k) + HEIGHT_MAX(k)) * ((float)GRASS_SHORT + (1.0f - (float)GRASS_SHORT) * suit);
+}
+
+float grass_end(float typical, float dist, float fy, float radius) {
+    float px = typical * fy / fmaxf(dist, 1e-3f);
+    return ease((float)GRASS_LOD_CLUMP_PX, (float)GRASS_LOD_END_PX, px) * (1.0f - ease((float)GRASS_RADIUS_FADE * radius, radius, dist));
+}
+
+void grass_lod(float px, int n, int sub, GrassLod *o) {
+    float kmid = (float)((n + 1) / 2), N = (float)n, ns;
+    if (px >= (float)GRASS_LOD_FULL_PX) {
+        float e = ease((float)GRASS_LOD_FULL_PX, (float)(GRASS_LOD_FULL_PX * GRASS_LOD_BAND), px);
+        o->bucket = GRASS_LOD_FULL;
+        o->keep = kmid + (N - kmid) * e;
+        o->morph = 1.0f - e;
+        ns = 1.0f;
+    } else if (px >= (float)GRASS_LOD_MID_PX) {
+        float e = ease((float)GRASS_LOD_MID_PX, (float)(GRASS_LOD_MID_PX * GRASS_LOD_BAND), px);
+        o->bucket = GRASS_LOD_MID;
+        o->keep = 1.0f + (kmid - 1.0f) * e;
+        o->morph = 1.0f - e;
+        ns = e;
+    } else {
+        o->bucket = GRASS_LOD_CLUMP;
+        o->keep = 1.0f;
+        o->morph = 0.0f;
+        ns = 0.0f;
+    }
+    /* a root in one cell of four stands for the three beside it as they go */
+    o->root = sub ? 1.0f : ns;
+    o->widen = N * (sub ? 1.0f + 3.0f * (1.0f - ns) : 1.0f) / o->keep;
+    o->count = o->root > 0.0f ? (int)ceilf(o->keep - 1e-3f) : 0;
+}
+
+void grass_lod_all(int n, GrassLod *o) {
+    o->bucket = GRASS_LOD_FULL; o->count = n; o->keep = (float)n; o->root = 1.0f; o->widen = 1.0f; o->morph = 0.0f;
+}
+
+float grass_lod_width(const GrassLod *l, int b) { return sat(l->keep - (float)b) * l->widen * l->root; }
+
+/* ---- the field from afar ------------------------------------------------- */
+
+static float lum3(const float c[3]) { return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]; }
+
+/* The blades of species k on suitable ground, as blade.vert shapes them
+ * (on level ground) and blade.frag colours them: each sampled along its
+ * length, each element by its area (width x length), the face light's mean
+ * (0.8 + 0.2 max(N.n, 0), its up face seen half the time) folded in. Roots
+ * weighed by their chance of being kept (their clump's density). */
+void grass_field(int k, GrassField *f) {
+    const GrassProfile *p = SP(k);
+    memset(f, 0, sizeof(*f));
+    if (!p->present) return;
+    double up = 0.0, lie = 0.0, area = 0.0, col[3] = { 0, 0, 0 }, blades = 0.0;
+    double lA[GRASS_FIELD_LAYERS] = { 0 }, lC[GRASS_FIELD_LAYERS][3] = { { 0 } };
+    const int T = 16;
+    float top = (float)GRASS_FIELD_TOP * 0.5f * (HEIGHT_MIN(k) + HEIGHT_MAX(k));   /* the layers' span */
+    float rootShare = lum3(p->root) / fmaxf(lum3(p->tip), 1e-4f);
+    for (int j = 0; j < 48; ++j)
+        for (int i = 0; i < 48; ++i) {
+            GrassCandidate c;
+            grass_candidate(k, 7 + i / GRID(k), -3 + j / GRID(k), i % GRID(k), j % GRID(k), &c);
+            GrassRoot r;
+            r.at = c;
+            grass_clump(k, c.px, c.pz, c.x, c.z, &r.clump);
+            uint32_t st = c.state;
+            (void)drawf(&st); (void)drawf(&st);
+            float uHeight = drawf(&st);
+            uint32_t uTuft = draw(&st);
+            r.height = (HEIGHT_MIN(k) + (HEIGHT_MAX(k) - HEIGHT_MIN(k)) * uHeight) * r.clump.height;
+            r.blades = TUFT_MIN(k) + (int)(uTuft % (uint32_t)(TUFT_MAX(k) - TUFT_MIN(k) + 1));
+            float wr = r.clump.density;
+            blades += wr * r.blades;
+            for (int b = 0; b < r.blades; ++b) {
+                GrassBlade g;
+                grass_blade(&r, b, &g);
+                /* blade.vert's centreline on level ground (n = y) */
+                float H = g.height, bend = g.bend * H, cl = cosf(g.lean), sl = sinf(g.lean);
+                float Ux = g.leanX * sl, Uy = cl, Uz = g.leanZ * sl;
+                float q1[3] = { Ux * H / 3.0f, Uy * H / 3.0f, Uz * H / 3.0f };
+                float q2[3] = { Ux * 0.72f * H + g.leanX * 0.5f * bend * (1.0f - p->curl), Uy * 0.72f * H, Uz * 0.72f * H + g.leanZ * 0.5f * bend * (1.0f - p->curl) };
+                float q3[3] = { Ux * H + g.leanX * bend, Uy * H, Uz * H + g.leanZ * bend };
+                #define LEN3(a, b, c) sqrtf((a) * (a) + (b) * (b) + (c) * (c))
+                float len = 0.5f * (LEN3(q3[0], q3[1], q3[2]) + LEN3(q1[0], q1[1], q1[2]) + LEN3(q2[0] - q1[0], q2[1] - q1[1], q2[2] - q1[2])
+                                    + LEN3(q3[0] - q2[0], q3[1] - q2[1], q3[2] - q2[2]));
+                float sc = H / fmaxf(len, 1e-5f);
+                float dryness = sat(g.tint + 0.5f) * p->dryShare;
+                for (int s = 0; s < T; ++s) {
+                    float t = ((float)s + 0.5f) / (float)T, u = 1.0f - t;
+                    float d[3];
+                    for (int a = 0; a < 3; ++a) d[a] = sc * (3.0f * u * u * q1[a] + 6.0f * u * t * (q2[a] - q1[a]) + 3.0f * t * t * (q3[a] - q2[a]));
+                    float dl = LEN3(d[0], d[1], d[2]) / (float)T;
+                    #undef LEN3
+                    float cosT = d[1] / fmaxf(dl * (float)T, 1e-6f), sinT = sqrtf(fmaxf(1.0f - cosT * cosT, 0.0f));
+                    float w = g.width * powf(u, p->taper);
+                    float a = (float)(wr * w * dl);
+                    up += wr * (2.0 / 3.14159265) * w * cosT * dl;
+                    lie += wr * w * sinT * dl;
+                    float ut = powf(t, 0.7f), face = 0.8f + 0.1f * sinT;
+                    float y = sc * (3.0f * u * u * t * q1[1] + 3.0f * u * t * t * q2[1] + t * t * t * q3[1]);
+                    int li = (int)(y / top * (float)GRASS_FIELD_LAYERS);
+                    li = li < 0 ? 0 : li >= GRASS_FIELD_LAYERS ? GRASS_FIELD_LAYERS - 1 : li;
+                    for (int q = 0; q < 3; ++q) {
+                        float lush = p->root[q] + (p->tip[q] - p->root[q]) * ut;
+                        float dry = p->dry[q] * (rootShare + (1.0f - rootShare) * ut);
+                        float cq = a * (lush + (dry - lush) * dryness) * (1.0f + 0.3f * g.tint) * face;
+                        col[q] += cq;
+                        lC[li][q] += cq;
+                    }
+                    area += a;
+                    lA[li] += a;
+                }
+            }
+        }
+    /* per blade: the mean over the roots kept */
+    for (int q = 0; q < 3; ++q) f->albedo[q] = (float)(col[q] / fmax(area, 1e-12));
+    f->upright = (float)(up / fmax(blades, 1e-12));
+    f->lying = (float)(lie / fmax(blades, 1e-12));
+    for (int i = 0; i < GRASS_FIELD_LAYERS; ++i) {
+        f->layerArea[i] = (float)(lA[i] / fmax(area, 1e-12));
+        for (int q = 0; q < 3; ++q) f->layerAlbedo[i][q] = (float)(lC[i][q] / fmax(lA[i], 1e-12));
+    }
+    /* the shaders' fit: albedo + (top - albedo)(1 - exp(-tau / scale)), top
+     * the field's at GRASS_FIELD_TAU_FAR, scale by least squares on the
+     * luminance over tau 0.1 .. GRASS_FIELD_TAU_FAR */
+    float far[3];
+    grass_field_seen(f, (float)GRASS_FIELD_TAU_FAR, far);
+    for (int q = 0; q < 3; ++q) f->top[q] = far[q];
+    float l0 = lum3(f->albedo), l1 = lum3(far), best = 1e30f;
+    f->scale = 1.0f;
+    for (float sc = 0.05f; sc < 8.0f; sc *= 1.02f) {
+        float err = 0.0f;
+        for (float tau = 0.1f; tau <= (float)GRASS_FIELD_TAU_FAR; tau *= 1.25f) {
+            float c[3];
+            grass_field_seen(f, tau, c);
+            float e = l0 + (l1 - l0) * (1.0f - expf(-tau / sc)) - lum3(c);
+            err += e * e;
+        }
+        if (err < best) { best = err; f->scale = sc; }
+    }
+}
+
+void grass_field_seen(const GrassField *f, float tau, float out[3]) {
+    double w = 0.0, c[3] = { 0, 0, 0 }, above = 0.0;
+    for (int i = GRASS_FIELD_LAYERS - 1; i >= 0; --i) {
+        double a = f->layerArea[i], v = a * exp(-tau * (above + 0.5 * a));
+        above += a;
+        w += v;
+        for (int q = 0; q < 3; ++q) c[q] += v * f->layerAlbedo[i][q];
+    }
+    for (int q = 0; q < 3; ++q) out[q] = (float)(c[q] / fmax(w, 1e-12));
+}
+
+/* Worked out once (the profiles are read once, before the first frame). */
+void grass_field_gpu(GrassSpeciesGPU out[GRASS_SPECIES]) {
+    static GrassField fields[GRASS_SPECIES];
+    static int done;
+    if (!done) {
+        for (int k = 0; k < GRASS_SPECIES; ++k) grass_field(k, &fields[k]);
+        done = 1;
+    }
+    for (int k = 0; k < GRASS_SPECIES; ++k) {
+        const GrassField f = fields[k];
+        for (int q = 0; q < 3; ++q) { out[k].field[q] = f.albedo[q]; out[k].fieldTop[q] = f.top[q]; }
+        out[k].field[3] = 0.0f;
+        out[k].fieldTop[3] = f.scale;
+        out[k].misc[1] = f.upright;
+        out[k].misc[2] = f.lying;
+    }
 }

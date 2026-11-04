@@ -751,8 +751,9 @@ against the ground's height, in soft ground's hollows first and on rock's and sc
 
 ### Grass (`src/grass`, `shaders/grass`; in progress)
 Grass blades are being built to `docs/procedural_grass_rendering_implementation.md`. So far the rules, the GPU
-path and the blades exist, and the land's grass is drawn as curved, tapered blades in tufts (the hand-offs between
-levels of detail, wind, the city's grass and proper light come next). The rules
+path, the blades and their levels of detail exist: the land's grass is drawn as curved, tapered blades in tufts,
+thinning with distance into the ground's own colour with no front (wind, the city's grass and proper light come
+next). The rules
 say where grass grows, how thick, of which species, in which clumps and tufts. They are
 written twice, as pure C (`src/grass/grass.c`) and as GLSL (`shaders/grass/rules.glsl`). The two copies take the same
 float steps. Their shared constants are one header (`src/grass/grass_rules.h`), and each species' numbers are its
@@ -800,7 +801,11 @@ blade texture.
 - the same roots and blades come back whatever order they are asked in, and clumps run on across patch sides;
 - there is no peak in the roots' spectrum at the root grid's, the patches' or the clumps' frequencies (a 0.8
   jitter would give one about 100 times its level);
-- clumps' heights differ (a lawn's less than a meadow's).
+- clumps' heights differ (a lawn's less than a meadow's);
+- the levels of detail keep the cover (to 1e-7) at every size on screen, with no width jumping and the ribbon fully
+  morphed where it changes bucket; the end comes to 0 smoothly by the radius; each species' field gives cover, its
+  albedo lies between its colours, the shaders' fit of it is within 2.4%, and the cap takes under 5% of its clump
+  blades' width (lawn's 8%, for GR6).
 
 `grass_test --gpu` (ctest `grass_rules_gpu`) runs the GLSL copy on the GPU over 65,536 random cases and compares
 every answer with C's. `grass_test --density-map out.ppm [km [x z]]` draws the effective density over the land.
@@ -810,15 +815,41 @@ with the kept roots as dots; species; clumps.
 **The GPU path** (`src/render/grass_gpu.c`, `shaders/grass/prepare.comp`, `finish.comp`). Every frame the GPU
 chooses, makes and draws the land's blades; the CPU does no per-blade work and never sees a count.
 - **Prepare** runs one workgroup per 8 m patch in a 52 x 52 square round the camera. A patch is dropped if it is beyond
-  200 m, if its tallest possible root would be under 1.5 px on screen, if it is out of view (its heights bounded from
+  200 m, if every species there would already have given way to the ground (below), if it is out of view (its heights bounded from
   its 9 x 9 metre points), or if nothing may grow anywhere in it. Then each candidate root is evaluated on the ground
   the terrain draws there: the clipmap's samples are read as `terrain.vert` reads them, with the morph into the parent
   level, and interpolated across the same triangle (`shaders/grass/surface.glsl`). The road near it comes from the
   road buffer (`terrain/road_lookup.glsl`).
-- **Levels of detail.** A kept root goes to a bucket by its height's size on screen at its distance (distance, not
-  depth, so turning doesn't change it): full (12 px or more) draws its whole tuft, mid (4-12 px) the first half, and
-  clump (1.5-4 px) its first blade, for one root cell in four. Each subgroup reserves room in each bucket with one
-  atomic. GR4 will blend the hand-offs.
+- **Levels of detail** (`shaders/grass/lod.glsl`, C's `grass_lod`; spec 7). A kept root's level comes from its height's
+  size on screen at its distance (distance, not depth, so turning doesn't change it; f_y from the frame, so any
+  resolution). Each subgroup reserves room in each bucket with one atomic.
+
+  | Root on screen | Bucket | Blades of a tuft of n |
+  |---|---|---|
+  | 18 px or more | full (5 segments) | all |
+  | 12-18 px | full, morphing to mid's shape | n easing to ceil(n/2) |
+  | 6-12 px | mid (3) | ceil(n/2), each n / ceil(n/2) wider |
+  | 4-6 px | mid, morphing to clump's shape | down to 1; roots outside one cell in four narrow away |
+  | under 4 px | clump (2) | 1 for one root in four, as wide as their 4 n blades (at most 0.8 of its height) |
+
+  Every hand-off keeps the cover: a blade being dropped narrows to nothing by its stable index while those kept widen,
+  so the widths over a root and its three neighbours add up to their 4 n blades' at every size. That is a fade with no
+  dither: at every hand-off a blade is far under a pixel wide, so the MSAA samples it covers go with its width, and
+  nothing writes `gl_SampleMask` or discards (early depth stays on). The segment count changes by a geomorph: across
+  the band above each switch, every vertex moves to the same row of the next bucket's ribbon (its fewer segments,
+  lerped), so at the switch nothing moves. The morph rides in the instance (4 bits).
+- **The ground takes over** (`shaders/grass/field.glsl`). All of a species' blades narrow away as its typical root (its
+  middle height, as short as the ground makes it) goes from 2.5 px to 1.5 px on screen, and from 170 m to the 200 m
+  radius. The ground's pixel then shows the field. Each species' blades/m² times the cover one blade gives (`grass_field`,
+  worked out in C from the blades as `blade.vert` shapes them: an area seen upright, by cot of the view's angle over the
+  ground, and an area lying) is an optical depth tau. The blades hide 1 - exp(-tau) of the pixel, in their albedo seen
+  through that much of the field: more and more their tops' colour as it thickens (the field in 12 layers by height,
+  fit in the shaders as the mean albedo easing to the top's over a scale of tau). The ground under the blades still
+  drawn takes 1 - exp(-tau of those gone), so through the hand-off the mean is the field's, and near the camera, where
+  every blade is drawn, the ground is its own. Beyond the blades, and on the planet's patches, the land shows the
+  field: the land's grass at range is now the blades' colour (darker than `land_grass`). The blades also take the
+  land's large-scale variation at their root and its darkening in the rain (`terrain/macro.glsl`), as the ground does,
+  so the two agree. With `--nograss` the ground stands for the blades everywhere.
 - **Room.** Each bucket has its own room (full 192k, mid 512k, clump 256k blades: 30 MB a frame slot), so a far bucket
   never takes a near one's. `finish.comp` writes the three indirect draws and counts the blades each bucket wanted by
   2 m of distance. If they overflow the room, the next frame keeps only those nearer than the distance that fits 90%
@@ -837,11 +868,12 @@ chooses, makes and draws the land's blades; the CPU does no per-blade work and n
 - The counters come back a frame slot late and the `--shot` log prints them: patches in range, in view and with
   grass; roots evaluated and kept; blades drawn per bucket, and those refused; triangles; and each land species'
   effective blades/m² over the ground it was evaluated on. `--grass-debug lod` colours the blades by
-  bucket (full red, mid yellow, clump blue) and the land by the bucket a typical meadow root would take. `--grass-debug
+  bucket (full red, mid yellow, clump blue) and the land by the bucket a typical meadow root would take, greying as
+  the ground takes over. `--grass-debug
   cull` colours the blades by patch and the land by its patch's state.
 
-At walking height over the meadow it draws about 590k blades (3.3M triangles): prepare 0.24 ms and draw 0.69 ms on an
-RTX 4080 SUPER at 1600 x 900, against a 1.5 ms budget. The log gives the meadow there as 118 blades/m², its 150 times
+At walking height over the meadow it draws about 530k blades (2.9M triangles): prepare 0.22 ms and draw 0.60 ms on an
+RTX 4080 SUPER at 1600 x 900, against a 1.5 ms budget; the field costs the terrain pass 0.03-0.07 ms. The log gives the meadow there as 118 blades/m², its 150 times
 the cover's suitability. `grass_test --gpu` also runs prepare and finish headless on a made-up clipmap. With every
 root evaluated and every blade written, its blade counts equal C's `grass_keep` exactly over 4,096 m² for meadow, reeds
 and mud, a slope and thin snow, with none on the city's ground or steep ground. The blades stand on the ground and inside

@@ -89,3 +89,48 @@ typedef struct GrassBlade {
     uint32_t seed;
 } GrassBlade;
 void grass_blade(const GrassRoot *r, int b, GrassBlade *o);
+
+/* Levels of detail (grass_rules.h GRASS_LOD_*; shaders/grass/lod.glsl, the
+ * same arithmetic). A root of species k on ground of suitability suit has
+ * a typical height (its species' middle, as short as the ground makes it);
+ * the blades of the species there are all there (1) to gone (0) by
+ * grass_end of it, its distance, f_y and the grass's radius. */
+float grass_typical(int k, float suit);
+float grass_end(float typical, float dist, float fy, float radius);
+/* A root px tall on screen with a tuft of n blades, in one cell of four
+ * (sub: both its cell's indices even) or not. Blade b of it is drawn if
+ * b < count, its width times grass_lod_width (and then by grass_end, at most
+ * GRASS_WIDE_MAX of its height). */
+typedef struct GrassLod {
+    int   bucket;          /* GRASS_LOD_* */
+    int   count;           /* blades drawn: those with b < keep */
+    float keep;            /* blades kept, continuous: blade b by clamp(keep - b, 0, 1) */
+    float root;            /* the root's own share (narrowing away out of one cell of four) */
+    float widen;           /* the survivors' widening, keeping the cover */
+    float morph;           /* how far its ribbon has morphed to the next bucket's shape, 0 .. 1 */
+} GrassLod;
+void  grass_lod(float px, int n, int sub, GrassLod *o);
+void  grass_lod_all(int n, GrassLod *o);   /* GRASS_MODE_ALL_FULL's: every blade full */
+float grass_lod_width(const GrassLod *l, int b);
+
+/* The field species k makes, seen from afar (grass/field.glsl): the blades'
+ * mean albedo by area (as blade.frag colours them, without the light), and
+ * the cover one blade gives on suitable ground: tau = density x (upright x
+ * cot(e) + lying), e the view's angle over the ground. */
+typedef struct GrassField {
+    float albedo[3];       /* the blades' mean albedo by area: the field seen through little of it (tau -> 0) */
+    float upright, lying;
+    /* seen through more of it, the top of the field hides the rest: its
+     * layers by height (to GRASS_FIELD_TOP x the species' middle height),
+     * each's share of the area and mean albedo; grass_field_seen */
+    float layerArea[GRASS_FIELD_LAYERS], layerAlbedo[GRASS_FIELD_LAYERS][3];
+    /* the shaders' fit of grass_field_seen: albedo + (top - albedo)(1 - exp(-tau / scale)) */
+    float top[3], scale;
+} GrassField;
+void grass_field(int k, GrassField *f);
+/* The field's albedo seen through optical depth tau of it: each layer by the
+ * light it sends through those above (tau of the area above it). */
+void grass_field_seen(const GrassField *f, float tau, float out[3]);
+/* Each species' field into its profile for the shaders (GrassSpeciesGPU field, misc.yz). */
+struct GrassSpeciesGPU;
+void grass_field_gpu(struct GrassSpeciesGPU out[GRASS_SPECIES]);

@@ -86,10 +86,40 @@
 /* A root's blades are shorter on poor ground: x (SHORT + (1 - SHORT) s). */
 #define GRASS_SHORT            0.75
 
-/* Levels of detail by a blade's projected height (px, GR4). */
+/* Levels of detail (GR4: grass_lod, shaders/grass/lod.glsl), by a root's
+ * height on screen, px = H f_y / distance:
+ *   above FULL_PX x BAND   full: every blade of its tuft;
+ *   FULL_PX .. x BAND      still full, its blades but the first ceil(n/2)
+ *                          narrowing away and those widening to keep the
+ *                          cover, its ribbon morphing to the mid one's shape;
+ *   MID_PX x BAND .. FULL  mid: ceil(n/2) blades, widened n / ceil(n/2);
+ *   MID_PX .. x BAND       still mid, down to one blade, and the roots not
+ *                          in one cell of four (both indices even) narrowing
+ *                          away, the ones that are widening for them;
+ *   below MID_PX           clump: one blade a root in four, as wide as their
+ *                          blades together (at most WIDE_MAX of its height).
+ * A blade fades by narrowing, not by a dither: at every hand-off it is far
+ * under a pixel wide, so the samples it covers go with its width. Segments
+ * change by a geomorph (blade.vert), so no shape pops. Then the ground takes
+ * over (grass/field.glsl): every blade of species k narrows to nothing as its
+ * typical root (grass_typical: not the root's own height, so the ground can
+ * know it) goes from END_PX to CLUMP_PX on screen, and as the distance goes
+ * from RADIUS_FADE of the radius to it; the ground under them takes the
+ * field's colour by the cover they leave. */
 #define GRASS_LOD_FULL_PX      12.0
 #define GRASS_LOD_MID_PX       4.0
 #define GRASS_LOD_CLUMP_PX     1.5
+#define GRASS_LOD_BAND         1.5
+#define GRASS_LOD_END_PX       2.5
+#define GRASS_RADIUS_FADE      0.85
+#define GRASS_WIDE_MAX         0.8
+#define GRASS_MORPH_STEPS      15           /* the morph in the instance: 4 bits */
+/* The field from afar (grass.h grass_field, grass/field.glsl): its blades in
+ * layers by height to TOP x the species' middle height, and its colour seen
+ * through as much as TAU_FAR of it, the top of the shaders' fit. */
+#define GRASS_FIELD_LAYERS     12
+#define GRASS_FIELD_TOP        1.6
+#define GRASS_FIELD_TAU_FAR    12.0
 
 /* The GPU path (src/render/grass_gpu.c, shaders/grass/prepare.comp). Blades
  * grow within GRASS_RADIUS of the camera, in a square of GRASS_PATCH_GRID
@@ -129,7 +159,7 @@
 #define GRASS_DRAW_WORDS       5            /* a VkDrawIndexedIndirectCommand */
 /* GrassFrame.info.z: the prepare pass's modes (grass_test). */
 #define GRASS_MODE_ALL_IN_VIEW 1            /* no frustum test */
-#define GRASS_MODE_ALL_FULL    2            /* every root full, every blade: the count test */
+#define GRASS_MODE_ALL_FULL    2            /* every root full, every blade, none narrowed: the count test */
 /* The counters (GrassCounters, src/render/grass_gpu.h), words: what grass_test and the
  * --shot log read back, then the bins. */
 #define GRASS_C_PATCHES_RANGE  0            /* in range and big enough on screen */

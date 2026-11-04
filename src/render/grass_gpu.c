@@ -215,6 +215,8 @@ void grass_gpu_destroy(Renderer *r) {
 
 void renderer_set_grass(Renderer *r, bool on) { r->grass->on = on && r->grass->supported && (grass_profile(GRASS_MEADOW)->present || grass_profile(GRASS_REEDS)->present); }
 
+bool grass_gpu_drawn(Renderer *r) { return r->grass && r->grass->on; }
+
 void renderer_set_grass_cap(Renderer *r, uint32_t cap) {
     for (int b = 0; b < GRASS_BUCKETS; ++b) r->grass->cap[b] = cap > 0 && cap < GRASS_CAPS[b] ? cap : GRASS_CAPS[b];
 }

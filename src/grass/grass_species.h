@@ -67,9 +67,11 @@ typedef struct GrassSpeciesGPU {
     float   root[4];  /* rgb, stiffness */
     float   tip[4];   /* rgb, interaction */
     float   dry[4];   /* rgb, dry share */
-    float   misc[4];  /* fullness, 0, 0, 0 */
+    float   misc[4];  /* fullness; the field's cover a blade, upright and lying (grass.h grass_field, filled by grass_field_gpu); 0 */
+    float   field[4]; /* rgb the field's albedo from afar, seen through little of it (grass_field_gpu); 0 */
+    float   fieldTop[4]; /* rgb seen through much of it (its top), w the scale of tau it goes over in */
 } GrassSpeciesGPU;
-_Static_assert(sizeof(GrassSpeciesGPU) == 9 * 16, "GrassSpecies's std140 layout");
+_Static_assert(sizeof(GrassSpeciesGPU) == 11 * 16, "GrassSpecies's std140 layout");
 
 extern const char *const GRASS_SPECIES_NAMES[GRASS_SPECIES];
 

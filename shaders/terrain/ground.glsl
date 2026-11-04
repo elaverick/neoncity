@@ -6,6 +6,8 @@
 // The wet ground's sheen (GGX, as the city's), and the drops ringing its puddles
 #include "brdf.glsl"
 #include "ripples.glsl"
+// The variation on the large scale (landMacro, landVary), shared with the grass's blades
+#include "terrain/macro.glsl"
 
 /* The bare land, as the clipmap (terrain.frag) and the planet's patches
  * (planet.frag) both draw it: lit by the overcast the city lights from below
@@ -121,6 +123,9 @@ vec3 coverAlbedo(Cover c, float wet, out LandWet lw) {
     return alb;
 }
 
+// The grass's field where its blades have given way (grassField)
+#include "grass/field.glsl"
+
 /* ---- the textures near the camera ------------------------------------- */
 
 // The textures fade into the flat colours as a pixel comes to span this many
@@ -159,22 +164,6 @@ vec3 landAxes(int k, vec3 N) {
     b /= dot(b, vec3(1.0));
     vec3 keep = step(vec3(0.05), b);
     return b * keep / dot(b * keep, vec3(1.0));
-}
-
-// a mod m for any sign of a, in 0 .. m - 1 (GLSL's % leaves negative a undefined)
-int imod(int a, int m) { int r = a - m * (a / m); return r < 0 ? r + m : r; }
-
-// Value noise on the integer lattice, repeating every period cells: fed the
-// wrapped x and z (frame.ground) in cells dividing 7040 m, it doesn't change
-// when the wrap moves.
-float vnoiseWrap(vec2 q, int period, uint salt) {
-    vec2 i = floor(q), f = q - i;
-    f = f * f * (3.0 - 2.0 * f);
-    ivec2 a = ivec2(imod(int(i.x), period), imod(int(i.y), period));
-    ivec2 b = ivec2(imod(a.x + 1, period), imod(a.y + 1, period));
-    float v00 = hfloat(hash2i(salt, a.x, a.y)), v10 = hfloat(hash2i(salt, b.x, a.y));
-    float v01 = hfloat(hash2i(salt, a.x, b.y)), v11 = hfloat(hash2i(salt, b.x, b.y));
-    return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
 }
 
 /* No tile repeats in a grid (hex tiling, after Mikkelsen 2022): the ground
@@ -419,21 +408,6 @@ vec3 coverTextured(Cover c, vec3 p, vec3 dpx, vec3 dpy, float px, float wet, ino
     return alb;
 }
 
-/* ---- variation on the large scale ------------------------------------- */
-
-// What the cover's albedo is scaled by on scales the textures don't reach,
-// about 1 on average, drawn alike on the clipmap and the planet's patches
-// (beside groundLit's patches at 37 m and 211 m): a 7.04 m octave (g, the
-// wrapped x and z) that the textures' own repeats are lost in, fading out as
-// a pixel comes to span a metre (some 900 m off); and a drier or lusher hue
-// over 1.6 km (wp, the world's x and z), not on the snow.
-vec3 landMacro(vec2 g, vec2 wp, float px, float snow) {
-    float a = 0.16 * (1.0 - smoothstep(0.6, 1.4, px));
-    float near = 1.0 + a * (vnoiseWrap(g / 7.04, 1000, 0x7E23u) - 0.5);
-    vec3 hue = mix(vec3(0.93, 1.0, 1.10), vec3(1.07, 1.0, 0.88), vnoise(wp / 1600.0, 0x7E24u));
-    return near * mix(hue, vec3(1.0), snow);
-}
-
 // Where on the ground the textures are mapped: p the ground's own coordinates,
 // x and z wrapped as the city's (frame.ground, from doubles), and their screen
 // derivatives; px the metres of ground a pixel spans; the sky over it. Taken
@@ -556,9 +530,10 @@ float normalKernel(vec3 n) {
 // The land's albedo at rel, its normal n bent by the textures' normal maps,
 // darkened by the rain, and the water on it (w). textured: whether the
 // cover's textures may be drawn (the clipmap's ground, where no road's asphalt
-// covers it; the planet's patches all lie beyond them). Called in uniform
-// control flow (normalKernel).
-vec3 groundAlbedo(vec3 rel, LandPoint l, float urban, Cover cover, bool textured, inout vec3 n, out LandWater w) {
+// covers it; the planet's patches all lie beyond them); road how far beyond
+// the nearest road's paved edge it is (GRASS_ROAD_FAR: none near), for the
+// grass's field. Called in uniform control flow (normalKernel).
+vec3 groundAlbedo(vec3 rel, LandPoint l, float urban, Cover cover, bool textured, float road, inout vec3 n, out LandWater w) {
     vec2 wp = frame.camPos.xz + rel.xz;
     vec3 nGeom = n;
     float wet = l.sky.wet;
@@ -575,15 +550,17 @@ vec3 groundAlbedo(vec3 rel, LandPoint l, float urban, Cover cover, bool textured
             lw = LandWet(mix(lw.stand, tw.stand, tex), mix(lw.sheen, tw.sheen, tex), mix(lw.snow, tw.snow, tex), tw.relief * tex);
         }
     }
-    albedo *= landMacro(l.p.xz, wp, l.px, lw.snow);
-    // patchy within each class
-    float patches = 0.6 * vnoise(wp / 37.0, 0x7E21u) + 0.4 * vnoise(wp / 211.0, 0x7E22u);
-    albedo *= 0.8 + 0.4 * patches;
+    // where the grass's blades have given way, the field they leave (grass/field.glsl)
+    vec3 fieldAlb;
+    float field = grassField(rel, nGeom, cover, urban, road, wet, fieldAlb);
+    albedo = mix(albedo, fieldAlb, field);
+    // the large scale's variation, patchy within each class (terrain/macro.glsl)
+    albedo *= landVary(l.p.xz, wp, l.px, lw.snow);
     // the water: in puddles a little darker beneath (silt in it) and level, a
     // film elsewhere; none where the city's streets take over (groundUrban)
     w.aa = normalKernel(n);
-    w.film = wet * lw.sheen * (1.0 - urban);
-    w.pool = wet > 0.0 && urban < 0.99 ? landPool(l, lw.relief, lw.stand, nGeom.y, wet) * (1.0 - urban) : 0.0;
+    w.film = wet * lw.sheen * (1.0 - urban) * (1.0 - field);
+    w.pool = wet > 0.0 && urban < 0.99 ? landPool(l, lw.relief, lw.stand, nGeom.y, wet) * (1.0 - urban) * (1.0 - field) : 0.0;
     albedo *= 1.0 - 0.15 * w.pool;
     n = normalize(mix(n, nGeom, w.pool));
     return albedo;
@@ -601,7 +578,7 @@ vec3 groundLit(vec3 rel, vec3 n, float urban, Cover cover, bool textured) {
     LandPoint l = landPoint(rel);
     LandWater w;
     vec3 nB = n;
-    vec3 albedo = groundAlbedo(rel, l, urban, cover, textured, nB, w);
+    vec3 albedo = groundAlbedo(rel, l, urban, cover, textured, float(GRASS_ROAD_FAR), nB, w);
     return groundUrban(albedo * groundLightIn(l.sky, nB), urban) + landSheen(rel, l, nB, n, LAND_FILM_ROUGH, w);
 }
 

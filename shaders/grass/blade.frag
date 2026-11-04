@@ -7,10 +7,12 @@
 /* Grass blades (blade.vert). Coloured by the species' profile
  * (frame.grassSpecies: assets/grass/<name>.json): root to tip, and towards
  * the dry colour by the blade's tint, mostly its clump's (spec 10.1: colour
- * coherent over a clump, not per blade). Lit, until GR7, by the light the
- * land takes at that point facing the ground's normal (groundLight), a
- * little more where the blade's face turns up to it, and hazed as the land
- * is. --grass-debug lod colours them by bucket (full red, mid yellow, clump
+ * coherent over a clump, not per blade), times the land's large-scale
+ * variation at the root (blade.vert: vVary) and darkened by the rain as the
+ * land's grass is, so it agrees with the ground's field (grass/field.glsl)
+ * where the blades give way to it. Lit, until GR7, by the light the land
+ * takes at that point facing the ground's normal (groundLightIn), a little
+ * more where the blade's face turns up to it, and hazed as the land is. --grass-debug lod colours them by bucket (full red, mid yellow, clump
  * blue), cull by patch. Two-sided. Nothing for the reflections. */
 
 layout(location = 0) in vec3 vRel;
@@ -20,6 +22,7 @@ layout(location = 3) flat in ivec2 vKind;
 layout(location = 4) flat in float vTint;
 layout(location = 5) in vec3 vN;
 layout(location = 6) flat in vec3 vGround;
+layout(location = 7) flat in vec3 vVary;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outRefl;
 
@@ -45,10 +48,11 @@ void main() {
         float rootShare = lum(sp.root.rgb) / max(lum(sp.tip.rgb), 1e-4);
         vec3 dry = sp.dry.rgb * mix(rootShare, 1.0, up);
         float dryness = clamp(vTint + 0.5, 0.0, 1.0) * sp.dry.w;
-        vec3 albedo = mix(lush, dry, dryness) * (1.0 + 0.3 * vTint);
+        LandSky sky = landSky(vRel);
+        vec3 albedo = mix(lush, dry, dryness) * (1.0 + 0.3 * vTint) * vVary * landDarken(2, sky.wet);
         vec3 N = normalize(vN);
         float face = 0.8 + 0.2 * max(dot(N, vGround), 0.0);
-        col = groundHazed(albedo * face * groundLight(vRel, vGround), vRel, 0.0);
+        col = groundHazed(albedo * face * groundLightIn(sky, vGround), vRel, 0.0);
     }
     outColor = vec4(col, 1.0);
     outRefl = vec4(0.0);

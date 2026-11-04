@@ -1,6 +1,6 @@
 #ifndef GRASS_DEBUG_GLSL
 #define GRASS_DEBUG_GLSL
-#include "grass/rules.glsl"
+#include "grass/lod.glsl"
 
 /* --grass-debug (spec 11.1): the grass's rules painted on the land, unlit,
  * before any blade exists (terrain.frag). FrameUBO.grass.z picks the view:
@@ -13,9 +13,10 @@
  *   clump    the clumps of the species with the most of the ground: a colour
  *            each, darker towards their borders, bare spots dark red; dim
  *            where nothing grows.
- *   lod      the bucket a meadow root of typical height (GRASS_DEBUG_TYPICAL)
+ *   lod      the bucket a meadow root of typical height there (grassTypical)
  *            would go in at the pixel's distance: full red, mid yellow, clump
- *            blue, none grey (the blades take their own bucket's colour);
+ *            blue, greying as the ground takes over (grassEnd), none grey (the
+ *            blades take their own bucket's colour);
  *   cull     each patch's state in the grass's prepare pass this frame
  *            (GRASS_PATCH_*): out of range or too small dark grey, out of
  *            view dark blue, bare dark red, no root kept olive, drawn green;
@@ -27,7 +28,6 @@
 layout(std430, set = 0, binding = 10) readonly buffer GrassPatches { uint grassPatchState[]; };
 
 const float GRASS_DEBUG_DENSE = 250.0;
-const float GRASS_DEBUG_TYPICAL = 0.5;
 const vec3  GRASS_DEBUG_COLOUR[GRASS_SPECIES] = vec3[](vec3(0.10, 0.55, 0.08), vec3(0.05, 0.45, 0.55), vec3(0.60, 0.65, 0.10), vec3(0.35, 0.32, 0.08));
 
 // The grass patch and the point in it under camera-relative x, z: the camera's
@@ -87,10 +87,10 @@ vec3 grassDebug(int mode, vec3 rel, vec3 n, float urban, Cover cover, bool onRoa
 
     if (mode == GRASS_DEBUG_LOD) {   // f_y: pixels per unit of height over distance (rayBasis' up is tan(fovy / 2))
         float fy = 0.5 * frame.screen.y / length(frame.rayBasis[1].xyz);
-        float hpx = GRASS_DEBUG_TYPICAL * fy / max(length(rel), 1e-3);
-        vec3 c = length(rel.xz) > float(GRASS_RADIUS) || hpx < float(GRASS_LOD_CLUMP_PX) ? vec3(0.03)
-               : hpx >= float(GRASS_LOD_FULL_PX) ? vec3(0.30, 0.04, 0.03) : hpx >= float(GRASS_LOD_MID_PX) ? vec3(0.30, 0.25, 0.02) : vec3(0.04, 0.10, 0.30);
-        return c * (suit > 0.0 ? 1.0 : 0.3);
+        float typ = grassTypical(GRASS_MEADOW, suit), dist = length(rel);
+        float hpx = typ * fy / max(dist, 1e-3), end = grassEnd(typ, dist, fy, float(GRASS_RADIUS));
+        vec3 c = hpx >= float(GRASS_LOD_FULL_PX) ? vec3(0.30, 0.04, 0.03) : hpx >= float(GRASS_LOD_MID_PX) ? vec3(0.30, 0.25, 0.02) : vec3(0.04, 0.10, 0.30);
+        return mix(vec3(0.03), c, end) * (suit > 0.0 ? 1.0 : 0.3);
     }
 
     if (mode == GRASS_DEBUG_CULL) {

@@ -5,7 +5,7 @@
 #extension GL_KHR_shader_subgroup_ballot : require
 #include "common.glsl"
 #include "terrain/road_lookup.glsl"
-#include "grass/rules.glsl"
+#include "grass/lod.glsl"
 #include "grass/surface.glsl"
 #define GRASS_INSTANCE_ACCESS writeonly
 #include "grass/instance.glsl"
@@ -13,18 +13,21 @@
 /* The grass's GPU path (src/render/grass_gpu.c), the land's grass: one
  * workgroup per patch of the GRASS_PATCH_GRID square round the camera's.
  *
- * A: the patch is dropped if it lies beyond GRASS_RADIUS, if its tallest
- *    possible root would be under GRASS_LOD_CLUMP_PX on screen at its nearest
- *    point, or off the drawn ground; then its 9 x 9 metre points (every
+ * A: the patch is dropped if it lies beyond GRASS_RADIUS, if every species'
+ *    blades would have given way to the ground (grassEnd) at its nearest
+ *    point, or it is off the drawn ground; then its 9 x 9 metre points (every
  *    vertex of the levels it can lie in) bound its heights, for the frustum,
  *    and the rules' inputs, so a patch where nothing may grow (the city, rock,
  *    snow, steep) or a species can't is dropped before its roots.
  * B: each candidate root of each species there (grass_rules.h): skipped if
  *    even its tallest is too small on screen for the bucket it could be in;
  *    else the ground under it (grass/surface.glsl), the road near it, and the
- *    rules (grass/rules.glsl, grass_keep). A kept root's bucket is chosen by
- *    its height's size on screen at its distance; past the distance the last
- *    frame's finish keeps its bucket to, its blades are counted and dropped.
+ *    rules (grass/rules.glsl, grass_keep). A kept root's level of detail
+ *    (grass/lod.glsl) comes from its height's size on screen at its
+ *    distance: its bucket, how many of its blades are drawn and how much
+ *    wider, its ribbon's morph; its species' end (grassEnd) narrows them all
+ *    as the ground takes over. Past the distance the last frame's finish keeps
+ *    its bucket to, its blades are counted and dropped.
  * C: the blades of the roots kept: each subgroup reserves room in each bucket
  *    with one atomic, and each root writes its tuft's blades (the bucket's
  *    share of them) there, as far as the room goes.
@@ -63,6 +66,8 @@ bool inView(vec3 mn, vec3 mx) {
 }
 
 float rootTallest(int k) { return GRASS_HEIGHT_MAX(k) * (1.0 + GRASS_CLUMP_VAR(k)); }
+// the species' typical root on the best ground, for its end (grassEnd); 0 if it is left out
+float typicalMost(int k) { return GRASS_PRESENT(k) ? grassTypical(k, 1.0) : 0.0; }
 float reedsWeight(float share, float wet) { return grassSat(float(GRASS_REEDS_MUD) * share + float(GRASS_REEDS_WET) * grassEase(GRASS_REEDS_WET0, GRASS_REEDS_WET1, wet)); }
 
 void main() {
@@ -80,7 +85,8 @@ void main() {
     // A: range and size on screen
     float dNear = length(clamp(vec2(0.0), corner, corner + S));
     float tallest = max(rootTallest(GRASS_MEADOW), rootTallest(GRASS_REEDS));
-    if (dNear > gf.view.x || gf.info.x >= TERRAIN_CLIP_LEVELS || (!allFull && tallest * fy < float(GRASS_LOD_CLUMP_PX) * dNear)) {
+    float typical = max(typicalMost(GRASS_MEADOW), typicalMost(GRASS_REEDS));
+    if (dNear > gf.view.x || gf.info.x >= TERRAIN_CLIP_LEVELS || (!allFull && !(grassEnd(typical, dNear, fy, gf.view.x) > 0.0))) {
         if (tid == 0u) patchState[pidx] = GRASS_PATCH_OUT;
         return;
     }
@@ -146,12 +152,14 @@ void main() {
         int k = ki == 0 ? GRASS_MEADOW : GRASS_REEDS;
         if (!GRASS_PRESENT(k) || !((k == GRASS_MEADOW ? meadowMost : reedsMost) > 0.0)) continue;
         int n = GRASS_GRID(k), total = n * n, rounds = (total + GRASS_WG - 1) / GRASS_WG;
-        float hk = rootTallest(k);
+        float hk = rootTallest(k), tk = grassTypical(k, 1.0);
         if (tid == 0u) atomicAdd(sCand, uint(total));
         for (int r = 0; r < rounds; ++r) {
             int idx = r * GRASS_WG + int(tid);
             int tier = -1;
             uint nb = 0u;
+            GrassLod lod;
+            float endK = 1.0;
             GrassRoot root;
             GrassGround gg;
             if (idx < total) {
@@ -160,9 +168,9 @@ void main() {
                 GrassCandidate cand = grassCandidate(k, gpatch, cell);
                 vec2 rel = corner + cand.p;
                 bool maybe = true;
-                if (!allFull) {   // the most it could be on screen
-                    float px = hk * fy / max(length(vec3(rel.x, dy, rel.y)), 1e-3);
-                    maybe = px >= float(GRASS_LOD_CLUMP_PX) && (sub || px >= float(GRASS_LOD_MID_PX));
+                if (!allFull) {   // the most it could be on screen; its species not yet given way
+                    float dLo = max(length(vec3(rel.x, dy, rel.y)), 1e-3);
+                    maybe = grassEnd(tk, dLo, fy, gf.view.x) > 0.0 && (sub || hk * fy / dLo >= float(GRASS_LOD_MID_PX));
                 }
                 if (maybe && grassSurface(rel, gg)) {
                     GrassSite s;
@@ -178,12 +186,15 @@ void main() {
                     if (grassKeep(cand, s, root)) {
                         atomicAdd(sSpBlades[ki], uint(root.blades));
                         float dist = length(planetBend(rel, gg.h));
-                        float px = root.height * fy / max(dist, 1e-3);
-                        tier = allFull || px >= float(GRASS_LOD_FULL_PX) ? GRASS_LOD_FULL
-                             : px >= float(GRASS_LOD_MID_PX) ? GRASS_LOD_MID
-                             : px >= float(GRASS_LOD_CLUMP_PX) && sub ? GRASS_LOD_CLUMP : -1;
-                        if (tier >= 0) {
-                            nb = tier == GRASS_LOD_FULL ? uint(root.blades) : tier == GRASS_LOD_MID ? uint(root.blades + 1) / 2u : 1u;
+                        if (allFull) lod = grassLodAll(root.blades);
+                        else {
+                            endK = grassEnd(grassTypical(k, grassSuitability(s)), dist, fy, gf.view.x);
+                            lod = grassLod(root.height * fy / max(dist, 1e-3), root.blades, sub);
+                            if (!(endK > 0.0)) lod.count = 0;
+                        }
+                        if (lod.count > 0) {
+                            tier = lod.bucket;
+                            nb = uint(lod.count);
                             atomicAdd(sKept, 1u);
                             atomicAdd(sHist[tier * GRASS_BINS + min(int(dist / float(GRASS_BIN_M)), GRASS_BINS - 1)], nb);
                             if (dist >= keepTo[tier]) {   // past the distance kept to: counted, not drawn
@@ -209,12 +220,14 @@ void main() {
                 uint room = gf.cap[tier];
                 for (uint bi = 0u; bi < nb && at + bi < room; ++bi) {
                     GrassBlade g = grassBlade(root, int(bi));
+                    // narrowed away, or widened for those gone (grass/lod.glsl), and by the species' end
+                    float width = min(g.width * grassLodWidth(lod, int(bi)) * endK, float(GRASS_WIDE_MAX) * g.height);
                     vec2 off = g.p - root.at.p;
                     // the ground's plane under the root, to the blade (within a tuft's width)
                     float hb = gg.h - (gg.n.x * off.x + gg.n.z * off.y) / max(gg.n.y, 0.2);
                     GrassInstance o;
-                    grassPack(planetBend(corner + g.p, hb), g.height, gg.n, g.facing, g.leanDir, g.width, g.lean, g.bend, g.phase,
-                              g.tint, k, tier, o);
+                    grassPack(planetBend(corner + g.p, hb), g.height, gg.n, g.facing, g.leanDir, width, g.lean, g.bend, g.phase,
+                              g.tint, k, tier, lod.morph, o);
                     inst[gf.base[tier] + at + bi] = o;
                 }
             }

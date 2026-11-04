@@ -227,6 +227,7 @@ void grass_gpu_create(Renderer *r);
 void grass_gpu_destroy(Renderer *r);
 void grass_gpu_prepare(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *viewProj);
 void grass_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
+bool grass_gpu_drawn(Renderer *r);   /* the blades are on (FrameUBO.grass.w) */
 
 /* road_gpu.c. Update (each frame, before the scene pass) moves the window of
  * roads round the camera when it has strayed and writes the frame slot's. */

@@ -1,6 +1,7 @@
 #include "renderer_internal.h"
 #include "terrain.h"
 #include "grass_rules.h"
+#include "grass.h"
 
 static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "terrain upload", "grass prepare", "shelter", "prepass", "shadow rays", "shadow filter",
                                                 "city", "plants", "proxies", "terrain", "grass", "sky", "clouds", "flames", "post" };
@@ -261,8 +262,9 @@ static void frame_uniforms(Renderer *r, int slot, const FrameUBO *uboIn, const d
     ubo->grass[0] = (float)(cam[0] - gpx * GRASS_PATCH_M);
     ubo->grass[1] = (float)(cam[2] - gpz * GRASS_PATCH_M);
     ubo->grass[2] = (float)r->grassDebug;
-    ubo->grass[3] = 0.0f;
+    ubo->grass[3] = grass_gpu_drawn(r) ? 1.0f : 0.0f;
     grass_profiles_gpu(ubo->grassSpecies);   /* read by grass_gpu_create */
+    grass_field_gpu(ubo->grassSpecies);
     /* Ray-traced shadows: the frame number turns the rays' sample points; the
      * shadow passes rebuild positions at sample 0 (Vulkan's standard sample
      * locations); the denoiser reprojects this frame's camera-relative

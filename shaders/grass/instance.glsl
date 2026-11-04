@@ -11,7 +11,8 @@ struct GrassInstance {
     uint  nrm;      // the ground's normal there: x, z as snorm16 (y up, positive)
     uint  dir;      // unorm16 x2: its face's direction, its lean's direction (turns, from +x towards +z)
     uint  shape;    // half x2: its width at the base (m), its lean (rad)
-    uint  misc;     // unorm8 bend (share of its height), unorm8 phase, unorm8 tint + 0.5, then the species (4 bits), its bucket (4 bits)
+    uint  misc;     // unorm8 bend (share of its height), unorm8 phase, unorm8 tint + 0.5, then the species (2 bits), its bucket (2 bits),
+                    // its morph to the next bucket's shape (4 bits, in GRASS_MORPH_STEPS)
 };
 
 // The prepare pass writes them, the vertex shader reads them (where a storage
@@ -23,11 +24,11 @@ layout(std430, set = 0, binding = 5) GRASS_INSTANCE_ACCESS buffer Instances { Gr
 
 struct GrassBladeDraw {
     vec3  p, n;
-    float height, width, facing, leanAngle, lean, bend, phase, tint;
+    float height, width, facing, leanAngle, lean, bend, phase, tint, morph;
     int   species, lod;
 };
 
-void grassPack(vec3 p, float height, vec3 n, float facing, vec2 leanDir, float width, float lean, float bend, float phase, float tint, int species, int lod, out GrassInstance g) {
+void grassPack(vec3 p, float height, vec3 n, float facing, vec2 leanDir, float width, float lean, float bend, float phase, float tint, int species, int lod, float morph, out GrassInstance g) {
     const float TURN = 1.0 / 6.28318531;
     g.p = p;
     g.height = height;
@@ -36,7 +37,8 @@ void grassPack(vec3 p, float height, vec3 n, float facing, vec2 leanDir, float w
     g.shape = packHalf2x16(vec2(width, lean));
     uint bendU = uint(clamp(bend, 0.0, 1.0) * 255.0 + 0.5), phaseU = uint(clamp(phase, 0.0, 1.0) * 255.0 + 0.5);
     uint tintU = uint(clamp(tint + 0.5, 0.0, 1.0) * 255.0 + 0.5);
-    g.misc = bendU | (phaseU << 8) | (tintU << 16) | (uint(species & 15) << 24) | (uint(lod & 15) << 28);
+    uint morphU = uint(clamp(morph, 0.0, 1.0) * float(GRASS_MORPH_STEPS) + 0.5);
+    g.misc = bendU | (phaseU << 8) | (tintU << 16) | (uint(species & 3) << 24) | (uint(lod & 3) << 26) | (morphU << 28);
 }
 
 GrassBladeDraw grassUnpack(GrassInstance g) {
@@ -54,8 +56,9 @@ GrassBladeDraw grassUnpack(GrassInstance g) {
     b.bend = float(g.misc & 255u) / 255.0;
     b.phase = float((g.misc >> 8) & 255u) / 255.0;
     b.tint = float((g.misc >> 16) & 255u) / 255.0 - 0.5;
-    b.species = int((g.misc >> 24) & 15u);
-    b.lod = int(g.misc >> 28);
+    b.species = int((g.misc >> 24) & 3u);
+    b.lod = int((g.misc >> 26) & 3u);
+    b.morph = float(g.misc >> 28) / float(GRASS_MORPH_STEPS);
     return b;
 }
 
