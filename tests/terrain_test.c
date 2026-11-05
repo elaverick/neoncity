@@ -8,7 +8,9 @@
  *
  * Then the region's landforms: weights that blend, every type present, each
  * with its own character, belts along their strike, sharp escarpments, and
- * continuous canyons. Then the ground cover: weights that sum to 1, the rules
+ * continuous canyons. Then the caves: each system the size it should be,
+ * clear of the cities, under its roof of rock but at its mouths, open there,
+ * with level floors, and the same however it is built or found. Then the ground cover: weights that sum to 1, the rules
  * where they should hold, smooth in every input, packed within a byte.
  *
  * Then levels of detail and the clipmap: coarse spacings drop only fine
@@ -37,6 +39,8 @@
  * some filled clipmaps instead, to compare what two builds generate;
  * terrain_test --map out.ppm [km [x z]] draws the land round the city or a place (see map);
  * terrain_test --cover-map out.ppm [km [x z]] its ground cover (see cover_map);
+ * terrain_test --caves [km] runs only the caves' tests, over more cells (150 km either way by default);
+ * terrain_test --cave-map out.ppm [km [x z]] draws the caves round a place (see cave_map);
  * terrain_test --planet-map out.ppm [px] the whole planet (see planet_map);
  * terrain_test --earth-map out.ppm [px] the Earth's bake (see earth_map);
  * terrain_test --landform-map out.ppm [px] its landforms (see landform_map);
@@ -2466,6 +2470,316 @@ static void test_earth(Rng *r, const char *path) {
     }
 }
 
+/* --- Caves ---------------------------------------------------------------------- */
+
+/* The ground in cave c's chart, as the caves read it (the world's frame). */
+static double cave_ground(const TerrainCave *c, double x, double z) { return terrain_height_dir(terrain_chart_dir(&c->chart, x, z), 0.0); }
+
+static double cave_air(double r) { return r + TERRAIN_CAVE_ROUGH_M + 0.25 * TERRAIN_CAVE_BLEND_M; }
+
+/* Whether a point of c's chart lies within a mouth's reach. */
+static int in_mouth(const TerrainCave *c, double x, double h, double z) {
+    for (int m = 0; m < c->nmouth; ++m) {
+        const TerrainCaveMouth *k = &c->mouth[m];
+        if ((x - k->p[0]) * (x - k->p[0]) + (h - k->p[1]) * (h - k->p[1]) + (z - k->p[2]) * (z - k->p[2]) <= (double)k->reach * k->reach) return 1;
+    }
+    return 0;
+}
+
+/* The cells surveyed: those under a grid of points `span` metres round
+ * (cx, cz), every TERRAIN_CAVE_CELL / 2, each once. */
+typedef struct CaveSurvey {
+    int          n;
+    int          f[1024], i[1024], j[1024], has[1024];
+    double       ms[1024];
+    TerrainCave *sys;
+} CaveSurvey;
+
+static void survey_cell(void *ctx, int k) {
+    CaveSurvey *s = (CaveSurvey *)ctx;
+    clock_t t0 = clock();
+    s->has[k] = terrain_cave_build(s->f[k], s->i[k], s->j[k], &s->sys[k]);
+    s->ms[k] = 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC;
+}
+
+static void cave_survey(CaveSurvey *s, double cx, double cz, double span) {
+    s->n = 0;
+    for (double z = cz - span; z <= cz + span; z += 0.5 * TERRAIN_CAVE_CELL)
+        for (double x = cx - span; x <= cx + span; x += 0.5 * TERRAIN_CAVE_CELL) {
+            int f, i, j, seen = 0;
+            terrain_cave_cell(terrain_world_dir(x, z), &f, &i, &j);
+            for (int k = 0; k < s->n && !seen; ++k) seen = s->f[k] == f && s->i[k] == i && s->j[k] == j;
+            if (seen || s->n >= 1024) continue;
+            s->f[s->n] = f; s->i[s->n] = i; s->j[s->n] = j;
+            s->n++;
+        }
+    s->sys = (TerrainCave *)malloc(sizeof(TerrainCave) * (size_t)s->n);
+    thread_parallel_for(s->n, cpu_count(), survey_cell, s);
+}
+
+/* 5c. The caves, over the cells round a point of the land beyond the
+ *     megacity (`span` metres either way): each system within its bounds and
+ *     its reach, its passages and chambers the sizes they should be, clear of
+ *     the cities, the ground TERRAIN_CAVE_ROOF_M or more over its air but
+ *     within a mouth's reach, the ground's surface inside its air only there,
+ *     each mouth open at the ground and leading under it, the floor level
+ *     under its passages; the same built on any thread, again or found by
+ *     the lookup. */
+static void test_caves(Rng *r, double span) {
+    DVec2 lc = land_centre();
+    CaveSurvey *s = (CaveSurvey *)calloc(1, sizeof(CaveSurvey));
+    clock_t t0 = clock();
+    cave_survey(s, lc.x, lc.z, span);
+    double wall = (double)(clock() - t0) / CLOCKS_PER_SEC;
+    int systems = 0, kinds[2] = { 0, 0 }, rooms = 0, mouths2 = 0, segs = 0, badShape = 0, badCity = 0, badRoof = 0, badSurface = 0, badMouth = 0,
+        badSame = 0, badFind = 0, badBounds = 0, airPts = 0, roofPts = 0, floors = 0, floorsFlat = 0, badFloor = 0;
+    double lenMin = 1e30, lenMax = 0.0, lenSum = 0.0, msSum = 0.0, msMax = 0.0, rMin = 1e30, rMax = 0.0, roomMax = 0.0, coverMin = 1e30, stepMax = 0.0;
+    double deepest = 0.0;
+    TerrainCave *again = (TerrainCave *)malloc(sizeof(TerrainCave)), *found = (TerrainCave *)malloc(4 * sizeof(TerrainCave));
+    for (int k = 0; k < s->n; ++k) {
+        msSum += s->ms[k];
+        msMax = fmax(msMax, s->ms[k]);
+        if (!s->has[k]) continue;
+        const TerrainCave *c = &s->sys[k];
+        systems++;
+        kinds[c->mouth[0].kind]++;
+        rooms += c->nroom;
+        mouths2 += c->nmouth > 1;
+        segs += c->nseg;
+        lenMin = fmin(lenMin, c->length); lenMax = fmax(lenMax, c->length); lenSum += c->length;
+
+        /* Its shape: sizes, counts, within its extent of its first mouth. */
+        if (c->nseg < 1 || c->nmouth < 1 || c->nmouth > TERRAIN_CAVE_MOUTHS || c->nroom > TERRAIN_CAVE_ROOMS || c->length < TERRAIN_CAVE_LEN_MIN_M ||
+            c->length > TERRAIN_CAVE_LEN_MAX_M + 600.0)
+            badShape++;
+        for (int q = 0; q < c->nseg; ++q) {
+            const TerrainCaveSeg *g = &c->seg[q];
+            rMin = fmin(rMin, fmin(g->ra, g->rb)); rMax = fmax(rMax, fmax(g->ra, g->rb));
+            if (fmin(g->ra, g->rb) < TERRAIN_CAVE_R_MIN - 1e-6 || fmax(g->ra, g->rb) > TERRAIN_CAVE_R_MAX + 1e-6 ||
+                hypot(g->a[0], g->a[2]) > TERRAIN_CAVE_EXTENT_M + 4.0 || hypot(g->b[0], g->b[2]) > TERRAIN_CAVE_EXTENT_M + 4.0)
+                badShape++;
+            for (int e = 0; e < 2; ++e) {   /* clear of the cities */
+                const double *p = e ? g->b : g->a;
+                double wx, wz;
+                terrain_cave_to_world(c, p[0], p[2], &wx, &wz);
+                if (plan_city_edge(wx, wz) < TERRAIN_CAVE_CITY_M) badCity++;
+            }
+            deepest = fmax(deepest, cave_ground(c, g->b[0], g->b[2]) - g->b[1]);
+        }
+        for (int q = 0; q < c->nroom; ++q) {
+            roomMax = fmax(roomMax, fmax(c->room[q].r[0], c->room[q].r[2]));
+            if (fmax(c->room[q].r[0], c->room[q].r[2]) > TERRAIN_CAVE_ROOM_M + 1e-6) badShape++;
+        }
+
+        /* The roof: random points of its air, and the top of its air over columns across its passages. */
+        for (int q = 0; q < 400; ++q) {
+            double p[3];
+            if (c->nroom > 0 && q % 8 == 0) {
+                const TerrainCaveRoom *m = &c->room[rng_int(r, 0, c->nroom - 1)];
+                double u = 2.0 * rng_float(r) - 1.0, v = 2.0 * rng_float(r) - 1.0, w = 2.0 * rng_float(r) - 1.0;
+                double ex = u * (m->r[0] + 2.0), ez = w * (m->r[2] + 2.0);
+                p[0] = m->c[0] + ex * m->cs - ez * m->sn; p[1] = m->c[1] + v * (m->r[1] + 2.0); p[2] = m->c[2] + ex * m->sn + ez * m->cs;
+            } else {
+                const TerrainCaveSeg *g = &c->seg[rng_int(r, 0, c->nseg - 1)];
+                double t = rng_float(r), rad = cave_air(fmax(g->ra, g->rb)), u = 2.0 * rng_float(r) - 1.0, v = 2.0 * rng_float(r) - 1.0, w = 2.0 * rng_float(r) - 1.0;
+                for (int a = 0; a < 3; ++a) p[a] = g->a[a] + t * (g->b[a] - g->a[a]);
+                p[0] += u * rad; p[1] += v * rad; p[2] += w * rad;
+            }
+            if (terrain_cave_sdf_local(c, p[0], p[1], p[2]) >= 0.0) continue;
+            airPts++;
+            for (int a = 0; a < 3; ++a)
+                if (p[a] < c->lo[a] || p[a] > c->hi[a]) badBounds++;
+            if (in_mouth(c, p[0], p[1], p[2])) continue;
+            double cover = cave_ground(c, p[0], p[2]) - p[1];
+            roofPts++;
+            coverMin = fmin(coverMin, cover);
+            if (cover < TERRAIN_CAVE_ROOF_M) {
+                if (badRoof++ < 5) printf("  cave %08x: air at (%.1f, %.1f, %.1f) has %.2f m of rock over it\n", c->id, p[0], p[1], p[2], cover);
+            }
+        }
+        for (int q = 0; q < 100; ++q) {
+            const TerrainCaveSeg *g = &c->seg[rng_int(r, 0, c->nseg - 1)];
+            double t = rng_float(r), R = cave_air(fmax(g->ra, g->rb)), s2 = (2.0 * rng_float(r) - 1.0) * R;
+            double dx = g->b[0] - g->a[0], dz = g->b[2] - g->a[2], l = fmax(hypot(dx, dz), 1e-9);
+            double x = g->a[0] + t * dx - dz / l * s2, z = g->a[2] + t * dz + dx / l * s2, ax = g->a[1] + t * (g->b[1] - g->a[1]);
+            for (double h = ax + 1.4 * R; h >= ax - R; h -= 0.2) {
+                if (terrain_cave_sdf_local(c, x, h, z) >= 0.0) continue;
+                if (!in_mouth(c, x, h, z)) {
+                    double cover = cave_ground(c, x, z) - h;
+                    roofPts++;
+                    coverMin = fmin(coverMin, cover);
+                    if (cover < TERRAIN_CAVE_ROOF_M && badRoof++ < 5)
+                        printf("  cave %08x: the top of the air at (%.1f, %.1f, %.1f) has %.2f m of rock over it\n", c->id, x, h, z, cover);
+                }
+                break;
+            }
+        }
+
+        /* The ground's surface lies in the air only within a mouth's reach. */
+        for (int q = 0; q < 300; ++q) {
+            double x = c->lo[0] + (c->hi[0] - c->lo[0]) * rng_float(r), z = c->lo[2] + (c->hi[2] - c->lo[2]) * rng_float(r), g = cave_ground(c, x, z);
+            if (terrain_cave_sdf_local(c, x, g, z) < 0.0 && !in_mouth(c, x, g, z) && badSurface++ < 5)
+                printf("  cave %08x: the ground at (%.1f, %.1f) is in its air, far from its mouths\n", c->id, x, z);
+        }
+
+        /* Each mouth: on the ground, open there, and leading under it. */
+        for (int m = 0; m < c->nmouth; ++m) {
+            const TerrainCaveMouth *k = &c->mouth[m];
+            int open = fabs(cave_ground(c, k->p[0], k->p[2]) - k->p[1]) < 1e-9 && terrain_cave_sdf_local(c, k->p[0], k->p[1] + 0.3, k->p[2]) < 0.0, under = 0;
+            for (int q = 0; q < 5; ++q) {   /* on the land's own ground, round it too: no road's cutting, no water's bed */
+                double x = k->p[0] + (q == 1 ? 15.0 : q == 2 ? -15.0 : 0.0), z = k->p[2] + (q == 3 ? 15.0 : q == 4 ? -15.0 : 0.0);
+                if (fabs(cave_ground(c, x, z) - terrain_ground_bare_dir(terrain_chart_dir(&c->chart, x, z), 0.0)) >= 0.01 && badMouth++ < 5)
+                    printf("  cave %08x: mouth %d is on a road or a water's bed\n", c->id, m);
+            }
+            for (double t = 2.0; t <= k->reach && !under; t += 2.0) {
+                double x = k->p[0] + k->dir[0] * t, z = k->p[2] + k->dir[1] * t, g = cave_ground(c, x, z);
+                for (double h = g - 2.0; h >= g - 20.0 && !under; h -= 0.25) under = terrain_cave_sdf_local(c, x, h, z) < 0.0;
+            }
+            if ((!open || !under) && badMouth++ < 5) printf("  cave %08x: mouth %d %s\n", c->id, m, !open ? "isn't open at the ground" : "leads nowhere under it");
+        }
+
+        /* The floor: under a passage's axis its level floor, and level along it. */
+        for (int q = 0; q < 12; ++q) {
+            const TerrainCaveSeg *g = &c->seg[rng_int(r, 0, c->nseg - 1)];
+            double dx = g->b[0] - g->a[0], dz = g->b[2] - g->a[2], L = hypot(dx, dz), prev = -1e30;
+            for (double u = 0.0; u <= L; u += 0.5) {
+                double t = L > 0.0 ? u / L : 0.0, x = g->a[0] + t * dx, z = g->a[2] + t * dz, ax = g->a[1] + t * (g->b[1] - g->a[1]);
+                double rr = g->ra + (g->rb - g->ra) * t, want = ax - TERRAIN_CAVE_FLOOR * rr;
+                if (terrain_cave_sdf_local(c, x, ax, z) >= 0.0) { prev = -1e30; continue; }
+                double fl = terrain_cave_floor_local(c, x, ax, z);
+                floors++;
+                if (fabs(fl - want) < 0.5) floorsFlat++;   /* the floors blend over the joints */
+                if (terrain_cave_sdf_local(c, x, fl + 0.01, z) >= 0.0 || terrain_cave_sdf_local(c, x, fl - 0.01, z) < 0.0) badFloor++;
+                if (prev > -1e29) stepMax = fmax(stepMax, fabs(fl - prev) / 0.5);
+                prev = fl;
+            }
+        }
+
+        /* The same again, and found by the lookup from its mouth and from the far side of its bounds. */
+        CHECK(terrain_cave_build(s->f[k], s->i[k], s->j[k], again), "cave %08x isn't there when built again", c->id);
+        if (memcmp(again, c, sizeof *c) != 0) badSame++;
+        TerrainDir md = terrain_chart_dir(&c->chart, c->mouth[0].p[0], c->mouth[0].p[2]), fd = terrain_chart_dir(&c->chart, c->hi[0] + 30.0, c->hi[2] + 30.0);
+        for (int a = 0; a < 2; ++a) {
+            int n = terrain_caves_near_dir(a ? fd : md, a ? 30.0 : 0.0, found, 4), hit = 0;
+            for (int q = 0; q < n; ++q) hit |= found[q].id == c->id && memcmp(&found[q], c, sizeof *c) == 0;
+            if (!hit) badFind++;
+        }
+    }
+    printf("caves over %d cells round (%.0f, %.0f): %d systems (%d adits, %d shafts), %d with a second mouth, %d chambers, %.1f passages each\n",
+           s->n, lc.x, lc.z, systems, kinds[0], kinds[1], mouths2, rooms, systems ? (double)segs / systems : 0.0);
+    if (systems)
+        printf("  passage %.0f .. %.0f m (mean %.0f), radii %.1f .. %.1f m, chambers up to %.0f m across, %.0f m deep at most\n", lenMin, lenMax, lenSum / systems,
+               rMin, rMax, 2.0 * roomMax, deepest);
+    printf("  built in %.1f ms a cell (at most %.0f ms), %.1f s on %d threads; roof %.2f m at least over %d points of %d in the air; floors level under %.0f%% of the axes, "
+           "steepest step %.2f m/m\n", msSum / fmax(s->n, 1), msMax, wall, cpu_count(), coverMin, roofPts, airPts, 100.0 * floorsFlat / fmax(floors, 1), stepMax);
+    CHECK(systems > 0, "no cave in %d cells", s->n);
+    CHECK(badShape == 0, "%d passages, chambers or systems out of size or extent", badShape);
+    CHECK(badCity == 0, "%d points of the caves within %.0f m of a city", badCity, TERRAIN_CAVE_CITY_M);
+    CHECK(badRoof == 0, "%d points of the caves' air under less than %.0f m of rock", badRoof, TERRAIN_CAVE_ROOF_M);
+    CHECK(badSurface == 0, "%d points of the ground's surface in the caves' air away from their mouths", badSurface);
+    CHECK(badMouth == 0, "%d mouths not open at the ground or leading nowhere", badMouth);
+    CHECK(badBounds == 0, "%d points of the caves' air outside their bounds", badBounds);
+    CHECK(badSame == 0, "%d caves differ built again", badSame);
+    CHECK(badFind == 0, "%d caves not found (or not the same) by the lookup", badFind);
+    CHECK(badFloor == 0 && floorsFlat * 10 >= floors * 9, "the floor: %d not between air and rock, level under only %d of %d axis points", badFloor, floorsFlat, floors);
+    /* where passages meet, their floors' blend is steeper than either, by up to a half of the steepest passage's grade */
+    CHECK(stepMax <= 1.5 * TERRAIN_CAVE_GRADE_MAX, "the floor steps by %.2f m/m along a passage", stepMax);
+    free(again); free(found); free(s->sys); free(s);
+}
+
+/* terrain_test --cave-map out.ppm [km [x z]]: the caves round the world's
+ * (x, z), or without one round the first system found out from the
+ * megacity, `km` across (1.5 by default), 800 pixels square: the ground lit
+ * from the north-west in grey; the passages and chambers seen from above,
+ * coloured by the rock over them (yellow shallow, through green, to blue at
+ * 100 m or more); the ground's surface where it lies in the air magenta (the
+ * mouths' openings) and each mouth's reach ringed in red. North (-z) is up.
+ * It prints each system's mouths, in world X/Z. */
+static int cave_map(const char *path, double km, const double *centre) {
+    const int W = 800;
+    DVec2 c;
+    TerrainCave *nearby = (TerrainCave *)malloc(16 * sizeof(TerrainCave));
+    if (centre) c = dv(centre[0], centre[1]);
+    else {   /* out from the megacity, cell by cell, to the first system */
+        DVec2 o = plan_town_centre(0, 0);
+        int got = 0;
+        for (double rad = 0.0; rad < 600000.0 && !got; rad += 0.5 * TERRAIN_CAVE_CELL)
+            for (int a = 0; a < 16 && !got; ++a) {
+                double x = o.x + rad * cos(a * (PI_F / 8.0)), z = o.z + rad * sin(a * (PI_F / 8.0));
+                if (terrain_caves_near(x, z, 0.5 * TERRAIN_CAVE_CELL, nearby, 1) == 1) {
+                    terrain_cave_to_world(&nearby[0], nearby[0].mouth[0].p[0], nearby[0].mouth[0].p[2], &c.x, &c.z);
+                    got = 1;
+                }
+            }
+        if (!got) { printf("no cave within 600 km of the megacity\n"); return 1; }
+    }
+    double px = km * 1000.0 / W, half = 0.5 * km * 1000.0;
+    int n = terrain_caves_near(c.x, c.z, half, nearby, 16);
+    uint8_t *img = (uint8_t *)malloc((size_t)W * W * 3);
+    double *row = (double *)malloc(sizeof(double) * (W + 1) * 2);
+    if (!img || !row) return 1;
+    for (int j = 0; j < W; ++j) {
+        double z = c.z + (j - W / 2) * px;
+        for (int k = 0; k <= W; ++k) {
+            row[k] = terrain_height(c.x + (k - W / 2) * px, z);
+            row[W + 1 + k] = terrain_height(c.x + (k - W / 2) * px, z + px);
+        }
+        for (int i = 0; i < W; ++i) {
+            double x = c.x + (i - W / 2) * px;
+            float g = lit(row[i], row[i + 1], row[W + 1 + i], px), col[3] = { 0.85f * g, 0.85f * g, 0.85f * g };
+            for (int q = 0; q < n; ++q) {
+                const TerrainCave *cv = &nearby[q];
+                double cx, cz;
+                terrain_cave_to_chart(cv, x, z, &cx, &cz);
+                if (cx < cv->lo[0] - 60.0 || cx > cv->hi[0] + 60.0 || cz < cv->lo[2] - 60.0 || cz > cv->hi[2] + 60.0) continue;
+                double top = -1e30;   /* the highest axis or chamber over this pixel */
+                for (int s = 0; s < cv->nseg; ++s) {
+                    const TerrainCaveSeg *sg = &cv->seg[s];
+                    double dx = sg->b[0] - sg->a[0], dz = sg->b[2] - sg->a[2], l2 = dx * dx + dz * dz;
+                    double t = l2 > 0.0 ? ((cx - sg->a[0]) * dx + (cz - sg->a[2]) * dz) / l2 : 0.0;
+                    t = t < 0.0 ? 0.0 : t > 1.0 ? 1.0 : t;
+                    double rr = sg->ra + (sg->rb - sg->ra) * t;
+                    if (hypot(cx - sg->a[0] - t * dx, cz - sg->a[2] - t * dz) <= fmax(rr, 0.7 * px)) top = fmax(top, sg->a[1] + t * (sg->b[1] - sg->a[1]) + rr);
+                }
+                for (int s = 0; s < cv->nroom; ++s) {
+                    const TerrainCaveRoom *rm = &cv->room[s];
+                    double dx = cx - rm->c[0], dz = cz - rm->c[2], u = (dx * rm->cs + dz * rm->sn) / rm->r[0], v = (-dx * rm->sn + dz * rm->cs) / rm->r[2];
+                    if (u * u + v * v <= 1.0) top = fmax(top, rm->c[1] + rm->r[1]);
+                }
+                if (top > -1e29) {
+                    float d = clampf((float)((row[i] - top) / 100.0), 0.0f, 1.0f);
+                    float pc[3] = { 0.95f * (1.0f - d), 0.85f - 0.35f * d, 0.15f + 0.8f * d };
+                    for (int a = 0; a < 3; ++a) col[a] = 0.35f * col[a] + 0.65f * pc[a];
+                }
+                if (terrain_cave_sdf_local(cv, cx, row[i], cz) < 0.0) { col[0] = 0.95f; col[1] = 0.1f; col[2] = 0.9f; }
+                for (int m = 0; m < cv->nmouth; ++m) {
+                    double d = hypot(cx - cv->mouth[m].p[0], cz - cv->mouth[m].p[2]);
+                    if (fabs(d - cv->mouth[m].reach) < 0.8 * px || d < 1.5 * px) { col[0] = 1.0f; col[1] = 0.05f; col[2] = 0.05f; }
+                }
+            }
+            for (int a = 0; a < 3; ++a) img[((size_t)j * W + i) * 3 + a] = (uint8_t)clampf(col[a] * 255.0f, 0.0f, 255.0f);
+        }
+    }
+    FILE *f = fopen(path, "wb");
+    if (!f) return 1;
+    fprintf(f, "P6\n%d %d\n255\n", W, W);
+    fwrite(img, 1, (size_t)W * W * 3, f);
+    fclose(f);
+    printf("cave map of %.1f km at (%.0f, %.0f): %d systems\n", km, c.x, c.z, n);
+    for (int q = 0; q < n; ++q) {
+        printf("  cave %08x: %.0f m of passage, %d passages, %d chambers, %.0f .. %.0f m high;", nearby[q].id, nearby[q].length, nearby[q].nseg, nearby[q].nroom,
+               nearby[q].lo[1], nearby[q].hi[1]);
+        for (int m = 0; m < nearby[q].nmouth; ++m) {
+            double wx, wz;
+            terrain_cave_to_world(&nearby[q], nearby[q].mouth[m].p[0], nearby[q].mouth[m].p[2], &wx, &wz);
+            printf(" %s mouth at (%.0f, %.1f, %.0f)", nearby[q].mouth[m].kind == TERRAIN_CAVE_SHAFT ? "shaft" : "adit", wx, nearby[q].mouth[m].p[1], wz);
+        }
+        printf("\n");
+    }
+    free(img); free(row); free(nearby);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     /* The Earth's test bake (tests/data/earth_test.bake: the real project at
      * 256 a side), from --earth <path> or found from the source or build
@@ -2524,6 +2838,11 @@ int main(int argc, char **argv) {
         double at[2] = { argc > 5 ? atof(argv[4]) : 0.0, argc > 5 ? atof(argv[5]) : 0.0 };
         return erosion_map(argv[2], argc > 3 ? atof(argv[3]) : 12.0, argc > 5 ? at : NULL);
     }
+    if (argc > 2 && strcmp(argv[1], "--cave-map") == 0) {   /* [km] [x z]: about the world's (x, z), the first cave's without */
+        double at[2] = { argc > 5 ? atof(argv[4]) : 0.0, argc > 5 ? atof(argv[5]) : 0.0 };
+        return cave_map(argv[2], argc > 3 ? atof(argv[3]) : 1.5, argc > 5 ? at : NULL);
+    }
+    if (argc > 1 && strcmp(argv[1], "--caves") == 0) { test_caves(&r, argc > 2 ? atof(argv[2]) * 1000.0 : 150000.0); return g_failures != 0; }
     if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
     if (argc > 2 && strcmp(argv[1], "--earth-map") == 0) return earth_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
     if (argc > 2 && strcmp(argv[1], "--landform-map") == 0) return landform_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
@@ -2711,6 +3030,7 @@ int main(int argc, char **argv) {
           "the megacity isn't settlement 0, of its size's relief");
 
     test_landforms(&r);
+    test_caves(&r, 60000.0);
     test_cover(&r);
     test_lod_heights();
     test_clipmap(&r);

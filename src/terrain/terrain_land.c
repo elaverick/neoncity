@@ -457,21 +457,25 @@ typedef struct Canyon {
  * walls and the land beyond its rim that it keeps the erosion off. */
 #define CANYON_REACH (10000.0 + 1200.0 + 300.0 + 90.0 + TERRAIN_CANYON_DEEP_M / TERRAIN_CANYON_WALL + TERRAIN_EROSION_CANYON_M)
 
-/* The cells of face f whose canyons' centres can lie within `reach` (m) of
- * p. A centre on the face has its component at least 1 / sqrt 3, so p is
+/* The cells of face f, cut N x N (terrain_internal.h), any point of which can
+ * lie within `reach` (m) of p; for the canyons, those whose centres can. A
+ * point on the face has its component at least 1 / sqrt 3, so p is
  * within reach only if its own is that less the reach's angle m; and along
  * the way the face's coordinates change by at most 4 / (pi R c) a metre,
  * with c the least component on the way. */
-static int canyon_cells(TerrainDir p, int f, double reach, int *i0, int *i1, int *j0, int *j1) {
+int terrain_face_cells(TerrainDir p, int f, double reach, int N, int *i0, int *i1, int *j0, int *j1) {
     double c = face_comp(p, f), m = reach / PLANET_RADIUS;
     if (c < 0.5773502691896258 - m) return 0;
     double du = (4.0 / PI_D) * m / (c - m) * 1.001, u = face_coord(p, f, 1, c), v = face_coord(p, f, 2, c);
-    const int N = CANYON_SIDE;
     *i0 = (int)floor((u - du + 1.0) * 0.5 * N); *i1 = (int)floor((u + du + 1.0) * 0.5 * N);
     *j0 = (int)floor((v - du + 1.0) * 0.5 * N); *j1 = (int)floor((v + du + 1.0) * 0.5 * N);
     *i0 = *i0 < 0 ? 0 : *i0; *i1 = *i1 >= N ? N - 1 : *i1;
     *j0 = *j0 < 0 ? 0 : *j0; *j1 = *j1 >= N ? N - 1 : *j1;
     return *i0 <= *i1 && *j0 <= *j1;
+}
+
+static int canyon_cells(TerrainDir p, int f, double reach, int *i0, int *i1, int *j0, int *j1) {
+    return terrain_face_cells(p, f, reach, CANYON_SIDE, i0, i1, j0, j1);
 }
 
 static uint32_t canyon_hash(int f, int i, int j) { return hash3i(WORLD_SEED ^ 0x7E51u, f, i, j); }

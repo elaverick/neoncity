@@ -233,6 +233,76 @@ double terrain_surface_dir(TerrainDir p, double spacing);
 /* No ground anywhere on the planet lies lower than this (m, world Y). */
 double terrain_planet_lowest(void);
 
+/* --- Caves (src/terrain/terrain_cave.c) -------------------------------------------
+ * The heightfield can't hold an overhang, so the caves are a second geometry:
+ * a signed distance field under the ground, negative in the cave's air. One
+ * system or none per cell of a lattice on each cube face, about 20 km
+ * across, where the land allows: entered through a horizontal mouth (an adit)
+ * in a canyon's wall or a mountain's steep flank, or down a sloping shaft
+ * from a plateau's top, never within TERRAIN_CAVE_CITY_M of a city's edge.
+ * From the mouth a passage runs into the ground until it has
+ * TERRAIN_CAVE_ROOF_M of rock over it, then branches as a random walk of
+ * tapered tubes (passages 3-12 m across, 300 m to 2 km of them) with a
+ * chamber or two up to 40 m across, and sometimes a second mouth. Everywhere
+ * but within a mouth's reach the ground (terrain_height, full detail) lies at
+ * least TERRAIN_CAVE_ROOF_M over the cave's air; a passage that would come
+ * nearer is sent down or dropped. The floors are flattened, for walking.
+ *
+ * A system is a pure function of its cell and the ground (read in the
+ * world's frame, whichever frame asks), built once per thread and cached.
+ * Its geometry is in its own chart (TerrainChart, about its first mouth): x
+ * and z in the chart, and the height h, world Y (height above the sphere),
+ * so it lies under the ground as the ground lies on the sphere. The world's
+ * queries below take this thread's frame's world (x, y, z). */
+#define TERRAIN_CAVE_ROOF_M   8.0      /* rock over the air, at least, but at the mouths (m) */
+#define TERRAIN_CAVE_CITY_M   2500.0   /* no cave nearer a city's edge (plan_city_edge, m) */
+#define TERRAIN_CAVE_SEGS     160
+#define TERRAIN_CAVE_ROOMS    2
+#define TERRAIN_CAVE_MOUTHS   2
+enum { TERRAIN_CAVE_ADIT = 0, TERRAIN_CAVE_SHAFT };
+/* A passage: a tube from a to b (chart x, h, z) whose radius runs from ra to
+ * rb, its floor TERRAIN_CAVE_FLOOR radii under its axis. */
+typedef struct TerrainCaveSeg { double a[3], b[3]; float ra, rb; } TerrainCaveSeg;
+/* A chamber: an ellipsoid about c with semi-axes r (along its yaw's x, up,
+ * along its z), its yaw's cos and sin, its floor TERRAIN_CAVE_ROOM_FLOOR of
+ * its height under c. */
+typedef struct TerrainCaveRoom { double c[3]; float r[3], cs, sn; } TerrainCaveRoom;
+/* A mouth: where its passage's floor meets the ground (chart x, h, z), the
+ * way into the ground (unit, along the chart), its kind, and its reach: the
+ * air within this of p is the mouth's and may come to the surface (m). */
+typedef struct TerrainCaveMouth { double p[3]; float dir[2], reach; int kind; } TerrainCaveMouth;
+typedef struct TerrainCave {
+    TerrainChart     chart;                     /* about mouth 0 */
+    uint32_t         id;                        /* names it among all caves */
+    double           lo[3], hi[3];              /* every point of its air lies within (chart x, h, z) */
+    float            length;                    /* its passages' length (m) */
+    int              nseg, nroom, nmouth;
+    TerrainCaveSeg   seg[TERRAIN_CAVE_SEGS];
+    TerrainCaveRoom  room[TERRAIN_CAVE_ROOMS];
+    TerrainCaveMouth mouth[TERRAIN_CAVE_MOUTHS];
+} TerrainCave;
+/* The systems whose air can lie within the square of half-width r round
+ * world (x, z), at most max of them (copied out); returns how many it wrote.
+ * terrain_caves_near_dir takes a direction. */
+int    terrain_caves_near(double x, double z, double r, TerrainCave *out, int max);
+int    terrain_caves_near_dir(TerrainDir p, double r, TerrainCave *out, int max);
+/* The cave's signed distance at a point of its chart (x, h, z), negative in
+ * its air: a bound on the distance to its walls within a factor of
+ * TERRAIN_CAVE_LIPSCHITZ, beyond its bounds a positive bound on it. At world
+ * (x, y, z), in this thread's frame, with terrain_cave_sdf. */
+#define TERRAIN_CAVE_LIPSCHITZ 4.0
+double terrain_cave_sdf_local(const TerrainCave *c, double x, double h, double z);
+double terrain_cave_sdf(const TerrainCave *c, double x, double y, double z);
+/* World (x, z) to cave c's chart and back, in this thread's frame. */
+void   terrain_cave_to_chart(const TerrainCave *c, double x, double z, double *cx, double *cz);
+void   terrain_cave_to_world(const TerrainCave *c, double cx, double cz, double *x, double *z);
+/* The floor under a point of cave c's air (chart x, h, z): the height where
+ * going down leaves the air (to a millimetre); -1e30 if the point isn't in
+ * its air. terrain_cave_floor asks every cave at world (x, y, z) and returns
+ * the highest floor under it, -1e30 in none. */
+double terrain_cave_floor_local(const TerrainCave *c, double x, double h, double z);
+double terrain_cave_floor(double x, double y, double z);
+
 /* --- The Earth (src/terrain/terrain_earth.c) ------------------------------------
  * The real planet's ground, baked onto the cube-sphere's faces by
  * tools/earth_bake.c from the editable project in data/earth (see

@@ -196,6 +196,23 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     was 1.7), and 0.5% more of their length is over 10 m of cut or fill.
   - **Value noise's lattice** still shows faintly in the mountains' finer octaves as rounded bumps; a gradient noise
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
+- **Caves** (`src/terrain/terrain_cave.c`, M10b; plan `~/.claude/plans/m10-erosion-and-caves.md`;
+  `terrain_test --caves [km]`, `--cave-map out.ppm [km [x z]]`). b1 (placement, passages, field, CPU only) is done;
+  b2-b6 (meshing and drawing, the mouths in the terrain, walking, light, dressing) are next. Left over from b1:
+  - **Shafts are rare on the real Earth near the megacity.** They need plateau tops; within 300 km of Los Angeles
+    1 system in 289 is a shaft (the Colorado Plateau has more). Without a bake about half are.
+  - **The roof is proved by sampling**, every 3 m over each passage's footprint with half the neighbours' difference
+    as a margin, not by a bound. The tests find at least 11 m of rock where 8 m is the rule.
+  - **The floor at a junction** is a blend of the passages' floors, up to about 1 m/m where two of different grade
+    meet (the passages themselves keep to 0.7). Walking (b4) may want it smoothed.
+  - **The cache is per thread**: a thread builds each system it needs (5 ms a cell on average, 50 ms at most), so
+    the first query near a cave on the main thread (walking, b4) would stall a frame or two. Share it, or have the
+    renderer's worker hand its systems on.
+  - **The field loops over every piece** of a system (about 37 passages and 2 chambers) at each point; meshing (b2)
+    wants a grid of the pieces per brick.
+  - **Chambers** stand only where the passages through them keep to their level floor, so they cluster on level
+    passages; about 1.2 a system, of the two allowed.
+  - **No water**: floors are dry, as decided. Underground rivers and pools come later.
 - **Ground cover and its materials** (the terrain textures roadmap, TX0-TX6, done: `src/terrain/terrain_cover.c`,
   `shaders/terrain/ground.glsl`, `assets/materials/land_*.json`; see the README). Left over:
   - **Grass blades** are done (the grass roadmap, GR0-GR9, README "Grass"). They read the cover's grass weight and

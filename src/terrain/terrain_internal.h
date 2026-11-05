@@ -7,6 +7,8 @@
  *   terrain_land.c     the land: rolling ground, regional landforms and canyons, and
  *                      the erosion's inputs (its lattice of the wild land's shape)
  *   terrain_erosion.c  the erosion filter: gullies down the slope, fill in the hollows
+ *   terrain_cave.c     the caves: where each system goes, its passages and chambers,
+ *                      their signed distance field and the floor under a point
  *   terrain_lod.c      the clipmap: where each level's window goes, the strips
  *                      a move exposes, the per-update budget, readiness, morph,
  *                      block bounds and the screen-space error's choice of levels
@@ -216,9 +218,84 @@ double terrain_erosion_cut_max(void);
  * it is kept there: with none, the land leaves the erosion out whole. */
 double terrain_erosion_dropped(double spacing);
 int    terrain_erosion_used(double spacing);
-/* Counts the bake's loads and unloads: the erosion's caches hold values
- * read from the Earth, good only while this stays the same. */
+/* Counts the bake's loads and unloads and its streams' (the water's beds'):
+ * the erosion's and the caves' caches hold values read from the Earth, good
+ * only while this stays the same. */
 uint32_t terrain_earth_generation(void);
+
+/* --- Caves (terrain_cave.c; terrain.h, "Caves") --------------------------------
+ * Each cube face is cut into TERRAIN_CAVE_SIDE cells a side, as the canyons'
+ * lattice, and cell (f, i, j) holds one system or none: of its
+ * TERRAIN_CAVE_SITES candidate mouths (hashed into the middle 0.8 of the
+ * cell, so neighbouring cells' systems never meet), the first where
+ *   adit   a canyon cuts at least _WALL_DEEP_M and the ground climbs at least
+ *          _WALL_SLOPE, or the mountains hold at least half the land and it
+ *          climbs at least _FLANK_SLOPE: the passage heads straight up the
+ *          slope, falling just enough for the rock over it to grow at
+ *          _COVER_RATE a metre;
+ *   shaft  plateaus hold at least _PLATEAU_W of the land, it is level (under
+ *          _LEVEL_SLOPE) and stands at least _TOP_RISE_M over the ground
+ *          _TOP_RING_M round: the passage falls at _SHAFT_GRADE;
+ * clear of the cities by TERRAIN_CAVE_CITY_M plus the system's reach, above
+ * the sea to come, off the roads and the water's beds, and whose system grows
+ * to TERRAIN_CAVE_LEN_MIN_M of passage. Past the entrance (the mouth's reach)
+ * the passages grow from tips, mostly the newest: each step _STEP_MIN_M to
+ * _STEP_MAX_M, turning a little (never more than _TURN_MAX from the passage
+ * before), its grade within _GRADE_STEP of the last and keeping between
+ * _COVER_LO_M and _COVER_HI_M of rock over it where it can, branching at
+ * _BRANCH, now and then a chamber; every step proved under
+ * TERRAIN_CAVE_ROOF_M of rock (strip_cover) or sent down, or dropped, and
+ * dropped too if it would stack on another piece (one floor over another's
+ * air; see terrain_cave.c, "Stacking"). None strays more than _EXTENT_M from
+ * its first mouth. With _SECOND, a second mouth near the cave, its entrance
+ * joined to the nearest junction within a grade step of both. */
+#define TERRAIN_CAVE_CELL       20000.0
+#define TERRAIN_CAVE_CHANCE     0.85     /* of a cell trying for a system */
+#define TERRAIN_CAVE_SITES      24
+#define TERRAIN_CAVE_WALL_DEEP_M 60.0
+#define TERRAIN_CAVE_WALL_SLOPE 0.8
+#define TERRAIN_CAVE_FLANK_SLOPE 0.5
+#define TERRAIN_CAVE_PLATEAU_W  0.6
+#define TERRAIN_CAVE_LEVEL_SLOPE 0.12
+#define TERRAIN_CAVE_TOP_RING_M 900.0
+#define TERRAIN_CAVE_TOP_RISE_M 60.0
+#define TERRAIN_CAVE_COVER_RATE 0.5      /* the entrance: rock gained a metre in (m/m) */
+#define TERRAIN_CAVE_SHAFT_GRADE 0.53    /* a shaft's fall, 28 degrees */
+#define TERRAIN_CAVE_ENTRY_MAX_M 160.0   /* an entrance that hasn't its roof by then is given up */
+#define TERRAIN_CAVE_EXTENT_M   1200.0
+#define TERRAIN_CAVE_LEN_MIN_M  300.0
+#define TERRAIN_CAVE_LEN_MAX_M  2000.0
+#define TERRAIN_CAVE_R_MIN      1.5      /* passages' radii (m) */
+#define TERRAIN_CAVE_R_MAX      6.0
+#define TERRAIN_CAVE_STEP_MIN_M 12.0
+#define TERRAIN_CAVE_STEP_MAX_M 40.0
+#define TERRAIN_CAVE_GRADE_MAX  0.7      /* the steepest passage, 35 degrees... */
+#define TERRAIN_CAVE_GRADE_STEP 0.35     /* ...and the most its grade changes from the passage before... */
+#define TERRAIN_CAVE_TURN_MAX   1.75     /* ...and its heading (100 degrees) */
+#define TERRAIN_CAVE_COVER_LO_M 20.0
+#define TERRAIN_CAVE_COVER_HI_M 70.0
+#define TERRAIN_CAVE_BRANCH     0.22
+#define TERRAIN_CAVE_ROOM_CHANCE 0.12
+#define TERRAIN_CAVE_ROOM_M     20.0     /* a chamber's half-width at most */
+#define TERRAIN_CAVE_FLOOR      0.55     /* a passage's floor, radii under its axis */
+#define TERRAIN_CAVE_ROOM_FLOOR 0.45     /* a chamber's, of its half-height */
+#define TERRAIN_CAVE_ROUGH_M    1.6      /* the walls' noise, at most (m) */
+#define TERRAIN_CAVE_BLEND_M    3.0      /* the passages' smooth union: its bulge is a quarter of this */
+#define TERRAIN_CAVE_FLOOR_K    1.0      /* the floor's soft clamp */
+#define TERRAIN_CAVE_ROOF_STEP_M 3.0     /* the ground sampled this finely over a passage */
+#define TERRAIN_CAVE_SECOND     0.45     /* of a system trying for a second mouth */
+#define TERRAIN_CAVE_SIDE ((int)(0.5 * 3.14159265358979323846 * PLANET_RADIUS / TERRAIN_CAVE_CELL + 0.5))
+/* How far a cave's air reaches from its first mouth's direction, at most (m). */
+#define TERRAIN_CAVE_REACH (TERRAIN_CAVE_EXTENT_M + TERRAIN_CAVE_ROOM_M + TERRAIN_CAVE_R_MAX + TERRAIN_CAVE_ROUGH_M + TERRAIN_CAVE_BLEND_M)
+/* The cells of face f, cut N x N in equal angle, any point of which can lie
+ * within `reach` (m) of p (the canyons' lattice and the caves'): their index
+ * ranges; 0 if none. */
+int terrain_face_cells(TerrainDir p, int f, double reach, int N, int *i0, int *i1, int *j0, int *j1);
+/* Cell (f, i, j)'s system, built afresh (no cache); 0 if it has none. For the
+ * tests: terrain_caves_near caches what this builds. */
+int terrain_cave_build(int f, int i, int j, TerrainCave *out);
+/* The cell holding direction p's mouth candidates (for the tests' surveys). */
+void terrain_cave_cell(TerrainDir p, int *f, int *i, int *j);
 
 /* An edge measure past every rise (E, C and the Earth's detail all 1): the
  * land as it would be with no settlement near, which the streams are

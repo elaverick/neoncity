@@ -186,17 +186,18 @@ static void water_free(EarthWater *w) {
     memset(w, 0, sizeof *w);
 }
 
+static volatile uint32_t g_generation;
+uint32_t terrain_earth_generation(void) { return g_generation; }
+
 /* The streams and everything their file gives the bake's water. */
 static void streams_free(void) {
+    g_generation++;   /* the water's beds go: the caves' ground changes */
     water_free(&g_earth.streams);
     free(g_earth.water.bed); g_earth.water.bed = NULL;
     free(g_earth.level_bucket); free(g_earth.level); free(g_earth.plan_probe);
     g_earth.level_bucket = NULL; g_earth.level = NULL; g_earth.plan_probe = NULL;
     g_earth.nlevels = g_earth.nplan = g_earth.plan_checked = 0;
 }
-
-static volatile uint32_t g_generation;
-uint32_t terrain_earth_generation(void) { return g_generation; }
 
 void terrain_earth_unload(void) {
     g_generation++;
@@ -488,6 +489,7 @@ static int load_streams(const char *path) {
     if (fgetc(f) != EOF) return streams_refused(f, path, "overlong");
     fclose(f);
     snprintf(g_earth.streams_path, sizeof g_earth.streams_path, "%s", path);
+    g_generation++;   /* the water's beds come: the caves' ground changes */
     printf("earth: streams %s, %u links, %u points (%.0f m grid, from %.2f m3/s), with the water's beds\n", path, get_u32(hd + 112), w->V, cell,
            get_f32(hd + 20));
     return 1;
