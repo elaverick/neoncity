@@ -4,7 +4,9 @@
 /* Terrain internals, shared by the terrain sources and tests/terrain_test.c.
  *
  *   terrain_height.c   the height field: urban ground blended into the land
- *   terrain_land.c     the land: rolling ground, regional landforms and canyons
+ *   terrain_land.c     the land: rolling ground, regional landforms and canyons, and
+ *                      the erosion's inputs (its lattice of the wild land's shape)
+ *   terrain_erosion.c  the erosion filter: gullies down the slope, fill in the hollows
  *   terrain_lod.c      the clipmap: where each level's window goes, the strips
  *                      a move exposes, the per-update budget, readiness, morph,
  *                      block bounds and the screen-space error's choice of levels
@@ -161,6 +163,63 @@
 #define TERRAIN_LAND_TOP_M  (TERRAIN_BASE_M + TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M)
 #define TERRAIN_LAND_DEEP_M (TERRAIN_BASE_M + TERRAIN_HILLS_M + TERRAIN_CANYON_DEEP_M)
 
+/* --- Erosion (terrain_erosion.c) --------------------------------------------
+ * land += E * rough * K * erosion, beyond the base, with K 0 inside a
+ * canyon's rim, rising to 1 TERRAIN_EROSION_CANYON_M beyond it (the
+ * canyons' walls are steeper and narrower than the erosion's slope can
+ * follow): an analytic filter, not a
+ * simulation (a simulation needs a bounded grid and breaks the land's being a
+ * function of position). Its inputs are the land's slope and hollowness at the
+ * point, read from the shape of the wild land (macro, the landforms, the
+ * canyons, as they would be with no settlement near) on a lattice of
+ * TERRAIN_EROSION_LATTICE_M and at that spacing whatever the level's, so they
+ * are the same at every level of detail (terrain_land.c, "The erosion's
+ * inputs"):
+ *   gullies  octaves of stripes running down the slope (TERRAIN_EROSION_WAVE
+ *            across at the widest), cutting at most TERRAIN_EROSION_M, none
+ *            under TERRAIN_EROSION_SLOPE_FROM, all from _SLOPE_FULL; deeper on
+ *            ridges (hollowness below 0) by up to TERRAIN_EROSION_RIDGE of
+ *            that, shallower in hollows by up to TERRAIN_EROSION_VALLEY.
+ *   fill     a hollow's floor raised by TERRAIN_EROSION_FILL of how far it
+ *            lies under the mean of its four neighbours, at most _FILL_M,
+ *            and only where the gullies are not (gentle ground): the
+ *            sediment, flattening the valleys' floors and the basins.
+ * hollowness = the mean of the shape at the four neighbours a lattice
+ * spacing away less the shape at the point (m): above 0 in a valley, below
+ * on a ridge. Past the spacing at which no gully octave is kept the land
+ * leaves the erosion out whole (terrain_erosion_used). */
+#define TERRAIN_EROSION_M          180.0    /* the gullies' deepest cut, every octave, before the ridges' gain (m) */
+#define TERRAIN_EROSION_WAVE       1600.0   /* the widest gullies' spacing (m) */
+#define TERRAIN_EROSION_OCTAVES    5
+#define TERRAIN_EROSION_LATTICE_M  400.0    /* the slope and hollowness read on a lattice this fine, at this spacing (m) */
+#define TERRAIN_EROSION_SLOPE_FROM 0.04
+#define TERRAIN_EROSION_SLOPE_FULL 0.30
+#define TERRAIN_EROSION_HOLLOW_M   40.0     /* hollowness (m) at which a ridge or a valley counts in full */
+#define TERRAIN_EROSION_RIDGE      0.6
+#define TERRAIN_EROSION_VALLEY     0.7
+#define TERRAIN_EROSION_FILL       1.0
+#define TERRAIN_EROSION_FILL_M     25.0
+#define TERRAIN_EROSION_CANYON_M   400.0    /* none inside a canyon's rim, fading in over this beyond it (m)... */
+#define TERRAIN_EROSION_CANYON_DEEP_M 40.0  /* ...wherever it is this deep, less where it tapers out (m) */
+#define TERRAIN_EROSION_ZMIN       0.3      /* the stripes' corners agreeing less than this fade */
+typedef struct TerrainEroded {
+    double dh;     /* the change in height (m): the fill less the gullies' cut */
+    float  crest;  /* -1 a gully's floor .. 1 its crest, by the steepness (0 on gentle ground) */
+    float  fill;   /* the fill over TERRAIN_EROSION_FILL_M, 0 .. 1 */
+} TerrainEroded;
+/* The filter at direction d given the land's slope there (a tangent vector,
+ * m per m) and hollowness (m), at `spacing`. Unscaled: the land scales dh by
+ * E * rough. dh lies within [-terrain_erosion_cut_max(), TERRAIN_EROSION_FILL_M]. */
+TerrainEroded terrain_erosion(TerrainDir d, TerrainDir grad, double hollow, double spacing);
+double terrain_erosion_cut_max(void);
+/* The share of the gullies' depth left out at `spacing`; and whether any of
+ * it is kept there: with none, the land leaves the erosion out whole. */
+double terrain_erosion_dropped(double spacing);
+int    terrain_erosion_used(double spacing);
+/* Counts the bake's loads and unloads: the erosion's caches hold values
+ * read from the Earth, good only while this stays the same. */
+uint32_t terrain_earth_generation(void);
+
 /* An edge measure past every rise (E, C and the Earth's detail all 1): the
  * land as it would be with no settlement near, which the streams are
  * derived from (terrain_earth_load_streams). */
@@ -204,6 +263,9 @@ double terrain_urban_shape(double x, double z);
 #define TERRAIN_VALLEY_M 1000.0   /* under the water's reach (2 km), so the fade is exact */
 double terrain_land_parts(TerrainDir d, double edge, double spacing, double *lift);
 double terrain_land_parts_at(TerrainDir d, double edge, double spacing, double valley, double *lift);
+/* The same, and the erosion's part in it in *er if not NULL (dh as it went
+ * into the land; crest and fill scaled by its weight there, at most 1). */
+double terrain_land_eroded(TerrainDir d, double edge, double spacing, double valley, double *lift, TerrainEroded *er);
 /* macro alone, at `spacing`, as it is wherever plan_urban is above 0 (the
  * Earth's detail is left out there). */
 double terrain_lift(double x, double z, double spacing);

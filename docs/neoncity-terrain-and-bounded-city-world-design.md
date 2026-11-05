@@ -59,6 +59,13 @@ This level should combine broad procedural fields with explicit feature descript
 
 Regional descriptions should therefore determine which landform types occur, where they occur, their orientation and scale, and how they transition into adjacent regions. Procedural noise can add variation within those constraints rather than substituting for geographic structure.
 
+**Erosion (M10a, `terrain_erosion.c`).** The landforms are then eroded by an analytic filter, not a simulation. A simulation needs a bounded grid and many passes, which breaks the land being a pure function of position, the octave cut-off levels of detail and the proven height bounds. The one grid there is, the Earth bake, is 2.44 km a sample, which is too coarse to show. The filter is built in two steps:
+
+- **The inputs.** The slope and hollowness of the wild land's shape (macro and the landforms, as they would be with no settlement near, and without the canyons) are read on a 400 m lattice in three dimensions. The lattice is cached per thread and blended smoothly over each cell, so the inputs are the same at every level of detail.
+- **The gullies and the fill.** Five octaves of stripes, 1.6 km to 100 m apart, run down that slope. Each octave's slope includes the coarser octaves' gullies, so the fine gullies turn into the coarse ones' floors. The cut is deeper on ridges and fades out on gentle ground. In hollows on gentle ground a fill raises the floor towards its surroundings.
+
+The erosion is weighted by the landforms' own rise and roughness and fades out towards canyons. Past 400 m spacing it is left out whole, within the level-of-detail bound. It adds about a third to a clipmap fill in the mountains.
+
 ### 3.3 Local terrain surface
 
 The local terrain surface supplies the continuous ground under the player and city, plus the surrounding terrain visible at ground level. Use a heightfield as the default representation: it is a strong fit for ordinary ground, including plains, hills, mountain slopes and most valleys and canyons.

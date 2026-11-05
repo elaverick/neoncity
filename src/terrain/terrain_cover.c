@@ -4,8 +4,9 @@
 /* The ground cover (terrain.h, "Ground cover"): rules over the ground's slope,
  * elevation, latitude and the water near, smooth in each, and the packing the
  * GPU reads. Every threshold below is a rule of thumb, not data: the land has
- * no land-cover or climate dataset behind it. Later inputs (erosion's
- * sediment and flow, M10) go into the site and these rules. */
+ * no land-cover or climate dataset behind it. The erosion (M10a) gives the
+ * site its gullies' crests and floors and its fill: rock shows on the
+ * crests, scree lies in the floors, and the fill is soil and grass. */
 
 /* Slopes, as the up component of the unit normal. */
 #define COVER_CLIFF_FROM   0.80    /* bare rock from about 37 degrees... */
@@ -34,6 +35,11 @@
 #define COVER_BIG_FULL_M   150.0   /* ...all sand, no mud, by this wide (and lakes) */
 #define COVER_FAR_M        1.0e5   /* the water read no farther than this */
 #define COVER_SOFT_M       2.0     /* the least blur of a band's edge, a point's */
+/* The erosion's part (terrain_internal.h, "Erosion"). */
+#define COVER_CREST_ROCK   0.45    /* of what the slope leaves, rock on a gully's crest... */
+#define COVER_CREST_HIGH   0.35    /* ...and this more in the highlands */
+#define COVER_FLOOR_SCREE  0.55    /* scree in a gully's floor, the highlands' (less, lower down) */
+#define COVER_FILL_GRASS   0.35    /* grass on the fill, over what the patches give */
 /* The grass's patches: a slow noise over the sphere. */
 #define COVER_PATCH_WAVE   1500.0
 #define COVER_PATCH_OCTAVES 3
@@ -94,11 +100,14 @@ void terrain_cover_at(const TerrainCoverSite *s, double spacing, TerrainCover *o
 
     /* Each class takes its share of what the ones before it leave, so the
      * shares sum to 1 by construction. */
+    double crest = fmax(0.0, s->crest), gully = fmax(0.0, -s->crest), fill = sat(s->fill);
     double rock = cliff + (1.0 - cliff) * fmax(alpine * ease(0.97, 0.85, ny), seaF * floorRock);   /* above the treeline, all but level ground; the sea's floor's */
+    rock += (1.0 - rock) * crest * (COVER_CREST_ROCK + COVER_CREST_HIGH * high) * steep;   /* the crests between the gullies */
+    rock *= 1.0 - fill * (1.0 - seaF);   /* the sediment buries it, ashore */
     double sandF = fmax(fmax(nearSand * big, coast) * level, seaF);   /* under the sea, all the rock leaves */
     double mudF = nearMud * (1.0 - 0.6 * big) * level * (1.0 - seaF);
-    double screeF = fmax(alpine, steep * (0.2 + 0.6 * high));
-    double grassF = sat(0.62 + 0.45 * patch + 0.35 * wet - 0.55 * steep) * (1.0 - alpine);
+    double screeF = fmax(fmax(alpine, steep * (0.2 + 0.6 * high)), gully * COVER_FLOOR_SCREE * (0.4 + 0.6 * high)) * (1.0 - fill);
+    double grassF = sat(0.62 + 0.45 * patch + 0.35 * wet - 0.55 * steep + COVER_FILL_GRASS * fill) * (1.0 - alpine);
 
     double left = 1.0 - rock;
     o->w[TERRAIN_COVER_ROCK] = (float)rock;

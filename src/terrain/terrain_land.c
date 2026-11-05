@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "terrain_internal.h"
 #include "noise.h"
 #include "plan.h"
@@ -452,8 +453,9 @@ typedef struct Canyon {
     double m1, f1, p1, m2, f2, p2; /* meanders: amplitude (m), cycles along the chord, phase */
 } Canyon;
 
-/* The farthest any canyon reaches from its centre: chord, meanders, floor and walls. */
-#define CANYON_REACH (10000.0 + 1200.0 + 300.0 + 90.0 + TERRAIN_CANYON_DEEP_M / TERRAIN_CANYON_WALL)
+/* The farthest any canyon reaches from its centre: chord, meanders, floor,
+ * walls and the land beyond its rim that it keeps the erosion off. */
+#define CANYON_REACH (10000.0 + 1200.0 + 300.0 + 90.0 + TERRAIN_CANYON_DEEP_M / TERRAIN_CANYON_WALL + TERRAIN_EROSION_CANYON_M)
 
 /* The cells of face f whose canyons' centres can lie within `reach` (m) of
  * p. A centre on the face has its component at least 1 / sqrt 3, so p is
@@ -506,9 +508,13 @@ static int canyon_of(int f, int i, int j, TerrainDir p, Canyon *c, double *x, do
 
 /* How deep canyon c cuts at (x, z) of its chart: the deepest of its
  * segments' cuts, each from the nearest point on the segment, so the cut is
- * continuous. */
-static double canyon_cut(const Canyon *c, double x, double z) {
-    double reach = c->half + c->m1 + c->m2 + c->floor + c->depth / TERRAIN_CANYON_WALL;
+ * continuous. With `shelter`, the most of how much each segment keeps the
+ * erosion off there, if more than *shelter: 1 out to its rim, falling to 0
+ * TERRAIN_EROSION_CANYON_M beyond, times how deep it is there against
+ * TERRAIN_EROSION_CANYON_DEEP_M, so the erosion fades in over the land
+ * round a canyon, not down its walls, and is whole where it tapers out. */
+static double canyon_cut(const Canyon *c, double x, double z, double *shelter) {
+    double reach = c->half + c->m1 + c->m2 + c->floor + c->depth / TERRAIN_CANYON_WALL + (shelter ? TERRAIN_EROSION_CANYON_M : 0.0);
     if (x * x + z * z >= reach * reach) return 0.0;
     /* the meanders' sines along the vertices, by turning each a step at a time */
     double d1 = 2.0 * PI_F * c->f1 / CANYON_SEGS, d2 = 2.0 * PI_F * c->f2 / CANYON_SEGS;
@@ -528,6 +534,9 @@ static double canyon_cut(const Canyon *c, double x, double z) {
             double deep = c->depth * smoothstepf(0.0f, 0.18f, (float)tt) * smoothstepf(1.0f, 0.82f, (float)tt);
             double rim = c->floor + deep / TERRAIN_CANYON_WALL;
             if (d < rim) cut = fmax(cut, deep * (1.0 - smoothstepf((float)c->floor, (float)rim, (float)d)));
+            if (shelter && d < rim + TERRAIN_EROSION_CANYON_M)
+                *shelter = fmax(*shelter, smoothstepf(0.0f, (float)TERRAIN_EROSION_CANYON_DEEP_M, (float)deep) *
+                                              (1.0 - smoothstepf((float)rim, (float)(rim + TERRAIN_EROSION_CANYON_M), (float)d)));
         }
         px = qx; pz = qz;
     }
@@ -581,18 +590,23 @@ int terrain_canyons_near_in(const TerrainChart *wc, double x, double z, double r
     return n;
 }
 
-static double canyon_depth(TerrainDir p) {
+/* The canyons' cut at p, the deepest of them; and with `shelter` the most
+ * any keeps the erosion off there (canyon_cut). */
+static double canyon_depth_at(TerrainDir p, double *shelter) {
     double cut = 0.0, x, z;
     int i0, i1, j0, j1;
     Canyon c;
+    if (shelter) *shelter = 0.0;
     for (int f = 0; f < 6; ++f) {
         if (!canyon_cells(p, f, CANYON_REACH, &i0, &i1, &j0, &j1)) continue;
         for (int j = j0; j <= j1; ++j)
             for (int i = i0; i <= i1; ++i)
-                if (canyon_of(f, i, j, p, &c, &x, &z)) cut = fmax(cut, canyon_cut(&c, x, z));
+                if (canyon_of(f, i, j, p, &c, &x, &z)) cut = fmax(cut, canyon_cut(&c, x, z, shelter));
     }
     return cut;
 }
+
+static double canyon_depth(TerrainDir p) { return canyon_depth_at(p, NULL); }
 
 double terrain_canyon_depth(double x, double z) { return canyon_depth(terrain_world_dir(x, z)); }
 
@@ -604,7 +618,96 @@ double terrain_canyon_depth(double x, double z) { return canyon_depth(terrain_wo
  * valley floors and shores. */
 static double valley_rise(double s) { return smoothstepf(0.0f, (float)TERRAIN_VALLEY_M, (float)s); }
 
-double terrain_land_parts_at(TerrainDir d, double edge, double spacing, double valley, double *lift) {
+/* --- The erosion's inputs ---------------------------------------------------
+ * The land's slope and hollowness for the erosion (terrain_internal.h), from
+ * the wild land's shape (the land with no settlement near: macro with the
+ * Earth's detail and the landforms; no base, no water, and no canyons, whose
+ * walls are steeper and narrower than the lattice can follow, so the
+ * erosion fades out in them instead) on a lattice
+ * of TERRAIN_EROSION_LATTICE_M over the planet's points in three dimensions,
+ * each lattice point's value the shape at its direction. At each corner of
+ * the cell round a point, the slope is the lattice's central differences
+ * along the three axes, the hollowness a quarter of the lattice's Laplacian
+ * times the spacing squared (the shape doesn't change along the radius, so
+ * that is the sphere's own, to the cell's error: the mean of four neighbours
+ * less the centre); they are blended by smoothstep weights over the cell, so
+ * they change smoothly. The shape is that of the wild land at every point,
+ * whatever settlement is near, so it needs no chart and is the same in every
+ * frame; the land scales the erosion by its own E and roughness. Lattice
+ * values and corners are cached per thread: they are pure functions of the
+ * lattice point, so the cache changes no value. */
+static double wild_shape(TerrainDir q) {
+    const double sp = TERRAIN_EROSION_LATTICE_M;
+    Macro m;
+    macro_of(q, TERRAIN_WILD_EDGE, sp, 1, &m);
+    Region r;
+    Frame fr[FRAME_MAX];
+    int n = region_frames(q, &m, &r, fr);
+    return m.lift + m.rough * forms_height(&r, fr, n, &m, sp);
+}
+
+#define LATTICE_BITS 15
+typedef struct LatticeValue { int32_t i, j, k; uint32_t gen; double s; } LatticeValue;
+typedef struct LatticeCorner { int32_t i, j, k; uint32_t gen; double g[3], hollow; } LatticeCorner;
+static _Thread_local LatticeValue  *t_values;
+static _Thread_local LatticeCorner *t_corners;
+
+static uint32_t lattice_slot(int32_t i, int32_t j, int32_t k) { return hash3i(0x7E81u, i, j, k) & ((1u << LATTICE_BITS) - 1u); }
+
+static double lattice_value(int32_t i, int32_t j, int32_t k, uint32_t gen) {
+    LatticeValue *v = t_values ? &t_values[lattice_slot(i, j, k)] : NULL;
+    if (v && v->gen == gen && v->i == i && v->j == j && v->k == k) return v->s;
+    TerrainDir p = { (double)i, (double)j, (double)k };
+    double s = wild_shape(unit3(p));
+    if (v) { v->i = i; v->j = j; v->k = k; v->gen = gen; v->s = s; }
+    return s;
+}
+
+static const LatticeCorner *lattice_corner(int32_t i, int32_t j, int32_t k, uint32_t gen, LatticeCorner *own) {
+    LatticeCorner *c = t_corners ? &t_corners[lattice_slot(i, j, k)] : own;
+    if (c != own && c->gen == gen && c->i == i && c->j == j && c->k == k) return c;
+    double s0 = lattice_value(i, j, k, gen), lap = 0.0;
+    for (int a = 0; a < 3; ++a) {
+        int32_t di = a == 0, dj = a == 1, dk = a == 2;
+        double sp = lattice_value(i + di, j + dj, k + dk, gen), sm = lattice_value(i - di, j - dj, k - dk, gen);
+        c->g[a] = (sp - sm) / (2.0 * TERRAIN_EROSION_LATTICE_M);
+        lap += sp + sm - 2.0 * s0;
+    }
+    c->hollow = 0.25 * lap;
+    c->i = i; c->j = j; c->k = k; c->gen = gen;
+    return c;
+}
+
+/* The erosion at d (terrain_internal.h, "Erosion"), unscaled. */
+static TerrainEroded erosion_at(TerrainDir d, double spacing) {
+    if (!t_values) {   /* a thread's first: the caches, or without them every value afresh */
+        t_values = (LatticeValue *)calloc((size_t)1 << LATTICE_BITS, sizeof(LatticeValue));
+        t_corners = (LatticeCorner *)calloc((size_t)1 << LATTICE_BITS, sizeof(LatticeCorner));
+    }
+    uint32_t gen = terrain_earth_generation() + 1u;   /* never 0, which the empty slots hold */
+    double r = PLANET_RADIUS / TERRAIN_EROSION_LATTICE_M;
+    double x = d.x * r, y = d.y * r, z = d.z * r, fx0 = floor(x), fy0 = floor(y), fz0 = floor(z);
+    int32_t ix = (int32_t)fx0, iy = (int32_t)fy0, iz = (int32_t)fz0;
+    double fx = x - fx0, fy = y - fy0, fz = z - fz0, wx[2], wy[2], wz[2];
+    wx[1] = fx * fx * (3.0 - 2.0 * fx); wx[0] = 1.0 - wx[1];
+    wy[1] = fy * fy * (3.0 - 2.0 * fy); wy[0] = 1.0 - wy[1];
+    wz[1] = fz * fz * (3.0 - 2.0 * fz); wz[0] = 1.0 - wz[1];
+    TerrainDir g = { 0.0, 0.0, 0.0 };
+    double hollow = 0.0;
+    for (int c = 0; c < 8; ++c) {
+        int dx = c & 1, dy = c >> 1 & 1, dz = c >> 2;
+        double w = wx[dx] * wy[dy] * wz[dz];
+        if (w <= 0.0) continue;
+        LatticeCorner own;
+        const LatticeCorner *k = lattice_corner(ix + dx, iy + dy, iz + dz, gen, &own);
+        g.x += w * k->g[0]; g.y += w * k->g[1]; g.z += w * k->g[2];
+        hollow += w * k->hollow;
+    }
+    g = sub3(g, scale3(d, dot3(g, d)));   /* along the sphere */
+    return terrain_erosion(d, g, hollow, spacing);
+}
+
+double terrain_land_eroded(TerrainDir d, double edge, double spacing, double valley, double *lift, TerrainEroded *er) {
     double v = valley_rise(valley);
     double h = v > 0.0 ? v * TERRAIN_BASE_M * fbm_lod(WORLD_SEED ^ 0x7E12u, scale3(d, PLANET_RADIUS), TERRAIN_BASE_WAVE, TERRAIN_BASE_OCTAVES, spacing) : 0.0;
     double e = v * region_rise(edge), c = v * canyon_rise(edge);
@@ -612,14 +715,25 @@ double terrain_land_parts_at(TerrainDir d, double edge, double spacing, double v
     macro_of(d, edge, spacing, e > 0.0 || c > 0.0, &m);
     *lift = m.lift;
     h += *lift;
+    if (er) { er->dh = 0.0; er->crest = er->fill = 0.0f; }
+    double shelter = 0.0, cut = c > 0.0 ? c * m.canyon * canyon_depth_at(d, &shelter) : 0.0;
     if (e > 0.0) {
         Region r;
         Frame fr[FRAME_MAX];
         int n = region_frames(d, &m, &r, fr);
         h += e * m.rough * forms_height(&r, fr, n, &m, spacing);
+        double w = e * m.rough * (1.0 - c * m.canyon * shelter);
+        if (w > 0.0 && terrain_erosion_used(spacing)) {
+            TerrainEroded x = erosion_at(d, spacing);
+            h += w * x.dh;
+            if (er) { er->dh = w * x.dh; er->crest = (float)(fmin(w, 1.0) * x.crest); er->fill = (float)(fmin(w, 1.0) * x.fill); }
+        }
     }
-    if (c > 0.0) h -= c * m.canyon * canyon_depth(d);
-    return h;
+    return h - cut;
+}
+
+double terrain_land_parts_at(TerrainDir d, double edge, double spacing, double valley, double *lift) {
+    return terrain_land_eroded(d, edge, spacing, valley, lift, NULL);
 }
 
 double terrain_land_parts(TerrainDir d, double edge, double spacing, double *lift) {
@@ -669,8 +783,8 @@ void terrain_landform_dir(TerrainDir d, TerrainLandform *out) {
 void terrain_land_range(double edge, double *lo, double *hi) {
     double e = region_rise(edge), elo, ehi, grade, e0 = terrain_earth_datum(), g = terrain_earth_rough_max();
     terrain_earth_extremes(&elo, &ehi, &grade);
-    *lo = fmin(0.0, elo - e0) - (TERRAIN_BASE_M + e * g * TERRAIN_HILLS_M + canyon_rise(edge) * TERRAIN_CANYON_DEEP_M);
-    *hi = fmax(0.0, ehi - e0) + TERRAIN_BASE_M + e * g * (TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M);
+    *lo = fmin(0.0, elo - e0) - (TERRAIN_BASE_M + e * g * (TERRAIN_HILLS_M + terrain_erosion_cut_max()) + canyon_rise(edge) * TERRAIN_CANYON_DEEP_M);
+    *hi = fmax(0.0, ehi - e0) + TERRAIN_BASE_M + e * g * (TERRAIN_UPLIFT_M + TERRAIN_RIDGE_M + TERRAIN_EROSION_FILL_M);
 }
 
 /* Leaving octaves out of a fractal sum moves it by at most their share of its
@@ -704,6 +818,11 @@ double terrain_land_lod_error(double x, double z, double spacing) {
                              TERRAIN_TOP_M * terrain_dropped(TERRAIN_TOP_WAVE, TERRAIN_TOP_OCTAVES, spacing);
         for (int f = 0; f < n; ++f)
             for (int k = 0; k < TERRAIN_TYPES; ++k) err += e * m.rough * fr[f].wt * fr[f].w[k] * t[k];
+        /* the erosion's slope and hollowness are the same at every level, so
+         * only its octaves left out move it; with none left it is left out
+         * whole, its fill too (dh lies between -cut and the fill) */
+        err += e * m.rough * (terrain_erosion_used(spacing) ? terrain_erosion_cut_max() * terrain_erosion_dropped(spacing)
+                                                            : fmax(terrain_erosion_cut_max(), TERRAIN_EROSION_FILL_M));
     }
     return err;
 }
@@ -724,8 +843,10 @@ uint64_t terrain_lod_key(double spacing) {
         { TERRAIN_PLAINS_WAVE, TERRAIN_PLAINS_OCTAVES }, { TERRAIN_HILLS_WAVE, TERRAIN_HILLS_OCTAVES },
         { TERRAIN_RIDGE_WAVE, TERRAIN_RIDGE_OCTAVES }, { TERRAIN_MASK_WAVE, TERRAIN_MASK_OCTAVES },
         { TERRAIN_TOP_WAVE, TERRAIN_TOP_OCTAVES }, { TERRAIN_MACRO_WAVE, TERRAIN_MACRO_OCTAVES },
+        { TERRAIN_EROSION_WAVE, TERRAIN_EROSION_OCTAVES },
     };
+    /* base 9 (no sum has more than 8 octaves): 9^9 fits the top 32 bits */
     uint64_t key = 0;
-    for (size_t k = 0; k < sizeof(sums) / sizeof(sums[0]); ++k) key = key * 16u + (uint64_t)terrain_octaves(sums[k].wave, sums[k].octaves, spacing);
+    for (size_t k = 0; k < sizeof(sums) / sizeof(sums[0]); ++k) key = key * 9u + (uint64_t)terrain_octaves(sums[k].wave, sums[k].octaves, spacing);
     return key << 32 | terrain_earth_lod_key(spacing);
 }

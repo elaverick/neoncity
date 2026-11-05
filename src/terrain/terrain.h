@@ -413,9 +413,11 @@ typedef struct TerrainCover { float w[TERRAIN_COVERS]; float snow, wet; } Terrai
  * ground's unit normal there, and the water near it (terrain_earth_water):
  * the signed distance to the nearest water's edge (m, negative in it; the
  * water's reach or more where none is near) and that water's size, a river's
- * width or TERRAIN_COVER_LAKE_M for a lake's shore (m). */
+ * width or TERRAIN_COVER_LAKE_M for a lake's shore (m); and the erosion
+ * there (TerrainEroded's, by the land's share): its gullies' crests and
+ * floors, -1 a floor .. 1 a crest, and its fill, 0 .. 1. */
 #define TERRAIN_COVER_LAKE_M 400.0
-typedef struct TerrainCoverSite { TerrainDir d; double elev, ny, edge, size; } TerrainCoverSite;
+typedef struct TerrainCoverSite { TerrainDir d; double elev, ny, edge, size; float crest, fill; } TerrainCoverSite;
 /* The cover at a site, as sampled every `spacing` metres (0: a point). */
 void   terrain_cover_at(const TerrainCoverSite *s, double spacing, TerrainCover *out);
 /* The cover of the drawn ground (terrain_surface_lod) at world (x, z) and

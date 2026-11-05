@@ -630,6 +630,16 @@ cut through whatever they cross. The city's surroundings stay gentle: the landfo
 its edge over the next 6 km, and the canyons keep 2.5 km away. `terrain_test --map out.ppm` draws them as
 a relief map.
 
+The land is eroded (`src/terrain/terrain_erosion.c`, M10a): gullies cut down its slopes and branch into one
+another, deeper on the ridges, from 1.6 km apart to about 100 m, and the sediment raises and flattens the
+floors of its hollows. It is an analytic filter, not a simulation, so the land stays a pure function of
+position. The gullies run down the slope of the wild land's shape, read on a 400 m lattice that is cached
+per thread, and each octave turns into the coarser octaves' gullies. Crests show rock, gully floors scree
+and the fill soil and grass. The erosion fades in with the landforms beyond a city's edge and stays off a
+canyon's walls, rising over 400 m beyond its rim. Past a 400 m sample spacing it is left out, so the
+streams, derived on a 500 m grid, and the planet's far patches are as they were. `terrain_test
+--erosion-map out.ppm [km [x z]]` draws the ground without it, with it, and its parts.
+
 The world is an Earth-size planet (`src/terrain/terrain_world.c`). World X/Z is a chart of it, the
 azimuthal-equidistant projection about a point, so the city and its plan stay flat while the terrain and
 the distant proxies are drawn curving away over the sphere (31 m down at 20 km). Which chart is the active

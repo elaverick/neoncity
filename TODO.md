@@ -173,8 +173,27 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     show them; that is a look to decide.
   - **Night shading** makes the land's relief hard to read: the cloud deck's glow is its only light, so slopes and
     escarpments differ only slightly in tone.
-  - **Canyon floors** follow the land they cut, so they rise and fall with it; rivers and drainage (M10) would give
-    them a fall. Canyons don't yet join into systems.
+  - **Canyon floors** follow the land they cut, so they rise and fall with it; the erosion (M10a) gave them no fall,
+    since it is a filter with no flow. Canyons don't yet join into systems.
+- **Erosion** (`src/terrain/terrain_erosion.c`, M10a; `terrain_test --erosion-map`). Left over:
+  - **No network.** The gullies follow the slope and turn into one another, but nothing routes flow: they don't
+    drain into the canyons or the real rivers, and they don't join into one valley per basin. Drainage would need the
+    streams (`tools/earth_streams.c`) to carve, or flow on a cached lattice.
+  - **Canyon walls are bare.** The erosion stays off them, rising over 400 m beyond the rim, because the 400 m
+    lattice can't follow a wall a few hundred metres across. Gullies cut into the walls need the canyon's own
+    across-slope.
+  - **The wild land's shape.** The gullies run down the land as it would be with no settlement near, scaled by the
+    land's rise towards a city. Within 7 km of an edge, where the landforms are faded, they follow slopes the
+    faded land doesn't quite have.
+  - **The fill** spreads over every gentle hollow at the lattice's scale (up to 25 m), not only valley floors with
+    a stream. It reads as soft basins on the erosion map.
+  - **The lattice's direction** has no smooth turn within a cell, so the gullies' stripes bend slightly at the
+    cells' faces (400 m). It hasn't been seen on the maps.
+  - **The look in the game** has been seen only in debug-lit, level-stretched captures at night (moonlight and
+    the haze hide most relief, the E4 haze-at-altitude question). The gullies are 2-6 m deep at their finest
+    octave (about 100 m apart); a sixth, finer octave would show more from the ground.
+  - **Roads.** The roads' ground beside them is steeper across where they cut through gullies (at most 3.3 m/m,
+    was 1.7), and 0.5% more of their length is over 10 m of cut or fill.
   - **Value noise's lattice** still shows faintly in the mountains' finer octaves as rounded bumps; a gradient noise
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
 - **Ground cover and its materials** (the terrain textures roadmap, TX0-TX6, done: `src/terrain/terrain_cover.c`,

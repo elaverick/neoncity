@@ -77,20 +77,22 @@ static double height_lod(double x, double z, const TerrainDir *p, double spacing
     int roads = parts & GROUND_ROADS;
     *w = plan_urban_weight(edge);
     *relief = *w > 0.0 ? urban_relief(plan_locate(x, z, &ux, &uz)) : 0.0;
-    if (site) { site->edge = 1e30; site->size = 0.0; }
+    if (site) { site->edge = 1e30; site->size = 0.0; site->crest = site->fill = 0.0f; }
     if (*w < 1.0) {
         TerrainDir d = p ? *p : terrain_world_dir(x, z);
         double land;
         TerrainEarthWater wt;
+        TerrainEroded er, *erp = site ? &er : NULL;
         if ((parts & GROUND_WATER) && terrain_earth_beds() && terrain_earth_water(d, &wt)) {   /* one query for the valley and the beds */
-            land = terrain_land_parts_at(d, edge, spacing, wt.valley, &lift);
+            land = terrain_land_eroded(d, edge, spacing, wt.valley, &lift, erp);
             if (wt.floor < land) land = fmax(wt.floor, land - TERRAIN_WATER_CARVE_M);
             if (site) site_water(site, &wt);
         } else {
-            land = terrain_land_parts(d, edge, spacing, &lift);
+            land = terrain_land_eroded(d, edge, spacing, terrain_earth_valley(d), &lift, erp);
             if (site && terrain_earth_water(d, &wt)) site_water(site, &wt);
         }
         h += (1.0 - *w) * land;
+        if (site) { site->crest = (float)(1.0 - *w) * er.crest; site->fill = (float)(1.0 - *w) * er.fill; }
         if (site) site->d = d;
     } else {
         lift = terrain_lift(x, z, spacing);

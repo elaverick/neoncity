@@ -195,7 +195,11 @@ static void streams_free(void) {
     g_earth.nlevels = g_earth.nplan = g_earth.plan_checked = 0;
 }
 
+static volatile uint32_t g_generation;
+uint32_t terrain_earth_generation(void) { return g_generation; }
+
 void terrain_earth_unload(void) {
+    g_generation++;
     for (int m = 0; m < g_earth.mips; ++m) mip_free(&g_earth.mip[m]);
     land_free(&g_earth.land);
     streams_free();
@@ -545,6 +549,7 @@ int terrain_earth_load(const char *path) {
                g_earth.path, g_earth.N, m0->step, g_earth.mips, m0->lo, m0->hi, m0->grade, g_earth.origin_lat, g_earth.origin_lon, g_earth.origin_heading,
                g_earth.datum, g_earth.land.n, g_earth.land.hints ? ", with hints" : "");
         terrain_earth_load_streams(NULL);
+        g_generation++;
     } else {
         fprintf(stderr, "earth: no bake %s (cmake --build build --target earth makes build/earth.bake, see data/earth/SOURCE.md); the procedural macro field stands in\n",
                 path ? path : "found (NEONCITY_EARTH, earth.bake by the executable or here, build/earth.bake)");

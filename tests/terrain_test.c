@@ -422,6 +422,25 @@ static int fill_all(TerrainClipmap *c, double x, double z) {
     return updates;
 }
 
+/* terrain_test --fill-bench x z [rounds]: the clipmap filled from scratch at
+ * the world's (x, z) on this thread, the best of `rounds`, and the time a
+ * sample; for the cost of a change to the land where it has it all (the
+ * test's own fill stands at the city's edge, where most of it is off). */
+static int fill_bench(double x, double z, int rounds) {
+    double best = 1e30;
+    for (int k = 0; k < rounds; ++k) {
+        TerrainClipmap c;
+        terrain_clip_init(&c);
+        clock_t t0 = clock();
+        fill_all(&c, x, z);
+        best = fmin(best, 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC);
+        terrain_clip_free(&c);
+    }
+    printf("fill at (%.0f, %.0f): best of %d %.0f ms, %.0f ns a sample; height there %.1f m\n", x, z, rounds, best,
+           1e6 * best / ((double)TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_W * TERRAIN_CLIP_W), terrain_height(x, z));
+    return 0;
+}
+
 /* Two clipmaps at the same camera hold the same windows, sample for sample. */
 static int same_clipmaps(const TerrainClipmap *a, const TerrainClipmap *b) {
     for (int l = 0; l < TERRAIN_CLIP_LEVELS; ++l) {
@@ -886,6 +905,69 @@ static int map(const char *path, double km, const double *centre) {
     return 0;
 }
 
+/* terrain_test --erosion-map out.ppm [km [x z]]: the erosion round the city
+ * centre, or the world's (x, z), `km` across (12 by default), as three panels
+ * 600 pixels square: the ground without the erosion and with it, each lit
+ * from the north-west at 35 degrees, then the erosion's own parts, its
+ * gullies' floors blue and their crests red by the steepness, the fill green,
+ * over the lit ground. North (-z) is up. */
+static double eroded_at(double x, double z, TerrainEroded *er) {
+    double h = terrain_height(x, z), lift, edge = plan_city_edge(x, z);
+    TerrainDir d = terrain_world_dir(x, z);
+    terrain_land_eroded(d, edge, 0.0, terrain_earth_valley(d), &lift, er);
+    er->dh *= 1.0 - plan_urban_weight(edge);   /* as it went into the height: the land's share */
+    return h;
+}
+
+static float lit(double h, double hx, double hz, double px) {
+    double gx = (hx - h) / px, gz = (hz - h) / px, inv = 1.0 / sqrt(1.0 + gx * gx + gz * gz);
+    /* light from the north-west (-x, -z), 35 degrees up */
+    double lx = -0.5792, ly = 0.5736, lz = -0.5792;
+    double ndl = (-gx * lx + ly - gz * lz) * inv;
+    return clampf((float)(0.08 + 0.92 * ndl), 0.0f, 1.0f);
+}
+
+static int erosion_map(const char *path, double km, const double *centre) {
+    const int W = 600;
+    DVec2 c = centre ? dv(centre[0], centre[1]) : plan_town_centre(0, 0);
+    double px = km * 1000.0 / W;
+    uint8_t *img = (uint8_t *)malloc((size_t)3 * W * W * 3);
+    double *h = (double *)malloc(sizeof(double) * (W + 1) * (W + 1)), *dh = (double *)malloc(sizeof(double) * (W + 1) * (W + 1));
+    float *crest = (float *)malloc(sizeof(float) * (W + 1) * (W + 1)), *fill = (float *)malloc(sizeof(float) * (W + 1) * (W + 1));
+    if (!img || !h || !dh || !crest || !fill) return 1;
+    double cut = 0.0, raise = 0.0, moved = 0.0;
+    for (int j = 0; j <= W; ++j)
+        for (int i = 0; i <= W; ++i) {
+            TerrainEroded er;
+            size_t k = (size_t)j * (W + 1) + i;
+            h[k] = eroded_at(c.x + (i - W / 2) * px, c.z + (j - W / 2) * px, &er);
+            dh[k] = er.dh; crest[k] = er.crest; fill[k] = er.fill;
+            cut = fmin(cut, er.dh); raise = fmax(raise, er.dh); moved += fabs(er.dh);
+        }
+    for (int j = 0; j < W; ++j)
+        for (int i = 0; i < W; ++i) {
+            size_t k = (size_t)j * (W + 1) + i, kx = k + 1, kz = k + W + 1;
+            float on = lit(h[k], h[kx], h[kz], px), off = lit(h[k] - dh[k], h[kx] - dh[kx], h[kz] - dh[kz], px);
+            float g = clampf(-crest[k], 0.0f, 1.0f), r = clampf(crest[k], 0.0f, 1.0f), f = fill[k];
+            float mask[3] = { on * (1.0f - g - f) + r * 0.6f, on * (1.0f - g - r) + f * 0.7f, on * (1.0f - r - f) + g * 0.8f };
+            for (int q = 0; q < 3; ++q) {
+                size_t row = (size_t)j * 3 * W;
+                img[(row + i) * 3 + q] = (uint8_t)(off * 255.0f);
+                img[(row + W + i) * 3 + q] = (uint8_t)(on * 255.0f);
+                img[(row + 2 * W + i) * 3 + q] = (uint8_t)clampf(mask[q] * 255.0f, 0.0f, 255.0f);
+            }
+        }
+    FILE *f = fopen(path, "wb");
+    if (!f) return 1;
+    fprintf(f, "P6\n%d %d\n255\n", 3 * W, W);
+    fwrite(img, 1, (size_t)3 * W * W * 3, f);
+    fclose(f);
+    printf("erosion map of %.0f km at (%.0f, %.0f): cut to %.1f m, raised to %.1f m, mean change %.2f m\n", km, c.x, c.z, cut, raise,
+           moved / ((double)(W + 1) * (W + 1)));
+    free(img); free(h); free(dh); free(crest); free(fill);
+    return 0;
+}
+
 /* terrain_test --planet-map out.ppm [px]: the whole planet as six faces of
  * px a side (3 across, 2 down: faces 0-2 then 3-5), each pixel the ground
  * at the pixel's spacing, shaded from the north-west; the city in red. */
@@ -954,6 +1036,7 @@ static TerrainCoverSite cover_site(double lat, double elev) {
     s.ny = 1.0;
     s.edge = 2000.0;
     s.size = 0.0;
+    s.crest = s.fill = 0.0f;
     return s;
 }
 
@@ -2427,6 +2510,7 @@ int main(int argc, char **argv) {
         g_z[i] = o.z + (2.0 * v - 1.0) * span;
     }
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
+    if (argc > 3 && strcmp(argv[1], "--fill-bench") == 0) return fill_bench(atof(argv[2]), atof(argv[3]), argc > 4 ? atoi(argv[4]) : 3);
     if (argc > 1 && strcmp(argv[1], "--patches") == 0) { test_planet_patches(&r); return g_failures != 0; }
     if (argc > 2 && strcmp(argv[1], "--map") == 0) {   /* [km] [x z]: about the world's (x, z), the core's without */
         double at[2] = { argc > 5 ? atof(argv[4]) : 0.0, argc > 5 ? atof(argv[5]) : 0.0 };
@@ -2435,6 +2519,10 @@ int main(int argc, char **argv) {
     if (argc > 2 && strcmp(argv[1], "--cover-map") == 0) {   /* [km] [x z], as --map */
         double at[2] = { argc > 5 ? atof(argv[4]) : 0.0, argc > 5 ? atof(argv[5]) : 0.0 };
         return cover_map(argv[2], argc > 3 ? atof(argv[3]) : 60.0, argc > 5 ? at : NULL);
+    }
+    if (argc > 2 && strcmp(argv[1], "--erosion-map") == 0) {   /* [km] [x z], as --map */
+        double at[2] = { argc > 5 ? atof(argv[4]) : 0.0, argc > 5 ? atof(argv[5]) : 0.0 };
+        return erosion_map(argv[2], argc > 3 ? atof(argv[3]) : 12.0, argc > 5 ? at : NULL);
     }
     if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
     if (argc > 2 && strcmp(argv[1], "--earth-map") == 0) return earth_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
