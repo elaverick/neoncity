@@ -4,13 +4,14 @@
 #include "grass.h"
 
 static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "terrain upload", "grass prepare", "shelter", "prepass", "shadow rays", "shadow filter",
-                                                "city", "plants", "proxies", "terrain", "grass", "sky", "clouds", "flames", "post" };
+                                                "city", "plants", "proxies", "terrain", "caves", "grass", "sky", "clouds", "flames", "post" };
 
 void renderer_set_shadows(Renderer *r, bool on) { r->shadowsOn = on && r->rt; }
 bool renderer_shadows(Renderer *r) { return r->shadowsOn; }
 void renderer_set_shadow_debug(Renderer *r, bool on) { r->shadowDebug = on; }
 bool renderer_shadow_debug(Renderer *r) { return r->shadowDebug; }
 void renderer_set_grass_debug(Renderer *r, int view) { r->grassDebug = view; }
+void renderer_set_cave_debug(Renderer *r, int view) { r->caveDebug = view; cave_gpu_set_debug(r, view); }
 void renderer_set_impostors(Renderer *r, float share) { interiors_set_share(r->interiors, share); }
 float renderer_impostors(Renderer *r) { return interiors_share(r->interiors); }
 int renderer_impostor_modules(Renderer *r) { return interiors_count(r->interiors); }
@@ -139,6 +140,7 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
     terrain_gpu_create(r);
     planet_gpu_create(r);
     grass_gpu_create(r);   /* after the terrain and the roads, whose buffers it reads */
+    cave_gpu_create(r);
     r->frame = terrain_frame();
     proxy_gpu_create(r);
     build_cloud_noise(r);
@@ -151,12 +153,13 @@ void renderer_destroy(Renderer *r) {
     vkDeviceWaitIdle(vk->device);
     destroy_targets(r);
     grass_gpu_destroy(r);
+    cave_gpu_destroy(r);
     terrain_gpu_destroy(r);
     road_gpu_destroy(r);
     planet_gpu_destroy(r);
     proxy_gpu_destroy(r);
     vk_buffer_destroy(vk, &r->shotBuf);
-    VkPipeline pipes[] = { r->impDemandPipe, r->cityPipe, r->plantPipe, r->terrainPipe, r->planetPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
+    VkPipeline pipes[] = { r->impDemandPipe, r->cityPipe, r->plantPipe, r->terrainPipe, r->planetPipe, r->cavePipe, r->caveXrayPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
                            r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->flamePipe, r->smokePipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
@@ -171,6 +174,8 @@ void renderer_destroy(Renderer *r) {
     vkDestroyPipelineLayout(vk->device, r->shadowPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->terrainPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->planetPL, NULL);
+    vkDestroyPipelineLayout(vk->device, r->cavePL, NULL);
+    vkDestroyDescriptorSetLayout(vk->device, r->caveLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->terrainLayout, NULL);
     vkDestroyPipelineLayout(vk->device, r->proxyPL, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->proxyLayout, NULL);
@@ -379,6 +384,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     terrain_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
     road_gpu_update(r, slot, cam);
     planet_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
+    cave_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_TERRAIN_UPLOAD);
     grass_gpu_prepare(r, cmd, slot, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_GRASS_PREP);

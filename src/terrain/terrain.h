@@ -303,6 +303,41 @@ void   terrain_cave_to_world(const TerrainCave *c, double cx, double cz, double 
 double terrain_cave_floor_local(const TerrainCave *c, double x, double h, double z);
 double terrain_cave_floor(double x, double y, double z);
 
+/* --- Caves' meshes (src/terrain/terrain_cave_mesh.c) -----------------------------
+ * A cave is drawn as the surface of its field, meshed by surface nets in
+ * bricks of TERRAIN_CAVE_CELLS^3 cells of its chart, at TERRAIN_CAVE_LODS
+ * levels of detail: cells of terrain_cave_voxel(lod) (0.5, 1 and 2 m), drawn
+ * out to terrain_cave_lod_reach(lod) (150 m, 400 m and 1 km) from the camera.
+ * Brick (i, j, k) of a level covers [i, i + 1) * terrain_cave_brick(lod) of
+ * the chart's x, and so on for h (world Y) and z. It holds the quads of the
+ * cells' edges that start in it, and so the vertices of the cells either
+ * side; two bricks of a level evaluate the field identically where they meet
+ * (terrain_cave_near_box), so their meshes meet exactly, with no crack. Pure
+ * functions of the cave and the brick.
+ *
+ * A vertex: its position from the brick's corner in 1/TERRAIN_CAVE_QUANT of
+ * a cell (whole numbers, so that the shaders' sums with the brick's offset
+ * are exact in float), a word for later (b5: the sky it sees), its normal
+ * facing the air (octahedral, snorm16 x 2: common.glsl octDecode) and a
+ * spare word. Triangles face the air: (b - a) x (c - a) points into it. */
+#define TERRAIN_CAVE_LODS     3
+#define TERRAIN_CAVE_CELLS    16
+#define TERRAIN_CAVE_VOXEL0   0.5      /* the finest level's cell (m) */
+#define TERRAIN_CAVE_QUANT    1024
+#define TERRAIN_CAVE_DRAW_M   1000.0   /* the coarsest level's reach: no cave is drawn further off */
+#define TERRAIN_CAVE_MESH_VERTS   ((TERRAIN_CAVE_CELLS + 1) * (TERRAIN_CAVE_CELLS + 1) * (TERRAIN_CAVE_CELLS + 1))
+#define TERRAIN_CAVE_MESH_INDICES (3 * TERRAIN_CAVE_CELLS * TERRAIN_CAVE_CELLS * TERRAIN_CAVE_CELLS * 6)
+typedef struct TerrainCaveVertex { int16_t p[3]; uint16_t sky; uint32_t n; uint32_t spare; } TerrainCaveVertex;
+double terrain_cave_voxel(int lod);
+double terrain_cave_brick(int lod);   /* a brick's side (m) */
+double terrain_cave_lod_reach(int lod);
+/* The bricks of a level that can hold some of c's surface, at most max of
+ * them (i, j, k); returns how many. */
+int terrain_cave_bricks(const TerrainCave *c, int lod, int32_t (*out)[3], int max);
+/* Brick (i, j, k)'s mesh into v (TERRAIN_CAVE_MESH_VERTS of room) and idx
+ * (TERRAIN_CAVE_MESH_INDICES): returns its vertices, its indices in *nidx. */
+int terrain_cave_brick_mesh(const TerrainCave *c, int lod, int i, int j, int k, TerrainCaveVertex *v, uint16_t *idx, int *nidx);
+
 /* --- The Earth (src/terrain/terrain_earth.c) ------------------------------------
  * The real planet's ground, baked onto the cube-sphere's faces by
  * tools/earth_bake.c from the editable project in data/earth (see

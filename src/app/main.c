@@ -78,7 +78,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -98,6 +98,9 @@ static void usage(void) {
            "                 the kept roots), species, clump; or colour the blades and the land by level of detail (lod)\n"
            "                 or by patch, the land by what the grass's culling made of its patch (cull); or both by\n"
            "                 the wind's strength (wind), or by the player's wake through the grass (wake)\n"
+           "  --cave-debug  draw the caves unlit, to look at their meshes: their normals, or lit from the eye (lit), or that\n"
+           "                tinted by level of detail (lod), through the ground (it isn't drawn), and fly mode goes under the ground.\n"
+           "                Without it, fly mode goes under the ground only into a cave's air\n"
            "  --shot  wait for streaming to settle, save a screenshot and exit\n");
 }
 
@@ -115,6 +118,7 @@ typedef struct Options {
     double      fixedTime;       /* the shaders' clock held here (< 0: running) */
     float       impostors;       /* the share of eligible office floors drawn as impostors (0: none) */
     int         grassDebug;      /* --grass-debug: GRASS_DEBUG_* (src/grass/grass_rules.h) */
+    int         caveDebug;       /* --cave-debug: renderer_set_cave_debug's view */
 } Options;
 
 static bool parse_args(int argc, char **argv, Options *o) {
@@ -135,6 +139,11 @@ static bool parse_args(int argc, char **argv, Options *o) {
             const char *v = argv[++i];
             for (int k = 0; k < (int)(sizeof(VIEWS) / sizeof(VIEWS[0])); ++k) if (strcmp(v, VIEWS[k]) == 0) o->grassDebug = GRASS_DEBUG_SUIT + k;
             if (o->grassDebug == GRASS_DEBUG_OFF) return false;
+        }
+        else if (strcmp(argv[i], "--cave-debug") == 0 && i + 1 < argc) {
+            const char *v = argv[++i];
+            o->caveDebug = strcmp(v, "normals") == 0 ? 1 : strcmp(v, "lit") == 0 ? 2 : strcmp(v, "lod") == 0 ? 3 : 0;
+            if (!o->caveDebug) return false;
         }
         else if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) o->shotPath = argv[++i];
         else if (strcmp(argv[i], "--city") == 0 && i + 1 < argc) o->city = argv[++i];
@@ -272,7 +281,7 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
         if (renderer_shadows(renderer))
             printf("shadows: %d bottom-level structures (%d MB, %d built so far), %d TLAS instances\n",
                    s.blas, s.blasMB, s.blasBuilds, s.instances);
-        char gpu[1024];
+        char gpu[2048];
         renderer_gpu_times(renderer, gpu, sizeof(gpu));
         printf("%s\n", gpu);
         renderer_terrain_stats(renderer, gpu, sizeof(gpu));
@@ -505,6 +514,7 @@ int main(int argc, char **argv) {
     Renderer *renderer = renderer_create(&vk, chunks);
     renderer_set_shadow_debug(renderer, opt.shadowDebug);
     renderer_set_grass_debug(renderer, opt.grassDebug);
+    renderer_set_cave_debug(renderer, opt.caveDebug);
     renderer_set_grass(renderer, !opt.noGrass);
     renderer_set_grass_cap(renderer, opt.grassCap);
     renderer_set_impostors(renderer, opt.impostors);
@@ -519,6 +529,7 @@ int main(int argc, char **argv) {
         player.pitch = (float)(opt.cam[3] * PI_F / 180.0);
         if (opt.camFly) { player.fly = true; player.feet[1] = opt.cam[4]; }
     }
+    player.noclip = opt.caveDebug != 0;   /* the caves seen through the ground, from anywhere */
 
     run(win, &vk, chunks, renderer, &player, &frames, &opt);
     layouts_shutdown();

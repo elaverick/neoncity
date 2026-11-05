@@ -197,8 +197,26 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   - **Value noise's lattice** still shows faintly in the mountains' finer octaves as rounded bumps; a gradient noise
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
 - **Caves** (`src/terrain/terrain_cave.c`, M10b; plan `~/.claude/plans/m10-erosion-and-caves.md`;
-  `terrain_test --caves [km]`, `--cave-map out.ppm [km [x z]]`). b1 (placement, passages, field, CPU only) is done;
-  b2-b6 (meshing and drawing, the mouths in the terrain, walking, light, dressing) are next. Left over from b1:
+  `terrain_test --caves [km]`, `--cave-map out.ppm [km [x z]]`, `--cave-mesh [km [n]]`). b1 (placement, passages,
+  field, CPU only) and b2 (meshing and drawing: `terrain_cave_mesh.c`, `src/render/cave_gpu.c`,
+  `shaders/terrain/cave.*`; `--cave-debug normals|lit|lod`) are done; b3-b6 (the mouths in the terrain, walking,
+  light, dressing) are next. Left over from b2:
+  - **The mouths**: the passages' tubes stand out of the ground there, and the terrain covers the openings (b3).
+  - **Light and air**: the rock is lit as the land outside is, by the moon and the cities' cloud, and hazed as it
+    is; no sky's share through the mouths yet, rain falls in the caves, the shelter map and the ray-traced shadows
+    don't see them (b5, M11).
+  - **Level 2 folds the narrowest passages**: at 2 m cells a 3 m passage gets 0.2-1.2% of its triangles turned
+    against the field's normal. Drawn only past 400 m.
+  - **Surface nets' ambiguous cells**: up to 0.5% of the edges are shared by four faces. No crack, a pinch.
+  - **Empty bricks**: about half the level 0 bricks the lists give turn out empty (all air in the chambers and wide
+    passages, or rock), each costing a full sampling (about 1.6 ms). A test that a box is all air would skip some.
+  - **The rings overlap by one cell of the coarser level**, where both are drawn; no z-fighting seen in the captures.
+  - **A finer level waits** (the coarser stands for it) until every brick in its box is meshed: about half a second
+    on reaching a system with three workers; at 30 m/s through one the rings kept up.
+  - **Fly mode goes under the ground only into a cave's air** (b2's fly-through), the main thread building the
+    systems it needs on its first query there; `--cave-debug` flies anywhere. Fly speed grows with world height,
+    not height above the ground, so a cave under high ground is crossed fast.
+  Left over from b1:
   - **Shafts are rare on the real Earth near the megacity.** They need plateau tops; within 300 km of Los Angeles
     1 system in 289 is a shaft (the Colorado Plateau has more). Without a bake about half are.
   - **The roof is proved by sampling**, every 3 m over each passage's footprint with half the neighbours' difference
@@ -208,8 +226,8 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   - **The cache is per thread**: a thread builds each system it needs (5 ms a cell on average, 50 ms at most), so
     the first query near a cave on the main thread (walking, b4) would stall a frame or two. Share it, or have the
     renderer's worker hand its systems on.
-  - **The field loops over every piece** of a system (about 37 passages and 2 chambers) at each point; meshing (b2)
-    wants a grid of the pieces per brick.
+  - **The field loops over every piece** of a system (about 37 passages and 2 chambers) at each point, but for a
+    brick of the meshes (b2: `terrain_cave_near_box`, the passages near it).
   - **Chambers** stand only where the passages through them keep to their level floor, so they cluster on level
     passages; about 1.2 a system, of the two allowed.
   - **No water**: floors are dry, as decided. Underground rivers and pools come later.

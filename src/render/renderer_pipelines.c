@@ -71,6 +71,12 @@ static const uint32_t SPV_planet_vert[] = {
 static const uint32_t SPV_planet_frag[] = {
 #include "terrain/planet.frag.inc"
 };
+static const uint32_t SPV_cave_vert[] = {
+#include "terrain/cave.vert.inc"
+};
+static const uint32_t SPV_cave_frag[] = {
+#include "terrain/cave.frag.inc"
+};
 static const uint32_t SPV_proxy_vert[] = {
 #include "proxy/proxy.vert.inc"
 };
@@ -247,6 +253,14 @@ void create_layouts(Renderer *r) {
         { 10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },  /* the grass's patch states (grass_gpu.c: --grass-debug cull; the clipmap's only) */
     };
     r->terrainLayout = make_set_layout(vk, terrain, 6);
+    VkDescriptorSetLayoutBinding cave[5] = {
+        { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
+        { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* the bricks' pool (cave_gpu.c) */
+        { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the frame's systems and draws */
+        { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' maps */
+        { 8, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' properties */
+    };
+    r->caveLayout = make_set_layout(vk, cave, 5);
     VkDescriptorSetLayoutBinding proxy[3] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* boxes */
@@ -265,6 +279,7 @@ void create_layouts(Renderer *r) {
     r->shelterPL = make_pipeline_layout(vk, r->sceneLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
     r->terrainPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(TerrainPush), VK_SHADER_STAGE_VERTEX_BIT);
     r->planetPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(PlanetPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+    r->cavePL = make_pipeline_layout(vk, r->caveLayout, sizeof(int32_t), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);   /* the --cave-debug view */
     r->proxyPL = make_pipeline_layout(vk, r->proxyLayout, 0, 0);
 
     VkDescriptorPoolSize sizes[4] = {
@@ -466,6 +481,13 @@ void create_pipelines(Renderer *r) {
     planet.fs = SPV_planet_frag; planet.fsBytes = sizeof(SPV_planet_frag);
     planet.layout = r->planetPL;
     r->planetPipe = make_graphics(vk, &planet);
+    GfxDesc cave = terrain;
+    cave.vs = SPV_cave_vert; cave.vsBytes = sizeof(SPV_cave_vert);
+    cave.fs = SPV_cave_frag; cave.fsBytes = sizeof(SPV_cave_frag);
+    cave.layout = r->cavePL;
+    r->cavePipe = make_graphics(vk, &cave);
+    cave.cull = false;
+    r->caveXrayPipe = make_graphics(vk, &cave);
     GfxDesc proxy = { SPV_proxy_vert, sizeof(SPV_proxy_vert), SPV_proxy_frag, sizeof(SPV_proxy_frag),
                       r->proxyPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
     proxy.colorFormat2 = HDR_FORMAT;

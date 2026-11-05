@@ -14,7 +14,8 @@
  *   renderer_passes.c     recording each pass: shelter map, prepass, shadows, reflections, clouds, bloom
  *   terrain_gpu.c         the terrain clipmap's GPU side: its samples' buffer and uploads, the ring meshes, drawing
  *   proxy_gpu.c           the distant proxies: tiles generated round the camera, their box pool, drawing
- *   planet_gpu.c          the planet's patches beyond the clipmap: their fill worker, vertex slots, drawing */
+ *   planet_gpu.c          the planet's patches beyond the clipmap: their fill worker, vertex slots, drawing
+ *   cave_gpu.c            the caves: their systems near the camera, bricks meshed by workers, the cache and pool, rings, drawing */
 
 #define HDR_FORMAT   VK_FORMAT_R16G16B16A16_SFLOAT
 #define DEPTH_FORMAT VK_FORMAT_D32_SFLOAT
@@ -59,12 +60,13 @@ typedef struct PlanetGpu PlanetGpu;
 typedef struct ProxyGpu ProxyGpu;
 typedef struct RoadGpu RoadGpu;
 typedef struct GrassGpu GrassGpu;
+typedef struct CaveGpu CaveGpu;
 /* GPU timestamps between the frame's passes (renderer_gpu_times). The scene
  * pass is stamped inside: the city (GT_CITY), plants (GT_PLANTS) and proxies
  * (GT_SCENE), the terrain (GT_TERRAIN), the grass (GT_GRASS), then the sky
  * and the resolve (GT_SKY). GT_GRASS_PREP: the grass's compute passes. */
 enum { GT_START = 0, GT_STREAM, GT_TERRAIN_UPLOAD, GT_GRASS_PREP, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_CITY, GT_PLANTS, GT_SCENE,
-       GT_TERRAIN, GT_GRASS, GT_SKY, GT_CLOUDS, GT_FLAMES, GT_POST, GT_COUNT };   /* GT_CLOUDS: the reflections and the clouds; GT_FLAMES: the smoke and flame pass */
+       GT_TERRAIN, GT_CAVES, GT_GRASS, GT_SKY, GT_CLOUDS, GT_FLAMES, GT_POST, GT_COUNT };   /* GT_CAVES: the caves' bricks, after the terrain */   /* GT_CLOUDS: the reflections and the clouds; GT_FLAMES: the smoke and flame pass */
 struct Renderer {
     VkCore      *vk;
     ChunkSystem *chunks;
@@ -111,6 +113,11 @@ struct Renderer {
     VkPipelineLayout      planetPL;
     VkPipeline            planetPipe;
     GrassGpu    *grass;     /* grass_gpu.c */
+    CaveGpu     *caves;     /* cave_gpu.c */
+    VkDescriptorSetLayout caveLayout;
+    VkPipelineLayout      cavePL;
+    VkPipeline            cavePipe, caveXrayPipe;   /* caveXrayPipe: both faces, for the --cave-debug views (the terrain not drawn) */
+    int                   caveDebug;
     ProxyGpu    *proxies;   /* proxy_gpu.c */
     VkDescriptorSetLayout proxyLayout;
     VkPipelineLayout      proxyPL;
@@ -228,6 +235,18 @@ void grass_gpu_destroy(Renderer *r);
 void grass_gpu_prepare(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);
 void grass_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
 bool grass_gpu_drawn(Renderer *r);   /* the blades are on (FrameUBO.grass.w) */
+
+/* cave_gpu.c. Update (after the terrain's, outside any rendering) takes in
+ * the systems and bricks the workers made, uploads them, chooses this frame's
+ * rings and draws and asks for what is missing; draw records them into the
+ * scene pass after the terrain. */
+void cave_gpu_create(Renderer *r);
+void cave_gpu_destroy(Renderer *r);
+void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);
+void cave_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
+void cave_gpu_set_debug(Renderer *r, int view);
+bool cave_gpu_settled(Renderer *r);
+void cave_gpu_stats(Renderer *r, char *buf, size_t n);
 
 /* road_gpu.c. Update (each frame, before the scene pass) moves the window of
  * roads round the camera when it has strayed and writes the frame slot's. */

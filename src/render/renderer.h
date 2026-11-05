@@ -60,6 +60,11 @@ void      renderer_set_shadow_debug(Renderer *r, bool on);
 bool      renderer_shadow_debug(Renderer *r);
 /* The --grass-debug view painted on the land (GRASS_DEBUG_*: src/grass/grass_rules.h; 0 off). */
 void      renderer_set_grass_debug(Renderer *r, int view);
+/* The caves' debug view (shaders/terrain/cave.frag): 0 off, 1 their normals,
+ * 2 lit from the eye, 3 lit from the eye and tinted by level. In any of them
+ * the terrain and the grass aren't drawn and the caves' both faces are (their
+ * outsides darker), so a system can be seen whole from above. */
+void      renderer_set_cave_debug(Renderer *r, int view);
 /* The grass's blades on or off (src/render/grass_gpu.c; off where the GPU can't), and each
  * level of detail's room, at most this many blades (0: their own, GRASS_CAP_*). */
 void      renderer_set_grass(Renderer *r, bool on);

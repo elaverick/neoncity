@@ -290,7 +290,8 @@ static void move_fly(Player *p, const PlayerInput *in, vec3 look, vec3 flatRight
     }
     for (int i = 0; i < 3; ++i) p->feet[i] += p->vel[i] * dt;
     float gh = ground_height(p->feet[0], p->feet[2], p->feet[1]) + 1.0f;
-    if (p->feet[1] < gh) p->feet[1] = gh;
+    /* under the ground only in a cave's air (M10b b2: flying through them; walking is b4's) */
+    if (p->feet[1] < gh && !p->noclip && terrain_cave_floor(p->feet[0], p->feet[1], p->feet[2]) < -1e29) p->feet[1] = gh;
     if (p->feet[1] > MAX_ALTITUDE) { p->feet[1] = MAX_ALTITUDE; p->vel[1] = minf(p->vel[1], 0.0f); }
     p->bobWeight = damp(p->bobWeight, 0, 8.0f, dt);
 }

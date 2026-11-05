@@ -587,10 +587,20 @@ void terrain_cave_to_world(const TerrainCave *c, double cx, double cz, double *x
  *           passages either side blend with no step;
  * joined by a soft clamp. The air lies within the walls' union, so within
  * air_of(r) of a passage's axis; past every piece's floor reach it is rock
- * (FLOOR_NONE_M under a floor). */
+ * (FLOOR_NONE_M under a floor).
+ *
+ * A point's field is made of its near pieces only, in their order: those
+ * whose wall (without the noise) lies within NEAR_M of the nearest piece's,
+ * or whose floor reaches it. One further off would change the walls' unions
+ * by nothing or next to nothing, and leaving it out by this rule makes the
+ * field the same, bit for bit, from any list of the pieces that holds every
+ * piece near the point: so a brick of the caves' meshes (terrain_cave_mesh.c)
+ * evaluates only the passages near it (terrain_cave_near_box), and two
+ * bricks agree exactly where they meet. */
 #define FLOOR_FADE_M  2.0
 #define FLOOR_REACH_M (TERRAIN_CAVE_ROUGH_M + 0.25 * TERRAIN_CAVE_BLEND_M + 0.5)
 #define FLOOR_NONE_M  2.0
+#define NEAR_M        (TERRAIN_CAVE_BLEND_M + 2.0 * TERRAIN_CAVE_ROUGH_M)
 
 static double smin(double a, double b, double k) {
     double h = fmax(k - fabs(a - b), 0.0) / k;
@@ -633,37 +643,117 @@ static int field_far(const Field *F, double wall) {
     return wall >= FLOOR_REACH_M && wall - TERRAIN_CAVE_ROUGH_M > F->w + TERRAIN_CAVE_BLEND_M;
 }
 
-double terrain_cave_sdf_local(const TerrainCave *c, double x, double h, double z) {
+/* Passage s at (x, h, z): its wall's distance (no noise), its floor's height
+ * less h, the point's distance from its axis and its radius there. */
+static double seg_wall(const TerrainCaveSeg *s, double x, double h, double z, double *floor, double *dist, double *rad) {
+    double ab[3] = { s->b[0] - s->a[0], s->b[1] - s->a[1], s->b[2] - s->a[2] }, ap[3] = { x - s->a[0], h - s->a[1], z - s->a[2] };
+    double l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2], tu = l2 > 0.0 ? (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / l2 : 0.0;
+    double t = clampd(tu, 0.0, 1.0);
+    double qx = ap[0] - t * ab[0], qy = ap[1] - t * ab[1], qz = ap[2] - t * ab[2], r = s->ra + (s->rb - s->ra) * t;
+    *dist = sqrt(qx * qx + qy * qy + qz * qz);
+    *rad = r;
+    /* the floor: the axis's height at the point's place along it, carried on past the ends, less its depth, less h */
+    *floor = s->a[1] + tu * ab[1] - TERRAIN_CAVE_FLOOR * r - h;
+    return *dist - r;
+}
+
+/* Chamber r at (x, h, z): its wall's distance (Quilez's bound), its floor's
+ * height less h, and the distance its floor's weight is reckoned by. */
+static double room_wall(const TerrainCaveRoom *r, double x, double h, double z, double *floor, double *dist, double *rmin) {
+    double dx = x - r->c[0], dy = h - r->c[1], dz = z - r->c[2];
+    double u = dx * r->cs + dz * r->sn, v = -dx * r->sn + dz * r->cs;
+    double a = u / r->r[0], bb = dy / r->r[1], cc = v / r->r[2];
+    double a2 = u / (r->r[0] * r->r[0]), b2 = dy / (r->r[1] * r->r[1]), c2 = v / (r->r[2] * r->r[2]);
+    double k0 = sqrt(a * a + bb * bb + cc * cc), k1 = sqrt(a2 * a2 + b2 * b2 + c2 * c2);
+    *rmin = fmin(r->r[0], fmin(r->r[1], r->r[2]));
+    double ell = k1 > 0.0 ? k0 * (k0 - 1.0) / k1 : -*rmin;
+    *floor = -dy - TERRAIN_CAVE_ROOM_FLOOR * r->r[1];
+    *dist = fmax(ell + *rmin, 0.0);
+    return ell;
+}
+
+/* The field from the passages listed (in order; every chamber is always
+ * taken): exact wherever the list holds every passage near the point. */
+static double field_of(const TerrainCave *c, const uint8_t *segs, int nseg, double x, double h, double z) {
     double p[3] = { x, h, z }, out = -1e30;
     for (int a = 0; a < 3; ++a) out = fmax(out, fmax(c->lo[a] - p[a], p[a] - c->hi[a]));
     if (out > 2.0) return out;   /* the air lies within the bounds: at least this far */
-    double n = rough(x, h, z);
-    Field F = { 1e30, 1e30, 0.0, 0.0 };
-    for (int k = 0; k < c->nseg; ++k) {
-        const TerrainCaveSeg *s = &c->seg[k];
-        double ab[3] = { s->b[0] - s->a[0], s->b[1] - s->a[1], s->b[2] - s->a[2] }, ap[3] = { x - s->a[0], h - s->a[1], z - s->a[2] };
-        double l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2], tu = l2 > 0.0 ? (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / l2 : 0.0;
-        double t = clampd(tu, 0.0, 1.0);
-        double qx = ap[0] - t * ab[0], qy = ap[1] - t * ab[1], qz = ap[2] - t * ab[2], r = s->ra + (s->rb - s->ra) * t;
-        double dist = sqrt(qx * qx + qy * qy + qz * qz), tube = dist - r;
-        if (field_far(&F, tube)) continue;
-        /* the floor: the axis's height at the point's place along it, carried on past the ends, less its depth, less h */
-        double floor = s->a[1] + tu * ab[1] - TERRAIN_CAVE_FLOOR * r - h;
-        field_add(&F, tube, floor, r + FLOOR_REACH_M, dist, n);
+    double wall[TERRAIN_CAVE_SEGS + TERRAIN_CAVE_ROOMS], fl[TERRAIN_CAVE_SEGS + TERRAIN_CAVE_ROOMS], dist[TERRAIN_CAVE_SEGS + TERRAIN_CAVE_ROOMS];
+    double rad[TERRAIN_CAVE_SEGS], rmin[TERRAIN_CAVE_ROOMS], least = 1e30;
+    for (int q = 0; q < nseg; ++q) {
+        wall[q] = seg_wall(&c->seg[segs[q]], x, h, z, &fl[q], &dist[q], &rad[q]);
+        least = fmin(least, wall[q]);
     }
     for (int k = 0; k < c->nroom; ++k) {
-        const TerrainCaveRoom *r = &c->room[k];
-        double dx = x - r->c[0], dy = h - r->c[1], dz = z - r->c[2];
-        double u = dx * r->cs + dz * r->sn, v = -dx * r->sn + dz * r->cs;
-        double a = u / r->r[0], bb = dy / r->r[1], cc = v / r->r[2];
-        double a2 = u / (r->r[0] * r->r[0]), b2 = dy / (r->r[1] * r->r[1]), c2 = v / (r->r[2] * r->r[2]);
-        double k0 = sqrt(a * a + bb * bb + cc * cc), k1 = sqrt(a2 * a2 + b2 * b2 + c2 * c2), rmin = fmin(r->r[0], fmin(r->r[1], r->r[2]));
-        double ell = k1 > 0.0 ? k0 * (k0 - 1.0) / k1 : -rmin;
-        if (field_far(&F, ell)) continue;
-        field_add(&F, ell, -dy - TERRAIN_CAVE_ROOM_FLOOR * r->r[1], rmin + FLOOR_REACH_M, fmax(ell + rmin, 0.0), n);
+        wall[nseg + k] = room_wall(&c->room[k], x, h, z, &fl[nseg + k], &dist[nseg + k], &rmin[k]);
+        least = fmin(least, wall[nseg + k]);
+    }
+    double n = rough(x, h, z);
+    Field F = { 1e30, 1e30, 0.0, 0.0 };
+    for (int q = 0; q < nseg + c->nroom; ++q) {
+        if (wall[q] >= FLOOR_REACH_M && wall[q] > least + NEAR_M) continue;   /* not near (see above) */
+        if (field_far(&F, wall[q])) continue;
+        field_add(&F, wall[q], fl[q], (q < nseg ? rad[q] : rmin[q - nseg]) + FLOOR_REACH_M, dist[q], n);
     }
     double floor = F.ws > 0.0 ? F.fs / F.ws : FLOOR_NONE_M;
     return fmax(smax(F.w, floor, TERRAIN_CAVE_FLOOR_K), out);
+}
+
+static const uint8_t *all_segs(void) {
+    static uint8_t all[TERRAIN_CAVE_SEGS];
+    static int made;
+    if (!made) { for (int k = 0; k < TERRAIN_CAVE_SEGS; ++k) all[k] = (uint8_t)k; made = 1; }
+    return all;
+}
+
+double terrain_cave_sdf_local(const TerrainCave *c, double x, double h, double z) { return field_of(c, all_segs(), c->nseg, x, h, z); }
+
+/* A passage's wall over a box: its distance at the middle, within the
+ * half-diagonal D times how fast it can change (1, and the taper along the
+ * axis) of every point's, and a little for the rounding. */
+static void seg_box(const TerrainCaveSeg *s, const double mid[3], double D, double *lo, double *hi) {
+    double fl, dist, rad, w = seg_wall(s, mid[0], mid[1], mid[2], &fl, &dist, &rad);
+    double L = sqrt((s->b[0] - s->a[0]) * (s->b[0] - s->a[0]) + (s->b[1] - s->a[1]) * (s->b[1] - s->a[1]) + (s->b[2] - s->a[2]) * (s->b[2] - s->a[2]));
+    double rate = 1.0 + (L > 1e-6 ? fabs((double)s->rb - s->ra) / L : 0.0), m = D * rate + 1e-6 * (1.0 + fabs(w));
+    *lo = w - m;
+    *hi = w + m;
+}
+
+void terrain_cave_near_box(const TerrainCave *c, const double lo[3], const double hi[3], TerrainCaveNear *out) {
+    double mid[3], D = 0.0, wlo[TERRAIN_CAVE_SEGS], best = 1e30;
+    for (int a = 0; a < 3; ++a) { mid[a] = 0.5 * (lo[a] + hi[a]); D += 0.25 * (hi[a] - lo[a]) * (hi[a] - lo[a]); }
+    D = sqrt(D);
+    for (int k = 0; k < c->nseg; ++k) {
+        double whi;
+        seg_box(&c->seg[k], mid, D, &wlo[k], &whi);
+        best = fmin(best, whi);   /* the nearest passage's wall lies under this everywhere in the box */
+    }
+    out->nseg = 0;
+    for (int k = 0; k < c->nseg; ++k)
+        if (wlo[k] < FLOOR_REACH_M || wlo[k] <= best + NEAR_M) out->seg[out->nseg++] = (uint8_t)k;
+}
+
+double terrain_cave_sdf_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z) { return field_of(c, n->seg, n->nseg, x, h, z); }
+
+int terrain_cave_box_live(const TerrainCave *c, const double lo[3], const double hi[3]) {
+    const double air = TERRAIN_CAVE_ROUGH_M + 0.25 * TERRAIN_CAVE_BLEND_M + 0.01;   /* a wall nearer than this can have air at it */
+    for (int a = 0; a < 3; ++a)
+        if (hi[a] < c->lo[a] || lo[a] > c->hi[a]) return 0;
+    double mid[3], D = 0.0;
+    for (int a = 0; a < 3; ++a) { mid[a] = 0.5 * (lo[a] + hi[a]); D += 0.25 * (hi[a] - lo[a]) * (hi[a] - lo[a]); }
+    D = sqrt(D);
+    for (int k = 0; k < c->nseg; ++k) {
+        double wlo, whi;
+        seg_box(&c->seg[k], mid, D, &wlo, &whi);
+        if (wlo < air) return 1;
+    }
+    for (int k = 0; k < c->nroom; ++k) {   /* within its bounds (as bounds() takes them), a metre more */
+        const TerrainCaveRoom *r = &c->room[k];
+        double w = fmax(r->r[0], r->r[2]) + air + 1.0, hh = r->r[1] + air + 1.0;
+        if (hi[0] >= r->c[0] - w && lo[0] <= r->c[0] + w && hi[1] >= r->c[1] - hh && lo[1] <= r->c[1] + hh && hi[2] >= r->c[2] - w && lo[2] <= r->c[2] + w)
+            return 1;
+    }
+    return 0;
 }
 
 double terrain_cave_sdf(const TerrainCave *c, double x, double y, double z) {

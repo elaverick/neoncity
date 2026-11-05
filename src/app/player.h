@@ -15,6 +15,7 @@ typedef struct Player {
     float  vel[3];
     float  yaw, pitch;
     bool   onGround, fly;
+    bool   noclip;           /* fly mode goes under the ground too (the --cave-debug views) */
 
     /* camera feel state */
     float  eyeOffset, eyeOffsetVel;  /* spring that absorbs curb steps and landings */

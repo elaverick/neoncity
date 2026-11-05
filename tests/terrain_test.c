@@ -41,6 +41,7 @@
  * terrain_test --cover-map out.ppm [km [x z]] its ground cover (see cover_map);
  * terrain_test --caves [km] runs only the caves' tests, over more cells (150 km either way by default);
  * terrain_test --cave-map out.ppm [km [x z]] draws the caves round a place (see cave_map);
+ * terrain_test --cave-mesh [km [n]] runs only the caves' meshes' tests, on the first n systems (3) within km (60) of the land's centre;
  * terrain_test --planet-map out.ppm [px] the whole planet (see planet_map);
  * terrain_test --earth-map out.ppm [px] the Earth's bake (see earth_map);
  * terrain_test --landform-map out.ppm [px] its landforms (see landform_map);
@@ -2687,6 +2688,251 @@ static void test_caves(Rng *r, double span) {
     free(again); free(found); free(s->sys); free(s);
 }
 
+/* --- The caves' meshes ------------------------------------------------------------ */
+
+/* A hash map of 64-bit keys to ints (keys never ~0). */
+typedef struct KeyMap { uint64_t *key; int *val; size_t cap, n; } KeyMap;
+static void km_init(KeyMap *m, size_t want) {
+    m->cap = 16;
+    while (m->cap < 2 * want) m->cap <<= 1;
+    m->key = (uint64_t *)malloc(sizeof(uint64_t) * m->cap);
+    m->val = (int *)calloc(m->cap, sizeof(int));
+    memset(m->key, 0xFF, sizeof(uint64_t) * m->cap);
+    m->n = 0;
+}
+static void km_free(KeyMap *m) { free(m->key); free(m->val); }
+static int *km_get(KeyMap *m, uint64_t key, int *made) {
+    size_t h = (size_t)(hash_u32((uint32_t)key ^ hash_u32((uint32_t)(key >> 32)))) & (m->cap - 1);
+    while (m->key[h] != ~0ull) {
+        if (m->key[h] == key) { if (made) *made = 0; return &m->val[h]; }
+        h = (h + 1) & (m->cap - 1);
+    }
+    m->key[h] = key;
+    m->val[h] = 0;
+    m->n++;
+    if (made) *made = 1;
+    return &m->val[h];
+}
+
+typedef struct BrickJob {
+    const TerrainCave *c;
+    int lod, n;
+    int32_t (*b)[3];
+    TerrainCaveVertex **v;
+    uint16_t **idx;
+    int *nv, *ni;
+    double *ms;
+} BrickJob;
+
+static void mesh_one(void *ctx, int k) {
+    BrickJob *j = (BrickJob *)ctx;
+    static _Thread_local TerrainCaveVertex *v;
+    static _Thread_local uint16_t *idx;
+    if (!v) { v = (TerrainCaveVertex *)malloc(sizeof(TerrainCaveVertex) * TERRAIN_CAVE_MESH_VERTS); idx = (uint16_t *)malloc(sizeof(uint16_t) * TERRAIN_CAVE_MESH_INDICES); }
+    clock_t t0 = clock();
+    int ni, nv = terrain_cave_brick_mesh(j->c, j->lod, j->b[k][0], j->b[k][1], j->b[k][2], v, idx, &ni);
+    j->ms[k] = 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC;
+    j->nv[k] = nv;
+    j->ni[k] = ni;
+    j->v[k] = (TerrainCaveVertex *)malloc(sizeof(TerrainCaveVertex) * (size_t)(nv ? nv : 1));
+    j->idx[k] = (uint16_t *)malloc(sizeof(uint16_t) * (size_t)(ni ? ni : 1));
+    memcpy(j->v[k], v, sizeof(TerrainCaveVertex) * (size_t)nv);
+    memcpy(j->idx[k], idx, sizeof(uint16_t) * (size_t)ni);
+}
+
+/* A vertex of brick b's mesh in the chart (m). */
+static void cave_vertex_at(int lod, const int32_t b[3], const TerrainCaveVertex *v, double p[3]) {
+    double s = terrain_cave_voxel(lod);
+    for (int a = 0; a < 3; ++a) p[a] = ((double)b[a] * TERRAIN_CAVE_CELLS + (double)v->p[a] / TERRAIN_CAVE_QUANT) * s;
+}
+
+static void oct_decode(uint32_t u, double n[3]) {
+    double x = (double)(int16_t)(u & 0xFFFF) / 32767.0, y = (double)(int16_t)(u >> 16) / 32767.0, z = 1.0 - fabs(x) - fabs(y);
+    double t = fmax(-z, 0.0);
+    x += x >= 0.0 ? -t : t;
+    y += y >= 0.0 ? -t : t;
+    double l = sqrt(x * x + y * y + z * z);
+    n[0] = x / l; n[1] = y / l; n[2] = z / l;
+}
+
+/* 5d. The caves' meshes (terrain_cave_mesh.c), for the first `want` systems
+ *     of a survey round the land's centre (`span` metres either way): at
+ *     every level, each brick's field from the passages near it the same, bit
+ *     for bit, as from all of them; a brick meshed again the same; the bricks'
+ *     meshes together closed, every edge met once each way (no crack between
+ *     bricks, no hole); the vertices on the surface, their normals and the
+ *     triangles facing the air. Prints the bricks' sizes and times, and, from
+ *     a point in each system, what the levels round it would draw (and places
+ *     to put the camera, for the captures). */
+static void test_cave_mesh(Rng *r, double span, int want) {
+    DVec2 lc = land_centre();
+    CaveSurvey *s = (CaveSurvey *)calloc(1, sizeof(CaveSurvey));
+    cave_survey(s, lc.x, lc.z, span);
+    int done = 0, badNear = 0, badSame = 0, badOpen = 0, badDup = 0, badFlat = 0;
+    const int MAXB = 65536;
+    int32_t (*bricks)[3] = malloc(sizeof(int32_t[3]) * MAXB);
+    for (int k = 0; k < s->n && done < want; ++k) {
+        if (!s->has[k]) continue;
+        const TerrainCave *c = &s->sys[k];
+        done++;
+        printf("cave %08x: %.0f m of passage, %d passages, %d chambers\n", c->id, c->length, c->nseg, c->nroom);
+        for (int lod = 0; lod < TERRAIN_CAVE_LODS; ++lod) {
+            double sv = terrain_cave_voxel(lod), B = terrain_cave_brick(lod);
+            int nb = terrain_cave_bricks(c, lod, bricks, MAXB);
+            CHECK(nb < MAXB, "cave %08x: more than %d bricks at level %d", c->id, MAXB, lod);
+            BrickJob j = { c, lod, nb, bricks };
+            j.v = (TerrainCaveVertex **)malloc(sizeof(void *) * (size_t)nb);
+            j.idx = (uint16_t **)malloc(sizeof(void *) * (size_t)nb);
+            j.nv = (int *)malloc(sizeof(int) * (size_t)nb);
+            j.ni = (int *)malloc(sizeof(int) * (size_t)nb);
+            j.ms = (double *)malloc(sizeof(double) * (size_t)nb);
+            clock_t t0 = clock();
+            thread_parallel_for(nb, cpu_count(), mesh_one, &j);
+            double wall = (double)(clock() - t0) / CLOCKS_PER_SEC;
+
+            /* the field near each of some bricks, against all of it */
+            for (int q = 0; q < 300 && nb > 0; ++q) {
+                const int32_t *b = bricks[rng_int(r, 0, nb - 1)];
+                double lo[3], hi[3], p[3];
+                for (int a = 0; a < 3; ++a) { lo[a] = ((double)b[a] * TERRAIN_CAVE_CELLS - 2.0) * sv; hi[a] = ((double)b[a] * TERRAIN_CAVE_CELLS + TERRAIN_CAVE_CELLS + 1.0) * sv; }
+                TerrainCaveNear near;
+                terrain_cave_near_box(c, lo, hi, &near);
+                for (int t = 0; t < 20; ++t) {
+                    for (int a = 0; a < 3; ++a) p[a] = q % 2 ? lo[a] + (hi[a] - lo[a]) * rng_float(r) : ((double)b[a] * TERRAIN_CAVE_CELLS - 2 + rng_int(r, 0, TERRAIN_CAVE_CELLS + 3)) * sv;
+                    double fa = terrain_cave_sdf_near(c, &near, p[0], p[1], p[2]), fb = terrain_cave_sdf_local(c, p[0], p[1], p[2]);
+                    if (memcmp(&fa, &fb, sizeof fa) != 0 && badNear++ < 5)
+                        printf("  level %d brick (%d, %d, %d): the field at (%.3f, %.3f, %.3f) is %.9f from the passages near, %.9f from all\n", lod, b[0], b[1], b[2], p[0], p[1], p[2], fa, fb);
+                }
+            }
+            /* meshed again, on this thread */
+            {
+                TerrainCaveVertex *v = (TerrainCaveVertex *)malloc(sizeof(TerrainCaveVertex) * TERRAIN_CAVE_MESH_VERTS);
+                uint16_t *idx = (uint16_t *)malloc(sizeof(uint16_t) * TERRAIN_CAVE_MESH_INDICES);
+                for (int q = 0; q < 20 && nb > 0; ++q) {
+                    int b = rng_int(r, 0, nb - 1), ni, nv = terrain_cave_brick_mesh(c, lod, bricks[b][0], bricks[b][1], bricks[b][2], v, idx, &ni);
+                    if (nv != j.nv[b] || ni != j.ni[b] || memcmp(v, j.v[b], sizeof(TerrainCaveVertex) * (size_t)nv) != 0 || memcmp(idx, j.idx[b], sizeof(uint16_t) * (size_t)ni) != 0)
+                        badSame++;
+                }
+                free(v); free(idx);
+            }
+            /* closed: the vertices joined across bricks by their place, every edge met once each way */
+            KeyMap verts, edges;
+            size_t tris = 0, vsum = 0, bytes = 0;
+            int empty = 0;
+            double msSum = 0.0, msMax = 0.0;
+            for (int b = 0; b < nb; ++b) { tris += (size_t)j.ni[b] / 3; vsum += (size_t)j.nv[b]; empty += j.ni[b] == 0; msSum += j.ms[b]; msMax = fmax(msMax, j.ms[b]);
+                                           bytes += (size_t)j.nv[b] * sizeof(TerrainCaveVertex) + (size_t)j.ni[b] * sizeof(uint16_t); }
+            km_init(&verts, vsum + 16);
+            km_init(&edges, 3 * tris + 16);
+            int *gid = (int *)malloc(sizeof(int) * (vsum + 1));
+            double fMax = 0.0, fSum = 0.0, cosMin = 1.0;
+            int facing = 0, checked = 0, windOk = 0, winds = 0, degenerate = 0;
+            size_t base = 0;
+            for (int b = 0; b < nb; ++b) {
+                for (int q = 0; q < j.nv[b]; ++q) {
+                    const TerrainCaveVertex *v = &j.v[b][q];
+                    int64_t g[3];
+                    for (int a = 0; a < 3; ++a) g[a] = (int64_t)bricks[b][a] * TERRAIN_CAVE_CELLS * TERRAIN_CAVE_QUANT + v->p[a];
+                    uint64_t key = ((uint64_t)(g[0] & 0x1FFFFF) << 42) | ((uint64_t)(g[1] & 0x1FFFFF) << 21) | (uint64_t)(g[2] & 0x1FFFFF);
+                    int made, *id = km_get(&verts, key, &made);
+                    if (made) *id = (int)verts.n;
+                    gid[base + (size_t)q] = *id;
+                }
+                for (int t = 0; t + 2 < j.ni[b]; t += 3) {
+                    int a[3] = { gid[base + j.idx[b][t]], gid[base + j.idx[b][t + 1]], gid[base + j.idx[b][t + 2]] };
+                    for (int e = 0; e < 3; ++e) {
+                        int x = a[e], y = a[(e + 1) % 3];
+                        if (x == y) { degenerate++; continue; }
+                        uint64_t key = x < y ? ((uint64_t)x << 32 | (uint32_t)y) : ((uint64_t)y << 32 | (uint32_t)x);
+                        int *cnt = km_get(&edges, key, NULL);
+                        *cnt += x < y ? 1 : 1 << 16;   /* each way counted apart */
+                    }
+                    /* winding against the vertices' normals */
+                    double P[3][3], N[3] = { 0, 0, 0 };
+                    for (int e = 0; e < 3; ++e) {
+                        cave_vertex_at(lod, bricks[b], &j.v[b][j.idx[b][t + e]], P[e]);
+                        double n[3];
+                        oct_decode(j.v[b][j.idx[b][t + e]].n, n);
+                        for (int q = 0; q < 3; ++q) N[q] += n[q];
+                    }
+                    double u[3] = { P[1][0] - P[0][0], P[1][1] - P[0][1], P[1][2] - P[0][2] }, w[3] = { P[2][0] - P[0][0], P[2][1] - P[0][1], P[2][2] - P[0][2] };
+                    double X[3] = { u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0] };
+                    double xl = sqrt(X[0] * X[0] + X[1] * X[1] + X[2] * X[2]), nl = sqrt(N[0] * N[0] + N[1] * N[1] + N[2] * N[2]);
+                    if (xl < 1e-9 || nl < 1e-9) continue;
+                    winds++;
+                    double cs = (X[0] * N[0] + X[1] * N[1] + X[2] * N[2]) / (xl * nl);
+                    windOk += cs > 0.0;
+                    cosMin = fmin(cosMin, cs);
+                }
+                /* some vertices: on the surface, their normals into the air */
+                for (int q = 0; q < j.nv[b]; q += 7) {
+                    double p[3], n[3];
+                    cave_vertex_at(lod, bricks[b], &j.v[b][q], p);
+                    oct_decode(j.v[b][q].n, n);
+                    double f = fabs(terrain_cave_sdf_local(c, p[0], p[1], p[2]));
+                    double up = terrain_cave_sdf_local(c, p[0] + 0.3 * sv * n[0], p[1] + 0.3 * sv * n[1], p[2] + 0.3 * sv * n[2]);
+                    double dn = terrain_cave_sdf_local(c, p[0] - 0.3 * sv * n[0], p[1] - 0.3 * sv * n[1], p[2] - 0.3 * sv * n[2]);
+                    fMax = fmax(fMax, f / sv);
+                    fSum += f / sv;
+                    checked++;
+                    facing += up < dn;
+                }
+                base += (size_t)j.nv[b];
+            }
+            int open = 0, dup = 0;
+            for (size_t e = 0; e < edges.cap; ++e) {
+                if (edges.key[e] == ~0ull) continue;
+                int fwd = edges.val[e] & 0xFFFF, back = edges.val[e] >> 16;
+                if (fwd != back) open++;
+                else if (fwd > 1) dup++;
+            }
+            printf("  level %d (%.1f m cells, %.0f m bricks): %d bricks (%d empty), %.0f tris and %.0f verts a brick (%.1f KB), meshed in %.2f ms each (at most %.1f), "
+                   "%.2f s on %d threads; %zu tris, %.1f MB\n", lod, sv, B, nb, empty, nb > empty ? (double)tris / (nb - empty) : 0.0,
+                   nb > empty ? (double)vsum / (nb - empty) : 0.0, nb > empty ? bytes / 1024.0 / (nb - empty) : 0.0, msSum / fmax(nb, 1), msMax, wall, cpu_count(),
+                   tris, bytes / (1024.0 * 1024.0));
+            printf("    %zu edges: %d met other than once each way, %d shared by more than two faces; %d degenerate; vertices off the surface by %.3f cells on average "
+                   "(at most %.2f), %.1f%% of normals into the air, %.2f%% of triangles wound with them (worst cos %.2f)\n",
+                   edges.n, open, dup, degenerate, fSum / fmax(checked, 1), fMax, 100.0 * facing / fmax(checked, 1), 100.0 * windOk / fmax(winds, 1), cosMin);
+            if (open) badOpen += open;
+            badDup += dup > (int)(edges.n / 200);   /* surface nets' ambiguous cells: not a crack */
+            if (facing < 0.98 * checked || windOk < (lod < 2 ? 0.995 : 0.98) * winds || fMax > 1.0) badFlat++;   /* at 2 m the narrowest passages fold a few */
+            km_free(&verts); km_free(&edges); free(gid);
+            for (int b = 0; b < nb; ++b) { free(j.v[b]); free(j.idx[b]); }
+            free(j.v); free(j.idx); free(j.nv); free(j.ni); free(j.ms);
+        }
+        /* From the middle of a passage some way in: what each level would draw, and a camera there. */
+        for (int q = 0; q < 3; ++q) {
+            const TerrainCaveSeg *g = &c->seg[(c->nseg - 1) * (q + 1) / 4];
+            double P[3], wx, wz, ax, az, bx, bz;
+            for (int a = 0; a < 3; ++a) P[a] = 0.5 * (g->a[a] + g->b[a]);
+            int counts[TERRAIN_CAVE_LODS];
+            for (int lod = 0; lod < TERRAIN_CAVE_LODS; ++lod) {
+                int nb = terrain_cave_bricks(c, lod, bricks, MAXB), in = 0;
+                double B = terrain_cave_brick(lod), R = terrain_cave_lod_reach(lod);
+                for (int b = 0; b < nb; ++b) {
+                    int inside = 1;
+                    for (int a = 0; a < 3; ++a) inside &= (bricks[b][a] + 1) * B > P[a] - R && bricks[b][a] * B < P[a] + R;
+                    in += inside;
+                }
+                counts[lod] = in;
+            }
+            terrain_cave_to_world(c, P[0], P[2], &wx, &wz);
+            terrain_cave_to_world(c, g->a[0], g->a[2], &ax, &az);
+            terrain_cave_to_world(c, g->b[0], g->b[2], &bx, &bz);
+            double run = hypot(bx - ax, bz - az), yaw = atan2(bx - ax, -(bz - az)) * 180.0 / PI_F, pitch = atan2(g->b[1] - g->a[1], run) * 180.0 / PI_F;
+            printf("  from passage %d's middle: %d, %d and %d bricks within the levels' reach; --cam %.1f %.1f %.1f %.1f %.1f\n", (c->nseg - 1) * (q + 1) / 4,
+                   counts[0], counts[1], counts[2], wx, wz, yaw, pitch, P[1]);
+        }
+    }
+    CHECK(done > 0, "no cave to mesh within %.0f km", span / 1000.0);
+    CHECK(badNear == 0, "%d points where a brick's field differs from the whole field", badNear);
+    CHECK(badSame == 0, "%d bricks meshed differently a second time", badSame);
+    CHECK(badOpen == 0, "%d edges of the caves' meshes not closed (a crack or a hole)", badOpen);
+    CHECK(badDup == 0, "too many edges shared by more than two faces");
+    CHECK(badFlat == 0, "%d levels' meshes off their surface, or facing the rock", badFlat);
+    free(bricks); free(s->sys); free(s);
+}
+
 /* terrain_test --cave-map out.ppm [km [x z]]: the caves round the world's
  * (x, z), or without one round the first system found out from the
  * megacity, `km` across (1.5 by default), 800 pixels square: the ground lit
@@ -2843,6 +3089,7 @@ int main(int argc, char **argv) {
         return cave_map(argv[2], argc > 3 ? atof(argv[3]) : 1.5, argc > 5 ? at : NULL);
     }
     if (argc > 1 && strcmp(argv[1], "--caves") == 0) { test_caves(&r, argc > 2 ? atof(argv[2]) * 1000.0 : 150000.0); return g_failures != 0; }
+    if (argc > 1 && strcmp(argv[1], "--cave-mesh") == 0) { test_cave_mesh(&r, argc > 2 ? atof(argv[2]) * 1000.0 : 60000.0, argc > 3 ? atoi(argv[3]) : 3); return g_failures != 0; }
     if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
     if (argc > 2 && strcmp(argv[1], "--earth-map") == 0) return earth_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
     if (argc > 2 && strcmp(argv[1], "--landform-map") == 0) return landform_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
@@ -3031,6 +3278,7 @@ int main(int argc, char **argv) {
 
     test_landforms(&r);
     test_caves(&r, 60000.0);
+    test_cave_mesh(&r, 60000.0, 1);
     test_cover(&r);
     test_lod_heights();
     test_clipmap(&r);

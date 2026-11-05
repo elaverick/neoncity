@@ -296,6 +296,15 @@ int terrain_face_cells(TerrainDir p, int f, double reach, int N, int *i0, int *i
 int terrain_cave_build(int f, int i, int j, TerrainCave *out);
 /* The cell holding direction p's mouth candidates (for the tests' surveys). */
 void terrain_cave_cell(TerrainDir p, int *f, int *i, int *j);
+/* The passages of c near a box of its chart (lo .. hi): every one that can be
+ * near (terrain_cave.c, "The field") any point of it, in order, so that
+ * terrain_cave_sdf_near from them is terrain_cave_sdf_local, bit for bit, at
+ * every point of the box. */
+typedef struct TerrainCaveNear { int nseg; uint8_t seg[TERRAIN_CAVE_SEGS]; } TerrainCaveNear;
+void   terrain_cave_near_box(const TerrainCave *c, const double lo[3], const double hi[3], TerrainCaveNear *out);
+double terrain_cave_sdf_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z);
+/* Whether any of c's air can lie in the box: 0 proves it is all rock. */
+int    terrain_cave_box_live(const TerrainCave *c, const double lo[3], const double hi[3]);
 
 /* An edge measure past every rise (E, C and the Earth's detail all 1): the
  * land as it would be with no settlement near, which the streams are

@@ -573,7 +573,7 @@ bool renderer_terrain_settled(Renderer *r) {
     mutex_lock(&t->lock);
     int evaluated = t->evaluated;
     mutex_unlock(&t->lock);
-    return evaluated == 0 && t->shown.finest <= t->shown.want && t->drawn == t->shown.want && t->fade.level < 0 && planet_gpu_settled(r);
+    return evaluated == 0 && t->shown.finest <= t->shown.want && t->drawn == t->shown.want && t->fade.level < 0 && planet_gpu_settled(r) && cave_gpu_settled(r);
 }
 
 /* Each ready level's samples in its window, hashed to 16 bits ("-" for a
@@ -624,5 +624,10 @@ void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
     if (used + 2 < n) {
         buf[used++] = '\n';
         road_gpu_stats(r, buf + used, n - used);
+    }
+    used = strlen(buf);
+    if (used + 2 < n) {
+        buf[used++] = '\n';
+        cave_gpu_stats(r, buf + used, n - used);
     }
 }
