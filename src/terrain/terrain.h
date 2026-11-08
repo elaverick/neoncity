@@ -329,6 +329,19 @@ typedef struct TerrainCaveHole {
 _Static_assert(TERRAIN_CAVE_HOLE_GRID * TERRAIN_CAVE_HOLE_GRID <= 128, "a hole's cells must fit its mask");
 int    terrain_cave_hole(const TerrainCave *c, int m, TerrainCaveHole *out);
 
+/* --- Caves: light (src/terrain/terrain_cave_light.c) ---------------------------
+ * No lamp lights the caves: only what reaches in through the mouths. The sky
+ * a point of a cave sees (0 .. 1) falls off with its path from the nearest
+ * mouth along the passages (not straight through the rock), by e every
+ * TERRAIN_CAVE_SKY_RADII radii of the mouth's passage, so the deep parts go
+ * dark. The cave meshes carry it at their vertices (TerrainCaveVertex.sky);
+ * cave.frag scales the sky's light by it, and the camera's sets the cave
+ * air's (src/render/cave_gpu.c). terrain_cave_sky takes a point of c's chart
+ * (x, h, z) and writes its path (m) to *path if path isn't NULL. */
+#define TERRAIN_CAVE_SKY_RADII  3.0
+#define TERRAIN_CAVE_SKY_ACROSS 2.0   /* a nearer passage's wall: the path from a farther one, plus this times how much farther (m/m) */
+double terrain_cave_sky(const TerrainCave *c, double x, double h, double z, double *path);
+
 /* --- Caves: walking (src/terrain/terrain_cave_walk.c) --------------------------
  * What a walker stands on and bumps into where the caves are, in world X/Z
  * (this thread's frame). The solid is the ground's rock less the caves' air:
@@ -377,7 +390,7 @@ double terrain_cave_walk_headroom(const TerrainCaveWalk *w, double x, double z, 
  *
  * A vertex: its position from the brick's corner in 1/TERRAIN_CAVE_QUANT of
  * a cell (whole numbers, so that the shaders' sums with the brick's offset
- * are exact in float), a word for later (b5: the sky it sees), its normal
+ * are exact in float), the sky it sees (terrain_cave_sky, unorm16), its normal
  * facing the air (octahedral, snorm16 x 2: common.glsl octDecode) and its
  * height over the ground (terrain_cave_ground; a float's bits), or
  * TERRAIN_CAVE_DEEP if it lies more than TERRAIN_CAVE_CLIP_GATE_M under it

@@ -12,7 +12,9 @@
  * (1/1024 of a cell), so the sum is exact in float and two bricks that share a
  * vertex put it at the same place. From there into the frame by the chart's
  * map at the anchor, then bent over the planet as the terrain is
- * (planetBend), with the height less the camera's taken from doubles. */
+ * (planetBend), with the height less the camera's taken from doubles.
+ * With CAVE_SHELTER (cave_shelter.vert) into the shelter map instead, so no
+ * rain falls under the rock (renderer.c: record_shelter). */
 
 // TerrainCaveVertex, four words: x | y << 16 (int16), z | sky << 16, the normal (octahedral), its height over the ground (float)
 layout(std430, set = 0, binding = 1) readonly buffer Pool { uint pool[]; };
@@ -24,6 +26,7 @@ layout(location = 3) flat out ivec3 vInfo;   // its system, discard box, level
 layout(location = 4) out vec3 vNrmC;     // the normal in the chart (the rock's mapping)
 layout(location = 5) out vec3 vFlat;     // camera-relative world x, z (not bent) and the height (world Y): cave.frag's cut at the ground
 layout(location = 6) out float vAbove;   // its height over the ground, near a mouth (TERRAIN_CAVE_DEEP elsewhere)
+layout(location = 7) out float vSky;     // the sky it sees (terrain_cave_sky)
 
 void main() {
     CaveDraw d = caveDraw[gl_InstanceIndex];
@@ -46,5 +49,10 @@ void main() {
     vInfo = d.info.xyz;
     vFlat = vec3(xz.x, h, xz.y);
     vAbove = uintBitsToFloat(pool[base + 3u]);
+    vSky = float(w1 >> 16) * (1.0 / 65535.0);
+#ifdef CAVE_SHELTER
+    gl_Position = caveShelter.topDown * vec4(vRel, 1.0);
+#else
     gl_Position = frame.viewProj * vec4(vRel, 1.0);
+#endif
 }

@@ -233,7 +233,7 @@ struct CaveGpu {
     Buffer   pool;                  /* device local: vertices and indices */
     Buffer   staging[MAX_FRAMES];
     Buffer   frameBuf[MAX_FRAMES];  /* host visible: CaveFrameGPU */
-    Buffer   indirect[MAX_FRAMES];  /* host visible: VkDrawIndexedIndirectCommand[MAX_DRAWS] */
+    Buffer   indirect[MAX_FRAMES];  /* host visible: VkDrawIndexedIndirectCommand[2 * MAX_DRAWS]: the view's, then from MAX_DRAWS the shelter map's */
     Buffer   holeBuf[MAX_FRAMES];   /* host visible: CaveHolesGPU */
     int      nholes, holesCut, holePieces;   /* this frame's holes, those cut, the most pieces one has */
     float    holeBox[TERRAIN_CAVE_HOLES][2][3];  /* the cut ones' boxes, camera-relative world (min, max) */
@@ -241,7 +241,9 @@ struct CaveGpu {
     VkDescriptorPool dpool;
     VkDescriptorSet  set[MAX_FRAMES];
     Job     *want;                  /* this frame's wanted bricks, before sorting */
-    int      ndraw, drawnLod[LODS], drawnTris, missing, uploads, levels[SYS_MAX], evicted;
+    int      ndraw, nshelter, drawnLod[LODS], drawnTris, missing, uploads, levels[SYS_MAX], evicted;
+    int      camIn;                 /* the camera in a cave's air under the ground, and the sky it sees there (terrain_cave_sky) */
+    float    camSky;
     int      debugView;
     int      frames, fellBack, missingMost;   /* frames drawn, those in which a finer level near a system had to wait, the most bricks missing */
     double   updateMs, slowestUpdateMs;
@@ -474,7 +476,7 @@ void cave_gpu_create(Renderer *r) {
     for (int i = 0; i < MAX_FRAMES; ++i) {
         g->staging[i] = vk_buffer(vk, UPLOAD_BYTES, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host);
         g->frameBuf[i] = vk_buffer(vk, sizeof(CaveFrameGPU), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, host);
-        g->indirect[i] = vk_buffer(vk, sizeof(VkDrawIndexedIndirectCommand) * MAX_DRAWS, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, host);
+        g->indirect[i] = vk_buffer(vk, sizeof(VkDrawIndexedIndirectCommand) * 2 * MAX_DRAWS, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, host);
         g->holeBuf[i] = vk_buffer(vk, sizeof(CaveHolesGPU), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host);   /* a uniform buffer: every fragment of the terrain reads it (from host memory, a storage buffer cost the terrain 0.1 ms a frame) */
         memset(g->holeBuf[i].mapped, 0, sizeof(CaveHolesGPU));
         ((CaveHolesGPU *)g->holeBuf[i].mapped)->info[1] = TERRAIN_CLIP_LEVELS;
@@ -646,7 +648,9 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
     CaveFrameGPU *fb = (CaveFrameGPU *)g->frameBuf[slot].mapped;
     VkDrawIndexedIndirectCommand *ind = (VkDrawIndexedIndirectCommand *)g->indirect[slot].mapped;
     Frustum fr = frustum_from_matrix(*viewProj);
-    int nwant = 0, ndraw = 0, nh = 0, np = 0;
+    int nwant = 0, ndraw = 0, nrec = 0, nshelter = 0, nh = 0, np = 0;
+    g->camIn = 0;
+    g->camSky = 1.0f;
     CaveHolesGPU *hb = (CaveHolesGPU *)g->holeBuf[slot].mapped;
     g->missing = 0;
     g->nholes = 0;
@@ -658,6 +662,13 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
         double cx, cz;
         terrain_dir_chart(&c->chart, camDir, &cx, &cz);
         double cp[3] = { cx, cam[1], cz };
+        /* the camera in its air, under the ground: the cave's own air and light round it (cave.frag) */
+        if (cp[0] > c->lo[0] && cp[0] < c->hi[0] && cp[1] > c->lo[1] && cp[1] < c->hi[1] && cp[2] > c->lo[2] && cp[2] < c->hi[2] &&
+            terrain_cave_sdf_local(c, cp[0], cp[1], cp[2]) < 0.0 && cp[1] < terrain_cave_ground(c, cp[0], cp[2])) {
+            float sky = (float)terrain_cave_sky(c, cp[0], cp[1], cp[2], NULL);
+            g->camSky = g->camIn ? fmaxf(g->camSky, sky) : sky;
+            g->camIn = 1;
+        }
         double A[3] = { snap_down(cx, ANCHOR_M), snap_down(cam[1], ANCHOR_M), snap_down(cz, ANCHOR_M) };
         /* the anchor in the frame, and the chart's local map there */
         double ax, az, px, pz, mx, mz;
@@ -721,7 +732,7 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
             int finer = -1;
             for (int f = l - 1; f >= 0 && finer < 0; --f) if (drawn[f]) finer = f;
             double B = terrain_cave_brick(l), v = terrain_cave_voxel(l);
-            for (int b = 0; b < s->nlive[l] && ndraw < MAX_DRAWS; ++b) {
+            for (int b = 0; b < s->nlive[l] && nrec < MAX_DRAWS; ++b) {
                 const int32_t *q = s->live[l][b];
                 int inBox = 1, inside = finer >= 0, cut = finer >= 0;
                 double lo[3], hi[3];
@@ -738,19 +749,27 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
                 BrickKey k = { c->id, (int16_t)q[0], (int16_t)q[1], (int16_t)q[2], (uint8_t)l, 0 };
                 Entry *e = find(g, k);
                 if (!e || e->nidx == 0) continue;
-                /* in view? its box about the anchor, in the frame */
+                /* in view? its box about the anchor, in the frame; and in
+                 * the shelter map's square (every brick there, in view or
+                 * not: a roof off the top of the screen shelters the rain in
+                 * view) */
                 double ox = lo[0] + 0.5 * B - A[0], oz = lo[2] + 0.5 * B - A[2];
                 vec3 mid = v3((float)(ax - cam[0] + J0 * ox + J1 * oz), (float)(lo[1] + 0.5 * B - cam[1]), (float)(az - cam[2] + J2 * ox + J3 * oz));
                 float hx = (float)(0.5 * B * (fabs(J0) + fabs(J1)) + 0.5), hz = (float)(0.5 * B * (fabs(J2) + fabs(J3)) + 0.5), hy = (float)(0.5 * B + 0.5);
-                if (!frustum_test_aabb(&fr, v3(mid.x - hx, mid.y - hy, mid.z - hz), v3(mid.x + hx, mid.y + hy, mid.z + hz))) continue;
-                CaveDrawGPU *d = &fb->draw[ndraw];
+                int seen = frustum_test_aabb(&fr, v3(mid.x - hx, mid.y - hy, mid.z - hz), v3(mid.x + hx, mid.y + hy, mid.z + hz));
+                int over = fabsf(mid.x) - hx < SHELTER_RADIUS + 1.0f && fabsf(mid.z) - hz < SHELTER_RADIUS + 1.0f &&
+                           mid.y + hy > SHELTER_LO && mid.y - hy < SHELTER_HI;
+                if (!seen && !over) continue;
+                CaveDrawGPU *d = &fb->draw[nrec];
                 d->off[0] = (float)(lo[0] - A[0]); d->off[1] = (float)(lo[1] - A[1]); d->off[2] = (float)(lo[2] - A[2]);
                 d->off[3] = (float)(v / TERRAIN_CAVE_QUANT);
                 d->info[0] = si; d->info[1] = cut ? finer : -1; d->info[2] = l; d->info[3] = 0;
                 VkDeviceSize at = (VkDeviceSize)e->block << BLOCK_LOG;
-                ind[ndraw] = (VkDrawIndexedIndirectCommand){ e->nidx, 1, (uint32_t)((at + e->vbytes) / sizeof(uint16_t)), (int32_t)(at / sizeof(TerrainCaveVertex)),
-                                                             (uint32_t)ndraw };
-                ndraw++;
+                VkDrawIndexedIndirectCommand dc = { e->nidx, 1, (uint32_t)((at + e->vbytes) / sizeof(uint16_t)), (int32_t)(at / sizeof(TerrainCaveVertex)), (uint32_t)nrec };
+                nrec++;
+                if (over) ind[MAX_DRAWS + nshelter++] = dc;
+                if (!seen) continue;
+                ind[ndraw++] = dc;
                 g->drawnLod[l]++;
                 g->drawnTris += (int)(e->nidx / 3);
             }
@@ -832,6 +851,7 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
     hb->info[0] = nh;
     hb->info[2] = (int32_t)TERRAIN_CAVE_SEED_A; hb->info[3] = (int32_t)TERRAIN_CAVE_SEED_B;
     g->ndraw = ndraw;
+    g->nshelter = nshelter;
     g->frames++;
     for (int si = 0; si < g->nsys; ++si)
         if (g->levels[si] != 3) { g->fellBack++; break; }
@@ -859,24 +879,40 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
                       VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
 }
 
+/* Draws n of the slot's indirect commands from `first`. */
+static void draw_list(Renderer *r, VkCommandBuffer cmd, int slot, int first, int n) {
+    CaveGpu *g = r->caves;
+    if (r->vk->mdi) {
+        uint32_t maxCount = r->vk->props.limits.maxDrawIndirectCount;
+        for (uint32_t k = 0; k < (uint32_t)n; k += maxCount) {
+            uint32_t cnt = (uint32_t)n - k < maxCount ? (uint32_t)n - k : maxCount;
+            vkCmdDrawIndexedIndirect(cmd, g->indirect[slot].buf, ((uint32_t)first + k) * sizeof(VkDrawIndexedIndirectCommand), cnt, sizeof(VkDrawIndexedIndirectCommand));
+        }
+    } else {
+        const VkDrawIndexedIndirectCommand *c = (const VkDrawIndexedIndirectCommand *)g->indirect[slot].mapped + first;
+        for (int i = 0; i < n; ++i) vkCmdDrawIndexed(cmd, c[i].indexCount, 1, c[i].firstIndex, c[i].vertexOffset, c[i].firstInstance);
+    }
+}
+
 void cave_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     CaveGpu *g = r->caves;
     if (g->ndraw == 0) return;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->debugView ? r->caveXrayPipe : r->cavePipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->cavePL, 0, 1, &g->set[slot], 0, NULL);
     vkCmdBindIndexBuffer(cmd, g->pool.buf, 0, VK_INDEX_TYPE_UINT16);
-    int32_t view = g->debugView;
+    struct { int32_t view, camIn; float camSky; } view = { g->debugView, g->camIn, g->camSky };   /* cave.glsl: CaveView */
     vkCmdPushConstants(cmd, r->cavePL, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(view), &view);
-    if (r->vk->mdi) {
-        uint32_t maxCount = r->vk->props.limits.maxDrawIndirectCount;
-        for (uint32_t first = 0; first < (uint32_t)g->ndraw; first += maxCount) {
-            uint32_t cnt = (uint32_t)g->ndraw - first < maxCount ? (uint32_t)g->ndraw - first : maxCount;
-            vkCmdDrawIndexedIndirect(cmd, g->indirect[slot].buf, first * sizeof(VkDrawIndexedIndirectCommand), cnt, sizeof(VkDrawIndexedIndirectCommand));
-        }
-    } else {
-        const VkDrawIndexedIndirectCommand *c = (const VkDrawIndexedIndirectCommand *)g->indirect[slot].mapped;
-        for (int i = 0; i < g->ndraw; ++i) vkCmdDrawIndexed(cmd, c[i].indexCount, 1, c[i].firstIndex, c[i].vertexOffset, c[i].firstInstance);
-    }
+    draw_list(r, cmd, slot, 0, g->ndraw);
+}
+
+void cave_gpu_draw_shelter(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *topDown) {
+    CaveGpu *g = r->caves;
+    if (g->nshelter == 0) return;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->caveShelterPipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->caveShelterPL, 0, 1, &g->set[slot], 0, NULL);
+    vkCmdBindIndexBuffer(cmd, g->pool.buf, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdPushConstants(cmd, r->caveShelterPL, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(mat4), topDown);
+    draw_list(r, cmd, slot, MAX_DRAWS, g->nshelter);
 }
 
 void cave_gpu_set_debug(Renderer *r, int view) { r->caves->debugView = view; }

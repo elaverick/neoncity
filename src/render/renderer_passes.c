@@ -117,6 +117,7 @@ void record_shelter(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *topD
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->shelterPL, 0, 1, &r->sceneSet[slot], 0, NULL);
     vkCmdPushConstants(cmd, r->shelterPL, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(mat4), topDown);
     chunks_draw_shelter(r->chunks, cmd, slot);
+    cave_gpu_draw_shelter(r, cmd, slot, topDown);
     vkCmdEndRendering(cmd);
     vk_image_barrier(cmd, r->shelter.img, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                      VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,

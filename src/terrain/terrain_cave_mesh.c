@@ -139,6 +139,7 @@ typedef struct Scratch {
     uint8_t crossed[V * V * V];
     const TerrainCave     *c;      /* the brick being meshed */
     const TerrainCaveNear *near;
+    const TerrainCaveLight *light;  /* the paths from its mouths (terrain_cave_light.c) */
     int64_t g0[3];
     double  s;
 } Scratch;
@@ -195,7 +196,8 @@ static void cell_vertex(Scratch *w, int x, int y, int z) {
  * field's gradient there, by differences a quarter of a cell either side
  * (the corners' differences, blended, smear a passage narrower than a few
  * cells), or theirs where that has none: from where it lies in the whole
- * chart, so a vertex two bricks share gets the same one in both. */
+ * chart, so a vertex two bricks share gets the same one in both; and so its
+ * sky (terrain_cave_light_at, from the pieces near the brick). */
 static int use_vertex(Scratch *w, int x, int y, int z, TerrainCaveVertex *v, int *nv) {
     int ci = CI(x, y, z);
     if (w->vid[ci] >= 0) return w->vid[ci];
@@ -218,7 +220,7 @@ static int use_vertex(Scratch *w, int x, int y, int z, TerrainCaveVertex *v, int
     if (l > 0.0)
         for (int q = 0; q < 3; ++q) n[q] = -g[q] / l;   /* into the air, down the field */
     o->n = oct_encode(n);
-    o->sky = 0;
+    o->sky = (uint16_t)lround(terrain_cave_light_at(w->c, w->light, w->near->seg, w->near->nseg, w->near->room, w->near->nroom, P[0], P[1], P[2], NULL) * 65535.0);
     o->above = (float)TERRAIN_CAVE_DEEP;   /* (stand_clear: over the ground, near a mouth) */
     w->vid[ci] = (*nv)++;
     return w->vid[ci];
@@ -279,6 +281,7 @@ int terrain_cave_brick_mesh(const TerrainCave *c, int lod, int bi, int bj, int b
     Scratch *w = t_scratch;
     if (!w) return 0;
     w->c = c; w->near = &near; w->s = s;
+    w->light = terrain_cave_light(c);
     for (int a = 0; a < 3; ++a) w->g0[a] = g0[a];
     int air = 0;
     for (int z = -2; z <= C + 1; ++z)

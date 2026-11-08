@@ -200,8 +200,26 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   `terrain_test --caves [km]`, `--cave-map out.ppm [km [x z]]`, `--cave-mesh [km [n]]`, `--cave-walk [km [n [dt [x z]]]]`).
   b1 (placement, passages, field, CPU only), b2 (meshing and drawing: `terrain_cave_mesh.c`, `src/render/cave_gpu.c`,
   `shaders/terrain/cave.*`; `--cave-debug normals|lit|lod`), b3 (the mouths: `terrain_cave_hole`,
-  `shaders/terrain/cave_hole.glsl`, `cave_clip.glsl`) and b4 (walking: `terrain_cave_walk.c`, `player.c`) are done;
-  b5-b6 (light, dressing) are next.
+  `shaders/terrain/cave_hole.glsl`, `cave_clip.glsl`), b4 (walking: `terrain_cave_walk.c`, `player.c`) and b5 (light
+  and air: `terrain_cave_light.c`, `shaders/terrain/cave_shelter.*`) are done; b6 (dressing, docs) is next.
+  Left over from b5:
+  - **The light is one number a vertex**, the sky's share by the path from the nearest mouth (by e every 3 radii of
+    the mouth's passage, `TERRAIN_CAVE_SKY_RADII`): it falls to 0.1 some 16-23 m in and 0.01 by 31-46 m, then black.
+    It has no direction: a wall facing away from the mouth gets as much as one facing it, and the moon's direct
+    light (`groundLightIn`) is scaled with the sky's, so moonlight seems to reach in round corners near a mouth. The
+    ray-traced shadows (M11) would do it properly.
+  - **A wall takes its own passage's light**, not a neighbour's through the rock: each piece's path is charged twice
+    how much farther its wall is than the nearest's (`TERRAIN_CAVE_SKY_ACROSS`), among those within
+    `TERRAIN_CAVE_NEAR_M`. A piece crossing that line can step the light a little; not seen in the captures.
+  - **The exposure doesn't adapt** (composite's is fixed at 1), so the dark reads black, not grey, as the plan wanted;
+    it also means no eye adjusting in a cave. An adapting exposure would want a floor so the deep parts stay dark.
+  - **The cave's air** is used only while the camera is in a cave's air under the ground (`cave_gpu.c`: camIn,
+    camSky): a thin fog (150 m) lit by the camera's and the fragment's sky. From outside, the land's haze as before,
+    and the terrain seen out of a mouth from inside keeps the land's haze too.
+  - **Rain**: the caves' bricks over the shelter map's square (in view or not) go into it, cut where they stand over
+    the ground at a mouth by their vertices' heights (coarser than cave.frag's cut), so a drop under the lip of a
+    mouth may still fall. Away from a city it doesn't rain at all (the cloud is the cities'), so only caves within the
+    cloud's border (3 km, 2.5 km being the caves' least) see it. Nothing wets the cave's rock.
   Left over from b4:
   - **The walker's lookup runs on the main thread**: 4-5 ms once on arriving near a new cell's system (on foot, or
     flying within 300 m of the ground), from its own per-thread cache. The renderer's workers have the same systems;
@@ -218,9 +236,9 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   - **Fly mode keeps 1 m over a cave's floor** as over the ground, and goes under the ground only into a cave's air.
   Left over from b3:
   - **No dark mouths far off.** The plan's dark cover for the coarse levels wasn't built: the holes are cut at every
-    level wherever the cave is drawn (to 1 km), so it would only matter past that, where a mouth is a few pixels,
-    and inside a cave is lit as outside until b5. With b5's dark, a mouth past 1 km should go dark too (the cover's
-    free top byte, or the hole's field in terrain.frag for the systems known).
+    level wherever the cave is drawn (to 1 km), so it would only matter past that, where a mouth is a few pixels.
+    With b5's dark, a mouth past 1 km should go dark too (the cover's free top byte, or the hole's field in
+    terrain.frag for the systems known).
   - **The rim is a clean cut**: no lip, scree or overhang where the ground opens (b6's dressing).
   - **A mouth opens only once the bricks round it are meshed**: about half a second on arrival; until then the
     ground is whole and the passage under it cut off at it.
@@ -232,9 +250,7 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     the cut (`terrain_cut.frag`) and lose the early depth test; the caves now draw before the terrain, so the parts
     of a cave hidden by the hill are shaded too (+0.03 ms on the caves' pass at 7 m) but from inside a cave the
     terrain costs nothing (0.39 to 0.03 ms).
-  - **Light and air**: the rock is lit as the land outside is, by the moon and the cities' cloud, and hazed as it
-    is; no sky's share through the mouths yet, rain falls in the caves, the shelter map and the ray-traced shadows
-    don't see them (b5, M11).
+  - **The ray-traced shadows don't see the caves** (M11).
   - **Level 2 folds the narrowest passages**: at 2 m cells a 3 m passage gets 0.2-1.2% of its triangles turned
     against the field's normal. Drawn only past 400 m.
   - **Surface nets' ambiguous cells**: up to 0.5% of the edges are shared by four faces. No crack, a pinch.

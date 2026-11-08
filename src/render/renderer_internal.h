@@ -117,6 +117,8 @@ struct Renderer {
     VkDescriptorSetLayout caveLayout;
     VkPipelineLayout      cavePL;
     VkPipeline            cavePipe, caveXrayPipe;   /* caveXrayPipe: both faces, for the --cave-debug views (the terrain not drawn) */
+    VkPipelineLayout      caveShelterPL;
+    VkPipeline            caveShelterPipe;          /* the caves into the shelter map (cave_shelter.vert/.frag) */
     int                   caveDebug;
     ProxyGpu    *proxies;   /* proxy_gpu.c */
     VkDescriptorSetLayout proxyLayout;
@@ -244,6 +246,9 @@ void cave_gpu_create(Renderer *r);
 void cave_gpu_destroy(Renderer *r);
 void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);
 void cave_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
+/* The caves' bricks over the shelter map's square into it (record_shelter),
+ * in view or not, so no rain falls in a cave. */
+void cave_gpu_draw_shelter(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *topDown);
 /* The frame slot's mouths' holes (shaders/terrain/cave_hole.glsl), written by
  * cave_gpu_update: for the terrain's cut and the grass's. */
 VkBuffer cave_gpu_holes(Renderer *r, int slot);

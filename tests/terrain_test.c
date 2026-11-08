@@ -2857,8 +2857,8 @@ static void test_cave_mesh(Rng *r, double span, int want) {
     DVec2 lc = land_centre();
     CaveSurvey *s = (CaveSurvey *)calloc(1, sizeof(CaveSurvey));
     cave_survey(s, lc.x, lc.z, span);
-    int done = 0, badNear = 0, badSame = 0, badOpen = 0, badDup = 0, badFlat = 0, badAbove = 0;
-    double aboveMax = -1e30;
+    int done = 0, badNear = 0, badSame = 0, badOpen = 0, badDup = 0, badFlat = 0, badAbove = 0, badSky = 0, badReach = 0, badMouth = 0;
+    double aboveMax = -1e30, skyOff = 0.0;
     const int MAXB = 65536;
     int32_t (*bricks)[3] = malloc(sizeof(int32_t[3]) * MAXB);
     for (int k = 0; k < s->n && done < want; ++k) {
@@ -2964,6 +2964,11 @@ static void test_cave_mesh(Rng *r, double span, int want) {
                     double f = fabs(terrain_cave_sdf_local(c, p[0], p[1], p[2]));
                     /* its height over the ground: kept within the gate, deep (and so) elsewhere */
                     double above = p[1] - cave_ground(c, p[0], p[2]), held = j.v[b][q].above;
+                    /* its sky: the whole cave's, so a vertex two bricks share sees the same in both */
+                    double sky = terrain_cave_sky(c, p[0], p[1], p[2], NULL), off = fabs(sky - j.v[b][q].sky / 65535.0);
+                    skyOff = fmax(skyOff, off);
+                    if (off > 0.51 / 65535.0 && badSky++ < 5)
+                        printf("  level %d brick (%d, %d, %d): a vertex's sky %.6f, the cave's there %.6f\n", lod, bricks[b][0], bricks[b][1], bricks[b][2], j.v[b][q].sky / 65535.0, sky);
                     if (held == (float)TERRAIN_CAVE_DEEP ? above > -TERRAIN_CAVE_CLIP_GATE_M : fabs(held - above) > 1e-3) badAbove++;
                     aboveMax = fmax(aboveMax, held);
                     double up = terrain_cave_sdf_local(c, p[0] + 0.3 * sv * n[0], p[1] + 0.3 * sv * n[1], p[2] + 0.3 * sv * n[2]);
@@ -2995,6 +3000,34 @@ static void test_cave_mesh(Rng *r, double span, int want) {
             km_free(&verts); km_free(&edges); free(gid);
             for (int b = 0; b < nb; ++b) { free(j.v[b]); free(j.idx[b]); }
             free(j.v); free(j.idx); free(j.nv); free(j.ni); free(j.ms);
+        }
+        /* The light along the passages: every axis reached from a mouth, the
+         * mouths open to the sky, and how far in the light goes. */
+        {
+            int samples = 0, dark = 0, unreached = 0;
+            double half = 1e30, tenth = 1e30, hundredth = 1e30, deepest = 0.0;
+            for (int q = 0; q < c->nseg; ++q) {
+                const TerrainCaveSeg *g = &c->seg[q];
+                double L = sqrt((g->b[0] - g->a[0]) * (g->b[0] - g->a[0]) + (g->b[1] - g->a[1]) * (g->b[1] - g->a[1]) + (g->b[2] - g->a[2]) * (g->b[2] - g->a[2]));
+                for (double t = 0.0; t <= L; t += 2.0) {
+                    double P[3], path;
+                    for (int a = 0; a < 3; ++a) P[a] = g->a[a] + (g->b[a] - g->a[a]) * (L > 0.0 ? t / L : 0.0);
+                    double sky = terrain_cave_sky(c, P[0], P[1], P[2], &path);
+                    samples++;
+                    if (path >= 1e29) { unreached++; continue; }
+                    dark += sky < 1e-3;
+                    deepest = fmax(deepest, path);
+                    if (sky < 0.5) half = fmin(half, path);
+                    if (sky < 0.1) tenth = fmin(tenth, path);
+                    if (sky < 0.01) hundredth = fmin(hundredth, path);
+                }
+            }
+            double mouthSky = 1.0;
+            for (int m = 0; m < c->nmouth; ++m) mouthSky = fmin(mouthSky, terrain_cave_sky(c, c->mouth[m].p[0], c->mouth[m].p[1], c->mouth[m].p[2], NULL));
+            printf("  light: %d axis points, %d unreached, %.1f%% dark (sky under 0.001); sky under 0.5 from %.1f m in, 0.1 from %.1f m, 0.01 from %.1f m; "
+                   "deepest %.0f m; at the mouths at least %.3f\n", samples, unreached, 100.0 * dark / fmax(samples, 1), half, tenth, hundredth, deepest, mouthSky);
+            badReach += unreached;
+            badMouth += mouthSky < 0.9;
         }
         /* From the middle of a passage some way in: what each level would draw, and a camera there. */
         for (int q = 0; q < 3; ++q) {
@@ -3052,6 +3085,10 @@ static void test_cave_mesh(Rng *r, double span, int want) {
     CHECK(badOpen == 0, "%d edges of the caves' meshes not closed (a crack or a hole)", badOpen);
     CHECK(badDup == 0, "too many edges shared by more than two faces");
     CHECK(badFlat == 0, "%d levels' meshes off their surface, or facing the rock", badFlat);
+    printf("  the vertices' sky against the cave's: off by %.2g at most\n", skyOff);
+    CHECK(badSky == 0, "%d vertices' sky not the cave's there", badSky);
+    CHECK(badReach == 0, "%d points of the passages' axes no path from a mouth reaches", badReach);
+    CHECK(badMouth == 0, "%d systems with a mouth not open to the sky", badMouth);
     free(bricks); free(s->sys); free(s);
 }
 

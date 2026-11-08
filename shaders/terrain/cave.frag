@@ -9,9 +9,14 @@
 #include "terrain/cave_clip.glsl"
 
 /* A brick of a cave (cave.vert): plain rock, the land's (PBR_LAND_ROCK),
- * mapped three ways in the cave's own chart. For now lit as the land outside
- * is (groundLightIn) and seen through its haze: the light under the rock
- * (what reaches in through the mouths) and the air there come later (M10b b5).
+ * mapped three ways in the cave's own chart. No lamp lights it (the user's
+ * call, M10b): it is lit as the land outside is (groundLightIn), times the
+ * sky its vertices see through the mouths (terrain_cave_sky: falling off
+ * along the passages from the nearest mouth), so the deep parts go black.
+ * From outside it is seen through the land's haze; from inside (the camera
+ * in a cave's air under the ground) through the cave's own thin air instead
+ * (the land's haze thickens with depth under its datum), lit as much as the
+ * camera's and the fragment's sky between them: dark where they are.
  * Where a finer level is drawn the fragments inside its box, shrunk by a cell
  * of this level's, are discarded (src/render/cave_gpu.c: the rings overlap by
  * that cell, so no crack opens between them).
@@ -35,6 +40,7 @@ layout(location = 3) flat in ivec3 vInfo;
 layout(location = 4) in vec3 vNrmC;
 layout(location = 5) in vec3 vFlat;
 layout(location = 6) in float vAbove;
+layout(location = 7) in float vSky;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outRefl;   // nothing for the screen-space reflections
 
@@ -65,6 +71,8 @@ vec3 caveRock(vec3 p, vec3 dpx, vec3 dpy, vec3 N, out vec3 bend) {
     return alb * landColour(0) / max(pbrAlbedoMean(m), vec3(1e-3));
 }
 
+const float CAVE_AIR_M = 150.0;   // the cave air's mean free path (m)
+
 const vec3 LOD_TINT[3] = vec3[](vec3(1.0, 0.55, 0.45), vec3(0.55, 1.0, 0.5), vec3(0.5, 0.7, 1.0));
 
 void main() {
@@ -79,7 +87,13 @@ void main() {
     vec3 col;
     if (caveView.view == 1) col = (0.5 + 0.5 * n) * 0.15 * outside;
     else if (caveView.view >= 2) col = vec3(0.25) * (0.1 + 0.9 * max(dot(n, V), 0.0)) * (caveView.view == 3 ? LOD_TINT[vInfo.z] : vec3(1.0)) * outside;
-    else col = groundHazed(alb * groundLightIn(landSky(vRel), nB), vRel, 0.0);
+    else {
+        vec3 lit = alb * groundLightIn(landSky(vRel), nB) * vSky;
+        if (caveView.camIn != 0) {
+            float dist = length(vRel), fog = 1.0 - exp(-dist / CAVE_AIR_M);
+            col = mix(lit, hazeColor(vRel / max(dist, 1e-4)) * (0.5 * (vSky + caveView.camSky)), fog);
+        } else col = groundHazed(lit, vRel, 0.0);
+    }
     if (vInfo.y >= 0) {   // inside the finer level's box: that level draws it
         vec3 lo = caveSys[vInfo.x].box[2 * vInfo.y].xyz, hi = caveSys[vInfo.x].box[2 * vInfo.y + 1].xyz;
         if (all(greaterThan(vChart, lo)) && all(lessThan(vChart, hi))) discard;

@@ -80,6 +80,12 @@ static const uint32_t SPV_cave_vert[] = {
 static const uint32_t SPV_cave_frag[] = {
 #include "terrain/cave.frag.inc"
 };
+static const uint32_t SPV_cave_shelter_vert[] = {
+#include "terrain/cave_shelter.vert.inc"
+};
+static const uint32_t SPV_cave_shelter_frag[] = {
+#include "terrain/cave_shelter.frag.inc"
+};
 static const uint32_t SPV_proxy_vert[] = {
 #include "proxy/proxy.vert.inc"
 };
@@ -285,7 +291,8 @@ void create_layouts(Renderer *r) {
     r->shelterPL = make_pipeline_layout(vk, r->sceneLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
     r->terrainPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(TerrainPush), VK_SHADER_STAGE_VERTEX_BIT);
     r->planetPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(PlanetPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-    r->cavePL = make_pipeline_layout(vk, r->caveLayout, sizeof(int32_t), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);   /* the --cave-debug view */
+    r->cavePL = make_pipeline_layout(vk, r->caveLayout, 3 * sizeof(int32_t), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);   /* cave.glsl: CaveView */
+    r->caveShelterPL = make_pipeline_layout(vk, r->caveLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
     r->proxyPL = make_pipeline_layout(vk, r->proxyLayout, 0, 0);
 
     VkDescriptorPoolSize sizes[4] = {
@@ -519,6 +526,9 @@ void create_pipelines(Renderer *r) {
                    r->shelterPL, VK_FORMAT_UNDEFINED, DEPTH_FORMAT, VK_SAMPLE_COUNT_1_BIT, true, true, true, false };
     sh.positionOnly = true;
     r->shelterPipe = make_graphics(vk, &sh);
+    GfxDesc csh = { SPV_cave_shelter_vert, sizeof(SPV_cave_shelter_vert), SPV_cave_shelter_frag, sizeof(SPV_cave_shelter_frag),
+                    r->caveShelterPL, VK_FORMAT_UNDEFINED, DEPTH_FORMAT, VK_SAMPLE_COUNT_1_BIT, false, true, true, false };
+    r->caveShelterPipe = make_graphics(vk, &csh);
     /* flames: boxes added to the HDR target, no depth attachment (flame.frag reads the depth) */
     GfxDesc fl = { SPV_flame_vert, sizeof(SPV_flame_vert), SPV_flame_frag, sizeof(SPV_flame_frag),
                    r->flamePL, HDR_FORMAT, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false };

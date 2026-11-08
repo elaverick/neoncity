@@ -299,6 +299,14 @@ void terrain_cave_cell(TerrainDir p, int *f, int *i, int *j);
 typedef struct TerrainCaveNear { int nseg, nroom; uint8_t seg[TERRAIN_CAVE_SEGS], room[TERRAIN_CAVE_ROOMS]; } TerrainCaveNear;
 void   terrain_cave_near_box(const TerrainCave *c, const double lo[3], const double hi[3], TerrainCaveNear *out);
 double terrain_cave_sdf_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z);
+/* A system's passages as a graph and the paths from its mouths
+ * (terrain_cave_light.c), made once per thread for the last few systems
+ * asked; and the sky at a point from the pieces listed (in order, every one
+ * near the point among them: terrain_cave_sky's, bit for bit). */
+typedef struct TerrainCaveLight TerrainCaveLight;
+const TerrainCaveLight *terrain_cave_light(const TerrainCave *c);
+double terrain_cave_light_at(const TerrainCave *c, const TerrainCaveLight *L, const uint8_t *segs, int nseg, const uint8_t *rooms, int nroom,
+                             double x, double h, double z, double *path);
 /* Whether any of c's air can lie in the box: 0 proves it is all rock. */
 int    terrain_cave_box_live(const TerrainCave *c, const double lo[3], const double hi[3]);
 

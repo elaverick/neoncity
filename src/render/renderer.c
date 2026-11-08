@@ -159,7 +159,7 @@ void renderer_destroy(Renderer *r) {
     planet_gpu_destroy(r);
     proxy_gpu_destroy(r);
     vk_buffer_destroy(vk, &r->shotBuf);
-    VkPipeline pipes[] = { r->impDemandPipe, r->cityPipe, r->plantPipe, r->terrainPipe, r->terrainCutPipe, r->planetPipe, r->cavePipe, r->caveXrayPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
+    VkPipeline pipes[] = { r->impDemandPipe, r->cityPipe, r->plantPipe, r->terrainPipe, r->terrainCutPipe, r->planetPipe, r->cavePipe, r->caveXrayPipe, r->caveShelterPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
                            r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->flamePipe, r->smokePipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
@@ -175,6 +175,7 @@ void renderer_destroy(Renderer *r) {
     vkDestroyPipelineLayout(vk->device, r->terrainPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->planetPL, NULL);
     vkDestroyPipelineLayout(vk->device, r->cavePL, NULL);
+    vkDestroyPipelineLayout(vk->device, r->caveShelterPL, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->caveLayout, NULL);
     vkDestroyDescriptorSetLayout(vk->device, r->terrainLayout, NULL);
     vkDestroyPipelineLayout(vk->device, r->proxyPL, NULL);
