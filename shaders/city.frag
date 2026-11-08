@@ -47,6 +47,15 @@ void glassRefl(vec3 n, float w) { gRefl = vec4(n.x, n.z, GLASS_ROUGH, w); }
 // the screen's to replace (ssr_apply.frag), and the reflection streaks only a little.
 const float INDOOR_ROUGH = -3.0;
 float gStreak = 1.0;      // wet surfaces: how far GGX highlights stretch toward the viewer    // chunk-local position + wrapped chunk offset: continuous for noise
+// The normal a rough surface's screen-space reflection traces along: its flat
+// one. ssr.comp casts one ray a pixel, so tracing along the stone's grain sends
+// neighbours' rays scattering and the few that strike a soffit lamp or an LED
+// strip come back as specks, a hall of mirrors under every canopy; ssr_apply's
+// streak stands in for that roughness instead. Smooth water keeps its ripples.
+void ssrRefl(vec3 n, vec3 nFlat, float rough, float w) {
+    vec3 r = normalize(mix(n, nFlat, smoothstep(0.08, 0.3, rough)));
+    gRefl = vec4(r.x, r.z, rough, w);
+}
 
 const float PI = 3.14159265;
 

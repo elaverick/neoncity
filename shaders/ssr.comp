@@ -80,6 +80,9 @@ void main() {
                * (1.0 - smoothstep(0.75, 1.0, float(hitStep) / float(STEPS)))   // the march's last steps
                * smoothstep(-0.3, 0.1, dot(R, frame.camFwd.xyz));
     vec3 col = textureLod(hdrTex, hit.xy, 0.0).rgb;
+    // a bad pixel on screen (NaN or inf) must not be reflected: ssr_apply's
+    // streak would smear it down the floor as a trail of specks
+    if (any(isnan(col)) || any(isinf(col))) { imageStore(ssrOut, px, vec4(0.0)); return; }
     // Glass seeing wet ground: the ground's lamp highlights streak toward the
     // camera, and a mirror would show them elsewhere (toward the camera's
     // mirror image), so they'd smear diagonally across the pane. Roll them

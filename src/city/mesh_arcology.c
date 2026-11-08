@@ -70,10 +70,12 @@ static void asign_quad(Mesh *m, const ALayout *A, float x0, float z0, float x1, 
 }
 
 /* Greedy rectangles over the cells whose use is in useMask (and in block blk, if >= 0). */
-int arc_rects(const ALayout *A, uint32_t useMask, int blk, ARect *out, int max) {
+/* As arc_rects, leaving out the cells marked in skip (one byte a cell, or NULL). */
+static int arc_rects_skip(const ALayout *A, uint32_t useMask, int blk, const uint8_t *skip, ARect *out, int max) {
     int N = A->nx * A->nz, n = 0;
     uint8_t *used = (uint8_t *)calloc((size_t)N, 1);
     if (!used) fatal("out of memory realising an arcology");
+    if (skip) memcpy(used, skip, (size_t)N);
 #define AWANT(i, j) ((useMask & (1u << A->use[(j) * A->nx + (i)])) && (blk < 0 || A->blk[(j) * A->nx + (i)] == blk) && !used[(j) * A->nx + (i)])
     for (int j = 0; j < A->nz && n < max; ++j)
         for (int i = 0; i < A->nx && n < max; ++i) {
@@ -95,6 +97,10 @@ int arc_rects(const ALayout *A, uint32_t useMask, int blk, ARect *out, int max) 
 #undef AWANT
     free(used);
     return n;
+}
+
+int arc_rects(const ALayout *A, uint32_t useMask, int blk, ARect *out, int max) {
+    return arc_rects_skip(A, useMask, blk, NULL, out, max);
 }
 
 /* A footprint outline (building frame) minus frame rectangles, as caps facing up or down. */
@@ -165,10 +171,14 @@ static uint32_t lamp_pack(const ALayout *A, const AConcourse *c) {
     return s | p << 8 | o << 16 | h << 24;
 }
 
-/* The concourse level's floor: base, streets (with their lamp pools), plaza, hall, yard, stalls. */
+/* The concourse level's floor: base, streets (with their lamp pools), plaza, hall, yard, stalls.
+ * A street runs on through the colonnade to its portal, so the colonnade's floor
+ * leaves out the cells a street paves (both lie at fy + 0.02 and would fight). */
 static void emit_arc_floor(Mesh *m, const BGraph *g, const ALayout *A) {
     const BSection *gs = &g->sec[A->tier[0].section];
     float fy = A->floorY;
+    uint8_t *paved = (uint8_t *)calloc((size_t)(A->nx * A->nz), 1);
+    if (!paved) fatal("out of memory realising an arcology");
     emit_cap(m, &gs->foot, fy + 0.01f, 0, iframe(m, amat(A, ARS_FLOOR, 5, 0.0f)));
     for (int c = 0; c < A->nconc; ++c) {
         const AConcourse *cc = &A->conc[c];
@@ -191,17 +201,23 @@ static void emit_arc_floor(Mesh *m, const BGraph *g, const ALayout *A) {
                 uv[0][0] = u0; uv[0][1] = -hw; uv[1][0] = u1; uv[1][1] = -hw; uv[2][0] = u1; uv[2][1] = hw; uv[3][0] = u0; uv[3][1] = hw;
             }
             aflat(m, A, q, fy + 0.02f, 0, (const float (*)[2])uv, mt);
+            for (int j = 0; j < A->nz; ++j)
+                for (int i = 0; i < A->nx; ++i) {
+                    float x = A->gx0 + ((float)i + 0.5f) * AR_CELL, z = A->gz0 + ((float)j + 0.5f) * AR_CELL;
+                    if (x > q.x0 && x < q.x1 && z > q.z0 && z < q.z1) paved[j * A->nx + i] = 1;
+                }
         }
     }
     ARect *rc = (ARect *)malloc(sizeof(ARect) * 1024);
     if (!rc) fatal("out of memory realising an arcology");
     static const struct { int use, var; } F[] = { { AU_COLONNADE, 4 }, { AU_PLAZA, 0 }, { AU_HALL, 2 }, { AU_YARD, 1 }, { AU_STALL, 3 }, { AU_COREHALL, 6 }, { AU_KIOSK, 7 } };
     for (int f = 0; f < (int)ARRAY_LEN(F); ++f) {
-        int n = arc_rects(A, 1u << F[f].use, -1, rc, 1024);
+        int n = arc_rects_skip(A, 1u << F[f].use, -1, F[f].use == AU_COLONNADE ? paved : NULL, rc, 1024);
         Mat mt = iframe(m, amat(A, ARS_FLOOR, F[f].var, 0.0f));
         for (int k = 0; k < n; ++k) aflat(m, A, rc[k], fy + (F[f].use == AU_COLONNADE ? 0.02f : 0.025f), 0, NULL, mt);
     }
     free(rc);
+    free(paved);
 }
 
 /* The concourse ceiling (open where the canyon rises), with stepped beams on the column lines. */
@@ -216,19 +232,22 @@ static void emit_arc_ceiling(Mesh *m, const BGraph *g, const ALayout *A) {
         for (float line = o - ceilf((o - lo) / s) * s; line <= hi; line += s) {
             if (line < lo + 1.0f || line > hi - 1.0f) continue;
             float a0 = axis ? A->gz0 : A->gx0, a1 = axis ? gz1 : gx1, start = 0.0f;
-            int inRun = 0;
+            int inRun = 0, prevOut = 1;
             for (float a = a0; a <= a1 + 1e-3f; a += AR_CELL) {
                 float x = axis ? line : a + 0.25f, z = axis ? a + 0.25f : line;
-                int ok = a < a1 && arcology_use_at(A, x, z) != AU_OUT;
+                int out = a >= a1 || arcology_use_at(A, x, z) == AU_OUT, ok = !out;
                 for (int v = 0; v < A->nvoid && ok; ++v) ok = !(x > A->voids[v].x0 - 0.8f && x < A->voids[v].x1 + 0.8f && z > A->voids[v].z0 - 0.8f && z < A->voids[v].z1 + 0.8f);
-                if (ok && !inRun) { inRun = 1; start = a; }
+                if (ok && !inRun) { inRun = 1; start = a + (prevOut ? 0.03f : 0.0f); }
+                prevOut = out;
                 if (!ok && inRun) {
                     inRun = 0;
-                    if (a - start < 2.0f) continue;
-                    if (axis) { abox(m, A, line - 0.35f, start, line + 0.35f, a, top - 1.3f, top - 0.6f, F_SIDES | F_BOT, beam);
-                                abox(m, A, line - 0.7f, start, line + 0.7f, a, top - 0.6f, top, F_SIDES | F_BOT, beam); }
-                    else      { abox(m, A, start, line - 0.35f, a, line + 0.35f, top - 1.3f, top - 0.6f, F_SIDES | F_BOT, beam);
-                                abox(m, A, start, line - 0.7f, a, line + 0.7f, top - 0.6f, top, F_SIDES | F_BOT, beam); }
+                    /* an end at the facade stops just short of it: on its plane, the end would fight the wall */
+                    float end = a - (out ? 0.03f : 0.0f);
+                    if (end - start < 2.0f) continue;
+                    if (axis) { abox(m, A, line - 0.35f, start, line + 0.35f, end, top - 1.3f, top - 0.6f, F_SIDES | F_BOT, beam);
+                                abox(m, A, line - 0.7f, start, line + 0.7f, end, top - 0.6f, top, F_SIDES | F_BOT, beam); }
+                    else      { abox(m, A, start, line - 0.35f, end, line + 0.35f, top - 1.3f, top - 0.6f, F_SIDES | F_BOT, beam);
+                                abox(m, A, start, line - 0.7f, end, line + 0.7f, top - 0.6f, top, F_SIDES | F_BOT, beam); }
                 }
             }
         }
@@ -407,12 +426,17 @@ static void emit_arc_stall(Mesh *m, const ALayout *A, const AStall *st) {
     in.seed = roof.seed = shut.seed = st->seed;
     out.seed = hash_combine(A->seed, (uint32_t)st->block);
     static const int FRONT[4] = { F_NZ, F_PX, F_PZ, F_NX };
+    /* the block's own face outside, except where the stall stands against the
+     * facade: the facade is opaque there, and a face on its plane would fight it */
+    float mx = 0.5f * (r.x0 + r.x1), mz = 0.5f * (r.z0 + r.z1);
+    int outNX = arcology_use_at(A, r.x0 - 0.25f, mz) != AU_OUT, outPX = arcology_use_at(A, r.x1 + 0.25f, mz) != AU_OUT;
+    int outNZ = arcology_use_at(A, mx, r.z0 - 0.25f) != AU_OUT, outPZ = arcology_use_at(A, mx, r.z1 + 0.25f) != AU_OUT;
     if (d == 0 || d == 2) {
         /* side walls: lit shelves inside, the block's own face outside */
         awall(m, A, r.x0 + t, r.z0, r.x0 + t, r.z1, fy, fy + h, 1.0f, 0.0f, r.z0, r.z1, 0.0f, h, in);
         awall(m, A, r.x1 - t, r.z0, r.x1 - t, r.z1, fy, fy + h, -1.0f, 0.0f, r.z0, r.z1, 0.0f, h, in);
-        awall(m, A, r.x0, r.z0, r.x0, r.z1, fy, fy + h, -1.0f, 0.0f, r.z0, r.z1, 0.0f, h, out);
-        awall(m, A, r.x1, r.z0, r.x1, r.z1, fy, fy + h, 1.0f, 0.0f, r.z0, r.z1, 0.0f, h, out);
+        if (outNX) awall(m, A, r.x0, r.z0, r.x0, r.z1, fy, fy + h, -1.0f, 0.0f, r.z0, r.z1, 0.0f, h, out);
+        if (outPX) awall(m, A, r.x1, r.z0, r.x1, r.z1, fy, fy + h, 1.0f, 0.0f, r.z0, r.z1, 0.0f, h, out);
         abox(m, A, r.x0, d == 0 ? r.z0 : r.z1 - 0.01f, r.x0 + t, d == 0 ? r.z0 + 0.01f : r.z1, fy, fy + h, d == 0 ? F_NZ : F_PZ, out);
         abox(m, A, r.x1 - t, d == 0 ? r.z0 : r.z1 - 0.01f, r.x1, d == 0 ? r.z0 + 0.01f : r.z1, fy, fy + h, d == 0 ? F_NZ : F_PZ, out);
         float back = d == 0 ? r.z1 - 0.02f : r.z0 + 0.02f, nz = d == 0 ? -1.0f : 1.0f;
@@ -421,8 +445,8 @@ static void emit_arc_stall(Mesh *m, const ALayout *A, const AStall *st) {
     } else {
         awall(m, A, r.x0, r.z0 + t, r.x1, r.z0 + t, fy, fy + h, 0.0f, 1.0f, r.x0, r.x1, 0.0f, h, in);
         awall(m, A, r.x0, r.z1 - t, r.x1, r.z1 - t, fy, fy + h, 0.0f, -1.0f, r.x0, r.x1, 0.0f, h, in);
-        awall(m, A, r.x0, r.z0, r.x1, r.z0, fy, fy + h, 0.0f, -1.0f, r.x0, r.x1, 0.0f, h, out);
-        awall(m, A, r.x0, r.z1, r.x1, r.z1, fy, fy + h, 0.0f, 1.0f, r.x0, r.x1, 0.0f, h, out);
+        if (outNZ) awall(m, A, r.x0, r.z0, r.x1, r.z0, fy, fy + h, 0.0f, -1.0f, r.x0, r.x1, 0.0f, h, out);
+        if (outPZ) awall(m, A, r.x0, r.z1, r.x1, r.z1, fy, fy + h, 0.0f, 1.0f, r.x0, r.x1, 0.0f, h, out);
         abox(m, A, d == 3 ? r.x0 : r.x1 - 0.01f, r.z0, d == 3 ? r.x0 + 0.01f : r.x1, r.z0 + t, fy, fy + h, d == 3 ? F_NX : F_PX, out);
         abox(m, A, d == 3 ? r.x0 : r.x1 - 0.01f, r.z1 - t, d == 3 ? r.x0 + 0.01f : r.x1, r.z1, fy, fy + h, d == 3 ? F_NX : F_PX, out);
         float back = d == 1 ? r.x0 + 0.02f : r.x1 - 0.02f, nx = d == 1 ? 1.0f : -1.0f;
@@ -587,8 +611,12 @@ static void emit_arc_signs(Mesh *m, const ALayout *A) {
 static void emit_arc_retrofit(Mesh *m, const ALayout *A) {
     float top = A->ceilY - 0.4f;
     for (int k = 0; k < A->nduct; ++k) {
-        const ADuct *d = &A->duct[k];
+        ADuct dd = A->duct[k];
+        const ADuct *d = &dd;
         int alongX = fabsf(d->z1 - d->z0) < 1e-3f;
+        /* a run that ends at the facade stops just short of it: its end on the wall's plane would fight it */
+        if (alongX) { if (arcology_use_at(A, dd.x0 - 0.25f, dd.z0) == AU_OUT) dd.x0 += 0.03f; if (arcology_use_at(A, dd.x1 + 0.25f, dd.z0) == AU_OUT) dd.x1 -= 0.03f; }
+        else        { if (arcology_use_at(A, dd.x0, dd.z0 - 0.25f) == AU_OUT) dd.z0 += 0.03f; if (arcology_use_at(A, dd.x0, dd.z1 + 0.25f) == AU_OUT) dd.z1 -= 0.03f; }
         float len = alongX ? d->x1 - d->x0 : d->z1 - d->z0, hs = d->size * 0.5f, t = arcology_t(A, d->y);
         Mat mt = amat(A, ARS_METAL, d->kind, t);
         float th = d->kind == AD_TRAY ? 0.12f : d->size;
@@ -919,11 +947,12 @@ void emit_arc_portals(Mesh *m, const BGraph *g, const ALayout *A) {
             emit_box(m, v3(u1 + wi, gy, zi), v3(u1 + w, top + up, zo), F_NOBOT, fr, UV_FACADE);
             emit_box(m, v3(u0 - wi, top + (s ? 0.45f + 0.55f * (float)(s - 1) : 0.0f), zi), v3(u1 + wi, top + up, zo), F_NOBOT | F_BOT, fr, UV_FACADE);
         }
-        /* a light frame round the opening */
+        /* a light frame round the opening, standing proud of the inner frame's face (0.45 m):
+         * sunk into it, its sides and underside lay on the frame's own faces and fought them */
         Mat led = mat(MAT_LEDSTRIP, h, A->palette[p % 3], 0, 0);
-        emit_box(m, v3(u0 - 0.06f, gy + 0.2f, 0.42f), v3(u0, top, 0.48f), F_SIDES, led, UV_FACADE);
-        emit_box(m, v3(u1, gy + 0.2f, 0.42f), v3(u1 + 0.06f, top, 0.48f), F_SIDES, led, UV_FACADE);
-        emit_box(m, v3(u0, top, 0.42f), v3(u1, top + 0.06f, 0.48f), F_SIDES | F_BOT, led, UV_FACADE);
+        emit_box(m, v3(u0 - 0.06f, gy + 0.2f, 0.46f), v3(u0, top, 0.52f), F_SIDES, led, UV_FACADE);
+        emit_box(m, v3(u1, gy + 0.2f, 0.46f), v3(u1 + 0.06f, top, 0.52f), F_SIDES, led, UV_FACADE);
+        emit_box(m, v3(u0, top, 0.46f), v3(u1, top + 0.06f, 0.52f), F_SIDES | F_BOT, led, UV_FACADE);
         /* a sign over it */
         float sy0 = top + 1.75f, sy1 = minf(sy0 + 1.5f, gy + (A->ceilY - A->floorY) - 0.3f);
         if (sy1 - sy0 > 0.6f) {
@@ -934,7 +963,8 @@ void emit_arc_portals(Mesh *m, const BGraph *g, const ALayout *A) {
         }
         if (pt->main) {
             Mat metal = mat(MAT_METAL, g->seed, 3, 0, 0);
-            emit_box(m, v3(u0 - 1.8f, top + 1.0f, 0.0f), v3(u1 + 1.8f, top + 1.35f, 4.0f), F_NOBOT | F_BOT, metal, UV_FACADE);
+            /* its underside clear of the outer frame's lintel (top + 1.0), not on it */
+            emit_box(m, v3(u0 - 1.8f, top + 1.02f, 0.0f), v3(u1 + 1.8f, top + 1.35f, 4.0f), F_NOBOT | F_BOT, metal, UV_FACADE);
             float uv[4][2] = { { 0, 0 }, { u1 - u0 + 3.4f, 0 }, { u1 - u0 + 3.4f, 1 }, { 0, 1 } };
             emit_quad(m, v3(u0 - 1.7f, top + 0.99f, 3.7f), v3(u1 + 1.7f, top + 0.99f, 3.7f), v3(u1 + 1.7f, top + 0.99f, 3.9f),
                       v3(u0 - 1.7f, top + 0.99f, 3.9f), v3(0, -1, 0), uv, mat(MAT_LEDSTRIP, h, A->palette[0], 1, 0));

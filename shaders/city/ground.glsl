@@ -400,8 +400,12 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         relBroad = pbrRelief(PBR_KERB, pbrBroadHeight(PBR_KERB, uv / pbrTile(PBR_KERB), 4.0));
         jointLevel = -0.4;
     } else if (mat == MAT_CURB && pbrLoaded(PBR_KERB)) {
-        // authored kerb face: uv = (metres along cross(up, n), height), so image up is -y
-        Surface s = samplePBR(PBR_KERB, uv / pbrTile(PBR_KERB), normalize(vec3(n.z, 0.0, -n.x)), vec3(0.0, -1.0, 0.0), n);
+        // authored kerb face: uv = (metres along cross(up, n), height), so image up is -y.
+        // A flat top (an entrance step's tread, a parapet's) has no such frame
+        // (cross(up, n) is zero, and the normal went NaN): laid in the world instead.
+        Surface s = abs(n.y) > 0.7
+                  ? samplePBR(PBR_KERB, w.xz / pbrTile(PBR_KERB), vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0), n)
+                  : samplePBR(PBR_KERB, uv / pbrTile(PBR_KERB), normalize(vec3(n.z, 0.0, -n.x)), vec3(0.0, -1.0, 0.0), n);
         alb = s.albedo * pbrAlbedoScale(PBR_KERB);
         n = s.n; ao = s.ao;
         rough = s.rough; specK = 0.04;   // dielectric F0
@@ -546,7 +550,7 @@ vec3 shadeGround(uint mat, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm
         vec3 R = normalize(mix(reflect(-V, n), n, rough * rough));
         float w = envBRDF(specK, rough, ndv) * ao;
         spec += envReflection(R) * w;
-        gRefl = vec4(n.x, n.z, rough, w);   // screen-space reflections refine this
+        ssrRefl(n, nGeom, rough, w);   // screen-space reflections refine this
     } else {
         // sky / haze sheen at grazing angles
         float fres = pow(1.0 - max(dot(n, V), 0.0), 5.0);

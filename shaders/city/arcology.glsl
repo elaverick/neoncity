@@ -447,6 +447,7 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     else if (surf == ARS_KIOSK) gm = var == 1u ? PBR_BRUSHED_METAL : PBR_PAINTED_STEEL;
     else if (surf == ARS_CRATE)
         gm = var == 10u ? PBR_FABRIC : var == 12u ? PBR_CONCRETE : var == 13u ? PBR_GRASS : var == 6u || var == 9u ? PBR_WOOD_DARK : PBR_PAINTED_STEEL;
+    vec3 nFlat = n;   // before the grain (ssrRefl)
     if (gm >= 0 && pbrLoaded(gm)) {
         vec3 gT, gB;
         modelFrame(p, uv, n, gT, gB);
@@ -469,7 +470,7 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float wgt = envBRDF(max(specK, 0.02), rough, ndv) * (surf == ARS_PUDDLE ? 1.0 : 0.8);
         vec3 indoor = vec3(0.008, 0.007, 0.010) + neonBounce(w, y + 6.0) * 3.0 * street + CROWN_COLD * 0.12 * smoothstep(0.9, 0.995, R.y);
         col += indoor * wgt;
-        gRefl = vec4(n.x, n.z, rough, wgt);
+        ssrRefl(n, nFlat, rough, wgt);
     }
     // haze: dark, faintly sodium-warm and neon-tinted in the street stratum, thin and cool up the canyon
     float dens = mix(0.014, 0.005, smoothstep(0.1, 0.6, t));
