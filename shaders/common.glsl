@@ -96,17 +96,26 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 wakeW[GRASS_WAKE_POINTS / 4]; // each point's weight, four to a vector
     vec4 wakeBox;    // camera-relative min x, min z, max x, max z the wake reaches
     vec4 wakeInfo;   // x how many points
+    vec4 landGrid;   // xy camera-relative x, z of the land's lamps' grid's corner (terrain/land_lights.glsl; src/render/chunks.c: build_land_records)
+    ivec4 landCells[LAND_GRID * LAND_GRID / 4];   // each cell's chunk record (-1: none), rows of z, four to a vector
+    vec4 landRects[LAND_GRID * LAND_GRID];        // camera-relative x0, z0, x1, z1 the cell's chunk's lights reach
 } frame;
+
+/* The scene set's buffers (src/render/renderer_pipelines.c: create_layouts) are set 0, but for the
+ * terrain, whose own set is 0: it binds the scene set as set 1 (SCENE_SET) for the land's lamps. */
+#ifndef SCENE_SET
+#define SCENE_SET 0
+#endif
 
 struct ChunkGPU {
     vec4  origin;    // chunk origin relative to camera
     ivec4 info;      // cx, cz, first light record (-1: none), unused
 };
-layout(std430, set = 0, binding = 1) readonly buffer Chunks { ChunkGPU chunks[]; };
+layout(std430, set = SCENE_SET, binding = 1) readonly buffer Chunks { ChunkGPU chunks[]; };
 
 // Per-chunk light tables (see build_lights in src/city/light_tiles.c): a header record,
 // 16 tile words (first << 16 | count), then lights (xyz, w = type | data).
-layout(std430, set = 0, binding = 2) readonly buffer Lights { uvec4 lightRec[]; };
+layout(std430, set = SCENE_SET, binding = 2) readonly buffer Lights { uvec4 lightRec[]; };
 
 /* ---------------- hashing: bit-identical to src/core/hash.h ---------------- */
 uint hash_u32(uint x) {

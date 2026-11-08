@@ -1,7 +1,12 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#define SCENE_SET 1   // (terrain.frag's lamps)
 #include "common.glsl"
 #include "terrain_clip.h"
+
+// The tiles near the city's lamps are drawn in the depth prepass too
+// (terrain_pre.frag), and the scene pass must meet that depth exactly.
+invariant gl_Position;
 
 /* One ring of the terrain clipmap (src/render/terrain_gpu.c). The grid is
  * TERRAIN_CLIP_W x TERRAIN_CLIP_W vertices, vertex (i, j) = gl_VertexIndex
@@ -32,7 +37,7 @@ layout(location = 0) out vec3  vRel;     // camera-relative position, bent over 
 layout(location = 1) out vec3  vNrm;
 layout(location = 2) out float vUrban;   // plan_urban: 1 in the city, 0 beyond its belt
 layout(location = 3) out vec4  vCoverA;  // the ground cover (ground.glsl, Cover): rock, scree, grass, sand
-layout(location = 4) out vec4  vCoverB;  // mud, snow, wet, 0
+layout(location = 4) out vec4  vCoverB;  // mud, snow, wet, the city's own ground (src/plan/plan.h plan_city_ground)
 layout(location = 5) out vec3  vFlat;    // camera-relative x, z (not bent) and the height drawn (world Y): the caves' holes (terrain.frag)
 
 const int N = TERRAIN_CLIP_N, W = TERRAIN_CLIP_W;

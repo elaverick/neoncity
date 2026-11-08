@@ -358,6 +358,39 @@ int plan_town_built(int i, int j) {
     return cell_built(s, &p, x0, z0, x1, z1);
 }
 
+/* plan_town_built of the frame's towns, remembered a thread at a time: the
+ * terrain asks at every sample on the city's ground (plan_city_ground), and
+ * the proof is costly. Keyed by the frame too, whose towns they are. */
+#define BUILT_CACHE 1024
+typedef struct BuiltEntry { int64_t key; uint32_t frame; int8_t built, used; } BuiltEntry;
+static _Thread_local BuiltEntry t_built[BUILT_CACHE];
+
+static int town_built_cached(int i, int j) {
+    Site s = town_site(i, j);
+    int64_t key = site_key(s);
+    uint32_t frame = terrain_frame()->id;
+    BuiltEntry *e = &t_built[hash_combine(hash_u32((uint32_t)i), (uint32_t)j) & (BUILT_CACHE - 1)];
+    if (!e->used || e->key != key || e->frame != frame) {
+        e->key = key;
+        e->frame = frame;
+        e->built = (int8_t)plan_town_built(i, j);
+        e->used = 1;
+    }
+    return e->built;
+}
+
+float plan_city_ground(double x, double z, float urban) {
+    if (urban <= 0.0f) return 0.0f;
+    double own = plan_built_edge(x, z);
+    /* another settlement's ground, never built in this frame: the urban weight stands in */
+    if (own >= PLAN_EDGE_CAP || own > plan_city_edge(x, z) + 1e-6) return urban;
+    /* a built town's cell, and its padding, lie at or inside CITY_BUILT_EDGE */
+    if (own > CITY_BUILT_EDGE) return 0.0f;
+    int i, j;
+    plan_town_at(x, z, &i, &j);
+    return town_built_cached(i, j) ? 1.0f : 0.0f;
+}
+
 /* The returned pointer is valid until the next town_get call (or anything
  * that makes one: town_built, town_ground). */
 static TownEntry *town_get(PlanCtx *c, int i, int j) {

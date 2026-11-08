@@ -199,8 +199,23 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
 - **Terrain in ray tracing** (M11; plan `~/.claude/plans/m11-terrain-ray-tracing.md`). M11a is done: the clipmap's
   levels near the camera (`src/render/terrain_rt.c`, `shaders/terrain/terrain_rt.comp`) are in the shadows' TLAS
   under `RT_MASK_TERRAIN`, refit in place as the windows move; `--shot` prints their check against the CPU's drawn
-  surface; `NEONCITY_TERRAIN_RT=0` leaves them out for an A/B. Next: M11b (the land takes the lamps), M11c (the
-  moon's shadows), M11d (the caves). Left over from M11a:
+  surface; `NEONCITY_TERRAIN_RT=0` leaves them out for an A/B. M11b is done: the land beside the city takes the
+  lamps, with their traced shadows (`shaders/terrain/land_lights.glsl`, `terrain_pre.frag`; the chunks' grid in the
+  frame's uniforms, `src/render/chunks.c: build_land_records`), and the land past the built edge is drawn as land
+  (`plan_city_ground`, the cover's last byte). Next: M11c (the moon's shadows), M11d (the caves). Left over from M11b:
+  - **Faint at the megacity's edges.** The lamps nearest the land stand on the perimeter boulevard's far sidewalk;
+    its shoulder and the grass verge (the city's) lie between them and the land, so the land is 15-30 m from them,
+    where a lamp's spill is a few per cent of its pool: the F10 view shows it, the scene barely. It shows where land
+    meets lights: a flare by the edge (80 m), a hilly town, a gate's road (whose lamps are the freeway's own).
+  - **The land's chunk** is its own cell's or one of the three beside it on its side: a flare two cells off reaches
+    no land. One chunk a point, so where two chunks' lamps overlap the land takes only the first's table (a table
+    already holds its neighbours' lamps within 34 m).
+  - **The haze** still follows the urban weight, so the land past the edge is hazed as the city for up to a town's
+    width; the planet's patches still draw the stand-in by the urban weight (far off, in the haze).
+  - **The prepass** takes every land tile near a lit chunk within `SHADOW_FAR`, the sunk ground under the streets
+    too (37 tiles at the spawn, the prepass 0.52 ms before and after: their fragments fail the city's depth).
+  - **Validation:** one more benign interface note (`terrain_pre.frag` reads only the normal and the position).
+  Left over from M11a:
   - **Seen nowhere yet in the megacity.** The built ground stops at least `CITY_BELT` inside the edge's contour, and
     the land there is gentle, so at the edges tried the lamps' shadows are the same with and without the terrain
     (the A/B differs by 0.06% of pixels, under two runs' noise). It shows where land stands over a lamp's ray: a
@@ -362,7 +377,7 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     on wet ground with puddles), over TX0's 0.6 ms target in the riverbank view (0.77 ms). Looking the classes' wet
     and snow numbers up once a pixel rather than once a hex copy saved at most 0.04 ms, so it wasn't kept.
   - **Later inputs:** erosion (M10) gives sediment and flow (scree under cliffs, alluvium in valleys; the cover's
-    spare byte is for it), and terrain in ray tracing (M11) shades hits with the same cover and material functions.
+    spare byte now says where the city's own ground lies, M11b, so it needs room of its own), and terrain in ray tracing (M11) shades hits with the same cover and material functions.
 
 ## Settlements and roads
 The world's largest metropolitan areas over the planet, megacities of the future 60-150 km across (177 of a

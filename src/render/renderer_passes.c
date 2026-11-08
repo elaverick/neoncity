@@ -127,7 +127,9 @@ void record_shelter(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *topD
 /* Depth prepass (ray-traced shadows only): the city's opaque surfaces into the
  * scene's depth, which the scene pass then loads, and the G-buffer the shadow
  * passes read (prepass.frag). Sample 0 of both is resolved for them. What
- * city.frag draws over only part of a pixel is left out (city.vert: PREPASS). */
+ * city.frag draws over only part of a pixel is left out (city.vert: PREPASS).
+ * After the city, the land the city's lamps light within SHADOW_FAR
+ * (terrain_pre.frag), so its lamps' shadows are traced too. */
 void record_prepass(Renderer *r, VkCommandBuffer cmd, int slot) {
     VkCore *vk = r->vk;
     bool msaa = vk->msaa != VK_SAMPLE_COUNT_1_BIT;
@@ -180,6 +182,7 @@ void record_prepass(Renderer *r, VkCommandBuffer cmd, int slot) {
     chunks_draw_prepass(r->chunks, cmd, slot);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->prepassPlantPipe);
     chunks_draw_plants(r->chunks, cmd, slot);
+    terrain_gpu_draw_prepass(r, cmd, slot);   /* the land near the city's lamps (terrain_pre.frag) */
     vkCmdEndRendering(cmd);
 
     const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
@@ -272,8 +275,9 @@ void record_reflections(Renderer *r, VkCommandBuffer cmd, int slot) {
 /* The scene pass: the city, its plants, the distant proxies, the terrain and
  * the sky into the MSAA HDR target and the reflection G-buffer, resolved into
  * r->hdr and r->refl. With shadows, the depth is the prepass's (which leaves
- * the proxies and the terrain out: they take no shadows, and only the
- * terrain's near levels cast, from the TLAS). The proxies
+ * the proxies out, and of the terrain all but the land by the city's lamps:
+ * the rest takes no shadows, and only the terrain's near levels cast, from the
+ * TLAS). The proxies
  * and the terrain come after the city, whose depth hides much of them, and
  * before the sky, which fills what's left. */
 void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows) {

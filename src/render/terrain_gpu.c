@@ -111,12 +111,12 @@ struct TerrainGpu {
     VkDescriptorSet  set[MAX_FRAMES];
     /* this frame's draws (plan_draws), each a run of one level's tiles */
     TerrainPush    push[TERRAIN_CLIP_LEVELS];
-    struct { int level, cut; uint32_t first, count; } draw[MAX_DRAWS];   /* cut: near a cave's mouth's hole (terrainCutPipe) */
+    struct { int level, cut, lit; uint32_t first, count; } draw[MAX_DRAWS];   /* cut: near a cave's mouth's hole (terrainCutPipe); lit: in the prepass */
     int            ndraw;
     /* the last frame's share, and the slowest so far (--shot prints them):
      * taking the update and staging its rows, the draw plan, in all; and the
      * slowest fill on the worker */
-    int            drawn, tilesDrawn, tilesTotal, tilesCut;
+    int            drawn, tilesDrawn, tilesTotal, tilesCut, tilesLit;
     double         stageMs, planMs, updateMs, slowestMs, slowestFillMs;
     TerrainRt     *rt;                    /* the near levels in the shadows' TLAS (terrain_rt.c); NULL without ray tracing */
     int            dirty[TERRAIN_CLIP_LEVELS];   /* samples uploaded this frame, per level */
@@ -357,6 +357,22 @@ void terrain_gpu_destroy(Renderer *r) {
     r->terrain = NULL;
 }
 
+/* Whether a tile's camera-relative box (mn, mx) lies where the city's lamps
+ * light the land within SHADOW_FAR (shaders/terrain/land_lights.glsl), so the
+ * depth prepass draws it (terrain_pre.frag) and the shadow passes trace its
+ * lamps: within SHADOW_FAR of the camera, and in reach of a chunk's lights
+ * (the shader's own test, with a metre to spare). */
+static int tile_lit(const LandLights *ll, const float mn[3], const float mx[3]) {
+    float nx = fmaxf(mn[0], fminf(0.0f, mx[0])), nz = fmaxf(mn[2], fminf(0.0f, mx[2]));
+    if (nx * nx + nz * nz > SHADOW_FAR * SHADOW_FAR) return 0;
+    const float R = 1.0f;
+    for (int i = 0; i < LAND_GRID * LAND_GRID; ++i) {
+        const float *b = ll->rect[i];
+        if (mn[0] <= b[2] + R && mx[0] >= b[0] - R && mn[2] <= b[3] + R && mx[2] >= b[1] - R) return 1;
+    }
+    return 0;
+}
+
 /* This frame's draws: the levels from the finest the screen-space error asks
  * for (or the finest ready, if coarser), reached a level at a time as the
  * finest blends in or out (terrain_fade_step), the finest as a whole window,
@@ -365,9 +381,10 @@ void terrain_gpu_destroy(Renderer *r) {
  * parent to the camera of the update the levels come from (c->cam). K comes
  * from viewProj's second row, the projection's 1 / tan(fovy / 2) times the
  * view's unit up axis. */
-static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj, uint32_t height, double dt, const float (*holes)[2][3], int nholes) {
+static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj, uint32_t height, double dt, const float (*holes)[2][3], int nholes,
+                       const LandLights *land) {
     TerrainClipmap *c = &t->shown;
-    t->ndraw = t->tilesDrawn = t->tilesTotal = t->tilesCut = 0;
+    t->ndraw = t->tilesDrawn = t->tilesTotal = t->tilesCut = t->tilesLit = 0;
     t->drawn = TERRAIN_CLIP_LEVELS;
     if (c->finest >= TERRAIN_CLIP_LEVELS) return;
     const float *m = viewProj->m;
@@ -436,12 +453,16 @@ static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj,
                 cut = bmn[0] <= hb[1][0] && bmx[0] >= hb[0][0] && bmn[1] <= hb[1][1] && bmx[1] >= hb[0][1] && bmn[2] <= hb[1][2] && bmx[2] >= hb[0][2];
             }
             t->tilesCut += cut;
-            if (t->ndraw > 0 && t->draw[t->ndraw - 1].level == l && t->draw[t->ndraw - 1].cut == cut &&
+            /* (no cave lies near a city; if one did, its cut tile stays out: the prepass doesn't cut) */
+            int lit = land && !cut && tile_lit(land, (const float[3]){ mn.x, mn.y, mn.z }, (const float[3]){ mx.x, mx.y, mx.z });
+            t->tilesLit += lit;
+            if (t->ndraw > 0 && t->draw[t->ndraw - 1].level == l && t->draw[t->ndraw - 1].cut == cut && t->draw[t->ndraw - 1].lit == lit &&
                 t->draw[t->ndraw - 1].first + t->draw[t->ndraw - 1].count == t->first[list][tile]) {
                 t->draw[t->ndraw - 1].count += t->count[list][tile];
             } else {
                 t->draw[t->ndraw].level = l;
                 t->draw[t->ndraw].cut = cut;
+                t->draw[t->ndraw].lit = lit;
                 t->draw[t->ndraw].first = t->first[list][tile];
                 t->draw[t->ndraw].count = t->count[list][tile];
                 t->ndraw++;
@@ -488,7 +509,8 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
     double t1 = glfwGetTime();
     const float (*holes)[2][3];
     int nholes = cave_gpu_hole_boxes(r, &holes);
-    plan_draws(t, cam, viewProj, r->vk->extent.height, t->lastTime > 0.0 ? t0 - t->lastTime : 0.0, holes, nholes);
+    plan_draws(t, cam, viewProj, r->vk->extent.height, t->lastTime > 0.0 ? t0 - t->lastTime : 0.0, holes, nholes,
+               r->rt && r->shadowsOn ? chunks_land_lights(r->chunks) : NULL);
     t->lastTime = t0;
     if (idle) {   /* the next update, at this frame's camera, for the level just selected */
         t->clip.want = t->shown.want;
@@ -516,12 +538,14 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
     terrain_rt_update(r, t->rt, cmd, slot, &t->shown, t->push, t->drawn, cam, t->dirty);
 }
 
-/* The update's plan (plan_draws), a push per level drawn. */
+/* The update's plan (plan_draws), a push per level drawn. The scene set is
+ * set 1, for the city's lamps (terrain.frag). */
 void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     TerrainGpu *t = r->terrain;
     if (t->ndraw == 0) return;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->terrainPipe);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->terrainPL, 0, 1, &t->set[slot], 0, NULL);
+    VkDescriptorSet sets[2] = { t->set[slot], r->sceneSet[slot] };
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->terrainPL, 0, 2, sets, 0, NULL);
     vkCmdBindIndexBuffer(cmd, t->indices.buf, 0, VK_INDEX_TYPE_UINT16);
     int pushed = -1, cut = 0;
     for (int k = 0; k < t->ndraw; ++k) {
@@ -529,6 +553,28 @@ void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
             cut = t->draw[k].cut;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, cut ? r->terrainCutPipe : r->terrainPipe);
         }
+        if (t->draw[k].level != pushed) {
+            pushed = t->draw[k].level;
+            vkCmdPushConstants(cmd, r->terrainPL, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(TerrainPush), &t->push[pushed]);
+        }
+        vkCmdDrawIndexed(cmd, t->draw[k].count, 1, t->draw[k].first, 0, 0);
+    }
+}
+
+/* The depth prepass (renderer_passes.c: record_prepass): the plan's tiles
+ * near the city's lamps (tile_lit), after the city, the same draws with the
+ * same pushes, so the scene pass meets their depth (terrain.vert's position
+ * is invariant). */
+void terrain_gpu_draw_prepass(Renderer *r, VkCommandBuffer cmd, int slot) {
+    TerrainGpu *t = r->terrain;
+    if (t->tilesLit == 0) return;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->terrainPrePipe);
+    VkDescriptorSet sets[2] = { t->set[slot], r->sceneSet[slot] };
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->terrainPL, 0, 2, sets, 0, NULL);
+    vkCmdBindIndexBuffer(cmd, t->indices.buf, 0, VK_INDEX_TYPE_UINT16);
+    int pushed = -1;
+    for (int k = 0; k < t->ndraw; ++k) {
+        if (!t->draw[k].lit) continue;
         if (t->draw[k].level != pushed) {
             pushed = t->draw[k].level;
             vkCmdPushConstants(cmd, r->terrainPL, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(TerrainPush), &t->push[pushed]);
@@ -649,11 +695,11 @@ void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
     char hashes[64];
     window_hashes(t, hashes, sizeof(hashes));
     mutex_unlock(&t->lock);
-    snprintf(buf, n, "terrain: levels %d-%d drawn (finest ready %d, screen-space error asks for %d%s), %d of %d tiles in view in %d draws,\n"
+    snprintf(buf, n, "terrain: levels %d-%d drawn (finest ready %d, screen-space error asks for %d%s), %d of %d tiles in view in %d draws (%d near the city's lamps, in the prepass),\n"
              "         last fill evaluated %d heights in %.2f ms on its worker (slowest %.2f ms); the frame's part %.2f ms\n"
              "         (taking an update %.2f, plan %.2f; slowest %.2f ms)\n"
              "         levels' windows hashed %s; changes of lineage %d made ready (the last fill ahead %.0f ms), %d refilled",
-             t->drawn, TERRAIN_CLIP_LEVELS - 1, t->shown.finest, t->shown.want, fading, t->tilesDrawn, t->tilesTotal, t->ndraw,
+             t->drawn, TERRAIN_CLIP_LEVELS - 1, t->shown.finest, t->shown.want, fading, t->tilesDrawn, t->tilesTotal, t->ndraw, t->tilesLit,
              evaluated, fillMs, slowestFill, t->updateMs, t->stageMs, t->planMs, t->slowestMs, hashes, swaps, aheadMs, refills);
     size_t used = strlen(buf);
     if (used + 2 < n) {

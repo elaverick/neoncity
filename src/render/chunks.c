@@ -54,6 +54,7 @@ typedef struct Entry {
     uint16_t pages[MAX_CHUNK_PAGES];
     int      npages;
     int      lightPage;     /* -1 if the chunk has no light table */
+    float    lightRect[4];  /* chunk-local x0, z0, x1, z1 its table's lights reach (x0 > x1: none) */
     uint32_t vcount;
     float    mn[3], mx[3];  /* chunk-local bounds */
     SkyLight *sky;          /* kept while RESIDENT (chunks_sky_lights) */
@@ -143,6 +144,7 @@ struct ChunkSystem {
     int      readyCount;
 
     Rt        *rt;      /* NULL without ray queries */
+    LandLights land;    /* this frame's chunks whose lamps light the land (build_land_records) */
     /* The mesh bounds of chunks generated before, kept after they are evicted.
      * A chunk is a pure function of its coordinates, so they stay true, and the
      * frustum test needn't fall back to the conservative bounds (which can
@@ -741,6 +743,21 @@ static int upload_ready(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t
             nlreg++;
             e->lightPage = lp;
         }
+        /* how far its table's lights reach (records from 6: light_tiles.c build_lights), each
+         * as far as cityLights takes it, for the land's (build_land_records) */
+        e->lightRect[0] = e->lightRect[1] = 1e9f;
+        e->lightRect[2] = e->lightRect[3] = -1e9f;
+        for (uint32_t k = 6; k < e->mesh.nlights; ++k) {
+            const uint32_t *rec = &e->mesh.lights[k * 4];
+            float x, z;
+            memcpy(&x, &rec[0], 4);
+            memcpy(&z, &rec[2], 4);
+            uint32_t w = rec[3];
+            int flame = (w & 3u) < 2u && ((w >> 26) & 3u) == 3u;   /* common.glsl isFlame */
+            float reach = flame ? 80.0f : (w & 3u) < 2u ? SHADOW_REACH : 12.0f;   /* common.glsl FLAME_REACH, lampFalloff, shopFalloff */
+            e->lightRect[0] = fminf(e->lightRect[0], x - reach); e->lightRect[1] = fminf(e->lightRect[1], z - reach);
+            e->lightRect[2] = fmaxf(e->lightRect[2], x + reach); e->lightRect[3] = fmaxf(e->lightRect[3], z + reach);
+        }
         memcpy((uint8_t *)stg->mapped + stgOff, e->mesh.v, bytes);
         for (int p = 0; p < np; ++p) {
             uint16_t page = cs->freePages[--cs->freePageCount];
@@ -859,6 +876,49 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
     return ndraw;
 }
 
+/* 5b. The land's lamps (shaders/terrain/land_lights.glsl): every resident
+ *     chunk with lights in its table whose cell lies in the LAND_GRID x
+ *     LAND_GRID grid round the camera's, by its chunk record (its record in
+ *     the view's draws if it has one, else one of its own after them: a chunk
+ *     behind the camera lights the land before it) and the box its lights
+ *     reach. Returns the records used. */
+_Static_assert((LAND_GRID / 2 - 2) * CHUNK_SIZE >= LAND_LIGHTS_FAR && LAND_GRID % 2 == 0,
+               "the land's lamps' grid must reach LAND_LIGHTS_FAR and a cell beyond (distances.h), four cells to a vector");
+static uint32_t build_land_records(ChunkSystem *cs, int slot, const double cam[3], uint32_t nchunk) {
+    const double P = CHUNK_SIZE;
+    ChunkGPU *gpu = (ChunkGPU *)cs->chunkData[slot].mapped;
+    LandLights *ll = &cs->land;
+    ll->cell0[0] = (int32_t)floor(cam[0] / P) - LAND_GRID / 2;
+    ll->cell0[1] = (int32_t)floor(cam[2] / P) - LAND_GRID / 2;
+    ll->corner[0] = (float)(ll->cell0[0] * P - cam[0]);
+    ll->corner[1] = (float)(ll->cell0[1] * P - cam[2]);
+    for (int i = 0; i < LAND_GRID * LAND_GRID; ++i) {
+        ll->cell[i] = -1;
+        ll->rect[i][0] = ll->rect[i][1] = 1e9f;   /* nothing there: no point lies within reach */
+        ll->rect[i][2] = ll->rect[i][3] = -1e9f;
+    }
+    for (int i = 0; i < MAX_ENTRIES; ++i) {
+        Entry *e = &cs->entries[i];
+        if (e->state != CS_RESIDENT || e->layer != 0 || e->lightPage < 0 || e->lightRect[0] > e->lightRect[2]) continue;
+        int gx = e->cx - ll->cell0[0], gz = e->cz - ll->cell0[1];
+        if (gx < 0 || gz < 0 || gx >= LAND_GRID || gz >= LAND_GRID) continue;
+        float x0 = (float)(e->cx * P - cam[0]), z0 = (float)(e->cz * P - cam[2]);
+        int rec = e->drawRecFrame == cs->frame + 1 ? e->drawRec : -1;
+        if (rec < 0) {
+            if (nchunk >= MAX_DRAW_CHUNKS) continue;
+            rec = (int)nchunk++;
+            ChunkGPU *g = &gpu[rec];
+            g->origin[0] = x0; g->origin[1] = -(float)cam[1]; g->origin[2] = z0; g->origin[3] = 0;
+            g->info[0] = e->cx; g->info[1] = e->cz; g->info[2] = e->lightPage * LIGHT_PAGE_RECS; g->info[3] = 0;
+        }
+        int c = gz * LAND_GRID + gx;
+        ll->cell[c] = rec;
+        float *b = ll->rect[c];
+        b[0] = x0 + e->lightRect[0]; b[1] = z0 + e->lightRect[1]; b[2] = x0 + e->lightRect[2]; b[3] = z0 + e->lightRect[3];
+    }
+    return nchunk;
+}
+
 /* 6. Shelter map draws: resident chunks overlapping its square, whatever the
  *    view, after the view's ndraw draws and nchunk chunk records. */
 static uint32_t build_shelter_draws(ChunkSystem *cs, int slot, const double cam[3], uint32_t ndraw, uint32_t nchunk) {
@@ -964,11 +1024,14 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     int uploads = upload_ready(cs, cmd, slot, frame, cam);
     uint32_t viewChunks;
     uint32_t ndraw = build_draw_list(cs, slot, &fr, cam, &viewChunks);
-    ndraw = build_shelter_draws(cs, slot, cam, ndraw, viewChunks);
+    uint32_t nchunk = build_land_records(cs, slot, cam, viewChunks);
+    ndraw = build_shelter_draws(cs, slot, cam, ndraw, nchunk);
     build_prepass_draws(cs, slot, ndraw);
     if (cs->rt) update_shadows(cs, cmd, slot, frame, cam);
     update_stats(cs, slot, queued, viewChunks, uploads);
 }
+
+const LandLights *chunks_land_lights(const ChunkSystem *cs) { return &cs->land; }
 
 /* The city's grass for the GPU (grass_gpu.c: prepare_city.comp): of every
  * chunk drawn this frame, its patches within radius of the camera (by their

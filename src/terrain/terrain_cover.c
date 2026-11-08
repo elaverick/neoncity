@@ -122,6 +122,7 @@ void terrain_cover_at(const TerrainCoverSite *s, double spacing, TerrainCover *o
 
     o->snow = (float)(ease(line - COVER_SNOW_BLEND_M, line + COVER_SNOW_BLEND_M, elev) * (1.0 - 0.7 * cliff));   /* cliffs shed it */
     o->wet = (float)wet;
+    o->city = s->city;
 }
 
 void terrain_cover(double x, double z, double spacing, TerrainCover *out) {
@@ -151,7 +152,7 @@ void terrain_cover_pack(const TerrainCover *c, uint32_t out[2]) {
         before = upto > before ? upto : before;
     }
     out[0] = b[0] | b[1] << 8 | b[2] << 16 | b[3] << 24;
-    out[1] = b[4] | byte_of(c->snow) << 8 | byte_of(c->wet) << 16;
+    out[1] = b[4] | byte_of(c->snow) << 8 | byte_of(c->wet) << 16 | byte_of(c->city) << 24;
 }
 
 void terrain_cover_unpack(const uint32_t in[2], TerrainCover *c) {
@@ -164,4 +165,5 @@ void terrain_cover_unpack(const uint32_t in[2], TerrainCover *c) {
     c->w[TERRAIN_COVER_SOIL] = fmaxf(1.0f - used, 0.0f);
     c->snow = (float)(in[1] >> 8 & 255u) / 255.0f;
     c->wet = (float)(in[1] >> 16 & 255u) / 255.0f;
+    c->city = (float)(in[1] >> 24) / 255.0f;
 }

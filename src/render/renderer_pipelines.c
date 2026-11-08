@@ -65,6 +65,12 @@ static const uint32_t SPV_terrain_vert[] = {
 static const uint32_t SPV_terrain_frag[] = {
 #include "terrain/terrain.frag.inc"
 };
+static const uint32_t SPV_terrain_rt_frag[] = {
+#include "terrain/terrain_rt.frag.inc"
+};
+static const uint32_t SPV_terrain_pre_frag[] = {
+#include "terrain/terrain_pre.frag.inc"
+};
 static const uint32_t SPV_terrain_cut_frag[] = {
 #include "terrain/terrain_cut.frag.inc"
 };
@@ -289,7 +295,16 @@ void create_layouts(Renderer *r) {
     r->ssrApplyPL = make_pipeline_layout(vk, r->ssrApplyLayout, 0, 0);
     r->flamePL = make_pipeline_layout(vk, r->flameLayout, 0, 0);
     r->shelterPL = make_pipeline_layout(vk, r->sceneLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
-    r->terrainPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(TerrainPush), VK_SHADER_STAGE_VERTEX_BIT);
+    {   /* the terrain's set, and the scene set as set 1 for the city's lamps on the land (terrain.frag) */
+        VkDescriptorSetLayout sets[2] = { r->terrainLayout, r->sceneLayout };
+        VkPushConstantRange pr = { VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(TerrainPush) };
+        VkPipelineLayoutCreateInfo ci = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+        ci.setLayoutCount = 2;
+        ci.pSetLayouts = sets;
+        ci.pushConstantRangeCount = 1;
+        ci.pPushConstantRanges = &pr;
+        VK_CHECK(vkCreatePipelineLayout(vk->device, &ci, NULL, &r->terrainPL));
+    }
     r->planetPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(PlanetPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
     r->cavePL = make_pipeline_layout(vk, r->caveLayout, 3 * sizeof(int32_t), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);   /* cave.glsl: CaveView */
     r->caveShelterPL = make_pipeline_layout(vk, r->caveLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
@@ -488,7 +503,9 @@ void create_pipelines(Renderer *r) {
     GfxDesc terrain = { SPV_terrain_vert, sizeof(SPV_terrain_vert), SPV_terrain_frag, sizeof(SPV_terrain_frag),
                         r->terrainPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
     terrain.colorFormat2 = HDR_FORMAT;
-    r->terrainPipe = make_graphics(vk, &terrain);
+    GfxDesc terrainLit = terrain;   /* with ray tracing, the lamps' shadows on the land */
+    if (r->rt) { terrainLit.fs = SPV_terrain_rt_frag; terrainLit.fsBytes = sizeof(SPV_terrain_rt_frag); }
+    r->terrainPipe = make_graphics(vk, &terrainLit);
     GfxDesc terrainCut = terrain;
     terrainCut.fs = SPV_terrain_cut_frag; terrainCut.fsBytes = sizeof(SPV_terrain_cut_frag);
     r->terrainCutPipe = make_graphics(vk, &terrainCut);
@@ -544,6 +561,9 @@ void create_pipelines(Renderer *r) {
         r->prepassPipe = make_graphics(vk, &pre);
         pre.cull = false;   /* lobby plants */
         r->prepassPlantPipe = make_graphics(vk, &pre);
+        GfxDesc tpre = { SPV_terrain_vert, sizeof(SPV_terrain_vert), SPV_terrain_pre_frag, sizeof(SPV_terrain_pre_frag),
+                         r->terrainPL, GBUF_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
+        r->terrainPrePipe = make_graphics(vk, &tpre);
         r->tracePipe = make_compute(vk, SPV_shadow_trace, sizeof(SPV_shadow_trace), r->shadowPL);
         r->denoisePipe = make_compute(vk, SPV_shadow_denoise, sizeof(SPV_shadow_denoise), r->shadowPL);
     }

@@ -10,6 +10,7 @@
 #include "grass/wind.glsl"
 #include "grass/wake.glsl"
 #include "grass/patch_light.glsl"
+#include "terrain/land_lights.glsl"
 
 /* A grass blade (docs/procedural_grass_rendering_implementation.md 5.2-5.5;
  * src/render/grass_gpu.c draws a bucket at a time): a ribbon along a cubic
@@ -61,7 +62,9 @@
  * from the shelter map (the city round the camera from above, the scene
  * set's binding 4): what stands over the root, and how high what stands
  * upwind of it rises for its distance. The land is open. A city blade's draw
- * chunk goes to the fragment shader, for its chunk's lights.
+ * chunk goes to the fragment shader, for its chunk's lights; a land blade's,
+ * near the city, the chunk whose lamps light the land at its root
+ * (terrain/land_lights.glsl), as the ground's.
  *
  * The player's wake (GR8, spec 9; grass/wake.glsl): where the feet have
  * passed, a blade is pushed away from the path, up to GRASS_WAKE_BEND of its
@@ -82,7 +85,7 @@ layout(location = 5) out vec3 vN;            // the blade's normal, the camera's
 layout(location = 6) flat out vec3 vGround;  // the ground's normal at the root
 layout(location = 7) flat out vec3 vVary;    // the land's variation at the root (landVary)
 layout(location = 8) flat out float vWind;   // the wind's strength at the root (--grass-debug wind)
-layout(location = 9) flat out uint vChunk;   // a city blade's draw chunk (GRASS_CHUNK_NONE on the land)
+layout(location = 9) flat out uint vChunk;   // a city blade's draw chunk; a land blade's lamps' chunk (GRASS_CHUNK_NONE: none)
 layout(location = 10) flat out vec3 vRootPx; // the root's pixel (xy) and forward distance (z)
 layout(location = 11) flat out vec4 vFwy;    // the root by its patch's freeway: off, s, across (grass/patch_light.glsl)
 layout(location = 12) flat out vec4 vLight;  // x the blade's own light's share (GRASS_THIN_PX), y the freeway's half width (0: none),
@@ -242,6 +245,10 @@ void main() {
     float px = length(b.p) * 2.0 * length(frame.rayBasis[1].xyz) * frame.screen.w;   // ground.glsl landPoint's
     vWind = int(frame.grass.z + 0.5) == GRASS_DEBUG_WAKE ? wkl : wd.strength;   // --grass-debug wind or wake
     vChunk = city ? instChunk[slot] : GRASS_CHUNK_NONE;
+    if (!city && length(b.p) < LAND_LIGHTS_FAR) {
+        int rec = landChunk(b.p.xz);
+        if (rec >= 0) vChunk = uint(rec);
+    }
     if (city && vChunk != GRASS_CHUNK_NONE) {
         // the park's own worn patches (city/ground.glsl: its grass's broad tone), by the city's world position (city.frag gWorld)
         ChunkGPU c = chunks[vChunk];

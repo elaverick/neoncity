@@ -31,6 +31,9 @@ typedef struct FrameUBO {
     float   wakeW[GRASS_WAKE_POINTS / 4][4];  /* each point's weight, four to a vector */
     float   wakeBox[4];    /* camera-relative min x, min z, max x, max z the wake reaches */
     float   wakeInfo[4];   /* how many points, unused, unused, unused */
+    float   landGrid[4];   /* the land's lamps (src/render/chunks.c: build_land_records): camera-relative x, z of the grid's corner; unused, unused */
+    int32_t landCells[LAND_GRID * LAND_GRID];   /* each cell's chunk record (-1: none), rows of z, four to a vector */
+    float   landRects[LAND_GRID * LAND_GRID][4];   /* camera-relative x0, z0, x1, z1 its lights reach (x0 > x1: none) */
 } FrameUBO;
 
 typedef struct Renderer Renderer;

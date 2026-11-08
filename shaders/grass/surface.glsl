@@ -16,7 +16,7 @@ struct GrassGround {
     float h;       // world Y
     vec3  n;       // unit normal
     vec4  ca, cb;  // the cover (ground.glsl Cover)
-    float urban;
+    float urban;   // where the city's own ground lies (the cover's last byte: plan_city_ground), as terrain.frag's stand-in
     int   level;
 };
 
@@ -63,7 +63,7 @@ GrassVertex grassVertex(int l, ivec2 g) {
     v.n = n;
     v.ca = ca;
     v.cb = cb;
-    v.urban = grassWord(base + 4);
+    v.urban = cb.w;   // the city's own ground (src/plan/plan.h plan_city_ground), blended as the cover
     return v;
 }
 

@@ -20,6 +20,9 @@
  * terms (below, GR7):
  * - on the land, the land's (groundLightIn) and beside a freeway its lamps'
  *   pools (blade.vert: vFwy, the root's patch's freeway), hazed as the land is;
+ *   and near the city its lamps, as the ground at the root takes them
+ *   (terrain.frag: blade.vert's vChunk, the chunk whose light table lights it,
+ *   with the root's slots as a city blade's);
  * - in the city (lawn and rough, GR6), the city's lights from its chunk's
  *   table (city/lighting.glsl cityLights, as city.frag's ground), with the
  *   soft shadows the ground at the root has: the blades aren't in the depth
@@ -237,6 +240,17 @@ void main() {
             float sheen = bladeSheen(sp, wetB, kernel, rough) * own;
             vec3 pools = landThinLights(sky, vRel);
             vec3 E = groundLightIn(sky, vGround) + pools;
+            if (vChunk != GRASS_CHUNK_NONE) {   // near the city: its lamps on the ground at the root (terrain.frag's landLights)
+                gC = chunks[vChunk];
+                gTime = frame.camPos.w;
+                vec3 p = vRel - gC.origin.xyz;   // chunk-local
+                gWorld = p + vec3(float(gC.info.x & 63) * CHUNK_SIZE, 0.0, float(gC.info.y & 63) * CHUNK_SIZE);
+                gBase = vRoot.y - gC.origin.y;
+                rootShadows();
+                vec3 diff = vec3(0.0), spec = vec3(0.0);
+                cityLights(p, vGround, gV, 8.0, 0.0, -1.0, diff, spec);
+                E += diff * (1.0 - smoothstep(LAND_LIGHTS_FAR - 100.0, LAND_LIGHTS_FAR, length(vRoot)));
+            }
             col = albedo * landDarken(2, sky.wet) * (face * (E + GRASS_THIN_FACE * own * gThinFace) + through * gThinBack) + sheen * gThinSpec;
             // the wet blade's sheen of the sky and the moon (the land's: wetHighlight)
             if (wetB > 0.0 && own > 0.0) col += wetHighlight(N, gV, rough, sky) * wetB * own;

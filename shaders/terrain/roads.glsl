@@ -135,9 +135,10 @@ vec3 wetSheen(vec3 rel, LandPoint l, vec3 n, vec3 nGeom, float rough, LandWater 
 // there; px and pxs the pixel's width across and along the road (taken in
 // uniform control flow). The land lit by its diffuse light, before the haze;
 // for its sheen (wetSheen), the water on the road and the land beside it into
-// w, their normal nS and the film's roughness roughS, and the lamps' share.
+// w, their normal nS and the film's roughness roughS, and the lamps' share;
+// the albedo all of it shows (alb: the city's lamps light it, terrain.frag).
 vec3 shadeRoad(vec3 land, vec3 nLand, vec3 n, vec3 rel, LandPoint l, float urban, RoadHit r, float px, float pxs,
-               inout LandWater w, out vec3 nS, out float roughS, out float lampShare) {
+               inout LandWater w, out vec3 nS, out float roughS, out float lampShare, out vec3 albOut) {
     vec2 wp = frame.camPos.xz + rel.xz, q = l.p.xz, gx = l.dpx.xz, gy = l.dpy.xz;
     float a = abs(r.off), side = r.off < 0.0 ? -1.0 : 1.0;
     float wet = l.sky.wet;
@@ -240,6 +241,7 @@ vec3 shadeRoad(vec3 land, vec3 nLand, vec3 n, vec3 rel, LandPoint l, float urban
     roughS = mix(LAND_FILM_ROUGH, ROAD_FILM_ROUGH, asph);
     lampShare = mix(lampsLand, lamps, asph);
     vec3 ground = mix(land, gAlb, grav);
+    albOut = mix(ground, alb, asph);
     return mix(groundUrban(ground * light, urban), alb * light, asph);
 }
 

@@ -21,7 +21,16 @@
  * TERRAIN_HAZE: the terrain's haze, clearer than the city's (CITY_HAZE in
  * shaders/common.glsl): its mean free path at street level (m), thinning with
  * height (hazeAmount) through a low layer HAZE_LOW_H metres deep and a high
- * one HAZE_HIGH_H deep, above which the air is clear. */
+ * one HAZE_HIGH_H deep, above which the air is clear.
+ *
+ * The land beside the city takes its lamps (shaders/terrain/land_lights.glsl)
+ * out to LAND_LIGHTS_FAR, fading over the last 100 m, from a chunk whose
+ * lights reach it, found through a LAND_GRID x LAND_GRID grid of chunk cells
+ * round the camera's (src/render/chunks.c: build_land_records), which must
+ * reach that far and a cell beyond, whichever way it looks, from anywhere in
+ * its cell: (LAND_GRID / 2 - 2) cells of CHUNK_SIZE. */
+#define LAND_LIGHTS_FAR   500.0f
+#define LAND_GRID         14
 #define VIEW_DISTANCE     1900.0f
 #define TERRAIN_DISTANCE  20000.0f
 #define MAX_ALTITUDE      20000.0f

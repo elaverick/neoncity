@@ -77,7 +77,7 @@ static double height_lod(double x, double z, const TerrainDir *p, double spacing
     int roads = parts & GROUND_ROADS;
     *w = plan_urban_weight(edge);
     *relief = *w > 0.0 ? urban_relief(plan_locate(x, z, &ux, &uz)) : 0.0;
-    if (site) { site->edge = 1e30; site->size = 0.0; site->crest = site->fill = 0.0f; }
+    if (site) { site->edge = 1e30; site->size = 0.0; site->crest = site->fill = site->city = 0.0f; }
     if (*w < 1.0) {
         TerrainDir d = p ? *p : terrain_world_dir(x, z);
         double land;
@@ -186,7 +186,7 @@ static double surface_lod(double x, double z, const TerrainDir *p, double spacin
     double w, relief, h = height_lod(x, z, p, spacing, &w, &relief, GROUND_ALL, site);
     if (urban) *urban = (float)w;
     h -= terrain_urban_sink(spacing, relief) * w;
-    if (site) { site->elev = h - terrain_sea_y(); site->ny = 0.0; }
+    if (site) { site->elev = h - terrain_sea_y(); site->ny = 0.0; site->city = plan_city_ground(x, z, (float)w); }
     return h;
 }
 

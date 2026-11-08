@@ -344,7 +344,7 @@ static GrassSite site_at(double x, double z, double spacing) {
     g.grass = c.w[TERRAIN_COVER_GRASS]; g.mud = c.w[TERRAIN_COVER_MUD];
     g.snow = c.snow; g.wet = c.wet;
     g.ny = (float)(1.0 / sqrt(1.0 + gx * gx + gz * gz));
-    g.urban = plan_urban(x, z);
+    g.urban = c.city;   /* the city's own ground, as the GPU's sites read it (grass/surface.glsl) */
     g.road = road_edge(x, z);
     return g;
 }
@@ -1020,9 +1020,13 @@ static void gp_keep_all(GpuPass *g) { float *k = (float *)g->keepTo.mapped; for 
 /* The cover's word from four shares, as terrain_cover_pack packs them (unorm8 each). */
 static uint32_t gp_pack(int a, int b, int c, int d) { return (uint32_t)a | (uint32_t)b << 8 | (uint32_t)c << 16 | (uint32_t)d << 24; }
 
-/* The GPU's blades over the block against count_region's over the same patches, the site as the GPU reads it. */
+/* The GPU's blades over the block against count_region's over the same patches, the site as the GPU reads it:
+ * urban is the city's own ground, which it reads from the cover's last byte (grass/surface.glsl), and the
+ * urban weight's word the same. */
 static void gp_count_case(GpuPass *g, const char *what, float nx, float nz, float urban, int grass, int mud, int snow, int wet) {
-    gp_ground(g, nx, nz, urban, gp_pack(0, 0, grass, 0), gp_pack(mud, snow, wet, 0));
+    int city = (int)lroundf(urban * 255.0f);
+    urban = (float)city / 255.0f;
+    gp_ground(g, nx, nz, urban, gp_pack(0, 0, grass, 0), gp_pack(mud, snow, wet, city));
     gp_keep_all(g);
     gp_frame(g);
     const uint32_t *c = (const uint32_t *)g->counters.mapped;

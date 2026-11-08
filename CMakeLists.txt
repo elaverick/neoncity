@@ -165,7 +165,7 @@ set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/spv)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain ${SHADER_OUT_DIR}/proxy ${SHADER_OUT_DIR}/interior ${SHADER_OUT_DIR}/grass)
 set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp
             cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
-            prepass.frag impostor_demand.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag
+            prepass.frag impostor_demand.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag terrain/terrain_pre.frag
             terrain/planet.vert terrain/planet.frag terrain/terrain_rt.comp terrain/cave.vert terrain/cave.frag terrain/cave_shelter.frag
             proxy/proxy.vert proxy/proxy.frag flame.vert flame.frag smoke.vert smoke.frag
             interior/capture.comp interior/capture_mpi.comp interior/truth.comp interior/recon.comp   # the interior baker's
@@ -176,6 +176,7 @@ set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_do
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS
                     grass/blade_rt.frag:grass/blade.frag:GRASS_SLOTS   # a city blade reads its root's shadow slots
                     terrain/terrain_cut.frag:terrain/terrain.frag:CAVE_CUT   # the caves' mouths cut: only the tiles near one
+                    terrain/terrain_rt.frag:terrain/terrain.frag:RT_SHADOWS   # the land beside the city: its lamps' shadows
                     terrain/cave_shelter.vert:terrain/cave.vert:CAVE_SHELTER)   # the caves into the shelter map
 # Shaders also include the #define-only headers they share with C.
 set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/core/clouds.h

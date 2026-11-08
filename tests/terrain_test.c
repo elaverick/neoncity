@@ -1043,7 +1043,7 @@ static TerrainCoverSite cover_site(double lat, double elev) {
     s.ny = 1.0;
     s.edge = 2000.0;
     s.size = 0.0;
-    s.crest = s.fill = 0.0f;
+    s.crest = s.fill = s.city = 0.0f;
     return s;
 }
 
@@ -1055,7 +1055,7 @@ static float cover_of(const TerrainCoverSite *s, int k, double spacing) {
 
 /* The most any weight (or the snow or wetness) differs between two covers. */
 static double cover_diff(const TerrainCover *a, const TerrainCover *b) {
-    double d = fmax(fabs(a->snow - b->snow), fabs(a->wet - b->wet));
+    double d = fmax(fmax(fabs(a->snow - b->snow), fabs(a->wet - b->wet)), fabs(a->city - b->city));
     for (int k = 0; k < TERRAIN_COVERS; ++k) d = fmax(d, fabs(a->w[k] - b->w[k]));
     return d;
 }
@@ -1096,7 +1096,7 @@ static void test_cover(Rng *r) {
         terrain_cover_pack(&c, p);
         terrain_cover_unpack(p, &u);
         uint32_t bytes = (p[0] & 255u) + (p[0] >> 8 & 255u) + (p[0] >> 16 & 255u) + (p[0] >> 24) + (p[1] & 255u);
-        if ((cover_diff(&c, &u) > 1.0 / 255.0 + 1e-6 || bytes > 255u || p[1] >> 24) && packBad++ < 3)
+        if ((cover_diff(&c, &u) > 1.0 / 255.0 + 1e-6 || bytes > 255u) && packBad++ < 3)
             CHECK(0, "cover at (%.0f, %.0f) unpacks %.4f off (bytes %u)", g_x[i], g_z[i], cover_diff(&c, &u), bytes);
     }
     printf("ground cover over %d points:", n);
@@ -1738,13 +1738,13 @@ static void test_planet_patches(Rng *r) {
         /* (the info and the vertices; the struct's tail padding is never written) */
         CHECK(memcmp(&a[0].info, &a[1].info, sizeof(TerrainPatchInfo)) == 0 && memcmp(a[0].v, a[1].v, sizeof(a[0].v)) == 0, "patch %d/%d/%lld,%lld fills differently twice", t.face, t.level, (long long)t.i, (long long)t.j);
         CHECK(isfinite(a[0].info.err) && a[0].info.err >= 0.0f && a[0].info.radius > 0.0f, "patch err %.3f radius %.1f", a[0].info.err, a[0].info.radius);
-        /* every vertex within the radius, its cover packed whole (the classes no more than 1, the top byte clear) */
+        /* every vertex within the radius, its cover packed whole (the classes no more than 1; the top byte the city's ground) */
         for (int v = 0; v < TERRAIN_PATCH_VERTS; ++v) {
             TerrainDir q = vabs(&a[0], v, 0);
             CHECK(pdist(q, a[0].info.centre) <= a[0].info.radius, "a vertex lies outside its patch's radius");
             const uint32_t *cv = a[0].v[v].cover;
             uint32_t sum = (cv[0] & 255u) + (cv[0] >> 8 & 255u) + (cv[0] >> 16 & 255u) + (cv[0] >> 24) + (cv[1] & 255u);
-            CHECK(sum <= 255u && cv[1] >> 24 == 0u, "a patch vertex's cover is packed wrong (%08x %08x)", cv[0], cv[1]);
+            CHECK(sum <= 255u, "a patch vertex's cover is packed wrong (%08x %08x)", cv[0], cv[1]);
         }
         /* seams: each edge vertex is a vertex of the neighbour across it */
         for (int side = 0; side < 4; ++side) {

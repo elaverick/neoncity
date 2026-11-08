@@ -159,7 +159,7 @@ void renderer_destroy(Renderer *r) {
     planet_gpu_destroy(r);
     proxy_gpu_destroy(r);
     vk_buffer_destroy(vk, &r->shotBuf);
-    VkPipeline pipes[] = { r->impDemandPipe, r->cityPipe, r->plantPipe, r->terrainPipe, r->terrainCutPipe, r->planetPipe, r->cavePipe, r->caveXrayPipe, r->caveShelterPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
+    VkPipeline pipes[] = { r->impDemandPipe, r->cityPipe, r->plantPipe, r->terrainPipe, r->terrainCutPipe, r->terrainPrePipe, r->planetPipe, r->cavePipe, r->caveXrayPipe, r->caveShelterPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
                            r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->flamePipe, r->smokePipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
@@ -377,6 +377,15 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     timestamp(r, cmd, slot, GT_START);
     interiors_update(r->interiors, cmd, slot);
     chunks_update(r->chunks, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
+    {   /* the land's lamps' chunks (the uniforms are written, but still the CPU's until the submit) */
+        const LandLights *ll = chunks_land_lights(r->chunks);
+        FrameUBO *u = (FrameUBO *)r->ubo[slot].mapped;
+        u->landGrid[0] = ll->corner[0];
+        u->landGrid[1] = ll->corner[1];
+        u->landGrid[2] = u->landGrid[3] = 0.0f;
+        memcpy(u->landCells, ll->cell, sizeof(u->landCells));
+        memcpy(u->landRects, ll->rect, sizeof(u->landRects));
+    }
     chunks_sky_lights(r->chunks, cam, (SkyGrid *)r->skyBuf[slot].mapped);
     r->flameCount[slot] = chunks_flames(r->chunks, cam, (FlameSet *)r->flameBuf[slot].mapped);
     r->plumeCount[slot] = chunks_plumes(r->chunks, cam, (PlumeSet *)r->plumeBuf[slot].mapped);

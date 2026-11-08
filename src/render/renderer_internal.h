@@ -109,6 +109,7 @@ struct Renderer {
     VkDescriptorSetLayout terrainLayout;
     VkPipelineLayout      terrainPL;
     VkPipeline            terrainPipe, terrainCutPipe;   /* terrainCutPipe: the caves' mouths cut (terrain_cut.frag), for the tiles near one */
+    VkPipeline            terrainPrePipe;   /* the tiles near the city's lamps into the depth prepass (terrain_pre.frag; ray tracing only) */
     RoadGpu     *roads;     /* road_gpu.c: the roads the clipmap paints (its binding 2) */
     PlanetGpu   *planet;    /* planet_gpu.c; the clipmap's descriptor set layout */
     VkPipelineLayout      planetPL;
@@ -219,6 +220,8 @@ void terrain_gpu_set_frame(Renderer *r, const struct TerrainFrame *f, const doub
 /* The frame to make the clipmap ready in, or NULL (cam in the active frame). */
 void terrain_gpu_ahead(Renderer *r, const struct TerrainFrame *f, const double cam[3]);
 void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
+/* The tiles near the city's lamps into the depth prepass (ray-traced shadows), after the city's. */
+void terrain_gpu_draw_prepass(Renderer *r, VkCommandBuffer cmd, int slot);
 /* The coarsest drawn level's window, world x0, z0, x1, z1; 0 if none is drawn. */
 int  terrain_gpu_window(Renderer *r, double win[4]);
 /* For the grass, which stands on the ground drawn: the samples' buffer, a

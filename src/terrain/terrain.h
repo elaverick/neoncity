@@ -593,7 +593,9 @@ int        terrain_horizon_hidden(TerrainDir cam, TerrainDir centre, double radi
  * noise and the latitude) and the site's values. */
 enum { TERRAIN_COVER_ROCK = 0, TERRAIN_COVER_SCREE, TERRAIN_COVER_SOIL, TERRAIN_COVER_GRASS, TERRAIN_COVER_SAND, TERRAIN_COVER_MUD,
        TERRAIN_COVERS };
-typedef struct TerrainCover { float w[TERRAIN_COVERS]; float snow, wet; } TerrainCover;
+/* city: where the city's own ground lies (plan_city_ground), which the
+ * renderer draws a stand-in for from afar and the grass keeps off. */
+typedef struct TerrainCover { float w[TERRAIN_COVERS]; float snow, wet, city; } TerrainCover;
 /* What the rules read at a point: its direction (planet frame, unit), its
  * elevation above the sea to come (m), the up component of the drawn
  * ground's unit normal there, and the water near it (terrain_earth_water):
@@ -601,9 +603,10 @@ typedef struct TerrainCover { float w[TERRAIN_COVERS]; float snow, wet; } Terrai
  * water's reach or more where none is near) and that water's size, a river's
  * width or TERRAIN_COVER_LAKE_M for a lake's shore (m); and the erosion
  * there (TerrainEroded's, by the land's share): its gullies' crests and
- * floors, -1 a floor .. 1 a crest, and its fill, 0 .. 1. */
+ * floors, -1 a floor .. 1 a crest, and its fill, 0 .. 1; and the city's own
+ * ground there (plan_city_ground), carried into the cover. */
 #define TERRAIN_COVER_LAKE_M 400.0
-typedef struct TerrainCoverSite { TerrainDir d; double elev, ny, edge, size; float crest, fill; } TerrainCoverSite;
+typedef struct TerrainCoverSite { TerrainDir d; double elev, ny, edge, size; float crest, fill, city; } TerrainCoverSite;
 /* The cover at a site, as sampled every `spacing` metres (0: a point). */
 void   terrain_cover_at(const TerrainCoverSite *s, double spacing, TerrainCover *out);
 /* The cover of the drawn ground (terrain_surface_lod) at world (x, z) and
@@ -613,9 +616,9 @@ void   terrain_cover(double x, double z, double spacing, TerrainCover *out);
 /* The permanent snow line at a latitude (degrees): its elevation above the sea (m). */
 double terrain_snowline(double lat_deg);
 /* The cover packed for the GPU, as TerrainSample and TerrainPatchVertex carry
- * it: word 0 rock, scree, grass and sand, word 1 mud, snow and wet, a byte
- * each from the lowest (unpackUnorm4x8's x, y, z, w), the top byte of word 1
- * 0. Soil is what the five classes leave. The classes are rounded as running
+ * it: word 0 rock, scree, grass and sand, word 1 mud, snow, wet and the
+ * city's ground, a byte each from the lowest (unpackUnorm4x8's x, y, z, w).
+ * Soil is what the five classes leave. The classes are rounded as running
  * sums, so they never sum past 1. Unpacking gives each class to within 1/255. */
 void   terrain_cover_pack(const TerrainCover *c, uint32_t out[2]);
 void   terrain_cover_unpack(const uint32_t in[2], TerrainCover *c);

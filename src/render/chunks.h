@@ -22,6 +22,19 @@ typedef struct ChunkStats {
     float reach;                   /* m: chunks are built only this near, the pool being full (0: everywhere) */
 } ChunkStats;
 
+/* The chunks whose lamps light the land round the camera this frame (after
+ * chunks_update; shaders/terrain/land_lights.glsl): a LAND_GRID x LAND_GRID
+ * grid of chunk cells from cell0 (world chunk coordinates; corner, its
+ * camera-relative x, z), each cell's chunk record (-1: none), rows of z, and
+ * the camera-relative x0, z0, x1, z1 its table's lights stand in (x0 > x1
+ * where there is none). */
+typedef struct LandLights {
+    int32_t cell0[2];
+    float   corner[2];
+    int32_t cell[LAND_GRID * LAND_GRID];
+    float   rect[LAND_GRID * LAND_GRID][4];
+} LandLights;
+
 ChunkSystem *chunks_create(VkCore *vk);
 void         chunks_destroy(ChunkSystem *cs);
 
@@ -45,6 +58,7 @@ VkDeviceSize chunks_gpu_buffer_size(void);
 VkBuffer     chunks_light_buffer(ChunkSystem *cs);   /* light tables of resident chunks (device local) */
 VkDeviceSize chunks_light_buffer_size(void);
 ChunkStats   chunks_stats(ChunkSystem *cs);
+const LandLights *chunks_land_lights(const ChunkSystem *cs);
 /* Whether this frame's view draws chunk (cx, cz)'s city layer (after
  * chunks_update): the distant proxies leave out the buildings of such a chunk. */
 bool         chunks_drawn(ChunkSystem *cs, int cx, int cz);

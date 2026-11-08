@@ -130,14 +130,18 @@ uint shopHash(uint seed, int section, int face, int next, bool endShare, float a
  * shaders/grass/blade.frag) the slots are read but nothing is traced: the
  * includer sets gSlotsOurs, gSlotIds, gSlotVis and gShadowFade itself (the
  * slots of the ground at a blade's root), and a light the slots don't hold is
- * unshadowed. */
+ * unshadowed.
+ *
+ * With LIGHTING_FOR_LAND (the land beside the city: shaders/terrain/terrain.frag)
+ * the includer sets the slots up too (landSlots), and with RT_SHADOWS traces
+ * the rest here, as city.frag does. */
 #ifdef RT_SHADOWS
 #define SLOT_SHADOWS 1
-layout(set = 0, binding = 5) uniform accelerationStructureEXT tlas;
+layout(set = SCENE_SET, binding = 5) uniform accelerationStructureEXT tlas;
 #endif
 #ifdef SLOT_SHADOWS
-layout(set = 0, binding = 6) uniform usampler2D shadowIdsTex;   // shadow_trace.comp: slot light ids
-layout(set = 0, binding = 7) uniform usampler2D shadowVisTex;   // shadow_denoise.comp: slot visibility
+layout(set = SCENE_SET, binding = 6) uniform usampler2D shadowIdsTex;   // shadow_trace.comp: slot light ids
+layout(set = SCENE_SET, binding = 7) uniform usampler2D shadowVisTex;   // shadow_denoise.comp: slot visibility
 uvec4 gSlotIds = uvec4(0u), gSlotVis = uvec4(0u);
 bool  gSlotsOurs = false;        // the slots at this pixel were made for this surface
 vec3  gGeoN = vec3(0.0, 1.0, 0.0);
@@ -146,7 +150,7 @@ float gFwd, gFwdTol;             // this fragment's forward distance, and how ne
 #endif
 float gShadowFade = 1.0;         // 1: unshadowed (shadows off, or faded out with distance)
 
-#ifndef LIGHTING_FOR_GRASS
+#if !defined(LIGHTING_FOR_GRASS) && !defined(LIGHTING_FOR_LAND)
 void shadowsBegin() {
 #ifdef RT_SHADOWS
     float fwd = dot(vRel, frame.camFwd.xyz);
@@ -206,7 +210,7 @@ float shadowVis(vec3 p, vec3 n, vec3 V, vec3 lp, uint w) {
  * prepass didn't see at sample 0 (the floor at a desk's edge) borrows a
  * neighbouring pixel's slots if they are its surface's, else is unshadowed. */
 float ceilingVis() {
-#if defined(RT_SHADOWS) && !defined(LIGHTING_FOR_GRASS)
+#if defined(RT_SHADOWS) && !defined(LIGHTING_FOR_GRASS) && !defined(LIGHTING_FOR_LAND)
     if (gShadowFade >= 1.0) return 1.0;
     uvec4 ids = gSlotIds, vis = gSlotVis;
     bool ours = gSlotsOurs;

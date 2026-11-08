@@ -461,6 +461,13 @@ double plan_built_edge(double x, double z);
 float  plan_urban(double x, double z);
 /* The same at a direction (the same in every frame). */
 float  plan_urban_dir(TerrainDir p);
+/* Where the city's own ground lies, for the terrain's stand-in for it
+ * (terrain/ground.glsl groundUrban) and the grass, given plan_urban there:
+ * on the frame's own settlement, 1 in a built town's cell (plan_town_built)
+ * and 0 elsewhere, so the land past the built edge, though its urban weight
+ * is still 1 for up to a town's width, is land; on any other settlement,
+ * never built in this frame, the urban weight. */
+float  plan_city_ground(double x, double z, float urban);
 /* The same weight from a plan_city_edge value already in hand: exactly 1 for
  * edge <= -CITY_BELT, exactly 0 for edge >= 0. */
 static inline float plan_urban_weight(double edge) {
