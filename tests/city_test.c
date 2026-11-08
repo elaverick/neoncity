@@ -9,7 +9,8 @@
  * chunks instead, to compare what two builds generate; city_test --proxies
  * surveys the distant proxies of the whole city; --props and --screens print
  * views of the street furniture and the video screens; --grass views of the
- * parks, fields, verge and land grass round a point. */
+ * parks, fields, verge and land grass round a point; --zfight X Z R lists the
+ * coplanar overlapping surfaces (z-fighting) within R m of a point. */
 #include "city.h"
 #include "grass_rules.h"
 #include "terrain.h"
@@ -822,6 +823,127 @@ static int props_cams(void) {
     return 0;
 }
 
+/* city_test --zfight X Z R: z-fighting round world (X, Z). Every layer of the
+ * chunks within R m (base, interiors, props, plants, litter) is gathered, and
+ * each pair of triangles that face the same way, lie within ZF_GAP of one plane
+ * and overlap is a fight. They are grouped by the two surfaces' materials
+ * (vertex params: material / y / z / w), each group with a --cam view of one.
+ * Back-to-back faces are left out: culling keeps them apart. */
+#define ZF_GAP 0.002f
+typedef struct ZfTri { float p[3][3], n[3], d, mn[3], mx[3]; uint8_t prm[4]; } ZfTri;
+typedef struct ZfGroup { uint8_t a[4], b[4]; int count; float at[3], n[3]; } ZfGroup;
+
+/* Is p (on t's plane) strictly inside triangle t? */
+static bool zf_inside(const ZfTri *t, const float *p) {
+    float s[3];
+    for (int i = 0; i < 3; ++i) {
+        const float *a = t->p[i], *b = t->p[(i + 1) % 3];
+        float e[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] }, q[3] = { p[0] - a[0], p[1] - a[1], p[2] - a[2] };
+        s[i] = (e[1] * q[2] - e[2] * q[1]) * t->n[0] + (e[2] * q[0] - e[0] * q[2]) * t->n[1] + (e[0] * q[1] - e[1] * q[0]) * t->n[2];
+    }
+    return (s[0] > 1e-6f && s[1] > 1e-6f && s[2] > 1e-6f) || (s[0] < -1e-6f && s[1] < -1e-6f && s[2] < -1e-6f);
+}
+
+/* Do coplanar triangles a and b overlap in area? (Their centroids, or points just in from their corners, inside the other.) */
+static bool zf_overlap(const ZfTri *a, const ZfTri *b) {
+    for (int pass = 0; pass < 2; ++pass) {
+        const ZfTri *s = pass ? b : a, *o = pass ? a : b;
+        float c[3];
+        for (int d = 0; d < 3; ++d) c[d] = (s->p[0][d] + s->p[1][d] + s->p[2][d]) / 3.0f;
+        if (zf_inside(o, c)) return true;
+        for (int k = 0; k < 3; ++k) {
+            float q[3];
+            for (int d = 0; d < 3; ++d) q[d] = c[d] + 0.9f * (s->p[k][d] - c[d]);
+            if (zf_inside(o, q)) return true;
+        }
+    }
+    return false;
+}
+
+/* Appends m's triangles near (X, Z), in metres from it, to *tris. */
+static void zf_gather(const Mesh *m, double X, double Z, double R, ZfTri **tris, int *n, int *cap) {
+    for (uint32_t i = 0; i + 2 < m->count; i += 3) {
+        ZfTri t;
+        const Vertex *v = &m->v[i];
+        for (int k = 0; k < 3; ++k) {
+            t.p[k][0] = (float)(m->ox + v[k].pos[0] - X); t.p[k][1] = v[k].pos[1]; t.p[k][2] = (float)(m->oz + v[k].pos[2] - Z);
+        }
+        for (int d = 0; d < 3; ++d) {
+            t.mn[d] = fminf(t.p[0][d], fminf(t.p[1][d], t.p[2][d]));
+            t.mx[d] = fmaxf(t.p[0][d], fmaxf(t.p[1][d], t.p[2][d]));
+        }
+        if (t.mn[0] > R || t.mx[0] < -R || t.mn[2] > R || t.mx[2] < -R) continue;
+        float e1[3], e2[3];
+        for (int d = 0; d < 3; ++d) { e1[d] = t.p[1][d] - t.p[0][d]; e2[d] = t.p[2][d] - t.p[0][d]; }
+        t.n[0] = e1[1] * e2[2] - e1[2] * e2[1]; t.n[1] = e1[2] * e2[0] - e1[0] * e2[2]; t.n[2] = e1[0] * e2[1] - e1[1] * e2[0];
+        float L = sqrtf(t.n[0] * t.n[0] + t.n[1] * t.n[1] + t.n[2] * t.n[2]);
+        if (L < 1e-6f) continue;   /* degenerate */
+        for (int d = 0; d < 3; ++d) t.n[d] /= L;
+        t.d = t.n[0] * t.p[0][0] + t.n[1] * t.p[0][1] + t.n[2] * t.p[0][2];
+        memcpy(t.prm, v->params, 4);
+        if (*n == *cap) {
+            *cap = *cap ? *cap * 2 : 65536;
+            *tris = (ZfTri *)realloc(*tris, sizeof(ZfTri) * (size_t)*cap);
+            if (!*tris) { fprintf(stderr, "out of memory\n"); exit(1); }
+        }
+        (*tris)[(*n)++] = t;
+    }
+}
+
+static int zfight_scan(double X, double Z, double R) {
+    static void (*const LAYERS[])(int, int, Mesh *) = { city_build_mesh, city_build_interiors, city_build_props, city_build_plants, city_build_litter };
+    ZfTri *tris = NULL;
+    int n = 0, cap = 0;
+    for (int cz = (int)floor((Z - R) / CHUNK_SIZE); cz <= (int)floor((Z + R) / CHUNK_SIZE); ++cz)
+        for (int cx = (int)floor((X - R) / CHUNK_SIZE); cx <= (int)floor((X + R) / CHUNK_SIZE); ++cx)
+            for (size_t L = 0; L < ARRAY_LEN(LAYERS); ++L) {
+                Mesh m = { 0 };
+                LAYERS[L](cx, cz, &m);
+                zf_gather(&m, X, Z, R, &tris, &n, &cap);
+                mesh_free(&m);
+            }
+    ZfGroup g[256];
+    int ng = 0, pairs = 0;
+    for (int i = 0; i < n; ++i)
+        for (int j = i + 1; j < n; ++j) {
+            const ZfTri *a = &tris[i], *b = &tris[j];
+            if (a->mn[0] > b->mx[0] + ZF_GAP || b->mn[0] > a->mx[0] + ZF_GAP || a->mn[1] > b->mx[1] + ZF_GAP ||
+                b->mn[1] > a->mx[1] + ZF_GAP || a->mn[2] > b->mx[2] + ZF_GAP || b->mn[2] > a->mx[2] + ZF_GAP) continue;
+            if (a->n[0] * b->n[0] + a->n[1] * b->n[1] + a->n[2] * b->n[2] < 0.999f) continue;
+            bool flush = true;
+            for (int k = 0; k < 3 && flush; ++k)
+                flush = fabsf(a->n[0] * b->p[k][0] + a->n[1] * b->p[k][1] + a->n[2] * b->p[k][2] - a->d) < ZF_GAP;
+            if (!flush || !zf_overlap(a, b)) continue;
+            pairs++;
+            /* the pair's materials, in a fixed order, so a/b and b/a group together */
+            const uint8_t *pa = a->prm, *pb = b->prm;
+            if (memcmp(pa, pb, 4) > 0) { const uint8_t *t = pa; pa = pb; pb = t; }
+            int k = 0;
+            while (k < ng && (memcmp(g[k].a, pa, 4) || memcmp(g[k].b, pb, 4))) ++k;
+            if (k == ng) {
+                if (ng == (int)ARRAY_LEN(g)) continue;
+                memcpy(g[k].a, pa, 4); memcpy(g[k].b, pb, 4); g[k].count = 0;
+                for (int d = 0; d < 3; ++d) { g[k].at[d] = (a->p[0][d] + a->p[1][d] + a->p[2][d]) / 3.0f; g[k].n[d] = a->n[d]; }
+                ng++;
+            }
+            g[k].count++;
+        }
+    printf("%d triangles within %.0f m of (%.1f, %.1f): %d overlapping same-facing pairs within %.0f mm, in %d groups\n",
+           n, R, X, Z, pairs, ZF_GAP * 1000.0f, ng);
+    for (int k = 0; k < ng; ++k) {
+        /* a view of the first: 4 m out along its normal (or, flat, from the side), looking back at it */
+        const ZfGroup *q = &g[k];
+        float hx = q->n[0], hz = q->n[2], hl = sqrtf(hx * hx + hz * hz);
+        if (hl < 0.3f) { hx = 1.0f; hz = 0.0f; } else { hx /= hl; hz /= hl; }
+        double cx = X + q->at[0] + hx * 4.0, cz = Z + q->at[2] + hz * 4.0;
+        printf("  %4d x  %u/%u/%u/%u vs %u/%u/%u/%u  at (%.2f, %.2f, %.2f) n (%.2f %.2f %.2f)  --cam %.2f %.2f %.1f 0\n", q->count,
+               q->a[0], q->a[1], q->a[2], q->a[3], q->b[0], q->b[1], q->b[2], q->b[3], X + q->at[0], q->at[1], Z + q->at[2],
+               q->n[0], q->n[1], q->n[2], cx, cz, atan2(-hx, hz) * 57.2958);
+    }
+    free(tris);
+    return 0;
+}
+
 /* city_test --facades: --cam views from the street of buildings round the spawn in each
  * walled palette (facadeWallAlbedo in shaders/city/facade.glsl: 0 concrete, 1 brick, 2 metal
  * panels, 3 tile, 5 stone, 6 bronze), each 12 m out from a grounded face and looking up a
@@ -1062,6 +1184,10 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--props") == 0) return props_cams();
     if (argc > 1 && strcmp(argv[1], "--screens") == 0) return screens_cams();
     if (argc > 1 && strcmp(argv[1], "--facades") == 0) return facades_cams();
+    if (argc > 1 && strcmp(argv[1], "--zfight") == 0) {
+        if (argc < 5) { fprintf(stderr, "city_test --zfight X Z RADIUS\n"); return 2; }
+        return zfight_scan(atof(argv[2]), atof(argv[3]), atof(argv[4]));
+    }
     if (argc > 1 && strcmp(argv[1], "--grass") == 0) return grass_cams(argc > 3 ? atof(argv[2]) : 64598.0, argc > 3 ? atof(argv[3]) : 11010.0);
 
     /* 1. Reference pass, in order. Track mesh sizes against the GPU page budget. */
