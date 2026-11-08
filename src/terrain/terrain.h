@@ -254,6 +254,9 @@ double terrain_planet_lowest(void);
  * and z in the chart, and the height h, world Y (height above the sphere),
  * so it lies under the ground as the ground lies on the sphere. The world's
  * queries below take this thread's frame's world (x, y, z). */
+#include "terrain_cave_field.h"   /* the field's shape: shared with the shaders */
+#define TERRAIN_CAVE_SEED_A   (WORLD_SEED ^ 0x7EC2u)   /* the walls' noise's two octaves */
+#define TERRAIN_CAVE_SEED_B   (WORLD_SEED ^ 0x7EC3u)
 #define TERRAIN_CAVE_ROOF_M   8.0      /* rock over the air, at least, but at the mouths (m) */
 #define TERRAIN_CAVE_CITY_M   2500.0   /* no cave nearer a city's edge (plan_city_edge, m) */
 #define TERRAIN_CAVE_SEGS     160
@@ -302,6 +305,31 @@ void   terrain_cave_to_world(const TerrainCave *c, double cx, double cz, double 
  * the highest floor under it, -1e30 in none. */
 double terrain_cave_floor_local(const TerrainCave *c, double x, double h, double z);
 double terrain_cave_floor(double x, double y, double z);
+/* The ground over cave c's chart (x, z), at full detail, as its mouths were
+ * placed on it (read in the world's frame, whichever frame asks; m, world Y). */
+double terrain_cave_ground(const TerrainCave *c, double x, double z);
+/* Mouth m's hole: where the ground lies in the cave's air. The drawn ground
+ * (terrain.frag) is cut where the field there is negative, and only within
+ * this box of the chart (x, h, z), which holds every point of the ground
+ * within a metre or so of the air there, h widened by
+ * TERRAIN_CAVE_HOLE_SLACK_M either way for the coarser levels' ground (which
+ * the cut still follows: it reads the field where the ground is drawn); and
+ * the passages and chambers near the box (terrain_cave_near_box), in order,
+ * so that the field from them is the cave's, bit for bit, in the box.
+ * Returns 0 if more passages are near than TERRAIN_CAVE_HOLE_SEGS (then no
+ * hole is cut). */
+#define TERRAIN_CAVE_HOLE_SLACK_M 8.0
+/* mask: the cells of the box's plan (TERRAIN_CAVE_HOLE_GRID a side, cell
+ * i + j G at bit i + j G, x along i and z along j) in which the ground can be
+ * in the air or near it; the cut reads the field only in those. */
+typedef struct TerrainCaveHole {
+    double   lo[3], hi[3];
+    int      nseg, nroom;
+    uint8_t  seg[TERRAIN_CAVE_HOLE_SEGS], room[TERRAIN_CAVE_ROOMS];
+    uint32_t mask[4];
+} TerrainCaveHole;
+_Static_assert(TERRAIN_CAVE_HOLE_GRID * TERRAIN_CAVE_HOLE_GRID <= 128, "a hole's cells must fit its mask");
+int    terrain_cave_hole(const TerrainCave *c, int m, TerrainCaveHole *out);
 
 /* --- Caves' meshes (src/terrain/terrain_cave_mesh.c) -----------------------------
  * A cave is drawn as the surface of its field, meshed by surface nets in
@@ -318,8 +346,14 @@ double terrain_cave_floor(double x, double y, double z);
  * A vertex: its position from the brick's corner in 1/TERRAIN_CAVE_QUANT of
  * a cell (whole numbers, so that the shaders' sums with the brick's offset
  * are exact in float), a word for later (b5: the sky it sees), its normal
- * facing the air (octahedral, snorm16 x 2: common.glsl octDecode) and a
- * spare word. Triangles face the air: (b - a) x (c - a) points into it. */
+ * facing the air (octahedral, snorm16 x 2: common.glsl octDecode) and its
+ * height over the ground (terrain_cave_ground; a float's bits), or
+ * TERRAIN_CAVE_DEEP if it lies more than TERRAIN_CAVE_CLIP_GATE_M under it
+ * (it is reckoned only in the bricks a mouth's reach comes near: elsewhere
+ * the roof holds). cave.frag cuts the mesh off at the drawn ground near the
+ * mouths with it, and a brick leaves out the triangles standing wholly more
+ * than TERRAIN_CAVE_CLIP_DROP_M over the ground. Triangles face the air:
+ * (b - a) x (c - a) points into it. */
 #define TERRAIN_CAVE_LODS     3
 #define TERRAIN_CAVE_CELLS    16
 #define TERRAIN_CAVE_VOXEL0   0.5      /* the finest level's cell (m) */
@@ -327,7 +361,7 @@ double terrain_cave_floor(double x, double y, double z);
 #define TERRAIN_CAVE_DRAW_M   1000.0   /* the coarsest level's reach: no cave is drawn further off */
 #define TERRAIN_CAVE_MESH_VERTS   ((TERRAIN_CAVE_CELLS + 1) * (TERRAIN_CAVE_CELLS + 1) * (TERRAIN_CAVE_CELLS + 1))
 #define TERRAIN_CAVE_MESH_INDICES (3 * TERRAIN_CAVE_CELLS * TERRAIN_CAVE_CELLS * TERRAIN_CAVE_CELLS * 6)
-typedef struct TerrainCaveVertex { int16_t p[3]; uint16_t sky; uint32_t n; uint32_t spare; } TerrainCaveVertex;
+typedef struct TerrainCaveVertex { int16_t p[3]; uint16_t sky; uint32_t n; float above; } TerrainCaveVertex;
 double terrain_cave_voxel(int lod);
 double terrain_cave_brick(int lod);   /* a brick's side (m) */
 double terrain_cave_lod_reach(int lod);

@@ -3,6 +3,10 @@
 #include "common.glsl"
 #include "terrain/ground.glsl"
 #include "terrain/cave.glsl"
+#define CAVE_HOLES_SET 0
+#define CAVE_HOLES_BINDING 5
+#include "terrain/cave_hole.glsl"
+#include "terrain/cave_clip.glsl"
 
 /* A brick of a cave (cave.vert): plain rock, the land's (PBR_LAND_ROCK),
  * mapped three ways in the cave's own chart. For now lit as the land outside
@@ -10,13 +14,27 @@
  * (what reaches in through the mouths) and the air there come later (M10b b5).
  * Where a finer level is drawn the fragments inside its box, shrunk by a cell
  * of this level's, are discarded (src/render/cave_gpu.c: the rings overlap by
- * that cell, so no crack opens between them). */
+ * that cell, so no crack opens between them).
+ *
+ * At the mouths the field's air comes out of the ground, and so would the
+ * mesh: near them (its vertices' heights over the ground say where) each
+ * fragment is cut off where it stands over the ground the terrain draws there
+ * (terrain/cave_clip.glsl). The terrain is cut away inside the field's
+ * surface, a margin in from it (terrain/cave_hole.glsl), so the mesh meets
+ * the drawn ground outside the hole, under ground still drawn: from outside a
+ * ray through the hole is under the ground before it reaches the mesh, and
+ * from inside the ground's ring over the passage is seen from below, its back.
+ * So no crack opens between them, and no skirt is needed (one, a few cm over
+ * the ground, showed as a dark line where the passage grazes the slope round
+ * the mouth). */
 
 layout(location = 0) in vec3 vRel;
 layout(location = 1) in vec3 vNrm;
 layout(location = 2) in vec3 vChart;
 layout(location = 3) flat in ivec3 vInfo;
 layout(location = 4) in vec3 vNrmC;
+layout(location = 5) in vec3 vFlat;
+layout(location = 6) in float vAbove;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outRefl;   // nothing for the screen-space reflections
 
@@ -65,6 +83,10 @@ void main() {
     if (vInfo.y >= 0) {   // inside the finer level's box: that level draws it
         vec3 lo = caveSys[vInfo.x].box[2 * vInfo.y].xyz, hi = caveSys[vInfo.x].box[2 * vInfo.y + 1].xyz;
         if (all(greaterThan(vChart, lo)) && all(lessThan(vChart, hi))) discard;
+    }
+    if (vAbove > -float(TERRAIN_CAVE_CLIP_GATE_M)) {   // near a mouth: cut off at the drawn ground
+        float g;
+        if (caveDrawnHeight(vFlat.xz, g) ? vFlat.y > g : vAbove > 0.0) discard;
     }
     outColor = vec4(col, 1.0);
     outRefl = vec4(0.0);

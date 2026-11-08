@@ -14,7 +14,7 @@
  * map at the anchor, then bent over the planet as the terrain is
  * (planetBend), with the height less the camera's taken from doubles. */
 
-// TerrainCaveVertex, four words: x | y << 16 (int16), z | sky << 16, the normal (octahedral), spare
+// TerrainCaveVertex, four words: x | y << 16 (int16), z | sky << 16, the normal (octahedral), its height over the ground (float)
 layout(std430, set = 0, binding = 1) readonly buffer Pool { uint pool[]; };
 
 layout(location = 0) out vec3 vRel;      // camera-relative position, bent over the planet
@@ -22,6 +22,8 @@ layout(location = 1) out vec3 vNrm;      // facing the air
 layout(location = 2) out vec3 vChart;    // the chart's (x, h, z) from the anchor
 layout(location = 3) flat out ivec3 vInfo;   // its system, discard box, level
 layout(location = 4) out vec3 vNrmC;     // the normal in the chart (the rock's mapping)
+layout(location = 5) out vec3 vFlat;     // camera-relative world x, z (not bent) and the height (world Y): cave.frag's cut at the ground
+layout(location = 6) out float vAbove;   // its height over the ground, near a mouth (TERRAIN_CAVE_DEEP elsewhere)
 
 void main() {
     CaveDraw d = caveDraw[gl_InstanceIndex];
@@ -42,5 +44,7 @@ void main() {
     vChart = c;
     vNrmC = n;
     vInfo = d.info.xyz;
+    vFlat = vec3(xz.x, h, xz.y);
+    vAbove = uintBitsToFloat(pool[base + 3u]);
     gl_Position = frame.viewProj * vec4(vRel, 1.0);
 }

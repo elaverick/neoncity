@@ -198,10 +198,26 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
 - **Caves** (`src/terrain/terrain_cave.c`, M10b; plan `~/.claude/plans/m10-erosion-and-caves.md`;
   `terrain_test --caves [km]`, `--cave-map out.ppm [km [x z]]`, `--cave-mesh [km [n]]`). b1 (placement, passages,
-  field, CPU only) and b2 (meshing and drawing: `terrain_cave_mesh.c`, `src/render/cave_gpu.c`,
-  `shaders/terrain/cave.*`; `--cave-debug normals|lit|lod`) are done; b3-b6 (the mouths in the terrain, walking,
-  light, dressing) are next. Left over from b2:
-  - **The mouths**: the passages' tubes stand out of the ground there, and the terrain covers the openings (b3).
+  field, CPU only), b2 (meshing and drawing: `terrain_cave_mesh.c`, `src/render/cave_gpu.c`,
+  `shaders/terrain/cave.*`; `--cave-debug normals|lit|lod`) and b3 (the mouths: `terrain_cave_hole`,
+  `shaders/terrain/cave_hole.glsl`, `cave_clip.glsl`) are done; b4-b6 (walking, light, dressing) are next.
+  Left over from b3:
+  - **No dark mouths far off.** The plan's dark cover for the coarse levels wasn't built: the holes are cut at every
+    level wherever the cave is drawn (to 1 km), so it would only matter past that, where a mouth is a few pixels,
+    and inside a cave is lit as outside until b5. With b5's dark, a mouth past 1 km should go dark too (the cover's
+    free top byte, or the hole's field in terrain.frag for the systems known).
+  - **The rim is a clean cut**: no lip, scree or overhang where the ground opens (b6's dressing).
+  - **A mouth opens only once the bricks round it are meshed**: about half a second on arrival; until then the
+    ground is whole and the passage under it cut off at it.
+  - **The holes' boxes come from samples** (every metre over each passage near a mouth, and the mouth's own air), not
+    a bound; the tests find every point of the ground in the air inside one. A mouth with more than
+    `TERRAIN_CAVE_HOLE_SEGS` (32) passages near would get no hole (18 seen in the procedural world, 8 on the Earth's).
+  - **The GPU's field is checked against the CPU's only by eye** (the captures): no `--gpu` test as the grass has.
+  - **The player still walks over the holes** (b4: the clipmap collision and the cave's floor).
+  - **The cut's cost**: +0.05 ms on the terrain at 7 m from a mouth, +0.01 at 22 m. The tiles near a mouth draw with
+    the cut (`terrain_cut.frag`) and lose the early depth test; the caves now draw before the terrain, so the parts
+    of a cave hidden by the hill are shaded too (+0.03 ms on the caves' pass at 7 m) but from inside a cave the
+    terrain costs nothing (0.39 to 0.03 ms).
   - **Light and air**: the rock is lit as the land outside is, by the moon and the cities' cloud, and hazed as it
     is; no sky's share through the mouths yet, rain falls in the caves, the shelter map and the ray-traced shadows
     don't see them (b5, M11).

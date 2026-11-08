@@ -112,7 +112,7 @@ void grass_gpu_create(Renderer *r) {
 
     const VkShaderStageFlags C = VK_SHADER_STAGE_COMPUTE_BIT, V = VK_SHADER_STAGE_VERTEX_BIT, F = VK_SHADER_STAGE_FRAGMENT_BIT;
     const VkDescriptorType UB = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    VkDescriptorSetLayoutBinding comp[13] = {
+    VkDescriptorSetLayoutBinding comp[14] = {
         { 0, UB, 1, C, NULL },    /* FrameUBO */
         { 1, SB, 1, C, NULL },    /* the clipmap's samples */
         { 2, SB, 1, C, NULL },    /* the roads (road_gpu.c) */
@@ -126,8 +126,9 @@ void grass_gpu_create(Renderer *r) {
         { 14, SB, 1, C, NULL },   /* their triangles */
         { 15, SB, 1, C, NULL },   /* each instance's draw chunk */
         { 16, SB, 1, C, NULL },   /* the patches' freeways */
+        { 17, UB, 1, C, NULL },   /* the caves' mouths' holes (cave_gpu.c) */
     };
-    g->compLayout = make_set_layout(vk, comp, 13);
+    g->compLayout = make_set_layout(vk, comp, 14);
     VkDescriptorSetLayoutBinding draw[3] = {
         { 0, SB, 1, V, NULL },    /* the instances */
         { 1, SB, 1, V, NULL },    /* their draw chunks */
@@ -189,7 +190,7 @@ void grass_gpu_create(Renderer *r) {
     }
 
     VkDescriptorPoolSize sizes[2] = {
-        { UB, 2 * MAX_FRAMES },
+        { UB, 3 * MAX_FRAMES },
         { SB, 14 * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -223,6 +224,7 @@ void grass_gpu_create(Renderer *r) {
         write_buf_set(vk, s, 14, SB, g->cityTri[i].buf, VK_WHOLE_SIZE);
         write_buf_set(vk, s, 15, SB, g->instChunk[i].buf, VK_WHOLE_SIZE);
         write_buf_set(vk, s, 16, SB, g->patchLight[i].buf, VK_WHOLE_SIZE);
+        write_buf_set(vk, s, 17, UB, cave_gpu_holes(r, i), VK_WHOLE_SIZE);
         s = g->drawSet[i];
         write_buf_set(vk, s, 0, SB, g->instances[i].buf, VK_WHOLE_SIZE);
         write_buf_set(vk, s, 1, SB, g->instChunk[i].buf, VK_WHOLE_SIZE);

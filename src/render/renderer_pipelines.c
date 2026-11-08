@@ -65,6 +65,9 @@ static const uint32_t SPV_terrain_vert[] = {
 static const uint32_t SPV_terrain_frag[] = {
 #include "terrain/terrain.frag.inc"
 };
+static const uint32_t SPV_terrain_cut_frag[] = {
+#include "terrain/terrain_cut.frag.inc"
+};
 static const uint32_t SPV_planet_vert[] = {
 #include "terrain/planet.vert.inc"
 };
@@ -244,23 +247,26 @@ void create_layouts(Renderer *r) {
         { 6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* PlumeSet */
     };
     r->flameLayout = make_set_layout(vk, flame, 5);
-    VkDescriptorSetLayoutBinding terrain[6] = {
+    VkDescriptorSetLayoutBinding terrain[7] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },     /* clipmap samples */
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* roads (road_gpu.c; the clipmap's only) */
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' maps, as the scene set's */
         { 8, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' properties */
         { 10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },  /* the grass's patch states (grass_gpu.c: --grass-debug cull; the clipmap's only) */
+        { 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the caves' mouths' holes (cave_gpu.c; the clipmap's only) */
     };
-    r->terrainLayout = make_set_layout(vk, terrain, 6);
-    VkDescriptorSetLayoutBinding cave[5] = {
+    r->terrainLayout = make_set_layout(vk, terrain, 7);
+    VkDescriptorSetLayoutBinding cave[7] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* the bricks' pool (cave_gpu.c) */
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the frame's systems and draws */
         { 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' maps */
         { 8, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' properties */
+        { 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the clipmap's samples (the cut at the mouths) */
+        { 5, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the holes and the terrain's levels */
     };
-    r->caveLayout = make_set_layout(vk, cave, 5);
+    r->caveLayout = make_set_layout(vk, cave, 7);
     VkDescriptorSetLayoutBinding proxy[3] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* boxes */
@@ -476,6 +482,9 @@ void create_pipelines(Renderer *r) {
                         r->terrainPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
     terrain.colorFormat2 = HDR_FORMAT;
     r->terrainPipe = make_graphics(vk, &terrain);
+    GfxDesc terrainCut = terrain;
+    terrainCut.fs = SPV_terrain_cut_frag; terrainCut.fsBytes = sizeof(SPV_terrain_cut_frag);
+    r->terrainCutPipe = make_graphics(vk, &terrainCut);
     GfxDesc planet = terrain;
     planet.vs = SPV_planet_vert; planet.vsBytes = sizeof(SPV_planet_vert);
     planet.fs = SPV_planet_frag; planet.fsBytes = sizeof(SPV_planet_frag);

@@ -219,9 +219,44 @@ static int use_vertex(Scratch *w, int x, int y, int z, TerrainCaveVertex *v, int
         for (int q = 0; q < 3; ++q) n[q] = -g[q] / l;   /* into the air, down the field */
     o->n = oct_encode(n);
     o->sky = 0;
-    o->spare = 0;
+    o->above = (float)TERRAIN_CAVE_DEEP;   /* (stand_clear: over the ground, near a mouth) */
     w->vid[ci] = (*nv)++;
     return w->vid[ci];
+}
+
+/* Whether a mouth's reach comes within `extra` of the box. */
+static int near_mouth(const TerrainCave *c, const double lo[3], const double hi[3], double extra) {
+    for (int m = 0; m < c->nmouth; ++m) {
+        double d2 = 0.0;
+        for (int a = 0; a < 3; ++a) {
+            double d = fmax(0.0, fmax(lo[a] - c->mouth[m].p[a], c->mouth[m].p[a] - hi[a]));
+            d2 += d * d;
+        }
+        if (sqrt(d2) <= c->mouth[m].reach + extra) return 1;
+    }
+    return 0;
+}
+
+/* Near a mouth, each vertex's height over the ground (terrain.h: the
+ * vertex's `above`), and the triangles standing wholly far over it left out;
+ * returns the indices kept. Elsewhere the roof holds: every vertex deep. */
+static int stand_clear(const Scratch *w, TerrainCaveVertex *v, int nv, uint16_t *idx, int ni) {
+    double lo[3], hi[3];
+    corner_box(w->g0, -1, C, w->s, lo, hi);
+    if (!near_mouth(w->c, lo, hi, 1.0)) return ni;
+    for (int q = 0; q < nv; ++q) {
+        double P[3];
+        for (int a = 0; a < 3; ++a) P[a] = ((double)w->g0[a] + (double)v[q].p[a] / Q) * w->s;
+        double above = P[1] - terrain_cave_ground(w->c, P[0], P[2]);
+        v[q].above = (float)(above < -TERRAIN_CAVE_CLIP_GATE_M ? TERRAIN_CAVE_DEEP : above);
+    }
+    int kept = 0;
+    for (int t = 0; t + 2 < ni; t += 3) {
+        if (v[idx[t]].above > TERRAIN_CAVE_CLIP_DROP_M && v[idx[t + 1]].above > TERRAIN_CAVE_CLIP_DROP_M && v[idx[t + 2]].above > TERRAIN_CAVE_CLIP_DROP_M) continue;
+        for (int e = 0; e < 3; ++e) idx[kept + e] = idx[t + e];
+        kept += 3;
+    }
+    return kept;
 }
 
 static int64_t dist2(const TerrainCaveVertex *a, const TerrainCaveVertex *b) {
@@ -292,6 +327,6 @@ int terrain_cave_brick_mesh(const TerrainCave *c, int lod, int bi, int bj, int b
                     for (int q = 0; q < 6; ++q) idx[ni++] = (uint16_t)tri[q];
                 }
             }
-    *nidx = ni;
-    return nv;
+    *nidx = stand_clear(w, v, nv, idx, ni);
+    return *nidx > 0 ? nv : 0;
 }

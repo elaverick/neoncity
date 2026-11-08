@@ -2518,6 +2518,92 @@ static void cave_survey(CaveSurvey *s, double cx, double cz, double span) {
     thread_parallel_for(s->n, cpu_count(), survey_cell, s);
 }
 
+/* The mouths' holes of a survey's systems, found on many threads. */
+typedef struct HoleJob { const CaveSurvey *s; TerrainCaveHole (*hole)[TERRAIN_CAVE_MOUTHS]; int (*ok)[TERRAIN_CAVE_MOUTHS]; double *ms; } HoleJob;
+static void hole_one(void *ctx, int k) {
+    HoleJob *j = (HoleJob *)ctx;
+    if (!j->s->has[k]) return;
+    clock_t t0 = clock();
+    for (int m = 0; m < j->s->sys[k].nmouth; ++m) j->ok[k][m] = terrain_cave_hole(&j->s->sys[k], m, &j->hole[k][m]);
+    j->ms[k] = 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC;
+}
+
+/* 5c'. The mouths' holes (terrain_cave_hole): every mouth has one, the
+ *      ground in the air near it lies in its box (random points round the
+ *      mouth and over its reach), and the field from its passages near is
+ *      the cave's, bit for bit, in the box. */
+static void test_cave_holes(Rng *r, const CaveSurvey *s) {
+    HoleJob j = { s };
+    j.hole = calloc((size_t)s->n, sizeof *j.hole);
+    j.ok = calloc((size_t)s->n, sizeof *j.ok);
+    j.ms = calloc((size_t)s->n, sizeof(double));
+    clock_t t0 = clock();
+    thread_parallel_for(s->n, cpu_count(), hole_one, &j);
+    double wall = (double)(clock() - t0) / CLOCKS_PER_SEC;
+    int mouths = 0, holes = 0, badOut = 0, badNear = 0, inAir = 0, segsMax = 0, shafts = 0, roomsLeft = 0;
+    double msMax = 0.0, msSum = 0.0, wMax = 0.0, hMax = 0.0;
+    for (int k = 0; k < s->n; ++k) {
+        if (!s->has[k]) continue;
+        const TerrainCave *c = &s->sys[k];
+        msSum += j.ms[k];
+        msMax = fmax(msMax, j.ms[k]);
+        for (int m = 0; m < c->nmouth; ++m) {
+            mouths++;
+            if (!j.ok[k][m]) {
+                const TerrainCaveMouth *mo = &c->mouth[m];
+                double g = cave_ground(c, mo->p[0], mo->p[2]);
+                TerrainCaveHole h2;
+                int again = terrain_cave_hole(c, m, &h2);
+                printf("  cave %08x: mouth %d (%s, reach %.1f) has no hole: ground %.3f at it (mouth %.3f), field there %.3f; again %d, %d passages near\n", c->id, m,
+                       mo->kind == TERRAIN_CAVE_ADIT ? "adit" : "shaft", mo->reach, g, mo->p[1], terrain_cave_sdf_local(c, mo->p[0], g, mo->p[2]), again, h2.nseg);
+                continue;
+            }
+            holes++;
+            const TerrainCaveHole *h = &j.hole[k][m];
+            const TerrainCaveMouth *mo = &c->mouth[m];
+            if (mo->kind == TERRAIN_CAVE_SHAFT && shafts++ < 3) {
+                double wx, wz;
+                terrain_cave_to_world(c, mo->p[0], mo->p[2], &wx, &wz);
+                printf("  cave %08x: mouth %d, a shaft, at world (%.1f, %.1f), %.1f m up\n", c->id, m, wx, wz, mo->p[1]);
+            }
+            segsMax = h->nseg > segsMax ? h->nseg : segsMax;
+            wMax = fmax(wMax, fmax(h->hi[0] - h->lo[0], h->hi[2] - h->lo[2]));
+            hMax = fmax(hMax, h->hi[1] - h->lo[1] - 2.0 * TERRAIN_CAVE_HOLE_SLACK_M);
+            TerrainCaveNear near;
+            near.nseg = h->nseg;
+            memcpy(near.seg, h->seg, (size_t)h->nseg);
+            near.nroom = h->nroom;
+            memcpy(near.room, h->room, (size_t)h->nroom);
+            roomsLeft += c->nroom - h->nroom;
+            for (int q = 0; q < 1500; ++q) {
+                double R = q % 2 ? 30.0 : mo->reach, x = mo->p[0] + (2.0 * rng_float(r) - 1.0) * R, z = mo->p[2] + (2.0 * rng_float(r) - 1.0) * R;
+                double g = cave_ground(c, x, z);
+                if (terrain_cave_sdf_local(c, x, g, z) >= 0.0) continue;
+                inAir++;
+                const int G = TERRAIN_CAVE_HOLE_GRID;
+                int ci = (int)floor((x - h->lo[0]) / (h->hi[0] - h->lo[0]) * G), cj = (int)floor((z - h->lo[2]) / (h->hi[2] - h->lo[2]) * G);
+                ci = ci < 0 ? 0 : ci >= G ? G - 1 : ci;
+                cj = cj < 0 ? 0 : cj >= G ? G - 1 : cj;
+                int marked = (h->mask[(cj * G + ci) >> 5] >> ((cj * G + ci) & 31)) & 1;
+                if ((x < h->lo[0] || x > h->hi[0] || z < h->lo[2] || z > h->hi[2] || g < h->lo[1] || g > h->hi[1] || !marked) && badOut++ < 5)
+                    printf("  cave %08x: mouth %d's ground at (%.1f, %.1f, %.1f) is in the air, outside its hole's box or marked cells\n", c->id, m, x, g, z);
+            }
+            for (int q = 0; q < 300; ++q) {
+                double p[3];
+                for (int a = 0; a < 3; ++a) p[a] = h->lo[a] + (h->hi[a] - h->lo[a]) * rng_float(r);
+                double fa = terrain_cave_sdf_near(c, &near, p[0], p[1], p[2]), fb = terrain_cave_sdf_local(c, p[0], p[1], p[2]);
+                if (memcmp(&fa, &fb, sizeof fa) != 0) badNear++;
+            }
+        }
+    }
+    printf("  %d mouths, %d with holes: boxes up to %.0f m across and %.0f m tall in the ground, up to %d passages near (%d chambers left out); %d points of the ground in the air round them; "
+           "found in %.0f ms a system (at most %.0f), %.1f s on %d threads\n", mouths, holes, wMax, hMax, segsMax, roomsLeft, inAir, msSum / fmax(holes, 1), msMax, wall, cpu_count());
+    CHECK(holes == mouths, "%d of %d mouths have no hole", mouths - holes, mouths);
+    CHECK(badOut == 0, "%d points of the ground in a cave's air outside its mouth's hole", badOut);
+    CHECK(badNear == 0, "%d points of a hole's box where its passages' field isn't the cave's", badNear);
+    free(j.hole); free(j.ok); free(j.ms);
+}
+
 /* 5c. The caves, over the cells round a point of the land beyond the
  *     megacity (`span` metres either way): each system within its bounds and
  *     its reach, its passages and chambers the sizes they should be, clear of
@@ -2685,6 +2771,7 @@ static void test_caves(Rng *r, double span) {
     CHECK(badFloor == 0 && floorsFlat * 10 >= floors * 9, "the floor: %d not between air and rock, level under only %d of %d axis points", badFloor, floorsFlat, floors);
     /* where passages meet, their floors' blend is steeper than either, by up to a half of the steepest passage's grade */
     CHECK(stepMax <= 1.5 * TERRAIN_CAVE_GRADE_MAX, "the floor steps by %.2f m/m along a passage", stepMax);
+    test_cave_holes(r, s);
     free(again); free(found); free(s->sys); free(s);
 }
 
@@ -2768,7 +2855,8 @@ static void test_cave_mesh(Rng *r, double span, int want) {
     DVec2 lc = land_centre();
     CaveSurvey *s = (CaveSurvey *)calloc(1, sizeof(CaveSurvey));
     cave_survey(s, lc.x, lc.z, span);
-    int done = 0, badNear = 0, badSame = 0, badOpen = 0, badDup = 0, badFlat = 0;
+    int done = 0, badNear = 0, badSame = 0, badOpen = 0, badDup = 0, badFlat = 0, badAbove = 0;
+    double aboveMax = -1e30;
     const int MAXB = 65536;
     int32_t (*bricks)[3] = malloc(sizeof(int32_t[3]) * MAXB);
     for (int k = 0; k < s->n && done < want; ++k) {
@@ -2843,6 +2931,8 @@ static void test_cave_mesh(Rng *r, double span, int want) {
                     for (int e = 0; e < 3; ++e) {
                         int x = a[e], y = a[(e + 1) % 3];
                         if (x == y) { degenerate++; continue; }
+                        /* the triangles standing wholly far over the ground are left out: open there */
+                        if (j.v[b][j.idx[b][t + e]].above > TERRAIN_CAVE_CLIP_DROP_M && j.v[b][j.idx[b][t + (e + 1) % 3]].above > TERRAIN_CAVE_CLIP_DROP_M) continue;
                         uint64_t key = x < y ? ((uint64_t)x << 32 | (uint32_t)y) : ((uint64_t)y << 32 | (uint32_t)x);
                         int *cnt = km_get(&edges, key, NULL);
                         *cnt += x < y ? 1 : 1 << 16;   /* each way counted apart */
@@ -2870,6 +2960,10 @@ static void test_cave_mesh(Rng *r, double span, int want) {
                     cave_vertex_at(lod, bricks[b], &j.v[b][q], p);
                     oct_decode(j.v[b][q].n, n);
                     double f = fabs(terrain_cave_sdf_local(c, p[0], p[1], p[2]));
+                    /* its height over the ground: kept within the gate, deep (and so) elsewhere */
+                    double above = p[1] - cave_ground(c, p[0], p[2]), held = j.v[b][q].above;
+                    if (held == (float)TERRAIN_CAVE_DEEP ? above > -TERRAIN_CAVE_CLIP_GATE_M : fabs(held - above) > 1e-3) badAbove++;
+                    aboveMax = fmax(aboveMax, held);
                     double up = terrain_cave_sdf_local(c, p[0] + 0.3 * sv * n[0], p[1] + 0.3 * sv * n[1], p[2] + 0.3 * sv * n[2]);
                     double dn = terrain_cave_sdf_local(c, p[0] - 0.3 * sv * n[0], p[1] - 0.3 * sv * n[1], p[2] - 0.3 * sv * n[2]);
                     fMax = fmax(fMax, f / sv);
@@ -2923,9 +3017,35 @@ static void test_cave_mesh(Rng *r, double span, int want) {
             printf("  from passage %d's middle: %d, %d and %d bricks within the levels' reach; --cam %.1f %.1f %.1f %.1f %.1f\n", (c->nseg - 1) * (q + 1) / 4,
                    counts[0], counts[1], counts[2], wx, wz, yaw, pitch, P[1]);
         }
+        /* Each mouth: a camera outside looking in, and one inside looking out. */
+        for (int m = 0; m < c->nmouth; ++m) {
+            const TerrainCaveMouth *k = &c->mouth[m];
+            double px, pz, qx, qz;
+            terrain_cave_to_world(c, k->p[0], k->p[2], &px, &pz);
+            terrain_cave_to_world(c, k->p[0] + k->dir[0], k->p[2] + k->dir[1], &qx, &qz);
+            double yaw = atan2(qx - px, -(qz - pz)) * 180.0 / PI_F;
+            double ox = k->p[0] - 22.0 * k->dir[0], oz = k->p[2] - 22.0 * k->dir[1], oh = fmax(k->p[1] + 3.0, cave_ground(c, ox, oz) + 2.0), wx, wz;
+            terrain_cave_to_world(c, ox, oz, &wx, &wz);
+            double pitch = atan2(k->p[1] + 1.0 - oh, 22.0) * 180.0 / PI_F;
+            printf("  mouth %d (%s): outside --cam %.1f %.1f %.1f %.1f %.1f", m, k->kind == TERRAIN_CAVE_ADIT ? "adit" : "shaft", wx, wz, yaw, pitch, oh);
+            for (double t = 14.0; t >= 4.0; t -= 2.0) {
+                double ix = k->p[0] + t * k->dir[0], iz = k->p[2] + t * k->dir[1], top = cave_ground(c, ix, iz) - 0.5;
+                for (double h = top; h > top - 30.0; h -= 0.25) {
+                    if (terrain_cave_sdf_local(c, ix, h, iz) >= 0.0) continue;
+                    double fl = terrain_cave_floor_local(c, ix, h, iz);
+                    terrain_cave_to_world(c, ix, iz, &wx, &wz);
+                    printf("; inside --cam %.1f %.1f %.1f 8.0 %.1f", wx, wz, yaw + 180.0, fl + 1.7);
+                    t = -1.0;
+                    break;
+                }
+            }
+            printf("\n");
+        }
     }
     CHECK(done > 0, "no cave to mesh within %.0f km", span / 1000.0);
     CHECK(badNear == 0, "%d points where a brick's field differs from the whole field", badNear);
+    printf("  vertices over the ground near the mouths: up to %.1f m (triangles wholly over %.0f m left out)\n", aboveMax, TERRAIN_CAVE_CLIP_DROP_M);
+    CHECK(badAbove == 0, "%d vertices' heights over the ground wrong (or deep within %.0f m of it)", badAbove, TERRAIN_CAVE_CLIP_GATE_M);
     CHECK(badSame == 0, "%d bricks meshed differently a second time", badSame);
     CHECK(badOpen == 0, "%d edges of the caves' meshes not closed (a crack or a hole)", badOpen);
     CHECK(badDup == 0, "too many edges shared by more than two faces");

@@ -11,6 +11,9 @@
 #include "grass/instance.glsl"
 #include "grass/prepare_common.glsl"
 #include "grass/patch_light.glsl"
+#define CAVE_HOLES_SET 0
+#define CAVE_HOLES_BINDING 17
+#include "terrain/cave_hole.glsl"
 
 /* The grass's GPU path (src/render/grass_gpu.c), the land's grass: one
  * workgroup per patch of the GRASS_PATCH_GRID square round the camera's.
@@ -29,7 +32,8 @@
  *    patch's bounds allow; the rest are queued (grass/prepare_common.glsl),
  *    and taken off the queue a workgroup's worth at a time for the dear part:
  *    the ground under it (grass/surface.glsl), the road near it, and the
- *    rules (grass/rules.glsl, grass_keep). A kept root's level of detail
+ *    rules (grass/rules.glsl, grass_keep); none grows in or at the edge of a
+ *    cave's mouth (terrain/cave_hole.glsl, the cut kept GRASS_CAVE_CLEAR off). A kept root's level of detail
  *    (grass/lod.glsl) comes from its height's size on screen at its
  *    distance: its bucket, how many of its blades are drawn and how much
  *    wider, its ribbon's morph; its species' end (grassEnd) narrows them all
@@ -53,6 +57,9 @@ shared uint sBase, sSlope, sSnow, sUrban;           // each factor's most over t
 shared uint sShareLo, sShareHi, sWetLo, sWetHi;      // the mud's share and the wet, least and most
 shared uint sCand, sEval, sKept, sCut[GRASS_BUCKETS];
 shared uint sSpEval[2], sSpBlades[2];                // meadow's and reeds': candidates evaluated, their kept roots' blades
+
+// How far (the field's units, about metres) a root keeps from a cave's mouth's cut.
+const float GRASS_CAVE_CLEAR = 0.6;
 
 float reedsWeight(float share, float wet) { return grassSat(float(GRASS_REEDS_MUD) * share + float(GRASS_REEDS_WET) * grassEase(GRASS_REEDS_WET0, GRASS_REEDS_WET1, wet)); }
 
@@ -187,7 +194,7 @@ void main() {
                 bool sub = ((cell.x | cell.y) & 1) == 0;
                 GrassCandidate cand = grassCandidate(k, gpatch, cell);
                 vec2 rel = corner + cand.p;
-                if (grassSurface(rel, gg)) {
+                if (grassSurface(rel, gg) && !caveHoleCut(rel, gg.h, GRASS_CAVE_CLEAR)) {
                     GrassSite s;
                     s.grass = gg.ca.z; s.mud = gg.cb.x; s.snow = gg.cb.y; s.wet = gg.cb.z;
                     s.ny = gg.n.y; s.urban = gg.urban; s.maintained = 0.0; s.city = 0;

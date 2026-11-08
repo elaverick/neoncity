@@ -33,6 +33,7 @@ layout(location = 1) out vec3  vNrm;
 layout(location = 2) out float vUrban;   // plan_urban: 1 in the city, 0 beyond its belt
 layout(location = 3) out vec4  vCoverA;  // the ground cover (ground.glsl, Cover): rock, scree, grass, sand
 layout(location = 4) out vec4  vCoverB;  // mud, snow, wet, 0
+layout(location = 5) out vec3  vFlat;    // camera-relative x, z (not bent) and the height drawn (world Y): the caves' holes (terrain.frag)
 
 const int N = TERRAIN_CLIP_N, W = TERRAIN_CLIP_W;
 
@@ -89,7 +90,9 @@ void main() {
         cb = mix(cb, pq, morph);
     }
 
-    vRel = planetBend(xz, h + morph * (hc - h));
+    float hd = h + morph * (hc - h);
+    vRel = planetBend(xz, hd);
+    vFlat = vec3(xz.x, hd, xz.y);
     vNrm = planetTilt(xz, n);
     vUrban = word(base + 4);
     vCoverA = ca;

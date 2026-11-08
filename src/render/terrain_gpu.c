@@ -111,12 +111,12 @@ struct TerrainGpu {
     VkDescriptorSet  set[MAX_FRAMES];
     /* this frame's draws (plan_draws), each a run of one level's tiles */
     TerrainPush    push[TERRAIN_CLIP_LEVELS];
-    struct { int level; uint32_t first, count; } draw[MAX_DRAWS];
+    struct { int level, cut; uint32_t first, count; } draw[MAX_DRAWS];   /* cut: near a cave's mouth's hole (terrainCutPipe) */
     int            ndraw;
     /* the last frame's share, and the slowest so far (--shot prints them):
      * taking the update and staging its rows, the draw plan, in all; and the
      * slowest fill on the worker */
-    int            drawn, tilesDrawn, tilesTotal;
+    int            drawn, tilesDrawn, tilesTotal, tilesCut;
     double         stageMs, planMs, updateMs, slowestMs, slowestFillMs;
 };
 
@@ -289,7 +289,7 @@ void terrain_gpu_create(Renderer *r) {
     upload_indices(r, t);
 
     VkDescriptorPoolSize sizes[3] = {
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES },   /* the frame, the materials, the caves' holes (cave_gpu.c writes it) */
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * MAX_FRAMES },   /* samples, roads, the grass's patches (grass_gpu.c writes it) */
         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT * MAX_FRAMES },
     };
@@ -358,9 +358,9 @@ void terrain_gpu_destroy(Renderer *r) {
  * parent to the camera of the update the levels come from (c->cam). K comes
  * from viewProj's second row, the projection's 1 / tan(fovy / 2) times the
  * view's unit up axis. */
-static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj, uint32_t height, double dt) {
+static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj, uint32_t height, double dt, const float (*holes)[2][3], int nholes) {
     TerrainClipmap *c = &t->shown;
-    t->ndraw = t->tilesDrawn = t->tilesTotal = 0;
+    t->ndraw = t->tilesDrawn = t->tilesTotal = t->tilesCut = 0;
     t->drawn = TERRAIN_CLIP_LEVELS;
     if (c->finest >= TERRAIN_CLIP_LEVELS) return;
     const float *m = viewProj->m;
@@ -396,6 +396,19 @@ static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj,
             if (hx < 0 || hx > 1 || hz < 0 || hz > 1) fatal("terrain: a clipmap window is off its parent's centre");
             list = (int)(hx + 2 * hz);
         }
+        /* the holes this level can draw: not those wholly inside the finer
+         * level's window, which draws all of them (its tiles' bounds here
+         * span that window) */
+        int lholes[TERRAIN_CAVE_HOLES], nl = 0;
+        for (int h = 0; h < nholes && h < TERRAIN_CAVE_HOLES; ++h) {
+            if (l > t->drawn) {
+                const TerrainClipLevel *fine = &c->level[l - 1];
+                double x0 = (double)fine->origin[0] * fine->spacing - cam[0], z0 = (double)fine->origin[1] * fine->spacing - cam[2];
+                double x1 = x0 + (CLIP_W - 1) * fine->spacing, z1 = z0 + (CLIP_W - 1) * fine->spacing;
+                if (holes[h][0][0] >= x0 && holes[h][1][0] <= x1 && holes[h][0][2] >= z0 && holes[h][1][2] <= z1) continue;
+            }
+            lholes[nl++] = h;
+        }
         for (int tile = 0; tile < TILES * TILES; ++tile) {
             if (t->count[list][tile] == 0) continue;
             t->tilesTotal++;
@@ -410,10 +423,18 @@ static void plan_draws(TerrainGpu *t, const double cam[3], const mat4 *viewProj,
             terrain_bend_bounds(bmn, bmx);   /* terrain.vert bends the ground over the planet */
             if (!frustum_test_aabb(&fr, v3(bmn[0], bmn[1], bmn[2]), v3(bmx[0], bmx[1], bmx[2]))) continue;
             t->tilesDrawn++;
-            if (t->ndraw > 0 && t->draw[t->ndraw - 1].level == l && t->draw[t->ndraw - 1].first + t->draw[t->ndraw - 1].count == t->first[list][tile]) {
+            int cut = 0;   /* near a cave's mouth's hole: drawn with the cut */
+            for (int q = 0; q < nl && !cut; ++q) {
+                const float (*hb)[3] = holes[lholes[q]];
+                cut = bmn[0] <= hb[1][0] && bmx[0] >= hb[0][0] && bmn[1] <= hb[1][1] && bmx[1] >= hb[0][1] && bmn[2] <= hb[1][2] && bmx[2] >= hb[0][2];
+            }
+            t->tilesCut += cut;
+            if (t->ndraw > 0 && t->draw[t->ndraw - 1].level == l && t->draw[t->ndraw - 1].cut == cut &&
+                t->draw[t->ndraw - 1].first + t->draw[t->ndraw - 1].count == t->first[list][tile]) {
                 t->draw[t->ndraw - 1].count += t->count[list][tile];
             } else {
                 t->draw[t->ndraw].level = l;
+                t->draw[t->ndraw].cut = cut;
                 t->draw[t->ndraw].first = t->first[list][tile];
                 t->draw[t->ndraw].count = t->count[list][tile];
                 t->ndraw++;
@@ -456,7 +477,9 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
         }
     }
     double t1 = glfwGetTime();
-    plan_draws(t, cam, viewProj, r->vk->extent.height, t->lastTime > 0.0 ? t0 - t->lastTime : 0.0);
+    const float (*holes)[2][3];
+    int nholes = cave_gpu_hole_boxes(r, &holes);
+    plan_draws(t, cam, viewProj, r->vk->extent.height, t->lastTime > 0.0 ? t0 - t->lastTime : 0.0, holes, nholes);
     t->lastTime = t0;
     if (idle) {   /* the next update, at this frame's camera, for the level just selected */
         t->clip.want = t->shown.want;
@@ -488,8 +511,12 @@ void terrain_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->terrainPipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->terrainPL, 0, 1, &t->set[slot], 0, NULL);
     vkCmdBindIndexBuffer(cmd, t->indices.buf, 0, VK_INDEX_TYPE_UINT16);
-    int pushed = -1;
+    int pushed = -1, cut = 0;
     for (int k = 0; k < t->ndraw; ++k) {
+        if (t->draw[k].cut != cut) {   /* (the push constants stand: the layouts are the same) */
+            cut = t->draw[k].cut;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, cut ? r->terrainCutPipe : r->terrainPipe);
+        }
         if (t->draw[k].level != pushed) {
             pushed = t->draw[k].level;
             vkCmdPushConstants(cmd, r->terrainPL, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(TerrainPush), &t->push[pushed]);

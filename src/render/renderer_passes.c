@@ -353,13 +353,16 @@ void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows) {
     timestamp(r, cmd, slot, GT_PLANTS);
     proxy_gpu_draw(r, cmd, slot);
     timestamp(r, cmd, slot, GT_SCENE);
+    /* the caves before the terrain: through a mouth the ground beyond the
+     * hill is then behind the cave's walls, and from inside all of it is, and
+     * the early depth test throws it away unshaded */
+    cave_gpu_draw(r, cmd, slot);
+    timestamp(r, cmd, slot, GT_CAVES);
     if (!r->caveDebug) {   /* the --cave-debug views see the caves through the ground */
         terrain_gpu_draw(r, cmd, slot);
         planet_gpu_draw(r, cmd, slot);
     }
     timestamp(r, cmd, slot, GT_TERRAIN);
-    cave_gpu_draw(r, cmd, slot);
-    timestamp(r, cmd, slot, GT_CAVES);
     if (!r->caveDebug) grass_gpu_draw(r, cmd, slot);   /* on the ground the terrain drew (shaders/grass/prepare.comp) */
     timestamp(r, cmd, slot, GT_GRASS);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->scenePL, 0, 1, &r->sceneSet[slot], 0, NULL);

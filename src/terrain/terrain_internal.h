@@ -277,11 +277,7 @@ uint32_t terrain_earth_generation(void);
 #define TERRAIN_CAVE_BRANCH     0.22
 #define TERRAIN_CAVE_ROOM_CHANCE 0.12
 #define TERRAIN_CAVE_ROOM_M     20.0     /* a chamber's half-width at most */
-#define TERRAIN_CAVE_FLOOR      0.55     /* a passage's floor, radii under its axis */
-#define TERRAIN_CAVE_ROOM_FLOOR 0.45     /* a chamber's, of its half-height */
-#define TERRAIN_CAVE_ROUGH_M    1.6      /* the walls' noise, at most (m) */
-#define TERRAIN_CAVE_BLEND_M    3.0      /* the passages' smooth union: its bulge is a quarter of this */
-#define TERRAIN_CAVE_FLOOR_K    1.0      /* the floor's soft clamp */
+/* (the field's shape, TERRAIN_CAVE_FLOOR to _NEAR_M, is in terrain_cave_field.h, shared with the shaders) */
 #define TERRAIN_CAVE_ROOF_STEP_M 3.0     /* the ground sampled this finely over a passage */
 #define TERRAIN_CAVE_SECOND     0.45     /* of a system trying for a second mouth */
 #define TERRAIN_CAVE_SIDE ((int)(0.5 * 3.14159265358979323846 * PLANET_RADIUS / TERRAIN_CAVE_CELL + 0.5))
@@ -300,7 +296,7 @@ void terrain_cave_cell(TerrainDir p, int *f, int *i, int *j);
  * near (terrain_cave.c, "The field") any point of it, in order, so that
  * terrain_cave_sdf_near from them is terrain_cave_sdf_local, bit for bit, at
  * every point of the box. */
-typedef struct TerrainCaveNear { int nseg; uint8_t seg[TERRAIN_CAVE_SEGS]; } TerrainCaveNear;
+typedef struct TerrainCaveNear { int nseg, nroom; uint8_t seg[TERRAIN_CAVE_SEGS], room[TERRAIN_CAVE_ROOMS]; } TerrainCaveNear;
 void   terrain_cave_near_box(const TerrainCave *c, const double lo[3], const double hi[3], TerrainCaveNear *out);
 double terrain_cave_sdf_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z);
 /* Whether any of c's air can lie in the box: 0 proves it is all rock. */

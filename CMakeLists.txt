@@ -174,7 +174,8 @@ set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_do
 # Variants of a shader built with a define: output:source:define. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS
-                    grass/blade_rt.frag:grass/blade.frag:GRASS_SLOTS)   # a city blade reads its root's shadow slots
+                    grass/blade_rt.frag:grass/blade.frag:GRASS_SLOTS   # a city blade reads its root's shadow slots
+                    terrain/terrain_cut.frag:terrain/terrain.frag:CAVE_CUT)   # the caves' mouths cut: only the tiles near one   # a city blade reads its root's shadow slots
 # Shaders also include the #define-only headers they share with C.
 set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/core/clouds.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_clip.h

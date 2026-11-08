@@ -37,7 +37,22 @@
  * the anchor (a whole number of cells) plus its place in the brick (a whole
  * number of 1/TERRAIN_CAVE_QUANT cells): exact in float, the same point for
  * two bricks that share it, so the seams stay shut on the GPU too. Nothing
- * meshed depends on the frame: a change of frame only moves the anchors. */
+ * meshed depends on the frame: a change of frame only moves the anchors.
+ *
+ * Mouths: each system's mouths' holes (terrain_cave_hole) are found with its
+ * bricks, and the live bricks of each level within HOLE_BRICK_PAD of each.
+ * Each frame the holes go to the slot's CaveHolesGPU (shaders/terrain/
+ * cave_hole.glsl) with the terrain's drawn levels: the terrain is cut where
+ * its ground lies in the air (terrain.frag), the grass kept off (grass/
+ * prepare.comp), and cave.frag cuts the meshes off at the drawn ground
+ * (terrain/cave_clip.glsl). A hole is cut only while its box lies within the
+ * coarsest ring and every brick drawn round it is meshed, so the ground never
+ * opens on a missing piece of cave; its margin is that of the coarsest level
+ * drawn over it (HOLE_MARGIN, the meshes' rounding there). The terrain draws
+ * only its tiles near a cut hole's box with the cut (terrain_gpu.c), since a
+ * shader that can discard loses the early depth test everywhere it draws.
+ * cave_gpu_update runs before the terrain's, which reads the boxes;
+ * cave_gpu_levels after it. */
 
 #define SYS_MAX      4
 #define LODS         TERRAIN_CAVE_LODS
@@ -75,10 +90,40 @@ typedef struct CaveDrawGPU {
 } CaveDrawGPU;
 typedef struct CaveFrameGPU { CaveSysGPU sys[SYS_MAX]; CaveDrawGPU draw[MAX_DRAWS]; } CaveFrameGPU;
 
+/* The mouths' holes and the terrain's drawn levels (shaders/terrain/cave_hole.glsl: CaveHoles). */
+#define HOLE_PIECES    TERRAIN_CAVE_HOLE_PIECES
+_Static_assert(TERRAIN_CAVE_HOLE_PIECES >= TERRAIN_CAVE_HOLE_SEGS + TERRAIN_CAVE_ROOMS, "a hole's pieces: its passages and every chamber");
+#define HOLE_BRICK_PAD 4.0   /* the bricks round a hole that must be meshed before it is cut (m) */
+static const float HOLE_MARGIN[LODS] = { 0.25f, 0.5f, 1.2f };   /* the field's units: past the meshes' vertices' worst (terrain_test --cave-mesh) */
+typedef struct CaveLevelGPU { float a[4], b[4]; int32_t c[4], d[4]; } CaveLevelGPU;   /* as GrassLevelGPU */
+typedef struct CaveHoleGPU {
+    float   anchor[4];   /* camera-relative world x, z of the system's anchor; the mouth's height; the margin */
+    float   Jinv[4];     /* chart x = Jinv0 dx + Jinv1 dz, chart z = Jinv2 dx + Jinv3 dz, from the anchor */
+    float   off[4];      /* the anchor's place in the chart less the mouth's */
+    float   lo[4], hi[4];/* the box, from the mouth */
+    float   noise[4];    /* the mouth in the chart */
+    int32_t info[4];     /* first piece, passages, chambers, 0 */
+    uint32_t mask[4];    /* TerrainCaveHole.mask */
+} CaveHoleGPU;
+typedef struct CavePieceGPU { float a[4], b[4]; } CavePieceGPU;
+typedef struct CaveHolesGPU {
+    int32_t      info[4];   /* holes, the finest terrain level drawn, the noise's seeds */
+    CaveLevelGPU lv[TERRAIN_CLIP_LEVELS];
+    CaveHoleGPU  hole[TERRAIN_CAVE_HOLES];
+    CavePieceGPU piece[TERRAIN_CAVE_HOLES * HOLE_PIECES];
+} CaveHolesGPU;
+_Static_assert(SYS_MAX * TERRAIN_CAVE_MOUTHS <= TERRAIN_CAVE_HOLES, "every near system's mouths must have room for a hole");
+_Static_assert(sizeof(CaveHolesGPU) <= 16384, "CaveHoles must fit the least maxUniformBufferRange Vulkan guarantees");
+_Static_assert(sizeof(CaveLevelGPU) == 64 && sizeof(CaveHoleGPU) == 128 && sizeof(CavePieceGPU) == 32, "CaveHoles' std430 layout");
+
 typedef struct CaveSys {   /* a system near the camera, as a worker found it; never changed */
     TerrainCave cave;
     int         nlive[LODS];
     int32_t   (*live[LODS])[3];
+    int         hasHole[TERRAIN_CAVE_MOUTHS];
+    TerrainCaveHole hole[TERRAIN_CAVE_MOUTHS];
+    int         nround[TERRAIN_CAVE_MOUTHS][LODS];     /* the live bricks round each hole */
+    int32_t   (*round[TERRAIN_CAVE_MOUTHS][LODS])[3];
 } CaveSys;
 
 typedef struct BrickKey { uint32_t cave; int16_t i, j, k; uint8_t lod, pad; } BrickKey;
@@ -189,6 +234,10 @@ struct CaveGpu {
     Buffer   staging[MAX_FRAMES];
     Buffer   frameBuf[MAX_FRAMES];  /* host visible: CaveFrameGPU */
     Buffer   indirect[MAX_FRAMES];  /* host visible: VkDrawIndexedIndirectCommand[MAX_DRAWS] */
+    Buffer   holeBuf[MAX_FRAMES];   /* host visible: CaveHolesGPU */
+    int      nholes, holesCut, holePieces;   /* this frame's holes, those cut, the most pieces one has */
+    float    holeBox[TERRAIN_CAVE_HOLES][2][3];  /* the cut ones' boxes, camera-relative world (min, max) */
+    double   holeMs;                /* finding a system's holes, the last time (a worker's) */
     VkDescriptorPool dpool;
     VkDescriptorSet  set[MAX_FRAMES];
     Job     *want;                  /* this frame's wanted bricks, before sorting */
@@ -202,8 +251,33 @@ struct CaveGpu {
 
 static void free_sys(CaveSys *s) {
     if (!s) return;
-    for (int l = 0; l < LODS; ++l) free(s->live[l]);
+    for (int l = 0; l < LODS; ++l) {
+        free(s->live[l]);
+        for (int m = 0; m < TERRAIN_CAVE_MOUTHS; ++m) free(s->round[m][l]);
+    }
     free(s);
+}
+
+/* System s's mouths' holes, and the live bricks round each. */
+static void find_holes(CaveSys *s) {
+    for (int m = 0; m < s->cave.nmouth; ++m) {
+        s->hasHole[m] = terrain_cave_hole(&s->cave, m, &s->hole[m]);
+        if (!s->hasHole[m]) continue;
+        const TerrainCaveHole *h = &s->hole[m];
+        for (int l = 0; l < LODS; ++l) {
+            double B = terrain_cave_brick(l);
+            int n = 0;
+            s->round[m][l] = malloc(sizeof(int32_t[3]) * (size_t)(s->nlive[l] ? s->nlive[l] : 1));
+            if (!s->round[m][l]) { s->hasHole[m] = 0; break; }
+            for (int b = 0; b < s->nlive[l]; ++b) {
+                const int32_t *q = s->live[l][b];
+                int touch = 1;
+                for (int a = 0; a < 3; ++a) touch &= (q[a] + 1) * B >= h->lo[a] - HOLE_BRICK_PAD && q[a] * B <= h->hi[a] + HOLE_BRICK_PAD;
+                if (touch) memcpy(s->round[m][l][n++], q, sizeof(int32_t[3]));
+            }
+            s->nround[m][l] = n;
+        }
+    }
 }
 
 /* The systems near direction p: those already known kept as they are. */
@@ -227,6 +301,11 @@ static void refresh(CaveGpu *g, TerrainDir p, CaveSys *const *known, int nknown)
             if (s->live[l]) memcpy(s->live[l], tmp, sizeof(int32_t[3]) * (size_t)s->nlive[l]);
             else s->nlive[l] = 0;
         }
+        double th = glfwGetTime();
+        find_holes(s);
+        mutex_lock(&g->lock);
+        g->holeMs = (glfwGetTime() - th) * 1000.0;
+        mutex_unlock(&g->lock);
         out[k] = s;
     }
     free(tmp);
@@ -396,10 +475,13 @@ void cave_gpu_create(Renderer *r) {
         g->staging[i] = vk_buffer(vk, UPLOAD_BYTES, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host);
         g->frameBuf[i] = vk_buffer(vk, sizeof(CaveFrameGPU), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, host);
         g->indirect[i] = vk_buffer(vk, sizeof(VkDrawIndexedIndirectCommand) * MAX_DRAWS, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, host);
+        g->holeBuf[i] = vk_buffer(vk, sizeof(CaveHolesGPU), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host);   /* a uniform buffer: every fragment of the terrain reads it (from host memory, a storage buffer cost the terrain 0.1 ms a frame) */
+        memset(g->holeBuf[i].mapped, 0, sizeof(CaveHolesGPU));
+        ((CaveHolesGPU *)g->holeBuf[i].mapped)->info[1] = TERRAIN_CLIP_LEVELS;
     }
     VkDescriptorPoolSize sizes[3] = {
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT * MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -416,6 +498,11 @@ void cave_gpu_create(Renderer *r) {
         write_buf_set(vk, g->set[i], 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, r->ubo[i].buf, sizeof(FrameUBO));
         write_buf_set(vk, g->set[i], 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, g->pool.buf, poolBytes);
         write_buf_set(vk, g->set[i], 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, g->frameBuf[i].buf, sizeof(CaveFrameGPU));
+        VkDeviceSize sampleBytes;
+        VkBuffer samples = terrain_gpu_samples(r, &sampleBytes);
+        write_buf_set(vk, g->set[i], 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, samples, sampleBytes);
+        write_buf_set(vk, g->set[i], 5, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, g->holeBuf[i].buf, sizeof(CaveHolesGPU));
+        write_buf_set(vk, terrain_gpu_set(r, i), 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, g->holeBuf[i].buf, sizeof(CaveHolesGPU));   /* terrain.frag's cut */
         write_material_set(r, g->set[i]);
     }
     mutex_init(&g->lock);
@@ -453,6 +540,7 @@ void cave_gpu_destroy(Renderer *r) {
         vk_buffer_destroy(vk, &g->staging[i]);
         vk_buffer_destroy(vk, &g->frameBuf[i]);
         vk_buffer_destroy(vk, &g->indirect[i]);
+        vk_buffer_destroy(vk, &g->holeBuf[i]);
     }
     vk_buffer_destroy(vk, &g->pool);
     free(g->table); free(g->bud); free(g->want);
@@ -558,8 +646,10 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
     CaveFrameGPU *fb = (CaveFrameGPU *)g->frameBuf[slot].mapped;
     VkDrawIndexedIndirectCommand *ind = (VkDrawIndexedIndirectCommand *)g->indirect[slot].mapped;
     Frustum fr = frustum_from_matrix(*viewProj);
-    int nwant = 0, ndraw = 0;
+    int nwant = 0, ndraw = 0, nh = 0, np = 0;
+    CaveHolesGPU *hb = (CaveHolesGPU *)g->holeBuf[slot].mapped;
     g->missing = 0;
+    g->nholes = 0;
     g->drawnTris = 0;
     for (int l = 0; l < LODS; ++l) g->drawnLod[l] = 0;
     for (int si = 0; si < g->nsys; ++si) {
@@ -665,7 +755,82 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
                 g->drawnTris += (int)(e->nidx / 3);
             }
         }
+        /* the mouths' holes: cut while their box is in the coarsest ring and
+         * every brick drawn round them is meshed, with the margin of the
+         * coarsest level that draws any of them */
+        for (int m = 0; m < c->nmouth; ++m) {
+            if (!s->hasHole[m]) continue;
+            g->nholes++;
+            const TerrainCaveHole *h = &s->hole[m];
+            int ok = nh < TERRAIN_CAVE_HOLES, coarsest = -1;
+            for (int a = 0; a < 3; ++a) ok &= h->lo[a] >= box[LODS - 1][0][a] && h->hi[a] <= box[LODS - 1][1][a];
+            for (int l = 0; l < LODS && ok; ++l) {
+                if (!drawn[l]) continue;
+                int finer = -1;
+                for (int f = l - 1; f >= 0 && finer < 0; --f) if (drawn[f]) finer = f;
+                double B = terrain_cave_brick(l), v = terrain_cave_voxel(l);
+                int covered = finer >= 0;   /* the hole wholly inside the finer level's shrunk box: none of it drawn here */
+                for (int a = 0; a < 3 && covered; ++a) covered = h->lo[a] >= box[finer][0][a] + v && h->hi[a] <= box[finer][1][a] - v;
+                if (!covered) coarsest = l;
+                for (int b = 0; b < s->nround[m][l] && ok; ++b) {
+                    const int32_t *q = s->round[m][l][b];
+                    int inBox = 1, inside = finer >= 0;
+                    for (int a = 0; a < 3; ++a) {
+                        double lo = q[a] * B, hi = lo + B;
+                        inBox &= lo >= box[l][0][a] && hi <= box[l][1][a];
+                        if (finer >= 0) inside &= lo >= box[finer][0][a] + v && hi <= box[finer][1][a] - v;
+                    }
+                    if (!inBox || inside) continue;
+                    BrickKey k = { c->id, (int16_t)q[0], (int16_t)q[1], (int16_t)q[2], (uint8_t)l, 0 };
+                    ok = find(g, k) != NULL;
+                }
+            }
+            if (!ok || coarsest < 0) continue;
+            const double *P = c->mouth[m].p;
+            double det = J0 * J3 - J1 * J2;
+            CaveHoleGPU *o = &hb->hole[nh++];
+            memset(o, 0, sizeof *o);
+            o->anchor[0] = sg->anchor[0]; o->anchor[1] = sg->anchor[1];
+            o->anchor[2] = (float)P[1]; o->anchor[3] = HOLE_MARGIN[coarsest];
+            o->Jinv[0] = (float)(J3 / det); o->Jinv[1] = (float)(-J1 / det); o->Jinv[2] = (float)(-J2 / det); o->Jinv[3] = (float)(J0 / det);
+            o->off[0] = (float)(A[0] - P[0]); o->off[2] = (float)(A[2] - P[2]);
+            for (int a = 0; a < 3; ++a) {
+                o->lo[a] = (float)(h->lo[a] - P[a]);
+                o->hi[a] = (float)(h->hi[a] - P[a]);
+                o->noise[a] = (float)P[a];
+            }
+            o->info[0] = np; o->info[1] = h->nseg; o->info[2] = h->nroom;
+            memcpy(o->mask, h->mask, sizeof o->mask);
+            /* its box about the camera, in the frame, for the terrain's draws (terrain_gpu.c: the cut's tiles) */
+            {
+                double cx = 0.5 * (h->lo[0] + h->hi[0]) - A[0], cz = 0.5 * (h->lo[2] + h->hi[2]) - A[2];
+                double rx = 0.5 * (h->hi[0] - h->lo[0]), rz = 0.5 * (h->hi[2] - h->lo[2]);
+                double wx = ax - cam[0] + J0 * cx + J1 * cz, wz = az - cam[2] + J2 * cx + J3 * cz;
+                double ex = fabs(J0) * rx + fabs(J1) * rz + 1.0, ez = fabs(J2) * rx + fabs(J3) * rz + 1.0;
+                float (*bx)[3] = g->holeBox[nh - 1];
+                bx[0][0] = (float)(wx - ex); bx[1][0] = (float)(wx + ex);
+                bx[0][1] = (float)(h->lo[1] - cam[1] - 1.0); bx[1][1] = (float)(h->hi[1] - cam[1] + 1.0);
+                bx[0][2] = (float)(wz - ez); bx[1][2] = (float)(wz + ez);
+            }
+            for (int q = 0; q < h->nseg; ++q) {
+                const TerrainCaveSeg *sq = &c->seg[h->seg[q]];
+                CavePieceGPU *pc = &hb->piece[np++];
+                for (int a = 0; a < 3; ++a) { pc->a[a] = (float)(sq->a[a] - P[a]); pc->b[a] = (float)(sq->b[a] - P[a]); }
+                pc->a[3] = sq->ra; pc->b[3] = sq->rb;
+            }
+            for (int q = 0; q < h->nroom; ++q) {
+                const TerrainCaveRoom *rm = &c->room[h->room[q]];
+                CavePieceGPU *pc = &hb->piece[np++];
+                for (int a = 0; a < 3; ++a) { pc->a[a] = (float)(rm->c[a] - P[a]); pc->b[a] = rm->r[a]; }
+                pc->a[3] = rm->cs; pc->b[3] = rm->sn;
+            }
+        }
     }
+    g->holesCut = nh;
+    g->holePieces = 0;
+    for (int q = 0; q < nh; ++q) g->holePieces = hb->hole[q].info[1] + hb->hole[q].info[2] > g->holePieces ? hb->hole[q].info[1] + hb->hole[q].info[2] : g->holePieces;
+    hb->info[0] = nh;
+    hb->info[2] = (int32_t)TERRAIN_CAVE_SEED_A; hb->info[3] = (int32_t)TERRAIN_CAVE_SEED_B;
     g->ndraw = ndraw;
     g->frames++;
     for (int si = 0; si < g->nsys; ++si)
@@ -716,6 +881,30 @@ void cave_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
 
 void cave_gpu_set_debug(Renderer *r, int view) { r->caves->debugView = view; }
 
+VkBuffer cave_gpu_holes(Renderer *r, int slot) { return r->caves->holeBuf[slot].buf; }
+
+int cave_gpu_hole_boxes(Renderer *r, const float (**box)[2][3]) {
+    *box = (const float (*)[2][3])r->caves->holeBox;
+    return r->caves->holesCut;
+}
+
+/* The terrain's levels as it draws them this frame, for cave.frag's cut
+ * (terrain/cave_clip.glsl): after terrain_gpu_update. */
+void cave_gpu_levels(Renderer *r, int slot) {
+    CaveHolesGPU *hb = (CaveHolesGPU *)r->caves->holeBuf[slot].mapped;
+    const TerrainPush *push;
+    int tdrawn = terrain_gpu_levels(r, &push);
+    hb->info[1] = tdrawn;
+    for (int l = tdrawn; l < TERRAIN_CLIP_LEVELS; ++l) {
+        const TerrainPush *p = &push[l];
+        CaveLevelGPU *o = &hb->lv[l];
+        o->a[0] = p->anchor[0]; o->a[1] = p->anchor[1]; o->a[2] = p->morph[0]; o->a[3] = p->morph[1];
+        o->b[0] = p->offset[0]; o->b[1] = p->offset[1]; o->b[2] = p->spacing; o->b[3] = p->fade;
+        o->c[0] = p->slot[0]; o->c[1] = p->slot[1]; o->c[2] = p->pslot[0]; o->c[3] = p->pslot[1];
+        o->d[0] = p->level; o->d[1] = p->top; o->d[2] = o->d[3] = 0;
+    }
+}
+
 /* Settled once every brick the rings want is meshed and nothing is being looked up or meshed. */
 bool cave_gpu_settled(Renderer *r) {
     CaveGpu *g = r->caves;
@@ -729,7 +918,7 @@ bool cave_gpu_settled(Renderer *r) {
 void cave_gpu_stats(Renderer *r, char *buf, size_t n) {
     CaveGpu *g = r->caves;
     mutex_lock(&g->lock);
-    double meshMs = g->meshMs, slowest = g->slowestMs, refreshMs = g->refreshMs;
+    double meshMs = g->meshMs, slowest = g->slowestMs, refreshMs = g->refreshMs, holeMs = g->holeMs;
     int meshed = g->meshed, queued = g->nqueue - g->qhead;
     mutex_unlock(&g->lock);
     char sys[96] = "";
@@ -739,8 +928,9 @@ void cave_gpu_stats(Renderer *r, char *buf, size_t n) {
                                  g->levels[k] == 3 ? "0-2" : g->levels[k] == 2 ? "1-2" : g->levels[k] == 1 ? "0, 2" : "2");
     snprintf(buf, n, "caves: %d systems near%s; %d bricks drawn (%d, %d, %d by level), %d triangles; %d missing, %d queued;\n"
              "       %d bricks cached (%.1f of %d MB), %d evicted; %d meshed, the last in %.2f ms on a worker (slowest %.2f); systems looked up in %.0f ms;\n"
-             "       the frame's part %.2f ms (slowest %.2f), %d uploads; in %d of %d frames a finer level waited, at most %d bricks missing",
+             "       the frame's part %.2f ms (slowest %.2f), %d uploads; in %d of %d frames a finer level waited, at most %d bricks missing;\n"
+             "       %d mouths' holes near, %d cut, up to %d pieces of the field each (a system's found in %.0f ms)",
              g->nsys, sys, g->ndraw, g->drawnLod[0], g->drawnLod[1], g->drawnLod[2], g->drawnTris, g->missing, queued, g->entries,
              (double)g->bud->used / (1024.0 * 1024.0), 1 << (POOL_LOG - 20), g->evicted, meshed, meshMs, slowest, refreshMs, g->updateMs, g->slowestUpdateMs, g->uploads,
-             g->fellBack, g->frames, g->missingMost);
+             g->fellBack, g->frames, g->missingMost, g->nholes, g->holesCut, g->holePieces, holeMs);
 }

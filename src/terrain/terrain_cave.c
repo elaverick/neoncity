@@ -597,10 +597,10 @@ void terrain_cave_to_world(const TerrainCave *c, double cx, double cz, double *x
  * piece near the point: so a brick of the caves' meshes (terrain_cave_mesh.c)
  * evaluates only the passages near it (terrain_cave_near_box), and two
  * bricks agree exactly where they meet. */
-#define FLOOR_FADE_M  2.0
-#define FLOOR_REACH_M (TERRAIN_CAVE_ROUGH_M + 0.25 * TERRAIN_CAVE_BLEND_M + 0.5)
-#define FLOOR_NONE_M  2.0
-#define NEAR_M        (TERRAIN_CAVE_BLEND_M + 2.0 * TERRAIN_CAVE_ROUGH_M)
+#define FLOOR_FADE_M  TERRAIN_CAVE_FLOOR_FADE_M   /* (terrain_cave_field.h: the shaders evaluate the field too) */
+#define FLOOR_REACH_M TERRAIN_CAVE_FLOOR_REACH_M
+#define FLOOR_NONE_M  TERRAIN_CAVE_FLOOR_NONE_M
+#define NEAR_M        TERRAIN_CAVE_NEAR_M
 
 static double smin(double a, double b, double k) {
     double h = fmax(k - fabs(a - b), 0.0) / k;
@@ -609,8 +609,9 @@ static double smin(double a, double b, double k) {
 static double smax(double a, double b, double k) { return -smin(-a, -b, k); }
 
 static double rough(double x, double h, double z) {
-    double n1 = 2.0 * noise_value3(WORLD_SEED ^ 0x7EC2u, x / 7.0, h / 7.0, z / 7.0) - 1.0;
-    double n2 = 2.0 * noise_value3(WORLD_SEED ^ 0x7EC3u, x / 2.5, h / 2.5, z / 2.5) - 1.0;
+    const double A = TERRAIN_CAVE_NOISE_A_M, B = TERRAIN_CAVE_NOISE_B_M;
+    double n1 = 2.0 * noise_value3(TERRAIN_CAVE_SEED_A, x / A, h / A, z / A) - 1.0;
+    double n2 = 2.0 * noise_value3(TERRAIN_CAVE_SEED_B, x / B, h / B, z / B) - 1.0;
     return TERRAIN_CAVE_ROUGH_M * (0.75 * n1 + 0.25 * n2);
 }
 
@@ -672,9 +673,9 @@ static double room_wall(const TerrainCaveRoom *r, double x, double h, double z, 
     return ell;
 }
 
-/* The field from the passages listed (in order; every chamber is always
- * taken): exact wherever the list holds every passage near the point. */
-static double field_of(const TerrainCave *c, const uint8_t *segs, int nseg, double x, double h, double z) {
+/* The field from the passages and chambers listed (in order): exact wherever
+ * the lists hold every piece near the point. */
+static double field_of(const TerrainCave *c, const uint8_t *segs, int nseg, const uint8_t *rooms, int nroom, double x, double h, double z) {
     double p[3] = { x, h, z }, out = -1e30;
     for (int a = 0; a < 3; ++a) out = fmax(out, fmax(c->lo[a] - p[a], p[a] - c->hi[a]));
     if (out > 2.0) return out;   /* the air lies within the bounds: at least this far */
@@ -684,13 +685,13 @@ static double field_of(const TerrainCave *c, const uint8_t *segs, int nseg, doub
         wall[q] = seg_wall(&c->seg[segs[q]], x, h, z, &fl[q], &dist[q], &rad[q]);
         least = fmin(least, wall[q]);
     }
-    for (int k = 0; k < c->nroom; ++k) {
-        wall[nseg + k] = room_wall(&c->room[k], x, h, z, &fl[nseg + k], &dist[nseg + k], &rmin[k]);
+    for (int k = 0; k < nroom; ++k) {
+        wall[nseg + k] = room_wall(&c->room[rooms[k]], x, h, z, &fl[nseg + k], &dist[nseg + k], &rmin[k]);
         least = fmin(least, wall[nseg + k]);
     }
     double n = rough(x, h, z);
     Field F = { 1e30, 1e30, 0.0, 0.0 };
-    for (int q = 0; q < nseg + c->nroom; ++q) {
+    for (int q = 0; q < nseg + nroom; ++q) {
         if (wall[q] >= FLOOR_REACH_M && wall[q] > least + NEAR_M) continue;   /* not near (see above) */
         if (field_far(&F, wall[q])) continue;
         field_add(&F, wall[q], fl[q], (q < nseg ? rad[q] : rmin[q - nseg]) + FLOOR_REACH_M, dist[q], n);
@@ -706,7 +707,7 @@ static const uint8_t *all_segs(void) {
     return all;
 }
 
-double terrain_cave_sdf_local(const TerrainCave *c, double x, double h, double z) { return field_of(c, all_segs(), c->nseg, x, h, z); }
+double terrain_cave_sdf_local(const TerrainCave *c, double x, double h, double z) { return field_of(c, all_segs(), c->nseg, all_segs(), c->nroom, x, h, z); }
 
 /* A passage's wall over a box: its distance at the middle, within the
  * half-diagonal D times how fast it can change (1, and the taper along the
@@ -731,9 +732,26 @@ void terrain_cave_near_box(const TerrainCave *c, const double lo[3], const doubl
     out->nseg = 0;
     for (int k = 0; k < c->nseg; ++k)
         if (wlo[k] < FLOOR_REACH_M || wlo[k] <= best + NEAR_M) out->seg[out->nseg++] = (uint8_t)k;
+    /* A chamber whose wall is sure to lie past both the floor's reach and the
+     * nearest passage's plus NEAR_M everywhere in the box counts nowhere in it
+     * (nor is it the nearest). At a distance d from its middle beyond its
+     * longest semi-axis R, with its shortest r, Quilez's bound (room_wall) is
+     * at least (r / R)^2 (d - R): k0 >= d / R, k1 <= d / r^2, and k0 (k0 - 1)
+     * grows with k0 past 1/2. */
+    out->nroom = 0;
+    for (int k = 0; k < c->nroom; ++k) {
+        const TerrainCaveRoom *r = &c->room[k];
+        double R = fmax(r->r[0], fmax(r->r[1], r->r[2])), rr = fmin(r->r[0], fmin(r->r[1], r->r[2])), d2 = 0.0;
+        for (int a = 0; a < 3; ++a) {
+            double e = fmax(0.0, fmax(lo[a] - r->c[a], r->c[a] - hi[a]));
+            d2 += e * e;
+        }
+        double d = sqrt(d2), bound = d > R ? (rr / R) * (rr / R) * (d - R) : -1e30;
+        if (!(bound >= FLOOR_REACH_M && bound > best + NEAR_M + 1e-6 * (1.0 + fabs(bound)))) out->room[out->nroom++] = (uint8_t)k;
+    }
 }
 
-double terrain_cave_sdf_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z) { return field_of(c, n->seg, n->nseg, x, h, z); }
+double terrain_cave_sdf_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z) { return field_of(c, n->seg, n->nseg, n->room, n->nroom, x, h, z); }
 
 int terrain_cave_box_live(const TerrainCave *c, const double lo[3], const double hi[3]) {
     const double air = TERRAIN_CAVE_ROUGH_M + 0.25 * TERRAIN_CAVE_BLEND_M + 0.01;   /* a wall nearer than this can have air at it */
@@ -781,6 +799,118 @@ double terrain_cave_floor_local(const TerrainCave *c, double x, double h, double
         if (terrain_cave_sdf_local(c, x, mid, z) < 0.0) air = mid; else rock = mid;
     }
     return 0.5 * (air + rock);
+}
+
+double terrain_cave_ground(const TerrainCave *c, double x, double z) {
+    const TerrainFrame *was = terrain_frame_bound();
+    terrain_frame_bind(terrain_frame_world());
+    double g = ground(c, x, z);
+    terrain_frame_bind(was);
+    return g;
+}
+
+/* --- The mouths' holes -------------------------------------------------------------
+ * The ground can lie in the air only within a mouth's reach (the roof holds
+ * everywhere else), and only over a passage whose air comes within it: the
+ * ground is sampled every HOLE_STEP_M over each such passage's footprint
+ * (its axis's plan, its air's radius either side and past its ends) within
+ * the reach, skipping where the air can't come within a metre of it, and
+ * the box grown over every sample whose field is under HOLE_NEAR, from the
+ * mouth's own (its nearest passage's air round it). Then the cells of the
+ * box's plan (TERRAIN_CAVE_HOLE_GRID a side) holding those samples or the
+ * mouth's own box, and their neighbours, are marked: the cut reads the field
+ * only in them. */
+#define HOLE_HITS 8192
+#define HOLE_STEP_M 1.0
+#define HOLE_NEAR   1.0
+#define HOLE_PAD_M  1.5   /* past the last sample in plan: a step and a half-metre */
+
+/* The distance from P to passage s's axis. */
+static double axis_dist(const TerrainCaveSeg *s, const double P[3]) {
+    double Q[3], r, fl;
+    seg_nearest(s, P, Q, &r, &fl);
+    return dist3(P, Q);
+}
+
+int terrain_cave_hole(const TerrainCave *c, int m, TerrainCaveHole *out) {
+    memset(out, 0, sizeof *out);
+    if (m < 0 || m >= c->nmouth) return 0;
+    const TerrainCaveMouth *k = &c->mouth[m];
+    const TerrainFrame *was = terrain_frame_bound();
+    terrain_frame_bind(terrain_frame_world());
+    /* the mouth itself, its nearest passage's air round it: on a cliff the
+     * opening is that compact in plan, and the samples a metre apart can
+     * straddle it */
+    double lo[3], hi[3], seed = 0.0, best = 1e30;
+    for (int q = 0; q < c->nseg; ++q) {
+        double d = axis_dist(&c->seg[q], k->p);
+        if (d < best) { best = d; seed = air_of(fmax(c->seg[q].ra, c->seg[q].rb)); }
+    }
+    for (int a = 0; a < 3; ++a) { lo[a] = k->p[a] - seed; hi[a] = k->p[a] + seed; }
+    static _Thread_local double hit[HOLE_HITS][2];
+    int nhit = 0;
+    for (int q = 0; q < c->nseg; ++q) {
+        const TerrainCaveSeg *s = &c->seg[q];
+        double R = air_of(fmax(s->ra, s->rb));
+        if (axis_dist(s, k->p) - R > k->reach) continue;
+        double dx = s->b[0] - s->a[0], dz = s->b[2] - s->a[2], L = hypot(dx, dz), ux = 1.0, uz = 0.0;
+        if (L > 1e-6) { ux = dx / L; uz = dz / L; }
+        double grade = L > 1e-6 ? (s->b[1] - s->a[1]) / L : 0.0, tall = R * sqrt(1.0 + grade * grade);
+        int nt = (int)ceil((L + 2.0 * R) / HOLE_STEP_M), ns = (int)ceil(2.0 * R / HOLE_STEP_M);
+        for (int it = 0; it <= nt; ++it) {
+            double t = -R + (L + 2.0 * R) * it / nt, axis = s->a[1] + (s->b[1] - s->a[1]) * clampd(L > 1e-6 ? t / L : 0.0, 0.0, 1.0);
+            for (int is = 0; is <= ns; ++is) {
+                double w = -R + 2.0 * R * is / ns, x = s->a[0] + ux * t - uz * w, z = s->a[2] + uz * t + ux * w;
+                if (hypot(x - k->p[0], z - k->p[2]) > k->reach) continue;
+                double g = ground(c, x, z);
+                if (g > axis + tall + HOLE_NEAR || g < axis - tall - HOLE_NEAR) continue;   /* the air can't come near it */
+                if (terrain_cave_sdf_local(c, x, g, z) >= HOLE_NEAR) continue;
+                double p[3] = { x, g, z };
+                for (int a = 0; a < 3; ++a) { lo[a] = fmin(lo[a], p[a]); hi[a] = fmax(hi[a], p[a]); }
+                if (nhit < HOLE_HITS) { hit[nhit][0] = x; hit[nhit][1] = z; }
+                nhit++;
+            }
+        }
+    }
+    terrain_frame_bind(was);
+    for (int a = 0; a < 3; ++a) {
+        double pad = a == 1 ? TERRAIN_CAVE_HOLE_SLACK_M : HOLE_PAD_M;   /* (the mouth's own box has its air's radius already) */
+        out->lo[a] = lo[a] - pad;
+        out->hi[a] = hi[a] + pad;
+    }
+    /* the cells: the samples' and the mouth's own box's, and their neighbours */
+    const int G = TERRAIN_CAVE_HOLE_GRID;
+    uint8_t on[TERRAIN_CAVE_HOLE_GRID * TERRAIN_CAVE_HOLE_GRID] = { 0 };
+    double cw = (out->hi[0] - out->lo[0]) / G, ch = (out->hi[2] - out->lo[2]) / G;
+    if (nhit > HOLE_HITS) memset(on, 1, sizeof on);
+    else {
+        for (int q = 0; q < nhit; ++q) {
+            int i = (int)floor((hit[q][0] - out->lo[0]) / cw), j = (int)floor((hit[q][1] - out->lo[2]) / ch);
+            on[(j < 0 ? 0 : j >= G ? G - 1 : j) * G + (i < 0 ? 0 : i >= G ? G - 1 : i)] = 1;
+        }
+        int i0 = (int)floor((k->p[0] - seed - out->lo[0]) / cw), i1 = (int)floor((k->p[0] + seed - out->lo[0]) / cw);
+        int j0 = (int)floor((k->p[2] - seed - out->lo[2]) / ch), j1 = (int)floor((k->p[2] + seed - out->lo[2]) / ch);
+        for (int j = j0 < 0 ? 0 : j0; j <= (j1 >= G ? G - 1 : j1); ++j)
+            for (int i = i0 < 0 ? 0 : i0; i <= (i1 >= G ? G - 1 : i1); ++i) on[j * G + i] = 1;
+    }
+    for (int j = 0; j < G; ++j)
+        for (int i = 0; i < G; ++i) {
+            int any = 0;
+            for (int dj = -1; dj <= 1; ++dj)
+                for (int di = -1; di <= 1; ++di) {
+                    int a = i + di, b = j + dj;
+                    any |= a >= 0 && a < G && b >= 0 && b < G && on[b * G + a];
+                }
+            if (any) out->mask[(j * G + i) >> 5] |= 1u << ((j * G + i) & 31);
+        }
+    TerrainCaveNear near;
+    terrain_cave_near_box(c, out->lo, out->hi, &near);
+    if (near.nseg > TERRAIN_CAVE_HOLE_SEGS) { out->nseg = near.nseg; return 0; }   /* (how many, for the tests) */
+    out->nseg = near.nseg;
+    memcpy(out->seg, near.seg, (size_t)near.nseg);
+    out->nroom = near.nroom;
+    memcpy(out->room, near.room, (size_t)near.nroom);
+    return 1;
 }
 
 double terrain_cave_floor(double x, double y, double z) {

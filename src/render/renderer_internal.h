@@ -63,10 +63,10 @@ typedef struct GrassGpu GrassGpu;
 typedef struct CaveGpu CaveGpu;
 /* GPU timestamps between the frame's passes (renderer_gpu_times). The scene
  * pass is stamped inside: the city (GT_CITY), plants (GT_PLANTS) and proxies
- * (GT_SCENE), the terrain (GT_TERRAIN), the grass (GT_GRASS), then the sky
+ * (GT_SCENE), the caves (GT_CAVES), the terrain (GT_TERRAIN), the grass (GT_GRASS), then the sky
  * and the resolve (GT_SKY). GT_GRASS_PREP: the grass's compute passes. */
 enum { GT_START = 0, GT_STREAM, GT_TERRAIN_UPLOAD, GT_GRASS_PREP, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_CITY, GT_PLANTS, GT_SCENE,
-       GT_TERRAIN, GT_CAVES, GT_GRASS, GT_SKY, GT_CLOUDS, GT_FLAMES, GT_POST, GT_COUNT };   /* GT_CAVES: the caves' bricks, after the terrain */   /* GT_CLOUDS: the reflections and the clouds; GT_FLAMES: the smoke and flame pass */
+       GT_CAVES, GT_TERRAIN, GT_GRASS, GT_SKY, GT_CLOUDS, GT_FLAMES, GT_POST, GT_COUNT };   /* GT_CAVES: the caves' bricks, before the terrain */   /* GT_CLOUDS: the reflections and the clouds; GT_FLAMES: the smoke and flame pass */
 struct Renderer {
     VkCore      *vk;
     ChunkSystem *chunks;
@@ -107,7 +107,7 @@ struct Renderer {
     TerrainGpu  *terrain;   /* terrain_gpu.c */
     VkDescriptorSetLayout terrainLayout;
     VkPipelineLayout      terrainPL;
-    VkPipeline            terrainPipe;
+    VkPipeline            terrainPipe, terrainCutPipe;   /* terrainCutPipe: the caves' mouths cut (terrain_cut.frag), for the tiles near one */
     RoadGpu     *roads;     /* road_gpu.c: the roads the clipmap paints (its binding 2) */
     PlanetGpu   *planet;    /* planet_gpu.c; the clipmap's descriptor set layout */
     VkPipelineLayout      planetPL;
@@ -244,6 +244,14 @@ void cave_gpu_create(Renderer *r);
 void cave_gpu_destroy(Renderer *r);
 void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);
 void cave_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
+/* The frame slot's mouths' holes (shaders/terrain/cave_hole.glsl), written by
+ * cave_gpu_update: for the terrain's cut and the grass's. */
+VkBuffer cave_gpu_holes(Renderer *r, int slot);
+/* This frame's cut holes' boxes (camera-relative world, min and max), for the
+ * terrain's draws; returns how many. After cave_gpu_update. */
+int  cave_gpu_hole_boxes(Renderer *r, const float (**box)[2][3]);
+/* The terrain's drawn levels into the slot's holes buffer: after terrain_gpu_update. */
+void cave_gpu_levels(Renderer *r, int slot);
 void cave_gpu_set_debug(Renderer *r, int view);
 bool cave_gpu_settled(Renderer *r);
 void cave_gpu_stats(Renderer *r, char *buf, size_t n);
