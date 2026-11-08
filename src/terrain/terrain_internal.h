@@ -299,6 +299,9 @@ void terrain_cave_cell(TerrainDir p, int *f, int *i, int *j);
 typedef struct TerrainCaveNear { int nseg, nroom; uint8_t seg[TERRAIN_CAVE_SEGS], room[TERRAIN_CAVE_ROOMS]; } TerrainCaveNear;
 void   terrain_cave_near_box(const TerrainCave *c, const double lo[3], const double hi[3], TerrainCaveNear *out);
 double terrain_cave_sdf_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z);
+/* Whether the field carries the stalactites (terrain_cave.c, "The dressing"):
+ * 1, but for terrain_test's checks of what they leave alone (single-threaded). */
+extern int terrain_cave_dressing;
 /* A system's passages as a graph and the paths from its mouths
  * (terrain_cave_light.c), made once per thread for the last few systems
  * asked; and the sky at a point from the pieces listed (in order, every one

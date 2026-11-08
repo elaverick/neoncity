@@ -102,8 +102,10 @@ typedef struct CaveHoleGPU {
     float   off[4];      /* the anchor's place in the chart less the mouth's */
     float   lo[4], hi[4];/* the box, from the mouth */
     float   noise[4];    /* the mouth in the chart */
-    int32_t info[4];     /* first piece, passages, chambers, 0 */
+    int32_t info[4];     /* first piece, passages, chambers, the cave's mouths */
     uint32_t mask[4];    /* TerrainCaveHole.mask */
+    float   mouthAt[2][4];   /* the cave's mouths: p from this one, the reach (the stalactites' share) */
+    float   mouthGrad[4];    /* their ground's slopes */
 } CaveHoleGPU;
 typedef struct CavePieceGPU { float a[4], b[4]; } CavePieceGPU;
 typedef struct CaveHolesGPU {
@@ -114,7 +116,7 @@ typedef struct CaveHolesGPU {
 } CaveHolesGPU;
 _Static_assert(SYS_MAX * TERRAIN_CAVE_MOUTHS <= TERRAIN_CAVE_HOLES, "every near system's mouths must have room for a hole");
 _Static_assert(sizeof(CaveHolesGPU) <= 16384, "CaveHoles must fit the least maxUniformBufferRange Vulkan guarantees");
-_Static_assert(sizeof(CaveLevelGPU) == 64 && sizeof(CaveHoleGPU) == 128 && sizeof(CavePieceGPU) == 32, "CaveHoles' std430 layout");
+_Static_assert(sizeof(CaveLevelGPU) == 64 && sizeof(CaveHoleGPU) == 176 && sizeof(CavePieceGPU) == 32, "CaveHoles' std430 layout");
 
 typedef struct CaveSys {   /* a system near the camera, as a worker found it; never changed */
     TerrainCave cave;
@@ -818,8 +820,14 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
                 o->hi[a] = (float)(h->hi[a] - P[a]);
                 o->noise[a] = (float)P[a];
             }
-            o->info[0] = np; o->info[1] = h->nseg; o->info[2] = h->nroom;
+            o->info[0] = np; o->info[1] = h->nseg; o->info[2] = h->nroom; o->info[3] = c->nmouth;
             memcpy(o->mask, h->mask, sizeof o->mask);
+            for (int q = 0; q < c->nmouth && q < 2; ++q) {
+                const TerrainCaveMouth *mo = &c->mouth[q];
+                for (int a = 0; a < 3; ++a) o->mouthAt[q][a] = (float)(mo->p[a] - P[a]);
+                o->mouthAt[q][3] = mo->reach;
+                o->mouthGrad[2 * q] = mo->grad[0]; o->mouthGrad[2 * q + 1] = mo->grad[1];
+            }
             /* its box about the camera, in the frame, for the terrain's draws (terrain_gpu.c: the cut's tiles) */
             {
                 double cx = 0.5 * (h->lo[0] + h->hi[0]) - A[0], cz = 0.5 * (h->lo[2] + h->hi[2]) - A[2];

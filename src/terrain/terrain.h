@@ -271,9 +271,11 @@ typedef struct TerrainCaveSeg { double a[3], b[3]; float ra, rb; } TerrainCaveSe
  * its height under c. */
 typedef struct TerrainCaveRoom { double c[3]; float r[3], cs, sn; } TerrainCaveRoom;
 /* A mouth: where its passage's floor meets the ground (chart x, h, z), the
- * way into the ground (unit, along the chart), its kind, and its reach: the
- * air within this of p is the mouth's and may come to the surface (m). */
-typedef struct TerrainCaveMouth { double p[3]; float dir[2], reach; int kind; } TerrainCaveMouth;
+ * way into the ground (unit, along the chart), its kind, its reach (the air
+ * within this of p is the mouth's and may come to the surface, m), and the
+ * ground's slope at p (its height a metre along chart x and z; the
+ * stalactites keep where the ground so reckoned lies well over them). */
+typedef struct TerrainCaveMouth { double p[3]; float dir[2], reach; int kind; float grad[2]; } TerrainCaveMouth;
 typedef struct TerrainCave {
     TerrainChart     chart;                     /* about mouth 0 */
     uint32_t         id;                        /* names it among all caves */

@@ -640,6 +640,32 @@ canyon's walls, rising over 400 m beyond its rim. Past a 400 m sample spacing it
 streams, derived on a 500 m grid, and the planet's far patches are as they were. `terrain_test
 --erosion-map out.ppm [km [x z]]` draws the ground without it, with it, and its parts.
 
+Under the land are caves (`src/terrain/terrain_cave*.c`, M10b), one system or none in each 20 km cell of a
+lattice on the cube's faces, none within 2.5 km of a city. A system is entered by a horizontal mouth in a
+canyon wall or a mountain flank (an adit) or by a sinkhole in a plateau's top (a shaft). Each system is
+300 m to 2 km of passages 3-12 m across, with a chamber or two up to 40 m and sometimes a second mouth. It
+is grown from its cell's hash, under at least 8 m of rock everywhere but at its mouths, so it is a pure
+function of position like the land. The ground stays a heightfield. A cave is a second shape, a signed
+distance field in the system's own chart:
+- the passages are tapered tubes and the chambers ellipsoids, in a smooth union;
+- the floors are flattened to sediment, level enough to walk;
+- the walls are rough with noise, and an upright octave of it hangs them in flowstone ribs;
+- stalactites hang from the ceilings, cones in a 2.2 m lattice, thick on some ceilings and absent from
+  others. They never come within 2.6 m of the floor, so they never get in the way, and they thin out near
+  a mouth wherever the rock over them grows thin.
+
+Near the camera the field is meshed by surface nets in bricks of 16 cells, at 0.5, 1 and 2 m cells out to
+150 m, 400 m and 1 km (`src/render/cave_gpu.c`, `shaders/terrain/cave.*`). The terrain is cut away where
+its ground lies in a cave's air, using the same field evaluated in GLSL (`shaders/terrain/cave_hole.glsl`).
+The player walks in on foot (`terrain_cave_walk.c`): the ground under the feet is the cave's floor, and
+the walls and roofs push out along the field's gradient. No lamp lights a cave. Each vertex carries the
+sky it sees, by its path along the passages from the nearest mouth, so the light falls to a tenth some
+20 m in and is black by 40 m. While the camera is in a cave, a thin cave air replaces the land's haze. No
+rain falls in a cave, and the exposure is fixed, so the dark stays dark. Carried lights, people's lights
+and underground water are still to come (TODO.md). `terrain_test --caves`, `--cave-map out.ppm`,
+`--cave-mesh` and `--cave-walk` survey, draw, mesh and walk them; `NeonCity --cave-debug normals|lit|lod`
+shows their shape lit from the eye.
+
 The world is an Earth-size planet (`src/terrain/terrain_world.c`). World X/Z is a chart of it, the
 azimuthal-equidistant projection about a point, so the city and its plan stay flat while the terrain and
 the distant proxies are drawn curving away over the sphere (31 m down at 20 km). Which chart is the active

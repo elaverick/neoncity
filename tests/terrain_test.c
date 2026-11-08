@@ -2606,6 +2606,85 @@ static void test_cave_holes(Rng *r, const CaveSurvey *s) {
     free(j.hole); free(j.ok); free(j.ms);
 }
 
+/* The dressing (terrain_cave.c, "The dressing"), over the first 64 systems,
+ * single-threaded (it switches the stalactites off and on): no air lost
+ * within TERRAIN_CAVE_DRIP_HEAD_M of a passage's floor, the floor the same,
+ * the stalactites hung where the ceiling is high enough, and the field still
+ * within TERRAIN_CAVE_LIPSCHITZ of the distance (by differences 2 cm long) in
+ * the air and the metre of rock round it; and the ground in a cave's air round
+ * its mouths still in its air (no island of ground held up over a hole). */
+static void test_cave_dressing(const CaveSurvey *s) {
+    Rng rd = rng_make(6151), *r = &rd;   /* its own: the tests after it draw as they did before it */
+    int systems = 0, cols = 0, high = 0, hung = 0, badHead = 0, badFloor = 0, grads = 0, groundAir = 0, islands = 0;
+    double hangMax = 0.0, gradMax = 0.0;
+    for (int k = 0; k < s->n && systems < 64; ++k) {
+        if (!s->has[k]) continue;
+        const TerrainCave *c = &s->sys[k];
+        systems++;
+        for (int q = 0; q < 60; ++q) {   /* columns over the axes */
+            const TerrainCaveSeg *g = &c->seg[rng_int(r, 0, c->nseg - 1)];
+            double t = rng_float(r), x = g->a[0] + t * (g->b[0] - g->a[0]), z = g->a[2] + t * (g->b[2] - g->a[2]), ax = g->a[1] + t * (g->b[1] - g->a[1]);
+            terrain_cave_dressing = 0;
+            int air = terrain_cave_sdf_local(c, x, ax, z) < 0.0;
+            terrain_cave_dressing = 1;
+            if (!air || terrain_cave_sdf_local(c, x, ax, z) >= 0.0) continue;
+            terrain_cave_dressing = 0;
+            double fl0 = terrain_cave_floor_local(c, x, ax, z), top0 = ax;
+            while (top0 < ax + 60.0 && terrain_cave_sdf_local(c, x, top0 + 0.05, z) < 0.0) top0 += 0.05;
+            terrain_cave_dressing = 1;
+            double fl1 = terrain_cave_floor_local(c, x, ax, z), top1 = ax;
+            while (top1 < ax + 60.0 && terrain_cave_sdf_local(c, x, top1 + 0.05, z) < 0.0) top1 += 0.05;
+            cols++;
+            if (fabs(fl1 - fl0) > 0.002 && badFloor++ < 5) printf("  cave %08x: the floor at (%.1f, %.1f) moved %.3f m with the stalactites\n", c->id, x, z, fl1 - fl0);
+            for (double h = fl0 + 0.05; h < fl0 + TERRAIN_CAVE_DRIP_HEAD_M - 0.01; h += 0.1) {
+                terrain_cave_dressing = 0;
+                double f0 = terrain_cave_sdf_local(c, x, h, z);
+                terrain_cave_dressing = 1;
+                if (f0 < 0.0 && terrain_cave_sdf_local(c, x, h, z) >= 0.0 && badHead++ < 5)
+                    printf("  cave %08x: a stalactite at (%.1f, %.1f, %.1f), %.2f m over the floor\n", c->id, x, h, z, h - fl0);
+            }
+            if (top0 - fl0 > TERRAIN_CAVE_DRIP_HEAD_M + 0.3) {
+                high++;
+                if (top0 - top1 > 0.3) hung++;
+                hangMax = fmax(hangMax, top0 - top1);
+            }
+        }
+        for (int m = 0; m < c->nmouth; ++m) {   /* no island of ground left over a mouth's hole */
+            TerrainCaveHole h;
+            if (!terrain_cave_hole(c, m, &h)) continue;
+            double lo[2] = { h.lo[0] - 10.0, h.lo[2] - 10.0 }, hi[2] = { h.hi[0] + 10.0, h.hi[2] + 10.0 };
+            for (int q = 0; q < 1500; ++q) {
+                double x = lo[0] + (hi[0] - lo[0]) * rng_float(r), z = lo[1] + (hi[1] - lo[1]) * rng_float(r), g = cave_ground(c, x, z);
+                terrain_cave_dressing = 0;
+                double f0 = terrain_cave_sdf_local(c, x, g, z);
+                terrain_cave_dressing = 1;
+                if (f0 >= 0.0) continue;
+                groundAir++;
+                if (terrain_cave_sdf_local(c, x, g, z) >= 0.0 && islands++ < 5)
+                    printf("  cave %08x: a stalactite holds up the ground at (%.1f, %.1f, %.1f) over mouth %d's hole\n", c->id, x, g, z, m);
+            }
+        }
+        for (int q = 0; q < 200; ++q) {   /* the field's slope in and round the air */
+            const TerrainCaveSeg *g = &c->seg[rng_int(r, 0, c->nseg - 1)];
+            double t = rng_float(r), rad = cave_air(fmax(g->ra, g->rb)) + 1.0, p[3], e[3], el = 0.0;
+            for (int a = 0; a < 3; ++a) p[a] = g->a[a] + t * (g->b[a] - g->a[a]) + (2.0 * rng_float(r) - 1.0) * rad;
+            for (int a = 0; a < 3; ++a) { e[a] = 2.0 * rng_float(r) - 1.0; el += e[a] * e[a]; }
+            el = sqrt(el);
+            if (el < 0.1) continue;
+            double f0 = terrain_cave_sdf_local(c, p[0], p[1], p[2]), f1 = terrain_cave_sdf_local(c, p[0] + 0.02 * e[0] / el, p[1] + 0.02 * e[1] / el, p[2] + 0.02 * e[2] / el);
+            if (f0 > 1.0 || f1 > 1.0) continue;   /* in the air or the rock round it: deeper in, the near pieces' rule leaves steps (the rock's value is only a bound) */
+            grads++;
+            gradMax = fmax(gradMax, fabs(f1 - f0) / 0.02);
+        }
+    }
+    printf("  dressing over %d systems: %d columns over the axes, %d with the ceiling over %.1f m, %d (%.0f%%) of those hung with stalactites (down to %.2f m); "
+           "the field's slope at most %.2f over %d points; %d of %d points of the ground in the air round the mouths held up\n", systems, cols, high, TERRAIN_CAVE_DRIP_HEAD_M + 0.3, hung, 100.0 * hung / fmax(high, 1), hangMax, gradMax, grads, islands, groundAir);
+    CHECK(badHead == 0, "%d points within %.1f m of the floor turned to rock by the stalactites", badHead, TERRAIN_CAVE_DRIP_HEAD_M);
+    CHECK(badFloor == 0, "%d floors moved by the stalactites", badFloor);
+    CHECK(islands == 0, "%d points of the ground over the mouths' holes held up by stalactites", islands);
+    CHECK(gradMax <= TERRAIN_CAVE_LIPSCHITZ, "the field's slope reaches %.2f, over TERRAIN_CAVE_LIPSCHITZ", gradMax);
+}
+
 /* 5c. The caves, over the cells round a point of the land beyond the
  *     megacity (`span` metres either way): each system within its bounds and
  *     its reach, its passages and chambers the sizes they should be, clear of
@@ -2774,6 +2853,7 @@ static void test_caves(Rng *r, double span) {
     /* where passages meet, their floors' blend is steeper than either, by up to a half of the steepest passage's grade */
     CHECK(stepMax <= 1.5 * TERRAIN_CAVE_GRADE_MAX, "the floor steps by %.2f m/m along a passage", stepMax);
     test_cave_holes(r, s);
+    test_cave_dressing(s);
     free(again); free(found); free(s->sys); free(s);
 }
 

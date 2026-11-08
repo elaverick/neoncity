@@ -201,7 +201,34 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   b1 (placement, passages, field, CPU only), b2 (meshing and drawing: `terrain_cave_mesh.c`, `src/render/cave_gpu.c`,
   `shaders/terrain/cave.*`; `--cave-debug normals|lit|lod`), b3 (the mouths: `terrain_cave_hole`,
   `shaders/terrain/cave_hole.glsl`, `cave_clip.glsl`), b4 (walking: `terrain_cave_walk.c`, `player.c`) and b5 (light
-  and air: `terrain_cave_light.c`, `shaders/terrain/cave_shelter.*`) are done; b6 (dressing, docs) is next.
+  and air: `terrain_cave_light.c`, `shaders/terrain/cave_shelter.*`) and b6 (dressing: flowstone and stalactites in
+  the field; README "Under the land are caves") are done: M10b is complete.
+  Not built, by the user's decisions (2026-11-05), for later:
+  - **A carried light.** There is no player light; the caves are lit only through their mouths, so past about 40 m
+    they are black, and the dressing is seen only in the twilight near a mouth or with `--cave-debug lit`.
+  - **People's lights**: squatters' neon strings, cables, a sodium lamp at a mouth. Needs art from the user (assets,
+    not code) and lights the caves would cast (M11's ray-traced shadows for them).
+  - **Underground water**: rivers and pools on the floors, wet walls (nothing wets the rock now).
+  Left over from b6:
+  - **Stalactites only.** No stalagmites, columns, rimstone or boulders on the floors: the floor is kept level for
+    walking (the tests hold it to the passages' floors), so anything there would need the walker's say too.
+  - **They are seen only near a mouth**, where the light reaches (see the carried light above), and only on ceilings
+    over 2.6 m (`TERRAIN_CAVE_DRIP_HEAD_M`): about 2% of the columns over the passages' axes have one over them; in
+    a big passage or chamber a ceiling holds a few in a patch, many bare.
+  - **At 0.5 m cells** the thinnest tips are lost (a cone under about 0.25 m across meshes as a blunt point), and the
+    1 m and 2 m levels mostly drop them; the flowstone's ribs (1.6 m across, 0.3 m deep at most) read faintly.
+  - **The rock over a stalactite near a mouth** is reckoned from the plane of the mouth's slope
+    (`TerrainCaveMouth.grad`): they thin out under 6 m of it and are gone under 3 m. A ground that bends away from
+    the plane by more than 3 m within a mouth's reach could still leave a stalactite standing in the open air over
+    the hole (an island of uncut ground). The test (`--caves`, the dressing's line) finds none in 64 systems a world.
+  - **The hole's GLSL field** now carries both: three noise octaves (the third bounded with the second) and one
+    stalactite cell a sample. Not timed apart from the rest of the cut (the caves' pass 0.08-0.2 ms as before); the
+    meshing costs about 15% more a brick (1.6-2.4 ms).
+  - **The field's Lipschitz bound (4)** holds in the air and the metre of rock round it (the test measures 1.3); deeper
+    in the rock the near pieces' rule leaves steps (50 seen), which only matter to a march started in the rock.
+  - **terrain_rules' moving clipmap check is marginal**: drawing a few more random numbers before it (the first
+    dressing test did) made 1 of 3414 updates on the full budget leave a level not ready. The dressing test now has
+    its own generator; the clipmap check would fail on some other camera paths.
   Left over from b5:
   - **The light is one number a vertex**, the sky's share by the path from the nearest mouth (by e every 3 radii of
     the mouth's passage, `TERRAIN_CAVE_SKY_RADII`): it falls to 0.1 some 16-23 m in and 0.01 by 31-46 m, then black.
@@ -239,7 +266,7 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     level wherever the cave is drawn (to 1 km), so it would only matter past that, where a mouth is a few pixels.
     With b5's dark, a mouth past 1 km should go dark too (the cover's free top byte, or the hole's field in
     terrain.frag for the systems known).
-  - **The rim is a clean cut**: no lip, scree or overhang where the ground opens (b6's dressing).
+  - **The rim is a clean cut**: no lip, scree or overhang where the ground opens (b6 dressed the inside only; a rim would need the ground and the field together, as the walker has).
   - **A mouth opens only once the bricks round it are meshed**: about half a second on arrival; until then the
     ground is whole and the passage under it cut off at it.
   - **The holes' boxes come from samples** (every metre over each passage near a mouth, and the mouth's own air), not

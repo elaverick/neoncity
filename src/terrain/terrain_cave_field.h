@@ -20,8 +20,39 @@
 #define TERRAIN_CAVE_FLOOR_REACH_M (TERRAIN_CAVE_ROUGH_M + 0.25 * TERRAIN_CAVE_BLEND_M + 0.5)   /* a floor's weight reaches this past its piece's air */
 #define TERRAIN_CAVE_FLOOR_NONE_M  2.0   /* under no floor: rock this far down */
 #define TERRAIN_CAVE_NEAR_M     (TERRAIN_CAVE_BLEND_M + 2.0 * TERRAIN_CAVE_ROUGH_M)   /* a piece is near if its wall is within this of the nearest's */
-#define TERRAIN_CAVE_NOISE_A_M  7.0      /* the walls' noise's two octaves (m) */
+#define TERRAIN_CAVE_NOISE_A_M  7.0      /* the walls' noise's octaves (m), their shares of TERRAIN_CAVE_ROUGH_M */
 #define TERRAIN_CAVE_NOISE_B_M  2.5
+#define TERRAIN_CAVE_NOISE_A_W  0.6
+#define TERRAIN_CAVE_NOISE_B_W  0.2
+/* The flowstone: a third octave stretched upright, so the walls hang in
+ * ribs and curtains (m across, m tall). */
+#define TERRAIN_CAVE_RIB_W_M    1.6
+#define TERRAIN_CAVE_RIB_H_M    6.0
+#define TERRAIN_CAVE_RIB_W      0.2
+/* The flowstone's and the stalactites' seeds: hash_combine(TERRAIN_CAVE_SEED_A, these). */
+#define TERRAIN_CAVE_SEED_RIB   1u
+#define TERRAIN_CAVE_SEED_DRIP  2u
+/* The stalactites (terrain_cave.c, "The dressing"): in cells of the chart's
+ * plan _CELL_M a side, one in a cell by a chance set per patch of _PATCH
+ * cells a side; each a cone (half-width _TAN_LO .. _HI of its height) at
+ * most _R_M round, its middle within _JIT_M of the cell's, hanging _LEN_LO_M
+ * .. _HI_M under the ceiling but never lower than _HEAD_M over the floor. */
+#define TERRAIN_CAVE_DRIP_CELL_M  2.2
+#define TERRAIN_CAVE_DRIP_PATCH   8
+#define TERRAIN_CAVE_DRIP_JIT_M   0.2
+#define TERRAIN_CAVE_DRIP_R_M     0.7
+#define TERRAIN_CAVE_DRIP_GAP_M   (0.5 * TERRAIN_CAVE_DRIP_CELL_M - TERRAIN_CAVE_DRIP_JIT_M - TERRAIN_CAVE_DRIP_R_M)   /* from a cell's side to its stalactite, at least */
+#define TERRAIN_CAVE_DRIP_TAN_LO  0.22
+#define TERRAIN_CAVE_DRIP_TAN_HI  0.45
+#define TERRAIN_CAVE_DRIP_LEN_LO_M 0.6
+#define TERRAIN_CAVE_DRIP_LEN_HI_M 2.4
+#define TERRAIN_CAVE_DRIP_HEAD_M  2.6
+/* Near a mouth (within its reach and _FADE_M more): only where the ground
+ * (the plane of its slope there) lies _COVER_LO_M .. _HI_M or more over the
+ * ceiling (the walls' noise and bulge lift a ceiling up to 2.35 m). */
+#define TERRAIN_CAVE_DRIP_FADE_M     10.0
+#define TERRAIN_CAVE_DRIP_COVER_LO_M 3.0
+#define TERRAIN_CAVE_DRIP_COVER_HI_M 6.0
 
 /* The mouths' holes (src/render/cave_gpu.c, CaveHolesGPU): at most this many
  * at once (four systems of two mouths), and the pieces of the field near

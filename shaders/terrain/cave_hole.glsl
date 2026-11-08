@@ -31,8 +31,10 @@ struct CaveHole {
     vec4  off;      // the anchor's place in the chart less the mouth's (x, -, z)
     vec4  lo, hi;   // the box, from the mouth (chart x, h, z)
     vec4  noise;    // the mouth's place in the chart (x, h, z): the walls' noise is in the chart's own
-    ivec4 info;     // its first piece, its passages, its chambers
+    ivec4 info;     // its first piece, its passages, its chambers, its cave's mouths
     uvec4 mask;     // the cells of the box's plan (TERRAIN_CAVE_HOLE_GRID a side) where the ground can be in the air or near it
+    vec4  mouthAt[2];   // its cave's mouths (TerrainCaveMouth): xyz p from this one, w the reach
+    vec4  mouthGrad;    // their ground's slopes: xy the first's, zw the second's
 };
 // A passage: a.xyz, b.xyz its axis's ends from the mouth, a.w, b.w its radii there.
 // A chamber: a.xyz its middle from the mouth, a.w its yaw's cos; b.xyz its semi-axes, b.w its yaw's sin.
@@ -70,10 +72,11 @@ float caveSmin(float a, float b, float k) {
 
 // Piece i of a hole (its passages first, then its chambers) at q: its wall's
 // distance (no noise), its floor's height less q's, the distance its floor's
-// weight is reckoned by, and the reach of that weight (seg_wall, room_wall).
+// weight is reckoned by, the reach of that weight, and its ceiling's height
+// less q's (seg_wall, room_wall).
 // Worked out again in each pass rather than kept: arrays indexed so would
 // spill out of the registers.
-void caveHolePiece(int i, bool seg, vec3 q, out float wall, out float fl, out float dist, out float reach) {
+void caveHolePiece(int i, bool seg, vec3 q, out float wall, out float fl, out float dist, out float reach, out float ce) {
     CavePiece P = cavePiece[i];
     if (seg) {
         vec3 ab = P.b.xyz - P.a.xyz, ap = q - P.a.xyz;
@@ -82,6 +85,7 @@ void caveHolePiece(int i, bool seg, vec3 q, out float wall, out float fl, out fl
         dist = length(ap - t * ab);
         wall = dist - r;
         fl = P.a.y + tu * ab.y - float(TERRAIN_CAVE_FLOOR) * r - q.y;
+        ce = P.a.y + tu * ab.y + r - q.y;
         reach = r + float(TERRAIN_CAVE_FLOOR_REACH_M);
     } else {
         vec3 d = q - P.a.xyz, R = P.b.xyz;
@@ -90,21 +94,65 @@ void caveHolePiece(int i, bool seg, vec3 q, out float wall, out float fl, out fl
         float k0 = length(e), k1 = length(e2), rmin = min(R.x, min(R.y, R.z));
         float ell = k1 > 0.0 ? k0 * (k0 - 1.0) / k1 : -rmin;
         fl = -d.y - float(TERRAIN_CAVE_ROOM_FLOOR) * R.y;
+        ce = R.y - d.y;
         dist = max(ell + rmin, 0.0);
         wall = ell;
         reach = rmin + float(TERRAIN_CAVE_FLOOR_REACH_M);
     }
 }
 
+float caveSmooth01(float t) { t = clamp(t, 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }
+
+// The stalactites' share under a ceiling ch over hole k's mouth, at q's place
+// (terrain_cave.c's drip_share).
+float caveDripShare(int k, vec2 q, float ch) {
+    CaveHole H = caveHole[k];
+    float s = 1.0;
+    for (int m = 0; m < H.info.w; ++m) {
+        vec4 M = H.mouthAt[m];
+        vec2 g = m == 0 ? H.mouthGrad.xy : H.mouthGrad.zw, d = q - M.xz;
+        float far = caveSmooth01((length(d) - M.w) / float(TERRAIN_CAVE_DRIP_FADE_M));
+        if (far >= 1.0) continue;
+        float cover = M.y + dot(g, d) - ch;
+        s = min(s, max(far, caveSmooth01((cover - float(TERRAIN_CAVE_DRIP_COVER_LO_M)) / float(TERRAIN_CAVE_DRIP_COVER_HI_M - TERRAIN_CAVE_DRIP_COVER_LO_M))));
+    }
+    return s;
+}
+
+// The stalactites' distance at chart (x, z) (p: pa, the walls' noise's place),
+// with the ceiling and the floor up and down over q, the place from hole k's
+// mouth: terrain_cave.c's drip.
+float caveDrip(int k, vec3 q, vec2 p, float up, float down, uint seed) {
+    const float C = float(TERRAIN_CAVE_DRIP_CELL_M);
+    float low = down + float(TERRAIN_CAVE_DRIP_HEAD_M);
+    vec2 i = floor(p / C), f = p - i * C;
+    float d = min(min(f.x, C - f.x), min(f.y, C - f.y)) + float(TERRAIN_CAVE_DRIP_GAP_M);
+    ivec2 c = ivec2(i), pc = ivec2(floor(i / float(TERRAIN_CAVE_DRIP_PATCH)));
+    float dens = hfloat(hash2i(seed ^ 0x5A5Au, pc.x, pc.y));
+    uint h = hash2i(seed, c.x, c.y);
+    float share = hfloat(h) < 0.85 * dens * dens ? caveDripShare(k, q.xz, q.y + up) : 0.0;
+    if (share > 0.0) {
+        vec2 j = (2.0 * vec2(hfloat(hash_combine(h, 1u)), hfloat(hash_combine(h, 2u))) - 1.0) * float(TERRAIN_CAVE_DRIP_JIT_M);
+        float u = hfloat(hash_combine(h, 3u));
+        float tn = (float(TERRAIN_CAVE_DRIP_TAN_LO) + float(TERRAIN_CAVE_DRIP_TAN_HI - TERRAIN_CAVE_DRIP_TAN_LO) * hfloat(hash_combine(h, 4u))) * share;
+        float len = float(TERRAIN_CAVE_DRIP_LEN_LO_M) + float(TERRAIN_CAVE_DRIP_LEN_HI_M - TERRAIN_CAVE_DRIP_LEN_LO_M) * u * u;
+        float rho = length(f - 0.5 * C - j), y = -max(up - len, low);
+        float cs = inversesqrt(1.0 + tn * tn), sn = tn * cs;
+        float cone = rho * sn + y * cs < 0.0 ? length(vec2(rho, y)) : rho * cs - y * sn;
+        d = min(d, max(cone, rho - float(TERRAIN_CAVE_DRIP_R_M) * share));
+    }
+    return max(d, low);
+}
+
 // The field at q from a hole's pieces (first .. first + n, its passages the
 // first ns), the nearest's wall `least`, with the walls' noise `rough`
-// there: the rest of field_of.
-float caveHoleSum(int first, int ns, int n, vec3 q, float least, float rough) {
+// there, the stalactites at pa.xz (the chart's): the rest of field_of.
+float caveHoleSum(int k, int first, int ns, int n, vec3 q, float least, float rough, vec3 pa) {
     const float ROUGH = float(TERRAIN_CAVE_ROUGH_M), BLEND = float(TERRAIN_CAVE_BLEND_M), REACH = float(TERRAIN_CAVE_FLOOR_REACH_M);
-    float w = 1e30, m = 1e30, fs = 0.0, ws = 0.0;
+    float w = 1e30, m = 1e30, fs = 0.0, cs = 0.0, ws = 0.0;
     for (int i = 0; i < n; ++i) {
-        float wall, fl, dist, reach;
-        caveHolePiece(first + i, i < ns, q, wall, fl, dist, reach);
+        float wall, fl, dist, reach, ce;
+        caveHolePiece(first + i, i < ns, q, wall, fl, dist, reach, ce);
         if (wall >= REACH && wall > least + float(TERRAIN_CAVE_NEAR_M)) continue;   // not near
         if (wall >= REACH && wall - ROUGH > w + BLEND) continue;                     // field_far
         float s = clamp(-fl / float(TERRAIN_CAVE_FLOOR_FADE_M), 0.0, 1.0);
@@ -116,10 +164,13 @@ float caveHoleSum(int first, int ns, int n, vec3 q, float least, float rough) {
         if (qq <= 0.0) continue;
         qq = qq * qq * (3.0 - 2.0 * qq);
         fs += qq * fl;
+        cs += qq * ce;
         ws += qq;
     }
     float floorH = ws > 0.0 ? fs / ws : float(TERRAIN_CAVE_FLOOR_NONE_M);
-    return -caveSmin(-w, -floorH, float(TERRAIN_CAVE_FLOOR_K));
+    float f = -caveSmin(-w, -floorH, float(TERRAIN_CAVE_FLOOR_K));
+    if (ws > 0.0) f = max(f, -caveDrip(k, q, pa.xz, cs / ws, floorH, hash_combine(uint(caveHoleInfo.z), uint(TERRAIN_CAVE_SEED_DRIP))));
+    return f;
 }
 
 // Hole k's cave's field at q (its chart, from its mouth): terrain_cave.c's
@@ -129,37 +180,41 @@ float caveHoleSum(int first, int ns, int n, vec3 q, float least, float rough) {
 // the union's bulge (a quarter of the blend) at most; the floor is a weighted
 // mean of those whose weight isn't 0, which always count (their walls are
 // within the floor's reach), so no higher than the highest; and the soft
-// clamp adds a quarter of its width at most. So the field is at least
+// clamp adds a quarter of its width at most; the stalactites only add rock,
+// at most their width (TERRAIN_CAVE_DRIP_R_M) deep. So the field is at least
 // least - ROUGH - BLEND / 4, and at most max(least + ROUGH, the highest
-// floor) + FLOOR_K / 4.
+// floor) + FLOOR_K / 4, or DRIP_R_M.
 float caveHoleField(int k, vec3 q, float cut) {
     CaveHole H = caveHole[k];
     int first = H.info.x, ns = H.info.y, n = H.info.y + H.info.z;
     const float ROUGH = float(TERRAIN_CAVE_ROUGH_M), BLEND = float(TERRAIN_CAVE_BLEND_M), REACH = float(TERRAIN_CAVE_FLOOR_REACH_M);
     float least = 1e30, flTop = -1e30;
     for (int i = 0; i < n; ++i) {
-        float wall, fl, dist, reach;
-        caveHolePiece(first + i, i < ns, q, wall, fl, dist, reach);
+        float wall, fl, dist, reach, ce;
+        caveHolePiece(first + i, i < ns, q, wall, fl, dist, reach, ce);
         least = min(least, wall);
         if (dist < reach) flTop = max(flTop, fl);
     }
     float lo = least - ROUGH - 0.25 * BLEND;
     if (lo >= cut) return lo;
-    float hi = max(least + ROUGH, flTop > -1e29 ? flTop : float(TERRAIN_CAVE_FLOOR_NONE_M)) + 0.25 * float(TERRAIN_CAVE_FLOOR_K);
+    float hi = max(max(least + ROUGH, flTop > -1e29 ? flTop : float(TERRAIN_CAVE_FLOOR_NONE_M)) + 0.25 * float(TERRAIN_CAVE_FLOOR_K), float(TERRAIN_CAVE_DRIP_R_M));
     if (hi < cut) return hi;
     // The rest is monotone in the noise (the smooth union, its floor and the
     // clamp all are, and the pieces field_far leaves out would change nothing),
-    // so the second octave (a quarter of the noise) is bounded before it is
-    // worked out, and only where that leaves the answer open.
+    // so the finer octaves (the second and the flowstone's) are bounded before
+    // they are worked out, and only where that leaves the answer open.
     vec3 pa = H.noise.xyz + q;
+    const float WA = float(TERRAIN_CAVE_NOISE_A_W), WB = float(TERRAIN_CAVE_NOISE_B_W), WR = float(TERRAIN_CAVE_RIB_W);
     float n1 = 2.0 * caveNoise3(uint(caveHoleInfo.z), pa / float(TERRAIN_CAVE_NOISE_A_M)) - 1.0;
-    float r1 = ROUGH * 0.75 * n1;
-    float f = caveHoleSum(first, ns, n, q, least, r1 - 0.25 * ROUGH);
+    float r1 = ROUGH * WA * n1;
+    float f = caveHoleSum(k, first, ns, n, q, least, r1 - (WB + WR) * ROUGH, pa);
     if (f >= cut) return f;
-    f = caveHoleSum(first, ns, n, q, least, r1 + 0.25 * ROUGH);
+    f = caveHoleSum(k, first, ns, n, q, least, r1 + (WB + WR) * ROUGH, pa);
     if (f < cut) return f;
     float n2 = 2.0 * caveNoise3(uint(caveHoleInfo.w), pa / float(TERRAIN_CAVE_NOISE_B_M)) - 1.0;
-    return caveHoleSum(first, ns, n, q, least, ROUGH * (0.75 * n1 + 0.25 * n2));
+    vec3 rib = pa / vec3(float(TERRAIN_CAVE_RIB_W_M), float(TERRAIN_CAVE_RIB_H_M), float(TERRAIN_CAVE_RIB_W_M));
+    float n3 = 2.0 * caveNoise3(hash_combine(uint(caveHoleInfo.z), uint(TERRAIN_CAVE_SEED_RIB)), rib) - 1.0;
+    return caveHoleSum(k, first, ns, n, q, least, ROUGH * (WA * n1 + WB * n2 + WR * n3), pa);
 }
 
 // Whether the ground at camera-relative world (x, z) and height h (world Y)
