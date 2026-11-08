@@ -196,6 +196,21 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     was 1.7), and 0.5% more of their length is over 10 m of cut or fill.
   - **Value noise's lattice** still shows faintly in the mountains' finer octaves as rounded bumps; a gradient noise
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
+- **Terrain in ray tracing** (M11; plan `~/.claude/plans/m11-terrain-ray-tracing.md`). M11a is done: the clipmap's
+  levels near the camera (`src/render/terrain_rt.c`, `shaders/terrain/terrain_rt.comp`) are in the shadows' TLAS
+  under `RT_MASK_TERRAIN`, refit in place as the windows move; `--shot` prints their check against the CPU's drawn
+  surface; `NEONCITY_TERRAIN_RT=0` leaves them out for an A/B. Next: M11b (the land takes the lamps), M11c (the
+  moon's shadows), M11d (the caves). Left over from M11a:
+  - **Seen nowhere yet in the megacity.** The built ground stops at least `CITY_BELT` inside the edge's contour, and
+    the land there is gentle, so at the edges tried the lamps' shadows are the same with and without the terrain
+    (the A/B differs by 0.06% of pixels, under two runs' noise). It shows where land stands over a lamp's ray: a
+    hilly town's edge, a cutting, a road's embankment. A lift test (the terrain raised 3 m) put every pool out.
+  - **Coarse near the city.** Walking in the city the error asks for levels 5-6 (the ground under the streets is
+    hidden), so the land beside the edge casts as 32-64 m triangles, as it is drawn.
+  - **Flat**, as the chunks: no planet bend, so 3 cm off the drawn surface at `RT_RANGE`.
+  - **The cost:** refits +0.02 ms a frame on foot in the mountains, +0.07 ms flying low at 30 m/s (about four
+    levels refit a frame, built afresh every 64); +0.02 ms of shadow rays at the edge.
+  - **Cave mouths** aren't cut in the TLAS yet (M11d).
 - **Caves** (`src/terrain/terrain_cave.c`, M10b; plan `~/.claude/plans/m10-erosion-and-caves.md`;
   `terrain_test --caves [km]`, `--cave-map out.ppm [km [x z]]`, `--cave-mesh [km [n]]`, `--cave-walk [km [n [dt [x z]]]]`).
   b1 (placement, passages, field, CPU only), b2 (meshing and drawing: `terrain_cave_mesh.c`, `src/render/cave_gpu.c`,

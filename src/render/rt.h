@@ -11,9 +11,11 @@
  * compacted one. All BLASes live in one arena buffer.
  *
  * Each frame the chunk streamer lists the BLASes that are in range as
- * instances, at their chunk's camera-relative origin, and a fresh top-level
- * structure (TLAS) is built over them. The TLAS does not depend on the view
- * frustum, so buildings behind or beside the camera shadow what it sees. */
+ * instances, at their chunk's camera-relative origin, the terrain adds its
+ * near levels (terrain_rt.c: meshes of its own, refit in place, rt_create_mesh),
+ * and the renderer builds a fresh top-level structure (TLAS) over them. The
+ * TLAS does not depend on the view frustum, so buildings behind or beside the
+ * camera shadow what it sees. */
 
 typedef struct Rt Rt;
 
@@ -21,6 +23,7 @@ typedef struct Rt Rt;
 #define RT_MASK_CITY      0x01u
 #define RT_MASK_INTERIOR  0x02u
 #define RT_MASK_LITTER    0x04u
+#define RT_MASK_TERRAIN   0x08u   /* the clipmap's near levels (terrain_rt.c) */
 
 Rt  *rt_create(VkCore *vk);
 void rt_destroy(Rt *rt);
@@ -40,6 +43,19 @@ bool rt_can_build(Rt *rt, int slot, uint32_t indices);
  * (try again later). */
 int  rt_build_blas(Rt *rt, VkCommandBuffer cmd, int slot, VkBuffer pool, const uint16_t *pages, int npages,
                    const uint32_t *pageVerts, const uint16_t *idx, const uint32_t *idxCount);
+/* A mesh of the caller's that moves in place (the terrain's levels): float3
+ * vertices at `verts`, `stride` bytes apart, and uint16 indices at `idx`,
+ * both in buffers made for acceleration-structure build input. Its counts are
+ * fixed for its life; its vertices may change between updates. */
+typedef struct RtMesh { VkDeviceAddress verts, idx; uint32_t stride, nverts, nidx; } RtMesh;
+/* A BLAS for such a mesh, made able to be refit and not compacted; not yet
+ * built (rt_update_mesh with full first). -1 if there was no room. */
+int  rt_create_mesh(Rt *rt, const RtMesh *m);
+/* Builds (full) or refits the mesh's BLAS in place from its vertices as they
+ * stand, which must be visible to acceleration-structure builds. The frames
+ * in flight may still trace it: the caller waits for them first. False if
+ * this frame's scratch is spent (try again next frame). */
+bool rt_update_mesh(Rt *rt, VkCommandBuffer cmd, int slot, int h, const RtMesh *m, bool full);
 /* Retires a BLAS; it is destroyed once no frame in flight can use it. */
 void rt_free_blas(Rt *rt, int h, uint64_t frame);
 

@@ -13,6 +13,7 @@
  *   renderer_targets.c    size-dependent render targets, the cloud noise volume, swapchain recreation
  *   renderer_passes.c     recording each pass: shelter map, prepass, shadows, reflections, clouds, bloom
  *   terrain_gpu.c         the terrain clipmap's GPU side: its samples' buffer and uploads, the ring meshes, drawing
+ *   terrain_rt.c          the clipmap's near levels in the ray-traced shadows' TLAS
  *   proxy_gpu.c           the distant proxies: tiles generated round the camera, their box pool, drawing
  *   planet_gpu.c          the planet's patches beyond the clipmap: their fill worker, vertex slots, drawing
  *   cave_gpu.c            the caves: their systems near the camera, bricks meshed by workers, the cache and pool, rings, drawing */
@@ -225,6 +226,18 @@ int  terrain_gpu_window(Renderer *r, double win[4]);
  * frame's drawn levels (after terrain_gpu_update): the finest drawn, or
  * TERRAIN_CLIP_LEVELS if none is, each level from it on as pushed. */
 VkBuffer        terrain_gpu_samples(Renderer *r, VkDeviceSize *size);
+/* terrain_rt.c (NULL without ray tracing), owned by terrain_gpu.c: made over
+ * the samples and the window's index list (firstIdx, nidx); update writes the
+ * levels in use, refits them and adds them to the frame's TLAS (after the
+ * chunks' instances, before rt_build_tlas), dirty[l] the samples level l had
+ * uploaded this frame; stats checks the levels against the clipmap if
+ * current (its samples are the GPU's). */
+typedef struct TerrainRt TerrainRt;
+TerrainRt *terrain_rt_create(Renderer *r, VkBuffer samples, VkDeviceSize sampleBytes, VkBuffer indices, VkDeviceSize firstIdx, uint32_t nidx);
+void terrain_rt_destroy(Renderer *r, TerrainRt *tr);
+void terrain_rt_update(Renderer *r, TerrainRt *tr, VkCommandBuffer cmd, int slot, const struct TerrainClipmap *shown,
+                       const TerrainPush *push, int drawn, const double cam[3], const int *dirty);
+void terrain_rt_stats(Renderer *r, TerrainRt *tr, const struct TerrainClipmap *clip, bool current, char *buf, size_t n);
 VkDescriptorSet terrain_gpu_set(Renderer *r, int slot);
 int             terrain_gpu_levels(Renderer *r, const TerrainPush **push);
 

@@ -272,7 +272,8 @@ void record_reflections(Renderer *r, VkCommandBuffer cmd, int slot) {
 /* The scene pass: the city, its plants, the distant proxies, the terrain and
  * the sky into the MSAA HDR target and the reflection G-buffer, resolved into
  * r->hdr and r->refl. With shadows, the depth is the prepass's (which leaves
- * the proxies and the terrain out: they cast and take no shadows). The proxies
+ * the proxies and the terrain out: they take no shadows, and only the
+ * terrain's near levels cast, from the TLAS). The proxies
  * and the terrain come after the city, whose depth hides much of them, and
  * before the sky, which fills what's left. */
 void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows) {

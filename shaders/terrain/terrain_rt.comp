@@ -1,0 +1,62 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "terrain_clip.h"
+
+/* One clipmap level's vertices for its bottom-level structure in the
+ * ray-traced shadows' TLAS (src/render/terrain_rt.c). The whole window, vertex
+ * (i, j) at (i, j) x spacing from the window's corner (the instance places
+ * it), so a move changes only heights and the structure is refit in place.
+ * Its height is the drawn one, blended into the parent exactly as terrain.vert
+ * blends it (the same float operations, so the shadows' surface is the one on
+ * screen), less a sink inside the finer level's window, but for its boundary
+ * (hole: its corner in this level's samples; -1 for the finest), which draws
+ * there: sunk that deep, those triangles lie under the finer surface, where
+ * no shadow ray goes. Under the city's ground the terrain is drawn sunk
+ * (terrain_urban_sink), so it lies under the streets here too. */
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Every level's TERRAIN_CLIP_N^2 slots, seven words each (TerrainSample).
+layout(std430, set = 0, binding = 0) readonly buffer Samples { uint samples[]; };
+// Every level's TERRAIN_CLIP_W^2 vertices, three floats each.
+layout(std430, set = 0, binding = 1) writeonly buffer Verts { float verts[]; };
+
+// TerrainRtPush (src/render/terrain_rt.c)
+layout(push_constant) uniform Level {
+    vec2  morph;     // the coarsest window's corner relative to the camera of the windows' update (TerrainPush.morph)
+    vec2  offset;    // this window's corner less that corner (TerrainPush.offset)
+    float spacing;
+    int   level;
+    ivec2 slot;      // storage slot of the window's corner sample
+    ivec2 hole;      // the finer window's corner in this level's samples; x < 0 for none
+    float fade;      // TerrainPush.fade
+    float sink;      // how far a vertex that shouldn't cast is sunk (m)
+    uint  base;      // this level's first vertex
+} lv;
+
+const int N = TERRAIN_CLIP_N, W = TERRAIN_CLIP_W;
+
+int slotBase(int level, ivec2 s) { return (((level * N) + (s.y & (N - 1))) * N + (s.x & (N - 1))) * 7; }
+float word(int i) { return uintBitsToFloat(samples[i]); }
+
+void main() {
+    ivec2 g = ivec2(gl_GlobalInvocationID.xy);
+    if (g.x >= W || g.y >= W) return;
+    int base = slotBase(lv.level, lv.slot + g);
+    float h = word(base), hc = word(base + 1);
+    // terrain.vert's morph
+    precise vec2 mxz = lv.morph + (lv.offset + vec2(g) * lv.spacing);
+    const float END = float((W - 1) / 2 - 1);
+    float d = max(abs(mxz.x), abs(mxz.y)) / lv.spacing;
+    float morph = clamp((d - (END - float(TERRAIN_CLIP_MORPH))) / float(TERRAIN_CLIP_MORPH), 0.0, 1.0);
+    morph = max(morph, lv.fade);
+    float hd = h + morph * (hc - h);
+
+    bool covered = lv.hole.x >= 0 && all(greaterThan(g, lv.hole)) && all(lessThan(g, lv.hole + (W - 1) / 2));
+    if (covered) hd -= lv.sink;
+
+    uint v = (lv.base + uint(g.y * W + g.x)) * 3u;
+    verts[v] = float(g.x) * lv.spacing;
+    verts[v + 1u] = hd;
+    verts[v + 2u] = float(g.y) * lv.spacing;
+}

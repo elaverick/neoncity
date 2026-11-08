@@ -383,7 +383,8 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     proxy_gpu_update(r, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_STREAM);
     cave_gpu_update(r, cmd, slot, cam, &ubo.viewProj);   /* first: the terrain's draws read its holes */
-    terrain_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
+    terrain_gpu_update(r, cmd, slot, cam, &ubo.viewProj);   /* adds the terrain's instances */
+    if (r->rt) rt_build_tlas(r->rt, cmd, slot);
     cave_gpu_levels(r, slot);
     road_gpu_update(r, slot, cam);
     planet_gpu_update(r, cmd, slot, cam, &ubo.viewProj);

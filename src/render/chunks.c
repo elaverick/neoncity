@@ -496,8 +496,9 @@ static int cmp_rtcand(const void *a, const void *b) {
 }
 
 /* Bottom-level structures for resident chunks within RT_RANGE (nearest first,
- * within this frame's build budget), dropped beyond it; then the frame's TLAS
- * over all of them, wherever the camera is looking. */
+ * within this frame's build budget), dropped beyond it; then all of them as
+ * the frame's instances, wherever the camera is looking (the renderer builds
+ * the TLAS once the terrain's are in too). */
 static void update_shadows(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t frame, const double cam[3]) {
     static RtCand cand[MAX_ENTRIES];
     int n = 0;
@@ -526,7 +527,6 @@ static void update_shadows(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint6
         float o[3] = { (float)(e->cx * (double)P - cam[0]), -(float)cam[1], (float)(e->cz * (double)P - cam[2]) };
         rt_add_instance(cs->rt, slot, e->blas, o, rt_mask(e->layer));
     }
-    rt_build_tlas(cs->rt, cmd, slot);
 }
 
 /* --------------------------------------------------------------- update --- */

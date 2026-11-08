@@ -16,6 +16,7 @@ typedef struct Blas {
     VkDeviceAddress addr;
     uint64_t off, size;   /* in the arena */
     int      live;
+    uint64_t buildScratch, updateScratch;   /* a mesh's (rt_create_mesh): its build's and its refit's scratch */
 } Blas;
 
 /* A structure no longer used by new frames, destroyed once the frame that retired it has finished. */
@@ -321,6 +322,75 @@ int rt_build_blas(Rt *rt, VkCommandBuffer cmd, int slot, VkBuffer pool, const ui
     pe->h = h;
     pe->q = rt->nextQuery[slot]++;
     return h;
+}
+
+/* A mesh's one geometry and its build info (mode and structures left to the caller). */
+static void mesh_geometry(const RtMesh *m, VkAccelerationStructureGeometryKHR *g, VkAccelerationStructureBuildGeometryInfoKHR *bi) {
+    memset(g, 0, sizeof(*g));
+    g->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    g->geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    g->flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    VkAccelerationStructureGeometryTrianglesDataKHR *t = &g->geometry.triangles;
+    t->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    t->vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    t->vertexData.deviceAddress = m->verts;
+    t->vertexStride = m->stride;
+    t->maxVertex = m->nverts - 1;
+    t->indexType = VK_INDEX_TYPE_UINT16;
+    t->indexData.deviceAddress = m->idx;
+    memset(bi, 0, sizeof(*bi));
+    bi->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    bi->type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    bi->flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    bi->geometryCount = 1;
+    bi->pGeometries = g;
+}
+
+int rt_create_mesh(Rt *rt, const RtMesh *m) {
+    if (!rt->nfreeHandles || m->nidx < 3) return -1;
+    VkAccelerationStructureGeometryKHR g;
+    VkAccelerationStructureBuildGeometryInfoKHR bi;
+    mesh_geometry(m, &g, &bi);
+    bi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    uint32_t prims = m->nidx / 3;
+    VkAccelerationStructureBuildSizesInfoKHR sz = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+    vkGetAccelerationStructureBuildSizesKHR(rt->vk->device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bi, &prims, &sz);
+    uint64_t aOff;
+    if (!arena_alloc(rt, sz.accelerationStructureSize, &aOff)) return -1;
+    int h = rt->freeHandles[--rt->nfreeHandles];
+    Blas *b = &rt->blas[h];
+    b->as = create_as(rt, rt->arena.buf, aOff, sz.accelerationStructureSize, VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, &b->addr);
+    b->off = aOff;
+    b->size = sz.accelerationStructureSize;
+    b->live = 1;
+    b->buildScratch = sz.buildScratchSize;
+    b->updateScratch = sz.updateScratchSize;
+    rt->nlive++;
+    return h;
+}
+
+bool rt_update_mesh(Rt *rt, VkCommandBuffer cmd, int slot, int h, const RtMesh *m, bool full) {
+    VkCore *vk = rt->vk;
+    if (h < 0 || !rt->blas[h].live) return false;
+    Blas *b = &rt->blas[h];
+    uint64_t need = full ? b->buildScratch : b->updateScratch;
+    uint64_t align = vk->asProps.minAccelerationStructureScratchOffsetAlignment;
+    uint64_t sOff = (rt->scratchUsed[slot] + align - 1) & ~(align - 1);
+    if (sOff + need > RT_SCRATCH_BYTES) return false;
+    rt->scratchUsed[slot] = sOff + need;
+    VkAccelerationStructureGeometryKHR g;
+    VkAccelerationStructureBuildGeometryInfoKHR bi;
+    mesh_geometry(m, &g, &bi);
+    bi.mode = full ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+    bi.srcAccelerationStructure = full ? VK_NULL_HANDLE : b->as;
+    bi.dstAccelerationStructure = b->as;
+    bi.scratchData.deviceAddress = vk_buffer_address(vk, rt->scratch[slot].buf) + sOff;
+    VkAccelerationStructureBuildRangeInfoKHR range = { 0 };
+    range.primitiveCount = m->nidx / 3;
+    const VkAccelerationStructureBuildRangeInfoKHR *pr = &range;
+    vkCmdBuildAccelerationStructuresKHR(cmd, 1, &bi, &pr);
+    if (full) rt->builds++;
+    return true;
 }
 
 void rt_free_blas(Rt *rt, int h, uint64_t frame) {

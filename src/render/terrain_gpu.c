@@ -118,6 +118,8 @@ struct TerrainGpu {
      * slowest fill on the worker */
     int            drawn, tilesDrawn, tilesTotal, tilesCut;
     double         stageMs, planMs, updateMs, slowestMs, slowestFillMs;
+    TerrainRt     *rt;                    /* the near levels in the shadows' TLAS (terrain_rt.c); NULL without ray tracing */
+    int            dirty[TERRAIN_CLIP_LEVELS];   /* samples uploaded this frame, per level */
 };
 
 static int terrain_worker(void *arg) {
@@ -242,8 +244,9 @@ static void upload_indices(Renderer *r, TerrainGpu *t) {
         }
         if ((size_t)(o - start) != (k == LIST_WINDOW ? windowIdx : ringIdx)) fatal("terrain: an index list came out the wrong length");
     }
-    t->indices = vk_buffer(vk, total * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    t->indices = vk_buffer(vk, total * sizeof(uint16_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                           (vk->rt ? VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0),
+                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);   /* (the window's list also builds terrain_rt.c's structures) */
 
     VkCommandBufferAllocateInfo ca = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
     ca.commandPool = r->cmdPool;
@@ -287,6 +290,9 @@ void terrain_gpu_create(Renderer *r) {
     t->copies = (VkBufferCopy *)malloc(sizeof(VkBufferCopy) * TERRAIN_CLIP_BUDGET);
     if (!t->copies) fatal("out of memory allocating the terrain");
     upload_indices(r, t);
+    uint32_t windowCount = 0;
+    for (int tile = 0; tile < TILES * TILES; ++tile) windowCount += t->count[LIST_WINDOW][tile];
+    t->rt = terrain_rt_create(r, t->samples.buf, sampleBytes, t->indices.buf, t->first[LIST_WINDOW][0], windowCount);
 
     VkDescriptorPoolSize sizes[3] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES },   /* the frame, the materials, the caves' holes (cave_gpu.c writes it) */
@@ -341,6 +347,7 @@ void terrain_gpu_destroy(Renderer *r) {
     cond_destroy(&t->aheadIdle);
     terrain_clip_free(&t->ahead);
     vkDestroyDescriptorPool(vk->device, t->pool, NULL);
+    terrain_rt_destroy(r, t->rt);
     vk_buffer_destroy(vk, &t->indices);
     for (int i = 0; i < MAX_FRAMES; ++i) vk_buffer_destroy(vk, &t->staging[i]);
     vk_buffer_destroy(vk, &t->samples);
@@ -458,6 +465,7 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
 
     /* The worker is idle, so its clipmap holds still while it is read. */
     uint32_t n = 0;
+    memset(t->dirty, 0, sizeof(t->dirty));
     if (take) {
         take_levels(t);
         uint8_t *dst = (uint8_t *)t->staging[slot].mapped;
@@ -470,6 +478,7 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
                 for (int z = d.z0; z < d.z1; ++z) {
                     if (used + row > t->staging[slot].size || n >= TERRAIN_CLIP_BUDGET) fatal("terrain: an update overflowed its staging buffer");   /* a refill: LEVELS * N rows */
                     memcpy(dst + used, &lv->samples[z * CLIP_N + d.x0], (size_t)row);
+                    t->dirty[l] += d.x1 - d.x0;
                     t->copies[n++] = (VkBufferCopy){ used, (((VkDeviceSize)l * CLIP_N + z) * CLIP_N + d.x0) * sizeof(TerrainSample), row };
                     used += row;
                 }
@@ -497,11 +506,14 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
     t->planMs = (t2 - t1) * 1000.0;
     t->updateMs = (t2 - t0) * 1000.0;
     if (t->updateMs > t->slowestMs) t->slowestMs = t->updateMs;
-    if (n == 0) return;
-    vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    vkCmdCopyBuffer(cmd, t->staging[slot].buf, t->samples.buf, n, t->copies);
-    vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                      VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+    if (n > 0) {   /* (terrain_rt.comp reads them too: it waits for the copy itself) */
+        vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COPY_BIT,
+                          VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        vkCmdCopyBuffer(cmd, t->staging[slot].buf, t->samples.buf, n, t->copies);
+        vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+    }
+    terrain_rt_update(r, t->rt, cmd, slot, &t->shown, t->push, t->drawn, cam, t->dirty);
 }
 
 /* The update's plan (plan_draws), a push per level drawn. */
@@ -632,6 +644,7 @@ void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
     mutex_lock(&t->lock);
     while (t->busy) cond_wait(&t->idle, &t->lock);
     int evaluated = t->evaluated, swaps = t->swaps, refills = t->refills;
+    int current = !t->done || t->evaluated == 0;   /* nothing taken yet, or what is waiting changed no sample */
     double fillMs = t->fillMs, slowestFill = t->slowestFillMs, aheadMs = t->aheadFillMs;
     char hashes[64];
     window_hashes(t, hashes, sizeof(hashes));
@@ -656,5 +669,10 @@ void renderer_terrain_stats(Renderer *r, char *buf, size_t n) {
     if (used + 2 < n) {
         buf[used++] = '\n';
         cave_gpu_stats(r, buf + used, n - used);
+    }
+    used = strlen(buf);
+    if (used + 2 < n) {   /* (the worker is idle: its clipmap holds still) */
+        buf[used++] = '\n';
+        terrain_rt_stats(r, t->rt, &t->clip, current, buf + used, n - used);
     }
 }
