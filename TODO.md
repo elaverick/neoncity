@@ -197,10 +197,25 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   - **Value noise's lattice** still shows faintly in the mountains' finer octaves as rounded bumps; a gradient noise
     would be smoother, at the cost of re-baselining the city (the plan shares `noise.h`) unless kept separate.
 - **Caves** (`src/terrain/terrain_cave.c`, M10b; plan `~/.claude/plans/m10-erosion-and-caves.md`;
-  `terrain_test --caves [km]`, `--cave-map out.ppm [km [x z]]`, `--cave-mesh [km [n]]`). b1 (placement, passages,
-  field, CPU only), b2 (meshing and drawing: `terrain_cave_mesh.c`, `src/render/cave_gpu.c`,
-  `shaders/terrain/cave.*`; `--cave-debug normals|lit|lod`) and b3 (the mouths: `terrain_cave_hole`,
-  `shaders/terrain/cave_hole.glsl`, `cave_clip.glsl`) are done; b4-b6 (walking, light, dressing) are next.
+  `terrain_test --caves [km]`, `--cave-map out.ppm [km [x z]]`, `--cave-mesh [km [n]]`, `--cave-walk [km [n [dt [x z]]]]`).
+  b1 (placement, passages, field, CPU only), b2 (meshing and drawing: `terrain_cave_mesh.c`, `src/render/cave_gpu.c`,
+  `shaders/terrain/cave.*`; `--cave-debug normals|lit|lod`), b3 (the mouths: `terrain_cave_hole`,
+  `shaders/terrain/cave_hole.glsl`, `cave_clip.glsl`) and b4 (walking: `terrain_cave_walk.c`, `player.c`) are done;
+  b5-b6 (light, dressing) are next.
+  Left over from b4:
+  - **The walker's lookup runs on the main thread**: 4-5 ms once on arriving near a new cell's system (on foot, or
+    flying within 300 m of the ground), from its own per-thread cache. The renderer's workers have the same systems;
+    handing them on would take it off the frame.
+  - **No crouching, no climbing.** The narrowest passages stay walkable because each piece's wall noise is its
+    radius less 1 m (0.5 m at least, `TERRAIN_CAVE_ROUGH_CLEAR_M`): 1.83 m of room at the least radius. A roof
+    lower than 1.8 m stops the walker going further under it (none found in 192 systems walked).
+  - **The walk test steers along the passages' axes** in plan (and sideways when held up), so it proves a way
+    through, not every place a player might stand; the narrows survey checks every half metre of every axis across
+    its width. The test's step copies `move_walk`'s, cut down to the caves: keep the two alike.
+  - **The walls push in plan only** (as the city's do); the floor and the roof are found up and down the column.
+  - **A step's ride down the ground's grade is a fall past 1 m** (`RIDE_DROP`), everywhere: off a cliff below about
+    15 frames a second, and off a road deck's side (which used to snap the feet down to the ground).
+  - **Fly mode keeps 1 m over a cave's floor** as over the ground, and goes under the ground only into a cave's air.
   Left over from b3:
   - **No dark mouths far off.** The plan's dark cover for the coarse levels wasn't built: the holes are cut at every
     level wherever the cave is drawn (to 1 km), so it would only matter past that, where a mouth is a few pixels,
@@ -213,7 +228,6 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     a bound; the tests find every point of the ground in the air inside one. A mouth with more than
     `TERRAIN_CAVE_HOLE_SEGS` (32) passages near would get no hole (18 seen in the procedural world, 8 on the Earth's).
   - **The GPU's field is checked against the CPU's only by eye** (the captures): no `--gpu` test as the grass has.
-  - **The player still walks over the holes** (b4: the clipmap collision and the cave's floor).
   - **The cut's cost**: +0.05 ms on the terrain at 7 m from a mouth, +0.01 at 22 m. The tiles near a mouth draw with
     the cut (`terrain_cut.frag`) and lose the early depth test; the caves now draw before the terrain, so the parts
     of a cave hidden by the hill are shaded too (+0.03 ms on the caves' pass at 7 m) but from inside a cave the
@@ -229,19 +243,17 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   - **The rings overlap by one cell of the coarser level**, where both are drawn; no z-fighting seen in the captures.
   - **A finer level waits** (the coarser stands for it) until every brick in its box is meshed: about half a second
     on reaching a system with three workers; at 30 m/s through one the rings kept up.
-  - **Fly mode goes under the ground only into a cave's air** (b2's fly-through), the main thread building the
-    systems it needs on its first query there; `--cave-debug` flies anywhere. Fly speed grows with world height,
-    not height above the ground, so a cave under high ground is crossed fast.
+  - **`--cave-debug` flies anywhere**, under the ground too. Fly speed grows with world height, not height above
+    the ground, so a cave under high ground is crossed fast.
   Left over from b1:
   - **Shafts are rare on the real Earth near the megacity.** They need plateau tops; within 300 km of Los Angeles
     1 system in 289 is a shaft (the Colorado Plateau has more). Without a bake about half are.
   - **The roof is proved by sampling**, every 3 m over each passage's footprint with half the neighbours' difference
     as a margin, not by a bound. The tests find at least 11 m of rock where 8 m is the rule.
   - **The floor at a junction** is a blend of the passages' floors, up to about 1 m/m where two of different grade
-    meet (the passages themselves keep to 0.7). Walking (b4) may want it smoothed.
-  - **The cache is per thread**: a thread builds each system it needs (5 ms a cell on average, 50 ms at most), so
-    the first query near a cave on the main thread (walking, b4) would stall a frame or two. Share it, or have the
-    renderer's worker hand its systems on.
+    meet (the passages themselves keep to 0.7). The walker rides it (b4) with no stick or fall.
+  - **The cache is per thread**: a thread builds each system it needs (5 ms a cell on average, 50 ms at most); see
+    b4's main-thread lookup above.
   - **The field loops over every piece** of a system (about 37 passages and 2 chambers) at each point, but for a
     brick of the meshes (b2: `terrain_cave_near_box`, the passages near it).
   - **Chambers** stand only where the passages through them keep to their level floor, so they cluster on level

@@ -574,7 +574,8 @@ void terrain_cave_to_world(const TerrainCave *c, double cx, double cz, double *x
 
 /* --- The field ---------------------------------------------------------------------
  * Each passage is a tapered tube with rough walls (two octaves of value noise
- * in the chart, TERRAIN_CAVE_ROUGH_M at most, fading out over the lowest
+ * in the chart, TERRAIN_CAVE_ROUGH_M at most, each piece's share less in the
+ * narrowest passages so they stay walkable (terrain_cave_field.h), fading out over the lowest
  * FLOOR_FADE_M of the walls so the floor stays level), each chamber an
  * ellipsoid (Quilez's bound) so too. The air is where both of these say so:
  *   walls   the smooth union of the pieces, so passages meet in rounded
@@ -626,7 +627,9 @@ typedef struct Field { double w, m, fs, ws; } Field;
  * the noise n there. */
 static void field_add(Field *F, double wall, double floor, double reach, double dist, double n) {
     double rise = -floor, s = rise <= 0.0 ? 0.0 : rise >= FLOOR_FADE_M ? 1.0 : rise / FLOOR_FADE_M;
-    double v = wall + n * s * s * (3.0 - 2.0 * s);
+    /* the piece's own share of the noise (terrain_cave_field.h): by its radius, reach - FLOOR_REACH_M */
+    double amp = clampd(reach - FLOOR_REACH_M - TERRAIN_CAVE_ROUGH_CLEAR_M, TERRAIN_CAVE_ROUGH_LEAST_M, TERRAIN_CAVE_ROUGH_M) / TERRAIN_CAVE_ROUGH_M;
+    double v = wall + n * amp * s * s * (3.0 - 2.0 * s);
     F->m = fmin(F->m, v);
     F->w = fmax(smin(F->w, v, TERRAIN_CAVE_BLEND_M), F->m - 0.25 * TERRAIN_CAVE_BLEND_M);
     double q = 1.0 - dist / reach;
@@ -911,16 +914,4 @@ int terrain_cave_hole(const TerrainCave *c, int m, TerrainCaveHole *out) {
     out->nroom = near.nroom;
     memcpy(out->room, near.room, (size_t)near.nroom);
     return 1;
-}
-
-double terrain_cave_floor(double x, double y, double z) {
-    static _Thread_local TerrainCave near[4];
-    int n = terrain_caves_near(x, z, 0.0, near, 4);
-    double best = -1e30;
-    for (int k = 0; k < n; ++k) {
-        double cx, cz;
-        terrain_cave_to_chart(&near[k], x, z, &cx, &cz);
-        best = fmax(best, terrain_cave_floor_local(&near[k], cx, y, cz));
-    }
-    return best;
 }

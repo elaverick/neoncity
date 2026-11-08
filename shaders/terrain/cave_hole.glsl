@@ -108,7 +108,8 @@ float caveHoleSum(int first, int ns, int n, vec3 q, float least, float rough) {
         if (wall >= REACH && wall > least + float(TERRAIN_CAVE_NEAR_M)) continue;   // not near
         if (wall >= REACH && wall - ROUGH > w + BLEND) continue;                     // field_far
         float s = clamp(-fl / float(TERRAIN_CAVE_FLOOR_FADE_M), 0.0, 1.0);
-        float v = wall + rough * s * s * (3.0 - 2.0 * s);
+        float amp = clamp(reach - REACH - float(TERRAIN_CAVE_ROUGH_CLEAR_M), float(TERRAIN_CAVE_ROUGH_LEAST_M), ROUGH) / ROUGH;   // the piece's share (field_add)
+        float v = wall + rough * amp * s * s * (3.0 - 2.0 * s);
         m = min(m, v);
         w = max(caveSmin(w, v, BLEND), m - 0.25 * BLEND);
         float qq = 1.0 - dist / reach;

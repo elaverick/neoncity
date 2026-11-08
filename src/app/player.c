@@ -13,6 +13,13 @@
 #define JUMP_SPEED    3.9f
 #define MOUSE_SENS    0.0022f
 #define BASE_FOV      (72.0f * PI_F / 180.0f)
+#define BODY_TOP      1.8f        /* the body's height, for the caves' ceilings (m) */
+#define RIDE_DROP     1.0f        /* the feet ride the ground's grade down no further than this a step: past it they fall */
+#define CAVE_LOOK_UP  300.0       /* the caves are looked up while the feet are no higher than this over the ground (m) */
+
+/* The caves near the player (terrain_cave_walk.c), looked up where its feet are each step. */
+static TerrainCaveWalk *s_caves;
+static int s_caveNear;
 
 /* ------------------------------------------------------------------------
  * Collision world: block layouts are a pure function of chunk coordinates,
@@ -95,7 +102,8 @@ static float base_ground(double x, double z, double feet) {
         if (in_curb(&L->ground[i], x, z)) return city_ground_y(x, z);
         d = fmin(d, curb_distance(&L->ground[i], x, z));
     }
-    float land = (float)terrain_surface(x, z);
+    double surface = terrain_surface(x, z);
+    float land = (float)(s_caveNear ? terrain_cave_walk_ground(s_caves, x, z, feet, surface) : surface);
     if (d >= CITY_VERGE_W) return land;
     return maxf(land, city_ground_y(x, z) + city_verge_height((float)d));
 }
@@ -252,6 +260,8 @@ static void collide(double *x, double *z, double feet) {
                 }
             }
     }
+    /* the caves' walls and ceilings (none is near a city) */
+    if (s_caveNear) terrain_cave_walk_push(s_caves, x, z, feet, terrain_surface(*x, *z), RADIUS, BODY_TOP);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -288,10 +298,11 @@ static void move_fly(Player *p, const PlayerInput *in, vec3 look, vec3 flatRight
         float target = i == 0 ? t.x : i == 1 ? t.y : t.z;
         p->vel[i] = damp(p->vel[i], target, 6.0f, dt);
     }
+    double prevY = p->feet[1];
     for (int i = 0; i < 3; ++i) p->feet[i] += p->vel[i] * dt;
-    float gh = ground_height(p->feet[0], p->feet[2], p->feet[1]) + 1.0f;
-    /* under the ground only in a cave's air (M10b b2: flying through them; walking is b4's) */
-    if (p->feet[1] < gh && !p->noclip && terrain_cave_floor(p->feet[0], p->feet[1], p->feet[2]) < -1e29) p->feet[1] = gh;
+    /* at least 1 m over what is under the feet: the ground, or under it in a cave's air the cave's floor */
+    float gh = ground_height(p->feet[0], p->feet[2], fmax(prevY, p->feet[1])) + 1.0f;
+    if (p->feet[1] < gh && !p->noclip) p->feet[1] = gh;
     if (p->feet[1] > MAX_ALTITUDE) { p->feet[1] = MAX_ALTITUDE; p->vel[1] = minf(p->vel[1], 0.0f); }
     p->bobWeight = damp(p->bobWeight, 0, 8.0f, dt);
 }
@@ -313,19 +324,27 @@ static void move_walk(Player *p, const PlayerInput *in, vec3 flatFwd, vec3 flatR
 
     double nx = p->feet[0] + p->vel[0] * dt, nz = p->feet[2] + p->vel[2] * dt;
     collide(&nx, &nz, p->feet[1]);
+    if (s_caveNear) {   /* under a cave's roof too low to stand under: no further in, though out is free */
+        double was = terrain_cave_walk_headroom(s_caves, p->feet[0], p->feet[2], p->feet[1], terrain_surface(p->feet[0], p->feet[2]), BODY_TOP);
+        double now = terrain_cave_walk_headroom(s_caves, nx, nz, p->feet[1], terrain_surface(nx, nz), BODY_TOP);
+        if (now < BODY_TOP && now < was) { nx = p->feet[0]; nz = p->feet[2]; }
+    }
     /* Recover velocity actually achieved so sliding along walls feels right. */
     p->vel[0] = (float)((nx - p->feet[0]) / dt);
     p->vel[2] = (float)((nz - p->feet[2]) / dt);
     /* On the ground the feet ride the street's grade; only kerbs and steps snap them (and dip the eye).
      * A floor is level, and the step onto it is a step. */
     float f;
-    if (p->onGround && !floor_height(nx, nz, &f) && !floor_height(p->feet[0], p->feet[2], &f))
-        p->feet[1] += base_ground(nx, nz, p->feet[1]) - base_ground(p->feet[0], p->feet[2], p->feet[1]);
+    if (p->onGround && !floor_height(nx, nz, &f) && !floor_height(p->feet[0], p->feet[2], &f)) {
+        float d = base_ground(nx, nz, p->feet[1]) - base_ground(p->feet[0], p->feet[2], p->feet[1]);
+        if (d > -RIDE_DROP) p->feet[1] += d;   /* over an edge (a mouth's rim, a deck's side): a fall */
+    }
     p->feet[0] = nx; p->feet[2] = nz;
 
     float prevY = (float)p->feet[1];
     p->feet[1] += p->vel[1] * dt;
-    float gh = ground_height(p->feet[0], p->feet[2], p->feet[1]);
+    /* what the feet were over before this step's fall, so a fast one can't pass through a floor */
+    float gh = ground_height(p->feet[0], p->feet[2], fmax(prevY, p->feet[1]));
     bool wasGround = p->onGround;
     if (p->feet[1] <= gh) {
         /* Landing: dip the head proportionally to the impact speed. */
@@ -418,6 +437,8 @@ void player_update(Player *p, const PlayerInput *in, float dt) {
     float ml = sqrtf(mx * mx + mz * mz);
     if (ml > 1.0f) { mx /= ml; mz /= ml; }
 
+    if (!s_caves) s_caves = terrain_cave_walk_new();
+    s_caveNear = p->feet[1] <= terrain_surface(p->feet[0], p->feet[2]) + CAVE_LOOK_UP && terrain_cave_walk_at(s_caves, p->feet[0], p->feet[1], p->feet[2]);
     if (p->fly) move_fly(p, in, look, flatRight, mx, mz, dt);
     else move_walk(p, in, flatFwd, flatRight, mx, mz, ml, dt);
     eye_spring(p, dt);

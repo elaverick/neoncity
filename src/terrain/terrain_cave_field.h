@@ -8,6 +8,12 @@
 #define TERRAIN_CAVE_FLOOR      0.55     /* a passage's floor, radii under its axis */
 #define TERRAIN_CAVE_ROOM_FLOOR 0.45     /* a chamber's, of its half-height */
 #define TERRAIN_CAVE_ROUGH_M    1.6      /* the walls' noise, at most (m) */
+/* A piece's own noise: its radius (a chamber's least semi-axis) less
+ * _CLEAR_M, held between _LEAST_M and TERRAIN_CAVE_ROUGH_M, so the narrowest
+ * passages (TERRAIN_CAVE_R_MIN, 1.5 m) keep room to walk through: a body
+ * 0.32 m round, 1.8 m tall. */
+#define TERRAIN_CAVE_ROUGH_CLEAR_M 1.0
+#define TERRAIN_CAVE_ROUGH_LEAST_M 0.5
 #define TERRAIN_CAVE_BLEND_M    3.0      /* the passages' smooth union: its bulge is a quarter of this */
 #define TERRAIN_CAVE_FLOOR_K    1.0      /* the floor's soft clamp */
 #define TERRAIN_CAVE_FLOOR_FADE_M  2.0   /* the walls' noise fades out over their lowest this */

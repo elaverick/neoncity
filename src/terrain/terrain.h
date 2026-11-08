@@ -301,10 +301,8 @@ void   terrain_cave_to_chart(const TerrainCave *c, double x, double z, double *c
 void   terrain_cave_to_world(const TerrainCave *c, double cx, double cz, double *x, double *z);
 /* The floor under a point of cave c's air (chart x, h, z): the height where
  * going down leaves the air (to a millimetre); -1e30 if the point isn't in
- * its air. terrain_cave_floor asks every cave at world (x, y, z) and returns
- * the highest floor under it, -1e30 in none. */
+ * its air. (Walking asks terrain_cave_walk_ground, below.) */
 double terrain_cave_floor_local(const TerrainCave *c, double x, double h, double z);
-double terrain_cave_floor(double x, double y, double z);
 /* The ground over cave c's chart (x, z), at full detail, as its mouths were
  * placed on it (read in the world's frame, whichever frame asks; m, world Y). */
 double terrain_cave_ground(const TerrainCave *c, double x, double z);
@@ -330,6 +328,40 @@ typedef struct TerrainCaveHole {
 } TerrainCaveHole;
 _Static_assert(TERRAIN_CAVE_HOLE_GRID * TERRAIN_CAVE_HOLE_GRID <= 128, "a hole's cells must fit its mask");
 int    terrain_cave_hole(const TerrainCave *c, int m, TerrainCaveHole *out);
+
+/* --- Caves: walking (src/terrain/terrain_cave_walk.c) --------------------------
+ * What a walker stands on and bumps into where the caves are, in world X/Z
+ * (this thread's frame). The solid is the ground's rock less the caves' air:
+ * a point is in it where it lies under the ground and the caves' field there
+ * is not negative. `ground` below is the heightfield's height at the column
+ * asked (as the walker reads it), returned unchanged where no cave is near.
+ *
+ * A walker keeps the systems near it and the pieces near it in each, so call
+ * terrain_cave_walk_at where it is once a step, before the queries round
+ * there (within a few metres; further off they are still exact, but slow).
+ * It returns whether a cave is near enough to matter. */
+#define TERRAIN_CAVE_STEP_M 0.5    /* the feet find the floor from this over them: a step up */
+typedef struct TerrainCaveWalk TerrainCaveWalk;
+TerrainCaveWalk *terrain_cave_walk_new(void);
+void   terrain_cave_walk_free(TerrainCaveWalk *w);
+int    terrain_cave_walk_at(TerrainCaveWalk *w, double x, double y, double z);
+/* The caves' field at a point (negative in their air; 1e30 where none is near). */
+double terrain_cave_walk_field(const TerrainCaveWalk *w, double x, double y, double z);
+/* Whether a point under the ground lies in a cave's air. */
+int    terrain_cave_walk_in_air(const TerrainCaveWalk *w, double x, double y, double z, double ground);
+/* The top of the solid under feet at (x, z), found from TERRAIN_CAVE_STEP_M
+ * over them: the ground, or where it is cut (a mouth's hole) or the feet
+ * are under it in a cave's air, the cave's floor. Under the ground in the
+ * rock, the ground. */
+double terrain_cave_walk_ground(const TerrainCaveWalk *w, double x, double z, double feet, double ground);
+/* Pushes a body standing on feet at (x, z) (spheres of radius r from over
+ * a step to `top` over the feet) out of the caves' rock, in plan. Returns
+ * how far the rock overhead presses down into it (m; 0 where none). */
+double terrain_cave_walk_push(const TerrainCaveWalk *w, double *x, double *z, double feet, double ground, double r, double top);
+/* The room at (x, z) over what feet coming there would stand on
+ * (terrain_cave_walk_ground), up to `top`: the height over it of the first
+ * rock (top where there is none). */
+double terrain_cave_walk_headroom(const TerrainCaveWalk *w, double x, double z, double feet, double ground, double top);
 
 /* --- Caves' meshes (src/terrain/terrain_cave_mesh.c) -----------------------------
  * A cave is drawn as the surface of its field, meshed by surface nets in

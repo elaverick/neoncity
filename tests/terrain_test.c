@@ -42,6 +42,8 @@
  * terrain_test --caves [km] runs only the caves' tests, over more cells (150 km either way by default);
  * terrain_test --cave-map out.ppm [km [x z]] draws the caves round a place (see cave_map);
  * terrain_test --cave-mesh [km [n]] runs only the caves' meshes' tests, on the first n systems (3) within km (60) of the land's centre;
+ * terrain_test --cave-walk [km [n [dt [x z]]]] walks only through the first n systems (3) within km (60) of the land's centre (or world x, z),
+ *   in steps of dt (1/60 s), and prints a --cam on foot outside each mouth;
  * terrain_test --planet-map out.ppm [px] the whole planet (see planet_map);
  * terrain_test --earth-map out.ppm [px] the Earth's bake (see earth_map);
  * terrain_test --landform-map out.ppm [px] its landforms (see landform_map);
@@ -3053,6 +3055,334 @@ static void test_cave_mesh(Rng *r, double span, int want) {
     free(bricks); free(s->sys); free(s);
 }
 
+/* --- Walking the caves ------------------------------------------------------------
+ * A walker as player.c's (its radius, height and speeds, its step: push out
+ * of the walls, no further under a roof too low, ride the floor's grade, fall
+ * and land) is sent round the whole of a system: in at its first mouth from
+ * the ground outside, along every passage out to its end and back (the
+ * passages' graph walked through, depth first), out at the first mouth, then
+ * through the system and out at the second if it has one. It steers for each
+ * passage's end in plan; held up, it tries sideways. Counted: where it is
+ * stuck (no nearer its mark in 16 s of trying), where its feet are in the
+ * rock, where it falls more than a step in a cave, and whether it is out on
+ * the ground at the end. Then the narrows (cave_narrows). With WALK_DUMP set,
+ * each stuck place's step and the field down the way ahead are printed, and
+ * the first narrows. */
+#define WALK_R     0.32
+#define WALK_TOP   1.8
+#define WALK_SPEED_MS 5.4    /* player.c's sprint */
+static double WALK_DT = 1.0 / 60.0;   /* the step (--cave-walk's dt; player.c's at most 0.05) */
+
+typedef struct Walker { double x, y, z, vy, fallTop; int onGround; } Walker;
+typedef struct WalkStats { int steps, stuck, inRock, falls, out; double fallMax, walked; } WalkStats;
+
+static double walk_g(TerrainCaveWalk *w, double x, double z, double feet) { return terrain_cave_walk_ground(w, x, z, feet, terrain_surface(x, z)); }
+
+/* One step of player.c's move_walk, cut down to the caves. */
+static void walk_step(TerrainCaveWalk *w, Walker *k, double vx, double vz, WalkStats *st) {
+    terrain_cave_walk_at(w, k->x, k->y, k->z);
+    double nx = k->x + vx * WALK_DT, nz = k->z + vz * WALK_DT;
+    terrain_cave_walk_push(w, &nx, &nz, k->y, terrain_surface(nx, nz), WALK_R, WALK_TOP);
+    double was = terrain_cave_walk_headroom(w, k->x, k->z, k->y, terrain_surface(k->x, k->z), WALK_TOP);
+    double now = terrain_cave_walk_headroom(w, nx, nz, k->y, terrain_surface(nx, nz), WALK_TOP);
+    if (now < WALK_TOP && now < was) { nx = k->x; nz = k->z; }
+    if (k->onGround) {
+        double d = walk_g(w, nx, nz, k->y) - walk_g(w, k->x, k->z, k->y);
+        if (d > -1.0) k->y += d;
+    }
+    st->walked += hypot(nx - k->x, nz - k->z);
+    k->x = nx; k->z = nz;
+    double prev = k->y;
+    k->vy -= 9.81 * WALK_DT;
+    k->y += k->vy * WALK_DT;
+    double gh = walk_g(w, k->x, k->z, fmax(prev, k->y));
+    int was_ground = k->onGround;
+    if (k->y <= gh || (was_ground && k->vy <= 0.0 && k->y - gh < 0.35)) {
+        /* a fall in a cave (off a cliff outside a mouth is the ground's own) */
+        if (!was_ground && k->fallTop - gh > TERRAIN_CAVE_STEP_M && gh < terrain_surface(k->x, k->z) - 0.05) {
+            st->falls++;
+            st->fallMax = fmax(st->fallMax, k->fallTop - gh);
+        }
+        k->y = gh; k->vy = 0.0; k->onGround = 1;
+    } else {
+        if (was_ground) k->fallTop = prev;
+        k->onGround = 0;
+    }
+    double T = terrain_surface(k->x, k->z);
+    if (k->y < T - 0.05 && terrain_cave_walk_field(w, k->x, k->y + 0.1, k->z) >= 0.0 && st->inRock++ < 3)
+        printf("    feet in the rock at (%.2f, %.2f, %.2f), %.2f under the ground\n", k->x, k->y, k->z, T - k->y);
+    st->steps++;
+}
+
+/* Walks to (tx, tz) in plan; returns 0 if stuck on the way (no nearer it in
+ * 16 s, trying sideways every 2 s). */
+static int walk_to(TerrainCaveWalk *w, Walker *k, double tx, double tz, WalkStats *st, uint32_t id) {
+    double best = hypot(tx - k->x, tz - k->z);
+    int since = 0, side = 0, tries = 0, beat = (int)(2.0 / WALK_DT + 0.5);   /* 2 s */
+    for (int n = 0; n * WALK_DT < 600.0; ++n) {
+        double dx = tx - k->x, dz = tz - k->z, d = hypot(dx, dz);
+        if (d < 0.6) return 1;
+        dx /= d; dz /= d;
+        double vx = dx, vz = dz;
+        if (side) { vx = side * -dz; vz = side * dx; }   /* held up: sideways a while */
+        walk_step(w, k, vx * WALK_SPEED_MS, vz * WALK_SPEED_MS, st);
+        if (d < best - 0.25) { best = d; since = 0; side = 0; continue; }
+        if (++since % beat == 0) side = side ? 0 : (tries++ & 1 ? 1 : -1);
+        if (since > beat * 8) break;
+    }
+    if (st->stuck++ < 5) {
+        double headroom = terrain_cave_walk_headroom(w, k->x, k->z, k->y, terrain_surface(k->x, k->z), 4.0);
+        printf("    cave %08x: stuck at (%.2f, %.2f, %.2f), %.1f m short of (%.2f, %.2f); room over the feet %.2f m\n", id, k->x, k->y, k->z,
+               hypot(tx - k->x, tz - k->z), tx, tz, headroom);
+        if (getenv("WALK_DUMP")) {
+            double d = hypot(tx - k->x, tz - k->z), ux = (tx - k->x) / d, uz = (tz - k->z) / d;
+            {   /* one step's parts, towards the mark */
+                terrain_cave_walk_at(w, k->x, k->y, k->z);
+                double nx = k->x + ux * WALK_SPEED_MS * WALK_DT, nz = k->z + uz * WALK_SPEED_MS * WALK_DT, px = nx, pz = nz;
+                terrain_cave_walk_push(w, &nx, &nz, k->y, terrain_surface(nx, nz), WALK_R, WALK_TOP);
+                double was = terrain_cave_walk_headroom(w, k->x, k->z, k->y, terrain_surface(k->x, k->z), WALK_TOP);
+                double now = terrain_cave_walk_headroom(w, nx, nz, k->y, terrain_surface(nx, nz), WALK_TOP);
+                printf("      step: pushed %.3f, %.3f; headroom %.2f -> %.2f; ground %.3f -> %.3f (T %.3f -> %.3f); feet %.3f onGround %d vy %.2f\n",
+                       nx - px, nz - pz, was, now, walk_g(w, k->x, k->z, k->y), walk_g(w, nx, nz, k->y), terrain_surface(k->x, k->z), terrain_surface(nx, nz),
+                       k->y, k->onGround, k->vy);
+            }
+            for (double t = -1.0; t <= fmin(d, 8.0); t += 0.25) {
+                double x = k->x + ux * t, z = k->z + uz * t, g = walk_g(w, x, z, k->y + 1.0), T = terrain_surface(x, z);
+                printf("      t %5.2f floor %8.2f (T %8.2f) field", t, g, T);
+                for (double h = 0.0; h <= 2.5; h += 0.25) printf(" %5.2f", terrain_cave_walk_field(w, x, g + h, z));
+                printf("\n");
+            }
+        }
+    }
+    return 0;
+}
+
+/* A system's passages as a graph: their ends, and where an end meets another
+ * passage along it, as nodes (in its chart). */
+#define WALK_NODES (4 * TERRAIN_CAVE_SEGS)
+typedef struct CaveGraph { int n, nedge; double p[WALK_NODES][3]; int edge[4 * TERRAIN_CAVE_SEGS][2]; } CaveGraph;
+
+static int graph_node(CaveGraph *g, const double p[3]) {
+    for (int k = 0; k < g->n; ++k)
+        if (fabs(g->p[k][0] - p[0]) + fabs(g->p[k][1] - p[1]) + fabs(g->p[k][2] - p[2]) < 1e-6) return k;
+    memcpy(g->p[g->n], p, sizeof g->p[0]);
+    return g->n++;
+}
+
+static void cave_graph(const TerrainCave *c, CaveGraph *g) {
+    g->n = g->nedge = 0;
+    for (int s = 0; s < c->nseg; ++s) { graph_node(g, c->seg[s].a); graph_node(g, c->seg[s].b); }
+    int ends = g->n;
+    for (int s = 0; s < c->nseg; ++s) {
+        const TerrainCaveSeg *q = &c->seg[s];
+        /* the nodes along it, in order */
+        int on[WALK_NODES], non = 0;
+        double t[WALK_NODES];
+        double ab[3] = { q->b[0] - q->a[0], q->b[1] - q->a[1], q->b[2] - q->a[2] }, l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+        for (int k = 0; k < ends && l2 > 0.0; ++k) {
+            double ap[3] = { g->p[k][0] - q->a[0], g->p[k][1] - q->a[1], g->p[k][2] - q->a[2] };
+            double u = (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / l2;
+            if (u < -1e-9 || u > 1.0 + 1e-9) continue;
+            double e[3] = { ap[0] - u * ab[0], ap[1] - u * ab[1], ap[2] - u * ab[2] };
+            if (e[0] * e[0] + e[1] * e[1] + e[2] * e[2] > 0.25) continue;
+            int at = non++;
+            while (at > 0 && t[at - 1] > u) { t[at] = t[at - 1]; on[at] = on[at - 1]; at--; }
+            t[at] = u; on[at] = k;
+        }
+        for (int k = 0; k + 1 < non; ++k)
+            if (on[k] != on[k + 1] && g->nedge < 4 * TERRAIN_CAVE_SEGS) { g->edge[g->nedge][0] = on[k]; g->edge[g->nedge][1] = on[k + 1]; g->nedge++; }
+    }
+}
+
+static int graph_nearest(const CaveGraph *g, double x, double z) {
+    int best = 0;
+    for (int k = 1; k < g->n; ++k)
+        if (hypot(g->p[k][0] - x, g->p[k][2] - z) < hypot(g->p[best][0] - x, g->p[best][2] - z)) best = k;
+    return best;
+}
+
+/* The tour from node `at`: every edge out to its end and back, depth first. */
+static void graph_tour(const CaveGraph *g, int at, int *seen, int *route, int *nr, int max) {
+    seen[at] = 1;
+    for (int e = 0; e < g->nedge; ++e) {
+        int to = g->edge[e][0] == at ? g->edge[e][1] : g->edge[e][1] == at ? g->edge[e][0] : -1;
+        if (to < 0 || seen[to]) continue;
+        if (*nr < max) route[(*nr)++] = to;
+        graph_tour(g, to, seen, route, nr, max);
+        if (*nr < max) route[(*nr)++] = at;
+    }
+}
+
+/* The path from node a to node b, by the graph (breadth first): its nodes after a. */
+static int graph_path(const CaveGraph *g, int a, int b, int *out, int max) {
+    int from[WALK_NODES], queue[WALK_NODES], h = 0, t = 0;
+    for (int k = 0; k < g->n; ++k) from[k] = -2;
+    from[a] = -1; queue[t++] = a;
+    while (h < t && from[b] == -2) {
+        int at = queue[h++];
+        for (int e = 0; e < g->nedge; ++e) {
+            int to = g->edge[e][0] == at ? g->edge[e][1] : g->edge[e][1] == at ? g->edge[e][0] : -1;
+            if (to >= 0 && from[to] == -2) { from[to] = at; queue[t++] = to; }
+        }
+    }
+    if (from[b] == -2) return 0;
+    int n = 0;
+    for (int k = b; k != a; k = from[k]) n++;
+    if (n > max) return 0;
+    int k = b;
+    for (int q = n - 1; q >= 0; --q) { out[q] = k; k = from[k]; }
+    return n;
+}
+
+/* The narrows: stations every half metre along each passage's axis (its
+ * entrance's and the rest) where the body standing on the floor under some
+ * point across the passage (within its radius either side) has its spheres
+ * clear of the walls by its radius. Returns how many stations have no such
+ * point; *stations how many there were, *worst_r the least air round the
+ * body found. */
+static int cave_narrows(const TerrainCave *c, int *stations, double *worst_r, uint32_t id) {
+    int bad = 0;
+    *stations = 0;
+    *worst_r = 1e30;
+    for (int s = 0; s < c->nseg; ++s) {
+        const TerrainCaveSeg *q = &c->seg[s];
+        double ab[3] = { q->b[0] - q->a[0], q->b[1] - q->a[1], q->b[2] - q->a[2] }, L = hypot(ab[0], ab[2]);
+        if (L < 1e-6) continue;
+        double ux = ab[0] / L, uz = ab[2] / L;
+        for (double t = 0.25; t < L; t += 0.5) {
+            double f = t / L, ax = q->a[0] + ab[0] * f, ay = q->a[1] + ab[1] * f, az = q->a[2] + ab[2] * f, r = q->ra + (q->rb - q->ra) * f;
+            double best = -1e30;   /* the most air round the body over the points across */
+            for (double o = -r; o <= r; o += 0.25) {
+                double x = ax - uz * o, z = az + ux * o;
+                if (terrain_cave_sdf_local(c, x, ay, z) >= 0.0) continue;
+                double fl = terrain_cave_floor_local(c, x, ay, z), least = 1e30;
+                for (int i = 0; i < 3; ++i) least = fmin(least, -terrain_cave_sdf_local(c, x, fl + 0.75 + (1.48 - 0.75) * i / 2.0, z));
+                best = fmax(best, least);
+            }
+            (*stations)++;
+            *worst_r = fmin(*worst_r, best);
+            if (best < WALK_R) {
+                if (bad < 3 && getenv("WALK_DUMP")) {
+                    double wx, wz;
+                    terrain_cave_to_world(c, ax, az, &wx, &wz);
+                    printf("    cave %08x: passage %d (r %.2f-%.2f) %.1f m along: %.2f m of air round the body at most, world (%.1f, %.1f)\n", id, s, q->ra, q->rb, t, best, wx, wz);
+                }
+                bad++;
+            }
+        }
+    }
+    return bad;
+}
+
+typedef struct WalkJob { const TerrainCave *sys; WalkStats st[64]; int unreached[64], narrows[64], stations[64]; double worst[64]; } WalkJob;
+
+static void walk_one(void *ctx, int q) {
+    WalkJob *j = (WalkJob *)ctx;
+    const TerrainCave *c = &j->sys[q];
+    WalkStats *st = &j->st[q];
+    memset(st, 0, sizeof *st);
+    CaveGraph *g = (CaveGraph *)malloc(sizeof *g);
+    cave_graph(c, g);
+    TerrainCaveWalk *w = terrain_cave_walk_new();
+    int seen[WALK_NODES] = { 0 }, route[4 * WALK_NODES], nr = 0;
+    /* out on the ground before the first mouth, and in */
+    const TerrainCaveMouth *m0 = &c->mouth[0];
+    double ox, oz;
+    terrain_cave_to_world(c, m0->p[0] - 6.0 * m0->dir[0], m0->p[2] - 6.0 * m0->dir[1], &ox, &oz);
+    Walker k = { ox, terrain_surface(ox, oz), oz, 0.0, 0.0, 1 };
+    int root = graph_nearest(g, m0->p[0], m0->p[2]);
+    route[nr++] = root;
+    graph_tour(g, root, seen, route, &nr, 4 * WALK_NODES - 4);
+    for (int n = 0; n < g->n; ++n) j->unreached[q] += !seen[n];
+    for (int r = 0; r < nr; ++r) {
+        double x, z;
+        terrain_cave_to_world(c, g->p[route[r]][0], g->p[route[r]][2], &x, &z);
+        if (!walk_to(w, &k, x, z, st, c->id)) {   /* stuck: on from the next mark */
+            terrain_cave_walk_at(w, x, g->p[route[r]][1], z);
+            k.x = x; k.z = z; k.y = walk_g(w, x, z, g->p[route[r]][1]); k.vy = 0.0; k.onGround = 1;
+        }
+    }
+    /* out at each mouth */
+    for (int m = 0; m < c->nmouth; ++m) {
+        const TerrainCaveMouth *mo = &c->mouth[m];
+        int at = graph_nearest(g, mo->p[0], mo->p[2]), path[WALK_NODES], np = 0;
+        if (m > 0) {   /* from the first mouth through the system to this one */
+            double ix, iz;
+            terrain_cave_to_world(c, g->p[root][0], g->p[root][2], &ix, &iz);
+            walk_to(w, &k, ix, iz, st, c->id);
+            np = graph_path(g, root, at, path, WALK_NODES);
+        }
+        for (int r = 0; r < np; ++r) {
+            double x, z;
+            terrain_cave_to_world(c, g->p[path[r]][0], g->p[path[r]][2], &x, &z);
+            walk_to(w, &k, x, z, st, c->id);
+        }
+        double mx, mz;
+        terrain_cave_to_world(c, mo->p[0], mo->p[2], &mx, &mz);
+        walk_to(w, &k, mx, mz, st, c->id);
+        terrain_cave_to_world(c, mo->p[0] - 6.0 * mo->dir[0], mo->p[2] - 6.0 * mo->dir[1], &ox, &oz);
+        walk_to(w, &k, ox, oz, st, c->id);
+        double T = terrain_surface(k.x, k.z);
+        if (fabs(k.y - T) < 0.05 && k.onGround) st->out++;
+        else printf("    cave %08x: not out on the ground at mouth %d: feet %.2f, ground %.2f\n", c->id, m, k.y, T);
+    }
+    terrain_cave_walk_free(w);
+    free(g);
+    j->narrows[q] = cave_narrows(c, &j->stations[q], &j->worst[q], c->id);
+}
+
+/* 5e. Walking the caves: the first `want` systems of a survey round the
+ * land's centre, or world (at[0], at[1]) (`span` metres either way), each
+ * walked through (see above). Prints, for each mouth, a --cam on foot on the
+ * ground outside it looking in (the walker's start). */
+static void test_cave_walk(double span, int want, double dt, const double *at) {
+    WALK_DT = dt;
+    DVec2 lc = land_centre();
+    if (at) { lc.x = at[0]; lc.z = at[1]; }
+    CaveSurvey *s = (CaveSurvey *)calloc(1, sizeof(CaveSurvey));
+    cave_survey(s, lc.x, lc.z, span);
+    WalkJob *j = (WalkJob *)calloc(1, sizeof(WalkJob));
+    TerrainCave *sys = (TerrainCave *)malloc(sizeof(TerrainCave) * 64);
+    int n = 0;
+    if (want > 64) want = 64;
+    for (int k = 0; k < s->n && n < want; ++k)
+        if (s->has[k]) sys[n++] = s->sys[k];
+    j->sys = sys;
+    clock_t t0 = clock();
+    thread_parallel_for(n, cpu_count(), walk_one, j);
+    int stuck = 0, rock = 0, falls = 0, out = 0, mouths = 0, unreached = 0, narrows = 0;
+    double fallMax = 0.0, walked = 0.0;
+    long steps = 0;
+    for (int q = 0; q < n; ++q) {
+        const WalkStats *st = &j->st[q];
+        printf("cave %08x: %.0f m of passage, walked %.0f m in %.0f s: %d stuck, %d in the rock, %d falls (%.1f m at most), out at %d of %d mouths%s;"
+               " %d of %d stations too narrow (least air round the body %.2f m)\n",
+               sys[q].id, sys[q].length, st->walked, st->steps * WALK_DT, st->stuck, st->inRock, st->falls, st->fallMax, st->out, sys[q].nmouth,
+               j->unreached[q] ? " (some passages not reached by the graph)" : "", j->narrows[q], j->stations[q], j->worst[q]);
+        for (int m = 0; m < sys[q].nmouth; ++m) {
+            const TerrainCaveMouth *mo = &sys[q].mouth[m];
+            double ox, oz, mx, mz;
+            terrain_cave_to_world(&sys[q], mo->p[0] - 6.0 * mo->dir[0], mo->p[2] - 6.0 * mo->dir[1], &ox, &oz);
+            terrain_cave_to_world(&sys[q], mo->p[0], mo->p[2], &mx, &mz);
+            printf("  mouth %d (%s): walk in from --cam %.1f %.1f %.1f 0\n", m, mo->kind == TERRAIN_CAVE_ADIT ? "adit" : "shaft", ox, oz,
+                   atan2(mx - ox, -(mz - oz)) * 180.0 / 3.14159265358979323846);
+        }
+        narrows += j->narrows[q];
+        stuck += st->stuck; rock += st->inRock; falls += st->falls; out += st->out; mouths += sys[q].nmouth; unreached += j->unreached[q];
+        fallMax = fmax(fallMax, st->fallMax); walked += st->walked; steps += st->steps;
+    }
+    printf("walked %d caves, %.1f km in %.0f s of walking (%.1f s to run): %d stuck, %d steps in the rock, %d falls (%.1f m at most), out at %d of %d mouths\n",
+           n, walked / 1000.0, steps * WALK_DT, (double)(clock() - t0) / CLOCKS_PER_SEC, stuck, rock, falls, fallMax, out, mouths);
+    CHECK(n > 0, "no cave to walk within %.0f km", span / 1000.0);
+    CHECK(unreached == 0, "%d of the caves' passages' ends not joined to their mouths", unreached);
+    CHECK(narrows == 0, "%d stations of the caves' passages too narrow for the body", narrows);
+    CHECK(stuck == 0, "the walker stuck %d times in the caves", stuck);
+    CHECK(rock == 0, "the walker's feet in the rock for %d steps", rock);
+    CHECK(falls == 0, "the walker fell %d times (%.1f m at most) in the caves", falls, fallMax);
+    CHECK(out == mouths, "the walker out at only %d of %d mouths", out, mouths);
+    free(sys); free(j); free(s->sys); free(s);
+}
+
 /* terrain_test --cave-map out.ppm [km [x z]]: the caves round the world's
  * (x, z), or without one round the first system found out from the
  * megacity, `km` across (1.5 by default), 800 pixels square: the ground lit
@@ -3209,6 +3539,9 @@ int main(int argc, char **argv) {
         return cave_map(argv[2], argc > 3 ? atof(argv[3]) : 1.5, argc > 5 ? at : NULL);
     }
     if (argc > 1 && strcmp(argv[1], "--caves") == 0) { test_caves(&r, argc > 2 ? atof(argv[2]) * 1000.0 : 150000.0); return g_failures != 0; }
+    if (argc > 1 && strcmp(argv[1], "--cave-walk") == 0) { double at[2] = { argc > 6 ? atof(argv[5]) : 0.0, argc > 6 ? atof(argv[6]) : 0.0 };
+        test_cave_walk(argc > 2 ? atof(argv[2]) * 1000.0 : 60000.0, argc > 3 ? atoi(argv[3]) : 3, argc > 4 ? atof(argv[4]) : 1.0 / 60.0, argc > 6 ? at : NULL);
+        return g_failures != 0; }
     if (argc > 1 && strcmp(argv[1], "--cave-mesh") == 0) { test_cave_mesh(&r, argc > 2 ? atof(argv[2]) * 1000.0 : 60000.0, argc > 3 ? atoi(argv[3]) : 3); return g_failures != 0; }
     if (argc > 2 && strcmp(argv[1], "--planet-map") == 0) return planet_map(argv[2], argc > 3 ? atoi(argv[3]) : 256);
     if (argc > 2 && strcmp(argv[1], "--earth-map") == 0) return earth_map(argv[2], argc > 3 ? atoi(argv[3]) : 1440);
@@ -3399,6 +3732,7 @@ int main(int argc, char **argv) {
     test_landforms(&r);
     test_caves(&r, 60000.0);
     test_cave_mesh(&r, 60000.0, 1);
+    test_cave_walk(60000.0, 1, 1.0 / 60.0, NULL);
     test_cover(&r);
     test_lod_heights();
     test_clipmap(&r);
