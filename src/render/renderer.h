@@ -5,6 +5,17 @@
 #include "clouds.h"
 #include "doors.h"
 #include "grass_species.h"
+#include "terrain_clip.h"
+
+/* A clipmap level as the terrain draws it this frame, for the shaders that
+ * read its heights (shaders/terrain/dir_shadow.glsl): terrain.vert's push
+ * constant (TerrainPush) in vec4s. */
+typedef struct TerrainLevelGPU {
+    float   a[4];   /* anchor x, z (the coarsest window's corner, camera-relative); morph x, z */
+    float   b[4];   /* offset x, z (this window's corner less the anchor); spacing (m); fade */
+    int32_t c[4];   /* the window's corner's storage slot x, z; the parent's slot x, z */
+    int32_t d[4];   /* level, top, 0, 0 */
+} TerrainLevelGPU;
 
 /* Per-frame globals; layout must match `Frame` in shaders/common.glsl (std140). */
 typedef struct FrameUBO {
@@ -34,6 +45,19 @@ typedef struct FrameUBO {
     float   landGrid[4];   /* the land's lamps (src/render/chunks.c: build_land_records): camera-relative x, z of the grid's corner; unused, unused */
     int32_t landCells[LAND_GRID * LAND_GRID];   /* each cell's chunk record (-1: none), rows of z, four to a vector */
     float   landRects[LAND_GRID * LAND_GRID][4];   /* camera-relative x0, z0, x1, z1 its lights reach (x0 > x1: none) */
+    /* The directional light (the moon, for now): towards it, in the camera's
+     * local frame; DIR_SHADOW_* (shaders/terrain/dir_shadow.glsl): its shadows
+     * marched through the clipmap, traced in the TLAS near the camera (renderer.c) */
+    float   dirLight[4];
+    /* The clipmap drawn (terrain_gpu.c: terrain_gpu_frame_levels): the finest
+     * level drawn (TERRAIN_CLIP_LEVELS: none), the highest ground in it (world
+     * Y), the coarsest level in the shadows' TLAS (-1: none), unused */
+    float   terrainInfo[4];
+    TerrainLevelGPU terrainLevel[TERRAIN_CLIP_LEVELS];   /* from the finest drawn on */
+    /* each drawn level's storage blocks' highest ground (world Y), over the
+     * block and the eight round it (so over every triangle touching it), rows
+     * of z, four to a vector: the march skips a block the ray passes over */
+    float   terrainBlocks[TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_NB * TERRAIN_CLIP_NB / 4][4];
 } FrameUBO;
 
 typedef struct Renderer Renderer;

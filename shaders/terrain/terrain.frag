@@ -31,7 +31,11 @@
  * own (city/lighting.glsl cityLights), out to LAND_LIGHTS_FAR. With
  * RT_SHADOWS (terrain_rt.frag) their shadows: the tiles near the lamps are in
  * the depth prepass (terrain_pre.frag), so the slots at a pixel are the
- * land's there; the lights they don't hold are traced here. */
+ * land's there; the lights they don't hold are traced here.
+ *
+ * Under a clear sky the moon's shadows (M11c: terrain/dir_shadow.glsl): the
+ * ray through the TLAS near the camera with RT_SHADOWS, beyond it (and in
+ * the other builds) the march through the clipmap's heights. */
 
 layout(location = 0) in vec3  vRel;
 layout(location = 1) in vec3  vNrm;
@@ -60,6 +64,9 @@ const float SHEEN = 3.5;
 const float PI = 3.14159265;
 #include "city/lighting.glsl"
 #include "terrain/land_lights.glsl"
+#ifdef RT_SHADOWS
+#define DIR_SHADOW_TRACE 1   // the moon's ray through the TLAS city/lighting.glsl binds
+#endif
 
 // The land's own roughness for the lamps' highlights where it is dry, and its
 // reflectance square on; wet, its film's or its puddles' (wetSurface).
@@ -105,6 +112,10 @@ bool landLights(vec3 n, vec3 V, float rough, float f0, float fwd, float tol, out
 }
 #endif
 
+// The clipmap's samples (terrain.vert's), for the moon's shadows' march
+layout(std430, set = 0, binding = 1) readonly buffer Samples { uint samples[]; };
+#include "terrain/dir_shadow.glsl"
+
 void main() {
     vec3 n = normalize(vNrm), nLand = n;
 #ifdef CAVE_CUT
@@ -117,6 +128,8 @@ void main() {
     // width past the built edge; that only hazes the land as the city.
     float city = vCoverB.w;
     LandPoint l = landPoint(vRel);
+    // the moon's shadow, where the sky is clear enough for it to cast one (ground.glsl landMoon)
+    if (l.sky.cover < 0.99) gMoonVis = dirShadow(vFlat, nLand, frame.dirLight.xyz, length(vRel));
     RoadHit road;
     bool onRoad = roadNear(vRel.xz, road);
     // the pixel's width across and along the road, in uniform control flow
@@ -125,10 +138,13 @@ void main() {
     // the forward distance the shadow slots are matched by (city/lighting.glsl shadowsBegin)
     float fwd = dot(vRel, frame.camFwd.xyz), tol = fwidth(fwd) * 1.5 + fwd * 0.002 + 0.01;
     vec3 V = -normalize(vRel);
-    if ((uint(frame.shadow.y) & SHADOWS_DEBUG) != 0u) {   // F10: only the light the city's lamps throw on it
+    if ((uint(frame.shadow.y) & SHADOWS_DEBUG) != 0u) {   // F10: only the light the city's lamps and the moon throw on it, shadowed
         vec3 d, sp;
         landLights(n, V, 1.0, 0.0, fwd, tol, d, sp);
-        outColor = vec4(d * 0.3 + vec3(0.004), 1.0);
+        // (the moonlight its shadow takes, in red)
+        float nl = max(dot(n, MOON_DIR), 0.0) * (1.0 - 0.9 * l.sky.cover), vis = landMoon(l.sky);
+        vec3 moon = MOON_LIGHT * nl * vis + vec3(0.25, 0.0, 0.0) * nl * (1.0 - vis);
+        outColor = vec4((d + moon) * 0.3 + vec3(0.004), 1.0);
         outRefl = vec4(0.0);
         return;
     }

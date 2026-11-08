@@ -89,7 +89,7 @@ layout(location = 9) flat out uint vChunk;   // a city blade's draw chunk; a lan
 layout(location = 10) flat out vec3 vRootPx; // the root's pixel (xy) and forward distance (z)
 layout(location = 11) flat out vec4 vFwy;    // the root by its patch's freeway: off, s, across (grass/patch_light.glsl)
 layout(location = 12) flat out vec4 vLight;  // x the blade's own light's share (GRASS_THIN_PX), y the freeway's half width (0: none),
-                                             // z how sheltered from the rain a city root is
+                                             // z how sheltered from the rain a city root is, w how much of the moon reaches a land root
 
 layout(set = 0, binding = 4) uniform sampler2D shelterMap;   // as city.vert's
 layout(std430, set = 1, binding = 2) readonly buffer PatchLights { uvec4 patchLight[]; };   // prepare.comp's
@@ -263,12 +263,13 @@ void main() {
     vRootPx = vec3(floor((ndc * 0.5 + 0.5) * frame.screen.xy), dot(b.p, frame.camFwd.xyz));
     // its light (GR7): its own terms' share by its size on screen; on the land
     // the freeway by its root's patch; in the city, what stands over it from the rain
-    vLight = vec4(smoothstep(GRASS_THIN_PX.x, GRASS_THIN_PX.y, hpx), 0.0, 0.0, 0.0);
+    vLight = vec4(smoothstep(GRASS_THIN_PX.x, GRASS_THIN_PX.y, hpx), 0.0, 0.0, 1.0);
     vFwy = vec4(1e9, 0.0, 1.0, 0.0);
     if (city) {
         float e;
         vLight.z = smoothstep(0.25, 0.6, shelterTop(b.p.xz, e) - b.p.y) * (1.0 - smoothstep(0.85, 1.0, e));
     } else {
+        vLight.w = uintBitsToFloat(instChunk[slot]);   // the moon's shadow at the root (prepare.comp)
         const float S = float(GRASS_PATCH_M);
         ivec2 rp = ivec2(floor((frame.grass.xy + b.p.xz) / S));
         ivec2 at = clamp(rp + ivec2(GRASS_PATCH_GRID / 2), ivec2(0), ivec2(GRASS_PATCH_GRID - 1));

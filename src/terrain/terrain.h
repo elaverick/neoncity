@@ -811,8 +811,7 @@ typedef struct TerrainSample { float h, hc, nx, nz, urban; uint32_t cover[2]; } 
  * |h - hc|: how far the surface moves there if the level is dropped for its
  * parent. Both surfaces are linear over each of the level's triangles (each
  * lies in one of the parent's), so between samples the move is no larger. */
-#define TERRAIN_CLIP_BLOCK 8
-#define TERRAIN_CLIP_NB    (TERRAIN_CLIP_N / TERRAIN_CLIP_BLOCK)
+/* (TERRAIN_CLIP_BLOCK and TERRAIN_CLIP_NB are in terrain_clip.h, for the shaders) */
 typedef struct TerrainBlock { float lo, hi, err; } TerrainBlock;
 
 /* A rectangle of storage slots, [x0, x1) x [z0, z1); never wraps. */

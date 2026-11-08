@@ -141,6 +141,7 @@ struct Renderer {
      * alternate between frames: the denoiser blends in the previous frame's. */
     Rt          *rt;
     bool         shadowsOn, shadowDebug, historyValid, shadowTargetsFresh, havePrev;
+    bool         dirShadowsOff;   /* NEONCITY_MOON_SHADOWS=0: the moon casts no shadows (terrain/dir_shadow.glsl) */
     int          grassDebug;     /* the --grass-debug view (GRASS_DEBUG_*) */
     Image        gbufMsaa, gbuf, sIds[MAX_FRAMES], sRaw, sVis[MAX_FRAMES];
     VkDescriptorSetLayout shadowLayout;
@@ -243,6 +244,12 @@ void terrain_rt_update(Renderer *r, TerrainRt *tr, VkCommandBuffer cmd, int slot
 void terrain_rt_stats(Renderer *r, TerrainRt *tr, const struct TerrainClipmap *clip, bool current, char *buf, size_t n);
 VkDescriptorSet terrain_gpu_set(Renderer *r, int slot);
 int             terrain_gpu_levels(Renderer *r, const TerrainPush **push);
+/* This frame's drawn levels for the frame's uniforms (FrameUBO terrainLevel,
+ * terrainInfo), after terrain_gpu_update. */
+void            terrain_gpu_frame_levels(Renderer *r, TerrainLevelGPU level[TERRAIN_CLIP_LEVELS], float info[4],
+                                         float blocks[TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_NB * TERRAIN_CLIP_NB]);
+/* The coarsest level terrain_rt_update put in this frame's TLAS, -1 for none. */
+int             terrain_rt_reach(const TerrainRt *tr);
 
 /* grass_gpu.c. Prepare (after the terrain's and the roads' updates, outside
  * any rendering) runs the compute passes that choose and write this frame's

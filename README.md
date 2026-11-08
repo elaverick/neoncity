@@ -52,7 +52,7 @@ procedural look.
 | F | Toggle fly mode (debug; Space/Ctrl to rise/descend, Shift for speed) |
 | F8 | Toggle the baked interior impostors on office floors (`--impostors`) |
 | F9 | Toggle ray-traced shadows |
-| F10 | Shadow debug view: only the light the city's lamps, shopfronts and lobbies throw on each surface |
+| F10 | Shadow debug view: only the light the city's lamps, shopfronts and lobbies throw on each surface (on the land also the moon's, the light its shadows take in red) |
 | F11 | Fullscreen |
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |

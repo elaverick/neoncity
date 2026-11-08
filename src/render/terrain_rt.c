@@ -70,6 +70,7 @@ struct TerrainRt {
     uint32_t         nidx;
     RtLevel          lv[LEVELS];
     int              first, last, top;   /* the levels in this frame's TLAS (first > last: none); the RT_RANGE level */
+    int              reach;              /* the coarsest level added to this frame's TLAS, -1 for none */
     int              refits, builds;     /* the last frame's */
     long             totalRefits, totalBuilds, missed;
     int              off;                /* NEONCITY_TERRAIN_RT=0 */
@@ -84,6 +85,7 @@ TerrainRt *terrain_rt_create(Renderer *r, VkBuffer samples, VkDeviceSize sampleB
     tr->first = 1;
     tr->last = 0;
     tr->top = LEVELS - 1;
+    tr->reach = -1;
     const char *env = getenv("NEONCITY_TERRAIN_RT");
     tr->off = env && atoi(env) == 0;
     if (tr->off) printf("Terrain in the ray-traced shadows: off (NEONCITY_TERRAIN_RT=0)\n");
@@ -136,6 +138,7 @@ void terrain_rt_update(Renderer *r, TerrainRt *tr, VkCommandBuffer cmd, int slot
                        const TerrainPush *push, int drawn, const double cam[3], const int *dirty) {
     if (!tr) return;
     tr->refits = tr->builds = 0;
+    tr->reach = -1;
     int first = drawn, last = drawn > tr->top ? drawn : tr->top;
     if (!r->shadowsOn || tr->off || first >= LEVELS) { first = 1; last = 0; }
     if (last >= LEVELS) last = LEVELS - 1;
@@ -221,6 +224,7 @@ void terrain_rt_update(Renderer *r, TerrainRt *tr, VkCommandBuffer cmd, int slot
     for (int l = first; l <= last; ++l) {
         const RtLevel *L = &tr->lv[l];
         if (!L->built) continue;
+        tr->reach = l;
         const TerrainClipLevel *lv = &shown->level[l];
         float o[3] = { (float)((double)lv->origin[0] * lv->spacing - cam[0]), -(float)cam[1],
                        (float)((double)lv->origin[1] * lv->spacing - cam[2]) };
@@ -301,3 +305,5 @@ void terrain_rt_stats(Renderer *r, TerrainRt *tr, const TerrainClipmap *clip, bo
     if (!current) { snprintf(buf + used, n - used, "; check skipped (an update not yet taken)"); return; }
     check_levels(r, tr, clip, buf + used, n - used);
 }
+
+int terrain_rt_reach(const TerrainRt *tr) { return tr ? tr->reach : -1; }

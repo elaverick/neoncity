@@ -99,6 +99,11 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
     r->chunks = chunks;
     r->rt = chunks_rt(chunks);
     r->shadowsOn = r->rt != NULL;
+    {   /* the moon's shadows on the land (shaders/terrain/dir_shadow.glsl), to compare captures and costs */
+        const char *env = getenv("NEONCITY_MOON_SHADOWS");
+        r->dirShadowsOff = env && atoi(env) == 0;
+        if (r->dirShadowsOff) printf("The moon's shadows: off (NEONCITY_MOON_SHADOWS=0)\n");
+    }
 
     VkCommandPoolCreateInfo cp = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     cp.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -279,6 +284,12 @@ static void frame_uniforms(Renderer *r, int slot, const FrameUBO *uboIn, const d
     ubo->shadow[1] = (float)((shadows ? 1 : 0) | (r->shadowDebug ? 2 : 0));   /* SHADOWS_ON | SHADOWS_DEBUG (common.glsl) */
     ubo->shadow[2] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.375f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
     ubo->shadow[3] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.125f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
+    /* The directional light is the moon (src/app/main.c moon_dir): its shadows
+     * marched through the clipmap unless turned off, and traced near the camera
+     * with the ray-traced shadows (DIR_SHADOW_TLAS, once the terrain's TLAS
+     * levels are known: after terrain_gpu_update). */
+    memcpy(ubo->dirLight, ubo->moon, 3 * sizeof(float));
+    ubo->dirLight[3] = r->dirShadowsOff ? 0.0f : 1.0f;   /* DIR_SHADOW_MARCH */
     if (!r->havePrev) { r->prevViewProj = ubo->viewProj; memcpy(r->prevCam, cam, sizeof(r->prevCam)); r->havePrev = true; }
     mat4 moved = mat4_identity();
     for (int k = 0; k < 3; ++k) moved.m[12 + k] = (float)(cam[k] - r->prevCam[k]);
@@ -394,6 +405,11 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     cave_gpu_update(r, cmd, slot, cam, &ubo.viewProj);   /* first: the terrain's draws read its holes */
     terrain_gpu_update(r, cmd, slot, cam, &ubo.viewProj);   /* adds the terrain's instances */
     if (r->rt) rt_build_tlas(r->rt, cmd, slot);
+    {   /* the clipmap drawn, for the moon's shadows; and whether they can trace the TLAS (the uniforms are still the CPU's) */
+        FrameUBO *u = (FrameUBO *)r->ubo[slot].mapped;
+        terrain_gpu_frame_levels(r, u->terrainLevel, u->terrainInfo, &u->terrainBlocks[0][0]);
+        if (u->dirLight[3] != 0.0f && shadows && u->terrainInfo[2] >= 0.0f) u->dirLight[3] = 3.0f;   /* | DIR_SHADOW_TLAS */
+    }
     cave_gpu_levels(r, slot);
     road_gpu_update(r, slot, cam);
     planet_gpu_update(r, cmd, slot, cam, &ubo.viewProj);

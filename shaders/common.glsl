@@ -16,6 +16,8 @@
 #include "doors.h"
 // GRASS_SPECIES and the grass's rules' constants: shared with C
 #include "grass_rules.h"
+// TERRAIN_CLIP_LEVELS and the clipmap's shape: shared with C
+#include "terrain_clip.h"
 
 /* Must match src/core/common.h */
 const float CHUNK_SIZE      = 110.0;
@@ -72,6 +74,14 @@ struct GrassSpecies {
     vec4  light;  // x root shade, y transmission, z dry roughness (grass/blade.frag)
 };
 
+// A clipmap level as the terrain draws it this frame: terrain.vert's Level (TerrainPush), in vec4s.
+struct TerrainLevel {
+    vec4  a;   // xy anchor (the coarsest window's corner, camera-relative), zw morph (the same, relative to the update's camera)
+    vec4  b;   // xy offset (this window's corner less the anchor), z spacing (m), w fade (the least morph)
+    ivec4 c;   // xy the window's corner's storage slot, zw the parent's slot of the parent sample there
+    ivec4 d;   // x level, y top (no parent)
+};
+
 layout(set = 0, binding = 0) uniform Frame {
     mat4 viewProj;
     mat4 rayBasis;   // col0 right*tanX, col1 up*tanY, col2 forward
@@ -99,6 +109,10 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 landGrid;   // xy camera-relative x, z of the land's lamps' grid's corner (terrain/land_lights.glsl; src/render/chunks.c: build_land_records)
     ivec4 landCells[LAND_GRID * LAND_GRID / 4];   // each cell's chunk record (-1: none), rows of z, four to a vector
     vec4 landRects[LAND_GRID * LAND_GRID];        // camera-relative x0, z0, x1, z1 the cell's chunk's lights reach
+    vec4 dirLight;      // xyz towards the directional light (the moon, for now), w DIR_SHADOW_* (terrain/dir_shadow.glsl)
+    vec4 terrainInfo;   // x the finest clipmap level drawn (TERRAIN_CLIP_LEVELS: none), y the highest ground in it (world Y), z the coarsest level in the TLAS (-1: none)
+    TerrainLevel terrainLevel[TERRAIN_CLIP_LEVELS];   // from the finest drawn on (src/render/terrain_gpu.c: terrain_gpu_frame_levels)
+    vec4 terrainBlocks[TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_NB * TERRAIN_CLIP_NB / 4];   // each level's storage blocks' highest ground, with the eight round each (world Y), rows of z, four to a vector
 } frame;
 
 /* The scene set's buffers (src/render/renderer_pipelines.c: create_layouts) are set 0, but for the
@@ -186,6 +200,7 @@ const uint  SHADOWS_ON = 1u, SHADOWS_DEBUG = 2u;         // frame.shadow.y (rend
 bool shadowsOn() { return (uint(frame.shadow.y) & SHADOWS_ON) != 0u; }
 const int   SHADOW_SLOTS = 8;                            // lights a pixel keeps soft shadows for
 const uint  RT_MASK_LITTER = 0x04u;                      // src/render/rt.h
+const uint  RT_MASK_TERRAIN = 0x08u;                     // src/render/rt.h: the clipmap's near levels
 const float LIGHT_NEGLIGIBLE = 0.002;                    // a light this faint shows no shadow worth tracing
 // Prepass G-buffer (prepass.frag): x the normal (octEncode), y the draw chunk (PG_CHUNK; MAX_DRAW_CHUNKS
 // in src/core/common.h) | these flags; for a lobby surface (PG_LOBBY), bits 12..19 hold its ceiling's

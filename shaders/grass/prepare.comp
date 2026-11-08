@@ -14,6 +14,8 @@
 #define CAVE_HOLES_SET 0
 #define CAVE_HOLES_BINDING 17
 #include "terrain/cave_hole.glsl"
+// the moon's shadow at each root (the march through the clipmap's samples, surface.glsl's)
+#include "terrain/dir_shadow.glsl"
 
 /* The grass's GPU path (src/render/grass_gpu.c), the land's grass: one
  * workgroup per patch of the GRASS_PATCH_GRID square round the camera's.
@@ -230,6 +232,11 @@ void main() {
             uint at = grassReserve(tier, nb);
             if (tier >= 0) {
                 uint room = gf.cap[tier];
+                // the moon's shadow at the root, as the ground there takes it (terrain.frag), in the word
+                // beside each of its blades (a city blade's chunk: grass/instance.glsl)
+                vec2 rr = corner + root.at.p;
+                float moon = 1.0;
+                if (cloudCover(rr, cityEdge(rr)) < 0.99) moon = dirShadow(vec3(rr.x, gg.h, rr.y), gg.n, frame.dirLight.xyz, length(rr));
                 for (uint bi = 0u; bi < nb && at + bi < room; ++bi) {
                     GrassBlade g = grassBlade(root, int(bi));
                     // narrowed away, or widened for those gone (grass/lod.glsl), and by the species' end
@@ -241,6 +248,7 @@ void main() {
                     grassPack(planetBend(corner + g.p, hb), g.height, gg.n, g.facing, g.leanDir, width, g.lean, g.bend, g.phase,
                               g.tint, root.clump.stiffness, k, tier, lod.morph, o);
                     inst[gf.base[tier] + at + bi] = o;
+                    instChunk[gf.base[tier] + at + bi] = floatBitsToUint(moon);
                 }
             }
             barrier();   // every invocation has read its entry and qn

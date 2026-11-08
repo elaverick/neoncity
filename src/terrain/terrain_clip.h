@@ -9,5 +9,7 @@
 #define TERRAIN_CLIP_W        (TERRAIN_CLIP_N - 1)    /* window side, samples; W - 1 even, (W - 1) / 2 odd */
 #define TERRAIN_CLIP_SPACING0 1.0                     /* level 0 sample spacing (m); level 9 spans 65 km */
 #define TERRAIN_CLIP_MORPH    12                      /* width of the blend into the parent, samples */
+#define TERRAIN_CLIP_BLOCK    8                       /* a storage block's side, slots (terrain.h TerrainBlock) */
+#define TERRAIN_CLIP_NB       (TERRAIN_CLIP_N / TERRAIN_CLIP_BLOCK)
 
 #endif

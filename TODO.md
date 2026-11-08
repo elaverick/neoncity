@@ -202,7 +202,21 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   surface; `NEONCITY_TERRAIN_RT=0` leaves them out for an A/B. M11b is done: the land beside the city takes the
   lamps, with their traced shadows (`shaders/terrain/land_lights.glsl`, `terrain_pre.frag`; the chunks' grid in the
   frame's uniforms, `src/render/chunks.c: build_land_records`), and the land past the built edge is drawn as land
-  (`plan_city_ground`, the cover's last byte). Next: M11c (the moon's shadows), M11d (the caves). Left over from M11b:
+  (`plan_city_ground`, the cover's last byte). M11c is done: the moon's shadows on the land, its roads and its grass
+  (`shaders/terrain/dir_shadow.glsl`: a ray through the TLAS near the camera, then a march through the clipmap's
+  heights that skips the blocks it clears; `frame.dirLight`, so a sun is another direction through it);
+  `NEONCITY_MOON_SHADOWS=0` leaves them out for an A/B. Next: M11d (the caves). Left over from M11c:
+  - **Rarely seen.** The moon stands 25 degrees up (`MOON_ENU`, src/app/main.c), and little of the land is steeper
+    than that, so its shadows fall in canyons, below cliffs and in ravines; on rolling land only the slopes facing
+    away are dark, as they were. A lower moon (about 6-10 degrees) would throw long shadows behind every ridge: a
+    look call, as it lengthens the sky's and the clouds' moonlight too.
+  - **Cost** (RTX 4080 SUPER, 1600 x 900): in the countryside the terrain pass +0.12-0.17 ms and the grass's
+    prepare +0.09 ms (one march per root); nothing under the cities' cloud, where the moon casts none.
+  - **The march** reads each level's own heights, not blended into the parent near its window's edge (a quarter
+    sample's height let off covers it), and nothing beyond the clipmap casts: its shadow fades out from 70% to 90%
+    of the coarsest window's half-width. The grass marches from its root (no TLAS ray in the compute pass): near
+    the camera its shadow's edge can differ from the ground's by a sample or so.
+  Left over from M11b:
   - **Faint at the megacity's edges.** The lamps nearest the land stand on the perimeter boulevard's far sidewalk;
     its shoulder and the grass verge (the city's) lie between them and the land, so the land is 15-30 m from them,
     where a lamp's spill is a few per cent of its pool: the F10 view shows it, the scene barely. It shows where land

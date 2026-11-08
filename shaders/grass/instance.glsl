@@ -20,9 +20,10 @@ struct GrassInstance {
 // buffer must be read-only): GRASS_INSTANCE_ACCESS says which, before this is
 // included; and where they are bound (the prepare passes' set 0, bindings 5
 // and 15; the blades' set 1, bindings 0 and 1). Beside each instance, in a
-// word of its own, a city blade's draw chunk (grass_rules.h GRASS_CHUNK_NONE
-// on the land, where nothing reads it): its chunk's record in the view's
-// draws, for the chunk's light table (shaders/grass/blade.frag).
+// word of its own, a city blade's draw chunk: its chunk's record in the
+// view's draws, for the chunk's light table (shaders/grass/blade.frag); a land
+// blade's, how much of the moon reaches its root (a float: grass/prepare.comp,
+// terrain/dir_shadow.glsl).
 #ifndef GRASS_INSTANCE_ACCESS
 #define GRASS_INSTANCE_ACCESS readonly
 #endif

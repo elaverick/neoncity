@@ -30,13 +30,20 @@ LandSky landSky(vec3 rel) {
     return s;
 }
 
+// How much of the moon reaches the ground being shaded: gMoonVis, its shadow
+// there under a clear sky (terrain/dir_shadow.glsl; the shader drawing the
+// land sets it, and it stays 1 where none does). Under the cities' cloud what
+// little of the moon comes through is scattered, and casts no shadow.
+float gMoonVis = 1.0;
+float landMoon(LandSky s) { return mix(gMoonVis, 1.0, s.cover); }
+
 // The light falling on ground under sky s facing n. Under the cities' cloud
 // it is the deck's glow, sodium-orange over a city and dying away over the
 // border beyond it, where only a little moonlight gets through. Under a clear
 // sky it is the moon, and the stars' faint glow.
 vec3 groundLightIn(LandSky s, vec3 n) {
     vec3 deck = CLOUD_DECK * s.city * (0.6 + 1.4 * max(n.y, 0.0));
-    vec3 clear = MOON_LIGHT * max(dot(n, MOON_DIR), 0.0) + STARLIGHT * (0.5 + 0.5 * n.y);
+    vec3 clear = MOON_LIGHT * max(dot(n, MOON_DIR), 0.0) * landMoon(s) + STARLIGHT * (0.5 + 0.5 * n.y);
     return deck * s.cover + clear * (1.0 - 0.9 * s.cover);
 }
 vec3 groundLight(vec3 rel, vec3 n) { return groundLightIn(landSky(rel), n); }
@@ -507,7 +514,7 @@ float wetSurface(LandPoint l, vec3 n, vec3 nGeom, float rough, LandWater w, out 
 vec3 wetHighlight(vec3 n, vec3 V, float rough, LandSky s) {
     vec3 R = normalize(mix(reflect(-V, n), n, rough * rough));
     vec3 c = landReflection(R, s) * envBRDF(WATER_F0, rough, max(dot(n, V), 1e-4));
-    return c + MOON_GLINT * (1.0 - 0.9 * s.cover) * landGgx(n, MOON_DIR, V, max(rough * rough, MOON_RADIUS), WATER_F0);
+    return c + MOON_GLINT * (1.0 - 0.9 * s.cover) * landMoon(s) * landGgx(n, MOON_DIR, V, max(rough * rough, MOON_RADIUS), WATER_F0);
 }
 
 // The wet ground's sheen at rel (wetSurface, wetHighlight).

@@ -111,7 +111,7 @@ const float PI = 3.14159265;
 // lights the ground (roads.glsl shadeRoad). Returns the pools' light at the
 // root, as the ground there takes it.
 vec3 landThinLights(LandSky sky, vec3 rel) {
-    grassThinLightS(MOON_DIR, MOON_LIGHT * (1.0 - 0.9 * sky.cover), false);
+    grassThinLightS(MOON_DIR, MOON_LIGHT * (1.0 - 0.9 * sky.cover) * landMoon(sky), false);
     vec3 pools = vec3(0.0);
     if (vLight.y <= 0.0) return pools;
     float a = abs(vFwy.x), beside = freewayBeside(a, vLight.y);
@@ -236,6 +236,7 @@ void main() {
             col = mix(col, hazeColor(vRel / max(dist, 1e-4)), fogAmount(vRel, dist));
         } else {
             LandSky sky = landSky(vRel);
+            gMoonVis = vLight.w;   // the moon's shadow at the root (ground.glsl landMoon)
             float wetB = sky.wet * (0.7 + 0.3 * t);
             float sheen = bladeSheen(sp, wetB, kernel, rough) * own;
             vec3 pools = landThinLights(sky, vRel);

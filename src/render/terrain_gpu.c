@@ -528,12 +528,13 @@ void terrain_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double
     t->planMs = (t2 - t1) * 1000.0;
     t->updateMs = (t2 - t0) * 1000.0;
     if (t->updateMs > t->slowestMs) t->slowestMs = t->updateMs;
-    if (n > 0) {   /* (terrain_rt.comp reads them too: it waits for the copy itself) */
-        vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COPY_BIT,
+    if (n > 0) {   /* (terrain_rt.comp and the grass read them too: they wait for the copy themselves; the moon's
+                    * shadows (terrain/dir_shadow.glsl) march through them in the fragment shaders) */
+        const VkPipelineStageFlags2 READERS = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        vk_memory_barrier(cmd, READERS | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COPY_BIT,
                           VK_ACCESS_2_TRANSFER_WRITE_BIT);
         vkCmdCopyBuffer(cmd, t->staging[slot].buf, t->samples.buf, n, t->copies);
-        vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, READERS, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
     }
     terrain_rt_update(r, t->rt, cmd, slot, &t->shown, t->push, t->drawn, cam, t->dirty);
 }
@@ -638,6 +639,45 @@ int terrain_gpu_levels(Renderer *r, const TerrainPush **push) {
     TerrainGpu *t = r->terrain;
     *push = t->push;
     return t->ndraw > 0 ? t->drawn : TERRAIN_CLIP_LEVELS;
+}
+
+/* The highest ground is over every drawn level, not only the coarsest, whose
+ * samples can straddle a peak the finer ones hold. A block's own bounds cover
+ * its samples; a triangle across its edge reaches the next block's, so each
+ * takes the most of the eight round it too (across the window's seam that
+ * takes in the far end's block as well, which only loosens it). */
+void terrain_gpu_frame_levels(Renderer *r, TerrainLevelGPU level[TERRAIN_CLIP_LEVELS], float info[4],
+                              float blocks[TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_NB * TERRAIN_CLIP_NB]) {
+    enum { NB = TERRAIN_CLIP_NB };
+    TerrainGpu *t = r->terrain;
+    const TerrainPush *push;
+    int drawn = terrain_gpu_levels(r, &push);
+    float hi = -1e9f;
+    memset(level, 0, sizeof(TerrainLevelGPU) * TERRAIN_CLIP_LEVELS);
+    for (int l = drawn; l < TERRAIN_CLIP_LEVELS; ++l) {
+        const TerrainPush *p = &push[l];
+        TerrainLevelGPU *o = &level[l];
+        o->a[0] = p->anchor[0]; o->a[1] = p->anchor[1]; o->a[2] = p->morph[0]; o->a[3] = p->morph[1];
+        o->b[0] = p->offset[0]; o->b[1] = p->offset[1]; o->b[2] = p->spacing; o->b[3] = p->fade;
+        o->c[0] = p->slot[0]; o->c[1] = p->slot[1]; o->c[2] = p->pslot[0]; o->c[3] = p->pslot[1];
+        o->d[0] = p->level; o->d[1] = p->top;
+        const TerrainClipLevel *lv = &t->shown.level[l];
+        float lo, h;
+        terrain_clip_bounds(lv, lv->origin[0], lv->origin[1], lv->origin[0] + CLIP_W - 1, lv->origin[1] + CLIP_W - 1, &lo, &h);
+        if (h > hi) hi = h;
+        float *most = blocks + l * NB * NB;
+        for (int bz = 0; bz < NB; ++bz)
+            for (int bx = 0; bx < NB; ++bx) {
+                float m = -1e9f;
+                for (int dz = -1; dz <= 1; ++dz)
+                    for (int dx = -1; dx <= 1; ++dx) m = fmaxf(m, lv->blocks[((bz + dz) & (NB - 1)) * NB + ((bx + dx) & (NB - 1))].hi);
+                most[bz * NB + bx] = m;
+            }
+    }
+    info[0] = (float)drawn;
+    info[1] = hi;
+    info[2] = (float)terrain_rt_reach(t->rt);
+    info[3] = 0.0f;
 }
 
 int terrain_gpu_window(Renderer *r, double win[4]) {
