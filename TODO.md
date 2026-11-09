@@ -667,10 +667,12 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   - **The sun's disc is clamped** to what the 16-bit target holds (30000 pre-exposed), so `--preexpose` changes it
     where it clips; the bloom spreads it either way.
 - **The land by day (DN4) left over** (README, "Sky", "Sunlight on the land"):
-  - **The grass's blades are darker than the moss** they stand in by day: their authored colours (`assets/grass/*`,
-    tips about 0.09 green) are the night's palette, and the land's texture (normalised to `land_grass`'s 0.066
-    mean) has bright moss and soil patches well above it. At night the tone curve's toe hid it. A look call on
-    the authored colours.
+  - **The city's grass colours** (`assets/grass/lawn.json`, `rough.json`) are still the night's palette. The land's
+    (`meadow`, `reeds`) were raised after DN4, when daylight showed their blades at 0.7-0.8 of the ground they stand
+    in (roots most, x1.8; tips x1.3; dry x1.2), so they now match it: 0.9-1.1 unlit, 0.8-0.97 lit, looking down and
+    at grazing (the blades' pixels against a `--nograss` frame of the same view, back through the tone curve). The
+    far field follows them (`grass_field`). The lawn and the rough sit on the parks' own ground; check them against
+    it once the city has its day (DN6).
   - **The light on the land is the eye's air**: `AIR_SUN` is the sun through the air as the eye sees it, so far land
     lower down isn't redder than the near (only its horizon is its own: `sunOverAt`); land higher than the eye loses
     the sun when the eye does. The fog's light likewise (DN3), so from 10 km up at sunset the haze over land the sun

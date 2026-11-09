@@ -17,9 +17,9 @@
   "interaction": 1.0,
   "colour": {
     // about land_grass's tint (assets/materials/land_grass.json), darker in, lighter out
-    "root": [0.016, 0.022, 0.010],
-    "tip":  [0.068, 0.090, 0.040],
-    "dry":  [0.100, 0.088, 0.046],
+    "root": [0.029, 0.040, 0.018],
+    "tip":  [0.088, 0.117, 0.052],
+    "dry":  [0.120, 0.106, 0.055],
     "dry_share": 0.35
   },
   "fullness":    0.35,
