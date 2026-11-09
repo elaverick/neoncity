@@ -1084,10 +1084,32 @@ points the galleries and bridges would black out the canyon.) They need a GPU wi
   of view get a record of their own, so the lamps behind the camera light the land before it. The land past the built
   edge is drawn as land, not as the city's stand-in (the urban weight stays 1 for up to a town's width there): the
   cover's last byte says where the city's own ground lies (`plan_city_ground`).
+- **The moon** (`shaders/terrain/dir_shadow.glsl`). The moon is a directional light (`frame.dirLight`), and its
+  shadows come from one function, `dirShadow`, so a sun would be a second direction through it. Near the camera a
+  hard ray goes through the top-level structure (the terrain's levels, `RT_MASK_TERRAIN`) out to the coarsest level
+  in it, about 1 km; from there it marches through the clipmap's heights, a coarser level as it goes, with the
+  planet's drop under the ray, and stops above the highest ground. Each level's 16 x 16 sample blocks carry their
+  highest ground (`frame.terrainBlocks`), so the march jumps over a block it clears. Its visibility is the least
+  clearance against the moon's disc, which gives the shadow a penumbra and hides the steps. It fades out towards the
+  clipmap's edge; the planet's patches beyond cast nothing. The land and its roads take it (`terrain.frag`), the
+  land's grass once per blade at its root (`prepare.comp`, the march alone). Under the cities' cloud the moonlight
+  is scattered and casts no shadow, so nothing is traced there.
+- **The caves.** Every drawn cave brick has its own bottom-level structure (`src/render/cave_gpu.c`), built once from
+  the caves' pool, under `RT_MASK_CAVE`. The terrain's levels that hold a mouth's hole and the bricks at a mouth are
+  not opaque: the caves' moon rays (`cave.frag`, `dirShadowOr` with `DIR_SHADOW_CAVES`) pass the ground where the
+  hole cuts it and the rock outside the drawn surface, so moonlight falls through a mouth as far as the moon is
+  seen, and never round a corner. The lamps' rays (`RT_MASK_LAMPS`) and the land's leave the caves out and take
+  everything as opaque.
+- **A/B.** `NEONCITY_TERRAIN_RT=0`, `NEONCITY_MOON_SHADOWS=0` and `NEONCITY_CAVE_RT=0` leave out the terrain's
+  structures, the moon's shadows and the caves' structures; F10 shows the moon's light on the land and in the caves
+  with its shadowed share in red.
 
 On an RTX 4080 SUPER at 1600x900 with 4x MSAA, at the spawn point, shadows cost about 1.5 ms: the prepass 0.35, the
 rays 0.6, the filter 0.5 and the structures' upkeep 0.1; the scene pass is no slower, since the prepass saves it as
-much as the lookups cost.
+much as the lookups cost. (Measured again on 2026-11-09: the prepass 0.45, the rays 0.75, the filter 0.7, of which
+0.15 of the rays is the terrain's levels in the structure, see TODO.md.) Out in the land the terrain's ray tracing
+costs about 0.3 ms flying over the mountains (the moon's march in the terrain and the grass), and 0.45 ms at worst
+just inside a cave's mouth looking out.
 
 ### Interior mapping (`shaders/city.frag`)
 Facades are single quads. For each window cell the fragment shader traces the view ray
@@ -1777,7 +1799,8 @@ over 2.5 km (`CLOUD_FADE`) along a ragged line into the clear sky over the count
 - **Moon and stars** (`sky.frag`): a single moon, a waning gibbous disc low in the sky
   (`MOON_DIR`), with an aureole in clear air. It is a directional light infinitely far off, and
   it faintly lights the land and roads beyond the clouds (`groundLight` in
-  `terrain/ground.glsl`). It also silvers the clouds from above. Behind it is a procedural star
+  `terrain/ground.glsl`). Out of the clouds it casts shadows on the land, its roads and its grass, and into
+  the caves (see Shadows, "The moon"). It also silvers the clouds from above. Behind it is a procedural star
   field: a jittered grid over a cube, with power-law brightness, colours from blue-white to
   orange, and twinkling near the horizon. Both are dimmed by the haze they shine through.
   For now the moon and the stars stay put against the compass wherever the camera is on the

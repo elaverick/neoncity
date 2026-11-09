@@ -208,8 +208,37 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   `NEONCITY_MOON_SHADOWS=0` leaves them out for an A/B. M11d is done: the caves' drawn bricks are in the TLAS
   (`RT_MASK_CAVE`, a BLAS a brick built once from the caves' pool, `src/render/cave_gpu.c`), the terrain's levels
   holding a cut mouth and the bricks at a mouth aren't opaque, and the moon is traced in the caves (`cave_rt.frag`,
-  `dirShadowOr` with `DIR_SHADOW_CAVES`); `NEONCITY_CAVE_RT=0` leaves the caves out for an A/B. Next: M11e (profiling
-  and docs). Left over from M11d:
+  `dirShadowOr` with `DIR_SHADOW_CAVES`); `NEONCITY_CAVE_RT=0` leaves the caves out for an A/B. M11e is done: the
+  README's Shadows section has the land, the moon and the caves, and the costs at the worst views are below. M11 is
+  complete.
+  - **The sun** (not built; the moon's path is meant to take it). `frame.dirLight` and `dirShadow` are generic, so a
+    sun is a second direction, a radiance and these:
+    - **Casters beyond `RT_RANGE`** (584 m): a low sun throws buildings' shadows hundreds of metres. The far city
+      needs the proxies in it (a shadow map over the proxy boxes, or bottom-level structures of them) and the
+      chunks' structures out to their draw distance, not just the TLAS's range.
+    - **City receivers**: `city.frag` and the city's grass take `dirShadow` (the lamps' slots are separate and stay
+      as they are). The lobbies and the interiors behind the windows would need the sun through their glass.
+    - **Past the clipmap**: the planet's patches cast and receive nothing; a horizon map per patch or a coarse march
+      over them.
+    - **A soft edge from the disc** (0.5 degrees) over long casters near the camera: jittered rays and the
+      denoiser's history, not one hard ray (the march already has a penumbra).
+    - **Everything the day changes**: the sky, the haze, the clouds' lighting and the exposure are all night's; a
+      sun means a day-night model, not just a light.
+  - **Costs** (M11e, RTX 4080 SUPER, 1600 x 900, MSAA x4, all three on against all three off; see the README):
+    two rounds each, which agreed to 0.01-0.02 ms.
+    - Just inside a cave's mouth looking out (adit 14928f41), the worst: 0.95 to 1.39 ms (caves 0.09 to 0.29, the
+      land's grass outside 0.20 to 0.35, the TLAS's build 0.01 to 0.09).
+    - Flying 1.2 km over the mountains (`--cam -60000 -95000 0 -14 1225`): 1.20 to 1.51 ms (terrain 0.59 to 0.79,
+      grass prepare 0.16 to 0.25). On foot there: 1.30 to 1.53.
+    - Over the canyons (moon shadows' test spots): +0.0-0.2 ms, mostly the TLAS's build.
+    - In the city at the spawn: the lamps' shadow rays 0.59 to 0.75 ms, all of it from the terrain's levels in the
+      TLAS (`NEONCITY_TERRAIN_RT=0` alone puts it back; the moon and caves add nothing there). The land lies 0.5 m
+      under every street (`terrain_urban_sink`) and its levels overlap the city's structures, so every lamp's ray
+      walks them too. Sinking it under the city's own ground in the BLAS as well (`plan_city_ground`, the cover's
+      last byte, which M11a didn't have) or leaving the terrain out of rays that start and end inside the built
+      area would win it back.
+    - At the north edge on foot: within noise.
+  Left over from M11d:
   - **Cost** (RTX 4080 SUPER, 1600 x 900): from just inside adit 14928f41's mouth, the cave filling the screen, the
     caves' pass 0.09 to 0.28 ms; deep in a passage 0.09 to 0.17 ms. The TLAS's build +0.05 ms with its 200-330
     bricks. Most of the pass's part is the hole's field worked out for the rays leaving by the mouth.
@@ -595,8 +624,8 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   (fronts, dry spells, snowfall), for which `--rain 0` (dry) and the fade below `RAIN_DRIZZLE` are the start.
 - **The moon and stars are fixed against the compass** (east, up, south at the camera: `moon_dir` in `main.c`,
   `frame.moon`), so they don't turn as the frame changes; but they don't wheel through the night or change with
-  where on the planet the camera is (they would want the planet's frame and a clock). The moon casts no shadows
-  (hills don't shade the land behind them), and its phase is fixed.
+  where on the planet the camera is (they would want the planet's frame and a clock). Its phase is fixed. (Its
+  shadows on the land and in the caves came with M11; see Terrain in ray tracing.)
 - **No light dome from afar.** From the countryside a city shows as its clouds, lit sodium-orange underneath near
   it, and its proxies; the haze itself doesn't glow over it, because the haze's colour is one per frame
   (`frame.sky.x`, the air round the camera). A glow in `hazeColor` towards each nearby city would add the dome.
