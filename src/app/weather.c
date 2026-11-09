@@ -61,6 +61,8 @@ void weather_frame(const Weather *w, const double eye[3], FrameUBO *ubo) {
     double edge = n > 0 ? nearest[0].edge : 1e9;
     float ragged = CLOUD_RAGGED * (2.0f * glsl_fbm((float)eye[0] / 5000.0, (float)eye[2] / 5000.0, 0xC1A0u) - 1.0f);
     float cover = 1.0f - smoothstepf(CLOUD_BORDER, CLOUD_BORDER + CLOUD_FADE, (float)edge + ragged);
+    /* an eye up out of the deck (on a hill, or flying) is under none of it (landSky in shaders/terrain/ground.glsl) */
+    cover *= 1.0f - smoothstepf(DECK_OVER, CLOUD_HIGH, (float)eye[1]);
     ubo->sky[0] = 1.0f - smoothstepf(0.0f, CLOUD_BORDER + CLOUD_FADE, (float)edge);
     ubo->sky[1] = (float)n;
     ubo->sky[2] = cover;

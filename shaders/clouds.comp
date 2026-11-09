@@ -18,8 +18,11 @@
  * above. Neon signs and
  * video screens high on the towers (sky lights, src/core/common.h) also light the
  * cloud around them in their own colour, flickering and changing with them,
- * found through a coarse grid around the camera. Each step is also
- * fogged by its own distance, so the deck dissolves into the haze at range.
+ * found through a coarse grid around the camera. By day the sun and the sky
+ * light it from above, through a deck thick and sooty enough that only
+ * DECK_DAYLIGHT of the daylight reaches the street (dayAt, below). Each step
+ * is also fogged by its own distance, so the deck dissolves into the haze at
+ * range.
  *
  * Output: rgb = in-scattered light, a = transmittance, and the forward
  * distance the march stopped at (for the depth-aware upsample in
@@ -39,7 +42,7 @@ layout(std430, set = 0, binding = 7) readonly buffer SkyLights {
     uint skyIndex[SKY_MAX_INDEX];
     SkyLight skyLight[SKY_MAX_LIGHTS];
     uint airCount;
-    SkyLight airLight[AIR_MAX_LIGHTS];   // lamps, shopfronts and signs near the camera
+    SkyLight airLamp[AIR_MAX_LIGHTS];    // lamps, shopfronts and signs near the camera
 };
 // Rain mist: light the rain-filled air scatters toward the eye, near the street.
 layout(set = 0, binding = 8, rgba16f) uniform writeonly image2D mistOut;
@@ -63,6 +66,7 @@ const float MID_REACH = 9000.0;
 const int   DISTANT_STEPS = 40;
 
 float gTime;
+vec2  gSeen;   // the march's sums of t and of the light's weight, for the mean distance the cloud is seen at
 
 float remap(float x, float a, float b, float c, float d) { return c + (x - a) * (d - c) / (b - a); }
 
@@ -126,6 +130,87 @@ float scud(vec3 p, Column c, bool detail) {
 
 // Density at world point p (deck drift already applied).
 float density(vec3 p, Column c, bool detail) { return max(deck(p, c, detail), scud(p, c, detail)); }
+
+/* The deck by day (DN5). The cities' cloud is thick and sooty: of the light
+ * it takes it scatters DECK_ALBEDO, and the soot absorbs the rest. So the
+ * daylight that diffuses down through it dies away with the optical depth
+ * above as exp(-DECK_K od). Seen from above, its top sends back a third of
+ * the light on it (1 / (1 + DECK_K)); seen from below, through a whole
+ * column (optical depth about 6, -ln(DECK_DAYLIGHT)), its base shows about
+ * DECK_DAYLIGHT (clouds.h) of it, the overcast the street is lit by
+ * (landDaylight, deckThrough): a storm sky's. The sun scattered once lights
+ * its tops and the flanks turned to it, and silvers a thin edge with the sun
+ * behind it (forward scattering). Seen from outside, the deck stands as a
+ * dark grey mass over a bright skyline.
+ *
+ * The night's look (the city's glow, the moon, the signs in the cloud) was
+ * made on a thinner, broken deck: a column about 1 deep (measured on the
+ * captures, 0.2-1.5, with gaps), which at night shows nothing much behind
+ * it. So the march carries two transmittances. The night's light is seen
+ * through the cloud as it was (SIGMA). The daylight, and what lies behind
+ * the deck by day, see it as the day's deck (dayExtinction): the billows
+ * DECK_DENSE times as thick, and between them, from the underside up to
+ * SHEET_TOP, a sheet of smog-cloud SHEET_OD deep where the cities' cloud is
+ * whole, thinning with it towards the countryside. Its optical depth goes
+ * as the cover, as deckThrough's does. gDayMix crossfades the two through
+ * twilight, so a night frame is what it was. */
+const float DECK_DENSE  = 2.0;
+const float SHEET_TOP   = 430.0;
+const float SHEET_OD    = 4.0;
+const float DECK_ALBEDO = 0.5;
+const float DECK_K      = 2.0;
+const float SUN_RUN     = 3000.0;   // how far towards the sun its light is followed through the cloud (m)
+vec3  gDayTop;    // the daylight on the deck's top: the sun's on level cloud and the clear sky's
+bool  gDay;       // whether there is any to speak of
+float gDayMix;    // 0 by night .. 1 by day
+float gTd;        // the transmittance through the deck as the day sees it
+
+// The day's sheet at p, 0..1: whole from just over the underside to SHEET_TOP.
+float sheet(vec3 p, Column c) {
+    return c.field * smoothstep(c.base, c.base + 40.0, p.y) * (1.0 - smoothstep(SHEET_TOP - 60.0, SHEET_TOP, p.y));
+}
+// Its extinction per metre where it is whole (it is about SHEET_TOP - 230 m thick).
+const float SHEET_SIGMA = SHEET_OD / (SHEET_TOP - 230.0);
+
+// The day's extinction per metre at p, for cloud density d there.
+float dayExtinction(float d, vec3 p, Column c) { return d * (SIGMA * DECK_DENSE) + sheet(p, c) * SHEET_SIGMA; }
+
+// The day's optical depth (without the eroded detail) from p straight up to the deck's top.
+float depthUp(vec3 p, Column c) {
+    float above = max(CLOUD_TOP - p.y, 0.0);
+    float od = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        vec3 q = p + vec3(0.0, above * (float(i) + 0.5) / 3.0, 0.0);
+        od += dayExtinction(deck(q, c, false), q, c);
+    }
+    return od * above / 3.0;
+}
+
+// ...and from p towards the sun, out of the top or SUN_RUN along: the cover
+// on the way taken as running evenly from this column's to fieldFar, the
+// cities' cloud's at the end, so the sun gets in at the deck's ragged edge.
+float depthSun(vec3 p, Column c, float fieldFar) {
+    float run = min(max(CLOUD_TOP - p.y, 0.0) / max(SUN_DIR.y, 0.02), SUN_RUN);
+    float od = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        float s = (float(i) + 0.5) / 3.0;
+        Column q = c;
+        q.field = mix(c.field, fieldFar, s);
+        q.cov = c.cov * q.field / max(c.field, 1e-3);
+        vec3 x = p + SUN_DIR * (run * s);
+        od += dayExtinction(density(x, q, false), x, q);
+    }
+    return od * run / 3.0;
+}
+
+// The daylight scattered toward the eye at p (muS: the cosine between the
+// ray and the sun).
+float dayPhase(float muS) { return mix(hgPhase(muS, -0.15), hgPhase(muS, 0.75), 0.5); }
+vec3 dayAt(vec3 p, Column c, float fieldFar, float muS) {
+    vec3 sun = AIR_SUN * (exp(-depthSun(p, c, fieldFar)) * dayPhase(muS));
+    vec3 diffused = gDayTop * (exp(-DECK_K * depthUp(p, c)) * (1.0 / AIR_PI));
+    return DECK_ALBEDO * sun + diffused;
+}
 
 // Light scattered toward the eye at p: city glow from below through the cloud
 // between p and the street, plus the moon and a trace of night sky from
@@ -203,6 +288,11 @@ vec3 signLight(vec3 q) {
  * there. Shaped by a forward-scattering halo, the lamps' downward cones and
  * the signs' facing. No shadows: lights round a corner glow faintly through. */
 const float MIST = 0.0006;   // in-scattering per unit rain intensity
+// By day: the rain's extinction per metre at intensity 1 (a downpour: 1.5 km
+// to see through), and how far along the ray it is counted, nearer than the
+// fog (hazeAmount) takes over.
+const float MIST_DAY = 0.0007;
+const float MIST_DAY_RANGE = 1500.0;
 
 vec3 airColor(SkyLight L) {
     uint cls = L.kind >> 8u & 255u;
@@ -218,7 +308,7 @@ vec3 mistLight(vec3 dir, float tEnd, float rain) {
     float T = min(tEnd, AIR_RANGE);
     vec3 sum = vec3(0.0);
     for (uint i = 0u; i < airCount; ++i) {
-        SkyLight L = flameAt(airLight[i]);
+        SkyLight L = flameAt(airLamp[i]);
         float t0 = dot(L.pos, dir);
         vec3 q = dir * clamp(t0, 0.0, T) - L.pos;      // nearest point on the ray, from the light
         uint cls = L.kind >> 8u & 255u;
@@ -259,7 +349,7 @@ float cloudFog(vec3 rel, float dist, float density) {
 void march(vec3 ro, vec3 dir, float ta, float tb, int steps, bool detail, float jitter, vec3 haze, inout vec3 L, inout float T) {
     float ds = (tb - ta) / float(steps);
     vec3 drift = WIND * gTime;
-    float mu = dot(dir, MOON_DIR), air = airDensity();
+    float mu = dot(dir, MOON_DIR), muS = dot(dir, SUN_DIR), air = airDensity();
     for (int i = 0; i < steps; ++i) {
         float t = ta + (float(i) + jitter) * ds;
         vec3 rel = dir * t;
@@ -272,17 +362,63 @@ void march(vec3 ro, vec3 dir, float ta, float tb, int steps, bool detail, float 
         Column c = column(p.xz, field);
         // the deck thins out towards CLOUD_REACH, measured across the ground,
         // so seen from high above it fades rather than ends on a line
-        float d = density(p, c, detail) * (1.0 - smoothstep(0.6 * CLOUD_REACH, CLOUD_REACH, length(rel.xz)));
-        if (d <= 0.002) continue;
-        float Ts = exp(-d * SIGMA * ds);
-        vec3 lit = lightAt(p, c, cityGlow(pw.xz) * cityLight(edge), mu) + signLight(rel);
+        // (beyond it, by day, the far deck takes over: farDeck)
+        float reach = 1.0 - smoothstep(0.6 * CLOUD_REACH, CLOUD_REACH, length(rel.xz));
+        float d = density(p, c, detail) * reach;
+        float sigD = gDay ? dayExtinction(d, p, c) * reach : 0.0;
+        if (d <= 0.002 && sigD <= 1e-5) continue;
+        float Ts = exp(-d * SIGMA * ds), Tsd = gDay ? exp(-sigD * ds) : Ts;
+        float wN = T * (1.0 - Ts), wD = gTd * (1.0 - Tsd), w = mix(wN, wD, gDayMix);
         // seen through the haze of the air round the camera (the city's, as
         // fogAmount, or the countryside's) between the eye and this step
-        vec3 s = mix(lit, haze, cloudFog(rel, t, air));
-        L += T * (1.0 - Ts) * s;
+        float f = cloudFog(rel, t, air);
+        if (d > 0.002) L += wN * (1.0 - f) * (lightAt(p, c, cityGlow(pw.xz) * cityLight(edge), mu) + signLight(rel));
+        L += w * f * haze;
+        if (gDay && wD > 1e-4) {
+            // the cities' cloud where the sun's light comes in from (whole, well inside the border)
+            vec2 far = rel.xz + SUN_DIR.xz * (SUN_RUN / max(length(SUN_DIR.xz), 1e-3));
+            float fieldFar = edge + SUN_RUN < CLOUD_BORDER - CLOUD_RAGGED ? 1.0 : cloudCover(far, cityEdge(far));
+            // A step the day's deck makes opaque (the sheet, in the long steps
+            // far off) is lit where the eye sees into it, a mean free path past
+            // the step's start, not at its jittered sample: its light falls off
+            // so fast with depth that it dithered with where the sample fell.
+            float back = max(jitter * ds - 1.0 / max(sigD, 1e-6), 0.0);
+            L += wD * (1.0 - f) * dayAt(p - dir * back, c, fieldFar, muS);
+        }
+        gSeen += vec2(t, 1.0) * w;
         T *= Ts;
-        if (T < 0.01) { T = 0.0; return; }
+        gTd *= Tsd;
+        if (T < 0.01) { T = 0.0; gTd = 0.0; return; }
     }
+}
+
+/* The far deck, by day. Past CLOUD_REACH the deck isn't marched: at night
+ * the haze has taken it by there, but by day, from the hills or the air, the
+ * land under a city's cloud showed through dark where the march ended. So
+ * beyond, a flat sheet stands for it: at SHEET_TOP seen from above, at the
+ * underside's mean height from below; lit as the day's deck's top or base
+ * are on the whole; as opaque as the cover there makes it; fading in as the
+ * march fades out. tMin..tMax: where along the ray it may lie. */
+void farDeck(vec3 ro, vec3 dir, float tMin, float tMax, vec3 haze, inout vec3 L) {
+    bool above = ro.y > SHEET_TOP;
+    // the ray's height over the planet's sphere: ro.y + dir.y t + (|dir.xz| t)^2 / 2R = y
+    float a = dot(dir.xz, dir.xz) * (0.5 / PLANET_RADIUS), b = dir.y, c = ro.y - (above ? SHEET_TOP : CLOUD_BASE);
+    float disc = b * b - 4.0 * a * c;
+    if (disc < 0.0 || a < 1e-12) return;
+    float q = -0.5 * (b + (b >= 0.0 ? sqrt(disc) : -sqrt(disc)));
+    float r0 = q / a, r1 = abs(q) > 1e-6 ? c / q : 1e30;
+    float t = min(r0 > 0.0 ? r0 : 1e30, r1 > 0.0 ? r1 : 1e30);
+    if (t <= tMin || t >= tMax) return;
+    vec3 rel = dir * t;
+    float field = cloudCover(rel.xz, cityEdge(rel.xz));
+    float alpha = smoothstep(0.6 * CLOUD_REACH, CLOUD_REACH, length(rel.xz)) * (1.0 - deckThrough(field));
+    if (alpha <= 1e-3) return;
+    vec3 col = above ? DECK_ALBEDO * 0.5 * AIR_SUN * dayPhase(dot(dir, SUN_DIR)) + gDayTop * (1.0 / (AIR_PI * (1.0 + DECK_K)))
+                     : gDayTop * (deckThrough(field) / AIR_PI);
+    float w = gTd * alpha * gDayMix;
+    L += w * mix(col, haze, cloudFog(rel, t, airDensity()));
+    gSeen += vec2(t, 1.0) * w;
+    gTd *= 1.0 - alpha;
 }
 
 // The stretch [ta, tb] of the ray along dir (from the camera) that passes
@@ -332,7 +468,16 @@ void main() {
     vec3 dir = normalize(frame.rayBasis[2].xyz + ndc.x * frame.rayBasis[0].xyz - ndc.y * frame.rayBasis[1].xyz);
     float tScene = fwd / max(dot(dir, frame.camFwd.xyz), 1e-4);
     vec3 ro = frame.camPos.xyz;
-    imageStore(mistOut, hp, vec4(EXPOSE(mistLight(dir, tScene, frame.weather.x)), 1.0));
+    gDayTop = AIR_SUN * max(SUN_DIR.y, 0.0) + skyIrradiance(vec3(0.0, 1.0, 0.0));
+    float dayLum = dot(gDayTop, vec3(0.2126, 0.7152, 0.0722));
+    gDay = dayLum > 0.02;
+    gDayMix = smoothstep(0.02, 1.0, dayLum);
+    gSeen = vec2(0.0);
+    // By day the rain also scatters the grey light under the deck (its
+    // underside's radiance, about deckThrough of the daylight on its top).
+    vec3 mist = mistLight(dir, tScene, frame.weather.x);
+    if (gDay) mist += gDayTop * (daylightThrough() / AIR_PI) * (1.0 - exp(-MIST_DAY * frame.weather.x * min(tScene, MIST_DAY_RANGE)));
+    imageStore(mistOut, hp, vec4(EXPOSE(mist), 1.0));
 
     // The ray's span inside the cloud layer, up to the scene and CLOUD_REACH,
     // over the cities' cloud: the distant proxies stand into the deck far
@@ -355,23 +500,35 @@ void main() {
     if (!cloudSpan(dir, sa, sb)) t1 = -1.0;
     t0 = max(t0, sa);
     t1 = min(t1, sb);
-    if (t1 <= t0) { imageStore(cloudOut, hp, vec4(0.0, 0.0, 0.0, 1.0)); return; }
+    bool marched = t1 > t0;
+    if (!marched && !gDay) { imageStore(cloudOut, hp, vec4(0.0, 0.0, 0.0, 1.0)); return; }
 
     float jitter = ign(vec2(hp));
     vec3 haze = hazeColor(dir);
     float T = 1.0;
+    gTd = 1.0;
     vec3 L = vec3(0.0);
     float tNear = min(t1, frame.camFwd.w);
-    if (tNear > t0) {
+    if (marched && tNear > t0) {
         int steps = int(clamp((tNear - t0) / 5.0, 16.0, 80.0));
         march(ro, dir, t0, tNear, steps, true, jitter, haze, L, T);
     }
     float tFar = max(t0, tNear), tMid = min(t1, max(tFar, MID_REACH / hz));
-    if (tMid > tFar && T > 0.0) {
+    if (marched && tMid > tFar && T > 0.0) {
         int steps = int(clamp((tMid - tFar) / FAR_STEP, 4.0, 64.0));
         march(ro, dir, tFar, tMid, steps, false, jitter, haze, L, T);
     }
-    if (t1 > tMid && T > 0.0 && 1.0 - cloudFog(dir * tMid, tMid, airDensity()) > 0.02)
+    if (marched && t1 > tMid && T > 0.0 && 1.0 - cloudFog(dir * tMid, tMid, airDensity()) > 0.02)
         march(ro, dir, tMid, t1, DISTANT_STEPS, false, jitter, haze, L, T);
+    if (gDay && gTd > 0.0) farDeck(ro, dir, marched ? t1 : 0.0, tScene, haze, L);
+    // and the clear air between the eye and the cloud, taken at the mean
+    // distance the cloud's light came from (a city's deck tens of kilometres
+    // off is blued and dimmed by it, as the land beside it is: airFog)
+    if (gSeen.y > 1e-4) {
+        float tm = gSeen.x / gSeen.y;
+        vec3 Ta, aL = airLight(dir * tm, tm, Ta);
+        L = L * Ta + aL * (1.0 - mix(T, gTd, gDayMix));
+    }
+    T = mix(T, gTd, gDayMix);   // what shows through: the day's thick deck by day
     imageStore(cloudOut, hp, vec4(EXPOSE(L), T));   // pre-exposed, as the scene it is blended over
 }

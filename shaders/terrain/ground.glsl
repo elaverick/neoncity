@@ -20,12 +20,15 @@
 // The sky over ground at rel: the cities' cloud over it (cloudCover), the
 // city's light in that cloud (cityLight), how wet the ground under it is
 // (the rain's wetness, frame.sky.w, where the cloud is; dry under a clear
-// sky), and how much of the sun is still up there (sunOverAt).
+// sky), and how much of the sun is still up there (sunOverAt). A hill that
+// stands up through the deck (DECK_OVER, clouds.h) is under none of it:
+// sunlit, dry, and not lit from the cloud below.
 struct LandSky { float cover; float city; float wet; float sun; };
 LandSky landSky(vec3 rel) {
     float edge = cityEdge(rel.xz);
     LandSky s;
-    s.cover = cloudCover(rel.xz, edge);
+    float h = frame.camPos.y + rel.y + planetDrop(rel.xz);   // the ground's height over the planet's sphere
+    s.cover = cloudCover(rel.xz, edge) * (1.0 - smoothstep(DECK_OVER, CLOUD_HIGH, h));
     s.city = cityLight(edge);
     s.wet = frame.sky.w * s.cover;
     s.sun = frame.dirMix.x > 0.0 ? sunOverAt(rel) : 0.0;

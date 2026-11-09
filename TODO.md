@@ -223,7 +223,7 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     - **A soft edge from the disc** (0.5 degrees) over long casters near the camera: jittered rays and the
       denoiser's history, not one hard ray (the march already has a penumbra).
     - **Everything the day changes**: the sky and the haze follow the sun since DN3, the land since DN4 (README,
-      "Sky"); the clouds' lighting and the city's are DN5-DN6.
+      "Sky"), the clouds since DN5 (README, "Clouds"); the city's is DN6.
   - **Costs** (M11e, RTX 4080 SUPER, 1600 x 900, MSAA x4, all three on against all three off; see the README):
     two rounds each, which agreed to 0.01-0.02 ms.
     - Just inside a cave's mouth looking out (adit 14928f41), the worst: 0.95 to 1.39 ms (caves 0.09 to 0.29, the
@@ -624,9 +624,9 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   the camera. The megacities' constant rain is meant to stay; the rest of the world is to get a full weather system
   (fronts, dry spells, snowfall), for which `--rain 0` (dry) and the fade below `RAIN_DRIZZLE` are the start.
 - **The moon and stars are the real ones** (DN0, `src/app/sky_clock.c`): they wheel with the UTC clock, by where
-  on the planet the camera is, and the moon has its phase and sets. The sun lights the sky and the haze (DN3) and the
-  land (DN4), not yet the clouds or the city: the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md,
-  DN5-DN9). The star cube is not a
+  on the planet the camera is, and the moon has its phase and sets. The sun lights the sky and the haze (DN3), the
+  land (DN4) and the clouds (DN5), not yet the city: the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md,
+  DN6-DN9). The star cube is not a
   real catalogue: the pole star and the constellations aren't where they are.
 - **The night isn't physical against its anchor** (DN1, README "Light and exposure"): the moon and the starlight are
   about 70 times the real ones (`NIGHT_LIFT`), the deck's underside five times the brightest real city-lit overcast,
@@ -684,6 +684,30 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   - **The exposure's day key** (`KEY_DUSK_EV` and up, a stop a stop) leaves noon land shown half a stop under what it
     meters (13.2-13.75 against 13.7-14.2): bright, as a game's day. Not tuned further; the deck by day (DN5) may move
     it.
+- **The deck by day (DN5) left over** (README, "Clouds", "By day"):
+  - **The deck's absolute height matters by day** (above, "The deck's height is absolute"): a settlement on raised
+    ground has its deck in its streets or under them, so by day it stands in the sun with no cloud over it (seen
+    from 800 m in the valley north of the megacity). The land now leaves the cover off where it stands up out of
+    the deck (`DECK_OVER`), so a hill over the cloud is sunlit, not black; the fix proper is the deck over each
+    settlement's own ground (`FrameUBO.cities[i].w` is free for its datum).
+  - **The smog whites out the view from above the deck.** With the camera up out of the deck the smog round it is
+    lit by the full sun, and near a city it is the city's (`CITY_HAZE` 1.1 km, a quarter of it thinning over
+    `HAZE_HIGH_H` 2 km): from 1.5 km over the border the deck below and the city beyond are a pale haze, gold at
+    4 degrees, pink at sunset. Seen from the street under the deck it is dark and right. Whether the smog should end
+    at the deck's top (an inversion capping it), or thin by day, is a look call, as the countryside's is (DN3, above).
+  - **The day's deck is not the night's** (two transmittances): by night a column is about 1 deep and broken, by day
+    the billows are twice as thick with a sheet 4 deep between them. Seen from below the day's underside is softer,
+    the sheet having filled the breaks; a column's light still follows its billows, but the mammatus-like texture of
+    the night's deck is gone by day. Retuning the night on the day's deck would make them one.
+  - **The far deck is flat** (`farDeck`): past 18-30 km a flat sheet at the cover's opacity, lit as a whole top or
+    base; from high up a far city's cloud has no relief.
+  - **The band of bright sky under the deck's edge** at dawn and dusk (the plan) comes from the low sun's light
+    followed into the deck towards it (`depthSun`, 3 km) and the far deck; not checked from inside the border at a
+    low sun, where it would show.
+  - **`deckLight(rel)`** (the plan's field with a C mirror) waits for its users: the city by day (DN6) and the
+    lamps' photocell (DN7). The land has `deckThrough(cover)` already.
+  - **Towers above the deck** (the proxies and chunks over 670 m) are unlit by day, black on the white deck top:
+    the city's day is DN6.
 
 ## Curtain wall relief
 Piers, beams, mullions and a coping on office towers' curtain walls (`src/city/mesh_relief.c`, `shadeTrim`), after

@@ -1796,6 +1796,9 @@ over 2.5 km (`CLOUD_FADE`) along a ragged line into the clear sky over the count
   blends the haze from sodium-lit smog to thin moonlit mist and the haze's density from the
   city's to the land's. It also gives the cloud cover over the camera. Rain and wet streets
   only come from that cover, so it is dry out in the countryside.
+- **Over the deck:** the deck hangs at fixed heights (world Y), so ground, or an eye, from `DECK_OVER` (330 m) up
+  through the deck's top (670 m) stands out of it (`landSky` in `terrain/ground.glsl`, `weather_frame`): a hill
+  over the cities' cloud is sunlit and dry, and moonlit at night rather than lit from the cloud below it.
 - **Moon and stars** (`sky.frag`): the real moon over the camera's place on the planet
   (`MOON_DIR`), with an aureole in clear air. It is a directional light infinitely far off, and
   it faintly lights the land and roads beyond the clouds (`groundLight` in
@@ -1846,8 +1849,8 @@ it has set, and by night the moonlit air's faint blue over the stars (DN3 of the
   (`nightGlow`: the sodium-lit smog near a city, the airglow out in the countryside), and the light of the sun, the
   moon and the sky scattered in it (`smogLight`: Henyey-Greenstein, g 0.6, albedo 0.9), so it is a white haze by
   day with the sun's aureole round it, gold at sunset, and the moon's glow by night. Under the cities' cloud only
-  `DECK_DAYLIGHT` (0.25%) of the daylight reaches it (`daylightThrough`, from the cover over the camera; DN5 makes it
-  a field). The sky low down is the smog's: the sky mixes into it as `hazeAmount` along the line of sight reaches
+  `DECK_DAYLIGHT` (0.25%) of the daylight reaches it (`daylightThrough`, from the cover over the camera, none once
+  the camera is up out of the deck: see Weather). The sky low down is the smog's: the sky mixes into it as `hazeAmount` along the line of sight reaches
   out (`skyClear`), so the horizon is the haze's colour and the land beyond the view distance dissolves into it.
 - **Sunlight on the land** (DN4): the directional light that cast the moon's shadows (`frame.dirLight`,
   `shaders/terrain/dir_shadow.glsl`) is the sun while it stands above -4 degrees and the moon below. The moon's light
@@ -1890,6 +1893,31 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
   the cloud toward the street, and adds multiple-scattering octaves and a falloff with
   height, so low bulges and scud glow sodium-orange (tinted by neon in places) while the
   body stays dark.
+- **By day** (DN5 of the day/night roadmap): the deck is a thick, sooty storm cloud. The daylight on its top (the
+  sun's on level cloud and the clear sky's, `gDayTop`) diffuses down through it and dies away with the optical depth
+  above as exp(-2 od) (`DECK_K`), so its top sends back a third of the light on it, and its base, about 6 deep,
+  shows `DECK_DAYLIGHT` (0.25%) of it: the same overcast the street is lit by (`deckThrough`). The sun scattered
+  once (`DECK_ALBEDO` 0.5, a forward and a backward Henyey-Greenstein lobe) lights its tops and the flanks turned to
+  it, and silvers a thin edge with the sun behind it; towards the sun its light is followed 3 km (`SUN_RUN`), the
+  cover along the way running to the cities' cloud's at the end, so a low sun gets in at the ragged border. The
+  night's look was made on a thinner, broken deck (a column about 1 deep, 0.2-1.5, measured), so the march carries
+  two transmittances: the city's glow, the moon and the signs are seen through the cloud as before, and the daylight,
+  and what lies behind the deck by day, through the day's deck: the billows twice as thick (`DECK_DENSE`), and
+  between them, from the underside up to `SHEET_TOP` (430 m), a sheet 4 deep (`SHEET_OD`) where the cover is whole,
+  thinning with it, so the day's deck lets through `DECK_DAYLIGHT` to the power of the cover, as the land assumes.
+  `gDayMix` crossfades the two through twilight; a night frame is what it was. A step that goes opaque is lit a
+  mean free path past its start, not at its jittered sample, or the sheet's top dithered from afar. Past
+  `CLOUD_REACH`, by day, a flat sheet stands for the deck (`farDeck`: at `SHEET_TOP` seen from above, at the
+  underside from below, as opaque as the cover makes it), so the land under a far city's cloud doesn't show through
+  dark. The clear air between the eye and the cloud (`airLight`, at the mean distance the cloud's light came from)
+  blues and dims a far deck as it does the land. The rain mist also scatters the grey light under the deck by day.
+  Captures (`--cam` views over Los Angeles, `--utc` from noon to sunset): in the street a dull grey-mauve storm sky
+  between the towers where the clear sky shone white through the deck before; looking up at the built edge a heavy
+  overcast, lighter where it thins towards the border; at sunset the twilight no longer shows through, the city's
+  glow holds the sky. From the hills and the air the deck's top is white in the sun, gold at 4 degrees. The night
+  against the build before (spawn, street, built edge, looking up, the belt, a hill) is within two runs of one
+  build, but for land standing above the deck (see Weather). The cloud pass costs the same: looking up from the edge
+  1.8 ms by day and by night, the street 0.74-0.78 ms at night against 0.76.
 - **Signs:** neon signs and video screens high enough to reach the clouds also light them
   in their own colour. They flicker with the sign and change with each screen's advert (an
   authored advert's mean colour, `adverts.glsl`).

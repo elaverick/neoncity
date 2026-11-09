@@ -20,6 +20,9 @@
  * DECK_DAYLIGHT: how much of the open sky's daylight gets through the deck to
  * the street under its middle (day/night cycle: a storm sky's, at noon some
  * 250 lux); its share of the moon's and the sky's light likewise.
+ * DECK_OVER: the deck hangs at fixed heights (world Y, CLOUD_LOW..CLOUD_HIGH
+ * in common.h; TODO, Weather), so ground, or an eye, from DECK_OVER up
+ * through CLOUD_HIGH stands out of it: under none of it, sunlit and dry.
  * RAIN_DRIZZLE: the rain intensity (0 dry .. 1 downpour) of a drizzle. Below
  * it the drops, the ripples and the wetness fade out to dry at 0. */
 #define CLOUD_CITIES   8
@@ -29,5 +32,6 @@
 #define CLOUD_REACH    30000.0f
 #define RAIN_DRIZZLE   0.1f
 #define DECK_DAYLIGHT  0.0025f
+#define DECK_OVER      330.0f
 
 #endif
