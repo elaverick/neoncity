@@ -181,6 +181,7 @@ set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PR
                     terrain/cave_shelter.vert:terrain/cave.vert:CAVE_SHELTER)   # the caves into the shelter map
 # Shaders also include the #define-only headers they share with C.
 set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/core/clouds.h
+                          ${CMAKE_CURRENT_SOURCE_DIR}/src/core/light_units.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_clip.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_planet.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/grass/grass_rules.h

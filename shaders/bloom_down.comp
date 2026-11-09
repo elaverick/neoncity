@@ -1,18 +1,21 @@
 #version 450
 // 13-tap downsample (Jimenez, "Next Generation Post Processing in Call of Duty").
 // The first pass applies a soft threshold and a Karis average to stop single
-// bright pixels (distant lamp heads) from flickering.
+// bright pixels (distant lamp heads) from flickering. The scene is pre-exposed
+// (common.glsl: EXPOSE): the threshold and knee come scaled by it, and the
+// Karis weights and the clamp take its levels in the engine's units.
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0) uniform sampler2D src;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dst;
-layout(push_constant) uniform Push { float threshold, knee, radius; int prefilter; } pc;
+layout(push_constant) uniform Push { float threshold, knee, radius; int prefilter; float exposure; } pc;
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 vec3 karis(vec3 a, vec3 b, vec3 c, vec3 d) {
+    float u = 1.0 / pc.exposure;   // luma(x) * u: in the engine's units
     // nothing below zero: a negative pixel near luma -1 would blow its weight up into a black disc
     a = max(a, vec3(0.0)); b = max(b, vec3(0.0)); c = max(c, vec3(0.0)); d = max(d, vec3(0.0));
-    vec4 s = vec4(a, 1.0) / (1.0 + luma(a)) + vec4(b, 1.0) / (1.0 + luma(b)) +
-             vec4(c, 1.0) / (1.0 + luma(c)) + vec4(d, 1.0) / (1.0 + luma(d));
+    vec4 s = vec4(a, 1.0) / (1.0 + luma(a) * u) + vec4(b, 1.0) / (1.0 + luma(b) * u) +
+             vec4(c, 1.0) / (1.0 + luma(c) * u) + vec4(d, 1.0) / (1.0 + luma(d) * u);
     return s.rgb / s.a;
 }
 
@@ -49,5 +52,5 @@ void main() {
     } else {
         col = (d + e + i + j) * 0.125 + (a + c + k + m) * 0.03125 + (b + f + h + l) * 0.0625 + g * 0.125;
     }
-    imageStore(dst, p, vec4(min(col, vec3(500.0)), 1.0));
+    imageStore(dst, p, vec4(min(col, vec3(500.0 * pc.exposure)), 1.0));
 }

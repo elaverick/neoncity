@@ -6,6 +6,7 @@
  * exactly under the lamp heads and shop spill matches the lit storefronts.
  * ==================================================================== */
 
+// The night's fill, sky and bounce: 0.007-0.009, about 0.4 lux (LIGHT_LUX), up to twice that near the ground.
 vec3 ambientLight(vec3 n, float h) {
     vec3 sky = vec3(0.006, 0.007, 0.013);
     vec3 bounce = vec3(0.013, 0.008, 0.006);

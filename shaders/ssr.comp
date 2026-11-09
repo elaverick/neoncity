@@ -79,7 +79,7 @@ void main() {
     float conf = smoothstep(0.0, 0.07, e.x) * smoothstep(0.0, 0.07, e.y)
                * (1.0 - smoothstep(0.75, 1.0, float(hitStep) / float(STEPS)))   // the march's last steps
                * smoothstep(-0.3, 0.1, dot(R, frame.camFwd.xyz));
-    vec3 col = textureLod(hdrTex, hit.xy, 0.0).rgb;
+    vec3 col = UNEXPOSE(textureLod(hdrTex, hit.xy, 0.0).rgb);   // the scene is pre-exposed (common.glsl): back to the engine's units
     // a bad pixel on screen (NaN or inf) must not be reflected: ssr_apply's
     // streak would smear it down the floor as a trail of specks
     if (any(isnan(col)) || any(isinf(col))) { imageStore(ssrOut, px, vec4(0.0)); return; }
@@ -97,5 +97,5 @@ void main() {
     vec3 H = hdir * (hit.z / max(dot(hdir, frame.camFwd.xyz), 1e-4));
     float extra = max(length(P) + length(H - P) - length(H), 0.0);
     col = mix(col, hazeColor(R), fogAmount(R * extra, extra));
-    imageStore(ssrOut, px, vec4(min(col, vec3(64.0)), conf));
+    imageStore(ssrOut, px, vec4(EXPOSE(min(col, vec3(64.0))), conf));
 }

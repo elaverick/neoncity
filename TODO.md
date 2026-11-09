@@ -329,7 +329,7 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   - **A wall takes its own passage's light**, not a neighbour's through the rock: each piece's path is charged twice
     how much farther its wall is than the nearest's (`TERRAIN_CAVE_SKY_ACROSS`), among those within
     `TERRAIN_CAVE_NEAR_M`. A piece crossing that line can step the light a little; not seen in the captures.
-  - **The exposure doesn't adapt** (composite's is fixed at 1), so the dark reads black, not grey, as the plan wanted;
+  - **The exposure doesn't adapt** (fixed at `--ev`, by default the night's `EV100_REF`: DN1), so the dark reads black, not grey, as the plan wanted;
     it also means no eye adjusting in a cave. An adapting exposure would want a floor so the deep parts stay dark.
   - **The cave's air** is used only while the camera is in a cave's air under the ground (`cave_gpu.c`: camIn,
     camSky): a thin fog (150 m) lit by the camera's and the fragment's sky. From outside, the land's haze as before,
@@ -624,8 +624,13 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   (fronts, dry spells, snowfall), for which `--rain 0` (dry) and the fade below `RAIN_DRIZZLE` are the start.
 - **The moon and stars are the real ones** (DN0, `src/app/sky_clock.c`): they wheel with the UTC clock, by where
   on the planet the camera is, and the moon has its phase and sets. The sun is worked out but lights nothing: the
-  day is the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md, DN1-DN9). The star cube is not a
+  day is the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md, DN2-DN9). The star cube is not a
   real catalogue: the pole star and the constellations aren't where they are.
+- **The night isn't physical against its anchor** (DN1, README "Light and exposure"): the moon and the starlight are
+  about 70 times the real ones (`NIGHT_LIFT`), the deck's underside five times the brightest real city-lit overcast,
+  and the lobbies and the impostors' offices about 1/17 of real ones (the kit's `bake_scale`). Kept as the look; the
+  auto exposure (DN2) and the sky (DN3) may bring the moon and stars nearer the truth. The pre-exposure has no frame
+  history to rescale yet (no pass reprojects colour); one that does must take this frame's over last frame's.
 - **No light dome from afar.** From the countryside a city shows as its clouds, lit sodium-orange underneath near
   it, and its proxies; the haze itself doesn't glow over it, because the haze's colour is one per frame
   (`frame.sky.x`, the air round the camera). A glow in `hazeColor` towards each nearby city would add the dome.

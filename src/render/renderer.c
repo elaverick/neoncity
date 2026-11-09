@@ -440,7 +440,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, 1);
 
     /* ---- bloom ---- */
-    record_bloom(r, cmd);
+    record_bloom(r, cmd, &ubo);
 
     record_composite(r, cmd, imageIndex, &ubo);
     timestamp(r, cmd, slot, GT_POST);

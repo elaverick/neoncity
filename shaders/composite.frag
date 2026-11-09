@@ -14,7 +14,7 @@ layout(push_constant) uniform Push {
     vec4 right;   // camera ray basis (FrameUBO.rayBasis); w = near plane
     vec4 up;      // w = far plane
     vec4 fwd;     // w = rain intensity
-    vec4 shelter; // shelter map: camera-relative centre x, z; half-width; w unused
+    vec4 shelter; // shelter map: camera-relative centre x, z; half-width; w the pre-exposure (common.glsl: EXPOSE)
 } pc;
 
 const float SHELTER_LO = -60.0, SHELTER_HI = 500.0;   // src/core/common.h
@@ -116,12 +116,12 @@ void main() {
         if (cover > 0.0) {
             vec3 behind = texture(hdrTex, uv + vec2(0.0, 0.012)).rgb;
             vec3 mist = texture(mistTex, uv).rgb / max(rain, 0.05);
-            vec3 light = mist * 4.0 + bl * 1.2 + behind * 0.25 + vec3(0.006, 0.007, 0.010);
+            vec3 light = mist * 4.0 + bl * 1.2 + behind * 0.25 + vec3(0.006, 0.007, 0.010) * pc.shelter.w;   // all pre-exposed
             col += light * min(cover, 1.0) * 0.8;
         }
     }
 
-    col *= pc.exposure;
+    col *= pc.exposure;   // the exposure over the pre-exposure the scene was written with: 1, but in a --preexpose check
     // Blade Runner grade: cyan-teal shadows, sodium-orange highlights.
     float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
     vec3 shadowTint = vec3(0.80, 1.02, 1.12);

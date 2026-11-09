@@ -119,7 +119,7 @@ bool dirSeeThrough(uint custom, vec3 h) {
 }
 #endif
 
-void main() {
+void shadePixel() {
     vec3 p = caveSys[vInfo.x].chart.xyz + vChart;
     vec3 dpx = dFdx(p), dpy = dFdy(p);
     vec3 n = normalize(vNrm), V = -normalize(vRel), bc;
@@ -165,3 +165,5 @@ void main() {
     outColor = vec4(col, 1.0);
     outRefl = vec4(0.0);
 }
+
+EXPOSE_OUT   // main: shadePixel, its colour pre-exposed (common.glsl)

@@ -116,7 +116,7 @@ bool landLights(vec3 n, vec3 V, float rough, float f0, float fwd, float tol, out
 layout(std430, set = 0, binding = 1) readonly buffer Samples { uint samples[]; };
 #include "terrain/dir_shadow.glsl"
 
-void main() {
+void shadePixel() {
     vec3 n = normalize(vNrm), nLand = n;
 #ifdef CAVE_CUT
     bool hole = caveHoleCut(vFlat.xz, vFlat.y, 0.0);
@@ -189,3 +189,5 @@ void main() {
     outRefl = vec4(0.0);
     CAVE_CUT_DISCARD
 }
+
+EXPOSE_OUT   // main: shadePixel, its colour pre-exposed (common.glsl)

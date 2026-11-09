@@ -18,7 +18,7 @@ layout(location = 5) in vec4  vCoverB;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outRefl;   // nothing reflective (city.frag)
 
-void main() {
+void shadePixel() {
     if (pc.window.z > pc.window.x) {
         const float M = TERRAIN_PLANET_HOLE_M;
         if (vChart.x > pc.window.x + M && vChart.x < pc.window.z - M && vChart.y > pc.window.y + M && vChart.y < pc.window.w - M) discard;
@@ -27,3 +27,5 @@ void main() {
     outColor = vec4(shadeGround(vRel, normalize(vNrm), vUrban, Cover(vCoverA, vCoverB), false), 1.0);
     outRefl = vec4(0.0);
 }
+
+EXPOSE_OUT   // main: shadePixel, its colour pre-exposed (common.glsl)

@@ -52,5 +52,5 @@ void main() {
     vec3 dir = normalize(frame.rayBasis[2].xyz + ndc.x * frame.rayBasis[0].xyz - ndc.y * frame.rayBasis[1].xyz);
     vec3 n = vec3(g.x, sqrt(max(1.0 - g.x * g.x - g.y * g.y, 0.0)), g.y);
     vec3 sky = indoor ? vec3(0.0) : envReflection(normalize(mix(reflect(dir, n), n, rough * rough)));
-    outColor = vec4(g.a * conf * (col - sky), 0.0);
+    outColor = vec4(g.a * conf * (col - EXPOSE(sky)), 0.0);   // ssr.comp's colour is pre-exposed, as the scene is
 }

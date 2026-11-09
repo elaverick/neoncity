@@ -332,7 +332,7 @@ void main() {
     vec3 dir = normalize(frame.rayBasis[2].xyz + ndc.x * frame.rayBasis[0].xyz - ndc.y * frame.rayBasis[1].xyz);
     float tScene = fwd / max(dot(dir, frame.camFwd.xyz), 1e-4);
     vec3 ro = frame.camPos.xyz;
-    imageStore(mistOut, hp, vec4(mistLight(dir, tScene, frame.weather.x), 1.0));
+    imageStore(mistOut, hp, vec4(EXPOSE(mistLight(dir, tScene, frame.weather.x)), 1.0));
 
     // The ray's span inside the cloud layer, up to the scene and CLOUD_REACH,
     // over the cities' cloud: the distant proxies stand into the deck far
@@ -373,5 +373,5 @@ void main() {
     }
     if (t1 > tMid && T > 0.0 && 1.0 - cloudFog(dir * tMid, tMid, airDensity()) > 0.02)
         march(ro, dir, tMid, t1, DISTANT_STEPS, false, jitter, haze, L, T);
-    imageStore(cloudOut, hp, vec4(L, T));
+    imageStore(cloudOut, hp, vec4(EXPOSE(L), T));   // pre-exposed, as the scene it is blended over
 }

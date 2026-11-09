@@ -25,7 +25,7 @@ layout(location = 0) out vec4 outColor;
 
 const float EMIT = 3.5;    // radiance of fire at its hottest, per metre of dense flame
 
-void main() {
+void shadePixel() {
     Flame f = flames[vIdx];
     vec3 lo, hi;
     flameBox(f, lo, hi);
@@ -95,3 +95,5 @@ void main() {
     float fog = fogAmount(dir * t0, t0);
     outColor = vec4(acc * (1.0 - fog), 0.0);
 }
+
+EXPOSE_OUT   // main: shadePixel, its colour pre-exposed (common.glsl)

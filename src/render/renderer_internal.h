@@ -27,14 +27,16 @@
 #define CLOUD_NOISE_SIZE 128   /* cloud noise volume edge (texels) */
 /* cloud noise volume edge (texels) */
 
-typedef struct BloomPush { float threshold, knee, radius; int prefilter; } BloomPush;
+/* threshold and knee in the scene target's levels (pre-exposed: shaders/common.glsl EXPOSE), the pre-exposure */
+typedef struct BloomPush { float threshold, knee, radius; int prefilter; float exposure; } BloomPush;
 /* right/up/fwd: the camera ray basis (as FrameUBO.rayBasis); right.w = near
- * plane, up.w = far plane, fwd.w = rain intensity (composite.frag draws the rain). */
+ * plane, up.w = far plane, fwd.w = rain intensity (composite.frag draws the rain).
+ * exposure: what the scene is multiplied by, its pre-exposure aside (FrameUBO.exposure). */
 typedef struct CompositePush {
     float time, bloom, exposure, grain;
     float width, height, aberration, vignette;
     float right[4], up[4], fwd[4];
-    float shelter[4];   /* as FrameUBO.shelter */
+    float shelter[4];   /* as FrameUBO.shelter, but w the pre-exposure (FrameUBO.exposure) */
 } CompositePush;
 typedef struct CloudPush { float zn, zf; } CloudPush;
 /* One terrain level's draw (shaders/terrain/terrain.vert: Level). */
@@ -199,7 +201,7 @@ void recreate_swapchain(Renderer *r);
 
 /* renderer_passes.c */
 void set_viewport(VkCommandBuffer cmd, uint32_t w, uint32_t h);
-void record_bloom(Renderer *r, VkCommandBuffer cmd);
+void record_bloom(Renderer *r, VkCommandBuffer cmd, const FrameUBO *ubo);
 void record_clouds(Renderer *r, VkCommandBuffer cmd, int slot);
 void record_shelter(Renderer *r, VkCommandBuffer cmd, int slot, const mat4 *topDown);
 void record_prepass(Renderer *r, VkCommandBuffer cmd, int slot);

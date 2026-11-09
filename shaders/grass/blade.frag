@@ -162,7 +162,7 @@ float bladeSheen(GrassSpecies sp, float wet, float kernel, out float rough) {
     return mix(GRASS_SHEEN_DRY, 1.0, wet);
 }
 
-void main() {
+void shadePixel() {
     int view = int(frame.grass.z + 0.5);
     int k = clamp(vKind.x, 0, GRASS_SPECIES - 1);
     bool city = (k == GRASS_LAWN || k == GRASS_ROUGH) && vChunk != GRASS_CHUNK_NONE;
@@ -261,3 +261,5 @@ void main() {
     outColor = vec4(col, 1.0);
     outRefl = vec4(0.0);
 }
+
+EXPOSE_OUT   // main: shadePixel, its colour pre-exposed (common.glsl)

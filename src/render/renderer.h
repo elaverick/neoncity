@@ -60,6 +60,12 @@ typedef struct FrameUBO {
      * block and the eight round it (so over every triangle touching it), rows
      * of z, four to a vector: the march skips a block the ray passes over */
     float   terrainBlocks[TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_NB * TERRAIN_CLIP_NB / 4][4];
+    /* The exposure (src/core/light_units.h; src/app/main.c: exposure_ubo): the
+     * pre-exposure every pass that writes colour multiplies it by (EXPOSE in
+     * shaders/common.glsl), its inverse, what the composite multiplies the
+     * scene by (the exposure over the pre-exposure: 1 but in a --preexpose
+     * check), the frame's EV100 */
+    float   exposure[4];
 } FrameUBO;
 
 typedef struct Renderer Renderer;

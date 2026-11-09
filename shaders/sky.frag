@@ -79,7 +79,7 @@ vec3 moon(vec3 dir, float px) {
     return MOON_SURFACE * albedo * (lit + 0.012) * disc;
 }
 
-void main() {
+void shadePixel() {
     vec2 ndc = vUV * 2.0 - 1.0;
     vec3 dir = normalize(frame.rayBasis[2].xyz + ndc.x * frame.rayBasis[0].xyz - ndc.y * frame.rayBasis[1].xyz);
     vec3 col = hazeColor(dir);
@@ -97,3 +97,5 @@ void main() {
     outColor = vec4(col, 1.0);
     outRefl = vec4(0.0);
 }
+
+EXPOSE_OUT   // main: shadePixel, its colour pre-exposed (common.glsl)

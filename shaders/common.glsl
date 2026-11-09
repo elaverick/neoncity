@@ -7,6 +7,8 @@
 #include "terrain_planet.h"
 // CLOUD_CITIES, CLOUD_BORDER, CLOUD_FADE, CLOUD_RAGGED, CLOUD_REACH: shared with C
 #include "clouds.h"
+// LIGHT_LUX, LIGHT_NIT, EV100_REF, NIGHT_LIFT: the light's units, shared with C
+#include "light_units.h"
 // Authored PBR materials: PBR_<NAME> (one per assets/materials/<name>.json), the maps
 // (PBR_ALBEDO..., PBR_MAPS_PER_MATERIAL), PBR_TEXTURE_COUNT and the flags: shared with C
 #include "pbr.h"
@@ -115,7 +117,23 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 terrainInfo;   // x the finest clipmap level drawn (TERRAIN_CLIP_LEVELS: none), y the highest ground in it (world Y), z the coarsest level in the TLAS (-1: none)
     TerrainLevel terrainLevel[TERRAIN_CLIP_LEVELS];   // from the finest drawn on (src/render/terrain_gpu.c: terrain_gpu_frame_levels)
     vec4 terrainBlocks[TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_NB * TERRAIN_CLIP_NB / 4];   // each level's storage blocks' highest ground, with the eight round each (world Y), rows of z, four to a vector
+    vec4 exposure;   // x the pre-exposure (EXPOSE), y its inverse, z what the composite multiplies the scene by, w the frame's EV100 (src/app/main.c: exposure_ubo)
 } frame;
+
+/* Pre-exposure (Frostbite's: Lagarde and de Rousiers 2014). The lighting
+ * works in the engine's units (src/core/light_units.h: one unit of
+ * irradiance is LIGHT_LUX lux), but every pass that writes colour into the
+ * scene's targets multiplies it by the frame's pre-exposure as it writes:
+ * the 16-bit floats then hold numbers near 1 by noon and by night alike,
+ * never a sun's 1e9 cd/m2 or the starlight's 1e-4. A pass that reads those
+ * targets back and compares with a fixed level (ssr.comp, bloom_down.comp,
+ * composite.frag) divides it out first. A scene shader's main ends in
+ * EXPOSE_OUT: its shading is the function shadePixel, which may return
+ * early; main calls it and exposes what it wrote. */
+#define PRE_EXPOSURE (frame.exposure.x)
+#define EXPOSE(c) ((c) * frame.exposure.x)
+#define UNEXPOSE(c) ((c) * frame.exposure.y)
+#define EXPOSE_OUT void main() { shadePixel(); outColor.rgb *= frame.exposure.x; }
 
 /* The scene set's buffers (src/render/renderer_pipelines.c: create_layouts) are set 0, but for the
  * terrain, whose own set is 0: it binds the scene set as set 1 (SCENE_SET) for the land's lamps. */
@@ -519,12 +537,15 @@ float cityLight(float edge) { return 1.0 - smoothstep(0.0, CLOUD_BORDER, edge); 
 #define MOON_DIR (frame.moon.xyz)   // unit: towards the moon
 #define SUN_DIR  (frame.sun.xyz)    // unit: towards the sun
 const float MOON_RADIUS = 0.014;                         // its disc's angular radius (rad), about three times the real moon's
+// In LIGHT_LUX units (light_units.h), the moon and the stars are NIGHT_LIFT times the real ones: a full moon's
+// 0.35 is 17 lux (the real one's 0.25), the starlight's 0.002 is 0.1 lux (the real one's, with airglow, 0.0015).
 const vec3  MOON_FULL = vec3(0.50, 0.58, 0.80) * 0.60;   // the light a full moon high up throws on ground square to it
 #define MOON_LIGHT (MOON_FULL * frame.moon.w)            // the moon's tonight: its phase, and none once it has set
 const vec3  STARLIGHT = vec3(0.0016, 0.0020, 0.0032);    // the clear night sky's own glow, from above
 
 /* ---------------- atmosphere ----------------
- * A smoggy night: warm city-lit haze near the horizon, cold dark zenith.
+ * A smoggy night: warm city-lit haze near the horizon, cold dark zenith
+ * (the city's low haze 0.059, 0.9 cd/m2; the moonlit mist's 0.018, 0.29).
  * Out in the countryside (frame.sky.x towards 0) the haze is thin moonlit
  * mist instead, with the moon's aureole round it under a clear sky. Fog uses
  * the same colour as the sky at the horizon so the finite view distance
@@ -591,6 +612,7 @@ float airDensity() { return (1.0 + 1.2 * frame.weather.x) / mix(TERRAIN_HAZE, CI
 
 // The rain-cloud deck (clouds.comp) as reflections see it: an overcast lit
 // sodium-orange from below, filling the upper sky.
+// Its luminance 0.061 is 1 cd/m2 (LIGHT_NIT): five times the brightest real city-lit overcast.
 const vec3 CLOUD_DECK = vec3(0.10, 0.052, 0.034);
 
 /* What a reflection sees where the screen can't show it (the fallback that

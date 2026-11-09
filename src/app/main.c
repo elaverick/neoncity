@@ -18,6 +18,7 @@
 #include "grass_rules.h"
 #include "grass_wake.h"
 #include "sky_clock.h"
+#include "light_units.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -79,7 +80,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -91,6 +92,9 @@ static void usage(void) {
            "  --time  hold the shaders' clock at this many seconds (flames, signs, steam: for captures)\n"
            "  --utc   start the world's clock (the sun, the moon, the stars) at this UTC instant, from which it runs at 1x;\n"
            "          otherwise it is the system's UTC. A --shot holds it, there or at " SKY_CAPTURE_UTC "\n"
+           "  --ev    the exposure, as a camera's EV at ISO 100 (default %.2f, the one the night was tuned at; higher is darker)\n"
+           "  --preexpose  a check: write the scene this many stops brighter (darker, if negative) and take them back out\n"
+           "               before the tone curve; the frame should not change, and any pass that does missed the pre-exposure\n"
            "  --impostors  draw this share (default 0.4; 0 turns them off) of the office towers' floors behind curtain\n"
            "               walls and ribbon windows as baked interior impostors (docs/interior-impostors.md; F8 toggles)\n"
            "  --lockdoors  lock every lobby's automatic doors: sliding ones stay shut, revolving ones stand still\n"
@@ -104,7 +108,7 @@ static void usage(void) {
            "  --cave-debug  draw the caves unlit, to look at their meshes: their normals, or lit from the eye (lit), or that\n"
            "                tinted by level of detail (lod), through the ground (it isn't drawn), and fly mode goes under the ground.\n"
            "                Without it, fly mode goes under the ground only into a cave's air\n"
-           "  --shot  wait for streaming to settle, save a screenshot and exit\n");
+           "  --shot  wait for streaming to settle, save a screenshot and exit\n", EV100_REF);
 }
 
 /* Command-line options. */
@@ -121,6 +125,8 @@ typedef struct Options {
     double      fixedTime;       /* the shaders' clock held here (< 0: running) */
     bool        haveUtc;         /* --utc: the world's clock starts at utcJd */
     double      utcJd;
+    float       ev;              /* --ev: the exposure (EV100: src/core/light_units.h) */
+    float       preExpose;       /* --preexpose: the scene written this many stops off its exposure (a check) */
     float       impostors;       /* the share of eligible office floors drawn as impostors (0: none) */
     int         grassDebug;      /* --grass-debug: GRASS_DEBUG_* (src/grass/grass_rules.h) */
     int         caveDebug;       /* --cave-debug: renderer_set_cave_debug's view */
@@ -132,6 +138,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
     o->fixedRain = -1.0f;
     o->fixedTime = -1.0;
     o->impostors = 0.4f;
+    o->ev = EV100_REF;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--validation") == 0) o->validation = true;
         else if (strcmp(argv[i], "--noshadows") == 0) o->shadows = false;
@@ -162,6 +169,8 @@ static bool parse_args(int argc, char **argv, Options *o) {
             if (!sky_parse_utc(argv[++i], &o->utcJd)) { fprintf(stderr, "--utc %s: not a UTC instant (YYYY-MM-DDTHH:MM)\n", argv[i]); return false; }
             o->haveUtc = true;
         }
+        else if (strcmp(argv[i], "--ev") == 0 && i + 1 < argc) o->ev = (float)atof(argv[++i]);
+        else if (strcmp(argv[i], "--preexpose") == 0 && i + 1 < argc) o->preExpose = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--impostors") == 0) {
             o->impostors = 0.4f;
             if (i + 1 < argc && ((argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') || argv[i + 1][0] == '.')) o->impostors = (float)atof(argv[++i]);
@@ -412,6 +421,19 @@ static void frame_ubo(const Player *player, const VkCore *vk, double t, double j
     sky_ubo(&sky, ubo);
 }
 
+/* frame.exposure (shaders/common.glsl; src/core/light_units.h). The exposure
+ * takes a luminance of 1.2 x 2^EV100 cd/m2 to 1: in the engine's units,
+ * 2^(EV100_REF - EV100). The scene is written pre-exposed by it, so the
+ * composite has nothing left to multiply by; --preexpose writes it off by
+ * that many stops instead and has the composite take them back out. */
+static void exposure_ubo(const Options *opt, FrameUBO *ubo) {
+    float E = exp2f(EV100_REF - opt->ev), P = E * exp2f(opt->preExpose);
+    ubo->exposure[0] = P;
+    ubo->exposure[1] = 1.0f / P;
+    ubo->exposure[2] = E / P;
+    ubo->exposure[3] = opt->ev;
+}
+
 /* The player's wake for the grass's blades (shaders/grass/wake.glsl), in real
  * time: the shaders' clock may be held (--time), the trail's ages never are. */
 static void wake_ubo(const GrassWake *wake, const double cam[3], double now, FrameUBO *ubo) {
@@ -526,6 +548,7 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
         ubo.doorInfo[0] = (uint32_t)lobby_doors_frame(keys, ubo.doorState);
         for (uint32_t k = 0; k < ubo.doorInfo[0]; ++k) ubo.doorKey[k / 4][k % 4] = keys[k];
         wake_ubo(&wake, player->eye, now - startTime, &ubo);
+        exposure_ubo(opt, &ubo);
         bool resized = g_resized;
         g_resized = false;
         renderer_frame(renderer, &ubo, player->eye, resized);

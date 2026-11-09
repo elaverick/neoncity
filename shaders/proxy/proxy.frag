@@ -138,7 +138,7 @@ vec3 shadeProxy(vec3 n, vec3 V) {
     return col;
 }
 
-void main() {
+void shadePixel() {
     vec3 n = normalize(vNrm);
     float dist = length(vRel);
     vec3 V = -vRel / max(dist, 1e-4);
@@ -146,3 +146,5 @@ void main() {
     outColor = vec4(mix(col, hazeColor(-V), fogAmount(vRel, dist)), 1.0);
     outRefl = vec4(0.0);
 }
+
+EXPOSE_OUT   // main: shadePixel, its colour pre-exposed (common.glsl)

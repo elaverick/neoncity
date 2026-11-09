@@ -476,6 +476,8 @@ IM4 made the modules' light photometric, split it into the bases the engine colo
 
 The same scale would make a real fitting look about 100 times brighter than the surfaces it lights, where the engine's lobby panels show about 4 (`ceilingFixture`). So what the eye sees of a light is capped at 4 in the engine's units (`BAKE_VISIBLE_CAP`), and a screen shows at 30% of the light it sheds, being mostly dark. The light they shed is untouched.
 
+In physical units (DN1, `src/core/light_units.h` and the README's "Light and exposure"), one engine unit of radiance is 15.9 cd/m2. A bake unit (100 cd/m2) therefore lands at 6 cd/m2, about 1/17 of the kit's real brightness against the street lamps, as the lobbies do, and the cap is 64 cd/m2.
+
 **Cost** (`--shot`, the city pass's 64-frame mean, RTX 4080 SUPER, 1600 x 900 with 4x MSAA, `--cam 1139.3 262 1.7 0 20`):
 
 | | city pass |

@@ -9,7 +9,8 @@ void set_viewport(VkCommandBuffer cmd, uint32_t w, uint32_t h) {
     vkCmdSetScissor(cmd, 0, 1, &sc);
 }
 
-void record_bloom(Renderer *r, VkCommandBuffer cmd) {
+void record_bloom(Renderer *r, VkCommandBuffer cmd, const FrameUBO *ubo) {
+    float P = ubo->exposure[0];   /* the scene's pre-exposure: the threshold is the same light at any */
     const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     vk_image_barrier(cmd, r->bloom.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | CS, 0,
@@ -17,7 +18,7 @@ void record_bloom(Renderer *r, VkCommandBuffer cmd) {
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->bloomDownPipe);
     for (uint32_t i = 0; i < r->bloomMips; ++i) {
-        BloomPush pc = { 0.9f, 0.6f, 1.0f, i == 0 ? 1 : 0 };
+        BloomPush pc = { 0.9f * P, 0.6f * P, 1.0f, i == 0 ? 1 : 0, P };
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->bloomPL, 0, 1, &r->bloomDownSet[i], 0, NULL);
         vkCmdPushConstants(cmd, r->bloomPL, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
         uint32_t w = r->bloom.w >> i, h = r->bloom.h >> i;
@@ -27,7 +28,7 @@ void record_bloom(Renderer *r, VkCommandBuffer cmd) {
     }
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->bloomUpPipe);
     for (int i = (int)r->bloomMips - 2; i >= 0; --i) {
-        BloomPush pc = { 0, 0, 1.0f, 0 };
+        BloomPush pc = { 0, 0, 1.0f, 0, P };
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->bloomPL, 0, 1, &r->bloomUpSet[i], 0, NULL);
         vkCmdPushConstants(cmd, r->bloomPL, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
         uint32_t w = r->bloom.w >> i, h = r->bloom.h >> i;
@@ -400,12 +401,13 @@ void record_composite(Renderer *r, VkCommandBuffer cmd, uint32_t imageIndex, con
     set_viewport(cmd, W, H);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->compositePipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->compositePL, 0, 1, &r->compositeSet, 0, NULL);
-    CompositePush cp = { ubo->camPos[3], 0.14f, 1.0f, 0.035f, (float)W, (float)H, 0.008f, 0.32f };
+    CompositePush cp = { ubo->camPos[3], 0.14f, ubo->exposure[2], 0.035f, (float)W, (float)H, 0.008f, 0.32f };
     for (int k = 0; k < 3; ++k) {
         cp.right[k] = ubo->rayBasis.m[k]; cp.up[k] = ubo->rayBasis.m[4 + k]; cp.fwd[k] = ubo->rayBasis.m[8 + k];
     }
     cp.right[3] = NEAR_PLANE; cp.up[3] = FAR_PLANE; cp.fwd[3] = ubo->weather[0];
     memcpy(cp.shelter, ubo->shelter, sizeof(cp.shelter));
+    cp.shelter[3] = ubo->exposure[0];   /* the pre-exposure: the rain's own glint is written at it */
     vkCmdPushConstants(cmd, r->compositePL, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cp), &cp);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);

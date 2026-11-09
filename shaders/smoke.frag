@@ -105,7 +105,7 @@ float plumeSigma(vec3 p, out float r, out float near) {
     return sigma * dens * sqrt(P.radius * 1.3 / r) * (1.0 - 0.4 * k);   // thinned as it spreads
 }
 
-void main() {
+void shadePixel() {
     P = plumes[vIdx];
     vec3 lo, hi;
     plumeBox(P, lo, hi);
@@ -192,3 +192,5 @@ void main() {
     float tm = 0.5 * (t0 + t1), fog = fogAmount(dir * tm, tm);
     outColor = vec4(acc * (1.0 - fog) + hazeColor(dir) * fog * (1.0 - T), T);
 }
+
+EXPOSE_OUT   // main: shadePixel, its colour pre-exposed (common.glsl)

@@ -3,7 +3,7 @@
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0) uniform sampler2D src;
 layout(set = 0, binding = 1, rgba16f) uniform image2D dst;
-layout(push_constant) uniform Push { float threshold, knee, radius; int prefilter; } pc;
+layout(push_constant) uniform Push { float threshold, knee, radius; int prefilter; float exposure; } pc;
 
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);

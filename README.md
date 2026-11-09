@@ -57,7 +57,7 @@ procedural look.
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
-Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture), `--utc YYYY-MM-DDTHH:MM` sets the world's clock, and so the sun, the moon and the stars (see Moon and stars)
+Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture), `--utc YYYY-MM-DDTHH:MM` sets the world's clock, and so the sun, the moon and the stars (see Moon and stars), `--ev EV100` sets the exposure (default 3.73, see Light and exposure), `--preexpose STOPS` checks the pre-exposure
 `--noshadows` runs without ray-traced shadows (and without the
 ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo` paints the grass's rules on the land (or its levels of detail, culling, wind, the player's wake, or the blades' and ground's albedo unlit), `--nograss` draws no grass blades, `--nowake` leaves the grass unparted where the player walks, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
@@ -1848,6 +1848,49 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
   resolve of the MSAA depth). A depth-aware upsample (`cloud_composite.frag`) then blends it
   over the HDR scene, so cloud never smears across a tower's silhouette.
 
+### Light and exposure (`src/core/light_units.h`)
+The lighting works in the engine's own units, now pinned to physical ones so that daylight can join the night.
+- **The anchor:** one unit of irradiance (what the lighting sums: a light's colour times its falloff) is
+  `LIGHT_LUX` = 50 lux. It is measured on the street lamps, the light the city is built round: under a sodium head
+  the street gets 0.91 (`lampFalloff` 1.75 at 7.1 m, times `lampColor`'s luminance 0.52), which is about 45 lux, as
+  under a lamp on a lit main road. Lambert's 1/pi is left out of the lighting (diffuse is albedo times irradiance),
+  so one unit of radiance, what the scene target holds, is `LIGHT_NIT` = 50/pi = 15.9 cd/m2.
+- **The night against it:**
+
+  | | engine | physical | real |
+  |---|---|---|---|
+  | under a sodium lamp (LED: 1.2) | 0.91 | 45 lux | 20-50 lux |
+  | a full moon high up (`MOON_FULL`'s luminance) | 0.35 | 17 lux | 0.25 lux |
+  | the clear night sky (`STARLIGHT`) | 0.002 | 0.1 lux | 0.0015 lux |
+  | the city's fill (`ambientLight`) | 0.007-0.009 | 0.4 lux, twice that near the ground | |
+  | the deck's underside (`CLOUD_DECK`) | 0.061 | 1 cd/m2 | 0.2 cd/m2 at the brightest |
+  | the city's low haze (`hazeColor`) | 0.059 | 0.9 cd/m2 | |
+  | the light on a lobby's floor | 0.55 | 27 lux | 200-500 lux |
+
+  So the moon and the stars are about 70 times the real ones (`NIGHT_LIFT`): a game's night, which the eye's
+  adaptation to the dark would give and a tone curve can't. The lobbies and offices go the other way. The impostor
+  kit's fittings are photometric (lumens; docs/interior-impostors.md section 16), and a bake's radiance is 0.01 of a
+  cd/m2. The modules' `bake_scale` of 0.375 makes one bake unit 0.375 of an engine unit, so a kit's light lands at
+  about 1/17 of its real brightness against the lamps. That matches the lobbies, whose panels it was calibrated
+  against. What the eye sees of a fitting is capped at 4 (`BAKE_VISIBLE_CAP`, 64 cd/m2). The sun, when it comes
+  (DN4), is 100 000 lux: 2000 units.
+- **Exposure:** the photographic convention (Lagarde and de Rousiers, "Moving Frostbite to PBR"). At EV100, a
+  luminance of 1.2 x 2^EV100 cd/m2 is taken to 1 before the tone curve, so the multiplier on the engine's radiance
+  is 2^(`EV100_REF` - EV100). `EV100_REF` = log2(15.9 / 1.2) = 3.73 is the exposure the night was tuned at, which
+  takes one unit to 1. `--ev EV100` sets it; higher is darker. There is no auto exposure yet (DN2).
+- **Pre-exposure** (Frostbite's): every pass that writes colour multiplies it by the frame's pre-exposure
+  (`frame.exposure.x`) as it writes, so the 16-bit targets hold numbers near 1 by night and by noon alike, never a
+  sun's 1e9 cd/m2 or the starlight's 1e-4. The lighting itself stays in the engine's units. A scene shader's
+  shading is `shadePixel`, and `EXPOSE_OUT` (`common.glsl`) is its `main`: it calls it and exposes what it wrote, so
+  an early return can't skip it. The clouds and the rain mist (`clouds.comp`) and the screen-space reflections
+  (`ssr.comp`, `ssr_apply.frag`) expose what they store. The passes that compare the targets with a fixed level
+  take the pre-exposure out first: the reflections' knee and clamp, the bloom's threshold, Karis weights and clamp,
+  and the rain's own glint in the composite. The composite multiplies by the exposure over the pre-exposure, which
+  is 1. `--preexpose STOPS` is the check: it writes the scene that many stops off and has the composite take them
+  back out, so the frame must not change. A pass that missed the pre-exposure shows up 2^STOPS too bright or too
+  dark. At +8 and -8 stops, captures of the street in rain, the towers, a steam vent, the refinery's flares, the
+  mountains and a cave stay within the noise between two runs at 0 (DN1).
+
 ### Frame
 1. Streaming: uploads, bottom-level structures for new chunks, compaction, the frame's top-level structure.
 2. Shelter map: the city round the camera rendered from above, depth only.
@@ -1857,7 +1900,7 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
 6. Screen-space reflections on the wet streets: a compute trace, then a streaked additive blend.
 7. Clouds and rain mist: half-resolution compute ray march over the cities' cloud, blended into the HDR target with a depth-aware upsample.
 8. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
-9. Composite: falling rain, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
+9. Composite: falling rain, the exposure, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
 
 ## Extending
 - **Environment** (rain, wet streets, fog volumes, weather): the atmosphere lives in
