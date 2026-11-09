@@ -616,7 +616,8 @@ the footprints 200 m back (W2a; see `data/earth/SOURCE.md`, "Runoff and the stre
 ## Weather
 The start of a weather system (`src/core/clouds.h`, `src/app/weather.c`, `shaders/sky.frag`, `cloudCover` in
 `shaders/common.glsl`; see the README). The rain clouds gather over the cities and a border round them. The
-countryside has a clear sky with stars and a moon, whose light faintly lights the land. Left over:
+countryside has a clear sky with the real sun, moon and stars over it, which light the land (the day/night roadmap,
+DN0-DN9; README "Day and night"). Left over:
 - **The deck's height is absolute** (world Y 115-670 m), not over each city's own ground: a city on raised ground
   (`terrain_lift`) would have its clouds in its streets or under them. From hills near a city the deck is at eye
   level. The deck should hang over each settlement's datum, as the haze does (`haze_datum` in `main.c`, the active
@@ -629,18 +630,18 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
 - **The moon and stars are the real ones** (DN0, `src/app/sky_clock.c`): they wheel with the UTC clock, by where
   on the planet the camera is, and the moon has its phase and sets. The sun lights the sky and the haze (DN3), the
   land (DN4), the clouds (DN5) and the city (DN6), on the city's own clock (DN7), shown on an HDR display if there is
-  one (DN8); the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md, DN9-DN10) is the docs and a
-  mop-up. The star cube is not a
-  real catalogue: the pole star and the constellations aren't where they are.
+  one (DN8); the docs and costs are DN9's, and what is left of the day/night roadmap
+  (~/.claude/plans/day-night-cycle.md) is DN10's mop-up. The star cube is not a real catalogue: the pole star and the constellations aren't where they are.
 - **The night isn't physical against its anchor** (DN1, README "Light and exposure"): the moon and the starlight are
   about 70 times the real ones (`NIGHT_LIFT`), the deck's underside five times the brightest real city-lit overcast,
   and the lobbies and the impostors' offices about 1/17 of real ones (the kit's `bake_scale`). Kept as the look. The
   auto exposure (DN2) opens the eye only 0.8 of a stop on the moonlit land against the city, so lowering the moon to
   the truth would darken the land by six stops. The sky (DN3) lights the air with a quarter of the lifted moon
   (`MOON_AIR`), not the real one's 1/70, which would leave no moonlit sky to see.
-- **The auto exposure's key is tuned on the night only** (DN2, `light_units.h`). By day, the slope above `KEY_DUSK_EV`
-  and the 14.5 a sunlit view lands on are guesses until the sun lights the land (DN4) and the deck by day (DN5). So is
-  the tone curve: the ACES fit is kept, with AgX the candidate if noon clips or hues skew. The meter weighs the
+- **The auto exposure's key was tuned on the night** (DN2, `light_units.h`); by day the slope above `KEY_DUSK_EV`
+  (a stop a stop) was only checked, on the sunlit land (DN4, half a stop under the meter, below) and the street
+  under the deck (DN6, 4.6-4.7 for a meter of 5.1), not tuned. The ACES fit is kept (nothing clips at noon), with AgX
+  the candidate if hues skew. The meter weighs the
   sky like anything else; by day it may want the sky above the deck left out (the plan's idea). There is no lens
   dirt or flare. The pre-exposure has no frame
   history to rescale yet (no pass reprojects colour); one that does must take this frame's over last frame's.
@@ -672,12 +673,12 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   - **The sun's disc is clamped** to what the 16-bit target holds (30000 pre-exposed), so `--preexpose` changes it
     where it clips; the bloom spreads it either way.
 - **The land by day (DN4) left over** (README, "Sky", "Sunlight on the land"):
-  - **The city's grass colours** (`assets/grass/lawn.json`, `rough.json`) are still the night's palette. The land's
+  - **The grass colours** were made at night. The land's
     (`meadow`, `reeds`) were raised after DN4, when daylight showed their blades at 0.7-0.8 of the ground they stand
     in (roots most, x1.8; tips x1.3; dry x1.2), so they now match it: 0.9-1.1 unlit, 0.8-0.97 lit, looking down and
     at grazing (the blades' pixels against a `--nograss` frame of the same view, back through the tone curve). The
-    far field follows them (`grass_field`). The lawn and the rough sit on the parks' own ground; check them against
-    it once the city has its day (DN6).
+    far field follows them (`grass_field`). The city's lawn and rough (`assets/grass/lawn.json`, `rough.json`) were
+    checked against the parks' ground under the deck by day (DN6) and already matched it, so they are unchanged.
   - **The light on the land is the eye's air**: `AIR_SUN` is the sun through the air as the eye sees it, so far land
     lower down isn't redder than the near (only its horizon is its own: `sunOverAt`); land higher than the eye loses
     the sun when the eye does. The fog's light likewise (DN3), so from 10 km up at sunset the haze over land the sun

@@ -57,7 +57,7 @@ procedural look.
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
-Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture), `--utc YYYY-MM-DDTHH:MM` sets the world's clock, and so the sun, the moon and the stars (see Moon and stars), `--ev EV100` holds the exposure there (otherwise the eye adapts; see Light and exposure), `--hdr [PAPER_NITS [PEAK_NITS]]` shows the frame on an HDR display (see Light and exposure, "The display"), `--preexpose STOPS` checks the pre-exposure
+Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture), `--utc YYYY-MM-DDTHH:MM` sets the world's clock, and so the sun, the moon and the stars (see Moon and stars), `--ev EV100` holds the exposure there (otherwise the eye adapts; see Light and exposure), `--hdr [PAPER_NITS [PEAK_NITS]]` shows the frame on an HDR display (see Light and exposure, "The display"), `--preexpose STOPS` writes the scene that many stops off and takes them back out, which must leave the frame unchanged (see Light and exposure, "Pre-exposure"),
 `--noshadows` runs without ray-traced shadows (and without the
 ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo` paints the grass's rules on the land (or its levels of detail, culling, wind, the player's wake, or the blades' and ground's albedo unlit), `--nograss` draws no grass blades, `--nowake` leaves the grass unparted where the player walks, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
@@ -1850,7 +1850,8 @@ over 2.5 km (`CLOUD_FADE`) along a ragged line into the clear sky over the count
   out in the planet's Earth-fixed frame, so every place has its own hour: night in New York is not night in Moscow.
   They are turned into the frame's axes at the eye (`sky_ubo` in `main.c`): `frame.moon` (its light against a full
   moon's, from its phase by Allen's law and fading as it sets), `frame.sun` (it lights the sky and the air (see
-  Sky), not yet the land, and the moon's disc, so its phase and the tilt of its terminator are tonight's) and `frame.starsTurn` (the star cube
+  Sky), the land, the clouds and the city (see Day and night), and the moon's disc, so its phase and the tilt of its
+  terminator are tonight's) and `frame.starsTurn` (the star cube
   is fixed in the equatorial frame and wheels about the pole). `MOON_LIGHT` is `MOON_FULL` times the moon's light;
   a set or new moon throws neither light nor shadows. Each run prints one `sky:` line: the instant, the place, its
   local solar time, the sun's and moon's altitude and azimuth, the moon's phase. `sky_test` (ctest
@@ -2064,6 +2065,39 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
   papers and saves it as `FILE.hdr` (Radiance), beside the BMP, which is that clipped at white paper: an HDR
   frame's highlights as SDR would clip them, not the SDR tone curve's frame. Captures run SDR.
 
+### Day and night
+The world runs on the real clock (`--utc` to set it), and everything lit follows the sun, the moon and the cities'
+cloud (the day/night roadmap, DN0-DN9; ~/.claude/plans/day-night-cycle.md has each step as built). Where each part is:
+- **The clock and the bodies:** Weather, "The world clock" (DN0).
+- **The units, the exposure, the display:** Light and exposure (DN1 the anchor and pre-exposure, DN2 the eye,
+  DN8 HDR).
+- **The sky, the air and the smog; the sun on the land:** Sky (DN3, DN4).
+- **The deck by day:** Clouds, "By day" (DN5). Under the cities' cloud the daylight is `DECK_DAYLIGHT` (0.25%) of the
+  open sky's, the same number for the land, the deck's base, the city and the haze.
+- **The city by day and on its own clock:** Streets and light, "By day" (DN6) and "The city's clock" (DN7).
+
+**What it costs** (RTX 4080 SUPER, 1600x900, MSAA x4; the best of two runs of a `--shot`'s 64-frame mean, ms; the
+night is the captures' clock, the day over Los Angeles on 24 December 2026: dawn with the sun just up, noon at 32
+degrees, 4 degrees low, and the sun setting):
+
+| view | night | dawn | noon | 4 degrees | sunset | what moves |
+|---|---|---|---|---|---|---|
+| the spawn in rain | 7.26 | 7.62 | 7.29 | 7.40 | 7.29 | the city pass's noise (3.9-4.3) |
+| the street under the towers | 7.08 | 7.08 | 6.88 | 6.95 | 6.96 | |
+| the built edge (`--cam -3400 -13432 180 -8`) | 7.99 | 8.21 | 8.30 | 8.27 | 8.81 | clouds 1.75-1.99, city 4.3-4.9 (0.3-0.45 between runs) |
+| looking up at the edge | 2.64 | 2.74 | 2.83 | 2.86 | 2.74 | clouds 1.91-2.13 |
+| over the border, 1.5 km up | 1.23 | 1.27 | 1.33 | 1.51 | 1.74 | terrain 0.35 -> 0.73 as the sun sinks |
+| the mountains on foot | 1.69 | 1.72 | 1.65 | 1.83 | 1.66 | |
+| flying over the mountains | 1.70 | 1.79 | 1.65 | 2.14 | 1.64 | terrain 0.93 -> 1.19 at 4 degrees |
+| just inside a cave's mouth looking out | 1.49 | 1.42 | 1.37 | 1.22 | 1.18 | caves 0.30 by the moon, 0.12-0.17 by the sun |
+
+So the day costs what the night does, but for the land under a low sun: the shadow march in the clipmap's heights
+(`dirMarch`) climbs above the highest ground later on a shallow ray, so it takes more steps: a quarter of a
+millisecond at most. The air's tables are 0.02-0.03 ms a
+frame. Against M11e's night (before the roadmap) the land is about 0.15 ms dearer (flying 1.51 -> 1.70, on foot 1.53
+-> 1.69: the clear air's fog and the sky's light) and the city the same within its noise. The worst frame of all is
+still the built edge, at 8.0-8.8 ms, the city and its clouds as before.
+
 ### Frame
 1. The air: the sky round the eye and the air's light at the eye (compute; the transmittance and multiple-scattering tables on the first frame).
 2. Streaming: uploads, bottom-level structures for new chunks, compaction, the frame's top-level structure.
@@ -2081,7 +2115,10 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
 - **Environment** (rain, wet streets, fog volumes, weather): the clear air is `src/core/atmosphere.h` and
   `shaders/atmosphere.glsl` (see Sky); the haze lives in `hazeColor` / `fogAmount` / `airFog` in `shaders/common.glsl`. The cloud deck's height, cover,
   wind and glow are the constants at the top of `shaders/clouds.comp`. Where the clouds
-  gather is `src/core/clouds.h`. The moon (`MOON_DIR`, `MOON_LIGHT`) is in `common.glsl`. The procedural road's slickness is
+  gather is `src/core/clouds.h`. The moon (`MOON_DIR`, `MOON_LIGHT`) is in `common.glsl`. The
+  clock and the sun's and moon's places are `src/app/sky_clock.c`; the sun's strength (`SUN_ILLUMINANCE`) is in
+  `atmosphere.h`, the share of daylight under the cities' cloud (`DECK_DAYLIGHT`) in `clouds.h`, and the units, the
+  night's lift and the exposure's key in `src/core/light_units.h` (see Day and night). The procedural road's slickness is
   the `specK` term in `shadeGround`. The textured road's sheen follows its roughness map under
   GGX; wet streets are the next step (`TODO.md`).
 - **Pool size and view distance**: `POOL_PAGES` and `VIEW_DISTANCE` in `src/core/common.h`.
