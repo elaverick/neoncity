@@ -71,7 +71,7 @@ typedef struct CaveGpu CaveGpu;
  * pass is stamped inside: the city (GT_CITY), plants (GT_PLANTS) and proxies
  * (GT_SCENE), the caves (GT_CAVES), the terrain (GT_TERRAIN), the grass (GT_GRASS), then the sky
  * and the resolve (GT_SKY). GT_GRASS_PREP: the grass's compute passes. */
-enum { GT_START = 0, GT_STREAM, GT_TERRAIN_UPLOAD, GT_GRASS_PREP, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_CITY, GT_PLANTS, GT_SCENE,
+enum { GT_START = 0, GT_AIR, GT_STREAM, GT_TERRAIN_UPLOAD, GT_GRASS_PREP, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_CITY, GT_PLANTS, GT_SCENE,
        GT_CAVES, GT_TERRAIN, GT_GRASS, GT_SKY, GT_CLOUDS, GT_FLAMES, GT_POST, GT_COUNT };   /* GT_CAVES: the caves' bricks, before the terrain */   /* GT_CLOUDS: the reflections and the clouds; GT_FLAMES: the smoke and flame pass */
 struct Renderer {
     VkCore      *vk;
@@ -176,6 +176,20 @@ struct Renderer {
     bool         meterClear, meterSnap;
     float        manualEv, meterDt;   /* manualEv NAN: adapting */
     float        meterState[3];
+
+    /* The clear air (atmosphere_gpu.c): its tables (transmittance and multiple
+     * scattering made once, the sky round the eye each frame), the air's light
+     * at the eye on the GPU and each slot's copy for the CPU, and the CPU's
+     * latest (frame.air). */
+    VkDescriptorSetLayout airLayout;
+    VkPipelineLayout      airPL;
+    VkPipeline            airTransPipe, airMsPipe, airSkyPipe, airEyePipe;
+    VkDescriptorPool      airPool;
+    VkDescriptorSet       airSet[MAX_FRAMES];
+    Image        airTrans, airMs, airSky;
+    Buffer       airBuf, airRead[MAX_FRAMES];
+    bool         airReady;
+    float        airState[4][4];
 };
 
 /* renderer.c */
@@ -232,6 +246,12 @@ void exposure_gpu_targets(Renderer *r, VkDescriptorSet set);
 VkBuffer exposure_gpu_buffer(Renderer *r, VkDeviceSize *size);
 void exposure_gpu_read(Renderer *r, int slot);
 void exposure_gpu_record(Renderer *r, VkCommandBuffer cmd, int slot, const FrameUBO *ubo);
+
+/* atmosphere_gpu.c (after create_layouts: it writes the scene sets' bindings 14 and 15) */
+void atmosphere_gpu_create(Renderer *r);
+void atmosphere_gpu_destroy(Renderer *r);
+void atmosphere_gpu_read(Renderer *r, int slot);
+void atmosphere_gpu_record(Renderer *r, VkCommandBuffer cmd, int slot);
 
 /* terrain_gpu.c. Update takes the clipmap's last move from its worker, records
  * its uploads (outside any rendering) and asks for the next, at the camera;

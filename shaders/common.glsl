@@ -9,6 +9,8 @@
 #include "clouds.h"
 // LIGHT_LUX, LIGHT_NIT, EV100_REF, NIGHT_LIFT: the light's units, shared with C
 #include "light_units.h"
+// The clear air: the Earth's, its tables' shapes and its phase functions (src/core/atmosphere.h)
+#include "atmosphere.glsl"
 // Authored PBR materials: PBR_<NAME> (one per assets/materials/<name>.json), the maps
 // (PBR_ALBEDO..., PBR_MAPS_PER_MATERIAL), PBR_TEXTURE_COUNT and the flags: shared with C
 #include "pbr.h"
@@ -118,6 +120,7 @@ layout(set = 0, binding = 0) uniform Frame {
     TerrainLevel terrainLevel[TERRAIN_CLIP_LEVELS];   // from the finest drawn on (src/render/terrain_gpu.c: terrain_gpu_frame_levels)
     vec4 terrainBlocks[TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_NB * TERRAIN_CLIP_NB / 4];   // each level's storage blocks' highest ground, with the eight round each (world Y), rows of z, four to a vector
     vec4 exposure;   // x the pre-exposure (EXPOSE), y its inverse, z the exposure, w its EV100 (src/app/main.c: exposure_ubo)
+    vec4 air[4];     // the air's light at the eye (AIR_SUN, AIR_MOON, AIR_SKY; shaders/atmo_eye.comp), a couple of frames late
 } frame;
 
 /* Pre-exposure (Frostbite's: Lagarde and de Rousiers 2014). The lighting
@@ -548,23 +551,59 @@ const vec3  MOON_FULL = vec3(0.50, 0.58, 0.80) * 0.60;   // the light a full moo
 #define MOON_LIGHT (MOON_FULL * frame.moon.w)            // the moon's tonight: its phase, and none once it has set
 const vec3  STARLIGHT = vec3(0.0016, 0.0020, 0.0032);    // the clear night sky's own glow, from above
 
-/* ---------------- atmosphere ----------------
- * A smoggy night: warm city-lit haze near the horizon, cold dark zenith
- * (the city's low haze 0.059, 0.9 cd/m2; the moonlit mist's 0.018, 0.29).
- * Out in the countryside (frame.sky.x towards 0) the haze is thin moonlit
- * mist instead, with the moon's aureole round it under a clear sky. Fog uses
- * the same colour as the sky at the horizon so the finite view distance
- * dissolves seamlessly into the haze. */
-vec3 hazeColor(vec3 dir) {
+/* ---------------- the air ----------------
+ * Two layers (README, "Sky"). The clear air (atmosphere.glsl; Hillaire 2020)
+ * up to 100 km: the sky (sky.frag, from the sky-view table made each frame:
+ * shaders/atmo_skyview.comp), and along every sight line its blue haze
+ * (airLight), lit by the sun and the moon as they stand. Under it the smog
+ * near the ground (hazeAmount), much thicker: by day it scatters the sun's
+ * light and the sky's (smogLight), by night it glows with the city's light
+ * from below and the sky's own faint light (nightGlow). Fog takes the smog's
+ * colour (hazeColor), which is the sky's at the horizon, so the finite view
+ * distance dissolves seamlessly into it. */
+
+// The eye's height above the planet's sphere, in the air's kilometres (atmosphere.glsl), kept inside the air.
+float airEyeH() { return clamp(frame.camPos.y * 1e-3, 0.002, ATMO_HEIGHT - 0.01); }
+// The moon's light into the air (the sky's table, atmo_skyview.comp): MOON_AIR of what it throws on the land.
+#define AIR_MOON_LIGHT (MOON_LIGHT * MOON_AIR)
+/* The air's light at the eye (shaders/atmo_eye.comp, a couple of frames late):
+ * the sun's through the air (white above it, reddened as it sinks), none once
+ * it has set; the moon's (AIR_MOON_LIGHT) likewise; and the mean radiance all
+ * round, the sky above and the lit ground below, which stands for the light
+ * the haze scatters on. Engine units. */
+#define AIR_SUN  (frame.air[0].rgb)
+#define AIR_MOON (frame.air[1].rgb)
+#define AIR_SKY  (frame.air[2].rgb)
+
+/* How much of the daylight reaches the air round the camera: under the
+ * cities' cloud (frame.sky.z, its cover there) only DECK_DAYLIGHT of it
+ * (clouds.h). The moon's and the sky's light likewise. */
+float daylightThrough() { return mix(1.0, DECK_DAYLIGHT, frame.sky.z); }
+
+/* The night's own glow in the haze, light no sun or moon gives it: near a
+ * city (frame.sky.x towards 1) warm sodium-lit smog at the horizon and a dim
+ * glow overhead (the city's low haze 0.059, 0.9 cd/m2); out in the
+ * countryside the airglow and the far cities' light, cold and faint. */
+vec3 nightGlow(vec3 dir) {
     float y = dir.y, g = frame.sky.x;
-    vec3 low  = mix(vec3(0.015, 0.018, 0.027), vec3(0.095, 0.050, 0.036), g);     // moonlit mist .. sodium-lit smog
-    vec3 mid  = mix(vec3(0.0075, 0.009, 0.016), vec3(0.034, 0.026, 0.040), g);
-    vec3 high = mix(vec3(0.0025, 0.0032, 0.007), vec3(0.005, 0.007, 0.014), g);
+    vec3 low  = mix(vec3(0.011, 0.013, 0.020), vec3(0.095, 0.050, 0.036), g);     // the land's .. sodium-lit smog
+    vec3 mid  = mix(vec3(0.0055, 0.0066, 0.012), vec3(0.034, 0.026, 0.040), g);
+    vec3 high = mix(vec3(0.0018, 0.0023, 0.005), vec3(0.005, 0.007, 0.014), g);
     vec3 c = mix(low, mid, smoothstep(-0.02, 0.22, y));
-    c = mix(c, high, smoothstep(0.18, 0.75, y));
-    float m = max(dot(dir, MOON_DIR), 0.0);
-    return c + MOON_LIGHT * (0.03 * pow(m, 400.0) + 0.005 * pow(m, 12.0)) * (1.0 - frame.sky.z);
+    return mix(c, high, smoothstep(0.18, 0.75, y));
 }
+
+/* The light the smog sends along -dir, seen thick (atmosphere.h, SMOG_*): the
+ * sun's and the moon's scattered forward round them (the aureole), and the
+ * light from all round (AIR_SKY), the more for the light the smog passes on
+ * through itself. Dimmed under the cities' cloud. */
+vec3 smogLight(vec3 dir) {
+    vec3 L = AIR_SUN * hgPhase(dot(dir, SUN_DIR), SMOG_G) + AIR_MOON * hgPhase(dot(dir, MOON_DIR), SMOG_G) + AIR_SKY * SMOG_MS;
+    return L * (SMOG_ALBEDO * daylightThrough());
+}
+
+// The haze's colour along dir: what fog mixes towards.
+vec3 hazeColor(vec3 dir) { return nightGlow(dir) + smogLight(dir); }
 
 // The mean of exp(-h / H) along a straight sight line from height h0 to h1.
 float hazeMean(float h0, float h1, float H) {
@@ -653,10 +692,39 @@ vec4 reflSample(sampler2D t, ivec2 px) {
     return g.a > 1e-3 ? vec4(g.xyz / g.a, g.a) : vec4(0.0);
 }
 
+/* The clear air along the sight line to rel (dist away): what it lets
+ * through (T) and the light it scatters in (returned), as the sun, the moon
+ * and the light all round (AIR_*) light it at the eye. Rayleigh and Mie
+ * thinning with height (heights above the planet's sphere: world Y 0) as
+ * hazeAmount's layers do, integrated exactly along the line; its light taken
+ * as constant along it, which over the tens of kilometres the land is drawn
+ * is near enough (the sky's own table does it properly, out to space). */
+vec3 airLight(vec3 rel, float dist, out vec3 T) {
+    float h0 = max(frame.camPos.y, 0.0), h1 = max(frame.camPos.y + rel.y + planetDrop(rel.xz), 0.0);
+    float km = dist * 1e-3;
+    float dR = hazeMean(h0, h1, ATMO_RAYLEIGH_H * 1000.0) * km, dM = hazeMean(h0, h1, ATMO_MIE_H * 1000.0) * km;
+    vec3 tR = AIR_RAYLEIGH * dR;
+    float tMs = ATMO_MIE_SCAT * dM;
+    vec3 tau = tR + (ATMO_MIE_SCAT + ATMO_MIE_ABS) * dM;
+    T = exp(-tau);
+    vec3 f = mix((1.0 - T) / max(tau, vec3(1e-6)), 1.0 - 0.5 * tau, lessThan(tau, vec3(1e-3)));   // (1 - T) / tau
+    vec3 dir = rel / max(dist, 1e-4);
+    float cs = dot(dir, SUN_DIR), cm = dot(dir, MOON_DIR);
+    vec3 sR = AIR_SUN * rayleighPhase(cs) + AIR_MOON * rayleighPhase(cm) + AIR_SKY;
+    vec3 sM = AIR_SUN * miePhase(cs) + AIR_MOON * miePhase(cm) + AIR_SKY;
+    return f * (tR * sR + tMs * sM) * daylightThrough();
+}
+
+/* Colour col of a surface at rel, dist away, as the eye sees it: through the
+ * clear air, then mixed by fog (fogAmount, or a shader's own) into the haze. */
+vec3 airFog(vec3 col, vec3 rel, float dist, float fog) {
+    vec3 T, L = airLight(rel, dist, T);
+    return mix(col * T + L, hazeColor(rel / max(dist, 1e-4)), fog);
+}
+
 vec3 applyFog(vec3 col, vec3 rel) {
     float d = length(rel);
-    vec3 dir = rel / max(d, 1e-4);
-    return mix(col, hazeColor(dir), fogAmount(rel, d));
+    return airFog(col, rel, d, fogAmount(rel, d));
 }
 
 #endif

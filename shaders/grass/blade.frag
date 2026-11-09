@@ -233,7 +233,7 @@ void shadePixel() {
                 col += envReflection(R) * envBRDF(0.02, rough, max(dot(N, gV), 1e-4)) * wetB * own;
             }
             float dist = length(vRel);
-            col = mix(col, hazeColor(vRel / max(dist, 1e-4)), fogAmount(vRel, dist));
+            col = airFog(col, vRel, dist, fogAmount(vRel, dist));
         } else {
             LandSky sky = landSky(vRel);
             gMoonVis = vLight.w;   // the moon's shadow at the root (ground.glsl landMoon)

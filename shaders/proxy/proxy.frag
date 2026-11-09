@@ -143,7 +143,7 @@ void shadePixel() {
     float dist = length(vRel);
     vec3 V = -vRel / max(dist, 1e-4);
     vec3 col = shadeProxy(n, V);
-    outColor = vec4(mix(col, hazeColor(-V), fogAmount(vRel, dist)), 1.0);
+    outColor = vec4(airFog(col, vRel, dist, fogAmount(vRel, dist)), 1.0);
     outRefl = vec4(0.0);
 }
 

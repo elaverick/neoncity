@@ -2,14 +2,18 @@
 #extension GL_GOOGLE_include_directive : require
 #include "common.glsl"
 
-/* The sky behind everything: the haze (hazeColor), with low smog banks lit
- * from below over and near a city; beyond the haze, the stars and the moon,
- * dimmed by the air they shine through. The cities' clouds (clouds.comp) are
- * laid over all of it. */
+/* The sky behind everything. The clear air's light (the sky-view table,
+ * shaders/atmo_skyview.comp: blue by day, red at dusk, the twilight after
+ * sunset, a moonlit night's faint blue), and beyond it the sun, the stars and
+ * the moon, dimmed and reddened by the air they shine through; low down the
+ * smog's haze (hazeColor) takes over, with low smog banks lit from below over
+ * and near a city. The cities' clouds (clouds.comp) are laid over all of it. */
 
 layout(location = 0) in vec2 vUV;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outRefl;   // nothing reflective (city.frag)
+layout(set = 0, binding = 14) uniform sampler2D skyLut;     // atmo_skyview.comp (repeating round the azimuth)
+layout(set = 0, binding = 15) uniform sampler2D transLut;   // atmo_transmittance.comp
 
 // How much of the light from beyond the air along dir gets through its haze.
 float skyClear(vec3 dir) {
@@ -79,10 +83,31 @@ vec3 moon(vec3 dir, float px) {
     return MOON_SURFACE * albedo * (lit + 0.012) * disc;
 }
 
+/* The sun: its disc SUN_RADIUS across, as bright as SUN_ILLUMINANCE spread
+ * over it, darker towards its limb (the linear law, u = 0.6), its edge
+ * anti-aliased over a pixel. */
+vec3 sunDisc(vec3 dir, float px) {
+    float a = atan(length(cross(dir, SUN_DIR)), dot(dir, SUN_DIR));   // the angle from its centre, exact when small
+    float edge = clamp((SUN_RADIUS - a) / px + 0.5, 0.0, 1.0);
+    if (edge <= 0.0) return vec3(0.0);
+    float q = min(a / SUN_RADIUS, 1.0), mu = sqrt(1.0 - q * q);
+    const float U = 0.6;
+    float L = SUN_ILLUMINANCE / (AIR_PI * SUN_RADIUS * SUN_RADIUS) * (1.0 - U * (1.0 - mu)) / (1.0 - U / 3.0);
+    return vec3(L * edge);
+}
+
 void shadePixel() {
     vec2 ndc = vUV * 2.0 - 1.0;
     vec3 dir = normalize(frame.rayBasis[2].xyz + ndc.x * frame.rayBasis[0].xyz - ndc.y * frame.rayBasis[1].xyz);
-    vec3 col = hazeColor(dir);
+    float h = airEyeH(), r = AIR_BOTTOM + h;
+    float px = length(frame.rayBasis[1].xyz) * 2.0 * frame.screen.w;   // a pixel's angle (radians)
+
+    // the clear air, and what shines through it from beyond (nothing below the horizon)
+    vec3 col = textureLod(skyLut, skyUV(r, h, dir), 0.0).rgb;
+    if (airToGround(r, dir.y, h) < 0.0)
+        col += (stars(dir, px) + moon(dir, px) + sunDisc(dir, px)) * airTransmittance(transLut, r, dir.y);
+    // the smog low down, and the night's own glow
+    col = nightGlow(dir) + mix(col, smogLight(dir), 1.0 - skyClear(dir));
 
     // Low smog banks lit from below by the city.
     if (dir.y > 0.0 && frame.sky.x > 0.0) {
@@ -91,10 +116,8 @@ void shadePixel() {
         float band = smoothstep(0.35, 0.85, n) * (1.0 - smoothstep(0.0, 0.6, dir.y));
         col += vec3(0.075, 0.036, 0.030) * band * frame.sky.x;
     }
-
-    float px = length(frame.rayBasis[1].xyz) * 2.0 * frame.screen.w;   // a pixel's angle (radians)
-    col += (stars(dir, px) + moon(dir, px)) * skyClear(dir);
-    outColor = vec4(col, 1.0);
+    // the sun's disc, pre-exposed, within what the 16-bit target holds (the bloom spreads it)
+    outColor = vec4(min(col, vec3(30000.0 * frame.exposure.y)), 1.0);
     outRefl = vec4(0.0);
 }
 

@@ -1,0 +1,22 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// The air's transmittance from any height along any direction to the top of
+// the air (atmosphere.glsl: transUV), made once.
+layout(local_size_x = 8, local_size_y = 8) in;
+#include "atmo_tables.glsl"
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= ATMO_TRANS_W || p.y >= ATMO_TRANS_H) return;
+    float r, mu;
+    transParams((vec2(p) + 0.5) / vec2(ATMO_TRANS_W, ATMO_TRANS_H), r, mu);
+    const int STEPS = 40;
+    float d = airToTop(r, mu), dt = d / float(STEPS);
+    vec3 tau = vec3(0.0);
+    for (int i = 0; i < STEPS; ++i) {
+        float t = (float(i) + 0.5) * dt;
+        float rs = sqrt(r * r + t * t + 2.0 * r * mu * t);
+        tau += airAt(rs - AIR_BOTTOM).ext * dt;
+    }
+    imageStore(transOut, p, vec4(exp(-tau), 1.0));
+}

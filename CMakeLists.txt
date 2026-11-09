@@ -164,6 +164,7 @@ set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/spv)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain ${SHADER_OUT_DIR}/proxy ${SHADER_OUT_DIR}/interior ${SHADER_OUT_DIR}/grass)
 set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp exposure_meter.comp exposure_adapt.comp
+            atmo_transmittance.comp atmo_multiscatter.comp atmo_skyview.comp atmo_eye.comp
             cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
             prepass.frag impostor_demand.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag terrain/terrain_pre.frag
             terrain/planet.vert terrain/planet.frag terrain/terrain_rt.comp terrain/cave.vert terrain/cave.frag terrain/cave_shelter.frag
@@ -181,7 +182,7 @@ set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PR
                     terrain/cave_shelter.vert:terrain/cave.vert:CAVE_SHELTER)   # the caves into the shelter map
 # Shaders also include the #define-only headers they share with C.
 set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/core/clouds.h
-                          ${CMAKE_CURRENT_SOURCE_DIR}/src/core/light_units.h
+                          ${CMAKE_CURRENT_SOURCE_DIR}/src/core/light_units.h ${CMAKE_CURRENT_SOURCE_DIR}/src/core/atmosphere.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_clip.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/terrain/terrain_planet.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/grass/grass_rules.h
@@ -478,7 +479,7 @@ list(REMOVE_ITEM GAME_GEN_SOURCES ${WORLD_SOURCES})
 add_library(neoncity_world OBJECT ${WORLD_SOURCES})
 target_include_directories(neoncity_world PRIVATE ${SRC_DIRS})
 add_executable(NeonCity
-  src/app/main.c src/app/sky_clock.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/exposure_gpu.c src/render/terrain_gpu.c src/render/terrain_rt.c src/render/road_gpu.c src/render/planet_gpu.c src/render/cave_gpu.c src/render/proxy_gpu.c src/render/grass_gpu.c src/grass/grass.c src/grass/grass_wake.c src/render/materials.c src/render/adverts.c src/render/interiors.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c src/app/lobby_doors.c)
+  src/app/main.c src/app/sky_clock.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/exposure_gpu.c src/render/atmosphere_gpu.c src/render/terrain_gpu.c src/render/terrain_rt.c src/render/road_gpu.c src/render/planet_gpu.c src/render/cave_gpu.c src/render/proxy_gpu.c src/render/grass_gpu.c src/grass/grass.c src/grass/grass_wake.c src/render/materials.c src/render/adverts.c src/render/interiors.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c src/app/lobby_doors.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

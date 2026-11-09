@@ -222,8 +222,8 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
       over them.
     - **A soft edge from the disc** (0.5 degrees) over long casters near the camera: jittered rays and the
       denoiser's history, not one hard ray (the march already has a penumbra).
-    - **Everything the day changes**: the sky, the haze, the clouds' lighting and the exposure are all night's; a
-      sun means a day-night model, not just a light.
+    - **Everything the day changes**: the sky and the haze follow the sun since DN3 (README, "Sky"); the land's
+      light, the clouds' lighting, the city's and the exposure's day are DN4-DN6.
   - **Costs** (M11e, RTX 4080 SUPER, 1600 x 900, MSAA x4, all three on against all three off; see the README):
     two rounds each, which agreed to 0.01-0.02 ms.
     - Just inside a cave's mouth looking out (adit 14928f41), the worst: 0.95 to 1.39 ms (caves 0.09 to 0.29, the
@@ -624,14 +624,16 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   the camera. The megacities' constant rain is meant to stay; the rest of the world is to get a full weather system
   (fronts, dry spells, snowfall), for which `--rain 0` (dry) and the fade below `RAIN_DRIZZLE` are the start.
 - **The moon and stars are the real ones** (DN0, `src/app/sky_clock.c`): they wheel with the UTC clock, by where
-  on the planet the camera is, and the moon has its phase and sets. The sun is worked out but lights nothing: the
-  day is the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md, DN2-DN9). The star cube is not a
+  on the planet the camera is, and the moon has its phase and sets. The sun lights the sky and the haze (DN3), not
+  yet the land, the clouds or the city: the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md,
+  DN4-DN9). The star cube is not a
   real catalogue: the pole star and the constellations aren't where they are.
 - **The night isn't physical against its anchor** (DN1, README "Light and exposure"): the moon and the starlight are
   about 70 times the real ones (`NIGHT_LIFT`), the deck's underside five times the brightest real city-lit overcast,
   and the lobbies and the impostors' offices about 1/17 of real ones (the kit's `bake_scale`). Kept as the look. The
   auto exposure (DN2) opens the eye only 0.8 of a stop on the moonlit land against the city, so lowering the moon to
-  the truth would darken the land by six stops. The sky (DN3) may still bring the moon and stars nearer the truth.
+  the truth would darken the land by six stops. The sky (DN3) lights the air with a quarter of the lifted moon
+  (`MOON_AIR`), not the real one's 1/70, which would leave no moonlit sky to see.
 - **The auto exposure's key is tuned on the night only** (DN2, `light_units.h`). By day, the slope above `KEY_DUSK_EV`
   and the 14.5 a sunlit view lands on are guesses until the sun lights the land (DN4) and the deck by day (DN5). So is
   the tone curve: the ACES fit is kept, with AgX the candidate if noon clips or hues skew. The meter weighs the
@@ -645,6 +647,23 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   everything does; the clouds alone leave it off out there (`cloudFog`). The moonlit haze, `MOON_LIGHT` and
   the star brightness are first guesses, tuned by eye from a few `--cam` views.
 - **Star field:** a uniform scatter; no Milky Way band or constellations.
+- **The sky (DN3) left over** (README, "Sky"):
+  - **Twilight is violet**, as Hillaire's RGB model makes it (its ozone absorbs green most); real civil twilight is
+    bluer overhead. A spectral sky or a nudged ozone would bring it back, if it reads wrong once the land is lit.
+  - **The fog's clear air is lit at the eye** (`airLight`: the sun's light, reddened, constant along the sight line),
+    so a far mountain still in the sun after it has set at the eye goes unlit, and the Earth's shadow rising in the
+    east at dusk isn't in the fog (it is in the sky). The froxel volume of the plan would carry it; it wasn't needed
+    for land within 20-40 km.
+  - **The air's light comes back two frames late** (`frame.air`, read back as the exposure is): a jump of the clock
+    (a new `--utc`, a frame change) lights the haze with the old sky for two frames.
+  - **The smog stays as thick by day** (`TERRAIN_HAZE` 4 km): the countryside's haze, dark at night, is a white
+    haze by day, and from high up over unlit land it is all one sees until the land is lit (DN4). Whether the land's
+    haze should thin by day is a look call for then, with the user's rule in mind: fog is to be reduced, not
+    leaned on.
+  - **Reflections still see the night's sky** low down (`envReflection`, the land's `landReflection`: the haze's
+    colour times 1.5, and `CLOUD_DECK`); the clear sky's blue isn't in them. DN4 (the land) and DN6 (the city).
+  - **The sun's disc is clamped** to what the 16-bit target holds (30000 pre-exposed), so `--preexpose` changes it
+    where it clips; the bloom spreads it either way.
 
 ## Curtain wall relief
 Piers, beams, mullions and a coping on office towers' curtain walls (`src/city/mesh_relief.c`, `shadeTrim`), after

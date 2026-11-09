@@ -315,6 +315,10 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
                player->yaw * 180.0f / PI_F, player->pitch * 180.0f / PI_F);
         float target, metered, ev = renderer_exposure(renderer, &target, &metered);
         printf("exposure: EV100 %.2f (the eye's target %.2f; the scene meters %.2f)\n", ev, target, metered);
+        float sun[4], moon[4], sky[4];
+        renderer_air(renderer, sun, moon, sky);
+        printf("air: sun %.4g %.4g %.4g (%.0f%% of its disc up), moon %.3g %.3g %.3g, all round %.3g %.3g %.3g (engine units)\n",
+               sun[0], sun[1], sun[2], sun[3] * 100.0f, moon[0], moon[1], moon[2], sky[0], sky[1], sky[2]);
     }
 }
 

@@ -589,11 +589,10 @@ vec3 groundLit(vec3 rel, vec3 n, float urban, Cover cover, bool textured) {
     return groundUrban(albedo * groundLightIn(l.sky, nB), urban) + landSheen(rel, l, nB, n, LAND_FILM_ROUGH, w);
 }
 
-// What is lit at rel, seen through the haze.
+// What is lit at rel, seen through the clear air and the haze.
 vec3 groundHazed(vec3 col, vec3 rel, float urban) {
     float dist = length(rel);
-    float fog = terrainFog(rel, dist, urban);
-    return mix(col, hazeColor(rel / max(dist, 1e-4)), fog);
+    return airFog(col, rel, dist, terrainFog(rel, dist, urban));
 }
 
 vec3 shadeGround(vec3 rel, vec3 n, float urban, Cover cover, bool textured) { return groundHazed(groundLit(rel, n, urban, cover, textured), rel, urban); }

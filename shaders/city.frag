@@ -151,7 +151,7 @@ void shadePixel() {
     }
     float dist = length(vRel);
     float fog = fogAmount(vRel, dist);
-    outColor = vec4(mix(col, hazeColor(vRel / max(dist, 1e-4)), fog), 1.0);
+    outColor = vec4(airFog(col, vRel, dist, fog), 1.0);
     float reflW = gRefl.w * (1.0 - fog);
     outRefl = vec4(gRefl.xyz * reflW, reflW);
 }

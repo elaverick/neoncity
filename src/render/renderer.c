@@ -3,7 +3,7 @@
 #include "grass_rules.h"
 #include "grass.h"
 
-static const char *const GT_NAMES[GT_COUNT] = { "", "streaming", "terrain upload", "grass prepare", "shelter", "prepass", "shadow rays", "shadow filter",
+static const char *const GT_NAMES[GT_COUNT] = { "", "air", "streaming", "terrain upload", "grass prepare", "shelter", "prepass", "shadow rays", "shadow filter",
                                                 "city", "plants", "proxies", "caves", "terrain", "grass", "sky", "clouds", "flames", "post" };
 
 void renderer_set_shadows(Renderer *r, bool on) { r->shadowsOn = on && r->rt; }
@@ -143,6 +143,7 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
     create_layouts(r);
     create_pipelines(r);
     exposure_gpu_create(r);
+    atmosphere_gpu_create(r);
     road_gpu_create(r);   /* before the terrain, whose descriptor sets bind it */
     terrain_gpu_create(r);
     planet_gpu_create(r);
@@ -160,6 +161,7 @@ void renderer_destroy(Renderer *r) {
     vkDeviceWaitIdle(vk->device);
     destroy_targets(r);
     exposure_gpu_destroy(r);
+    atmosphere_gpu_destroy(r);
     grass_gpu_destroy(r);
     cave_gpu_destroy(r);
     terrain_gpu_destroy(r);
@@ -229,6 +231,7 @@ static bool frame_acquire(Renderer *r, int slot, uint32_t *imageIndex) {
     if (acq != VK_SUCCESS && acq != VK_SUBOPTIMAL_KHR) VK_CHECK(acq);
     VK_CHECK(vkResetFences(vk->device, 1, &r->fence[slot]));
     exposure_gpu_read(r, slot);
+    atmosphere_gpu_read(r, slot);
     if (r->timeWritten[slot]) {   /* this slot's last frame has finished: how long its passes took */
         uint64_t t[GT_COUNT];
         if (vkGetQueryPoolResults(vk->device, r->timeQ[slot], 0, GT_COUNT, sizeof(t), t, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
@@ -293,6 +296,7 @@ static void frame_uniforms(Renderer *r, int slot, const FrameUBO *uboIn, const d
      * with the ray-traced shadows (DIR_SHADOW_TLAS, once the terrain's TLAS
      * levels are known: after terrain_gpu_update). A moon that has set (or
      * is new) throws no light and so no shadows. */
+    memcpy(ubo->air, r->airState, sizeof(ubo->air));   /* the air at the eye, as last read back (atmosphere_gpu.c) */
     memcpy(ubo->dirLight, ubo->moon, 3 * sizeof(float));
     ubo->dirLight[3] = r->dirShadowsOff || ubo->moon[3] <= 0.0f ? 0.0f : 1.0f;   /* DIR_SHADOW_MARCH */
     if (!r->havePrev) { r->prevViewProj = ubo->viewProj; memcpy(r->prevCam, cam, sizeof(r->prevCam)); r->havePrev = true; }
@@ -391,6 +395,8 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
 
     vkCmdResetQueryPool(cmd, r->timeQ[slot], 0, GT_COUNT);
     timestamp(r, cmd, slot, GT_START);
+    atmosphere_gpu_record(r, cmd, slot);   /* the sky, before the scene's sky pass reads it */
+    timestamp(r, cmd, slot, GT_AIR);
     interiors_update(r->interiors, cmd, slot);
     chunks_update(r->chunks, cmd, slot, r->frameIndex, cam, &ubo.viewProj);
     {   /* the land's lamps' chunks (the uniforms are written, but still the CPU's until the submit) */

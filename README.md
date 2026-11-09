@@ -1802,7 +1802,8 @@ over 2.5 km (`CLOUD_FADE`) along a ragged line into the clear sky over the count
   `terrain/ground.glsl`). Out of the clouds it casts shadows on the land, its roads and its grass, and into
   the caves (see Shadows, "The moon"). It also silvers the clouds from above. Behind it is a procedural star
   field: a jittered grid over a cube, with power-law brightness, colours from blue-white to
-  orange, and twinkling near the horizon. Both are dimmed by the haze they shine through.
+  orange, and twinkling near the horizon. Both are dimmed by the clear air and the haze they shine through (see
+  Sky).
 - **The world clock** (`src/app/sky_clock.c`): UTC, as a Julian date. It is the system's UTC, running at 1x;
   `--utc YYYY-MM-DDTHH:MM` starts it at that instant instead. A `--shot` holds it, at `--utc` or else at
   `SKY_CAPTURE_UTC` (Christmas Eve 2026 in Los Angeles, the full moon 24 degrees up in the east-north-east, near
@@ -1810,8 +1811,8 @@ over 2.5 km (`CLOUD_FADE`) along a ragged line into the clear sky over the count
   the moon (Meeus's truncated series, with its parallax from the camera's place) and the sidereal angle are worked
   out in the planet's Earth-fixed frame, so every place has its own hour: night in New York is not night in Moscow.
   They are turned into the frame's axes at the eye (`sky_ubo` in `main.c`): `frame.moon` (its light against a full
-  moon's, from its phase by Allen's law and fading as it sets), `frame.sun` (worked out, lighting nothing yet: only
-  the moon's disc, so its phase and the tilt of its terminator are tonight's) and `frame.starsTurn` (the star cube
+  moon's, from its phase by Allen's law and fading as it sets), `frame.sun` (it lights the sky and the air (see
+  Sky), not yet the land, and the moon's disc, so its phase and the tilt of its terminator are tonight's) and `frame.starsTurn` (the star cube
   is fixed in the equatorial frame and wheels about the pole). `MOON_LIGHT` is `MOON_FULL` times the moon's light;
   a set or new moon throws neither light nor shadows. Each run prints one `sky:` line: the instant, the place, its
   local solar time, the sun's and moon's altitude and azimuth, the moon's phase. `sky_test` (ctest
@@ -1819,6 +1820,43 @@ over 2.5 km (`CLOUD_FADE`) along a ragged line into the clear sky over the count
   the eclipse of 2024 April 8, sunrise in New York and in Moscow on one day and the solstice's noon at Greenwich;
   `sky_test --at UTC LAT LON` prints the sky anywhere, `--find` searches for a capture instant. It is DN0 of the
   day/night roadmap.
+
+### Sky (`src/core/atmosphere.h`, `src/render/atmosphere_gpu.c`)
+The sky follows the sun and the moon: blue by day, gold and red as the sun sinks, the twilight's purple and blue after
+it has set, and by night the moonlit air's faint blue over the stars (DN3 of the day/night roadmap). Two layers:
+- **The clear air:** the Earth's (Hillaire, "A Scalable and Production Ready Sky and Atmosphere Rendering Technique",
+  2020): Rayleigh scattering thinning over 8 km, aerosols (Mie) over 1.2 km, ozone absorbing round 25 km, 100 km deep
+  over the planet's sphere. Its look-up tables are compute passes (`shaders/atmo_*.comp`, all four in the frame's
+  first 0.02-0.03 ms, "air"): the transmittance to the top of the air (256 x 64) and the light scattered many times
+  (32 x 32, Hillaire's psi_ms) are made on the first frame; each frame the sky round the eye (192 x 108, its rows
+  packed towards the horizon) is marched in 32 steps, lit by the sun (`SUN_ILLUMINANCE` 2560 units, 128 000 lux,
+  above the air) and by the moon at `MOON_AIR` (a quarter) of its lifted light, once and many times, with the
+  planet's shadow. `sky.frag` reads it, and adds the sun's disc (its real 0.27 degrees, limb-darkened, as bright
+  as the 16-bit target holds), the moon and the stars, all seen through the air's transmittance, so they redden and
+  dim towards the horizon.
+- **The air at the eye:** one compute group then works out the sun's and the moon's light at the eye through the
+  air (reddened as they sink, gone once their discs have set) and the mean radiance all round (the sky above, the
+  lit ground below). It is copied back to the CPU like the exposure and reaches every shader a couple of frames
+  late as `frame.air` (`AIR_SUN`, `AIR_MOON`, `AIR_SKY`). The shot's log prints it on an `air:` line. The fog of
+  every surface that reaches far (`airFog`: the land and the planet's patches, the proxies, the city, the grass)
+  takes the clear air between it and the eye: its transmittance and its in-scattered light, Rayleigh and Mie thinning
+  with height and integrated exactly along the sight line, lit by those three, so distant land turns blue by day.
+- **The smog:** the haze of the cities and the land (`hazeAmount`, `CITY_HAZE`, `TERRAIN_HAZE`) stays, much thicker
+  than the clear air's aerosols, and is what fog mixes into (`hazeColor`). It holds the night's own glow
+  (`nightGlow`: the sodium-lit smog near a city, the airglow out in the countryside), and the light of the sun, the
+  moon and the sky scattered in it (`smogLight`: Henyey-Greenstein, g 0.6, albedo 0.9), so it is a white haze by
+  day with the sun's aureole round it, gold at sunset, and the moon's glow by night. Under the cities' cloud only
+  `DECK_DAYLIGHT` (0.25%) of the daylight reaches it (`daylightThrough`, from the cover over the camera; DN5 makes it
+  a field). The sky low down is the smog's: the sky mixes into it as `hazeAmount` along the line of sight reaches
+  out (`skyClear`), so the horizon is the haze's colour and the land beyond the view distance dissolves into it.
+- **Captures** over the mountains NW of the megacity (the shot's `--utc`), with the land still unlit by the sun
+  (DN4): noon, a white hazy horizon under a blue sky, EV 14.5; the afternoon sun at 20 degrees, its disc with a
+  white aureole, the sun's light at the eye (2195, 1781, 1301); at 4 degrees, gold (1440, 676, 191), EV 12.6; as
+  it sets, an orange band and a violet sky, EV 9.3; civil twilight at -5.5 degrees, violet with the first stars,
+  EV 4.7; nautical twilight, a dark blue sky and a red line on the horizon, at the night's exposure. The night views
+  against the build before (the spawn, the street, the built edge) differ by less than two runs of one build do; the
+  moonlit countryside's sky is a little bluer, its stars fading towards the horizon. `--preexpose` +/-8 leaves a day
+  view unchanged (mean difference 0.02).
 
 ### Clouds (`shaders/clouds.comp`)
 Rain clouds hang over the cities: a nimbostratus deck whose underside sits around 200 m, with
@@ -1864,7 +1902,9 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
   | the clear night sky (`STARLIGHT`) | 0.002 | 0.1 lux | 0.0015 lux |
   | the city's fill (`ambientLight`) | 0.007-0.009 | 0.4 lux, twice that near the ground | |
   | the deck's underside (`CLOUD_DECK`) | 0.061 | 1 cd/m2 | 0.2 cd/m2 at the brightest |
-  | the city's low haze (`hazeColor`) | 0.059 | 0.9 cd/m2 | |
+  | the city's low haze (`nightGlow`) | 0.059 | 0.9 cd/m2 | |
+  | the sun above the air (`SUN_ILLUMINANCE`); at the ground, 32 degrees up | 2560; 2350 | 128 000; 117 000 lux | 128 000; ~100 000 lux |
+  | the noon sky all round (`AIR_SKY`, 32 degrees) | 105 | 1700 cd/m2 | |
   | the light on a lobby's floor | 0.55 | 27 lux | 200-500 lux |
 
   So the moon and the stars are about 70 times the real ones (`NIGHT_LIFT`): a game's night, which the eye's
@@ -1923,20 +1963,21 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
   mountains and a cave stay within the noise between two runs at 0 (DN1).
 
 ### Frame
-1. Streaming: uploads, bottom-level structures for new chunks, compaction, the frame's top-level structure.
-2. Shelter map: the city round the camera rendered from above, depth only.
-3. With shadows: the depth prepass, then the shadow rays and their filter (compute).
-4. MSAA x4 HDR scene and reflection G-buffer, resolved (colour averaged, depth sample zero).
-5. Sky, drawn into the empty depth: the haze, the stars and the moon.
-6. Screen-space reflections on the wet streets: a compute trace, then a streaked additive blend.
-7. Clouds and rain mist: half-resolution compute ray march over the cities' cloud, blended into the HDR target with a depth-aware upsample.
-8. Auto exposure: the scene's luminance histogram, then the eye's adaptation (compute).
-9. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
-10. Composite: falling rain, the eye's exposure, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
+1. The air: the sky round the eye and the air's light at the eye (compute; the transmittance and multiple-scattering tables on the first frame).
+2. Streaming: uploads, bottom-level structures for new chunks, compaction, the frame's top-level structure.
+3. Shelter map: the city round the camera rendered from above, depth only.
+4. With shadows: the depth prepass, then the shadow rays and their filter (compute).
+5. MSAA x4 HDR scene and reflection G-buffer, resolved (colour averaged, depth sample zero).
+6. Sky, drawn into the empty depth: the clear air's light, the sun, the moon and the stars through it, the haze low down.
+7. Screen-space reflections on the wet streets: a compute trace, then a streaked additive blend.
+8. Clouds and rain mist: half-resolution compute ray march over the cities' cloud, blended into the HDR target with a depth-aware upsample.
+9. Auto exposure: the scene's luminance histogram, then the eye's adaptation (compute).
+10. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
+11. Composite: falling rain, the eye's exposure, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
 
 ## Extending
-- **Environment** (rain, wet streets, fog volumes, weather): the atmosphere lives in
-  `hazeColor` / `fogAmount` in `shaders/common.glsl`. The cloud deck's height, cover,
+- **Environment** (rain, wet streets, fog volumes, weather): the clear air is `src/core/atmosphere.h` and
+  `shaders/atmosphere.glsl` (see Sky); the haze lives in `hazeColor` / `fogAmount` / `airFog` in `shaders/common.glsl`. The cloud deck's height, cover,
   wind and glow are the constants at the top of `shaders/clouds.comp`. Where the clouds
   gather is `src/core/clouds.h`. The moon (`MOON_DIR`, `MOON_LIGHT`) is in `common.glsl`. The procedural road's slickness is
   the `specK` term in `shadeGround`. The textured road's sheen follows its roughness map under

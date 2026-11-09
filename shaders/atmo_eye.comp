@@ -1,0 +1,52 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+/* The air's light at the eye, for every shader that fogs (common.glsl: AIR_SUN,
+ * AIR_MOON, AIR_SKY), which reads it from the frame's uniforms a couple of
+ * frames late (src/render/atmosphere_gpu.c reads it back): the sun's light
+ * through the air, as much of its disc as stands above the horizon; the
+ * moon's in the air (MOON_AIR of it); and the mean radiance round the eye, the
+ * sky (sky-view table) above and the lit ground (albedo ATMO_GROUND_ALBEDO,
+ * seen through the air) below, as the light the haze scatters on. One group. */
+layout(local_size_x = 64) in;
+#include "atmo_tables.glsl"
+
+shared vec3 sAll[64], sUp[64];
+shared float sDown[64];
+
+void main() {
+    uint i = gl_LocalInvocationIndex;
+    float h = airEyeH(), r = AIR_BOTTOM + h;
+    vec3 all = vec3(0.0), up = vec3(0.0);
+    float down = 0.0;
+    for (uint k = 0u; k < 4u; ++k) {   // 256 directions, evenly over the sphere
+        float n = float(i * 4u + k);
+        float y = 1.0 - (n + 0.5) * (2.0 / 256.0), s = sqrt(max(1.0 - y * y, 0.0)), a = n * 2.39996323;
+        vec3 dir = vec3(s * cos(a), y, s * sin(a));
+        vec3 L = textureLod(skyLut, skyUV(r, h, dir), 0.0).rgb;
+        all += L;
+        if (airToGround(r, y, h) >= 0.0) down += 1.0;
+        else up += L;
+    }
+    sAll[i] = all; sUp[i] = up; sDown[i] = down;
+    barrier();
+    for (uint w = 32u; w > 0u; w >>= 1) {
+        if (i < w) { sAll[i] += sAll[i + w]; sUp[i] += sUp[i + w]; sDown[i] += sDown[i + w]; }
+        barrier();
+    }
+    if (i != 0u) return;
+
+    float muH = -sqrt(max(h * (r + AIR_BOTTOM), 0.0)) / r;   // the horizon's cosine to the up
+    float fs = clamp((SUN_DIR.y - muH) / (2.0 * SUN_RADIUS) + 0.5, 0.0, 1.0);
+    float fm = clamp((MOON_DIR.y - muH) / (2.0 * MOON_RADIUS) + 0.5, 0.0, 1.0);
+    vec3 sun = SUN_ILLUMINANCE * fs * airTransmittance(transLut, r, max(SUN_DIR.y, muH));
+    vec3 moon = AIR_MOON_LIGHT * fm * airTransmittance(transLut, r, max(MOON_DIR.y, muH));
+    float nDown = sDown[0], nUp = 256.0 - nDown;
+    vec3 skyMean = nUp > 0.0 ? sUp[0] / nUp : vec3(0.0);
+    // the ground below: lit by the sun, the moon and a sky of that mean radiance
+    vec3 E = sun * max(SUN_DIR.y, 0.0) + moon * max(MOON_DIR.y, 0.0) + AIR_PI * skyMean;
+    vec3 ground = E * (ATMO_GROUND_ALBEDO / AIR_PI);
+    airEye[0] = vec4(sun, fs);
+    airEye[1] = vec4(moon, fm);
+    airEye[2] = vec4((sAll[0] + ground * nDown) / 256.0, 0.0);
+    airEye[3] = vec4(skyMean, 0.0);
+}

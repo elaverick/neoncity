@@ -1,0 +1,46 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+/* The sky round the eye (Hillaire 2020's sky-view table), made each frame: the
+ * light the clear air scatters towards the eye along each direction, from the
+ * sun and the moon (MOON_AIR of its light), once from each and many times
+ * (msLut), out to the top of the air or the ground. Engine units, not
+ * pre-exposed; sky.frag reads it (atmosphere.glsl: skyUV). The ray's steps
+ * crowd towards the eye, where the air is thickest. */
+layout(local_size_x = 8, local_size_y = 8) in;
+#include "atmo_tables.glsl"
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= ATMO_SKY_W || p.y >= ATMO_SKY_H) return;
+    float h = airEyeH(), r = AIR_BOTTOM + h;
+    vec3 dir = skyDir(r, h, (vec2(p) + 0.5) / vec2(ATMO_SKY_W, ATMO_SKY_H));
+    float tg = airToGround(r, dir.y, h), tmax = tg >= 0.0 ? tg : airToTop(r, dir.y);
+
+    vec3 Es = vec3(SUN_ILLUMINANCE), Em = AIR_MOON_LIGHT;
+    float cs = dot(dir, SUN_DIR), cm = dot(dir, MOON_DIR);
+    float pRs = rayleighPhase(cs), pMs = miePhase(cs), pRm = rayleighPhase(cm), pMm = miePhase(cm);
+    bool moonUp = dot(Em, Em) > 0.0;
+    vec3 P0 = vec3(0.0, r, 0.0), thr = vec3(1.0), L = vec3(0.0);
+    const int STEPS = 32;
+    float t0 = 0.0;
+    for (int i = 0; i < STEPS; ++i) {
+        float u = float(i + 1) / float(STEPS), t1 = tmax * u * u, dt = t1 - t0;
+        vec3 P = P0 + dir * (t0 + 0.5 * dt);
+        t0 = t1;
+        float rs = length(P), hs = rs - AIR_BOTTOM;
+        AirAt air = airAt(hs);
+        vec3 scat = air.scatR + air.scatM;
+        float muS = dot(P, SUN_DIR) / rs;
+        vec3 S = Es * (airLitBy(transLut, rs, hs, muS) * (air.scatR * pRs + air.scatM * pMs)
+                       + textureLod(msLut, msUV(hs, muS), 0.0).rgb * scat);
+        if (moonUp) {
+            float muM = dot(P, MOON_DIR) / rs;
+            S += Em * (airLitBy(transLut, rs, hs, muM) * (air.scatR * pRm + air.scatM * pMm)
+                       + textureLod(msLut, msUV(hs, muM), 0.0).rgb * scat);
+        }
+        vec3 Ts = exp(-air.ext * dt);
+        L += thr * S * (1.0 - Ts) / max(air.ext, vec3(1e-7));
+        thr *= Ts;
+    }
+    imageStore(skyOut, p, vec4(L, 1.0));
+}
