@@ -2,8 +2,10 @@
 // 13-tap downsample (Jimenez, "Next Generation Post Processing in Call of Duty").
 // The first pass applies a soft threshold and a Karis average to stop single
 // bright pixels (distant lamp heads) from flickering. The scene is pre-exposed
-// (common.glsl: EXPOSE): the threshold and knee come scaled by it, and the
-// Karis weights and the clamp take its levels in the engine's units.
+// (common.glsl: EXPOSE). The threshold, the knee, the Karis weights and the
+// clamp are levels of the exposed image (the scene's times the exposure), so
+// the bloom looks the same at any exposure: pc.exposure is the pre-exposure
+// over the exposure (1 but in a --preexpose check).
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0) uniform sampler2D src;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dst;
@@ -11,7 +13,7 @@ layout(push_constant) uniform Push { float threshold, knee, radius; int prefilte
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 vec3 karis(vec3 a, vec3 b, vec3 c, vec3 d) {
-    float u = 1.0 / pc.exposure;   // luma(x) * u: in the engine's units
+    float u = 1.0 / pc.exposure;   // luma(x) * u: the exposed image's
     // nothing below zero: a negative pixel near luma -1 would blow its weight up into a black disc
     a = max(a, vec3(0.0)); b = max(b, vec3(0.0)); c = max(c, vec3(0.0)); d = max(d, vec3(0.0));
     vec4 s = vec4(a, 1.0) / (1.0 + luma(a) * u) + vec4(b, 1.0) / (1.0 + luma(b) * u) +

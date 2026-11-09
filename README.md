@@ -57,7 +57,7 @@ procedural look.
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
-Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture), `--utc YYYY-MM-DDTHH:MM` sets the world's clock, and so the sun, the moon and the stars (see Moon and stars), `--ev EV100` sets the exposure (default 3.73, see Light and exposure), `--preexpose STOPS` checks the pre-exposure
+Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture), `--utc YYYY-MM-DDTHH:MM` sets the world's clock, and so the sun, the moon and the stars (see Moon and stars), `--ev EV100` holds the exposure there (otherwise the eye adapts; see Light and exposure), `--preexpose STOPS` checks the pre-exposure
 `--noshadows` runs without ray-traced shadows (and without the
 ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo` paints the grass's rules on the land (or its levels of detail, culling, wind, the player's wake, or the blades' and ground's albedo unlit), `--nograss` draws no grass blades, `--nowake` leaves the grass unparted where the player walks, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
@@ -663,7 +663,7 @@ sky it sees, by its path along the passages from the nearest mouth, so the light
 20 m in and is black by 40 m. The moon's own light is traced (with ray tracing): the drawn bricks are in
 the shadows' TLAS, and a ray from the rock to the moon passes the ground only where a mouth's hole cuts it,
 so moonlight falls through a mouth as far in as the moon can be seen, and never round a corner. While the camera is in a cave, a thin cave air replaces the land's haze. No
-rain falls in a cave, and the exposure is fixed, so the dark stays dark. Carried lights, people's lights
+rain falls in a cave, and the eye's exposure has a floor (`EXPOSURE_MIN`, a stop over the night's), so the dark stays dark. Carried lights, people's lights
 and underground water are still to come (TODO.md). `terrain_test --caves`, `--cave-map out.ppm`,
 `--cave-mesh` and `--cave-walk` survey, draw, mesh and walk them; `NeonCity --cave-debug normals|lit|lod`
 shows their shape lit from the eye.
@@ -1877,7 +1877,38 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
 - **Exposure:** the photographic convention (Lagarde and de Rousiers, "Moving Frostbite to PBR"). At EV100, a
   luminance of 1.2 x 2^EV100 cd/m2 is taken to 1 before the tone curve, so the multiplier on the engine's radiance
   is 2^(`EV100_REF` - EV100). `EV100_REF` = log2(15.9 / 1.2) = 3.73 is the exposure the night was tuned at, which
-  takes one unit to 1. `--ev EV100` sets it; higher is darker. There is no auto exposure yet (DN2).
+  takes one unit to 1. `--ev EV100` holds it there; higher is darker.
+- **Auto exposure** (`src/render/exposure_gpu.c`, `shaders/exposure_meter.comp`, `exposure_adapt.comp`; DN2): the
+  eye adapts to the scene. Once the clouds are in the scene target, the meter puts every other pixel's luminance
+  (each way, back in the engine's units) into a 128-bin log2 histogram, weighted 4:1 to the middle of the screen.
+  One workgroup averages it between the 50% and 95% marks of the weight, so the dark half of a night view (sky,
+  unlit walls) doesn't drag the exposure up, nor a few lamp heads down. That is the metered EV100,
+  log2(L x 100 / 12.5) with L in cd/m2. The **key** turns it into the exposure the eye settles on. Through the night
+  it follows the scene by a third of a stop a stop (`KEY_NIGHT_SLOPE`) from `EV100_REF` at 2.75, which is what the
+  streets meter. Above `KEY_DUSK_EV` (5) it follows a stop a stop, as a camera would by day. The result is held
+  between `EXPOSURE_MIN` 2.7 and `EXPOSURE_MAX` 16. The eye moves to it exponentially, 3 a second to a brighter
+  scene and 1 to a darker one. The state stays on the GPU, and the composite reads it the same frame. Each frame
+  slot copies it back to the CPU, which pre-exposes the next frames with it a couple of frames late. The
+  composite multiplies by the eye's exposure over that pre-exposure, which is near 1 while the eye is still.
+  At night (the captures' clock, `SKY_CAPTURE_UTC`):
+
+  | view | meters | shown at |
+  |---|---|---|
+  | the spawn in rain | 3.36 | 3.94 |
+  | the street under the towers (`--cam 1139.3 268 1.7 32`) | 2.75 | 3.73 |
+  | a facade at level (`--cam 1139.3 262 1.7 0 20`) | 1.73 | 3.37 |
+  | the built edge (`--cam -3400 -13300 0 -8`) | 2.78 | 3.74 |
+  | the mountains, flying and on foot | 0.41-0.65 | 2.91-3.00 |
+  | looking out of a cave's mouth | 0.51 | 2.94 |
+  | looking into a cave; deep in one | -3.70; -11.0 | 2.70 (the floor) |
+
+  So the night is where it was tuned, give or take half a stop, and the moonlit land shows about 0.8 of a stop
+  brighter. A cave gets one stop more than the night's tuning and no more, so its dark stays black. The threshold
+  and Karis weights of the bloom, and the knee and clamp of the reflections, are levels of the exposed image,
+  so they look the same at any exposure. So is the grade, which works on the exposed colour. A `--shot` takes the
+  eye's exposure for its view at once. A `--walk` capture adapts as it walks. `--ev` meters and prints the view but
+  holds the exposure. The shot prints the EV100 shown, the eye's target and the metered EV. The window title shows
+  the EV100. The tone curve is still the ACES fit; it is reviewed for noon once the sun lights the land (DN4).
 - **Pre-exposure** (Frostbite's): every pass that writes colour multiplies it by the frame's pre-exposure
   (`frame.exposure.x`) as it writes, so the 16-bit targets hold numbers near 1 by night and by noon alike, never a
   sun's 1e9 cd/m2 or the starlight's 1e-4. The lighting itself stays in the engine's units. A scene shader's
@@ -1899,8 +1930,9 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
 5. Sky, drawn into the empty depth: the haze, the stars and the moon.
 6. Screen-space reflections on the wet streets: a compute trace, then a streaked additive blend.
 7. Clouds and rain mist: half-resolution compute ray march over the cities' cloud, blended into the HDR target with a depth-aware upsample.
-8. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
-9. Composite: falling rain, the exposure, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
+8. Auto exposure: the scene's luminance histogram, then the eye's adaptation (compute).
+9. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
+10. Composite: falling rain, the eye's exposure, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
 
 ## Extending
 - **Environment** (rain, wet streets, fog volumes, weather): the atmosphere lives in

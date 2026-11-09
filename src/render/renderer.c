@@ -27,6 +27,7 @@ void renderer_set_frame(Renderer *r, const TerrainFrame *f, const double cam[3])
     if (!keep) {
         r->havePrev = false;      /* last frame's view was another frame's: nothing to reproject */
         r->historyValid = false;
+        r->meterSnap = true;      /* somewhere else: the eye takes it as it is */
     }
     r->frame = f;
 }
@@ -141,6 +142,7 @@ Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
                           VK_SAMPLE_COUNT_1_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
     create_layouts(r);
     create_pipelines(r);
+    exposure_gpu_create(r);
     road_gpu_create(r);   /* before the terrain, whose descriptor sets bind it */
     terrain_gpu_create(r);
     planet_gpu_create(r);
@@ -157,6 +159,7 @@ void renderer_destroy(Renderer *r) {
     VkCore *vk = r->vk;
     vkDeviceWaitIdle(vk->device);
     destroy_targets(r);
+    exposure_gpu_destroy(r);
     grass_gpu_destroy(r);
     cave_gpu_destroy(r);
     terrain_gpu_destroy(r);
@@ -225,6 +228,7 @@ static bool frame_acquire(Renderer *r, int slot, uint32_t *imageIndex) {
     if (acq == VK_ERROR_OUT_OF_DATE_KHR) { recreate_swapchain(r); return false; }
     if (acq != VK_SUCCESS && acq != VK_SUBOPTIMAL_KHR) VK_CHECK(acq);
     VK_CHECK(vkResetFences(vk->device, 1, &r->fence[slot]));
+    exposure_gpu_read(r, slot);
     if (r->timeWritten[slot]) {   /* this slot's last frame has finished: how long its passes took */
         uint64_t t[GT_COUNT];
         if (vkGetQueryPoolResults(vk->device, r->timeQ[slot], 0, GT_COUNT, sizeof(t), t, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
@@ -438,6 +442,8 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     vk_image_barrier(cmd, r->hdr.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                      COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, 1);
+
+    exposure_gpu_record(r, cmd, slot, &ubo);   /* the eye, before the bloom and the composite read it */
 
     /* ---- bloom ---- */
     record_bloom(r, cmd, &ubo);

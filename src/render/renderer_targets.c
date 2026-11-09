@@ -138,14 +138,14 @@ void create_targets(Renderer *r) {
     }
 
     VkDescriptorPoolSize sizes[5] = {
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 7 + 2 * MAX_FRAMES + 4 + 5 * MAX_FRAMES + 4 * MAX_FRAMES + 2 * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * BLOOM_MIPS + 7 + 2 * MAX_FRAMES + 4 + 5 * MAX_FRAMES + 4 * MAX_FRAMES + 2 * MAX_FRAMES + 1 },
         { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * BLOOM_MIPS + 3 * MAX_FRAMES + MAX_FRAMES + 3 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES + MAX_FRAMES + MAX_FRAMES + MAX_FRAMES },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES + 2 * MAX_FRAMES + MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES + 2 * MAX_FRAMES + MAX_FRAMES + 2 },
         { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-    pci.maxSets = 2 * BLOOM_MIPS + 2 + MAX_FRAMES + 1 + 2 * MAX_FRAMES + MAX_FRAMES + MAX_FRAMES;
+    pci.maxSets = 2 * BLOOM_MIPS + 2 + MAX_FRAMES + 1 + 2 * MAX_FRAMES + MAX_FRAMES + MAX_FRAMES + 1;
     pci.poolSizeCount = r->rt ? 5 : 4;
     pci.pPoolSizes = sizes;
     VK_CHECK(vkCreateDescriptorPool(vk->device, &pci, NULL, &r->targetPool));
@@ -168,6 +168,12 @@ void create_targets(Renderer *r) {
     write_tex_set(vk, r->compositeSet, 2, CIS, r->nearestClamp, sceneDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     write_tex_set(vk, r->compositeSet, 3, CIS, r->linearClamp, r->mist.view, VK_IMAGE_LAYOUT_GENERAL);
     write_tex_set(vk, r->compositeSet, 4, CIS, r->nearestClamp, r->shelter.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    {   /* the eye's exposure, for the composite; and the meter's set */
+        VkDeviceSize meterBytes;
+        VkBuffer meter = exposure_gpu_buffer(r, &meterBytes);
+        write_buf_set(vk, r->compositeSet, 5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, meter, meterBytes);
+        exposure_gpu_targets(r, alloc_set(r, r->meterLayout));
+    }
 
     for (int i = 0; i < MAX_FRAMES; ++i) {
         r->cloudSet[i] = alloc_set(r, r->cloudLayout);

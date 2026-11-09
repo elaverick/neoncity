@@ -329,8 +329,9 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   - **A wall takes its own passage's light**, not a neighbour's through the rock: each piece's path is charged twice
     how much farther its wall is than the nearest's (`TERRAIN_CAVE_SKY_ACROSS`), among those within
     `TERRAIN_CAVE_NEAR_M`. A piece crossing that line can step the light a little; not seen in the captures.
-  - **The exposure doesn't adapt** (fixed at `--ev`, by default the night's `EV100_REF`: DN1), so the dark reads black, not grey, as the plan wanted;
-    it also means no eye adjusting in a cave. An adapting exposure would want a floor so the deep parts stay dark.
+  - **The eye adapts only a stop in a cave** (DN2: the floor `EXPOSURE_MIN` is a stop over the night's), so the dark
+    reads black, not grey as the plan wanted. Lowering the floor would let the eye open further, and would grey the
+    passages near a mouth.
   - **The cave's air** is used only while the camera is in a cave's air under the ground (`cave_gpu.c`: camIn,
     camSky): a thin fog (150 m) lit by the camera's and the fragment's sky. From outside, the land's haze as before,
     and the terrain seen out of a mouth from inside keeps the land's haze too.
@@ -628,8 +629,14 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   real catalogue: the pole star and the constellations aren't where they are.
 - **The night isn't physical against its anchor** (DN1, README "Light and exposure"): the moon and the starlight are
   about 70 times the real ones (`NIGHT_LIFT`), the deck's underside five times the brightest real city-lit overcast,
-  and the lobbies and the impostors' offices about 1/17 of real ones (the kit's `bake_scale`). Kept as the look; the
-  auto exposure (DN2) and the sky (DN3) may bring the moon and stars nearer the truth. The pre-exposure has no frame
+  and the lobbies and the impostors' offices about 1/17 of real ones (the kit's `bake_scale`). Kept as the look. The
+  auto exposure (DN2) opens the eye only 0.8 of a stop on the moonlit land against the city, so lowering the moon to
+  the truth would darken the land by six stops. The sky (DN3) may still bring the moon and stars nearer the truth.
+- **The auto exposure's key is tuned on the night only** (DN2, `light_units.h`). By day, the slope above `KEY_DUSK_EV`
+  and the 14.5 a sunlit view lands on are guesses until the sun lights the land (DN4) and the deck by day (DN5). So is
+  the tone curve: the ACES fit is kept, with AgX the candidate if noon clips or hues skew. The meter weighs the
+  sky like anything else; by day it may want the sky above the deck left out (the plan's idea). There is no lens
+  dirt or flare. The pre-exposure has no frame
   history to rescale yet (no pass reprojects colour); one that does must take this frame's over last frame's.
 - **No light dome from afar.** From the countryside a city shows as its clouds, lit sodium-orange underneath near
   it, and its proxies; the haze itself doesn't glow over it, because the haze's colour is one per frame

@@ -10,7 +10,9 @@ void set_viewport(VkCommandBuffer cmd, uint32_t w, uint32_t h) {
 }
 
 void record_bloom(Renderer *r, VkCommandBuffer cmd, const FrameUBO *ubo) {
-    float P = ubo->exposure[0];   /* the scene's pre-exposure: the threshold is the same light at any */
+    /* The scene's pre-exposure over the exposure: the threshold is a level of
+     * the exposed image, so the bloom looks the same at any exposure */
+    float P = ubo->exposure[0] / ubo->exposure[2];
     const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     vk_image_barrier(cmd, r->bloom.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | CS, 0,
@@ -401,7 +403,7 @@ void record_composite(Renderer *r, VkCommandBuffer cmd, uint32_t imageIndex, con
     set_viewport(cmd, W, H);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->compositePipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->compositePL, 0, 1, &r->compositeSet, 0, NULL);
-    CompositePush cp = { ubo->camPos[3], 0.14f, ubo->exposure[2], 0.035f, (float)W, (float)H, 0.008f, 0.32f };
+    CompositePush cp = { ubo->camPos[3], 0.14f, ubo->exposure[1], 0.035f, (float)W, (float)H, 0.008f, 0.32f };
     for (int k = 0; k < 3; ++k) {
         cp.right[k] = ubo->rayBasis.m[k]; cp.up[k] = ubo->rayBasis.m[4 + k]; cp.fwd[k] = ubo->rayBasis.m[8 + k];
     }

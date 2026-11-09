@@ -1,0 +1,51 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// The auto exposure's eye (src/core/light_units.h): the metered EV100 from
+// the histogram (exposure_meter.comp), averaged between its METER_PCT_LO and
+// METER_PCT_HI fractions; the exposure the key settles on for it; and the
+// eye's adaptation towards that, faster to a brighter scene than to a darker
+// one. One workgroup, a thread a bin. It clears the histogram for the next
+// frame. --ev shows the frame at a fixed EV100 but still meters it.
+#define METER_BINDING 1   // binding 0 is the meter's scene
+#define METER_PASS
+#include "exposure.glsl"
+layout(local_size_x = METER_BINS) in;
+
+shared float run[METER_BINS];
+shared vec2 acc[METER_BINS];
+
+void main() {
+    uint i = gl_LocalInvocationIndex;
+    float h = float(meter.bins[i]);
+    meter.bins[i] = 0u;
+    run[i] = h;
+    barrier();
+    for (uint s = 1u; s < METER_BINS; s <<= 1) {   // running sums: run[i] is the weight up to bin i's top
+        float v = i >= s ? run[i - s] : 0.0;
+        barrier();
+        run[i] += v;
+        barrier();
+    }
+    float total = run[METER_BINS - 1u];
+    float a = total * METER_PCT_LO, b = total * METER_PCT_HI;
+    float w = max(0.0, min(run[i], b) - max(run[i] - h, a));   // this bin's weight between the two fractions
+    acc[i] = vec2(w * meterBinLog(i), w);
+    barrier();
+    for (uint s = METER_BINS / 2u; s > 0u; s >>= 1) {
+        if (i < s) acc[i] += acc[i + s];
+        barrier();
+    }
+    if (i != 0u) return;
+    vec4 st = meter.state;
+    if (acc[0].y > 0.0) {
+        st.z = acc[0].x / acc[0].y + log2(LIGHT_NIT * 8.0);   // L x 100 / 12.5, L in cd/m2
+        st.y = meterTarget(st.z);
+    } else if (st.w == 0.0) {   // nothing metered yet
+        st.y = st.z = EV100_REF;
+    }
+    if ((pc.flags & 1) != 0) st.x = pc.manualEv;
+    else if (st.w == 0.0 || (pc.flags & 2) != 0) st.x = st.y;
+    else st.x += (st.y - st.x) * (1.0 - exp(-pc.dt * (st.y > st.x ? ADAPT_UP : ADAPT_DOWN)));
+    st.w = 1.0;
+    meter.state = st;
+}

@@ -117,7 +117,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 terrainInfo;   // x the finest clipmap level drawn (TERRAIN_CLIP_LEVELS: none), y the highest ground in it (world Y), z the coarsest level in the TLAS (-1: none)
     TerrainLevel terrainLevel[TERRAIN_CLIP_LEVELS];   // from the finest drawn on (src/render/terrain_gpu.c: terrain_gpu_frame_levels)
     vec4 terrainBlocks[TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_NB * TERRAIN_CLIP_NB / 4];   // each level's storage blocks' highest ground, with the eight round each (world Y), rows of z, four to a vector
-    vec4 exposure;   // x the pre-exposure (EXPOSE), y its inverse, z what the composite multiplies the scene by, w the frame's EV100 (src/app/main.c: exposure_ubo)
+    vec4 exposure;   // x the pre-exposure (EXPOSE), y its inverse, z the exposure, w its EV100 (src/app/main.c: exposure_ubo)
 } frame;
 
 /* Pre-exposure (Frostbite's: Lagarde and de Rousiers 2014). The lighting
@@ -127,10 +127,15 @@ layout(set = 0, binding = 0) uniform Frame {
  * the 16-bit floats then hold numbers near 1 by noon and by night alike,
  * never a sun's 1e9 cd/m2 or the starlight's 1e-4. A pass that reads those
  * targets back and compares with a fixed level (ssr.comp, bloom_down.comp,
- * composite.frag) divides it out first. A scene shader's main ends in
+ * composite.frag) divides it out first. The exposure (EXPOSURE) is the eye's
+ * (src/render/exposure_gpu.c) as the CPU last read it back, a couple of
+ * frames late, and the pre-exposure follows it; a level meant for the image
+ * as seen, a highlight's knee, is one of the exposed image's: the engine's
+ * units times EXPOSURE. A scene shader's main ends in
  * EXPOSE_OUT: its shading is the function shadePixel, which may return
  * early; main calls it and exposes what it wrote. */
 #define PRE_EXPOSURE (frame.exposure.x)
+#define EXPOSURE (frame.exposure.z)
 #define EXPOSE(c) ((c) * frame.exposure.x)
 #define UNEXPOSE(c) ((c) * frame.exposure.y)
 #define EXPOSE_OUT void main() { shadePixel(); outColor.rgb *= frame.exposure.x; }

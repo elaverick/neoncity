@@ -16,7 +16,8 @@
  *   terrain_rt.c          the clipmap's near levels in the ray-traced shadows' TLAS
  *   proxy_gpu.c           the distant proxies: tiles generated round the camera, their box pool, drawing
  *   planet_gpu.c          the planet's patches beyond the clipmap: their fill worker, vertex slots, drawing
- *   cave_gpu.c            the caves: their systems near the camera, bricks meshed by workers, the cache and pool, rings, drawing */
+ *   cave_gpu.c            the caves: their systems near the camera, bricks meshed by workers, the cache and pool, rings, drawing
+ *   exposure_gpu.c        auto exposure: the scene's meter, the eye's adaptation, its state read back */
 
 #define HDR_FORMAT   VK_FORMAT_R16G16B16A16_SFLOAT
 #define DEPTH_FORMAT VK_FORMAT_D32_SFLOAT
@@ -27,11 +28,13 @@
 #define CLOUD_NOISE_SIZE 128   /* cloud noise volume edge (texels) */
 /* cloud noise volume edge (texels) */
 
-/* threshold and knee in the scene target's levels (pre-exposed: shaders/common.glsl EXPOSE), the pre-exposure */
+/* threshold and knee in the scene target's levels (pre-exposed: shaders/common.glsl EXPOSE); exposure the
+ * pre-exposure over the exposure (1 but in a --preexpose check): the bloom's levels are the exposed image's */
 typedef struct BloomPush { float threshold, knee, radius; int prefilter; float exposure; } BloomPush;
 /* right/up/fwd: the camera ray basis (as FrameUBO.rayBasis); right.w = near
  * plane, up.w = far plane, fwd.w = rain intensity (composite.frag draws the rain).
- * exposure: what the scene is multiplied by, its pre-exposure aside (FrameUBO.exposure). */
+ * exposure: one over the pre-exposure the scene was written with (FrameUBO.exposure); the
+ * composite multiplies by it and by the eye's exposure (shaders/exposure.glsl: meter.state). */
 typedef struct CompositePush {
     float time, bloom, exposure, grain;
     float width, height, aberration, vignette;
@@ -161,6 +164,18 @@ struct Renderer {
     char   shotPath[512];
     bool   shotPending;
     Buffer shotBuf;
+
+    /* Auto exposure (exposure_gpu.c): the meter's set (with the targets), the
+     * histogram and the eye's state on the GPU, each slot's copy of the state
+     * for the CPU, and the CPU's latest (EV100 shown, heading for, metered). */
+    VkDescriptorSetLayout meterLayout;
+    VkPipelineLayout      meterPL;
+    VkPipeline            meterPipe, adaptPipe;
+    VkDescriptorSet       meterSet;
+    Buffer       meterBuf, meterRead[MAX_FRAMES];
+    bool         meterClear, meterSnap;
+    float        manualEv, meterDt;   /* manualEv NAN: adapting */
+    float        meterState[3];
 };
 
 /* renderer.c */
@@ -209,6 +224,14 @@ void record_shadows(Renderer *r, VkCommandBuffer cmd, int slot);
 void record_reflections(Renderer *r, VkCommandBuffer cmd, int slot);
 void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows);
 void record_composite(Renderer *r, VkCommandBuffer cmd, uint32_t imageIndex, const FrameUBO *ubo);
+
+/* exposure_gpu.c */
+void exposure_gpu_create(Renderer *r);
+void exposure_gpu_destroy(Renderer *r);
+void exposure_gpu_targets(Renderer *r, VkDescriptorSet set);
+VkBuffer exposure_gpu_buffer(Renderer *r, VkDeviceSize *size);
+void exposure_gpu_read(Renderer *r, int slot);
+void exposure_gpu_record(Renderer *r, VkCommandBuffer cmd, int slot, const FrameUBO *ubo);
 
 /* terrain_gpu.c. Update takes the clipmap's last move from its worker, records
  * its uploads (outside any rendering) and asks for the next, at the camera;

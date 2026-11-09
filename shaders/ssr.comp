@@ -21,7 +21,7 @@ layout(set = 0, binding = 6, rgba16f) uniform writeonly image2D ssrOut;
 
 const int STEPS = 64;
 const int REFINE = 6;
-const float GROUND_KNEE = 0.25;   // luminance where wet ground seen in glass is halved
+const float GROUND_KNEE = 0.25;   // luminance where wet ground seen in glass is halved (exposed: EXPOSURE)
 
 ivec2 gSize;
 
@@ -89,7 +89,7 @@ void main() {
     // off, leaving the dark street and only a faint glow.
     vec4 hg = reflSample(reflTex, clamp(ivec2(hit.xy * vec2(gSize)), ivec2(0), gSize - 1));
     if (g.b < 0.0 && g.b > -2.0 && hg.a > 1e-3 && hg.b >= 0.0)
-        col *= mix(1.0, GROUND_KNEE / (GROUND_KNEE + luma(col)), min(-g.b, 1.0));
+        col *= mix(1.0, GROUND_KNEE / (GROUND_KNEE + luma(col) * EXPOSURE), min(-g.b, 1.0));
     // The hit's colour is hazed for the camera's distance to it, but the light
     // travelled further, via the reflecting surface: haze it over the extra.
     vec2 hn = hit.xy * 2.0 - 1.0;
@@ -97,5 +97,5 @@ void main() {
     vec3 H = hdir * (hit.z / max(dot(hdir, frame.camFwd.xyz), 1e-4));
     float extra = max(length(P) + length(H - P) - length(H), 0.0);
     col = mix(col, hazeColor(R), fogAmount(R * extra, extra));
-    imageStore(ssrOut, px, vec4(EXPOSE(min(col, vec3(64.0))), conf));
+    imageStore(ssrOut, px, vec4(EXPOSE(min(col, vec3(64.0 / EXPOSURE))), conf));
 }

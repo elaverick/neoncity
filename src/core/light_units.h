@@ -29,4 +29,40 @@
 #define EV100_REF     3.7293f       /* log2(LIGHT_NIT / 1.2) */
 #define NIGHT_LIFT    70.0f
 
+/* Auto exposure (src/render/exposure_gpu.c; shaders/exposure_meter.comp and
+ * exposure_adapt.comp; README, "Light and exposure"). The meter: a histogram
+ * of the scene's luminance in the engine's units, every other pixel each way,
+ * weighted to the middle of the screen, in METER_BINS bins: bin 0 everything
+ * below 2^METER_LOG_LO (black), the rest evenly in log2 up to 2^METER_LOG_HI
+ * (a sunlit wall is about 2^9). Its average is taken over the bins between
+ * the METER_PCT_LO and METER_PCT_HI fractions of the weight: the darkest half
+ * of the screen (a night sky, an unlit wall) doesn't drag the exposure up, nor
+ * a few lamp heads it down. The metered EV100 is the photographer's
+ * log2(L x 100 / 12.5), L the average in cd/m2. */
+#define METER_BINS    128
+#define METER_LOG_LO  (-16.0f)
+#define METER_LOG_HI  12.0f
+#define METER_PCT_LO  0.50f
+#define METER_PCT_HI  0.95f
+
+/* The key: the exposure the eye settles on for a metered EV (Krawczyk et al.
+ * 2005 in spirit: a dark scene is shown darker than mid-grey). Through the
+ * night it follows the scene by KEY_NIGHT_SLOPE of a stop a stop, from
+ * EV100_REF at KEY_NIGHT_EV, what the city's streets meter at night (the
+ * spawn in rain 3.4, the street under the towers 2.8, a facade 1.7): so the
+ * night stays where it was tuned, the moonlit land (0.4-0.7) shows only some
+ * 0.8 of a stop brighter. Above KEY_DUSK_EV it follows a stop a stop, as a
+ * camera would by day (sunlit land, metering about 15, shown at 14.5). The
+ * result is held within EXPOSURE_MIN and EXPOSURE_MAX: EXPOSURE_MIN is the
+ * floor that keeps a cave dark however little light it has (one meters -4
+ * to -11), a stop over the night's. The eye adapts at ADAPT_UP a second
+ * (e-foldings) to a brighter scene, ADAPT_DOWN to a darker one. */
+#define KEY_NIGHT_EV    2.75f
+#define KEY_NIGHT_SLOPE 0.35f
+#define KEY_DUSK_EV     5.0f
+#define EXPOSURE_MIN    2.7f
+#define EXPOSURE_MAX    16.0f
+#define ADAPT_UP      3.0f
+#define ADAPT_DOWN    1.0f
+
 #endif

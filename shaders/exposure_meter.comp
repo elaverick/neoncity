@@ -1,0 +1,31 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// The auto exposure's meter (src/core/light_units.h): the scene's luminance,
+// every other pixel each way, into a histogram, weighted to the middle of the
+// screen. The scene target is pre-exposed: the luminance is taken back to the
+// engine's units first, so the meter reads the same light at any exposure.
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0) uniform sampler2D hdrTex;
+#define METER_BINDING 1
+#define METER_PASS
+#include "exposure.glsl"
+
+shared uint local[METER_BINS];
+
+void main() {
+    uint i = gl_LocalInvocationIndex;
+    if (i < METER_BINS) local[i] = 0u;
+    barrier();
+    ivec2 size = textureSize(hdrTex, 0);
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy) * 2;
+    if (all(lessThan(p, size))) {
+        vec3 c = texelFetch(hdrTex, p, 0).rgb;
+        float l = dot(c, vec3(0.2126, 0.7152, 0.0722)) * pc.invPre;
+        vec2 q = (vec2(p) + 0.5) / vec2(size) - 0.5;
+        q.x *= float(size.x) / float(size.y);
+        uint w = 2u + uint(6.0 * (1.0 - smoothstep(0.1, 0.6, length(q))) + 0.5);   // 2 at the edges, 8 in the middle
+        atomicAdd(local[meterBin(l)], w);
+    }
+    barrier();
+    if (i < METER_BINS && local[i] != 0u) atomicAdd(meter.bins[i], local[i]);
+}

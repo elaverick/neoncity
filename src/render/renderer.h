@@ -62,9 +62,9 @@ typedef struct FrameUBO {
     float   terrainBlocks[TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_NB * TERRAIN_CLIP_NB / 4][4];
     /* The exposure (src/core/light_units.h; src/app/main.c: exposure_ubo): the
      * pre-exposure every pass that writes colour multiplies it by (EXPOSE in
-     * shaders/common.glsl), its inverse, what the composite multiplies the
-     * scene by (the exposure over the pre-exposure: 1 but in a --preexpose
-     * check), the frame's EV100 */
+     * shaders/common.glsl), its inverse, the exposure (the eye's, as last read
+     * back: EXPOSURE), its EV100. The pre-exposure is the exposure, but in a
+     * --preexpose check */
     float   exposure[4];
 } FrameUBO;
 
@@ -124,5 +124,12 @@ void      renderer_terrain_stats(Renderer *r, char *buf, size_t n);
 bool      renderer_proxies_ready(Renderer *r);
 /* The distant proxies' tiles and draws (one line of text). */
 void      renderer_proxy_stats(Renderer *r, char *buf, size_t n);
+/* Auto exposure (src/render/exposure_gpu.c): manualEv shows the frames at
+ * that EV100 (NAN: the eye adapts to the scene, dt seconds since the last
+ * frame); snap takes the eye straight to the scene's exposure. Call it before
+ * each renderer_frame. renderer_exposure: the EV100 the latest finished frame
+ * was shown at, where the eye was heading and what the scene metered. */
+void      renderer_set_exposure(Renderer *r, float manualEv, float dt, bool snap);
+float     renderer_exposure(Renderer *r, float *target, float *metered);
 /* Saves the next presented frame as a 24-bit BMP. */
 void      renderer_request_screenshot(Renderer *r, const char *path);

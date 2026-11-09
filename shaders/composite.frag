@@ -8,8 +8,11 @@ layout(set = 0, binding = 1) uniform sampler2D bloomTex;
 layout(set = 0, binding = 2) uniform sampler2D depthTex;
 layout(set = 0, binding = 3) uniform sampler2D mistTex;   // rain mist (clouds.comp): how lit the air is along each ray
 layout(set = 0, binding = 4) uniform sampler2D shelterMap; // highest surface over each spot (renderer.c: record_shelter)
+#define METER_BINDING 5
+#define METER_ACCESS readonly
+#include "exposure.glsl"   // the eye's exposure (src/render/exposure_gpu.c), and EV100_REF
 layout(push_constant) uniform Push {
-    float time, bloom, exposure, grain;
+    float time, bloom, exposure, grain;   // exposure: one over the scene's pre-exposure
     float width, height, aberration, vignette;
     vec4 right;   // camera ray basis (FrameUBO.rayBasis); w = near plane
     vec4 up;      // w = far plane
@@ -121,7 +124,9 @@ void main() {
         }
     }
 
-    col *= pc.exposure;   // the exposure over the pre-exposure the scene was written with: 1, but in a --preexpose check
+    // The eye's exposure (exposure_adapt.comp, this frame), over the pre-exposure the scene was written with
+    // (the CPU's copy of it, a couple of frames late): near 1 while the eye is still, 2^-STOPS in a --preexpose check.
+    col *= exp2(EV100_REF - meter.state.x) * pc.exposure;
     // Blade Runner grade: cyan-teal shadows, sodium-orange highlights.
     float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
     vec3 shadowTint = vec3(0.80, 1.02, 1.12);

@@ -92,7 +92,8 @@ static void usage(void) {
            "  --time  hold the shaders' clock at this many seconds (flames, signs, steam: for captures)\n"
            "  --utc   start the world's clock (the sun, the moon, the stars) at this UTC instant, from which it runs at 1x;\n"
            "          otherwise it is the system's UTC. A --shot holds it, there or at " SKY_CAPTURE_UTC "\n"
-           "  --ev    the exposure, as a camera's EV at ISO 100 (default %.2f, the one the night was tuned at; higher is darker)\n"
+           "  --ev    hold the exposure here, as a camera's EV at ISO 100 (higher is darker; %.2f is the one the night was\n"
+           "          tuned at); otherwise the eye adapts to the scene (a --shot without it takes the eye's exposure for the view)\n"
            "  --preexpose  a check: write the scene this many stops brighter (darker, if negative) and take them back out\n"
            "               before the tone curve; the frame should not change, and any pass that does missed the pre-exposure\n"
            "  --impostors  draw this share (default 0.4; 0 turns them off) of the office towers' floors behind curtain\n"
@@ -125,7 +126,8 @@ typedef struct Options {
     double      fixedTime;       /* the shaders' clock held here (< 0: running) */
     bool        haveUtc;         /* --utc: the world's clock starts at utcJd */
     double      utcJd;
-    float       ev;              /* --ev: the exposure (EV100: src/core/light_units.h) */
+    bool        haveEv;          /* --ev: the exposure held at ev (EV100: src/core/light_units.h); otherwise the eye adapts */
+    float       ev;
     float       preExpose;       /* --preexpose: the scene written this many stops off its exposure (a check) */
     float       impostors;       /* the share of eligible office floors drawn as impostors (0: none) */
     int         grassDebug;      /* --grass-debug: GRASS_DEBUG_* (src/grass/grass_rules.h) */
@@ -138,7 +140,6 @@ static bool parse_args(int argc, char **argv, Options *o) {
     o->fixedRain = -1.0f;
     o->fixedTime = -1.0;
     o->impostors = 0.4f;
-    o->ev = EV100_REF;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--validation") == 0) o->validation = true;
         else if (strcmp(argv[i], "--noshadows") == 0) o->shadows = false;
@@ -169,7 +170,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
             if (!sky_parse_utc(argv[++i], &o->utcJd)) { fprintf(stderr, "--utc %s: not a UTC instant (YYYY-MM-DDTHH:MM)\n", argv[i]); return false; }
             o->haveUtc = true;
         }
-        else if (strcmp(argv[i], "--ev") == 0 && i + 1 < argc) o->ev = (float)atof(argv[++i]);
+        else if (strcmp(argv[i], "--ev") == 0 && i + 1 < argc) { o->ev = (float)atof(argv[++i]); o->haveEv = true; }
         else if (strcmp(argv[i], "--preexpose") == 0 && i + 1 < argc) o->preExpose = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--impostors") == 0) {
             o->impostors = 0.4f;
@@ -312,6 +313,8 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
         printf("%s\n", gpu);
         printf("camera (%.1f, %.1f, %.1f) yaw %.1f pitch %.1f\n", player->eye[0], player->eye[1], player->eye[2],
                player->yaw * 180.0f / PI_F, player->pitch * 180.0f / PI_F);
+        float target, metered, ev = renderer_exposure(renderer, &target, &metered);
+        printf("exposure: EV100 %.2f (the eye's target %.2f; the scene meters %.2f)\n", ev, target, metered);
     }
 }
 
@@ -423,15 +426,21 @@ static void frame_ubo(const Player *player, const VkCore *vk, double t, double j
 
 /* frame.exposure (shaders/common.glsl; src/core/light_units.h). The exposure
  * takes a luminance of 1.2 x 2^EV100 cd/m2 to 1: in the engine's units,
- * 2^(EV100_REF - EV100). The scene is written pre-exposed by it, so the
- * composite has nothing left to multiply by; --preexpose writes it off by
- * that many stops instead and has the composite take them back out. */
-static void exposure_ubo(const Options *opt, FrameUBO *ubo) {
-    float E = exp2f(EV100_REF - opt->ev), P = E * exp2f(opt->preExpose);
+ * 2^(EV100_REF - EV100). The EV100 is --ev's, or else the eye's (auto
+ * exposure: src/render/exposure_gpu.c) as last read back from the GPU, a
+ * couple of frames late. The scene is written pre-exposed by it, and the
+ * composite takes out any difference from the eye's exposure this frame;
+ * --preexpose writes it off by that many stops more, for the composite to
+ * take back out. A capture takes the eye's exposure for its view at once
+ * (snap), but for a --walk's, which adapts as it goes. */
+static void exposure_ubo(const Options *opt, Renderer *renderer, float dt, bool snap, FrameUBO *ubo) {
+    renderer_set_exposure(renderer, opt->haveEv ? opt->ev : NAN, dt, snap);
+    float ev = opt->haveEv ? opt->ev : renderer_exposure(renderer, NULL, NULL);
+    float E = exp2f(EV100_REF - ev), P = E * exp2f(opt->preExpose);
     ubo->exposure[0] = P;
     ubo->exposure[1] = 1.0f / P;
-    ubo->exposure[2] = E / P;
-    ubo->exposure[3] = opt->ev;
+    ubo->exposure[2] = E;
+    ubo->exposure[3] = ev;
 }
 
 /* The player's wake for the grass's blades (shaders/grass/wake.glsl), in real
@@ -472,9 +481,9 @@ static void update_title(GLFWwindow *win, ChunkSystem *chunks, Renderer *rendere
     }
     char title[480];
     snprintf(title, sizeof(title),
-             "NeonCity | %.0f fps, worst %.0f ms | %s--cam %.1f %.1f %.0f %.0f | chunk (%d,%d) | drawn %d (%d draws) | resident %d | queued %d | pool %d%%%s%s%s",
+             "NeonCity | %.0f fps, worst %.0f ms | %s--cam %.1f %.1f %.0f %.0f | EV %.1f | chunk (%d,%d) | drawn %d (%d draws) | resident %d | queued %d | pool %d%%%s%s%s",
              fps, worstMs, city, player->eye[0], player->eye[2],
-             player->yaw * 180.0f / PI_F, player->pitch * 180.0f / PI_F,
+             player->yaw * 180.0f / PI_F, player->pitch * 180.0f / PI_F, renderer_exposure(renderer, NULL, NULL),
              (int)floor(player->feet[0] / CHUNK_SIZE), (int)floor(player->feet[2] / CHUNK_SIZE),
              s.drawnChunks, s.drawCalls, s.resident, s.queued + s.ready,
              s.pagesUsed * 100 / (s.pagesTotal ? s.pagesTotal : 1), reach, player->fly ? " | FLY" : "",
@@ -548,7 +557,7 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
         ubo.doorInfo[0] = (uint32_t)lobby_doors_frame(keys, ubo.doorState);
         for (uint32_t k = 0; k < ubo.doorInfo[0]; ++k) ubo.doorKey[k / 4][k % 4] = keys[k];
         wake_ubo(&wake, player->eye, now - startTime, &ubo);
-        exposure_ubo(opt, &ubo);
+        exposure_ubo(opt, renderer, dt, opt->shotPath && !cap.walkStarted, &ubo);
         bool resized = g_resized;
         g_resized = false;
         renderer_frame(renderer, &ubo, player->eye, resized);
