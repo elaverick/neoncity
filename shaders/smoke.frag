@@ -22,7 +22,7 @@
  * flow without smearing however long it runs);
  * - and the whole thinned as it spreads, eaten from the edges as it climbs,
  *   gone by the top of its rise.
- * It is lit by the sodium-lit overcast and the moon from above (one tap
+ * It is lit by the sodium-lit overcast and the moon (by day the daylight) from above (one tap
  * towards them for its own shadow), the city's glow from below, any flare
  * near it (flickering with flameGout), and, for a refinery's smoke, the flue's
  * fire glowing in its throat. */
@@ -138,7 +138,8 @@ void shadePixel() {
     // the light on it: the overcast and the moon above, the city's glow below,
     // the flares near it (the two nearest the camera within reach)
     float city = frame.sky.x;
-    vec3 above = CLOUD_DECK * (1.0 + 1.5 * city) + MOON_LIGHT * 0.35 * (1.0 - frame.sky.z);
+    vec3 above = CLOUD_DECK * (1.0 + 1.5 * city) + MOON_LIGHT * 0.35 * (1.0 - frame.sky.z)
+               + dayLevel() * (0.6 * daylightThrough());   // by day: the sky, or the deck's grey through which it comes
     vec3 below = vec3(1.0, 0.55, 0.3) * (0.1 + 0.5 * city);
     vec3 albedo = P.kind == PLUME_SMOKE ? vec3(0.45, 0.42, 0.40) : vec3(0.80, 0.82, 0.85);   // smoke; steam
     vec3 flp[2], flc[2];

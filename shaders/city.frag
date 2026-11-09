@@ -104,6 +104,7 @@ void shadePixel() {
     gTime = frame.camPos.w;
     gWorld = vLocal + vec3(float(gC.info.x & 63) * CHUNK_SIZE, 0.0, float(gC.info.y & 63) * CHUNK_SIZE);
     gBase = vBase;
+    gSkyCover = skyCover(vRel);
     shadowsBegin();
     vec3 n = normalize(vNrm);
     uint mat = vParams.x;

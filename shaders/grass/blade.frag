@@ -212,6 +212,7 @@ void shadePixel() {
             vec3 p = vRel - gC.origin.xyz;   // chunk-local
             gWorld = p + vec3(float(gC.info.x & 63) * CHUNK_SIZE, 0.0, float(gC.info.y & 63) * CHUNK_SIZE);
             gBase = vRoot.y - gC.origin.y;
+            gSkyCover = skyCover(vRel);
             rootShadows();
             // wet as the streets, but none where something stands over it from the rain
             // (the ground there stays wet, as the water runs in; a blade doesn't)

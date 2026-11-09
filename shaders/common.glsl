@@ -617,6 +617,62 @@ vec3 skyRadiance(vec3 dir) {
 float deckThrough(float cover) { return pow(DECK_DAYLIGHT, cover); }
 float daylightThrough() { return deckThrough(frame.sky.z); }
 
+/* ---------------- the city by day (DN6) ----------------
+ * The cities' cloud over a point at rel (camera-relative, as drawn) whose
+ * cityEdge is edge: its cover there (cloudCover), less where the point stands
+ * up through the deck (DECK_OVER, clouds.h), as the land takes it (landSky). */
+float skyCoverAt(vec3 rel, float edge) {
+    float h = frame.camPos.y + rel.y + planetDrop(rel.xz);   // its height over the planet's sphere
+    return cloudCover(rel.xz, edge) * (1.0 - smoothstep(DECK_OVER, CLOUD_HIGH, h));
+}
+float skyCover(vec3 rel) { return skyCoverAt(rel, cityEdge(rel.xz)); }
+
+// The daylight on level ground under a clear sky, unshadowed: the sun's (SUN_LAND) and the sky's.
+vec3 dayLevel() { return SUN_LAND * max(SUN_DIR.y, 0.0) + skyIrradiance(vec3(0.0, 1.0, 0.0)); }
+
+/* What the city's surfaces take of the daylight, facing n, under the cities'
+ * cloud where its cover is `cover`, seeing `open` of the sky (cityOpen). Under
+ * the deck deckThrough of it gets through, spread over its underside as an
+ * even overcast (the land's landDaylight); a clear sky's sun has no shadow in
+ * the city (none is cast there: TODO, "The sun"), so it is only thinned by
+ * how much of the sky the surface sees, as the sky's light is. What the sky
+ * doesn't show comes back off the streets and the facades round about,
+ * CITY_BOUNCE of the light on them. */
+const float CITY_BOUNCE = 0.15;
+vec3 cityDaylight(vec3 n, float cover, float open) {
+    vec3 level = dayLevel();
+    vec3 clear = SUN_LAND * max(dot(n, SUN_DIR), 0.0) + skyIrradiance(n);
+    vec3 grey = level * (0.5 + 0.5 * n.y);
+    vec3 bounce = level * (CITY_BOUNCE * (0.5 - 0.5 * n.y + (1.0 - open)));
+    return (mix(clear, grey, cover) * open + bounce) * deckThrough(cover);
+}
+
+/* How much of the sky a city surface facing n sees, h metres above the ground
+ * its building stands on: down among the towers less than half of it (a
+ * wall's own half the more so), all of it from the rooftops. */
+float cityOpen(vec3 n, float h) { return mix(0.4 + 0.15 * max(n.y, 0.0), 1.0, smoothstep(0.0, 90.0, h)); }
+
+/* The city's light all round (city/lighting.glsl ambientLight, the proxies'):
+ * by night the overcast's faint fill from above and the streets' warm bounce
+ * from below, twice as much near the ground (0.007-0.009, about 0.4 lux,
+ * LIGHT_LUX); by day the daylight (cityDaylight). */
+vec3 cityAmbient(vec3 n, float h, float cover) {
+    vec3 sky = vec3(0.006, 0.007, 0.013);
+    vec3 bounce = vec3(0.013, 0.008, 0.006);
+    float up = n.y * 0.5 + 0.5;
+    return mix(bounce, sky, up) * (0.8 + 0.8 * exp(-h / 30.0)) + cityDaylight(n, cover, cityOpen(n, h));
+}
+
+/* The sky by day seen along R from under cover: the clear sky (skyRadiance),
+ * the deck's even grey under it; and its mean radiance (dayOvercast), what a
+ * window or skylight sees of it. None by night. */
+vec3 daySky(vec3 R, float cover) {
+    return mix(skyRadiance(R), dayLevel() * (1.0 / AIR_PI), cover) * deckThrough(cover);
+}
+vec3 dayOvercast(float cover) {
+    return mix(skyIrradiance(vec3(0.0, 1.0, 0.0)), dayLevel(), cover) * (deckThrough(cover) / AIR_PI);
+}
+
 /* The night's own glow in the haze, light no sun or moon gives it: near a
  * city (frame.sky.x towards 1) warm sodium-lit smog at the horizon and a dim
  * glow overhead (the city's low haze 0.059, 0.9 cd/m2); out in the
@@ -700,17 +756,23 @@ const vec3 CLOUD_DECK = vec3(0.10, 0.052, 0.034);
  * screen-space reflections replace by confidence): the overcast lit
  * sodium-orange from below; around the horizon a blurred band of the lit
  * facades across the way, blocks of windows and the odd sign, varying with
- * direction; and below, the dark wet street under its lamps. */
+ * direction; and below, the dark wet street under its lamps. By day the sky
+ * (daySky) as it is round the camera, and the facades and street under it
+ * (DAY_FACADES, DAY_STREET of the daylight on open ground, less light than
+ * they take: radiance off a dark wall in a canyon). */
+const float DAY_FACADES = 0.03, DAY_STREET = 0.02;
 vec3 envReflection(vec3 R) {
-    vec3 c = mix(hazeColor(R) * 1.5, CLOUD_DECK, smoothstep(0.03, 0.3, R.y) * 0.85);
+    float cover = frame.sky.z;
+    vec3 day = dayLevel() * deckThrough(cover);   // on open ground round the camera
+    vec3 c = mix(hazeColor(R) * 1.5, CLOUD_DECK + daySky(R, cover), smoothstep(0.03, 0.3, R.y) * 0.85);
     float az = atan(R.z, R.x);
     float band = smoothstep(-0.3, -0.03, R.y) * (1.0 - smoothstep(0.08, 0.45, R.y));
     float rows = 0.45 + 0.55 * vnoise(vec2(az * 7.0, 0.0), 0xFAC1u);          // blocks of lit windows
     uint sh = hash2i(0xFAC3u, int(floor(az * 5.0)), 0);
     float sign_ = smoothstep(0.6, 0.85, vnoise(vec2(az * 13.0, 3.1), 0xFAC2u)) * (1.0 - smoothstep(-0.04, 0.1, R.y));
-    vec3 facades = vec3(0.09, 0.068, 0.05) * rows + neonColor(sh) * sign_ * 0.12;
+    vec3 facades = vec3(0.09, 0.068, 0.05) * rows + neonColor(sh) * sign_ * 0.12 + day * (DAY_FACADES * (1.4 - 0.6 * rows));
     c = mix(c, facades, band * 0.85);
-    vec3 street = vec3(0.016, 0.014, 0.014) + lampColor(0) * 0.012;
+    vec3 street = vec3(0.016, 0.014, 0.014) + lampColor(0) * 0.012 + day * DAY_STREET;
     return mix(c, street, smoothstep(-0.12, -0.4, R.y));
 }
 

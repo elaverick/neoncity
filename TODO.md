@@ -223,7 +223,9 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     - **A soft edge from the disc** (0.5 degrees) over long casters near the camera: jittered rays and the
       denoiser's history, not one hard ray (the march already has a penumbra).
     - **Everything the day changes**: the sky and the haze follow the sun since DN3, the land since DN4 (README,
-      "Sky"), the clouds since DN5 (README, "Clouds"); the city's is DN6.
+      "Sky"), the clouds since DN5 (README, "Clouds"), the city since DN6 (README, "Streets and light", "By day"):
+      under the deck as an even overcast, so it needs no shadow; where the deck isn't over it (towers above it, a
+      raised settlement until DN10) its sun is unshadowed, thinned only by how much sky a surface sees.
   - **Costs** (M11e, RTX 4080 SUPER, 1600 x 900, MSAA x4, all three on against all three off; see the README):
     two rounds each, which agreed to 0.01-0.02 ms.
     - Just inside a cave's mouth looking out (adit 14928f41), the worst: 0.95 to 1.39 ms (caves 0.09 to 0.29, the
@@ -626,8 +628,8 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   (fronts, dry spells, snowfall), for which `--rain 0` (dry) and the fade below `RAIN_DRIZZLE` are the start.
 - **The moon and stars are the real ones** (DN0, `src/app/sky_clock.c`): they wheel with the UTC clock, by where
   on the planet the camera is, and the moon has its phase and sets. The sun lights the sky and the haze (DN3), the
-  land (DN4) and the clouds (DN5), not yet the city: the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md,
-  DN6-DN9). The star cube is not a
+  land (DN4), the clouds (DN5) and the city (DN6); the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md,
+  DN7-DN10) is the city's own clock, the HDR display, the docs and a mop-up. The star cube is not a
   real catalogue: the pole star and the constellations aren't where they are.
 - **The night isn't physical against its anchor** (DN1, README "Light and exposure"): the moon and the starlight are
   about 70 times the real ones (`NIGHT_LIFT`), the deck's underside five times the brightest real city-lit overcast,
@@ -662,9 +664,10 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
     haze by day, and from high up over unlit land it is all one sees until the land is lit (DN4). Whether the land's
     haze should thin by day is a look call for then, with the user's rule in mind: fog is to be reduced, not
     leaned on.
-  - **The city's reflections still see the night's sky** low down (`envReflection`: the haze's colour times 1.5, and
-    `CLOUD_DECK`); the clear sky's blue isn't in them (DN6). The land's (`landReflection`) take the sky's L1
-    radiance since DN4, so a puddle shows a smooth blue sky with no sun's aureole in it (the glint is the sun's own).
+  - **The city's reflections** (`envReflection`) see the sky round the camera since DN6 (`daySky`: the clear sky's
+    L1 radiance, the deck's even grey under it) over the night's; low down they still take the haze's colour times
+    1.5, a night's hand value. The land's (`landReflection`) take the sky's L1 radiance since DN4, so a puddle shows
+    a smooth blue sky with no sun's aureole in it (the glint is the sun's own).
   - **The sun's disc is clamped** to what the 16-bit target holds (30000 pre-exposed), so `--preexpose` changes it
     where it clips; the bloom spreads it either way.
 - **The land by day (DN4) left over** (README, "Sky", "Sunlight on the land"):
@@ -706,10 +709,24 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   - **The band of bright sky under the deck's edge** at dawn and dusk (the plan) comes from the low sun's light
     followed into the deck towards it (`depthSun`, 3 km) and the far deck; not checked from inside the border at a
     low sun, where it would show.
-  - **`deckLight(rel)`** (the plan's field with a C mirror) waits for its users: the city by day (DN6) and the
-    lamps' photocell (DN7). The land has `deckThrough(cover)` already.
-  - **Towers above the deck** (the proxies and chunks over 670 m) are unlit by day, black on the white deck top:
-    the city's day is DN6.
+  - **`deckLight(rel)`** (the plan's field with a C mirror) waits for its user, the lamps' photocell (DN7). The land
+    has `deckThrough(cover)` and the city `skyCover(rel)` (DN6), both on the GPU.
+- **The city by day (DN6) left over** (README, "Streets and light", "By day"):
+  - **How much sky a surface sees is a guess by height** (`cityOpen`: 0.4-0.55 at street level, all of it from 90 m
+    up), not the street's real canyon: a low-rise street under the deck is as dim as one among towers. A per-chunk
+    sky-view factor (from the plan's heights, or traced once per chunk) would tell them apart.
+  - **The sun has no shadow in the city** where it reaches it: towers standing up out of the deck, and settlements
+    on raised ground until the deck hangs over their own streets (DN10). See "The sun", above.
+  - **The arcologies' halls** keep the night's light inside; only their glazed crowns show the day's sky.
+  - **Falling rain** is lit by the day through the rain mist (DN5), as the street's lights light it; the drops' own
+    floor (`composite.frag`, a constant) is the night's.
+  - **The sky is drawn in its own radiance**, the surfaces in the lighting's units, where Lambert's 1/pi is left out
+    (light_units.h): the sky (`sky.frag`, the sun's disc too), the clouds' daylight and the air's in-scattering all
+    hold radiance per steradian of the irradiance units, so against a lit wall they look pi times (1.65 stops)
+    darker than they would by the anchor, if the derivation holds (not yet measured on a frame). The night was
+    tuned by eye and would hide it. The city's day takes the sky as it is drawn (`daySky`,
+    `dayOvercast`: the light over pi), so reflections match the sky above them. Needs checking against the anchor,
+    and if so the sky's writers times pi, with the night's sky constants (`MOON_AIR`, `nightGlow`) retuned.
 
 ## Curtain wall relief
 Piers, beams, mullions and a coping on office towers' curtain walls (`src/city/mesh_relief.c`, `shadeTrim`), after

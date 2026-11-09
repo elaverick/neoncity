@@ -120,10 +120,12 @@ void impostorLight(vec3 lamps, vec3 glassT, float height, uint floorHash, float 
     gImpFloor = floorHash;
     gImpLit = hf(floorHash, 33u) < litChance ? mix(0.75, 1.25, hf(floorHash, 34u)) : 0.0;
     vec3 across = vec3(0.11, 0.085, 0.06) * 2.5;     // the towers across: paneSheen's lit facades
-    gImpC[0] = (lamps * 2.0 + across * mix(0.25, 1.0, exp(-height / 80.0))) * glassT;
+    // and by day the towers across under the daylight (envReflection's DAY_FACADES), and the sky
+    vec3 day = dayLevel() * deckThrough(gSkyCover);
+    gImpC[0] = (lamps * 2.0 + (across + day * DAY_FACADES) * mix(0.25, 1.0, exp(-height / 80.0))) * glassT;
     // a floor sees signs from afar, even where none stand just below it
     gImpC[1] = neonHue(gWorld) * mix(0.4, 1.0, neonDensity(gWorld)) * mix(0.35, 1.0, exp(-height / 40.0)) * 5.0 * glassT;
-    gImpC[2] = mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) * 1.4 * glassT;
+    gImpC[2] = (mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) * 1.4 + dayOvercast(gSkyCover)) * glassT;
     // mostly cool, some warmer or green, breathing as what they show changes
     float k = hf(floorHash, 30u);
     vec3 screen = k < 0.65 ? vec3(0.30, 0.50, 0.85) : k < 0.85 ? vec3(0.62, 0.70, 0.80) : vec3(0.32, 0.72, 0.55);

@@ -1247,6 +1247,25 @@ sit exactly under the lamp heads, and the coloured spill from each lit shopfront
 storefront itself: the shader and the generator use the same hash for which 6 m shop bay is
 open.
 
+**By day** (DN6 of the day/night roadmap) the city takes the daylight its cloud lets through. Every surface's
+light all round (`ambientLight`, `cityAmbient` in `common.glsl`, which the proxies share) is the night's faint
+fill and the daylight (`cityDaylight`). The daylight is the land's (`landDaylight`): the sun and the sky on level
+ground, under the deck only `deckThrough` of it (0.25% where the cover is whole), spread over the deck's underside
+as an even overcast with no sun and no shadow. The cover is the fragment's own (`skyCover`: the cities' cloud
+over it, none where it stands up out of the deck), so a tower over the deck is in the sun. A surface sees only
+part of the sky (`cityOpen`: 0.4-0.55 at street level, a wall less than a pavement, all of it from 90 m up), and
+what it doesn't see comes back off the streets and facades round it (`CITY_BOUNCE`, 15% of the light on them).
+The reflections' fallback (`envReflection`) has the day's sky round the camera (`daySky`: the clear sky's L1
+radiance, the deck's even grey under it), the facades across under it and the street. The light through a window
+into a dark room or an impostor's office, a lobby's skylight and an arcology's glazed crown take the overcast's
+mean radiance (`dayOvercast`); the lobbies take the day through their glass as they took the night's fill; the
+plumes are lit from above by it. Lamps, signs, adverts and lit windows are as they are at night (their clock is
+DN7). At noon under the deck the street meters about 5.1 (the night's 2.75-3.4) and is shown at 4.6-4.7: a grey
+storm-lit day, the lamps' pools and the neon still showing. With the sun at 4 degrees it is a dusk under the
+lamps; in civil twilight the night. Looking up at the built edge the deck meters 6.65. The night is unchanged (at
+a fixed exposure the spawn, the street and the built edge differ from the build before only along edges, by the
+sub-pixel shift two runs make, with equal means).
+
 ### Litter (`src/city/litter.c`)
 Rubbish lies still, so it isn't a particle system. Each item is ordinary geometry in a third,
 near-only layer of chunk meshes, streamed within `LITTER_DISTANCE` (120 m) and generated, like
@@ -1953,6 +1972,7 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
   | the city's low haze (`nightGlow`) | 0.059 | 0.9 cd/m2 | |
   | the sun above the air (`SUN_ILLUMINANCE`); at the ground, 32 degrees up | 2560; 2350 | 128 000; 117 000 lux | 128 000; ~100 000 lux |
   | the noon sky all round (`AIR_SKY`, 32 degrees) | 105 | 1700 cd/m2 | |
+  | noon under the whole deck, open level ground (`DECK_DAYLIGHT` of sun and sky, 32 degrees; DN6) | 3.1 | 150 lux | a storm sky's 100-1000 lux |
   | the light on a lobby's floor | 0.55 | 27 lux | 200-500 lux |
 
   So the moon and the stars are about 70 times the real ones (`NIGHT_LIFT`): a game's night, which the eye's

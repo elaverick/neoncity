@@ -328,7 +328,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float wallSpecK = glassWall ? 0.4 : 0.05 * grainSpec(wallG);
     vec3 wdiff = wallLighting(p, wallG.n, V, wallShin, wallSpecK, vAbs, wspec);   // the wall's relief (flat on glass)
     // a dark room has only what reaches its window: the lamps, neon and city glow on the facade, through the glass
-    gWinE = (wdiff + mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) * 0.45) * glassT;   // the window's view: overcast and facades across
+    gWinE = (wdiff + (mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) + dayOvercast(gSkyCover)) * 0.45) * glassT;   // the window's view: overcast and facades across
     if (imp.m >= 0) {
         // the module relit for this window (impostors.glsl), and its bay's mean under that light
         vec3 lamps = max(wdiff - ambientLight(n, vAbs) - neonBounce(gWorld, vAbs) * 1.5, vec3(0.0));

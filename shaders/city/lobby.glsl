@@ -692,7 +692,7 @@ vec3 shadeInterior(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     } else if (surf == IS_SKYLIGHT) {
         vec2 t = fract(uv / 1.5);
         float bar = max(1.0 - smoothstep(0.0, 0.02 + aa, min(t.x, 1.0 - t.x)), 1.0 - smoothstep(0.0, 0.02 + aa, min(t.y, 1.0 - t.y)));
-        return mix(CLOUD_DECK * 2.2 + Lc * 0.03, vec3(0.01), bar);
+        return mix(CLOUD_DECK * 2.2 + Lc * 0.03 + dayOvercast(gSkyCover) * 0.8, vec3(0.01), bar);   // the overcast, or the day's sky, through it
     } else if (surf == IS_OFFICE) {
         // the podium floors round an atrium: dark glazing onto lit offices
         float fh = facadeFloorH(seed), fy = fract((y - ceilH) / fh) * fh;

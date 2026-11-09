@@ -36,12 +36,8 @@ float boxCover(float x, float a, float b, float w) {
     w = max(w, 1e-4);
     return clamp((min(x + 0.5 * w, b) - max(x - 0.5 * w, a)) / w, 0.0, 1.0);
 }
-vec3 ambientLight(vec3 n, float h) {
-    vec3 sky = vec3(0.006, 0.007, 0.013);
-    vec3 bounce = vec3(0.013, 0.008, 0.006);
-    float up = n.y * 0.5 + 0.5;
-    return mix(bounce, sky, up) * (0.8 + 0.8 * exp(-h / 30.0));
-}
+float gSkyCover;   // the cities' cloud over this fragment (skyCover)
+vec3 ambientLight(vec3 n, float h) { return cityAmbient(n, h, gSkyCover); }
 vec3 neonBounce(vec3 w, float h) {
     float m = vnoise(w.xz / 23.0, 0xB0B0u);
     float k = vnoise(w.xz / 17.0 + 7.3, 0xB0B1u);
@@ -66,6 +62,7 @@ vec3 shadeProxy(vec3 n, vec3 V) {
     // derivatives first, in uniform control flow
     float dU = fwidth(u), dV = fwidth(vAbs);
     vec3 world = frame.camPos.xyz + vRel;
+    gSkyCover = skyCover(vRel);
     vec3 wdiff = ambientLight(n, max(vAbs, 0.0)) + neonBounce(world, max(vAbs, 0.0)) * 1.5;
 
     vec3 wallAlb = palette == 0u ? vec3(0.085, 0.080, 0.075) :
@@ -95,7 +92,7 @@ vec3 shadeProxy(vec3 n, vec3 V) {
     else if (type == 2) { winW = 1.0;  winH = mix(0.4, 0.55, hf(sh, 9u)); }
     else                { winW = mix(0.2, 0.32, hf(sh, 5u)); winH = mix(0.7, 0.85, hf(sh, 9u)); }
     float litFrac = 0.16 + 0.42 * hf(sh, 6u), tintSel = hf(sh, 8u);
-    vec3 winE = (wdiff + mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) * 0.45) * glassT;
+    vec3 winE = (wdiff + (mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) + dayOvercast(gSkyCover)) * 0.45) * glassT;
     vec3 avgLight = (tintSel < 0.5 ? kelvin(3050.0) : kelvin(3600.0)) * 1.15 * 0.42;
     vec3 avgWin = (avgLight * litFrac * glassT + winE * 0.1 * (1.0 - litFrac)) * (1.0 - F) + refl * F;
 

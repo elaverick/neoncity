@@ -365,7 +365,7 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float bar = max(1.0 - smoothstep(0.0, 0.03 + aa / 2.0, min(f.x, 1.0 - f.x)), 1.0 - smoothstep(0.0, 0.03 + aa / 2.0, min(f.y, 1.0 - f.y)));
         float cloud = 0.7 + 0.3 * fbm(uv * 0.05 + vec2(gTime * 0.01, 0.0), 0xA571u);
         float rainS = 0.92 + 0.08 * step(0.7, vnoise(vec2(uv.x * 9.0, uv.y * 0.5 - gTime * 3.0), 0xA572u));
-        return mix(CROWN_COLD * 0.55 * cloud * rainS + CLOUD_DECK * 0.6, vec3(0.006), bar);
+        return mix(CROWN_COLD * 0.55 * cloud * rainS + CLOUD_DECK * 0.6 + dayOvercast(gSkyCover) * (0.8 * cloud * rainS), vec3(0.006), bar);
     } else if (surf == ARS_PUDDLE) {
         // black water under the crown, ringed by drips
         float r = length(uv) / max(float(var) * 0.5, 0.3);

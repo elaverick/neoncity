@@ -6,13 +6,11 @@
  * exactly under the lamp heads and shop spill matches the lit storefronts.
  * ==================================================================== */
 
-// The night's fill, sky and bounce: 0.007-0.009, about 0.4 lux (LIGHT_LUX), up to twice that near the ground.
-vec3 ambientLight(vec3 n, float h) {
-    vec3 sky = vec3(0.006, 0.007, 0.013);
-    vec3 bounce = vec3(0.013, 0.008, 0.006);
-    float up = n.y * 0.5 + 0.5;
-    return mix(bounce, sky, up) * (0.8 + 0.8 * exp(-h / 30.0));
-}
+// The cities' cloud over the fragment being shaded (common.glsl skyCover): the includer sets it.
+float gSkyCover = 1.0;
+
+// The light all round, at h metres above the ground: the night's fill and bounce, and the daylight (cityAmbient).
+vec3 ambientLight(vec3 n, float h) { return cityAmbient(n, h, gSkyCover); }
 
 /* Specular lobes. Procedural materials use a normalised Blinn-Phong lobe
  * (shin, specK) and pass rough < 0. Authored PBR materials pass rough >= 0
