@@ -2612,10 +2612,13 @@ static void test_cave_holes(Rng *r, const CaveSurvey *s) {
  * the stalactites hung where the ceiling is high enough, and the field still
  * within TERRAIN_CAVE_LIPSCHITZ of the distance (by differences 2 cm long) in
  * the air and the metre of rock round it; and the ground in a cave's air round
- * its mouths still in its air (no island of ground held up over a hole). */
+ * its mouths still in its air (no island of ground held up over a hole), and
+ * where the hole's cut takes it without them (the field it cuts by under
+ * minus level 0's margin), taken with them too (no strips of ground left
+ * along the stalactites' cells' sides). */
 static void test_cave_dressing(const CaveSurvey *s) {
     Rng rd = rng_make(6151), *r = &rd;   /* its own: the tests after it draw as they did before it */
-    int systems = 0, cols = 0, high = 0, hung = 0, badHead = 0, badFloor = 0, grads = 0, groundAir = 0, islands = 0;
+    int systems = 0, cols = 0, high = 0, hung = 0, badHead = 0, badFloor = 0, grads = 0, groundAir = 0, islands = 0, groundCut = 0, strips = 0;
     double hangMax = 0.0, gradMax = 0.0;
     for (int k = 0; k < s->n && systems < 64; ++k) {
         if (!s->has[k]) continue;
@@ -2662,6 +2665,14 @@ static void test_cave_dressing(const CaveSurvey *s) {
                 groundAir++;
                 if (terrain_cave_sdf_local(c, x, g, z) >= 0.0 && islands++ < 5)
                     printf("  cave %08x: a stalactite holds up the ground at (%.1f, %.1f, %.1f) over mouth %d's hole\n", c->id, x, g, z, m);
+                terrain_cave_dressing = 0;
+                double c0 = terrain_cave_cut_local(c, x, g, z);
+                terrain_cave_dressing = 1;
+                if (c0 >= -0.25) continue;   /* (level 0's margin: cave_gpu.c HOLE_MARGIN) */
+                groundCut++;
+                if (terrain_cave_cut_local(c, x, g, z) >= -0.25 && strips++ < 5)
+                    printf("  cave %08x: the ground at (%.1f, %.1f, %.1f) over mouth %d's hole left standing by the stalactites (cut field %.3f)\n",
+                           c->id, x, g, z, m, terrain_cave_cut_local(c, x, g, z));
             }
         }
         for (int q = 0; q < 200; ++q) {   /* the field's slope in and round the air */
@@ -2678,10 +2689,11 @@ static void test_cave_dressing(const CaveSurvey *s) {
         }
     }
     printf("  dressing over %d systems: %d columns over the axes, %d with the ceiling over %.1f m, %d (%.0f%%) of those hung with stalactites (down to %.2f m); "
-           "the field's slope at most %.2f over %d points; %d of %d points of the ground in the air round the mouths held up\n", systems, cols, high, TERRAIN_CAVE_DRIP_HEAD_M + 0.3, hung, 100.0 * hung / fmax(high, 1), hangMax, gradMax, grads, islands, groundAir);
+           "the field's slope at most %.2f over %d points; %d of %d points of the ground in the air round the mouths held up, %d of %d cut left standing\n", systems, cols, high, TERRAIN_CAVE_DRIP_HEAD_M + 0.3, hung, 100.0 * hung / fmax(high, 1), hangMax, gradMax, grads, islands, groundAir, strips, groundCut);
     CHECK(badHead == 0, "%d points within %.1f m of the floor turned to rock by the stalactites", badHead, TERRAIN_CAVE_DRIP_HEAD_M);
     CHECK(badFloor == 0, "%d floors moved by the stalactites", badFloor);
     CHECK(islands == 0, "%d points of the ground over the mouths' holes held up by stalactites", islands);
+    CHECK(strips == 0, "%d points of the ground the mouths' holes cut left standing by the stalactites", strips);
     CHECK(gradMax <= TERRAIN_CAVE_LIPSCHITZ, "the field's slope reaches %.2f, over TERRAIN_CAVE_LIPSCHITZ", gradMax);
 }
 

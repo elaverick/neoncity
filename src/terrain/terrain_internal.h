@@ -299,6 +299,11 @@ void terrain_cave_cell(TerrainDir p, int *f, int *i, int *j);
 typedef struct TerrainCaveNear { int nseg, nroom; uint8_t seg[TERRAIN_CAVE_SEGS], room[TERRAIN_CAVE_ROOMS]; } TerrainCaveNear;
 void   terrain_cave_near_box(const TerrainCave *c, const double lo[3], const double hi[3], TerrainCaveNear *out);
 double terrain_cave_sdf_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z);
+/* The field the mouths' holes cut the ground by (terrain_cave.c, "The
+ * dressing"): the same surface and sign, the air as deep at the stalactites'
+ * cells' sides as away from them. As terrain_cave_sdf_local and _near. */
+double terrain_cave_cut_local(const TerrainCave *c, double x, double h, double z);
+double terrain_cave_cut_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z);
 /* Whether the field carries the stalactites (terrain_cave.c, "The dressing"):
  * 1, but for terrain_test's checks of what they leave alone (single-threaded). */
 extern int terrain_cave_dressing;

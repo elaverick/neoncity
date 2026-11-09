@@ -52,7 +52,21 @@
  * only its tiles near a cut hole's box with the cut (terrain_gpu.c), since a
  * shader that can discard loses the early depth test everywhere it draws.
  * cave_gpu_update runs before the terrain's, which reads the boxes;
- * cave_gpu_levels after it. */
+ * cave_gpu_levels after it.
+ *
+ * Ray tracing (M11d): each brick drawn (in view or not) is in the shadows'
+ * TLAS (RT_MASK_CAVE), for the moon's rays in the caves (cave.frag,
+ * terrain/dir_shadow.glsl). A brick's BLAS is built once, straight from its
+ * block of the pool (its int16 positions read as SNORM, its sky word
+ * ignored), after its upload and at most RT_BUILDS a frame, and retired with
+ * its cache entry. The instance's transform carries the SNORM's scale, the
+ * brick's offset and the chart's map at its system's anchor, so it lies in
+ * the TLAS's frame (camera-relative x, z, not bent; y less the camera's).
+ * A brick near a mouth (a vertex within TERRAIN_CAVE_CLIP_GATE_M of the
+ * ground) or overlapping a finer level's box is not opaque: its hits over
+ * the drawn ground or inside the finer box are passed, as cave.frag discards
+ * those fragments. NEONCITY_CAVE_RT=0 leaves the caves out (the moon in them
+ * then falls off with the sky they see, as before). */
 
 #define SYS_MAX      4
 #define LODS         TERRAIN_CAVE_LODS
@@ -71,6 +85,8 @@
 #define ORDERS       (POOL_LOG - BLOCK_LOG + 1)
 #define NBLOCKS      (1 << (POOL_LOG - BLOCK_LOG))
 #define WORKERS_MAX  3
+#define RT_ITEMS     8192             /* bricks in the TLAS a frame, at most */
+#define RT_BUILDS    48               /* bricks' BLASes built a frame, at most */
 
 _Static_assert(sizeof(TerrainCaveVertex) == 16, "cave.vert reads a vertex as 4 words");
 _Static_assert(ANCHOR_M >= TERRAIN_CAVE_CELLS * TERRAIN_CAVE_VOXEL0 * 4.0 && (int)ANCHOR_M % (int)(TERRAIN_CAVE_CELLS * TERRAIN_CAVE_VOXEL0 * 4.0) == 0,
@@ -143,10 +159,14 @@ typedef struct Entry {
     int32_t  block;     /* its pool block, -1 for an empty mesh */
     uint32_t nidx, vbytes;
     uint64_t used;      /* the frame it was last wanted in */
+    int32_t  blas;      /* its BLAS (rt.h), -1 until built */
+    uint8_t  mouth;     /* a vertex within TERRAIN_CAVE_CLIP_GATE_M of the ground: cut there */
 } Entry;
 
 typedef struct Job { BrickKey key; const CaveSys *sys; int32_t b[3]; float pri; } Job;
-typedef struct Result { BrickKey key; int nv, ni; void *data; double ms; } Result;
+typedef struct Result { BrickKey key; int nv, ni, mouth; void *data; double ms; } Result;
+/* A brick in this frame's TLAS: its draw's place (CaveDrawGPU's), found again by its key after the uploads. */
+typedef struct RtItem { BrickKey key; int16_t sys, finer; float off[3], unit; } RtItem;
 
 /* --- The pool: a buddy allocator over NBLOCKS blocks ------------------------------ */
 typedef struct Buddy {
@@ -249,6 +269,14 @@ struct CaveGpu {
     int      debugView;
     int      frames, fellBack, missingMost;   /* frames drawn, those in which a finer level near a system had to wait, the most bricks missing */
     double   updateMs, slowestUpdateMs;
+    /* ray tracing: the bricks in the TLAS */
+    Rt      *rt;                    /* NULL without ray tracing */
+    uint64_t frame;                 /* this frame's index, for retiring BLASes */
+    int      rtOff;                 /* NEONCITY_CAVE_RT=0 */
+    RtItem  *rtItem;
+    int      nrt, rtIn, rtBuilt, rtWaiting, rtTraced;   /* this frame's: wanted, instanced, built, without a BLAS yet; whether the caves are in the TLAS */
+    long     rtBuilds;
+    float    rtBase[SYS_MAX][7];    /* each system's anchor in the TLAS's frame (x, y, z) and its J */
 };
 
 /* --- The workers ------------------------------------------------------------------ */
@@ -358,6 +386,8 @@ static int cave_worker(void *arg) {
         double t0 = glfwGetTime();
         int ni, nv = terrain_cave_brick_mesh(cave, j.key.lod, j.b[0], j.b[1], j.b[2], v, idx, &ni);
         double ms = (glfwGetTime() - t0) * 1000.0;
+        int mouth = 0;
+        for (int k = 0; k < nv && !mouth; ++k) mouth = v[k].above > -(float)TERRAIN_CAVE_CLIP_GATE_M;
         void *data = NULL;
         if (ni > 0) {
             data = malloc(sizeof(TerrainCaveVertex) * (size_t)nv + sizeof(uint16_t) * (size_t)ni);
@@ -368,7 +398,7 @@ static int cave_worker(void *arg) {
         } else nv = 0;
         mutex_lock(&g->lock);
         g->busyOn[wa->id] = 0;
-        g->result[g->nresult++] = (Result){ j.key, nv, ni, data, ms };   /* there is room: it waited for some */
+        g->result[g->nresult++] = (Result){ j.key, nv, ni, mouth, data, ms };   /* there is room: it waited for some */
         g->meshMs = ms;
         g->meshed++;
         if (ms > g->slowestMs) g->slowestMs = ms;
@@ -399,6 +429,7 @@ static Entry *insert(CaveGpu *g, BrickKey k) {
     g->table[h].key = k;
     g->table[h].used_ = 1;
     g->table[h].block = -1;
+    g->table[h].blas = -1;
     g->entries++;
     return &g->table[h];
 }
@@ -406,6 +437,7 @@ static Entry *insert(CaveGpu *g, BrickKey k) {
 /* Removes slot h, shifting back the entries probed past it. */
 static void erase(CaveGpu *g, uint32_t h) {
     if (g->table[h].block >= 0) bud_free(g->bud, g->table[h].block);
+    if (g->table[h].blas >= 0) rt_free_blas(g->rt, g->table[h].blas, g->frame);
     g->table[h].used_ = 0;
     g->entries--;
     uint32_t i = h;
@@ -469,11 +501,17 @@ void cave_gpu_create(Renderer *r) {
     g->table = (Entry *)calloc(ENTRIES, sizeof(Entry));
     g->bud = (Buddy *)malloc(sizeof(Buddy));
     g->want = (Job *)malloc(sizeof(Job) * QUEUE_MAX * 8);
-    if (!g->table || !g->bud || !g->want) fatal("out of memory allocating the caves");
+    g->rtItem = (RtItem *)malloc(sizeof(RtItem) * RT_ITEMS);
+    if (!g->table || !g->bud || !g->want || !g->rtItem) fatal("out of memory allocating the caves");
+    g->rt = r->rt;
+    const char *env = getenv("NEONCITY_CAVE_RT");
+    g->rtOff = env && atoi(env) == 0;
+    if (g->rt && g->rtOff) printf("Caves in the ray-traced shadows: off (NEONCITY_CAVE_RT=0)\n");
     bud_init(g->bud);
     const VkDeviceSize poolBytes = (VkDeviceSize)1 << POOL_LOG;
-    g->pool = vk_buffer(vk, poolBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VkBufferUsageFlags poolUse = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    if (r->rt) poolUse |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;   /* the bricks' BLASes */
+    g->pool = vk_buffer(vk, poolBytes, poolUse, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     const VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     for (int i = 0; i < MAX_FRAMES; ++i) {
         g->staging[i] = vk_buffer(vk, UPLOAD_BYTES, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host);
@@ -483,14 +521,15 @@ void cave_gpu_create(Renderer *r) {
         memset(g->holeBuf[i].mapped, 0, sizeof(CaveHolesGPU));
         ((CaveHolesGPU *)g->holeBuf[i].mapped)->info[1] = TERRAIN_CLIP_LEVELS;
     }
-    VkDescriptorPoolSize sizes[3] = {
+    VkDescriptorPoolSize sizes[4] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * MAX_FRAMES },
         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PBR_TEXTURE_COUNT * MAX_FRAMES },
+        { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES },
     };
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = MAX_FRAMES;
-    pci.poolSizeCount = 3;
+    pci.poolSizeCount = r->rt ? 4 : 3;
     pci.pPoolSizes = sizes;
     VK_CHECK(vkCreateDescriptorPool(vk->device, &pci, NULL, &g->dpool));
     for (int i = 0; i < MAX_FRAMES; ++i) {
@@ -508,6 +547,7 @@ void cave_gpu_create(Renderer *r) {
         write_buf_set(vk, g->set[i], 5, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, g->holeBuf[i].buf, sizeof(CaveHolesGPU));
         write_buf_set(vk, terrain_gpu_set(r, i), 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, g->holeBuf[i].buf, sizeof(CaveHolesGPU));   /* terrain.frag's cut */
         write_material_set(r, g->set[i]);
+        if (r->rt) write_as_set(vk, g->set[i], 6, rt_tlas(r->rt, i));   /* the moon's rays (cave_rt.frag) */
     }
     mutex_init(&g->lock);
     cond_init(&g->wake);
@@ -547,7 +587,7 @@ void cave_gpu_destroy(Renderer *r) {
         vk_buffer_destroy(vk, &g->holeBuf[i]);
     }
     vk_buffer_destroy(vk, &g->pool);
-    free(g->table); free(g->bud); free(g->want);
+    free(g->table); free(g->bud); free(g->want); free(g->rtItem);
     free(g);
     r->caves = NULL;
 }
@@ -579,7 +619,9 @@ static int take_results(Renderer *r, CaveGpu *g, int slot, VkBufferCopy *copies)
             e->used = r->frameIndex;
         }
         if (e->block >= 0) { bud_free(g->bud, e->block); e->block = -1; }   /* meshed again: the newer stands */
+        if (e->blas >= 0) { rt_free_blas(g->rt, e->blas, g->frame); e->blas = -1; }
         e->nidx = (uint32_t)res->ni;
+        e->mouth = (uint8_t)res->mouth;
         e->vbytes = (uint32_t)vb;
         if (res->ni > 0) {
             int32_t b = bud_alloc(g->bud, bytes);
@@ -614,6 +656,9 @@ static int in_flight(const CaveGpu *g, BrickKey k) {
 void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj) {
     CaveGpu *g = r->caves;
     double t0 = glfwGetTime();
+    g->frame = r->frameIndex;
+    int traceOn = g->rt && r->shadowsOn && !g->rtOff;
+    g->nrt = 0;
 
     /* 1. The systems a worker found, and the meshes finished. */
     mutex_lock(&g->lock);
@@ -688,6 +733,9 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
         sg->anchor[2] = (float)(A[1] - cam[1]); sg->anchor[3] = (float)A[1];
         sg->J[0] = (float)J0; sg->J[1] = (float)J1; sg->J[2] = (float)J2; sg->J[3] = (float)J3;
         sg->chart[0] = (float)A[0]; sg->chart[1] = (float)A[1]; sg->chart[2] = (float)A[2];
+        float *rb = g->rtBase[si];   /* the anchor in the TLAS's frame, and J */
+        rb[0] = sg->anchor[0]; rb[1] = sg->anchor[2]; rb[2] = sg->anchor[1];
+        rb[3] = sg->J[0]; rb[4] = sg->J[1]; rb[5] = sg->J[2]; rb[6] = sg->J[3];
 
         /* each level's box, snapped to the next level's bricks, and whether all of it is meshed */
         double box[LODS][2][3];
@@ -751,6 +799,14 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
                 BrickKey k = { c->id, (int16_t)q[0], (int16_t)q[1], (int16_t)q[2], (uint8_t)l, 0 };
                 Entry *e = find(g, k);
                 if (!e || e->nidx == 0) continue;
+                if (traceOn && g->nrt < RT_ITEMS) {   /* in the TLAS, in view or not: what it shadows may be in view */
+                    RtItem *it = &g->rtItem[g->nrt++];
+                    it->key = k;
+                    it->sys = (int16_t)si;
+                    it->finer = (int16_t)(cut ? finer : -1);
+                    for (int a = 0; a < 3; ++a) it->off[a] = (float)(lo[a] - A[a]);
+                    it->unit = (float)(v / TERRAIN_CAVE_QUANT);
+                }
                 /* in view? its box about the anchor, in the frame; and in
                  * the shelter map's square (every brick there, in view or
                  * not: a roof off the top of the screen shelters the rain in
@@ -877,14 +933,50 @@ void cave_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double ca
     mutex_unlock(&g->lock);
     if (g->entries >= ENTRIES_KEEP) make_room(g, 0, r->frameIndex);
 
+    const VkPipelineStageFlags2 BUILD = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    if (ncopy) {   /* (the earlier frames' draws and builds read the blocks first) */
+        vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | BUILD, 0, VK_PIPELINE_STAGE_2_COPY_BIT,
+                          VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        vkCmdCopyBuffer(cmd, g->staging[slot].buf, g->pool.buf, (uint32_t)ncopy, copies);
+        vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | BUILD,
+                          VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT);
+    }
+
+    /* 5. The bricks drawn into the TLAS, their BLASes built as they come. */
+    g->rtIn = g->rtBuilt = g->rtWaiting = 0;
+    if (g->nrt) {
+        VkDeviceAddress pool = vk_buffer_address(r->vk, g->pool.buf);
+        for (int k = 0; k < g->nrt; ++k) {
+            const RtItem *it = &g->rtItem[k];
+            Entry *e = find(g, it->key);
+            if (!e || e->nidx == 0 || e->block < 0) continue;
+            if (e->blas < 0) {
+                if (g->rtBuilt >= RT_BUILDS) { g->rtWaiting++; continue; }
+                VkDeviceAddress at = pool + ((VkDeviceAddress)e->block << BLOCK_LOG);
+                RtMesh m = { at, at + e->vbytes, sizeof(TerrainCaveVertex), e->vbytes / (uint32_t)sizeof(TerrainCaveVertex), e->nidx,
+                             VK_FORMAT_R16G16B16A16_SNORM };
+                e->blas = rt_build_mesh(r->rt, cmd, slot, &m);
+                if (e->blas < 0) { g->rtWaiting++; g->rtBuilt = RT_BUILDS; continue; }   /* no room this frame */
+                g->rtBuilt++;
+                g->rtBuilds++;
+            }
+            /* chart (x, h, z) from the anchor = off + q unit, q the SNORM's value times 32767; into the TLAS's frame by J */
+            const float *b = g->rtBase[it->sys];
+            float S = it->unit * 32767.0f;
+            const float xf[3][4] = {
+                { b[3] * S, 0.0f, b[4] * S, b[0] + b[3] * it->off[0] + b[4] * it->off[2] },
+                { 0.0f, S, 0.0f, b[1] + it->off[1] },
+                { b[5] * S, 0.0f, b[6] * S, b[2] + b[5] * it->off[0] + b[6] * it->off[2] },
+            };
+            uint32_t custom = RT_INST_CAVE | (uint32_t)it->sys << 2 | (uint32_t)(it->finer + 1) << 4 | (uint32_t)e->mouth << 6;   /* cave.frag: dirSeeThrough */
+            rt_add_instance_xf(r->rt, slot, e->blas, xf, RT_MASK_CAVE, custom, it->finer < 0 && !e->mouth);
+            g->rtIn++;
+        }
+    }
+    g->rtTraced = traceOn;
+
     g->updateMs = (glfwGetTime() - t0) * 1000.0;
     if (g->updateMs > g->slowestUpdateMs) g->slowestUpdateMs = g->updateMs;
-    if (ncopy == 0) return;
-    vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COPY_BIT,
-                      VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    vkCmdCopyBuffer(cmd, g->staging[slot].buf, g->pool.buf, (uint32_t)ncopy, copies);
-    vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-                      VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
 }
 
 /* Draws n of the slot's indirect commands from `first`. */
@@ -908,7 +1000,7 @@ void cave_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->debugView ? r->caveXrayPipe : r->cavePipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->cavePL, 0, 1, &g->set[slot], 0, NULL);
     vkCmdBindIndexBuffer(cmd, g->pool.buf, 0, VK_INDEX_TYPE_UINT16);
-    struct { int32_t view, camIn; float camSky; } view = { g->debugView, g->camIn, g->camSky };   /* cave.glsl: CaveView */
+    struct { int32_t view, camIn; float camSky; int32_t traced; } view = { g->debugView, g->camIn, g->camSky, g->rtTraced };   /* cave.glsl: CaveView */
     vkCmdPushConstants(cmd, r->cavePL, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(view), &view);
     draw_list(r, cmd, slot, 0, g->ndraw);
 }
@@ -973,8 +1065,10 @@ void cave_gpu_stats(Renderer *r, char *buf, size_t n) {
     snprintf(buf, n, "caves: %d systems near%s; %d bricks drawn (%d, %d, %d by level), %d triangles; %d missing, %d queued;\n"
              "       %d bricks cached (%.1f of %d MB), %d evicted; %d meshed, the last in %.2f ms on a worker (slowest %.2f); systems looked up in %.0f ms;\n"
              "       the frame's part %.2f ms (slowest %.2f), %d uploads; in %d of %d frames a finer level waited, at most %d bricks missing;\n"
-             "       %d mouths' holes near, %d cut, up to %d pieces of the field each (a system's found in %.0f ms)",
+             "       %d mouths' holes near, %d cut, up to %d pieces of the field each (a system's found in %.0f ms);\n"
+             "       in the TLAS: %s%d bricks of %d wanted, %d built this frame, %d waiting; %ld built in all",
              g->nsys, sys, g->ndraw, g->drawnLod[0], g->drawnLod[1], g->drawnLod[2], g->drawnTris, g->missing, queued, g->entries,
              (double)g->bud->used / (1024.0 * 1024.0), 1 << (POOL_LOG - 20), g->evicted, meshed, meshMs, slowest, refreshMs, g->updateMs, g->slowestUpdateMs, g->uploads,
-             g->fellBack, g->frames, g->missingMost, g->nholes, g->holesCut, g->holePieces, holeMs);
+             g->fellBack, g->frames, g->missingMost, g->nholes, g->holesCut, g->holePieces, holeMs,
+             !g->rt ? "no ray tracing, " : g->rtOff ? "off (NEONCITY_CAVE_RT=0), " : !g->rtTraced ? "shadows off, " : "", g->rtIn, g->nrt, g->rtBuilt, g->rtWaiting, g->rtBuilds);
 }

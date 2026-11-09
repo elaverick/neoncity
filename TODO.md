@@ -205,7 +205,26 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   (`plan_city_ground`, the cover's last byte). M11c is done: the moon's shadows on the land, its roads and its grass
   (`shaders/terrain/dir_shadow.glsl`: a ray through the TLAS near the camera, then a march through the clipmap's
   heights that skips the blocks it clears; `frame.dirLight`, so a sun is another direction through it);
-  `NEONCITY_MOON_SHADOWS=0` leaves them out for an A/B. Next: M11d (the caves). Left over from M11c:
+  `NEONCITY_MOON_SHADOWS=0` leaves them out for an A/B. M11d is done: the caves' drawn bricks are in the TLAS
+  (`RT_MASK_CAVE`, a BLAS a brick built once from the caves' pool, `src/render/cave_gpu.c`), the terrain's levels
+  holding a cut mouth and the bricks at a mouth aren't opaque, and the moon is traced in the caves (`cave_rt.frag`,
+  `dirShadowOr` with `DIR_SHADOW_CAVES`); `NEONCITY_CAVE_RT=0` leaves the caves out for an A/B. Next: M11e (profiling
+  and docs). Left over from M11d:
+  - **Cost** (RTX 4080 SUPER, 1600 x 900): from just inside adit 14928f41's mouth, the cave filling the screen, the
+    caves' pass 0.09 to 0.28 ms; deep in a passage 0.09 to 0.17 ms. The TLAS's build +0.05 ms with its 200-330
+    bricks. Most of the pass's part is the hole's field worked out for the rays leaving by the mouth.
+  - **A hard edge**: one ray, so the moon's disc gives the shadow no penumbra (the land's march has one; the ray
+    near the camera never did).
+  - **Arriving**: 48 bricks' structures are built a frame, so a system's few hundred take 5-10 frames; until then
+    the rock they hold lets the moon through.
+  - **Fallbacks**: without ray tracing, with `NEONCITY_CAVE_RT=0`, or past the TLAS's coarsest level (about 1 km,
+    as far as the caves are drawn), the moon in the caves falls off with the sky they see, as in b5.
+  - **The coarser levels are sunk 50 m** under a finer window: a ray from deeper than that, going up a passage and
+    out of its mouth, would stop on them (the hole's box doesn't reach so deep). Moonlight down 50 m of straight
+    passage; not seen.
+  - **Only the caves' own rays** see the caves and the holes: the lamps' rays leave the caves out (`RT_MASK_LAMPS`),
+    and the land's take the terrain as opaque, so no moonlight comes out through a passage onto the land beyond.
+  Left over from M11c:
   - **Rarely seen.** The moon stands 25 degrees up (`MOON_ENU`, src/app/main.c), and little of the land is steeper
     than that, so its shadows fall in canyons, below cliffs and in ravines; on rolling land only the slopes facing
     away are dark, as they were. A lower moon (about 6-10 degrees) would throw long shadows behind every ridge: a
@@ -239,7 +258,6 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   - **Flat**, as the chunks: no planet bend, so 3 cm off the drawn surface at `RT_RANGE`.
   - **The cost:** refits +0.02 ms a frame on foot in the mountains, +0.07 ms flying low at 30 m/s (about four
     levels refit a frame, built afresh every 64); +0.02 ms of shadow rays at the edge.
-  - **Cave mouths** aren't cut in the TLAS yet (M11d).
 - **Caves** (`src/terrain/terrain_cave.c`, M10b; plan `~/.claude/plans/m10-erosion-and-caves.md`;
   `terrain_test --caves [km]`, `--cave-map out.ppm [km [x z]]`, `--cave-mesh [km [n]]`, `--cave-walk [km [n [dt [x z]]]]`).
   b1 (placement, passages, field, CPU only), b2 (meshing and drawing: `terrain_cave_mesh.c`, `src/render/cave_gpu.c`,
@@ -276,9 +294,9 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   Left over from b5:
   - **The light is one number a vertex**, the sky's share by the path from the nearest mouth (by e every 3 radii of
     the mouth's passage, `TERRAIN_CAVE_SKY_RADII`): it falls to 0.1 some 16-23 m in and 0.01 by 31-46 m, then black.
-    It has no direction: a wall facing away from the mouth gets as much as one facing it, and the moon's direct
-    light (`groundLightIn`) is scaled with the sky's, so moonlight seems to reach in round corners near a mouth. The
-    ray-traced shadows (M11) would do it properly.
+    It has no direction: a wall facing away from the mouth gets as much as one facing it. The moon's own light is
+    traced since M11d (with ray tracing); without it, it is scaled with the sky's, so it seems to reach in round
+    corners near a mouth.
   - **A wall takes its own passage's light**, not a neighbour's through the rock: each piece's path is charged twice
     how much farther its wall is than the nearest's (`TERRAIN_CAVE_SKY_ACROSS`), among those within
     `TERRAIN_CAVE_NEAR_M`. A piece crossing that line can step the light a little; not seen in the captures.
@@ -321,7 +339,6 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     the cut (`terrain_cut.frag`) and lose the early depth test; the caves now draw before the terrain, so the parts
     of a cave hidden by the hill are shaded too (+0.03 ms on the caves' pass at 7 m) but from inside a cave the
     terrain costs nothing (0.39 to 0.03 ms).
-  - **The ray-traced shadows don't see the caves** (M11).
   - **Level 2 folds the narrowest passages**: at 2 m cells a 3 m passage gets 0.2-1.2% of its triangles turned
     against the field's normal. Drawn only past 400 m.
   - **Surface nets' ambiguous cells**: up to 0.5% of the edges are shared by four faces. No crack, a pinch.

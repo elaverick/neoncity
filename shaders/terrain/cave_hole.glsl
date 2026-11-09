@@ -121,12 +121,14 @@ float caveDripShare(int k, vec2 q, float ch) {
 
 // The stalactites' distance at chart (x, z) (p: pa, the walls' noise's place),
 // with the ceiling and the floor up and down over q, the place from hole k's
-// mouth: terrain_cave.c's drip.
+// mouth: terrain_cave.c's drip, as the holes' cut reckons it (its `cut`: each
+// cell's own stalactite only, so the ground isn't left standing in strips
+// along the cells' sides, where the bound on the others lifts the deep air).
 float caveDrip(int k, vec3 q, vec2 p, float up, float down, uint seed) {
     const float C = float(TERRAIN_CAVE_DRIP_CELL_M);
     float low = down + float(TERRAIN_CAVE_DRIP_HEAD_M);
     vec2 i = floor(p / C), f = p - i * C;
-    float d = min(min(f.x, C - f.x), min(f.y, C - f.y)) + float(TERRAIN_CAVE_DRIP_GAP_M);
+    float d = 1e30;
     ivec2 c = ivec2(i), pc = ivec2(floor(i / float(TERRAIN_CAVE_DRIP_PATCH)));
     float dens = hfloat(hash2i(seed ^ 0x5A5Au, pc.x, pc.y));
     uint h = hash2i(seed, c.x, c.y);

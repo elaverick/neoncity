@@ -26,7 +26,7 @@ layout(push_constant) uniform CaveShelter { mat4 topDown; } caveShelter;
 // The --cave-debug view (renderer_set_cave_debug): 0 off, 1 normals, 2 lit
 // from the eye, 3 that tinted by level; and the camera: whether it is in a
 // cave's air under the ground, and the sky it sees there (terrain_cave_sky)
-layout(push_constant) uniform CaveView { int view; int camIn; float camSky; } caveView;
+layout(push_constant) uniform CaveView { int view; int camIn; float camSky; int traced; } caveView;   // traced: the caves are in the TLAS this frame (cave_gpu.c)
 #endif
 
 #endif

@@ -201,6 +201,9 @@ bool shadowsOn() { return (uint(frame.shadow.y) & SHADOWS_ON) != 0u; }
 const int   SHADOW_SLOTS = 8;                            // lights a pixel keeps soft shadows for
 const uint  RT_MASK_LITTER = 0x04u;                      // src/render/rt.h
 const uint  RT_MASK_TERRAIN = 0x08u;                     // src/render/rt.h: the clipmap's near levels
+const uint  RT_MASK_CAVE = 0x10u;                        // src/render/rt.h: the caves' bricks (only the moon's rays in the caves)
+const uint  RT_MASK_LAMPS = 0xFFu & ~RT_MASK_CAVE;       // what the city's lamps' rays trace (no cave lies near a city)
+const uint  RT_INST_TERRAIN = 1u, RT_INST_CAVE = 2u;     // src/render/rt.h: an instance's custom index's low two bits
 const float LIGHT_NEGLIGIBLE = 0.002;                    // a light this faint shows no shadow worth tracing
 // Prepass G-buffer (prepass.frag): x the normal (octEncode), y the draw chunk (PG_CHUNK; MAX_DRAW_CHUNKS
 // in src/core/common.h) | these flags; for a lobby surface (PG_LOBBY), bits 12..19 hold its ceiling's

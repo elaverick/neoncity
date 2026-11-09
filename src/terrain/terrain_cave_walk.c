@@ -98,18 +98,21 @@ static void column(const TerrainCaveWalk *w, double x, double z, Column *c) {
     }
 }
 
-/* The caves' field at height y of a column (a point's chart places). */
-static double field_at(const TerrainCaveWalk *w, const double *cx, const double *cz, double y) {
+/* The caves' field at height y of a column (a point's chart places); with
+ * cut, the one the mouths' holes cut the ground by (terrain_cave_cut_*). */
+static double field_of_column(const TerrainCaveWalk *w, const double *cx, const double *cz, double y, int cut) {
     double f = 1e30;
     for (int k = 0; k < w->n; ++k) {
         const WalkSys *s = &w->sys[k];
         double p[3] = { cx[k], y, cz[k] };
         int in = s->has_box;
         for (int a = 0; a < 3 && in; ++a) in = p[a] >= s->lo[a] && p[a] <= s->hi[a];
-        f = fmin(f, in ? terrain_cave_sdf_near(&s->cave, &s->near, p[0], y, p[2]) : terrain_cave_sdf_local(&s->cave, p[0], y, p[2]));
+        f = fmin(f, in ? (cut ? terrain_cave_cut_near : terrain_cave_sdf_near)(&s->cave, &s->near, p[0], y, p[2])
+                       : (cut ? terrain_cave_cut_local : terrain_cave_sdf_local)(&s->cave, p[0], y, p[2]));
     }
     return f;
 }
+static double field_at(const TerrainCaveWalk *w, const double *cx, const double *cz, double y) { return field_of_column(w, cx, cz, y, 0); }
 
 double terrain_cave_walk_field(const TerrainCaveWalk *w, double x, double y, double z) {
     Column c;
@@ -162,7 +165,7 @@ double terrain_cave_walk_ground(const TerrainCaveWalk *w, double x, double z, do
     if (!c.live) return ground;
     double p = feet + TERRAIN_CAVE_STEP_M;
     if (p >= ground) {   /* over the ground: on it, unless it is cut there (a mouth's hole), then on the cave's floor */
-        if (field_at(w, c.cx, c.cz, ground) >= -HOLE_MARGIN) return ground;
+        if (field_of_column(w, c.cx, c.cz, ground, 1) >= -HOLE_MARGIN) return ground;
         return march_down(w, &c, ground);
     }
     /* under it: in a cave's air, on its floor, if the walker can get there; in the rock (never walking: fly mode), the ground */

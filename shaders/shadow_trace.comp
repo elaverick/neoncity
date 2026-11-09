@@ -58,7 +58,7 @@ void traceCeiling(ivec2 px, vec3 rel, float dist, vec3 p, vec3 n, vec3 V, uint g
         if (d.y < 0.05) { raw.x |= 1u << uint(k); continue; }   // along the floor: the room's bounce, not the panels
         float tmax = min((ceilH - y) / d.y + 0.05, 14.0);
         rayQueryEXT q;
-        rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu, o, 0.0, d, tmax);
+        rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, RT_MASK_LAMPS, o, 0.0, d, tmax);
         while (rayQueryProceedEXT(q)) {}
         bool miss = rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT;
         float th = miss ? tmax : rayQueryGetIntersectionTEXT(q, true);
@@ -129,7 +129,7 @@ void main() {
     }
 
     raw.x = SH_VALID | (overflow ? SH_OVERFLOW : 0u);
-    uint mask = (g.y & PG_LITTER) != 0u ? 0xFFu & ~RT_MASK_LITTER : 0xFFu;   // litter's own shape moves (city.vert)
+    uint mask = (g.y & PG_LITTER) != 0u ? RT_MASK_LAMPS & ~RT_MASK_LITTER : RT_MASK_LAMPS;   // litter's own shape moves (city.vert)
     float fr = float(uint(frame.shadow.x) & 63u);
     vec3 xi0 = vec3(ign(vec2(px) + fr * 5.588238), ign(vec2(px.yx) + vec2(41.0, 17.0) + fr * 5.588238),
                     ign(vec2(px) + vec2(23.0, 71.0) + fr * 5.588238));

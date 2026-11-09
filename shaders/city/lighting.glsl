@@ -145,7 +145,7 @@ layout(set = SCENE_SET, binding = 7) uniform usampler2D shadowVisTex;   // shado
 uvec4 gSlotIds = uvec4(0u), gSlotVis = uvec4(0u);
 bool  gSlotsOurs = false;        // the slots at this pixel were made for this surface
 vec3  gGeoN = vec3(0.0, 1.0, 0.0);
-uint  gShadowCull = 0xFFu;       // instance mask (src/render/rt.h)
+uint  gShadowCull = RT_MASK_LAMPS;   // instance mask (src/render/rt.h)
 float gFwd, gFwdTol;             // this fragment's forward distance, and how near a slot's must be to be ours
 #endif
 float gShadowFade = 1.0;         // 1: unshadowed (shadows off, or faded out with distance)
@@ -157,7 +157,7 @@ void shadowsBegin() {
     float tol = fwidth(fwd) * 1.5 + fwd * 0.002 + 0.01;   // the slots are for sample 0; this fragment is at the pixel's centre
     gFwd = fwd; gFwdTol = tol;
     gGeoN = normalize(vNrm);
-    gShadowCull = vParams.x == MAT_LITTER ? 0xFFu & ~RT_MASK_LITTER : 0xFFu;   // litter's own shape moves (city.vert)
+    gShadowCull = vParams.x == MAT_LITTER ? RT_MASK_LAMPS & ~RT_MASK_LITTER : RT_MASK_LAMPS;   // litter's own shape moves (city.vert)
     if (!shadowsOn()) return;
     gShadowFade = smoothstep(SHADOW_FADE, SHADOW_FAR, length(vRel));
     ivec2 px = ivec2(gl_FragCoord.xy);

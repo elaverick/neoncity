@@ -72,6 +72,7 @@ struct TerrainRt {
     int              first, last, top;   /* the levels in this frame's TLAS (first > last: none); the RT_RANGE level */
     int              reach;              /* the coarsest level added to this frame's TLAS, -1 for none */
     int              refits, builds;     /* the last frame's */
+    int              holed;              /* the last frame's levels holding a cut mouth (not opaque) */
     long             totalRefits, totalBuilds, missed;
     int              off;                /* NEONCITY_TERRAIN_RT=0 */
 };
@@ -221,6 +222,13 @@ void terrain_rt_update(Renderer *r, TerrainRt *tr, VkCommandBuffer cmd, int slot
         }
     }
 
+    /* A level whose window holds a cave's mouth cut this frame is not opaque:
+     * the moon's rays in the caves (terrain/dir_shadow.glsl) pass it where
+     * the ground is cut away (cave.frag: dirSeeThrough). The land's and the
+     * lamps' rays take it as opaque. */
+    const float (*hole)[2][3];
+    int nholes = r->caves ? cave_gpu_hole_boxes(r, &hole) : 0;
+    tr->holed = 0;
     for (int l = first; l <= last; ++l) {
         const RtLevel *L = &tr->lv[l];
         if (!L->built) continue;
@@ -228,7 +236,13 @@ void terrain_rt_update(Renderer *r, TerrainRt *tr, VkCommandBuffer cmd, int slot
         const TerrainClipLevel *lv = &shown->level[l];
         float o[3] = { (float)((double)lv->origin[0] * lv->spacing - cam[0]), -(float)cam[1],
                        (float)((double)lv->origin[1] * lv->spacing - cam[2]) };
-        rt_add_instance(r->rt, slot, L->blas, o, RT_MASK_TERRAIN);
+        float side = (float)((W - 1) * lv->spacing);
+        bool opaque = true;
+        for (int k = 0; k < nholes && opaque; ++k)
+            opaque = hole[k][1][0] < o[0] || hole[k][0][0] > o[0] + side || hole[k][1][2] < o[2] || hole[k][0][2] > o[2] + side;
+        tr->holed += !opaque;
+        const float xf[3][4] = { { 1.0f, 0.0f, 0.0f, o[0] }, { 0.0f, 1.0f, 0.0f, o[1] }, { 0.0f, 0.0f, 1.0f, o[2] } };
+        rt_add_instance_xf(r->rt, slot, L->blas, xf, RT_MASK_TERRAIN, RT_INST_TERRAIN, opaque);
     }
 }
 
@@ -298,8 +312,8 @@ void terrain_rt_stats(Renderer *r, TerrainRt *tr, const TerrainClipmap *clip, bo
     int used = snprintf(buf, n, "terrain in the TLAS: ");
     if (tr->first > tr->last) used += snprintf(buf + used, n - used, "none");
     else used += snprintf(buf + used, n - used, "levels %d-%d", tr->first, tr->last);
-    used += snprintf(buf + used, n - used, " (to level %d for RT_RANGE %.0f m), last frame %d refit and %d built; in all %ld refits, %ld builds, %ld missed; arena %.0f of %.0f MB",
-                     tr->top, (double)RT_RANGE, tr->refits, tr->builds, tr->totalRefits, tr->totalBuilds, tr->missed, rs.arenaUsedMB, rs.arenaMB);
+    used += snprintf(buf + used, n - used, " (to level %d for RT_RANGE %.0f m), last frame %d refit and %d built, %d holding a cave's mouth; in all %ld refits, %ld builds, %ld missed; arena %.0f of %.0f MB",
+                     tr->top, (double)RT_RANGE, tr->refits, tr->builds, tr->holed, tr->totalRefits, tr->totalBuilds, tr->missed, rs.arenaUsedMB, rs.arenaMB);
     if (used < 0 || (size_t)used >= n) return;
     if (tr->first > tr->last) return;
     if (!current) { snprintf(buf + used, n - used, "; check skipped (an update not yet taken)"); return; }

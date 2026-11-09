@@ -30,8 +30,23 @@
  * clipmap (the planet's patches) nothing casts or takes a shadow: the haze is
  * deep there, and the shadow fades out before the coarsest window's edge.
  *
+ * In the caves (DIR_SHADOW_CAVES: cave_rt.frag) the ray also traces the
+ * caves' bricks (RT_MASK_CAVE: src/render/cave_gpu.c), and takes the hits on
+ * the instances that aren't opaque one by one: the terrain's levels holding a
+ * mouth's hole, the bricks at a mouth or in a finer ring's overlap. The
+ * includer's dirSeeThrough(custom, h) says which of those to pass (the hole's
+ * cut ground, the brick over the drawn ground or inside the finer ring's box),
+ * h the hit in the TLAS's frame, custom the instance's custom index. There a
+ * point the ray can't be traced from takes the includer's own (dirShadowOr):
+ * the march from under the ground would find the rock over every cave.
+ *
  * The includer declares the clipmap's samples as `samples` (terrain.vert's
- * buffer: TerrainSample's seven words per slot) and includes common.glsl. */
+ * buffer: TerrainSample's seven words per slot), or names them DIR_SAMPLES,
+ * and includes common.glsl. */
+
+#ifndef DIR_SAMPLES
+#define DIR_SAMPLES samples
+#endif
 
 const uint  DIR_SHADOW_MARCH = 1u;   // frame.dirLight.w's bits: the march on
 const uint  DIR_SHADOW_TLAS  = 2u;   // ...and the ray near the camera
@@ -42,7 +57,7 @@ const float DIR_BIAS = 0.25;         // the ground's height let off, in the leve
 // Level l's sample at storage slot s: its height (world Y).
 float dirSampleH(int l, ivec2 s) {
     const int N = TERRAIN_CLIP_N;
-    return uintBitsToFloat(samples[(((l * N) + (s.y & (N - 1))) * N + (s.x & (N - 1))) * 7]);
+    return uintBitsToFloat(DIR_SAMPLES[(((l * N) + (s.y & (N - 1))) * N + (s.x & (N - 1))) * 7]);
 }
 
 // Where camera-relative x, z lies in level l's window, in its samples from the corner.
@@ -118,43 +133,69 @@ float dirMarch(vec3 p, vec3 L, float t0, float s0) {
     return vis;
 }
 
+#ifdef DIR_SHADOW_TRACE
+// The ray near the camera from p (dirShadow's), facing n, lp the finest level
+// holding it, to where the TLAS's coarsest level's window ends (out: the level
+// metres there): 0 if it strikes something, 1 if not, -1 if it can't be
+// traced from p (the ray-traced shadows or the terrain's levels out of it,
+// or p beyond them).
+float dirRay(vec3 p, vec3 n, vec3 L, float dist, int lp, out float out_) {
+    out_ = 0.0;
+    int reach = int(frame.terrainInfo.z);
+    if ((uint(frame.dirLight.w) & DIR_SHADOW_TLAS) == 0u || reach < 0 || lp > reach) return -1.0;
+    TerrainLevel T = frame.terrainLevel[reach];
+    vec2 lo = T.a.xy + T.b.xy, hi = lo + float(TERRAIN_CLIP_W - 1) * T.b.z;
+    float hor = length(L.xz);
+    vec2 dh = hor > 1e-4 ? L.xz / hor : vec2(1.0, 0.0);
+    vec2 ex = vec2(abs(dh.x) > 1e-6 ? ((dh.x > 0.0 ? hi.x : lo.x) - p.x) / dh.x : 1e9,
+                   abs(dh.y) > 1e-6 ? ((dh.y > 0.0 ? hi.y : lo.y) - p.z) / dh.y : 1e9);
+    out_ = max(min(ex.x, ex.y), 0.0);   // level metres to the window's edge
+    vec3 o = vec3(p.x, p.y - frame.camPos.y, p.z) + n * (0.03 + dist * 4e-4);   // the TLAS's frame: the camera's x, z; y less the camera's
+    float len = hor > 1e-4 ? out_ / hor : 1e5;
+    rayQueryEXT q;
+#ifdef DIR_SHADOW_CAVES
+    rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT, RT_MASK_TERRAIN | RT_MASK_CAVE, o, 0.0, L, len);
+    while (rayQueryProceedEXT(q)) {   // only the instances that aren't opaque come here
+        if (rayQueryGetIntersectionTypeEXT(q, false) != gl_RayQueryCandidateIntersectionTriangleEXT) continue;
+        vec3 h = o + L * rayQueryGetIntersectionTEXT(q, false);
+        if (!dirSeeThrough(uint(rayQueryGetIntersectionInstanceCustomIndexEXT(q, false)), h)) rayQueryConfirmIntersectionEXT(q);
+    }
+#else
+    rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, RT_MASK_TERRAIN, o, 0.0, L, len);
+    while (rayQueryProceedEXT(q)) {}
+#endif
+    return rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionNoneEXT ? 0.0 : 1.0;
+}
+#endif
+
 // How much of the directional light (towards L) reaches the ground at
 // camera-relative p (x, z not bent, y world Y: terrain.vert's vFlat), facing
-// n, dist from the camera.
-float dirShadow(vec3 p, vec3 n, vec3 L, float dist) {
+// n, dist from the camera. Where the ray near the camera can't be traced from
+// p, `untraced` if it is not negative; else (and it is) the march from p.
+float dirShadowOr(vec3 p, vec3 n, vec3 L, float dist, float untraced) {
+    float none = untraced >= 0.0 ? untraced : 1.0;
     uint flags = uint(frame.dirLight.w);
-    if ((flags & DIR_SHADOW_MARCH) == 0u || dot(n, L) <= 0.0) return 1.0;   // (facing away, it is dark anyway)
+    if ((flags & DIR_SHADOW_MARCH) == 0u) return none;
+    if (dot(n, L) <= 0.0) return 1.0;   // (facing away, it is dark anyway)
     int finest = int(frame.terrainInfo.x);
-    if (finest >= TERRAIN_CLIP_LEVELS) return 1.0;
+    if (finest >= TERRAIN_CLIP_LEVELS) return none;
     int lp = dirLevel(finest, p.xz);
-    if (lp >= TERRAIN_CLIP_LEVELS) return 1.0;
+    if (lp >= TERRAIN_CLIP_LEVELS) return none;
     float s0 = frame.terrainLevel[lp].b.z, t0 = 2.0 * s0;
     // out towards the coarsest window's edge, the shadow fades (beyond it the land takes none)
     const int TOP = TERRAIN_CLIP_LEVELS - 1;
     vec2 qt = dirWindow(TOP, p.xz) / float(TERRAIN_CLIP_W - 1) * 2.0 - 1.0;
     float fade = smoothstep(0.7, 0.9, max(abs(qt.x), abs(qt.y)));
     if (fade >= 1.0) return 1.0;
+    bool traced = false;
 #ifdef DIR_SHADOW_TRACE
-    int reach = int(frame.terrainInfo.z);
-    if ((flags & DIR_SHADOW_TLAS) != 0u && reach >= 0 && lp <= reach) {
-        // the ray, to where the TLAS's coarsest level's window ends
-        TerrainLevel T = frame.terrainLevel[reach];
-        vec2 lo = T.a.xy + T.b.xy, hi = lo + float(TERRAIN_CLIP_W - 1) * T.b.z;
-        float hor = length(L.xz);
-        vec2 dh = hor > 1e-4 ? L.xz / hor : vec2(1.0, 0.0);
-        vec2 ex = vec2(abs(dh.x) > 1e-6 ? ((dh.x > 0.0 ? hi.x : lo.x) - p.x) / dh.x : 1e9,
-                       abs(dh.y) > 1e-6 ? ((dh.y > 0.0 ? hi.y : lo.y) - p.z) / dh.y : 1e9);
-        float out_ = max(min(ex.x, ex.y), 0.0);   // level metres to the window's edge
-        vec3 o = vec3(p.x, p.y - frame.camPos.y, p.z) + n * (0.03 + dist * 4e-4);   // the TLAS's frame: the camera's x, z; y less the camera's
-        float len = hor > 1e-4 ? out_ / hor : 1e5;
-        rayQueryEXT q;
-        rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, RT_MASK_TERRAIN, o, 0.0, L, len);
-        while (rayQueryProceedEXT(q)) {}
-        if (rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionNoneEXT) return fade;
-        t0 = max(t0, out_);
-    }
+    float out_, ray = dirRay(p, n, L, dist, lp, out_);
+    if (ray == 0.0) return fade;
+    if (ray > 0.0) { t0 = max(t0, out_); traced = true; }
 #endif
+    if (!traced && untraced >= 0.0) return untraced;
     return mix(dirMarch(p, L, t0, s0), 1.0, fade);
 }
+float dirShadow(vec3 p, vec3 n, vec3 L, float dist) { return dirShadowOr(p, n, L, dist, -1.0); }
 
 #endif

@@ -2,7 +2,7 @@
 
 #define RT_ARENA_BYTES    (768ull << 20)  /* every BLAS, compacted (about 60 bytes a triangle) */
 #define RT_MAX_BLAS       4096
-#define RT_MAX_INSTANCES  4096
+#define RT_MAX_INSTANCES  8192            /* the chunks' layers, the terrain's levels, the caves' bricks */
 #define RT_INDEX_BYTES    (8u << 20)      /* per frame in flight: the index lists of its builds */
 #define RT_SCRATCH_BYTES  (128ull << 20)  /* per frame in flight: build scratch */
 #define RT_MAX_BUILDS     256             /* per frame: one compacted-size query each */
@@ -245,6 +245,10 @@ bool rt_can_build(Rt *rt, int slot, uint32_t indices) {
            rt->nfreeHandles > 0;
 }
 
+static int build_compacted(Rt *rt, VkCommandBuffer cmd, int slot, const VkAccelerationStructureGeometryKHR *geo, uint32_t ng,
+                           const VkAccelerationStructureBuildRangeInfoKHR *range, const uint32_t *maxPrims);
+static void mesh_geometry(const RtMesh *m, VkAccelerationStructureGeometryKHR *g, VkAccelerationStructureBuildGeometryInfoKHR *bi);
+
 int rt_build_blas(Rt *rt, VkCommandBuffer cmd, int slot, VkBuffer pool, const uint16_t *pages, int npages,
                   const uint32_t *pageVerts, const uint16_t *idx, const uint32_t *idxCount) {
     VkCore *vk = rt->vk;
@@ -282,7 +286,17 @@ int rt_build_blas(Rt *rt, VkCommandBuffer cmd, int slot, VkBuffer pool, const ui
         off += idxCount[p] * sizeof(uint16_t);
         src += idxCount[p];
     }
+    int h = build_compacted(rt, cmd, slot, geo, ng, range, maxPrims);
+    if (h >= 0) rt->idxUsed[slot] = off;
+    return h;
+}
 
+/* Builds a compactable BLAS over ng geometries into the arena, its compacted
+ * size asked for. -1 if there was no room. */
+static int build_compacted(Rt *rt, VkCommandBuffer cmd, int slot, const VkAccelerationStructureGeometryKHR *geo, uint32_t ng,
+                           const VkAccelerationStructureBuildRangeInfoKHR *range, const uint32_t *maxPrims) {
+    VkCore *vk = rt->vk;
+    if (rt->nextQuery[slot] >= RT_MAX_BUILDS || rt->nfreeHandles <= 0) return -1;
     VkAccelerationStructureBuildGeometryInfoKHR bi = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR };
     bi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
     bi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
@@ -297,12 +311,11 @@ int rt_build_blas(Rt *rt, VkCommandBuffer cmd, int slot, VkBuffer pool, const ui
     if (sOff + sz.buildScratchSize > RT_SCRATCH_BYTES) return -1;
     uint64_t aOff;
     if (!arena_alloc(rt, sz.accelerationStructureSize, &aOff)) {
-        if (!rt->arenaFullWarned) fprintf(stderr, "acceleration structure arena full: some chunks cast no shadows\n");
+        if (!rt->arenaFullWarned) fprintf(stderr, "acceleration structure arena full: some chunks or caves cast no shadows\n");
         rt->arenaFullWarned = true;
         return -1;
     }
     rt->scratchUsed[slot] = sOff + sz.buildScratchSize;
-    rt->idxUsed[slot] = off;
 
     int h = rt->freeHandles[--rt->nfreeHandles];
     Blas *b = &rt->blas[h];
@@ -324,6 +337,17 @@ int rt_build_blas(Rt *rt, VkCommandBuffer cmd, int slot, VkBuffer pool, const ui
     return h;
 }
 
+int rt_build_mesh(Rt *rt, VkCommandBuffer cmd, int slot, const RtMesh *m) {
+    if (m->nidx < 3) return -1;
+    VkAccelerationStructureGeometryKHR g;
+    VkAccelerationStructureBuildGeometryInfoKHR unused;
+    mesh_geometry(m, &g, &unused);
+    VkAccelerationStructureBuildRangeInfoKHR range = { 0 };
+    range.primitiveCount = m->nidx / 3;
+    uint32_t prims = range.primitiveCount;
+    return build_compacted(rt, cmd, slot, &g, 1, &range, &prims);
+}
+
 /* A mesh's one geometry and its build info (mode and structures left to the caller). */
 static void mesh_geometry(const RtMesh *m, VkAccelerationStructureGeometryKHR *g, VkAccelerationStructureBuildGeometryInfoKHR *bi) {
     memset(g, 0, sizeof(*g));
@@ -332,7 +356,7 @@ static void mesh_geometry(const RtMesh *m, VkAccelerationStructureGeometryKHR *g
     g->flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
     VkAccelerationStructureGeometryTrianglesDataKHR *t = &g->geometry.triangles;
     t->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-    t->vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    t->vertexFormat = m->format ? m->format : VK_FORMAT_R32G32B32_SFLOAT;
     t->vertexData.deviceAddress = m->verts;
     t->vertexStride = m->stride;
     t->maxVertex = m->nverts - 1;
@@ -406,17 +430,21 @@ void rt_free_blas(Rt *rt, int h, uint64_t frame) {
             if (rt->pending[s][i].h == h) rt->pending[s][i--] = rt->pending[s][--rt->npending[s]];
 }
 
-void rt_add_instance(Rt *rt, int slot, int h, const float origin[3], uint32_t mask) {
+void rt_add_instance_xf(Rt *rt, int slot, int h, const float xf[3][4], uint32_t mask, uint32_t custom, bool opaque) {
     if (h < 0 || !rt->blas[h].live || rt->ninst[slot] >= RT_MAX_INSTANCES) return;
     VkAccelerationStructureInstanceKHR *in = (VkAccelerationStructureInstanceKHR *)rt->inst[slot].mapped + rt->ninst[slot]++;
     memset(in, 0, sizeof(*in));
-    in->transform.matrix[0][0] = in->transform.matrix[1][1] = in->transform.matrix[2][2] = 1.0f;
-    in->transform.matrix[0][3] = origin[0];
-    in->transform.matrix[1][3] = origin[1];
-    in->transform.matrix[2][3] = origin[2];
+    memcpy(in->transform.matrix, xf, sizeof(float[3][4]));
+    in->instanceCustomIndex = custom & 0xFFFFFFu;
     in->mask = mask & 0xFFu;
-    in->flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR | VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR;
+    in->flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR |
+                (opaque ? VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR : VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR);
     in->accelerationStructureReference = rt->blas[h].addr;
+}
+
+void rt_add_instance(Rt *rt, int slot, int h, const float origin[3], uint32_t mask) {
+    const float xf[3][4] = { { 1.0f, 0.0f, 0.0f, origin[0] }, { 0.0f, 1.0f, 0.0f, origin[1] }, { 0.0f, 0.0f, 1.0f, origin[2] } };
+    rt_add_instance_xf(rt, slot, h, xf, mask, RT_INST_CITY, true);
 }
 
 void rt_build_tlas(Rt *rt, VkCommandBuffer cmd, int slot) {

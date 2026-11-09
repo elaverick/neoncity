@@ -645,7 +645,17 @@ static double rough(double x, double h, double z) {
  * over the hole). So within a mouth's reach (and _FADE_M past it) the
  * stalactites thin to nothing where the ground, reckoned as the plane of the
  * mouth's slope, lies less than _COVER_HI_M over the ceiling, and are gone
- * under _COVER_LO_M (their widths scaled, so the field stays continuous). */
+ * under _COVER_LO_M (their widths scaled, so the field stays continuous).
+ *
+ * The bound on the other cells' stalactites lifts the deep air at a cell's
+ * sides to at least minus the gap (0.2 m), wherever no floor is near enough
+ * to hold it down. The mouths' holes cut the ground where the field is under
+ * minus a margin (0.25 m and more), so they would leave the ground standing
+ * in strips along the cells' sides, a lattice of them over the opening
+ * (M11d found it: the moon's rays caught on them). The holes' cut reckons
+ * each cell's own stalactite only (terrain_cave_cut_*, `cut`): the same
+ * surface, and the same sign everywhere, since no stalactite reaches past the
+ * gap from its own cell's side; only the air's depth there differs. */
 int terrain_cave_dressing = 1;
 
 static double smooth01(double t) { t = clampd(t, 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }
@@ -663,11 +673,11 @@ static double drip_share(const TerrainCave *c, double x, double z, double ch) {
     return s;
 }
 
-static double drip(const TerrainCave *c, double x, double h, double z, double up, double down) {
+static double drip(const TerrainCave *c, double x, double h, double z, double up, double down, int cut) {
     const double C = TERRAIN_CAVE_DRIP_CELL_M;
     double low = down + TERRAIN_CAVE_DRIP_HEAD_M;   /* the lowest point any can hang at, less h */
     double ix = floor(x / C), iz = floor(z / C), fx = x - ix * C, fz = z - iz * C;
-    double d = fmin(fmin(fx, C - fx), fmin(fz, C - fz)) + TERRAIN_CAVE_DRIP_GAP_M;
+    double d = cut ? 1e30 : fmin(fmin(fx, C - fx), fmin(fz, C - fz)) + TERRAIN_CAVE_DRIP_GAP_M;
     uint32_t seed = hash_combine(TERRAIN_CAVE_SEED_A, TERRAIN_CAVE_SEED_DRIP);
     double dens = hash_float(hash2i(seed ^ 0x5A5Au, (int32_t)floor(ix / TERRAIN_CAVE_DRIP_PATCH), (int32_t)floor(iz / TERRAIN_CAVE_DRIP_PATCH)));
     uint32_t hh = hash2i(seed, (int32_t)ix, (int32_t)iz);
@@ -753,7 +763,7 @@ static double room_wall(const TerrainCaveRoom *r, double x, double h, double z, 
 
 /* The field from the passages and chambers listed (in order): exact wherever
  * the lists hold every piece near the point. */
-static double field_of(const TerrainCave *c, const uint8_t *segs, int nseg, const uint8_t *rooms, int nroom, double x, double h, double z) {
+static double field_of(const TerrainCave *c, const uint8_t *segs, int nseg, const uint8_t *rooms, int nroom, double x, double h, double z, int cut) {
     double p[3] = { x, h, z }, out = -1e30;
     for (int a = 0; a < 3; ++a) out = fmax(out, fmax(c->lo[a] - p[a], p[a] - c->hi[a]));
     if (out > 2.0) return out;   /* the air lies within the bounds: at least this far */
@@ -775,7 +785,7 @@ static double field_of(const TerrainCave *c, const uint8_t *segs, int nseg, cons
         field_add(&F, wall[q], fl[q], ce[q], (q < nseg ? rad[q] : rmin[q - nseg]) + FLOOR_REACH_M, dist[q], n);
     }
     double floor = F.ws > 0.0 ? F.fs / F.ws : FLOOR_NONE_M, f = smax(F.w, floor, TERRAIN_CAVE_FLOOR_K);
-    if (F.ws > 0.0 && terrain_cave_dressing) f = fmax(f, -drip(c, x, h, z, F.cs / F.ws, floor));
+    if (F.ws > 0.0 && terrain_cave_dressing) f = fmax(f, -drip(c, x, h, z, F.cs / F.ws, floor, cut));
     return fmax(f, out);
 }
 
@@ -786,7 +796,8 @@ static const uint8_t *all_segs(void) {
     return all;
 }
 
-double terrain_cave_sdf_local(const TerrainCave *c, double x, double h, double z) { return field_of(c, all_segs(), c->nseg, all_segs(), c->nroom, x, h, z); }
+double terrain_cave_sdf_local(const TerrainCave *c, double x, double h, double z) { return field_of(c, all_segs(), c->nseg, all_segs(), c->nroom, x, h, z, 0); }
+double terrain_cave_cut_local(const TerrainCave *c, double x, double h, double z) { return field_of(c, all_segs(), c->nseg, all_segs(), c->nroom, x, h, z, 1); }
 
 /* A passage's wall over a box: its distance at the middle, within the
  * half-diagonal D times how fast it can change (1, and the taper along the
@@ -830,7 +841,8 @@ void terrain_cave_near_box(const TerrainCave *c, const double lo[3], const doubl
     }
 }
 
-double terrain_cave_sdf_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z) { return field_of(c, n->seg, n->nseg, n->room, n->nroom, x, h, z); }
+double terrain_cave_sdf_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z) { return field_of(c, n->seg, n->nseg, n->room, n->nroom, x, h, z, 0); }
+double terrain_cave_cut_near(const TerrainCave *c, const TerrainCaveNear *n, double x, double h, double z) { return field_of(c, n->seg, n->nseg, n->room, n->nroom, x, h, z, 1); }
 
 int terrain_cave_box_live(const TerrainCave *c, const double lo[3], const double hi[3]) {
     const double air = TERRAIN_CAVE_ROUGH_M + 0.25 * TERRAIN_CAVE_BLEND_M + 0.01;   /* a wall nearer than this can have air at it */

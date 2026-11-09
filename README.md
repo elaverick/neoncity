@@ -660,7 +660,9 @@ its ground lies in a cave's air, using the same field evaluated in GLSL (`shader
 The player walks in on foot (`terrain_cave_walk.c`): the ground under the feet is the cave's floor, and
 the walls and roofs push out along the field's gradient. No lamp lights a cave. Each vertex carries the
 sky it sees, by its path along the passages from the nearest mouth, so the light falls to a tenth some
-20 m in and is black by 40 m. While the camera is in a cave, a thin cave air replaces the land's haze. No
+20 m in and is black by 40 m. The moon's own light is traced (with ray tracing): the drawn bricks are in
+the shadows' TLAS, and a ray from the rock to the moon passes the ground only where a mouth's hole cuts it,
+so moonlight falls through a mouth as far in as the moon can be seen, and never round a corner. While the camera is in a cave, a thin cave air replaces the land's haze. No
 rain falls in a cave, and the exposure is fixed, so the dark stays dark. Carried lights, people's lights
 and underground water are still to come (TODO.md). `terrain_test --caves`, `--cave-map out.ppm`,
 `--cave-mesh` and `--cave-walk` survey, draw, mesh and walk them; `NeonCity --cave-debug normals|lit|lod`

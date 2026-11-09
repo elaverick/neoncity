@@ -86,6 +86,9 @@ static const uint32_t SPV_cave_vert[] = {
 static const uint32_t SPV_cave_frag[] = {
 #include "terrain/cave.frag.inc"
 };
+static const uint32_t SPV_cave_rt_frag[] = {
+#include "terrain/cave_rt.frag.inc"
+};
 static const uint32_t SPV_cave_shelter_vert[] = {
 #include "terrain/cave_shelter.vert.inc"
 };
@@ -269,7 +272,7 @@ void create_layouts(Renderer *r) {
         { 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the caves' mouths' holes (cave_gpu.c; the clipmap's only) */
     };
     r->terrainLayout = make_set_layout(vk, terrain, 7);
-    VkDescriptorSetLayoutBinding cave[7] = {
+    VkDescriptorSetLayoutBinding cave[8] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* the bricks' pool (cave_gpu.c) */
         { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the frame's systems and draws */
@@ -277,8 +280,9 @@ void create_layouts(Renderer *r) {
         { 8, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the materials' properties */
         { 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the clipmap's samples (the cut at the mouths) */
         { 5, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* the holes and the terrain's levels */
+        { 6, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL },   /* ray tracing only: the TLAS (the moon's rays, cave_rt.frag) */
     };
-    r->caveLayout = make_set_layout(vk, cave, 7);
+    r->caveLayout = make_set_layout(vk, cave, r->rt ? 8 : 7);
     VkDescriptorSetLayoutBinding proxy[3] = {
         { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, NULL },
         { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, NULL },   /* boxes */
@@ -306,7 +310,7 @@ void create_layouts(Renderer *r) {
         VK_CHECK(vkCreatePipelineLayout(vk->device, &ci, NULL, &r->terrainPL));
     }
     r->planetPL = make_pipeline_layout(vk, r->terrainLayout, sizeof(PlanetPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-    r->cavePL = make_pipeline_layout(vk, r->caveLayout, 3 * sizeof(int32_t), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);   /* cave.glsl: CaveView */
+    r->cavePL = make_pipeline_layout(vk, r->caveLayout, 4 * sizeof(int32_t), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);   /* cave.glsl: CaveView */
     r->caveShelterPL = make_pipeline_layout(vk, r->caveLayout, sizeof(mat4), VK_SHADER_STAGE_VERTEX_BIT);
     r->proxyPL = make_pipeline_layout(vk, r->proxyLayout, 0, 0);
 
@@ -518,7 +522,9 @@ void create_pipelines(Renderer *r) {
     cave.vs = SPV_cave_vert; cave.vsBytes = sizeof(SPV_cave_vert);
     cave.fs = SPV_cave_frag; cave.fsBytes = sizeof(SPV_cave_frag);
     cave.layout = r->cavePL;
-    r->cavePipe = make_graphics(vk, &cave);
+    GfxDesc caveLit = cave;   /* with ray tracing, the moon traced in the caves */
+    if (r->rt) { caveLit.fs = SPV_cave_rt_frag; caveLit.fsBytes = sizeof(SPV_cave_rt_frag); }
+    r->cavePipe = make_graphics(vk, &caveLit);
     cave.cull = false;
     r->caveXrayPipe = make_graphics(vk, &cave);
     GfxDesc proxy = { SPV_proxy_vert, sizeof(SPV_proxy_vert), SPV_proxy_frag, sizeof(SPV_proxy_frag),

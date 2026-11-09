@@ -79,7 +79,7 @@ void landSlots(int rec, float dist, float fwd, float tol) {
 #ifdef RT_SHADOWS
     gFwd = fwd; gFwdTol = tol;
     gGeoN = normalize(vNrm);
-    gShadowCull = 0xFFu;
+    gShadowCull = RT_MASK_LAMPS;
     if (!shadowsOn()) return;
     gShadowFade = smoothstep(SHADOW_FADE, SHADOW_FAR, dist);
     ivec2 px = ivec2(gl_FragCoord.xy);
