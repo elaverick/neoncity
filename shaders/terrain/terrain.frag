@@ -128,6 +128,7 @@ void shadePixel() {
     // width past the built edge; that only hazes the land as the city.
     float city = vCoverB.w;
     LandPoint l = landPoint(vRel);
+    gLampDay = lampDaylight(l.sky.cover);   // the lamps' photocells (DN7)
     // the directional light's shadow (the sun's or the moon's), where the sky is clear enough for it to cast one (ground.glsl landDir)
     if (l.sky.cover < 0.99) gDirVis = dirShadow(vFlat, nLand, frame.dirLight.xyz, length(vRel));
     RoadHit road;

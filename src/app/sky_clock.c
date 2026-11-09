@@ -199,6 +199,11 @@ double sky_local_solar_hours(double jd, double lon_deg) {
     return h < 0.0 ? h + 24.0 : h;
 }
 
+int sky_local_weekday(double jd, double lon_deg) {
+    long d = (long)floor(jd + 0.5 + lon_deg / 360.0) % 7;   /* JD 0 began on a Monday (noon to noon: + 0.5) */
+    return (int)(d < 0 ? d + 7 : d);
+}
+
 void sky_celestial_to_earth(const SkyState *s, const double c[3], double out[3]) {
     double g = s->gmst, cg = cos(g), sg = sin(g);
     out[0] = c[0] * cg + c[1] * sg;

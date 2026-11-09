@@ -87,7 +87,7 @@ vec3 unitFronts(vec2 uv, uint seed, uint st, float t, float aa) {
         float door = band(fx, 0.12, 0.42, aa) * band(y, 0.0, 2.1, aa * 3.0);
         float win = band(fx, 0.55, 0.88, aa) * band(y, 1.0, 1.9, aa * 3.0);
         vec3 doorC = mix(vec3(0.10, 0.12, 0.13), vec3(0.16, 0.06, 0.05), step(0.6, hf(h, 6u)));
-        bool lit = hf(h, 7u) < 0.55;
+        bool lit = hf(h, 7u) < 0.55 * cityHours(true);   // by the hour (DN7)
         vec3 winC = lit ? (hf(h, 8u) < 0.5 ? kelvin(3000.0) : kelvin(6500.0)) * 0.55 * (0.6 + 0.4 * hf(h, 9u)) : vec3(0.01);
         vec3 c = mix(mix(wall, doorC, door), winC, win);
         c += vec3(0.3, 0.25, 0.15) * band(fx, 0.2, 0.32, aa) * band(y, 2.25, 2.4, aa * 3.0) * 1.5;   // the number plate's lamp
@@ -96,7 +96,7 @@ vec3 unitFronts(vec2 uv, uint seed, uint st, float t, float aa) {
     if (st == 2u) {
         // offices and hotel frontages: tall glass on warm rooms
         float glass = band(y, 0.1, 2.9, aa * 3.0);
-        bool lit = hf(h, 10u) < 0.7;
+        bool lit = hf(h, 10u) < min(0.7 * cityHours(false), 0.95);
         vec3 room = lit ? kelvin(3200.0) * (0.25 + 0.35 * hf(h, 11u)) * (0.6 + 0.4 * smoothstep(1.5, 2.8, y)) : vec3(0.006);
         vec3 c = mix(wall, room, glass);
         return mix(c, vec3(0.18, 0.13, 0.07), edgeM);   // bronze mullions

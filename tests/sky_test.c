@@ -128,6 +128,12 @@ int main(int argc, char **argv) {
     sky_clock_init(&clock, 2451545.0, 10.0, true);
     near("a capture's clock is held", sky_clock_jd(&clock, 1000.0), 2451545.0, 0.0);
     near("local solar time at 90 W, 12:00 UTC", sky_local_solar_hours(sky_jd(2026, 3, 1, 12, 0, 0.0), -90.0), 6.0, 1e-6);
+    /* the day of the week there (0 Monday): 2000-01-01 was a Saturday; the captures' evening in Los
+     * Angeles (SKY_CAPTURE_UTC, Thursday 02:50 UTC) is still Wednesday there; Tokyo is on Thursday */
+    near("weekday 2000-01-01 12:00 at 0 E", sky_local_weekday(2451545.0, 0.0), 5.0, 0.0);
+    near("weekday of the captures in Los Angeles", sky_local_weekday(sky_jd(2026, 12, 24, 2, 50, 0.0), -118.24), 2.0, 0.0);
+    near("weekday of the captures in Tokyo", sky_local_weekday(sky_jd(2026, 12, 24, 2, 50, 0.0), 139.69), 3.0, 0.0);
+    near("weekday just before midnight at 0 E", sky_local_weekday(sky_jd(2026, 11, 9, 23, 59, 0.0), 0.0), 0.0, 0.0);
 
     SkyState s;
     /* sidereal time (Meeus 12.a): 1987 April 10, 0h UT, 13h10m46.3668s */

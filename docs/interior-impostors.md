@@ -815,7 +815,7 @@ Shader only: no re-bake and no new LFS data beyond the images in `docs/reference
 
 **Dark floors.** A floor's own lights now come on with the same chance as a room's in that building (`litChance`, from `litFrac`), where before at least 45% came on whatever the building. Dark floors show the exterior light and keep 35% of their screens' light, with most screens off. It matches the far term, which already averages `litFrac`. It also means fewer lit impostor floors: about a third on average, against about two thirds before (`lit_before_after.jpg`).
 
-**No night clock.** The plan asked for "the city's window-light curve over the night", but the engine has no time of night: `litFrac` is fixed per building and nothing changes with the hour. The floors follow that per-building figure.
+**No night clock.** The plan asked for "the city's window-light curve over the night", but the engine has no time of night: `litFrac` is fixed per building and nothing changes with the hour. The floors follow that per-building figure. (Since DN7 of the day/night roadmap there is one: `litFrac` and the floors' light states follow the local hour and day; README, "The city's clock".)
 
 **Checks.** All 19 ctest tests pass. The module files and sidecars are untouched, and so is the generator (`--fingerprint` hashes generated layers, which this doesn't touch; it wasn't re-run).
 

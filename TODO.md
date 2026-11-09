@@ -709,8 +709,20 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   - **The band of bright sky under the deck's edge** at dawn and dusk (the plan) comes from the low sun's light
     followed into the deck towards it (`depthSun`, 3 km) and the far deck; not checked from inside the border at a
     low sun, where it would show.
-  - **`deckLight(rel)`** (the plan's field with a C mirror) waits for its user, the lamps' photocell (DN7). The land
-    has `deckThrough(cover)` and the city `skyCover(rel)` (DN6), both on the GPU.
+  - **`deckLight(rel)`** (the plan's field with a C mirror) has no user: the lamps' photocell (DN7) reads the
+    fragment's cover on the GPU (`lampDaylight`), as the land (`deckThrough`) and the city (`skyCover`) do.
+- **The city's clock (DN7) left over** (README, "Streets and light", "The city's clock"):
+  - **Shops, lobbies, signs and adverts keep the night's hours**: no shutters coming down at night, no lobbies
+    dimmed after hours. A neon city that never shuts was the call; opening hours by district would be next.
+  - **The hour is the camera's**, not each settlement's: a far city drawn as proxies shows the camera's hour (a
+    few minutes off at most within a megacity; hours off only for another continent, which isn't drawn).
+  - **The impostors' cleaners' state stands for the working day**: every panel on, nobody at the desks. A
+    "working" state with people waits for IM9b's people.
+  - **Television rooms** (`makeRoom`'s 14% of dark rooms) don't follow the hour; nor do the rooms' people.
+  - **The shadow passes' light ranking** (`lightImportance`) still counts a lamp its photocell has switched off,
+    so by day past the deck rays go to dark lamps. Harmless (the daylight swamps their light) but wasted.
+  - **The day of the week has no holidays**, and solar time isn't civil time (no zones, no daylight saving): an
+    office in Los Angeles empties at 17:00 solar, about 17:00-18:00 by the clock on the wall.
 - **The city by day (DN6) left over** (README, "Streets and light", "By day"):
   - **How much sky a surface sees is a guess by height** (`cityOpen`: 0.4-0.55 at street level, all of it from 90 m
     up), not the street's real canyon: a low-rise street under the deck is as dim as one among towers. A per-chunk

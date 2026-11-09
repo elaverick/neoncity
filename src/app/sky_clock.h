@@ -64,5 +64,7 @@ void   sky_moon_topocentric(const SkyState *s, const double up[3], double out[3]
 void   sky_alt_az(const double d[3], const double up[3], double *alt, double *az);
 /* The local mean solar time (hours, 0..24) at longitude lon (degrees east). */
 double sky_local_solar_hours(double jd, double lon_deg);
+/* The day of the week there by that solar time: 0 Monday .. 6 Sunday. */
+int    sky_local_weekday(double jd, double lon_deg);
 /* The Earth-fixed direction of a star's frame (equatorial, of date) vector c. */
 void   sky_celestial_to_earth(const SkyState *s, const double c[3], double out[3]);

@@ -122,6 +122,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 exposure;   // x the pre-exposure (EXPOSE), y its inverse, z the exposure, w its EV100 (src/app/main.c: exposure_ubo)
     vec4 air[8];     // the air's light at the eye (AIR_SUN, AIR_MOON, AIR_SKY, skyIrradiance; shaders/atmo_eye.comp), a couple of frames late
     vec4 dirMix;     // x the sun's share of the land's light (1 while it is dirLight), y the moon's, z dirLight's disc's radius (rad) (src/render/renderer.c)
+    vec4 clock;      // x the local mean solar time at the camera (hours), y the day of the week (0 Monday .. 6 Sunday) (src/app/main.c: frame_ubo; cityHours)
 } frame;
 
 /* Pre-exposure (Frostbite's: Lagarde and de Rousiers 2014). The lighting
@@ -415,11 +416,22 @@ vec3 lampColor(int type) {
                      : vec3(0.55, 0.80, 1.0) * 0.9;  // cold LED
 }
 
+/* The daylight a street lamp's photocell sees here (lampDaylight, set by each
+ * shader that lights with the lamps: 0 by night and under the cities' deck,
+ * where the lamps burn all day). */
+float gLampDay = 0.0;
+vec3 lampFault(uint fault, float t);
+vec3 lampState(uint fault, float t) {
+    // its photocell (DN7): each switches at its own level, 10-40 lux (0.2-0.8 units), so they go out one by one at dawn
+    float cell = mix(0.2, 0.8, hfloat(hash_combine(fault >> 2, 0x9407u)));
+    float on = 1.0 - smoothstep(cell * 0.85, cell * 1.15, gLampDay);
+    return on > 0.0 ? lampFault(fault, t) * on : vec3(0.0);
+}
 /* Failing street lamps (lamp_fault in src/city/streets.c): fault & 3 is the state,
  * fault >> 2 a seed. 0 works; 1 is dead; 2 cycles, as a worn sodium lamp does:
  * it runs, sputters, goes out, then restrikes with a red glow that warms back
  * to orange; 3 is dim and reddened. Multiplies the lamp's colour. */
-vec3 lampState(uint fault, float t) {
+vec3 lampFault(uint fault, float t) {
     uint state = fault & 3u, s = fault >> 2;
     if (state == 0u) return vec3(1.0);
     if (state == 1u) return vec3(0.0);
@@ -671,6 +683,66 @@ vec3 daySky(vec3 R, float cover) {
 }
 vec3 dayOvercast(float cover) {
     return mix(skyIrradiance(vec3(0.0, 1.0, 0.0)), dayLevel(), cover) * (deckThrough(cover) / AIR_PI);
+}
+
+/* ---------------- the city's own clock (DN7) ----------------
+ * gLampDay for a lamp under the cities' cloud where its cover is `cover`:
+ * the daylight on open ground (units: 1 is LIGHT_LUX), none once the cover
+ * is more than half, so the lamps stay on all day under the deck and switch
+ * by the light out past its edge. */
+float lampDaylight(float cover) {
+    return luma(dayLevel()) * deckThrough(cover) * (1.0 - smoothstep(0.3, 0.5, cover));
+}
+
+/* How many of the rooms lit at the captures' hour (SKY_CAPTURE_UTC: a
+ * weekday, 18:57 local) are lit at this hour (frame.clock), per hour of the
+ * local solar day, weekdays and weekends. Offices fill by day (more than at
+ * 19:00: litChance clamps), empty through the evening to the night's few
+ * left on; homes light up in the evening, a little at breakfast, dim at 3am. */
+const float OFFICE_WEEK[24] = float[](0.35, 0.32, 0.30, 0.30, 0.30, 0.35, 0.50, 0.90, 1.50, 1.80, 1.80, 1.80,
+                                      1.75, 1.80, 1.80, 1.80, 1.75, 1.40, 1.00, 1.00, 0.80, 0.65, 0.50, 0.42);
+const float OFFICE_END[24]  = float[](0.30, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30, 0.40, 0.50, 0.55, 0.55,
+                                      0.55, 0.55, 0.55, 0.55, 0.55, 0.50, 0.45, 0.40, 0.38, 0.35, 0.33, 0.30);
+const float HOME_WEEK[24]   = float[](0.55, 0.35, 0.25, 0.20, 0.20, 0.28, 0.60, 0.75, 0.50, 0.35, 0.30, 0.30,
+                                      0.32, 0.30, 0.30, 0.35, 0.50, 0.75, 1.00, 1.00, 1.00, 0.95, 0.85, 0.70);
+const float HOME_END[24]    = float[](0.70, 0.50, 0.35, 0.25, 0.20, 0.20, 0.25, 0.35, 0.50, 0.55, 0.50, 0.45,
+                                      0.45, 0.45, 0.45, 0.50, 0.65, 0.85, 1.00, 1.00, 1.00, 1.00, 0.90, 0.80);
+bool cityWeekend() { return frame.clock.y >= 4.5; }
+float cityHours(bool home) {
+    float h = mod(frame.clock.x, 24.0), f = fract(h);
+    int a = int(h) % 24, b = (a + 1) % 24;
+    bool we = cityWeekend();
+    float va = home ? (we ? HOME_END[a] : HOME_WEEK[a]) : (we ? OFFICE_END[a] : OFFICE_WEEK[a]);
+    float vb = home ? (we ? HOME_END[b] : HOME_WEEK[b]) : (we ? OFFICE_END[b] : OFFICE_WEEK[b]);
+    return mix(va, vb, f);
+}
+/* A building's share of lit rooms (litFrac, the facades' and proxies') at
+ * this hour: homes where tintSel < 0.5 (makeRoom), offices otherwise. */
+float cityLitFrac(float litFrac, float tintSel) { return min(litFrac * cityHours(tintSel < 0.5), 0.9); }
+
+/* The baked open-plan floors' light states by hour (impostor_pick.glsl): where
+ * a floor's own hash falls among the cuts picks after hours (< x), the late
+ * shift (< y), the cleaners' (< z: every panel on, which stands in for the
+ * working day) or dark with screens. At 18-19 on a weekday they are the split
+ * the captures had (55/20/12/13 %). */
+const vec3 OFFICE_STATES_WEEK[24] = vec3[](
+    vec3(0.78, 0.83, 0.88), vec3(0.78, 0.83, 0.88), vec3(0.78, 0.83, 0.88), vec3(0.78, 0.83, 0.88),
+    vec3(0.78, 0.83, 0.88), vec3(0.72, 0.77, 0.88), vec3(0.60, 0.66, 0.88), vec3(0.35, 0.45, 0.86),
+    vec3(0.05, 0.15, 0.90), vec3(0.05, 0.15, 0.90), vec3(0.05, 0.15, 0.90), vec3(0.05, 0.15, 0.90),
+    vec3(0.05, 0.15, 0.90), vec3(0.05, 0.15, 0.90), vec3(0.05, 0.15, 0.90), vec3(0.05, 0.15, 0.90),
+    vec3(0.05, 0.15, 0.90), vec3(0.25, 0.50, 0.88), vec3(0.55, 0.75, 0.87), vec3(0.55, 0.75, 0.87),
+    vec3(0.50, 0.62, 0.86), vec3(0.50, 0.60, 0.86), vec3(0.62, 0.70, 0.87), vec3(0.72, 0.78, 0.88));
+const vec3 OFFICE_STATES_END[24] = vec3[](
+    vec3(0.80, 0.85, 0.90), vec3(0.80, 0.85, 0.90), vec3(0.80, 0.85, 0.90), vec3(0.80, 0.85, 0.90),
+    vec3(0.80, 0.85, 0.90), vec3(0.80, 0.85, 0.90), vec3(0.80, 0.85, 0.90), vec3(0.78, 0.84, 0.90),
+    vec3(0.70, 0.82, 0.90), vec3(0.60, 0.80, 0.90), vec3(0.60, 0.80, 0.90), vec3(0.60, 0.80, 0.90),
+    vec3(0.60, 0.80, 0.90), vec3(0.60, 0.80, 0.90), vec3(0.60, 0.80, 0.90), vec3(0.60, 0.80, 0.90),
+    vec3(0.60, 0.80, 0.90), vec3(0.65, 0.81, 0.90), vec3(0.70, 0.82, 0.90), vec3(0.70, 0.82, 0.90),
+    vec3(0.72, 0.83, 0.90), vec3(0.74, 0.84, 0.90), vec3(0.76, 0.84, 0.90), vec3(0.78, 0.85, 0.90));
+vec3 officeStates() {
+    float h = mod(frame.clock.x, 24.0), f = fract(h);
+    int a = int(h) % 24, b = (a + 1) % 24;
+    return cityWeekend() ? mix(OFFICE_STATES_END[a], OFFICE_STATES_END[b], f) : mix(OFFICE_STATES_WEEK[a], OFFICE_STATES_WEEK[b], f);
 }
 
 /* The night's own glow in the haze, light no sun or moon gives it: near a

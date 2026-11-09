@@ -74,7 +74,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     else if (type == 1) { winW = 0.94; winH = 0.86; }
     else if (type == 2) { winW = 1.0;  winH = mix(0.4, 0.55, hf(sh, 9u)); }
     else                { winW = mix(0.2, 0.32, hf(sh, 5u)); winH = mix(0.7, 0.85, hf(sh, 9u)); }
-    float litFrac = 0.16 + 0.42 * hf(sh, 6u);
+    float litFrac = cityLitFrac(0.16 + 0.42 * hf(sh, 6u), hf(sh, 8u));   // by the hour (DN7)
     float tintSel = hf(sh, 8u);
 
     vec3 wallAlb = facadeWallAlbedo(palette, sh);
@@ -505,7 +505,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
 vec3 trimWindowLight(uint seed, int section, int faceDir, int nextFace, bool endShare, int bay, int nBays, int floorIdx, float bayW, float floorH, uint plate) {
     uint sh = styleHash(seed);
     ivec2 rk = cornerKey(faceDir, nextFace, endShare, bay, nBays - 1);
-    float litFrac = 0.16 + 0.42 * hf(sh, 6u);
+    float litFrac = cityLitFrac(0.16 + 0.42 * hf(sh, 6u), hf(sh, 8u));   // by the hour (DN7)
     uint floorHash = hash3i(seed ^ 0xF100u, floorIdx, rk.x, section);
     float litChance = litFrac * (0.25 + 1.5 * hfloat(floorHash));
     uint roomHash = hash3i(seed ^ (uint(rk.x) * 0x9E3779B1u), rk.y, floorIdx, section);

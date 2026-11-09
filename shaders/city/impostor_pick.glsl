@@ -35,9 +35,10 @@ int impostorModule(uint seed, int section, int floorIdx, uint plate) {
     int metres = clamp(int(plate >> 1u), 0, 63);
     uint mask = interiors.pick[metres >> 2][metres & 3];
     if (mask == 0u) return -1;
-    // the floor's light state, if a module for this plate has it: mostly after hours
+    // the floor's light state, if a module for this plate has it: by the hour (officeStates), mostly after hours by night
     float s = hf(h, 2u);
-    uint inState = mask & interiors.states[s < 0.55 ? 0 : s < 0.75 ? 1 : s < 0.87 ? 2 : 3];
+    vec3 cut = officeStates();
+    uint inState = mask & interiors.states[s < cut.x ? 0 : s < cut.y ? 1 : s < cut.z ? 2 : 3];
     if (inState != 0u) mask = inState;
     for (int k = int(hf(h, 1u) * float(bitCount(mask))); k > 0; --k) mask &= mask - 1u;
     return findLSB(mask);

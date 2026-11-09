@@ -1259,12 +1259,28 @@ The reflections' fallback (`envReflection`) has the day's sky round the camera (
 radiance, the deck's even grey under it), the facades across under it and the street. The light through a window
 into a dark room or an impostor's office, a lobby's skylight and an arcology's glazed crown take the overcast's
 mean radiance (`dayOvercast`); the lobbies take the day through their glass as they took the night's fill; the
-plumes are lit from above by it. Lamps, signs, adverts and lit windows are as they are at night (their clock is
-DN7). At noon under the deck the street meters about 5.1 (the night's 2.75-3.4) and is shown at 4.6-4.7: a grey
+plumes are lit from above by it. Signs and adverts are as they are at night; the lamps and windows keep the
+city's clock (below). At noon under the deck the street meters about 5.1 (the night's 2.75-3.4) and is shown at 4.6-4.7: a grey
 storm-lit day, the lamps' pools and the neon still showing. With the sun at 4 degrees it is a dusk under the
 lamps; in civil twilight the night. Looking up at the built edge the deck meters 6.65. The night is unchanged (at
 a fixed exposure the spawn, the street and the built edge differ from the build before only along edges, by the
 sub-pixel shift two runs make, with equal means).
+
+**The city's clock** (DN7). The windows keep the local mean solar time at the camera's longitude and the day of
+the week there (`frame.clock`, from the world's UTC clock; a settlement spans a few minutes of it). A building's
+share of lit rooms (`litFrac`) is scaled by the hour (`cityHours`, `cityLitFrac` in `common.glsl`): offices
+(`tintSel` 0.5 and over) fill from 07:00, are nearly all lit through the working day, and empty through the
+evening to the night's few left on; homes light up from 17:00, a little at breakfast, and are dimmest at 03:00;
+weekends keep offices mostly dark and homes up later. The same factor drives the far term, the proxies, the
+impostors' own floor lights and the arcologies' homes and offices, and as the hour moves each room or floor
+switches on its own hash, one at a time. The open-plan floors' baked light states move with it
+(`officeStates`): after hours by night, the cleaners' (every panel on, standing for the working day) through
+the day, the late shift and the cleaners in the evening. Every table is 1 (the old split) at a weekday's
+18:00-19:00, so the captures' evening (`SKY_CAPTURE_UTC`, 18:57 on a Wednesday in Los Angeles) is the night it
+was. The street lamps have photocells (`lampState`, `gLampDay = lampDaylight(cover)`): under the cities' deck
+(cover over half) they burn all day; past it each goes off at its own level, 10-40 lux of daylight, so they go
+out one by one at dawn and come on through dusk; a freeway's lamps switch together on one circuit
+(`freewayLampsOn`, 20-25 lux). Signs, adverts, shopfronts and lobbies keep the night's hours.
 
 ### Litter (`src/city/litter.c`)
 Rubbish lies still, so it isn't a particle system. Each item is ordinary geometry in a third,

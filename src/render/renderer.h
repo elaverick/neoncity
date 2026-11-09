@@ -79,6 +79,11 @@ typedef struct FrameUBO {
      * twilight), the directional light's disc's angular radius (rad: the
      * shadows' penumbra), unused */
     float   dirMix[4];
+    /* The city's own clock (DN7; src/app/main.c: frame_ubo): the local mean
+     * solar time at the camera's longitude (hours, 0..24), the day of the
+     * week there (0 Monday .. 6 Sunday), unused, unused. The windows and the
+     * impostors' light states follow it (shaders/common.glsl: cityHours) */
+    float   clock[4];
 } FrameUBO;
 
 typedef struct Renderer Renderer;

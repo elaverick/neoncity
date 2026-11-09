@@ -22,8 +22,11 @@ const float FREEWAY_LAMP_H = 12.0, FREEWAY_LAMP_R = 0.35, FREEWAY_GLINT_ALPHA = 
 // ROAD_CELL_REACH of it, to cover the farther.
 const float FREEWAY_REACH = 14.0, TRUNK_REACH = 3.0, FREEWAY_LIGHT_FADE = 6.0;
 
-// The light a lamp's pool gives (ROAD_SODIUM x this) square on.
-const float FREEWAY_POOL = 1.4;
+// The light a lamp's pool gives (ROAD_SODIUM x this) square on, while they're on:
+// a freeway's lamps switch together, on their circuit's photocell (DN7: gLampDay,
+// 20-25 lux), so they burn from dusk to dawn and all day under the cities' deck.
+float freewayLampsOn() { return 1.0 - smoothstep(0.4, 0.5, gLampDay); }
+#define FREEWAY_POOL (1.4 * freewayLampsOn())
 
 // How far along the road from the nearest lamp s is (m, -30 .. 30).
 float freewayLampDs(float s) { return s - FREEWAY_LAMP_SPACING * floor(s / FREEWAY_LAMP_SPACING + 0.5); }

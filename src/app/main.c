@@ -398,8 +398,9 @@ static void sky_report(const Player *player, double jd) {
     char when[64];
     sky_format_utc(jd, when, sizeof(when));
     double h = sky_local_solar_hours(jd, lon), r2d = 180.0 / 3.14159265358979323846;
-    printf("sky: %s at %.3f %.3f, local solar time %02d:%02d; sun altitude %.1f azimuth %.1f; moon altitude %.1f azimuth %.1f, %.0f%% lit (%.2f of full)\n",
-           when, lat, lon, (int)h, (int)(h * 60.0) % 60, salt * r2d, saz * r2d, malt * r2d, maz * r2d, l.s.moonLit * 100.0, l.s.moonBright);
+    static const char *const DAYS[7] = { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" };
+    printf("sky: %s at %.3f %.3f, local solar time %s %02d:%02d; sun altitude %.1f azimuth %.1f; moon altitude %.1f azimuth %.1f, %.0f%% lit (%.2f of full)\n",
+           when, lat, lon, DAYS[sky_local_weekday(jd, lon)], (int)h, (int)(h * 60.0) % 60, salt * r2d, saz * r2d, malt * r2d, maz * r2d, l.s.moonLit * 100.0, l.s.moonBright);
     fflush(stdout);
 }
 
@@ -426,6 +427,12 @@ static void frame_ubo(const Player *player, const VkCore *vk, double t, double j
     LocalSky sky;
     local_sky(player, jd, &sky);
     sky_ubo(&sky, ubo);
+    /* the city's own clock (DN7): its local mean solar time, from the camera's
+     * longitude (a settlement spans a few minutes of it), and the day there */
+    double lat, lon;
+    terrain_dir_latlon(sky.up, &lat, &lon);
+    ubo->clock[0] = (float)sky_local_solar_hours(jd, lon);
+    ubo->clock[1] = (float)sky_local_weekday(jd, lon);
 }
 
 /* frame.exposure (shaders/common.glsl; src/core/light_units.h). The exposure

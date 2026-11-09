@@ -213,6 +213,7 @@ void shadePixel() {
             gWorld = p + vec3(float(gC.info.x & 63) * CHUNK_SIZE, 0.0, float(gC.info.y & 63) * CHUNK_SIZE);
             gBase = vRoot.y - gC.origin.y;
             gSkyCover = skyCover(vRel);
+            gLampDay = lampDaylight(gSkyCover);
             rootShadows();
             // wet as the streets, but none where something stands over it from the rain
             // (the ground there stays wet, as the water runs in; a blade doesn't)
@@ -240,6 +241,7 @@ void shadePixel() {
             col = airFog(col, vRel, dist, fogAmount(vRel, dist));
         } else {
             LandSky sky = landSky(vRel);
+            gLampDay = lampDaylight(sky.cover);   // the lamps' photocells (DN7)
             gDirVis = vLight.w;   // the directional light's shadow at the root (ground.glsl landDir)
             float wetB = sky.wet * (0.7 + 0.3 * t);
             float sheen = bladeSheen(sp, wetB, kernel, rough) * own;

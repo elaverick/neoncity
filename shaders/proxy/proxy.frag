@@ -91,7 +91,7 @@ vec3 shadeProxy(vec3 n, vec3 V) {
     else if (type == 1) { winW = 0.94; winH = 0.86; }
     else if (type == 2) { winW = 1.0;  winH = mix(0.4, 0.55, hf(sh, 9u)); }
     else                { winW = mix(0.2, 0.32, hf(sh, 5u)); winH = mix(0.7, 0.85, hf(sh, 9u)); }
-    float litFrac = 0.16 + 0.42 * hf(sh, 6u), tintSel = hf(sh, 8u);
+    float tintSel = hf(sh, 8u), litFrac = cityLitFrac(0.16 + 0.42 * hf(sh, 6u), tintSel);   // by the hour (DN7)
     vec3 winE = (wdiff + (mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) + dayOvercast(gSkyCover)) * 0.45) * glassT;
     vec3 avgLight = (tintSel < 0.5 ? kelvin(3050.0) : kelvin(3600.0)) * 1.15 * 0.42;
     vec3 avgWin = (avgLight * litFrac * glassT + winE * 0.1 * (1.0 - litFrac)) * (1.0 - F) + refl * F;

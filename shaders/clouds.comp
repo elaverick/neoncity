@@ -451,6 +451,7 @@ void main() {
     ivec2 hs = imageSize(cloudOut);
     if (any(greaterThanEqual(hp, hs))) return;
     gTime = frame.camPos.w;
+    gLampDay = lampDaylight(frame.sky.z);   // the lamps near the camera: their photocells (DN7)
 
     // The nearest scene depth in this pixel's 2x2 block (reverse-Z: largest is nearest).
     ivec2 fs = textureSize(sceneDepth, 0);
