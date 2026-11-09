@@ -128,8 +128,8 @@ void shadePixel() {
     // width past the built edge; that only hazes the land as the city.
     float city = vCoverB.w;
     LandPoint l = landPoint(vRel);
-    // the moon's shadow, where the sky is clear enough for it to cast one (ground.glsl landMoon)
-    if (l.sky.cover < 0.99) gMoonVis = dirShadow(vFlat, nLand, frame.dirLight.xyz, length(vRel));
+    // the directional light's shadow (the sun's or the moon's), where the sky is clear enough for it to cast one (ground.glsl landDir)
+    if (l.sky.cover < 0.99) gDirVis = dirShadow(vFlat, nLand, frame.dirLight.xyz, length(vRel));
     RoadHit road;
     bool onRoad = roadNear(vRel.xz, road);
     // the pixel's width across and along the road, in uniform control flow
@@ -138,13 +138,10 @@ void shadePixel() {
     // the forward distance the shadow slots are matched by (city/lighting.glsl shadowsBegin)
     float fwd = dot(vRel, frame.camFwd.xyz), tol = fwidth(fwd) * 1.5 + fwd * 0.002 + 0.01;
     vec3 V = -normalize(vRel);
-    if ((uint(frame.shadow.y) & SHADOWS_DEBUG) != 0u) {   // F10: only the light the city's lamps and the moon throw on it, shadowed
+    if ((uint(frame.shadow.y) & SHADOWS_DEBUG) != 0u) {   // F10: only the light the city's lamps and the directional light throw on it, shadowed
         vec3 d, sp;
         landLights(n, V, 1.0, 0.0, fwd, tol, d, sp);
-        // (the moonlight its shadow takes, in red)
-        float nl = max(dot(n, MOON_DIR), 0.0) * (1.0 - 0.9 * l.sky.cover), vis = landMoon(l.sky);
-        vec3 moon = MOON_LIGHT * nl * vis + vec3(0.25, 0.0, 0.0) * nl * (1.0 - vis);
-        outColor = vec4((d + moon) * 0.3 + vec3(0.004), 1.0);
+        outColor = vec4((d + dirDebugLight(n, l.sky)) * 0.3 + vec3(0.004), 1.0);
         outRefl = vec4(0.0);
         return;
     }
@@ -171,7 +168,7 @@ void shadePixel() {
     vec3 nS = nLand, col, alb = land;
     float roughS = LAND_FILM_ROUGH, lamps = 0.0;
     if (onRoad) col = shadeRoad(land, nLand, n, vRel, l, city, road, px, pxs, w, nS, roughS, lamps, alb);
-    else        col = groundUrban(land * groundLightIn(l.sky, nLand), city);
+    else        col = groundUrban(land * groundLightIn(l.sky, nLand), city, l.sky);
 #ifdef LAND_LIGHTS
     {
         // the city's lights: on the albedo (where the city's own ground lies, groundUrban's asphalt),

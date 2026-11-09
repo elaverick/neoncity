@@ -2,6 +2,7 @@
 #include "terrain.h"
 #include "grass_rules.h"
 #include "grass.h"
+#include "atmosphere.h"
 
 static const char *const GT_NAMES[GT_COUNT] = { "", "air", "streaming", "terrain upload", "grass prepare", "shelter", "prepass", "shadow rays", "shadow filter",
                                                 "city", "plants", "proxies", "caves", "terrain", "grass", "sky", "clouds", "flames", "post" };
@@ -291,14 +292,28 @@ static void frame_uniforms(Renderer *r, int slot, const FrameUBO *uboIn, const d
     ubo->shadow[1] = (float)((shadows ? 1 : 0) | (r->shadowDebug ? 2 : 0));   /* SHADOWS_ON | SHADOWS_DEBUG (common.glsl) */
     ubo->shadow[2] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.375f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
     ubo->shadow[3] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.125f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
-    /* The directional light is the moon (src/app/main.c: sky_ubo): its shadows
-     * marched through the clipmap unless turned off, and traced near the camera
-     * with the ray-traced shadows (DIR_SHADOW_TLAS, once the terrain's TLAS
-     * levels are known: after terrain_gpu_update). A moon that has set (or
-     * is new) throws no light and so no shadows. */
+    /* The directional light (src/app/main.c: sky_ubo) is the sun while it
+     * stands above DIR_SUN_LOW, however little of it gets through the air,
+     * and the moon once it is lower: the moon's light on the land fades in
+     * as the sun sinks on to DIR_MOON_FULL, so its shadows never pop in
+     * while it is more than a little of the light (DN4). Its shadows are
+     * marched through the clipmap unless turned off, and traced near the
+     * camera with the ray-traced shadows (DIR_SHADOW_TLAS, once the
+     * terrain's TLAS levels are known: after terrain_gpu_update). A moon that
+     * has set (or is new) throws no light and so no shadows. */
     memcpy(ubo->air, r->airState, sizeof(ubo->air));   /* the air at the eye, as last read back (atmosphere_gpu.c) */
-    memcpy(ubo->dirLight, ubo->moon, 3 * sizeof(float));
-    ubo->dirLight[3] = r->dirShadowsOff || ubo->moon[3] <= 0.0f ? 0.0f : 1.0f;   /* DIR_SHADOW_MARCH */
+    {
+        const float DIR_SUN_LOW = -0.0698f, DIR_MOON_FULL = -0.1392f;   /* the sines of -4 and -8 degrees */
+        bool sunLit = ubo->sun[3] > DIR_SUN_LOW;
+        float m = fminf(fmaxf((ubo->sun[3] - DIR_SUN_LOW) / (DIR_MOON_FULL - DIR_SUN_LOW), 0.0f), 1.0f);
+        const float *towards = sunLit ? ubo->sun : ubo->moon;
+        memcpy(ubo->dirLight, towards, 3 * sizeof(float));
+        ubo->dirMix[0] = sunLit ? 1.0f : 0.0f;
+        ubo->dirMix[1] = m * m * (3.0f - 2.0f * m);
+        ubo->dirMix[2] = sunLit ? SUN_RADIUS : MOON_RADIUS;
+        bool lit = sunLit || ubo->moon[3] * ubo->dirMix[1] > 0.0f;
+        ubo->dirLight[3] = r->dirShadowsOff || !lit ? 0.0f : 1.0f;   /* DIR_SHADOW_MARCH */
+    }
     if (!r->havePrev) { r->prevViewProj = ubo->viewProj; memcpy(r->prevCam, cam, sizeof(r->prevCam)); r->havePrev = true; }
     mat4 moved = mat4_identity();
     for (int k = 0; k < 3; ++k) moved.m[12 + k] = (float)(cam[k] - r->prevCam[k]);

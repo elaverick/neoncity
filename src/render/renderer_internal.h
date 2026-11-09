@@ -189,7 +189,7 @@ struct Renderer {
     Image        airTrans, airMs, airSky;
     Buffer       airBuf, airRead[MAX_FRAMES];
     bool         airReady;
-    float        airState[4][4];
+    float        airState[8][4];
 };
 
 /* renderer.c */

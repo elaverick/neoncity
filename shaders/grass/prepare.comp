@@ -232,7 +232,7 @@ void main() {
             uint at = grassReserve(tier, nb);
             if (tier >= 0) {
                 uint room = gf.cap[tier];
-                // the moon's shadow at the root, as the ground there takes it (terrain.frag), in the word
+                // the directional light's shadow at the root (the sun's or the moon's), as the ground there takes it (terrain.frag), in the word
                 // beside each of its blades (a city blade's chunk: grass/instance.glsl)
                 vec2 rr = corner + root.at.p;
                 float moon = 1.0;

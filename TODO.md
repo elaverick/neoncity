@@ -211,8 +211,8 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
   `dirShadowOr` with `DIR_SHADOW_CAVES`); `NEONCITY_CAVE_RT=0` leaves the caves out for an A/B. M11e is done: the
   README's Shadows section has the land, the moon and the caves, and the costs at the worst views are below. M11 is
   complete.
-  - **The sun** (not built; the moon's path is meant to take it). `frame.dirLight` and `dirShadow` are generic, so a
-    sun is a second direction, a radiance and these:
+  - **The sun** lights the land through the moon's path since DN4 (`frame.dirLight` is the sun by day: README, "Sky",
+    "Sunlight on the land"). What it still lacks:
     - **Casters beyond `RT_RANGE`** (584 m): a low sun throws buildings' shadows hundreds of metres. The far city
       needs the proxies in it (a shadow map over the proxy boxes, or bottom-level structures of them) and the
       chunks' structures out to their draw distance, not just the TLAS's range.
@@ -222,8 +222,8 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
       over them.
     - **A soft edge from the disc** (0.5 degrees) over long casters near the camera: jittered rays and the
       denoiser's history, not one hard ray (the march already has a penumbra).
-    - **Everything the day changes**: the sky and the haze follow the sun since DN3 (README, "Sky"); the land's
-      light, the clouds' lighting, the city's and the exposure's day are DN4-DN6.
+    - **Everything the day changes**: the sky and the haze follow the sun since DN3, the land since DN4 (README,
+      "Sky"); the clouds' lighting and the city's are DN5-DN6.
   - **Costs** (M11e, RTX 4080 SUPER, 1600 x 900, MSAA x4, all three on against all three off; see the README):
     two rounds each, which agreed to 0.01-0.02 ms.
     - Just inside a cave's mouth looking out (adit 14928f41), the worst: 0.95 to 1.39 ms (caves 0.09 to 0.29, the
@@ -624,9 +624,9 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   the camera. The megacities' constant rain is meant to stay; the rest of the world is to get a full weather system
   (fronts, dry spells, snowfall), for which `--rain 0` (dry) and the fade below `RAIN_DRIZZLE` are the start.
 - **The moon and stars are the real ones** (DN0, `src/app/sky_clock.c`): they wheel with the UTC clock, by where
-  on the planet the camera is, and the moon has its phase and sets. The sun lights the sky and the haze (DN3), not
-  yet the land, the clouds or the city: the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md,
-  DN4-DN9). The star cube is not a
+  on the planet the camera is, and the moon has its phase and sets. The sun lights the sky and the haze (DN3) and the
+  land (DN4), not yet the clouds or the city: the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md,
+  DN5-DN9). The star cube is not a
   real catalogue: the pole star and the constellations aren't where they are.
 - **The night isn't physical against its anchor** (DN1, README "Light and exposure"): the moon and the starlight are
   about 70 times the real ones (`NIGHT_LIFT`), the deck's underside five times the brightest real city-lit overcast,
@@ -643,8 +643,9 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
 - **No light dome from afar.** From the countryside a city shows as its clouds, lit sodium-orange underneath near
   it, and its proxies; the haze itself doesn't glow over it, because the haze's colour is one per frame
   (`frame.sky.x`, the air round the camera). A glow in `hazeColor` towards each nearby city would add the dome.
-- **Seen from the countryside** the proxies and the land still take the band at the chunks' edge (`edgeFog`), as
-  everything does; the clouds alone leave it off out there (`cloudFog`). The moonlit haze, `MOON_LIGHT` and
+- **Seen from the countryside** the proxies still take the band at the chunks' edge (`edgeFog`), as the city does;
+  the clouds leave it off out there (`cloudFog`), and since DN4 so does the land beyond a kilometre of a settlement
+  (`terrainFog`), where by day it stood as a white wall 1.9 km off all round. The moonlit haze, `MOON_LIGHT` and
   the star brightness are first guesses, tuned by eye from a few `--cam` views.
 - **Star field:** a uniform scatter; no Milky Way band or constellations.
 - **The sky (DN3) left over** (README, "Sky"):
@@ -660,10 +661,27 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
     haze by day, and from high up over unlit land it is all one sees until the land is lit (DN4). Whether the land's
     haze should thin by day is a look call for then, with the user's rule in mind: fog is to be reduced, not
     leaned on.
-  - **Reflections still see the night's sky** low down (`envReflection`, the land's `landReflection`: the haze's
-    colour times 1.5, and `CLOUD_DECK`); the clear sky's blue isn't in them. DN4 (the land) and DN6 (the city).
+  - **The city's reflections still see the night's sky** low down (`envReflection`: the haze's colour times 1.5, and
+    `CLOUD_DECK`); the clear sky's blue isn't in them (DN6). The land's (`landReflection`) take the sky's L1
+    radiance since DN4, so a puddle shows a smooth blue sky with no sun's aureole in it (the glint is the sun's own).
   - **The sun's disc is clamped** to what the 16-bit target holds (30000 pre-exposed), so `--preexpose` changes it
     where it clips; the bloom spreads it either way.
+- **The land by day (DN4) left over** (README, "Sky", "Sunlight on the land"):
+  - **The grass's blades are darker than the moss** they stand in by day: their authored colours (`assets/grass/*`,
+    tips about 0.09 green) are the night's palette, and the land's texture (normalised to `land_grass`'s 0.066
+    mean) has bright moss and soil patches well above it. At night the tone curve's toe hid it. A look call on
+    the authored colours.
+  - **The light on the land is the eye's air**: `AIR_SUN` is the sun through the air as the eye sees it, so far land
+    lower down isn't redder than the near (only its horizon is its own: `sunOverAt`); land higher than the eye loses
+    the sun when the eye does. The fog's light likewise (DN3), so from 10 km up at sunset the haze over land the sun
+    has left still glows gold.
+  - **The unlit debug views** (`--grass-debug albedo` and the rest, F10's lights-only view) are drawn under the
+    eye's exposure, so by day they are black or white; they were set for the night's.
+  - **The sky's light is L1** (four numbers a channel): no sun-side brightening finer than a hemisphere's gradient,
+    and the puddles' sky (`skyRadiance`) is as smooth.
+  - **The exposure's day key** (`KEY_DUSK_EV` and up, a stop a stop) leaves noon land shown half a stop under what it
+    meters (13.2-13.75 against 13.7-14.2): bright, as a game's day. Not tuned further; the deck by day (DN5) may move
+    it.
 
 ## Curtain wall relief
 Piers, beams, mullions and a coping on office towers' curtain walls (`src/city/mesh_relief.c`, `shadeTrim`), after

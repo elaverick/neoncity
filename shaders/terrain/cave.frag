@@ -135,19 +135,24 @@ void shadePixel() {
     else if (caveView.view >= 2) col = vec3(0.25) * (0.1 + 0.9 * max(dot(n, V), 0.0)) * (caveView.view == 3 ? LOD_TINT[vInfo.z] : vec3(1.0)) * outside;
     else {
         LandSky s = landSky(vRel);
-        // the moon's own light traced (see above), else as the sky the vertices see
-        float moonVis = vSky;
+        // the directional light's own (the sun's or the moon's) traced (see above), else as the sky the vertices
+        // see: the moon's so, the sun's far sooner gone (vSky^4), as it is one direction of the sky and as bright
+        // as all the rest of it (DN4)
+        float untraced = frame.dirMix.x > 0.0 ? vSky * vSky * vSky * vSky : vSky, dirVis = untraced;
 #ifdef RT_SHADOWS
-        if (caveView.traced != 0 && s.cover < 0.99) moonVis = dirShadowOr(vFlat, ng, frame.dirLight.xyz, length(vRel), vSky);
+        if (caveView.traced != 0 && s.cover < 0.99) dirVis = dirShadowOr(vFlat, ng, frame.dirLight.xyz, length(vRel), untraced);
 #endif
-        gMoonVis = 0.0;
-        vec3 E0 = groundLightIn(s, nB);   // all but the moon's own (ground.glsl)
-        gMoonVis = 1.0;
-        vec3 moon = groundLightIn(s, nB) - E0;
-        vec3 lit = alb * (E0 * vSky + moon * moonVis);
-        if ((uint(frame.shadow.y) & SHADOWS_DEBUG) != 0u) {   // F10: only the moon's light, and in red the share its shadow takes
-            float nl = max(dot(nB, MOON_DIR), 0.0) * (1.0 - 0.9 * s.cover), vis = mix(moonVis, 1.0, s.cover);
-            lit = (MOON_LIGHT * nl * vis + vec3(0.25, 0.0, 0.0) * nl * (1.0 - vis)) * 0.3 + vec3(0.004);
+        // a face of the rock turned from the light is in its own shadow, however its bumps (nB) turn: else
+        // they catch the sun in specks, where the ray leaves from the face into the rock and out of its back
+        if (dot(ng, frame.dirLight.xyz) <= 0.0) dirVis = 0.0;
+        gDirVis = 0.0;
+        vec3 E0 = groundLightIn(s, nB);   // all but the directional light's own (ground.glsl)
+        gDirVis = 1.0;
+        vec3 dirE = groundLightIn(s, nB) - E0;
+        vec3 lit = alb * (E0 * vSky + dirE * dirVis);
+        if ((uint(frame.shadow.y) & SHADOWS_DEBUG) != 0u) {   // F10: only the directional light, and in red the share its shadow takes
+            gDirVis = dirVis;
+            lit = dirDebugLight(nB, s) * 0.3 + vec3(0.004);
         }
         if (caveView.camIn != 0) {
             float dist = length(vRel), fog = 1.0 - exp(-dist / CAVE_AIR_M);

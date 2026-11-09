@@ -242,7 +242,7 @@ vec3 shadeRoad(vec3 land, vec3 nLand, vec3 n, vec3 rel, LandPoint l, float urban
     lampShare = mix(lampsLand, lamps, asph);
     vec3 ground = mix(land, gAlb, grav);
     albOut = mix(ground, alb, asph);
-    return mix(groundUrban(ground * light, urban), alb * light, asph);
+    return mix(groundUrban(ground * light, urban, l.sky), alb * light, asph);
 }
 
 #endif

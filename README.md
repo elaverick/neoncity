@@ -1849,8 +1849,28 @@ it has set, and by night the moonlit air's faint blue over the stars (DN3 of the
   `DECK_DAYLIGHT` (0.25%) of the daylight reaches it (`daylightThrough`, from the cover over the camera; DN5 makes it
   a field). The sky low down is the smog's: the sky mixes into it as `hazeAmount` along the line of sight reaches
   out (`skyClear`), so the horizon is the haze's colour and the land beyond the view distance dissolves into it.
-- **Captures** over the mountains NW of the megacity (the shot's `--utc`), with the land still unlit by the sun
-  (DN4): noon, a white hazy horizon under a blue sky, EV 14.5; the afternoon sun at 20 degrees, its disc with a
+- **Sunlight on the land** (DN4): the directional light that cast the moon's shadows (`frame.dirLight`,
+  `shaders/terrain/dir_shadow.glsl`) is the sun while it stands above -4 degrees and the moon below. The moon's light
+  on the land fades in as the sun sinks on to -8 degrees (`frame.dirMix`, `src/render/renderer.c`), so its shadows
+  never pop in while it is much of the light. The penumbra is the light's own disc. The sun's light on the land is
+  `AIR_SUN`, through the air as the eye sees it, so it reddens and dims as it sinks, and a point checks its own
+  horizon from its own height (`sunOverAt`): low land loses the sun before the eye does. The sky's light is the
+  sky-view table's radiance above the horizon as L1 spherical harmonics, summed by the same compute group
+  (`frame.air[4..7]`, `skyIrradiance`): blue from overhead, brighter towards the sun, and nothing from below. On top
+  of it the land round gives back 15% of the light on level ground on to faces turned down (`LAND_BOUNCE`). Under
+  the cities' cloud the daylight is `deckThrough` = `DECK_DAYLIGHT` to the power of the cover, spread over the
+  deck's underside as an overcast with no sun and no shadow (`landDaylight`). This reaches the land, the roads, the
+  planet's patches, the land's grass (the sun's light through the blades and their sheen) and the caves (the sun
+  traced into a mouth as the moon is; untraced, it falls off as the sky they see to the fourth power, and a face of
+  the rock turned from the sun takes none of it, whatever its bumps). The wet ground reflects that sky
+  (`skyRadiance`, smooth) and takes the sun's glint. The far city's stand-in ground (`groundUrban`) is a grey asphalt
+  under the deck by day. The night is unchanged: the moon and the stars light the land as before (the night views
+  against DN3 differ by what two runs of one build do; the moonlit countryside is 0.1-0.2 levels lighter for the
+  moonlit sky's own light). The band at the chunks' edge (`edgeFog`) is now on the land only over the settlements
+  and a kilometre round them (`terrainFog`): out in the countryside it stood by day as a white wall 1.9 km off all
+  round, and nothing is handed over there.
+- **Captures** over the mountains NW of the megacity (the shot's `--utc`), before the land was lit (DN3):
+  noon, a white hazy horizon under a blue sky, EV 14.5; the afternoon sun at 20 degrees, its disc with a
   white aureole, the sun's light at the eye (2195, 1781, 1301); at 4 degrees, gold (1440, 676, 191), EV 12.6; as
   it sets, an orange band and a violet sky, EV 9.3; civil twilight at -5.5 degrees, violet with the first stars,
   EV 4.7; nautical twilight, a dark blue sky and a red line on the horizon, at the night's exposure. The night views
@@ -1912,8 +1932,9 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
   kit's fittings are photometric (lumens; docs/interior-impostors.md section 16), and a bake's radiance is 0.01 of a
   cd/m2. The modules' `bake_scale` of 0.375 makes one bake unit 0.375 of an engine unit, so a kit's light lands at
   about 1/17 of its real brightness against the lamps. That matches the lobbies, whose panels it was calibrated
-  against. What the eye sees of a fitting is capped at 4 (`BAKE_VISIBLE_CAP`, 64 cd/m2). The sun, when it comes
-  (DN4), is 100 000 lux: 2000 units.
+  against. What the eye sees of a fitting is capped at 4 (`BAKE_VISIBLE_CAP`, 64 cd/m2). The sun on the land at
+  32 degrees (DN4) is about 2070 units (100 000 lux), and the clear sky's light on level ground
+  about 165 (8000 lux, blue: 92, 170, 329; the shot's `air:` line prints it).
 - **Exposure:** the photographic convention (Lagarde and de Rousiers, "Moving Frostbite to PBR"). At EV100, a
   luminance of 1.2 x 2^EV100 cd/m2 is taken to 1 before the tone curve, so the multiplier on the engine's radiance
   is 2^(`EV100_REF` - EV100). `EV100_REF` = log2(15.9 / 1.2) = 3.73 is the exposure the night was tuned at, which
@@ -1948,7 +1969,7 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
   so they look the same at any exposure. So is the grade, which works on the exposed colour. A `--shot` takes the
   eye's exposure for its view at once. A `--walk` capture adapts as it walks. `--ev` meters and prints the view but
   holds the exposure. The shot prints the EV100 shown, the eye's target and the metered EV. The window title shows
-  the EV100. The tone curve is still the ACES fit; it is reviewed for noon once the sun lights the land (DN4).
+  the EV100. The tone curve is still the ACES fit: at noon and with the sun 20 degrees up over the lit land (DN4) nothing clips (frames average 93-108 of 255), so it stays.
 - **Pre-exposure** (Frostbite's): every pass that writes colour multiplies it by the frame's pre-exposure
   (`frame.exposure.x`) as it writes, so the 16-bit targets hold numbers near 1 by night and by noon alike, never a
   sun's 1e9 cd/m2 or the starlight's 1e-4. The lighting itself stays in the engine's units. A scene shader's

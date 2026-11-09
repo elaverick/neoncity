@@ -106,12 +106,15 @@ const float PI = 3.14159265;
 #include "terrain/freeway_light.glsl"
 
 // On the land, the lights with a direction, for the fragment at rel
-// (camera-relative): the moon through the cloud (as groundLightIn's), and
-// beside the root's freeway (vFwy) its three nearest lamps, each as its pool
-// lights the ground (roads.glsl shadeRoad). Returns the pools' light at the
-// root, as the ground there takes it.
+// (camera-relative): the moon through the cloud and the sun under a clear sky
+// (as groundLightIn's: landDaylight), the sun's sheen with it, and beside the
+// root's freeway (vFwy) its three nearest lamps, each as its pool lights the
+// ground (roads.glsl shadeRoad). Returns the pools' light at the root, as the
+// ground there takes it.
 vec3 landThinLights(LandSky sky, vec3 rel) {
-    grassThinLightS(MOON_DIR, MOON_LIGHT * (1.0 - 0.9 * sky.cover) * landMoon(sky), false);
+    grassThinLightS(MOON_DIR, MOON_LAND * (1.0 - 0.9 * sky.cover) * landDir(sky), false);
+    if (frame.dirMix.x > 0.0 && sky.cover < 1.0)
+        grassThinLight(SUN_DIR, SUN_LAND * (sky.sun * (1.0 - sky.cover) * deckThrough(sky.cover) * landDir(sky)));
     vec3 pools = vec3(0.0);
     if (vLight.y <= 0.0) return pools;
     float a = abs(vFwy.x), beside = freewayBeside(a, vLight.y);
@@ -236,7 +239,7 @@ void shadePixel() {
             col = airFog(col, vRel, dist, fogAmount(vRel, dist));
         } else {
             LandSky sky = landSky(vRel);
-            gMoonVis = vLight.w;   // the moon's shadow at the root (ground.glsl landMoon)
+            gDirVis = vLight.w;   // the directional light's shadow at the root (ground.glsl landDir)
             float wetB = sky.wet * (0.7 + 0.3 * t);
             float sheen = bladeSheen(sp, wetB, kernel, rough) * own;
             vec3 pools = landThinLights(sky, vRel);
@@ -253,7 +256,7 @@ void shadePixel() {
                 E += diff * (1.0 - smoothstep(LAND_LIGHTS_FAR - 100.0, LAND_LIGHTS_FAR, length(vRoot)));
             }
             col = albedo * landDarken(2, sky.wet) * (face * (E + GRASS_THIN_FACE * own * gThinFace) + through * gThinBack) + sheen * gThinSpec;
-            // the wet blade's sheen of the sky and the moon (the land's: wetHighlight)
+            // the wet blade's sheen of the sky, the moon and the sun (the land's: wetHighlight)
             if (wetB > 0.0 && own > 0.0) col += wetHighlight(N, gV, rough, sky) * wetB * own;
             col = groundHazed(col, vRel, 0.0);
         }

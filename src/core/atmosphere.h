@@ -17,6 +17,7 @@
  * The light: the sun's illuminance above the air, SUN_ILLUMINANCE in the
  * engine's units (light_units.h: 2560 is 128 000 lux; about 100 000 reach the
  * ground at noon), as white; its disc SUN_RADIUS across (rad), the real one.
+ * The moon's disc is MOON_RADIUS (rad), about three times the real one's.
  * The moon lights the air too, with MOON_AIR of the light it throws on the
  * land (MOON_FULL in shaders/common.glsl, which is NIGHT_LIFT times the real
  * moon's): enough that a moonlit night's sky is a little brighter and bluer
@@ -46,6 +47,7 @@
 
 #define SUN_ILLUMINANCE    2560.0f
 #define SUN_RADIUS         0.004675f
+#define MOON_RADIUS        0.014f
 #define MOON_AIR           0.25f
 
 #define SMOG_ALBEDO        0.9f

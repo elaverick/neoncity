@@ -24,7 +24,7 @@ static const uint32_t SPV_atmo_eye[] = {
 #include "atmo_eye.comp.inc"
 };
 
-#define AIR_BYTES (4 * 4 * sizeof(float))
+#define AIR_BYTES (8 * 4 * sizeof(float))
 
 void atmosphere_gpu_create(Renderer *r) {
     VkCore *vk = r->vk;
@@ -142,7 +142,9 @@ void atmosphere_gpu_record(Renderer *r, VkCommandBuffer cmd, int slot) {
     vk_memory_barrier(cmd, XFER, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);
 }
 
-void renderer_air(Renderer *r, float sun[4], float moon[4], float sky[4]) {
+void renderer_air(Renderer *r, float sun[4], float moon[4], float sky[4], float level[3]) {
+    if (level)
+        for (int c = 0; c < 3; ++c) level[c] = r->airState[4][c] + r->airState[6][c];   /* pi a + (2 pi / 3) b.y (atmo_eye.comp) */
     if (sun) memcpy(sun, r->airState[0], 4 * sizeof(float));
     if (moon) memcpy(moon, r->airState[1], 4 * sizeof(float));
     if (sky) memcpy(sky, r->airState[2], 4 * sizeof(float));

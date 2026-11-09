@@ -47,7 +47,7 @@ typedef struct FrameUBO {
     float   landGrid[4];   /* the land's lamps (src/render/chunks.c: build_land_records): camera-relative x, z of the grid's corner; unused, unused */
     int32_t landCells[LAND_GRID * LAND_GRID];   /* each cell's chunk record (-1: none), rows of z, four to a vector */
     float   landRects[LAND_GRID * LAND_GRID][4];   /* camera-relative x0, z0, x1, z1 its lights reach (x0 > x1: none) */
-    /* The directional light (the moon, for now): towards it, in the camera's
+    /* The directional light (the sun by day, the moon by night: dirMix): towards it, in the camera's
      * local frame; DIR_SHADOW_* (shaders/terrain/dir_shadow.glsl): its shadows
      * marched through the clipmap, traced in the TLAS near the camera (renderer.c) */
     float   dirLight[4];
@@ -69,8 +69,16 @@ typedef struct FrameUBO {
     /* The air's light at the eye (shaders/atmo_eye.comp; src/render/
      * atmosphere_gpu.c reads it back, a couple of frames late): the sun's
      * through the air and how much of its disc is up; the moon's (MOON_AIR of
-     * it) and the same; the mean radiance all round; the sky's above (renderer.c) */
-    float   air[4][4];
+     * it) and the same; the mean radiance all round; the sky's above; then
+     * the sky's irradiance (pi a and (2 pi / 3) b's x, y, z: atmo_eye.comp)
+     * (renderer.c) */
+    float   air[8][4];
+    /* Which light dirLight is, and how much of each lights the land (DN4;
+     * renderer.c): the sun's share (1 while it is the directional light, 0
+     * once it is the moon), the moon's (fading in as the sun sinks through
+     * twilight), the directional light's disc's angular radius (rad: the
+     * shadows' penumbra), unused */
+    float   dirMix[4];
 } FrameUBO;
 
 typedef struct Renderer Renderer;
@@ -138,7 +146,8 @@ void      renderer_set_exposure(Renderer *r, float manualEv, float dt, bool snap
 float     renderer_exposure(Renderer *r, float *target, float *metered);
 /* The air's light at the eye as the latest finished frame left it (frame.air):
  * the sun's and the moon's through the air (rgb; w how much of the disc is
- * up), the mean radiance all round. Any may be NULL. */
-void      renderer_air(Renderer *r, float sun[4], float moon[4], float sky[4]);
+ * up), the mean radiance all round, the clear sky's light on level ground
+ * (rgb: common.glsl skyIrradiance). Any may be NULL. */
+void      renderer_air(Renderer *r, float sun[4], float moon[4], float sky[4], float level[3]);
 /* Saves the next presented frame as a 24-bit BMP. */
 void      renderer_request_screenshot(Renderer *r, const char *path);

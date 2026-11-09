@@ -115,12 +115,13 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 landGrid;   // xy camera-relative x, z of the land's lamps' grid's corner (terrain/land_lights.glsl; src/render/chunks.c: build_land_records)
     ivec4 landCells[LAND_GRID * LAND_GRID / 4];   // each cell's chunk record (-1: none), rows of z, four to a vector
     vec4 landRects[LAND_GRID * LAND_GRID];        // camera-relative x0, z0, x1, z1 the cell's chunk's lights reach
-    vec4 dirLight;      // xyz towards the directional light (the moon, for now), w DIR_SHADOW_* (terrain/dir_shadow.glsl)
+    vec4 dirLight;      // xyz towards the directional light (the sun by day, the moon by night: dirMix), w DIR_SHADOW_* (terrain/dir_shadow.glsl)
     vec4 terrainInfo;   // x the finest clipmap level drawn (TERRAIN_CLIP_LEVELS: none), y the highest ground in it (world Y), z the coarsest level in the TLAS (-1: none)
     TerrainLevel terrainLevel[TERRAIN_CLIP_LEVELS];   // from the finest drawn on (src/render/terrain_gpu.c: terrain_gpu_frame_levels)
     vec4 terrainBlocks[TERRAIN_CLIP_LEVELS * TERRAIN_CLIP_NB * TERRAIN_CLIP_NB / 4];   // each level's storage blocks' highest ground, with the eight round each (world Y), rows of z, four to a vector
     vec4 exposure;   // x the pre-exposure (EXPOSE), y its inverse, z the exposure, w its EV100 (src/app/main.c: exposure_ubo)
-    vec4 air[4];     // the air's light at the eye (AIR_SUN, AIR_MOON, AIR_SKY; shaders/atmo_eye.comp), a couple of frames late
+    vec4 air[8];     // the air's light at the eye (AIR_SUN, AIR_MOON, AIR_SKY, skyIrradiance; shaders/atmo_eye.comp), a couple of frames late
+    vec4 dirMix;     // x the sun's share of the land's light (1 while it is dirLight), y the moon's, z dirLight's disc's radius (rad) (src/render/renderer.c)
 } frame;
 
 /* Pre-exposure (Frostbite's: Lagarde and de Rousiers 2014). The lighting
@@ -540,11 +541,10 @@ float cityLight(float edge) { return 1.0 - smoothstep(0.0, CLOUD_BORDER, edge); 
 // The moon, so far off that its light falls the same way everywhere. Where
 // it stands, and how much of it is lit, is the world clock's (src/app/
 // sky_clock.c: the real moon over the camera's place on the planet), and so
-// are the stars; it rises and sets, and some nights it is new. The sun is
-// worked out as well (SUN_DIR) but lights nothing yet: only the moon's disc.
+// are the stars; it rises and sets, and some nights it is new. The sun
+// (SUN_DIR) lights the air (DN3) and the land (DN4: SUN_LAND).
 #define MOON_DIR (frame.moon.xyz)   // unit: towards the moon
 #define SUN_DIR  (frame.sun.xyz)    // unit: towards the sun
-const float MOON_RADIUS = 0.014;                         // its disc's angular radius (rad), about three times the real moon's
 // In LIGHT_LUX units (light_units.h), the moon and the stars are NIGHT_LIFT times the real ones: a full moon's
 // 0.35 is 17 lux (the real one's 0.25), the starlight's 0.002 is 0.1 lux (the real one's, with airglow, 0.0015).
 const vec3  MOON_FULL = vec3(0.50, 0.58, 0.80) * 0.60;   // the light a full moon high up throws on ground square to it
@@ -575,10 +575,47 @@ float airEyeH() { return clamp(frame.camPos.y * 1e-3, 0.002, ATMO_HEIGHT - 0.01)
 #define AIR_MOON (frame.air[1].rgb)
 #define AIR_SKY  (frame.air[2].rgb)
 
-/* How much of the daylight reaches the air round the camera: under the
- * cities' cloud (frame.sky.z, its cover there) only DECK_DAYLIGHT of it
- * (clouds.h). The moon's and the sky's light likewise. */
-float daylightThrough() { return mix(1.0, DECK_DAYLIGHT, frame.sky.z); }
+/* The light on the land (DN4): the sun's on ground square to it, through the
+ * air, while it is the directional light (frame.dirMix.x: src/render/
+ * renderer.c), and the moon's, which fades in as the sun sinks through
+ * twilight and so is the whole of MOON_LIGHT by night. */
+#define SUN_LAND  (AIR_SUN * frame.dirMix.x)
+#define MOON_LAND (MOON_LIGHT * frame.dirMix.y)
+
+/* How much of SUN_LAND reaches a point at rel (camera-relative, as drawn:
+ * bent down over the planet): AIR_SUN is the sun as the eye sees it, so a
+ * point lower than the eye, or far round the planet's curve, may have seen
+ * it set already. The share of its disc over that point's horizon (its height
+ * over the planet's sphere, its own up) over the share the eye sees
+ * (frame.air[0].w), at most 1: land higher than the eye can't keep the sun
+ * once it has set at the eye (the air's light is the eye's). */
+float sunOverAt(vec3 rel) {
+    float eye = frame.air[0].w;
+    if (eye <= 0.0) return 0.0;
+    float h = max(frame.camPos.y + rel.y + planetDrop(rel.xz), 0.0), r = PLANET_RADIUS + h;
+    vec3 up = normalize(vec3(rel.x, PLANET_RADIUS, rel.z));
+    float muH = -sqrt(h * (r + PLANET_RADIUS)) / r;
+    return min(clamp((dot(SUN_DIR, up) - muH) / (2.0 * SUN_RADIUS) + 0.5, 0.0, 1.0) / eye, 1.0);
+}
+
+/* The clear sky's light on a surface facing n (shaders/atmo_eye.comp: its
+ * radiance over the directions above the horizon as L1 harmonics, so the
+ * blue overhead and the bright sky round the sun), none from below it.
+ * Engine units. skyRadiance is that sky as seen along dir, as smooth. */
+vec3 skyIrradiance(vec3 n) {
+    return max(frame.air[4].rgb + n.x * frame.air[5].rgb + n.y * frame.air[6].rgb + n.z * frame.air[7].rgb, vec3(0.0));
+}
+vec3 skyRadiance(vec3 dir) {
+    return max(frame.air[4].rgb + 1.5 * (dir.x * frame.air[5].rgb + dir.y * frame.air[6].rgb + dir.z * frame.air[7].rgb), vec3(0.0)) * (1.0 / AIR_PI);
+}
+
+/* How much of the daylight gets through the cities' cloud where its cover
+ * is `cover`: DECK_DAYLIGHT (clouds.h) under the whole deck, thinning with
+ * it towards the countryside (its optical depth goes as the cover), all of it
+ * under a clear sky. daylightThrough: round the camera (frame.sky.z); the
+ * moon's and the sky's light likewise. */
+float deckThrough(float cover) { return pow(DECK_DAYLIGHT, cover); }
+float daylightThrough() { return deckThrough(frame.sky.z); }
 
 /* The night's own glow in the haze, light no sun or moon gives it: near a
  * city (frame.sky.x towards 1) warm sodium-lit smog at the horizon and a dim

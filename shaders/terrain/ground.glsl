@@ -10,52 +10,90 @@
 #include "terrain/macro.glsl"
 
 /* The bare land, as the clipmap (terrain.frag) and the planet's patches
- * (planet.frag) both draw it: lit by the overcast the city lights from below
- * where the cities' clouds hang, by the moon and the stars beyond them, and
- * seen through the haze. Under the cloud it rains: the ground darkens, takes
+ * (planet.frag) both draw it: lit by the sun and the sky by day (DN4), and by
+ * night by the overcast the city lights from below where the cities' clouds
+ * hang, by the moon and the stars beyond them; seen through the haze. Under the cloud it rains: the ground darkens, takes
  * a wet sheen and holds puddles. rel is the camera-relative position (as
  * drawn, bent over the planet), n the normal, urban plan_urban there, cover
  * the ground's cover there (Cover, below). */
 
 // The sky over ground at rel: the cities' cloud over it (cloudCover), the
-// city's light in that cloud (cityLight), and how wet the ground under it is
-// (the rain's wetness, frame.sky.w, where the cloud is; dry under a clear sky).
-struct LandSky { float cover; float city; float wet; };
+// city's light in that cloud (cityLight), how wet the ground under it is
+// (the rain's wetness, frame.sky.w, where the cloud is; dry under a clear
+// sky), and how much of the sun is still up there (sunOverAt).
+struct LandSky { float cover; float city; float wet; float sun; };
 LandSky landSky(vec3 rel) {
     float edge = cityEdge(rel.xz);
     LandSky s;
     s.cover = cloudCover(rel.xz, edge);
     s.city = cityLight(edge);
     s.wet = frame.sky.w * s.cover;
+    s.sun = frame.dirMix.x > 0.0 ? sunOverAt(rel) : 0.0;
     return s;
 }
 
-// How much of the moon reaches the ground being shaded: gMoonVis, its shadow
-// there under a clear sky (terrain/dir_shadow.glsl; the shader drawing the
-// land sets it, and it stays 1 where none does). Under the cities' cloud what
-// little of the moon comes through is scattered, and casts no shadow.
-float gMoonVis = 1.0;
-float landMoon(LandSky s) { return mix(gMoonVis, 1.0, s.cover); }
+// How much of the directional light (the sun by day, the moon by night:
+// frame.dirLight) reaches the ground being shaded: gDirVis, its shadow there
+// under a clear sky (terrain/dir_shadow.glsl; the shader drawing the land
+// sets it, and it stays 1 where none does). Under the cities' cloud what
+// little of it comes through is scattered, and casts no shadow.
+float gDirVis = 1.0;
+float landDir(LandSky s) { return mix(gDirVis, 1.0, s.cover); }
 
-// The light falling on ground under sky s facing n. Under the cities' cloud
-// it is the deck's glow, sodium-orange over a city and dying away over the
-// border beyond it, where only a little moonlight gets through. Under a clear
-// sky it is the moon, and the stars' faint glow.
+// How much of the light on level ground comes back off the land round it, up
+// on to a surface turned down (the land's mean albedo, under the air's
+// ATMO_GROUND_ALBEDO, which counts the cities and the snow).
+const float LAND_BOUNCE = 0.15;
+
+// The daylight on ground under sky s facing n (DN4): under a clear sky the
+// sun (SUN_LAND, reddened by the air as it sinks, shadowed: landDir) and the
+// sky's light (skyIrradiance), and what the land round gives back up on to
+// a slope. Under the cities' cloud only deckThrough of it gets through,
+// spread evenly over the deck's underside, as an overcast: no sun, no shadow.
+vec3 landDaylight(LandSky s, vec3 n) {
+    vec3 sun = SUN_LAND * s.sun;
+    vec3 level = sun * max(SUN_DIR.y, 0.0) + skyIrradiance(vec3(0.0, 1.0, 0.0));   // on level ground, unshadowed
+    vec3 bounce = level * (LAND_BOUNCE * (0.5 - 0.5 * n.y));
+    vec3 clear = sun * (max(dot(n, SUN_DIR), 0.0) * landDir(s)) + skyIrradiance(n);
+    vec3 grey = level * (0.5 + 0.5 * n.y);
+    return (mix(clear, grey, s.cover) + bounce) * deckThrough(s.cover);
+}
+
+// F10's view (terrain.frag, cave.frag): the directional light on ground under
+// sky s facing n, alone, and in red the share its shadow takes.
+vec3 dirDebugLight(vec3 n, LandSky s) {
+    vec3 c = frame.dirMix.x > 0.0 ? SUN_LAND * s.sun : MOON_LAND;
+    float nl = max(dot(n, frame.dirLight.xyz), 0.0) * (1.0 - 0.9 * s.cover), vis = landDir(s);
+    return c * (nl * vis) + vec3(0.52 * max(c.r, max(c.g, c.b)), 0.0, 0.0) * (nl * (1.0 - vis));
+}
+
+// The light falling on ground under sky s facing n. By day the daylight
+// (landDaylight). Under the cities' cloud the deck's glow, sodium-orange over
+// a city and dying away over the border beyond it, where only a little
+// moonlight gets through. Under a clear sky the moon, and the stars' faint
+// glow.
 vec3 groundLightIn(LandSky s, vec3 n) {
     vec3 deck = CLOUD_DECK * s.city * (0.6 + 1.4 * max(n.y, 0.0));
-    vec3 clear = MOON_LIGHT * max(dot(n, MOON_DIR), 0.0) * landMoon(s) + STARLIGHT * (0.5 + 0.5 * n.y);
-    return deck * s.cover + clear * (1.0 - 0.9 * s.cover);
+    vec3 clear = MOON_LAND * max(dot(n, MOON_DIR), 0.0) * landDir(s) + STARLIGHT * (0.5 + 0.5 * n.y);
+    return deck * s.cover + clear * (1.0 - 0.9 * s.cover) + landDaylight(s, n);
 }
 vec3 groundLight(vec3 rel, vec3 n) { return groundLightIn(landSky(rel), n); }
 
 // Beyond the city the air is clearer than over its streets, so far ridges
 // stand out above the haze: TERRAIN_HAZE (distances.h) against the city's
 // CITY_HAZE (fogAmount). Under the city the terrain takes the city's haze.
-// Both take the band at the chunks' edge (edgeFog), so the city there isn't
-// hazier than the land round it.
+// Over the settlements, where the chunks are drawn, and a little round them
+// (LAND_EDGE_FOG_REACH past their footprints: cityEdge), it takes the band at
+// the chunks' edge (edgeFog) as the city does, so the city there isn't
+// hazier than the land round it. Out in the countryside nothing is handed
+// over at the chunks' edge, and the band is left off: by day it would stand
+// as a white wall VIEW_DISTANCE away all round (DN4).
+const float LAND_EDGE_FOG_REACH = 1000.0;
 float terrainFog(vec3 rel, float dist, float urban) {
     float density = (1.0 + 1.2 * frame.weather.x) / TERRAIN_HAZE;
-    return edgeFog(mix(hazeAmount(rel, dist, density), cityHaze(rel, dist), urban), dist);
+    float haze = mix(hazeAmount(rel, dist, density), cityHaze(rel, dist), urban);
+    float near = 1.0 - smoothstep(0.0, LAND_EDGE_FOG_REACH, cityEdge(rel.xz));
+    return mix(haze, edgeFog(haze, dist), max(near, urban));
 }
 
 // The ground cover (src/terrain/terrain_cover.c, terrain_cover_pack), as the
@@ -464,16 +502,21 @@ const float LAND_FILM_ROUGH = 0.45, LAND_POOL_ROUGH = 0.04, WATER_F0 = 0.02;
 // The moon as a highlight sees it: its disc's radiance as the sky draws it
 // (sky.frag: about 1.75 where lit) times the disc's solid angle (MOON_RADIUS),
 // in MOON_LIGHT's colour. Far less than MOON_LIGHT, the diffuse light, which
-// is made strong enough for a moonlit night to read.
-#define MOON_GLINT (MOON_LIGHT * 0.003)
+// is made strong enough for a moonlit night to read. The sun's glint is its
+// own light (SUN_LAND), which isn't lifted.
+#define MOON_GLINT (MOON_LAND * 0.003)
 
 // The sky a wet surface reflects in direction R under sky s: the haze and the
-// moon's aureole (hazeColor) about the horizon, and above, where the cities'
-// cloud hangs, the cloud lit by the city (as the city's surfaces see it:
-// envReflection, but for the lit streets and facades it has round its
-// horizon, which the land hasn't).
+// moon's aureole (hazeColor) about the horizon, the clear sky above it
+// (skyRadiance: blue by day, the night's glow by night), and above, where the
+// cities' cloud hangs, the cloud lit by the city by night and greyly by the
+// day through it (as the city's surfaces see it: envReflection, but for the
+// lit streets and facades it has round its horizon, which the land hasn't).
 vec3 landReflection(vec3 R, LandSky s) {
-    return mix(hazeColor(R) * 1.5, CLOUD_DECK * s.city, smoothstep(0.03, 0.3, R.y) * 0.85 * s.cover);
+    float up = smoothstep(0.03, 0.3, R.y);
+    vec3 sky = mix(hazeColor(R), nightGlow(R) + skyRadiance(R), up) * 1.5;
+    vec3 deck = CLOUD_DECK * s.city + skyIrradiance(vec3(0.0, 1.0, 0.0)) * (DECK_DAYLIGHT / 3.14159265);
+    return mix(sky, deck, up * 0.85 * s.cover);
 }
 
 // GGX's highlight from a light square on to its direction L (pi carried in,
@@ -509,12 +552,15 @@ float wetSurface(LandPoint l, vec3 n, vec3 nGeom, float rough, LandWater w, out 
 }
 
 // The highlight of a wet surface (normal n, roughness rough) seen along V under
-// sky s: the sky it reflects (landReflection) and the moon's glint through the
-// cloud.
+// sky s: the sky it reflects (landReflection), the moon's glint through the
+// cloud and the sun's under a clear sky (none through the deck).
 vec3 wetHighlight(vec3 n, vec3 V, float rough, LandSky s) {
     vec3 R = normalize(mix(reflect(-V, n), n, rough * rough));
     vec3 c = landReflection(R, s) * envBRDF(WATER_F0, rough, max(dot(n, V), 1e-4));
-    return c + MOON_GLINT * (1.0 - 0.9 * s.cover) * landMoon(s) * landGgx(n, MOON_DIR, V, max(rough * rough, MOON_RADIUS), WATER_F0);
+    c += MOON_GLINT * (1.0 - 0.9 * s.cover) * landDir(s) * landGgx(n, MOON_DIR, V, max(rough * rough, MOON_RADIUS), WATER_F0);
+    if (frame.dirMix.x > 0.0 && s.cover < 1.0)
+        c += SUN_LAND * (s.sun * (1.0 - s.cover) * deckThrough(s.cover) * landDir(s)) * landGgx(n, SUN_DIR, V, max(rough * rough, SUN_RADIUS), WATER_F0);
+    return c;
 }
 
 // The wet ground's sheen at rel (wetSurface, wetHighlight).
@@ -575,9 +621,11 @@ vec3 groundAlbedo(vec3 rel, LandPoint l, float urban, Cover cover, bool textured
 
 // Under the city, where its chunks aren't drawn (beyond their view distance,
 // between the distant proxies), the lit land col gives way to the streets:
-// dark wet asphalt under the sodium lamps, seen from afar as their average glow.
-vec3 groundUrban(vec3 col, float urban) {
-    return mix(col, vec3(0.02, 0.018, 0.017) * CLOUD_DECK * 2.0 + vec3(1.0, 0.55, 0.25) * 0.012, urban);
+// dark wet asphalt under the sodium lamps, seen from afar as their average
+// glow, and grey under the day through the deck (sky s).
+vec3 groundUrban(vec3 col, float urban, LandSky s) {
+    vec3 day = 0.05 * landDaylight(s, vec3(0.0, 1.0, 0.0));
+    return mix(col, vec3(0.02, 0.018, 0.017) * CLOUD_DECK * 2.0 + vec3(1.0, 0.55, 0.25) * 0.012 + day, urban);
 }
 
 // The land lit, before the haze: its diffuse light, and the wet ground's sheen.
@@ -586,7 +634,7 @@ vec3 groundLit(vec3 rel, vec3 n, float urban, Cover cover, bool textured) {
     LandWater w;
     vec3 nB = n;
     vec3 albedo = groundAlbedo(rel, l, urban, cover, textured, float(GRASS_ROAD_FAR), nB, w);
-    return groundUrban(albedo * groundLightIn(l.sky, nB), urban) + landSheen(rel, l, nB, n, LAND_FILM_ROUGH, w);
+    return groundUrban(albedo * groundLightIn(l.sky, nB), urban, l.sky) + landSheen(rel, l, nB, n, LAND_FILM_ROUGH, w);
 }
 
 // What is lit at rel, seen through the clear air and the haze.

@@ -1,10 +1,10 @@
 #ifndef DIR_SHADOW_GLSL
 #define DIR_SHADOW_GLSL
 
-/* The directional light's shadows on the land (M11c). The light is the moon
- * for now (frame.dirLight: its direction, set from frame.moon in
- * src/render/renderer.c); a sun would be another direction through the same
- * function. dirShadow says how much of it reaches a point on the ground:
+/* The directional light's shadows on the land (M11c). The light is the sun
+ * by day and the moon by night (frame.dirLight: its direction, set in
+ * src/render/renderer.c, DN4). dirShadow says how much of it reaches a point
+ * on the ground:
  *
  * - Near the camera, one hard ray through the shadows' TLAS (the clipmap's
  *   near levels, RT_MASK_TERRAIN: src/render/terrain_rt.c) to where the
@@ -15,7 +15,7 @@
  *   through the clipmap's heights towards the light, out to the coarsest
  *   window. Each step reads the level whose spacing is about the step, and
  *   the steps grow with the distance (DIR_GROW), so a far ridge is sampled as
- *   coarsely as its shadow's edge is soft: the light's disc (MOON_RADIUS)
+ *   coarsely as its shadow's edge is soft: the light's disc (frame.dirMix.z)
  *   widens the edge with the distance to what casts it, and the march gives
  *   that soft edge from the least clearance it found. The ground falls away
  *   under the ray with the planet's curve (planetDrop). Where the ray passes
@@ -100,8 +100,8 @@ float dirMarch(vec3 p, vec3 L, float t0, float s0) {
     float rise = L.y / hor, top = frame.terrainInfo.y;
     // the light's disc as a clearance: ground a height c under the ray, t out,
     // lies c hor^2 / t below it as the light's direction goes, so the disc
-    // (its angular radius MOON_RADIUS) shows past it from c = -soft t / 2 to + soft t / 2
-    float soft = 2.0 * MOON_RADIUS / max(hor * hor, 1e-3);
+    // (its angular radius frame.dirMix.z: the sun's or the moon's) shows past it from c = -soft t / 2 to + soft t / 2
+    float soft = 2.0 * frame.dirMix.z / max(hor * hor, 1e-3);
     float vis = 1.0, t = t0;
     for (int i = 0; i < DIR_STEPS; ++i) {
         float y = p.y + t * rise + planetDrop(vec2(t, 0.0));

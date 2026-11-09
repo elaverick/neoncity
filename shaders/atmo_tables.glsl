@@ -13,6 +13,6 @@ layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D transOut;
 layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D msOut;
 layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D skyOut;
 layout(set = 0, binding = 6) uniform sampler2D skyLut;
-layout(set = 0, binding = 7, std430) buffer AirEye { vec4 airEye[4]; };   // AIR_* in common.glsl, read back for the frame
+layout(set = 0, binding = 7, std430) buffer AirEye { vec4 airEye[8]; };   // AIR_* in common.glsl, read back for the frame
 
 #endif
