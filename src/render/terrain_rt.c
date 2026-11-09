@@ -12,11 +12,15 @@
  * moves only the heights change, and the structure is refit in place rather
  * than built (built again every REBUILD refits, when most of its samples are
  * new, or when it comes back into use). The finer level's window, but for its
- * boundary, is sunk rather than left out (a refit can't drop triangles). The
- * ground under the city stays in: it is drawn sunk under the streets
- * (terrain_urban_sink), and urban weight 1 reaches well past the built edge
- * (the belt is measured from the edge's contour), over the very hills that
- * cut the city off.
+ * boundary, is sunk rather than left out (a refit can't drop triangles). So
+ * is the ground under the city's own streets (under_city: the cover's last
+ * byte, plan_city_ground, exactly 1 at the vertex and the eight round it):
+ * the city covers it, and in the TLAS it cost every lamp's ray in the city
+ * 0.15 ms to walk (M11e). Not the urban weight: that is 1 well past the built
+ * edge (the belt is measured from the edge's contour), over the very hills
+ * that cut the city off. On another settlement, never built in this frame,
+ * the byte is its urban weight, so its core is sunk too: gentle ground, and
+ * its land in the moon's TLAS ray only.
  *
  * The levels are the finest drawn out to the first whose window reaches
  * RT_RANGE from its centre (or just the finest drawn, if that is coarser), so
@@ -246,6 +250,20 @@ void terrain_rt_update(Renderer *r, TerrainRt *tr, VkCommandBuffer cmd, int slot
     }
 }
 
+/* terrain_rt.comp's underCity: window vertex (i, j) of the level and the
+ * eight round it (clamped to the window) on the city's own ground. */
+static int city_at(const TerrainClipLevel *lv, int i, int j) {
+    i = i < 0 ? 0 : i > W - 1 ? W - 1 : i;
+    j = j < 0 ? 0 : j > W - 1 ? W - 1 : j;
+    return (terrain_clip_sample(lv, lv->origin[0] + i, lv->origin[1] + j)->cover[1] >> 24) == 255u;
+}
+static int under_city(const TerrainClipLevel *lv, int i, int j) {
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dx = -1; dx <= 1; ++dx)
+            if (!city_at(lv, i + dx, j + dz)) return 0;
+    return 1;
+}
+
 /* The check: each level in the TLAS read back and set against the CPU's
  * drawn surface (terrain_clip_morph's blend of the clipmap's own samples,
  * round the camera the level was written for) and the sinks. Only while the clipmap is as the GPU last had it: the worker
@@ -276,7 +294,7 @@ static void check_levels(Renderer *r, TerrainRt *tr, const TerrainClipmap *clip,
 
     const float *v = (const float *)rb.mapped;
     double worst = 0.0, worstXZ = 0.0;
-    long bad = 0, sunkHole = 0, total = 0;
+    long bad = 0, sunkHole = 0, sunkCity = 0, total = 0;
     for (int l = tr->first; l <= tr->last; ++l) {
         const RtLevel *L = &tr->lv[l];
         const TerrainClipLevel *lv = &clip->level[l];
@@ -292,8 +310,10 @@ static void check_levels(Renderer *r, TerrainRt *tr, const TerrainClipmap *clip,
                 if (m < L->fade) m = L->fade;
                 double want = s->h + m * (s->hc - s->h);
                 int hole = L->hole[0] >= 0 && i > L->hole[0] && i < L->hole[0] + HOLE && j > L->hole[1] && j < L->hole[1] + HOLE;
-                if (hole) want -= SINK;
+                int city = under_city(lv, i, j);
+                if (hole || city) want -= SINK;
                 sunkHole += hole;
+                sunkCity += city && !hole;
                 double e = fabs(p[1] - want), exz = fmax(fabs(p[0] - i * lv->spacing), fabs(p[2] - j * lv->spacing));
                 if (e > worst) worst = e;
                 if (exz > worstXZ) worstXZ = exz;
@@ -302,8 +322,8 @@ static void check_levels(Renderer *r, TerrainRt *tr, const TerrainClipmap *clip,
             }
     }
     vk_buffer_destroy(vk, &rb);
-    snprintf(out, n, "; check: %ld vertices, worst height %.4f m, x/z %.4f m, %ld off by more than 1 cm%s (%ld sunk under a finer level)",
-             total, worst, worstXZ, bad, bad ? " FAILED" : "", sunkHole);
+    snprintf(out, n, "; check: %ld vertices, worst height %.4f m, x/z %.4f m, %ld off by more than 1 cm%s (%ld sunk under a finer level, %ld under the city)",
+             total, worst, worstXZ, bad, bad ? " FAILED" : "", sunkHole, sunkCity);
 }
 
 void terrain_rt_stats(Renderer *r, TerrainRt *tr, const TerrainClipmap *clip, bool current, char *buf, size_t n) {

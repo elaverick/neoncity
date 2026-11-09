@@ -231,12 +231,12 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     - Flying 1.2 km over the mountains (`--cam -60000 -95000 0 -14 1225`): 1.20 to 1.51 ms (terrain 0.59 to 0.79,
       grass prepare 0.16 to 0.25). On foot there: 1.30 to 1.53.
     - Over the canyons (moon shadows' test spots): +0.0-0.2 ms, mostly the TLAS's build.
-    - In the city at the spawn: the lamps' shadow rays 0.59 to 0.75 ms, all of it from the terrain's levels in the
-      TLAS (`NEONCITY_TERRAIN_RT=0` alone puts it back; the moon and caves add nothing there). The land lies 0.5 m
-      under every street (`terrain_urban_sink`) and its levels overlap the city's structures, so every lamp's ray
-      walks them too. Sinking it under the city's own ground in the BLAS as well (`plan_city_ground`, the cover's
-      last byte, which M11a didn't have) or leaving the terrain out of rays that start and end inside the built
-      area would win it back.
+    - In the city at the spawn: the lamps' shadow rays were 0.59 to 0.75 ms, all of it from the terrain's levels in
+      the TLAS: the land lies 0.5 m under every street (`terrain_urban_sink`), so every lamp's ray walked it too.
+      Fixed: `terrain_rt.comp` now sinks it 50 m where the city's own ground (`plan_city_ground`, the cover's last
+      byte) is 1 at a vertex and the eight round it, and the rays are back to 0.58 ms; F10 at the spawn and the edge
+      differ by same-build noise. On another settlement (never built in its neighbour's frame) the byte is its
+      urban weight, so its core is sunk too and casts no moon shadow from within the TLAS's reach: gentle ground.
     - At the north edge on foot: within noise.
   Left over from M11d:
   - **Cost** (RTX 4080 SUPER, 1600 x 900): from just inside adit 14928f41's mouth, the cave filling the screen, the

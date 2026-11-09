@@ -1075,6 +1075,7 @@ points the galleries and bridges would black out the canyon.) They need a GPU wi
   Shadows fade out from `SHADOW_FADE` (350 m) to `SHADOW_FAR`, deep in the haze.
 - **The land.** The terrain's clipmap levels near the camera are in the top-level structure too
   (`src/render/terrain_rt.c`, refit in place as the windows move), so hills, cuttings and embankments shadow the lamps.
+  Under the city's own streets (and under a finer level's window) their copy is sunk 50 m, out of the rays' way.
   And the land beside the city takes their light (`shaders/terrain/land_lights.glsl`): each frame a grid of chunk cells
   round the camera, in the frame's uniforms, gives each cell's chunk record and the box its table's lights reach; a
   point of land takes the table of the first chunk whose lights reach it (its own cell's, then the three beside it).
@@ -1106,8 +1107,7 @@ points the galleries and bridges would black out the canyon.) They need a GPU wi
 
 On an RTX 4080 SUPER at 1600x900 with 4x MSAA, at the spawn point, shadows cost about 1.5 ms: the prepass 0.35, the
 rays 0.6, the filter 0.5 and the structures' upkeep 0.1; the scene pass is no slower, since the prepass saves it as
-much as the lookups cost. (Measured again on 2026-11-09: the prepass 0.45, the rays 0.75, the filter 0.7, of which
-0.15 of the rays is the terrain's levels in the structure, see TODO.md.) Out in the land the terrain's ray tracing
+much as the lookups cost. (Measured again on 2026-11-09: the prepass 0.45, the rays 0.6, the filter 0.7.) Out in the land the terrain's ray tracing
 costs about 0.3 ms flying over the mountains (the moon's march in the terrain and the grass), and 0.45 ms at worst
 just inside a cave's mouth looking out.
 

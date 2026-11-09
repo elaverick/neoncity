@@ -11,8 +11,8 @@
  * screen), less a sink inside the finer level's window, but for its boundary
  * (hole: its corner in this level's samples; -1 for the finest), which draws
  * there: sunk that deep, those triangles lie under the finer surface, where
- * no shadow ray goes. Under the city's ground the terrain is drawn sunk
- * (terrain_urban_sink), so it lies under the streets here too. */
+ * no shadow ray goes. Under the city's own ground (underCity) it is sunk the
+ * same way, so the lamps' rays don't walk it. */
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -39,6 +39,20 @@ const int N = TERRAIN_CLIP_N, W = TERRAIN_CLIP_W;
 int slotBase(int level, ivec2 s) { return (((level * N) + (s.y & (N - 1))) * N + (s.x & (N - 1))) * 7; }
 float word(int i) { return uintBitsToFloat(samples[i]); }
 
+/* Under the city's own streets (the cover's last byte, plan_city_ground, is
+ * exactly 1 here and at the eight samples round, within the window): the
+ * city's ground covers every triangle that touches the vertex, so it casts
+ * nothing a ray from the city could meet, and sunk it keeps the lamps' rays
+ * from walking it. The land beside the built edge, its hills and embankments,
+ * stays. Mirrored in terrain_rt.c (under_city). */
+bool cityAt(ivec2 g) { return (samples[slotBase(lv.level, lv.slot + g) + 6] >> 24) == 255u; }
+bool underCity(ivec2 g) {
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dx = -1; dx <= 1; ++dx)
+            if (!cityAt(clamp(g + ivec2(dx, dz), ivec2(0), ivec2(W - 1)))) return false;
+    return true;
+}
+
 void main() {
     ivec2 g = ivec2(gl_GlobalInvocationID.xy);
     if (g.x >= W || g.y >= W) return;
@@ -53,7 +67,7 @@ void main() {
     float hd = h + morph * (hc - h);
 
     bool covered = lv.hole.x >= 0 && all(greaterThan(g, lv.hole)) && all(lessThan(g, lv.hole + (W - 1) / 2));
-    if (covered) hd -= lv.sink;
+    if (covered || underCity(g)) hd -= lv.sink;
 
     uint v = (lv.base + uint(g.y * W + g.x)) * 3u;
     verts[v] = float(g.x) * lv.spacing;
