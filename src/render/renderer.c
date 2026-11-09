@@ -284,12 +284,13 @@ static void frame_uniforms(Renderer *r, int slot, const FrameUBO *uboIn, const d
     ubo->shadow[1] = (float)((shadows ? 1 : 0) | (r->shadowDebug ? 2 : 0));   /* SHADOWS_ON | SHADOWS_DEBUG (common.glsl) */
     ubo->shadow[2] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.375f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
     ubo->shadow[3] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.125f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
-    /* The directional light is the moon (src/app/main.c moon_dir): its shadows
+    /* The directional light is the moon (src/app/main.c: sky_ubo): its shadows
      * marched through the clipmap unless turned off, and traced near the camera
      * with the ray-traced shadows (DIR_SHADOW_TLAS, once the terrain's TLAS
-     * levels are known: after terrain_gpu_update). */
+     * levels are known: after terrain_gpu_update). A moon that has set (or
+     * is new) throws no light and so no shadows. */
     memcpy(ubo->dirLight, ubo->moon, 3 * sizeof(float));
-    ubo->dirLight[3] = r->dirShadowsOff ? 0.0f : 1.0f;   /* DIR_SHADOW_MARCH */
+    ubo->dirLight[3] = r->dirShadowsOff || ubo->moon[3] <= 0.0f ? 0.0f : 1.0f;   /* DIR_SHADOW_MARCH */
     if (!r->havePrev) { r->prevViewProj = ubo->viewProj; memcpy(r->prevCam, cam, sizeof(r->prevCam)); r->havePrev = true; }
     mat4 moved = mat4_identity();
     for (int k = 0; k < 3; ++k) moved.m[12 + k] = (float)(cam[k] - r->prevCam[k]);

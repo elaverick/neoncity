@@ -94,7 +94,9 @@ layout(set = 0, binding = 0) uniform Frame {
     mat4 prevViewProj;   // the previous frame's viewProj, taking this frame's camera-relative positions
     vec4 sky;        // x the city's light in the air round the camera (0 countryside .. 1 city), y how many cities[], z cloud cover over the camera (src/app/weather.c)
     vec4 cities[CLOUD_CITIES];   // the settlements whose clouds are drawn: camera-relative centre x, z; footprint radius (clouds.h)
-    vec4 moon;       // xyz towards the moon, in the camera's local frame (src/app/main.c: moon_dir); w east's angle there, from x towards z
+    vec4 moon;       // xyz towards the moon, in the camera's local frame (src/app/main.c: sky_ubo); w its light against a full moon's (phase, and 0 once it has set)
+    vec4 sun;        // xyz towards the sun, in the camera's local frame; w its altitude's sine
+    mat4 starsTurn;  // the stars' frame (equatorial, of date) from the camera's local one (sky.frag)
     uvec4 doorInfo;  // x how many doors near the camera (src/app/lobby_doors.c)
     uvec4 doorKey[DOOR_SLOTS / 4];   // their keys, four to a vector
     vec4 doorState[DOOR_SLOTS];      // x how far open (0..1, eased), y a revolving door's angle (rad)
@@ -509,12 +511,16 @@ float cloudCover(vec2 rel, float edge) {
 // border's outer line.
 float cityLight(float edge) { return 1.0 - smoothstep(0.0, CLOUD_BORDER, edge); }
 
-// The moon, low in the sky and so far off that its light falls the same way
-// everywhere. It stays put against the compass for now, wherever on the
-// planet the camera is (src/app/main.c: moon_dir), and so do the stars.
+// The moon, so far off that its light falls the same way everywhere. Where
+// it stands, and how much of it is lit, is the world clock's (src/app/
+// sky_clock.c: the real moon over the camera's place on the planet), and so
+// are the stars; it rises and sets, and some nights it is new. The sun is
+// worked out as well (SUN_DIR) but lights nothing yet: only the moon's disc.
 #define MOON_DIR (frame.moon.xyz)   // unit: towards the moon
+#define SUN_DIR  (frame.sun.xyz)    // unit: towards the sun
 const float MOON_RADIUS = 0.014;                         // its disc's angular radius (rad), about three times the real moon's
-const vec3  MOON_LIGHT = vec3(0.50, 0.58, 0.80) * 0.60;  // the light it throws on ground square to it
+const vec3  MOON_FULL = vec3(0.50, 0.58, 0.80) * 0.60;   // the light a full moon high up throws on ground square to it
+#define MOON_LIGHT (MOON_FULL * frame.moon.w)            // the moon's tonight: its phase, and none once it has set
 const vec3  STARLIGHT = vec3(0.0016, 0.0020, 0.0032);    // the clear night sky's own glow, from above
 
 /* ---------------- atmosphere ----------------

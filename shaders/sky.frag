@@ -23,13 +23,13 @@ float skyClear(vec3 dir) {
  * blue-white to orange. Each is drawn as a soft point about a pixel across
  * (px: a pixel's angle, radians), so it neither shimmers nor drops out as it
  * moves over the pixels. Near the horizon they twinkle. The cube is fixed
- * against the compass, as the moon is: dir is turned from the frame's axes
- * into east, up and south (frame.moon.w), so the stars don't turn when the
- * frame changes. */
+ * in the stars' own frame (equatorial: its +z the celestial pole), dir
+ * turned into it by frame.starsTurn, so they wheel about the pole star with
+ * the sidereal day and stand as they should over every place. */
 const float STAR_CELLS = 180.0;   // cells along a face's edge
 vec3 stars(vec3 dir, float px) {
-    vec2 e = vec2(cos(frame.moon.w), sin(frame.moon.w));   // east, in the frame's (x, z)
-    dir = vec3(dot(dir.xz, e), dir.y, dot(dir.xz, vec2(-e.y, e.x)));
+    float twinkle = 0.45 * (1.0 - smoothstep(0.02, 0.35, dir.y));
+    dir = mat3(frame.starsTurn) * dir;
     vec3 a = abs(dir);
     uint face;
     vec2 uv;
@@ -40,7 +40,6 @@ vec3 stars(vec3 dir, float px) {
     // a pixel in cells: the face stretches towards its corners
     float pc = px * 0.5 * STAR_CELLS * (1.0 + 0.5 * dot(uv, uv));
     float s2 = 2.0 * 0.36 * pc * pc;   // the blur: a gaussian of 0.6 pixel
-    float twinkle = 0.45 * (1.0 - smoothstep(0.02, 0.35, dir.y));
     ivec2 c0 = ivec2(floor(g));
     vec3 sum = vec3(0.0);
     for (int j = -1; j <= 1; ++j)
@@ -61,9 +60,10 @@ vec3 stars(vec3 dir, float px) {
     return sum;
 }
 
-/* The moon: a waning gibbous disc MOON_RADIUS across, lit from the side by
- * the sun below the horizon, with darker seas and a faint earthshine on its
- * unlit side; its edge anti-aliased over a pixel. */
+/* The moon: a disc MOON_RADIUS across, lit by the real sun (SUN_DIR: so far
+ * off that from the moon it lies the same way), so its phase and the tilt of
+ * its terminator are tonight's; with darker seas and a faint earthshine on
+ * its unlit side; its edge anti-aliased over a pixel. */
 const vec3 MOON_SURFACE = vec3(1.0, 0.96, 0.90) * 2.5;
 vec3 moon(vec3 dir, float px) {
     float c = dot(dir, MOON_DIR);
@@ -72,7 +72,7 @@ vec3 moon(vec3 dir, float px) {
     vec2 q = vec2(dot(dir, T), dot(dir, B)) / MOON_RADIUS;   // on the disc: |q| < 1, y up the sky
     float disc = clamp((1.0 - length(q)) * MOON_RADIUS / px + 0.5, 0.0, 1.0);
     vec3 nrm = vec3(q, sqrt(max(1.0 - dot(q, q), 0.0)));      // its surface; z towards the eye
-    const vec3 SUN = vec3(-0.72, 0.30, 0.62);                 // from the moon, the sun lies to the left and behind it
+    vec3 SUN = vec3(dot(SUN_DIR, T), dot(SUN_DIR, B), -dot(SUN_DIR, MOON_DIR));   // in the disc's frame
     float lit = smoothstep(-0.04, 0.12, dot(nrm, SUN)) * (0.55 + 0.45 * max(dot(nrm, SUN), 0.0));
     float seas = fbm(q * 2.3 + 4.0, 0x300Fu) * 0.7 + 0.3 * vnoise(q * 9.0, 0x3010u);
     float albedo = mix(1.0, 0.6, smoothstep(0.42, 0.62, seas));

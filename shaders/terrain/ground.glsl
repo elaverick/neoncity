@@ -465,7 +465,7 @@ const float LAND_FILM_ROUGH = 0.45, LAND_POOL_ROUGH = 0.04, WATER_F0 = 0.02;
 // (sky.frag: about 1.75 where lit) times the disc's solid angle (MOON_RADIUS),
 // in MOON_LIGHT's colour. Far less than MOON_LIGHT, the diffuse light, which
 // is made strong enough for a moonlit night to read.
-const vec3 MOON_GLINT = MOON_LIGHT * 0.003;
+#define MOON_GLINT (MOON_LIGHT * 0.003)
 
 // The sky a wet surface reflects in direction R under sky s: the haze and the
 // moon's aureole (hazeColor) about the horizon, and above, where the cities'

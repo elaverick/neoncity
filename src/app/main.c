@@ -17,6 +17,7 @@
 #include "lobby_doors.h"
 #include "grass_rules.h"
 #include "grass_wake.h"
+#include "sky_clock.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -78,7 +79,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -88,6 +89,8 @@ static void usage(void) {
            "  --walk-shot  take the --shot as the walk ends, not once streaming settles again (to catch the grass's wake)\n"
            "  --rain  fix the rain intensity (0 dry, 0.1 drizzle .. 1 downpour); otherwise it drifts\n"
            "  --time  hold the shaders' clock at this many seconds (flames, signs, steam: for captures)\n"
+           "  --utc   start the world's clock (the sun, the moon, the stars) at this UTC instant, from which it runs at 1x;\n"
+           "          otherwise it is the system's UTC. A --shot holds it, there or at " SKY_CAPTURE_UTC "\n"
            "  --impostors  draw this share (default 0.4; 0 turns them off) of the office towers' floors behind curtain\n"
            "               walls and ribbon windows as baked interior impostors (docs/interior-impostors.md; F8 toggles)\n"
            "  --lockdoors  lock every lobby's automatic doors: sliding ones stay shut, revolving ones stand still\n"
@@ -116,6 +119,8 @@ typedef struct Options {
     bool        walkShot;        /* --walk-shot: the shot as the walk ends */
     bool        noWake;          /* --nowake: no wake through the grass */
     double      fixedTime;       /* the shaders' clock held here (< 0: running) */
+    bool        haveUtc;         /* --utc: the world's clock starts at utcJd */
+    double      utcJd;
     float       impostors;       /* the share of eligible office floors drawn as impostors (0: none) */
     int         grassDebug;      /* --grass-debug: GRASS_DEBUG_* (src/grass/grass_rules.h) */
     int         caveDebug;       /* --cave-debug: renderer_set_cave_debug's view */
@@ -153,6 +158,10 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--nowake") == 0) o->noWake = true;
         else if (strcmp(argv[i], "--rain") == 0 && i + 1 < argc) o->fixedRain = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--time") == 0 && i + 1 < argc) o->fixedTime = atof(argv[++i]);
+        else if (strcmp(argv[i], "--utc") == 0 && i + 1 < argc) {
+            if (!sky_parse_utc(argv[++i], &o->utcJd)) { fprintf(stderr, "--utc %s: not a UTC instant (YYYY-MM-DDTHH:MM)\n", argv[i]); return false; }
+            o->haveUtc = true;
+        }
         else if (strcmp(argv[i], "--impostors") == 0) {
             o->impostors = 0.4f;
             if (i + 1 < argc && ((argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') || argv[i + 1][0] == '.')) o->impostors = (float)atof(argv[++i]);
@@ -315,29 +324,70 @@ static float haze_datum(void) {
     return datum;
 }
 
-/* Towards the moon in the camera's local frame: fixed against the compass
- * (east, up, south: MOON_ENU), so it neither turns as the frame changes nor
- * as the camera travels. out[3] is where east lies in the frame there, the
- * angle from its x towards its z (east is level, so that is all of it): the
- * stars turn by it (shaders/sky.frag). */
-static const double MOON_ENU[3] = { 0.8547, 0.4223, -0.3017 };
-static void moon_dir(const Player *player, float out[4]) {
-    TerrainDir ax, up, az;
-    terrain_frame_axes(terrain_frame(), player->eye[0], player->eye[2], &ax, &up, &az);
-    TerrainDir east = { -up.y, up.x, 0.0 };   /* the pole (+z) cross up */
-    double l = sqrt(east.x * east.x + east.y * east.y);
-    east.x /= l; east.y /= l;
-    TerrainDir south = { east.y * up.z - east.z * up.y, east.z * up.x - east.x * up.z, east.x * up.y - east.y * up.x };   /* east cross up */
-    TerrainDir m = { MOON_ENU[0] * east.x + MOON_ENU[1] * up.x + MOON_ENU[2] * south.x,
-                     MOON_ENU[0] * east.y + MOON_ENU[1] * up.y + MOON_ENU[2] * south.y,
-                     MOON_ENU[0] * east.z + MOON_ENU[1] * up.z + MOON_ENU[2] * south.z };
-    out[0] = (float)(m.x * ax.x + m.y * ax.y + m.z * ax.z);
-    out[1] = (float)(m.x * up.x + m.y * up.y + m.z * up.z);
-    out[2] = (float)(m.x * az.x + m.y * az.y + m.z * az.z);
-    out[3] = (float)atan2(east.x * az.x + east.y * az.y, east.x * ax.x + east.y * ax.y);
+/* The sky in the camera's local frame (src/app/sky_clock.c): the sun, the
+ * moon and the stars, worked out Earth-fixed for the clock's instant and
+ * turned into the frame's axes at the eye, so each place on the planet has
+ * its own hour. */
+typedef struct LocalSky {
+    TerrainDir ax, up, az;     /* the frame's axes at the eye, Earth-fixed */
+    SkyState   s;
+    double     moon[3];        /* towards the moon from the eye's place (its parallax), Earth-fixed */
+} LocalSky;
+
+static void local_sky(const Player *player, double jd, LocalSky *l) {
+    terrain_frame_axes(terrain_frame(), player->eye[0], player->eye[2], &l->ax, &l->up, &l->az);
+    sky_state(jd, &l->s);
+    double up[3] = { l->up.x, l->up.y, l->up.z };
+    sky_moon_topocentric(&l->s, up, l->moon);
 }
 
-static void frame_ubo(const Player *player, const VkCore *vk, double t, const Weather *weather, float edge, FrameUBO *ubo) {
+static void to_local(const LocalSky *l, const double d[3], float out[3]) {
+    out[0] = (float)(d[0] * l->ax.x + d[1] * l->ax.y + d[2] * l->ax.z);
+    out[1] = (float)(d[0] * l->up.x + d[1] * l->up.y + d[2] * l->up.z);
+    out[2] = (float)(d[0] * l->az.x + d[1] * l->az.y + d[2] * l->az.z);
+}
+
+/* frame.moon, frame.sun, frame.starsTurn (shaders/common.glsl). The moon's
+ * light (moon.w, against a full moon's: MOON_FULL) follows its phase and
+ * fades as it sinks into the horizon's thick air: none once it has set. */
+static void sky_ubo(const LocalSky *l, FrameUBO *ubo) {
+    to_local(l, l->moon, ubo->moon);
+    to_local(l, l->s.sun, ubo->sun);
+    float m = fminf(fmaxf((ubo->moon[1] + 0.02f) / 0.12f, 0.0f), 1.0f);   /* its altitude's sine over -0.02 .. 0.1 */
+    ubo->moon[3] = (float)l->s.moonBright * m * m * (3.0f - 2.0f * m);
+    ubo->sun[3] = ubo->sun[1];
+    /* the stars' frame (equatorial, of date) from the local one: the frame's
+     * axes, Earth-fixed, turned back by the sidereal angle */
+    double cg = cos(l->s.gmst), sg = sin(l->s.gmst);
+    const TerrainDir *axes[3] = { &l->ax, &l->up, &l->az };
+    for (int c = 0; c < 3; ++c) {
+        const TerrainDir *a = axes[c];
+        ubo->starsTurn[c * 4 + 0] = (float)(a->x * cg - a->y * sg);
+        ubo->starsTurn[c * 4 + 1] = (float)(a->x * sg + a->y * cg);
+        ubo->starsTurn[c * 4 + 2] = (float)a->z;
+        ubo->starsTurn[c * 4 + 3] = 0.0f;
+    }
+    ubo->starsTurn[15] = 1.0f;
+}
+
+/* One line on the console: the instant, the place, its local solar time, the
+ * sun's and the moon's heights and bearings, the moon's phase. */
+static void sky_report(const Player *player, double jd) {
+    LocalSky l;
+    local_sky(player, jd, &l);
+    double up[3] = { l.up.x, l.up.y, l.up.z }, lat, lon, salt, saz, malt, maz;
+    terrain_dir_latlon(l.up, &lat, &lon);
+    sky_alt_az(l.s.sun, up, &salt, &saz);
+    sky_alt_az(l.moon, up, &malt, &maz);
+    char when[64];
+    sky_format_utc(jd, when, sizeof(when));
+    double h = sky_local_solar_hours(jd, lon), r2d = 180.0 / 3.14159265358979323846;
+    printf("sky: %s at %.3f %.3f, local solar time %02d:%02d; sun altitude %.1f azimuth %.1f; moon altitude %.1f azimuth %.1f, %.0f%% lit (%.2f of full)\n",
+           when, lat, lon, (int)h, (int)(h * 60.0) % 60, salt * r2d, saz * r2d, malt * r2d, maz * r2d, l.s.moonLit * 100.0, l.s.moonBright);
+    fflush(stdout);
+}
+
+static void frame_ubo(const Player *player, const VkCore *vk, double t, double jd, const Weather *weather, float edge, FrameUBO *ubo) {
     float aspect = (float)vk->extent.width / (float)(vk->extent.height ? vk->extent.height : 1);
     mat4 proj = mat4_perspective_rz(player->fovY, aspect, NEAR_PLANE, FAR_PLANE);
     mat4 view = mat4_view_rot(player->right, player->up, player->fwd);
@@ -357,7 +407,9 @@ static void frame_ubo(const Player *player, const VkCore *vk, double t, const We
     ubo->weather[2] = haze_datum();
     ubo->weather[3] = edge;
     weather_frame(weather, player->eye, ubo);
-    moon_dir(player, ubo->moon);
+    LocalSky sky;
+    local_sky(player, jd, &sky);
+    sky_ubo(&sky, ubo);
 }
 
 /* The player's wake for the grass's blades (shaders/grass/wake.glsl), in real
@@ -430,6 +482,12 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
     Capture cap = { .path = opt->shotPath, .walkSeconds = opt->walkSeconds, .turnRate = opt->turnRate, .atWalkEnd = opt->walkShot };
     Weather weather = { 0.0f, -1.0f };
     GrassWake wake;   /* the player's path through the grass (src/grass/grass_wake.h) */
+    SkyClock clock;   /* the world's UTC: a capture holds it */
+    sky_clock_init(&clock, opt->haveUtc ? opt->utcJd : 0.0, startTime, opt->shotPath != NULL);
+    if (!opt->haveUtc) {
+        if (opt->shotPath) sky_parse_utc(SKY_CAPTURE_UTC, &clock.jd0);
+        else clock.jd0 = sky_jd_now();
+    }
     grass_wake_reset(&wake);
     while (!glfwWindowShouldClose(win)) {
         glfwPollEvents();
@@ -461,7 +519,9 @@ static void run(GLFWwindow *win, VkCore *vk, ChunkSystem *chunks, Renderer *rend
         weather_update(&weather, now - startTime, dt, opt->fixedRain);
         FrameUBO ubo;
         edge = chunk_edge(chunks, edge, dt);
-        frame_ubo(player, vk, shaderTime, &weather, edge, &ubo);
+        double jd = sky_clock_jd(&clock, now);
+        if (totalFrames == 1) sky_report(player, jd);
+        frame_ubo(player, vk, shaderTime, jd, &weather, edge, &ubo);
         uint32_t keys[DOOR_SLOTS];
         ubo.doorInfo[0] = (uint32_t)lobby_doors_frame(keys, ubo.doorState);
         for (uint32_t k = 0; k < ubo.doorInfo[0]; ++k) ubo.doorKey[k / 4][k % 4] = keys[k];

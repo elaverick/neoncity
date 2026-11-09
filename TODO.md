@@ -622,10 +622,10 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   clearing, no rain out in the country. Rain intensity still drifts on one global clock, scaled by the cover over
   the camera. The megacities' constant rain is meant to stay; the rest of the world is to get a full weather system
   (fronts, dry spells, snowfall), for which `--rain 0` (dry) and the fade below `RAIN_DRIZZLE` are the start.
-- **The moon and stars are fixed against the compass** (east, up, south at the camera: `moon_dir` in `main.c`,
-  `frame.moon`), so they don't turn as the frame changes; but they don't wheel through the night or change with
-  where on the planet the camera is (they would want the planet's frame and a clock). Its phase is fixed. (Its
-  shadows on the land and in the caves came with M11; see Terrain in ray tracing.)
+- **The moon and stars are the real ones** (DN0, `src/app/sky_clock.c`): they wheel with the UTC clock, by where
+  on the planet the camera is, and the moon has its phase and sets. The sun is worked out but lights nothing: the
+  day is the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md, DN1-DN9). The star cube is not a
+  real catalogue: the pole star and the constellations aren't where they are.
 - **No light dome from afar.** From the countryside a city shows as its clouds, lit sodium-orange underneath near
   it, and its proxies; the haze itself doesn't glow over it, because the haze's colour is one per frame
   (`frame.sky.x`, the air round the camera). A glow in `hazeColor` towards each nearby city would add the dome.

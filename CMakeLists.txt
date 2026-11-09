@@ -261,6 +261,10 @@ add_executable(terrain_test tests/terrain_test.c ${TERRAIN_SOURCES} ${GEN_SOURCE
 target_include_directories(terrain_test PRIVATE ${SRC_DIRS})
 # The settlements over the planet and the roads between them (src/plan/plan_world.c, plan_roads.c):
 # world_test [--fingerprint | --map out.ppm [px] | --local out.ppm [km [x z]]].
+# The world's clock and the sky's ephemerides (src/app/sky_clock.c) against reference values:
+# sky_test [--at UTC LAT LON | --find].
+add_executable(sky_test tests/sky_test.c src/app/sky_clock.c)
+target_include_directories(sky_test PRIVATE src/app)
 add_executable(world_test tests/world_test.c src/app/frames.c ${GEN_SOURCES})
 target_include_directories(world_test PRIVATE ${SRC_DIRS})
 # Materials (assets/materials/*.json): every file reads, its maps exist and decode, and its
@@ -282,7 +286,7 @@ if(MSVC)
 elseif(UNIX)
   target_link_libraries(grass_test PRIVATE dl)   # volk loads the Vulkan loader
 endif()
-foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test world_test material_test grass_test)
+foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test world_test material_test grass_test sky_test)
   # the assets the tests read (the models: src/city/models.h), from the source tree
   target_compile_definitions(${T} PRIVATE NEONCITY_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets")
   if(MSVC)
@@ -307,6 +311,7 @@ add_test(NAME arcology_rules COMMAND interior_lab arcology 12000)
 add_test(NAME terrain_rules COMMAND terrain_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake)
 add_test(NAME terrain_rules_procedural COMMAND terrain_test --earth none)
 add_test(NAME world_rules COMMAND world_test)
+add_test(NAME sky_ephemerides COMMAND sky_test)
 add_test(NAME material_rules COMMAND material_test ${CMAKE_CURRENT_SOURCE_DIR}/assets)
 add_test(NAME grass_rules COMMAND grass_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake)
 add_test(NAME grass_rules_gpu COMMAND grass_test --gpu)
@@ -472,7 +477,7 @@ list(REMOVE_ITEM GAME_GEN_SOURCES ${WORLD_SOURCES})
 add_library(neoncity_world OBJECT ${WORLD_SOURCES})
 target_include_directories(neoncity_world PRIVATE ${SRC_DIRS})
 add_executable(NeonCity
-  src/app/main.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/terrain_rt.c src/render/road_gpu.c src/render/planet_gpu.c src/render/cave_gpu.c src/render/proxy_gpu.c src/render/grass_gpu.c src/grass/grass.c src/grass/grass_wake.c src/render/materials.c src/render/adverts.c src/render/interiors.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c src/app/lobby_doors.c)
+  src/app/main.c src/app/sky_clock.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/terrain_gpu.c src/render/terrain_rt.c src/render/road_gpu.c src/render/planet_gpu.c src/render/cave_gpu.c src/render/proxy_gpu.c src/render/grass_gpu.c src/grass/grass.c src/grass/grass_wake.c src/render/materials.c src/render/adverts.c src/render/interiors.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c src/app/lobby_doors.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

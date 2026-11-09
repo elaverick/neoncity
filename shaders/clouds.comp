@@ -138,7 +138,7 @@ vec3 lightAt(vec3 p, Column c, vec3 glow, float mu) {
     od *= below * 0.25 * SIGMA;
     // multiple scattering: light diffuses deep into the deck rather than dying out
     float ms = exp(-od) + 0.3 * exp(-od * 0.25) + 0.1 * exp(-od * 0.06);
-    float above = max(CLOUD_TOP - p.y, 1.0) / MOON_DIR.y;
+    float above = max(CLOUD_TOP - p.y, 1.0) / max(MOON_DIR.y, 0.05);   // (a set moon throws no light: MOON_LIGHT)
     float odUp = deck(p + MOON_DIR * (above * 0.35), c, false) * above * SIGMA * 0.5;
     // the city's light spreads as it rises: the lowest scud and bulges catch the most
     float fall = exp(-(p.y - SCUD_LO) / 80.0);

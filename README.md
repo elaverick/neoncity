@@ -57,7 +57,7 @@ procedural look.
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
-Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture)
+Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture), `--utc YYYY-MM-DDTHH:MM` sets the world's clock, and so the sun, the moon and the stars (see Moon and stars)
 `--noshadows` runs without ray-traced shadows (and without the
 ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo` paints the grass's rules on the land (or its levels of detail, culling, wind, the player's wake, or the blades' and ground's albedo unlit), `--nograss` draws no grass blades, `--nowake` leaves the grass unparted where the player walks, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
@@ -1796,15 +1796,29 @@ over 2.5 km (`CLOUD_FADE`) along a ragged line into the clear sky over the count
   blends the haze from sodium-lit smog to thin moonlit mist and the haze's density from the
   city's to the land's. It also gives the cloud cover over the camera. Rain and wet streets
   only come from that cover, so it is dry out in the countryside.
-- **Moon and stars** (`sky.frag`): a single moon, a waning gibbous disc low in the sky
+- **Moon and stars** (`sky.frag`): the real moon over the camera's place on the planet
   (`MOON_DIR`), with an aureole in clear air. It is a directional light infinitely far off, and
   it faintly lights the land and roads beyond the clouds (`groundLight` in
   `terrain/ground.glsl`). Out of the clouds it casts shadows on the land, its roads and its grass, and into
   the caves (see Shadows, "The moon"). It also silvers the clouds from above. Behind it is a procedural star
   field: a jittered grid over a cube, with power-law brightness, colours from blue-white to
   orange, and twinkling near the horizon. Both are dimmed by the haze they shine through.
-  For now the moon and the stars stay put against the compass wherever the camera is on the
-  planet, and as the frame changes.
+- **The world clock** (`src/app/sky_clock.c`): UTC, as a Julian date. It is the system's UTC, running at 1x;
+  `--utc YYYY-MM-DDTHH:MM` starts it at that instant instead. A `--shot` holds it, at `--utc` or else at
+  `SKY_CAPTURE_UTC` (Christmas Eve 2026 in Los Angeles, the full moon 24 degrees up in the east-north-east, near
+  where the moon used to stand fixed), so captures stay comparable. From the clock the sun (NOAA/Meeus low precision),
+  the moon (Meeus's truncated series, with its parallax from the camera's place) and the sidereal angle are worked
+  out in the planet's Earth-fixed frame, so every place has its own hour: night in New York is not night in Moscow.
+  They are turned into the frame's axes at the eye (`sky_ubo` in `main.c`): `frame.moon` (its light against a full
+  moon's, from its phase by Allen's law and fading as it sets), `frame.sun` (worked out, lighting nothing yet: only
+  the moon's disc, so its phase and the tilt of its terminator are tonight's) and `frame.starsTurn` (the star cube
+  is fixed in the equatorial frame and wheels about the pole). `MOON_LIGHT` is `MOON_FULL` times the moon's light;
+  a set or new moon throws neither light nor shadows. Each run prints one `sky:` line: the instant, the place, its
+  local solar time, the sun's and moon's altitude and azimuth, the moon's phase. `sky_test` (ctest
+  `sky_ephemerides`) checks the clock and the ephemerides against Meeus's worked examples, a full and a new moon,
+  the eclipse of 2024 April 8, sunrise in New York and in Moscow on one day and the solstice's noon at Greenwich;
+  `sky_test --at UTC LAT LON` prints the sky anywhere, `--find` searches for a capture instant. It is DN0 of the
+  day/night roadmap.
 
 ### Clouds (`shaders/clouds.comp`)
 Rain clouds hang over the cities: a nimbostratus deck whose underside sits around 200 m, with
