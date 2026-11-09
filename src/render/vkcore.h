@@ -9,6 +9,13 @@
 
 #define MAX_SWAP_IMAGES 8
 
+/* What the swapchain's pixels mean (composite.frag encodes for it; the --shot decodes it). */
+enum {
+    DISPLAY_SDR   = 0,   /* 8-bit sRGB: the tone curve's 0..1 is the display's 0..1 */
+    DISPLAY_HDR10 = 1,   /* 10-bit, BT.2020 primaries, SMPTE ST 2084 (PQ) to 10,000 nits */
+    DISPLAY_SCRGB = 2,   /* 16-bit float, linear BT.709 primaries, 1.0 = 80 nits (Windows' scRGB) */
+};
+
 typedef struct VkCore {
     GLFWwindow      *window;
     VkInstance       instance;
@@ -30,6 +37,14 @@ typedef struct VkCore {
      * shaderSampledImageArrayNonUniformIndexing. Without them the screens show only
      * the procedural scenes. */
     bool             adverts;
+
+    /* The display (DN8): HDR only when asked (--hdr) and the surface offers it, which on Windows
+     * needs its HDR switch on (Settings > Display). paperWhite: the nits the tone curve's 1.0
+     * (white paper, a lit wall) is shown at; peak: the most the display can show. */
+    bool             hdrWant, colorspaceExt, hdrMetadataExt;
+    int              display;        /* DISPLAY_* */
+    float            paperWhite, peak;
+    bool             formatChanged;  /* the last vk_create_swapchain took a different format (the composite's pipeline is stale) */
 
     VkSwapchainKHR   swapchain;
     VkFormat         swapFormat;
@@ -55,8 +70,10 @@ typedef struct Image {
     uint32_t       w, h, mips;
 } Image;
 
-/* rt: use ray queries if the device has them (vk->rt says whether it did). */
-void     vk_init(VkCore *vk, GLFWwindow *window, bool validation, bool rt);
+/* rt: use ray queries if the device has them (vk->rt says whether it did). hdrPaper > 0 asks for an
+ * HDR swapchain with white paper at that many nits and the display's peak at hdrPeak (vk->display
+ * says whether it got one). */
+void     vk_init(VkCore *vk, GLFWwindow *window, bool validation, bool rt, float hdrPaper, float hdrPeak);
 /* The same device without a window, surface or swapchain, for tools (tools/interior_bake). */
 void     vk_init_headless(VkCore *vk, bool validation, bool rt);
 void     vk_shutdown(VkCore *vk);

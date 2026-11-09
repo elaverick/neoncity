@@ -18,7 +18,10 @@ layout(push_constant) uniform Push {
     vec4 up;      // w = far plane
     vec4 fwd;     // w = rain intensity
     vec4 shelter; // shelter map: camera-relative centre x, z; half-width; w the pre-exposure (common.glsl: EXPOSE)
+    vec4 display; // x the display (DISPLAY_*: src/render/vkcore.h), y white paper's nits, z the peak over white paper
 } pc;
+
+const int DISPLAY_SDR = 0, DISPLAY_HDR10 = 1, DISPLAY_SCRGB = 2;
 
 const float SHELTER_LO = -60.0, SHELTER_HI = 500.0;   // src/core/common.h
 
@@ -32,6 +35,32 @@ bool sheltered(vec3 q) {
 vec3 aces(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
+// The tone curve for an HDR display: the SDR curve (aces) up to KNEE of white paper, then on towards the
+// display's peak (M, in white papers) by an exponential shoulder leaving the knee at the SDR curve's slope.
+// Everything below the knee (the night's streets, walls by day, skin, the sky) is shown as on SDR, at white
+// paper's nits; only what SDR squeezes into its last fifth (neon, lamp heads, the sun's glare off glass, the
+// clouds' silver edges) opens up above it.
+const float KNEE = 0.8, KNEE_X = 0.98235, KNEE_SLOPE = 0.21864;   // aces(KNEE_X) = KNEE; aces'(KNEE_X)
+vec3 hdrTone(vec3 x, float M) {
+    float room = max(M - KNEE, 0.2);
+    vec3 hi = KNEE + room * (1.0 - exp(-(x - KNEE_X) * (KNEE_SLOPE / room)));
+    return mix(aces(x), hi, step(vec3(KNEE_X), x));
+}
+
+// SMPTE ST 2084 (PQ): nits / 10000 to the signal.
+vec3 pq(vec3 y) {
+    const float m1 = 0.1593017578125, m2 = 78.84375, c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875;
+    vec3 p = pow(clamp(y, 0.0, 1.0), vec3(m1));
+    return pow((c1 + c2 * p) / (1.0 + c3 * p), vec3(m2));
+}
+
+// BT.709 primaries (the scene's) to BT.2020's (HDR10's), both D65.
+vec3 rec709To2020(vec3 c) {
+    return vec3(dot(vec3(0.627404, 0.329283, 0.043313), c),
+                dot(vec3(0.069097, 0.919540, 0.011362), c),
+                dot(vec3(0.016391, 0.088013, 0.895595), c));
 }
 
 float hash12(vec2 p) {
@@ -133,7 +162,8 @@ void main() {
     vec3 highTint = vec3(1.10, 0.97, 0.84);
     col *= mix(shadowTint, highTint, smoothstep(0.015, 0.45, l));
 
-    col = aces(col);
+    int display = int(pc.display.x);
+    col = display == DISPLAY_SDR ? aces(col) : hdrTone(col, pc.display.z);
 
     // Vignette
     float v = 1.0 - pc.vignette * smoothstep(0.25, 0.95, length(c * vec2(pc.width / pc.height, 1.0)) * 1.15);
@@ -141,7 +171,11 @@ void main() {
 
     // Film grain (animated), strongest in the mid-tones.
     float g = hash12(gl_FragCoord.xy + vec2(fract(pc.time * 7.13) * 1913.0, fract(pc.time * 3.71) * 2777.0)) - 0.5;
-    col += g * pc.grain * (0.25 + 0.75 * sqrt(max(col, vec3(0.0)))) * 0.5;
+    col += g * pc.grain * (0.25 + 0.75 * sqrt(clamp(col, 0.0, 1.0))) * 0.5;
+    col = max(col, vec3(0.0));
 
-    outColor = vec4(max(col, vec3(0.0)), 1.0);
+    // Out to the display: SDR's swapchain is sRGB (the hardware encodes); HDR's are in nits, white paper at pc.display.y.
+    if (display == DISPLAY_HDR10) col = pq(rec709To2020(col) * (pc.display.y / 10000.0));
+    else if (display == DISPLAY_SCRGB) col *= pc.display.y / 80.0;
+    outColor = vec4(col, 1.0);
 }

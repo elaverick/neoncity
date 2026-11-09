@@ -628,8 +628,9 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
   (fronts, dry spells, snowfall), for which `--rain 0` (dry) and the fade below `RAIN_DRIZZLE` are the start.
 - **The moon and stars are the real ones** (DN0, `src/app/sky_clock.c`): they wheel with the UTC clock, by where
   on the planet the camera is, and the moon has its phase and sets. The sun lights the sky and the haze (DN3), the
-  land (DN4), the clouds (DN5) and the city (DN6); the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md,
-  DN7-DN10) is the city's own clock, the HDR display, the docs and a mop-up. The star cube is not a
+  land (DN4), the clouds (DN5) and the city (DN6), on the city's own clock (DN7), shown on an HDR display if there is
+  one (DN8); the rest of the day/night roadmap (~/.claude/plans/day-night-cycle.md, DN9-DN10) is the docs and a
+  mop-up. The star cube is not a
   real catalogue: the pole star and the constellations aren't where they are.
 - **The night isn't physical against its anchor** (DN1, README "Light and exposure"): the moon and the starlight are
   about 70 times the real ones (`NIGHT_LIFT`), the deck's underside five times the brightest real city-lit overcast,
@@ -723,6 +724,20 @@ countryside has a clear sky with stars and a moon, whose light faintly lights th
     so by day past the deck rays go to dark lamps. Harmless (the daylight swamps their light) but wasted.
   - **The day of the week has no holidays**, and solar time isn't civil time (no zones, no daylight saving): an
     office in Los Angeles empties at 17:00 solar, about 17:00-18:00 by the clock on the wall.
+- **The HDR display (DN8) left over** (README, "Light and exposure", "The display"):
+  - **White paper and the peak are flags** (`--hdr PAPER PEAK`, 203 and 1000 nits), not read from the system:
+    Windows knows the display's peak (DXGI's `IDXGIOutput6::GetDesc1`) and the user's SDR content brightness, and
+    neither is asked. No in-game key turns HDR on or off, nor sets either level.
+  - **Judged on numbers, not on the display**: the frames were decoded and compared with SDR's, and the first look
+    on the user's monitor is still to come. The shoulder (`KNEE` 0.8 of white paper) and 203 nits are where the
+    look calls would be.
+  - **The shoulder is per channel**, as the ACES fit is: a saturated neon tube rises in its own channels and keeps
+    its hue, where SDR's clip whitens it. A hue-preserving curve (on the maximum channel, or on luminance) would be
+    the alternative if the neon looks too saturated.
+  - **The bloom and the grain are SDR's**: the same bloom strength above paper white, and the grain's amplitude
+    capped at white paper's.
+  - **An HDR `--shot`'s BMP** is the HDR frame clipped at white paper, not the SDR tone curve's frame; the capture
+    scripts run SDR.
 - **The city by day (DN6) left over** (README, "Streets and light", "By day"):
   - **How much sky a surface sees is a guess by height** (`cityOpen`: 0.4-0.55 at street level, all of it from 90 m
     up), not the street's real canyon: a low-rise street under the deck is as dim as one among towers. A per-chunk

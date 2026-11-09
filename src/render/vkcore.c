@@ -20,6 +20,18 @@ static bool has_layer(const char *name) {
     return found;
 }
 
+static bool has_instance_ext(const char *name) {
+    uint32_t n = 0;
+    vkEnumerateInstanceExtensionProperties(NULL, &n, NULL);
+    VkExtensionProperties *props = (VkExtensionProperties *)malloc(sizeof(VkExtensionProperties) * (n ? n : 1));
+    vkEnumerateInstanceExtensionProperties(NULL, &n, props);
+    bool found = false;
+    for (uint32_t i = 0; i < n; ++i)
+        if (strcmp(props[i].extensionName, name) == 0) found = true;
+    free(props);
+    return found;
+}
+
 static void create_instance(VkCore *vk, bool validation, bool headless) {
     const char *exts[16];
     uint32_t n = 0;
@@ -27,7 +39,10 @@ static void create_instance(VkCore *vk, bool validation, bool headless) {
         uint32_t glfwCount = 0;
         const char **glfwExts = glfwGetRequiredInstanceExtensions(&glfwCount);
         if (!glfwExts) fatal("GLFW reports no Vulkan surface support");
-        for (uint32_t i = 0; i < glfwCount && n < 15; ++i) exts[n++] = glfwExts[i];
+        for (uint32_t i = 0; i < glfwCount && n < 14; ++i) exts[n++] = glfwExts[i];
+        /* the HDR colour spaces (HDR10 / scRGB) a surface can offer */
+        vk->colorspaceExt = vk->hdrWant && has_instance_ext(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+        if (vk->colorspaceExt) exts[n++] = VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME;
     }
 
     const char *layer = "VK_LAYER_KHRONOS_validation";
@@ -181,23 +196,35 @@ static void create_device(VkCore *vk, bool wantRt) {
     f2.features.textureCompressionBC = vk->adverts ? VK_TRUE : VK_FALSE;
     f2.features.fragmentStoresAndAtomics = supported.fragmentStoresAndAtomics;   /* city.frag counts the interior modules drawn near the eye */
 
-    const char *exts[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-                           VK_KHR_RAY_QUERY_EXTENSION_NAME, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME };
     bool swap = vk->surface != VK_NULL_HANDLE;   /* headless devices have no swapchain */
+    const char *exts[6];
+    uint32_t en = 0;
+    if (swap) exts[en++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+    if (vk->rt) {
+        exts[en++] = VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME;
+        exts[en++] = VK_KHR_RAY_QUERY_EXTENSION_NAME;
+        exts[en++] = VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME;
+    }
+    /* the HDR display's mastering metadata (optional: without it the display assumes its own) */
+    vk->hdrMetadataExt = swap && vk->colorspaceExt && has_device_ext(vk->phys, VK_EXT_HDR_METADATA_EXTENSION_NAME);
+    if (vk->hdrMetadataExt) exts[en++] = VK_EXT_HDR_METADATA_EXTENSION_NAME;
     VkDeviceCreateInfo ci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     ci.pNext = &f2;
     ci.queueCreateInfoCount = 1;
     ci.pQueueCreateInfos = &qi;
-    ci.enabledExtensionCount = (vk->rt ? 3 : 0) + (swap ? 1 : 0);
-    ci.ppEnabledExtensionNames = swap ? exts : exts + 1;
+    ci.enabledExtensionCount = en;
+    ci.ppEnabledExtensionNames = exts;
     VK_CHECK(vkCreateDevice(vk->phys, &ci, NULL, &vk->device));
     volkLoadDevice(vk->device);
     vkGetDeviceQueue(vk->device, vk->queueFamily, 0, &vk->queue);
 }
 
-void vk_init(VkCore *vk, GLFWwindow *window, bool validation, bool rt) {
+void vk_init(VkCore *vk, GLFWwindow *window, bool validation, bool rt, float hdrPaper, float hdrPeak) {
     memset(vk, 0, sizeof(*vk));
     vk->window = window;
+    vk->hdrWant = hdrPaper > 0.0f;
+    vk->paperWhite = vk->hdrWant ? hdrPaper : 80.0f;
+    vk->peak = vk->hdrWant ? (hdrPeak > hdrPaper ? hdrPeak : hdrPaper) : 80.0f;
     VK_CHECK(volkInitialize());
     create_instance(vk, validation, false);
     VK_CHECK(glfwCreateWindowSurface(vk->instance, window, NULL, &vk->surface));
@@ -227,6 +254,30 @@ void vk_create_swapchain(VkCore *vk) {
     for (uint32_t i = 0; i < fn; ++i)
         if ((fmts[i].format == VK_FORMAT_B8G8R8A8_SRGB || fmts[i].format == VK_FORMAT_R8G8B8A8_SRGB) &&
             fmts[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) { chosen = fmts[i]; break; }
+    /* HDR (--hdr): HDR10 first (what the display takes natively), else scRGB (Windows converts it). */
+    int display = DISPLAY_SDR;
+    if (vk->hdrWant && vk->colorspaceExt) {
+        for (uint32_t i = 0; i < fn && display == DISPLAY_SDR; ++i)
+            if ((fmts[i].format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || fmts[i].format == VK_FORMAT_A2R10G10B10_UNORM_PACK32) &&
+                fmts[i].colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT) { chosen = fmts[i]; display = DISPLAY_HDR10; }
+        for (uint32_t i = 0; i < fn && display == DISPLAY_SDR; ++i)
+            if (fmts[i].format == VK_FORMAT_R16G16B16A16_SFLOAT && fmts[i].colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT) {
+                chosen = fmts[i]; display = DISPLAY_SCRGB;
+            }
+    }
+    if (vk->hdrWant && vk->swapFormat == VK_FORMAT_UNDEFINED) {   /* the first swapchain: say what the display gave */
+        if (display == DISPLAY_SDR) {
+            printf("Display: SDR (--hdr asked for, but the surface offers no HDR10 or scRGB format%s; formats offered:",
+                   vk->colorspaceExt ? ": is Windows' HDR switch on for this display?" : ", and the driver lacks " VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+            for (uint32_t i = 0; i < fn; ++i) printf(" %d/%d", (int)fmts[i].format, (int)fmts[i].colorSpace);
+            printf(")\n");
+        } else {
+            printf("Display: %s, white paper at %.0f nits, peak %.0f nits%s\n", display == DISPLAY_HDR10 ? "HDR10 (PQ, BT.2020)" : "scRGB (linear, fp16)",
+                   vk->paperWhite, vk->peak, vk->hdrMetadataExt ? "" : " (no HDR metadata extension)");
+        }
+    }
+    vk->formatChanged = vk->swapFormat != VK_FORMAT_UNDEFINED && vk->swapFormat != chosen.format;
+    vk->display = display;
 
     uint32_t pn = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(vk->phys, vk->surface, &pn, NULL);
@@ -263,6 +314,20 @@ void vk_create_swapchain(VkCore *vk) {
     VK_CHECK(vkCreateSwapchainKHR(vk->device, &ci, NULL, &vk->swapchain));
     vk->swapFormat = chosen.format;
     vk->extent = ext;
+    if (display != DISPLAY_SDR && vk->hdrMetadataExt) {
+        /* What the frames hold: mastered in BT.2020's primaries and D65, at most the peak, the frame's
+         * average about white paper. */
+        VkHdrMetadataEXT md = { VK_STRUCTURE_TYPE_HDR_METADATA_EXT };
+        md.displayPrimaryRed   = (VkXYColorEXT){ 0.708f, 0.292f };
+        md.displayPrimaryGreen = (VkXYColorEXT){ 0.170f, 0.797f };
+        md.displayPrimaryBlue  = (VkXYColorEXT){ 0.131f, 0.046f };
+        md.whitePoint          = (VkXYColorEXT){ 0.3127f, 0.3290f };
+        md.maxLuminance = vk->peak;
+        md.minLuminance = 0.0f;
+        md.maxContentLightLevel = vk->peak;
+        md.maxFrameAverageLightLevel = vk->paperWhite;
+        vkSetHdrMetadataEXT(vk->device, 1, &vk->swapchain, &md);
+    }
 
     vkGetSwapchainImagesKHR(vk->device, vk->swapchain, &vk->imageCount, NULL);
     if (vk->imageCount > MAX_SWAP_IMAGES) fatal("too many swapchain images");

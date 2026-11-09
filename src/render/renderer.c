@@ -93,6 +93,92 @@ static void write_bmp(const char *path, const uint8_t *px, uint32_t w, uint32_t 
     printf("Saved screenshot %s\n", path);
 }
 
+/* A Radiance .hdr (RGBE, flat scanlines, top row first) of linear RGB. */
+static void write_hdr(const char *path, const float *rgb, uint32_t w, uint32_t h) {
+    FILE *f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "cannot write %s\n", path); return; }
+    fprintf(f, "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y %u +X %u\n", h, w);
+    uint8_t *line = (uint8_t *)malloc((size_t)w * 4);
+    for (uint32_t y = 0; y < h; ++y) {
+        for (uint32_t x = 0; x < w; ++x) {
+            const float *c = rgb + ((size_t)y * w + x) * 3;
+            float m = fmaxf(c[0], fmaxf(c[1], c[2]));
+            uint8_t *o = line + x * 4;
+            if (m < 1e-32f) { o[0] = o[1] = o[2] = o[3] = 0; continue; }
+            int e;
+            float s = frexpf(m, &e) * 256.0f / m;
+            for (int k = 0; k < 3; ++k) o[k] = (uint8_t)fmaxf(c[k] * s, 0.0f);
+            o[3] = (uint8_t)(e + 128);
+        }
+        fwrite(line, 1, (size_t)w * 4, f);
+    }
+    free(line);
+    fclose(f);
+    printf("Saved HDR frame %s\n", path);
+}
+
+static float half_to_float(uint16_t hv) {
+    uint32_t s = (uint32_t)(hv >> 15) << 31, e = (hv >> 10) & 31, m = hv & 1023, bits;
+    if (e == 0) {
+        if (!m) bits = s;
+        else { float v = ldexpf((float)m, -24); return (hv >> 15) ? -v : v; }
+    } else if (e == 31) bits = s | 0x7f800000u | (m << 13);
+    else bits = s | ((e + 112) << 23) | (m << 13);
+    float out;
+    memcpy(&out, &bits, 4);
+    return out;
+}
+
+static float pq_to_nits(float e) {
+    const float m1 = 0.1593017578125f, m2 = 78.84375f, c1 = 0.8359375f, c2 = 18.8515625f, c3 = 18.6875f;
+    float p = powf(fmaxf(e, 0.0f), 1.0f / m2);
+    return 10000.0f * powf(fmaxf(p - c1, 0.0f) / (c2 - c3 * p), 1.0f / m1);
+}
+
+static float srgb_encode(float c) {
+    c = fminf(fmaxf(c, 0.0f), 1.0f);
+    return c <= 0.0031308f ? 12.92f * c : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
+}
+
+/* An HDR swapchain's shot: the frame decoded back to linear BT.709 in white papers (1 = white paper, the
+ * peak at vk->peak / vk->paperWhite), saved as FILE's .hdr; the .bmp is that clipped at white paper,
+ * which is how an SDR display would show the HDR frame's encoding, not the SDR tone curve's frame (its
+ * highlights are flat where SDR's roll off). */
+static void write_hdr_shot(const VkCore *vk, const char *bmpPath, const void *px, uint32_t w, uint32_t h) {
+    float *lin = (float *)malloc((size_t)w * h * 3 * sizeof(float));
+    uint8_t *bgra = (uint8_t *)malloc((size_t)w * h * 4);
+    for (size_t i = 0; i < (size_t)w * h; ++i) {
+        float c[3];
+        if (vk->display == DISPLAY_SCRGB) {
+            const uint16_t *hp = (const uint16_t *)px + i * 4;
+            for (int k = 0; k < 3; ++k) c[k] = half_to_float(hp[k]) * 80.0f / vk->paperWhite;
+        } else {
+            uint32_t v = ((const uint32_t *)px)[i];
+            float lo = pq_to_nits((float)(v & 1023) / 1023.0f), mid = pq_to_nits((float)((v >> 10) & 1023) / 1023.0f),
+                  hi = pq_to_nits((float)((v >> 20) & 1023) / 1023.0f);
+            bool abgr = vk->swapFormat == VK_FORMAT_A2B10G10R10_UNORM_PACK32;   /* red in the low bits */
+            float r2020 = abgr ? lo : hi, g2020 = mid, b2020 = abgr ? hi : lo;
+            c[0] = ( 1.660491f * r2020 - 0.587641f * g2020 - 0.072850f * b2020) / vk->paperWhite;   /* BT.2020 to BT.709 */
+            c[1] = (-0.124550f * r2020 + 1.132900f * g2020 - 0.008349f * b2020) / vk->paperWhite;
+            c[2] = (-0.018151f * r2020 - 0.100579f * g2020 + 1.118730f * b2020) / vk->paperWhite;
+        }
+        for (int k = 0; k < 3; ++k) {
+            lin[i * 3 + k] = fmaxf(c[k], 0.0f);
+            bgra[i * 4 + 2 - k] = (uint8_t)(srgb_encode(c[k]) * 255.0f + 0.5f);
+        }
+        bgra[i * 4 + 3] = 255;
+    }
+    char hdrPath[520];
+    snprintf(hdrPath, sizeof(hdrPath), "%s", bmpPath);
+    char *dot = strrchr(hdrPath, '.');
+    if (dot && !strchr(dot, '/') && !strchr(dot, '\\')) *dot = 0;
+    strncat(hdrPath, ".hdr", sizeof(hdrPath) - strlen(hdrPath) - 1);
+    write_hdr(hdrPath, lin, w, h);
+    write_bmp(bmpPath, bgra, w, h, true);
+    free(lin);
+    free(bgra);
+}
+
 /* ------------------------------------------------------------- create --- */
 
 Renderer *renderer_create(VkCore *vk, ChunkSystem *chunks) {
@@ -335,7 +421,7 @@ static bool record_present_barrier(Renderer *r, VkCommandBuffer cmd, VkImage swa
     if (shot) {
         r->shotPending = false;
         vk_buffer_destroy(vk, &r->shotBuf);
-        r->shotBuf = vk_buffer(vk, (VkDeviceSize)W * H * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        r->shotBuf = vk_buffer(vk, (VkDeviceSize)W * H * (vk->display == DISPLAY_SCRGB ? 8 : 4), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         vk_image_barrier(cmd, swapImg, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                          COLOR, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, 0, 1);
@@ -373,8 +459,11 @@ static void frame_submit_present(Renderer *r, VkCommandBuffer cmd, int slot, uin
     VK_CHECK(vkQueueSubmit2(vk->queue, 1, &si, r->fence[slot]));
     if (shot) {
         VK_CHECK(vkWaitForFences(vk->device, 1, &r->fence[slot], VK_TRUE, UINT64_MAX));
-        bool bgr = vk->swapFormat == VK_FORMAT_B8G8R8A8_SRGB || vk->swapFormat == VK_FORMAT_B8G8R8A8_UNORM;
-        write_bmp(r->shotPath, (const uint8_t *)r->shotBuf.mapped, W, H, bgr);
+        if (vk->display != DISPLAY_SDR) write_hdr_shot(vk, r->shotPath, r->shotBuf.mapped, W, H);
+        else {
+            bool bgr = vk->swapFormat == VK_FORMAT_B8G8R8A8_SRGB || vk->swapFormat == VK_FORMAT_B8G8R8A8_UNORM;
+            write_bmp(r->shotPath, (const uint8_t *)r->shotBuf.mapped, W, H, bgr);
+        }
     }
 
     VkPresentInfoKHR pi = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };

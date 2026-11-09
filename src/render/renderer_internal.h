@@ -40,6 +40,7 @@ typedef struct CompositePush {
     float width, height, aberration, vignette;
     float right[4], up[4], fwd[4];
     float shelter[4];   /* as FrameUBO.shelter, but w the pre-exposure (FrameUBO.exposure) */
+    float display[4];   /* DISPLAY_* (vkcore.h), white paper's nits, the peak over white paper, unused */
 } CompositePush;
 typedef struct CloudPush { float zn, zf; } CloudPush;
 /* One terrain level's draw (shaders/terrain/terrain.vert: Level). */
@@ -220,6 +221,8 @@ void write_material_set(Renderer *r, VkDescriptorSet set);
 void create_layouts(Renderer *r);
 VkPipeline make_compute(VkCore *vk, const uint32_t *code, size_t bytes, VkPipelineLayout layout);
 void create_pipelines(Renderer *r);
+/* The composite's pipeline, for the swapchain's format (again when that changes: Windows' HDR switch). */
+void make_composite_pipe(Renderer *r);
 
 /* renderer_targets.c */
 void write_tex_set(VkCore *vk, VkDescriptorSet set, uint32_t binding, VkDescriptorType type, VkSampler s, VkImageView v, VkImageLayout layout);

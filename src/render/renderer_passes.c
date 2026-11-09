@@ -410,6 +410,9 @@ void record_composite(Renderer *r, VkCommandBuffer cmd, uint32_t imageIndex, con
     cp.right[3] = NEAR_PLANE; cp.up[3] = FAR_PLANE; cp.fwd[3] = ubo->weather[0];
     memcpy(cp.shelter, ubo->shelter, sizeof(cp.shelter));
     cp.shelter[3] = ubo->exposure[0];   /* the pre-exposure: the rain's own glint is written at it */
+    cp.display[0] = (float)vk->display;
+    cp.display[1] = vk->paperWhite;
+    cp.display[2] = vk->peak / vk->paperWhite;
     vkCmdPushConstants(cmd, r->compositePL, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(cp), &cp);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);

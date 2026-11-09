@@ -397,6 +397,14 @@ void create_layouts(Renderer *r) {
 
 /* ---------------------------------------------------------- pipelines --- */
 
+void make_composite_pipe(Renderer *r) {
+    VkCore *vk = r->vk;
+    if (r->compositePipe) vkDestroyPipeline(vk->device, r->compositePipe, NULL);
+    GfxDesc comp = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_composite_frag, sizeof(SPV_composite_frag),
+                     r->compositePL, vk->swapFormat, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false };
+    r->compositePipe = make_graphics(vk, &comp);
+}
+
 VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
     VkShaderModule vs = vk_shader(vk, d->vs, d->vsBytes), fs = vk_shader(vk, d->fs, d->fsBytes);
     VkPipelineShaderStageCreateInfo st[2] = {
@@ -534,9 +542,7 @@ void create_pipelines(Renderer *r) {
                       r->proxyPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
     proxy.colorFormat2 = HDR_FORMAT;
     r->proxyPipe = make_graphics(vk, &proxy);
-    GfxDesc comp = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_composite_frag, sizeof(SPV_composite_frag),
-                     r->compositePL, vk->swapFormat, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false };
-    r->compositePipe = make_graphics(vk, &comp);
+    make_composite_pipe(r);
     r->bloomDownPipe = make_compute(vk, SPV_bloom_down, sizeof(SPV_bloom_down), r->bloomPL);
     r->bloomUpPipe = make_compute(vk, SPV_bloom_up, sizeof(SPV_bloom_up), r->bloomPL);
     r->cloudPipe = make_compute(vk, SPV_clouds, sizeof(SPV_clouds), r->cloudPL);

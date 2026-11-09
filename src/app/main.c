@@ -80,7 +80,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -96,6 +96,9 @@ static void usage(void) {
            "          tuned at); otherwise the eye adapts to the scene (a --shot without it takes the eye's exposure for the view)\n"
            "  --preexpose  a check: write the scene this many stops brighter (darker, if negative) and take them back out\n"
            "               before the tone curve; the frame should not change, and any pass that does missed the pre-exposure\n"
+           "  --hdr   show the frame on an HDR display (HDR10, else scRGB), if the window's display offers one (on Windows: its\n"
+           "          HDR switch on); white paper at PAPER_NITS (default 203, BT.2408's), highlights up to PEAK_NITS (default\n"
+           "          1000: the display's own). Otherwise SDR. A --shot of it saves FILE.hdr (linear, 1 = white paper) as well\n"
            "  --impostors  draw this share (default 0.4; 0 turns them off) of the office towers' floors behind curtain\n"
            "               walls and ribbon windows as baked interior impostors (docs/interior-impostors.md; F8 toggles)\n"
            "  --lockdoors  lock every lobby's automatic doors: sliding ones stay shut, revolving ones stand still\n"
@@ -129,6 +132,7 @@ typedef struct Options {
     bool        haveEv;          /* --ev: the exposure held at ev (EV100: src/core/light_units.h); otherwise the eye adapts */
     float       ev;
     float       preExpose;       /* --preexpose: the scene written this many stops off its exposure (a check) */
+    float       hdrPaper, hdrPeak;   /* --hdr: white paper's nits and the display's peak (0: SDR) */
     float       impostors;       /* the share of eligible office floors drawn as impostors (0: none) */
     int         grassDebug;      /* --grass-debug: GRASS_DEBUG_* (src/grass/grass_rules.h) */
     int         caveDebug;       /* --cave-debug: renderer_set_cave_debug's view */
@@ -172,6 +176,13 @@ static bool parse_args(int argc, char **argv, Options *o) {
         }
         else if (strcmp(argv[i], "--ev") == 0 && i + 1 < argc) { o->ev = (float)atof(argv[++i]); o->haveEv = true; }
         else if (strcmp(argv[i], "--preexpose") == 0 && i + 1 < argc) o->preExpose = (float)atof(argv[++i]);
+        else if (strcmp(argv[i], "--hdr") == 0) {
+            o->hdrPaper = 203.0f;
+            o->hdrPeak = 1000.0f;
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') o->hdrPaper = (float)atof(argv[++i]);
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') o->hdrPeak = (float)atof(argv[++i]);
+            if (o->hdrPaper < 1.0f) return false;
+        }
         else if (strcmp(argv[i], "--impostors") == 0) {
             o->impostors = 0.4f;
             if (i + 1 < argc && ((argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') || argv[i + 1][0] == '.')) o->impostors = (float)atof(argv[++i]);
@@ -612,7 +623,7 @@ int main(int argc, char **argv) {
     GLFWwindow *win = create_window();
 
     VkCore vk;
-    vk_init(&vk, win, opt.validation, opt.shadows);
+    vk_init(&vk, win, opt.validation, opt.shadows, opt.hdrPaper, opt.hdrPeak);
     ChunkSystem *chunks = chunks_create(&vk);
     Renderer *renderer = renderer_create(&vk, chunks);
     renderer_set_shadow_debug(renderer, opt.shadowDebug);

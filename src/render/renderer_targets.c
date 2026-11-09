@@ -281,5 +281,9 @@ void recreate_swapchain(Renderer *r) {
     destroy_targets(r);
     vk_destroy_swapchain(vk);
     vk_create_swapchain(vk);
+    if (vk->formatChanged) {   /* Windows' HDR switch flipped under a --hdr run */
+        printf("Display: now %s\n", vk->display == DISPLAY_HDR10 ? "HDR10" : vk->display == DISPLAY_SCRGB ? "scRGB" : "SDR");
+        make_composite_pipe(r);
+    }
     create_targets(r);
 }

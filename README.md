@@ -57,7 +57,7 @@ procedural look.
 | F12 | Screenshot (`neoncity_NNN.bmp`) |
 | Esc | Release the mouse (click to recapture); Esc again quits |
 
-Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture), `--utc YYYY-MM-DDTHH:MM` sets the world's clock, and so the sun, the moon and the stars (see Moon and stars), `--ev EV100` holds the exposure there (otherwise the eye adapts; see Light and exposure), `--preexpose STOPS` checks the pre-exposure
+Command line: `--city NAME` starts in that city (the first whose name begins so, or its number) at its core, in its frame; `--cam X Z YAW PITCH [HEIGHT]` sets the start position, in metres in the city's frame (a height starts in fly mode), `--shot file.bmp` saves a screenshot once streaming has settled and then exits, `--walk SECONDS` walks forward before a `--shot` (`--turn DEG_PER_S` turning as it goes; the shot then reports how many chunks in view within 700 m weren't drawn yet; `--walk-shot` takes it as the walk ends, before the grass's wake recovers), `--rain 0..1` pins the rain intensity (0 dry, 0.1 drizzle, 1 downpour; otherwise it drifts between drizzle and downpour), `--time SECONDS` holds the shaders' clock (to catch a flare's gout in a capture), `--utc YYYY-MM-DDTHH:MM` sets the world's clock, and so the sun, the moon and the stars (see Moon and stars), `--ev EV100` holds the exposure there (otherwise the eye adapts; see Light and exposure), `--hdr [PAPER_NITS [PEAK_NITS]]` shows the frame on an HDR display (see Light and exposure, "The display"), `--preexpose STOPS` checks the pre-exposure
 `--noshadows` runs without ray-traced shadows (and without the
 ray-query device features they need), `--shadowdebug` starts in the shadow debug view, `--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo` paints the grass's rules on the land (or its levels of detail, culling, wind, the player's wake, or the blades' and ground's albedo unlit), `--nograss` draws no grass blades, `--nowake` leaves the grass unparted where the player walks, `--grass-cap N` gives each of the grass's levels of detail room for N blades, `--impostors [SHARE]` draws that
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
@@ -2046,6 +2046,23 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
   back out, so the frame must not change. A pass that missed the pre-exposure shows up 2^STOPS too bright or too
   dark. At +8 and -8 stops, captures of the street in rain, the towers, a steam vent, the refinery's flares, the
   mountains and a cave stay within the noise between two runs at 0 (DN1).
+- **The display** (`vk_create_swapchain` in `src/render/vkcore.c`, `composite.frag`; DN8): SDR unless `--hdr` is
+  given and the window's display offers HDR, which on Windows needs its HDR switch on. HDR10 is taken first
+  (`A2B10G10R10` with `VK_COLOR_SPACE_HDR10_ST2084_EXT`: BT.2020 primaries, PQ to 10 000 nits), else scRGB (fp16,
+  linear BT.709, 1.0 = 80 nits, which Windows converts); the startup line `Display:` says which, or lists the formats
+  offered when neither is. `--hdr PAPER PEAK` sets white paper's brightness (default 203 nits, BT.2408's reference
+  white) and the display's peak (default 1000 nits); the peak goes to the display as HDR metadata
+  (`VK_EXT_hdr_metadata`) where the driver has it. Nothing is read from Windows' own settings. The tone curve is the
+  SDR one (the ACES fit) up to 0.8 of white paper, and above it an exponential shoulder that leaves the knee at the
+  ACES fit's slope and runs on towards the peak (`hdrTone`). So everything SDR shows below 0.8 (the night's
+  streets, walls by day, the sky) is shown the same, at white paper's nits; only what SDR squeezes into its top
+  fifth opens up: lamp heads, lit offices and signs at night (up to 3.3 white papers, 660 nits, at the spawn), the
+  sun's disc by day (4.4). Checked on both formats against an SDR shot of the same view: below the knee the mean
+  luminance matches within the run-to-run noise. The grade, vignette and grain work on the tone curve's output
+  either way. Windows' HDR switch flipped while the game runs gets a new swapchain in the new format (the
+  composite's pipeline is rebuilt). A `--shot` of an HDR swapchain decodes it back to linear BT.709 in white
+  papers and saves it as `FILE.hdr` (Radiance), beside the BMP, which is that clipped at white paper: an HDR
+  frame's highlights as SDR would clip them, not the SDR tone curve's frame. Captures run SDR.
 
 ### Frame
 1. The air: the sky round the eye and the air's light at the eye (compute; the transmittance and multiple-scattering tables on the first frame).
@@ -2058,7 +2075,7 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
 8. Clouds and rain mist: half-resolution compute ray march over the cities' cloud, blended into the HDR target with a depth-aware upsample.
 9. Auto exposure: the scene's luminance histogram, then the eye's adaptation (compute).
 10. Compute bloom: a 13-tap Karis-averaged downsample chain, then a tent upsample.
-11. Composite: falling rain, the eye's exposure, ACES tonemapping, a teal/orange grade, vignette, slight chromatic aberration and film grain.
+11. Composite: falling rain, the eye's exposure, a teal/orange grade, ACES tonemapping (with an HDR shoulder on an HDR display, then encoded for it), vignette, slight chromatic aberration and film grain.
 
 ## Extending
 - **Environment** (rain, wet streets, fog volumes, weather): the clear air is `src/core/atmosphere.h` and
