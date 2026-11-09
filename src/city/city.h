@@ -220,6 +220,13 @@ void     city_build_litter(int cx, int cz, Mesh *m);
 /* How squalid the streets are at (x, z) in a block of `zone` (-1: on a road), 0..1:
  * how much rubbish lies about (src/city/litter.c) and how much fine debris the ground shader draws. */
 float    city_squalor(int zone, double x, double z);
+/* How much graffiti the walls at (x, z) carry, 0 (the wealthiest districts: almost none) .. 1 (the
+ * poorest, and the city's squalid border): plan_affluence, as city_squalor reads it, but without the
+ * zone (src/city/litter.c). The renderer packs it at each chunk's corners (city_graffiti_corners). */
+float    city_graffiti(double x, double z);
+/* city_graffiti at chunk (cx, cz)'s four corners, a byte each: x0z0 | x1z0 << 8 | x0z1 << 16 | x1z1 << 24
+ * (ChunkGPU.info[3]: graffitiLevel in shaders/city/surface.glsl interpolates them across the chunk). */
+uint32_t city_graffiti_corners(int cx, int cz);
 /* The street furniture layer (src/city/props.c): bins, bollards, post boxes and
  * crossing signals along the sidewalks, dumpsters in the back alleys, condensers
  * on the walls. Like the litter it is lit by the chunk's light table. */

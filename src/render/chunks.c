@@ -54,6 +54,7 @@ typedef struct Entry {
     uint16_t pages[MAX_CHUNK_PAGES];
     int      npages;
     int      lightPage;     /* -1 if the chunk has no light table */
+    uint32_t graffiti;      /* city_graffiti_corners: how much its walls are painted (ChunkGPU.info[3]) */
     float    lightRect[4];  /* chunk-local x0, z0, x1, z1 its table's lights reach (x0 > x1: none) */
     uint32_t vcount;
     float    mn[3], mx[3];  /* chunk-local bounds */
@@ -182,6 +183,7 @@ static int table_insert(ChunkSystem *cs, int cx, int cz, int layer) {
     e->cx = cx; e->cz = cz; e->layer = layer;
     e->lightPage = -1;
     e->blas = -1;
+    e->graffiti = city_graffiti_corners(cx, cz);
     uint32_t b = bucket_of(cx, cz, layer);
     e->next = cs->buckets[b];
     cs->buckets[b] = i;
@@ -859,7 +861,7 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
             lp = base >= 0 && cs->entries[base].state == CS_RESIDENT ? cs->entries[base].lightPage : -1;
         }
         g->info[2] = lp >= 0 ? lp * LIGHT_PAGE_RECS : -1;
-        g->info[3] = 0;
+        g->info[3] = (int32_t)e->graffiti;
         for (int p = 0; p < e->npages; ++p) {
             uint32_t first = p * PAGE_VERTS;
             VkDrawIndirectCommand *c = &cmds[ndraw++];

@@ -944,6 +944,88 @@ static int zfight_scan(double X, double Z, double R) {
     return 0;
 }
 
+/* Whether chunk-local (x, z) is open street in m: a road or sidewalk under it, with nothing over it
+ * within 8 m (an arcade, a canopy, a deck). *y: that ground's height. */
+static bool open_street(const Mesh *m, float x, float z, float *y) {
+    float ground = -1e9f, over = 1e9f;
+    for (uint32_t i = 0; i + 2 < m->count; i += 3) {
+        const float *a = m->v[i].pos, *b = m->v[i + 1].pos, *c = m->v[i + 2].pos;
+        float d = (b[0] - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (b[2] - a[2]);
+        if (fabsf(d) < 1e-6f) continue;
+        float u = ((b[0] - x) * (c[2] - z) - (c[0] - x) * (b[2] - z)) / d;
+        float v = ((c[0] - x) * (a[2] - z) - (a[0] - x) * (c[2] - z)) / d;
+        if (u < 0.0f || v < 0.0f || u + v > 1.0f) continue;
+        float h = u * a[1] + v * b[1] + (1.0f - u - v) * c[1];
+        int mat = m->v[i].params[0];
+        if ((mat == MAT_ROAD || mat == MAT_SIDEWALK) && h > ground) ground = h;
+        else over = fminf(over, h);
+    }
+    *y = ground;
+    return ground > -1e8f && !(over > ground + 0.3f && over < ground + 8.0f);
+}
+
+/* city_test --graffiti: how much graffiti the chunks round the spawn carry (city_graffiti_corners:
+ * graffitiLevel in shaders/city/surface.glsl), then --cam views from open street (open_street), 8 m
+ * out and at eye height (flying: nothing moves it while the city streams in), of brick, tile and stone faces 8 m
+ * wide or more in the most and the least painted chunks (with the share of their shops lit: the rest are
+ * shuttered), of blacked-out lobby glass (a room or core behind it: params[3] & 64), and of loading bays'
+ * shutters where there's more than a little. */
+static int graffiti_cams(void) {
+    double sx, sz;
+    float yaw;
+    city_spawn(&sx, &sz, &yaw);
+    int hx = (int)floor(sx / CHUNK_SIZE), hz = (int)floor(sz / CHUNK_SIZE);
+    const int R = 12;
+    int hist[5] = { 0 }, nPoor = 0, nRich = 0, nDark = 0, nBay = 0;
+    for (int cz = hz - R; cz <= hz + R; ++cz)
+        for (int cx = hx - R; cx <= hx + R; ++cx) {
+            uint32_t c = city_graffiti_corners(cx, cz);
+            float lv = 0.0f;
+            for (int k = 0; k < 4; ++k) lv += (float)((c >> (8 * k)) & 255u) / (4.0f * 255.0f);
+            hist[lv >= 1.0f ? 4 : (int)(lv * 5.0f)]++;
+            bool poor = lv > 0.7f && nPoor < 14, rich = lv < 0.12f && nRich < 3, bays = lv > 0.5f && nBay < 6;
+            if (!poor && !rich && !bays && nDark >= 4) continue;
+            Mesh m = { 0 };
+            city_build_mesh(cx, cz, &m);
+            uint32_t lastSeed = 0;
+            for (uint32_t i = 0; i + 5 < m.count && bays; i += 6) {   /* loading bays' shutters: a door panel is two triangles */
+                const Vertex *v = &m.v[i];
+                if (v->params[0] != MAT_DOOR || v->params[1] != 2 || v->seed == lastSeed) continue;
+                float nx = v->nrm[0] / 127.0f, nz = v->nrm[2] / 127.0f, cxl = 0.0f, czl = 0.0f, gy;
+                for (int k = 0; k < 6; ++k) { cxl += m.v[i + k].pos[0] / 6.0f; czl += m.v[i + k].pos[2] / 6.0f; }
+                float lx = cxl + nx * 7.0f, lz = czl + nz * 7.0f;
+                if (!open_street(&m, lx, lz, &gy)) continue;
+                lastSeed = v->seed;
+                printf("bay        level %.2f  shutter at (%.1f, %.1f): --cam %.2f %.2f %.1f 4 %.1f\n", lv, m.ox + cxl, m.oz + czl,
+                       m.ox + lx, m.oz + lz, atan2(-nx, nz) * 57.2958, gy + 1.7);
+                if (++nBay >= 6) bays = false;
+            }
+            for (uint32_t i = 0; i < m.count; ++i) {
+                const Vertex *v = &m.v[i];
+                if (v->params[0] != MAT_FACADE || !(v->params[2] & 1) || v->seed == lastSeed) continue;
+                float nx = v->nrm[0] / 127.0f, ny = v->nrm[1] / 127.0f, nz = v->nrm[2] / 127.0f;
+                if (fabsf(ny) > 0.1f || v->pos[1] - v->base > 0.5f || v->uv[0] < 8.0f) continue;
+                int pal = v->params[3] & 7;
+                bool brick = (pal == 1 || pal == 3 || pal == 5) && ((v->params[2] >> 3) & 3) != 1;   /* brick, tile, stone */
+                bool dark = (v->params[3] & 64) && !(v->params[3] & 128) && nDark < 4;
+                static const char *const POOR[8] = { 0, "poor brick", 0, "poor tile", 0, "poor stone" }, *const RICH[8] = { 0, "rich brick", 0, "rich tile", 0, "rich stone" };
+                const char *what = brick && poor ? POOR[pal] : brick && rich ? RICH[pal] : dark ? "dark glass" : NULL;
+                if (!what) continue;
+                float lx = v->pos[0] - v->uv[0] * 0.5f * nz + nx * 8.0f, lz = v->pos[2] + v->uv[0] * 0.5f * nx + nz * 8.0f, gy;
+                if (!open_street(&m, lx, lz, &gy)) continue;
+                lastSeed = v->seed;
+                printf("%-10s level %.2f  shops lit %d/8  face at (%.1f, %.1f) %.0f m wide: --cam %.2f %.2f %.1f 6 %.1f\n", what, lv,
+                       (v->params[3] >> 3) & 7, m.ox + v->pos[0], m.oz + v->pos[2], v->uv[0], m.ox + lx, m.oz + lz, atan2(-nx, nz) * 57.2958, gy + 1.7);
+                if (what[0] == 'p') { if (++nPoor >= 14) poor = false; }
+                else if (what[0] == 'r') { if (++nRich >= 3) rich = false; }
+                else nDark++;
+            }
+            mesh_free(&m);
+        }
+    printf("chunks by graffiti level (0-0.2 .. 0.8-1): %d %d %d %d %d\n", hist[0], hist[1], hist[2], hist[3], hist[4]);
+    return 0;
+}
+
 /* city_test --facades: --cam views from the street of buildings round the spawn in each
  * walled palette (facadeWallAlbedo in shaders/city/facade.glsl: 0 concrete, 1 brick, 2 metal
  * panels, 3 tile, 5 stone, 6 bronze), each 12 m out from a grounded face and looking up a
@@ -1184,6 +1266,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--props") == 0) return props_cams();
     if (argc > 1 && strcmp(argv[1], "--screens") == 0) return screens_cams();
     if (argc > 1 && strcmp(argv[1], "--facades") == 0) return facades_cams();
+    if (argc > 1 && strcmp(argv[1], "--graffiti") == 0) return graffiti_cams();
     if (argc > 1 && strcmp(argv[1], "--zfight") == 0) {
         if (argc < 5) { fprintf(stderr, "city_test --zfight X Z RADIUS\n"); return 2; }
         return zfight_scan(atof(argv[2]), atof(argv[3]), atof(argv[4]));

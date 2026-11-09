@@ -127,6 +127,21 @@ float city_squalor(int zone, double x, double z) {
     return sq + maxf(0.85f - sq, 0.0f) * border;
 }
 
+float city_graffiti(double x, double z) {
+    float g = smoothstepf(0.8f, 0.2f, plan_affluence(x, z));
+    float border = smoothstepf(0.4f, 0.65f, plan_fringe(x, z));
+    return maxf(0.03f + 0.97f * g, 0.85f * border);
+}
+
+uint32_t city_graffiti_corners(int cx, int cz) {
+    uint32_t packed = 0;
+    for (int k = 0; k < 4; ++k) {
+        double x = (cx + (k & 1)) * (double)CHUNK_SIZE, z = (cz + (k >> 1)) * (double)CHUNK_SIZE;
+        packed |= (uint32_t)(clampf(city_graffiti(x, z), 0.0f, 1.0f) * 255.0f + 0.5f) << (8 * k);
+    }
+    return packed;
+}
+
 static float squalor(LGen *g, int bi) {
     if (g->sq[bi] < 0.0f) {
         const Block *bk = &g->c.pa->blocks[bi];

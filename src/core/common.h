@@ -152,7 +152,7 @@ typedef struct Vertex {
 /* Per-chunk data visible to shaders (std430). */
 typedef struct ChunkGPU {
     float   origin[4];   /* chunk origin relative to the camera */
-    int32_t info[4];     /* cx, cz, first light record (-1 if none), unused */
+    int32_t info[4];     /* cx, cz, first light record (-1 if none), graffiti at its corners (city_graffiti_corners; 0 but in the view's draws) */
 } ChunkGPU;
 
 /* std430, mirrored in shaders/clouds.comp. pos is chunk-local in a Mesh and

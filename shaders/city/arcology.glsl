@@ -291,8 +291,9 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     } else if (surf == ARS_SHUTTER) {
         float rib = pbrLoaded(PBR_SHUTTER) ? 0.85 : 0.6 + 0.4 * smoothstep(0.3, 0.5, abs(fract(uv.y / 0.09) - 0.5) * 2.0);   // (authored below)
         alb = vec3(0.07, 0.072, 0.075) * rib * (0.5 + 0.7 * fbm(uv * 0.8, seed & 0xFFFFu));
-        float graf = smoothstep(0.6, 0.65, fbm(uv * 0.9, seed));
-        alb = mix(alb, neonColor(seed >> 6) * 0.1, graf * 0.8);
+        // graffiti (graffitiStreet): under the slats' grain below, so their relief shows through it
+        vec4 graf = graffitiStreet(uv, dFdx(uv), dFdy(uv), hash_combine(seed, 0x6A13u), 3.2);
+        alb = mix(alb, graf.rgb * rib, graf.a);
         rough = 0.5;
     } else if (surf == ARS_COUNTER) {
         alb = hf(seed, 9u) < 0.5 ? vec3(0.12, 0.12, 0.13) : vec3(0.16, 0.08, 0.04);

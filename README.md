@@ -1265,6 +1265,33 @@ everything else, as a pure function of the plan. The CPU does nothing per frame.
   spawn, up to a 180,000 cap in the worst slums). Measured on an RTX 4080 SUPER at 1600x900,
   neither the layer nor the debris shading showed a cost above run-to-run noise (about 0.1 ms).
 
+### Graffiti (`graffitiBand` in `shaders/city/surface.glsl`)
+Tags, throw-ups and stencilled faces sprayed over the walls. There's no geometry: the shaders
+paint them into a surface's albedo, so whatever relief the surface has (brick's or tile's joints, a
+shutter's slats) lights the paint too.
+
+- **The pieces:** 96, in one atlas (`assets/materials/graffiti.json`, 12 x 8 square cells), its
+  alpha the paint's coverage. `tools/graffiti_pack.py` makes it from a contact sheet of two 8 x 6
+  grids: it clears what a neighbouring piece or a grid line left in each cell, remaps the alpha of
+  the grid cut from a pale ground, crops and centres each piece in its cell, and fills the colour
+  under the clear parts from the nearest paint so mips don't bleed.
+- **What's painted:** brick, tile and stone walls (palettes 1, 3 and 5) from the street up to the
+  2nd floor; shut shutters (shopfronts, loading bays, arcology stalls) and blacked-out lobby glass (a
+  room or core behind it) at street level, whatever the wall. Never floors, clear glass, metal fences,
+  or concrete, metal, glass or bronze walls.
+- **Where:** in bands of 3 m spots along each face, each spot painted or not by its own hash. At
+  street level, between 0.2 and 2.7 m, two rows of spots, the second offset half a spot and
+  sprayed over the first. Then the 1st floor's spandrel (from above the shopfronts' windows to the
+  1st floor's sills) at three tenths of that, and the 2nd's at a tenth. Each piece is as big as fits
+  its band and spot (0.7-2.1 m), turned up to 12 degrees either way, and the older ones faded.
+- **How much:** from the district's affluence, as the litter's (`city_graffiti` in
+  `src/city/litter.c`: none to speak of in the wealthiest districts, 80% of street-level spots in
+  the poorest, and the squalid border as poor as the worst). Each chunk carries it at its corners
+  (`ChunkGPU.info[3]`), and the shader interpolates it across the chunk.
+- `city_test --graffiti` counts the chunks round the spawn by how much they carry and prints
+  `--cam` views from open street of brick, tile and stone walls in the poorest and the wealthiest,
+  of loading bays, and of blacked-out glass.
+
 ### Street furniture (`src/city/props.c`)
 Bins, bollards, post boxes, crossing signals, dumpsters and air-conditioning condensers are
 models (`assets/models/`; see Models below), set down whole in a fifth near-only layer of chunk meshes, streamed

@@ -344,5 +344,8 @@ vec3 shadeDoor(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 shutter = vec3(0.075, 0.07, 0.06) * rib * g.tint * g.ao * (0.6 + 0.6 * fbm(m * 0.8, seed & 0xFFFFu));
     float stripe = step(hM - 0.35, m.y) * step(0.5, fract(m.x / 0.6 + m.y / 0.6));   // hazard stripes at the top
     shutter = mix(shutter, vec3(0.12, 0.09, 0.0), stripe);
+    // graffiti (graffitiStreet), over the slats and their stripes: the slats' relief shows through it
+    vec4 graf = graffitiStreet(m, dFdx(m), dFdy(m), hash_combine(seed, 0x6A12u), hM);
+    shutter = mix(shutter, graf.rgb * rib * mix(1.0, g.ao, 0.6), graf.a);
     return shutter * diff + spec;
 }

@@ -29,6 +29,22 @@ vec3 facadeWallAlbedo(uint palette, uint sh) {
 // One building in six (relief_style's glazed) has them, and the rail; the rest a bay is one pane.
 float reliefLights(uint sh, float bayW) { return hf(sh, 76u) >= 1.0 / 6.0 ? 1.0 : bayW >= 3.6 ? 3.0 : bayW >= 2.4 ? 2.0 : 1.0; }
 
+// A face's graffiti (graffitiBand), q metres along it and up from the sidewalk: at street level, the most;
+// along the 1st floor's spandrel (from above the shopfronts' windows to the 1st floor's sills), less; along
+// the 2nd's (from the 1st floor's window heads to the 2nd's sills), less again. y0, y1: the windows' sill
+// and head, as shares of a floor. upper false: street level only (for its shutters and blacked-out glass).
+vec4 facadeGraffiti(vec2 q, vec2 qx, vec2 qy, uint key, float groundH, float floorH, float y0, float y1, bool upper) {
+    if (!pbrLoaded(PBR_GRAFFITI)) return vec4(0.0);
+    float chance = pbrParams(PBR_GRAFFITI).z * graffitiLevel();
+    if (chance <= 0.0 || q.y > groundH + floorH * (1.0 + y0)) return vec4(0.0);
+    vec4 acc = graffitiBand(q, qx, qy, key, 0.2, min(2.7, groundH - 0.1), 3.0, chance, 2);
+    if (upper) {   // the bands don't meet: their sums are their paint
+        acc += graffitiBand(q, qx, qy, key, max(groundH - 1.3, 2.8), groundH + y0 * floorH, 3.0, chance * 0.3, 1);
+        acc += graffitiBand(q, qx, qy, key, groundH + y1 * floorH, groundH + floorH * (1.0 + y0), 3.0, chance * 0.1, 1);
+    }
+    return graffitiPaint(acc);
+}
+
 vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 V = -normalize(rel);
     // Facade data (facade_mat in src/city/mesh_building.c):
@@ -94,6 +110,18 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float prevBayW = prevW / max(1.0, floor(prevW / baseBayW + 0.5));   // the neighbours' corner bays
     float nextBayW = nextW / max(1.0, floor(nextW / baseBayW + 0.5));
 
+    // Graffiti (facadeGraffiti): up to the 2nd floor on brick, tile and stone walls (palettes 1, 3, 5); at
+    // street level, on any wall's shut shutters and blacked-out lobby glass. It changes only the albedo: the
+    // wall's joints or the slats' relief light it.
+    bool paintable = (palette == 1u || palette == 3u || palette == 5u) && !glassWall;
+    float gSill = (1.0 - winH) * 0.42;
+    vec4 graf = vec4(0.0);
+    if (atGround || paintable)
+        graf = facadeGraffiti(vec2(u, vAbs - SIDEWALK_HEIGHT), vec2(gqx.x, -gqx.y), vec2(gqy.x, -gqy.y), hash3i(seed ^ 0x6A11u, section, faceDir, 0),
+                              groundH, floorH, gSill, gSill + winH, paintable);
+    float grafWall = paintable ? graf.a : 0.0;
+    vec3 grafOnWall = graf.rgb * mix(1.0, wallG.ao, 0.6);   // the joints stay dark through the paint
+
     // ---------------- plinth ----------------
     // Below the ground floor, where the street falls away from the building's
     // base (Mesh.footing, and the steps up to its entrances: src/city/mesh_building.c):
@@ -118,7 +146,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         bool realPane = (prm.z & 128u) != 0u && (prm.w & 64u) == 0u && inWin > 0.5 && length(rel) < REAL_GLASS_DIST && lodR < 0.75;
         vec3 spec = vec3(0.0);
         vec3 diffL = realPane ? vec3(0.0) : wallLighting(p, n, V, 30.0, 0.15, vAbs, spec);
-        vec3 wallC = wallAlb * wallTint * 0.9 * diffL + spec;
+        vec3 wallC = mix(wallAlb * wallTint * 0.9, grafOnWall, grafWall) * diffL + spec;
         // light lines set into the mullions (every first, second or third) in the lobby's accent colour
         if (groundMode != 3u && hf(sh, 63u) < 0.8) {
             float every = 1.0 + floor(hf(sh, 62u) * 3.0), k = floor(u / 1.5 + 0.5);
@@ -129,8 +157,9 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         if ((prm.w & 64u) != 0u) {
             // A closed room or a core of the real lobby stands behind this
             // stretch (emit_walls in src/city/mesh_building.c): opaque back-painted glass.
-            float F = glassFresnel(n, V);
-            vec3 pane = vec3(0.012, 0.013, 0.015) * diffL + envReflection(reflect(-V, n)) * F + paneSheen(p, n, V);
+            // graffiti on the glass's outside: over the black and what's lit behind it, and duller than the glass
+            float F = glassFresnel(n, V), gloss = 1.0 - 0.45 * graf.a;
+            vec3 pane = mix(vec3(0.012, 0.013, 0.015), graf.rgb, graf.a) * diffL + (envReflection(reflect(-V, n)) * F + paneSheen(p, n, V)) * gloss;
             if ((prm.w & 128u) != 0u) {
                 // an arcology's market blocks stand behind: backlit poster lightboxes in some panes
                 float cell = floor(u / 1.5);
@@ -146,10 +175,10 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
                     art += vec3(1.0, 0.8, 0.65) * exp(-dot(fc, fc) * 14.0) * 0.9;
                     vec2 gq = vec2((q.x - 0.12) / 0.18, fract(q.y * 6.0));
                     if (q.x > 0.12 && q.x < 0.3) art += c1 * 1.2 * (1.0 - smoothstep(0.04, 0.1, glyphDist(hash_combine(lh, uint(q.y * 6.0)), gq)));
-                    pane += art * 0.6 * box * (0.88 + 0.12 * sin(gTime * 1.3 + hfloat(lh) * 6.0));
+                    pane += art * 0.6 * box * (0.88 + 0.12 * sin(gTime * 1.3 + hfloat(lh) * 6.0)) * (1.0 - graf.a);
                 }
             }
-            glassRefl(n, F * clamp(inWin, 0.0, 1.0));
+            glassRefl(n, F * gloss * clamp(inWin, 0.0, 1.0));
             return mix(wallC, pane, clamp(inWin, 0.0, 1.0));
         }
         if ((prm.z & 128u) != 0u && inWin > 0.5 && length(rel) < REAL_GLASS_DIST) {
@@ -197,7 +226,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float inWin = band(fs, 0.05, 0.95, aa) * band(yy, 0.45, winTop, dV + 0.01);
         vec3 spec;
         vec3 diffL = wallLighting(p, n, V, 20.0, 0.1, vAbs, spec);
-        vec3 wallC = wallAlb * wallTint * 0.8 * diffL + spec;
+        vec3 wallC = mix(wallAlb * wallTint * 0.8, grafOnWall, grafWall) * diffL + spec;
         if (lit) {
             Room r = makeRoom(h, 1.0, 0.0, true, shopColor(h));
             vec3 d = vec3(dot(-V, T), -V.y, -dot(-V, n));
@@ -229,18 +258,18 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             return mix(wallC, glass, inWin);
         } else {
             // rolled-down shutter: its slats authored (shutter.json) where they loaded, lit by their own relief
+            // its graffiti (graf) over the slats, which show through it in their shading
             float grime = 0.5 + 0.7 * fbm(vec2(along * 0.8, yy * 0.8), 0x5417u);
-            float graf = smoothstep(0.62, 0.66, fbm(vec2(along, yy) * 0.9, h));
             if (pbrLoaded(PBR_SHUTTER)) {
                 Grain g = pbrGrain(PBR_SHUTTER, vec2(along, -yy), gqx, gqy, T, IMG_UP, n);
-                vec3 shut = mix(vec3(0.06, 0.062, 0.065) * g.tint * g.ao * grime, neonColor(h >> 6) * 0.08, graf * 0.8);
+                vec3 shut = mix(vec3(0.06, 0.062, 0.065) * g.tint * g.ao * grime, graf.rgb * mix(1.0, g.ao, 0.6) * mix(1.0, grime, 0.3), graf.a);
                 vec3 sSpec;
                 vec3 sDiff = wallLighting(p, g.n, V, 20.0, 0.1 * grainSpec(g), vAbs, sSpec);
                 return mix(wallC, shut * sDiff + sSpec, inWin);
             }
             float rib = 0.6 + 0.4 * smoothstep(0.3, 0.5, abs(fract(yy / 0.09) - 0.5) * 2.0);
             vec3 shut = vec3(0.07, 0.072, 0.075) * rib * grime;
-            shut = mix(shut, neonColor(h >> 6) * 0.08, graf * 0.8);
+            shut = mix(shut, graf.rgb * rib, graf.a);
             vec3 sc = shut * diffL + spec;
             return mix(wallC, sc, inWin);
         }
@@ -330,6 +359,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         float sl = fract(vAbs / 0.22);
         wallC = vec3(0.06, 0.062, 0.065) * mix(0.55, 1.0, smoothstep(0.3, 0.6, sl) * (1.0 - lodT) + lodT * 0.75);
     }
+    if (!plantFloor) wallC = mix(wallC, grafOnWall * mix(1.0, grime, 0.4), grafWall);
     vec3 wallLit = wallC * wdiff + wspec;
     float wallW = 0.0;   // weight of the sky reflection in wallLit (glass curtain walls)
     if (glassWall) {

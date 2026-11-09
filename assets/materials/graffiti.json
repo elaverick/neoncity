@@ -1,0 +1,19 @@
+// Graffiti: 96 pieces in a 12 x 8 atlas of square cells (tools/graffiti_pack.py), sprayed over the
+// albedo of brick, tile and stone walls, shut shutters and blacked-out lobby glass (graffitiBand in
+// shaders/city/surface.glsl), more of it the poorer the district. Its alpha is the paint's
+// coverage. It has no relief of its own (the normal and orm maps are flat): the paint takes the
+// relief of what it's on.
+{
+  "maps": {
+    "albedo": "../textures/graffiti/albedo.png",
+    "normal": "../textures/graffiti/normal.png",
+    "orm":    "../textures/graffiti/orm.png"
+  },
+  "albedo_scale": 0.4,     // spray paint's white -> 0.4: vivid against the night's walls (about 0.1)
+  "params": [
+    0.7,                   // metres across the smallest piece's cell
+    2.1,                   // ...and the largest's, at street level (a floor up, a band's height at most)
+    0.8,                   // the share of street-level spots painted in the poorest districts
+    12.0                   // degrees a piece may be turned either way
+  ]
+}
