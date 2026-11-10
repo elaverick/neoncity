@@ -746,6 +746,12 @@ static int build_market(VGen *G, VFrame *F) {
         float q[4][3] = { { x0 + 0.1f, th - 0.02f, tz1 + 0.01f }, { x1 - 0.1f, th - 0.02f, tz1 + 0.01f }, { x1 - 0.1f, 0.04f, tz1 + 0.01f }, { x0 + 0.1f, 0.04f, tz1 + 0.01f } };
         int sk = v_quad(v, VR_CLOTH, VS_CLOTH, VCOL_ACC2, q, VPF_SWAY);
         if (sk >= 0 && table >= 0) v_edge(v, sk, table, VE_ATTACHED_TO);
+        /* four square legs at its corners, the front two behind the skirt */
+        for (int c = 0; c < 4; ++c) {
+            float x = c & 1 ? x1 - 0.18f : x0 + 0.13f, z = c & 2 ? tz1 - 0.08f : tz0 + 0.03f;
+            int leg = v_box(v, VR_SUPPORT, VS_TIMBER, VCOL_TRIM, x, 0.0f, z, x + 0.05f, th - 0.04f, z + 0.05f);
+            if (leg >= 0) { v->part[leg].faces = VB_BOT | VB_TOP; if (table >= 0) v_edge(v, leg, table, VE_SUPPORTS); }
+        }
     } else {
         for (int s = 0; s < 2; ++s) {
             float x = s ? x1 - 0.25f : x0 + 0.25f;
