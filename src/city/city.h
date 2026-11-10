@@ -257,6 +257,36 @@ int      city_casts_shadow(const Vertex *v);
 
 /* Buildings filling one plan block (all of them, wherever their centres are). */
 int      city_block_buildings(const Block *bk, Building *out, int max);
+/* The open spaces the lot filler (src/city/lots.c) leaves in a block for the
+ * street vendors (src/city/vendor_sites.c, docs/street-vendor-generation.md):
+ *   SPACE_APRON  a shophouse row set back 4-7 m behind a paved hawker frontage;
+ *   SPACE_LANE   an alley across the block widened to 7-10 m, a paved market lane;
+ *   SPACE_POCKET a plot left unbuilt for a paved market;
+ *   SPACE_PLAZA  an office tower's paved forecourt, 8-16 m deep (lunch stalls);
+ *   SPACE_COURT  a yard behind the buildings reached from the street (found by
+ *                vendor_sites.c among what the buildings leave, not made here).
+ * A space is a rectangle u0..u1 x v0..v1 in its frame: origin o, unit axes u
+ * and v (world x, z). An apron's, a plaza's and a pocket's v runs in from the
+ * street (v0 on the lot's street edge); a lane's runs across it. The same
+ * filler places the buildings, so the spaces and the buildings agree. */
+enum { SPACE_APRON = 0, SPACE_LANE, SPACE_POCKET, SPACE_PLAZA, SPACE_COURT, SPACE_KINDS };
+typedef struct CitySpace {
+    uint8_t  kind;
+    double   ox, oz;
+    float    ux, uz, vx, vz;
+    float    u0, v0, u1, v1;
+    uint32_t seed;
+} CitySpace;
+#define MAX_BLOCK_SPACES 16
+/* The spaces of a block (all of them), as city_block_buildings leaves them; returns how many. */
+int      city_block_spaces(const Block *bk, CitySpace *out, int max);
+/* Whether a space's ground is paved (all but a court, which is the yard's asphalt). */
+static inline int city_space_paved(int kind) { return kind != SPACE_COURT; }
+/* Whether world (x, z) lies in space s, grown by margin (m). */
+static inline int city_space_contains(const CitySpace *s, double x, double z, double margin) {
+    double dx = x - s->ox, dz = z - s->oz, u = dx * s->ux + dz * s->uz, v = dx * s->vx + dz * s->vz;
+    return u > s->u0 - margin && u < s->u1 + margin && v > s->v0 - margin && v < s->v1 + margin;
+}
 /* Drop kerbs cut into a block's sidewalks (all of them), one at each side of
  * every crosswalk. Uses the roads of the plan area along the block's edges. */
 int      city_block_drops(const PlanArea *pa, const Block *bk, DropKerb *out, int max);

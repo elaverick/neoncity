@@ -489,7 +489,22 @@ static int clear_of_glass(const WallFrame *w, DVec2 a, float ya, DVec2 b, float 
  * criss-cross, and hung lower and slacker than over the streets. Stricter than
  * over the streets, where the walls are far apart: both ends must have solid
  * wall all round them, and the cable must stay clear of glass along the walls. */
+/* Whether a span sagging from a (ya) to b (yb) passes over a vendor's site lower than the vendor may stand. */
+static int over_vendor(const VendorSpot *vs, int nvs, DVec2 a, float ya, DVec2 b, float yb, float sag) {
+    for (int k = 0; k <= 16; ++k) {
+        float t = (float)k / 16.0f, y = lerpf(ya, yb, t) - 4.0f * sag * t * (1.0f - t);
+        DVec2 p = dadd(a, dscale(dsub(b, a), t));
+        for (int i = 0; i < nvs; ++i)
+            if (y < vs[i].y + VENDOR_TOP_MAX + 0.3f && vendor_spot_contains(&vs[i], p.x, p.z, 0.3, 0.3)) return 1;
+    }
+    return 0;
+}
+
 static void build_alley_cables(Mesh *m, ChunkGen *g) {
+    /* the vendors' sites of the blocks of the buildings this chunk owns, which the cables pass high over */
+    VendorSpot *vs = (VendorSpot *)malloc(sizeof(VendorSpot) * 1024);
+    if (!vs) fatal("out of memory hanging cables");
+    int nvs = city_vendor_spots(g, g->ox, g->oz, g->ox + CHUNK_SIZE, g->oz + CHUNK_SIZE, VSPOTS_BLOCKS, vs, 1024);
     for (int i = 0; i < g->nb; ++i) {
         const Building *b = &g->bld[i];
         if (!chunk_gen_owns(g, b->ox, b->oz)) continue;
@@ -540,7 +555,7 @@ static void build_alley_cables(Mesh *m, ChunkGen *g) {
                             if (glass_near(wb.bg, wb.s, wb.len, hb.u, yb - wb.base, ALLEY_GAP_U - 0.05f, ALLEY_GAP_V - 0.05f)) continue;
                             DVec2 pa = to_world(b, lx - e.ez * 0.08f, lz + e.ex * 0.08f);
                             float sag = span_sag(pa, ya, pb, yb, sagFrac * (1.0f + 0.4f * (float)j), gm + ALLEY_CLEAR);
-                            if (!clear_of_glass(&wa, pa, ya, pb, yb, sag) || !clear_of_glass(&wb, pa, ya, pb, yb, sag)) continue;
+                            if (!clear_of_glass(&wa, pa, ya, pb, yb, sag) || !clear_of_glass(&wb, pa, ya, pb, yb, sag) || over_vendor(vs, nvs, pa, ya, pb, yb, sag)) continue;
                             emit_span(m, g, pa, ya, pb, yb, sag, thick, mt);
                         }
                     }
@@ -548,6 +563,7 @@ static void build_alley_cables(Mesh *m, ChunkGen *g) {
             }
         }
     }
+    free(vs);
 }
 
 void build_cables(Mesh *m, ChunkGen *g) {

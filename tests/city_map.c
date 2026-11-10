@@ -5,9 +5,14 @@
  *
  * Defaults to a 6 km square around the central regional centre at 3 m/px.
  * Roads are coloured by class, blocks by zone, building sections by height;
- * the city's ground is dark asphalt, and the land beyond it black. A map of
- * the whole city (30 km at 20 m/px, say) is quicker without the buildings. */
+ * the city's ground is dark asphalt, and the land beyond it black. The open
+ * spaces left for the street vendors are sand (paved) and brown (a court),
+ * and on maps up to 2.5 km across the vendors' sites are orange, their fronts
+ * yellow. A map of the whole city (30 km at 20 m/px, say) is quicker without
+ * the buildings. It ends with a survey of the spaces: how many blocks of each
+ * zone, poor, middling and wealthy, have each kind. */
 #include "building.h"
+#include "vendor_sites.h"
 #include "hash.h"
 #include "mathlib.h"
 
@@ -46,6 +51,19 @@ static void fill(const void *shape, InsideFn inside, double bx0, double bz0, dou
 }
 
 static int in_poly(const void *s, double x, double z) { return poly_contains((const Poly *)s, x, z, 0.0); }
+static int in_space(const void *s, double x, double z) { return city_space_contains((const CitySpace *)s, x, z, 0.0); }
+static int in_spot(const void *s, double x, double z) { return vendor_spot_contains((const VendorSpot *)s, x, z, 0.0, 0.0); }
+static int in_front(const void *s, double x, double z) {
+    const VendorSpot *v = (const VendorSpot *)s;
+    return vendor_spot_contains(v, x, z, 0.0, 0.0) && !vendor_spot_contains(v, x, z, 0.0, -0.6);
+}
+
+/* The survey: each block once (tiles overlap). */
+typedef struct BlockRec { uint32_t seed; uint8_t zone, cls, kinds; } BlockRec;
+static int rec_cmp(const void *a, const void *b) {
+    uint32_t x = ((const BlockRec *)a)->seed, y = ((const BlockRec *)b)->seed;
+    return x < y ? -1 : x > y;
+}
 
 typedef struct SecShape { const Building *b; const BFoot *f; } SecShape;
 
@@ -96,6 +114,8 @@ int main(int argc, char **argv) {
     memset(g_px, 0, (size_t)g_w * g_h * 3);
 
     static const uint32_t zoneCol[ZONE_COUNT] = { 0x3a2f3f, 0x4a3a28, 0x2c3440, 0x343434, 0x1f3a22, 0x3a4a1c };
+    BlockRec *rec = NULL;
+    int nrec = 0, caprec = 0;
     PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
     Building *bl = (Building *)malloc(sizeof(Building) * 256);
     BGraph *bg = (BGraph *)malloc(sizeof(BGraph));
@@ -142,6 +162,19 @@ int main(int argc, char **argv) {
                 double x0, z0, x1, z1;
                 poly_bounds(&bk->lot, &x0, &z0, &x1, &z1);
                 fill(&bk->lot, in_poly, x0, z0, x1, z1, clip, zoneCol[bk->zone]);
+                CitySpace sp[MAX_BLOCK_SPACES];
+                int nsp = city_block_spaces(bk, sp, MAX_BLOCK_SPACES);
+                for (int k = 0; k < nsp; ++k) {
+                    double r0 = fabs(sp[k].u0) + fabs(sp[k].u1) + fabs(sp[k].v0) + fabs(sp[k].v1);
+                    fill(&sp[k], in_space, sp[k].ox - r0, sp[k].oz - r0, sp[k].ox + r0, sp[k].oz + r0, clip, 0xb09a6a);
+                }
+                if (nrec == caprec) { caprec = caprec ? 2 * caprec : 4096; rec = (BlockRec *)realloc(rec, sizeof(BlockRec) * caprec); }
+                DVec2 cen = poly_centroid(&bk->lot);
+                float aff = plan_affluence(cen.x, cen.z);
+                rec[nrec].seed = bk->seed; rec[nrec].zone = (uint8_t)bk->zone; rec[nrec].cls = (uint8_t)(aff < 0.33f ? 0 : aff < 0.66f ? 1 : 2);
+                rec[nrec].kinds = 0;
+                for (int k = 0; k < nsp; ++k) rec[nrec].kinds |= (uint8_t)(1u << sp[k].kind);
+                nrec++;
                 int n = withBuildings ? city_block_buildings(bk, bl, 256) : 0;
                 for (int k = 0; k < n; ++k) {
                     const Building *b = &bl[k];
@@ -164,6 +197,23 @@ int main(int argc, char **argv) {
                 buildings += n;
             }
         }
+    /* The vendors' sites (and their courts, which the site planner finds) on smaller maps. */
+    int sites = 0;
+    if (withBuildings && size <= 2500.0) {
+        VendorSpot *vs = (VendorSpot *)malloc(sizeof(VendorSpot) * MAX_VENDOR_SPOTS);
+        double clip[4] = { g_x0, g_z0, g_x0 + size, g_z0 + size };
+        for (int cz = (int)floor(g_z0 / CHUNK_SIZE); cz <= (int)floor((g_z0 + size) / CHUNK_SIZE); ++cz)
+            for (int cx = (int)floor(g_x0 / CHUNK_SIZE); cx <= (int)floor((g_x0 + size) / CHUNK_SIZE); ++cx) {
+                int n = city_chunk_vendor_spots(cx, cz, vs, MAX_VENDOR_SPOTS);
+                for (int i = 0; i < n; ++i) {
+                    double r0 = vs[i].site.w + vs[i].site.d;
+                    fill(&vs[i], in_spot, vs[i].x - r0, vs[i].z - r0, vs[i].x + r0, vs[i].z + r0, clip, vs[i].space == SPACE_COURT ? 0xff6a20 : 0xff8a30);
+                    fill(&vs[i], in_front, vs[i].x - r0, vs[i].z - r0, vs[i].x + r0, vs[i].z + r0, clip, 0xffe040);
+                }
+                sites += n;
+            }
+        free(vs);
+    }
     /* The city's town centres: regional ones larger. */
     for (int j = (int)floor(g_z0 / TOWN_SIZE) - 1; j <= (int)floor((g_z0 + size) / TOWN_SIZE) + 1; ++j)
         for (int i = (int)floor(g_x0 / TOWN_SIZE) - 1; i <= (int)floor((g_x0 + size) / TOWN_SIZE) + 1; ++i) {
@@ -177,8 +227,31 @@ int main(int argc, char **argv) {
                         put(x, y, reg ? 0xff2020 : 0xffa020);
         }
     write_bmp(out);
+    if (nrec) {
+        qsort(rec, (size_t)nrec, sizeof(BlockRec), rec_cmp);
+        int u = 0;
+        for (int i = 0; i < nrec; ++i) if (!u || rec[u - 1].seed != rec[i].seed) rec[u++] = rec[i];
+        static const char *const ZN[ZONE_COUNT] = { "core", "centre", "residential", "industrial", "park", "rural" };
+        static const char *const CN[3] = { "poor", "middling", "wealthy" };
+        static const char *const SN[SPACE_KINDS] = { "apron", "lane", "pocket", "plaza", "court" };
+        printf("spaces for vendors, by block (%d blocks):\n", u);
+        for (int z = 0; z < 2; ++z)
+            for (int c = 0; c < 3; ++c) {
+                int nb = 0, with[SPACE_KINDS] = { 0 };
+                for (int i = 0; i < u; ++i) {
+                    if (rec[i].zone != z || rec[i].cls != c) continue;
+                    nb++;
+                    for (int k = 0; k < SPACE_KINDS; ++k) with[k] += (rec[i].kinds >> k) & 1;
+                }
+                if (!nb) continue;
+                printf("  %-6s %-8s %5d blocks:", ZN[z], CN[c], nb);
+                for (int k = 0; k < SPACE_KINDS - 1; ++k) printf(" %s %d (1 in %.1f)", SN[k], with[k], with[k] ? (double)nb / with[k] : 0.0);
+                printf("\n");
+            }
+    }
+    if (sites) printf("%d vendors' sites\n", sites);
     printf("wrote %s: %dx%d px, %.0f m square, %d blocks, %d buildings (tiles overlap, so counts include repeats)\n",
            out, g_w, g_h, size, blocks, buildings);
-    free(pa); free(bl); free(bg); free(g_px);
+    free(pa); free(bl); free(bg); free(g_px); free(rec);
     return 0;
 }

@@ -1014,7 +1014,7 @@ int v_build_structure(VGen *G, VFrame *F) {
 void vendor_min_site(int a, float *w, float *d) {
     static const float M[VA_COUNT][2] = {
         { 3.3f, 3.1f }, { 2.0f, 2.3f }, { 2.5f, 2.4f }, { V_BOX20 + 0.3f, V_BOX_W + 1.3f },
-        { V_BOX20 + 0.3f, V_BOX_W + V_BOX10 + 0.3f }, { 2.2f, 2.4f }, { 2.0f, 1.4f } };
+        { V_BOX20 + 0.3f, V_BOX_W + V_BOX10 + 0.3f }, { 2.2f, 2.4f }, { 2.0f, 1.7f } };   /* a barrow: its bed up to 1 m wide, 0.65 m round it */
     *w = a >= 0 && a < VA_COUNT ? M[a][0] : 2.0f;
     *d = a >= 0 && a < VA_COUNT ? M[a][1] : 2.0f;
 }

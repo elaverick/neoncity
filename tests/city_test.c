@@ -793,6 +793,8 @@ static void check_props(int hx, int hz) {
     CHECK(faced == 0, "%d crossing signals face a block, not the road", faced);
 }
 
+#include "city_test_vendors.c"
+
 /* city_test --props: --cam views of the street furniture nearest the spawn, a
  * few of each kind, from in front of each piece (a condenser's from the
  * ground below, looking up at it). */
@@ -1264,6 +1266,8 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
     if (argc > 1 && strcmp(argv[1], "--proxies") == 0) return proxy_survey();
     if (argc > 1 && strcmp(argv[1], "--props") == 0) return props_cams();
+    if (argc > 1 && strcmp(argv[1], "--vendor-sites") == 0) return vendor_sites_cams(argc, argv);
+    if (argc > 3 && strcmp(argv[1], "--vs-probe") == 0) return vs_probe(atof(argv[2]), atof(argv[3]));
     if (argc > 1 && strcmp(argv[1], "--screens") == 0) return screens_cams();
     if (argc > 1 && strcmp(argv[1], "--facades") == 0) return facades_cams();
     if (argc > 1 && strcmp(argv[1], "--graffiti") == 0) return graffiti_cams();
@@ -1515,6 +1519,9 @@ int main(int argc, char **argv) {
 
     /* 8. Street furniture. */
     check_props(hx, hz);
+
+    /* 9. Where the street vendors stand. */
+    check_vendor_sites(hx, hz, "the spawn");
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all city tests passed (%d chunks x %d orders/threads)\n", N_CHUNKS, THREADS + 2);

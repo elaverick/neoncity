@@ -26,6 +26,7 @@ build/interior_bake --check              # the baked office floors against asset
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
 build/vendor_lab 60 out        # street vendors: validity, determinism, budgets, neighbours, the mix by affluence; contact sheets
 build/city_test --props        # --cam views of the street furniture near the spawn
+build/city_test --vendor-sites # the vendors' sites round the spawn and the nearest lane, pocket market, plaza, apron: checks, --cam views
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
 build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the world chart within 5400 km; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
 cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)
@@ -1387,8 +1388,23 @@ each kind near the spawn. The layer averages about 49,000 vertices a chunk (130,
 
 ### Street vendors (`src/gen/vendor.c`)
 Noodle bars, kiosks, lean-tos, container shops, market stalls and barrows follow
-`docs/street-vendor-generation.md`. So far the grammar alone is built (SV0 of the vendor roadmap): the city
-doesn't place them yet.
+`docs/street-vendor-generation.md`. So far the grammar (SV0 of the vendor roadmap) and the sites (SV1) are
+built: the city plans where they stand, but doesn't draw them yet.
+
+- **Room for them** (`src/city/lots.c`, `city_block_spaces`): in the centres' poorer and middling districts
+  about one block in six has a market lane (an alley across it widened to 7-10 m), one in six or seven a hawker
+  frontage (its row set back 4-7 m behind a paved apron) and one in ten a pocket market (a plot left unbuilt);
+  in the wealthy cores one block in five has a lunch plaza (an office tower set back 8-16 m behind its
+  forecourt). These are paved as the sidewalks are. The choices are hashes of the block, so a block with none
+  keeps its buildings.
+- **Sites** (`src/city/vendor_sites.c`, `vendor_sites.h`): rows along each space (against an apron's row,
+  down both sides of a lane, across a pocket market's aisles, at a forecourt's sides), round a court (the
+  largest open yard behind a block's buildings that a 1.5 m way joins to the street) and by the kerb where the
+  sidewalk leaves 1.8 m behind a pitch. Every site stands clear of walls, columns, relief piers and door ways,
+  1 m from the next, with its own way clear; street furniture, litter and alley cables keep off them. A
+  block's sites are planned whole, whichever chunk asks; those of one space are a group, generated in order.
+  `city_test --vendor-sites` checks them (the same from every chunk, clear, reachable, each taking a valid
+  vendor) and `city_map` draws them.
 
 - **Input:** a site, a rectangle with its back (a wall a lean-to may lean on) and its front, where the
   customers come from; its kind (kerb, apron, market lane, court, pocket market, lunch plaza, arcology),

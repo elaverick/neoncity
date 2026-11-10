@@ -80,6 +80,8 @@ typedef struct LGen {
     Tris     *T;             /* the item being built */
     Prop     *props;         /* street furniture in reach (city_props) */
     int       nprops;
+    VendorSpot *vs;          /* vendors' sites in reach (vendor_sites.c) */
+    int       nvs;
     Mesh     *m;
 } LGen;
 
@@ -99,11 +101,15 @@ static void lgen_init(LGen *g, int cx, int cz, Mesh *m) {
     if (!g->props) fatal("out of memory generating litter");
     const double R = PROPS_REACH;
     g->nprops = city_props(&g->c, g->c.ox - R, g->c.oz - R, g->c.ox + CHUNK_SIZE + R, g->c.oz + CHUNK_SIZE + R, PROPS_GROUND, g->props, MAX_PROPS);
+    /* and the vendors' sites, which it lies clear of (it may lie on the paving round them) */
+    g->vs = (VendorSpot *)malloc(sizeof(VendorSpot) * MAX_VENDOR_SPOTS);
+    if (!g->vs) fatal("out of memory generating litter");
+    g->nvs = city_vendor_spots(&g->c, g->c.ox - 3.0, g->c.oz - 3.0, g->c.ox + CHUNK_SIZE + 3.0, g->c.oz + CHUNK_SIZE + 3.0, VSPOTS_TOUCH, g->vs, MAX_VENDOR_SPOTS);
 }
 
 static void lgen_free(LGen *g) {
     for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) free(g->drops[k]);
-    free(g->sq); free(g->T); free(g->drops); free(g->nd); free(g->props);
+    free(g->sq); free(g->T); free(g->drops); free(g->nd); free(g->props); free(g->vs);
     chunk_gen_free(&g->c);
     memset(g, 0, sizeof(*g));
 }
@@ -217,6 +223,8 @@ static int in_plot(const Building *b, double x, double z, double margin, float *
 
 /* Whether something of radius rad at (x, z) would stand in a wall, a column, a lamp post or a piece of street furniture. */
 static int blocked(LGen *g, double x, double z, float rad) {
+    for (int i = 0; i < g->nvs; ++i)
+        if (vendor_spot_contains(&g->vs[i], x, z, rad, rad)) return 1;
     for (int i = 0; i < g->nprops; ++i) {
         const Prop *p = &g->props[i];
         double dx = x - p->x, dz = z - p->z;

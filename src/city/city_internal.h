@@ -5,6 +5,7 @@
 #include "arcology.h"
 #include "plant.h"
 #include "models.h"
+#include "vendor_sites.h"
 #include "hash.h"
 #include "mathlib.h"
 #include "geom2d.h"
@@ -29,6 +30,7 @@
  *   cables.c         overhead cables
  *   litter.c         the litter layer
  *   props.c          the street furniture layer
+ *   vendor_sites.c   where the street vendors stand (vendor_sites.h)
  *   models.c         the models it and the lobbies set down (models.h: assets/models/)
  *   proxy.c          distant proxies: boxes round the buildings' sections */
 
@@ -357,3 +359,12 @@ void    emit_model(Mesh *m, int pm, vec3 at, float fx, float fz, Mat mt);
 #define PROPS_LAMP_PAD  4.0
 #define PROPS_REACH     1.0
 int     city_props(ChunkGen *g, double x0, double z0, double x1, double z1, int mask, Prop *out, int max);
+
+/* vendor_sites.c */
+/* The vendors' sites of the blocks that reach [x0, x1) x [z0, z1): those whose
+ * middles lie in it (VSPOTS_OWNED), whose rectangles or ways reach into it
+ * (VSPOTS_TOUCH), or all of them (VSPOTS_BLOCKS: what a source that keeps off
+ * them must see, wherever the chunk asking is). g must hold the buildings of
+ * every block that reaches the rectangle. */
+enum { VSPOTS_OWNED = 0, VSPOTS_TOUCH, VSPOTS_BLOCKS };
+int     city_vendor_spots(ChunkGen *g, double x0, double z0, double x1, double z1, int touch, VendorSpot *out, int max);

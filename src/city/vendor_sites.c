@@ -1,0 +1,661 @@
+#include "city_internal.h"
+#include "vendor_sites.h"
+
+/* ===========================================================================
+ * Where the street vendors stand (vendor_sites.h). A block's sites are planned
+ * whole: its spaces (city_block_spaces) in order, then a court if the yards
+ * behind its buildings leave one, then its kerbs. Each space is lined with
+ * rows of sites; a row walks along its back line, trying a site of a drawn
+ * width and depth, keeping it if it passes (candidate), and moving on.
+ * ========================================================================= */
+
+enum { GK_NONE = 0, GK_SIDEWALK, GK_LOT, GK_DROP };
+
+#define MAX_BLOCK_SPOTS 160
+#define MAX_KEEP        24
+#define SAMPLE          0.45   /* the most between the points a site is checked at (m) */
+#define KERB_END        6.0    /* a kerb pitch keeps this far from its edge's ends (the corners) */
+#define KERB_CROSSING   2.5    /* ...and from a drop kerb (the crossing's waiting space) */
+#define KERB_LAMP       0.5    /* ...and this far from a lamp post's pole */
+#define KERB_BACK       (KERB_STONE_WIDTH + 0.12)   /* a kerb pitch's back off the kerb line */
+#define DOOR_KEEP       0.6    /* a door's way is kept this much wider than the door each side (as props.c) */
+#define DOOR_REACH      2.2    /* ...and out this far */
+#define CEIL_MIN        2.6f   /* the lowest overhead a site may stand under */
+#define OPEN_SKY        8.0f   /* anything higher overhead leaves it under the open sky */
+#define COURT_CELL      0.5    /* the yards' raster */
+#define COURT_MIN       10.0   /* a court is at least this square (m) */
+
+/* A rectangle in its own frame: centre c, unit axes t and n, half extents. */
+typedef struct OBB { DVec2 c, t, n; double hu, hn; } OBB;
+
+typedef struct SGen {
+    ChunkGen   *g;
+    int         bi;
+    const Block *bk;
+    int         bl[256], nbl;           /* the block's buildings in g */
+    DropKerb    dk[MAX_BLOCK_DROPS];
+    int         nd;
+    Lamp        lamp[96];
+    int         nl;
+    CitySpace   sp[MAX_BLOCK_SPACES + 1];
+    int         nsp;
+    VendorSpot  spot[MAX_BLOCK_SPOTS];
+    OBB         box[MAX_BLOCK_SPOTS], way[MAX_BLOCK_SPOTS];   /* each site's rectangle and the way in front of it */
+    int         n;
+    OBB         keep[MAX_KEEP];         /* ways kept clear: into a court */
+    int         nkeep;
+    float       aff;
+} SGen;
+
+const char *vendor_space_name(int space) {
+    static const char *const N[SPACE_KINDS + 1] = { "apron", "lane", "pocket market", "plaza", "court", "kerb" };
+    return space >= 0 && space <= SPACE_KINDS ? N[space] : "?";
+}
+
+static int site_kind(int space) {
+    switch (space) {
+    case SPACE_APRON:  return VSITE_APRON;
+    case SPACE_LANE:   return VSITE_LANE;
+    case SPACE_POCKET: return VSITE_POCKET;
+    case SPACE_PLAZA:  return VSITE_PLAZA;
+    case SPACE_COURT:  return VSITE_COURT;
+    default:           return VSITE_KERB;
+    }
+}
+
+/* ---------------------------------------------------------- geometry --- */
+
+static double obb_reach(const OBB *a, DVec2 ax) { return a->hu * fabs(ddot(a->t, ax)) + a->hn * fabs(ddot(a->n, ax)); }
+
+/* Whether two rectangles come within gap of each other (separating axes). */
+static int obb_hit(const OBB *a, const OBB *b, double gap) {
+    const DVec2 ax[4] = { a->t, a->n, b->t, b->n };
+    DVec2 d = dsub(b->c, a->c);
+    for (int k = 0; k < 4; ++k)
+        if (fabs(ddot(d, ax[k])) >= obb_reach(a, ax[k]) + obb_reach(b, ax[k]) + gap) return 0;
+    return 1;
+}
+
+/* A site with its back's middle at B, its front f: its rectangle, and the way
+ * `walk` deep in front of it (a little wider than the site). */
+static OBB site_box(DVec2 B, DVec2 f, double w, double d) {
+    OBB o;
+    o.t = dv(f.z, -f.x); o.n = f;
+    o.c = dadd(B, dscale(f, d * 0.5));
+    o.hu = w * 0.5; o.hn = d * 0.5;
+    return o;
+}
+static OBB way_box(DVec2 B, DVec2 f, double w, double d, double walk) {
+    OBB o = site_box(dadd(B, dscale(f, d)), f, w + 0.6, walk);
+    return o;
+}
+
+void vendor_spot_corners(const VendorSpot *s, double (*v)[2]) {
+    double rx = s->fz, rz = -s->fx, hw = s->site.w * 0.5, d = s->site.d;
+    static const int su[4] = { 1, -1, -1, 1 }, sd[4] = { 0, 0, 1, 1 };
+    for (int k = 0; k < 4; ++k) {
+        v[k][0] = s->x + rx * hw * su[k] + s->fx * d * sd[k];
+        v[k][1] = s->z + rz * hw * su[k] + s->fz * d * sd[k];
+    }
+}
+
+int vendor_spot_contains(const VendorSpot *s, double x, double z, double margin, double front) {
+    double dx = x - s->x, dz = z - s->z;
+    double a = dx * s->fz - dz * s->fx, b = dx * s->fx + dz * s->fz;
+    return fabs(a) < s->site.w * 0.5 + margin && b > -margin && b < s->site.d + front;
+}
+
+/* ------------------------------------------------------------ the block --- */
+
+static int ground_at(const SGen *S, double x, double z) {
+    const Block *bk = S->bk;
+    if (x < bk->x0 || x > bk->x1 || z < bk->z0 || z > bk->z1 || !poly_contains(&bk->curb, x, z, 0.0)) return GK_NONE;
+    if (bk->lot.n && poly_contains(&bk->lot, x, z, 0.0)) return GK_LOT;
+    if (!poly_contains(&bk->curb, x, z, -KERB_STONE_WIDTH)) return GK_DROP;   /* the kerb stones */
+    for (int i = 0; i < S->nd; ++i)
+        if (city_drop_contains(&S->dk[i], x, z, 0.1)) return GK_DROP;
+    return GK_SIDEWALK;
+}
+
+static int in_plot(const Building *b, double x, double z, double margin, float *lx, float *lz) {
+    double dx = x - b->ox, dz = z - b->oz;
+    double px = b->c * dx + b->s * dz, pz = -b->s * dx + b->c * dz;
+    *lx = (float)px; *lz = (float)pz;
+    return px > b->foot.x0 - margin && px < b->foot.x1 + margin && pz > b->foot.z0 - margin && pz < b->foot.z1 + margin;
+}
+
+/* Whether a circle of radius rad at (x, z) runs into a wall standing at street
+ * level, a column or a plant's fence of the block's buildings (as props.c). */
+static int solid(SGen *S, double x, double z, float rad) {
+    ChunkGen *g = S->g;
+    for (int q = 0; q < S->nbl; ++q) {
+        int i = S->bl[q];
+        float lx, lz;
+        if (!in_plot(&g->bld[i], x, z, rad + 0.6, &lx, &lz)) continue;
+        const BGraph *bg = chunk_gen_graph(g, i);
+        if (bgen_industrial(bg)) {
+            const float *f = bg->fence;
+            int inside = lx > f[0] - rad && lx < f[2] + rad && lz > f[1] - rad && lz < f[3] + rad;
+            int within = lx > f[0] + rad && lx < f[2] - rad && lz > f[1] + rad && lz < f[3] - rad;
+            if (inside && !within) return 1;
+        }
+        float ro = relief_out(bg);   /* a curtain wall's piers stand out this far at the street */
+        for (int si = 0; si < bg->nsec; ++si) {
+            const BSection *s = &bg->sec[si];
+            if (s->y0 > SIDEWALK_HEIGHT + 0.5f || bsec_open(s)) continue;
+            float r = rad + (ro > 0.0f && bsec_grounded(s) && relief_on(bg, s) ? ro + 0.02f : 0.0f);
+            if (bfoot_contains(&s->foot, lx, lz) || bfoot_boundary_dist(&s->foot, lx, lz, NULL, NULL) < r) return 1;
+        }
+        for (int k = 0; k < bg->nsup; ++k) {
+            const BSupport *sp = &bg->sup[k];
+            if (sp->type != SUP_COLUMN && sp->type != SUP_STRUT && sp->type != SUP_LEG) continue;
+            float h = sp->size * 0.5f + rad;
+            if (sp->y0 <= SIDEWALK_HEIGHT + 0.5f && fabsf(sp->x0 - lx) < h && fabsf(sp->z0 - lz) < h) return 1;
+            if (sp->y1 <= SIDEWALK_HEIGHT + 0.5f && fabsf(sp->x1 - lx) < h && fabsf(sp->z1 - lz) < h) return 1;
+        }
+    }
+    return 0;
+}
+
+/* Whether (x, z) lies in a door's way: from its face out DOOR_REACH, DOOR_KEEP wider each side. */
+static int in_doorway(SGen *S, double x, double z) {
+    ChunkGen *g = S->g;
+    for (int q = 0; q < S->nbl; ++q) {
+        int i = S->bl[q];
+        float lx, lz;
+        if (!in_plot(&g->bld[i], x, z, DOOR_REACH + 1.0, &lx, &lz)) continue;
+        const BGraph *bg = chunk_gen_graph(g, i);
+        for (int di = 0; di < bg->ndoor; ++di) {
+            const BDoor *d = &bg->door[di];
+            const BLoop *l = &bg->sec[d->section].foot.outer;
+            int k = d->face, k1 = (k + 1) % l->n;
+            float ex = l->x[k1] - l->x[k], ez = l->z[k1] - l->z[k], el = sqrtf(ex * ex + ez * ez);
+            if (el < 1e-4f) continue;
+            ex /= el; ez /= el;
+            float rx = lx - l->x[k], rz = lz - l->z[k];
+            float nx = ez, nz = -ex;   /* out of the wall */
+            if (bloop_inside(l, l->x[k] + ex * d->u + nx * 0.1f, l->z[k] + ez * d->u + nz * 0.1f)) { nx = -nx; nz = -nz; }
+            float u = rx * ex + rz * ez, o = rx * nx + rz * nz;
+            if (fabsf(u - d->u) < d->width * 0.5f + (float)DOOR_KEEP && o > -0.2f && o < (float)DOOR_REACH) return 1;
+        }
+    }
+    return 0;
+}
+
+/* The underside of the lowest section of the block's buildings standing over
+ * (x, z) (world Y), or 1e30. */
+static float overhead(SGen *S, double x, double z) {
+    ChunkGen *g = S->g;
+    float best = 1e30f;
+    for (int q = 0; q < S->nbl; ++q) {
+        int i = S->bl[q];
+        float lx, lz;
+        if (!in_plot(&g->bld[i], x, z, 0.05, &lx, &lz)) continue;
+        const BGraph *bg = chunk_gen_graph(g, i);
+        float base = building_base(&g->bld[i]);
+        for (int si = 0; si < bg->nsec; ++si) {
+            const BSection *s = &bg->sec[si];
+            if (s->y0 <= SIDEWALK_HEIGHT + 0.5f || !bfoot_contains(&s->foot, lx, lz)) continue;
+            best = minf(best, base + s->y0);
+        }
+    }
+    return best;
+}
+
+static int lamp_near(const SGen *S, double x, double z, double r) {
+    for (int i = 0; i < S->nl; ++i) {
+        double dx = x - S->lamp[i].x, dz = z - S->lamp[i].z, k = 0.22 + r;
+        if (dx * dx + dz * dz < k * k) return 1;
+    }
+    return 0;
+}
+
+/* --------------------------------------------------------------- a site --- */
+
+/* Whether a site w x d with its back's middle at B, facing f, stands on `want`
+ * ground clear of everything, with `walk` clear in front of it; fills sp if so. */
+static int candidate(SGen *S, DVec2 B, DVec2 f, double w, double d, double walk, int want, VendorSpot *sp) {
+    DVec2 r = dv(f.z, -f.x);
+    OBB box = site_box(B, f, w, d), way = way_box(B, f, w, d, walk);
+    for (int i = 0; i < S->n; ++i)
+        if (obb_hit(&box, &S->box[i], V_GAP_MIN) || obb_hit(&box, &S->way[i], 0.02) || obb_hit(&way, &S->box[i], 0.02)) return 0;
+    for (int i = 0; i < S->nkeep; ++i)
+        if (obb_hit(&box, &S->keep[i], 0.0)) return 0;
+    int kerb = want == GK_SIDEWALK;
+    int nu = (int)ceil(w / SAMPLE), nz = (int)ceil(d / SAMPLE);
+    float roof = 1e30f;   /* the lowest overhead, world Y */
+    for (int j = 0; j <= nz; ++j)
+        for (int i = 0; i <= nu; ++i) {
+            double a = -w * 0.5 + w * i / nu, b = 0.02 + (d - 0.04) * j / nz;
+            DVec2 p = dadd(B, dadd(dscale(r, a), dscale(f, b)));
+            if (ground_at(S, p.x, p.z) != want || solid(S, p.x, p.z, 0.02f) || in_doorway(S, p.x, p.z)) return 0;
+            if (kerb) {
+                if (lamp_near(S, p.x, p.z, KERB_LAMP)) return 0;
+                for (int q = 0; q < S->nd; ++q)
+                    if (city_drop_contains(&S->dk[q], p.x, p.z, KERB_CROSSING)) return 0;
+            }
+            if ((i == 0 || i == nu || i == nu / 2) && (j == 0 || j == nz || j == nz / 2)) {
+                float h = overhead(S, p.x, p.z);
+                if (h - city_ground_y(p.x, p.z) - SIDEWALK_HEIGHT < CEIL_MIN) return 0;
+                roof = minf(roof, h);
+            }
+        }
+    /* the way in front: on the block's ground, nothing solid in it */
+    int nw = (int)ceil(walk / SAMPLE);
+    for (int j = 1; j <= nw; ++j)
+        for (int i = 0; i <= nu; ++i) {
+            double a = -w * 0.5 + w * i / nu, b = d + walk * j / nw;
+            DVec2 p = dadd(B, dadd(dscale(r, a), dscale(f, b)));
+            if (ground_at(S, p.x, p.z) == GK_NONE || solid(S, p.x, p.z, 0.0f) || (kerb && lamp_near(S, p.x, p.z, 0.0))) return 0;
+        }
+    /* a wall all along its back, which a lean-to may lean on */
+    int host = 1;
+    for (int i = 0; i <= nu && host; ++i) {
+        DVec2 p = dadd(B, dadd(dscale(r, -w * 0.5 + w * (0.05 + 0.9 * i / nu)), dscale(f, -0.12)));
+        host = solid(S, p.x, p.z, 0.0f);
+    }
+    memset(sp, 0, sizeof(*sp));
+    sp->x = B.x; sp->z = B.z;
+    sp->fx = (float)f.x; sp->fz = (float)f.z;
+    float lo = 1e30f;
+    double cv[4][2];
+    sp->site.w = (float)w; sp->site.d = (float)d;
+    vendor_spot_corners(sp, cv);
+    for (int k = 0; k < 4; ++k) lo = minf(lo, city_ground_y(cv[k][0], cv[k][1]));
+    sp->y = lo + SIDEWALK_HEIGHT + (want == GK_LOT ? 0.006f : 0.0f);
+    double mx, mz;
+    vendor_spot_middle(sp, &mx, &mz);
+    sp->ground = city_ground_y(mx, mz);
+    sp->walk = (float)walk;
+    sp->site.ceiling = roof - sp->y >= OPEN_SKY ? 0.0f : roof - sp->y;
+    sp->site.affluence = plan_affluence(mx, mz);
+    sp->site.hostWall = (uint8_t)host;
+    sp->site.archetype = -1; sp->site.trade = -1;
+    return 1;
+}
+
+static void keep_site(SGen *S, const VendorSpot *sp, int space, uint32_t group, int member, int lunch) {
+    if (S->n >= MAX_BLOCK_SPOTS) return;
+    VendorSpot *o = &S->spot[S->n];
+    *o = *sp;
+    o->space = (uint8_t)space;
+    o->group = group; o->member = (uint16_t)member; o->members = 1;
+    o->site.kind = (uint8_t)site_kind(space);
+    o->site.lunch = (uint8_t)lunch;
+    o->site.seed = hash_combine(group, (uint32_t)member + 1u);
+    DVec2 B = dv(sp->x, sp->z), f = dv(sp->fx, sp->fz);
+    S->box[S->n] = site_box(B, f, sp->site.w, sp->site.d);
+    S->way[S->n] = way_box(B, f, sp->site.w, sp->site.d, sp->walk);
+    S->n++;
+}
+
+/* ---------------------------------------------------------------- rows --- */
+
+typedef struct Row {
+    DVec2    a, t, f;        /* the back line's start, along it, the sites' front */
+    double   len;
+    float    dlo, dhi, wlo, whi, walk;
+    int      want, space, lunch, most;
+    float    rate;           /* kerb pitches: how many to a metre (exponential gaps); 0: a packed row */
+    uint32_t seed, group;    /* group 0: each site a group of its own */
+} Row;
+
+static void fill_row(SGen *S, const Row *R, int *member) {
+    if (R->len < R->wlo || R->dhi < R->dlo - 1e-3f) return;
+    Rng r = rng_make(R->seed);
+    double u = R->rate > 0.0f ? -log(1.0 - 0.999 * rng_float(&r)) / R->rate : rng_range(&r, 0.0f, 1.0f);
+    int placed = 0, tries = 0;
+    while (u < R->len && placed < R->most && S->n < MAX_BLOCK_SPOTS) {
+        double w = rng_range(&r, R->wlo, R->whi), d = rng_range(&r, R->dlo, R->dhi);
+        if (u + w > R->len) w = R->len - u;
+        if (w < R->wlo - 1e-6) break;
+        VendorSpot sp;
+        int ok = 0;
+        for (int k = 0; k < 2 && !ok; ++k) {
+            double ww = k ? R->wlo : w;
+            if (k && w - R->wlo < 0.3) break;
+            DVec2 B = dadd(R->a, dscale(R->t, u + ww * 0.5));
+            if (candidate(S, B, R->f, ww, d, R->walk, R->want, &sp)) { ok = 1; w = ww; }
+        }
+        if (ok) {
+            uint32_t grp = R->group ? R->group : hash_combine(R->seed, (uint32_t)placed + 1u);
+            keep_site(S, &sp, R->space, grp, R->group ? (*member)++ : 0, R->lunch);
+            placed++;
+            tries = 0;
+            if (R->rate > 0.0f) u += w + (rng_float(&r) < 0.3f ? rng_range(&r, 1.0f, 2.0f) : -log(1.0 - 0.999 * rng_float(&r)) / R->rate);
+            else u += w + rng_range(&r, (float)V_GAP_MIN + 0.05f, 2.2f);
+        } else if (R->rate > 0.0f && ++tries > 4) {
+            u += -log(1.0 - 0.999 * rng_float(&r)) / R->rate;
+            tries = 0;
+        } else {
+            u += 0.5;
+        }
+    }
+}
+
+/* A row along a space's frame: from (u, v) along unit direction (du, dv) in
+ * the frame for len, the sites facing (fu, fv). */
+static Row space_row(const CitySpace *s, double u, double v, double du, double dvv, double len, double fu, double fv) {
+    Row R;
+    memset(&R, 0, sizeof(R));
+    DVec2 U = dv(s->ux, s->uz), V = dv(s->vx, s->vz);
+    R.a = dadd(dv(s->ox, s->oz), dadd(dscale(U, u), dscale(V, v)));
+    R.t = dadd(dscale(U, du), dscale(V, dvv));
+    R.f = dadd(dscale(U, fu), dscale(V, fv));
+    R.len = len;
+    R.want = GK_LOT;
+    R.walk = VENDOR_WALK_LOT;
+    R.group = s->seed;
+    R.space = s->kind;
+    return R;
+}
+
+/* The rows of one of the filler's spaces. */
+static void fill_space(SGen *S, const CitySpace *s) {
+    int member = 0;
+    double W = s->u1 - s->u0, H = s->v1 - s->v0;
+    uint32_t sd = s->seed;
+    Row R;
+    switch (s->kind) {
+    case SPACE_APRON:
+        /* backs to the row's front, facing the street; customers stand on the apron and the sidewalk */
+        R = space_row(s, s->u0 + 0.4, s->v1 - 0.05, 1, 0, W - 0.8, 0, -1);
+        R.dlo = 2.4f; R.dhi = (float)fmin(3.6, H - 1.0); if (R.dhi < R.dlo) R.dlo = R.dhi;
+        R.wlo = 2.4f; R.whi = 4.5f; R.walk = 1.0f; R.most = 12; R.seed = hash_combine(sd, 1u);
+        fill_row(S, &R, &member);
+        break;
+    case SPACE_LANE: {
+        /* a row down each side, facing across the way between them */
+        double d = fmin(3.5, (H - VENDOR_WALK_LOT - 0.2) * 0.5);
+        for (int side = 0; side < 2; ++side) {
+            R = side ? space_row(s, s->u1 - 1.0, s->v1 - 0.05, -1, 0, W - 2.0, 0, -1)
+                     : space_row(s, s->u0 + 1.0, s->v0 + 0.05, 1, 0, W - 2.0, 0, 1);
+            R.dlo = (float)fmin(2.4, d); R.dhi = (float)d;
+            R.wlo = 2.2f; R.whi = 4.0f; R.walk = (float)fmin(VENDOR_WALK_LOT, H - 2.0 * d - 0.2); R.most = 16;
+            R.seed = hash_combine(sd, 2u + (uint32_t)side);
+            fill_row(S, &R, &member);
+        }
+        break;
+    }
+    case SPACE_POCKET: {
+        /* rows across the plot, in from the street, facing each other across aisles open to it */
+        const double d = 2.5, aisle = 2.2 + 0.8 * hash_float(hash_combine(sd, 9u)), unit = 2.0 * d + aisle + V_GAP_MIN + 0.1;
+        int na = (int)floor((W + V_GAP_MIN + 0.1) / unit);
+        if (na < 1) break;
+        double u = s->u0 + (W - (na * unit - V_GAP_MIN - 0.1)) * 0.5;
+        for (int k = 0; k < na; ++k, u += unit)
+            for (int side = 0; side < 2; ++side) {
+                double ub = side ? u + 2.0 * d + aisle : u;
+                R = space_row(s, ub, s->v0 + 1.2, 0, 1, H - 1.7, side ? -1 : 1, 0);
+                R.dlo = R.dhi = (float)d;
+                R.wlo = 2.2f; R.whi = 3.6f; R.most = 8;
+                R.seed = hash_combine(sd, 10u + (uint32_t)(2 * k + side));
+                fill_row(S, &R, &member);
+            }
+        break;
+    }
+    case SPACE_PLAZA:
+        /* a few lunch stalls at the forecourt's sides, the middle (the way to the tower) clear */
+        for (int side = 0; side < 2; ++side) {
+            R = space_row(s, side ? s->u1 - 0.5 : s->u0 + 0.5, s->v0 + 1.5, 0, 1, H - 2.5, side ? -1 : 1, 0);
+            R.dlo = 2.5f; R.dhi = (float)fmin(4.0, W * 0.25);
+            R.wlo = 2.4f; R.whi = 7.0f; R.most = 2; R.lunch = 1;
+            R.seed = hash_combine(sd, 20u + (uint32_t)side);
+            fill_row(S, &R, &member);
+        }
+        break;
+    case SPACE_COURT: {
+        /* round its sides, facing in, the middle clear */
+        double dm = fmin(6.0, (fmin(W, H) - 3.0) * 0.5);
+        const double cu[4] = { s->u0 + 0.05, s->u1 - 0.05, s->u1 - 0.05, s->u0 + 0.05 }, cv[4] = { s->v0 + 0.05, s->v0 + 0.05, s->v1 - 0.05, s->v1 - 0.05 };
+        const double tu[4] = { 1, 0, -1, 0 }, tv[4] = { 0, 1, 0, -1 }, len[4] = { W - 0.1, H - 0.1, W - 0.1, H - 0.1 };
+        int first = (int)(hash_combine(sd, 30u) & 3u), total = 0;
+        for (int q = 0; q < 4; ++q) {
+            int e = (first + q) & 3;
+            R = space_row(s, cu[e], cv[e], tu[e], tv[e], len[e], -tv[e], tu[e]);   /* in: the edge turned left */
+            R.dlo = 2.4f; R.dhi = (float)dm;
+            R.wlo = 2.5f; R.whi = 7.0f; R.most = 8 - total;
+            R.seed = hash_combine(sd, 31u + (uint32_t)e);
+            int before = S->n;
+            fill_row(S, &R, &member);
+            total += S->n - before;
+        }
+        break;
+    }
+    default: break;
+    }
+}
+
+/* ---------------------------------------------------------------- courts --- */
+
+/* The yard behind the block's buildings: the largest rectangle (COURT_MIN
+ * square at least) of open lot no plot nor space takes, along the grain, if a
+ * way at least VENDOR_WALK_LOT wide leads from it to the street. Its ways in
+ * are kept clear (S->keep). */
+static int find_court(SGen *S, CitySpace *out) {
+    const Block *bk = S->bk;
+    if (!bk->lot.n || (bk->zone != ZONE_CORE && bk->zone != ZONE_CENTRE)) return 0;
+    if (hash_float(hash_combine(bk->seed, 0xC0027u)) >= (S->aff < 0.66f ? 0.35f : 0.15f)) return 0;
+    DVec2 t = dv(bk->gc, bk->gs), nn = dv(-bk->gs, bk->gc);
+    double u0 = 1e300, u1 = -1e300, v0 = 1e300, v1 = -1e300;
+    for (int i = 0; i < bk->curb.n; ++i) {
+        double a = ddot(bk->curb.v[i], t), b = ddot(bk->curb.v[i], nn);
+        u0 = fmin(u0, a); u1 = fmax(u1, a); v0 = fmin(v0, b); v1 = fmax(v1, b);
+    }
+    const double h = COURT_CELL;
+    int NU = (int)ceil((u1 - u0) / h), NV = (int)ceil((v1 - v0) / h);
+    if (NU < 8 || NV < 8 || (long)NU * NV > 600000) return 0;
+    /* per cell: 1 open lot (a court may stand there), 2 walkable, 4 the street's sidewalk */
+    uint8_t *c = (uint8_t *)calloc((size_t)NU * NV, 1);
+    int *q = (int *)malloc(sizeof(int) * (size_t)NU * NV);
+    if (!c || !q) fatal("out of memory finding a court");
+    for (int j = 0; j < NV; ++j)
+        for (int i = 0; i < NU; ++i) {
+            double a = u0 + (i + 0.5) * h, b = v0 + (j + 0.5) * h;
+            double x = t.x * a + nn.x * b, z = t.z * a + nn.z * b;
+            if (!poly_contains(&bk->curb, x, z, 0.0)) continue;
+            int built = 0;
+            for (int k = 0; k < S->nbl && !built; ++k) built = inside_building(&S->g->bld[S->bl[k]], x, z, 0.6);
+            if (built) continue;
+            uint8_t m = 2;
+            if (!poly_contains(&bk->lot, x, z, 0.0)) m |= 4;
+            else if (poly_contains(&bk->lot, x, z, -0.3)) {
+                int sp = 0;
+                for (int k = 0; k < S->nsp && !sp; ++k) sp = city_space_contains(&S->sp[k], x, z, 0.5);
+                if (!sp) m |= 1;
+            }
+            c[(size_t)j * NU + i] = m;
+        }
+    /* the largest open rectangle at least COURT_MIN square (histograms row by row) */
+    int need = (int)ceil(COURT_MIN / h), best = 0, bi0 = 0, bj0 = 0, bi1 = 0, bj1 = 0;
+    int *hist = (int *)calloc((size_t)NU + 1, sizeof(int)), *stk = (int *)malloc(sizeof(int) * ((size_t)NU + 1));
+    if (!hist || !stk) fatal("out of memory finding a court");
+    for (int j = 0; j < NV; ++j) {
+        for (int i = 0; i < NU; ++i) hist[i] = (c[(size_t)j * NU + i] & 1) ? hist[i] + 1 : 0;
+        hist[NU] = 0;
+        int sp = 0;
+        for (int i = 0; i <= NU; ++i) {
+            while (sp && hist[stk[sp - 1]] >= hist[i]) {
+                int hh = hist[stk[--sp]], left = sp ? stk[sp - 1] + 1 : 0, ww = i - left;
+                if (hh >= need && ww >= need && hh * ww > best) { best = hh * ww; bi0 = left; bi1 = i; bj0 = j - hh + 1; bj1 = j + 1; }
+            }
+            stk[sp++] = i;
+        }
+    }
+    free(hist); free(stk);
+    int ok = 0;
+    if (best) {
+        /* way: a cell walkable with its four neighbours (a way of three cells, 1.5 m, at least) */
+        #define WALK(i, j) ((i) > 0 && (j) > 0 && (i) < NU - 1 && (j) < NV - 1 && (c[(size_t)(j) * NU + (i)] & 2) && \
+                            (c[(size_t)(j) * NU + (i) - 1] & 2) && (c[(size_t)(j) * NU + (i) + 1] & 2) && \
+                            (c[(size_t)((j) - 1) * NU + (i)] & 2) && (c[(size_t)((j) + 1) * NU + (i)] & 2))
+        uint8_t *seen = (uint8_t *)calloc((size_t)NU * NV, 1);
+        if (!seen) fatal("out of memory finding a court");
+        int qh = 0, qt = 0, street = 0;
+        int ci = (bi0 + bi1) / 2, cj = (bj0 + bj1) / 2;
+        if (WALK(ci, cj)) { seen[(size_t)cj * NU + ci] = 1; q[qt++] = cj * NU + ci; }
+        while (qh < qt && !street) {
+            int at = q[qh++], i = at % NU, j = at / NU;
+            if (c[at] & 4) street = 1;
+            static const int di[4] = { 1, -1, 0, 0 }, dj[4] = { 0, 0, 1, -1 };
+            for (int k = 0; k < 4; ++k) {
+                int a = i + di[k], b = j + dj[k];
+                if (!WALK(a, b) || seen[(size_t)b * NU + a]) continue;
+                seen[(size_t)b * NU + a] = 1;
+                q[qt++] = b * NU + a;
+            }
+        }
+        if (street) {
+            /* the court, a little in from the cells round it; its ways in: the walkable cells just outside each side */
+            memset(out, 0, sizeof(*out));
+            out->kind = SPACE_COURT;
+            out->ox = 0.0; out->oz = 0.0;
+            out->ux = (float)t.x; out->uz = (float)t.z; out->vx = (float)nn.x; out->vz = (float)nn.z;
+            out->u0 = (float)(u0 + bi0 * h + 0.25); out->u1 = (float)(u0 + bi1 * h - 0.25);
+            out->v0 = (float)(v0 + bj0 * h + 0.25); out->v1 = (float)(v0 + bj1 * h - 0.25);
+            out->seed = hash_combine(bk->seed ^ 0xC0027u, 1u);
+            double dm = fmin(6.0, (fmin(out->u1 - out->u0, out->v1 - out->v0) - 3.0) * 0.5) + 0.5;
+            for (int side = 0; side < 4; ++side) {
+                int horiz = side < 2, n = horiz ? bi1 - bi0 : bj1 - bj0, run = -1;
+                for (int k = 0; k <= n; ++k) {
+                    int i, j;
+                    if (horiz) { i = bi0 + k; j = side == 0 ? bj0 - 1 : bj1; }
+                    else       { j = bj0 + k; i = side == 2 ? bi0 - 1 : bi1; }
+                    int open = k < n && i >= 0 && j >= 0 && i < NU && j < NV && seen[(size_t)j * NU + i];
+                    if (open && run < 0) run = k;
+                    if (!open && run >= 0) {
+                        if (k - run >= 3 && S->nkeep < MAX_KEEP) {
+                            /* the way in across the side's run, from the side to past the rows */
+                            double a0 = (horiz ? u0 + (bi0 + run) * h : v0 + (bj0 + run) * h) - 0.3, a1 = (horiz ? u0 + (bi0 + k) * h : v0 + (bj0 + k) * h) + 0.3;
+                            double e = horiz ? (side == 0 ? out->v0 : out->v1) : (side == 2 ? out->u0 : out->u1);
+                            double in = (side == 0 || side == 2) ? 1.0 : -1.0, mid = e + in * dm * 0.5;
+                            OBB *o = &S->keep[S->nkeep++];
+                            double cu = horiz ? 0.5 * (a0 + a1) : mid, cv = horiz ? mid : 0.5 * (a0 + a1);
+                            o->c = dadd(dscale(t, cu), dscale(nn, cv));
+                            o->t = t; o->n = nn;
+                            o->hu = horiz ? 0.5 * (a1 - a0) : dm * 0.5; o->hn = horiz ? dm * 0.5 : 0.5 * (a1 - a0);
+                        }
+                        run = -1;
+                    }
+                }
+            }
+            ok = 1;
+        }
+        free(seen);
+        #undef WALK
+    }
+    free(c); free(q);
+    return ok;
+}
+
+/* ----------------------------------------------------------------- kerbs --- */
+
+/* Pitches by the kerb along edge i of the block, if its sidewalk is wide
+ * enough to leave VENDOR_WALK_KERB behind them: barrows and kiosks, most in
+ * the poorer centres, lunch kiosks in the wealthy cores. */
+static void kerb_pitches(SGen *S, int i) {
+    const Block *bk = S->bk;
+    const Poly *c = &bk->curb;
+    if (!c->e[i].id || c->e[i].bank) return;
+    DVec2 A = c->v[i], B = c->v[(i + 1) % c->n];
+    double len = dlen(dsub(B, A)), walk = c->e[i].walk;
+    double room = walk - KERB_BACK - VENDOR_WALK_KERB - 0.05;
+    if (len < 2.0 * KERB_END + 2.0 || room < 1.7) return;
+    static const float RATE[ZONE_COUNT] = { 1.0f / 160.0f, 1.0f / 55.0f, 1.0f / 140.0f, 1.0f / 260.0f, 0.0f, 0.0f };
+    float rate = RATE[bk->zone] * (1.4f - S->aff);
+    if (rate <= 0.0f) return;
+    DVec2 t = dscale(dsub(B, A), 1.0 / len), in = dv(-t.z, t.x);
+    if (ddot(in, dsub(poly_centroid(c), A)) < 0.0) in = dv(-in.x, -in.z);
+    Row R;
+    memset(&R, 0, sizeof(R));
+    R.a = dadd(dadd(A, dscale(t, KERB_END)), dscale(in, KERB_BACK));
+    R.t = t; R.f = in;
+    R.len = len - 2.0 * KERB_END;
+    R.dlo = 1.7f; R.dhi = (float)fmin(2.6, room);
+    R.wlo = 2.0f; R.whi = 3.0f; R.walk = VENDOR_WALK_KERB;
+    R.want = GK_SIDEWALK; R.space = SPACE_KERB;
+    R.lunch = bk->zone == ZONE_CORE && S->aff > 0.6f;
+    R.most = 64; R.rate = rate;
+    R.seed = hash_combine(bk->seed ^ 0x4E4Bu, (uint32_t)i);
+    int member = 0;
+    fill_row(S, &R, &member);
+}
+
+/* ---------------------------------------------------------------- a block --- */
+
+static void plan_block(SGen *S, ChunkGen *g, int bi) {
+    const Block *bk = &g->pa->blocks[bi];
+    S->g = g; S->bi = bi; S->bk = bk;
+    S->n = S->nkeep = S->nbl = 0;
+    for (int i = 0; i < g->nb && S->nbl < 256; ++i)
+        if (g->bblk[i] == bi) S->bl[S->nbl++] = i;
+    S->nd = city_block_drops(g->pa, bk, S->dk, MAX_BLOCK_DROPS);
+    S->nsp = city_block_spaces(bk, S->sp, MAX_BLOCK_SPACES);
+    DVec2 cen = poly_centroid(bk->lot.n ? &bk->lot : &bk->curb);
+    S->aff = plan_affluence(cen.x, cen.z);
+    /* the lamp posts on its sidewalks, from its roads (not g's, which reach only so far round the chunk) */
+    S->nl = 0;
+    for (int ri = 0; ri < g->pa->nroads && S->nl < 96; ++ri) {
+        Lamp lt[64];
+        const Road *rd = &g->pa->roads[ri];
+        double reach = rd->at.half + rd->at.walk + 2.0;
+        if (fmax(rd->a.x, rd->b.x) < bk->x0 - reach || fmin(rd->a.x, rd->b.x) > bk->x1 + reach ||
+            fmax(rd->a.z, rd->b.z) < bk->z0 - reach || fmin(rd->a.z, rd->b.z) > bk->z1 + reach) continue;
+        int n = city_road_lamps(g->pa, ri, bk->x0 - 1.0, bk->z0 - 1.0, bk->x1 + 1.0, bk->z1 + 1.0, lt, 64);
+        for (int k = 0; k < n && S->nl < 96; ++k)
+            if (poly_contains(&bk->curb, lt[k].x, lt[k].z, 0.5)) S->lamp[S->nl++] = lt[k];
+    }
+    for (int k = 0; k < S->nsp; ++k) fill_space(S, &S->sp[k]);
+    CitySpace court;
+    if (S->nsp < MAX_BLOCK_SPACES + 1 && find_court(S, &court)) {
+        S->sp[S->nsp] = court;
+        fill_space(S, &S->sp[S->nsp]);
+    }
+    for (int i = 0; i < bk->curb.n; ++i) kerb_pitches(S, i);
+    /* each group's size */
+    for (int a = 0; a < S->n; ++a) {
+        int m = 0;
+        for (int b = 0; b < S->n; ++b) m += S->spot[b].group == S->spot[a].group;
+        S->spot[a].members = (uint16_t)m;
+    }
+}
+
+/* city_internal.h */
+int city_vendor_spots(ChunkGen *g, double x0, double z0, double x1, double z1, int touch, VendorSpot *out, int max) {
+    SGen *S = (SGen *)malloc(sizeof(SGen));
+    if (!S) fatal("out of memory placing vendors");
+    int n = 0;
+    for (int bi = 0; bi < g->pa->nblocks; ++bi) {
+        const Block *bk = &g->pa->blocks[bi];
+        if (bk->x1 < x0 || bk->x0 > x1 || bk->z1 < z0 || bk->z0 > z1) continue;
+        if (bk->zone == ZONE_PARK || bk->zone == ZONE_RURAL) continue;
+        plan_block(S, g, bi);
+        for (int k = 0; k < S->n && n < max; ++k) {
+            const VendorSpot *s = &S->spot[k];
+            double mx, mz;
+            vendor_spot_middle(s, &mx, &mz);
+            int in;
+            if (touch == VSPOTS_BLOCKS) in = 1;
+            else if (touch == VSPOTS_OWNED) in = mx >= x0 && mx < x1 && mz >= z0 && mz < z1;
+            else {
+                OBB r;
+                r.c = dv(0.5 * (x0 + x1), 0.5 * (z0 + z1)); r.t = dv(1, 0); r.n = dv(0, 1);
+                r.hu = 0.5 * (x1 - x0); r.hn = 0.5 * (z1 - z0);
+                in = obb_hit(&r, &S->box[k], 0.0) || obb_hit(&r, &S->way[k], 0.0);
+            }
+            if (in) out[n++] = *s;
+        }
+    }
+    free(S);
+    return n;
+}
+
+int city_chunk_vendor_spots(int cx, int cz, VendorSpot *out, int max) { return city_vendor_spots_near(cx, cz, 0.0, out, max); }
+
+int city_vendor_spots_near(int cx, int cz, double grow, VendorSpot *out, int max) {
+    ChunkGen g;
+    chunk_gen_init(&g, cx, cz, PROPS_PLAN_PAD, PROPS_BUILD_PAD + grow, PROPS_LAMP_PAD);
+    int n = city_vendor_spots(&g, g.ox - grow, g.oz - grow, g.ox + CHUNK_SIZE + grow, g.oz + CHUNK_SIZE + grow, VSPOTS_OWNED, out, max);
+    chunk_gen_free(&g);
+    return n;
+}

@@ -104,9 +104,32 @@ typedef struct PGen {
     int       n, max, aircons;
     DropKerb *drops[PLAN_MAX_BLOCKS];
     int       nd[PLAN_MAX_BLOCKS];
+    VendorSpot *vs;             /* the vendors' sites of every block reaching the rectangle: kept off */
+    int       nvs;
+    CitySpace *sp[PLAN_MAX_BLOCKS];   /* each block's open spaces (city_block_spaces), when asked for */
+    int       nsp[PLAN_MAX_BLOCKS];
 } PGen;
 
 static int owned(const PGen *P, double x, double z) { return x >= P->x0 && x < P->x1 && z >= P->z0 && z < P->z1; }
+
+/* Whether a disc of radius r at (x, z) reaches a vendor's site or the way in front of it. */
+static int on_vendor(const PGen *P, double x, double z, double r) {
+    for (int i = 0; i < P->nvs; ++i)
+        if (vendor_spot_contains(&P->vs[i], x, z, r, P->vs[i].walk + r)) return 1;
+    return 0;
+}
+
+/* Whether (x, z) lies on one of block bi's paved spaces (a market lane, a hawker frontage, a pocket market, a forecourt). */
+static int on_paved(PGen *P, int bi, double x, double z, double margin) {
+    if (P->nsp[bi] < 0) {
+        P->sp[bi] = (CitySpace *)malloc(sizeof(CitySpace) * MAX_BLOCK_SPACES);
+        if (!P->sp[bi]) fatal("out of memory placing street furniture");
+        P->nsp[bi] = city_block_spaces(&P->g->pa->blocks[bi], P->sp[bi], MAX_BLOCK_SPACES);
+    }
+    for (int k = 0; k < P->nsp[bi]; ++k)
+        if (city_space_paved(P->sp[bi][k].kind) && city_space_contains(&P->sp[bi][k], x, z, margin)) return 1;
+    return 0;
+}
 
 static int block_drops(PGen *P, int bi, const DropKerb **out) {
     if (P->nd[bi] < 0) {
@@ -291,7 +314,7 @@ static void kerb_edge(PGen *P, int bi, int i) {
         int near_ = 0; \
         for (int q_ = 0; q_ < nd && !near_; ++q_) near_ = city_drop_contains(&dk[q_], x_, z_, KERB_DROP); \
         for (int q_ = 0; q_ < P->g->nl && !near_; ++q_) { double lx_ = P->g->lamp[q_].x - x_, lz_ = P->g->lamp[q_].z - z_; near_ = lx_ * lx_ + lz_ * lz_ < KERB_LAMP * KERB_LAMP; } \
-        if (near_ || !clear_of(list, n, x_, z_, keep_radius(KIND))) break; \
+        if (near_ || !clear_of(list, n, x_, z_, keep_radius(KIND)) || on_vendor(P, x_, z_, sqrt((HW) * (HW) + (HD) * (HD)))) break; \
         float fx_ = (float)((FACEIN) ? in.x : -in.x), fz_ = (float)((FACEIN) ? in.z : -in.z), y_; \
         if (!footing(P, x_, z_, fx_, fz_, (HW), (HD), GK_SIDEWALK, &y_)) break; \
         Prop *p_ = &list[n++]; \
@@ -381,7 +404,7 @@ static void crossing(PGen *P, int bi, const DropKerb *d) {
     /* a point u along t (beyond the lowered kerb) and dd in from the kerb line, if it is plain sidewalk */
     #define SPOT(U, DD, X, Z, OK) do { \
         X = o.x + t.x * (U) + in.x * (DD); Z = o.z + t.z * (U) + in.z * (DD); \
-        int blk_; OK = (U) > e0 + 1.5 && (U) < e1 - 1.5 && ground_kind(P, X, Z, &blk_) == GK_SIDEWALK && blk_ == bi && !solid(P, X, Z, 0.25f); \
+        int blk_; OK = (U) > e0 + 1.5 && (U) < e1 - 1.5 && ground_kind(P, X, Z, &blk_) == GK_SIDEWALK && blk_ == bi && !solid(P, X, Z, 0.25f) && !on_vendor(P, X, Z, 0.3); \
         for (int q_ = 0; q_ < nd && OK; ++q_) if (city_drop_contains(&dk[q_], X, Z, 0.3)) OK = 0; \
     } while (0)
 
@@ -612,6 +635,8 @@ static void dumpsters(PGen *P, int i) {
             !clear_of(list, n, c.x, c.z, keep_radius(PROP_DUMPSTER))) continue;
         float y;
         if (!footing(P, c.x, c.z, fx, fz, hw, hd - 0.02f, GK_LOT, &y)) continue;
+        /* not on a vendor's site or its way, nor on the paved spaces the vendors stand in */
+        if (on_vendor(P, c.x, c.z, sqrt(hw * hw + hd * hd)) || on_paved(P, g->bblk[i], c.x, c.z, sqrt(hw * hw + hd * hd))) continue;
         /* never in a door's way, and never closing the way past it */
         int bad = 0;
         for (int j = -3; j <= 3 && !bad; ++j)
@@ -623,7 +648,7 @@ static void dumpsters(PGen *P, int i) {
             for (int kk = 1; kk <= 9 && !bad; ++kk) {
                 double a = (hw + 0.3) * j / 3.0, e = hd + DUMP_CLEAR * kk / 9.0;
                 double px = c.x + fz * a + fx * e, pz = c.z - fx * a + fz * e;
-                bad = solid(P, px, pz, 0.0f);
+                bad = solid(P, px, pz, 0.0f) || on_vendor(P, px, pz, 0.0);
             }
         if (bad) continue;
         uint32_t seed = hash3i(bg->seed ^ 0xD5u, cs[q], cf[q], (int)floorf(u * 4.0f));
@@ -641,8 +666,11 @@ int city_props(ChunkGen *g, double x0, double z0, double x1, double z1, int mask
     PGen *P = (PGen *)calloc(1, sizeof(PGen));
     if (!P) fatal("out of memory placing street furniture");
     P->g = g; P->x0 = x0; P->z0 = z0; P->x1 = x1; P->z1 = z1; P->mask = mask; P->out = out; P->max = max;
-    for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) P->nd[k] = -1;
+    for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) P->nd[k] = P->nsp[k] = -1;
     const double pad = 3.0;
+    P->vs = (VendorSpot *)malloc(sizeof(VendorSpot) * 1024);
+    if (!P->vs) fatal("out of memory placing street furniture");
+    if (mask & PROPS_GROUND) P->nvs = city_vendor_spots(g, x0 - pad, z0 - pad, x1 + pad, z1 + pad, VSPOTS_BLOCKS, P->vs, 1024);
     if (mask & PROPS_GROUND) {
         for (int bi = 0; bi < g->pa->nblocks; ++bi) {
             const Block *bk = &g->pa->blocks[bi];
@@ -674,7 +702,8 @@ int city_props(ChunkGen *g, double x0, double z0, double x1, double z1, int mask
         if (mask & PROPS_GROUND) dumpsters(P, i);
         if (mask & PROPS_WALLS) aircons(P, i);
     }
-    for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) free(P->drops[k]);
+    for (int k = 0; k < PLAN_MAX_BLOCKS; ++k) { free(P->drops[k]); free(P->sp[k]); }
+    free(P->vs);
     int n = P->n;
     free(P);
     return n;

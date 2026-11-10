@@ -664,7 +664,45 @@ static void emit_lot(Mesh *m, const ChunkGen *g, const BlockFrame *F) {
     /* its blades (city.h city_grass_param): a park is mown unless it lies in squalor, a field left rough */
     float kept = bk->zone == ZONE_PARK ? 1.0f - smoothstepf(0.45f, 0.8f, (float)F->sq / 255.0f) : 0.0f;
     uint8_t blades = green ? city_grass_param(kept) : CITY_GRASS_NONE;
-    if (k) emit_flat(m, cl, k, SIDEWALK_HEIGHT + 0.006f, (const float (*)[2])uv, mat(MAT_LOT, 0, green, F->sq, blades));
+    if (!k) return;
+    /* the market lanes, hawker frontages, pocket markets and forecourts left for
+     * the vendors (city_block_spaces) are paved as the sidewalks are, the rest
+     * of the lot round them asphalt */
+    CitySpace sp[MAX_BLOCK_SPACES];
+    int nsp = green ? 0 : city_block_spaces(bk, sp, MAX_BLOCK_SPACES), paved = 0;
+    for (int i = 0; i < nsp; ++i) paved += city_space_paved(sp[i].kind);
+    if (!paved) { emit_flat(m, cl, k, SIDEWALK_HEIGHT + 0.006f, (const float (*)[2])uv, mat(MAT_LOT, 0, green, F->sq, blades)); return; }
+    Shard *sh = (Shard *)malloc(sizeof(Shard) * MAX_SHARDS * 2);
+    if (!sh) fatal("out of memory paving a lot");
+    int ns = 1;
+    sh[0].n = k;
+    memcpy(sh[0].v, cl, sizeof(DVec2) * (size_t)k);
+    for (int i = 0; i < nsp; ++i) {
+        const CitySpace *s = &sp[i];
+        if (!city_space_paved(s->kind)) continue;
+        DVec2 U = dv(s->ux, s->uz), V = dv(s->vx, s->vz), o = dv(s->ox - g->ox, s->oz - g->oz);
+        DVec2 q[4];
+        static const int cu[4] = { 0, 1, 1, 0 }, cv[4] = { 0, 0, 1, 1 };
+        for (int c = 0; c < 4; ++c) q[c] = dadd(o, dadd(dscale(U, cu[c] ? s->u1 : s->u0), dscale(V, cv[c] ? s->v1 : s->v0)));
+        shards_minus(sh, &ns, sh + MAX_SHARDS, q, 4);
+        /* the lot within the space */
+        DVec2 a[48], b2[48];
+        double ku = ddot(o, U), kv = ddot(o, V);
+        int n = clip_hp(cl, NULL, k, U, s->u1 + ku, 0, a, NULL);
+        if (n) n = clip_hp(a, NULL, n, dv(-U.x, -U.z), -(s->u0 + ku), 0, b2, NULL);
+        if (n) n = clip_hp(b2, NULL, n, V, s->v1 + kv, 0, a, NULL);
+        if (n) n = clip_hp(a, NULL, n, dv(-V.x, -V.z), -(s->v0 + kv), 0, b2, NULL);
+        if (!n) continue;
+        float puv[48][2];
+        pave_uv(F, b2, n, puv);
+        emit_flat(m, b2, n, SIDEWALK_HEIGHT + 0.006f, (const float (*)[2])puv, mat(MAT_SIDEWALK, F->gbits, 0, F->sq, 0));
+    }
+    for (int i = 0; i < ns; ++i) {
+        float suv[48][2];
+        pave_uv(F, sh[i].v, sh[i].n, suv);
+        emit_flat(m, sh[i].v, sh[i].n, SIDEWALK_HEIGHT + 0.006f, (const float (*)[2])suv, mat(MAT_LOT, 0, green, F->sq, blades));
+    }
+    free(sh);
 }
 
 /* Raised blocks: sidewalk, kerb stones, kerb faces, drop kerbs and the lot
