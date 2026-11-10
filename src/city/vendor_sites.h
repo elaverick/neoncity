@@ -59,3 +59,22 @@ static inline void vendor_spot_middle(const VendorSpot *s, double *x, double *z)
     *x = s->x + s->fx * s->site.d * 0.5; *z = s->z + s->fz * s->site.d * 0.5;
 }
 const char *vendor_space_name(int space);
+
+/* The vendors themselves (src/city/mesh_vendor.c; roadmap SV2). Each site's
+ * vendor is vendor_generate's at the standard tier, seeing the fingerprints of
+ * the vendors before it in its group, so the vendors of a lane or a court are
+ * the same whichever chunk generates them. */
+typedef void (*VendorVisit)(void *ctx, const VendorSpot *s, const Vendor *v);
+/* Calls fn for each valid vendor of chunk (cx, cz) (its site's middle in the
+ * chunk), in planning order; returns how many. */
+int  city_chunk_vendors(int cx, int cz, VendorVisit fn, void *ctx);
+/* A point of a site's frame (x across, z out from its back), world. */
+static inline void vendor_spot_world(const VendorSpot *s, double x, double z, double *wx, double *wz) {
+    *wx = s->x + s->fz * x + s->fx * z; *wz = s->z - s->fx * x + s->fz * z;
+}
+/* What of a vendor the walker meets, in its frame: a box it can't walk into
+ * (floor 0), or a floor it steps up onto at height y over the site's floor
+ * (a container's deck, its step). Returns how many. */
+typedef struct VendorSolid { float x0, z0, x1, z1, y; uint8_t floor; } VendorSolid;
+#define VENDOR_SOLIDS_MAX 24
+int  vendor_solids(const Vendor *v, VendorSolid *out, int max);

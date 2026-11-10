@@ -26,7 +26,7 @@
 #define MAX_DROP_PV     16
 #define MAX_COLL        4096
 #define MAX_COLL_VERTS  20480
-#define MAX_FLOORS      128
+#define MAX_FLOORS      256
 #define MAX_CHANNELS    24
 #define MAX_DECKS       24
 #define MAX_BARRIERS    256
@@ -136,6 +136,7 @@ typedef struct BlockLayout {
     int      ndrops;
     DropKerb drop[MAX_DROPS];       /* drop kerbs cut into them, touching this chunk */
     int      ncoll, ncollv;         /* what stands at street level: walls, piers, cores, columns */
+    int      vcoll0;                /* coll[vcoll0..ncoll): the street vendors' (the last; city_test leaves them out) */
     CollPoly coll[MAX_COLL];
     int      nfloor;                /* floors inside them, of the buildings in this chunk */
     FloorPoly floor[MAX_FLOORS];

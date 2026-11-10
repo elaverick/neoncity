@@ -118,8 +118,16 @@ enum {
     MAT_FACADE, MAT_ROOF, MAT_NEON, MAT_METAL,
     MAT_EMISSIVE, MAT_SCREEN, MAT_LEDSTRIP, MAT_DOOR,
     MAT_INTERIOR, MAT_LITTER, MAT_ARCOLOGY, MAT_INDUSTRY,
-    MAT_PROP, MAT_TRIM
+    MAT_PROP, MAT_TRIM, MAT_VENDOR
 };
+
+/* Street vendors' shells (MAT_VENDOR; src/city/mesh_vendor.c, src/gen/vendor.h):
+ * params y the surface (VS_* in vendor.h), z its flags (VPF_*), w its wear
+ * (0 new .. 255 rusted and grimy); aux its colour (sRGB, 0xRRGGBB) | its part's
+ * role (VR_*) << 24; seed the vendor's. A painted sign's face (VS_NEON): z and w
+ * its size in half metres, aux its sign word (vendor_mesh.c neon_word), uv 0..1
+ * across it. Lit neon is drawn as the facades' (MAT_NEON). Must match
+ * shaders/city/vendor.glsl. */
 
 /* Industrial plants' surfaces (MAT_INDUSTRY params.y; src/city/mesh_industry.c):
  * paint, open grating, steam, glazing lit from within, wire mesh. Must match

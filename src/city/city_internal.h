@@ -368,3 +368,9 @@ int     city_props(ChunkGen *g, double x0, double z0, double x1, double z1, int 
  * every block that reaches the rectangle. */
 enum { VSPOTS_OWNED = 0, VSPOTS_TOUCH, VSPOTS_BLOCKS };
 int     city_vendor_spots(ChunkGen *g, double x0, double z0, double x1, double z1, int touch, VendorSpot *out, int max);
+
+/* mesh_vendor.c */
+/* city_chunk_vendors for g's chunk; g must hold the buildings of every block that reaches it. */
+int     city_vendors(ChunkGen *g, VendorVisit fn, void *ctx);
+/* The vendors' shells (vendor_mesh's VL_SHELL) in the chunk's base layer. */
+void    build_vendors(Mesh *m, ChunkGen *g);

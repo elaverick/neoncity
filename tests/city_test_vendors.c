@@ -3,7 +3,10 @@
  *
  *   check_vendor_sites   placement rules, reachability, the same sites from
  *                        every chunk's view, the grammar on every site
- *   vendor_sites_cams    city_test --vendor-sites [X Z]: counts and --cam views */
+ *   vendor_sites_cams    city_test --vendor-sites [X Z]: counts and --cam views
+ *   check_vendor_shells  the vendors on them (SV2): in their sites, in the
+ *                        chunk's mesh and its collision
+ *   vendor_cams          city_test --vendors [X Z]: counts, costs, --cam views */
 #include "vendor_sites.h"
 
 /* Even-odd point in polygon. */
@@ -119,7 +122,7 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
     for (int j = 1; j < W - 1; ++j)
         for (int i = 1; i < W - 1; ++i) {
             city_layout(hx - R + i, hz - R + j, &L);
-            for (int c = 0; c < L.ncoll; ++c) {
+            for (int c = 0; c < L.vcoll0; ++c) {   /* not the vendors themselves (check_vendor_shells) */
                 const CollPoly *cp = &L.coll[c];
                 vs_add_poly(&L, cp);
                 vs_mark_poly(&G, (const double (*)[2])&L.collv[cp->first], cp->n, VS_BLOCKED, 1);
@@ -278,6 +281,116 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
     CHECK(built == tried, "%s: %d of %d sites have no valid vendor", where, tried - built, tried);
 }
 
+/* ------------------------------------------------------------ the shells (SV2) --- */
+
+typedef struct VsShells {
+    int vendors, arch[VA_COUNT], cls[VC_COUNT], tris, trisMax, drawn, solids, floors, outside, high, collMiss;
+    VendorMesh vm;
+    /* one of each archetype, the nearest to a point, for the views */
+    double px, pz, best[VA_COUNT];
+    VendorSpot spot[VA_COUNT];
+    int trade[VA_COUNT];
+    const char *where;
+} VsShells;
+
+static void vs_shell_visit(void *ctx, const VendorSpot *s, const Vendor *v) {
+    VsShells *A = (VsShells *)ctx;
+    A->vendors++;
+    A->arch[v->archetype]++;
+    A->cls[v->cls]++;
+    /* what the chunk's mesh should draw of it: its shell (lit neon faces as MAT_NEON, the rest MAT_VENDOR) */
+    A->vm.count = 0;
+    int t = vendor_mesh(v, VL_SHELL, &A->vm), lit = 0;
+    for (uint32_t i = 0; i + 2 < A->vm.count; i += 3) {
+        const VendorVertex *x = &A->vm.v[i];
+        lit += x->surf == VS_NEON && (x->flags & VPF_EMISSIVE) && !(x->rgb & (1u << 30));
+    }
+    A->tris += t;
+    A->drawn += t - lit;
+    if (t > A->trisMax) A->trisMax = t;
+    /* everything it is stands in its site, below VENDOR_TOP_MAX (the cables) and its ceiling */
+    const float hw = 0.5f * s->site.w + 0.02f, d = s->site.d + 0.02f;
+    int out = 0;
+    for (int i = 0; i < v->nstructure; ++i) {
+        float mn[3], mx[3];
+        vendor_part_aabb(&v->part[i], mn, mx);
+        out |= mn[0] < -hw || mx[0] > hw || mn[2] < -0.02f || mx[2] > d;
+    }
+    VendorSolid so[VENDOR_SOLIDS_MAX];
+    int ns = vendor_solids(v, so, VENDOR_SOLIDS_MAX);
+    for (int i = 0; i < ns; ++i) {
+        out |= so[i].x0 < -hw || so[i].x1 > hw || so[i].z0 < -0.02f || so[i].z1 > d;
+        A->floors += so[i].floor;
+        A->solids += !so[i].floor;
+    }
+    double mx, mz;
+    vendor_spot_middle(s, &mx, &mz);
+    A->outside += out;
+    CHECK(!out, "%s: a %s at (%.1f, %.1f) reaches out of its %.1f x %.1f site", A->where, vendor_archetype_name(v->archetype), mx, mz, s->site.w, s->site.d);
+    int high = v->top > VENDOR_TOP_MAX + 0.01f || (s->site.ceiling > 0.0f && v->top > s->site.ceiling + 0.01f);
+    A->high += high;
+    CHECK(!high, "%s: a %s at (%.1f, %.1f) stands %.2f m high (ceiling %.1f)", A->where, vendor_archetype_name(v->archetype), mx, mz, v->top, s->site.ceiling);
+    CHECK(ns > 0, "%s: a %s at (%.1f, %.1f) has nothing solid", A->where, vendor_archetype_name(v->archetype), mx, mz);
+    double dd = hypot(mx - A->px, mz - A->pz);
+    if (dd < A->best[v->archetype]) { A->best[v->archetype] = dd; A->spot[v->archetype] = *s; A->trade[v->archetype] = v->trade; }
+}
+
+/* Each vendor of the 3 x 3 chunks round (hx, hz): in its site, its shell in
+ * the chunk's mesh, its solids in the chunk's collision. Prints counts and
+ * costs; with views, a --cam on the nearest of each archetype. */
+static void check_vendor_shells(int hx, int hz, const char *where, int views) {
+    static VsShells A;
+    vendor_mesh_free(&A.vm);
+    memset(&A, 0, sizeof(A));
+    A.where = where;
+    A.px = (hx + 0.5) * CHUNK_SIZE; A.pz = (hz + 0.5) * CHUNK_SIZE;
+    for (int k = 0; k < VA_COUNT; ++k) A.best[k] = 1e30;
+    static BlockLayout L;
+    int chunkTris = 0, chunkMax = 0, baseMax = 0, colls = 0, floors = 0;
+    double ms = 0.0;
+    for (int j = -1; j <= 1; ++j)
+        for (int i = -1; i <= 1; ++i) {
+            int before = A.drawn, solids = A.solids, fl = A.floors;
+            clock_t c0 = clock();
+            city_chunk_vendors(hx + i, hz + j, vs_shell_visit, &A);
+            ms += 1000.0 * (double)(clock() - c0) / CLOCKS_PER_SEC;
+            Mesh m;
+            memset(&m, 0, sizeof(m));
+            city_build_mesh(hx + i, hz + j, &m);
+            int drawn = 0;
+            for (uint32_t v = 0; v + 2 < m.count; v += 3) drawn += m.v[v].params[0] == MAT_VENDOR;
+            /* exactly its vendors' shells, less their lit faces (MAT_NEON, as the facades' signs) */
+            CHECK(drawn == A.drawn - before, "%s: chunk (%d,%d) draws %d vendor triangles, its vendors have %d", where, hx + i, hz + j, drawn, A.drawn - before);
+            chunkTris += drawn;
+            if (drawn > chunkMax) chunkMax = drawn;
+            if ((int)m.count > baseMax) baseMax = (int)m.count;
+            mesh_free(&m);
+            city_layout(hx + i, hz + j, &L);
+            int nc = L.ncoll - L.vcoll0;
+            colls += nc;
+            CHECK(nc == A.solids - solids, "%s: chunk (%d,%d) collides with %d vendor outlines of %d", where, hx + i, hz + j, nc, A.solids - solids);
+            floors += A.floors - fl;
+        }
+    printf("vendors round %s (3 x 3 chunks): %d (poor %d, middling %d, wealthy %d), %.2f ms a chunk to generate\n", where, A.vendors,
+           A.cls[VC_POOR], A.cls[VC_MID], A.cls[VC_RICH], ms / 9.0);
+    printf(" ");
+    for (int a = 0; a < VA_COUNT; ++a) if (A.arch[a]) printf(" %s %d", vendor_archetype_name(a), A.arch[a]);
+    printf("\n  shells: %d triangles (%.0f a vendor, most %d); a chunk's most %d (of %d vertices in its base layer); %d outlines, %d floors; "
+           "%d out of their sites, %d too high\n", A.tris, A.vendors ? (double)A.tris / A.vendors : 0.0, A.trisMax, chunkMax, baseMax, colls, floors,
+           A.outside, A.high);
+    if (views)
+        for (int a = 0; a < VA_COUNT; ++a) {
+            if (A.best[a] > 1e29) continue;
+            const VendorSpot *s = &A.spot[a];
+            double mx, mz;
+            vendor_spot_middle(s, &mx, &mz);
+            double dd = s->site.d * 0.5 + s->walk + 3.0;
+            double cx = mx + s->fx * dd + s->fz * 2.0, cz = mz + s->fz * dd - s->fx * 2.0;
+            printf("  %-10s %-11s (%s, %.1f x %.1f) at (%.1f, %.1f): --cam %.2f %.2f %.1f -8\n", vendor_archetype_name(a), vendor_trade_name(A.trade[a]),
+                   vendor_space_name(s->space), s->site.w, s->site.d, mx, mz, cx, cz, atan2(mx - cx, -(mz - cz)) * 57.2958);
+        }
+}
+
 /* The middle of a block near (x, z) with a space of this kind (or -1: none found). */
 static int vs_find_space(double x, double z, int kind, double *ox, double *oz) {
     PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
@@ -331,6 +444,27 @@ static int vendor_sites_cams(int argc, char **argv) {
                    mx, mz, cx, cz, atan2(mx - cx, -(mz - cz)) * 57.2958);
             shown++;
         }
+    }
+    if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
+    return 0;
+}
+
+/* city_test --vendors [X Z]: the vendors round the spawn (or X Z) and round the
+ * nearest lane, pocket market, plaza and hawker frontage: checks, counts, costs
+ * and a --cam view of the nearest of each archetype. */
+static int vendor_cams(int argc, char **argv) {
+    double sx, sz;
+    float yaw;
+    city_spawn(&sx, &sz, &yaw);
+    if (argc > 3) { sx = atof(argv[2]); sz = atof(argv[3]); }
+    check_vendor_shells((int)floor(sx / CHUNK_SIZE), (int)floor(sz / CHUNK_SIZE), "the spawn", 1);
+    static const int kinds[4] = { SPACE_LANE, SPACE_POCKET, SPACE_PLAZA, SPACE_APRON };
+    for (int k = 0; k < 4; ++k) {
+        double x, z;
+        if (vs_find_space(sx, sz, kinds[k], &x, &z) < 0) { printf("no %s found\n", vendor_space_name(kinds[k])); continue; }
+        char where[64];
+        snprintf(where, sizeof(where), "a %s at (%.0f, %.0f)", vendor_space_name(kinds[k]), x, z);
+        check_vendor_shells((int)floor(x / CHUNK_SIZE), (int)floor(z / CHUNK_SIZE), where, 1);
     }
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     return 0;

@@ -6,6 +6,7 @@
 
 static void collide_building(BlockLayout *L, const Building *b, const BGraph *bg);
 static int coll_begin(BlockLayout *L, int n);
+static void collide_vendor(void *ctx, const VendorSpot *s, const Vendor *v);
 
 static int touches(const ChunkGen *g, double x0, double z0, double x1, double z1, double pad) {
     return x1 + pad >= g->ox && x0 - pad <= g->ox + CHUNK_SIZE && z1 + pad >= g->oz && z0 - pad <= g->oz + CHUNK_SIZE;
@@ -102,6 +103,9 @@ void city_layout(int cx, int cz, BlockLayout *L) {
         for (int k = 0; k < n; ++k) { L->collv[L->ncollv][0] = v[k][0]; L->collv[L->ncollv][1] = v[k][1]; L->ncollv++; }
     }
     free(pr);
+    /* the street vendors: last, so city_test can tell them apart (vcoll0) */
+    L->vcoll0 = L->ncoll;
+    city_vendors(&g, collide_vendor, L);
     L->bounded = g.pa->bounded;
     for (int i = 0; i < g.pa->ntowns && L->nground < MAX_GROUND; ++i) {
         const Poly *gp = &g.pa->ground[i];
@@ -137,6 +141,27 @@ void city_layout(int cx, int cz, BlockLayout *L) {
 /* ===========================================================================
  * Collision: what stands at street level
  * ========================================================================= */
+
+/* A street vendor (vendor_solids): its boxes, and its decks and steps as floors. */
+static void collide_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
+    BlockLayout *L = (BlockLayout *)ctx;
+    VendorSolid so[VENDOR_SOLIDS_MAX];
+    int n = vendor_solids(v, so, VENDOR_SOLIDS_MAX);
+    for (int i = 0; i < n; ++i) {
+        const float c[4][2] = { { so[i].x0, so[i].z0 }, { so[i].x0, so[i].z1 }, { so[i].x1, so[i].z1 }, { so[i].x1, so[i].z0 } };
+        int at = L->ncollv;
+        if (so[i].floor) {
+            if (L->nfloor >= MAX_FLOORS || L->ncollv + 4 > MAX_COLL_VERTS) continue;
+            FloorPoly *f = &L->floor[L->nfloor++];
+            f->y = s->y + so[i].y;
+            f->at.first = at; f->at.n = 4; f->at.holeFirst = 0; f->at.holeN = 0;
+        } else if (!coll_begin(L, 4)) continue;
+        for (int k = 0; k < 4; ++k) {
+            vendor_spot_world(s, c[k][0], c[k][1], &L->collv[L->ncollv][0], &L->collv[L->ncollv][1]);
+            L->ncollv++;
+        }
+    }
+}
 
 static int coll_begin(BlockLayout *L, int n) {
     if (L->ncoll >= MAX_COLL || L->ncollv + n > MAX_COLL_VERTS) return 0;

@@ -295,6 +295,8 @@ typedef struct VendorMesh { VendorVertex *v; uint32_t count, cap; } VendorMesh;
 int  vendor_mesh(const Vendor *v, int layer, VendorMesh *m);
 /* Counts the triangles vendor_mesh would make, without making them. */
 int  vendor_tris(const Vendor *v, int layer);
+/* A part's box in the vendor's frame (min, max). */
+void vendor_part_aabb(const VPart *p, float mn[3], float mx[3]);
 void vendor_mesh_free(VendorMesh *m);
 
 /* The palettes' colours (linear RGB), for the lab and the shaders' mirror. */

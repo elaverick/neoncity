@@ -159,6 +159,7 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
         m->xf = 0;
     }
     build_cables(m, &g);
+    build_vendors(m, &g);
     build_lights(m, &g);
     chunk_gen_free(&g);
 }

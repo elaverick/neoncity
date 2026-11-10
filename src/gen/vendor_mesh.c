@@ -659,4 +659,5 @@ static int build(const Vendor *v, int layer, VendorMesh *m) {
 
 int vendor_mesh(const Vendor *v, int layer, VendorMesh *m) { return build(v, layer, m); }
 int vendor_tris(const Vendor *v, int layer) { return build(v, layer, NULL); }
+void vendor_part_aabb(const VPart *p, float mn[3], float mx[3]) { v_part_aabb(p, mn, mx); }
 void vendor_mesh_free(VendorMesh *m) { free(m->v); m->v = NULL; m->count = m->cap = 0; }

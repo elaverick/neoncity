@@ -1267,6 +1267,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--proxies") == 0) return proxy_survey();
     if (argc > 1 && strcmp(argv[1], "--props") == 0) return props_cams();
     if (argc > 1 && strcmp(argv[1], "--vendor-sites") == 0) return vendor_sites_cams(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "--vendors") == 0) return vendor_cams(argc, argv);
     if (argc > 3 && strcmp(argv[1], "--vs-probe") == 0) return vs_probe(atof(argv[2]), atof(argv[3]));
     if (argc > 1 && strcmp(argv[1], "--screens") == 0) return screens_cams();
     if (argc > 1 && strcmp(argv[1], "--facades") == 0) return facades_cams();
@@ -1522,6 +1523,7 @@ int main(int argc, char **argv) {
 
     /* 9. Where the street vendors stand. */
     check_vendor_sites(hx, hz, "the spawn");
+    check_vendor_shells(hx, hz, "the spawn", 0);
 
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("all city tests passed (%d chunks x %d orders/threads)\n", N_CHUNKS, THREADS + 2);
