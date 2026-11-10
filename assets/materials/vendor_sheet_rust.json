@@ -1,0 +1,13 @@
+// Corrugated iron rusted almost through, flecks of old paint left: a vendor's rust finish
+// (shadeVendor, VS_RUST), the flecks in the vendor's own colour. CorrugatedSteel007C (ambientCG, CC0),
+// packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/corrugated_steel_007c/albedo.png",
+    "normal": "../textures/corrugated_steel_007c/normal.png",
+    "orm":    "../textures/corrugated_steel_007c/orm.png"
+  },
+  "tile": 0.8,                 // metres per image: four ribs, 20 cm apart
+  "albedo_mean": [0.113, 0.082, 0.077],   // per channel (pbr_pack)
+  "params": [1.0, 1.0, 0.025]
+}

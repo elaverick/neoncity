@@ -1,0 +1,12 @@
+// Weathered planks gone grey, running across the image: the other timber of a vendor's frame and
+// decks (shadeVendor, VS_TIMBER, VS_DECK). Planks023A (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/planks_023a/albedo.png",
+    "normal": "../textures/planks_023a/normal.png",
+    "orm":    "../textures/planks_023a/orm.png"
+  },
+  "tile": 1.0,                 // metres per image: boards about 17 cm
+  "albedo_mean": [0.102, 0.079, 0.062],   // per channel (pbr_pack)
+  "params": [1.0, 1.0]
+}

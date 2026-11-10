@@ -1,0 +1,12 @@
+// Weathered brown planks, running across the image: a vendor's posts, beams, tables, barrow beds and
+// decks (shadeVendor, VS_TIMBER, VS_DECK). Planks012 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/planks_012/albedo.png",
+    "normal": "../textures/planks_012/normal.png",
+    "orm":    "../textures/planks_012/orm.png"
+  },
+  "tile": 1.0,                 // metres per image: boards about 15 cm
+  "albedo_mean": [0.097, 0.063, 0.038],   // per channel (pbr_pack)
+  "params": [1.0, 1.0]
+}

@@ -112,6 +112,7 @@ static void shade_vertex(const Vendor *v, const VendorVertex *x, float u, float 
     switch (x->surf) {
     case VS_CORRUGATED: k = 0.75f + 0.25f * sinf(u * 2.0f * PI_F / 0.08f); break;
     case VS_RUST: { float rust[3]; hex_lin(0x7A3A1Au, rust); for (int i = 0; i < 3; ++i) base[i] = lerpf(base[i], rust[i], 0.4f + 0.4f * v->wear); k = 0.8f + 0.2f * sinf(u * 2.0f * PI_F / 0.08f); break; }
+    case VS_CHIPBOARD: { float ob[3]; hex_lin(0xC09060u, ob); for (int i = 0; i < 3; ++i) base[i] = lerpf(base[i], ob[i], 0.8f); k = 0.85f + 0.15f * hash_float(hash2i(v->site.seed, (int)floorf(u / 0.05f), (int)floorf(vv / 0.05f))); break; }
     case VS_TIMBER: case VS_DECK: { float wood[3]; hex_lin(0x8A6038u, wood); for (int i = 0; i < 3; ++i) base[i] = lerpf(base[i], wood[i], 0.65f); k = fmodf(fabsf(vv), 0.15f) < 0.01f ? 0.5f : 1.0f; break; }
     case VS_TILE: k = fmodf(fabsf(u), 0.15f) < 0.01f || fmodf(fabsf(vv), 0.15f) < 0.01f ? 0.55f : 1.0f; break;
     case VS_BRICK: { float br[3]; hex_lin(0x8A3A2Au, br); for (int i = 0; i < 3; ++i) base[i] = lerpf(base[i], br[i], 0.6f);

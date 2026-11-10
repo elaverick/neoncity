@@ -1,0 +1,14 @@
+// Painted corrugated iron rusting through, its ribs running up the image: a worn vendor's sheet walls
+// and roofs (shadeVendor, VS_CORRUGATED), the paint the vendor's own colour, the rust where the
+// photograph's paint has gone. CorrugatedSteel008C (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/corrugated_steel_008c/albedo.png",
+    "normal": "../textures/corrugated_steel_008c/normal.png",
+    "orm":    "../textures/corrugated_steel_008c/orm.png"
+  },
+  "tile": 0.8,                 // metres per image: four ribs, 20 cm apart
+  "albedo_mean": [0.515, 0.531, 0.002],   // per channel (pbr_pack): yellow paint (the shader reads the raw albedo)
+  // the albedo's variation (1 all); the normal map's strength; the ribs' depth in metres (pbrGrainRelief)
+  "params": [1.0, 1.0, 0.025]
+}

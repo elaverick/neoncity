@@ -15,6 +15,7 @@ typedef struct MCtx {
     int         count;     /* triangles */
     uint8_t     surf, col, lay, flags, role;
     uint32_t    rgb;
+    uint8_t     top;       /* the part's top, 5 cm steps (VendorVertex.top) */
 } MCtx;
 
 typedef struct V3 { float x, y, z; } V3;
@@ -41,7 +42,7 @@ static void push(MCtx *c, V3 p, V3 n, float u, float v) {
     o->n[0] = n.x; o->n[1] = n.y; o->n[2] = n.z;
     o->uv[0] = u; o->uv[1] = v;
     o->surf = c->surf; o->col = c->col; o->layer = c->lay; o->flags = c->flags; o->rgb = c->rgb; o->role = c->role;
-    o->pad[0] = o->pad[1] = o->pad[2] = 0;
+    o->top = c->top; o->pad[0] = o->pad[1] = 0;
 }
 
 static void tri(MCtx *c, V3 a, V3 b, V3 d, const float uv[3][2]) {
@@ -220,12 +221,16 @@ static void vault(MCtx *c, const VPart *p, int detail) {
 
 static void set(MCtx *c, int surf, int col, int layer, int flags, int role, uint32_t rgb) {
     c->surf = (uint8_t)surf; c->col = (uint8_t)col; c->lay = (uint8_t)layer; c->flags = (uint8_t)flags; c->role = (uint8_t)role; c->rgb = rgb;
+    c->top = 0;
 }
 
 static void emit_part(MCtx *c, const Vendor *v, const VPart *p) {
     int surf = p->surf == VS_FINISH ? v_finish_surf(v) : p->surf;
     set(c, surf, p->col, p->layer, p->flags, p->role, p->col == VCOL_RGB ? p->rgb : (p->seed & 0xFFFFFFu));
     if (!wanted(c)) return;
+    float mn[3], mx[3];
+    v_part_aabb(p, mn, mx);
+    c->top = (uint8_t)clampf(mx[1] / 0.05f + 0.5f, 0.0f, 255.0f);
     switch (p->shape) {
     case VP_BOX:   abox(c, qv(p->a), qv(p->b), p->faces); break;
     case VP_BEAM:  beam(c, qv(p->a), qv(p->b), p->r); break;

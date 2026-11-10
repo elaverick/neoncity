@@ -174,7 +174,8 @@ static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
             const VendorVertex *x = &t[k];
             vec3 p = v3(bx + x->p[0] * s->fz + x->p[2] * s->fx, s->y + x->p[1], bz - x->p[0] * s->fx + x->p[2] * s->fz);
             vec3 nn = v3(x->n[0] * s->fz + x->n[2] * s->fx, x->n[1], -x->n[0] * s->fx + x->n[2] * s->fz);
-            mesh_push(m, p, nn, uvs[k][0], uvs[k][1], seed, prm, aux);
+            /* its part's top over the floor, 5 cm steps (to 6.35 m), where the grime runs down from (vendor.glsl) */
+            mesh_push_w(m, p, nn, (int8_t)(x->top < 127 ? x->top : 127), uvs[k][0], uvs[k][1], seed, prm, aux);
         }
         E->tris++;
     }

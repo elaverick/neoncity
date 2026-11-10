@@ -1688,6 +1688,15 @@ procedural noise. All are ambientCG (CC0), packed at 1024 from the 2K downloads:
 | `mulch` | [WoodChips003](https://ambientcg.com/view?id=WoodChips003) | lobby pots' bark-mulch dressing |
 | `paper` | [Paper003](https://ambientcg.com/view?id=Paper003) | litter's newspapers, flyers, receipts, wads, cups and noodle boxes |
 | `cardboard` | [Cardboard002](https://ambientcg.com/view?id=Cardboard002) | litter's flattened boxes and pizza boxes |
+| `vendor_osb` | [Chipboard003](https://ambientcg.com/view?id=Chipboard003) | street vendors' flake-board counters, shelves, cabinets, tiers, tables and sheet walls |
+| `vendor_flakeboard` | [Chipboard006](https://ambientcg.com/view?id=Chipboard006) | the same, the paler board (chosen per vendor) |
+| `vendor_planks` | [Planks012](https://ambientcg.com/view?id=Planks012) | street vendors' weathered posts, beams, barrow beds and decks |
+| `vendor_planks_grey` | [Planks023A](https://ambientcg.com/view?id=Planks023A) | the same, gone grey (chosen per vendor) |
+| `vendor_pine` | [Planks009](https://ambientcg.com/view?id=Planks009) | the cleaner street vendors' pine boards |
+| `vendor_sheet_worn` | [CorrugatedSteel008C](https://ambientcg.com/view?id=CorrugatedSteel008C) | worn street vendors' painted corrugated iron, rusting through (in the vendor's own colour) |
+| `vendor_sheet_rust` | [CorrugatedSteel007C](https://ambientcg.com/view?id=CorrugatedSteel007C) | street vendors' rusted corrugated iron, flecks of their paint left |
+| `grime_streaks_a` | [Leaking001](https://ambientcg.com/view?id=Leaking001) | dirt run down street vendors' walls from their top edges |
+| `grime_streaks_b` | [Leaking003](https://ambientcg.com/view?id=Leaking003) | the same, greener |
 
 The lobby woods and white marble (`wood_mid`, `wood_dark`, `wood_light`, `marble_white`) also
 carry an `albedo_mean` and grain `params`, so they serve as grain too: arcology timber soffits,

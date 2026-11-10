@@ -124,7 +124,8 @@ enum {
 /* Street vendors' shells (MAT_VENDOR; src/city/mesh_vendor.c, src/gen/vendor.h):
  * params y the surface (VS_* in vendor.h), z its flags (VPF_*), w its wear
  * (0 new .. 255 rusted and grimy); aux its colour (sRGB, 0xRRGGBB) | its part's
- * role (VR_*) << 24; seed the vendor's. A painted sign's face (VS_NEON): z and w
+ * role (VR_*) << 24; seed the vendor's; the normal's w its part's top over the
+ * vendor's floor in 5 cm steps (what grime runs down from). A painted sign's face (VS_NEON): z and w
  * its size in half metres, aux its sign word (vendor_mesh.c neon_word), uv 0..1
  * across it. Lit neon is drawn as the facades' (MAT_NEON). Must match
  * shaders/city/vendor.glsl. */

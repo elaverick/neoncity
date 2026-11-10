@@ -1,0 +1,13 @@
+// Flake board (OSB), raw or barely stained: a street vendor's counters, shelves, cabinets, display
+// tiers and sheet walls (shadeVendor, VS_CHIPBOARD). Chipboard003 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/chipboard_003/albedo.png",
+    "normal": "../textures/chipboard_003/normal.png",
+    "orm":    "../textures/chipboard_003/orm.png"
+  },
+  "tile": 1.2,                 // metres per image: flakes 5-8 cm
+  "albedo_mean": [0.608, 0.301, 0.100],   // per channel (pbr_pack): the raw board is tint x mean
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}

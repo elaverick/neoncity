@@ -176,7 +176,7 @@ static int build_canopy(VGen *G, VFrame *F) {
     /* the counter: a tiled or painted body and a steel top; a gap at one end lets the cook in */
     int gapLeft = rng_float(r) < 0.5f;
     float cx0 = ix0 + (gapLeft && !U ? 0.7f : 0.0f), cx1 = ix1 - (!gapLeft && !U ? 0.7f : 0.0f);
-    int body = v_box(v, VR_SHELL, rng_float(r) < 0.5f ? VS_TILE : VS_FINISH, VCOL_ACC2, cx0, 0.0f, zc0 + 0.03f, cx1, ch - 0.04f, zc1 - 0.03f);
+    int body = v_box(v, VR_SHELL, rng_float(r) < 0.25f ? VS_TILE : VS_FINISH, VCOL_ACC2, cx0, 0.0f, zc0 + 0.03f, cx1, ch - 0.04f, zc1 - 0.03f);
     int top = v_box(v, VR_COUNTER, VS_STAINLESS, VCOL_TRIM, cx0 - 0.02f, ch - 0.04f, zc0, cx1 + 0.02f, ch, zc1);
     if (body >= 0) v->part[body].faces = VB_BOT | VB_TOP;
     if (body >= 0 && top >= 0) v_edge(v, body, top, VE_SUPPORTS);
@@ -351,7 +351,7 @@ static int build_leanto(VGen *G, VFrame *F) {
     float cd = rng_range(r, 0.55f, 0.75f), ch = rng_range(r, 0.96f, 1.05f);
     float cz1 = dp - 0.08f, cz0 = cz1 - cd;
     int body = v_box(v, VR_SHELL, VS_FINISH, VCOL_ACC2, x0 + 0.15f, 0.0f, cz0 + 0.03f, x1 - 0.65f, ch - 0.04f, cz1 - 0.03f);
-    int top = v_box(v, VR_COUNTER, VS_TIMBER, VCOL_TRIM, x0 + 0.12f, ch - 0.04f, cz0, x1 - 0.62f, ch, cz1);
+    int top = v_box(v, VR_COUNTER, VS_CHIPBOARD, VCOL_TRIM, x0 + 0.12f, ch - 0.04f, cz0, x1 - 0.62f, ch, cz1);
     if (body >= 0) v->part[body].faces = VB_BOT;
     if (body >= 0 && top >= 0) v_edge(v, body, top, VE_SUPPORTS);
     add_surface(F, VSU_COUNTER, x0 + 0.18f, cz0 + 0.05f, x1 - 0.7f, cz1 - 0.05f, ch);
@@ -360,7 +360,7 @@ static int build_leanto(VGen *G, VFrame *F) {
     float sd = minf(rng_range(r, 0.4f, 0.55f), cz0 - 0.08f - 0.8f);
     if (sd >= 0.3f) {
         float sx0 = x0 + 0.3f, sx1 = x1 - 0.3f, sh = minf(2.1f, yHi - 0.35f);
-        int shelf = v_box(v, VR_CABINET, VS_TIMBER, VCOL_TRIM, sx0, 0.0f, 0.08f, sx1, sh, 0.08f + sd);
+        int shelf = v_box(v, VR_CABINET, VS_CHIPBOARD, VCOL_TRIM, sx0, 0.0f, 0.08f, sx1, sh, 0.08f + sd);
         if (shelf >= 0) {
             v->part[shelf].faces = VB_BOT | VB_NZ;
             v_opening(v, VO_RECESS, sx0 + 0.08f, 0.35f, 0.08f + sd + 0.005f, 1.0f, 0.0f, sx1 - sx0 - 0.16f, sh - 0.45f, sd - 0.05f, shelf);
@@ -673,7 +673,7 @@ static int build_pair(VGen *G, VFrame *F) {
     /* the court: a high table and stools round it */
     float tx = a[0] + 0.5f * cw, tz = a[3] + 0.5f * (zF - a[3]) + 0.3f;
     v_cyl(v, VR_SHELL, VS_STEEL, VCOL_TRIM, tx, 0.0f, tz, tx, 1.02f, tz, 0.05f, 6);
-    int tt = v_cyl(v, VR_SHELL, VS_TIMBER, VCOL_TRIM, tx, 1.0f, tz, tx, 1.05f, tz, 0.4f, 10);
+    int tt = v_cyl(v, VR_SHELL, VS_CHIPBOARD, VCOL_TRIM, tx, 1.0f, tz, tx, 1.05f, tz, 0.4f, 10);
     (void)tt;
     add_surface(F, VSU_SHELF, tx - 0.25f, tz - 0.25f, tx + 0.25f, tz + 0.25f, 1.05f);
     int ns = 0;
@@ -741,7 +741,7 @@ static int build_market(VGen *G, VFrame *F) {
     v->front = tz1;
     v->clearMin = V_MARKET_LIP;
     /* the table: a top, skirted or on trestles, and tiers rising to the back */
-    int table = v_box(v, VR_TABLE, VS_TIMBER, VCOL_TRIM, x0 + 0.1f, th - 0.04f, tz0, x1 - 0.1f, th, tz1);
+    int table = v_box(v, VR_TABLE, VS_CHIPBOARD, VCOL_TRIM, x0 + 0.1f, th - 0.04f, tz0, x1 - 0.1f, th, tz1);
     if (skirt) {
         float q[4][3] = { { x0 + 0.1f, th - 0.02f, tz1 + 0.01f }, { x1 - 0.1f, th - 0.02f, tz1 + 0.01f }, { x1 - 0.1f, 0.04f, tz1 + 0.01f }, { x0 + 0.1f, 0.04f, tz1 + 0.01f } };
         int sk = v_quad(v, VR_CLOTH, VS_CLOTH, VCOL_ACC2, q, VPF_SWAY);
@@ -759,7 +759,7 @@ static int build_market(VGen *G, VFrame *F) {
     for (int k = 1; k < tiers; ++k) {
         float zk1 = tz1 - tierD * (1.4f + (float)(k - 1)), yk = th + 0.13f * (float)k;
         /* each tier stands on the one below, so no two share a face */
-        int tp = v_box(v, VR_TIER, VS_TIMBER, VCOL_TRIM, x0 + 0.12f, yk - 0.13f, tz0, x1 - 0.12f, yk, zk1);
+        int tp = v_box(v, VR_TIER, VS_CHIPBOARD, VCOL_TRIM, x0 + 0.12f, yk - 0.13f, tz0, x1 - 0.12f, yk, zk1);
         if (tp >= 0) v->part[tp].faces = VB_BOT;
         if (tp >= 0 && table >= 0) v_edge(v, table, tp, VE_SUPPORTS);
         add_surface(F, VSU_TIER, x0 + 0.15f, zk1 - tierD + 0.03f, x1 - 0.15f, zk1 - 0.03f, yk);

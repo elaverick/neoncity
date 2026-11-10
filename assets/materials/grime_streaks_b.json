@@ -1,0 +1,11 @@
+// Greener dirt run down a wall from its top edge, the opacity in the albedo's alpha: the other streaks
+// on a street vendor's walls (shadeVendor). Leaking003 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/leaking_003/albedo.png",
+    "normal": "../textures/leaking_003/normal.png",
+    "orm":    "../textures/leaking_003/orm.png"
+  },
+  "tile": [2.0, 1.0],          // metres per image (a 2:1 image)
+  "albedo_mean": [0.041, 0.044, 0.024]   // per channel (pbr_pack)
+}

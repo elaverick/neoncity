@@ -130,7 +130,7 @@ VItem *v_item(Vendor *v, int kind, int role) {
 }
 
 int v_finish_surf(const Vendor *v) {
-    static const uint8_t S[VF_COUNT] = { VS_STEEL, VS_CORRUGATED, VS_TILE, VS_TIMBER, VS_BRICK, VS_RUST };
+    static const uint8_t S[VF_COUNT] = { VS_STEEL, VS_CORRUGATED, VS_TILE, VS_TIMBER, VS_CHIPBOARD, VS_RUST };
     return S[v->finish < VF_COUNT ? v->finish : 0];
 }
 
@@ -732,21 +732,19 @@ static void reduce(VGen *G) {
     int cap = V_TIER[v->tier].tris;
     int tris = vendor_tris(v, -1);
     int idle = 0;
-    for (int step = 0; tris > cap && idle < 8; step = (step + 1) % 8) {
+    for (int step = 0; tris > cap && idle < 7; step = (step + 1) % 7) {
         int did = 0;
         switch (step) {
         case 0:   /* a decoration */
             for (int i = v->nitem - 1; i >= 0; --i) if (v->item[i].role == VR_DECOR) { vlog(G, "    simplify: drop the %s\n", vendor_item_name(v->item[i].kind)); remove_item(v, i); did = 1; break; }
             break;
-        case 1:   /* a patron: there are none */
-            break;
-        case 2: { /* two hanging items */
+        case 1: { /* two hanging items */
             int n = 0;
             for (int i = v->nitem - 1; i >= 0 && n < 2; --i) if (v->item[i].role == VR_HANG) { remove_item(v, i); n++; }
             if (n) { vlog(G, "    simplify: remove %d hanging items\n", n); did = 1; }
             break;
         }
-        case 3:   /* a counter item (or three heaps, which are counter items too) */
+        case 2:   /* a counter item (or three heaps, which are counter items too) */
             for (int i = v->nitem - 1; i >= 0; --i) {
                 if (v->item[i].role == VR_HEAP) {
                     int n = 0;
@@ -756,17 +754,17 @@ static void reduce(VGen *G) {
                 if (v->item[i].role == VR_PROP) { vlog(G, "    simplify: remove the %s\n", vendor_item_name(v->item[i].kind)); remove_item(v, i); did = 1; break; }
             }
             break;
-        case 4:
+        case 3:
             if (v->detail > 0) { v->detail--; vlog(G, "    simplify: lower the detail to %d\n", v->detail); did = 1; }
             break;
-        case 5:
+        case 4:
             for (int i = v->nitem - 1; i >= 0; --i) if (v->item[i].role == VR_STOOL) { vlog(G, "    simplify: drop a stool\n"); remove_item(v, i); did = 1; break; }
             break;
-        case 6:
+        case 5:
             if (v->signature != VSIG_DEADNEON)
                 for (int i = v->nitem - 1; i >= 0; --i) if (v->item[i].role == VR_SIGNATURE) { vlog(G, "    simplify: drop the signature (%s)\n", vendor_signature_name(v->signature)); remove_item(v, i); did = 1; break; }
             break;
-        case 7: {
+        case 6: {
             int n = 0;
             for (int i = v->nitem - 1; i >= 0; --i) if (v->item[i].role == VR_HANG) { remove_item(v, i); n++; }
             if (n) { vlog(G, "    simplify: remove all hanging items\n"); did = 1; }

@@ -1,0 +1,12 @@
+// Tongue-and-groove pine boards, fresh and pale, running up the image: the cleaner vendors' timber
+// (shadeVendor, VS_TIMBER). Planks009 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/planks_009/albedo.png",
+    "normal": "../textures/planks_009/normal.png",
+    "orm":    "../textures/planks_009/orm.png"
+  },
+  "tile": 1.0,                 // metres per image: eight boards, 12.5 cm
+  "albedo_mean": [0.529, 0.339, 0.157],   // per channel (pbr_pack)
+  "params": [1.0, 1.0]
+}

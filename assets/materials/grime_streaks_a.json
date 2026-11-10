@@ -1,0 +1,11 @@
+// Dirt run down a wall from its top edge, the opacity map in the albedo's alpha: the grime on a street
+// vendor's walls (shadeVendor), more as it wears. Leaking001 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/leaking_001/albedo.png",
+    "normal": "../textures/leaking_001/normal.png",
+    "orm":    "../textures/leaking_001/orm.png"
+  },
+  "tile": [2.0, 1.0],          // metres per image (a 2:1 image): its top row is the edge the dirt runs from
+  "albedo_mean": [0.024, 0.024, 0.017]   // per channel (pbr_pack)
+}

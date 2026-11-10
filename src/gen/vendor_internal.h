@@ -52,7 +52,7 @@ extern const VSigInfo V_SIG[VSIG_COUNT];
 typedef struct VPropInfo { const char *name; float w, h, d; uint8_t emitter; } VPropInfo;   /* emitter: VEM_* + 1, 0 none */
 extern const VPropInfo V_PROP[VI_PROP_END];
 /* The tier table (section 9.1). */
-typedef struct VTierInfo { int tris, particles, hangings, neon, figures, props, decor; } VTierInfo;
+typedef struct VTierInfo { int tris, particles, hangings, neon, props, decor; } VTierInfo;
 extern const VTierInfo V_TIER[VTIER_COUNT];
 /* Steam per kind (section 10.2): life, start and end size, rise, peak opacity. */
 typedef struct VEmitInfo { float life, size0, size1, rise, opacity, spread, turbulence; } VEmitInfo;

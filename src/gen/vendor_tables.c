@@ -111,11 +111,11 @@ const VPalette V_PALETTE[V_PALETTES] = {
     { { 0x161616u, 0xC2A67Eu, 0x5B4636u, 0xE8E2D6u }, { 3, 6 }, 4, 0 },   /* matte black (ref 4) */
 };
 
-/*                                          painted corrug tile  plank brick rust */
+/*                                          painted corrug tile  plank board rust */
 const float V_FINISH_CLASS[VC_COUNT][VF_COUNT] = {
-    { 1.0f, 2.0f, 0.6f, 1.2f, 0.8f, 2.2f },
-    { 1.6f, 1.4f, 1.0f, 1.2f, 0.8f, 0.6f },
-    { 2.5f, 0.8f, 1.2f, 2.0f, 0.6f, 0.0f },
+    { 0.6f, 2.0f, 0.4f, 1.4f, 1.6f, 2.2f },
+    { 1.2f, 1.4f, 0.6f, 1.2f, 1.8f, 0.6f },
+    { 1.8f, 0.8f, 0.6f, 1.4f, 1.4f, 0.0f },
 };
 
 const VDecorInfo V_DECOR[VI_DECOR_COUNT] = {
@@ -193,11 +193,11 @@ const VPropInfo V_PROP[VI_PROP_END] = {
     { "ice tray",     0.70f, 0.12f, 0.45f, VEM_MIST + 1 },
 };
 
-/*                                    tris  particles hang neon figures props decor */
+/*                                    tris  particles hang neon props decor */
 const VTierInfo V_TIER[VTIER_COUNT] = {
-    {  800,  48,  5, 3, 1,  8, 2 },
-    { 1700, 100, 12, 5, 3, 16, 5 },
-    { 2600, 180, 20, 7, 5, 26, 8 },
+    {  800,  48,  5, 3,  8, 2 },
+    { 1700, 100, 12, 5, 16, 5 },
+    { 2600, 180, 20, 7, 26, 8 },
 };
 
 /*                                  life  size0  size1 rise  opacity spread turbulence */

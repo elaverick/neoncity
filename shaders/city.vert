@@ -157,6 +157,8 @@ void main() {
         vec3 d = doorMove(nrm);
         rel += d;
         local += d;
+    } else if (inParams.x == MAT_VENDOR) {
+        lit = vec2(inNrm.w, 0.0);   // a vendor's part's top over its floor, in 6.35 m (src/city/mesh_vendor.c)
     } else if (inParams.x == MAT_INTERIOR && (inParams.y == 10u || inParams.y == 20u)) {
         lit = vec2(inNrm.w, 0.0);   // lobby plants (grow_plants in src/city/mesh_planting.c): how open the crown is there
     } else if (inParams.x == MAT_ARCOLOGY && inParams.y == 23u) {

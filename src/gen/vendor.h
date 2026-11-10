@@ -47,13 +47,15 @@ enum { VSITE_KERB = 0, VSITE_APRON, VSITE_LANE, VSITE_COURT, VSITE_POCKET, VSITE
  * corrugation, tile, plank, brick), coloured from the palette slot. */
 enum { VS_STEEL = 0, VS_CORRUGATED, VS_RUST, VS_TIMBER, VS_DECK, VS_TILE, VS_BRICK, VS_TARP, VS_STRIPE,
        VS_CLOTH, VS_STAINLESS, VS_LAMINATE, VS_CHROME, VS_RUBBER, VS_GLASS, VS_PROP, VS_FOOD, VS_NEON,
-       VS_TUBE, VS_BULB, VS_ROOM, VS_SIGN, VS_SHUTTER, VS_PAPER, VS_PLANT, VS_COUNT };
+       VS_TUBE, VS_BULB, VS_ROOM, VS_SIGN, VS_SHUTTER, VS_PAPER, VS_PLANT, VS_CHIPBOARD, VS_COUNT };
 /* Painted stock on the shelves of the room behind an opening (section 7, layer 1). */
 enum { VK_BOWLS = 0, VK_BOTTLES, VK_JARS, VK_STEAMERS, VK_TANKS, VK_FISHRACK, VK_DRAWERS, VK_CRT, VK_PARTS,
        VK_SLEEVES, VK_BOLTS, VK_MASKS, VK_CLOCKS, VK_TOOLS, VK_PLANTS, VK_FRUIT, VK_VEG, VK_FLOWERS, VK_LOAVES,
        VK_JOINTS, VK_BOOKS, VK_CUPS, VK_BOXES, VK_CERAMICS, VK_TEXTILES, VK_COUNT };
-/* Wall finishes (section 8): applied by the shader, not textures. */
-enum { VF_PAINTED = 0, VF_CORRUGATED, VF_TILE, VF_PLANK, VF_BRICK, VF_RUST, VF_COUNT };
+/* Wall finishes (section 8): the cheap stuff a stall is knocked up from, shaded from authored
+ * grain (shaders/city/vendor.glsl): painted sheet steel, corrugated iron, tile, planks, flake
+ * board, rusted sheet. (The doc's brick is flake board here: no stall is built of brick.) */
+enum { VF_PAINTED = 0, VF_CORRUGATED, VF_TILE, VF_PLANK, VF_CHIPBOARD, VF_RUST, VF_COUNT };
 /* The feature wall at the back of the room. */
 enum { VW_SHELVES = 0, VW_MENU, VW_MOSAIC, VW_MURAL, VW_SCREENS, VW_PEGBOARD, VW_CRATES, VW_LIGHTBOX, VW_COUNT };
 /* Palette slots (VPart.col); VCOL_RGB: the part's own colour (VPart.rgb). */
@@ -288,7 +290,9 @@ typedef struct VendorVertex {
     float    p[3], n[3], uv[2];
     uint8_t  surf, col, layer, flags;   /* VS_*, VCOL_*, VL_*, VPF_* */
     uint32_t rgb;                       /* VCOL_RGB's colour; else the part's seed's low bits */
-    uint8_t  role, pad[3];
+    uint8_t  role;
+    uint8_t  top;                       /* its part's top over the vendor's floor, 5 cm steps (0: an item's, a sign's) */
+    uint8_t  pad[2];
 } VendorVertex;
 typedef struct VendorMesh { VendorVertex *v; uint32_t count, cap; } VendorMesh;
 /* Appends the vendor's triangles (layer -1: both layers) to m; returns how many triangles. */
