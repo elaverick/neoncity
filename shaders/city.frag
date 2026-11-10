@@ -95,6 +95,7 @@ float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + 
 #include "city/litter.glsl"
 #include "city/industry.glsl"
 #include "city/props.glsl"
+#include "city/vendor_room.glsl"
 #include "city/vendor.glsl"
 
 /* ====================================================================== */

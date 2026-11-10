@@ -888,10 +888,17 @@ baked by `tools/model_pack.c`). See the README. Left over:
 - **Collision** is a box round each piece (a post box's round its box, not its post).
 
 ## Street vendors (next)
-The grammar is built (`src/gen/vendor*.c`, `vendor_lab`); the roadmap's SV1-SV9 place it in the city and the
-arcologies (`~/.claude/plans/street-vendors.md`). Left over from SV0:
-- **People:** no patrons on the stools and no vendor at a barrow's handles; the vendor will be painted into the
-  rooms (SV3). Patrons wait for the city to have people.
+The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sites.c`, `mesh_vendor.c`,
+`shaders/city/vendor_room.glsl`); the roadmap's SV4-SV11 continue (`~/.claude/plans/street-vendors.md`).
+Left over:
+- **People:** none anywhere, no vendor in the rooms and no patrons on the stools, until people are a project
+  of their own (the user's call).
+- **Painted stock** is simple shapes per kind (25 kinds); if it reads too plain close up, an authored stock
+  atlas (as the graffiti's) could replace the shapes for the nearest rooms.
+- **Rooms' light** is the vendor's lamp inside the room only: it lights nothing outside until SV4 puts the lamps
+  in the light table. Rooms are never shut until SV8 keeps hours (the shut look is built and was checked).
+- **Walk-in containers** (wealthy courts) are rare: `city_test --vendors` found only hatched containers to view; their
+  room (a display table in place of a prep table) was not seen in the game.
 - **The lab's renders** are flat-shaded previews, not the engine's look: the patterns (corrugation, stripes,
   tiles, the painted rooms) are stand-ins for what the shaders will do.
 - **Small sites** (a kiosk on a narrow kerb) can run out of places for a signature piece no neighbour has; such a

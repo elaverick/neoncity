@@ -127,8 +127,11 @@ enum {
  * role (VR_*) << 24; seed the vendor's; the normal's w its part's top over the
  * vendor's floor in 5 cm steps (what grime runs down from). A painted sign's face (VS_NEON): z and w
  * its size in half metres, aux its sign word (vendor_mesh.c neon_word), uv 0..1
- * across it. Lit neon is drawn as the facades' (MAT_NEON). Must match
- * shaders/city/vendor.glsl. */
+ * across it. Lit neon is drawn as the facades' (MAT_NEON). A room behind an opening (VS_ROOM;
+ * mesh_vendor.c room_word): z and w its width and height (2.5 cm), the normal's w its depth
+ * (2.5 cm), aux its stock (3 x 5 bits), feature wall (3), opening kind (3), palette (4),
+ * cooking (2), wear (3), a tube lamp (1), shut (1, top bit); the seed its lamp (RGB565, high
+ * half) and a hash (low half). Must match shaders/city/vendor.glsl and vendor_room.glsl. */
 
 /* Industrial plants' surfaces (MAT_INDUSTRY params.y; src/city/mesh_industry.c):
  * paint, open grating, steam, glazing lit from within, wire mesh. Must match

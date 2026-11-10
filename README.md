@@ -1388,8 +1388,8 @@ each kind near the spawn. The layer averages about 49,000 vertices a chunk (130,
 
 ### Street vendors (`src/gen/vendor.c`)
 Noodle bars, kiosks, lean-tos, container shops, market stalls and barrows follow
-`docs/street-vendor-generation.md`. So far the grammar (SV0 of the vendor roadmap) and the sites (SV1) are
-built: the city plans where they stand, but doesn't draw them yet.
+`docs/street-vendor-generation.md`. So far the grammar (SV0 of the vendor roadmap), the sites (SV1), the
+shells in the city (SV2) and the rooms seen through their openings (SV3) are built.
 
 - **Room for them** (`src/city/lots.c`, `city_block_spaces`): in the centres' poorer and middling districts
   about one block in six has a market lane (an alley across it widened to 7-10 m), one in six or seven a hawker
@@ -1405,6 +1405,21 @@ built: the city plans where they stand, but doesn't draw them yet.
   block's sites are planned whole, whichever chunk asks; those of one space are a group, generated in order.
   `city_test --vendor-sites` checks them (the same from every chunk, clear, reachable, each taking a valid
   vendor) and `city_map` draws them.
+- **Rooms** (`shaders/city/vendor_room.glsl`; the doc's section 6): behind each opening (a hatch, a
+  container's walk-in front, a canopy bar's or lean-to's shelf recess, the gap behind a market stall's table,
+  a barrow's cabinet) a box is traced from its one quad, and what it holds is painted procedurally from the
+  vendor's stock, feature wall, palette, cooking and wear, which `mesh_vendor.c` (`room_word`) packs into the
+  quad's vertex words: shelves with real depth (the boards' fronts, tops and undersides) and 25 kinds of
+  painted stock on them (bowls, bottles, jars, steamers, tanks, screens, books, sleeves, fruit in crates...);
+  the feature wall (a menu board, a tiled splashback, a mural, a wall of screens, a pegboard, stacked crates,
+  backlit photographs); stock painted flat on the side walls; the floor, and the ceiling's strip light. Two
+  cut-outs at fixed depths give parallax: the prep table (pots, steamers, a wok over its flame, a drinks
+  machine, a till, the stock laid out) and what hangs inside the head (utensils, lanterns, fish, joints,
+  garments, herbs, cables, the bare bulb). No figures. The vendor's lamp lights it, with what falls on the
+  opening from outside; the box's corners darken, grime grows with wear, goods narrower than a few pixels give
+  way to their average, and far off the room is its mean. Shut (a bit in the words, for SV8's hours), the
+  opening is a roller shutter, a tarp over a market's gap or a board. About 0.06 ms with a kiosk's room in
+  view; nothing measurable down a market lane. `city_test --vendors` checks every room's words.
 
 - **Input:** a site, a rectangle with its back (a wall a lean-to may lean on) and its front, where the
   customers come from; its kind (kerb, apron, market lane, court, pocket market, lunch plaza, arcology),

@@ -16,7 +16,8 @@
  * shelter map, casting ray-traced shadows. Its dressing waits for a near-only
  * layer of its own (SV5). Lit neon faces are drawn as the facades' signs
  * (MAT_NEON); everything else is MAT_VENDOR (src/core/common.h), shaded by
- * shaders/city/vendor.glsl. The openings' rooms are dark until SV3 paints them.
+ * shaders/city/vendor.glsl. The rooms behind its openings are painted by
+ * shaders/city/vendor_room.glsl (SV3) from the words room_word puts on their quads.
  * ========================================================================= */
 
 #define VENDORS_ALL 1024   /* every site of the blocks reaching a chunk */
@@ -127,6 +128,40 @@ static uint32_t to_srgb8(const float lin[3]) {
 
 typedef struct VEmit { Mesh *m; VendorMesh vm; int tris; } VEmit;
 
+/* The opening a room quad's vertex lies on (in its plane, inside it): its index, or -1. */
+static int room_opening(const Vendor *v, const float p[3]) {
+    for (int i = 0; i < v->nopen; ++i) {
+        const VOpening *o = &v->open[i];
+        float d[3] = { p[0] - o->o[0], p[1] - o->o[1], p[2] - o->o[2] };
+        float along = d[0] * o->u[0] + d[2] * o->u[2], out = d[0] * o->n[0] + d[2] * o->n[2];
+        if (fabsf(out) < 0.01f && along > -0.01f && along < o->w + 0.01f && d[1] > -0.01f && d[1] < o->h + 0.01f) return i;
+    }
+    return -1;
+}
+
+static uint8_t q_cm25(float m) { return (uint8_t)clampf(m / 0.025f + 0.5f, 1.0f, 255.0f); }
+
+/* What the shader needs to paint the room behind an opening (shaders/city/vendor_room.glsl vendorRoom; the
+ * layout is in src/core/common.h): its size in prm z, w; its depth in the normal's w; in aux its
+ * stock, feature wall, kind, palette, cooking, wear, lamp and whether it is shut; in the seed the
+ * lamp's colour and a hash of its own. */
+static void room_word(const Vendor *v, int oi, uint8_t prm[4], uint32_t *aux, uint32_t *seed, int8_t *depth) {
+    const VOpening *o = &v->open[oi];
+    prm[2] = q_cm25(o->w);
+    prm[3] = q_cm25(o->h);
+    *depth = (int8_t)clampf(o->depth / 0.025f + 0.5f, 1.0f, 127.0f);
+    uint32_t wear = (uint32_t)clampf(v->wear * 7.0f + 0.5f, 0.0f, 7.0f);
+    int tube = v->nlight > 0 && (v->light[0].kind == VLK_TUBE || v->light[0].kind == VLK_LED);
+    int closed = 0;   /* SV8 keeps hours */
+    *aux = (uint32_t)(v->stock[0] & 31u) | (uint32_t)(v->stock[1] & 31u) << 5 | (uint32_t)(v->stock[2] & 31u) << 10 |
+           (uint32_t)(v->feature & 7u) << 15 | (uint32_t)(o->kind & 7u) << 18 | (uint32_t)(v->palette & 15u) << 21 |
+           (uint32_t)(v->cooking & 3u) << 25 | wear << 27 | (uint32_t)tube << 30 | (uint32_t)closed << 31;
+    uint32_t lamp = v->nlight > 0 ? v->light[0].rgb : v->part[o->part].rgb;
+    uint32_t r = (lamp >> 16) & 255u, g = (lamp >> 8) & 255u, b = lamp & 255u;
+    uint32_t c565 = (r >> 3) << 11 | (g >> 2) << 5 | (b >> 3);
+    *seed = (hash_combine(v->site.seed, (uint32_t)oi + 0x7700u) & 0xFFFFu) | c565 << 16;
+}
+
 static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     VEmit *E = (VEmit *)ctx;
     Mesh *m = E->m;
@@ -150,7 +185,12 @@ static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
         uint32_t aux = (t->col == VCOL_RGB ? t->rgb & 0xFFFFFFu : t->col < 4 ? pal[t->col] : 0x808080u) | (uint32_t)t->role << 24;
         uint32_t seed = v->site.seed;
         float uvs[3][2];
+        int8_t wt = -1;   /* the normal's w: the part's top, or a room's depth */
         for (int k = 0; k < 3; ++k) { uvs[k][0] = t[k].uv[0]; uvs[k][1] = t[k].uv[1]; }
+        if (t->surf == VS_ROOM) {
+            int oi = room_opening(v, t->p);
+            if (oi >= 0) room_word(v, oi, prm, &aux, &seed, &wt);
+        }
         if (t->surf == VS_NEON) {
             /* a sign's face: a quad's two triangles, which share their first corner (vendor_mesh.c quad); uv over
              * it 0..1, its size in half metres; lit tubes as the facades' neon */
@@ -175,7 +215,7 @@ static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
             vec3 p = v3(bx + x->p[0] * s->fz + x->p[2] * s->fx, s->y + x->p[1], bz - x->p[0] * s->fx + x->p[2] * s->fz);
             vec3 nn = v3(x->n[0] * s->fz + x->n[2] * s->fx, x->n[1], -x->n[0] * s->fx + x->n[2] * s->fz);
             /* its part's top over the floor, 5 cm steps (to 6.35 m), where the grime runs down from (vendor.glsl) */
-            mesh_push_w(m, p, nn, (int8_t)(x->top < 127 ? x->top : 127), uvs[k][0], uvs[k][1], seed, prm, aux);
+            mesh_push_w(m, p, nn, wt >= 0 ? wt : (int8_t)(x->top < 127 ? x->top : 127), uvs[k][0], uvs[k][1], seed, prm, aux);
         }
         E->tris++;
     }

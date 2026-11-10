@@ -284,7 +284,7 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
 /* ------------------------------------------------------------ the shells (SV2) --- */
 
 typedef struct VsShells {
-    int vendors, arch[VA_COUNT], cls[VC_COUNT], tris, trisMax, drawn, solids, floors, outside, high, collMiss;
+    int vendors, arch[VA_COUNT], cls[VC_COUNT], tris, trisMax, drawn, solids, floors, outside, high, collMiss, rooms;
     VendorMesh vm;
     /* one of each archetype, the nearest to a point, for the views */
     double px, pz, best[VA_COUNT];
@@ -304,6 +304,7 @@ static void vs_shell_visit(void *ctx, const VendorSpot *s, const Vendor *v) {
     for (uint32_t i = 0; i + 2 < A->vm.count; i += 3) {
         const VendorVertex *x = &A->vm.v[i];
         lit += x->surf == VS_NEON && (x->flags & VPF_EMISSIVE) && !(x->rgb & (1u << 30));
+        A->rooms += x->surf == VS_ROOM;
     }
     A->tris += t;
     A->drawn += t - lit;
@@ -350,17 +351,26 @@ static void check_vendor_shells(int hx, int hz, const char *where, int views) {
     double ms = 0.0;
     for (int j = -1; j <= 1; ++j)
         for (int i = -1; i <= 1; ++i) {
-            int before = A.drawn, solids = A.solids, fl = A.floors;
+            int before = A.drawn, solids = A.solids, fl = A.floors, roomsBefore = A.rooms;
             clock_t c0 = clock();
             city_chunk_vendors(hx + i, hz + j, vs_shell_visit, &A);
             ms += 1000.0 * (double)(clock() - c0) / CLOCKS_PER_SEC;
             Mesh m;
             memset(&m, 0, sizeof(m));
             city_build_mesh(hx + i, hz + j, &m);
-            int drawn = 0;
-            for (uint32_t v = 0; v + 2 < m.count; v += 3) drawn += m.v[v].params[0] == MAT_VENDOR;
+            int drawn = 0, painted = 0;
+            for (uint32_t v = 0; v + 2 < m.count; v += 3) {
+                const Vertex *x = &m.v[v];
+                drawn += x->params[0] == MAT_VENDOR;
+                if (x->params[0] != MAT_VENDOR || x->params[1] != VS_ROOM) continue;
+                /* a room's words (mesh_vendor.c room_word): its size, depth, stock and kind, read by vendor_room.glsl */
+                uint32_t w = x->aux;
+                painted += x->params[2] > 0 && x->params[3] > 0 && x->nrm[3] > 0 && (w & 31u) < VK_COUNT && ((w >> 5) & 31u) < VK_COUNT &&
+                           ((w >> 10) & 31u) < VK_COUNT && ((w >> 18) & 7u) <= VO_CABINET && ((w >> 21) & 15u) < V_PALETTES && (x->seed >> 16) != 0;
+            }
             /* exactly its vendors' shells, less their lit faces (MAT_NEON, as the facades' signs) */
             CHECK(drawn == A.drawn - before, "%s: chunk (%d,%d) draws %d vendor triangles, its vendors have %d", where, hx + i, hz + j, drawn, A.drawn - before);
+            CHECK(painted == A.rooms - roomsBefore, "%s: chunk (%d,%d) paints %d rooms' triangles, its vendors' openings have %d", where, hx + i, hz + j, painted, A.rooms - roomsBefore);
             chunkTris += drawn;
             if (drawn > chunkMax) chunkMax = drawn;
             if ((int)m.count > baseMax) baseMax = (int)m.count;

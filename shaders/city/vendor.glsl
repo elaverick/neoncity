@@ -12,8 +12,8 @@
  * iron rusting through and rusted sheet in relief, painted steel, canvas and
  * tarp in the vendor's. Wear brings grime: blotches, dirt run down from each
  * part's top edge (an authored decal), dirt splashed up from the ground. The
- * rooms behind the openings stay dark until SV3 paints them; lamps glow, but
- * light nothing yet (SV4). A painted sign's face (VS_NEON, unlit) is hand-lettered:
+ * rooms behind the openings are painted by vendor_room.glsl (SV3), or shut;
+ * lamps glow, but light nothing yet (SV4). A painted sign's face (VS_NEON, unlit) is hand-lettered:
  * the neon's own glyphs (tubeDist, signs.glsl) as brush strokes. Lit neon is
  * MAT_NEON (shadeNeon).
  * ==================================================================== */
@@ -61,12 +61,25 @@ vec3 shadeVendor(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint a
     // the grime's image coordinates and their derivatives, while control flow is uniform
     vec2 dq = vec2(uv.x / 2.0 + hf(seed, 14u), top - y);
     vec2 dqx = dFdx(dq), dqy = dFdy(dq);
+    float rpx = max(length(dFdx(uv)), length(dFdy(uv)));   // a room's metres a pixel
     if (surf == VS_NEONFACE) return vendorPaintedSign(p, V, n, uv, seed, prm, y, wear);
     vec3 pal = vendorColour(aux);
+    if (surf == VS_ROOM) {
+        // the painted room behind an opening (vendor_room.glsl), lit by its lamp and what reaches it from outside
+        if ((aux >> 31) == 0u) {
+            vec3 sp;
+            vec3 outside = wallLighting(p, n, V, 10.0, 0.0, y, sp) * 0.5;
+            return vendorRoom(uv, -V, n, seed, prm, aux, top * 0.5, y - uv.y, rpx, length(rel), outside);
+        }
+        // shut: a roller shutter down, a tarp tied over a market's gap, a board over a recess or cabinet
+        uint kind = (aux >> 18) & 7u;
+        surf = kind == VO_BACKCLOTH ? VS_TARP : kind == VO_RECESS || kind == VO_CABINET ? VS_CHIPBOARD : VS_SHUTTER;
+        pal = vPal((aux >> 21) & 15u, 0u);
+        wear = float((aux >> 27) & 7u) / 7.0;
+        prm.z = 0u;
+    }
     // lamps: a warm bulb, a cold tube (lit on their own; the light they throw is SV4's)
     if (surf == VS_TUBE || surf == VS_BULB || (prm.z & VPF_EMISSIVE) != 0u) return pal * (surf == VS_TUBE ? 3.0 : 5.0);
-    // the room behind an opening: dark, but for a little of its lamp (SV3 paints it)
-    if (surf == VS_ROOM) return pal * 0.004 + vec3(0.002);
 
     /* What it is made of. Cheap stuff, even where the district is wealthy: flake board, weathered
      * planks (fresh pine on the cleaner stalls), corrugated iron painted in the vendor's colour and
