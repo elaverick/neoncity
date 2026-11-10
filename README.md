@@ -24,6 +24,7 @@ build/interior_lab office 400 out        # baked office floors: the generator's 
 python tools/interior_models.py check    # the bake-only furniture (assets_src/interiors): stance and leaks
 build/interior_bake --check              # the baked office floors against assets/interiors/catalogue.json
 build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, timings; contact sheets
+build/vendor_lab 60 out        # street vendors: validity, determinism, budgets, neighbours, the mix by affluence; contact sheets
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
 build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the world chart within 5400 km; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
@@ -1383,6 +1384,35 @@ What stands on the ground collides (`city_layout`), and the litter lies clear of
 `city_test` checks that no two pieces overlap, that every signal faces the road and that
 nothing closes the way past a dumpster; `city_test --props` prints `--cam` views of a few of
 each kind near the spawn. The layer averages about 49,000 vertices a chunk (130,000 at most).
+
+### Street vendors (`src/gen/vendor.c`)
+Noodle bars, kiosks, lean-tos, container shops, market stalls and barrows follow
+`docs/street-vendor-generation.md`. So far the grammar alone is built (SV0 of the vendor roadmap): the city
+doesn't place them yet.
+
+- **Input:** a site, a rectangle with its back (a wall a lean-to may lean on) and its front, where the
+  customers come from; its kind (kerb, apron, market lane, court, pocket market, lunch plaza, arcology),
+  a ceiling if it has one, and the district's affluence (`plan_affluence`).
+- **Stages:** the trade (22: the doc's 19 and coffee, lunch boxes and homeware for the wealthy streets and the
+  office districts' lunch) and the archetype, by affinity, affluence and what fits the site; the structure
+  (`vendor_structure.c`, section 5: bays no wider than 4.5 m, cantilevers within 1.2 m, a container's corner
+  posts and head rail, a barrow's wheels and handles...); the dressing (palette, finish, feature wall, neon
+  motif, shelf stock, decorations in sized slots and a signature piece), rerolled while it shares more than
+  three of nine axes with a neighbour; the fill (counter props, heaps of loose stock, hanging goods clear of
+  heads, gas bottles, signs, neon, steam emitters). Affluence moves all of it: barrows, lean-tos and canopy
+  bars in rust, tarp and corrugated sheet, cold tubes, dying neon and clutter in the poorest streets; kiosks and
+  containers in painted steel and timber under warm LED, with little clutter, in the wealthiest.
+- **Budget:** `vendor_mesh` makes the triangles (the shell, seen from afar, and the dressing, near only), and
+  the tier's budget is measured on them. Over it, the reduction order of section 9.2 runs; a vendor that
+  fails validation is retried at a simpler level.
+- **Validation** (`vendor_validate.c`) reads every bounded rule of section 4 back from the parts and the graph
+  alone, whatever built them, and logs each failure with its measure.
+- `vendor_lab [seeds] [out_dir]` checks every archetype, tier and affluence class over many seeds (valid,
+  byte-identical twice, within budget), rows of five neighbours with one archetype and one trade (none too
+  alike), and the automatic mix by affluence; with a directory it renders contact sheets. `vendor_lab dump
+  <archetype> <seed> [affluence] [tier]` prints one vendor's log, parts, graph and items. Over 200 seeds, all
+  12,600 pass; at the standard tier the median noodle bar is about 1,200 triangles, a kiosk 510, a market
+  stall 670, a barrow 490, a container pair 1,320.
 
 ### Textures (`src/render/materials.c`, `assets/materials/`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual surfaces can opt in to authored PBR

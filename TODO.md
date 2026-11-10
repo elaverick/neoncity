@@ -887,6 +887,19 @@ baked by `tools/model_pack.c`). See the README. Left over:
   industrial plants' yards or the parks, and none against a boundary wall or fence.
 - **Collision** is a box round each piece (a post box's round its box, not its post).
 
+## Street vendors (next)
+The grammar is built (`src/gen/vendor*.c`, `vendor_lab`); the roadmap's SV1-SV9 place it in the city and the
+arcologies (`~/.claude/plans/street-vendors.md`). Left over from SV0:
+- **People:** no patrons on the stools and no vendor at a barrow's handles; the vendor will be painted into the
+  rooms (SV3). Patrons wait for the city to have people.
+- **The lab's renders** are flat-shaded previews, not the engine's look: the patterns (corrugation, stripes,
+  tiles, the painted rooms) are stand-ins for what the shaders will do.
+- **Small sites** (a kiosk on a narrow kerb) can run out of places for a signature piece no neighbour has; such a
+  vendor goes without one rather than repeating a neighbour's (logged).
+- **Forced changes:** in rows of identical sites with one trade, about one vendor in twenty needs its dressing forced
+  (palette, then feature wall, motif, finish, a sideline stock) to stay distinct; the city's mixed rows will need
+  it far less.
+
 ## Industrial plants and substations
 Section 11 of `docs/procedural-building-generation.md` (`src/gen/building_industry.c`,
 `src/city/mesh_industry.c`, `building_lab industry`). Left over:

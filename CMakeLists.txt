@@ -229,7 +229,8 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/dr
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
                 src/gen/interior_fixtures.c src/gen/interior_validate.c src/gen/interior_lights.c src/gen/interior_doors.c
-                src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c)
+                src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c
+                src/gen/vendor.c src/gen/vendor_structure.c src/gen/vendor_tables.c src/gen/vendor_mesh.c src/gen/vendor_validate.c)
 # Terrain (src/terrain): the ground everywhere, a pure function of position over the planet the world's
 # X/Z is a chart of (terrain_height.c, terrain_land.c, terrain_world.c, terrain_cube.c and terrain_earth.c, in GEN_SOURCES:
 # the city builds on them), the clipmap that samples it round the camera (drawn by src/render/terrain_gpu.c)
@@ -257,6 +258,11 @@ target_include_directories(interior_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR} to
 # (plant_lab [seeds] [out_dir]).
 add_executable(plant_lab tests/plant_lab.c src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c)
 target_include_directories(plant_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
+# Street vendors (docs/street-vendor-generation.md): validity, determinism, budgets, uniqueness,
+# the mix by affluence; contact sheets (vendor_lab [seeds] [out_dir] [verbose_seed]).
+add_executable(vendor_lab tests/vendor_lab.c src/gen/vendor.c src/gen/vendor_structure.c src/gen/vendor_tables.c
+               src/gen/vendor_mesh.c src/gen/vendor_validate.c src/gen/gen_common.c)
+target_include_directories(vendor_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # Terrain determinism, bounds, slopes, the city footprint, levels of detail and the clipmap
 # (terrain_test [--earth <test bake>] [--fingerprint]).
 add_executable(terrain_test tests/terrain_test.c ${TERRAIN_SOURCES} ${GEN_SOURCES})
@@ -288,7 +294,7 @@ if(MSVC)
 elseif(UNIX)
   target_link_libraries(grass_test PRIVATE dl)   # volk loads the Vulkan loader
 endif()
-foreach(T city_test city_map building_lab interior_lab plant_lab terrain_test world_test material_test grass_test sky_test)
+foreach(T city_test city_map building_lab interior_lab plant_lab vendor_lab terrain_test world_test material_test grass_test sky_test)
   # the assets the tests read (the models: src/city/models.h), from the source tree
   target_compile_definitions(${T} PRIVATE NEONCITY_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets")
   if(MSVC)
@@ -308,6 +314,7 @@ add_test(NAME interior_rules COMMAND interior_lab 1500)
 # The generated office floors behind the impostors: the catalogue and a sweep of inputs.
 add_test(NAME office_rules COMMAND interior_lab office 400)
 add_test(NAME plant_rules COMMAND plant_lab 12)
+add_test(NAME vendor_rules COMMAND vendor_lab 40)
 # Arcology interiors over a wide area (only mega plots are generated, so it is quick).
 add_test(NAME arcology_rules COMMAND interior_lab arcology 12000)
 add_test(NAME terrain_rules COMMAND terrain_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake)
