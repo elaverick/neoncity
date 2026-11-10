@@ -274,6 +274,12 @@ void     city_spawn(double *x, double *z, float *yaw);
  * raised by it at the building's base. It is the terrain's urban ground
  * (terrain_urban_height in src/terrain). */
 float    city_ground_y(double x, double z);
+/* Settlement k's ground at its core: city_ground_y at its centre, read in its
+ * own frame (world Y: its height over the planet's sphere, the same in every
+ * frame). Its cloud's deck hangs at the deck's heights over it (CLOUD_LOW
+ * and the rest count from it: src/core/clouds.h). All of them are read at
+ * the first call, which main makes before any worker starts. */
+float    city_settlement_ground(int k);
 /* Round the city's outline (where it ends, PlanArea.bounded) a grass verge
  * slopes from the asphalt down to the land over CITY_VERGE_W, to
  * CITY_VERGE_DROP under the city's ground: a little under the land there,

@@ -347,7 +347,7 @@ void     road_gpu_stats(Renderer *r, char *buf, size_t n);
  * them into the scene pass after the clipmap. */
 void planet_gpu_create(Renderer *r);
 void planet_gpu_destroy(Renderer *r);
-void planet_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj);
+void planet_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj, double smogTop, double smogCover);
 void planet_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot);
 bool planet_gpu_settled(Renderer *r);
 void planet_gpu_stats(Renderer *r, char *buf, size_t n);

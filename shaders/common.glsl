@@ -97,7 +97,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 shadow;     // ray-traced shadows: x frame number, y SHADOWS_ON | SHADOWS_DEBUG, zw where sample 0 lies in a pixel
     mat4 prevViewProj;   // the previous frame's viewProj, taking this frame's camera-relative positions
     vec4 sky;        // x the city's light in the air round the camera (0 countryside .. 1 city), y how many cities[], z cloud cover over the camera (src/app/weather.c)
-    vec4 cities[CLOUD_CITIES];   // the settlements whose clouds are drawn: camera-relative centre x, z; footprint radius (clouds.h)
+    vec4 cities[CLOUD_CITIES];   // the settlements whose clouds are drawn: camera-relative centre x, z; footprint radius; w the ground its deck hangs over (world Y; clouds.h)
     vec4 moon;       // xyz towards the moon, in the camera's local frame (src/app/main.c: sky_ubo); w its light against a full moon's (phase, and 0 once it has set)
     vec4 sun;        // xyz towards the sun, in the camera's local frame; w its altitude's sine
     mat4 starsTurn;  // the stars' frame (equatorial, of date) from the camera's local one (sky.frag)
@@ -123,6 +123,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 air[8];     // the air's light at the eye (AIR_SUN, AIR_MOON, AIR_SKY, skyIrradiance; shaders/atmo_eye.comp), a couple of frames late
     vec4 dirMix;     // x the sun's share of the land's light (1 while it is dirLight), y the moon's, z dirLight's disc's radius (rad) (src/render/renderer.c)
     vec4 clock;      // x the local mean solar time at the camera (hours), y the day of the week (0 Monday .. 6 Sunday) (src/app/main.c: frame_ubo; cityHours)
+    vec4 smog;       // the smog's top over the cities' cloud (hazeAmount), in the haze's heights: x over the eye, y the deck's cover over the eye (whatever its height), z the lowest over any city drawn (1e9: none) (src/app/weather.c)
 } frame;
 
 /* Pre-exposure (Frostbite's: Lagarde and de Rousiers 2014). The lighting
@@ -533,6 +534,23 @@ float cityEdge(vec2 rel) {
     for (int i = 0; i < int(frame.sky.y); ++i) e = min(e, length(rel - frame.cities[i].xy) - frame.cities[i].z);
     return e;
 }
+// ...and the ground the deck hangs over there (world Y): each city's own over
+// it, running from one's to the next's between them (DECK_BLEND, clouds.h;
+// the C mirror, at the eye, is in src/app/weather.c). The deck's heights
+// (CLOUD_LOW, CLOUD_HIGH, DECK_OVER, clouds.comp's) count from it.
+float cityEdge(vec2 rel, out float datum) {
+    float e = 1e9, d = 0.0, wsum = 0.0;
+    for (int i = 0; i < int(frame.sky.y); ++i) {
+        float ei = length(rel - frame.cities[i].xy) - frame.cities[i].z;
+        float w = DECK_BLEND / (max(ei, 0.0) + DECK_BLEND);
+        w *= w; w *= w;
+        d += w * frame.cities[i].w;
+        wsum += w;
+        e = min(e, ei);
+    }
+    datum = wsum > 0.0 ? d / wsum : 0.0;
+    return e;
+}
 
 // The cities' cloud over rel, edge = cityEdge(rel) there: 1 over a city and
 // its border, falling to 0 over the countryside along a ragged line. The C
@@ -631,13 +649,17 @@ float daylightThrough() { return deckThrough(frame.sky.z); }
 
 /* ---------------- the city by day (DN6) ----------------
  * The cities' cloud over a point at rel (camera-relative, as drawn) whose
- * cityEdge is edge: its cover there (cloudCover), less where the point stands
- * up through the deck (DECK_OVER, clouds.h), as the land takes it (landSky). */
-float skyCoverAt(vec3 rel, float edge) {
-    float h = frame.camPos.y + rel.y + planetDrop(rel.xz);   // its height over the planet's sphere
+ * cityEdge is edge, the deck there over ground datum: its cover there
+ * (cloudCover), less where the point stands up through the deck (DECK_OVER,
+ * clouds.h), as the land takes it (landSky). */
+float skyCoverAt(vec3 rel, float edge, float datum) {
+    float h = frame.camPos.y + rel.y + planetDrop(rel.xz) - datum;   // its height over the planet's sphere, over the deck's ground
     return cloudCover(rel.xz, edge) * (1.0 - smoothstep(DECK_OVER, CLOUD_HIGH, h));
 }
-float skyCover(vec3 rel) { return skyCoverAt(rel, cityEdge(rel.xz)); }
+float skyCover(vec3 rel) {
+    float datum, edge = cityEdge(rel.xz, datum);
+    return skyCoverAt(rel, edge, datum);
+}
 
 // The daylight on level ground under a clear sky, unshadowed: the sun's (SUN_LAND) and the sky's.
 vec3 dayLevel() { return SUN_LAND * max(SUN_DIR.y, 0.0) + skyIrradiance(vec3(0.0, 1.0, 0.0)); }
@@ -776,6 +798,16 @@ float hazeMean(float h0, float h1, float H) {
     return abs(dh) > 1.0 ? H * (exp(-h0 / H) - exp(-h1 / H)) / dh : exp(-h0 / H);
 }
 
+// hazeMean less `cover` of the part of the line above height cap (the smog
+// capped there: hazeAmount): the line's heights clipped to over the cap.
+float hazeMeanCapped(float h0, float h1, float H, float cap, float cover) {
+    float m = hazeMean(h0, h1, H);
+    if (cover <= 0.0 || max(h0, h1) <= cap) return m;
+    float a = max(h0, cap), b = max(h1, cap), dh = h1 - h0;
+    float above = abs(dh) > 1.0 ? H * (exp(-a / H) - exp(-b / H)) / dh : (h0 > cap ? exp(-h0 / H) : 0.0);
+    return max(m - cover * above, 0.0);
+}
+
 // How much of the light from rel (camera-relative, dist away) the haze takes,
 // for air of the given density (per metre) at street level, thinning with
 // height: three quarters of it within HAZE_LOW_H or so of the ground, the
@@ -783,12 +815,25 @@ float hazeMean(float h0, float h1, float H) {
 // the haze datum (frame.weather.z): the ground of the settlement, not y = 0,
 // so a town on raised ground lies in its own street-level haze. They are
 // heights above the planet's sphere, so ground bent down out of sight stays
-// in the street's haze. The C mirror for the planet's patches is
-// planet_haze (src/render/planet_gpu.c).
+// in the street's haze. Over the cities' cloud the smog stops at the deck's
+// top, an inversion capping it (frame.smog): the cap and the cover are taken
+// at the line's higher end, where the part of it over the cap lies (the eye
+// looking down; the far end looking up). The C mirror for the planet's
+// patches is planet_haze (src/render/planet_gpu.c).
 float hazeAmount(vec3 rel, float dist, float density) {
     float h0 = max(frame.camPos.y - frame.weather.z, 0.0);
     float h1 = max(frame.camPos.y + rel.y + planetDrop(rel.xz) - frame.weather.z, 0.0);
-    float low = hazeMean(h0, h1, HAZE_LOW_H), high = hazeMean(h0, h1, HAZE_HIGH_H);
+    float cap = 1e9, cover = 0.0;
+    if (max(h0, h1) > frame.smog.z) {   // over the lowest deck's top drawn
+        float s = smoothstep(-30.0, 30.0, h0 - h1);
+        cap = frame.smog.x; cover = frame.smog.y;
+        if (s < 1.0) {
+            float datum, edge = cityEdge(rel.xz, datum);
+            cap = mix(CLOUD_HIGH + datum - frame.weather.z, cap, s);
+            cover = mix(cloudCover(rel.xz, edge), cover, s);
+        }
+    }
+    float low = hazeMeanCapped(h0, h1, HAZE_LOW_H, cap, cover), high = hazeMeanCapped(h0, h1, HAZE_HIGH_H, cap, cover);
     return 1.0 - exp(-dist * density * (0.25 * high + 0.75 * low));
 }
 

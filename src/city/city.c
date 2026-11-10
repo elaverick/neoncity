@@ -25,6 +25,22 @@ float city_height_cap(int cx, int cz) {
 
 float city_ground_y(double x, double z) { return (float)terrain_urban_height(x, z); }
 
+float city_settlement_ground(int k) {
+    static float ground[PLAN_MAX_SETTLEMENTS];
+    static int known;
+    if (!known) {
+        const TerrainFrame *was = terrain_frame_bound();
+        for (int q = 0; q < plan_settlement_count(); ++q) {
+            DVec2 c = q > 0 ? plan_settlement(q).centre : plan_town_centre(0, 0);
+            terrain_frame_bind(plan_frame_settlement(q));
+            ground[q] = city_ground_y(c.x, c.z);
+        }
+        terrain_frame_bind(was);
+        known = 1;
+    }
+    return k >= 0 && k < plan_settlement_count() ? ground[k] : 0.0f;
+}
+
 /* The relief of the ground at (x, z): its settlement's (m). */
 static double ground_relief(double x, double z) { return plan_settlement(plan_settlement_near(x, z)).relief_m; }
 

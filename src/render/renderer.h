@@ -29,7 +29,7 @@ typedef struct FrameUBO {
     float   shadow[4];     /* ray-traced shadows: frame number, on (1) / off (0), where sample 0 lies in a pixel (renderer.c) */
     mat4    prevViewProj;  /* the previous frame's viewProj for this frame's camera-relative positions (renderer.c) */
     float   sky[4];        /* the city's light in the air round the camera (0 countryside .. 1 city), how many cities[], cloud cover over the camera, how wet the ground is under the cloud (src/app/weather.c) */
-    float   cities[CLOUD_CITIES][4];   /* the settlements whose clouds are drawn: camera-relative centre x, z; footprint radius; unused */
+    float   cities[CLOUD_CITIES][4];   /* the settlements whose clouds are drawn: camera-relative centre x, z; footprint radius; the ground its deck hangs over (world Y: city_settlement_ground) */
     float   moon[4];       /* towards the moon, in the camera's local frame (src/app/main.c: sky_ubo); its light against a full moon's (0 once it has set) */
     float   sun[4];        /* towards the sun, in the camera's local frame; its altitude's sine */
     float   starsTurn[16]; /* mat4: the stars' frame (equatorial, of date) from the camera's local one */
@@ -84,6 +84,7 @@ typedef struct FrameUBO {
      * week there (0 Monday .. 6 Sunday), unused, unused. The windows and the
      * impostors' light states follow it (shaders/common.glsl: cityHours) */
     float   clock[4];
+    float   smog[4];       /* the smog's top over the cities' cloud (hazeAmount), in the haze's heights (over weather[2]): over the eye, cloud cover over the eye (the deck's, whatever the eye's height), the lowest over any drawn city (1e9: none), unused (src/app/weather.c) */
 } FrameUBO;
 
 typedef struct Renderer Renderer;

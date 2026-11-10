@@ -527,7 +527,7 @@ void renderer_frame(Renderer *r, const FrameUBO *uboIn, const double cam[3], boo
     }
     cave_gpu_levels(r, slot);
     road_gpu_update(r, slot, cam);
-    planet_gpu_update(r, cmd, slot, cam, &ubo.viewProj);
+    planet_gpu_update(r, cmd, slot, cam, &ubo.viewProj, ubo.smog[0] + ubo.weather[2], ubo.smog[1]);   /* the smog's top over the eye, world Y */
     timestamp(r, cmd, slot, GT_TERRAIN_UPLOAD);
     grass_gpu_prepare(r, cmd, slot, cam, &ubo.viewProj);
     timestamp(r, cmd, slot, GT_GRASS_PREP);

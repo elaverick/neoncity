@@ -1,6 +1,7 @@
 #include "weather.h"
 #include "noise.h"
 #include "plan.h"
+#include "city.h"
 
 void weather_update(Weather *w, double t, float dt, float fixedRain) {
     /* The megacities' rain never stops: left to drift, it stays between a
@@ -56,13 +57,29 @@ void weather_frame(const Weather *w, const double eye[3], FrameUBO *ubo) {
         ubo->cities[i][0] = (float)(x - eye[0]);
         ubo->cities[i][1] = (float)(z - eye[2]);
         ubo->cities[i][2] = (float)plan_settlement(nearest[i].k).radius;
-        ubo->cities[i][3] = 0.0f;
+        ubo->cities[i][3] = city_settlement_ground(nearest[i].k);   /* the ground its deck hangs over */
     }
     double edge = n > 0 ? nearest[0].edge : 1e9;
+    /* the ground the deck over the eye hangs over (deckDatum in shaders/common.glsl) */
+    float datum = 0.0f, wsum = 0.0f, lowest = 1e9f;
+    for (int i = 0; i < n; ++i) {
+        float w = DECK_BLEND / ((float)fmax(nearest[i].edge, 0.0) + DECK_BLEND);
+        w *= w; w *= w;
+        datum += w * ubo->cities[i][3];
+        wsum += w;
+        lowest = fminf(lowest, ubo->cities[i][3]);
+    }
+    datum = wsum > 0.0f ? datum / wsum : 0.0f;
     float ragged = CLOUD_RAGGED * (2.0f * glsl_fbm((float)eye[0] / 5000.0, (float)eye[2] / 5000.0, 0xC1A0u) - 1.0f);
-    float cover = 1.0f - smoothstepf(CLOUD_BORDER, CLOUD_BORDER + CLOUD_FADE, (float)edge + ragged);
+    float deck = 1.0f - smoothstepf(CLOUD_BORDER, CLOUD_BORDER + CLOUD_FADE, (float)edge + ragged);
+    /* the smog stops at the deck's top over the cities' cloud (hazeAmount):
+     * its top over the eye and the lowest of any drawn, in the haze's heights */
+    ubo->smog[0] = CLOUD_HIGH + datum - ubo->weather[2];
+    ubo->smog[1] = deck;
+    ubo->smog[2] = n > 0 ? CLOUD_HIGH + lowest - ubo->weather[2] : 1e9f;
+    ubo->smog[3] = 0.0f;
     /* an eye up out of the deck (on a hill, or flying) is under none of it (landSky in shaders/terrain/ground.glsl) */
-    cover *= 1.0f - smoothstepf(DECK_OVER, CLOUD_HIGH, (float)eye[1]);
+    float cover = deck * (1.0f - smoothstepf(DECK_OVER + datum, CLOUD_HIGH + datum, (float)eye[1]));
     ubo->sky[0] = 1.0f - smoothstepf(0.0f, CLOUD_BORDER + CLOUD_FADE, (float)edge);
     ubo->sky[1] = (float)n;
     ubo->sky[2] = cover;

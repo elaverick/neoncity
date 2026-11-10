@@ -219,18 +219,29 @@ void planet_gpu_destroy(Renderer *r) {
     r->planet = NULL;
 }
 
+/* The mean of exp(-y / H) over the heights 0..h of a sight line straight
+ * down, less `cover` of the part over `top` (hazeMeanCapped in
+ * shaders/common.glsl). */
+static double planet_haze_mean(double h, double H, double top, double cover) {
+    if (h <= 1.0) return 1.0;
+    double m = H * (1.0 - exp(-h / H)) / h;
+    if (cover > 0.0 && h > top) m -= cover * H * (exp(-fmax(top, 0.0) / H) - exp(-h / H)) / h;
+    return fmax(m, 1e-6);
+}
+
 /* The distance over which the haze leaves 1/e of the ground's contrast, seen
  * from the camera's height: hazeAmount (shaders/common.glsl) along a sight
- * line down to the ground, in clear weather. */
-static double planet_haze(double camY) {
-    double h = fmax(camY, 0.0), lo = HAZE_LOW_H, hi = HAZE_HIGH_H;
-    double mlo = h > 1.0 ? lo * (1.0 - exp(-h / lo)) / h : 1.0, mhi = h > 1.0 ? hi * (1.0 - exp(-h / hi)) / h : 1.0;
-    return TERRAIN_HAZE / (0.25 * mhi + 0.75 * mlo);
+ * line down to the ground, in clear weather; over the cities' cloud the smog
+ * stops at the deck's top (top, in the same heights, with the cover there:
+ * FrameUBO.smog). */
+static double planet_haze(double camY, double top, double cover) {
+    double h = fmax(camY, 0.0);
+    return TERRAIN_HAZE / (0.25 * planet_haze_mean(h, HAZE_HIGH_H, top, cover) + 0.75 * planet_haze_mean(h, HAZE_LOW_H, top, cover));
 }
 
 static void set4(float o[4], double x, double y, double z, double w) { o[0] = (float)x; o[1] = (float)y; o[2] = (float)z; o[3] = (float)w; }
 
-void planet_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj) {
+void planet_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double cam[3], const mat4 *viewProj, double smogTop, double smogCover) {
     PlanetGpu *p = r->planet;
     TerrainPlanet *tp = &p->sel;
     double t0 = glfwGetTime();
@@ -259,7 +270,7 @@ void planet_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, const double 
     const float *m = viewProj->m;
     v.K = 0.5 * r->vk->extent.height * sqrt((double)m[1] * m[1] + (double)m[5] * m[5] + (double)m[9] * m[9]);
     v.frustum = frustum_from_matrix(*viewProj);
-    v.haze = planet_haze(cam[1]);
+    v.haze = planet_haze(cam[1], smogTop, smogCover);
     v.window = terrain_gpu_window(r, v.win);
     terrain_planet_select(tp, &v);
 

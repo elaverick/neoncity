@@ -344,8 +344,7 @@ static float haze_datum(void) {
     static uint32_t known = UINT32_MAX;
     const TerrainFrame *f = terrain_frame();
     if (f->settlement >= 0 && f->id != known) {
-        DVec2 c = f->settlement > 0 ? plan_settlement(f->settlement).centre : plan_town_centre(0, 0);
-        datum = city_ground_y(c.x, c.z);
+        datum = city_settlement_ground(f->settlement);
         known = f->id;
     }
     return datum;
@@ -617,6 +616,7 @@ int main(int argc, char **argv) {
     if (!parse_args(argc, argv, &opt)) { usage(); return 1; }
     terrain_earth_load(NULL);       /* the Earth's bake, if built, before the plan reads the ground */
     plan_world_init(cpu_count());   /* the settlements and roads, before any worker asks for them */
+    city_settlement_ground(0);      /* every settlement's ground, which the deck hangs over (weather.c, mesh_emit.c) */
     models_load(NULL);              /* the street furniture's and lobbies' models (assets/models), before any chunk */
     Frames frames;
     frames_init(&frames, opt.city ? find_city(opt.city) : 0);   /* the frame the camera starts in, before anything is built */

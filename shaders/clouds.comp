@@ -354,11 +354,12 @@ void march(vec3 ro, vec3 dir, float ta, float tb, int steps, bool detail, float 
         float t = ta + (float(i) + jitter) * ds;
         vec3 rel = dir * t;
         // the cities' cloud stays over them, while the clouds drift through it
-        float edge = cityEdge(rel.xz), field = cloudCover(rel.xz, edge);
+        float datum, edge = cityEdge(rel.xz, datum), field = cloudCover(rel.xz, edge);
         if (field <= 0.001) continue;
         vec3 pw = ro + rel;              // world position: the city glow stays put...
         pw.y += planetDrop(rel.xz);      // (its height above the planet's curved ground)
-        vec3 p = pw + drift;             // ...while the clouds drift over it
+        vec3 p = pw + drift;             // ...while the clouds drift over it,
+        p.y -= datum;                    // at their heights over the ground the deck hangs over there
         Column c = column(p.xz, field);
         // the deck thins out towards CLOUD_REACH, measured across the ground,
         // so seen from high above it fades rather than ends on a line
@@ -396,21 +397,31 @@ void march(vec3 ro, vec3 dir, float ta, float tb, int steps, bool detail, float 
  * the haze has taken it by there, but by day, from the hills or the air, the
  * land under a city's cloud showed through dark where the march ended. So
  * beyond, a flat sheet stands for it: at SHEET_TOP seen from above, at the
- * underside's mean height from below; lit as the day's deck's top or base
+ * underside's mean height from below (over the ground the deck hangs over
+ * there: found where the ray meets the sheet over the ground at its start,
+ * then again over the ground there); lit as the day's deck's top or base
  * are on the whole; as opaque as the cover there makes it; fading in as the
  * march fades out. tMin..tMax: where along the ray it may lie. */
-void farDeck(vec3 ro, vec3 dir, float tMin, float tMax, vec3 haze, inout vec3 L) {
-    bool above = ro.y > SHEET_TOP;
+float farDeckHit(vec3 ro, vec3 dir, float y) {
     // the ray's height over the planet's sphere: ro.y + dir.y t + (|dir.xz| t)^2 / 2R = y
-    float a = dot(dir.xz, dir.xz) * (0.5 / PLANET_RADIUS), b = dir.y, c = ro.y - (above ? SHEET_TOP : CLOUD_BASE);
+    float a = dot(dir.xz, dir.xz) * (0.5 / PLANET_RADIUS), b = dir.y, c = ro.y - y;
     float disc = b * b - 4.0 * a * c;
-    if (disc < 0.0 || a < 1e-12) return;
+    if (disc < 0.0 || a < 1e-12) return 1e30;
     float q = -0.5 * (b + (b >= 0.0 ? sqrt(disc) : -sqrt(disc)));
     float r0 = q / a, r1 = abs(q) > 1e-6 ? c / q : 1e30;
-    float t = min(r0 > 0.0 ? r0 : 1e30, r1 > 0.0 ? r1 : 1e30);
+    return min(r0 > 0.0 ? r0 : 1e30, r1 > 0.0 ? r1 : 1e30);
+}
+void farDeck(vec3 ro, vec3 dir, float tMin, float tMax, vec3 haze, inout vec3 L) {
+    float datum;
+    cityEdge(dir.xz * tMin, datum);
+    bool above = ro.y > SHEET_TOP + datum;
+    float t = farDeckHit(ro, dir, (above ? SHEET_TOP : CLOUD_BASE) + datum);
+    if (t >= 1e29) return;
+    float edge = cityEdge(dir.xz * t, datum);
+    t = farDeckHit(ro, dir, (above ? SHEET_TOP : CLOUD_BASE) + datum);
     if (t <= tMin || t >= tMax) return;
     vec3 rel = dir * t;
-    float field = cloudCover(rel.xz, cityEdge(rel.xz));
+    float field = cloudCover(rel.xz, edge);
     float alpha = smoothstep(0.6 * CLOUD_REACH, CLOUD_REACH, length(rel.xz)) * (1.0 - deckThrough(field));
     if (alpha <= 1e-3) return;
     vec3 col = above ? DECK_ALBEDO * 0.5 * AIR_SUN * dayPhase(dot(dir, SUN_DIR)) + gDayTop * (1.0 / (AIR_PI * (1.0 + DECK_K)))
@@ -486,7 +497,11 @@ void main() {
     // Within VIEW_DISTANCE every 5 m or so with the eroded detail; beyond it,
     // where the haze has taken most of the deck, every FAR_STEP metres
     // without, and past MID_REACH coarser still while the haze leaves any.
-    float lo = SCUD_LO, hi = CLOUD_TOP, t0, t1;
+    // (from the lowest ground any city's deck hangs over to the highest)
+    float dLo = 1e9, dHi = -1e9;
+    for (int i = 0; i < int(frame.sky.y); ++i) { dLo = min(dLo, frame.cities[i].w); dHi = max(dHi, frame.cities[i].w); }
+    if (dHi < dLo) { dLo = 0.0; dHi = 0.0; }
+    float lo = SCUD_LO + dLo, hi = CLOUD_TOP + dHi, t0, t1;
     if (abs(dir.y) < 1e-5) {
         t0 = 0.0;
         t1 = (ro.y > lo && ro.y < hi) ? 1e9 : -1.0;

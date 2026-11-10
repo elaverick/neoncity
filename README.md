@@ -1831,9 +1831,15 @@ over 2.5 km (`CLOUD_FADE`) along a ragged line into the clear sky over the count
   blends the haze from sodium-lit smog to thin moonlit mist and the haze's density from the
   city's to the land's. It also gives the cloud cover over the camera. Rain and wet streets
   only come from that cover, so it is dry out in the countryside.
-- **Over the deck:** the deck hangs at fixed heights (world Y), so ground, or an eye, from `DECK_OVER` (330 m) up
-  through the deck's top (670 m) stands out of it (`landSky` in `terrain/ground.glsl`, `weather_frame`): a hill
-  over the cities' cloud is sunlit and dry, and moonlit at night rather than lit from the cloud below it.
+- **The deck's ground:** the deck hangs over each settlement's own ground, its core's (`city_settlement_ground`,
+  `FrameUBO.cities[i].w`): its heights (115-670 m, `DECK_OVER`, `clouds.comp`'s underside and sheet) count from
+  there, so a city on raised ground has its deck as high over its streets as Los Angeles has. Between two
+  settlements it runs from one's ground to the other's, each weighed by `(DECK_BLEND / (DECK_BLEND + how far beyond
+  its footprint))^4` (`DECK_BLEND` 2 km; `cityEdge(rel, datum)` in `common.glsl`, `weather_frame` at the eye). The
+  signs' and flares' lights kept for the cloud (`in_deck`, `mesh_emit.c`) count from their settlement's ground too.
+- **Over the deck:** ground, or an eye, from `DECK_OVER` (330 m) over the deck's ground up through the deck's top
+  (670 m) stands out of it (`landSky` in `terrain/ground.glsl`, `weather_frame`): a hill over the cities' cloud is
+  sunlit and dry, and moonlit at night rather than lit from the cloud below it.
 - **Moon and stars** (`sky.frag`): the real moon over the camera's place on the planet
   (`MOON_DIR`), with an aureole in clear air. It is a directional light infinitely far off, and
   it faintly lights the land and roads beyond the clouds (`groundLight` in
@@ -1886,7 +1892,11 @@ it has set, and by night the moonlit air's faint blue over the stars (DN3 of the
   moon and the sky scattered in it (`smogLight`: Henyey-Greenstein, g 0.6, albedo 0.9), so it is a white haze by
   day with the sun's aureole round it, gold at sunset, and the moon's glow by night. Under the cities' cloud only
   `DECK_DAYLIGHT` (0.25%) of the daylight reaches it (`daylightThrough`, from the cover over the camera, none once
-  the camera is up out of the deck: see Weather). The sky low down is the smog's: the sky mixes into it as `hazeAmount` along the line of sight reaches
+  the camera is up out of the deck: see Weather). Over the cities' cloud the smog stops at the deck's top, an
+  inversion capping it (`hazeMeanCapped`, `FrameUBO.smog`): the line of sight's heights clipped to under the top,
+  the top and the cover taken at the line's higher end (the eye looking down, the far end looking up), so from the
+  hills or the air the deck and the city under it are no longer whited out by sunlit smog; out in the countryside
+  the land's smog is as it was. The planet's patches' haze distance (`planet_haze`) takes the cap over the eye. The sky low down is the smog's: the sky mixes into it as `hazeAmount` along the line of sight reaches
   out (`skyClear`), so the horizon is the haze's colour and the land beyond the view distance dissolves into it.
 - **Sunlight on the land** (DN4): the directional light that cast the moon's shadows (`frame.dirLight`,
   `shaders/terrain/dir_shadow.glsl`) is the sun while it stands above -4 degrees and the moon below. The moon's light

@@ -1,4 +1,5 @@
 #include "city_internal.h"
+#include "terrain.h"
 
 /* ===========================================================================
  * Mesh emission helpers
@@ -266,6 +267,14 @@ void push_light(SkyLight **arr, uint32_t *n, uint32_t *cap, const SkyLight *L) {
     (*arr)[(*n)++] = *L;
 }
 
+/* Whether a light at height y (world Y) reaching `reach` can light the deck,
+ * which hangs over the ground of the settlement whose frame the chunk is
+ * built in (city_settlement_ground; src/core/clouds.h). */
+static int in_deck(float y, float reach) {
+    float g = city_settlement_ground(terrain_frame()->settlement);
+    return y + reach >= CLOUD_LOW + g && y - reach <= CLOUD_HIGH + g;
+}
+
 /* A neon sign or video screen lights the rain mist (an air light) and, if it
  * can reach the cloud layer, the clouds (a sky light; src/core/common.h): its
  * centre and facing in chunk-local space (through the current emission
@@ -293,7 +302,7 @@ void sign_lights(Mesh *m, vec3 c, vec3 n, float area, Mat mt) {
                     : (uint32_t)((mt.p[1] & 7) | (((mt.p[1] >> 6) & 3) << 3));
     L.kind |= AIR_SIGN << 8;
     push_light(&m->air, &m->nair, &m->capair, &L);
-    if (c.y + reach >= CLOUD_LOW && c.y - reach <= CLOUD_HIGH) push_light(&m->sky, &m->nsky, &m->capsky, &L);
+    if (in_deck(c.y, reach)) push_light(&m->sky, &m->nsky, &m->capsky, &L);
 }
 
 /* A flare's fire, its nozzle at c (through the emission transform, as
@@ -321,7 +330,7 @@ void push_flame(Mesh *m, vec3 c, float reach, float radius, uint32_t id) {
     push_light(&m->air, &m->nair, &m->capair, &L);
     L.power = 900.0f;
     float r = sky_light_range(L.power);
-    if (L.pos[1] + r >= CLOUD_LOW && L.pos[1] - r <= CLOUD_HIGH) push_light(&m->sky, &m->nsky, &m->capsky, &L);
+    if (in_deck(L.pos[1], r)) push_light(&m->sky, &m->nsky, &m->capsky, &L);
 }
 
 /* A stack's plume, its mouth at c (through the emission transform, as

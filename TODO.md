@@ -618,11 +618,10 @@ The start of a weather system (`src/core/clouds.h`, `src/app/weather.c`, `shader
 `shaders/common.glsl`; see the README). The rain clouds gather over the cities and a border round them. The
 countryside has a clear sky with the real sun, moon and stars over it, which light the land (the day/night roadmap,
 DN0-DN9; README "Day and night"). Left over:
-- **The deck's height is absolute** (world Y 115-670 m), not over each city's own ground: a city on raised ground
-  (`terrain_lift`) would have its clouds in its streets or under them. From hills near a city the deck is at eye
-  level. The deck should hang over each settlement's datum, as the haze does (`haze_datum` in `main.c`, the active
-  city's). Decided (2026-11-09): it will, a raised city keeping its deck at the same height over its streets;
-  staged as DN10, the day/night roadmap's mop-up.
+- **The deck over each settlement's ground** (DN10, done): one height per settlement, its core's; a settlement's
+  relief (up to `PLAN_RELIEF_MAX_M` 40 m) moves its streets under a level deck. Between two settlements the deck
+  slopes over the gap (`DECK_BLEND`); the march's span over the cities' grounds is one, so a ray over two cities
+  hundreds of metres apart in height takes its steps over the taller span.
 - **The field is static.** The clouds drift through it, but it doesn't move: no fronts, no clouds forming and
   clearing, no rain out in the country. Rain intensity still drifts on one global clock, scaled by the cover over
   the camera. The megacities' constant rain is meant to stay; the rest of the world is to get a full weather system
@@ -691,17 +690,9 @@ DN0-DN9; README "Day and night"). Left over:
     meters (13.2-13.75 against 13.7-14.2): bright, as a game's day. Not tuned further; the deck by day (DN5) may move
     it.
 - **The deck by day (DN5) left over** (README, "Clouds", "By day"):
-  - **The deck's absolute height matters by day** (above, "The deck's height is absolute"): a settlement on raised
-    ground has its deck in its streets or under them, so by day it stands in the sun with no cloud over it (seen
-    from 800 m in the valley north of the megacity). The land now leaves the cover off where it stands up out of
-    the deck (`DECK_OVER`), so a hill over the cloud is sunlit, not black; the fix proper is the deck over each
-    settlement's own ground (`FrameUBO.cities[i].w` is free for its datum): DN10.
-  - **The smog whites out the view from above the deck.** With the camera up out of the deck the smog round it is
-    lit by the full sun, and near a city it is the city's (`CITY_HAZE` 1.1 km, a quarter of it thinning over
-    `HAZE_HIGH_H` 2 km): from 1.5 km over the border the deck below and the city beyond are a pale haze, gold at
-    4 degrees, pink at sunset. Seen from the street under the deck it is dark and right. Decided (2026-11-09): over
-    the cities' cloud the smog stops at the deck's top (an inversion capping it); staged as DN10, the day/night
-    roadmap's mop-up. The countryside's smog is its own call (DN3, above).
+  - **The smog's cap (DN10) is taken at the line's higher end**: a sight line from over the countryside to a city,
+    or the other way, takes the cap of one end only, so the part of it over the other's ground is capped or not as
+    that end is. The countryside's smog is its own call (DN3, above).
   - **The day's deck is not the night's** (two transmittances): by night a column is about 1 deep and broken, by day
     the billows are twice as thick with a sheet 4 deep between them. Seen from below the day's underside is softer,
     the sheet having filled the breaks; a column's light still follows its billows, but the mammatus-like texture of
