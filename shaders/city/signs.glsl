@@ -332,8 +332,10 @@ vec3 shadeDoor(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     Grain g = Grain(vec3(1.0), n, 1.0, 0.5);
     if (pbrLoaded(mt)) {
         vec2 q = vec2(m.x, -m.y);   // upright: down the image is down the door
-        g = pbrGrain(mt, q, dFdx(q), dFdy(q), normalize(vec3(n.z, 0.0, -n.x)), vec3(0.0, 1.0, 0.0), n);
+        g = pbrGrainRelief(mt, q, dFdx(q), dFdy(q), normalize(vec3(n.z, 0.0, -n.x)), vec3(0.0, 1.0, 0.0), n, V);
+        reliefLightsOn();   // a shutter's slats shadow their own lights (pbrGrainRelief)
         diff = wallLighting(p, g.n, V, 60.0, 0.3 * grainSpec(g), p.y - gBase, spec);
+        reliefLightsOff();
     }
     if (prm.y == 1u) {
         vec3 steel = vec3(0.06, 0.065, 0.07) * (pbrLoaded(mt) ? g.tint * g.ao : vec3(0.8 + 0.4 * fbm(m * 3.0, seed & 0xFFFFu)));

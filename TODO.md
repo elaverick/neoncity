@@ -1008,3 +1008,19 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 - **Lens drops** (optional, cinematic): the occasional drop on the lens, refracting the
   scene.
 - **Keep:** procedural materials on their current Blinn-Phong model until each is moved over.
+
+## Corrugated relief
+**Done:** parallax occlusion mapping and self-shadowing on the corrugated sheets (`pbrGrainRelief`,
+`reliefShadow` in `shaders/pbr.glsl`; see the README). The relief depth is `params` z in
+`assets/materials/facade_metal.json` (6 cm) and `shutter.json` (3 cm).
+
+**Next:**
+- **Rescale the shutter's slats.** `shutter.json` says its slats are 8 cm apart, but its
+  `[7.2, 3.6]` tile puts them about 24 cm apart: the image has about 15 slats down its 3.6 m.
+  At that size they read as cladding panels rather than a roller shutter. A third of the tile,
+  `[2.4, 1.2]`, gives true 8 cm slats. Drop the relief depth with it, to about 1.5 cm, and check
+  the shutters on shopfronts (`shadeFacade`), loading bays (`shadeDoor`) and arcology stalls.
+- **Moonlight on the city.** The moon lights no city surface, so the relief has nothing of it to
+  shadow. Where the cities' cloud thins, a direct moon term would give the ribs moon shadows too.
+- **Lamps on walls are faint.** A wall's light is mostly the overcast fill and bounce, which have no
+  direction, so the lamps' rib and slat shadows change little at night.

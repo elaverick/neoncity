@@ -72,11 +72,9 @@ Surface samplePBR(int m, vec2 st, vec3 T, vec3 B, vec3 N) {
  * taken in uniform control flow, so it can be called from inside per-pixel branches. T, B: the
  * world directions of image right and up. */
 struct Grain { vec3 tint; vec3 n; float ao; float rough; };
-Grain pbrGrain(int m, vec2 q, vec2 gx, vec2 gy, vec3 T, vec3 B, vec3 N) {
+// pbrGrain at image coordinates st (q over the tile), gx, gy st's screen derivatives.
+Grain pbrGrainAt(int m, vec2 st, vec2 gx, vec2 gy, vec3 T, vec3 B, vec3 N) {
     int i = m * PBR_MAPS_PER_MATERIAL;
-    vec2 tile = pbrTile(m);
-    vec2 st = q / tile;
-    gx /= tile; gy /= tile;
     vec4 k = pbrParams(m);
     Grain g;
     g.tint = mix(vec3(1.0), textureGrad(pbrMaps[i + PBR_ALBEDO], st, gx, gy).rgb / max(pbrAlbedoMean(m), vec3(1e-3)), k.x);
@@ -85,6 +83,99 @@ Grain pbrGrain(int m, vec2 q, vec2 gx, vec2 gy, vec3 T, vec3 B, vec3 N) {
     vec3 orm = textureGrad(pbrMaps[i + PBR_ORM], st, gx, gy).rgb;
     g.ao = orm.r; g.rough = orm.g;
     return g;
+}
+Grain pbrGrain(int m, vec2 q, vec2 gx, vec2 gy, vec3 T, vec3 B, vec3 N) {
+    vec2 tile = pbrTile(m);
+    return pbrGrainAt(m, q / tile, gx / tile, gy / tile, T, B, N);
+}
+
+/* pbrGrain with its relief in depth, for a material whose params.z gives one (metres from the
+ * height map's tops, at height 1 in the surface's plane, down to height 0; the corrugated sheets):
+ * parallax occlusion mapping. The view ray steps down through the height field in even layers
+ * until it passes under it, and the hit goes between the last two by where it crossed, so the
+ * ribs hide the troughs behind them as the eye moves. The layers follow how many pixels the
+ * deepest shift spans: none where it is under one (far off, or seen square on, the plain grain),
+ * the depth fading in over the next two so the shift never pops, up to 32 near and at a slant.
+ * Down in the relief the light reaches less (a cavity term, into ao, by the height where the ray
+ * met it, so the same far off as near): the trough's floor takes 0.6. V: towards the eye.
+ * Materials with no params.z take pbrGrain as it is.
+ *
+ * It also leaves where the ray met the relief (gRel*) for its lights' self-shadowing
+ * (reliefShadow), which the caller turns on round its lighting (reliefLightsOn, reliefLightsOff). */
+bool  gReliefReady = false, gReliefOn = false;
+int   gRelM = 0;
+vec2  gRelSt = vec2(0.0), gRelSx = vec2(0.0), gRelSy = vec2(0.0), gRelScale = vec2(0.0);
+vec3  gRelT = vec3(1.0, 0.0, 0.0), gRelB = vec3(0.0, 1.0, 0.0), gRelN = vec3(0.0, 0.0, 1.0);
+float gRelH = 1.0, gRelFade = 0.0;
+void reliefLightsOn()  { gReliefOn = gReliefReady; }
+void reliefLightsOff() { gReliefOn = false; }
+
+Grain pbrGrainRelief(int m, vec2 q, vec2 gx, vec2 gy, vec3 T, vec3 B, vec3 N, vec3 V) {
+    vec2 tile = pbrTile(m);
+    vec2 st = q / tile, sx = gx / tile, sy = gy / tile;
+    float depth = pbrParams(m).z;
+    float vn = dot(V, N);
+    float px = max(min(length(gx), length(gy)), 1e-5);   // metres a pixel spans, the finer way
+    gReliefReady = false;
+    if (depth > 0.0 && vn > 0.0) {
+        // st's shift per metre of depth: the ray runs against V, along T (q.x) and down B (q.y runs down the image);
+        // held to about 80 degrees off square, where the shift is under six depths
+        vec2 dir = vec2(-dot(V, T), dot(V, B)) / max(vn, 0.17);
+        float shiftPx = depth * length(dir) / px;
+        if (shiftPx > 1.0) {
+            float fade = smoothstep(1.0, 3.0, shiftPx);
+            dir *= depth * fade / tile;
+            int layers = int(clamp(shiftPx * 0.5, 4.0, 32.0));
+            float inc = 1.0 / float(layers), d = 0.0;
+            int oi = m * PBR_MAPS_PER_MATERIAL + PBR_ORM;
+            float gap = textureGrad(pbrMaps[oi], st, sx, sy).b - 1.0, prev = gap;   // height above the ray (<= 0: above)
+            vec2 p = st;
+            for (int k = 0; k < 32; ++k) {
+                if (k >= layers || gap >= 0.0) break;
+                prev = gap;
+                p += dir * inc; d += inc;
+                gap = textureGrad(pbrMaps[oi], p, sx, sy).b - (1.0 - d);
+            }
+            float back = gap > 0.0 ? inc * (gap / max(gap - prev, 1e-5)) : 0.0;   // back to where it crossed
+            st = p - dir * back;
+        }
+    }
+    Grain g = pbrGrainAt(m, st, sx, sy, T, B, N);
+    if (depth > 0.0) {
+        float h = textureGrad(pbrMaps[m * PBR_MAPS_PER_MATERIAL + PBR_ORM], st, sx, sy).b;
+        g.ao *= 1.0 - 0.4 * (1.0 - h);
+        // the shadows show while a pixel spans less than the relief's depth twice over (the ribs a few
+        // pixels across), seen at any angle: a lamp raking a wall seen square on still throws them
+        gRelFade = 1.0 - smoothstep(depth, 2.0 * depth, px);
+        gReliefReady = gRelFade > 0.0 && h < 0.98;   // on a crest nothing stands over it
+        gRelM = m; gRelSt = st; gRelSx = sx; gRelSy = sy; gRelScale = depth / tile;
+        gRelT = T; gRelB = B; gRelN = N; gRelH = h;
+    }
+    return g;
+}
+
+/* How much of a light from direction L (towards it) reaches the point of the relief pbrGrainRelief
+ * found, while a caller has it on (reliefLightsOn): a ray from there up towards the light, eight
+ * steps until it clears the height map's tops, and how far the relief rises over it on the way,
+ * soft (a rise of a sixth of the depth is all shadow; nearer steps count more than farther ones,
+ * so a shadow's edge softens away from its rib, as a lamp's wide head would). Light from behind
+ * the surface is left to the lighting's own n.L. 1 with no relief on. */
+float reliefShadow(vec3 L) {
+    if (!gReliefOn) return 1.0;
+    float ln = dot(L, gRelN);
+    if (ln <= 0.0) return 1.0;
+    float rise = 1.0 - gRelH;
+    // st's shift per unit of height climbed towards the light (q.x along T, q.y down B), held to
+    // about 84 degrees off square: a lamp just along the wall throws ten depths' shadows
+    vec2 dir = vec2(dot(L, gRelT), -dot(L, gRelB)) / max(ln, 0.1) * gRelScale;
+    int oi = gRelM * PBR_MAPS_PER_MATERIAL + PBR_ORM;
+    float block = 0.0;
+    for (int k = 1; k <= 8; ++k) {
+        float t = rise * float(k) * 0.125;
+        float h = textureGrad(pbrMaps[oi], gRelSt + dir * t, gRelSx, gRelSy).b;
+        block = max(block, (h - gRelH - t) * (1.0 - 0.06 * float(k)));
+    }
+    return 1.0 - smoothstep(0.0, 0.17, block) * gRelFade;
 }
 // pbrGrain's tint alone (where a surface's lighting takes no normal map, as a lobby's finishes), and the
 // roughness map in rough.

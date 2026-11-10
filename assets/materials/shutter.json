@@ -9,6 +9,7 @@
   },
   "tile": [7.2, 3.6],          // metres per image (a 2:1 image): slats 8 cm apart
   "albedo_mean": [0.230, 0.228, 0.228],   // per channel (pbr_pack): the tint divides by it
-  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
-  "params": [0.8, 1.0]
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored);
+  // the slats' depth in metres, parallax occlusion mapped (pbrGrainRelief)
+  "params": [0.8, 1.0, 0.03]
 }

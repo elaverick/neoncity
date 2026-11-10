@@ -9,8 +9,32 @@
 // The cities' cloud over the fragment being shaded (common.glsl skyCover): the includer sets it.
 float gSkyCover = 1.0;
 
+/* With LIGHTING_RELIEF (city.frag), a surface lit with its relief in depth (pbr.glsl:
+ * pbrGrainRelief, between reliefLightsOn and reliefLightsOff) shadows itself: its ribs and
+ * slats keep each light from the troughs behind them, by how much of the height map stands
+ * between where the eye's ray met the relief and the light (reliefShadow; 1 when no relief
+ * surface is being lit). */
+#ifdef LIGHTING_RELIEF
+float reliefShadow(vec3 L);
+#define RELIEF_SHADOW(L) reliefShadow(L)
+#else
+#define RELIEF_SHADOW(L) 1.0
+#endif
+
 // The light all round, at h metres above the ground: the night's fill and bounce, and the daylight (cityAmbient).
-vec3 ambientLight(vec3 n, float h) { return cityAmbient(n, h, gSkyCover); }
+// The sun's own share of it (cityDaylight's clear sky, square on to it) is the one with a direction, so the
+// relief shadows that, as it does the lamps.
+vec3 ambientLight(vec3 n, float h) {
+    vec3 a = cityAmbient(n, h, gSkyCover);
+#ifdef LIGHTING_RELIEF
+    float sunN = dot(n, SUN_DIR);
+    if (sunN > 0.0 && gSkyCover < 1.0 && frame.dirMix.x > 0.0) {
+        vec3 sun = SUN_LAND * sunN * (1.0 - gSkyCover) * cityOpen(n, h) * deckThrough(gSkyCover);
+        a -= sun * (1.0 - RELIEF_SHADOW(SUN_DIR));
+    }
+#endif
+    return a;
+}
 
 /* Specular lobes. Procedural materials use a normalised Blinn-Phong lobe
  * (shin, specK) and pass rough < 0. Authored PBR materials pass rough >= 0
@@ -252,6 +276,8 @@ void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, in
         float reach = flame ? FLAME_REACH : type < 2u ? 34.0 : 12.0;
         if (dot(l, l) > reach * reach) continue;   // out of its reach (addLamp, addShop, addFlame)
         float vis = shadowVis(p, n, V, lp, r.w);
+        if (vis <= 0.0) continue;
+        vis *= RELIEF_SHADOW(normalize(l));
         if (vis <= 0.0) continue;
         if (flame) addFlame(p, n, V, shin, specK, rough, flameLightPos(lp, r.w, gTime), flameLightColor(r.w, gTime) * vis, diff, spec);
         else if (type < 2u) addLamp(p, n, V, shin, specK, rough, lp, lampColor(int(type)) * lampState(r.w >> 2, gTime) * vis, diff, spec);

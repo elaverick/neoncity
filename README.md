@@ -1595,7 +1595,21 @@ drops out and only its variation is left to multiply the surface's colour by, wi
 occlusion and roughness maps as they are. The surfaces stay on their Blinn-Phong lobes; the
 roughness map scales the highlight (`grainSpec`). Each such file's `params` are how much of the
 albedo's variation shows (1 all) and how strongly the normal map bends the surface (1 as
-authored). Flat surfaces with no texture coordinates of their own are mapped by `planarFrame`:
+authored); a third, where given, is the relief's depth in metres (the corrugated sheets: `facade_metal`
+6 cm, `shutter` 3 cm), and the surfaces that take those (`pbrGrainRelief`) parallax occlusion map
+it: the view ray steps down through the height map (orm.b, height 1 in the surface's plane) until it
+passes under it, so the ribs hide the troughs behind them at a slant. The layers follow how many
+pixels the deepest shift spans: none under one pixel (far off or square on, where it costs one
+branch), the depth fading in over the next two so nothing pops, up to 32 close by at a slant; the
+light in the relief falls with its depth (0.6 at the bottom of a trough). The relief shadows its own
+lights too (`reliefShadow`, with `LIGHTING_RELIEF` in `city.frag`): while such a surface is lit
+(`reliefLightsOn`/`reliefLightsOff` round its lighting), each lamp, flare and shop light in
+`cityLights`, and the sun's direct share of the daylight, marches eight steps from where the eye's
+ray met the relief towards the light, and the rise of the height map over that ray darkens it, soft
+at a sixth of the depth. A lamp just along a wall throws its ribs' shadows up to ten depths long.
+They show while a pixel spans less than twice the depth, at any angle. The moon throws none: it
+lights no city surface (only the land, the grass and the air).
+Flat surfaces with no texture coordinates of their own are mapped by `planarFrame`:
 level ones in world x and z, so those tiles divide 64 chunks (`material_test` checks), others
 along their level line and up their slope. Where a file doesn't load, the surface keeps its
 procedural noise. All are ambientCG (CC0), packed at 1024 from the 2K downloads:

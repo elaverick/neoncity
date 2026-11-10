@@ -8,8 +8,9 @@
     "normal": "../textures/corrugated_steel_005/normal.png",
     "orm":    "../textures/corrugated_steel_005/orm.png"
   },
-  "tile": 4.0,                 // metres per image: ribs a quarter metre apart
+  "tile": 4.0,                 // metres per image: ten ribs, 0.4 m apart
   "albedo_mean": [0.322, 0.330, 0.341],   // per channel (pbr_pack): the tint divides by it
-  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
-  "params": [0.6, 1.0]
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored);
+  // the ribs' depth in metres, crest to trough, parallax occlusion mapped (pbrGrainRelief)
+  "params": [0.6, 1.0, 0.06]
 }

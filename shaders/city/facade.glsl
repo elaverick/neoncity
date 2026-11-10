@@ -101,7 +101,7 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     int wallM = palette == 0u ? PBR_FACADE_CONCRETE : palette == 1u ? PBR_FACADE_BRICK : palette == 2u ? PBR_FACADE_METAL
               : palette == 3u ? PBR_FACADE_TILE : palette == 5u ? PBR_FACADE_STONE : palette == 6u ? PBR_BRUSHED_METAL : -1;
     Grain wallG = Grain(vec3(1.0), n, 1.0, 0.5);
-    if (wallM >= 0 && !glassWall && pbrLoaded(wallM)) wallG = pbrGrain(wallM, gq, gqx, gqy, T, IMG_UP, n);
+    if (wallM >= 0 && !glassWall && pbrLoaded(wallM)) wallG = pbrGrainRelief(wallM, gq, gqx, gqy, T, IMG_UP, n, V);
     vec3 wallTint = wallG.tint * mix(1.0, wallG.ao, 0.6);
     // Whole bays only: stretch the bay so every face ends on a full window at its corners.
     float baseBayW = bayW;
@@ -261,10 +261,12 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
             // its graffiti (graf) over the slats, which show through it in their shading
             float grime = 0.5 + 0.7 * fbm(vec2(along * 0.8, yy * 0.8), 0x5417u);
             if (pbrLoaded(PBR_SHUTTER)) {
-                Grain g = pbrGrain(PBR_SHUTTER, vec2(along, -yy), gqx, gqy, T, IMG_UP, n);
+                Grain g = pbrGrainRelief(PBR_SHUTTER, vec2(along, -yy), gqx, gqy, T, IMG_UP, n, V);
                 vec3 shut = mix(vec3(0.06, 0.062, 0.065) * g.tint * g.ao * grime, graf.rgb * mix(1.0, g.ao, 0.6) * mix(1.0, grime, 0.3), graf.a);
                 vec3 sSpec;
+                reliefLightsOn();
                 vec3 sDiff = wallLighting(p, g.n, V, 20.0, 0.1 * grainSpec(g), vAbs, sSpec);
+                reliefLightsOff();
                 return mix(wallC, shut * sDiff + sSpec, inWin);
             }
             float rib = 0.6 + 0.4 * smoothstep(0.3, 0.5, abs(fract(yy / 0.09) - 0.5) * 2.0);
@@ -326,7 +328,9 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 wspec;
     float wallShin = glassWall ? 80.0 : 12.0;
     float wallSpecK = glassWall ? 0.4 : 0.05 * grainSpec(wallG);
+    reliefLightsOn();   // the wall's corrugations shadow their own lights (pbrGrainRelief)
     vec3 wdiff = wallLighting(p, wallG.n, V, wallShin, wallSpecK, vAbs, wspec);   // the wall's relief (flat on glass)
+    reliefLightsOff();
     // a dark room has only what reaches its window: the lamps, neon and city glow on the facade, through the glass
     gWinE = (wdiff + (mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) + dayOvercast(gSkyCover)) * 0.45) * glassT;   // the window's view: overcast and facades across
     if (imp.m >= 0) {

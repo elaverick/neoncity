@@ -453,13 +453,15 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         vec3 gT, gB;
         modelFrame(p, uv, n, gT, gB);
         vec2 q = vec2(uv.x, -uv.y);
-        Grain g = pbrGrain(gm, q, dFdx(q), dFdy(q), gT, -gB, n);
+        Grain g = pbrGrainRelief(gm, q, dFdx(q), dFdy(q), gT, -gB, n, V);
         alb *= g.tint * mix(1.0, g.ao, 0.7);
         n = g.n;
         rough = clamp(rough + 0.5 * (g.rough - 0.5), 0.02, 1.0);
     }
 
+    reliefLightsOn();   // a market block's or stall roof's corrugations shadow their own lights (pbrGrainRelief)
     cityLights(p, n, V, 30.0, specK, rough, diff, spec);
+    reliefLightsOff();
     vec3 col = alb * diff + spec + emit;
     if (wet) {
         // The wet film. What the screen can't reflect is, indoors, the dark

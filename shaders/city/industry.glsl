@@ -103,7 +103,7 @@ vec3 shadeIndustry(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         vec3 gT, gB;
         modelFrame(p, uv, n, gT, gB);
         vec2 q = vec2(uv.x, -uv.y);   // upright: down the image is down the surface (-gB, along +v)
-        gr = pbrGrain(gm, q, dFdx(q), dFdy(q), gT, -gB, n);
+        gr = pbrGrainRelief(gm, q, dFdx(q), dFdy(q), gT, -gB, n, V);
         alb *= gr.tint * mix(1.0, gr.ao, 0.7);
         if (surf == IND_GRATING) gr.n = n;
     } else if ((pat & 2u) != 0u) {   // profiled cladding
@@ -120,6 +120,8 @@ vec3 shadeIndustry(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         specK = 0.1;
     }
     vec3 spec;
+    reliefLightsOn();   // profiled cladding shadows its own lights (pbrGrainRelief)
     vec3 diff = wallLighting(p, gr.n, V, shin, specK, y, spec);
+    reliefLightsOff();
     return alb * diff + spec;
 }

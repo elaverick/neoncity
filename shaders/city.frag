@@ -81,7 +81,7 @@ float segDist(vec2 p, vec2 a, vec2 b);
 // Signed distance to a box of half-size b centred on the origin.
 float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
 
-
+#define LIGHTING_RELIEF 1   // the corrugated sheets' relief shadows its own lights (pbr.glsl reliefShadow)
 #include "city/lighting.glsl"
 #include "city/surface.glsl"
 #include "grass/field_city.glsl"   // the field the city's grass blades leave (city/ground.glsl)
