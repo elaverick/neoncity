@@ -148,6 +148,7 @@ typedef struct VendorSite {
     uint8_t  kind;          /* VSITE_* */
     uint8_t  hostWall;      /* a solid wall along z = 0, which a lean-to may lean on */
     uint8_t  lunch;         /* a lunch stall for an office district */
+    uint8_t  slice;         /* the noodle bar slice's site (vendor_sites.h VENDOR_SLICE_X; roadmap NB0) */
     int8_t   archetype;     /* VA_*, or -1: chosen */
     int8_t   trade;         /* VT_*, or -1: chosen */
 } VendorSite;

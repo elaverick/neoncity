@@ -27,6 +27,7 @@ build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, t
 build/vendor_lab 60 out        # street vendors: validity, determinism, budgets, neighbours, the mix by affluence; contact sheets
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/city_test --vendor-sites # the vendors' sites round the spawn and the nearest lane, pocket market, plaza, apron: checks, --cam views
+build/city_test --slice        # the noodle bar slice (docs/noodle-bar-target.md): its site, checks, views; tools/slice_capture.py, tools/slice_board.py
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
 build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the world chart within 5400 km; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
 cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)

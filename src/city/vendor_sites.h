@@ -32,6 +32,14 @@
 #define VENDOR_REACH      8.0           /* how far a site reaches from its middle, at most (m) */
 #define VENDOR_TOP_MAX    5.0f          /* the highest a vendor stands above its floor (cables keep above it) */
 
+/* The noodle bar slice (roadmap NB0-NB8 in ~/.claude/plans/street-vendors.md,
+ * docs/noodle-bar-target.md): the hawker frontage site holding this point
+ * (world, the home city's frame), against its row's wall and under the open
+ * sky, is always a canopy noodle bar (VendorSite.slice), so the slice's work
+ * is judged at one fixed place. city_test --slice checks it and prints its views. */
+#define VENDOR_SLICE_X    332.60
+#define VENDOR_SLICE_Z    1182.58
+
 typedef struct VendorSpot {
     VendorSite site;
     double   x, z;        /* the middle of the site's back edge, world */

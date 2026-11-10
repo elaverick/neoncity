@@ -283,6 +283,11 @@ static void keep_site(SGen *S, const VendorSpot *sp, int space, uint32_t group, 
     o->site.kind = (uint8_t)site_kind(space);
     o->site.lunch = (uint8_t)lunch;
     o->site.seed = hash_combine(group, (uint32_t)member + 1u);
+    if (space == SPACE_APRON && o->site.hostWall && o->site.ceiling == 0.0f && vendor_spot_contains(o, VENDOR_SLICE_X, VENDOR_SLICE_Z, 0.0, 0.0)) {
+        o->site.slice = 1;
+        o->site.archetype = VA_CANOPY;
+        o->site.trade = VT_NOODLE;
+    }
     DVec2 B = dv(sp->x, sp->z), f = dv(sp->fx, sp->fz);
     S->box[S->n] = site_box(B, f, sp->site.w, sp->site.d);
     S->way[S->n] = way_box(B, f, sp->site.w, sp->site.d, sp->walk);

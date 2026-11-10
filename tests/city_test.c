@@ -794,6 +794,7 @@ static void check_props(int hx, int hz) {
 }
 
 #include "city_test_vendors.c"
+#include "city_test_slice.c"
 
 /* city_test --props: --cam views of the street furniture nearest the spawn, a
  * few of each kind, from in front of each piece (a condenser's from the
@@ -1268,6 +1269,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--props") == 0) return props_cams();
     if (argc > 1 && strcmp(argv[1], "--vendor-sites") == 0) return vendor_sites_cams(argc, argv);
     if (argc > 1 && strcmp(argv[1], "--vendors") == 0) return vendor_cams(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "--slice") == 0) return slice_cams(argc, argv);
     if (argc > 3 && strcmp(argv[1], "--vs-probe") == 0) return vs_probe(atof(argv[2]), atof(argv[3]));
     if (argc > 1 && strcmp(argv[1], "--screens") == 0) return screens_cams();
     if (argc > 1 && strcmp(argv[1], "--facades") == 0) return facades_cams();
