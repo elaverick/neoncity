@@ -98,6 +98,7 @@
 #define AIR_SHOP          3u            /* seed: the shop hash (its colour) */
 #define AIR_LOBBY         4u
 #define AIR_FLAME         5u            /* seed: the flame's timing id (flameGout in shaders/common.glsl) */
+#define AIR_VENDOR        6u            /* seed: its light record's word (VENDOR_LIGHT: vendorLightColor) */
 
 /* Ray-traced shadows (src/render/rt.c, shaders/shadow_trace.comp). Every light in a
  * chunk's table (street lamps, shopfronts, lobby spill, arcology lights) is

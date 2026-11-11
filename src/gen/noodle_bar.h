@@ -79,7 +79,32 @@ typedef struct NbPlan {
     float    bell[3];
     int      ntube;  float  tube[NB_TUBES_MAX][6];     /* the strip lights' tubes: ends a, b (x, y, z each) */
     int      nicon;  float  icon[NB_ICONS_MAX][6];     /* the fascia's icon housings: middle, facing (x, z), size */
+    /* NB6: light and signs (from the seed by hash, not the plan's draws, so the layout is NB5's) */
+    uint8_t  tubeWhite;                    /* the tubes' white: NB_WHITE_6500 or NB_WHITE_5000 */
+    uint8_t  iconKind[NB_ICONS_MAX];       /* what each icon shows: PMK_ICON_* */
+    uint8_t  iconGlow[NB_ICONS_MAX];       /* its neon: colour (shaders/common.glsl neonColor, 0-7) | flicker << 3 (0 steady,
+                                            * 1 the odd dropout, 2 failing: neonFlicker) */
+    float    lamp[3];                      /* the kitchen's lamp, hung under the extractor's baffles (its mount) */
+    float    batten[4];                    /* the warm batten under the lower shelf: x0, x1, its underside y, z (x0 >= x1: none) */
 } NbPlan;
+
+/* ---------------------------------------------------------------------------
+ * The bar's lights (NB6): what the city puts in its chunk's light table
+ * (src/city/light_tiles.c) and the rain's mist, in the site's frame. The
+ * tubes under the fascia (cold), the kitchen's lamp under the extractor and
+ * the batten under the lower shelf (warm), the burners' flames (blue,
+ * flickering) and the fascia's neon icons (coloured, each as its tubes
+ * flicker). */
+enum { NB_LIGHT_TUBE = 0, NB_LIGHT_LAMP, NB_LIGHT_FLAME, NB_LIGHT_NEON };
+/* colours: whites by temperature, the burners' blue; a neon's is NB_NEON + its neonColor index */
+enum { NB_WHITE_6500 = 0, NB_WHITE_5000, NB_WHITE_3000, NB_WHITE_2700, NB_FLAME_BLUE, NB_NEON = 8 };
+#define NB_LIGHTS_MAX 16
+/* a: a tube's first end, else the light's place; b: a tube's other end, a neon's facing (x, z); size: a neon's
+ * square; flicker and seed: a neon's (its icon's), a flame's own */
+typedef struct NbLight { uint8_t kind, colour, flicker, seed; float a[3], b[3], size; } NbLight;
+int  nb_lights(const NbPlan *p, NbLight *out, int max);
+/* An icon's seed, for its tubes' flicker (the kit instance's and its light's alike). */
+uint8_t nb_icon_seed(const NbPlan *p, int icon);
 
 /* Makes the plan for a site w x d (ceiling: 0 open sky) from seed. form: NB_* or -1 (chosen; the corner when
  * the site is wide enough, about a third of the time). Always fills the plan; returns whether the bar fits
@@ -152,6 +177,9 @@ void nb_line(const NbPlan *p, NbLine *L);
  * the saddle clips, the gas valve and gauge, hooks). Its merged parts (the range's carcass, the bain-marie's
  * box, the gas pipe and hose, the cables) are the body's: nb_body builds them. */
 void nb_line_place(Pm *pm, const NbPlan *p, const NbLine *L);
+/* The line's modules built in at their coarse level, unbaked: occluders for the body's bake (pm_bake_with), so
+ * the bench and counter darken round what stands on them (NB6). */
+void nb_line_occluders(const NbPlan *p, PmMesh *out);
 /* Checks the line's rules; writes each broken one (one per line) into err (may be NULL); returns how many. */
 int  nb_line_check(const NbPlan *p, const NbLine *L, char *err, int cap);
 /* The underside of whatever is overhead at (x, z) of the plan: the hood's sheet less its ribs, the deck. */

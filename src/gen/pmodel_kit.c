@@ -1098,6 +1098,150 @@ static void m_regulator(Pm *pm) {
     pm_pop(pm);
 }
 
+/* ------------------------------------------------------ NB6: light, signs --- */
+/* A neon stroke along points in icon units (the PM_ICON_SIZE square's half is 1) at z 0: a tube of 5.5 mm
+ * glass, its ends capped and turning back into the housing as electrode legs (blacked-out glass, to z -0.03). */
+static void neon_stroke(Pm *pm, const float (*pt)[2], int n) {
+    const float h = 0.5f * PM_ICON_SIZE, r = 0.0055f;
+    PmPath pa;
+    pm_path_init(&pa, n);
+    for (int i = 0; i < n; ++i) pm_path_add(&pa, pt[i][0] * h, pt[i][1] * h, 0.0f, 0);
+    pm_mat(pm, PMAT_NEON);
+    pm_tube(pm, &pa, r, 8, 3);
+    pm_path_free(&pa);
+    pm_mat(pm, PMAT_PLASTIC);
+    for (int e = 0; e < 2; ++e) {
+        const float *q = pt[e ? n - 1 : 0];
+        pm_push(pm);
+        pm_translate(pm, q[0] * h, q[1] * h, 0.0f);
+        pm_rotate_x(pm, 0.5f * PI_F);   /* local +y to +z: the leg from the back up to the tube */
+        pm_cyl(pm, -0.03f, -0.004f, r, pm_segs(pm, 8, 4));
+        pm_pop(pm);
+    }
+}
+/* points along an ellipse's arc (centre, radii, angles), n of them */
+static int arc_pts(float (*o)[2], int n, float cx, float cy, float rx, float ry, float a0, float a1) {
+    for (int i = 0; i < n; ++i) {
+        float a = a0 + (a1 - a0) * (float)i / (float)(n - 1);
+        o[i][0] = cx + rx * cosf(a); o[i][1] = cy + ry * sinf(a);
+    }
+    return n;
+}
+/* a wisp of steam rising from (x, y0) to y1: a sine of `waves` waves (bends no tighter than the tube allows) */
+static int wisp_pts(float (*o)[2], int n, float x, float y0, float y1, float amp, float waves) {
+    for (int i = 0; i < n; ++i) {
+        float t = (float)i / (float)(n - 1);
+        o[i][0] = x + amp * sinf(t * 2.0f * waves * PI_F); o[i][1] = y0 + (y1 - y0) * t;
+    }
+    return n;
+}
+static int icon_n(const Pm *pm, int n) { return L0 ? n : L2 ? (n + 3) / 4 + 1 : (n + 1) / 2 + 1; }
+/* the bowl every bowl icon shares: rim, body, foot; y0 lowers it */
+static void icon_bowl(Pm *pm, float y0) {
+    float q[40][2];
+    float rim[2][2] = { { -0.86f, 0.05f + y0 }, { 0.86f, 0.05f + y0 } };
+    neon_stroke(pm, (const float (*)[2])rim, 2);
+    int n = arc_pts(q, icon_n(pm, 24), 0.0f, 0.05f + y0, 0.78f, 0.62f, -0.08f * PI_F, -0.92f * PI_F);
+    neon_stroke(pm, (const float (*)[2])q, n);
+    float foot[2][2] = { { -0.3f, -0.72f + y0 }, { 0.3f, -0.72f + y0 } };
+    neon_stroke(pm, (const float (*)[2])foot, 2);
+}
+static void m_icon_bowl(Pm *pm) {
+    icon_bowl(pm, -0.1f);
+    /* noodles heaped over the rim: three humps */
+    float q[40][2];
+    int n = icon_n(pm, 28);
+    for (int i = 0; i < n; ++i) {
+        float t = (float)i / (float)(n - 1);
+        q[i][0] = -0.66f + 1.32f * t; q[i][1] = 0.05f + 0.16f * fabsf(sinf(t * 3.0f * PI_F));
+    }
+    neon_stroke(pm, (const float (*)[2])q, n);
+}
+static void m_icon_chopsticks(Pm *pm) {
+    icon_bowl(pm, -0.18f);
+    float a[2][2] = { { -0.2f, 0.02f }, { 0.78f, 0.9f } }, b[2][2] = { { -0.02f, -0.04f }, { 0.92f, 0.72f } };
+    neon_stroke(pm, (const float (*)[2])a, 2);
+    neon_stroke(pm, (const float (*)[2])b, 2);
+}
+static void m_icon_steam(Pm *pm) {
+    icon_bowl(pm, -0.22f);
+    float q[24][2];
+    for (int k = -1; k <= 1; ++k) {
+        int n = wisp_pts(q, icon_n(pm, 16), 0.38f * (float)k, 0.0f, k ? 0.72f : 0.9f, 0.11f, 1.5f);
+        neon_stroke(pm, (const float (*)[2])q, n);
+    }
+}
+static void m_icon_cup(Pm *pm) {
+    float q[40][2];
+    /* the cup: its sides tapering to a flat bottom, its corners rounded */
+    {
+        const float h = 0.5f * PM_ICON_SIZE;
+        PmPath c, f;
+        pm_path_init(&c, 4);
+        pm_path_init(&f, 32);
+        pm_path_add(&c, -0.52f * h, 0.5f * h, 0.0f, 0); pm_path_add(&c, -0.4f * h, -0.56f * h, 0.0f, 0);
+        pm_path_add(&c, 0.4f * h, -0.56f * h, 0.0f, 0); pm_path_add(&c, 0.52f * h, 0.5f * h, 0.0f, 0);
+        pm_path_fillet(&c, 0.2f * h, L0 ? 4 : 2, &f);
+        int n = f.n < 40 ? f.n : 40;
+        for (int i = 0; i < n; ++i) { q[i][0] = f.p[i][0] / h; q[i][1] = f.p[i][1] / h; }
+        pm_path_free(&c); pm_path_free(&f);
+        neon_stroke(pm, (const float (*)[2])q, n);
+    }
+    int n;
+    float rim[2][2] = { { -0.6f, 0.5f }, { 0.6f, 0.5f } };
+    neon_stroke(pm, (const float (*)[2])rim, 2);
+    n = arc_pts(q, icon_n(pm, 14), 0.5f, 0.06f, 0.3f, 0.26f, -0.42f * PI_F, 0.42f * PI_F);
+    neon_stroke(pm, (const float (*)[2])q, n);
+    float saucer[2][2] = { { -0.82f, -0.72f }, { 0.82f, -0.72f } };
+    neon_stroke(pm, (const float (*)[2])saucer, 2);
+    for (int k = -1; k <= 1; k += 2) {
+        n = wisp_pts(q, icon_n(pm, 12), 0.22f * (float)k, 0.62f, 0.98f, 0.06f, 1.0f);
+        neon_stroke(pm, (const float (*)[2])q, n);
+    }
+}
+/* a tongue of flame: a cone from its base on the origin up local +y */
+static void tongue(Pm *pm, float r, float h) {
+    PmProf c[4] = { { 0, 0, 0 }, { r, 0, 0 }, { 0.75f * r, 0.45f * h, 0 }, { 0, h, 0 } };
+    pm_lathe(pm, c, 4, pm_segs(pm, 6, 4), 0, 0);
+}
+/* A ring burner's flames: tongues out and up from its crown's ports (m_burner: 24 at 43 mm, 33.5 mm up). */
+static void m_flame_ring(Pm *pm) {
+    pm_mat(pm, PMAT_FLAME);
+    const int n = L0 ? 24 : L2 ? 8 : 12;
+    for (int k = 0; k < n; ++k) {
+        float a = 2.0f * PI_F * ((float)k + 0.5f) / (float)n;
+        pm_push(pm);
+        pm_rotate_y(pm, a);
+        pm_translate(pm, 0.046f, 0.0335f, 0.0f);
+        pm_rotate_z(pm, -0.75f);   /* leaning out (+x) about 43 degrees off upright */
+        tongue(pm, L0 ? 0.0032f : 0.005f, 0.017f);
+        pm_pop(pm);
+    }
+}
+/* A wok burner's jets (m_wok_burner: 16 at 60 mm, their tips 56 mm up), roaring up into the wok. */
+static void m_flame_jet(Pm *pm) {
+    pm_mat(pm, PMAT_FLAME);
+    const int n = L0 ? 16 : 8;
+    for (int k = 0; k < n; ++k) {
+        float a = 2.0f * PI_F * (float)k / (float)n;
+        pm_push(pm);
+        pm_rotate_y(pm, a);
+        pm_translate(pm, 0.06f, 0.055f, 0.0f);
+        pm_rotate_z(pm, -0.12f);
+        tongue(pm, L0 ? 0.0055f : 0.008f, 0.075f);
+        pm_pop(pm);
+    }
+}
+/* The kitchen's lamp: a bulkhead hanging from the origin (a ceiling or a canopy's underside), its warm glass. */
+static void m_lamp(Pm *pm) {
+    pm_mat(pm, PMAT_STEEL);
+    PmProf b[5] = { { 0, -0.016f, 0 }, { 0.058f, -0.016f, 1 }, { 0.062f, -0.008f, 0 }, { 0.06f, 0.0f, 1 }, { 0, 0.0f, 0 } };
+    lathe(pm, b, 5, 28);
+    pm_mat(pm, PMAT_BULB);
+    PmProf g[6] = { { 0, -0.052f, 0 }, { 0.022f, -0.05f, 0 }, { 0.038f, -0.042f, 0 }, { 0.048f, -0.028f, 0 }, { 0.05f, -0.015f, 0 }, { 0, -0.015f, 0 } };
+    lathe(pm, g, 6, 24);
+}
+
 /* ----------------------------------------------------------- materials --- */
 const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_RUST] = "rust", [PMAT_PLATE] = "plate", [PMAT_STAINLESS] = "stainless", [PMAT_COPPER] = "copper",
@@ -1107,6 +1251,7 @@ const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_PLASTIC] = "plastic", [PMAT_GALV] = "galv", [PMAT_STEEL] = "steel", [PMAT_DIAL] = "dial", [PMAT_RED] = "red",
     [PMAT_BROTH] = "broth", [PMAT_NOODLE] = "noodle", [PMAT_CURRY] = "curry", [PMAT_RICE] = "rice", [PMAT_OIL] = "oil",
     [PMAT_GINGER] = "ginger", [PMAT_RUST_STEEL] = "rust_steel", [PMAT_CHEQUER] = "chequer", [PMAT_LINING] = "lining",
+    [PMAT_TUBE] = "tube", [PMAT_NEON] = "neon", [PMAT_FLAME] = "flame", [PMAT_BULB] = "bulb", [PMAT_SIGN_FAR] = "sign_far",
 };
 /* Mirrored by kitSet in shaders/city/kit.glsl. Sets may serve two materials in different colours (the
  * rubber's grain under black plastic, the white paint's under red): the share check counts them together. */
@@ -1169,7 +1314,16 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_CHOPSTICKS]   = { "chopsticks",     m_chopsticks,     { 1400, 500, 150 },    1 },
     [PMK_POWER_STRIP]  = { "power_strip",    m_power_strip,    { 1300, 300, 100 },    1 },
     [PMK_REGULATOR]    = { "regulator",      m_regulator,      { 1000, 500, 200 },    1 },
+    [PMK_ICON_BOWL]    = { "icon_bowl",      m_icon_bowl,      { 4000, 1800, 800 },   1 },
+    [PMK_ICON_CHOPSTICKS] = { "icon_chopsticks", m_icon_chopsticks, { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_STEAM]   = { "icon_steam",     m_icon_steam,     { 4000, 1800, 800 },   1 },
+    [PMK_ICON_CUP]     = { "icon_cup",       m_icon_cup,       { 4000, 1800, 800 },   1 },
+    [PMK_FLAME_RING]   = { "flame_ring",     m_flame_ring,     { 1200, 400, 200 },    1 },
+    [PMK_FLAME_JET]    = { "flame_jet",      m_flame_jet,      { 1000, 400, 400 },    1 },
+    [PMK_LAMP]         = { "lamp",           m_lamp,           { 700, 350, 150 },     1 },
 };
+
+int pm_module_casts(int id) { return id >= 0 && id < PMK_ICON_BOWL; }
 
 int pm_module_count(void) { return PMK_COUNT; }
 const PmModuleDef *pm_module(int id) { return id >= 0 && id < PMK_COUNT ? &DEFS[id] : NULL; }

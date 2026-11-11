@@ -128,6 +128,30 @@ void addShop(vec3 p, vec3 n, vec3 V, float specK, float rough, vec3 lpos, vec3 c
     else spec += c * specK * 0.6;
 }
 
+/* A street vendor's light (NB6: common.glsl vendorFalloff): from the nearest
+ * point on a tube, from a lamp, a flame, or a neon square, which lights what
+ * is in front of it most (wrapping a little round, as a sign's glow does).
+ * Its size widens the GGX lobe, as addShop's pane does, so a tube's sheen on
+ * the wet street and the counter runs along it rather than sitting as a dot. */
+void addVendor(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, vec3 lp, uint w, vec3 col,
+               inout vec3 diff, inout vec3 spec) {
+    vec3 l = vendorPoint(lp, w, p) - p;
+    float d = length(l);
+    float att = vendorFalloff(w, d);
+    if (att <= 0.0) return;
+    vec3 L = l / max(d, 1e-4);
+    float ndl = max(dot(n, L), 0.0);
+    uint k = vendorKind(w);
+    if (k == VL_NEON) att *= 0.25 + 0.75 * max(dot(-L, vendorWay(w)), 0.0);   // in front of the sign
+    vec3 c = col * att;
+    GRASS_THIN(L, c);
+    diff += c * ndl;
+    if (rough >= 0.0) {
+        float grow = k == VL_TUBE || k == VL_NEON ? 0.5 * max(vendorLen(w), 0.1) / max(d, 0.3) : 0.0;
+        spec += c * ggxSpec(n, L, V, min(max(rough * rough, 0.002) + grow, 1.0), specK, ndl);
+    } else spec += c * specLobe(n, L, V, shin, specK, -1.0, ndl);
+}
+
 /* Facade faces are numbered within their section, round the outline. The
  * cell (window bay or 6 m shop bay) that wraps a convex corner is keyed as
  * the next face's first cell, so both windows of a corner room or shop look
@@ -273,13 +297,15 @@ void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, in
         uint type = r.w & 3u;
         bool flame = isFlame(r.w);
         vec3 l = lp - p;
-        float reach = flame ? FLAME_REACH : type < 2u ? 34.0 : 12.0;
+        bool vend = isVendorLight(r.w);
+        float reach = flame ? FLAME_REACH : vend ? vendorReach(r.w) + 0.5 * vendorLen(r.w) : type < 2u ? 34.0 : 12.0;
         if (dot(l, l) > reach * reach) continue;   // out of its reach (addLamp, addShop, addFlame)
         float vis = shadowVis(p, n, V, lp, r.w);
         if (vis <= 0.0) continue;
         vis *= RELIEF_SHADOW(normalize(l));
         if (vis <= 0.0) continue;
-        if (flame) addFlame(p, n, V, shin, specK, rough, flameLightPos(lp, r.w, gTime), flameLightColor(r.w, gTime) * vis, diff, spec);
+        if (vend) addVendor(p, n, V, shin, specK, rough, lp, r.w, vendorLightColor(r.w, gTime) * vis, diff, spec);
+        else if (flame) addFlame(p, n, V, shin, specK, rough, flameLightPos(lp, r.w, gTime), flameLightColor(r.w, gTime) * vis, diff, spec);
         else if (type < 2u) addLamp(p, n, V, shin, specK, rough, lp, lampColor(int(type)) * lampState(r.w >> 2, gTime) * vis, diff, spec);
         else addShop(p, n, V, specK, rough, lp, (type == 2u ? shopColor(r.w) : LOBBY_SPILL) * vis, diff, spec);
     }

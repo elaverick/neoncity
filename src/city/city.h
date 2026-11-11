@@ -179,13 +179,16 @@ static inline float city_grass_maintained(uint8_t w) { return w ? (float)(w - 1)
  * (the vendor's per-part tint), its flags (the vendor's wear 0..15 in bits 0-3, KIT_FLAG_HEAT: it stands at
  * the range, so it gathers grease and soot; the vendor's paint, a coat of NB_COATS, in bits 5-7; its hood's
  * metal, NB_HOOD_*, in bits 8-9: src/gen/noodle_bar.h nb_finish; KIT_FLAG_BARE_WOOD: an A-frame left bare
- * timber, set on the A-frame alone; shaders/city/kit.glsl), the ground its
- * heights count from (world Y) and a seed. */
+ * timber, set on the A-frame alone; its glow (NB6) in bits 11-15: what glows shows it (kit.glsl): a lit tube's
+ * white (NB_WHITE_*: the vendor's) in 11-13, or a neon icon's colour (neonColor) in 11-13 and its flicker in
+ * 14-15; shaders/city/kit.glsl), the ground its heights count from (world Y) and a seed (a neon icon's: its
+ * light's, nb_icon_seed, so the tubes and the light they throw flicker together). */
 #define KIT_FLAG_WEAR 15u
 #define KIT_FLAG_HEAT 16u
 #define KIT_FLAG_COAT_SHIFT 5
 #define KIT_FLAG_HOOD_SHIFT 8
 #define KIT_FLAG_BARE_WOOD 1024u   /* NB_FINISH_BARE_WOOD */
+#define KIT_FLAG_GLOW_SHIFT 11      /* NB6: 3 bits of colour or white, then 2 of flicker */
 typedef struct KitInst { float xf[12]; uint16_t module, flags; uint8_t part, pad[3]; float base; uint32_t seed; } KitInst;   /* pad zeroed */
 
 typedef struct Mesh {

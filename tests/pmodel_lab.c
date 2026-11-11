@@ -187,7 +187,8 @@ static void hex_lin(uint32_t c, float o[3]) { for (int k = 0; k < 3; ++k) o[k] =
 static const uint32_t MAT_RGB[PMAT_COUNT] = {
     0x7A4A2E, 0x56605E, 0x9A9C9E, 0xB06A3C, 0x2E2C2A, 0x3F5A52, 0xD8D6CC, 0x1C1C1C, 0xE0DCCF, 0x6F8A86, 0xB89A4A, 0x7A5A3A,
     0x262A28, 0xE8E4DA, 0xC2A46A, 0xE2D8B0, 0x222222, 0x8A9092, 0x4A4C4E, 0xF0EEE6, 0xA02A20, 0xB07A3A, 0xE8D49A, 0xB8761C,
-    0xF2EFE6, 0x9A1A0A, 0xE8A0A0, 0x5E4A40, 0x6A6E72, 0xA8AAAC };
+    0xF2EFE6, 0x9A1A0A, 0xE8A0A0, 0x5E4A40, 0x6A6E72, 0xA8AAAC,
+    0xF4F8FF, 0xFF3060, 0x4080FF, 0xFFD090, 0xC04080 };   /* NB6: tube, neon, flame, bulb, the far icon face */
 
 /* A 5 x 7 font: digits, letters, underscore, point. */
 static const uint8_t *glyph(char c) {
@@ -358,7 +359,8 @@ static void render(Image *im, const PmMesh *m, int cx, int cy, int cw, int ch, i
 }
 
 /* ------------------------------------------------------- the bar's body --- */
-#define NB_STRUCT_BUDGET 16000   /* the merged structure at its one (near) level; NB0 guessed 6,000 */
+#define NB_STRUCT_BUDGET 17500   /* the merged structure at its one (near) level; NB0 guessed 6,000; NB6 +1,200
+                                  * for the bench's and counter's fine top sheets (contact darkening) */
 #define NB_FAR_BUDGET    500
 
 static void body_section(const char *out) {
@@ -390,7 +392,9 @@ static void body_section(const char *out) {
         nb_body(&pm, &p);
         double tb = now_ms() - t0;
         t0 = now_ms();
-        pm_bake(&m, NB_BAKE_RAYS, NB_BAKE_REACH);
+        PmMesh oc = { 0 };
+        nb_line_occluders(&p, &oc);   /* the line darkens the bench and counter round it (NB6) */
+        pm_bake_with(&m, &oc, NB_BAKE_RAYS, NB_BAKE_REACH);
         double tk = now_ms() - t0;
         PmStats s, s2;
         pm_stats(&m, &s);
@@ -398,7 +402,9 @@ static void body_section(const char *out) {
         nb_plan(&q, B[b].w, B[b].d, 0.0f, seed, B[b].form);
         pm_begin(&pm, &m2, &li2, PM_LOD0);
         nb_body(&pm, &q);
-        pm_bake(&m2, NB_BAKE_RAYS, NB_BAKE_REACH);
+        nb_line_occluders(&q, &oc);
+        pm_bake_with(&m2, &oc, NB_BAKE_RAYS, NB_BAKE_REACH);
+        pm_mesh_free(&oc);
         pm_stats(&m2, &s2);
         if (b == 0) {
             int bym[PMAT_COUNT] = { 0 };

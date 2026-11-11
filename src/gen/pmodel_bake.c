@@ -214,10 +214,28 @@ static uint32_t weld(const PmMesh *m, float step, int by_shell, uint32_t *group)
     return m->nv ? g + 1 : 0;
 }
 
-void pm_bake(PmMesh *m, int rays, float reach) {
+void pm_bake(PmMesh *m, int rays, float reach) { pm_bake_with(m, NULL, rays, reach); }
+
+void pm_bake_with(PmMesh *m, const PmMesh *occluders, int rays, float reach) {
     if (!m->nv || !m->ni) return;
-    /* occlusion */
-    PmBvh *b = pm_bvh_build(m);
+    /* occlusion: the rays meet the mesh, and the occluders as well where given (their own shading untouched) */
+    PmBvh *b;
+    if (occluders && occluders->ni) {
+        PmMesh all;
+        memset(&all, 0, sizeof(all));
+        all.nv = all.capv = m->nv + occluders->nv;
+        all.ni = all.capi = m->ni + occluders->ni;
+        all.v = (PmVertex *)malloc(sizeof(PmVertex) * all.nv);
+        all.idx = (uint32_t *)malloc(sizeof(uint32_t) * all.ni);
+        memcpy(all.v, m->v, sizeof(PmVertex) * m->nv);
+        memcpy(all.v + m->nv, occluders->v, sizeof(PmVertex) * occluders->nv);
+        memcpy(all.idx, m->idx, sizeof(uint32_t) * m->ni);
+        for (uint32_t i = 0; i < occluders->ni; ++i) all.idx[m->ni + i] = m->nv + occluders->idx[i];
+        b = pm_bvh_build(&all);
+        free(all.v); free(all.idx);
+    } else {
+        b = pm_bvh_build(m);
+    }
     for (uint32_t i = 0; i < m->nv; ++i) {
         PmVertex *v = &m->v[i];
         float n[3] = { v->n[0], v->n[1], v->n[2] }, t[3], s[3];

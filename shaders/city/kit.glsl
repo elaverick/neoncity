@@ -34,8 +34,9 @@ const uint PMAT_RUST = 0u, PMAT_PLATE = 1u, PMAT_STAINLESS = 2u, PMAT_COPPER = 3
            PMAT_TILE = 6u, PMAT_RUBBER = 7u, PMAT_ENAMEL = 8u, PMAT_GLASS = 9u, PMAT_BRASS = 10u, PMAT_TIMBER = 11u,
            PMAT_CHALK = 12u, PMAT_CERAMIC = 13u, PMAT_BAMBOO = 14u, PMAT_PAPER = 15u, PMAT_PLASTIC = 16u, PMAT_GALV = 17u,
            PMAT_STEEL = 18u, PMAT_DIAL = 19u, PMAT_RED = 20u, PMAT_BROTH = 21u, PMAT_NOODLE = 22u, PMAT_CURRY = 23u,
-           PMAT_RICE = 24u, PMAT_OIL = 25u, PMAT_GINGER = 26u, PMAT_RUST_STEEL = 27u, PMAT_CHEQUER = 28u, PMAT_LINING = 29u;   // src/gen/pmodel.h
-const uint KIT_MATS = 30u;
+           PMAT_RICE = 24u, PMAT_OIL = 25u, PMAT_GINGER = 26u, PMAT_RUST_STEEL = 27u, PMAT_CHEQUER = 28u, PMAT_LINING = 29u,
+           PMAT_TUBE = 30u, PMAT_NEON = 31u, PMAT_FLAME = 32u, PMAT_BULB = 33u, PMAT_SIGN_FAR = 34u;   // src/gen/pmodel.h
+const uint KIT_MATS = 35u;   // the tables below stop at the lit materials (30 on): kitGlow draws those
 const uint KIT_HEAT = 16u;   // flags: the instance stands at the range (kit_gpu.h)
 const uint KIT_HOOD_RUST = 0u, KIT_HOOD_GALV = 1u, KIT_HOOD_STEEL = 2u;
 const uint KIT_BARE_WOOD = 1024u;   // flags: the A-frame's frame bare timber, not the trim coat (src/city/city.h)   // flags >> 8 (src/gen/noodle_bar.h NB_HOOD_*)
@@ -161,9 +162,34 @@ void kitFood(uint m, vec2 f, float foot, inout vec3 base, inout float rough) {
     }
 }
 
+/* What glows (NB6): the light the bar's own lamps give off (their light on everything else is the chunk's light
+ * table's: src/city/light_tiles.c vendor_lights). The flags' glow bits (src/city/city.h KIT_FLAG_GLOW_SHIFT): a
+ * tube's white, a neon's colour and flicker; a neon flickers with the light it throws (the same seed). */
+vec3 kitGlow(uint m, vec3 p, vec3 n, vec3 V, uint seed, uvec4 prm) {
+    uint glow = (prm.w >> 11) & 7u, flick = (prm.w >> 14) & 3u;
+    float facing = abs(dot(n, V));
+    if (m == PMAT_TUBE)   // a fluorescent tube: even along it, a little brighter seen through more glass at its edges
+        return vendorWhite(glow) * (7.0 + 2.0 * (1.0 - facing));
+    if (m == PMAT_BULB)   // opal glass over a warm lamp: brightest face-on
+        return vendorWhite(3u) * (3.5 + 2.5 * facing);
+    if (m == PMAT_NEON) {
+        vec3 c = neonColor(glow);
+        float f = neonFlicker(seed & 255u, flick, gTime);
+        // the gas glows through the glass, its core paler where the tube faces us
+        return mix(c, vec3(1.0) * max(c.r, max(c.g, c.b)), 0.3 * facing * facing) * 9.0 * f + c * 0.04;
+    }
+    if (m == PMAT_FLAME) {   // blue cones, their inner cone brighter, dancing
+        float d = vnoise(vec2(dot(p, vec3(37.0, 51.0, 23.0)), gTime * 14.0), 0xF1A6u);
+        return vec3(0.10, 0.26, 1.0) * (2.5 + 2.5 * d) * (0.6 + 0.4 * facing);
+    }
+    // the far shell's icon face: its neon's colour spread over the square (the tubes cover about a sixth)
+    return neonColor(glow) * 1.4;
+}
+
 vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ, float wear) {
     vec3 V = -normalize(rel);
     uint m = min(prm.y, KIT_MATS - 1u);
+    if (m >= PMAT_TUBE) return kitGlow(m, p, n, V, seed, prm);
     float vw = float(prm.w & 15u) / 15.0;   // the vendor's wear: 0 new .. 1 rusted and grimy
     bool heat = (prm.w & KIT_HEAT) != 0u;
     uint coat = (prm.w >> 5) & 7u, hood = (prm.w >> 8) & 3u;

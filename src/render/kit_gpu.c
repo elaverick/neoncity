@@ -136,7 +136,7 @@ KitGpu *kit_create(VkCore *vk, Rt *rt) {
     if (!k->cand || !k->key) fatal("out of memory");
     for (int m = 0; m < PMK_COUNT; ++m) {
         k->blas[m] = -1;
-        if (rt && k->group[m][KIT_RT_LOD].indexCount >= 3 && k->radius[m] >= KIT_RT_RADIUS) k->blasPending++;
+        if (rt && k->group[m][KIT_RT_LOD].indexCount >= 3 && k->radius[m] >= KIT_RT_RADIUS && pm_module_casts(m)) k->blasPending++;
     }
     k->st.modules = PMK_COUNT;
     k->st.levels = PM_LODS;
@@ -183,7 +183,7 @@ void kit_begin(KitGpu *k, VkCommandBuffer cmd, int slot, uint64_t frame, const m
         VkDeviceAddress va = vk_buffer_address(k->vk, k->verts.buf), ia = vk_buffer_address(k->vk, k->idx.buf);
         for (int m = 0; m < PMK_COUNT; ++m) {
             const KitGroup *g = &k->group[m][KIT_RT_LOD];
-            if (k->blas[m] >= 0 || g->indexCount < 3 || k->radius[m] < KIT_RT_RADIUS) continue;
+            if (k->blas[m] >= 0 || g->indexCount < 3 || k->radius[m] < KIT_RT_RADIUS || !pm_module_casts(m)) continue;   /* lights' glass and flames cast nothing */
             if (!rt_can_build(k->rt, slot, g->indexCount)) break;
             RtMesh rm = { va + (VkDeviceAddress)g->vertexOffset * sizeof(Vertex), ia + (VkDeviceAddress)g->firstIndex * sizeof(uint16_t),
                           (uint32_t)sizeof(Vertex), g->nverts, g->indexCount, VK_FORMAT_UNDEFINED };

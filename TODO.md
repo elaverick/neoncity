@@ -894,12 +894,13 @@ The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sit
 (`src/render/kit_gpu.c`, NB2); every canopy bar has its cooking line (`nb_line`, NB5). Left over:
 - **`--kit all`** gives every vendor a bar's line whatever its trade or size (the cost spike), without the
   line's merged parts (the range's carcass, the bain-marie, the gas and cables are the bar's body).
-- **The bar's bake (NB4, NB5):** baking a body's occlusion takes ~85 ms with its line's parts (NB4: ~60) on a
-  worker thread, every time its chunk's vendor layer is built; the far shell stands in meanwhile. A cache of
+- **The bar's bake (NB4-NB6):** baking a body's occlusion takes ~115 ms a straight bar and ~185 a corner bar with
+  its line's parts and the line as occluders (NB6's contact darkening; NB5 ~88, NB4 ~60) on a worker thread, every time its chunk's vendor layer is built; the far shell stands in meanwhile. A cache of
   baked bodies by site, or fewer vertices baked, if streaming shows it. The target sheet's +3 ms a chunk is far
   exceeded.
-- **The bar's frame cost (NB5):** at the slice, night in rain, the vendor layer adds +0.69 ms from 3 m and
-  +0.38 ms from 8 m against the target's +0.3 (city pass, shadow rays and filter on the kitchen's surfaces;
+- **The bar's frame cost (NB5, NB6):** at the slice, night in rain, the vendor layer adds +1.25 ms from 3 m and
+  +0.67 ms from 8 m with NB6's lights (NB5: +0.69 and +0.38) against the target's +0.3; a bar's own lights
+  (eight that cast) fill a pixel's shadow slots (city pass, shadow rays and filter on the kitchen's surfaces;
   the kit itself +0.14). NB8 re-gates; the kit's level rule (0.15 triangles a pixel) draws small round
   modules at their far level from a metre, so each module's L1/L2 must stay presentable (NB5 regraded the
   bowl stack and jars).
@@ -924,6 +925,10 @@ The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sit
   heat is); dial faces, labels and the chalk board are flat colour (NB5); metre UVs on lathes still swirl on
   domed lids (no triplanar: the kit's cost is its pixels); rust runs are noise, not sourced from the
   rivets and seams (NB4 has their positions).
+- **The bar's lights (NB6)** are in their own chunk's light table only: where a bar stands within a few metres
+  of a chunk's edge, the ground across it is unlit by the bar (lamps and shopfronts are listed in every chunk
+  they reach; vendors are generated only for their own chunk's mesh). Their strengths are set by eye
+  (`vendorPower`); tubes and neon don't bloom in glass (`paneSheen` skips type 3 lights).
 - **/fp:fast:** the game builds the kit with fast floating point, so its meshes differ in the last bits from
   `pmodel_lab`'s.
 
@@ -932,8 +937,8 @@ Left over from the first vendors (SV0-SV3):
   of their own (the user's call).
 - **Painted stock** is simple shapes per kind (25 kinds); if it reads too plain close up, an authored stock
   atlas (as the graffiti's) could replace the shapes for the nearest rooms.
-- **Rooms' light** is the vendor's lamp inside the room only: it lights nothing outside until SV4 puts the lamps
-  in the light table. Rooms are never shut until SV8 keeps hours (the shut look is built and was checked).
+- **Rooms' light** is the vendor's lamp inside the room only: it lights nothing outside (NB6 put only the noodle
+  bars' lights in the light table; the old archetypes' `VLight`s wait for SF2's forms). Rooms are never shut until SV8 keeps hours (the shut look is built and was checked).
 - **Walk-in containers** (wealthy courts) are rare: `city_test --vendors` found only hatched containers to view; their
   room (a display table in place of a prep table) was not seen in the game.
 - **The lab's renders** are flat-shaded previews, not the engine's look: the patterns (corrugation, stripes,

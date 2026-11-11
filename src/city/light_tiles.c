@@ -25,11 +25,65 @@
  *          out from their glass: bits 16..23 are the way it faces (256ths of a
  *          turn from +x towards +z) and bits 24..29 the bay's width (quarter
  *          metres), so shadows can be cast from the whole pane.
+ *          Type 3 with bit 31 set (VENDOR_LIGHT): a street vendor's light (NB6:
+ *          src/gen/noodle_bar.h nb_lights): bits 2..3 its kind (VL_*: a tube, a
+ *          lamp, a burner's flame, a neon icon), 4..7 its colour (NB_WHITE_*,
+ *          NB_FLAME_BLUE, NB_NEON + neonColor), 8..15 a seed (a flame's flicker,
+ *          a neon's: its icon's), 16..23 its way (256ths of a turn from +x
+ *          towards +z: a tube's axis, a neon's facing), 24..28 its length (a
+ *          tube's, a neon's square: eighths of a metre), 29..30 a neon's
+ *          flicker (neonFlicker). shaders/common.glsl: isVendorLight and after.
  * ========================================================================= */
 
 enum { LE_LAMP = 0, LE_ARC_SODIUM = 1, LE_ARC_CROWN = 2, LE_FLAME = 3 };   /* must match emitterPoint in shaders/common.glsl */
 
 typedef struct LightSrc { float x, y, z, range; uint32_t w; } LightSrc;
+
+#define VENDOR_LIGHT (1u << 31)
+/* how far each kind of vendor light reaches (shaders/common.glsl vendorReach) */
+static const float VL_REACH[4] = { 9.0f, 5.0f, 1.6f, 6.0f };
+/* the rain's mist: each kind's power (sky_light_range's units: emitted radiance x area) */
+static const float VL_AIR[4] = { 6.0f, 1.5f, 0.15f, 2.5f };
+
+void vendor_lights(ChunkGen *g, const Mesh *m, const VendorSpot *s, const Vendor *v) {
+    NbLight L[NB_LIGHTS_MAX];
+    const int n = nb_lights(&v->nb, L, NB_LIGHTS_MAX);
+    const float bx = (float)(s->x - m->ox), bz = (float)(s->z - m->oz);
+    for (int i = 0; i < n; ++i) {
+        const NbLight *l = &L[i];
+        float a[3], dir[2] = { 0.0f, 0.0f }, len = l->size;
+        memcpy(a, l->a, sizeof(a));
+        if (l->kind == NB_LIGHT_TUBE) {
+            /* a tube: its middle, its axis and length */
+            float dx = l->b[0] - l->a[0], dz = l->b[2] - l->a[2];
+            len = sqrtf(dx * dx + dz * dz);
+            for (int k = 0; k < 3; ++k) a[k] = 0.5f * (l->a[k] + l->b[k]);
+            if (len > 1e-3f) { dir[0] = dx / len; dir[1] = dz / len; }
+        } else if (l->kind == NB_LIGHT_NEON) {
+            dir[0] = l->b[0]; dir[1] = l->b[1];
+        }
+        /* the site's frame to chunk-local (as vendor_emit_body) */
+        float x = bx + a[0] * s->fz + a[2] * s->fx, z = bz - a[0] * s->fx + a[2] * s->fz;
+        float ux = dir[0] * s->fz + dir[1] * s->fx, uz = -dir[0] * s->fx + dir[1] * s->fz;
+        uint32_t way = (uint32_t)(int)floorf(atan2f(uz, ux) / 6.2831853f * 256.0f + 256.5f) & 255u;
+        uint32_t ln = (uint32_t)clampf(len * 8.0f + 0.5f, 0.0f, 31.0f);
+        uint32_t w = 3u | (uint32_t)(l->kind & 3u) << 2 | (uint32_t)(l->colour & 15u) << 4 | (uint32_t)l->seed << 8
+                   | way << 16 | ln << 24 | (uint32_t)(l->flicker & 3u) << 29 | VENDOR_LIGHT;
+        if (g->nvl == g->capvl) {
+            g->capvl = g->capvl ? g->capvl * 2 : 32;
+            g->vl = (VendorLight *)realloc(g->vl, sizeof(VendorLight) * g->capvl);
+            if (!g->vl) fatal("out of memory gathering the vendors' lights");
+        }
+        VendorLight *o = &g->vl[g->nvl++];
+        o->x = x; o->y = s->y + a[1]; o->z = z;
+        o->range = VL_REACH[l->kind & 3u];
+        o->w = w;
+        o->power = VL_AIR[l->kind & 3u] * (l->kind == NB_LIGHT_TUBE ? maxf(len, 0.3f) : 1.0f);
+        /* the mist lit in front of a neon; under the hood, out of the bar's front */
+        o->nx = l->kind == NB_LIGHT_NEON ? ux : s->fx;
+        o->nz = l->kind == NB_LIGHT_NEON ? uz : s->fz;
+    }
+}
 
 /* A lamp or shopfront lighting the rain mist, facing (nx, nz) if it has a
  * front. Several chunks see the same light; only the chunk it stands in
@@ -144,6 +198,12 @@ void build_lights(Mesh *m, ChunkGen *g) {
                 }
             }
         }
+    }
+    for (int i = 0; i < g->nvl; ++i) {   /* the vendors' (build_vendors gathered them: vendor_lights) */
+        const VendorLight *L = &g->vl[i];
+        if (L->x < bx0 - L->range || L->x > bx1 + L->range || L->z < bz0 - L->range || L->z > bz1 + L->range) continue;
+        ADD_LIGHT(L->x, L->y, L->z, L->range, L->w);
+        air_light(m, L->x, L->y, L->z, L->power, L->nx, L->nz, L->w, AIR_VENDOR << 8);
     }
 #undef ADD_LIGHT
 

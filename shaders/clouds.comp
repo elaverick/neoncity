@@ -301,6 +301,7 @@ vec3 airColor(SkyLight L) {
     if (cls == AIR_SHOP) return shopColor(L.seed);
     if (cls == AIR_LOBBY) return LOBBY_SPILL;
     if (cls == AIR_FLAME) return fireColor(0.6) * flameGout(L.seed, gTime).power;
+    if (cls == AIR_VENDOR) return vendorLightColor(L.seed, gTime);   // a vendor's tube, lamp, flame or neon (NB6)
     return skyLightColor(L);
 }
 

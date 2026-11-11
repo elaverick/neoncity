@@ -23,13 +23,18 @@ static int g_kit = KIT_SLICE;
 void city_set_kit(int mode) { g_kit = mode; }
 int  city_kit_mode(void) { return g_kit; }
 
-typedef struct KitEmit { Mesh *m; PmInstances inst; PmMesh body, none; } KitEmit;
+typedef struct KitEmit { Mesh *m; PmInstances inst; PmMesh body, none, occ; } KitEmit;
 
 /* A bar's flags but the heat: the vendor's wear (0..15) and its finish (its coat, its hood's metal, whether its
- * A-frame is bare timber: nb_finish; the caller keeps that last bit for the A-frame alone). */
+ * A-frame is bare timber: nb_finish; the caller keeps that last bit for the A-frame alone), and its tubes'
+ * white (NB6). */
 uint32_t vendor_kit_flags(const Vendor *v) {
     const uint32_t wear = (uint32_t)(clampf(v->wear, 0.0f, 1.0f) * 15.0f + 0.5f);
-    return wear | nb_finish(v->site.affluence, v->site.seed);
+    return wear | nb_finish(v->site.affluence, v->site.seed) | (uint32_t)v->nb.tubeWhite << KIT_FLAG_GLOW_SHIFT;
+}
+/* A neon icon's glow bits (its colour and flicker), icon i of the plan. */
+static uint32_t icon_glow(const NbPlan *p, int i) {
+    return i >= 0 && i < p->nicon ? (uint32_t)p->iconGlow[i] << KIT_FLAG_GLOW_SHIFT : 0u;
 }
 
 void vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMesh *pm, int far) {
@@ -45,6 +50,8 @@ void vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMes
             vec3 n = v3(x->n[0] * s->fz + x->n[2] * s->fx, x->n[1], -x->n[0] * s->fx + x->n[2] * s->fz);
             uint8_t prm[4] = { MAT_KIT, x->mat, x->occ, x->wear };
             uint32_t fl = wear | (nb_at_range(&v->nb, x->p) ? KIT_FLAG_HEAT : 0u);
+            if (x->mat == PMAT_SIGN_FAR)   /* a far icon face: its own neon's colour (its part: 140 + the icon) */
+                fl = (fl & ((1u << KIT_FLAG_GLOW_SHIFT) - 1u)) | icon_glow(&v->nb, (int)x->part - 140);
             uint32_t aux = (uint32_t)x->part | (fl & 255u) << 8 | (far ? KIT_AUX_FAR : 0u) | (fl >> 8) << 17;
             mesh_push_w(m, p, n, 0, x->uv[0], x->uv[1], seed, prm, aux);
         }
@@ -67,7 +74,8 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
         E->body.nv = E->body.ni = 0;
         pm_begin(&pm, &E->body, &E->inst, PM_LOD0);
         nb_body(&pm, np);
-        pm_bake(&E->body, NB_BAKE_RAYS, pm_reach(&E->body));
+        nb_line_occluders(np, &E->occ);   /* the line darkens the bench and counter round it (NB6) */
+        pm_bake_with(&E->body, &E->occ, NB_BAKE_RAYS, pm_reach(&E->body));
         vendor_emit_body(m, s, v, &E->body, 0);
     }
     {
@@ -99,10 +107,16 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
         k->part = pi->part;
         const float at[3] = { pi->xf[3], pi->xf[7], pi->xf[11] };
         const int heat = nb_at_range(np, at);
-        const uint32_t fin = pi->module == PMK_A_FRAME ? wear : wear & ~KIT_FLAG_BARE_WOOD;
+        uint32_t fin = pi->module == PMK_A_FRAME ? wear : wear & ~KIT_FLAG_BARE_WOOD;
+        k->seed = hash_combine(s->site.seed, i + 0x4B49u);
+        if (pi->module >= PMK_ICON_BOWL && pi->module <= PMK_ICON_CUP) {
+            /* a neon icon (its part 140 + its place on the fascia): its colour and flicker, its light's seed */
+            const int ic = (int)pi->part - 140;
+            fin = (fin & ((1u << KIT_FLAG_GLOW_SHIFT) - 1u)) | icon_glow(np, ic);
+            if (ic >= 0 && ic < np->nicon) k->seed = nb_icon_seed(np, ic);
+        }
         k->flags = (uint16_t)(fin | (heat ? KIT_FLAG_HEAT : 0u));
         k->base = s->y;
-        k->seed = hash_combine(s->site.seed, i + 0x4B49u);
         for (int a = 0; a < 3; ++a) {
             float p = k->xf[a * 4 + 3];
             m->mn[a] = minf(m->mn[a], p - KIT_PAD);
@@ -122,4 +136,5 @@ void city_build_vendor_kit(int cx, int cz, Mesh *m) {
     pm_inst_free(&E.inst);
     pm_mesh_free(&E.body);
     pm_mesh_free(&E.none);
+    pm_mesh_free(&E.occ);
 }

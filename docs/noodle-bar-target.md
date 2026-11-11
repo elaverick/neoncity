@@ -143,6 +143,20 @@ NB3: the hood's rusted sheet 37%, the walls' steel 24%, stainless 9%, painted by
 | Icon signs | red and cyan, lit boxes or tube neon | air lights in the rain's mist |
 | By day | the tubes on, the signs dimmer than the sky | the kitchen reads as a dark interior with warm light |
 
+**NB6 built** (`nb_lights` in `src/gen/noodle_bar.c`; `src/city/light_tiles.c` `vendor_lights`): every light is
+a record in its chunk's light table (type 3 with bit 31: kind, colour, seed, way, length, flicker) with
+ray-traced shadows, and an air light in the rain's mist. The tubes are line lights (6500 or 5000 K by the
+vendor), lit from the nearest point on the tube; the kitchen's lamp is a bulkhead under the extractor's baffles
+(2700 K); a warm batten (3000 K) under the lower shelf where it is long enough; each burner a small blue light
+under its pot, flickering, with blue flame tongues (instanced `flame_ring`, `flame_jet`); the icons are bent
+neon tube (`icon_bowl`, `icon_chopsticks`, `icon_steam`, `icon_cup`) in open blacked trays, a pair of colours
+a vendor (red and cyan most), one icon in three bars flickering or failing, each throwing its light from a
+square in front of it in step with its tubes. Strengths were set by eye at night in rain (common.glsl
+`vendorPower`). What glows casts nothing (`pm_module_casts`, `pm_mat_glows`), and the neon's light casts no
+shadows (a bar's nine lights overran a pixel's eight shadow slots). The far shell's icon faces glow thinly in
+their colour. The bench and the counter darken round what stands on them: the body's bake sees the cooking line
+as occluders, over fine top sheets.
+
 ## Budgets
 
 | What | Budget | Why |

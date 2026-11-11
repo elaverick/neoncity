@@ -63,6 +63,12 @@ enum {
     PMAT_RUST_STEEL,   /* rusting grey steel sheet (unused by the bar since NB4b: services, later) */
     PMAT_CHEQUER,      /* chequer (diamond) plate: the floor behind the counter, steps */
     PMAT_LINING,       /* brushed stainless sheet: the kitchen's lining (NB4b) */
+    /* NB6: what glows (kit.glsl draws its light; none of them casts a shadow, pm_module_casts) */
+    PMAT_TUBE,         /* a lit tube or batten's diffuser: white by the vendor (its flags' glow bits) */
+    PMAT_NEON,         /* neon glass: its colour and flicker in the instance's flags' glow bits */
+    PMAT_FLAME,        /* a gas burner's blue flame */
+    PMAT_BULB,         /* a warm lamp's glass */
+    PMAT_SIGN_FAR,     /* the far shell's icon face: its neon's colour spread thin over the face */
     PMAT_COUNT
 };
 
@@ -243,6 +249,9 @@ enum {
     PMK_GAS_13, PMK_GAS_47, PMK_FAN, PMK_POWER_PANEL, PMK_SHELF_BRACKET, PMK_A_FRAME,
     /* NB5, the cooking line */
     PMK_WOK, PMK_NOODLE_BASKET, PMK_SAUCEPAN, PMK_CHOP_BLOCK, PMK_CHOPSTICKS, PMK_POWER_STRIP, PMK_REGULATOR,
+    /* NB6, light and signs: neon icons (bent tube, facing +z, a 0.36 m square centred on the origin; the
+     * housing's back at z -0.03), the burners' flames (on the burner's origin), the kitchen's lamp */
+    PMK_ICON_BOWL, PMK_ICON_CHOPSTICKS, PMK_ICON_STEAM, PMK_ICON_CUP, PMK_FLAME_RING, PMK_FLAME_JET, PMK_LAMP,
     PMK_COUNT
 };
 typedef struct PmModuleDef {
@@ -255,12 +264,20 @@ int                pm_module_count(void);
 const PmModuleDef *pm_module(int id);
 /* Places module `id` with the builder's current transform: an instance, or built in. */
 void pm_place(Pm *pm, int id);
+/* Whether module id casts shadows (the city's ray-traced ones): not the lights' own glass and flames. */
+int  pm_module_casts(int id);
+/* Whether a material glows (the lights' own surfaces: they cast nothing). */
+static inline int pm_mat_glows(int mat) { return mat >= PMAT_TUBE && mat <= PMAT_SIGN_FAR; }
+#define PM_ICON_SIZE 0.36f   /* the icons' square, which instances scale to their housing */
 /* Builds module id at a level into out (cleared first) and bakes its occlusion and wear. */
 void pm_module_mesh(int id, int lod, PmMesh *out);
 
 /* ------------------------------------------------------------------ bake --- */
 /* Bakes per-vertex occlusion (rays rays within reach metres) and wear from the mesh's own geometry. */
 void pm_bake(PmMesh *m, int rays, float reach);
+/* ...with other geometry in the rays' way as well (NB6: the cooking line over the bench, so the body darkens
+ * round what stands on it); occluders may be NULL. */
+void pm_bake_with(PmMesh *m, const PmMesh *occluders, int rays, float reach);
 /* A reach for a mesh: a quarter of its bounding box's diagonal, clamped to [0.02, 0.6] m. */
 float pm_reach(const PmMesh *m);
 /* Copies the module instances into the mesh (each module's own baked mesh at the level). */

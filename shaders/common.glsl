@@ -45,7 +45,7 @@ const uint  SKY_KIND_SCREEN = 32u;
 // Air lights (src/core/common.h): what lights the rain mist
 const int   AIR_MAX_LIGHTS  = 256;
 const float AIR_RANGE       = 140.0;
-const uint  AIR_SIGN = 0u, AIR_LAMP_SODIUM = 1u, AIR_LAMP_LED = 2u, AIR_SHOP = 3u, AIR_LOBBY = 4u, AIR_FLAME = 5u;
+const uint  AIR_SIGN = 0u, AIR_LAMP_SODIUM = 1u, AIR_LAMP_LED = 2u, AIR_SHOP = 3u, AIR_LOBBY = 4u, AIR_FLAME = 5u, AIR_VENDOR = 6u;
 float skyLightRange(float power) { return min(sqrt(power * SKY_GAIN / 0.04), SKY_RANGE_MAX); }
 const uint  WORLD_SEED      = 0xC1B3A7u;
 
@@ -346,6 +346,48 @@ float lampGround(vec3 lp, uint w) {
     return ((w >> 26) & 3u) == 0u ? lp.y - (LAMP_HEIGHT - 0.4) : lp.y - float((w >> 8) & 0xFFFFu) / 16.0;
 }
 
+/* ---------------- a street vendor's lights (NB6) ----------------
+ * Type 3 records with bit 31 set (src/city/light_tiles.c vendor_lights, from
+ * src/gen/noodle_bar.h nb_lights): a noodle bar's tubes under its fascia
+ * (cold line lights), the kitchen's lamp and the batten under its shelf
+ * (warm), its burners' flames (blue, flickering, small), its neon icons
+ * (coloured squares facing the street, flickering as their tubes do). */
+const uint VL_TUBE = 0u, VL_LAMP = 1u, VL_FLAME = 2u, VL_NEON = 3u;
+bool  isVendorLight(uint w) { return (w & 0x80000003u) == 0x80000003u; }
+uint  vendorKind(uint w) { return (w >> 2) & 3u; }
+float vendorLen(uint w) { return float((w >> 24) & 31u) * 0.125; }
+vec3  vendorWay(uint w) { float a = float((w >> 16) & 255u) * (6.2831853 / 256.0); return vec3(cos(a), 0.0, sin(a)); }
+// how far each kind reaches (light_tiles.c VL_REACH)
+float vendorReach(uint w) { uint k = vendorKind(w); return k == VL_TUBE ? 9.0 : k == VL_LAMP ? 5.0 : k == VL_FLAME ? 1.6 : 6.0; }
+// the whites by temperature (src/gen/noodle_bar.h NB_WHITE_*): 6500, 5000, 3000, 2700 K; then the burners' blue
+vec3 vendorWhite(uint i) {
+    return i == 0u ? vec3(0.90, 0.96, 1.00) : i == 1u ? vec3(1.00, 0.95, 0.87) : i == 2u ? vec3(1.00, 0.73, 0.47)
+         : i == 3u ? vec3(1.00, 0.66, 0.37) : vec3(0.16, 0.36, 1.00);
+}
+// its colour before flicker; neon (8 and over) is the signs' own
+vec3 vendorTint(uint w) { uint c = (w >> 4) & 15u; return c >= 8u ? neonColor(c - 8u) : vendorWhite(c); }
+// its strength: a tube's by its length (cold tubes under the fascia; a warm batten under a shelf far less), a
+// lamp's, a flame's, a neon square's. Set by eye against the street lamps at night (NB6 captures).
+float vendorPower(uint w) {
+    uint k = vendorKind(w);
+    float warm = ((w >> 4) & 15u) >= 2u ? 0.3 : 1.0;
+    return k == VL_TUBE ? 2.2 * warm * max(vendorLen(w), 0.3) : k == VL_LAMP ? 0.8 : k == VL_FLAME ? 0.12 : 1.2;
+}
+// The point it lights p from: the nearest on a tube's axis, else its place.
+vec3 vendorPoint(vec3 lp, uint w, vec3 p) {
+    if (vendorKind(w) != VL_TUBE) return lp;
+    vec3 U = vendorWay(w);
+    float h = 0.5 * vendorLen(w);
+    return lp + U * clamp(dot(p - lp, U), -h, h);
+}
+// Its falloff at distance d (from vendorPoint), cut to nothing by its reach.
+float vendorFalloff(uint w, float d) {
+    uint k = vendorKind(w);
+    float soft = k == VL_TUBE ? 0.25 : k == VL_LAMP ? 0.05 : k == VL_FLAME ? 0.01 : 0.1;   // a tube's nearest: no hot spots
+    float R = vendorReach(w);
+    return vendorPower(w) / (d * d + soft) * smoothstep(R, 0.45 * R, d);
+}
+
 /* A point on light record w's emitter (lp chunk-local) as seen from p, from
  * xi in [0,1)^3, and the emitter's size (for penumbra estimates). A street
  * lamp's beam glows through the diffuser under the head, a disc just below it,
@@ -354,6 +396,20 @@ float lampGround(vec3 lp, uint w) {
  * A shop or lobby light stands 1 m out from its pane, which glows over the
  * bay's width from knee height to over the door. */
 vec3 emitterPoint(vec3 lp, uint w, vec3 xi, vec3 p, out float size) {
+    if (isVendorLight(w)) {   // a tube along its axis, a neon over its square, a lamp's glass, a flame's ring
+        uint k = vendorKind(w);
+        vec3 U = vendorWay(w);
+        float len = vendorLen(w);
+        if (k == VL_TUBE) { size = max(len, 0.05); return lp + U * ((xi.x - 0.5) * len); }
+        if (k == VL_NEON) {
+            vec3 T = vec3(-U.z, 0.0, U.x);
+            size = len;
+            return lp - U * 0.08 + T * ((xi.x - 0.5) * 0.8 * len) + vec3(0.0, (xi.y - 0.5) * 0.8 * len, 0.0);
+        }
+        float r = k == VL_LAMP ? 0.035 : 0.05, a = 6.2831853 * xi.y;
+        size = 2.0 * r;
+        return lp + vec3(cos(a), k == VL_LAMP ? xi.z - 0.5 : 0.0, sin(a)) * (r * sqrt(xi.x));
+    }
     if (isFlame(w)) {   // a ball of fire a third of the way up a gout
         size = 3.0;
         return lp + vec3(0.0, 0.35 * float((w >> 8) & 0xFFFFu) / 16.0, 0.0) + (xi - 0.5) * 3.0;
@@ -378,10 +434,16 @@ vec3 emitterPoint(vec3 lp, uint w, vec3 xi, vec3 p, out float size) {
 // in src/city/light_tiles.c) stand for the cold light falling down the canyon from its
 // glazed crown, a fill from far above rather than a light at the point they
 // mark, so they light the galleries unshadowed.
-bool castsShadow(uint w) { return (w & 3u) >= 2u || ((w >> 26) & 3u) != 2u; }
+// A vendor's neon icon (VL_NEON) neither: its light is a soft coloured spill from over the counter, where a
+// shadow hardly shows, and a bar's own lights (nine of them) overran a pixel's shadow slots (NB6).
+bool castsShadow(uint w) {
+    if (isVendorLight(w)) return vendorKind(w) != VL_NEON;
+    return (w & 3u) >= 2u || ((w >> 26) & 3u) != 2u;
+}
 
 // The middle of the emitter, as seen from p: where city.frag aims a hard shadow ray.
 vec3 emitterCentre(vec3 lp, uint w, vec3 p) {
+    if (isVendorLight(w)) return vendorKind(w) == VL_NEON ? lp - vendorWay(w) * 0.08 : vendorPoint(lp, w, p);
     if (isFlame(w)) return lp + vec3(0.0, 0.35 * float((w >> 8) & 0xFFFFu) / 16.0, 0.0);
     if ((w & 3u) < 2u) return lampBeamShare(lp, p) >= 0.5 ? lp : vec3(lp.x, lampGround(lp, w) + POOL_HEIGHT, lp.z);
     float ang = float((w >> 16) & 255u) * (6.2831853 / 256.0);
@@ -461,6 +523,13 @@ float lightImportance(vec3 p, vec3 n, vec3 V, vec3 lp, uint w) {
     float ndl = dot(n, L);
     float glint = ndl > 0.0 ? 4.0 * pow(max(dot(reflect(-V, n), L), 0.0), 24.0) : 0.0;
     uint type = w & 3u;
+    if (isVendorLight(w)) {
+        vec3 lv = vendorPoint(lp, w, p) - p;
+        float dv = length(lv);
+        float nv = dot(n, lv / max(dv, 1e-4));
+        float gv = nv > 0.0 ? 4.0 * pow(max(dot(reflect(-V, n), lv / max(dv, 1e-4)), 0.0), 24.0) : 0.0;
+        return vendorFalloff(w, dv) * luma(vendorTint(w)) * (max(nv, 0.0) + 0.05 + gv);
+    }
     if (isFlame(w)) return flameFalloff(l) * luma(fireColor(0.6)) * (max(ndl, 0.0) + 0.05 + glint);
     if (type < 2u) return lampFalloff(l) * luma(lampColor(int(type))) * (max(ndl, 0.0) + 0.05 + glint);
     return shopFalloff(d) * 0.6 * (0.35 + 0.65 * max(ndl, 0.0) + glint);
@@ -477,6 +546,16 @@ float neonFlicker(uint seed, uint mode, float t) {
     float ph = fract(t * 0.23 + hfloat(seed));
     float buzz = step(0.85, ph) * step(0.4, hfloat(hash_combine(seed, uint(t * 20.0))));
     return mix(1.0, 0.15, buzz) * (0.85 + 0.15 * sin(t * 120.0));
+}
+
+/* A vendor light's colour now: its tint and strength's share by its flicker (a
+ * neon's as its tubes', neonFlicker; a flame's dancing a little). */
+vec3 vendorLightColor(uint w, float t) {
+    vec3 c = vendorTint(w);
+    uint k = vendorKind(w), seed = (w >> 8) & 255u;
+    if (k == VL_NEON) c *= neonFlicker(seed, (w >> 29) & 3u, t);
+    if (k == VL_FLAME) c *= 0.8 + 0.4 * vnoise(vec2(t * 9.0, float(seed) * 1.7), 0xF1A5u);
+    return c;
 }
 
 // Video screens change advert every slot (ADVERT_SLOT_SECONDS), each screen on its own

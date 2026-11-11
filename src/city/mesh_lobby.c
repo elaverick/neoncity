@@ -61,8 +61,9 @@ int city_casts_shadow(const Vertex *v) {
         return (p[2] & 3) != TRIM_MULLION;
     case MAT_VENDOR:   /* not a vendor's glass, nor a sign's painted face (its board casts) */
         return p[1] != VS_GLASS && p[1] != VS_NEON;
-    case MAT_KIT:      /* a noodle bar's body, not its glass; its far shell never (the near body casts) */
-        return !(v->aux & KIT_AUX_FAR) && p[1] != PMAT_GLASS;
+    case MAT_KIT:      /* a noodle bar's body, not its glass or what glows (its lamps' light passes); its far
+                        * shell never (the near body casts) */
+        return !(v->aux & KIT_AUX_FAR) && p[1] != PMAT_GLASS && !pm_mat_glows(p[1]);
     default:
         return 1;
     }

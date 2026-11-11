@@ -270,7 +270,75 @@ int nb_plan(NbPlan *p, float W, float D, float ceiling, uint32_t seed, int form)
         float g = 0.5f * (c->gate0 + c->gate1), at = clampf(g < 0.5f * c->len ? g + 0.75f : g - 0.75f, 0.2f, c->len - 0.2f);
         p->bell[0] = c->o[0] + c->u[0] * at; p->bell[1] = cy; p->bell[2] = p->front - 0.45f * cd;
     }
+    /* NB6: light and signs, by hash (the draws above stay NB5's) */
+    {
+        const uint32_t hl = hash_combine(seed, 0x4C4954u);
+        p->tubeWhite = hash_float(hash_combine(hl, 1u)) < 0.6f ? NB_WHITE_6500 : NB_WHITE_5000;
+        /* the icons' neon: a pair of colours a vendor, red and cyan most (the references) */
+        static const uint8_t PAIR[6][2] = { { 2, 1 }, { 2, 1 }, { 0, 1 }, { 1, 2 }, { 2, 3 }, { 0, 5 } };
+        const int pair = (int)(hash_float(hash_combine(hl, 2u)) * 6.0f) % 6;
+        const int first = (int)(hash_float(hash_combine(hl, 3u)) * 4.0f) & 3;
+        const int bad = hash_float(hash_combine(hl, 4u)) < 0.35f ? (int)(hash_float(hash_combine(hl, 5u)) * (float)NB_ICONS_MAX) : -1;
+        const int badMode = hash_float(hash_combine(hl, 6u)) < 0.35f ? 2 : 1;
+        for (int i = 0; i < p->nicon; ++i) {
+            p->iconKind[i] = (uint8_t)(PMK_ICON_BOWL + ((first + i) & 3));
+            p->iconGlow[i] = (uint8_t)(PAIR[pair][i & 1] | (i == bad ? badMode : 0) << 3);
+        }
+        /* the lamp hangs under the extractor's baffles, over the range's middle */
+        p->lamp[0] = 0.5f * (p->rangeX0 + p->rangeX1); p->lamp[1] = 1.955f; p->lamp[2] = p->lining + 0.40f;
+        /* the batten under the lower shelf, clear of its brackets */
+        p->batten[0] = p->batten[1] = 0.0f;
+        if (p->shelfX1 - p->shelfX0 > 0.65f) {
+            p->batten[0] = p->shelfX0 + 0.12f; p->batten[1] = p->shelfX1 - 0.12f;
+            p->batten[2] = 1.43f - 0.022f; p->batten[3] = p->lining + 0.20f;
+        }
+    }
     return fits;
+}
+
+uint8_t nb_icon_seed(const NbPlan *p, int icon) { return (uint8_t)hash_combine(p->seed, 0x1C0u + (uint32_t)icon); }
+
+int nb_lights(const NbPlan *p, NbLight *out, int max) {
+    int n = 0;
+#define NB_ADD(K, C) (n < max ? (memset(&out[n], 0, sizeof(NbLight)), out[n].kind = (K), out[n].colour = (C), &out[n++]) : NULL)
+    for (int i = 0; i < p->ntube; ++i) {
+        NbLight *l = NB_ADD(NB_LIGHT_TUBE, p->tubeWhite);
+        if (!l) break;
+        memcpy(l->a, &p->tube[i][0], sizeof(l->a)); memcpy(l->b, &p->tube[i][3], sizeof(l->b));
+    }
+    if (p->lamp[1] > 0.0f) {
+        NbLight *l = NB_ADD(NB_LIGHT_LAMP, NB_WHITE_2700);
+        if (l) { l->a[0] = p->lamp[0]; l->a[1] = p->lamp[1] - 0.035f; l->a[2] = p->lamp[2]; }
+    }
+    if (p->batten[1] > p->batten[0]) {
+        NbLight *l = NB_ADD(NB_LIGHT_TUBE, NB_WHITE_3000);
+        if (l) {
+            l->a[0] = p->batten[0]; l->a[1] = p->batten[2] - 0.004f; l->a[2] = p->batten[3];
+            l->b[0] = p->batten[1]; l->b[1] = l->a[1]; l->b[2] = l->a[2];
+        }
+    }
+    NbLine L;
+    nb_line(p, &L);
+    for (int b = 0; b < 2; ++b) {
+        const int wok = b == 1 && L.kind == NB_POT_WOK;
+        NbLight *l = NB_ADD(NB_LIGHT_FLAME, NB_FLAME_BLUE);
+        if (!l) break;
+        l->a[0] = L.burner[b][0]; l->a[1] = wok ? WOK_FLOOR + 0.08f : RANGE_TRAY + 0.04f; l->a[2] = L.burner[b][1];
+        l->seed = (uint8_t)hash_combine(p->seed, 0xF1u + (uint32_t)b);
+    }
+    for (int i = 0; i < p->nicon; ++i) {
+        const float *c = p->icon[i];
+        NbLight *l = NB_ADD(NB_LIGHT_NEON, (uint8_t)(NB_NEON + (p->iconGlow[i] & 7u)));
+        if (!l) break;
+        /* in front of its tubes, so its own housing never shadows it */
+        l->a[0] = c[0] + c[3] * 0.12f; l->a[1] = c[1]; l->a[2] = c[2] + c[4] * 0.12f;
+        l->b[0] = c[3]; l->b[1] = c[4];
+        l->size = c[5];
+        l->flicker = (uint8_t)(p->iconGlow[i] >> 3);
+        l->seed = nb_icon_seed(p, i);
+    }
+#undef NB_ADD
+    return n;
 }
 
 /* ----------------------------------------------------------- the helpers --- */
@@ -285,6 +353,28 @@ static void bb(Pm *pm, float x0, float y0, float z0, float x1, float y1, float z
     float h[3] = { 0.5f * fabsf(x1 - x0), 0.5f * fabsf(y1 - y0), 0.5f * fabsf(z1 - z0) };
     if (h[0] < 1e-4f || h[1] < 1e-4f || h[2] < 1e-4f) return;
     pm_bbox(pm, c, h, bevel, 1);
+}
+/* A sheet facing up over a top (x0..x1, z0..z1 at y), its vertices every `step` or so: where the line's things
+ * stand on it, the body's baked occlusion (pm_bake_with: the line as occluders) has vertices to darken round
+ * them (NB6). It lies a millimetre over the slab whose top it is. */
+#define TOP_STEP 0.08f
+static void top_sheet(Pm *pm, float x0, float z0, float x1, float z1, float y) {
+    const int nx = (int)ceilf((x1 - x0) / TOP_STEP), nz = (int)ceilf((z1 - z0) / TOP_STEP);
+    if (nx < 1 || nz < 1) return;
+    pm->shell++;
+    const float n[3] = { 0.0f, 1.0f, 0.0f };
+    uint32_t first = 0;
+    for (int j = 0; j <= nz; ++j)
+        for (int i = 0; i <= nx; ++i) {
+            float q[3] = { x0 + (x1 - x0) * (float)i / (float)nx, y, z0 + (z1 - z0) * (float)j / (float)nz };
+            uint32_t id = pm_vert(pm, q, n, q[0], q[2]);
+            if (!i && !j) first = id;
+        }
+    for (int j = 0; j < nz; ++j)
+        for (int i = 0; i < nx; ++i) {
+            uint32_t a = first + (uint32_t)(j * (nx + 1) + i);
+            pm_quad(pm, a, a + 1, a + (uint32_t)(nx + 1) + 1, a + (uint32_t)(nx + 1));
+        }
 }
 static void put(Pm *pm, float x, float y, float z, float a, int id) {
     pm_push(pm);
@@ -377,7 +467,11 @@ static void counter_run(Pm *pm, const NbPlan *p, const NbRun *r, int k) {
         pm_mat(pm, PMAT_STEEL);
         bb(pm, a, 0.0f, zb + 0.01f, b, 0.10f, 0.004f, 0.002f);
         pm_mat(pm, PMAT_STAINLESS);
-        bb(pm, a - (a < 0.01f ? 0.02f : 0.0f), yt, -cd + 0.03f, b + (b > L - 0.01f ? 0.02f : 0.0f), cy, 0.03f, 0.006f);
+        {
+            const float ta = a - (a < 0.01f ? 0.02f : 0.0f), tb = b + (b > L - 0.01f ? 0.02f : 0.0f);
+            bb(pm, ta, yt, -cd + 0.03f, tb, cy, 0.03f, 0.006f);
+            top_sheet(pm, ta + 0.006f, -cd + 0.036f, tb - 0.006f, 0.024f, cy + 0.001f);   /* the condiments' contact */
+        }
         /* the front's panels: frames of flat bar 6 mm proud, riveted along their middles */
         pm_mat(pm, PMAT_PLATE);
         int np = (int)floorf((b - a) / 0.6f + 0.5f);
@@ -650,6 +744,7 @@ static void kitchen(Pm *pm, const NbPlan *p, const NbLine *L) {
     if (b1 - b0 > 0.3f) {
         pm->part = 121;
         bb(pm, b0, by - 0.035f, zl, b1, by, zl + bd, 0.004f);
+        top_sheet(pm, b0 + 0.004f, zl + 0.004f, b1 - 0.004f, zl + bd - 0.004f, by + 0.001f);   /* the line's contact */
         bb(pm, b0, by, zl, b1, by + 0.08f, zl + 0.012f, 0.002f);
         bb(pm, b0, by - 0.11f, zl + bd - 0.016f, b1, by - 0.035f, zl + bd, 0.002f);
         bb(pm, b0 + 0.03f, 0.16f, zl + 0.03f, b1 - 0.03f, 0.18f, zl + bd - 0.03f, 0.002f);
@@ -706,6 +801,17 @@ static void kitchen(Pm *pm, const NbPlan *p, const NbLine *L) {
         pm_translate(pm, 0.5f * (e1 - e0 - 0.06f), 0.25f, 0.0f);
         pm_grille_bars(pm, e1 - e0 - 0.06f, 0.5f, 0.006f, 0.035f);
         pm_pop(pm);
+        /* its lamp under the baffles (NB6) */
+        if (p->lamp[1] > 0.0f) put(pm, p->lamp[0], p->lamp[1], p->lamp[2], 0.0f, PMK_LAMP);
+    }
+    /* the warm batten under the lower shelf (NB6): an aluminium channel, its opal diffuser */
+    if (p->batten[1] > p->batten[0]) {
+        const float x0 = p->batten[0], x1 = p->batten[1], y = p->batten[2], z = p->batten[3];
+        pm->part = 126;
+        pm_mat(pm, PMAT_STEEL);
+        pm_box(pm, x0, y + 0.007f, z - 0.017f, x1, 1.43f, z + 0.017f);
+        pm_mat(pm, PMAT_BULB);
+        pm_box(pm, x0 + 0.01f, y, z - 0.012f, x1 - 0.01f, y + 0.007f, z + 0.012f);
     }
     /* the duct up the lining and through the roof: flanged joints, a band to the wall, the flashing, the cap */
     {
@@ -764,7 +870,7 @@ static void hood_fittings(Pm *pm, const NbPlan *p) {
             float x = (float)e * 0.4f * L;
             bb(pm, x - 0.012f, 0.03f, 0.035f, x + 0.012f, 0.036f, 0.11f - 0.002f, 0.0f);
         }
-        pm_mat(pm, PMAT_GLASS);
+        pm_mat(pm, PMAT_TUBE);   /* lit (NB6) */
         cyl_x(pm, -0.5f * L, 0.5f * L, 0.0f, 0.0f, 0.013f, 12);
         pm_mat(pm, PMAT_PLASTIC);
         cyl_x(pm, -0.5f * L - 0.035f, -0.5f * L, 0.0f, 0.0f, 0.017f, 10);
@@ -772,16 +878,28 @@ static void hood_fittings(Pm *pm, const NbPlan *p) {
         for (int e = -1; e <= 1; e += 2) bb(pm, (float)e * (0.5f * L + 0.02f) - 0.012f, 0.0f, -0.012f, (float)e * (0.5f * L + 0.02f) + 0.012f, 0.02f, 0.012f, 0.0f);
         pm_pop(pm);
     }
-    /* the icon housings on the fascia: a steel box, its face glass (NB6 lights it) */
+    /* the icon housings on the fascia: an open steel tray, blacked inside, its neon icon (NB6) on legs in it */
     for (int i = 0; i < p->nicon; ++i) {
-        const float *c = p->icon[i], s = c[5];
+        const float *c = p->icon[i], s = c[5], e = 0.5f * s, r = 0.022f;
         pm->part = (uint8_t)(140 + i);
         pm_push(pm);
         frame_on(pm, c[0], c[1], c[2], c[4], -c[3]);   /* along: the fascia (cross(up, out)); out: its facing */
         pm_mat(pm, PMAT_STEEL);
-        bb(pm, -0.5f * s, -0.5f * s, -0.002f, 0.5f * s, 0.5f * s, 0.055f, 0.006f);
-        pm_mat(pm, PMAT_GLASS);
-        pm_box(pm, -0.5f * s + 0.022f, -0.5f * s + 0.022f, 0.055f, 0.5f * s - 0.022f, 0.5f * s - 0.022f, 0.058f);
+        bb(pm, -e, -e, -0.002f, e, e, 0.008f, 0.004f);
+        pm_box(pm, -e, -e, 0.008f, e, -e + r, 0.055f);   /* the rim: plain (the back's bevel reads at its edge) */
+        pm_box(pm, -e, e - r, 0.008f, e, e, 0.055f);
+        pm_box(pm, -e, -e + r, 0.008f, -e + r, e - r, 0.055f);
+        pm_box(pm, e - r, -e + r, 0.008f, e, e - r, 0.055f);
+        pm_mat(pm, PMAT_PLASTIC);
+        pm_box(pm, -e + r, -e + r, 0.008f, e - r, e - r, 0.010f);
+        {
+            const float k = (s - 0.07f) / PM_ICON_SIZE;
+            pm_push(pm);
+            pm_translate(pm, 0.0f, 0.0f, 0.040f);
+            pm_scale(pm, k, k, k);
+            pm_place(pm, p->iconKind[i] ? p->iconKind[i] : PMK_ICON_BOWL);
+            pm_pop(pm);
+        }
         for (int k = 0; k < 4; ++k) {
             pm_push(pm);
             pm_translate(pm, (k & 1) ? 0.5f * s - 0.011f : -0.5f * s + 0.011f, (k & 2) ? 0.5f * s - 0.011f : -0.5f * s + 0.011f, 0.055f);
@@ -981,14 +1099,18 @@ void nb_shell(Pm *pm, const NbPlan *p) {
         const float *c = p->icon[i], s = c[5];
         pm_push(pm);
         frame_on(pm, c[0], c[1], c[2], c[4], -c[3]);
-        /* its face alone: at range the housing's sides are nothing */
+        /* its face alone, glowing thinly in its neon's colour (vendor_emit_body: by its part): at range the
+         * housing's sides are nothing */
         pm->shell++;
+        pm->part = (uint8_t)(140 + i);
+        pm_mat(pm, PMAT_SIGN_FAR);
         float n[3] = { 0, 0, 1 }, q[4][3] = { { -0.5f * s, -0.5f * s, 0.055f }, { 0.5f * s, -0.5f * s, 0.055f }, { 0.5f * s, 0.5f * s, 0.055f }, { -0.5f * s, 0.5f * s, 0.055f } };
         uint32_t id[4];
         for (int k = 0; k < 4; ++k) id[k] = pm_vert(pm, q[k], n, q[k][0], q[k][1]);
         pm_quad(pm, id[0], id[1], id[2], id[3]);
         pm_pop(pm);
     }
+    pm->part = 0;
     pm_mat(pm, PMAT_PAINTED);
     for (int i = 0; i < p->nstool; ++i) {
         const float x = p->stool[i][0], z = p->stool[i][1];
@@ -1260,6 +1382,12 @@ void nb_line_place(Pm *pm, const NbPlan *p, const NbLine *L) {
     pm->part = (uint8_t)part++;
     for (int b = 0; b < 2; ++b) put_knob(pm, L->burner[b][0], 0.80f, zf + 0.03f);
     put_knob(pm, L->rangeEnd < 0 ? L->carc0 + 0.075f : L->carc1 - 0.075f, 0.80f, zf + 0.03f);
+    /* both burners alight (NB6): a ring burner's flames on its crown, the wok burner's jets roaring */
+    pm->part = (uint8_t)part++;
+    for (int b = 0; b < 2; ++b) {
+        const int wok = b == 1 && L->kind == NB_POT_WOK;
+        put(pm, L->burner[b][0], wok ? WOK_FLOOR : RANGE_TRAY, L->burner[b][1], 0.0f, wok ? PMK_FLAME_JET : PMK_FLAME_RING);
+    }
     /* the bain-marie's dial */
     if (L->bmPans) put_knob(pm, L->bm0 + 0.07f, 0.985f, L->bmZ1);
     /* the cleaver: on the block if there is one, else on the rail */
@@ -1318,6 +1446,17 @@ void nb_line_place(Pm *pm, const NbPlan *p, const NbLine *L) {
         pm_place(pm, PMK_SADDLE);
         pm_pop(pm);
     }
+}
+
+/* The line as occluders for the body's bake (NB6: contact darkening on the bench and the counter): its modules
+ * built in at their coarse level, unbaked (only their shapes matter). */
+void nb_line_occluders(const NbPlan *p, PmMesh *out) {
+    out->nv = out->ni = 0;
+    NbLine L;
+    nb_line(p, &L);
+    Pm pm;
+    pm_begin(&pm, out, NULL, PM_LOD2);
+    nb_line_place(&pm, p, &L);
 }
 
 /* ------------------------------------------------------------ the checks --- */

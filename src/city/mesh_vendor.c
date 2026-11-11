@@ -139,7 +139,7 @@ static uint32_t to_srgb8(const float lin[3]) {
     return o;
 }
 
-typedef struct VEmit { Mesh *m; VendorMesh vm; PmMesh shell; int tris; } VEmit;
+typedef struct VEmit { Mesh *m; ChunkGen *g; VendorMesh vm; PmMesh shell; int tris; } VEmit;
 
 /* The opening a room quad's vertex lies on (in its plane, inside it): its index, or -1. */
 static int room_opening(const Vendor *v, const float p[3]) {
@@ -187,6 +187,7 @@ static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
         pm_bake(&E->shell, NB_BAKE_RAYS, pm_reach(&E->shell));
         vendor_emit_body(m, s, v, &E->shell, 1);
         E->tris += (int)(E->shell.ni / 3);
+        vendor_lights(E->g, m, s, v);
         return;
     }
     VendorMesh *vm = &E->vm;
@@ -250,6 +251,7 @@ void build_vendors(Mesh *m, ChunkGen *g) {
     VEmit E;
     memset(&E, 0, sizeof(E));
     E.m = m;
+    E.g = g;
     city_vendors(g, emit_vendor, &E);
     vendor_mesh_free(&E.vm);
     pm_mesh_free(&E.shell);
