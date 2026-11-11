@@ -129,10 +129,10 @@ Checks (NB3): the share of the vendor's area each set covers (none over 40%); ev
 | What | Budget | Why |
 |---|---|---|
 | Unique structure (hood, walls, counter: merged, a near vendor layer) | 6,000 triangles near (0.7 MB of the 504 MB non-indexed pool at 40 B a vertex) | a lane of 44 vendors at most +31 MB; the pool is 84% full down a lane already |
-| Instanced kit (modules: stools, pots, grates, rivet rows, ribs, utensils, jars) | 150 instances a vendor; the module library 300,000 triangles over its levels, indexed (under 20 MB), uploaded once | detail without the pool |
+| Instanced kit (modules: stools, pots, grates, rivet rows, ribs, utensils, jars) | 150 instances a vendor; the module library 300,000 triangles over its levels, indexed (under 20 MB), uploaded once | detail without the pool. NB1 measured: the library 139,000 triangles over its levels; a slice's kit about 62 instances, but the hood alone sets down ~190 single rivets (curved laps take no straight rows): NB2 decides whether rivets are instances or a per-vendor near mesh |
 | Levels | L0 to 8 m, L1 to 30 m, L2 to 120 m; beyond, the far shell | screen size picks within them (NB2) |
 | Far shell (base layer, to the 1.9 km view distance) | 500 triangles | casts the city's shadows, shelters the rain |
-| Triangles drawn, one slice at 3 m | 60,000 at most (structure + L0 instances) | the office impostors' near tier draws far more |
+| Triangles drawn, one slice at 3 m | 60,000 at most (structure + L0 instances): **to revise in NB2**. NB1 measured a plausible kit at 137,000 at L0 (57,000 at L1, 15,000 at L2) and the hood 3,000 + 11,000 in rivets; support loops (for the baked occlusion and wear) are a third of L0 | the office impostors' near tier draws far more; the gate is the frame cost below, measured on NB2's spike |
 | Frame cost | +0.3 ms at the worst view at most (a row of six slices; the lane at night), shadows included | |
 | Generation | +3 ms a chunk for six slices at most | streaming stays smooth |
 | Collision | the counter, the walls, the posts, the stools' bases, the A-frame | outlines as `vendor_solids` |

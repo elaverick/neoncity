@@ -28,6 +28,7 @@ build/vendor_lab 60 out        # street vendors: validity, determinism, budgets,
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/city_test --vendor-sites # the vendors' sites round the spawn and the nearest lane, pocket market, plaza, apron: checks, --cam views
 build/city_test --slice        # the noodle bar slice (docs/noodle-bar-target.md): its site, checks, views; tools/slice_capture.py, tools/slice_board.py
+build/pmodel_lab out           # the procedural modelling kit: determinism, closure, normals, budgets per level; lit contact sheets
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
 build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the world chart within 5400 km; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
 cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)
@@ -1445,6 +1446,45 @@ shells in the city (SV2) and the rooms seen through their openings (SV3) are bui
   <archetype> <seed> [affluence] [tier]` prints one vendor's log, parts, graph and items. Over 200 seeds, all
   12,600 pass; at the standard tier the median noodle bar is about 1,200 triangles, a kiosk 510, a market
   stall 670, a barrow 490, a container pair 1,320.
+
+### The procedural modelling kit (`src/gen/pmodel*.c`)
+The street vendors' rework (the noodle bar slice, `docs/noodle-bar-target.md`) builds them in far more
+detail, still entirely in code. The kit is the means: indexed meshes in metres with smooth or hard normals,
+metre UVs, a material per part (`PMAT_*`) and two terms baked per vertex from the mesh's own geometry.
+It is not in the game yet (NB2 instances it; NB4-NB5 build the bar from it).
+
+- **Primitives** (`pmodel.c`): a transform stack; boxes and bevelled or chamfered boxes; the lathe (a profile
+  turned round a circle or a rounded rectangle, so hotel pans and boxes are lathes too; `pm_prof_shell` gives a
+  profile a wall and a rolled rim); the sweep (a section along a path, mitred at sharp points, transported
+  frames, capped by ear clipping); extrusions, tori, cylinders; paths with filleted bends, catenaries and arcs.
+  Creases come from hard points or a turn of more than 40 degrees.
+- **Levels:** LOD0 (to 8 m), LOD1 (to 30 m), LOD2 (to 120 m). Segment counts fall with the level, profiles are
+  simplified (Douglas-Peucker, 0.5 mm at LOD1, 2 mm at LOD2; hard points kept), and rivets and bolt washers
+  are LOD0 only.
+- **Support loops:** at LOD0 and LOD1 a ring of vertices 4 mm (8 mm) beside every crease, and lathe profiles
+  split to 0.12 m (0.3 m), so the baked terms stay where they belong instead of smearing across whole faces.
+- **Occlusion** (`pmodel_bake.c`): 24 cosine-weighted rays a vertex through a BVH of the mesh, within a reach
+  of a quarter of its diagonal (2 cm to 0.6 m). **Wear:** a crease wears fully (convex up, concave down) where a
+  support loop or bevel keeps it narrow, a smooth surface by its curvature (full at a 4 mm radius), so rims,
+  bevels and rib edges wear and broad faces stay clean.
+- **Parts** (`pmodel_parts.c`): lapped sheet walls with rivet rows, corrugated sheet with its real profile,
+  the ribbed barrel hood (`PmHood`: panels between ribs, vertex columns beside each rib, the rolled lip, the
+  fascia with its rivets, end plates; straight or wrapping a corner with a mitred hip rib), pipes with filleted
+  bends and bolted flanges, sagging cables and tied bundles, burner grates, round and bar grilles.
+- **The library** (`pmodel_kit.c`, `PMK_*`): 41 modules after the target sheet: rivets and rivet rows, bolts,
+  nuts, knobs, toggle switches, a pressure gauge, gate and ball valves, brackets, saddle clips, insulators, the
+  counter bell; pedestal stools; stock pots (copper and steel, broth inside), a lid, a stack of bowls, jars of
+  chilli oil and ginger, a sauce bottle; burners, a grate, a wok burner, a bamboo steamer, GN 1/3 hotel pans
+  (lidded, and open on curry), a rice cooker; a ladle, a spider, a slotted spatula, a cleaver, S hooks and the
+  utensil rail; 13 and 47 kg gas bottles, the extractor fan, the power panel, shelf brackets and the menu
+  A-frame. Each has a triangle budget per level. `pm_place` puts one down: into an instance list
+  (`PmInstances`, for NB2) or built in place.
+- `pmodel_lab [out_dir] [--only NAME]` builds every module at every level, and every part, and checks them:
+  the same mesh twice, closed modules watertight and the right way out, every vertex normal agreeing with its
+  faces, each level within its budget, the library within 300,000 triangles over its levels (139,000 now).
+  It prints a table and a plausible slice's kit (62 instances: 137,000 triangles at LOD0, 57,000 at LOD1,
+  15,000 at LOD2). With a directory it renders contact sheets lit with ray-traced shadows over the baked
+  occlusion: each module a row, LOD0-2, then LOD0's occlusion and wear alone, a 10 cm checker on the UVs.
 
 ### Textures (`src/render/materials.c`, `assets/materials/`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual surfaces can opt in to authored PBR

@@ -1,0 +1,974 @@
+#include "pmodel.h"
+#include "mathlib.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* ===========================================================================
+ * The module library (pmodel.h): every module built in its own frame, y up,
+ * at three levels of detail. Sizes after docs/noodle-bar-target.md. Frames:
+ * things that stand (stools, pots, bottles) stand on y 0 centred on the axis;
+ * things fixed to a surface (bolts, rivets, switches, gauges' stems,
+ * brackets) have that surface at y 0 (or z 0 for wall pieces, out along +z);
+ * things that hang (utensils, hooks) hang from the origin.
+ * ========================================================================= */
+
+#define L0 (pm->lod == PM_LOD0)
+#define L2 (pm->lod == PM_LOD2)
+
+static void lathe(Pm *pm, const PmProf *p, int n, int segs) { pm_lathe(pm, p, n, pm_segs(pm, segs, 4), 0, 0); }
+/* A lathe flat-shaded round the turn (hex heads and nuts). */
+static void lathe_faceted(Pm *pm, const PmProf *p, int n, int segs) {
+    uint32_t v0 = pm->out->nv, i0 = pm->out->ni;
+    pm_lathe(pm, p, n, segs, 0, 0);
+    pm_flatten(pm, v0, i0);
+}
+/* A turned shell from its outside, wall t, rim bead r. */
+static void shell(Pm *pm, const PmProf *o, int n, float t, float rim, int segs) {
+    PmProf s[120];
+    int k = pm_prof_shell(o, n, t, rim, L0 ? 6 : 3, s, 120);
+    if (k) lathe(pm, s, k, segs);
+}
+/* A thin ring band round the axis (a label, a hoop): r0 inside, r1 outside, y0..y1. */
+static void band(Pm *pm, float r0, float r1, float y0, float y1, int segs) {
+    PmProf p[5] = { { r0, y0, 1 }, { r1, y0, 1 }, { r1, y1, 1 }, { r0, y1, 1 }, { r0, y0, 1 } };
+    lathe(pm, p, 5, segs);
+}
+static void set3(float o[3], float x, float y, float z) { o[0] = x; o[1] = y; o[2] = z; }
+
+/* --------------------------------------------------------- small parts --- */
+static void m_rivet(Pm *pm) {
+    if (!L0) return;
+    pm_mat(pm, PMAT_STEEL);
+    /* a dome, closed underneath (it sits 0.4 mm into the sheet) */
+    float sup = pm->support;
+    pm->support = 0.0f;
+    PmProf p[5] = { { 0.0f, -0.0004f, 0 }, { 0.0032f, -0.0004f, 0 }, { 0.0029f, 0.0010f, 0 }, { 0.0017f, 0.0021f, 0 }, { 0.0f, 0.0025f, 0 } };
+    pm_lathe(pm, p, 5, 6, 0, 0);
+    pm->support = sup;
+}
+static void rivets_x(Pm *pm, int n) {
+    for (int k = 0; k < n; ++k) { pm_push(pm); pm_translate(pm, 0.06f * (float)k, 0, 0); m_rivet(pm); pm_pop(pm); }
+}
+static void m_rivet_row4(Pm *pm) { rivets_x(pm, 4); }
+static void m_rivet_row10(Pm *pm) { rivets_x(pm, 10); }
+
+static void hex(Pm *pm, float r, float y0, float y1, float ch) {
+    PmProf p[6] = { { 0, y0, 0 }, { r, y0, 1 }, { r, y1 - ch, 1 }, { r - ch, y1, 1 }, { 0, y1, 0 } };
+    lathe_faceted(pm, p, 5, 6);
+}
+static void m_bolt(Pm *pm) {
+    if (L2) return;
+    pm_mat(pm, PMAT_STEEL);
+    if (L0) { PmProf w[4] = { { 0, 0, 0 }, { 0.0085f, 0, 0 }, { 0.0085f, 0.0016f, 0 }, { 0, 0.0016f, 0 } }; lathe(pm, w, 4, 12); }
+    hex(pm, 0.0075f, 0.0016f, 0.0072f, L0 ? 0.0008f : 0.0f);
+}
+static void m_nut_washer(Pm *pm) {
+    if (L2) return;
+    pm_mat(pm, PMAT_STEEL);
+    PmProf w[4] = { { 0, 0, 0 }, { 0.0095f, 0, 0 }, { 0.0095f, 0.0018f, 0 }, { 0, 0.0018f, 0 } };
+    lathe(pm, w, 4, 12);
+    hex(pm, 0.0078f, 0.0018f, 0.0085f, L0 ? 0.0008f : 0.0f);
+    PmProf s[5] = { { 0, 0.0085f, 0 }, { 0.004f, 0.0085f, 0 }, { 0.004f, 0.0125f, 0 }, { 0.0032f, 0.0133f, 0 }, { 0, 0.0133f, 0 } };
+    lathe(pm, s, 5, 10);
+}
+
+/* A range knob, 40 mm, its face up +y. */
+static void m_knob(Pm *pm) {
+    pm_mat(pm, PMAT_STAINLESS);
+    PmProf sk[5] = { { 0, 0, 0 }, { 0.024f, 0, 0 }, { 0.024f, 0.002f, 0 }, { 0.02f, 0.0035f, 0 }, { 0, 0.0035f, 0 } };
+    lathe(pm, sk, 5, 24);
+    pm_mat(pm, PMAT_PLASTIC);
+    PmProf b[7] = { { 0, 0.003f, 0 }, { 0.0185f, 0.003f, 0 }, { 0.0185f, 0.012f, 0 }, { 0.0165f, 0.02f, 0 }, { 0.0145f, 0.0235f, 0 }, { 0.011f, 0.025f, 0 }, { 0, 0.0255f, 0 } };
+    lathe(pm, b, 7, 24);
+    float c[3] = { 0, 0.03f, 0 }, h[3] = { 0.015f, 0.006f, 0.0045f };
+    pm_bbox(pm, c, h, 0.002f, 2);
+    if (L0) { pm_mat(pm, PMAT_PAINTED); float c2[3] = { 0.0105f, 0.0362f, 0 }, h2[3] = { 0.0035f, 0.0003f, 0.0008f }; pm_bbox(pm, c2, h2, 0.0f, 1); }
+}
+
+/* A toggle switch on its plate, the panel's face at y 0. */
+static void m_toggle(Pm *pm) {
+    pm_mat(pm, PMAT_STAINLESS);
+    float c[3] = { 0, 0.0015f, 0 }, h[3] = { 0.016f, 0.0015f, 0.026f };
+    pm_bbox(pm, c, h, 0.001f, 2);
+    if (L0) for (int k = -1; k <= 1; k += 2) { pm_push(pm); pm_translate(pm, 0, 0.003f, 0.019f * (float)k); pm_place(pm, PMK_BOLT); pm_pop(pm); }
+    pm_mat(pm, PMAT_BRASS);
+    PmProf b[4] = { { 0, 0.003f, 0 }, { 0.006f, 0.003f, 0 }, { 0.006f, 0.012f, 0 }, { 0, 0.012f, 0 } };
+    lathe(pm, b, 4, 12);
+    pm_mat(pm, PMAT_STEEL);
+    hex(pm, 0.0082f, 0.003f, 0.0055f, 0.0f);
+    pm_mat(pm, PMAT_STAINLESS);
+    pm_push(pm);
+    pm_translate(pm, 0, 0.011f, 0);
+    pm_rotate_x(pm, 0.35f);
+    PmProf l[6] = { { 0, 0, 0 }, { 0.0024f, 0, 0 }, { 0.0016f, 0.02f, 0 }, { 0.0028f, 0.021f, 0 }, { 0.0026f, 0.0245f, 0 }, { 0, 0.0255f, 0 } };
+    lathe(pm, l, 6, 10);
+    pm_pop(pm);
+}
+
+/* A pressure gauge (63 mm) on its stem: the stem's foot at the origin, up +y; the face looks +z. */
+static void m_gauge(Pm *pm) {
+    pm_mat(pm, PMAT_BRASS);
+    hex(pm, 0.0095f, 0.0f, 0.009f, L0 ? 0.001f : 0.0f);
+    PmProf s[4] = { { 0, 0.008f, 0 }, { 0.0055f, 0.008f, 0 }, { 0.0055f, 0.036f, 0 }, { 0, 0.036f, 0 } };
+    lathe(pm, s, 4, 12);
+    pm_push(pm);
+    pm_translate(pm, 0, 0.066f, -0.012f);
+    pm_rotate_x(pm, 0.5f * PI_F);   /* local +y (the face) to +z */
+    pm_mat(pm, PMAT_PAINTED);
+    PmProf c[9] = { { 0, 0, 0 }, { 0.0300f, 0, 0 }, { 0.0320f, 0.002f, 0 }, { 0.0320f, 0.017f, 0 }, { 0.0337f, 0.018f, 0 },
+                    { 0.0337f, 0.0225f, 0 }, { 0.0318f, 0.0245f, 0 }, { 0.0292f, 0.0245f, 1 }, { 0, 0.0245f, 0 } };
+    /* the bezel's top drops to the face inside it */
+    c[8].y = 0.0195f; c[7].y = 0.0245f;
+    PmProf cc[10];
+    memcpy(cc, c, sizeof(PmProf) * 8);
+    cc[8].r = 0.0292f; cc[8].y = 0.0195f; cc[8].hard = 1;
+    cc[9].r = 0.0f; cc[9].y = 0.0195f; cc[9].hard = 0;
+    lathe(pm, cc, 10, 28);
+    pm_mat(pm, PMAT_DIAL);
+    PmProf f[4] = { { 0, 0.0195f, 0 }, { 0.029f, 0.0195f, 0 }, { 0.029f, 0.0205f, 0 }, { 0, 0.0205f, 0 } };
+    lathe(pm, f, 4, 28);
+    pm_mat(pm, PMAT_RED);
+    {
+        float a = 0.6f, c3[3] = { 0.009f * cosf(a), 0.0213f, -0.009f * sinf(a) }, h3[3] = { 0.012f, 0.0004f, 0.0007f };
+        pm_push(pm); pm_translate(pm, c3[0], c3[1], c3[2]); pm_rotate_y(pm, a);
+        float z[3] = { 0, 0, 0 };
+        pm_bbox(pm, z, h3, 0.0f, 1);
+        pm_pop(pm);
+        PmProf hb[4] = { { 0, 0.0205f, 0 }, { 0.0025f, 0.0205f, 0 }, { 0.0025f, 0.0222f, 0 }, { 0, 0.0222f, 0 } };
+        lathe(pm, hb, 4, 10);
+    }
+    pm_mat(pm, PMAT_GLASS);
+    PmProf g[5] = { { 0, 0.0228f, 0 }, { 0.0294f, 0.0228f, 0 }, { 0.0294f, 0.0234f, 1 }, { 0.016f, 0.0244f, 0 }, { 0, 0.0247f, 0 } };
+    lathe(pm, g, 5, 28);
+    pm_pop(pm);
+}
+
+/* A gate valve on a pipe along x through the origin, its wheel up +y. */
+static void m_valve_wheel(Pm *pm) {
+    pm_mat(pm, PMAT_BRASS);
+    pm_push(pm);
+    pm_rotate_z(pm, -0.5f * PI_F);   /* +y onto +x: the body along the pipe */
+    PmProf b[11] = { { 0, -0.036f, 0 }, { 0.0145f, -0.036f, 0 }, { 0.0145f, -0.027f, 0 }, { 0.012f, -0.025f, 0 }, { 0.019f, -0.016f, 0 },
+                     { 0.022f, 0.0f, 0 }, { 0.019f, 0.016f, 0 }, { 0.012f, 0.025f, 0 }, { 0.0145f, 0.027f, 0 }, { 0.0145f, 0.036f, 0 }, { 0, 0.036f, 0 } };
+    lathe(pm, b, 11, 16);
+    pm_pop(pm);
+    PmProf bn[7] = { { 0, 0.012f, 0 }, { 0.017f, 0.012f, 0 }, { 0.017f, 0.038f, 0 }, { 0.012f, 0.043f, 0 }, { 0.009f, 0.052f, 0 }, { 0.009f, 0.058f, 0 }, { 0, 0.058f, 0 } };
+    lathe(pm, bn, 7, 16);
+    pm_mat(pm, PMAT_STEEL);
+    PmProf st[4] = { { 0, 0.058f, 0 }, { 0.004f, 0.058f, 0 }, { 0.004f, 0.098f, 0 }, { 0, 0.098f, 0 } };
+    lathe(pm, st, 4, 8);
+    pm_mat(pm, PMAT_RED);
+    pm_push(pm);
+    pm_translate(pm, 0, 0.088f, 0);
+    pm_torus(pm, 0.038f, 0.0045f, 28, 8);
+    int ns = L2 ? 3 : 5;
+    for (int k = 0; k < ns; ++k) {
+        float a = 2.0f * PI_F * (float)k / (float)ns, p0[3], p1[3];
+        set3(p0, 0.008f * cosf(a), 0, 0.008f * sinf(a)); set3(p1, 0.036f * cosf(a), -0.004f, 0.036f * sinf(a));
+        pm_beam(pm, p0, p1, 0.006f, 0.004f, 0.0f, NULL);
+    }
+    PmProf h[4] = { { 0, -0.004f, 0 }, { 0.009f, -0.004f, 0 }, { 0.009f, 0.005f, 0 }, { 0, 0.005f, 0 } };
+    lathe(pm, h, 4, 12);
+    pm_pop(pm);
+    pm_mat(pm, PMAT_STEEL);
+    pm_push(pm); pm_translate(pm, 0, 0.093f, 0); m_nut_washer(pm); pm_pop(pm);
+}
+
+/* A ball valve on a pipe along x through the origin, the lever along the pipe (open). */
+static void m_valve_lever(Pm *pm) {
+    pm_mat(pm, PMAT_BRASS);
+    float c[3] = { 0, 0, 0 }, h[3] = { 0.022f, 0.016f, 0.016f };
+    pm_bbox(pm, c, h, 0.004f, 2);
+    for (int s = -1; s <= 1; s += 2) {
+        pm_push(pm);
+        pm_translate(pm, 0.022f * (float)s, 0, 0);
+        pm_rotate_z(pm, -0.5f * PI_F * (float)s);
+        PmProf e[4] = { { 0, 0, 0 }, { 0.0145f, 0, 1 }, { 0.0145f, 0.012f, 1 }, { 0, 0.012f, 0 } };
+        lathe_faceted(pm, e, 4, 6);
+        pm_pop(pm);
+    }
+    PmProf st[4] = { { 0, 0.016f, 0 }, { 0.005f, 0.016f, 0 }, { 0.005f, 0.026f, 0 }, { 0, 0.026f, 0 } };
+    lathe(pm, st, 4, 10);
+    pm_mat(pm, PMAT_RED);
+    float a[3] = { -0.006f, 0.029f, 0 }, b[3] = { 0.1f, 0.029f, 0 };
+    pm_beam(pm, a, b, 0.004f, 0.014f, 0.0f, NULL);
+    pm_mat(pm, PMAT_PLASTIC);
+    float gc[3] = { 0.08f, 0.029f, 0 }, gh[3] = { 0.026f, 0.0065f, 0.0045f };
+    pm_bbox(pm, gc, gh, 0.002f, 2);
+    pm_mat(pm, PMAT_STEEL);
+    pm_push(pm); pm_translate(pm, 0, 0.031f, 0); pm_place(pm, PMK_BOLT); pm_pop(pm);
+}
+
+/* An angle bracket on a wall (z 0, out +z): a 30 x 4 mm flat bar 0.2 m down the wall and 0.2 m out, braced. */
+static void m_bracket(Pm *pm) {
+    pm_mat(pm, PMAT_PAINTED);
+    float a[3], b[3];
+    set3(a, 0, 0.0f, 0.002f); set3(b, 0, -0.2f, 0.002f);
+    float up[3] = { 0, 0, 1 };
+    pm_beam(pm, a, b, 0.03f, 0.004f, 0.0f, up);
+    set3(a, 0, 0.002f, 0.0f); set3(b, 0, 0.002f, 0.2f);
+    float up2[3] = { 0, 1, 0 };
+    pm_beam(pm, a, b, 0.03f, 0.004f, 0.0f, up2);
+    set3(a, 0, -0.17f, 0.004f); set3(b, 0, -0.004f, 0.17f);
+    pm_beam(pm, a, b, 0.022f, 0.004f, 0.0f, NULL);
+    if (!L2)
+        for (int k = 0; k < 2; ++k) {
+            pm_push(pm);
+            pm_translate(pm, 0, -0.05f - 0.1f * (float)k, 0.004f);
+            pm_rotate_x(pm, 0.5f * PI_F);
+            pm_place(pm, PMK_BOLT);
+            pm_pop(pm);
+        }
+}
+
+/* A saddle clip for a 22 mm pipe along z, on a surface at y 0. */
+static void m_saddle(Pm *pm) {
+    pm_mat(pm, PMAT_GALV);
+    PmPath pa;
+    pm_path_init(&pa, 24);
+    float c[3] = { 0, 0.011f, 0 }, ex[3] = { 1, 0, 0 }, ey[3] = { 0, 1, 0 };
+    pm_path_arc(&pa, c, ex, ey, 0.0122f, 0.0f, PI_F, L0 ? 12 : 6);
+    PmSect s;
+    pm_sect_rect(&s, 0.0016f, 0.012f, 0.0f);
+    float up[3] = { 0, 0, 1 };
+    pm_sweep(pm, &pa, &s, up, 3);
+    pm_path_free(&pa);
+    for (int k = -1; k <= 1; k += 2) {
+        float fc[3] = { 0.021f * (float)k, 0.0008f, 0 }, fh[3] = { 0.009f, 0.0008f, 0.006f };
+        pm_bbox(pm, fc, fh, 0.0f, 1);
+        float wc[3] = { 0.0128f * (float)k, 0.0055f, 0 }, wh[3] = { 0.0008f, 0.0055f, 0.006f };
+        pm_bbox(pm, wc, wh, 0.0f, 1);
+        if (L0) { pm_push(pm); pm_translate(pm, 0.023f * (float)k, 0.0016f, 0); pm_place(pm, PMK_BOLT); pm_pop(pm); }
+    }
+}
+
+/* A ceramic post insulator on its steel pin, standing on y 0. */
+static void m_insulator(Pm *pm) {
+    pm_mat(pm, PMAT_STEEL);
+    hex(pm, 0.009f, 0.0f, 0.006f, 0.0f);
+    PmProf pin[4] = { { 0, 0.006f, 0 }, { 0.006f, 0.006f, 0 }, { 0.006f, 0.02f, 0 }, { 0, 0.02f, 0 } };
+    lathe(pm, pin, 4, 8);
+    pm_mat(pm, PMAT_CERAMIC);
+    PmProf p[18] = {
+        { 0, 0.018f, 0 }, { 0.014f, 0.018f, 0 }, { 0.014f, 0.028f, 0 }, { 0.033f, 0.035f, 0 }, { 0.033f, 0.038f, 0 }, { 0.016f, 0.042f, 0 },
+        { 0.029f, 0.049f, 0 }, { 0.029f, 0.052f, 0 }, { 0.015f, 0.056f, 0 }, { 0.015f, 0.064f, 0 }, { 0.0115f, 0.067f, 0 },
+        { 0.0115f, 0.071f, 0 }, { 0.0155f, 0.074f, 0 }, { 0.0155f, 0.079f, 0 }, { 0.012f, 0.084f, 0 }, { 0.0f, 0.0855f, 0 } };
+    lathe(pm, p, 16, 24);
+}
+
+/* A counter bell, 85 mm, standing on y 0. */
+static void m_bell(Pm *pm) {
+    pm_mat(pm, PMAT_PLASTIC);
+    PmProf b[5] = { { 0, 0, 0 }, { 0.046f, 0, 0 }, { 0.046f, 0.007f, 0 }, { 0.041f, 0.012f, 0 }, { 0, 0.012f, 0 } };
+    lathe(pm, b, 5, 28);
+    pm_mat(pm, PMAT_BRASS);
+    PmProf d[8] = { { 0, 0.012f, 0 }, { 0.0425f, 0.012f, 0 }, { 0.0425f, 0.016f, 1 }, { 0.040f, 0.028f, 0 }, { 0.033f, 0.042f, 0 },
+                    { 0.022f, 0.051f, 0 }, { 0.010f, 0.055f, 0 }, { 0, 0.056f, 0 } };
+    lathe(pm, d, 8, 32);
+    pm_mat(pm, PMAT_STEEL);
+    PmProf pl[6] = { { 0, 0.054f, 0 }, { 0.0028f, 0.054f, 0 }, { 0.0028f, 0.068f, 0 }, { 0.006f, 0.07f, 0 }, { 0.006f, 0.074f, 0 }, { 0, 0.076f, 0 } };
+    lathe(pm, pl, 6, 12);
+}
+
+/* ------------------------------------------------------------- seating --- */
+/* A pedestal stool: seat 0.36 m round at 0.75 m, a 60 mm pedestal, a 0.40 m base, a foot ring. */
+static void m_stool(Pm *pm) {
+    pm_mat(pm, PMAT_PAINTED);
+    PmProf b[8] = { { 0, 0, 0 }, { 0.2f, 0, 0 }, { 0.2f, 0.007f, 0 }, { 0.193f, 0.013f, 0 }, { 0.09f, 0.03f, 0 }, { 0.045f, 0.038f, 0 }, { 0.034f, 0.045f, 0 }, { 0, 0.045f, 0 } };
+    lathe(pm, b, 8, 32);
+    PmProf p[8] = { { 0, 0.04f, 0 }, { 0.03f, 0.04f, 0 }, { 0.03f, 0.63f, 0 }, { 0.036f, 0.635f, 0 }, { 0.036f, 0.655f, 0 }, { 0.06f, 0.66f, 0 }, { 0.06f, 0.666f, 0 }, { 0, 0.666f, 0 } };
+    lathe(pm, p, 8, 24);
+    pm_mat(pm, PMAT_STAINLESS);
+    pm_push(pm);
+    pm_translate(pm, 0, 0.29f, 0);
+    pm_torus(pm, 0.165f, 0.011f, 32, 8);
+    pm_pop(pm);
+    pm_mat(pm, PMAT_PAINTED);
+    for (int k = 0; k < 3; ++k) {
+        float a = 2.0f * PI_F * (float)k / 3.0f + 0.3f, p0[3], p1[3];
+        set3(p0, 0.025f * cosf(a), 0.27f, 0.025f * sinf(a)); set3(p1, 0.158f * cosf(a), 0.29f, 0.158f * sinf(a));
+        pm_beam(pm, p0, p1, 0.018f, 0.012f, 0.002f, NULL);
+    }
+    pm_mat(pm, PMAT_STEEL);
+    PmProf pan[5] = { { 0, 0.662f, 0 }, { 0.165f, 0.662f, 0 }, { 0.178f, 0.672f, 0 }, { 0.178f, 0.676f, 0 }, { 0, 0.676f, 0 } };
+    lathe(pm, pan, 5, 32);
+    pm_mat(pm, PMAT_RUBBER);
+    PmProf s[9] = { { 0, 0.674f, 0 }, { 0.176f, 0.674f, 0 }, { 0.183f, 0.682f, 0 }, { 0.184f, 0.712f, 0 }, { 0.181f, 0.732f, 0 },
+                    { 0.172f, 0.744f, 0 }, { 0.15f, 0.749f, 0 }, { 0.08f, 0.751f, 0 }, { 0, 0.751f, 0 } };
+    lathe(pm, s, 9, 32);
+    /* the seat's piping */
+    if (L0) { pm_push(pm); pm_translate(pm, 0, 0.7105f, 0); pm_torus(pm, 0.1845f, 0.0035f, 32, 6); pm_pop(pm); }
+}
+
+/* ----------------------------------------------------------- the pots --- */
+static void loop_handle(Pm *pm, float R, float y, float side, float span, float out, float r) {
+    PmPath pa;
+    pm_path_init(&pa, 24);
+    float c[3] = { side * R, y, 0 }, ex[3] = { side, 0, 0 }, ey[3] = { 0, 0, 1 };
+    /* a D loop: an ellipse half round out from the wall */
+    int n = L0 ? 12 : L2 ? 4 : 6;
+    for (int k = 0; k <= n; ++k) {
+        float a = -0.5f * PI_F + PI_F * (float)k / (float)n;
+        pm_path_add(&pa, c[0] + ex[0] * out * cosf(a), c[1], c[2] + ey[2] * span * sinf(a), 0);
+    }
+    pm_tube(pm, &pa, r, 10, 3);
+    pm_path_free(&pa);
+    /* the riveted plates it hangs from */
+    for (int k = -1; k <= 1; k += 2) {
+        float pc[3] = { side * (R + 0.003f), y, (float)k * span }, ph[3] = { 0.003f, 0.012f, 0.009f };
+        pm_bbox(pm, pc, ph, 0.0015f, 1);
+        if (L0) { pm_push(pm); pm_translate(pm, side * (R + 0.006f), y, (float)k * span); pm_rotate_z(pm, -0.5f * PI_F * side); pm_place(pm, PMK_RIVET); pm_pop(pm); }
+    }
+}
+
+static void stockpot(Pm *pm, float R, float H, int copper) {
+    pm_mat(pm, copper ? PMAT_COPPER : PMAT_STAINLESS);
+    PmProf o[5] = { { 0, 0, 0 }, { R - 0.012f, 0, 0 }, { R - 0.003f, 0.004f, 0 }, { R, 0.012f, 0 }, { R, H, 0 } };
+    shell(pm, o, 5, 0.0025f, 0.004f, 48);
+    /* a capsule base */
+    pm_mat(pm, PMAT_STAINLESS);
+    PmProf bs[4] = { { 0, -0.004f, 0 }, { R - 0.02f, -0.004f, 0 }, { R - 0.02f, 0.001f, 0 }, { 0, 0.001f, 0 } };
+    lathe(pm, bs, 4, 40);
+    pm_mat(pm, copper ? PMAT_BRASS : PMAT_STAINLESS);
+    loop_handle(pm, R, H - 0.055f, 1.0f, 0.035f, 0.045f, 0.0055f);
+    loop_handle(pm, R, H - 0.055f, -1.0f, 0.035f, 0.045f, 0.0055f);
+    /* broth at four fifths full */
+    pm_mat(pm, PMAT_BROTH);
+    float rb = R - 0.0035f;
+    PmProf br[4] = { { 0, 0.8f * H - 0.004f, 0 }, { rb, 0.8f * H - 0.004f, 0 }, { rb, 0.8f * H, 0 }, { 0, 0.8f * H, 0 } };
+    lathe(pm, br, 4, 40);
+}
+static void m_stockpot_s(Pm *pm) { stockpot(pm, 0.15f, 0.30f, 1); }
+static void m_stockpot_l(Pm *pm) { stockpot(pm, 0.20f, 0.38f, 0); }
+
+/* A lid for the small pot, its rim at y 0, a loop handle on top. */
+static void m_lid(Pm *pm) {
+    pm_mat(pm, PMAT_STAINLESS);
+    PmProf p[8] = { { 0, 0, 0 }, { 0.148f, 0, 0 }, { 0.156f, 0.002f, 0 }, { 0.156f, 0.006f, 1 }, { 0.148f, 0.01f, 0 }, { 0.11f, 0.026f, 0 }, { 0.05f, 0.036f, 0 }, { 0, 0.038f, 0 } };
+    lathe(pm, p, 8, 48);
+    PmPath pa;
+    pm_path_init(&pa, 16);
+    int n = L0 ? 10 : 4;
+    for (int k = 0; k <= n; ++k) { float a = PI_F * (float)k / (float)n; pm_path_add(&pa, -0.035f * cosf(a), 0.036f + 0.025f * sinf(a), 0, 0); }
+    pm_tube(pm, &pa, 0.005f, 10, 3);
+    pm_path_free(&pa);
+}
+
+/* A stack of six enamel bowls, 0.19 m round. */
+/* A bowl; one under another shows only its outside and rim, so it is closed by a disc just below the
+ * rim of the one sitting in it. */
+static void bowl(Pm *pm, int top) {
+    PmProf o[8] = { { 0, 0.004f, 0 }, { 0.031f, 0.004f, 0 }, { 0.033f, 0.0f, 1 }, { 0.039f, 0.0f, 1 }, { 0.041f, 0.007f, 1 }, { 0.07f, 0.025f, 0 }, { 0.088f, 0.05f, 0 }, { 0.095f, 0.072f, 0 } };
+    if (top) { shell(pm, o, 8, 0.004f, 0.0f, 40); return; }
+    PmProf c[11];
+    memcpy(c, o, sizeof(o));
+    c[8].r = 0.0955f; c[8].y = 0.0745f; c[8].hard = 0;
+    c[9].r = 0.091f;  c[9].y = 0.0745f; c[9].hard = 1;
+    c[10].r = 0.0f;   c[10].y = 0.0745f; c[10].hard = 0;
+    lathe(pm, c, 11, 40);
+}
+static void m_bowl_stack(Pm *pm) {
+    pm_mat(pm, PMAT_ENAMEL);
+    if (L2) {
+        PmProf s[5] = { { 0, 0, 0 }, { 0.04f, 0, 0 }, { 0.08f, 0.03f, 0 }, { 0.095f, 0.072f + 0.11f, 0 }, { 0, 0.072f + 0.11f, 0 } };
+        lathe(pm, s, 5, 24);
+        return;
+    }
+    for (int k = 0; k < 6; ++k) { pm_push(pm); pm_translate(pm, 0, 0.022f * (float)k, 0); pm->part = (uint8_t)k; bowl(pm, k == 5); pm_pop(pm); }
+    pm->part = 0;
+}
+
+/* A glass jar, its contents, a lid and a label. */
+static void jar(Pm *pm, float R, float H, int contents) {
+    pm_mat(pm, PMAT_GLASS);
+    PmProf o[7] = { { 0, 0, 0 }, { R - 0.006f, 0, 0 }, { R, 0.006f, 0 }, { R, H - 0.025f, 0 }, { R - 0.006f, H - 0.015f, 0 }, { R - 0.01f, H - 0.012f, 0 }, { R - 0.01f, H - 0.002f, 0 } };
+    shell(pm, o, 7, 0.003f, 0.0f, 32);
+    pm_mat(pm, contents);
+    float fill = contents == PMAT_OIL ? 0.7f : 0.82f;
+    PmProf c[4] = { { 0, 0.004f, 0 }, { R - 0.0035f, 0.004f, 0 }, { R - 0.0035f, fill * H, 0 }, { 0, fill * H, 0 } };
+    lathe(pm, c, 4, 24);
+    pm_mat(pm, PMAT_RED);
+    PmProf l[6] = { { 0, H - 0.014f, 0 }, { R - 0.007f, H - 0.014f, 0 }, { R - 0.007f, H + 0.004f, 0 }, { R - 0.009f, H + 0.006f, 0 }, { 0, H + 0.006f, 0 } };
+    lathe(pm, l, 5, 32);
+    if (!L2) { pm_mat(pm, PMAT_PAPER); band(pm, R + 0.0001f, R + 0.0007f, 0.3f * H, 0.68f * H, 32); }
+}
+static void m_jar_oil(Pm *pm) { jar(pm, 0.05f, 0.16f, PMAT_OIL); }
+static void m_jar_ginger(Pm *pm) { jar(pm, 0.065f, 0.13f, PMAT_GINGER); }
+
+/* A sauce bottle, dark glass, 0.25 m. */
+static void m_bottle(Pm *pm) {
+    pm_mat(pm, PMAT_GLASS);
+    PmProf p[10] = { { 0, 0.003f, 0 }, { 0.026f, 0.0f, 0 }, { 0.031f, 0.004f, 0 }, { 0.032f, 0.012f, 0 }, { 0.032f, 0.15f, 0 },
+                     { 0.028f, 0.172f, 0 }, { 0.015f, 0.2f, 0 }, { 0.0125f, 0.228f, 0 }, { 0.0125f, 0.232f, 0 }, { 0, 0.232f, 0 } };
+    lathe(pm, p, 10, 28);
+    pm_mat(pm, PMAT_RED);
+    PmProf c[5] = { { 0, 0.226f, 0 }, { 0.0138f, 0.226f, 0 }, { 0.0138f, 0.249f, 0 }, { 0.0125f, 0.251f, 0 }, { 0, 0.251f, 0 } };
+    lathe(pm, c, 5, 20);
+    if (!L2) { pm_mat(pm, PMAT_PAPER); band(pm, 0.0321f, 0.0326f, 0.04f, 0.12f, 28); }
+}
+
+/* --------------------------------------------------------- the range --- */
+/* A ring burner, 0.12 m, on y 0. */
+static void m_burner(Pm *pm) {
+    pm_mat(pm, PMAT_CAST_IRON);
+    PmProf b[8] = { { 0, 0, 0 }, { 0.06f, 0, 0 }, { 0.06f, 0.014f, 0 }, { 0.056f, 0.018f, 0 }, { 0.05f, 0.018f, 0 }, { 0.046f, 0.026f, 0 }, { 0.046f, 0.03f, 0 }, { 0, 0.03f, 0 } };
+    lathe(pm, b, 8, 32);
+    /* the flame ports: notches round the crown, as teeth at LOD0 */
+    if (L0)
+        for (int k = 0; k < 24; ++k) {
+            float a = 2.0f * PI_F * (float)k / 24.0f;
+            pm_push(pm); pm_rotate_y(pm, a);
+            float c[3] = { 0.043f, 0.0335f, 0 }, h[3] = { 0.004f, 0.0035f, 0.0025f };
+            pm_bbox(pm, c, h, 0.0f, 1);
+            pm_pop(pm);
+        }
+    pm_mat(pm, PMAT_BRASS);
+    PmProf c[6] = { { 0, 0.034f, 0 }, { 0.040f, 0.034f, 0 }, { 0.042f, 0.037f, 0 }, { 0.040f, 0.041f, 0 }, { 0.02f, 0.044f, 0 }, { 0, 0.045f, 0 } };
+    lathe(pm, c, 6, 32);
+}
+static void m_grate(Pm *pm) { pm_grate(pm, 0.45f, 0.015f); }
+
+/* A wok burner: the jet ring in a drip pan, a raised cradle (ring 0.35 m). */
+static void m_wok_burner(Pm *pm) {
+    pm_mat(pm, PMAT_CAST_IRON);
+    PmProf pan[7] = { { 0, 0, 0 }, { 0.2f, 0, 0 }, { 0.2f, 0.035f, 1 }, { 0.192f, 0.035f, 1 }, { 0.192f, 0.008f, 1 }, { 0.0f, 0.008f, 0 } };
+    lathe(pm, pan, 6, 40);
+    pm_push(pm); pm_translate(pm, 0, 0.03f, 0); pm_torus(pm, 0.06f, 0.012f, 32, 8); pm_pop(pm);
+    int nj = L0 ? 16 : L2 ? 0 : 8;
+    pm_mat(pm, PMAT_BRASS);
+    for (int k = 0; k < nj; ++k) {
+        float a = 2.0f * PI_F * (float)k / (float)nj;
+        pm_push(pm);
+        pm_translate(pm, 0.06f * cosf(a), 0.04f, 0.06f * sinf(a));
+        PmProf j[5] = { { 0, 0, 0 }, { 0.0055f, 0, 0 }, { 0.0045f, 0.014f, 0 }, { 0.003f, 0.016f, 0 }, { 0, 0.016f, 0 } };
+        lathe(pm, j, 5, 8);
+        pm_pop(pm);
+    }
+    PmProf hub[4] = { { 0, 0.008f, 0 }, { 0.028f, 0.008f, 0 }, { 0.024f, 0.05f, 0 }, { 0, 0.05f, 0 } };
+    lathe(pm, hub, 4, 20);
+    pm_mat(pm, PMAT_CAST_IRON);
+    pm_push(pm); pm_translate(pm, 0, 0.18f, 0); pm_torus(pm, 0.175f, 0.012f, 48, 8); pm_pop(pm);
+    for (int k = 0; k < 4; ++k) {
+        float a = 0.5f * PI_F * (float)k + 0.25f * PI_F, p0[3], p1[3];
+        set3(p0, 0.19f * cosf(a), 0.0f, 0.19f * sinf(a)); set3(p1, 0.176f * cosf(a), 0.18f, 0.176f * sinf(a));
+        pm_beam(pm, p0, p1, 0.022f, 0.016f, 0.003f, NULL);
+        float f0[3], f1[3], f2[3];
+        set3(f0, 0.175f * cosf(a + 0.25f * PI_F), 0.18f, 0.175f * sinf(a + 0.25f * PI_F));
+        set3(f1, 0.11f * cosf(a + 0.25f * PI_F), 0.17f, 0.11f * sinf(a + 0.25f * PI_F));
+        set3(f2, 0.11f * cosf(a + 0.25f * PI_F), 0.205f, 0.11f * sinf(a + 0.25f * PI_F));
+        pm_beam(pm, f0, f1, 0.014f, 0.016f, 0.002f, NULL);
+        pm_beam(pm, f1, f2, 0.014f, 0.014f, 0.002f, NULL);
+    }
+}
+
+/* A bamboo steamer stack, 0.30 m: three tiers and a lid. */
+static void steamer_tier(Pm *pm, float y) {
+    PmProf w[5] = { { 0.142f, y, 1 }, { 0.15f, y, 1 }, { 0.15f, y + 0.07f, 1 }, { 0.142f, y + 0.07f, 1 }, { 0.142f, y, 1 } };
+    lathe(pm, w, 5, 40);
+    if (!L2) { band(pm, 0.1495f, 0.153f, y + 0.004f, y + 0.016f, 40); band(pm, 0.1495f, 0.153f, y + 0.054f, y + 0.066f, 40); }
+    /* the slatted floor is hidden by the tier and lid above; only the bottom one's underside shows */
+    if (y == 0.0f) { PmProf f[4] = { { 0, y + 0.009f, 0 }, { 0.142f, y + 0.009f, 0 }, { 0.142f, y + 0.015f, 0 }, { 0, y + 0.015f, 0 } }; lathe(pm, f, 4, 24); }
+}
+static void m_steamer(Pm *pm) {
+    pm_mat(pm, PMAT_BAMBOO);
+    for (int k = 0; k < 3; ++k) { pm->part = (uint8_t)k; steamer_tier(pm, 0.066f * (float)k); }
+    pm->part = 3;
+    float y = 0.198f;
+    PmProf l[7] = { { 0, y, 0 }, { 0.152f, y, 0 }, { 0.152f, y + 0.022f, 1 }, { 0.14f, y + 0.03f, 0 }, { 0.09f, y + 0.05f, 0 }, { 0.03f, y + 0.058f, 0 }, { 0, y + 0.059f, 0 } };
+    lathe(pm, l, 7, 40);
+    pm->part = 0;
+}
+
+/* A GN 1/3 hotel pan (325 x 176, 150 deep), lidded or open on its curry. */
+static void gn_pan(Pm *pm, int lid) {
+    const float rc = 0.02f, hx = 0.1625f - rc, hz = 0.088f - rc;
+    int segs = pm_segs(pm, 24, 4);
+    pm_mat(pm, PMAT_STAINLESS);
+    PmProf o[6] = { { 0, 0, 0 }, { rc - 0.012f, 0, 0 }, { rc - 0.008f, 0.004f, 0 }, { rc, 0.146f, 0 }, { rc + 0.004f, 0.15f, 1 }, { rc + 0.013f, 0.15f, 0 } };
+    PmProf s[40];
+    int k = pm_prof_shell(o, 6, 0.0012f, 0.0f, 2, s, 40);
+    pm_lathe(pm, s, k, segs, hx, hz);
+    pm_mat(pm, PMAT_CURRY);
+    PmProf c[4] = { { 0, 0.09f, 0 }, { rc - 0.0035f, 0.09f, 0 }, { rc - 0.0025f, 0.122f, 0 }, { 0, 0.122f, 0 } };
+    pm_lathe(pm, c, 4, segs, hx, hz);
+    if (lid) {
+        pm_mat(pm, PMAT_STAINLESS);
+        PmProf l[6] = { { 0, 0.1505f, 0 }, { rc + 0.012f, 0.1505f, 0 }, { rc + 0.014f, 0.153f, 0 }, { rc + 0.006f, 0.157f, 0 }, { 0.0f, 0.158f, 0 } };
+        pm_lathe(pm, l, 5, segs, hx, hz);
+        float a[3] = { -0.04f, 0.168f, 0 }, b[3] = { 0.04f, 0.168f, 0 };
+        pm_beam(pm, a, b, 0.012f, 0.006f, 0.002f, NULL);
+        for (int e = -1; e <= 1; e += 2) { float p0[3] = { 0.034f * (float)e, 0.158f, 0 }, p1[3] = { 0.04f * (float)e, 0.168f, 0 }; pm_beam(pm, p0, p1, 0.01f, 0.004f, 0.0f, NULL); }
+    }
+}
+static void m_gn_pan(Pm *pm) { gn_pan(pm, 1); }
+static void m_gn_pan_open(Pm *pm) { gn_pan(pm, 0); }
+
+/* A rice cooker, 0.35 m round, 0.30 high. */
+static void m_rice_cooker(Pm *pm) {
+    pm_mat(pm, PMAT_ENAMEL);
+    PmProf b[8] = { { 0, 0.012f, 0 }, { 0.15f, 0.012f, 0 }, { 0.168f, 0.03f, 0 }, { 0.175f, 0.08f, 0 }, { 0.175f, 0.215f, 0 }, { 0.171f, 0.228f, 1 }, { 0.165f, 0.228f, 0 }, { 0, 0.228f, 0 } };
+    lathe(pm, b, 8, 48);
+    pm_mat(pm, PMAT_STAINLESS);
+    PmProf l[7] = { { 0, 0.226f, 0 }, { 0.17f, 0.226f, 0 }, { 0.172f, 0.232f, 0 }, { 0.16f, 0.25f, 0 }, { 0.11f, 0.282f, 0 }, { 0.04f, 0.295f, 0 }, { 0, 0.296f, 0 } };
+    lathe(pm, l, 7, 48);
+    pm_mat(pm, PMAT_PLASTIC);
+    PmProf k[5] = { { 0, 0.29f, 0 }, { 0.022f, 0.29f, 0 }, { 0.02f, 0.306f, 0 }, { 0.012f, 0.312f, 0 }, { 0, 0.313f, 0 } };
+    lathe(pm, k, 5, 16);
+    for (int s = -1; s <= 1; s += 2) {
+        float c[3] = { 0.183f * (float)s, 0.19f, 0 }, h[3] = { 0.012f, 0.012f, 0.045f };
+        pm_bbox(pm, c, h, 0.005f, 2);
+    }
+    for (int f = 0; f < 3; ++f) {
+        float a = 2.0f * PI_F * (float)f / 3.0f;
+        pm_push(pm); pm_translate(pm, 0.12f * cosf(a), 0, 0.12f * sinf(a));
+        PmProf ft[4] = { { 0, 0, 0 }, { 0.015f, 0, 0 }, { 0.013f, 0.013f, 0 }, { 0, 0.013f, 0 } };
+        lathe(pm, ft, 4, 10);
+        pm_pop(pm);
+    }
+    /* the front: switch and pilot lamp */
+    float sc[3] = { 0, 0.07f, 0.172f }, sh[3] = { 0.03f, 0.022f, 0.012f };
+    pm_bbox(pm, sc, sh, 0.004f, 2);
+    pm_mat(pm, PMAT_RED);
+    pm_push(pm); pm_translate(pm, 0.0f, 0.11f, 0.172f); pm_rotate_x(pm, 0.5f * PI_F);
+    PmProf lp[4] = { { 0, 0, 0 }, { 0.006f, 0, 0 }, { 0.006f, 0.007f, 0 }, { 0, 0.009f, 0 } };
+    lathe(pm, lp, 4, 12);
+    pm_pop(pm);
+}
+
+/* --------------------------------------------------------- utensils --- */
+/* A wire hook bent over the rail at the origin, its eye below. */
+static void hang_hook(Pm *pm, float drop) {
+    PmPath pa;
+    pm_path_init(&pa, 24);
+    float c[3] = { 0, 0, 0 }, ex[3] = { 0, 0, 1 }, ey[3] = { 0, 1, 0 };
+    pm_path_arc(&pa, c, ex, ey, 0.011f, -0.3f, PI_F, L0 ? 10 : 4);
+    pm_path_add(&pa, 0, -drop, -0.011f, 0);
+    pm_tube(pm, &pa, 0.0022f, 8, 3);
+    pm_path_free(&pa);
+}
+
+/* A ladle hanging by its hooked handle, the bowl (90 mm) at the bottom, opening out (+z). */
+static void m_ladle(Pm *pm) {
+    pm_mat(pm, PMAT_STAINLESS);
+    PmPath pa;
+    pm_path_init(&pa, 32);
+    float c[3] = { 0, 0, 0 }, ex[3] = { 0, 0, 1 }, ey[3] = { 0, 1, 0 };
+    pm_path_arc(&pa, c, ex, ey, 0.014f, -0.2f, PI_F, L0 ? 10 : 4);
+    pm_path_add(&pa, 0, -0.06f, -0.014f, 0);
+    pm_path_add(&pa, 0, -0.33f, -0.014f, 0);
+    pm_path_add(&pa, 0, -0.355f, -0.004f, 0);
+    PmSect s;
+    pm_sect_rect(&s, 0.012f, 0.003f, 0.0008f);
+    PmPath f;
+    pm_path_init(&f, 64);
+    pm_path_fillet(&pa, 0.02f, L0 ? 6 : 2, &f);
+    float up[3] = { 1, 0, 0 };
+    pm_sweep(pm, &f, &s, up, 3);
+    pm_path_free(&f);
+    pm_path_free(&pa);
+    pm_push(pm);
+    pm_translate(pm, 0, -0.4f, 0.0f);
+    pm_rotate_x(pm, 0.5f * PI_F);   /* the bowl's opening (+y) out to +z */
+    pm_translate(pm, 0, -0.045f, 0);
+    PmProf o[6] = { { 0, 0, 0 }, { 0.02f, 0.002f, 0 }, { 0.034f, 0.01f, 0 }, { 0.042f, 0.022f, 0 }, { 0.045f, 0.035f, 0 }, { 0.045f, 0.045f, 0 } };
+    shell(pm, o, 6, 0.0015f, 0.002f, 28);
+    pm_pop(pm);
+}
+
+/* A spider (wire skimmer): a bamboo handle hung from its loop, the basket below facing out. */
+static void m_spider(Pm *pm) {
+    pm_mat(pm, PMAT_STEEL);
+    hang_hook(pm, 0.01f);
+    pm_mat(pm, PMAT_BAMBOO);
+    PmProf h[5] = { { 0, -0.29f, 0 }, { 0.011f, -0.29f, 0 }, { 0.0125f, -0.03f, 0 }, { 0.011f, -0.018f, 0 }, { 0, -0.018f, 0 } };
+    lathe(pm, h, 5, 12);
+    pm_mat(pm, PMAT_BRASS);
+    band(pm, 0.0, 0.0135f, -0.31f, -0.285f, 12);
+    pm_mat(pm, PMAT_STEEL);
+    /* the twisted wire shank and the basket */
+    float a[3] = { 0.003f, -0.31f, 0 }, b[3] = { 0.003f, -0.38f, 0.0f };
+    float a2[3] = { -0.003f, -0.31f, 0 }, b2[3] = { -0.003f, -0.38f, 0.0f };
+    pm_beam(pm, a, b, 0.003f, 0.003f, 0.0f, NULL);
+    pm_beam(pm, a2, b2, 0.003f, 0.003f, 0.0f, NULL);
+    pm_push(pm);
+    pm_translate(pm, 0, -0.46f, 0.0f);
+    pm_rotate_x(pm, 0.5f * PI_F);
+    int rings = L0 ? 5 : L2 ? 1 : 3;
+    for (int k = 1; k <= rings; ++k) {
+        float t = (float)k / (float)rings, r = 0.08f * t, y = -0.03f * (1.0f - t * t);
+        pm_push(pm); pm_translate(pm, 0, y, 0); pm_torus(pm, r, k == rings ? 0.0025f : 0.0012f, 32, 4); pm_pop(pm);
+    }
+    int sp = L0 ? 12 : L2 ? 0 : 6;
+    for (int k = 0; k < sp; ++k) {
+        float ang = 2.0f * PI_F * (float)k / (float)sp;
+        PmPath pa;
+        pm_path_init(&pa, 12);
+        for (int j = 0; j <= 6; ++j) { float t = (float)j / 6.0f, r = 0.08f * t; pm_path_add(&pa, r * cosf(ang), -0.03f * (1.0f - t * t), r * sinf(ang), 0); }
+        pm_tube(pm, &pa, 0.0011f, 4, 3);
+        pm_path_free(&pa);
+    }
+    pm_pop(pm);
+}
+
+/* A slotted spatula hung from its hole; a riveted timber handle. */
+static void m_spatula(Pm *pm) {
+    pm_mat(pm, PMAT_STEEL);
+    hang_hook(pm, 0.015f);
+    pm_mat(pm, PMAT_TIMBER);
+    float hc[3] = { 0, -0.11f, 0 }, hh[3] = { 0.012f, 0.085f, 0.009f };
+    pm_bbox(pm, hc, hh, 0.004f, 2);
+    if (L0) for (int k = 0; k < 2; ++k) { pm_push(pm); pm_translate(pm, 0, -0.07f - 0.07f * (float)k, 0.009f); pm_rotate_x(pm, 0.5f * PI_F); pm_mat(pm, PMAT_BRASS); m_rivet(pm); pm_pop(pm); }
+    pm_mat(pm, PMAT_STAINLESS);
+    const float zup[3] = { 0, 0, 1 };
+    float a[3] = { 0, -0.19f, 0 }, b[3] = { 0, -0.28f, 0.012f };
+    pm_beam(pm, a, b, 0.016f, 0.003f, 0.0f, zup);
+    /* the blade: tines between slots, with its top and its edge */
+    float y0 = -0.28f, y1 = -0.37f, w = 0.1f;
+    float top0[3] = { -0.5f * w, y0, 0.012f }, top1[3] = { 0.5f * w, y0, 0.012f };
+    pm_beam(pm, top0, top1, 0.012f, 0.002f, 0.0f, zup);
+    float e0[3] = { -0.5f * w, y1, 0.012f }, e1[3] = { 0.5f * w, y1, 0.012f };
+    pm_beam(pm, e0, e1, 0.012f, 0.002f, 0.0f, zup);
+    int nt = L2 ? 1 : 6;
+    for (int k = 0; k < nt; ++k) {
+        float x = nt == 1 ? 0.0f : -0.5f * w + 0.005f + (w - 0.01f) * (float)k / (float)(nt - 1);
+        float p0[3] = { x, y0, 0.012f }, p1[3] = { x, y1, 0.012f };
+        pm_beam(pm, p0, p1, nt == 1 ? w : 0.009f, 0.002f, 0.0f, zup);
+    }
+}
+
+/* A cleaver hung by the hole in its blade's corner. */
+static void m_cleaver(Pm *pm) {
+    pm_mat(pm, PMAT_STEEL);
+    hang_hook(pm, 0.012f);
+    pm_mat(pm, PMAT_STAINLESS);
+    float poly[6][2] = { { -0.02f, -0.012f }, { -0.02f, -0.1f }, { 0.185f, -0.104f }, { 0.19f, -0.015f }, { 0.17f, -0.008f }, { 0.0f, -0.008f } };
+    pm_extrude(pm, (const float (*)[2])poly, 6, -0.0015f, 0.0015f);
+    pm_mat(pm, PMAT_TIMBER);
+    float a[3] = { 0.185f, -0.03f, 0 }, b[3] = { 0.3f, -0.026f, 0 };
+    pm_beam(pm, a, b, 0.016f, 0.024f, 0.004f, NULL);
+    if (L0)
+        for (int k = 0; k < 3; ++k)
+            for (int s = -1; s <= 1; s += 2) {
+                pm_push(pm); pm_translate(pm, 0.205f + 0.035f * (float)k, -0.029f, 0.008f * (float)s); pm_rotate_x(pm, 0.5f * PI_F * (float)s);
+                pm_mat(pm, PMAT_BRASS); m_rivet(pm); pm_pop(pm);
+            }
+}
+
+/* An S hook: its top over the rail at the origin. */
+static void m_s_hook(Pm *pm) {
+    pm_mat(pm, PMAT_STEEL);
+    PmPath pa;
+    pm_path_init(&pa, 32);
+    float c0[3] = { 0, 0, 0 }, c1[3] = { 0, -0.05f, 0 }, ex[3] = { 0, 0, 1 }, ey[3] = { 0, 1, 0 };
+    int n = L0 ? 10 : 4;
+    pm_path_arc(&pa, c0, ex, ey, 0.011f, -0.2f, PI_F, n);
+    pa.n--;   /* join the arcs with the straight between them */
+    PmPath b;
+    pm_path_init(&b, 16);
+    pm_path_arc(&b, c1, ex, ey, 0.011f, 0.0f, -PI_F - 0.2f, n);
+    for (int k = 0; k < b.n; ++k) pm_path_add(&pa, b.p[k][0], b.p[k][1], b.p[k][2], 0);
+    pm_tube(pm, &pa, 0.0025f, 8, 3);
+    pm_path_free(&b);
+    pm_path_free(&pa);
+}
+
+/* A utensil rail, 1 m along x, 45 mm off the wall (z 0), on two stand-offs. */
+static void m_utensil_rail(Pm *pm) {
+    pm_mat(pm, PMAT_STAINLESS);
+    PmPath pa;
+    pm_path_init(&pa, 2);
+    pm_path_add(&pa, -0.5f, 0, 0.045f, 0);
+    pm_path_add(&pa, 0.5f, 0, 0.045f, 0);
+    pm_tube(pm, &pa, 0.008f, 14, 3);
+    pm_path_free(&pa);
+    for (int s = -1; s <= 1; s += 2) {
+        pm_push(pm);
+        pm_translate(pm, 0.45f * (float)s, 0, 0);
+        pm_rotate_x(pm, 0.5f * PI_F);
+        PmProf p[7] = { { 0, 0, 0 }, { 0.025f, 0, 0 }, { 0.025f, 0.004f, 0 }, { 0.01f, 0.008f, 0 }, { 0.008f, 0.012f, 0 }, { 0.008f, 0.046f, 0 }, { 0, 0.046f, 0 } };
+        lathe(pm, p, 7, 16);
+        if (L0) for (int k = 0; k < 2; ++k) { pm_push(pm); pm_translate(pm, 0.017f * (k ? 1.0f : -1.0f), 0.004f, 0); pm_place(pm, PMK_BOLT); pm_pop(pm); }
+        pm_pop(pm);
+    }
+}
+
+/* ------------------------------------------------------- gas, fan, power --- */
+static void gas_bottle(Pm *pm, float R, float H) {
+    pm_mat(pm, PMAT_RED);
+    /* the foot ring */
+    PmProf f[5] = { { R * 0.86f, 0, 1 }, { R * 0.9f, 0, 1 }, { R * 0.9f, 0.06f, 1 }, { R * 0.86f, 0.06f, 1 }, { R * 0.86f, 0, 1 } };
+    lathe(pm, f, 5, 40);
+    /* the body: a cylinder with ellipsoidal ends */
+    PmProf b[16];
+    int n = 0;
+    int e = L0 ? 6 : 3;
+    for (int k = 0; k <= e; ++k) { float a = -0.5f * PI_F + 0.5f * PI_F * (float)k / (float)e; b[n].r = R * cosf(a); b[n].y = 0.035f + 0.45f * R + 0.45f * R * sinf(a); b[n].hard = 0; n++; }
+    for (int k = 0; k <= e; ++k) { float a = 0.5f * PI_F * (float)k / (float)e; b[n].r = R * cosf(a); b[n].y = H - 0.12f - 0.45f * R + 0.45f * R * sinf(a); b[n].hard = 0; n++; }
+    lathe(pm, b, n, 40);
+    if (!L2) { band(pm, R - 0.001f, R + 0.002f, 0.035f + 0.45f * R - 0.01f, 0.035f + 0.45f * R + 0.01f, 40); }
+    /* the shroud round the valve */
+    float ys = H - 0.12f - 0.08f;
+    PmProf sh[6] = { { 0.085f, ys, 1 }, { 0.09f, ys, 1 }, { 0.09f, H - 0.005f, 1 }, { 0.083f, H, 0 }, { 0.083f, ys + 0.02f, 1 }, { 0.085f, ys, 1 } };
+    lathe(pm, sh, 6, 32);
+    /* the valve */
+    pm_mat(pm, PMAT_BRASS);
+    float yv = H - 0.12f;
+    PmProf v[6] = { { 0, yv - 0.01f, 0 }, { 0.016f, yv - 0.01f, 0 }, { 0.016f, yv + 0.035f, 0 }, { 0.012f, yv + 0.04f, 0 }, { 0.008f, yv + 0.055f, 0 }, { 0, yv + 0.055f, 0 } };
+    lathe(pm, v, 6, 16);
+    pm_push(pm); pm_translate(pm, 0, yv + 0.025f, 0); pm_rotate_z(pm, -0.5f * PI_F);
+    PmProf o[4] = { { 0, 0, 0 }, { 0.007f, 0, 0 }, { 0.007f, 0.04f, 0 }, { 0, 0.04f, 0 } };
+    lathe(pm, o, 4, 10);
+    pm_pop(pm);
+    pm_mat(pm, PMAT_RED);
+    pm_push(pm); pm_translate(pm, 0, yv + 0.058f, 0); pm_torus(pm, 0.026f, 0.004f, 20, 6);
+    for (int k = 0; k < 3; ++k) { float a = 2.0f * PI_F * (float)k / 3.0f, p0[3] = { 0, 0, 0 }, p1[3] = { 0.025f * cosf(a), 0, 0.025f * sinf(a) }; pm_beam(pm, p0, p1, 0.005f, 0.004f, 0.0f, NULL); }
+    pm_pop(pm);
+}
+static void m_gas_13(Pm *pm) { gas_bottle(pm, 0.155f, 0.6f); }
+static void m_gas_47(Pm *pm) { gas_bottle(pm, 0.185f, 1.3f); }
+
+/* An extractor fan, 0.35 m, in its housing on a wall (z 0), facing +z behind a grille. */
+static void m_fan(Pm *pm) {
+    pm_mat(pm, PMAT_PAINTED);
+    float R = 0.175f;
+    pm_push(pm);
+    pm_rotate_x(pm, 0.5f * PI_F);   /* the lathe's axis (+y) out of the wall (+z) */
+    PmProf h[8] = { { R + 0.01f, 0, 1 }, { R + 0.04f, 0, 1 }, { R + 0.04f, 0.008f, 1 }, { R + 0.01f, 0.012f, 1 }, { R + 0.01f, 0.14f, 1 }, { R + 0.002f, 0.14f, 1 }, { R + 0.002f, 0.0f, 1 }, { R + 0.01f, 0, 1 } };
+    lathe(pm, h, 8, 48);
+    pm_mat(pm, PMAT_STEEL);
+    PmProf mo[6] = { { 0, 0.0f, 0 }, { 0.06f, 0.0f, 0 }, { 0.06f, 0.06f, 0 }, { 0.04f, 0.075f, 0 }, { 0.02f, 0.085f, 0 }, { 0, 0.086f, 0 } };
+    lathe(pm, mo, 6, 24);
+    /* the blades round the hub, pitched */
+    int nb = 5;
+    for (int k = 0; k < nb; ++k) {
+        pm_push(pm);
+        pm_translate(pm, 0, 0.095f, 0);
+        pm_rotate_y(pm, 2.0f * PI_F * (float)k / (float)nb);
+        pm_translate(pm, 0.1f, 0, 0);
+        pm_rotate_x(pm, 0.45f);
+        float c[3] = { 0, 0, 0 }, hh[3] = { 0.07f, 0.0015f, 0.045f };
+        pm_bbox(pm, c, hh, 0.0012f, 1);
+        pm_pop(pm);
+    }
+    PmProf hub[5] = { { 0, 0.085f, 0 }, { 0.035f, 0.085f, 0 }, { 0.035f, 0.105f, 0 }, { 0.02f, 0.115f, 0 }, { 0, 0.118f, 0 } };
+    lathe(pm, hub, 5, 20);
+    pm_pop(pm);
+    pm_mat(pm, PMAT_STEEL);
+    pm_push(pm);
+    pm_translate(pm, 0, 0, 0.143f);
+    pm_grille_round(pm, R + 0.005f, 0.003f, L0 ? 5 : L2 ? 2 : 3, L0 ? 8 : 4);
+    pm_pop(pm);
+}
+
+/* A power panel: a riveted box 0.4 x 0.6 x 0.15 on a wall (z 0, its foot at y 0), a door, switches,
+ * insulators on a cross arm, glands underneath, a warning card. */
+static void m_power_panel(Pm *pm) {
+    const float W = 0.4f, H = 0.6f, D = 0.15f;
+    pm_mat(pm, PMAT_PLATE);
+    float c[3] = { 0, 0.5f * H, 0.5f * D - 0.006f }, h[3] = { 0.5f * W, 0.5f * H, 0.5f * D - 0.006f };
+    pm_bbox(pm, c, h, 0.006f, 2);
+    /* the door, proud of the front, and its frame */
+    pm_mat(pm, PMAT_PAINTED);
+    float dc[3] = { 0, 0.5f * H, D - 0.006f }, dh[3] = { 0.5f * W - 0.012f, 0.5f * H - 0.012f, 0.007f };
+    pm_bbox(pm, dc, dh, 0.004f, 2);
+    float n[3] = { 0, 0, 1 };
+    if (pm->inst || L0) {
+        float y0 = 0.03f, y1 = H - 0.03f, x0 = -0.5f * W + 0.03f, x1 = 0.5f * W - 0.03f, z = D + 0.001f;
+        float a[3] = { x0, y0, z }, b[3] = { x1, y0, z }, cc[3] = { x1, y1, z }, d[3] = { x0, y1, z };
+        pm_rivet_row(pm, a, b, n, 0.06f); pm_rivet_row(pm, d, cc, n, 0.06f);
+        pm_rivet_row(pm, a, d, n, 0.06f); pm_rivet_row(pm, b, cc, n, 0.06f);
+    }
+    /* hinges and a handle */
+    pm_mat(pm, PMAT_STEEL);
+    for (int k = 0; k < 2; ++k) {
+        pm_push(pm); pm_translate(pm, -0.5f * W + 0.004f, 0.12f + 0.36f * (float)k, D + 0.004f);
+        PmProf hp[4] = { { 0, -0.03f, 0 }, { 0.007f, -0.03f, 0 }, { 0.007f, 0.03f, 0 }, { 0, 0.03f, 0 } };
+        lathe(pm, hp, 4, 10);
+        pm_pop(pm);
+    }
+    {
+        float a[3] = { 0.5f * W - 0.05f, 0.24f, D + 0.025f }, b[3] = { 0.5f * W - 0.05f, 0.36f, D + 0.025f };
+        pm_beam(pm, a, b, 0.012f, 0.012f, 0.003f, NULL);
+        for (int k = 0; k < 2; ++k) { float p0[3] = { 0.5f * W - 0.05f, 0.25f + 0.1f * (float)k, D + 0.001f }, p1[3] = { 0.5f * W - 0.05f, 0.25f + 0.1f * (float)k, D + 0.025f }; pm_beam(pm, p0, p1, 0.01f, 0.01f, 0.0f, NULL); }
+    }
+    /* four toggles on the door, a warning card and the hand-written circuit card */
+    for (int k = 0; k < 4; ++k) {
+        pm_push(pm); pm_translate(pm, -0.11f + 0.07f * (float)k, 0.42f, D + 0.001f); pm_rotate_x(pm, 0.5f * PI_F);
+        pm_place(pm, PMK_TOGGLE);
+        pm_pop(pm);
+    }
+    pm_mat(pm, PMAT_PAPER);
+    {
+        float tri[3][2] = { { -0.05f, 0.0f }, { 0.05f, 0.0f }, { 0.0f, 0.087f } };
+        pm_push(pm); pm_translate(pm, -0.05f, 0.22f, D + 0.001f);
+        pm->part = 1;
+        pm_extrude(pm, (const float (*)[2])tri, 3, 0.0f, 0.0015f);
+        pm_pop(pm);
+        pm->part = 2;
+        float cc2[3] = { 0.06f, 0.15f, D + 0.0018f }, ch[3] = { 0.06f, 0.04f, 0.0008f };
+        pm_bbox(pm, cc2, ch, 0.0f, 1);
+        pm->part = 0;
+    }
+    /* the cross arm and its insulators on top */
+    pm_mat(pm, PMAT_STEEL);
+    {
+        float a[3] = { -0.22f, H + 0.02f, 0.06f }, b[3] = { 0.22f, H + 0.02f, 0.06f };
+        pm_beam(pm, a, b, 0.04f, 0.04f, 0.0f, NULL);
+        for (int s = -1; s <= 1; s += 2) { float p0[3] = { 0.15f * (float)s, H, 0.01f }, p1[3] = { 0.15f * (float)s, H + 0.02f, 0.06f }; pm_beam(pm, p0, p1, 0.03f, 0.006f, 0.0f, NULL); }
+        for (int k = 0; k < 3; ++k) { pm_push(pm); pm_translate(pm, -0.15f + 0.15f * (float)k, H + 0.04f, 0.06f); pm_place(pm, PMK_INSULATOR); pm_pop(pm); }
+    }
+    /* glands underneath, where the cables leave */
+    pm_mat(pm, PMAT_PLASTIC);
+    for (int k = 0; k < 3; ++k) {
+        pm_push(pm); pm_translate(pm, -0.12f + 0.12f * (float)k, 0.0f, 0.07f); pm_rotate_x(pm, PI_F);
+        PmProf g[6] = { { 0, 0, 0 }, { 0.016f, 0, 1 }, { 0.016f, 0.008f, 1 }, { 0.012f, 0.012f, 0 }, { 0.011f, 0.03f, 0 }, { 0, 0.03f, 0 } };
+        lathe(pm, g, 6, 16);
+        pm_pop(pm);
+    }
+}
+
+/* A shelf bracket on a wall (z 0): a gusset 0.28 deep, its top at y 0. */
+static void m_shelf_bracket(Pm *pm) {
+    pm_mat(pm, PMAT_PAINTED);
+    float poly[5][2] = { { 0.0f, 0.0f }, { 0.0f, -0.25f }, { 0.03f, -0.25f }, { 0.28f, -0.03f }, { 0.28f, 0.0f } };
+    pm_push(pm);
+    pm_rotate_y(pm, -0.5f * PI_F);   /* the polygon's x (out) onto +z */
+    pm_extrude(pm, (const float (*)[2])poly, 5, -0.003f, 0.003f);
+    pm_pop(pm);
+    /* flanges along the wall and under the shelf */
+    float a[3] = { 0, -0.25f, 0.002f }, b[3] = { 0, 0.0f, 0.002f }, up[3] = { 0, 0, 1 };
+    pm_beam(pm, a, b, 0.03f, 0.004f, 0.0f, up);
+    float c[3] = { 0, -0.002f, 0.0f }, d[3] = { 0, -0.002f, 0.28f };
+    pm_beam(pm, c, d, 0.03f, 0.004f, 0.0f, NULL);
+    if (!L2) for (int k = 0; k < 2; ++k) { pm_push(pm); pm_translate(pm, 0, -0.05f - 0.15f * (float)k, 0.004f); pm_rotate_x(pm, 0.5f * PI_F); pm_place(pm, PMK_BOLT); pm_pop(pm); }
+}
+
+/* A menu A-frame, 0.6 x 0.9: two chalk boards in timber frames, hinged at the top, a chain between. */
+static void m_a_frame(Pm *pm) {
+    const float W = 0.6f, H = 0.9f, splay = 0.2f;
+    for (int s = -1; s <= 1; s += 2) {
+        pm_push(pm);
+        pm_translate(pm, 0, H * cosf(splay), 0);
+        pm_rotate_x(pm, (float)s * splay);
+        pm_translate(pm, 0, -H, 0);
+        pm_mat(pm, PMAT_TIMBER);
+        float fw = 0.035f, ft = 0.02f;
+        float c[4][3] = { { -0.5f * W, 0, 0 }, { 0.5f * W, 0, 0 }, { 0.5f * W, H, 0 }, { -0.5f * W, H, 0 } };
+        for (int k = 0; k < 4; ++k) {
+            float a[3], b[3], d[3];
+            for (int i = 0; i < 3; ++i) { a[i] = c[k][i]; b[i] = c[(k + 1) % 4][i]; d[i] = b[i] - a[i]; }
+            float l = sqrtf(d[0] * d[0] + d[1] * d[1]);
+            for (int i = 0; i < 2; ++i) { a[i] += (k & 1 ? 0 : 0) ; d[i] /= l; }
+            /* inset the bars' centrelines by half their width */
+            float in[4][2] = { { 0, 0.5f * fw }, { -0.5f * fw, 0 }, { 0, -0.5f * fw }, { 0.5f * fw, 0 } };
+            a[0] += in[k][0] - d[0] * 0.5f * fw; a[1] += in[k][1] - d[1] * 0.5f * fw;
+            b[0] += in[k][0] + d[0] * 0.5f * fw; b[1] += in[k][1] + d[1] * 0.5f * fw;
+            float up[3] = { 0, 0, 1 };
+            pm_beam(pm, a, b, fw, ft, 0.003f, up);
+        }
+        pm_mat(pm, PMAT_CHALK);
+        float bc[3] = { 0, 0.5f * H, 0 }, bh[3] = { 0.5f * W - fw + 0.004f, 0.5f * H - fw + 0.004f, 0.005f };
+        pm_bbox(pm, bc, bh, 0.0f, 1);
+        pm_pop(pm);
+    }
+    pm_mat(pm, PMAT_STEEL);
+    for (int s = -1; s <= 1; s += 2) {
+        pm_push(pm); pm_translate(pm, 0.25f * (float)s, H * cosf(splay), 0); pm_rotate_z(pm, 0.5f * PI_F);
+        PmProf hp[4] = { { 0, -0.03f, 0 }, { 0.006f, -0.03f, 0 }, { 0.006f, 0.03f, 0 }, { 0, 0.03f, 0 } };
+        lathe(pm, hp, 4, 10);
+        pm_pop(pm);
+    }
+    if (!L2) {
+        /* the chain: links along the span between the boards at a third of the height */
+        float y = H * cosf(splay) * 0.35f, z = (H - H * 0.35f) * sinf(splay);
+        int nl = L0 ? 9 : 3;
+        for (int k = 0; k < nl; ++k) {
+            float t = ((float)k + 0.5f) / (float)nl, zz = lerpf(-z, z, t), sag = 0.03f * 4.0f * t * (1.0f - t);
+            pm_push(pm); pm_translate(pm, 0.28f, y - sag, zz);
+            if (k & 1) pm_rotate_z(pm, 0.5f * PI_F);
+            pm_rotate_x(pm, 0.5f * PI_F);
+            pm_scale(pm, 1.0f, 1.0f, 1.6f);
+            pm_torus(pm, 0.008f, 0.0018f, 12, 4);
+            pm_pop(pm);
+        }
+    }
+}
+
+/* --------------------------------------------------------------- table --- */
+static const PmModuleDef DEFS[PMK_COUNT] = {
+    [PMK_RIVET]        = { "rivet",          m_rivet,          { 50, 0, 0 },          1 },
+    [PMK_RIVET_ROW4]   = { "rivet_row4",     m_rivet_row4,     { 200, 0, 0 },         1 },
+    [PMK_RIVET_ROW10]  = { "rivet_row10",    m_rivet_row10,    { 400, 0, 0 },         1 },
+    [PMK_BOLT]         = { "bolt",           m_bolt,           { 100, 50, 0 },         1 },
+    [PMK_NUT_WASHER]   = { "nut_washer",     m_nut_washer,     { 200, 150, 0 },        1 },
+    [PMK_KNOB]         = { "knob",           m_knob,           { 800, 350, 100 },      1 },
+    [PMK_TOGGLE]       = { "toggle",         m_toggle,         { 700, 150, 100 },      1 },
+    [PMK_GAUGE]        = { "gauge",          m_gauge,          { 1500, 850, 200 },     1 },
+    [PMK_VALVE_WHEEL]  = { "valve_wheel",    m_valve_wheel,    { 1550, 800, 300 },    1 },
+    [PMK_VALVE_LEVER]  = { "valve_lever",    m_valve_lever,    { 850, 400, 150 },     1 },
+    [PMK_BRACKET]      = { "bracket",        m_bracket,        { 250, 100, 50 },      1 },
+    [PMK_SADDLE]       = { "saddle",         m_saddle,         { 500, 150, 150 },      1 },
+    [PMK_INSULATOR]    = { "insulator",      m_insulator,      { 1400, 550, 300 },     1 },
+    [PMK_BELL]         = { "bell",           m_bell,           { 1050, 600, 200 },     1 },
+    [PMK_STOOL]        = { "stool",          m_stool,          { 4400, 1600, 550 },   1 },
+    [PMK_STOCKPOT_S]   = { "stockpot_s",     m_stockpot_s,     { 4700, 1400, 550 },   1 },
+    [PMK_STOCKPOT_L]   = { "stockpot_l",     m_stockpot_l,     { 4950, 1550, 550 },   1 },
+    [PMK_LID]          = { "lid",            m_lid,            { 1000, 500, 250 },    1 },
+    [PMK_BOWL_STACK]   = { "bowl_stack",     m_bowl_stack,     { 7350, 4600, 100 },   1 },
+    [PMK_JAR_OIL]      = { "jar_oil",        m_jar_oil,        { 2950, 1600, 300 },    1 },
+    [PMK_JAR_GINGER]   = { "jar_ginger",     m_jar_ginger,     { 2800, 1600, 300 },    1 },
+    [PMK_BOTTLE]       = { "bottle",         m_bottle,         { 1400, 750, 200 },     1 },
+    [PMK_BURNER]       = { "burner",         m_burner,         { 1450, 650, 200 },    1 },
+    [PMK_GRATE]        = { "grate",          m_grate,          { 3100, 250, 250 },     1 },
+    [PMK_WOK_BURNER]   = { "wok_burner",     m_wok_burner,     { 5900, 1750, 550 },   1 },
+    [PMK_STEAMER]      = { "steamer",        m_steamer,        { 5950, 3100, 500 },   1 },
+    [PMK_GN_PAN]       = { "gn_pan",         m_gn_pan,         { 3050, 1700, 500 },    1 },
+    [PMK_GN_PAN_OPEN]  = { "gn_pan_open",    m_gn_pan_open,    { 2400, 1350, 350 },    1 },
+    [PMK_RICE_COOKER]  = { "rice_cooker",    m_rice_cooker,    { 3650, 1600, 500 },   1 },
+    [PMK_LADLE]        = { "ladle",          m_ladle,          { 1450, 750, 450 },    1 },
+    [PMK_SPIDER]       = { "spider",         m_spider,         { 2950, 1150, 250 },    1 },
+    [PMK_SPATULA]      = { "spatula",        m_spatula,        { 700, 300, 150 },     1 },
+    [PMK_CLEAVER]      = { "cleaver",        m_cleaver,        { 700, 250, 100 },     1 },
+    [PMK_S_HOOK]       = { "s_hook",         m_s_hook,         { 400, 100, 100 },      1 },
+    [PMK_UTENSIL_RAIL] = { "utensil_rail",   m_utensil_rail,   { 1150, 400, 150 },     1 },
+    [PMK_GAS_13]       = { "gas_13",         m_gas_13,         { 4000, 1850, 600 },    1 },
+    [PMK_GAS_47]       = { "gas_47",         m_gas_47,         { 4500, 1950, 600 },    1 },
+    [PMK_FAN]          = { "fan",            m_fan,            { 5900, 2150, 650 },   1 },
+    [PMK_POWER_PANEL]  = { "power_panel",    m_power_panel,    { 10350, 3200, 1400 },   1 },
+    [PMK_SHELF_BRACKET]= { "shelf_bracket",  m_shelf_bracket,  { 300, 150, 50 },      1 },
+    [PMK_A_FRAME]      = { "a_frame",        m_a_frame,        { 4850, 450, 200 },    1 },
+};
+
+int pm_module_count(void) { return PMK_COUNT; }
+const PmModuleDef *pm_module(int id) { return id >= 0 && id < PMK_COUNT ? &DEFS[id] : NULL; }
+
+void pm_place(Pm *pm, int id) {
+    const PmModuleDef *d = pm_module(id);
+    if (!d) return;
+    if (pm->inst) {
+        PmInstances *l = pm->inst;
+        if (l->n == l->cap) { l->cap = l->cap ? l->cap * 2 : 64; l->v = (PmInstance *)realloc(l->v, sizeof(PmInstance) * l->cap); }
+        PmInstance *o = &l->v[l->n++];
+        memcpy(o->xf, pm->xf, sizeof(o->xf));
+        o->module = (uint16_t)id; o->part = pm->part; o->pad = 0;
+        return;
+    }
+    uint8_t mat = pm->mat, part = pm->part;
+    int depth = pm->depth;
+    pm_push(pm);
+    d->build(pm);
+    pm_pop(pm);
+    pm->depth = depth;
+    pm->mat = mat; pm->part = part;
+}
+
+void pm_module_mesh(int id, int lod, PmMesh *out) {
+    out->nv = out->ni = 0;
+    const PmModuleDef *d = pm_module(id);
+    if (!d) return;
+    Pm pm;
+    pm_begin(&pm, out, NULL, lod);
+    d->build(&pm);
+    if (out->ni) pm_bake(out, 24, pm_reach(out));
+}

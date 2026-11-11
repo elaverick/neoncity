@@ -263,6 +263,10 @@ target_include_directories(plant_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 add_executable(vendor_lab tests/vendor_lab.c src/gen/vendor.c src/gen/vendor_structure.c src/gen/vendor_tables.c
                src/gen/vendor_mesh.c src/gen/vendor_validate.c src/gen/gen_common.c)
 target_include_directories(vendor_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
+# The procedural modelling kit (src/gen/pmodel*.c; the noodle bar slice, NB1): determinism, closure, normals,
+# budgets per level; contact sheets lit with ray-traced shadows (pmodel_lab [out_dir] [--only NAME]).
+add_executable(pmodel_lab tests/pmodel_lab.c src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_bake.c)
+target_include_directories(pmodel_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # Terrain determinism, bounds, slopes, the city footprint, levels of detail and the clipmap
 # (terrain_test [--earth <test bake>] [--fingerprint]).
 add_executable(terrain_test tests/terrain_test.c ${TERRAIN_SOURCES} ${GEN_SOURCES})
@@ -294,7 +298,7 @@ if(MSVC)
 elseif(UNIX)
   target_link_libraries(grass_test PRIVATE dl)   # volk loads the Vulkan loader
 endif()
-foreach(T city_test city_map building_lab interior_lab plant_lab vendor_lab terrain_test world_test material_test grass_test sky_test)
+foreach(T city_test city_map building_lab interior_lab plant_lab vendor_lab pmodel_lab terrain_test world_test material_test grass_test sky_test)
   # the assets the tests read (the models: src/city/models.h), from the source tree
   target_compile_definitions(${T} PRIVATE NEONCITY_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets")
   if(MSVC)
@@ -315,6 +319,7 @@ add_test(NAME interior_rules COMMAND interior_lab 1500)
 add_test(NAME office_rules COMMAND interior_lab office 400)
 add_test(NAME plant_rules COMMAND plant_lab 12)
 add_test(NAME vendor_rules COMMAND vendor_lab 40)
+add_test(NAME pmodel_rules COMMAND pmodel_lab)
 # Arcology interiors over a wide area (only mega plots are generated, so it is quick).
 add_test(NAME arcology_rules COMMAND interior_lab arcology 12000)
 add_test(NAME terrain_rules COMMAND terrain_test --earth ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/earth_test.bake)
