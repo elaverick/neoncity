@@ -4,6 +4,7 @@
 #include "adverts.h"
 #include "interiors.h"
 #include "rt.h"
+#include "kit_gpu.h"
 
 /* Shared between the renderer's files (src/render/renderer*.c). Not part of
  * the public interface in renderer.h.
@@ -69,10 +70,10 @@ typedef struct RoadGpu RoadGpu;
 typedef struct GrassGpu GrassGpu;
 typedef struct CaveGpu CaveGpu;
 /* GPU timestamps between the frame's passes (renderer_gpu_times). The scene
- * pass is stamped inside: the city (GT_CITY), plants (GT_PLANTS) and proxies
+ * pass is stamped inside: the city (GT_CITY), plants (GT_PLANTS), the vendors' kit (GT_KIT) and proxies
  * (GT_SCENE), the caves (GT_CAVES), the terrain (GT_TERRAIN), the grass (GT_GRASS), then the sky
  * and the resolve (GT_SKY). GT_GRASS_PREP: the grass's compute passes. */
-enum { GT_START = 0, GT_AIR, GT_STREAM, GT_TERRAIN_UPLOAD, GT_GRASS_PREP, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_CITY, GT_PLANTS, GT_SCENE,
+enum { GT_START = 0, GT_AIR, GT_STREAM, GT_TERRAIN_UPLOAD, GT_GRASS_PREP, GT_SHELTER, GT_PREPASS, GT_TRACE, GT_DENOISE, GT_CITY, GT_PLANTS, GT_KIT, GT_SCENE,
        GT_CAVES, GT_TERRAIN, GT_GRASS, GT_SKY, GT_CLOUDS, GT_FLAMES, GT_POST, GT_COUNT };   /* GT_CAVES: the caves' bricks, before the terrain */   /* GT_CLOUDS: the reflections and the clouds; GT_FLAMES: the smoke and flame pass */
 struct Renderer {
     VkCore      *vk;
@@ -154,6 +155,7 @@ struct Renderer {
     VkPipelineLayout      shadowPL;
     VkDescriptorSet       shadowSet[MAX_FRAMES];
     VkPipeline            prepassPipe, prepassPlantPipe, tracePipe, denoisePipe;
+    VkPipeline            kitPipe, kitPrePipe;   /* the vendors' kit, instanced (kit.vert; kit_gpu.c): the scene's and the prepass's */
     mat4         prevViewProj;   /* last frame's, camera-relative to prevCam */
     double       prevCam[3];
 
@@ -211,6 +213,7 @@ typedef struct GfxDesc {
     VkFormat colorFormat2;   /* a second colour attachment (UNDEFINED: none), written unblended */
     bool positionOnly;       /* the vertex shader reads only the position attribute */
     bool noColor;            /* writes no colour */
+    bool kit;                /* a second, per-instance vertex binding: KitInstGPU (kit.vert; kit_gpu.h) */
 } GfxDesc;
 VkPipeline make_graphics(VkCore *vk, const GfxDesc *d);
 VkDescriptorSetLayout make_set_layout(VkCore *vk, const VkDescriptorSetLayoutBinding *b, uint32_t n);

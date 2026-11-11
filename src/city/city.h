@@ -173,6 +173,12 @@ static inline uint8_t city_grass_param(float maintained) {
 }
 static inline float city_grass_maintained(uint8_t w) { return w ? (float)(w - 1) / 254.0f : 0.0f; }
 
+/* A module of the vendors' modelling kit (src/gen/pmodel.h, PMK_*) set down in a chunk, drawn instanced
+ * (src/render/kit_gpu.c): a row-major 3x4 transform from the module's frame to chunk-local (x' = M x + t,
+ * the translation in [3], [7], [11]; rotation and uniform scale only), its module, its piece's variation
+ * (the vendor's per-part tint), the ground its heights count from (world Y) and a seed. */
+typedef struct KitInst { float xf[12]; uint16_t module; uint8_t part, flags; float base; uint32_t seed; } KitInst;
+
 typedef struct Mesh {
     Vertex  *v;
     uint32_t count, cap;
@@ -189,6 +195,8 @@ typedef struct Mesh {
     uint32_t  nplume, capplume;
     CityGrassTri *grass; /* the grass the blades grow on, by patch (pz, then px; city_build_mesh) */
     uint32_t  ngrass;
+    KitInst  *kit;       /* the vendors' kit modules set down in the chunk (city_build_vendor_kit) */
+    uint32_t  nkit, capkit;
     int       xf;        /* emission transform: local frame -> chunk-local */
     float     xc, xs, xx, xz;
     float     xy;        /* ...raised this far: a building's or a lamp's base on the ground (city_ground_y),
@@ -232,6 +240,14 @@ uint32_t city_graffiti_corners(int cx, int cz);
  * crossing signals along the sidewalks, dumpsters in the back alleys, condensers
  * on the walls. Like the litter it is lit by the chunk's light table. */
 void     city_build_props(int cx, int cz, Mesh *m);
+/* The near vendor layer (src/city/vendor_kit.c; the noodle bar slice's NB2): no triangles of its own
+ * yet, only the kit's modules each vendor sets down (Mesh.kit), within KIT_DISTANCE. Its bounds are the
+ * modules' places, grown by KIT_PAD. Which vendors get a kit: city_set_kit (KIT_SLICE by default). */
+void     city_build_vendor_kit(int cx, int cz, Mesh *m);
+enum { KIT_OFF = 0, KIT_SLICE, KIT_ALL };   /* none; the slice only; every vendor (the cost spike) */
+void     city_set_kit(int mode);
+int      city_kit_mode(void);
+#define KIT_PAD 1.5f   /* m: the largest module's reach from its origin, and some */
 /* A piece of street furniture. (x, z) is where it stands: its footprint's
  * centre, a crossing's signal pole, a condenser's back on its wall; y the
  * world Y of its foot (a condenser's underside), ground what its heights

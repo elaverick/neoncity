@@ -3,6 +3,7 @@
 #include "rt.h"
 #include "thread.h"
 #include "grass_gpu.h"
+#include "kit_gpu.h"
 
 #define MAX_ENTRIES    8192
 #define HASH_BUCKETS   16384
@@ -18,9 +19,12 @@ enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
  * (city_build_litter), wanted only within LITTER_DISTANCE and lit by the
  * chunk's own light table, 3 the lobbies' plants (city_build_plants), wanted
  * with the lobbies and drawn last, without back-face culling, 4 its street
- * furniture (city_build_props), wanted within PROPS_DISTANCE and lit as the litter. */
+ * furniture (city_build_props), wanted within PROPS_DISTANCE and lit as the litter,
+ * 5 the near vendor layer (city_build_vendor_kit), wanted within KIT_DISTANCE: no
+ * triangles yet, only the kit's instances (Mesh.kit), drawn by kit_gpu.c. */
 #define LAYER_PLANTS 3
 #define LAYER_PROPS  4
+#define LAYER_VENDOR 5
 
 /* Prefetching (want_chunks). Ahead of a moving camera chunks are queued
  * sooner: their priority is cut by up to LEAD_GAIN straight ahead, in full
@@ -68,7 +72,9 @@ typedef struct Entry {
     uint32_t  nplume;
     CityGrassTri *grass;    /* kept while RESIDENT (chunks_city_grass) */
     uint32_t  ngrass;
-    int       drawRec;      /* its chunk record in the view's draws, when drawRecFrame is this frame's + 1 */
+    KitInst  *kit;          /* the vendor layer's kit instances, kept while RESIDENT (kit_gpu.c) */
+    uint32_t  nkit;
+    int       drawRec;     /* its chunk record in the view's draws, when drawRecFrame is this frame's + 1 */
     uint64_t  drawRecFrame;
     /* ray-traced shadows (src/render/rt.c): the casting triangles of each page, as
      * page-local vertex indices, kept while resident so the BLAS can be
@@ -145,7 +151,8 @@ struct ChunkSystem {
     int      readyCount;
 
     Rt        *rt;      /* NULL without ray queries */
-    LandLights land;    /* this frame's chunks whose lamps light the land (build_land_records) */
+    KitGpu    *kit;     /* the vendors' kit: its module library and the frame's instanced draws */
+    LandLights land;   /* this frame's chunks whose lamps light the land (build_land_records) */
     /* The mesh bounds of chunks generated before, kept after they are evicted.
      * A chunk is a pure function of its coordinates, so they stay true, and the
      * frustum test needn't fall back to the conservative bounds (which can
@@ -203,6 +210,9 @@ static void table_remove(ChunkSystem *cs, int idx) {
     free(e->plume);
     free(e->grass);
     free(e->rtIdx);
+    free(e->kit);
+    e->kit = NULL;
+    e->nkit = 0;
     e->rtIdx = NULL;
     e->grass = NULL;
     e->ngrass = 0;
@@ -233,6 +243,7 @@ static int worker_main(void *arg) {
         else if (job.layer == 2) city_build_litter(job.cx, job.cz, &r.mesh);
         else if (job.layer == LAYER_PLANTS) city_build_plants(job.cx, job.cz, &r.mesh);
         else if (job.layer == LAYER_PROPS) city_build_props(job.cx, job.cz, &r.mesh);
+        else if (job.layer == LAYER_VENDOR) city_build_vendor_kit(job.cx, job.cz, &r.mesh);
         else city_build_mesh(job.cx, job.cz, &r.mesh);
 
         mutex_lock(&cs->doneLock);
@@ -269,6 +280,7 @@ ChunkSystem *chunks_create(VkCore *vk) {
     if (vk->rt) poolUse |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
     cs->pool = vk_buffer(vk, poolBytes, poolUse, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     cs->rt = rt_create(vk);
+    cs->kit = kit_create(vk, cs->rt);
     cs->lightPool = vk_buffer(vk, chunks_light_buffer_size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -302,7 +314,9 @@ void chunks_destroy(ChunkSystem *cs) {
     for (int i = 0; i < MAX_ENTRIES; ++i) {
         mesh_free(&cs->entries[i].mesh); free(cs->entries[i].sky); free(cs->entries[i].air); free(cs->entries[i].flame); free(cs->entries[i].plume); free(cs->entries[i].rtIdx);
         free(cs->entries[i].grass);
+        free(cs->entries[i].kit);
     }
+    kit_destroy(cs->kit);
     rt_destroy(cs->rt);
     for (int i = 0; i < MAX_FRAMES; ++i) {
         vk_buffer_destroy(cs->vk, &cs->staging[i]);
@@ -474,7 +488,7 @@ static void caster_indices(Entry *e, const Vertex *v, uint32_t vc) {
     e->rtTotal = n;
 }
 
-static uint32_t rt_mask(int layer) { return layer == 0 || layer == LAYER_PROPS ? RT_MASK_CITY : layer == 1 ? RT_MASK_INTERIOR : RT_MASK_LITTER; }
+static uint32_t rt_mask(int layer) { return layer == 0 || layer == LAYER_PROPS || layer == LAYER_VENDOR ? RT_MASK_CITY : layer == 1 ? RT_MASK_INTERIOR : RT_MASK_LITTER; }
 
 /* Distance from the camera to the chunk's square, horizontally. */
 static float chunk_dist(const Entry *e, const double cam[3]) {
@@ -675,6 +689,7 @@ static void want_chunks(ChunkSystem *cs, const Frustum *frp, const double cam[3]
             if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, LAYER_PLANTS, kp, kp * f, inView);
             if (d < LITTER_DISTANCE) push_want(cs, cx, cz, 2, kt, kt * f, inView);
             if (d < PROPS_DISTANCE) push_want(cs, cx, cz, LAYER_PROPS, kf, kf * f, inView);
+            if (d < KIT_DISTANCE && city_kit_mode() != KIT_OFF) push_want(cs, cx, cz, LAYER_VENDOR, kf, kf * f, inView);
         }
     }
     qsort(cs->want, cs->wantCount, sizeof(Want), cmp_want);
@@ -801,6 +816,9 @@ static int upload_ready(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t
         e->grass = e->mesh.grass;
         e->ngrass = e->mesh.ngrass;
         e->mesh.grass = NULL;
+        e->kit = e->mesh.kit;
+        e->nkit = e->mesh.nkit;
+        e->mesh.kit = NULL;
         mesh_free(&e->mesh);
         e->state = CS_RESIDENT;
         uploads++;
@@ -841,7 +859,7 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
         Want *w = &cs->want[k % cs->wantCount];
         if (!w->inView || (w->layer == LAYER_PLANTS) != (k >= cs->wantCount)) continue;
         int idx = table_find(cs, w->cx, w->cz, w->layer);
-        if (idx < 0 || cs->entries[idx].state != CS_RESIDENT || !cs->entries[idx].npages) continue;
+        if (idx < 0 || cs->entries[idx].state != CS_RESIDENT || (!cs->entries[idx].npages && !cs->entries[idx].nkit)) continue;
         Entry *e = &cs->entries[idx];
         float x0 = (float)(e->cx * (double)P - cam[0]), z0 = (float)(e->cz * (double)P - cam[2]);
         float y0 = -(float)cam[1];
@@ -972,6 +990,20 @@ static uint32_t build_prepass_draws(ChunkSystem *cs, int slot, uint32_t ndraw) {
     return ndraw;
 }
 
+/* 8. The vendors' kit (kit_gpu.c): every resident vendor layer's instances, by
+ *    the chunk record the view's draws gave it (none: they only cast shadows). */
+static void update_kit(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t frame, const double cam[3], const mat4 *viewProj) {
+    kit_begin(cs->kit, cmd, slot, frame, viewProj, cs->vk->extent.height);
+    const double P = CHUNK_SIZE;
+    for (int i = 0; i < MAX_ENTRIES; ++i) {
+        const Entry *e = &cs->entries[i];
+        if (e->state != CS_RESIDENT || e->layer != LAYER_VENDOR || !e->nkit) continue;
+        float o[3] = { (float)(e->cx * P - cam[0]), -(float)cam[1], (float)(e->cz * P - cam[2]) };
+        kit_add(cs->kit, slot, e->kit, e->nkit, o, e->drawRecFrame == cs->frame + 1 ? e->drawRec : -1);
+    }
+    kit_end(cs->kit, slot);
+}
+
 static void update_stats(ChunkSystem *cs, int slot, int queued, uint32_t viewChunks, int uploads) {
     uint32_t residentCount = 0;
     for (int i = 0; i < MAX_ENTRIES; ++i) if (cs->entries[i].state == CS_RESIDENT) residentCount++;
@@ -1030,6 +1062,7 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     ndraw = build_shelter_draws(cs, slot, cam, ndraw, nchunk);
     build_prepass_draws(cs, slot, ndraw);
     if (cs->rt) update_shadows(cs, cmd, slot, frame, cam);
+    update_kit(cs, cmd, slot, frame, cam, viewProj);
     update_stats(cs, slot, queued, viewChunks, uploads);
 }
 
@@ -1288,6 +1321,9 @@ void chunks_draw_plants(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {
 void chunks_draw_prepass(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {
     draw_range(cs, cmd, slot, cs->preFirst[slot], cs->preCount[slot]);
 }
+
+void chunks_draw_kit(ChunkSystem *cs, VkCommandBuffer cmd, int slot) { kit_draw(cs->kit, cmd, slot); }
+KitGpu *chunks_kit(ChunkSystem *cs) { return cs->kit; }
 
 void chunks_draw_shelter(ChunkSystem *cs, VkCommandBuffer cmd, int slot) {
     draw_range(cs, cmd, slot, cs->shelterFirst[slot], cs->shelterCount[slot]);

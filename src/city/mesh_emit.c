@@ -5,7 +5,7 @@
  * Mesh emission helpers
  * ========================================================================= */
 
-void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); free(m->air); free(m->flame); free(m->plume); free(m->grass); memset(m, 0, sizeof(*m)); }
+void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); free(m->air); free(m->flame); free(m->plume); free(m->grass); free(m->kit); memset(m, 0, sizeof(*m)); }
 
 void mesh_begin(Mesh *m, int cx, int cz) {
     m->count = 0;

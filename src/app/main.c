@@ -19,6 +19,8 @@
 #include "grass_wake.h"
 #include "sky_clock.h"
 #include "light_units.h"
+#include "kit_gpu.h"
+#include "city.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -80,7 +82,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -102,6 +104,8 @@ static void usage(void) {
            "  --impostors  draw this share (default 0.4; 0 turns them off) of the office towers' floors behind curtain\n"
            "               walls and ribbon windows as baked interior impostors (docs/interior-impostors.md; F8 toggles)\n"
            "  --lockdoors  lock every lobby's automatic doors: sliding ones stay shut, revolving ones stand still\n"
+           "  --kit  which street vendors set down the modelling kit's modules (NB2): none, the noodle bar slice\n"
+           "         (the default) or every vendor (a lane's worth of slices: the instancing's cost)\n"
            "  --nograss  draw no grass blades\n"
            "  --nowake  the grass doesn't part where the player walks\n"
            "  --grass-cap  give each of the grass's levels of detail room for at most N blades (the far ones give way)\n"
@@ -136,6 +140,7 @@ typedef struct Options {
     float       impostors;       /* the share of eligible office floors drawn as impostors (0: none) */
     int         grassDebug;      /* --grass-debug: GRASS_DEBUG_* (src/grass/grass_rules.h) */
     int         caveDebug;       /* --cave-debug: renderer_set_cave_debug's view */
+    int         kit;             /* --kit: KIT_OFF, KIT_SLICE, KIT_ALL (city_set_kit) */
 } Options;
 
 static bool parse_args(int argc, char **argv, Options *o) {
@@ -144,12 +149,20 @@ static bool parse_args(int argc, char **argv, Options *o) {
     o->fixedRain = -1.0f;
     o->fixedTime = -1.0;
     o->impostors = 0.4f;
+    o->kit = KIT_SLICE;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--validation") == 0) o->validation = true;
         else if (strcmp(argv[i], "--noshadows") == 0) o->shadows = false;
         else if (strcmp(argv[i], "--shadowdebug") == 0) o->shadowDebug = true;
         else if (strcmp(argv[i], "--lockdoors") == 0) o->lockDoors = true;
         else if (strcmp(argv[i], "--nograss") == 0) o->noGrass = true;
+        else if (strcmp(argv[i], "--kit") == 0 && i + 1 < argc) {
+            const char *v = argv[++i];
+            if (strcmp(v, "off") == 0) o->kit = KIT_OFF;
+            else if (strcmp(v, "slice") == 0) o->kit = KIT_SLICE;
+            else if (strcmp(v, "all") == 0) o->kit = KIT_ALL;
+            else return false;
+        }
         else if (strcmp(argv[i], "--grass-cap") == 0 && i + 1 < argc) o->grassCap = (uint32_t)strtoul(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--grass-debug") == 0 && i + 1 < argc) {
             static const char *const VIEWS[] = { "suit", "density", "species", "clump", "lod", "cull", "wind", "wake", "albedo" };   /* GRASS_DEBUG_SUIT on */
@@ -311,6 +324,13 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
         if (renderer_shadows(renderer))
             printf("shadows: %d bottom-level structures (%d MB, %d built so far), %d TLAS instances\n",
                    s.blas, s.blasMB, s.blasBuilds, s.instances);
+        {
+            KitStats ks = kit_stats(chunks_kit(chunks));
+            printf("kit: library %d triangles (%.1f MB, built in %.0f ms); %d instances offered, drawn L0 %d L1 %d L2 %d "
+                   "(%ld triangles, %d draws); %d TLAS instances over %d module BLASes\n",
+                   ks.libTris, ks.libMB, ks.buildMs, ks.offered, ks.drawn[0], ks.drawn[1], ks.drawn[2], ks.tris, ks.draws,
+                   ks.rtInstances, ks.blas);
+        }
         char gpu[2048];
         renderer_gpu_times(renderer, gpu, sizeof(gpu));
         printf("%s\n", gpu);
@@ -624,6 +644,7 @@ int main(int argc, char **argv) {
 
     VkCore vk;
     vk_init(&vk, win, opt.validation, opt.shadows, opt.hdrPaper, opt.hdrPeak);
+    city_set_kit(opt.kit);         /* before any chunk */
     ChunkSystem *chunks = chunks_create(&vk);
     Renderer *renderer = renderer_create(&vk, chunks);
     renderer_set_shadow_debug(renderer, opt.shadowDebug);

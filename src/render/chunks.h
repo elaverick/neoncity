@@ -51,6 +51,9 @@ void         chunks_draw(ChunkSystem *cs, VkCommandBuffer cmd, int slot);
 void         chunks_draw_plants(ChunkSystem *cs, VkCommandBuffer cmd, int slot);
 /* The depth prepass (ray-traced shadows): the view's chunks near enough to receive shadows (SHADOW_FAR). */
 void         chunks_draw_prepass(ChunkSystem *cs, VkCommandBuffer cmd, int slot);
+/* The vendors' kit (kit_gpu.c): this frame's instanced draws, with the kit pipeline (or its prepass one) bound. */
+void         chunks_draw_kit(ChunkSystem *cs, VkCommandBuffer cmd, int slot);
+struct KitGpu *chunks_kit(ChunkSystem *cs);
 /* Draws resident chunks overlapping the shelter map square (SHELTER_RADIUS around the camera). */
 void         chunks_draw_shelter(ChunkSystem *cs, VkCommandBuffer cmd, int slot);
 VkBuffer     chunks_gpu_buffer(ChunkSystem *cs, int slot);

@@ -7,6 +7,7 @@
  *                                80 m from its counter (turned down the street, or as near
  *                                as 50 m, if the line of sight needs it), and an office impostor
  *                                tower's curtain wall at the same distances
+ *   city_test --slice lane [X Z] a view down the nearest market lane (NB2's cost spike)
  *   city_test --slice find [X Z] apron sites against a wall under the open sky
  *                                near X Z (default the old canopy bar's lane):
  *                                candidates for VENDOR_SLICE_X/Z
@@ -118,9 +119,49 @@ static int slice_find(double x, double z) {
     return 0;
 }
 
+/* A view down the market lane nearest (x, z): its vendors' middles' long axis,
+ * from just behind the first of them, at eye height (NB2's cost spike with
+ * NeonCity --kit all; NB8's worst view). */
+static int slice_lane(double x, double z) {
+    double lx, lz;
+    if (vs_find_space(x, z, SPACE_LANE, &lx, &lz) < 0) { printf("no market lane near (%.0f, %.0f)\n", x, z); return 1; }
+    static VendorSpot sp[MAX_VENDOR_SPOTS];
+    double px[512], pz[512], fy = 0.0;
+    int n = 0, cx = (int)floor(lx / CHUNK_SIZE), cz = (int)floor(lz / CHUNK_SIZE);
+    for (int j = -1; j <= 1; ++j)
+        for (int i = -1; i <= 1; ++i) {
+            int m = city_chunk_vendor_spots(cx + i, cz + j, sp, MAX_VENDOR_SPOTS);
+            for (int k = 0; k < m && n < 512; ++k) {
+                if (sp[k].space != SPACE_LANE) continue;
+                vendor_spot_middle(&sp[k], &px[n], &pz[n]);
+                if (hypot(px[n] - lx, pz[n] - lz) > 80.0) continue;
+                fy += sp[k].y;
+                n++;
+            }
+        }
+    if (n < 2) { printf("the lane at (%.0f, %.0f) has %d vendors\n", lx, lz, n); return 1; }
+    double mx = 0, mz = 0, sxx = 0, sxz = 0, szz = 0;
+    for (int i = 0; i < n; ++i) { mx += px[i]; mz += pz[i]; }
+    mx /= n; mz /= n; fy /= n;
+    for (int i = 0; i < n; ++i) { double a = px[i] - mx, b = pz[i] - mz; sxx += a * a; sxz += a * b; szz += b * b; }
+    double th = 0.5 * atan2(2.0 * sxz, sxx - szz), ux = cos(th), uz = sin(th), t0 = 1e30, t1 = -1e30;
+    for (int i = 0; i < n; ++i) { double t = (px[i] - mx) * ux + (pz[i] - mz) * uz; t0 = fmin(t0, t); t1 = fmax(t1, t); }
+    printf("lane: %d vendors along %.0f m round (%.1f, %.1f), axis (%.2f, %.2f)\n", n, t1 - t0, mx, mz, ux, uz);
+    sl_load(mx, mz, 2);
+    for (int end = 0; end < 2; ++end) {
+        double s = end ? -1.0 : 1.0, ex = mx + ux * (end ? t1 + 3.0 : t0 - 3.0), ez = mz + uz * (end ? t1 + 3.0 : t0 - 3.0);
+        double eye = fmax(fy, city_ground_y(ex, ez) + SIDEWALK_HEIGHT) + 1.68;
+        printf("view lane_%s --cam %.2f %.2f %.1f -3.0 %.2f%s\n", end ? "back" : "down", ex, ez, atan2(ux * s, -uz * s) * 57.2958, eye,
+               vs_solid(ex, ez) || sl_under_building(ex, ez) ? "   (the eye stands in something: move it)" : "");
+    }
+    return 0;
+}
+
 static int slice_cams(int argc, char **argv) {
     if (argc > 2 && strcmp(argv[2], "find") == 0)
         return slice_find(argc > 4 ? atof(argv[3]) : 732.2, argc > 4 ? atof(argv[4]) : -735.1);
+    if (argc > 2 && strcmp(argv[2], "lane") == 0)
+        return slice_lane(argc > 4 ? atof(argv[3]) : 634.0, argc > 4 ? atof(argv[4]) : 925.0);
     int cx = (int)floor(VENDOR_SLICE_X / CHUNK_SIZE), cz = (int)floor(VENDOR_SLICE_Z / CHUNK_SIZE);
     static SlFind F;
     memset(&F, 0, sizeof(F));
@@ -152,6 +193,30 @@ static int slice_cams(int argc, char **argv) {
            s->site.affluence, vendor_class_name(F.v.cls), s->walk);
     printf("  now: %d shell triangles, %d dressing triangles, %d parts, %d items, %d lights, %d emitters\n", F.tris, F.dress, F.v.npart,
            F.v.nitem, F.v.nlight, F.v.nemit);
+    {   /* the near vendor layer: the kit's modules set down at the slice (NB2), the same from either build */
+        Mesh km, km2;
+        memset(&km, 0, sizeof(km));
+        memset(&km2, 0, sizeof(km2));
+        int kx = (int)floor(mx / CHUNK_SIZE), kz = (int)floor(mz / CHUNK_SIZE);
+        city_build_vendor_kit(kx, kz, &km);
+        city_build_vendor_kit(kx, kz, &km2);
+        int counts[PMK_COUNT] = { 0 }, out = 0;
+        for (uint32_t i = 0; i < km.nkit; ++i) {
+            const KitInst *k = &km.kit[i];
+            if (k->module < PMK_COUNT) counts[k->module]++;
+            /* within the site grown by a metre (its stools and A-frame stand at its front), chunk-local to world */
+            double wx = k->xf[3] + kx * (double)CHUNK_SIZE, wz = k->xf[11] + kz * (double)CHUNK_SIZE;
+            out += !vendor_spot_contains(s, wx, wz, 1.0, 1.0);
+        }
+        CHECK(km.nkit > 0, "the slice sets down no kit");
+        CHECK(km.nkit == km2.nkit && !memcmp(km.kit, km2.kit, sizeof(KitInst) * km.nkit), "the slice's kit is not deterministic");
+        CHECK(out == 0, "%d of the slice's kit modules stand outside its site", out);
+        printf("  kit: %u modules set down (stand-ins until NB4-NB5):", km.nkit);
+        for (int m = 0; m < PMK_COUNT; ++m) if (counts[m]) printf(" %s %d", pm_module(m)->name, counts[m]);
+        printf("\n");
+        mesh_free(&km);
+        mesh_free(&km2);
+    }
 
     /* the views: the counter's middle at 1.3 m (between counter and hood), from in front */
     sl_load(mx, mz, 2);

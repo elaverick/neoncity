@@ -28,6 +28,7 @@ build/vendor_lab 60 out        # street vendors: validity, determinism, budgets,
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/city_test --vendor-sites # the vendors' sites round the spawn and the nearest lane, pocket market, plaza, apron: checks, --cam views
 build/city_test --slice        # the noodle bar slice (docs/noodle-bar-target.md): its site, checks, views; tools/slice_capture.py, tools/slice_board.py
+build/city_test --slice lane   # a view down the nearest market lane: the vendors' worst view (NeonCity --kit all for the kit's cost)
 build/pmodel_lab out           # the procedural modelling kit: determinism, closure, normals, budgets per level; lit contact sheets
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
 build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the world chart within 5400 km; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
@@ -1451,7 +1452,7 @@ shells in the city (SV2) and the rooms seen through their openings (SV3) are bui
 The street vendors' rework (the noodle bar slice, `docs/noodle-bar-target.md`) builds them in far more
 detail, still entirely in code. The kit is the means: indexed meshes in metres with smooth or hard normals,
 metre UVs, a material per part (`PMAT_*`) and two terms baked per vertex from the mesh's own geometry.
-It is not in the game yet (NB2 instances it; NB4-NB5 build the bar from it).
+NB2 draws its modules in the game, instanced (below); NB4-NB5 build the bar from it.
 
 - **Primitives** (`pmodel.c`): a transform stack; boxes and bevelled or chamfered boxes; the lathe (a profile
   turned round a circle or a rounded rectangle, so hotel pans and boxes are lathes too; `pm_prof_shell` gives a
@@ -1485,6 +1486,41 @@ It is not in the game yet (NB2 instances it; NB4-NB5 build the bar from it).
   It prints a table and a plausible slice's kit (62 instances: 137,000 triangles at LOD0, 57,000 at LOD1,
   15,000 at LOD2). With a directory it renders contact sheets lit with ray-traced shadows over the baked
   occlusion: each module a row, LOD0-2, then LOD0's occlusion and wear alone, a 10 cm checker on the UVs.
+
+### The vendors' kit in the game (`src/render/kit_gpu.c`, `src/city/vendor_kit.c`)
+The chunk pool holds non-indexed triangles, and a detailed vendor merged into its chunk would cost megabytes of
+it, so the kit's modules are drawn instanced instead (NB2).
+
+- **The library:** every module at its three levels, built and baked at start-up on the worker threads (about
+  150 ms), as the city's vertices (`MAT_KIT`) with 16-bit indices in two device-local buffers: 138,000
+  triangles, 6.9 MB. A module's level is one indexed draw.
+- **The near vendor layer** (layer 5 of the chunk streamer, within `KIT_DISTANCE`, 120 m): no triangles yet,
+  only the modules each vendor sets down (`KitInst`: a transform, its module, a part and a seed;
+  `city_build_vendor_kit`). Until NB4-NB5 build the bar, the slice sets down a stand-in noodle bar's kit after
+  the target sheet (60 modules: the range, pots, hotel pans, shelves of bowls, jars and bottles, the utensil
+  rail, the fan, the power panel, the gas, stools and the A-frame), standing where the bench, counter and
+  shelves will be. `--kit off|slice|all` picks which vendors get it (the slice by default; all for the cost).
+- **Each frame** (`kit_add`): every instance of the drawn chunks is culled against the view, given the finest
+  level its distance allows (L0 to 8 m, L1 to 30 m, L2 beyond), made coarser while that level would put more
+  than 0.15 triangles on each pixel of the module's bounding disc, and shrunk into its centre over the last
+  quarter of its fade distance (200 times its radius, 6 to 120 m: a jar goes by 16 m, a pot by 50, a stool by
+  80); a level a module leaves empty (rivets past L0, bolts past L1) isn't drawn. The survivors are written
+  grouped by module and level, one indirect indexed draw a group. `kit.vert` reads the instance as a second,
+  per-instance vertex binding and hands `city.frag` (built as `kit.frag` with early depth tests: the kit's
+  depth is always in the prepass) and `prepass.frag` what `city.vert` does, so the kit is lit by its chunk's
+  light table and receives the traced shadows; `shaders/city/kit.glsl` shades it with a flat colour a material,
+  the baked occlusion and wear (NB3 brings the authored sets).
+- **Shadows it casts:** a BLAS over each module's L1, built once; a TLAS instance for every kit instance within
+  35 m whose module reaches 10 cm (stools, pots, pans, gas, the fan), whatever the view.
+- **Not in the shelter map:** small modules shelter nothing worth the rain's map; the hoods that do will be
+  NB4's merged structure.
+- **Cost** (`--shot` prints a `kit:` line: instances offered and drawn at each level, triangles, draws, TLAS
+  instances): at the slice, 60 instances, 0.05 ms. Down the market lane at (634, 925) at night in rain
+  (`city_test --slice lane` prints the view) with all 32 vendors in view carrying a full noodle bar's kit
+  (`--kit all`), 2,584 instances offered, 774 drawn, 277,000 triangles: +0.35 to 0.41 ms over the same view
+  without (the kit's pass 0.30, the shadow rays 0.12, the TLAS 0.06, the prepass 0.03), slightly over the
+  target sheet's +0.3 ms in a view harsher than its gate. It is the kit's pixels' shading, not its triangles:
+  drawing only the kit within 20 m cost as much as all of it.
 
 ### Textures (`src/render/materials.c`, `assets/materials/`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual surfaces can opt in to authored PBR

@@ -889,8 +889,26 @@ baked by `tools/model_pack.c`). See the README. Left over:
 
 ## Street vendors (next)
 The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sites.c`, `mesh_vendor.c`,
-`shaders/city/vendor_room.glsl`); the roadmap's SV4-SV11 continue (`~/.claude/plans/street-vendors.md`).
-Left over:
+`shaders/city/vendor_room.glsl`); the rework's noodle bar slice continues (NB3-NB8, then street food SF1-SF6:
+`~/.claude/plans/street-vendors.md`). The modelling kit (`src/gen/pmodel*.c`) is drawn instanced
+(`src/render/kit_gpu.c`, NB2). Left over from the kit's instancing:
+- **Stand-ins:** the slice's kit modules stand where NB4's bench, counter and shelves will be, over the old
+  canopy shell; `--kit all` gives every vendor the noodle bar's kit whatever its trade or size (the cost spike).
+- **Cost:** +0.35 to 0.41 ms down the market lane with all 32 vendors kitted (the target is +0.3 ms at the
+  worst view): mostly the shading of the kit's pixels. NB8 measures again with the real bodies and trades.
+- **The city pass may shade what is hidden:** `city.frag` writes `gl_SampleMask` (and some materials discard),
+  which can make the driver test depth after shading. The kit's pass, built with `early_fragment_tests`, fell
+  from 0.54 to 0.33 ms at the lane. The city's opaque materials are all in the depth prepass when shadows are
+  on, so a variant of the city's pipeline for them (or depth-equal testing) might save much of the 3 ms city
+  pass. Not tried.
+- **Popping:** levels switch and modules shrink away with no dithered cross-fade.
+- **Rivets** draw only within 6 m (rows within 8 m): beyond, a riveted panel shows none. NB3's materials may
+  need rivets in the texture for the middle distance.
+- **No shelter:** the kit isn't drawn into the rain's shelter map (NB4's hoods will be).
+- **/fp:fast:** the game builds the kit with fast floating point, so its meshes differ in the last bits from
+  `pmodel_lab`'s.
+
+Left over from the first vendors (SV0-SV3):
 - **People:** none anywhere, no vendor in the rooms and no patrons on the stools, until people are a project
   of their own (the user's call).
 - **Painted stock** is simple shapes per kind (25 kinds); if it reads too plain close up, an authored stock

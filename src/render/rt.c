@@ -2,7 +2,7 @@
 
 #define RT_ARENA_BYTES    (768ull << 20)  /* every BLAS, compacted (about 60 bytes a triangle) */
 #define RT_MAX_BLAS       4096
-#define RT_MAX_INSTANCES  8192            /* the chunks' layers, the terrain's levels, the caves' bricks */
+#define RT_MAX_INSTANCES  16384           /* the chunks' layers, the terrain's levels, the caves' bricks, the vendors' kit */
 #define RT_INDEX_BYTES    (8u << 20)      /* per frame in flight: the index lists of its builds */
 #define RT_SCRATCH_BYTES  (128ull << 20)  /* per frame in flight: build scratch */
 #define RT_MAX_BUILDS     256             /* per frame: one compacted-size query each */

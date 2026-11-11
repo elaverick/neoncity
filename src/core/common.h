@@ -39,6 +39,9 @@
 /* Street furniture (src/city/props.c) is a fourth, streamed this close: bins,
  * bollards, crossing signals, post boxes, dumpsters and the condensers on the walls. */
 #define PROPS_DISTANCE    220.0f
+/* The vendors' kit (the modelling kit's modules, src/gen/pmodel.h, drawn instanced: src/render/kit_gpu.c)
+ * is a fifth, the near vendor layer, streamed this close: its modules' coarsest level reaches this far. */
+#define KIT_DISTANCE      120.0f
 
 /* GPU geometry pool: chunk meshes live in fixed-size pages of non-indexed
  * triangles so a chunk may occupy any set of free pages (no fragmentation). */
@@ -118,7 +121,7 @@ enum {
     MAT_FACADE, MAT_ROOF, MAT_NEON, MAT_METAL,
     MAT_EMISSIVE, MAT_SCREEN, MAT_LEDSTRIP, MAT_DOOR,
     MAT_INTERIOR, MAT_LITTER, MAT_ARCOLOGY, MAT_INDUSTRY,
-    MAT_PROP, MAT_TRIM, MAT_VENDOR
+    MAT_PROP, MAT_TRIM, MAT_VENDOR, MAT_KIT
 };
 
 /* Street vendors' shells (MAT_VENDOR; src/city/mesh_vendor.c, src/gen/vendor.h):

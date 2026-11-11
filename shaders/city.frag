@@ -6,6 +6,11 @@
 #extension GL_EXT_ray_query : require
 #endif
 #include "common.glsl"
+#ifdef KIT_FRAG
+/* The vendors' kit (kit.vert; src/render/kit_gpu.c) neither discards nor covers only some samples, and its
+ * depth is in the prepass: whatever of it stands behind something nearer is thrown away before it is shaded. */
+layout(early_fragment_tests) in;
+#endif
 
 layout(location = 0) in vec3 vRel;
 layout(location = 1) in vec3 vLocal;
@@ -97,6 +102,7 @@ float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + 
 #include "city/props.glsl"
 #include "city/vendor_room.glsl"
 #include "city/vendor.glsl"
+#include "city/kit.glsl"
 
 /* ====================================================================== */
 
@@ -143,6 +149,7 @@ void shadePixel() {
     else if (mat == MAT_INDUSTRY)  col = shadeIndustry(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_PROP)      col = shadeProp(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_VENDOR)    col = shadeVendor(vLocal, vRel, n, vUV, vSeed, vParams, vAux, vLitter.x * 6.35);
+    else if (mat == MAT_KIT)       col = shadeKit(vLocal, vRel, n, vUV, vSeed, vParams, vLitter.x, vLitter.y);
     else {
         // LED strip: steady or chasing
         float chase = vParams.z == 1u ? 0.25 + 0.75 * step(0.5, fract(vUV.x / 6.0 - gTime * 0.7)) : 1.0;

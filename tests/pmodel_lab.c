@@ -349,6 +349,8 @@ int main(int argc, char **argv) {
             }
             printf("%-15s %4d %7d %7d %8d %8.1f %6.1f  %s\n", d->name, l, s.tris, d->budget[l], s.verts,
                    (double)(lods[l].nv * sizeof(PmVertex) + lods[l].ni * 4) / 1024.0, ms, checks);
+            if (l == 0 && s.tris)
+                printf("%-15s      bounds x %.3f..%.3f y %.3f..%.3f z %.3f..%.3f\n", "", s.lo[0], s.hi[0], s.lo[1], s.hi[1], s.lo[2], s.hi[2]);
         }
         if (out) {
             if (!im.p) im = image_new(5 * CW, ROWS_PER_SHEET * CH);

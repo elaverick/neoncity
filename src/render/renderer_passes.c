@@ -183,6 +183,8 @@ void record_prepass(Renderer *r, VkCommandBuffer cmd, int slot) {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->scenePL, 0, 1, &r->sceneSet[slot], 0, NULL);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->prepassPipe);
     chunks_draw_prepass(r->chunks, cmd, slot);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->kitPrePipe);
+    chunks_draw_kit(r->chunks, cmd, slot);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->prepassPlantPipe);
     chunks_draw_plants(r->chunks, cmd, slot);
     terrain_gpu_draw_prepass(r, cmd, slot);   /* the land near the city's lamps (terrain_pre.frag) */
@@ -360,6 +362,9 @@ void record_scene(Renderer *r, VkCommandBuffer cmd, int slot, bool shadows) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->plantPipe);
     chunks_draw_plants(r->chunks, cmd, slot);
     timestamp(r, cmd, slot, GT_PLANTS);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->kitPipe);
+    chunks_draw_kit(r->chunks, cmd, slot);
+    timestamp(r, cmd, slot, GT_KIT);
     proxy_gpu_draw(r, cmd, slot);
     timestamp(r, cmd, slot, GT_SCENE);
     /* the caves before the terrain: through a mouth the ground beyond the

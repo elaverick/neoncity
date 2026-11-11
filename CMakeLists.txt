@@ -163,7 +163,7 @@ file(CONFIGURE OUTPUT ${GEN_DIR}/advert_names.inc CONTENT
 set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 set(SHADER_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/spv)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR} ${SHADER_OUT_DIR}/terrain ${SHADER_OUT_DIR}/proxy ${SHADER_OUT_DIR}/interior ${SHADER_OUT_DIR}/grass)
-set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp exposure_meter.comp exposure_adapt.comp
+set(SHADERS city.vert kit.vert city.frag fullscreen.vert sky.frag composite.frag bloom_down.comp bloom_up.comp exposure_meter.comp exposure_adapt.comp
             atmo_transmittance.comp atmo_multiscatter.comp atmo_skyview.comp atmo_eye.comp
             cloud_noise.comp clouds.comp cloud_composite.frag ssr.comp ssr_apply.frag shelter.vert shelter.frag
             prepass.frag impostor_demand.frag shadow_trace.comp shadow_denoise.comp terrain/terrain.vert terrain/terrain.frag terrain/terrain_pre.frag
@@ -172,9 +172,10 @@ set(SHADERS city.vert city.frag fullscreen.vert sky.frag composite.frag bloom_do
             interior/capture.comp interior/capture_mpi.comp interior/truth.comp interior/recon.comp   # the interior baker's
             grass/rules_test.comp   # grass_test --gpu's
             grass/prepare.comp grass/prepare_city.comp grass/finish.comp grass/blade.vert grass/blade.frag)
-# Variants of a shader built with a define: output:source:define. Ray-traced
+# Variants of a shader built with defines: output:source:define[+define...]. Ray-traced
 # shadows need ray queries in the scene pass, and a depth prepass.
 set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PREPASS
+                    kit.frag:city.frag:KIT_FRAG kit_rt.frag:city.frag:RT_SHADOWS+KIT_FRAG   # the vendors' kit: early depth tests
                     grass/blade_rt.frag:grass/blade.frag:GRASS_SLOTS   # a city blade reads its root's shadow slots
                     terrain/terrain_cut.frag:terrain/terrain.frag:CAVE_CUT   # the caves' mouths cut: only the tiles near one
                     terrain/terrain_rt.frag:terrain/terrain.frag:RT_SHADOWS   # the land beside the city: its lamps' shadows
@@ -205,9 +206,14 @@ foreach(V ${SHADER_VARIANTS})
   list(GET P 0 NAME)
   list(GET P 1 SRC)
   list(GET P 2 DEF)
+  string(REPLACE "+" ";" DEFS ${DEF})
+  set(DFLAGS "")
+  foreach(D ${DEFS})
+    list(APPEND DFLAGS -D${D}=1)
+  endforeach()
   set(OUT ${SHADER_OUT_DIR}/${NAME}.inc)
   add_custom_command(OUTPUT ${OUT}
-    COMMAND ${SHADER_CMD} -I${SHADER_SRC_DIR} ${SHADER_SHARED_INC} -D${DEF}=1 -o ${OUT} ${SHADER_SRC_DIR}/${SRC}
+    COMMAND ${SHADER_CMD} -I${SHADER_SRC_DIR} ${SHADER_SHARED_INC} ${DFLAGS} -o ${OUT} ${SHADER_SRC_DIR}/${SRC}
     DEPENDS ${SHADER_SRC_DIR}/${SRC} ${SHADER_INCLUDES} ${SHADER_DEP}
     COMMENT "Compiling shader ${NAME}" VERBATIM)
   list(APPEND SPV_OUTPUTS ${OUT})
@@ -223,14 +229,15 @@ set(SRC_DIRS src/core src/plan src/gen src/city src/terrain src/grass src/render
 set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/drops.c src/city/lamps.c
                 src/city/mesh_emit.c src/city/mesh_building.c src/city/mesh_relief.c src/city/mesh_lobby.c src/city/mesh_doors.c src/city/mesh_planting.c
                 src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/channels.c src/city/road_bridges.c src/city/light_tiles.c src/city/cables.c
-                src/city/litter.c src/city/props.c src/city/vendor_sites.c src/city/mesh_vendor.c src/city/models.c src/city/proxy.c src/city/grass_city.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c src/plan/plan_water.c
+                src/city/litter.c src/city/props.c src/city/vendor_sites.c src/city/mesh_vendor.c src/city/vendor_kit.c src/city/models.c src/city/proxy.c src/city/grass_city.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c src/plan/plan_water.c
                 src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_erosion.c src/terrain/terrain_cave.c src/terrain/terrain_cave_mesh.c src/terrain/terrain_cave_light.c src/terrain/terrain_cave_walk.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c src/core/thread.c src/core/assets.c
                 src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
                 src/gen/interior_fixtures.c src/gen/interior_validate.c src/gen/interior_lights.c src/gen/interior_doors.c
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c
-                src/gen/vendor.c src/gen/vendor_structure.c src/gen/vendor_tables.c src/gen/vendor_mesh.c src/gen/vendor_validate.c)
+                src/gen/vendor.c src/gen/vendor_structure.c src/gen/vendor_tables.c src/gen/vendor_mesh.c src/gen/vendor_validate.c
+                src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_bake.c)
 # Terrain (src/terrain): the ground everywhere, a pure function of position over the planet the world's
 # X/Z is a chart of (terrain_height.c, terrain_land.c, terrain_world.c, terrain_cube.c and terrain_earth.c, in GEN_SOURCES:
 # the city builds on them), the clipmap that samples it round the camera (drawn by src/render/terrain_gpu.c)
@@ -491,7 +498,7 @@ list(REMOVE_ITEM GAME_GEN_SOURCES ${WORLD_SOURCES})
 add_library(neoncity_world OBJECT ${WORLD_SOURCES})
 target_include_directories(neoncity_world PRIVATE ${SRC_DIRS})
 add_executable(NeonCity
-  src/app/main.c src/app/sky_clock.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/exposure_gpu.c src/render/atmosphere_gpu.c src/render/terrain_gpu.c src/render/terrain_rt.c src/render/road_gpu.c src/render/planet_gpu.c src/render/cave_gpu.c src/render/proxy_gpu.c src/render/grass_gpu.c src/grass/grass.c src/grass/grass_wake.c src/render/materials.c src/render/adverts.c src/render/interiors.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/rt.c src/app/player.c src/app/layouts.c src/app/lobby_doors.c)
+  src/app/main.c src/app/sky_clock.c src/app/weather.c src/app/frames.c src/render/vkcore.c src/render/renderer.c src/render/renderer_pipelines.c src/render/renderer_targets.c src/render/renderer_passes.c src/render/exposure_gpu.c src/render/atmosphere_gpu.c src/render/terrain_gpu.c src/render/terrain_rt.c src/render/road_gpu.c src/render/planet_gpu.c src/render/cave_gpu.c src/render/proxy_gpu.c src/render/grass_gpu.c src/grass/grass.c src/grass/grass_wake.c src/render/materials.c src/render/adverts.c src/render/interiors.c ${MATERIAL_SOURCES} ${GAME_GEN_SOURCES} $<TARGET_OBJECTS:neoncity_world> ${TERRAIN_SOURCES} src/render/chunks.c src/render/kit_gpu.c src/render/rt.c src/app/player.c src/app/layouts.c src/app/lobby_doors.c)
 add_dependencies(NeonCity shaders)
 target_include_directories(NeonCity PRIVATE ${SRC_DIRS} ${SHADER_OUT_DIR} ${stb_SOURCE_DIR})
 # Authored textures are loaded at run time from assets/ beside the executable.

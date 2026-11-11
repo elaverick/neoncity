@@ -19,6 +19,7 @@
 #include "thread.h"
 #include "models.h"
 #include "advert_def.h"
+#include "pmodel.h"
 #include <time.h>
 
 #define N_CHUNKS 400

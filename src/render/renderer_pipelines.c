@@ -4,6 +4,15 @@
 static const uint32_t SPV_city_vert[] = {
 #include "city.vert.inc"
 };
+static const uint32_t SPV_kit_vert[] = {
+#include "kit.vert.inc"
+};
+static const uint32_t SPV_kit_frag[] = {
+#include "kit.frag.inc"
+};
+static const uint32_t SPV_kit_rt_frag[] = {
+#include "kit_rt.frag.inc"
+};
 static const uint32_t SPV_city_frag[] = {
 #include "city.frag.inc"
 };
@@ -426,6 +435,17 @@ VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
         vi.vertexBindingDescriptionCount = 1; vi.pVertexBindingDescriptions = &bind;
         vi.vertexAttributeDescriptionCount = d->positionOnly ? 1 : 7; vi.pVertexAttributeDescriptions = attrs;
     }
+    /* the kit's instances (kit_gpu.h KitInstGPU): three rows of its transform, then seed, chunk, part, base */
+    VkVertexInputBindingDescription kbind[2] = { bind, { 1, sizeof(KitInstGPU), VK_VERTEX_INPUT_RATE_INSTANCE } };
+    VkVertexInputAttributeDescription kattrs[11];
+    if (d->kit) {
+        memcpy(kattrs, attrs, sizeof(attrs));
+        for (uint32_t i = 0; i < 3; ++i)
+            kattrs[7 + i] = (VkVertexInputAttributeDescription){ 7 + i, 1, VK_FORMAT_R32G32B32A32_SFLOAT, (uint32_t)(offsetof(KitInstGPU, row) + 16 * i) };
+        kattrs[10] = (VkVertexInputAttributeDescription){ 10, 1, VK_FORMAT_R32G32B32A32_UINT, (uint32_t)offsetof(KitInstGPU, seed) };
+        vi.vertexBindingDescriptionCount = 2; vi.pVertexBindingDescriptions = kbind;
+        vi.vertexAttributeDescriptionCount = 11; vi.pVertexAttributeDescriptions = kattrs;
+    }
     VkPipelineInputAssemblyStateCreateInfo ia = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
     ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     VkPipelineViewportStateCreateInfo vp = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
@@ -509,6 +529,11 @@ void create_pipelines(Renderer *r) {
     demand.depthWrite = false;
     demand.noColor = true;
     r->impDemandPipe = make_graphics(vk, &demand);
+    GfxDesc kit = city;               /* the vendors' kit, instanced */
+    kit.vs = SPV_kit_vert; kit.vsBytes = sizeof(SPV_kit_vert);
+    kit.fs = r->rt ? SPV_kit_rt_frag : SPV_kit_frag; kit.fsBytes = r->rt ? sizeof(SPV_kit_rt_frag) : sizeof(SPV_kit_frag);
+    kit.kit = true;
+    r->kitPipe = make_graphics(vk, &kit);
     city.cull = false;                /* lobby plants: a leaf is a single surface, seen from both sides */
     r->plantPipe = make_graphics(vk, &city);
     GfxDesc sky = { SPV_fullscreen_vert, sizeof(SPV_fullscreen_vert), SPV_sky_frag, sizeof(SPV_sky_frag),
@@ -574,6 +599,10 @@ void create_pipelines(Renderer *r) {
         GfxDesc pre = { SPV_city_pre_vert, sizeof(SPV_city_pre_vert), SPV_prepass_frag, sizeof(SPV_prepass_frag),
                         r->scenePL, GBUF_FORMAT, DEPTH_FORMAT, vk->msaa, true, true, true, true };
         r->prepassPipe = make_graphics(vk, &pre);
+        GfxDesc kpre = pre;   /* the vendors' kit */
+        kpre.vs = SPV_kit_vert; kpre.vsBytes = sizeof(SPV_kit_vert);
+        kpre.kit = true;
+        r->kitPrePipe = make_graphics(vk, &kpre);
         pre.cull = false;   /* lobby plants */
         r->prepassPlantPipe = make_graphics(vk, &pre);
         GfxDesc tpre = { SPV_terrain_vert, sizeof(SPV_terrain_vert), SPV_terrain_pre_frag, sizeof(SPV_terrain_pre_frag),
