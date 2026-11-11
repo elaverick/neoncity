@@ -12,7 +12,10 @@
  * 40% of a noodle bar's area (the plausible kit and the body's main
  * surfaces, NB3).
  * It prints a table (triangles, vertices, bytes, build time) per module and
- * level.
+ * level, then the noodle bar's body (NB4, src/gen/noodle_bar.c) in both its
+ * forms at the slice's site and wider ones: the merged structure's triangles,
+ * its instances, its far shell's, the time to build and bake it, the same
+ * plan twice over, the budgets (the structure, the far shell's 500).
  *
  * With an output directory it also renders contact sheets, lit by a key
  * light with ray-traced shadows over an ambient term scaled by the baked
@@ -20,8 +23,9 @@
  * LOD0's occlusion and its wear alone; a faint 10 cm checker shows the
  * metre UVs.
  *
- *   pmodel_lab [out_dir] [--only NAME] */
+ *   pmodel_lab [out_dir] [--only NAME]   (NAME body: the noodle bar's bodies only) */
 #include "pmodel.h"
+#include "noodle_bar.h"
 #include "hash.h"
 #include "mathlib.h"
 #include <stdio.h>
@@ -63,26 +67,27 @@ static void add_area(const PmMesh *m, double n, double area[PMAT_COUNT]) {
 static void material_share(const int (*mix)[2], size_t nmix) {
     double area[PMAT_COUNT] = { 0 };
     for (size_t k = 0; k < nmix; ++k) {
+        /* the body (below) sets down its own stools, bell, A-frame and shelf brackets */
+        int id = mix[k][0];
+        if (id == PMK_STOOL || id == PMK_BELL || id == PMK_A_FRAME || id == PMK_SHELF_BRACKET) continue;
         PmMesh m = { 0 };
-        pm_module_mesh(mix[k][0], PM_LOD0, &m);
+        pm_module_mesh(id, PM_LOD0, &m);
         add_area(&m, (double)mix[k][1], area);
         pm_mesh_free(&m);
     }
     {
+        /* the body of the slice's bar (NB4), its modules built in */
+        NbPlan p;
+        nb_plan(&p, 3.85f, 3.48f, 0.0f, 0x5EED01u, NB_STRAIGHT);
         PmMesh m = { 0 };
         PmInstances li = { 0 };
         Pm pm;
         pm_begin(&pm, &m, &li, PM_LOD0);
-        build_part(PART_HOOD, &pm);
+        nb_body(&pm, &p);
         pm_instances_bake(&m, &li, PM_LOD0);
         add_area(&m, 1.0, area);
         pm_mesh_free(&m); pm_inst_free(&li);
     }
-    area[PMAT_RUST_STEEL] += 2.0 * 2.0 * 2.9 * 2.35;   /* two side walls, both faces */
-    area[PMAT_PLATE]      += 3.85 * 1.0;              /* the counter's front */
-    area[PMAT_STAINLESS]  += 3.85 * 0.45 + 3.85 * 0.65 + 3.85 * 0.3;   /* its top, the bench, the undershelf */
-    area[PMAT_TILE]       += 1.5 * 0.9;               /* the splashback */
-    area[PMAT_CHEQUER]    += 3.85 * 1.0;              /* the floor behind the counter */
     double total = 0.0, set[PMAT_COUNT] = { 0 }, painted = 0.0;
     for (int i = 0; i < PMAT_COUNT; ++i) total += area[i];
     /* sets serving two materials count once: fold each onto the first material naming it */
@@ -359,6 +364,104 @@ static void render(Image *im, const PmMesh *m, int cx, int cy, int cw, int ch, i
     free(zb); free(tid); free(bw);
 }
 
+/* ------------------------------------------------------- the bar's body --- */
+#define NB_STRUCT_BUDGET 16000   /* the merged structure at its one (near) level; NB0 guessed 6,000 */
+#define NB_FAR_BUDGET    500
+
+static void body_section(const char *out) {
+    static const struct { const char *name; float w, d; int form, side; uint32_t seed; } B[] = {
+        { "straight (slice)", 3.85f, 3.48f, NB_STRAIGHT, 0, 0x5EED01u },
+        { "straight wide", 5.2f, 3.3f, NB_STRAIGHT, 0, 0x5EED04u },
+        { "corner right", 4.4f, 3.6f, NB_CORNER, 1, 0x5EED02u },
+        { "corner left", 4.0f, 3.4f, NB_CORNER, -1, 0x5EED03u } };
+    const int nb = (int)(sizeof(B) / sizeof(B[0]));
+    const int BW = 620, BH = 460;
+    Image im = { 0, 0, NULL };
+    if (out) im = image_new(3 * BW, nb * BH);
+    printf("\n%-18s %7s %6s %8s %5s %8s %6s %6s %6s  %s\n", "body", "struct", "inst", "drawn", "far", "KB", "build", "bake", "far ms", "checks");
+    for (int b = 0; b < nb; ++b) {
+        NbPlan p;
+        uint32_t seed = B[b].seed;
+        int fits = 0;
+        for (int t = 0; t < 64; ++t, seed += 7919u) {   /* a seed whose plan turns the corner the way asked */
+            fits = nb_plan(&p, B[b].w, B[b].d, 0.0f, seed, B[b].form);
+            if (!B[b].side || p.side == B[b].side) break;
+        }
+        CHECK(fits, "body %s: the plan doesn't fit its %.2f x %.2f m site", B[b].name, B[b].w, B[b].d);
+        CHECK(p.form == B[b].form, "body %s: the plan's form is %d, asked %d", B[b].name, p.form, B[b].form);
+        PmMesh m = { 0 }, m2 = { 0 }, f = { 0 }, line = { 0 };
+        PmInstances li = { 0 }, li2 = { 0 }, ll = { 0 };
+        Pm pm;
+        double t0 = now_ms();
+        pm_begin(&pm, &m, &li, PM_LOD0);
+        nb_body(&pm, &p);
+        double tb = now_ms() - t0;
+        t0 = now_ms();
+        pm_bake(&m, NB_BAKE_RAYS, NB_BAKE_REACH);
+        double tk = now_ms() - t0;
+        PmStats s, s2;
+        pm_stats(&m, &s);
+        NbPlan q;
+        nb_plan(&q, B[b].w, B[b].d, 0.0f, seed, B[b].form);
+        pm_begin(&pm, &m2, &li2, PM_LOD0);
+        nb_body(&pm, &q);
+        pm_bake(&m2, NB_BAKE_RAYS, NB_BAKE_REACH);
+        pm_stats(&m2, &s2);
+        if (b == 0) {
+            int bym[PMAT_COUNT] = { 0 };
+            for (uint32_t i = 0; i + 2 < m.ni; i += 3) bym[m.v[m.idx[i]].mat]++;
+            for (uint32_t i = 0; i < m.nv; ++i)
+                if (m.v[i].p[2] < -0.005f) { printf("  behind the wall: %s part %d at (%.3f, %.3f, %.3f)\n", PM_MAT_NAME[m.v[i].mat], m.v[i].part, m.v[i].p[0], m.v[i].p[1], m.v[i].p[2]); break; }
+            printf("  the slice's structure by material:");
+            for (int k = 0; k < PMAT_COUNT; ++k) if (bym[k]) printf(" %s %d", PM_MAT_NAME[k], bym[k]);
+            printf("\n");
+        }
+        CHECK(s.hash == s2.hash && li.n == li2.n, "body %s: not deterministic", B[b].name);
+        CHECK(s.bad_normals == 0, "body %s: %d vertices whose normals disagree with their faces", B[b].name, s.bad_normals);
+        CHECK(s.tris <= NB_STRUCT_BUDGET, "body %s: %d structure triangles, over %d", B[b].name, s.tris, NB_STRUCT_BUDGET);
+        t0 = now_ms();
+        pm_begin(&pm, &f, NULL, PM_LOD2);
+        nb_shell(&pm, &p);
+        pm_bake(&f, NB_BAKE_RAYS, pm_reach(&f));
+        double tf = now_ms() - t0;
+        PmStats sf;
+        pm_stats(&f, &sf);
+        CHECK(sf.tris <= NB_FAR_BUDGET, "body %s: far shell %d triangles, over %d", B[b].name, sf.tris, NB_FAR_BUDGET);
+        CHECK(sf.bad_normals == 0, "body %s: far shell: %d vertices whose normals disagree with their faces", B[b].name, sf.bad_normals);
+        /* inside the site, under the duct's cap */
+        CHECK(s.lo[0] > -0.5f * B[b].w - 0.01f && s.hi[0] < 0.5f * B[b].w + 0.01f && s.lo[2] > -0.01f && s.hi[2] < B[b].d + 0.25f,
+              "body %s: reaches x %.2f..%.2f z %.2f..%.2f on a %.2f x %.2f m site", B[b].name, s.lo[0], s.hi[0], s.lo[2], s.hi[2], B[b].w, B[b].d);
+        /* the drawn bar: the structure, its modules and the stand-in line built in */
+        pm_begin(&pm, &line, &ll, PM_LOD0);
+        nb_standin(&pm, &p);
+        uint32_t ninst = li.n;
+        pm_instances_bake(&m, &li, PM_LOD0);
+        pm_instances_bake(&m, &ll, PM_LOD0);
+        PmStats sd;
+        pm_stats(&m, &sd);
+        printf("%-18s %7d %6u %8d %5d %8.0f %6.1f %6.1f %6.1f  %s %s, %.2f x %.2f, %d stools, %d tubes, %d icons, open %d\n",
+               B[b].name, s.tris, ninst, sd.tris, sf.tris, (double)(s.tris * 3 * 40) / 1024.0, tb, tk, tf,
+               p.form == NB_CORNER ? "corner" : "straight", p.side > 0 ? "+x" : "-x", B[b].w, B[b].d, p.nstool, p.ntube, p.nicon, s.open_edges);
+        if (out) {
+            render(&im, &m, 0, b * BH, BW, BH, SHOW_LIT);
+            render(&im, &f, BW, b * BH, BW, BH, SHOW_LIT);
+            render(&im, &m, 2 * BW, b * BH, BW, BH, SHOW_OCC);
+            text(&im, 8, b * BH + 8, B[b].name, 2);
+            text(&im, BW + 8, b * BH + 8, "far shell", 2);
+            text(&im, 2 * BW + 8, b * BH + 8, "occlusion", 2);
+        }
+        pm_mesh_free(&m); pm_mesh_free(&m2); pm_mesh_free(&f); pm_mesh_free(&line);
+        pm_inst_free(&li); pm_inst_free(&li2); pm_inst_free(&ll);
+    }
+    printf("(struct: merged triangles, near; KB: in the pool at 40 B a vertex, unindexed)\n");
+    if (out) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/pmodel_body.png", out);
+        stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
+        free(im.p);
+    }
+}
+
 /* ----------------------------------------------------------------- main --- */
 #define CW 300
 #define CH 240
@@ -528,6 +631,7 @@ int main(int argc, char **argv) {
         stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
         free(im.p);
     }
+    if (!only || !strcmp(only, "body")) body_section(out);
     printf("\n%s (%d failures)\n", g_fail ? "FAILED" : "ok", g_fail);
     return g_fail ? 1 : 0;
 }

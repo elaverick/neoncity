@@ -13,7 +13,10 @@
  *
  * Its shell (vendor_mesh's VL_SHELL: the structure, its signs and neon) goes in
  * the chunk's base layer: seen to the view distance, drawn into the rain's
- * shelter map, casting ray-traced shadows. Its dressing waits for a near-only
+ * shelter map, casting ray-traced shadows. A canopy noodle bar (NB4) is made
+ * from its plan instead (src/gen/noodle_bar.c): its far shell here (sheltering
+ * the rain, casting nothing: its body in the vendor layer casts, and city.vert
+ * drops the shell where that is drawn), its body in vendor_kit.c. Its dressing waits for a near-only
  * layer of its own (SV5). Lit neon faces are drawn as the facades' signs
  * (MAT_NEON); everything else is MAT_VENDOR (src/core/common.h), shaded by
  * shaders/city/vendor.glsl. The rooms behind its openings are painted by
@@ -76,6 +79,16 @@ int city_chunk_vendors(int cx, int cz, VendorVisit fn, void *ctx) {
  * pair's second container, a market's table). Thin parts are grown to 12 cm. */
 int vendor_solids(const Vendor *v, VendorSolid *out, int max) {
     int n = 0;
+    if (v->archetype == VA_CANOPY) {
+        /* a noodle bar: its plan's (the kitchen behind its counter, posts, column, stools, A-frame) */
+        float b[NB_SOLIDS_MAX][4];
+        int nb = nb_solids(&v->nb, b, NB_SOLIDS_MAX);
+        for (int i = 0; i < nb && n < max; ++i) {
+            VendorSolid *o = &out[n++];
+            o->x0 = b[i][0]; o->z0 = b[i][1]; o->x1 = b[i][2]; o->z1 = b[i][3]; o->y = 0.0f; o->floor = 0;
+        }
+        return n;
+    }
 #define ADD(a, b, c, d, yy, fl) do { if (n < max) { VendorSolid *o_ = &out[n++]; o_->x0 = (a); o_->z0 = (b); o_->x1 = (c); o_->z1 = (d); o_->y = (yy); o_->floor = (uint8_t)(fl); } } while (0)
     float body[2][4];
     int nb = 0;
@@ -126,7 +139,7 @@ static uint32_t to_srgb8(const float lin[3]) {
     return o;
 }
 
-typedef struct VEmit { Mesh *m; VendorMesh vm; int tris; } VEmit;
+typedef struct VEmit { Mesh *m; VendorMesh vm; PmMesh shell; int tris; } VEmit;
 
 /* The opening a room quad's vertex lies on (in its plane, inside it): its index, or -1. */
 static int room_opening(const Vendor *v, const float p[3]) {
@@ -165,6 +178,17 @@ static void room_word(const Vendor *v, int oi, uint8_t prm[4], uint32_t *aux, ui
 static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     VEmit *E = (VEmit *)ctx;
     Mesh *m = E->m;
+    if (v->archetype == VA_CANOPY) {
+        /* a noodle bar: its far shell (src/gen/noodle_bar.c), which gives way to its body near (vendor_kit.c) */
+        E->shell.nv = E->shell.ni = 0;
+        Pm pm;
+        pm_begin(&pm, &E->shell, NULL, PM_LOD2);
+        nb_shell(&pm, &v->nb);
+        pm_bake(&E->shell, NB_BAKE_RAYS, pm_reach(&E->shell));
+        vendor_emit_body(m, s, v, &E->shell, 1);
+        E->tris += (int)(E->shell.ni / 3);
+        return;
+    }
     VendorMesh *vm = &E->vm;
     vm->count = 0;
     vendor_mesh(v, VL_SHELL, vm);
@@ -228,4 +252,5 @@ void build_vendors(Mesh *m, ChunkGen *g) {
     E.m = m;
     city_vendors(g, emit_vendor, &E);
     vendor_mesh_free(&E.vm);
+    pm_mesh_free(&E.shell);
 }

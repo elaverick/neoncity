@@ -237,7 +237,7 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/dr
                 src/gen/interior_fixtures.c src/gen/interior_validate.c src/gen/interior_lights.c src/gen/interior_doors.c
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c
                 src/gen/vendor.c src/gen/vendor_structure.c src/gen/vendor_tables.c src/gen/vendor_mesh.c src/gen/vendor_validate.c
-                src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_bake.c)
+                src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_bake.c src/gen/noodle_bar.c)
 # Terrain (src/terrain): the ground everywhere, a pure function of position over the planet the world's
 # X/Z is a chart of (terrain_height.c, terrain_land.c, terrain_world.c, terrain_cube.c and terrain_earth.c, in GEN_SOURCES:
 # the city builds on them), the clipmap that samples it round the camera (drawn by src/render/terrain_gpu.c)
@@ -268,11 +268,12 @@ target_include_directories(plant_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # Street vendors (docs/street-vendor-generation.md): validity, determinism, budgets, uniqueness,
 # the mix by affluence; contact sheets (vendor_lab [seeds] [out_dir] [verbose_seed]).
 add_executable(vendor_lab tests/vendor_lab.c src/gen/vendor.c src/gen/vendor_structure.c src/gen/vendor_tables.c
-               src/gen/vendor_mesh.c src/gen/vendor_validate.c src/gen/gen_common.c)
+               src/gen/vendor_mesh.c src/gen/vendor_validate.c src/gen/gen_common.c
+               src/gen/noodle_bar.c src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_bake.c)
 target_include_directories(vendor_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # The procedural modelling kit (src/gen/pmodel*.c; the noodle bar slice, NB1): determinism, closure, normals,
 # budgets per level; contact sheets lit with ray-traced shadows (pmodel_lab [out_dir] [--only NAME]).
-add_executable(pmodel_lab tests/pmodel_lab.c src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_bake.c)
+add_executable(pmodel_lab tests/pmodel_lab.c src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_bake.c src/gen/noodle_bar.c)
 target_include_directories(pmodel_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # Terrain determinism, bounds, slopes, the city footprint, levels of detail and the clipmap
 # (terrain_test [--earth <test bake>] [--fingerprint]).

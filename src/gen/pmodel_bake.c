@@ -43,9 +43,41 @@ static void bvh_split(PmBvh *b, uint32_t ni, float (*cen)[3]) {
     }
     memcpy(n->lo, lo, sizeof(lo)); memcpy(n->hi, hi, sizeof(hi));
     if (n->count <= 4) return;
+    /* the split: binned by centroid on each axis, the plane of least surface area cost (a mesh of big thin
+     * sheets and small parts is badly served by the middle); the middle of the longest axis if none helps */
+    enum { NBIN = 12 };
     int ax = 0;
     for (int k = 1; k < 3; ++k) if (chi[k] - clo[k] > chi[ax] - clo[ax]) ax = k;
-    float mid = 0.5f * (clo[ax] + chi[ax]);
+    float mid = 0.5f * (clo[ax] + chi[ax]), bestCost = 1e30f;
+    for (int a = 0; a < 3; ++a) {
+        float ext = chi[a] - clo[a];
+        if (ext < 1e-6f) continue;
+        uint32_t cnt[NBIN] = { 0 };
+        float blo[NBIN][3], bhi[NBIN][3];
+        for (int q = 0; q < NBIN; ++q) for (int k = 0; k < 3; ++k) { blo[q][k] = 1e30f; bhi[q][k] = -1e30f; }
+        for (uint32_t i = n->first; i < n->first + n->count; ++i) {
+            int q = (int)((cen[b->order[i]][a] - clo[a]) / ext * (float)NBIN);
+            q = q < 0 ? 0 : q >= NBIN ? NBIN - 1 : q;
+            float tl[3], th[3];
+            tri_bounds(b->tri[b->order[i]], tl, th);
+            cnt[q]++;
+            for (int k = 0; k < 3; ++k) { blo[q][k] = minf(blo[q][k], tl[k]); bhi[q][k] = maxf(bhi[q][k], th[k]); }
+        }
+        for (int s = 1; s < NBIN; ++s) {
+            float L0[3] = { 1e30f, 1e30f, 1e30f }, L1[3] = { -1e30f, -1e30f, -1e30f }, R0[3] = { 1e30f, 1e30f, 1e30f }, R1[3] = { -1e30f, -1e30f, -1e30f };
+            uint32_t nl = 0, nr = 0;
+            for (int q = 0; q < NBIN; ++q) {
+                if (!cnt[q]) continue;
+                float *o0 = q < s ? L0 : R0, *o1 = q < s ? L1 : R1;
+                for (int k = 0; k < 3; ++k) { o0[k] = minf(o0[k], blo[q][k]); o1[k] = maxf(o1[k], bhi[q][k]); }
+                if (q < s) nl += cnt[q]; else nr += cnt[q];
+            }
+            if (!nl || !nr) continue;
+            float dl[3] = { L1[0] - L0[0], L1[1] - L0[1], L1[2] - L0[2] }, dr[3] = { R1[0] - R0[0], R1[1] - R0[1], R1[2] - R0[2] };
+            float cost = (dl[0] * dl[1] + dl[1] * dl[2] + dl[2] * dl[0]) * (float)nl + (dr[0] * dr[1] + dr[1] * dr[2] + dr[2] * dr[0]) * (float)nr;
+            if (cost < bestCost) { bestCost = cost; ax = a; mid = clo[a] + ext * (float)s / (float)NBIN; }
+        }
+    }
     uint32_t i = n->first, j = n->first + n->count;
     while (i < j) {
         if (cen[b->order[i]][ax] < mid) i++;
@@ -87,31 +119,41 @@ void pm_bvh_free(PmBvh *b) {
     free(b->node); free(b->tri); free(b->order); free(b);
 }
 
-static int box_hit(const BNode *n, const float o[3], const float inv[3], float tmax) {
+/* Where the ray enters node n's box before tmax, or -1 if it misses. */
+static float box_enter(const BNode *n, const float o[3], const float inv[3], float tmax) {
     float t0 = 0.0f, t1 = tmax;
     for (int k = 0; k < 3; ++k) {
         float a = (n->lo[k] - o[k]) * inv[k], c = (n->hi[k] - o[k]) * inv[k];
         if (a > c) { float t = a; a = c; c = t; }
         t0 = maxf(t0, a); t1 = minf(t1, c);
-        if (t0 > t1) return 0;
+        if (t0 > t1) return -1.0f;
     }
-    return 1;
+    return t0;
 }
 
 float pm_bvh_ray(const PmBvh *b, const float o[3], const float d[3], float tmin, float tmax) {
     if (!b->ntri) return -1.0f;
     float inv[3];
     for (int k = 0; k < 3; ++k) inv[k] = fabsf(d[k]) > 1e-12f ? 1.0f / d[k] : 1e12f;
+    /* nearer child first, each entry kept with where the ray enters its box: the nearest hit is found sooner
+     * and the boxes beyond it are skipped (the result is the same in any order) */
     uint32_t stack[64];
+    float enter[64];
     int sp = 0;
-    stack[sp++] = 0;
+    if (box_enter(&b->node[0], o, inv, tmax) < 0.0f) return -1.0f;
+    stack[sp] = 0; enter[sp] = 0.0f; sp++;
     float best = tmax;
     int hit = 0;
     while (sp) {
-        const BNode *n = &b->node[stack[--sp]];
-        if (!box_hit(n, o, inv, best)) continue;
+        --sp;
+        if (enter[sp] > best) continue;
+        const BNode *n = &b->node[stack[sp]];
         if (n->count == 0) {
-            if (sp < 62) { stack[sp++] = n->left; stack[sp++] = n->left + 1; }
+            uint32_t l = n->left, r = n->left + 1;
+            float tl = box_enter(&b->node[l], o, inv, best), tr = box_enter(&b->node[r], o, inv, best);
+            if (tl >= 0.0f && tr >= 0.0f && tr < tl) { uint32_t t = l; l = r; r = t; float f = tl; tl = tr; tr = f; }
+            if (tr >= 0.0f && sp < 63) { stack[sp] = r; enter[sp] = tr; sp++; }
+            if (tl >= 0.0f && sp < 63) { stack[sp] = l; enter[sp] = tl; sp++; }
             continue;
         }
         for (uint32_t i = n->first; i < n->first + n->count; ++i) {

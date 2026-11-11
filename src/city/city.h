@@ -244,9 +244,10 @@ uint32_t city_graffiti_corners(int cx, int cz);
  * crossing signals along the sidewalks, dumpsters in the back alleys, condensers
  * on the walls. Like the litter it is lit by the chunk's light table. */
 void     city_build_props(int cx, int cz, Mesh *m);
-/* The near vendor layer (src/city/vendor_kit.c; the noodle bar slice's NB2): no triangles of its own
- * yet, only the kit's modules each vendor sets down (Mesh.kit), within KIT_DISTANCE. Its bounds are the
- * modules' places, grown by KIT_PAD. Which vendors get a kit: city_set_kit (KIT_SLICE by default). */
+/* The near vendor layer (src/city/vendor_kit.c; the noodle bar slice's NB2, NB4), within KIT_DISTANCE:
+ * the canopy noodle bars' bodies (merged MAT_KIT triangles) and the kit's modules they and the cooking
+ * line set down (Mesh.kit). Its bounds are the triangles' and the modules' places, grown by KIT_PAD.
+ * Which vendors get the (stand-in) cooking line: city_set_kit (KIT_SLICE by default; KIT_OFF: no layer). */
 void     city_build_vendor_kit(int cx, int cz, Mesh *m);
 enum { KIT_OFF = 0, KIT_SLICE, KIT_ALL };   /* none; the slice only; every vendor (the cost spike) */
 void     city_set_kit(int mode);

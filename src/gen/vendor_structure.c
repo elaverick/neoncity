@@ -100,139 +100,123 @@ static void roof_slots(Vendor *v, float x0, float x1, float z0, float z1, float 
 
 /* ------------------------------------------------------- canopy noodle bar --- */
 
+/* The canopy noodle bar is made from its plan (src/gen/noodle_bar.c, roadmap NB4): the city draws the plan's
+ * body and far shell, never these parts. They mirror the plan coarsely, so the stages after this one (the
+ * rules, the bounds, the footprint, the dressing's tops and slots) see the bar as it is built: the hood's legs
+ * and the deck as roofs carried by the walls, posts and column; the counter's runs; the bench; the extractor
+ * and its duct; the stools where the plan sets them; the tubes as its lights. */
 static int build_canopy(VGen *G, VFrame *F) {
     Vendor *v = G->v;
-    Rng *r = &G->rs;
-    float W = v->site.w, D = v->site.d, ceil = ceiling_of(v);
-    if (W < 3.2f || D < 3.1f || ceil < 3.1f) return 0;
-    float cd = rng_range(r, 0.55f, 0.74f), ch = rng_range(r, 0.98f, 1.06f), sz = 0.85f;
-    float cab = rng_range(r, 0.45f, 0.6f), kd = cab + rng_range(r, 0.85f, 1.2f);
-    if (kd + cd + sz > D - 0.05f) kd = D - 0.05f - cd - sz;
-    if (kd < cab + 0.8f) { cab = kd - 0.8f; if (cab < 0.3f) return 0; }
-    float bw = minf(W - 0.1f, rng_range(r, 3.4f, 7.0f));
-    int U = bw >= 5.0f && rng_float(r) < 0.35f && bw - 2.0f * (cd + sz) >= 1.8f;
-    v->layout = U;
-    float x0 = -0.5f * bw, x1 = 0.5f * bw;
-    float zc0 = kd, zc1 = kd + cd, zf = zc1 + sz;
-    float ix0 = U ? x0 + sz : x0, ix1 = U ? x1 - sz : x1;   /* the counter's outer edge across */
-    v->front = zc1;
+    float ceil = ceiling_of(v);
+    NbPlan *p = &v->nb;
+    if (!nb_plan(p, v->site.w, v->site.d, v->site.ceiling, v->site.seed, -1)) return 0;
+    if (p->top > ceil + 1e-3f) return 0;
+    v->layout = p->form;
+    v->variant = p->side > 0;
+    v->front = p->front;
     v->clearMin = V_CLEAR_MIN;
-    float under = minf(rng_range(r, 2.46f, 2.85f), ceil - 0.7f);
-    if (under < 2.44f) return 0;
-    float slab = rng_range(r, 0.16f, 0.24f);
-    int vault = rng_float(r) < 0.4f;
-    float rise = vault ? rng_range(r, 0.22f, 0.4f) : 0.0f;
-    v->variant = vault;
-
-    /* the roof, and its lip along the front with the tubes under it */
-    int roof;
-    if (vault) {
-        roof = v_part(v, VP_VAULT, VR_ROOF, VS_FINISH, VCOL_BODY, VL_SHELL);
-        if (roof >= 0) {
-            VPart *p = &v->part[roof];
-            p->a[0] = x0; p->a[1] = under; p->a[2] = 0.0f; p->b[0] = x1; p->b[1] = under + slab; p->b[2] = zf; p->r = rise; p->segs = 8;
-        }
-    } else {
-        roof = v_box(v, VR_ROOF, VS_FINISH, VCOL_BODY, x0, under, 0.0f, x1, under + slab, zf);
-    }
-    int lip = v_box(v, VR_ROOF, VS_STEEL, VCOL_TRIM, x0 - 0.02f, under - 0.1f, zf - 0.06f, x1 + 0.02f, under + slab * 0.5f, zf + 0.02f);
-    if (lip >= 0 && roof >= 0) v_edge(v, lip, roof, VE_ATTACHED_TO);
-    float roofTop = under + slab + rise;
-    F->roofTop = roofTop; F->roofPart = roof; v->roofY = under - 0.1f;
-
-    /* posts: the counter's corners front and back, no bay over the span */
-    int round = rng_float(r) < 0.5f;
-    float pr = round ? 0.06f : 0.055f;
-    post_row(v, VS_STEEL, VCOL_TRIM, ix0 + 0.07f, ix1 - 0.07f, zc1 - 0.07f, under, pr, round, roof, NULL, 0);
-    post_row(v, VS_STEEL, VCOL_TRIM, ix0 + 0.07f, ix1 - 0.07f, cab + 0.08f, under, pr, round, roof, NULL, 0);
-
-    /* the back: a cabinet of shelves the painted room shows through, and the prep bench before it */
-    float bx0 = ix0 + 0.12f, bx1 = ix1 - 0.12f;
-    int cabinet = wall(v, bx0, 0.0f, 0.0f, bx1, under - 0.02f, cab);
-    if (cabinet >= 0) {
-        v->part[cabinet].role = VR_CABINET;
-        float ow = (bx1 - bx0) - 0.5f, oy = rng_range(r, 0.95f, 1.15f), oh = under - 0.3f - oy;
-        int room = v_opening(v, VO_RECESS, -0.5f * ow, oy, cab + 0.005f, 1.0f, 0.0f, ow, oh, cab - 0.06f, cabinet);
-        (void)room;
-        v->part[cabinet].faces = VB_BOT | VB_TOP;
-    }
-    float bench0 = cab, bench1 = cab + rng_range(r, 0.45f, 0.55f);
-    int bench = v_box(v, VR_SHELL, VS_STAINLESS, VCOL_TRIM, bx0, 0.0f, bench0, bx1, 0.9f, bench1);
-    if (bench >= 0) v->part[bench].faces = VB_BOT;
-    float cookX = bx0 + (bx1 - bx0) * rng_range(r, 0.3f, 0.7f);
-    if (V_TRADES[v->trade].cooking == 2) {
-        F->cook[0] = cookX; F->cook[1] = 0.9f; F->cook[2] = 0.5f * (bench0 + bench1);
-        float hw = rng_range(r, 0.5f, 0.8f);
-        int hood = v_box(v, VR_HOOD, VS_STAINLESS, VCOL_TRIM, cookX - hw, under - 0.45f, bench0 - 0.02f, cookX + hw, under - 0.02f, bench1 + 0.1f);
-        if (hood >= 0 && roof >= 0) v_edge(v, hood, roof, VE_MOUNTED_ON);
-        float fh = roofTop + rng_range(r, 0.65f, 1.1f);
-        int flue = v_cyl(v, VR_FLUE, VS_STEEL, VCOL_TRIM, cookX, under, 0.5f * (bench0 + bench1), cookX, minf(fh, ceil - 0.05f), 0.5f * (bench0 + bench1), 0.12f, 8);
-        if (flue >= 0 && hood >= 0) v_edge(v, flue, hood, VE_ATTACHED_TO);
-        add_surface(F, VSU_COUNTER, bx0 + 0.05f, bench0 + 0.03f, bx1 - 0.05f, bench1 - 0.03f, 0.9f);
-    } else {
-        add_surface(F, VSU_SHELF, bx0 + 0.05f, bench0 + 0.03f, bx1 - 0.05f, bench1 - 0.03f, 0.9f);
-    }
-
-    /* the counter: a tiled or painted body and a steel top; a gap at one end lets the cook in */
-    int gapLeft = rng_float(r) < 0.5f;
-    float cx0 = ix0 + (gapLeft && !U ? 0.7f : 0.0f), cx1 = ix1 - (!gapLeft && !U ? 0.7f : 0.0f);
-    int body = v_box(v, VR_SHELL, rng_float(r) < 0.25f ? VS_TILE : VS_FINISH, VCOL_ACC2, cx0, 0.0f, zc0 + 0.03f, cx1, ch - 0.04f, zc1 - 0.03f);
-    int top = v_box(v, VR_COUNTER, VS_STAINLESS, VCOL_TRIM, cx0 - 0.02f, ch - 0.04f, zc0, cx1 + 0.02f, ch, zc1);
-    if (body >= 0) v->part[body].faces = VB_BOT | VB_TOP;
-    if (body >= 0 && top >= 0) v_edge(v, body, top, VE_SUPPORTS);
-    add_surface(F, VSU_COUNTER, cx0 + 0.05f, zc0 + 0.06f, cx1 - 0.05f, zc1 - 0.06f, ch);
-    int stools = stool_row(v, r, cx0 + 0.3f, zc1 + 0.42f, cx1 - 0.3f, zc1 + 0.42f, 0.0f, -1.0f, 8);
-    if (U) {
-        /* the side counters, from the front counter back into the bar, with stools outside them */
-        float sz0 = cab + 0.35f;
-        for (int s = -1; s <= 1; s += 2) {
-            float a = s < 0 ? ix0 : ix1 - cd, b = s < 0 ? ix0 + cd : ix1;
-            int sb = v_box(v, VR_SHELL, VS_FINISH, VCOL_ACC2, a + 0.03f, 0.0f, sz0, b - 0.03f, ch - 0.04f, zc0 + 0.03f);
-            int st = v_box(v, VR_COUNTER, VS_STAINLESS, VCOL_TRIM, a, ch - 0.04f, sz0, b, ch, zc0);
-            if (sb >= 0) v->part[sb].faces = VB_BOT | VB_TOP;
-            if (sb >= 0 && st >= 0) v_edge(v, sb, st, VE_SUPPORTS);
-            add_surface(F, VSU_COUNTER, a + 0.06f, sz0 + 0.05f, b - 0.06f, zc0 - 0.05f, ch);
-            float xs = s < 0 ? ix0 - 0.42f : ix1 + 0.42f;
-            stools += stool_row(v, r, xs, sz0 + 0.3f, xs, zc0 - 0.1f, (float)s * -1.0f, 0.0f, 4);
+    const PmHood *h = &p->hood;
+    v->roofY = h->spring;
+    /* walls and posts, which carry the roofs */
+    int sup[NB_WALLS_MAX + NB_POSTS_MAX + 1], ns = 0;
+    for (int i = 0; i < p->nwall; ++i) {
+        const NbWall *w = &p->wall[i];
+        float ax = w->o[0], az = w->o[1], bx = ax + w->u[0] * w->len, bz = az + w->u[1] * w->len;
+        float nx = -w->u[1], nz = w->u[0];   /* outward */
+        int k = wall(v, minf(ax, bx), 0.0f, minf(az, bz), maxf(ax, bx), w->h, maxf(az, bz));
+        if (k >= 0) {
+            VPart *q = &v->part[k];
+            /* 4 cm thick, inward of its face */
+            if (fabsf(w->u[0]) < 0.5f) { q->a[0] = nx > 0.0f ? ax - 0.04f : ax; q->b[0] = q->a[0] + 0.04f; }
+            else { q->a[2] = nz > 0.0f ? az - 0.04f : az; q->b[2] = q->a[2] + 0.04f; }
+            sup[ns++] = k;
         }
     }
-    v->st.stools = stools;
-    /* the kitchen's sides: half the time, walls of the finish from the back to the counter */
-    if (rng_float(r) < 0.5f) {
-        for (int s = -1; s <= 1; s += 2) {
-            float xa = s < 0 ? ix0 + 0.02f : ix1 - 0.12f, xb = xa + 0.1f, xo = s < 0 ? xa : xb;
-            int w = wall(v, xa, 0.0f, 0.0f, xb, under, kd - 0.25f);
-            if (w >= 0) v->part[w].faces = VB_BOT | VB_TOP;
-            if (w >= 0 && roof >= 0) v_edge(v, w, roof, VE_SUPPORTS);
-            v_slot(v, VSL_WALL, xo + 0.005f * (float)s, 1.3f, 0.5f * (kd - 0.25f), (float)s, 0.0f, kd - 0.5f, 1.4f);
-        }
-    } else {
-        v_slot(v, VSL_WALL, bx0 - 0.005f, 1.4f, 0.5f * cab, -1.0f, 0.0f, cab - 0.1f, 1.2f);
-        v_slot(v, VSL_WALL, bx1 + 0.005f, 1.4f, 0.5f * cab, 1.0f, 0.0f, cab - 0.1f, 1.2f);
+    for (int i = 0; i < p->npost; ++i) {
+        int k = post(v, VS_STEEL, VCOL_TRIM, p->post[i][0], p->post[i][1], 0.0f, p->post[i][2], 0.03f, 0);
+        if (k >= 0) sup[ns++] = k;
     }
-    /* tubes under the lip, and their light */
-    int tubes = 2 + (bw > 5.0f) + (rng_float(r) < 0.4f);
+    if (p->column[2] > 0.0f) {
+        int k = v_box(v, VR_SUPPORT, VS_STEEL, VCOL_TRIM, p->column[0] - p->column[2], 0.0f, p->column[1] - p->column[2],
+                      p->column[0] + p->column[2], p->column[3], p->column[1] + p->column[2]);
+        if (k >= 0) sup[ns++] = k;
+    }
+    /* the roofs: each leg of the hood as a slab from its spine to its lip, the deck */
+    int roof = -1;
+    float s0 = 0.0f;
+    for (int j = 0; j + 1 < h->nspine; ++j) {
+        float ax = h->spine[j][0], az = h->spine[j][1], bx = h->spine[j + 1][0], bz = h->spine[j + 1][1];
+        float dx = bx - ax, dz = bz - az, L = sqrtf(dx * dx + dz * dz);
+        if (L < 1e-3f) continue;
+        /* the leg's spine and its lip, mitred round a corner (the hip goes with both legs) */
+        float la[3], lb[3];
+        pm_hood_point(h, s0, 1.0f, la);
+        pm_hood_point(h, s0 + L, 1.0f, lb);
+        s0 += L;
+        int k = v_box(v, VR_ROOF, VS_RUST, VCOL_BODY, minf(minf(ax, bx), minf(la[0], lb[0])), h->spring,
+                      minf(minf(az, bz), minf(la[2], lb[2])), maxf(maxf(ax, bx), maxf(la[0], lb[0])), p->hoodTop,
+                      maxf(maxf(az, bz), maxf(la[2], lb[2])));
+        if (k < 0) continue;
+        if (roof < 0) roof = k;
+        for (int i = 0; i < ns; ++i) v_edge(v, sup[i], k, VE_SUPPORTS);
+    }
+    if (p->deck[2] > p->deck[0]) {
+        int k = v_box(v, VR_ROOF, VS_RUST, VCOL_BODY, p->deck[0], p->hoodTop - 0.02f, p->deck[1], p->deck[2], p->hoodTop, p->deck[3]);
+        if (k >= 0) for (int i = 0; i < ns; ++i) v_edge(v, sup[i], k, VE_SUPPORTS);
+    }
+    F->roofTop = p->hoodTop; F->roofPart = roof;
+    /* the counter's runs (their tops), the bench, the extractor, the duct */
+    for (int i = 0; i < p->nrun; ++i) {
+        const NbRun *r = &p->run[i];
+        float ax = r->o[0], az = r->o[1], bx = ax + r->u[0] * r->len, bz = az + r->u[1] * r->len;
+        float nx = -r->u[1] * p->cd, nz = r->u[0] * p->cd;   /* back from the face */
+        float x0 = minf(minf(ax, bx), minf(ax - nx, bx - nx)), x1 = maxf(maxf(ax, bx), maxf(ax - nx, bx - nx));
+        float z0 = minf(minf(az, bz), minf(az - nz, bz - nz)), z1 = maxf(maxf(az, bz), maxf(az - nz, bz - nz));
+        int body = v_box(v, VR_SHELL, VS_STEEL, VCOL_ACC2, x0, 0.0f, z0, x1, p->cy - 0.04f, z1);
+        int top = v_box(v, VR_COUNTER, VS_STAINLESS, VCOL_TRIM, x0, p->cy - 0.04f, z0, x1, p->cy, z1);
+        if (body >= 0 && top >= 0) v_edge(v, body, top, VE_SUPPORTS);
+        add_surface(F, VSU_COUNTER, x0 + 0.05f, z0 + 0.05f, x1 - 0.05f, z1 - 0.05f, p->cy);
+    }
+    if (p->benchX1 - p->benchX0 > 0.3f) {
+        v_box(v, VR_SHELL, VS_STAINLESS, VCOL_TRIM, p->benchX0, 0.0f, p->lining, p->benchX1, p->benchY, p->lining + p->benchD);
+        add_surface(F, VSU_COUNTER, p->benchX0 + 0.05f, p->lining + 0.03f, p->benchX1 - 0.05f, p->lining + p->benchD - 0.03f, p->benchY);
+    }
+    int hood = v_box(v, VR_HOOD, VS_STAINLESS, VCOL_TRIM, p->rangeX0 - 0.1f, 1.97f, p->lining, p->rangeX1 + 0.1f, 2.40f, p->lining + 0.6f);
+    int flue = v_cyl(v, VR_FLUE, VS_STEEL, VCOL_TRIM, p->ductX, 2.40f, p->ductZ, p->ductX, p->ductTop, p->ductZ, p->ductR, 8);
+    if (flue >= 0 && hood >= 0) v_edge(v, flue, hood, VE_ATTACHED_TO);
+    if (hood >= 0 && roof >= 0) v_edge(v, hood, roof, VE_MOUNTED_ON);
+    F->cook[0] = 0.5f * (p->rangeX0 + p->rangeX1); F->cook[1] = p->benchY; F->cook[2] = p->lining + 0.5f * p->benchD;
+    F->front = p->front;
+    F->signY = 0.0f; F->signW = 0.0f;   /* the fascia's icons are the bar's signs (NB6) */
+    /* the stools where the plan sets them, facing the counter */
+    for (int i = 0; i < p->nstool; ++i) {
+        VItem *it = v_item(v, VI_STOOL, VR_STOOL);
+        if (!it) break;
+        it->p[0] = p->stool[i][0]; it->p[1] = 0.0f; it->p[2] = p->stool[i][1];
+        it->s[0] = 0.36f; it->s[1] = 0.75f; it->s[2] = 0.36f;
+        it->fx = 0.0f; it->fz = -1.0f;
+        it->seed = hash_combine(v->site.seed, 0x5700u + (uint32_t)i);
+    }
+    v->st.stools = p->nstool;
+    /* the tubes, and a warm lamp over the kitchen */
     uint32_t lc = lamp_rgb(v);
-    for (int k = 0; k < tubes; ++k) {
-        float x = x0 + bw * ((float)k + 0.5f) / (float)tubes, hl = minf(0.6f, bw / (float)tubes * 0.4f);
-        int t = v_box(v, VR_LAMP, v->cls == VC_RICH ? VS_BULB : VS_TUBE, VCOL_RGB, x - hl, under - 0.13f, zc1 + 0.12f, x + hl, under - 0.1f, zc1 + 0.16f);
-        if (t >= 0) { v->part[t].rgb = lc; v->part[t].flags |= VPF_EMISSIVE; if (lip >= 0) v_edge(v, t, lip, VE_MOUNTED_ON); }
-        v_light(v, lamp_kind(v), x, under - 0.15f, zc1 + 0.14f, 1.0f, lc);
+    for (int i = 0; i < p->ntube; ++i) {
+        const float *t = p->tube[i];
+        v_light(v, VLK_TUBE, 0.5f * (t[0] + t[3]), t[1], 0.5f * (t[2] + t[5]), 1.0f, lc);
     }
-    v_light(v, VLK_TUBE, 0.0f, under - 0.2f, 0.5f * (cab + zc0), 0.6f, lc);
-    /* rails: over the stools along the front, and inside over the kitchen */
-    add_rail(F, x0 + 0.25f, zf - 0.12f, x1 - 0.25f, zf - 0.12f, under - 0.12f, 1);
-    add_rail(F, ix0 + 0.3f, zc0 - 0.15f, ix1 - 0.3f, zc0 - 0.15f, under - 0.05f, 0);
-    F->front = zc1;
-    F->signY = roofTop; F->signW = minf(bw * 0.6f, 2.6f);
-    roof_slots(v, x0 + 0.3f, x1 - 0.3f, 0.2f, zf * 0.5f, roofTop, 3);
-    /* the ground beside the bar, if the site leaves room */
-    if (W - bw > 0.8f) {
-        v_slot(v, VSL_GROUND, x0 - 0.5f * (0.5f * (W - bw)), 0.0f, 0.5f * kd, 0.0f, 1.0f, 0.5f * (W - bw) - 0.1f, 1.6f);
-        v_slot(v, VSL_GROUND, x1 + 0.5f * (0.5f * (W - bw)), 0.0f, 0.5f * kd, 0.0f, 1.0f, 0.5f * (W - bw) - 0.1f, 1.6f);
+    v_light(v, VLK_BULB, F->cook[0], 1.9f, p->lining + 0.4f, 0.6f, 0xFFB46Bu);
+    /* slots: the side walls' outer faces for a poster or a meter, the ground beside the bar */
+    for (int i = 0; i < p->nwall; ++i) {
+        const NbWall *w = &p->wall[i];
+        if (fabsf(w->u[0]) > 0.5f || w->len < 0.8f) continue;
+        float nx = -w->u[1];
+        v_slot(v, VSL_WALL, w->o[0] + nx * 0.005f, 1.4f, w->o[1] + w->u[1] * 0.5f * w->len, nx, 0.0f, w->len - 0.3f, 1.2f);
     }
-    v_slot(v, VSL_GROUND, U ? 0.0f : (gapLeft ? x1 - 0.35f : x0 + 0.35f), 0.0f, 0.5f * (bench1 + zc0), 0.0f, 1.0f, 0.5f, 1.0f);
-    v->box[0] = minf(x0, U ? ix0 - 0.62f : x0); v->box[1] = 0.0f; v->box[2] = maxf(x1, U ? ix1 + 0.62f : x1); v->box[3] = zf;
+    float sw = 0.5f * (v->site.w - (p->x1 - p->x0));
+    if (sw > 0.8f) {
+        v_slot(v, VSL_GROUND, p->x0 - 0.5f * sw, 0.0f, 0.5f * p->front, 0.0f, 1.0f, sw - 0.1f, 1.6f);
+        v_slot(v, VSL_GROUND, p->x1 + 0.5f * sw, 0.0f, 0.5f * p->front, 0.0f, 1.0f, sw - 0.1f, 1.6f);
+    }
     return 1;
 }
 

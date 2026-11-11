@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include "building.h"   /* BLog */
+#include "noodle_bar.h"
 
 /* Street vendors: noodle bars, kiosks, lean-tos, container shops, market
  * stalls and barrows, after docs/street-vendor-generation.md (the design;
@@ -265,6 +266,7 @@ typedef struct Vendor {
     VEmitter     emit[V_EMITTERS_MAX];
     VSlot        slot[V_MAX_SLOT];
     VItem        item[V_MAX_ITEM];
+    NbPlan       nb;                /* a canopy noodle bar's plan (src/gen/noodle_bar.c): what the city builds it from */
     int          nstructure;        /* parts 0 .. nstructure-1 are the structure's; the rest are made from the items */
     int          detail;            /* 2 full .. 0 coarsest (fewer segments round the cylinders) */
     VendorFinger finger;

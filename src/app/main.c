@@ -21,6 +21,7 @@
 #include "light_units.h"
 #include "kit_gpu.h"
 #include "city.h"
+#include "noodle_bar.h"
 
 static bool   g_resized;
 static bool   g_captured = true;
@@ -82,7 +83,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--nbform straight|corner] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -106,6 +107,7 @@ static void usage(void) {
            "  --lockdoors  lock every lobby's automatic doors: sliding ones stay shut, revolving ones stand still\n"
            "  --kit  which street vendors set down the modelling kit's modules (NB2): none, the noodle bar slice\n"
            "         (the default) or every vendor (a lane's worth of slices: the instancing's cost)\n"
+           "  --nbform  build every canopy noodle bar straight or turning a corner, where it fits (NB4's captures)\n"
            "  --nograss  draw no grass blades\n"
            "  --nowake  the grass doesn't part where the player walks\n"
            "  --grass-cap  give each of the grass's levels of detail room for at most N blades (the far ones give way)\n"
@@ -161,6 +163,12 @@ static bool parse_args(int argc, char **argv, Options *o) {
             if (strcmp(v, "off") == 0) o->kit = KIT_OFF;
             else if (strcmp(v, "slice") == 0) o->kit = KIT_SLICE;
             else if (strcmp(v, "all") == 0) o->kit = KIT_ALL;
+            else return false;
+        }
+        else if (strcmp(argv[i], "--nbform") == 0 && i + 1 < argc) {
+            const char *v = argv[++i];
+            if (strcmp(v, "straight") == 0) nb_force_form(NB_STRAIGHT);
+            else if (strcmp(v, "corner") == 0) nb_force_form(NB_CORNER);
             else return false;
         }
         else if (strcmp(argv[i], "--grass-cap") == 0 && i + 1 < argc) o->grassCap = (uint32_t)strtoul(argv[++i], NULL, 10);

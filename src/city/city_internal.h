@@ -372,5 +372,8 @@ int     city_vendor_spots(ChunkGen *g, double x0, double z0, double x1, double z
 /* mesh_vendor.c */
 /* city_chunk_vendors for g's chunk; g must hold the buildings of every block that reaches it. */
 int     city_vendors(ChunkGen *g, VendorVisit fn, void *ctx);
-/* The vendors' shells (vendor_mesh's VL_SHELL) in the chunk's base layer. */
+/* The vendors' shells (vendor_mesh's VL_SHELL; a canopy noodle bar's far shell, nb_shell) in the chunk's base layer. */
 void    build_vendors(Mesh *m, ChunkGen *g);
+/* vendor_kit.c: a noodle bar's body or far shell (far: KIT_AUX_FAR), baked, in the vendor's frame, into m as
+ * MAT_KIT triangles (src/core/common.h). */
+void    vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMesh *pm, int far);

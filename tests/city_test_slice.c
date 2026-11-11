@@ -8,6 +8,8 @@
  *                                as 50 m, if the line of sight needs it), and an office impostor
  *                                tower's curtain wall at the same distances
  *   city_test --slice lane [X Z] a view down the nearest market lane (NB2's cost spike)
+ *   city_test --slice bars [X Z] the canopy noodle bars round X Z (default the slice) and the
+ *                                60 m round one holding the most (NB4's bodies' worst view)
  *   city_test --slice find [X Z] apron sites against a wall under the open sky
  *                                near X Z (default the old canopy bar's lane):
  *                                candidates for VENDOR_SLICE_X/Z
@@ -119,6 +121,37 @@ static int slice_find(double x, double z) {
     return 0;
 }
 
+/* The canopy noodle bars within 8 chunks of (x, z) (NB4's bodies), and the 120 m disc (the vendor layer's
+ * reach) holding most of them, with a view into it from its edge: the view that loads the most bodies. */
+typedef struct SlBars { double x[1024], z[1024]; int n, corner; } SlBars;
+static void sl_bar(void *ctx, const VendorSpot *s, const Vendor *v) {
+    SlBars *B = (SlBars *)ctx;
+    if (v->archetype != VA_CANOPY || B->n >= 1024) return;
+    vendor_spot_middle(s, &B->x[B->n], &B->z[B->n]);
+    B->corner += v->nb.form == NB_CORNER;
+    B->n++;
+}
+static int slice_bars(double x, double z) {
+    static SlBars B;
+    memset(&B, 0, sizeof(B));
+    int cx = (int)floor(x / CHUNK_SIZE), cz = (int)floor(z / CHUNK_SIZE);
+    for (int j = -8; j <= 8; ++j)
+        for (int i = -8; i <= 8; ++i) city_chunk_vendors(cx + i, cz + j, sl_bar, &B);
+    int best = -1, most = 0;
+    for (int a = 0; a < B.n; ++a) {
+        int c = 0;
+        for (int b = 0; b < B.n; ++b) c += (B.x[a] - B.x[b]) * (B.x[a] - B.x[b]) + (B.z[a] - B.z[b]) * (B.z[a] - B.z[b]) < 60.0 * 60.0;
+        if (c > most) { most = c; best = a; }
+    }
+    printf("%d canopy noodle bars within 8 chunks of (%.0f, %.0f), %d of them corner bars\n", B.n, x, z, B.corner);
+    if (best < 0) return 0;
+    printf("the most within 60 m of one: %d round (%.2f, %.2f)\n", most, B.x[best], B.z[best]);
+    for (int b = 0; b < B.n; ++b)
+        if ((B.x[best] - B.x[b]) * (B.x[best] - B.x[b]) + (B.z[best] - B.z[b]) * (B.z[best] - B.z[b]) < 60.0 * 60.0)
+            printf("  bar at (%.2f, %.2f)\n", B.x[b], B.z[b]);
+    return 0;
+}
+
 /* A view down the market lane nearest (x, z): its vendors' middles' long axis,
  * from just behind the first of them, at eye height (NB2's cost spike with
  * NeonCity --kit all; NB8's worst view). */
@@ -160,6 +193,8 @@ static int slice_lane(double x, double z) {
 static int slice_cams(int argc, char **argv) {
     if (argc > 2 && strcmp(argv[2], "find") == 0)
         return slice_find(argc > 4 ? atof(argv[3]) : 732.2, argc > 4 ? atof(argv[4]) : -735.1);
+    if (argc > 2 && strcmp(argv[2], "bars") == 0)
+        return slice_bars(argc > 4 ? atof(argv[3]) : VENDOR_SLICE_X, argc > 4 ? atof(argv[4]) : VENDOR_SLICE_Z);
     if (argc > 2 && strcmp(argv[2], "lane") == 0)
         return slice_lane(argc > 4 ? atof(argv[3]) : 634.0, argc > 4 ? atof(argv[4]) : 925.0);
     int cx = (int)floor(VENDOR_SLICE_X / CHUNK_SIZE), cz = (int)floor(VENDOR_SLICE_Z / CHUNK_SIZE);
@@ -191,14 +226,26 @@ static int slice_cams(int argc, char **argv) {
     printf("slice: a %s (%s) on an apron site %.2f x %.2f at (%.2f, %.2f), facing (%.2f, %.2f); floor %.2f, affluence %.2f (%s), walk %.1f m\n",
            vendor_archetype_name(F.v.archetype), vendor_trade_name(F.v.trade), s->site.w, s->site.d, mx, mz, s->fx, s->fz, s->y,
            s->site.affluence, vendor_class_name(F.v.cls), s->walk);
-    printf("  now: %d shell triangles, %d dressing triangles, %d parts, %d items, %d lights, %d emitters\n", F.tris, F.dress, F.v.npart,
-           F.v.nitem, F.v.nlight, F.v.nemit);
+    {   /* its plan (NB4) and far shell */
+        const NbPlan *p = &F.v.nb;
+        PmMesh fm = { 0 };
+        Pm pm;
+        pm_begin(&pm, &fm, NULL, PM_LOD2);
+        nb_shell(&pm, p);
+        printf("  plan: %s%s, bar %.2f m, counter front at %.2f, lip at %.2f, hood %.2f to %.2f m, %d stools, %d tubes, %d icons; far shell %u triangles\n",
+               p->form == NB_CORNER ? "corner" : "straight", p->form == NB_CORNER ? (p->side > 0 ? " (+x)" : " (-x)") : "", p->x1 - p->x0,
+               p->front, p->lip, p->hood.spring, p->hoodTop, p->nstool, p->ntube, p->nicon, fm.ni / 3);
+        CHECK(fm.ni / 3 <= 500, "the slice's far shell has %u triangles, over 500", fm.ni / 3);
+        pm_mesh_free(&fm);
+    }
     {   /* the near vendor layer: the kit's modules set down at the slice (NB2), the same from either build */
         Mesh km, km2;
         memset(&km, 0, sizeof(km));
         memset(&km2, 0, sizeof(km2));
         int kx = (int)floor(mx / CHUNK_SIZE), kz = (int)floor(mz / CHUNK_SIZE);
+        clock_t c0 = clock();
         city_build_vendor_kit(kx, kz, &km);
+        double kms = 1000.0 * (double)(clock() - c0) / CLOCKS_PER_SEC;
         city_build_vendor_kit(kx, kz, &km2);
         int counts[PMK_COUNT] = { 0 }, out = 0;
         for (uint32_t i = 0; i < km.nkit; ++i) {
@@ -210,8 +257,11 @@ static int slice_cams(int argc, char **argv) {
         }
         CHECK(km.nkit > 0, "the slice sets down no kit");
         CHECK(km.nkit == km2.nkit && !memcmp(km.kit, km2.kit, sizeof(KitInst) * km.nkit), "the slice's kit is not deterministic");
+        CHECK(km.count == km2.count && !memcmp(km.v, km2.v, sizeof(Vertex) * km.count), "the slice's body is not deterministic");
+        printf("  vendor layer: %u body triangles (%.1f MB of the pool), built in %.0f ms\n", km.count / 3,
+               (double)km.count * sizeof(Vertex) / 1048576.0, kms);
         CHECK(out == 0, "%d of the slice's kit modules stand outside its site", out);
-        printf("  kit: %u modules set down (stand-ins until NB4-NB5):", km.nkit);
+        printf("  kit: %u modules set down (the line a stand-in until NB5):", km.nkit);
         for (int m = 0; m < PMK_COUNT; ++m) if (counts[m]) printf(" %s %d", pm_module(m)->name, counts[m]);
         printf("\n");
         mesh_free(&km);

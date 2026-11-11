@@ -157,6 +157,8 @@ void main() {
         vec3 d = doorMove(nrm);
         rel += d;
         local += d;
+    } else if (inParams.x == MAT_KIT) {
+        lit = vec2(float(inParams.z), float(inParams.w)) / 255.0;   // a noodle bar's body: its baked occlusion, wear
     } else if (inParams.x == MAT_VENDOR) {
         lit = vec2(inNrm.w, 0.0);   // a vendor's part's top over its floor, in 6.35 m (src/city/mesh_vendor.c)
     } else if (inParams.x == MAT_INTERIOR && (inParams.y == 10u || inParams.y == 20u)) {
@@ -207,11 +209,14 @@ void main() {
     vUV = inUV;
     vSeed = inSeed;
     vParams = inParams;
+    if (inParams.x == MAT_KIT) vParams = uvec4(MAT_KIT, inParams.y, inAux & 255u, (inAux >> 8) & 255u);   // as kit.vert's
     vChunk = uint(gl_InstanceIndex);
     vFacePack = uint(max(inUV.y, 0.0) + 0.5);
     if (inParams.x == MAT_FACADE) vFacePack |= uint(inNrm.w * 127.0 + 0.5) << 24;   // facade_mat (src/city/mesh_building.c)
     vAux = inAux;
     gl_Position = frame.viewProj * vec4(rel, 1.0);
+    // a noodle bar's far shell where its chunk's vendor layer draws the near body (src/core/common.h KIT_AUX_FAR)
+    if (inParams.x == MAT_KIT && (inAux & KIT_AUX_FAR) != 0u && c.origin.w > 0.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 #ifdef PREPASS
     if (partialCoverage()) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // all three corners outside: the triangle is clipped away
 #endif

@@ -26,6 +26,13 @@ If the city's plan moves the site (SF3 re-weights the sites), `city_test --slice
 
 ## Parts and dimensions
 
+**NB4 built the body** (`src/gen/noodle_bar.c`): one plan per canopy site (`NbPlan`, a pure function of the
+site) gives the near body, the far shell, the collision and the cooking line's places. Two forms: **straight**,
+against the host wall, the hood along the frontage; **corner**, the bar turning round one end of its site (a
+third of the sites wide enough, 3.4 m): the counter in an L round a riveted column, the hood wrapping round a
+mitred hip, a flat deck of lapped sheet over the kitchen behind its spine, the customers on two sides.
+`pmodel_lab` draws both (`build/pmodel/pmodel_body.png`); `NeonCity --nbform straight|corner` forces one.
+
 The site's frame: x across the frontage, z out from the back wall (0) to the front (3.48), y up from the floor.
 Sizes are targets; the generator may vary them within the ranges, the slice's first build sits mid-range.
 
@@ -43,12 +50,12 @@ Sizes are targets; the generator may vary them within the ranges, the slice's fi
 |---|---|---|
 | Form | barrel vault, its axis along the frontage; curving down to the front | straight on a wall site, wrapping round on a corner (NB4's second form) |
 | Span (front to back) | the site's depth + 0.6 to 0.9 m overhang past the counter | the overhang shelters the stools |
-| Spring height | 2.35 to 2.5 m (front lip) | clear of V_CLEAR_MIN 2.3 m |
+| Spring height | 2.45 to 2.6 m (front lip) | **NB4:** raised from 2.35-2.5 so the fascia's bottom keeps 2.05 m (over V_HANG_CLEAR 1.95, as a hanging sign); the roof itself clears V_CLEAR_MIN 2.3 m |
 | Rise | 0.6 to 0.9 m above the spring | top at 3.1 to 3.4 m |
 | Ribs | 60 x 30 mm, pitch 0.45 to 0.6 m | standing above the sheet, front to back |
 | Panels | sheet 1.5 mm between ribs, lapped 25 mm, rivet rows along the laps | rusted copper-brown, streaked from rivets and seams |
 | Rolled lip | 50 to 60 mm round, along the front edge | |
-| Fascia | 0.30 to 0.40 m tall under the lip, full frontage | carries the icon signs |
+| Fascia | 0.30 to 0.36 m tall under the lip, full frontage | carries the icon signs; its bottom at 2.05 m at least |
 | Icon signs | 0.35 to 0.45 m square, 0.8 to 1.0 m pitch | bowl, chopsticks, steaming bowl, cup: lit boxes (generic shapes) |
 | Strip lights | T8 tubes 1.2 or 1.5 m under the fascia, 1 to 3 | in a shallow steel channel |
 | Ends | closed by the side walls' arched tops (tympana) | |
@@ -57,7 +64,7 @@ Sizes are targets; the generator may vary them within the ranges, the slice's fi
 | Part | Size | Notes |
 |---|---|---|
 | Height | 1.00 to 1.05 m | |
-| Top | 0.40 to 0.50 m deep, 3 mm worn steel, 40 mm turned-down edge | a raised pass shelf behind it at 1.25 m optional |
+| Top | 0.50 to 0.55 m deep, 3 mm worn steel, 40 mm turned-down edge | **NB4:** 0.50 at least (the grammar's V_COUNTER_D_LO); no pass shelf yet |
 | Front | panelled, panels 0.5 to 0.7 m wide, riveted frames | kick plate 0.1 m, dented |
 | Foot rail | 40 to 50 mm tube, 0.20 m high, 0.25 m out, on brackets | |
 | Stools | seat 0.36 m round, 0.75 m high, 60 mm pedestal, 0.40 m base | pitch 0.62 m; 5 on the slice's frontage; 0.3 m out from the counter |
@@ -139,14 +146,14 @@ NB3: the hood's rusted sheet 37%, the walls' steel 24%, stainless 9%, painted by
 
 | What | Budget | Why |
 |---|---|---|
-| Unique structure (hood, walls, counter: merged, a near vendor layer) | 6,000 triangles near (0.7 MB of the 504 MB non-indexed pool at 40 B a vertex) | a lane of 44 vendors at most +31 MB; the pool is 84% full down a lane already |
+| Unique structure (hood, walls, counter: merged, a near vendor layer) | **NB4: 11,400 to 12,700 triangles, 1.3 to 1.5 MB of the pool** (16,000 the lab's cap; NB0 guessed 6,000) | near only (within 120 m), so a lane holds a dozen at most; its rivets, bolts and stools are instances (about 300) |
 | Instanced kit (modules: stools, pots, grates, rivet rows, ribs, utensils, jars) | 150 instances a vendor; the module library 300,000 triangles over its levels, indexed (under 20 MB), uploaded once | detail without the pool. NB1 measured: the library 139,000 triangles over its levels; a slice's kit about 62 instances, but the hood alone sets down ~190 single rivets (curved laps take no straight rows). **NB2: rivets stay instances** (190 a hood is nothing to the instance path, and they draw only within 6 m: a 6 mm head is under a pixel beyond); the library is 6.9 MB on the GPU, built at start-up in ~150 ms |
 | Levels | L0 to 8 m, L1 to 30 m, L2 to 120 m; beyond, the far shell | **NB2:** the finest level the distance allows, coarser while it would put over 0.15 triangles on each pixel of the module's disc; each module fades by 200 times its radius (6 to 120 m) |
-| Far shell (base layer, to the 1.9 km view distance) | 500 triangles | casts the city's shadows, shelters the rain |
+| Far shell (base layer, to the 1.9 km view distance) | 500 triangles | shelters the rain; **NB4:** 350 to 474 triangles; casts nothing (the near body casts within its reach), dropped where the near body is drawn |
 | Triangles drawn | **NB2: no triangle cap**; the frame cost below is the gate. The kit's cost is the shading of its pixels, not its triangles (only the kit within 20 m of the lane's view cost as much as all of it; the levels aim at 0.15 triangles a pixel; a small module at L2 can still put more) | NB1 measured a plausible kit at 137,000 triangles at L0, 57,000 at L1, 15,000 at L2 |
-| Frame cost | +0.3 ms at the worst view at most (a row of six slices; the lane at night), shadows included | **NB2's spike:** the market lane at (634, 925) at night in rain with all 32 vendors in view carrying the stand-in kit (`--kit all`), +0.35 to 0.41 ms (kit pass 0.30, shadow rays 0.12, TLAS 0.06, prepass 0.03); over budget in a view harsher than the gate. NB8 measures again with the real bodies and trades |
-| Generation | +3 ms a chunk for six slices at most | streaming stays smooth |
-| Collision | the counter, the walls, the posts, the stools' bases, the A-frame | outlines as `vendor_solids` |
+| Frame cost | +0.3 ms at the worst view at most (a row of six slices; the lane at night), shadows included | **NB2's spike:** the market lane at (634, 925) at night in rain with all 32 vendors in view carrying the stand-in kit (`--kit all`), +0.35 to 0.41 ms (kit pass 0.30, shadow rays 0.12, TLAS 0.06, prepass 0.03); over budget in a view harsher than the gate. NB8 measures again with the real bodies and trades. **NB4** (the slice, night in rain, the vendor layer on against off): +0.59 ms from 3 m with the bar filling the frame (over), +0.25 ms from 8 m; bars are sparse (at most 3 within 60 m round the slice and the lane), so no row of six exists yet |
+| Generation | +3 ms a chunk for six slices at most | streaming stays smooth. **NB4: missed** - baking a body's occlusion takes ~60 ms (a corner bar ~75) on a worker thread; the far shell stands in until it is ready (TODO: a cache) |
+| Collision | the kitchen behind its counter (one box, the walls inside it), the posts, the column, the stools' feet, the A-frame | boxes from the plan (`nb_solids`) as `vendor_solids` |
 
 ## Captures and the comparison board
 

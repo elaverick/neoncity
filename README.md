@@ -27,7 +27,7 @@ build/plant_lab 12 out         # lobby plants: validity, determinism, budgets, t
 build/vendor_lab 60 out        # street vendors: validity, determinism, budgets, neighbours, the mix by affluence; contact sheets
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/city_test --vendor-sites # the vendors' sites round the spawn and the nearest lane, pocket market, plaza, apron: checks, --cam views
-build/city_test --slice        # the noodle bar slice (docs/noodle-bar-target.md): its site, checks, views; tools/slice_capture.py, tools/slice_board.py
+build/city_test --slice        # the noodle bar slice (docs/noodle-bar-target.md): its site, plan, checks, views (also: lane, bars, find); tools/slice_capture.py, tools/slice_board.py
 build/city_test --slice lane   # a view down the nearest market lane: the vendors' worst view (NeonCity --kit all for the kit's cost)
 build/pmodel_lab out           # the procedural modelling kit: determinism, closure, normals, budgets per level; lit contact sheets
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
@@ -1452,7 +1452,7 @@ shells in the city (SV2) and the rooms seen through their openings (SV3) are bui
 The street vendors' rework (the noodle bar slice, `docs/noodle-bar-target.md`) builds them in far more
 detail, still entirely in code. The kit is the means: indexed meshes in metres with smooth or hard normals,
 metre UVs, a material per part (`PMAT_*`) and two terms baked per vertex from the mesh's own geometry.
-NB2 draws its modules in the game, instanced (below); NB4-NB5 build the bar from it.
+NB2 draws its modules in the game, instanced (below); NB4 builds the bar's body from it, NB5 its cooking line.
 
 - **Primitives** (`pmodel.c`): a transform stack; boxes and bevelled or chamfered boxes; the lathe (a profile
   turned round a circle or a rounded rectangle, so hotel pans and boxes are lathes too; `pm_prof_shell` gives a
@@ -1464,8 +1464,8 @@ NB2 draws its modules in the game, instanced (below); NB4-NB5 build the bar from
   are LOD0 only.
 - **Support loops:** at LOD0 and LOD1 a ring of vertices 4 mm (8 mm) beside every crease, and lathe profiles
   split to 0.12 m (0.3 m), so the baked terms stay where they belong instead of smearing across whole faces.
-- **Occlusion** (`pmodel_bake.c`): 24 cosine-weighted rays a vertex through a BVH of the mesh, within a reach
-  of a quarter of its diagonal (2 cm to 0.6 m). **Wear:** a crease wears fully (convex up, concave down) where a
+- **Occlusion** (`pmodel_bake.c`): 24 cosine-weighted rays a vertex through a BVH of the mesh (split by a binned
+  surface-area heuristic, walked nearer child first), within a reach of a quarter of its diagonal (2 cm to 0.6 m). **Wear:** a crease wears fully (convex up, concave down) where a
   support loop or bevel keeps it narrow, a smooth surface by its curvature (full at a 4 mm radius), so rims,
   bevels and rib edges wear and broad faces stay clean.
 - **Parts** (`pmodel_parts.c`): lapped sheet walls with rivet rows, corrugated sheet with its real profile,
@@ -1494,12 +1494,13 @@ it, so the kit's modules are drawn instanced instead (NB2).
 - **The library:** every module at its three levels, built and baked at start-up on the worker threads (about
   150 ms), as the city's vertices (`MAT_KIT`) with 16-bit indices in two device-local buffers: 138,000
   triangles, 6.9 MB. A module's level is one indexed draw.
-- **The near vendor layer** (layer 5 of the chunk streamer, within `KIT_DISTANCE`, 120 m): no triangles yet,
-  only the modules each vendor sets down (`KitInst`: a transform, its module, a part and a seed;
-  `city_build_vendor_kit`). Until NB4-NB5 build the bar, the slice sets down a stand-in noodle bar's kit after
-  the target sheet (60 modules: the range, pots, hotel pans, shelves of bowls, jars and bottles, the utensil
-  rail, the fan, the power panel, the gas, stools and the A-frame), standing where the bench, counter and
-  shelves will be. `--kit off|slice|all` picks which vendors get it (the slice by default; all for the cost).
+- **The near vendor layer** (layer 5 of the chunk streamer, within `KIT_DISTANCE`, 120 m): each canopy noodle
+  bar's body as merged triangles (below), and the modules the bars and their cooking line set down (`KitInst`: a
+  transform, its module, a part and a seed; `city_build_vendor_kit`). Until NB5 builds the line, the slice sets
+  down a stand-in after the target sheet (the range, pots, hotel pans, the shelves' bowls, jars and bottles, the
+  utensil rail, the fan, the power panel, the gas) on its plan's bench, lining and counter. `--kit off|slice|all`
+  picks which vendors get the line (the slice by default; all for the cost); off drops the layer, so every bar
+  is its far shell.
 - **Each frame** (`kit_add`): every instance of the drawn chunks is culled against the view, given the finest
   level its distance allows (L0 to 8 m, L1 to 30 m, L2 beyond), made coarser while that level would put more
   than 0.15 triangles on each pixel of the module's bounding disc, and shrunk into its centre over the last
@@ -1529,8 +1530,8 @@ it, so the kit's modules are drawn instanced instead (NB2).
   sheet is the most, 37%). The lane at night with every vendor kitted: the kit's pass 0.30 -> 0.33 ms.
 - **Shadows it casts:** a BLAS over each module's L1, built once; a TLAS instance for every kit instance within
   35 m whose module reaches 10 cm (stools, pots, pans, gas, the fan), whatever the view.
-- **Not in the shelter map:** small modules shelter nothing worth the rain's map; the hoods that do will be
-  NB4's merged structure.
+- **Not in the shelter map:** small modules shelter nothing worth the rain's map; the bars' far shells (base
+  layer) shelter it under their hoods.
 - **Cost** (`--shot` prints a `kit:` line: instances offered and drawn at each level, triangles, draws, TLAS
   instances): at the slice, 60 instances, 0.05 ms. Down the market lane at (634, 925) at night in rain
   (`city_test --slice lane` prints the view) with all 32 vendors in view carrying a full noodle bar's kit
@@ -1538,6 +1539,37 @@ it, so the kit's modules are drawn instanced instead (NB2).
   without (the kit's pass 0.30, the shadow rays 0.12, the TLAS 0.06, the prepass 0.03), slightly over the
   target sheet's +0.3 ms in a view harsher than its gate. It is the kit's pixels' shading, not its triangles:
   drawing only the kit within 20 m cost as much as all of it.
+
+### The noodle bar's body (`src/gen/noodle_bar.c`)
+NB4 builds the canopy noodle bar from one plan per site (`NbPlan`: `nb_plan`, a pure function of the site, held
+in `Vendor.nb`), so its near body, far shell, collision and cooking line always agree (`docs/noodle-bar-target.md`).
+
+- **Two forms.** Straight, against its host wall: the hood's spine on the back lining, riveted side walls to the
+  counter's back, posts at the lip, one counter run with the cook's gate. Corner (about a third of the sites wide
+  enough; `NeonCity --nbform straight|corner` forces either): the bar turns round one end, the counter in an L
+  round a riveted column, the hood wrapping round a mitred hip, a deck of lapped sheet over the kitchen behind
+  its spine, customers on two sides.
+- **The near body** (`nb_body`, the vendor layer): the ribbed barrel hood with its rolled lip, riveted fascia, icon
+  housings (NB6 lights them) and end plates; tube channels behind the fascia; lapped sheet walls on angle
+  framing; posts on bolted plates; counter runs (worn stainless tops, the green plate's carcass behind a riveted
+  flat-bar panel frame, kick plates, foot rails on brackets, a lift-up flap over a half door); a chequer floor;
+  the back bench; a tiled splashback; shelves on brackets; the extractor canopy with baffle filters and its
+  flanged, banded, flashed and capped duct up through the roof; the stools, bell and A-frame. About 12,000
+  merged triangles (1.3-1.5 MB of the pool) with occlusion and wear baked per vertex (8 rays within 0.4 m), and
+  about 300 instances (rivets, bolts, stools). The merged vertices are `MAT_KIT` with their own material,
+  occlusion and wear (`src/core/common.h`); `city.vert` hands them to `shadeKit` as `kit.vert` does its instances.
+- **The far shell** (`nb_shell`, the base layer): under 500 triangles of the same plan (the hood's legs, the
+  fascia, walls, posts, column, deck, counter, bench, extractor, duct, the icons' faces, stools), flagged
+  `KIT_AUX_FAR`: it shelters the rain, casts no traced shadows (the near body does), and `city.vert` drops it
+  where its chunk's vendor layer is resident (the base chunk record's `origin[3]`, set by `build_draw_list`).
+- **The grammar** (`build_canopy`) makes the plan and mirrors it in coarse parts that are never drawn, so the
+  rules, bounds and dressing still read the bar (vendor_lab: all valid).
+- **Collision** from the plan (`nb_solids`): the kitchen behind its counter, posts, column, stools, A-frame.
+- **Cost:** at the slice at night in rain, the vendor layer on against off (off still draws the far shells; on, about 4 bars' bodies within 120 m and the slice's stand-in line, 1,204 instances offered), two rounds each: from 3 m, the bar filling the frame, +0.59 ms (city pass +0.18, kit +0.13, shadow rays +0.13, shadow filter +0.10), over the target's +0.3; from 8 m +0.25 ms. Down the market lane (no bars) `--kit all` +0.25 to 0.35 ms. Generation: ~60 ms a straight bar's bake, ~75 a corner's, on a worker (the slice's chunk's vendor layer ~105 ms with the group's grammar); NB8 re-gates both.
+- **Checks:** `pmodel_lab --only body` builds four bars (straight at the slice and wide, corner either way) and
+  checks determinism, normals, budgets (the structure 16,000, the far shell 500) and the site, and renders them
+  near, far and their occlusion (`pmodel_body.png`); `city_test --slice` prints the slice's plan, far shell and
+  vendor layer; `city_test --slice bars [X Z]` lists the canopy bars round a point and the densest 60 m.
 
 ### Textures (`src/render/materials.c`, `assets/materials/`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual surfaces can opt in to authored PBR

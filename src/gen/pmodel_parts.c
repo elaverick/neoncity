@@ -310,8 +310,9 @@ int pm_hood(Pm *pm, const PmHood *h) {
     /* ribs and lip without support loops (their faces are narrow; the structure's budget) */
     float sup0 = pm->support;
     pm->support = 0.0f;
-    /* ribs: an open channel (two flanks and a top) standing on the sheet along each station's arc */
-    pm_mat(pm, PMAT_STEEL);
+    /* ribs: an open channel (two flanks and a top) standing on the sheet along each station's arc; rusting
+     * steel (NB4: bare steel caught the sky and read as white paint in the sun) */
+    pm_mat(pm, PMAT_RUST_STEEL);
     PmSect rib;
     rib.closed = 0; rib.n = 4;
     rib.p[0][0] = 0.5f * h->rib_w;  rib.p[0][1] = -0.002f;

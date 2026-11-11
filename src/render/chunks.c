@@ -20,8 +20,10 @@ enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
  * chunk's own light table, 3 the lobbies' plants (city_build_plants), wanted
  * with the lobbies and drawn last, without back-face culling, 4 its street
  * furniture (city_build_props), wanted within PROPS_DISTANCE and lit as the litter,
- * 5 the near vendor layer (city_build_vendor_kit), wanted within KIT_DISTANCE: no
- * triangles yet, only the kit's instances (Mesh.kit), drawn by kit_gpu.c. */
+ * 5 the near vendor layer (city_build_vendor_kit), wanted within KIT_DISTANCE: the
+ * noodle bars' bodies (merged, MAT_KIT) and the kit's instances (Mesh.kit), drawn by
+ * kit_gpu.c; while it is resident the base layer's far shells of those bars give way
+ * (its chunk record's origin[3]: city.vert). */
 #define LAYER_PLANTS 3
 #define LAYER_PROPS  4
 #define LAYER_VENDOR 5
@@ -872,6 +874,11 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
         e->drawRecFrame = cs->frame + 1;
         ChunkGPU *g = &gpu[nchunk];
         g->origin[0] = x0; g->origin[1] = y0; g->origin[2] = z0; g->origin[3] = 0;
+        if (e->layer == 0) {
+            /* the noodle bars' far shells give way where the vendor layer draws their near bodies (city.vert) */
+            int vi = table_find(cs, e->cx, e->cz, LAYER_VENDOR);
+            if (vi >= 0 && cs->entries[vi].state == CS_RESIDENT && cs->entries[vi].npages) g->origin[3] = 1.0f;
+        }
         g->info[0] = e->cx; g->info[1] = e->cz;
         int lp = e->lightPage;
         if (e->layer >= 1) {   /* interiors and litter are lit by their chunk's lamps, shopfronts and arcology lights */

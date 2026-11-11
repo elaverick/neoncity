@@ -136,6 +136,15 @@ enum {
  * cooking (2), wear (3), a tube lamp (1), shut (1, top bit); the seed its lamp (RGB565, high
  * half) and a hash (low half). Must match shaders/city/vendor.glsl and vendor_room.glsl. */
 
+/* The noodle bars' bodies, merged (MAT_KIT in a mesh; src/city/vendor_kit.c, src/gen/noodle_bar.c), as
+ * the kit's instanced modules are drawn (shaders/kit.vert), but each vertex carries its own: params y
+ * its material (PMAT_*), z its baked occlusion, w its baked wear; aux its piece (bits 0-7), its flags
+ * (8-15: the vendor's wear, KIT_FLAG_HEAT), KIT_AUX_FAR; the seed the vendor's. A far shell's vertices
+ * (KIT_AUX_FAR, in the base layer) are dropped by city.vert wherever the chunk's vendor layer, holding
+ * the near body, is drawn (ChunkGPU.origin[3] 1), and cast no ray-traced shadows. Must match
+ * shaders/city.vert. */
+#define KIT_AUX_FAR (1u << 16)
+
 /* Industrial plants' surfaces (MAT_INDUSTRY params.y; src/city/mesh_industry.c):
  * paint, open grating, steam, glazing lit from within, wire mesh. Must match
  * shaders/city/industry.glsl. */

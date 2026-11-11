@@ -889,11 +889,19 @@ baked by `tools/model_pack.c`). See the README. Left over:
 
 ## Street vendors (next)
 The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sites.c`, `mesh_vendor.c`,
-`shaders/city/vendor_room.glsl`); the rework's noodle bar slice continues (NB3-NB8, then street food SF1-SF6:
+`shaders/city/vendor_room.glsl`); the rework's noodle bar slice continues (NB5-NB8, then street food SF1-SF6:
 `~/.claude/plans/street-vendors.md`). The modelling kit (`src/gen/pmodel*.c`) is drawn instanced
 (`src/render/kit_gpu.c`, NB2). Left over from the kit's instancing:
-- **Stand-ins:** the slice's kit modules stand where NB4's bench, counter and shelves will be, over the old
-  canopy shell; `--kit all` gives every vendor the noodle bar's kit whatever its trade or size (the cost spike).
+- **Stand-ins:** the slice's cooking line is NB0's stand-in placed on NB4's bench, lining and counter (NB5
+  replaces it); `--kit all` gives every vendor that line whatever its trade or size (the cost spike).
+- **The bar's bake (NB4):** baking a body's occlusion takes ~60 ms (a corner bar ~75) on a worker thread, every
+  time its chunk's vendor layer is built; the far shell stands in meanwhile. A cache of baked bodies by site, or
+  fewer vertices baked, if streaming shows it. The target sheet's +3 ms a chunk is far exceeded.
+- **The far shell swaps** for the near body the frame the vendor layer is resident (no cross-fade).
+- **The corner form** turns round one end of an ordinary site; real building corners and columns (SF3) aren't
+  sought yet.
+- **The canopy's grammar parts** mirror the plan for the rules only; `vendor_lab`'s contact sheets show those
+  boxes, not the bar (`pmodel_lab --only body` draws the bar).
 - **Cost:** +0.35 to 0.41 ms down the market lane with all 32 vendors kitted (the target is +0.3 ms at the
   worst view): mostly the shading of the kit's pixels. NB8 measures again with the real bodies and trades.
 - **The city pass may shade what is hidden:** `city.frag` writes `gl_SampleMask` (and some materials discard),
@@ -903,14 +911,13 @@ The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sit
   pass. Not tried.
 - **Popping:** levels switch and modules shrink away with no dithered cross-fade.
 - **Rivets** draw only within 6 m (rows within 8 m): beyond, a riveted panel shows none. NB3 left it so: the
-  materials have no rivets of their own; NB4 judges the hood and walls at 8-30 m and may paint rivet rows
-  (from the parts' own layout) into the shading there.
+  materials have no rivets of their own. NB4 left it: at 8-30 m the ribs, laps and frames carry the
+  panelling; painted rivet rows there are still possible.
 - **Kit materials (NB3), left:** the vendor's affluence only scales the wear (cleanliness and paint colour per
   vendor wait for SF1); `KIT_FLAG_HEAT` is the stand-in kit's range rectangle (NB5's line should say where its
   heat is); dial faces, labels and the chalk board are flat colour (NB5); metre UVs on lathes still swirl on
   domed lids (no triplanar: the kit's cost is its pixels); rust runs are noise, not sourced from the
   rivets and seams (NB4 has their positions).
-- **No shelter:** the kit isn't drawn into the rain's shelter map (NB4's hoods will be).
 - **/fp:fast:** the game builds the kit with fast floating point, so its meshes differ in the last bits from
   `pmodel_lab`'s.
 
