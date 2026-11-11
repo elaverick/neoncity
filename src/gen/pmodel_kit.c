@@ -895,6 +895,27 @@ static void m_a_frame(Pm *pm) {
     }
 }
 
+/* ----------------------------------------------------------- materials --- */
+const char *const PM_MAT_NAME[PMAT_COUNT] = {
+    [PMAT_RUST] = "rust", [PMAT_PLATE] = "plate", [PMAT_STAINLESS] = "stainless", [PMAT_COPPER] = "copper",
+    [PMAT_CAST_IRON] = "cast_iron", [PMAT_PAINTED] = "painted", [PMAT_TILE] = "tile", [PMAT_RUBBER] = "rubber",
+    [PMAT_ENAMEL] = "enamel", [PMAT_GLASS] = "glass", [PMAT_BRASS] = "brass", [PMAT_TIMBER] = "timber",
+    [PMAT_CHALK] = "chalk", [PMAT_CERAMIC] = "ceramic", [PMAT_BAMBOO] = "bamboo", [PMAT_PAPER] = "paper",
+    [PMAT_PLASTIC] = "plastic", [PMAT_GALV] = "galv", [PMAT_STEEL] = "steel", [PMAT_DIAL] = "dial", [PMAT_RED] = "red",
+    [PMAT_BROTH] = "broth", [PMAT_NOODLE] = "noodle", [PMAT_CURRY] = "curry", [PMAT_RICE] = "rice", [PMAT_OIL] = "oil",
+    [PMAT_GINGER] = "ginger", [PMAT_RUST_STEEL] = "rust_steel", [PMAT_CHEQUER] = "chequer",
+};
+/* Mirrored by kitSet in shaders/city/kit.glsl. Sets may serve two materials in different colours (the
+ * rubber's grain under black plastic, the white paint's under red): the share check counts them together. */
+const char *const PM_MAT_SET[PMAT_COUNT] = {
+    [PMAT_RUST] = "kit_rust_sheet", [PMAT_PLATE] = "kit_plate", [PMAT_STAINLESS] = "kit_stainless",
+    [PMAT_COPPER] = "kit_copper", [PMAT_CAST_IRON] = "kit_cast_iron", [PMAT_PAINTED] = "kit_painted",
+    [PMAT_TILE] = "kit_tile", [PMAT_RUBBER] = "kit_rubber", [PMAT_BRASS] = "kit_brass", [PMAT_TIMBER] = "vendor_planks",
+    [PMAT_BAMBOO] = "kit_bamboo", [PMAT_PAPER] = "paper", [PMAT_PLASTIC] = "kit_rubber", [PMAT_GALV] = "kit_galv",
+    [PMAT_STEEL] = "kit_steel", [PMAT_RED] = "kit_painted", [PMAT_RUST_STEEL] = "kit_rust_steel",
+    [PMAT_CHEQUER] = "kit_chequer",
+};
+
 /* --------------------------------------------------------------- table --- */
 static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_RIVET]        = { "rivet",          m_rivet,          { 50, 0, 0 },          1 },

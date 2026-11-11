@@ -1508,8 +1508,25 @@ it, so the kit's modules are drawn instanced instead (NB2).
   grouped by module and level, one indirect indexed draw a group. `kit.vert` reads the instance as a second,
   per-instance vertex binding and hands `city.frag` (built as `kit.frag` with early depth tests: the kit's
   depth is always in the prepass) and `prepass.frag` what `city.vert` does, so the kit is lit by its chunk's
-  light table and receives the traced shadows; `shaders/city/kit.glsl` shades it with a flat colour a material,
-  the baked occlusion and wear (NB3 brings the authored sets).
+  light table and receives the traced shadows; `shaders/city/kit.glsl` shades it (below).
+- **Materials** (NB3, `shadeKit`): each `PMAT_*` is drawn with an authored set (`PM_MAT_SET` in
+  `pmodel_kit.c`, mirrored by the shader's `kitSet`; ambientCG, CC0, packed at 1024): rust right through on the
+  hood (Rust006), rusting grey steel on the walls (Metal025), green paint flaking off the counter's plate
+  (PaintedMetal006), cream enamel paint chipped to rust on posts, stools and the extractor (PaintedMetal010; red
+  over it for gas bottles and valve wheels), brushed stainless (Metal055A), dark used copper and a third of the
+  pots bright with verdigris (Metal047B, Metal058B), brass (Metal008), small white tiles (Tiles036), chequer
+  plate (DiamondPlate008C); grains under the material's own colour for cast iron, bare steel, galvanised
+  sheet, rubber and plastic, bamboo (Metal053B, Metal056A, Metal043B, Rubber004, Bamboo001A); the vendors'
+  planks and the litter's paper. Glass, glazes, printed faces and food are painted. The metal sets keep
+  their metalness map (`pbr_pack` now writes it into `orm.png`'s alpha), so rust on steel is not metal. Each
+  instance and piece is shifted in its image. Over that, the wear, scaled by the vendor's (its flags, from
+  `vendor_kit.c`): paint chipped to bare steel on the bevelled edges in ragged chips (rusting as it wears),
+  bright metal rubbed bright, grime packed into corners, runs down upright faces (dirt, and rust bled from
+  steel), rust creeping up from the ground to knee height (Rust001, a decal), grease spattered on what faces up
+  and soot round the flames for what stands at the range (`KIT_FLAG_HEAT`), the smoke's film above 1.7 m,
+  dirty grout; wet in the rain where the shelter map leaves it open. `pmodel_lab` checks that every set's file
+  exists and that none covers over 40% of a noodle bar (the kit and the body's main surfaces: the hood's rusted
+  sheet is the most, 37%). The lane at night with every vendor kitted: the kit's pass 0.30 -> 0.33 ms.
 - **Shadows it casts:** a BLAS over each module's L1, built once; a TLAS instance for every kit instance within
   35 m whose module reaches 10 cm (stools, pots, pans, gas, the fan), whatever the view.
 - **Not in the shelter map:** small modules shelter nothing worth the rain's map; the hoods that do will be

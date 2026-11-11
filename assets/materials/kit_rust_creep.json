@@ -1,0 +1,12 @@
+// Rust creeping up a part from where it stands on the wet ground, the opacity map in the albedo's alpha (its
+// bottom row the ground): over painted, plated and bare steel below knee height (shadeKit), more as the vendor
+// wears. Rust001 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/rust_001/albedo.png",
+    "normal": "../textures/rust_001/normal.png",
+    "orm":    "../textures/rust_001/orm.png"
+  },
+  "tile": [1.6, 0.4],          // metres per image (a 4:1 image)
+  "albedo_mean": [0.157, 0.065, 0.051]   // per channel (pbr_pack)
+}

@@ -1,0 +1,15 @@
+// Copper gone dark and blotched with use: stock pots, the gas line (PMAT_COPPER).
+// Metal047B (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c; its metalness in orm's alpha.
+{
+  "maps": {
+    "albedo": "../textures/metal_047b/albedo.png",
+    "normal": "../textures/metal_047b/normal.png",
+    "orm":    "../textures/metal_047b/orm.png"
+  },
+  "tile": 0.5,                 // metres per image
+  "albedo_mean": [0.158, 0.085, 0.056],   // per channel (pbr_pack)
+  // shadeKit (shaders/city/kit.glsl): how much of the albedo's variation shows (1 all); how strongly the normal
+  // map bends the surface (1 as authored); relief depth in metres (0: none); 1 the photograph's own colour, 0 its
+  // grain under the kit's colour for the material
+  "params": [1.0, 1.0, 0.0, 1.0]
+}

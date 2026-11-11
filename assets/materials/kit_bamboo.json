@@ -1,0 +1,15 @@
+// Bamboo culms, their grain under old, steamed bamboo's tan: steamer baskets, spider handles (PMAT_BAMBOO).
+// Bamboo001A (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/bamboo_001a/albedo.png",
+    "normal": "../textures/bamboo_001a/normal.png",
+    "orm":    "../textures/bamboo_001a/orm.png"
+  },
+  "tile": 0.6,                 // metres per image
+  "albedo_mean": [0.342, 0.350, 0.046],   // per channel (pbr_pack)
+  // shadeKit (shaders/city/kit.glsl): how much of the albedo's variation shows (1 all); how strongly the normal
+  // map bends the surface (1 as authored); relief depth in metres (0: none); 1 the photograph's own colour, 0 its
+  // grain under the kit's colour for the material
+  "params": [1.0, 1.0, 0.0, 0.0]
+}

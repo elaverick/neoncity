@@ -6,7 +6,11 @@
  * gives the same mesh (twice over), closed modules are watertight and the
  * right way out, every vertex normal agrees with the faces using it, each
  * level keeps to its module's triangle budget, the library as a whole keeps
- * to NB0's 300,000 triangles over its levels, occlusion and wear are baked.
+ * to NB0's 300,000 triangles over its levels, occlusion and wear are baked;
+ * every material is drawn with an authored set (PM_MAT_SET, its file in
+ * assets/materials/) or painted by the shader, and no one set covers over
+ * 40% of a noodle bar's area (the plausible kit and the body's main
+ * surfaces, NB3).
  * It prints a table (triangles, vertices, bytes, build time) per module and
  * level.
  *
@@ -38,6 +42,81 @@ enum { PART_HOOD = 0, PART_HOOD_CORNER, PART_SHEET_WALL, PART_CORRUGATED, PART_P
        PART_GRILLE_BARS, PART_BEVEL_BOXES, PART_COUNT };
 static const char *PART_NAME[PART_COUNT] = { "hood", "hood_corner", "sheet_wall", "corrugated", "pipe_run", "cable_bundle", "grate", "grille_round",
                                              "grille_bars", "bevel_boxes" };
+
+static void build_part(int id, Pm *pm);
+
+/* Triangle areas of m by material, added to area[] times n. */
+static void add_area(const PmMesh *m, double n, double area[PMAT_COUNT]) {
+    for (uint32_t i = 0; i + 2 < m->ni; i += 3) {
+        const PmVertex *a = &m->v[m->idx[i]], *b = &m->v[m->idx[i + 1]], *c = &m->v[m->idx[i + 2]];
+        float e[3], f[3], x[3];
+        for (int k = 0; k < 3; ++k) { e[k] = b->p[k] - a->p[k]; f[k] = c->p[k] - a->p[k]; }
+        x[0] = e[1] * f[2] - e[2] * f[1]; x[1] = e[2] * f[0] - e[0] * f[2]; x[2] = e[0] * f[1] - e[1] * f[0];
+        if (a->mat < PMAT_COUNT) area[a->mat] += n * 0.5 * sqrt((double)(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]));
+    }
+}
+
+/* The noodle bar's materials (NB3): each one's set exists, and no one set covers over 40% of the area of the
+ * slice's plausible kit (mix, counts) and its body's main surfaces. Until NB4 builds the body, those are the
+ * default hood (as built) and boards at the target sheet's sizes: the side walls, the counter's front and top,
+ * the back bench, the splashback, the floor behind the counter. */
+static void material_share(const int (*mix)[2], size_t nmix) {
+    double area[PMAT_COUNT] = { 0 };
+    for (size_t k = 0; k < nmix; ++k) {
+        PmMesh m = { 0 };
+        pm_module_mesh(mix[k][0], PM_LOD0, &m);
+        add_area(&m, (double)mix[k][1], area);
+        pm_mesh_free(&m);
+    }
+    {
+        PmMesh m = { 0 };
+        PmInstances li = { 0 };
+        Pm pm;
+        pm_begin(&pm, &m, &li, PM_LOD0);
+        build_part(PART_HOOD, &pm);
+        pm_instances_bake(&m, &li, PM_LOD0);
+        add_area(&m, 1.0, area);
+        pm_mesh_free(&m); pm_inst_free(&li);
+    }
+    area[PMAT_RUST_STEEL] += 2.0 * 2.0 * 2.9 * 2.35;   /* two side walls, both faces */
+    area[PMAT_PLATE]      += 3.85 * 1.0;              /* the counter's front */
+    area[PMAT_STAINLESS]  += 3.85 * 0.45 + 3.85 * 0.65 + 3.85 * 0.3;   /* its top, the bench, the undershelf */
+    area[PMAT_TILE]       += 1.5 * 0.9;               /* the splashback */
+    area[PMAT_CHEQUER]    += 3.85 * 1.0;              /* the floor behind the counter */
+    double total = 0.0, set[PMAT_COUNT] = { 0 }, painted = 0.0;
+    for (int i = 0; i < PMAT_COUNT; ++i) total += area[i];
+    /* sets serving two materials count once: fold each onto the first material naming it */
+    for (int i = 0; i < PMAT_COUNT; ++i) {
+        if (!PM_MAT_SET[i]) { painted += area[i]; continue; }
+        int first = i;
+        for (int j = 0; j < i; ++j) if (PM_MAT_SET[j] && !strcmp(PM_MAT_SET[j], PM_MAT_SET[i])) { first = j; break; }
+        set[first] += area[i];
+    }
+    const char *dirs[] = { "assets/materials", "../assets/materials", "build/assets/materials" };
+    int dir = -1;
+    for (int d = 0; d < 3 && dir < 0; ++d) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s.json", dirs[d], PM_MAT_SET[PMAT_RUST]);
+        FILE *f = fopen(path, "rb");
+        if (f) { fclose(f); dir = d; }
+    }
+    printf("\nmaterials (a noodle bar: the kit and the body's main surfaces, %.1f m2)\n", total);
+    for (int i = 0; i < PMAT_COUNT; ++i) {
+        if (!PM_MAT_SET[i]) continue;
+        if (dir >= 0) {
+            char path[512];
+            snprintf(path, sizeof(path), "%s/%s.json", dirs[dir], PM_MAT_SET[i]);
+            FILE *f = fopen(path, "rb");
+            CHECK(f != NULL, "material %s names the set %s, but %s is missing", PM_MAT_NAME[i], PM_MAT_SET[i], path);
+            if (f) fclose(f);
+        }
+        if (set[i] <= 0.0) continue;
+        printf("  %-20s %6.2f m2 %5.1f%%\n", PM_MAT_SET[i], set[i], 100.0 * set[i] / total);
+        CHECK(set[i] <= 0.4 * total, "the set %s covers %.0f%% of a noodle bar (at most 40%%)", PM_MAT_SET[i], 100.0 * set[i] / total);
+    }
+    printf("  %-20s %6.2f m2 %5.1f%%  (glass, glazes, printed faces, food)\n", "painted by the shader", painted, 100.0 * painted / total);
+    if (dir < 0) printf("  (assets/materials not found from here: the sets' files not checked)\n");
+}
 
 static void build_part(int id, Pm *pm) {
     switch (id) {
@@ -110,7 +189,7 @@ static void hex_lin(uint32_t c, float o[3]) { for (int k = 0; k < 3; ++k) o[k] =
 static const uint32_t MAT_RGB[PMAT_COUNT] = {
     0x7A4A2E, 0x56605E, 0x9A9C9E, 0xB06A3C, 0x2E2C2A, 0x3F5A52, 0xD8D6CC, 0x1C1C1C, 0xE0DCCF, 0x6F8A86, 0xB89A4A, 0x7A5A3A,
     0x262A28, 0xE8E4DA, 0xC2A46A, 0xE2D8B0, 0x222222, 0x8A9092, 0x4A4C4E, 0xF0EEE6, 0xA02A20, 0xB07A3A, 0xE8D49A, 0xB8761C,
-    0xF2EFE6, 0x9A1A0A, 0xE8A0A0 };
+    0xF2EFE6, 0x9A1A0A, 0xE8A0A0, 0x5E4A40, 0x6A6E72 };
 
 /* A 5 x 7 font: digits, letters, underscore, point. */
 static const uint8_t *glyph(char c) {
@@ -389,6 +468,7 @@ int main(int argc, char **argv) {
             inst += MIX[k][1];
         }
         printf("a slice's kit (%d instances, without the hood and its rivets): L0 %ld, L1 %ld, L2 %ld triangles\n", inst, kit[0], kit[1], kit[2]);
+        material_share(MIX, sizeof(MIX) / sizeof(MIX[0]));
     }
 
     /* the parts, with their modules as instances (counted) and built in (drawn) */

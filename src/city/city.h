@@ -176,7 +176,11 @@ static inline float city_grass_maintained(uint8_t w) { return w ? (float)(w - 1)
 /* A module of the vendors' modelling kit (src/gen/pmodel.h, PMK_*) set down in a chunk, drawn instanced
  * (src/render/kit_gpu.c): a row-major 3x4 transform from the module's frame to chunk-local (x' = M x + t,
  * the translation in [3], [7], [11]; rotation and uniform scale only), its module, its piece's variation
- * (the vendor's per-part tint), the ground its heights count from (world Y) and a seed. */
+ * (the vendor's per-part tint), its flags (the vendor's wear 0..15 in bits 0-3, KIT_FLAG_HEAT: it stands at
+ * the range, so it gathers grease and soot; shaders/city/kit.glsl), the ground its heights count from (world Y)
+ * and a seed. */
+#define KIT_FLAG_WEAR 15u
+#define KIT_FLAG_HEAT 16u
 typedef struct KitInst { float xf[12]; uint16_t module; uint8_t part, flags; float base; uint32_t seed; } KitInst;
 
 typedef struct Mesh {

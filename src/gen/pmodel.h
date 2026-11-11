@@ -27,9 +27,13 @@
 
 enum { PM_LOD0 = 0, PM_LOD1, PM_LOD2, PM_LODS };   /* near (to 8 m), mid (to 30 m), far (to 120 m) */
 
-/* Materials: what each part is made of (NB3 binds them to authored sets). */
+/* Materials: what each part is made of. NB3 bound them to authored sets
+ * (assets/materials/kit_*.json, PM_MAT_SET below; shaders/city/kit.glsl
+ * shadeKit samples them); the glass, the glazes, the printed faces and the
+ * food stay procedural. New ones go on the end: the library's vertices and
+ * the shader's tables are indexed by them. */
 enum {
-    PMAT_RUST = 0,     /* rusted copper-brown sheet: the hood, side walls */
+    PMAT_RUST = 0,     /* rusted copper-brown sheet: the hood */
     PMAT_PLATE,        /* riveted painted plate: counter front, panels */
     PMAT_STAINLESS,    /* worn stainless: counter top, bench, pans, shelves */
     PMAT_COPPER,       /* tarnished copper: stock pots, the gas line */
@@ -56,8 +60,18 @@ enum {
     PMAT_RICE,
     PMAT_OIL,          /* chilli oil in a jar */
     PMAT_GINGER,       /* pickled ginger */
+    PMAT_RUST_STEEL,   /* rusting grey steel sheet: side walls, the back lining, framing */
+    PMAT_CHEQUER,      /* chequer (diamond) plate: the floor behind the counter, steps */
     PMAT_COUNT
 };
+
+/* The authored material each PMAT_* is drawn with (its file's name in
+ * assets/materials/, without .json), or NULL where the shader paints it.
+ * shaders/city/kit.glsl's kitSet mirrors it (and draws a share of the
+ * copper pots with kit_copper_patina); pmodel_lab checks that no one set
+ * covers most of a vendor. */
+extern const char *const PM_MAT_SET[PMAT_COUNT];
+extern const char *const PM_MAT_NAME[PMAT_COUNT];
 
 typedef struct PmVertex {
     float   p[3], n[3], uv[2];   /* uv in metres along the surface */

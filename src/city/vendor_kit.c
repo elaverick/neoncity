@@ -140,7 +140,6 @@ static void slice_kit(Pm *pm, float w, float d) {
 }
 
 static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
-    (void)v;
     KitEmit *E = (KitEmit *)ctx;
     if (g_kit == KIT_OFF || (g_kit == KIT_SLICE && !s->site.slice)) return;
     Mesh *m = E->m;
@@ -151,6 +150,10 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     /* the site's frame to chunk-local: x across (fz, -fx), z out (fx, fz), y up from its floor */
     const float R[3][3] = { { s->fz, 0.0f, s->fx }, { 0.0f, 1.0f, 0.0f }, { -s->fx, 0.0f, s->fz } };
     const float t[3] = { (float)(s->x - m->ox), s->y, (float)(s->z - m->oz) };
+    /* the flags: the vendor's wear, and whether a module stands at the range (the stand-in kit's: the bench's first
+     * 1.25 m, back to front as far as the aisle; NB5's cooking line will say where its heat is) */
+    const uint8_t wear = (uint8_t)(clampf(v->wear, 0.0f, 1.0f) * 15.0f + 0.5f);
+    const float hw = s->site.w * 0.5f;
     if (m->nkit + E->inst.n > m->capkit) {
         m->capkit = (m->nkit + E->inst.n) * 2;
         m->kit = (KitInst *)realloc(m->kit, sizeof(KitInst) * m->capkit);
@@ -166,7 +169,9 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
         }
         k->module = pi->module;
         k->part = pi->part;
-        k->flags = 0;
+        const float lx = pi->xf[3], ly = pi->xf[7], lz = pi->xf[11];
+        const int heat = lx > -hw - 0.05f && lx < -hw + 1.25f && lz < 0.85f && ly > 0.5f && ly < 1.9f;
+        k->flags = (uint8_t)(wear | (heat ? KIT_FLAG_HEAT : 0u));
         k->base = s->y;
         k->seed = hash_combine(s->site.seed, i + 0x4B49u);
         for (int a = 0; a < 3; ++a) {

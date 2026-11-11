@@ -902,8 +902,14 @@ The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sit
   on, so a variant of the city's pipeline for them (or depth-equal testing) might save much of the 3 ms city
   pass. Not tried.
 - **Popping:** levels switch and modules shrink away with no dithered cross-fade.
-- **Rivets** draw only within 6 m (rows within 8 m): beyond, a riveted panel shows none. NB3's materials may
-  need rivets in the texture for the middle distance.
+- **Rivets** draw only within 6 m (rows within 8 m): beyond, a riveted panel shows none. NB3 left it so: the
+  materials have no rivets of their own; NB4 judges the hood and walls at 8-30 m and may paint rivet rows
+  (from the parts' own layout) into the shading there.
+- **Kit materials (NB3), left:** the vendor's affluence only scales the wear (cleanliness and paint colour per
+  vendor wait for SF1); `KIT_FLAG_HEAT` is the stand-in kit's range rectangle (NB5's line should say where its
+  heat is); dial faces, labels and the chalk board are flat colour (NB5); metre UVs on lathes still swirl on
+  domed lids (no triplanar: the kit's cost is its pixels); rust runs are noise, not sourced from the
+  rivets and seams (NB4 has their positions).
 - **No shelter:** the kit isn't drawn into the rain's shelter map (NB4's hoods will be).
 - **/fp:fast:** the game builds the kit with fast floating point, so its meshes differ in the last bits from
   `pmodel_lab`'s.

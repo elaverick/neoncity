@@ -94,25 +94,36 @@ Sizes are targets; the generator may vary them within the ranges, the slice's fi
 
 ## Materials
 
-Design first; NB3 fetches what this needs from ambientCG (packed at 1024 by `tools/pbr_pack.c`). Cheap and weathered
-(the user's rule), but rusted riveted steel and copper sheet lead; flake board and planks only as minor parts; no
-one set across most of the vendor.
+Design first; NB3 fetched what this needs from ambientCG (CC0, packed at 1024 by `tools/pbr_pack.c`, which now keeps
+a set's metalness in `orm.png`'s alpha). Cheap and weathered (the user's rule), but rusted riveted steel and copper
+sheet lead; flake board and planks only as minor parts; no one set across most of the vendor. The files are
+`assets/materials/kit_*.json`; `PM_MAT_SET` (`src/gen/pmodel_kit.c`) names each material's, `shadeKit`
+(`shaders/city/kit.glsl`) draws them. "Own" sets show the photograph's colour; "grain" sets go under the
+material's colour.
 
-| Surface | Set (to fetch or reuse) | Where |
+| Surface (PMAT) | Set | Where |
 |---|---|---|
-| Rusted copper-brown sheet | rusted steel plate, tinted | the hood's panels, side walls |
-| Riveted plate | riveted / painted metal plate | counter front, power panel |
-| Worn stainless | brushed stainless (exists), scratched | counter top, bench, bain-marie, shelves |
-| Tarnished copper | copper | stock pots, the gas line |
-| Cast iron | cast iron / rough black metal | grates, the wok burner |
-| Chipped painted metal | painted metal, chipped | posts, stools' bases, the extractor |
-| Small tiles | white tiles, dirty grout | splashback |
-| Worn rubber | rubber | stool seats, cable sheaths |
-| Grimy enamel | enamel / ceramic | bowls, the rice cooker |
-| Glass | (shader) | gauge faces, jars, the hatch |
-| Wear | the grime-streak decals (`grime_streaks_a/b`), a curvature term from the kit | rust runs from rivets and seams, grease and soot round the range and up the hood, edge wear, wet streaks under the lip |
+| Rusted copper-brown sheet (RUST) | Rust006, own, 1.2 m | the hood's panels, lip and ends |
+| Rusting grey steel (RUST_STEEL, added in NB3) | Metal025, own, 1.5 m | side walls, the back lining, framing |
+| Riveted painted plate (PLATE) | PaintedMetal006 (green paint flaking off rust), own, 1.2 m | counter front, power panel |
+| Worn stainless (STAINLESS) | Metal055A (brushed), own, 0.8 m | counter top, bench, bain-marie, shelves |
+| Tarnished copper (COPPER) | Metal047B, own, 0.5 m; a third of the pots Metal058B (bright, verdigris) | stock pots, the gas line |
+| Cast iron (CAST_IRON) | Metal053B grain under near-black | grates, burners, the wok ring |
+| Chipped painted metal (PAINTED; RED over it) | PaintedMetal010 (cream, chipped to rust), own, 0.5 m | posts, stools' bases, the extractor; gas bottles, valve wheels |
+| Bare dark steel (STEEL) | Metal056A grain | ribs, angle, bolts, rails, utensils |
+| Galvanised (GALV) | Metal043B grain under grey | corrugated sheet, conduit, clips |
+| Small tiles (TILE) | Tiles036 (100 mm white), own, 1.0 m; the grout dirtied in the shader | splashback |
+| Chequer plate (CHEQUER, added in NB3) | DiamondPlate008C, own, 0.6 m | the floor behind the counter, steps |
+| Rubber, black plastic (RUBBER, PLASTIC) | Rubber004 grain | stool seats, cable sheaths; knobs, switch bodies |
+| Brass (BRASS) | Metal008, own, 0.3 m | the bell, valve bodies, fittings |
+| Bamboo (BAMBOO) | Bamboo001A grain under old tan | steamers, spider handles |
+| Timber, paper (TIMBER, PAPER) | the vendors' planks, the litter's paper | handles, the A-frame; labels |
+| Grimy enamel, ceramic, glass, dial faces, chalk, food | painted in the shader | bowls, the rice cooker, insulators, jars, gauges, the menu |
+| Wear | the kit's baked wear and occlusion, the vendor's wear (instance flags), `KIT_FLAG_HEAT`, Rust001 (a decal) | chips to bare steel on bevels, grime in corners, runs down upright faces (rust from steel), rust creeping up from the ground, grease and soot at the range, the smoke's film above 1.7 m, dirty grout, wet where the rain reaches |
 
-Checks (NB3): the share of the vendor's area each set covers (none over 40%); every part has a set.
+Checks (NB3, `pmodel_lab`): every material names a set whose file exists, or is painted; no set covers over 40% of a
+noodle bar (the plausible kit and the body's main surfaces at the sheet's sizes, until NB4 builds the body). At
+NB3: the hood's rusted sheet 37%, the walls' steel 24%, stainless 9%, painted by the shader 5%.
 
 ## Lights
 

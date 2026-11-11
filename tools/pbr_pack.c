@@ -11,9 +11,11 @@
  * integer multiple of it) and written to the output directory as:
  *   albedo.png  colour, sRGB; alpha the opacity (RGB without an opacity map)
  *   normal.png  tangent-space normal, OpenGL convention (+Y green = image up)
- *   orm.png     R = ambient occlusion, G = roughness, B = height
- * Nothing else in the download (.blend, .mtlx, .tres, .usdc, NormalDX,
- * Metalness, the preview sphere) is needed. */
+ *   orm.png     R = ambient occlusion, G = roughness, B = height; A = the
+ *               metalness where the download has a _Metalness map (RGB
+ *               without one: the loader reads A as 1)
+ * Nothing else in the download (.blend, .mtlx, .tres, .usdc, NormalDX, the
+ * preview sphere) is needed. */
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #include <stb_image.h>
@@ -105,7 +107,7 @@ int main(int argc, char **argv) {
     const char *prefix = argv[1], *outDir = argv[2];
     int size = argc > 3 ? atoi(argv[3]) : 2048;
 
-    Map color = { 0 }, normal = { 0 }, rough = { 0 }, ao = { 0 }, height = { 0 }, opacity = { 0 };
+    Map color = { 0 }, normal = { 0 }, rough = { 0 }, ao = { 0 }, height = { 0 }, opacity = { 0 }, metal = { 0 };
     printf("Reading %s_*\n", prefix);
     if (!load_map(prefix, "Color", 3, &color) || !load_map(prefix, "NormalGL", 3, &normal) ||
         !load_map(prefix, "Roughness", 1, &rough)) {
@@ -115,9 +117,11 @@ int main(int argc, char **argv) {
     int haveAO = load_map(prefix, "AmbientOcclusion", 1, &ao);
     int haveHeight = load_map(prefix, "Displacement", 1, &height);
     int haveOpacity = load_map(prefix, "Opacity", 1, &opacity);
+    int haveMetal = load_map(prefix, "Metalness", 1, &metal);
 
-    Map *all[6] = { &color, &normal, &rough, haveAO ? &ao : NULL, haveHeight ? &height : NULL, haveOpacity ? &opacity : NULL };
-    for (int i = 0; i < 6; ++i) {
+    Map *all[7] = { &color, &normal, &rough, haveAO ? &ao : NULL, haveHeight ? &height : NULL, haveOpacity ? &opacity : NULL,
+                    haveMetal ? &metal : NULL };
+    for (int i = 0; i < 7; ++i) {
         if (!all[i]) continue;
         if (all[i]->w != color.w || all[i]->h != color.h) { fprintf(stderr, "maps differ in size\n"); return 1; }
     }
@@ -130,7 +134,7 @@ int main(int argc, char **argv) {
     size_t n = (size_t)color.w * color.h;
     for (size_t i = 0; i < n * 3; ++i) color.px[i] = srgb_to_linear(color.px[i]);
     for (size_t i = 0; i < n * 3; ++i) normal.px[i] = normal.px[i] * 2.0f - 1.0f;
-    for (int i = 0; i < 6; ++i) if (all[i]) downsample(all[i], size);
+    for (int i = 0; i < 7; ++i) if (all[i]) downsample(all[i], size);
 
     int w = color.w, h = color.h;
     n = (size_t)w * h;
@@ -159,19 +163,23 @@ int main(int argc, char **argv) {
     }
     if (!write_png(outDir, "normal.png", w, h, 3, px)) return 1;
 
+    int co = haveMetal ? 4 : 3;
+    double meanMetal = 0.0;
     for (size_t i = 0; i < n; ++i) {
         meanRough += rough.px[i];
-        px[i * 3 + 0] = haveAO ? to8(ao.px[i]) : 255;
-        px[i * 3 + 1] = to8(rough.px[i]);
-        px[i * 3 + 2] = haveHeight ? to8(height.px[i]) : 128;
+        px[i * co + 0] = haveAO ? to8(ao.px[i]) : 255;
+        px[i * co + 1] = to8(rough.px[i]);
+        px[i * co + 2] = haveHeight ? to8(height.px[i]) : 128;
+        if (haveMetal) { px[i * co + 3] = to8(metal.px[i]); meanMetal += metal.px[i]; }
     }
-    if (!write_png(outDir, "orm.png", w, h, 3, px)) return 1;
+    if (!write_png(outDir, "orm.png", w, h, co, px)) return 1;
 
     double inv = 1.0 / (cover > 0.0 ? cover : 1.0);   /* the RGB mean is what albedo_mean wants, for a surface tinting the map */
     printf("%dx%d, mean linear albedo %.3f [%.3f, %.3f, %.3f], mean roughness %.3f%s%s", w, h, meanAlb * inv,
            meanRGB[0] * inv, meanRGB[1] * inv, meanRGB[2] * inv, meanRough / n,
            haveAO ? "" : ", no AO (white)", haveHeight ? "" : ", no height (flat)");
     if (haveOpacity) printf(", opacity %.3f", cover / n);
+    if (haveMetal) printf(", metalness %.3f", meanMetal / n);
     printf("\n");
     return 0;
 }
