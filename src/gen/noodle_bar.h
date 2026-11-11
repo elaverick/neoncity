@@ -18,8 +18,9 @@
  *   - the far shell (nb_shell): ~500 triangles of the same plan for the base
  *     layer, seen to the view distance and sheltering the rain; city.vert
  *     drops it where the near body is drawn;
- *   - what the walker meets (nb_solids), and where the cooking line stands
- *     (nb_standin: NB5 replaces the stand-in).
+ *   - what the walker meets (nb_solids), and the cooking line (NB5: nb_line
+ *     lays it out, nb_line_place sets its modules down, the body builds its
+ *     range carcass, bain-marie, gas line and cables).
  *
  * Two forms: straight, against its host wall, the hood along the frontage;
  * and the corner, the bar turning round one end of its site: the counter in
@@ -89,14 +90,74 @@ void nb_force_form(int form);
 int  nb_forced_form(void);
 
 /* The near body into pm (detail by pm->lod; the stools, rivets and bolts by pm_place: instances if pm has an
- * instance list). */
+ * instance list), with the cooking line's merged parts (nb_line_place sets its modules down). */
 void nb_body(Pm *pm, const NbPlan *p);
 /* The far shell (built in, about 500 triangles). */
 void nb_shell(Pm *pm, const NbPlan *p);
-/* The stand-in cooking line after the target sheet (NB5's to replace), placed on the plan's bench, lining
- * and counter: the range, the bain-marie, steamer and rice cooker, the shelves' stock, the utensil rail, the
- * fan, the power panel, the gas and its line, the bell. */
-void nb_standin(Pm *pm, const NbPlan *p);
+/* ---------------------------------------------------------------------------
+ * The cooking line (NB5): what stands in the kitchen and on the counter, laid
+ * out by rules from the plan (a pure function of it, so the body, the kit and
+ * the checks always agree):
+ *   - the range at the bench's end: a stainless carcass with doors and a
+ *     knob rail, a stainless top over two burner wells on a 0.45 m pitch: the
+ *     stock pot of broth on one, and on the other a pot of noodle baskets, a
+ *     wok on a wok burner, a steamer stack on its pot, or copper saucepans;
+ *   - along the bench from the range: the bain-marie (three or four GN 1/3
+ *     pans in a heated well, one open on its curry, a dial and pilot lights),
+ *     bowls for the assembly, the chopping block and its cleaver, the rice
+ *     cooker, a cold steamer; spare bowls and pans on the undershelf;
+ *   - on the shelves: stacked bowls, labelled jars and bottles;
+ *   - the utensil rail on the side wall by the range (ladle, spider, slotted
+ *     spatula, cleaver, hooks);
+ *   - the gas: the bottles at the bench's other end, the regulator and hose,
+ *     the copper line along the lining in saddle clips, its valve and gauge,
+ *     down behind the range into its manifold;
+ *   - the power: the panel over the bottles, its cable bundles (up to the
+ *     hood, to the fan), a socket strip with cords to the rice cooker and the
+ *     bain-marie; the fan high on a wall where one fits;
+ *   - on the counter: chopsticks, chilli oil and sauce for the customers.
+ * The rules: burners on a 0.45 m pitch, pots on their burners; everything the
+ * cook uses within 0.7 m of the aisle and no higher than 1.85 m; nothing in
+ * another thing's way, inside the kitchen, under the hood, the extractor and
+ * the shelves with clearance; the gas bottles (at most two) away from the
+ * burners. nb_line_check says which are broken. */
+
+enum { NB_POT_NOODLES = 0, NB_POT_WOK, NB_POT_STEAMER, NB_POT_SAUCEPAN, NB_POT_KINDS };   /* the second burner */
+enum { NB_ON_RANGE = 0, NB_ON_BENCH, NB_ON_UNDER, NB_ON_SHELF, NB_ON_FLOOR, NB_ON_WALL, NB_ON_COUNTER, NB_ON_HUNG };
+#define NB_ITEMS_MAX 72
+/* A module set down: where its origin goes (the site's frame), its turn about y, what it stands on, whether
+ * the cook works with it (the reach rule). */
+typedef struct NbItem { uint16_t module; uint8_t on, used; float x, y, z, yaw; } NbItem;
+typedef struct NbLine {
+    int   kind;                       /* NB_POT_*: what the second burner holds */
+    int   rangeEnd;                   /* -1: the range at the bench's -x end; +1 its +x end */
+    float carc0, carc1;               /* the range's carcass along x (it runs to the bench's end) */
+    float burner[2][2];               /* x, z of each burner: [0] the stock pot's, [1] the second's */
+    float bm0, bm1, bmZ0, bmZ1;       /* the bain-marie's box (x0 >= x1: none) */
+    int   bmPans;
+    float pipeY;                      /* the gas line's height along the lining */
+    float pipeX0, pipeX1;             /* from its valve (by the bottles) to its drop beside the splashback */
+    float panelX, stripX;             /* the power panel's middle; the socket strip's */
+    float fan[4];                     /* the fan: x, y, z, its facing (0 +z off the lining; +-1 +-x off a side wall); y 0 none */
+    float rail[3];                    /* the utensil rail: its side wall's x (inner face), y, z middle */
+    float railFacing;                 /* +1: the rail faces +x (on the -x wall), -1 faces -x */
+    float cookerX, cookerZ;           /* the rice cooker (where cords go; x 0 when none) */
+    int   n;
+    NbItem item[NB_ITEMS_MAX];
+} NbLine;
+
+/* Lays the line out on the plan. */
+void nb_line(const NbPlan *p, NbLine *L);
+/* Sets the line's modules down (instances if pm has an instance list): its items and their fittings (knobs,
+ * the saddle clips, the gas valve and gauge, hooks). Its merged parts (the range's carcass, the bain-marie's
+ * box, the gas pipe and hose, the cables) are the body's: nb_body builds them. */
+void nb_line_place(Pm *pm, const NbPlan *p, const NbLine *L);
+/* Checks the line's rules; writes each broken one (one per line) into err (may be NULL); returns how many. */
+int  nb_line_check(const NbPlan *p, const NbLine *L, char *err, int cap);
+/* The underside of whatever is overhead at (x, z) of the plan: the hood's sheet less its ribs, the deck. */
+float nb_ceil(const NbPlan *p, float x, float z);
+/* A module's bounds at its near level (computed once; for the checks). */
+void nb_module_bounds(int module, float lo[3], float hi[3]);
 /* Whether a point of the bar stands at the range (its grease and soot: kit.glsl's heat). */
 int  nb_at_range(const NbPlan *p, const float pos[3]);
 /* What the walker meets: boxes x0, z0, x1, z1 in the site's frame (the kitchen behind its counter, posts,

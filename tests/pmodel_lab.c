@@ -23,7 +23,7 @@
  * LOD0's occlusion and its wear alone; a faint 10 cm checker shows the
  * metre UVs.
  *
- *   pmodel_lab [out_dir] [--only NAME]   (NAME body: the noodle bar's bodies only) */
+ *   pmodel_lab [out_dir] [--only NAME]   (NAME body: the noodle bar's bodies and lines; line: the lines) */
 #include "pmodel.h"
 #include "noodle_bar.h"
 #include "hash.h"
@@ -61,32 +61,25 @@ static void add_area(const PmMesh *m, double n, double area[PMAT_COUNT]) {
 }
 
 /* The noodle bar's materials (NB3): each one's set exists, and no one set covers over 40% of the area of the
- * slice's plausible kit (mix, counts) and its body's main surfaces. Until NB4 builds the body, those are the
- * default hood (as built) and boards at the target sheet's sizes: the side walls, the counter's front and top,
- * the back bench, the splashback, the floor behind the counter. */
-static void material_share(const int (*mix)[2], size_t nmix) {
+ * slice's bar: its body and its cooking line (NB5), modules and all. */
+static void material_share(void) {
     double area[PMAT_COUNT] = { 0 };
-    for (size_t k = 0; k < nmix; ++k) {
-        /* the body (below) sets down its own stools, bell, A-frame and shelf brackets */
-        int id = mix[k][0];
-        if (id == PMK_STOOL || id == PMK_BELL || id == PMK_A_FRAME || id == PMK_SHELF_BRACKET) continue;
-        PmMesh m = { 0 };
-        pm_module_mesh(id, PM_LOD0, &m);
-        add_area(&m, (double)mix[k][1], area);
-        pm_mesh_free(&m);
-    }
     {
-        /* the body of the slice's bar (NB4), its modules built in */
+        /* the slice's bar (NB4, NB5): its body, its modules and its cooking line's, built in */
         NbPlan p;
         nb_plan(&p, 3.85f, 3.48f, 0.0f, 0x5EED01u, NB_STRAIGHT);
-        PmMesh m = { 0 };
+        NbLine L;
+        nb_line(&p, &L);
+        PmMesh m = { 0 }, none = { 0 };
         PmInstances li = { 0 };
         Pm pm;
         pm_begin(&pm, &m, &li, PM_LOD0);
         nb_body(&pm, &p);
+        pm_begin(&pm, &none, &li, PM_LOD0);
+        nb_line_place(&pm, &p, &L);
         pm_instances_bake(&m, &li, PM_LOD0);
         add_area(&m, 1.0, area);
-        pm_mesh_free(&m); pm_inst_free(&li);
+        pm_mesh_free(&m); pm_mesh_free(&none); pm_inst_free(&li);
     }
     double total = 0.0, set[PMAT_COUNT] = { 0 }, painted = 0.0;
     for (int i = 0; i < PMAT_COUNT; ++i) total += area[i];
@@ -105,7 +98,7 @@ static void material_share(const int (*mix)[2], size_t nmix) {
         FILE *f = fopen(path, "rb");
         if (f) { fclose(f); dir = d; }
     }
-    printf("\nmaterials (a noodle bar: the kit and the body's main surfaces, %.1f m2)\n", total);
+    printf("\nmaterials (the slice's bar: its body and its cooking line, %.1f m2)\n", total);
     for (int i = 0; i < PMAT_COUNT; ++i) {
         if (!PM_MAT_SET[i]) continue;
         if (dir >= 0) {
@@ -431,9 +424,11 @@ static void body_section(const char *out) {
         /* inside the site, under the duct's cap */
         CHECK(s.lo[0] > -0.5f * B[b].w - 0.01f && s.hi[0] < 0.5f * B[b].w + 0.01f && s.lo[2] > -0.01f && s.hi[2] < B[b].d + 0.25f,
               "body %s: reaches x %.2f..%.2f z %.2f..%.2f on a %.2f x %.2f m site", B[b].name, s.lo[0], s.hi[0], s.lo[2], s.hi[2], B[b].w, B[b].d);
-        /* the drawn bar: the structure, its modules and the stand-in line built in */
+        /* the drawn bar: the structure, its modules and the cooking line's built in */
+        NbLine L;
+        nb_line(&p, &L);
         pm_begin(&pm, &line, &ll, PM_LOD0);
-        nb_standin(&pm, &p);
+        nb_line_place(&pm, &p, &L);
         uint32_t ninst = li.n;
         pm_instances_bake(&m, &li, PM_LOD0);
         pm_instances_bake(&m, &ll, PM_LOD0);
@@ -460,6 +455,91 @@ static void body_section(const char *out) {
         stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
         free(im.p);
     }
+}
+
+/* --------------------------------------------------- the cooking line --- */
+/* NB5: the line's rules over a sweep of sites and seeds in both forms (nb_line_check), its determinism, the
+ * second burner's mix; cutaway renders of four kitchens (the hood, the counter and the street taken off). */
+static void line_section(const char *out) {
+    static const float WS[] = { 3.2f, 3.5f, 3.85f, 4.2f, 4.6f, 5.2f }, DS[] = { 3.0f, 3.3f, 3.48f, 3.8f };
+    int lines = 0, failing = 0, shown = 0, kinds[NB_POT_KINDS] = { 0 }, items = 0, fans = 0, bms = 0;
+    double t0 = now_ms();
+    for (size_t wi = 0; wi < sizeof(WS) / sizeof(WS[0]); ++wi)
+        for (size_t di = 0; di < sizeof(DS) / sizeof(DS[0]); ++di)
+            for (int form = 0; form < NB_FORMS; ++form)
+                for (uint32_t k = 0; k < 40; ++k) {
+                    NbPlan p;
+                    const uint32_t seed = hash_combine(0x11E5u, (uint32_t)(wi * 1000 + di * 100 + (size_t)form * 50) + k);
+                    if (!nb_plan(&p, WS[wi], DS[di], 0.0f, seed, form)) continue;
+                    NbLine L, L2;
+                    nb_line(&p, &L);
+                    nb_line(&p, &L2);
+                    CHECK(!memcmp(&L, &L2, sizeof(L)), "line %.2f x %.2f seed %08x: not deterministic", WS[wi], DS[di], seed);
+                    char err[2048];
+                    const int bad = nb_line_check(&p, &L, err, sizeof(err));
+                    lines++; items += L.n; kinds[L.kind]++; fans += L.fan[1] > 0.0f; bms += L.bmPans > 0;
+                    if (bad) {
+                        failing++;
+                        if (shown < 6) { printf("  line %.2f x %.2f %s seed %08x (%s): %d broken\n%s", WS[wi], DS[di], p.form ? "corner" : "straight", seed, L.kind == NB_POT_WOK ? "wok" : L.kind == NB_POT_STEAMER ? "steamer" : L.kind == NB_POT_SAUCEPAN ? "saucepan" : "noodles", bad, err); shown++; }
+                    }
+                }
+    printf("\nthe cooking line: %d lines over the sweep (%.1f ms), %d break a rule; %.1f items a line; second burner: noodles %d, wok %d, steamer %d, saucepan %d; a bain-marie in %d, a fan in %d\n",
+           lines, now_ms() - t0, failing, lines ? (double)items / lines : 0.0, kinds[0], kinds[1], kinds[2], kinds[3], bms, fans);
+    CHECK(failing == 0, "%d of %d cooking lines break a rule", failing, lines);
+    if (!out) return;
+    /* cutaways of the body_section's four bars */
+    static const struct { float w, d; int form, side; uint32_t seed; } B[] = {
+        { 3.85f, 3.48f, NB_STRAIGHT, 0, 0x5EED01u }, { 5.2f, 3.3f, NB_STRAIGHT, 0, 0x5EED04u },
+        { 4.4f, 3.6f, NB_CORNER, 1, 0x5EED02u }, { 4.0f, 3.4f, NB_CORNER, -1, 0x5EED03u } };
+    const int CWL = 900, CHL = 640;
+    Image im = image_new(2 * CWL, 2 * CHL);
+    for (int b = 0; b < 4; ++b) {
+        NbPlan p;
+        uint32_t seed = B[b].seed;
+        for (int t = 0; t < 64; ++t, seed += 7919u) {
+            nb_plan(&p, B[b].w, B[b].d, 0.0f, seed, B[b].form);
+            if (!B[b].side || p.side == B[b].side) break;
+        }
+        NbLine L;
+        nb_line(&p, &L);
+        PmMesh m = { 0 }, none = { 0 }, cut = { 0 };
+        PmInstances li = { 0 };
+        Pm pm;
+        pm_begin(&pm, &m, &li, PM_LOD0);
+        nb_body(&pm, &p);
+        pm_begin(&pm, &none, &li, PM_LOD0);
+        nb_line_place(&pm, &p, &L);
+        pm_instances_bake(&m, &li, PM_LOD0);
+        /* keep the kitchen: under 2.5 m, behind the counter's back, inside the side walls (the near one, +x,
+         * taken off to see the bottles' end); its vertices compacted so the view fits it */
+        cut.v = (PmVertex *)malloc(sizeof(PmVertex) * m.nv);
+        cut.shell = (uint16_t *)malloc(sizeof(uint16_t) * m.nv);
+        cut.idx = (uint32_t *)malloc(sizeof(uint32_t) * m.ni);
+        uint32_t *remap = (uint32_t *)malloc(sizeof(uint32_t) * m.nv);
+        for (uint32_t i = 0; i < m.nv; ++i) remap[i] = UINT32_MAX;
+        for (uint32_t i = 0; i + 2 < m.ni; i += 3) {
+            float c[3] = { 0, 0, 0 };
+            for (int k = 0; k < 3; ++k) for (int a = 0; a < 3; ++a) c[a] += m.v[m.idx[i + k]].p[a] / 3.0f;
+            if (c[1] > 2.5f || c[2] > p.kz1 - 0.02f || c[0] < p.x0 + 0.003f || c[0] > p.kx1 + 0.02f) continue;
+            for (int k = 0; k < 3; ++k) {
+                uint32_t v = m.idx[i + k];
+                if (remap[v] == UINT32_MAX) { remap[v] = cut.nv; cut.shell[cut.nv] = m.shell[v]; cut.v[cut.nv++] = m.v[v]; }
+                cut.idx[cut.ni++] = remap[v];
+            }
+        }
+        free(remap);
+        render(&im, &cut, (b & 1) * CWL, (b >> 1) * CHL, CWL, CHL, SHOW_LIT);
+        static const char *const KIND[NB_POT_KINDS] = { "noodles", "wok", "steamer", "saucepan" };
+        char label[96];
+        snprintf(label, sizeof(label), "%s %.2fx%.2f %s %d pans", p.form ? "corner" : "straight", B[b].w, B[b].d, KIND[L.kind], L.bmPans);
+        text(&im, (b & 1) * CWL + 8, (b >> 1) * CHL + 8, label, 2);
+        free(cut.idx); free(cut.v); free(cut.shell);
+        pm_mesh_free(&m); pm_mesh_free(&none); pm_inst_free(&li);
+    }
+    char path[512];
+    snprintf(path, sizeof(path), "%s/pmodel_line.png", out);
+    stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
+    free(im.p);
 }
 
 /* ----------------------------------------------------------------- main --- */
@@ -556,22 +636,22 @@ int main(int argc, char **argv) {
     printf("library: %ld triangles over its levels (NB0's budget 300000)\n", total);
     if (!only) CHECK(total <= 300000, "the library holds %ld triangles over its levels, over 300000", total);
     if (!only) {
-        /* a plausible kit for one noodle bar after the target sheet (NB4-NB5 settle the real one), at each level */
-        static const int MIX[][2] = {
-            { PMK_STOOL, 5 }, { PMK_STOCKPOT_S, 2 }, { PMK_STOCKPOT_L, 1 }, { PMK_LID, 2 }, { PMK_BOWL_STACK, 2 }, { PMK_JAR_OIL, 3 },
-            { PMK_JAR_GINGER, 2 }, { PMK_BOTTLE, 4 }, { PMK_BURNER, 2 }, { PMK_GRATE, 2 }, { PMK_KNOB, 4 }, { PMK_STEAMER, 1 },
-            { PMK_GN_PAN, 3 }, { PMK_GN_PAN_OPEN, 1 }, { PMK_RICE_COOKER, 1 }, { PMK_LADLE, 1 }, { PMK_SPIDER, 1 }, { PMK_SPATULA, 1 },
-            { PMK_CLEAVER, 1 }, { PMK_S_HOOK, 4 }, { PMK_UTENSIL_RAIL, 1 }, { PMK_GAS_13, 1 }, { PMK_GAS_47, 1 }, { PMK_FAN, 1 },
-            { PMK_POWER_PANEL, 1 }, { PMK_SHELF_BRACKET, 4 }, { PMK_A_FRAME, 1 }, { PMK_BELL, 1 }, { PMK_GAUGE, 1 },
-            { PMK_VALVE_LEVER, 1 }, { PMK_SADDLE, 6 }, { PMK_INSULATOR, 0 } };
+        /* the slice's cooking line (NB5) at each level: its modules as set down */
+        NbPlan p;
+        nb_plan(&p, 3.85f, 3.48f, 0.0f, 0x5EED01u, NB_STRAIGHT);
+        NbLine L;
+        nb_line(&p, &L);
+        PmMesh none = { 0 };
+        PmInstances li = { 0 };
+        Pm pm;
+        pm_begin(&pm, &none, &li, PM_LOD0);
+        nb_line_place(&pm, &p, &L);
         long kit[PM_LODS] = { 0, 0, 0 };
-        int inst = 0;
-        for (size_t k = 0; k < sizeof(MIX) / sizeof(MIX[0]); ++k) {
-            for (int l = 0; l < PM_LODS; ++l) kit[l] += (long)mod_tris[MIX[k][0]][l] * MIX[k][1];
-            inst += MIX[k][1];
-        }
-        printf("a slice's kit (%d instances, without the hood and its rivets): L0 %ld, L1 %ld, L2 %ld triangles\n", inst, kit[0], kit[1], kit[2]);
-        material_share(MIX, sizeof(MIX) / sizeof(MIX[0]));
+        for (uint32_t k = 0; k < li.n; ++k)
+            for (int l = 0; l < PM_LODS; ++l) kit[l] += (long)mod_tris[li.v[k].module][l];
+        printf("the slice's cooking line (%u instances, %d items): L0 %ld, L1 %ld, L2 %ld triangles\n", li.n, L.n, kit[0], kit[1], kit[2]);
+        pm_mesh_free(&none); pm_inst_free(&li);
+        material_share();
     }
 
     /* the parts, with their modules as instances (counted) and built in (drawn) */
@@ -632,6 +712,7 @@ int main(int argc, char **argv) {
         free(im.p);
     }
     if (!only || !strcmp(only, "body")) body_section(out);
+    if (!only || !strcmp(only, "body") || !strcmp(only, "line")) line_section(out);
     printf("\n%s (%d failures)\n", g_fail ? "FAILED" : "ok", g_fail);
     return g_fail ? 1 : 0;
 }

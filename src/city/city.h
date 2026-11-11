@@ -252,9 +252,10 @@ void     city_build_props(int cx, int cz, Mesh *m);
 /* The near vendor layer (src/city/vendor_kit.c; the noodle bar slice's NB2, NB4), within KIT_DISTANCE:
  * the canopy noodle bars' bodies (merged MAT_KIT triangles) and the kit's modules they and the cooking
  * line set down (Mesh.kit). Its bounds are the triangles' and the modules' places, grown by KIT_PAD.
- * Which vendors get the (stand-in) cooking line: city_set_kit (KIT_SLICE by default; KIT_OFF: no layer). */
+ * Which vendors get them: city_set_kit (KIT_SLICE, the default: every bar, its body and its cooking line (NB5);
+ * KIT_ALL: every vendor a line; KIT_OFF: no layer). */
 void     city_build_vendor_kit(int cx, int cz, Mesh *m);
-enum { KIT_OFF = 0, KIT_SLICE, KIT_ALL };   /* none; the slice only; every vendor (the cost spike) */
+enum { KIT_OFF = 0, KIT_SLICE, KIT_ALL };   /* none; the bars (named for the slice); every vendor (the cost spike) */
 void     city_set_kit(int mode);
 int      city_kit_mode(void);
 #define KIT_PAD 1.5f   /* m: the largest module's reach from its origin, and some */

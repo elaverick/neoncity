@@ -268,6 +268,16 @@ static int slice_cams(int argc, char **argv) {
                fin & NB_FINISH_BARE_WOOD ? "timber" : "painted");
         CHECK(fm.ni / 3 <= 500, "the slice's far shell has %u triangles, over 500", fm.ni / 3);
         pm_mesh_free(&fm);
+        /* its cooking line (NB5) and the line's rules */
+        NbLine L;
+        nb_line(p, &L);
+        static const char *const KIND[NB_POT_KINDS] = { "noodle baskets", "a wok", "a steamer", "a saucepan" };
+        printf("  line: the range at the bench's %s end, the stock pot and %s; a bain-marie of %d pans; %d items; %s\n",
+               L.rangeEnd < 0 ? "-x" : "+x", KIND[L.kind], L.bmPans, L.n, L.fan[1] > 0.0f ? "a fan" : "no fan");
+        char err[2048];
+        const int bad = nb_line_check(p, &L, err, sizeof(err));
+        if (bad) printf("%s", err);
+        CHECK(bad == 0, "the slice's cooking line breaks %d rules", bad);
     }
     {   /* the near vendor layer: the kit's modules set down at the slice (NB2), the same from either build */
         Mesh km, km2;
@@ -292,7 +302,7 @@ static int slice_cams(int argc, char **argv) {
         printf("  vendor layer: %u body triangles (%.1f MB of the pool), built in %.0f ms\n", km.count / 3,
                (double)km.count * sizeof(Vertex) / 1048576.0, kms);
         CHECK(out == 0, "%d of the slice's kit modules stand outside its site", out);
-        printf("  kit: %u modules set down (the line a stand-in until NB5):", km.nkit);
+        printf("  kit: %u modules set down:", km.nkit);
         for (int m = 0; m < PMK_COUNT; ++m) if (counts[m]) printf(" %s %d", pm_module(m)->name, counts[m]);
         printf("\n");
         mesh_free(&km);

@@ -98,6 +98,69 @@ int kitSet(uint m, uint seed) {
 
 float kitLum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
+// Round beads scattered one to a cell (cells per metre; size their radius in cells, 0..0.5): 1 inside one,
+// soft at its rim; about 60% of the cells hold one.
+float kitBeads(vec2 f, float cells, float size, uint salt) {
+    vec2 c = f * cells, i = floor(c), g = fract(c);
+    uint h = hash2i(salt, int(i.x), int(i.y));
+    vec2 o = vec2(hfloat(h), hfloat(hash_combine(h, 1u))) * (1.0 - 2.0 * size) + size;
+    float r = size * (0.45 + 0.55 * hfloat(hash_combine(h, 2u)));
+    return step(hfloat(hash_combine(h, 3u)), 0.6) * (1.0 - smoothstep(0.7 * r, r, length(g - o)));
+}
+
+// The food (NB5), painted simply: broth with beads of fat and flecks of spring onion; noodles in strands
+// lying two ways, dark between them; curry with its potato and meat and its oil pooling; rice grains; chilli
+// oil with its flakes, ginger in slices (both seen through their jars' glass). f: metres over the surface;
+// foot: a pixel's size there (the fine patterns fade to their average past it).
+void kitFood(uint m, vec2 f, float foot, inout vec3 base, inout float rough) {
+    if (m == PMAT_BROTH) {
+        base = mix(vec3(0.15, 0.065, 0.02), vec3(0.30, 0.15, 0.045), fbm(f * 7.0, 0xB07u));
+        float fine = 1.0 - smoothstep(0.004, 0.012, foot);
+        float fat = kitBeads(f, 45.0, 0.3, 0xFA7u) * fine;
+        float onion = kitBeads(f + 3.1, 16.0, 0.16, 0x0A1u) * step(0.75, vnoise(f * 5.0, 0x0A2u)) * fine;
+        base = mix(base, vec3(0.52, 0.34, 0.09), 0.6 * fat);
+        base = mix(base, vec3(0.10, 0.22, 0.04), onion);
+        rough = mix(0.07, 0.03, fat);
+    } else if (m == PMAT_NOODLE) {
+        vec2 w = f + 0.012 * vec2(fbm(f * 25.0, 0x9D1u), fbm(f * 25.0 + 5.0, 0x9D2u));
+        const float FR = 170.0;
+        float aa = 1.0 - smoothstep(0.15, 0.5, foot * FR);
+        float s1 = 0.5 + 0.5 * sin(6.2832 * FR * dot(w, vec2(0.8, 0.6)));
+        float s2 = 0.5 + 0.5 * sin(6.2832 * FR * dot(w, vec2(-0.5, 0.87)) + 1.3);
+        float strand = mix(s1, s2, step(0.5, vnoise(f * 18.0, 0x9D3u)));
+        float lit = mix(0.7, smoothstep(0.1, 0.6, strand), aa);
+        base = vec3(0.60, 0.46, 0.19) * mix(0.5, 1.05, lit) * mix(0.88, 1.06, vnoise(f * 40.0, 0x9D4u));
+        rough = mix(0.55, 0.3, lit);
+    } else if (m == PMAT_CURRY) {
+        base = mix(vec3(0.22, 0.08, 0.018), vec3(0.40, 0.19, 0.035), fbm(f * 14.0, 0xC01u));
+        float potato = kitBeads(f, 28.0, 0.4, 0xC02u), meat = kitBeads(f + 1.7, 24.0, 0.35, 0xC03u) * (1.0 - potato);
+        base = mix(base, vec3(0.52, 0.36, 0.11), 0.75 * potato);
+        base = mix(base, vec3(0.12, 0.045, 0.018), 0.7 * meat);
+        float oil = smoothstep(0.58, 0.78, vnoise(f * 9.0, 0xC04u)) * (1.0 - potato);
+        base = mix(base, vec3(0.42, 0.10, 0.015), 0.5 * oil);
+        rough = mix(0.4, 0.07, oil);
+    } else if (m == PMAT_RICE) {
+        float aa = 1.0 - smoothstep(0.002, 0.006, foot);
+        float grain = mix(0.6, kitBeads(f, 160.0, 0.45, 0x51Cu), aa);
+        base = vec3(0.70, 0.68, 0.62) * mix(0.72, 1.0, grain);
+        rough = 0.5;
+    } else if (m == PMAT_OIL) {
+        // deep red-brown oil, its flakes settled through it, glossy behind the glass
+        float aa = 1.0 - smoothstep(0.002, 0.006, foot);
+        float flake = kitBeads(f, 110.0, 0.25, 0x0E1u) * aa;
+        base = mix(vec3(0.11, 0.022, 0.007), vec3(0.24, 0.055, 0.012), fbm(f * 30.0, 0x0E2u));
+        base = mix(base, vec3(0.05, 0.012, 0.004), 0.7 * flake);
+        rough = 0.06;
+    } else if (m == PMAT_GINGER) {
+        // pale pink slices packed in their brine, a little darker at their edges
+        float aa = 1.0 - smoothstep(0.003, 0.008, foot);
+        float a = kitBeads(f, 55.0, 0.45, 0x61Eu), b = kitBeads(f + 0.009, 55.0, 0.45, 0x61Fu);
+        float slice = mix(0.5, max(a, 0.8 * b), aa);
+        base = mix(vec3(0.46, 0.27, 0.22), vec3(0.74, 0.52, 0.45), slice);
+        rough = 0.1;
+    }
+}
+
 vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ, float wear) {
     vec3 V = -normalize(rel);
     uint m = min(prm.y, KIT_MATS - 1u);
@@ -122,6 +185,8 @@ vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ
     vec2 q = vec2(uv.x, -uv.y) + vec2(hf(seed, 3u + prm.z), hf(seed, 5u + prm.z)) * 7.3;
     vec2 qx = dFdx(q), qy = dFdy(q);
     float hx = dFdx(hgt), hy = dFdy(hgt);   // taken here, in uniform control flow
+    vec2 pw = mod(p.xz, 64.0);                // the food's metres on what faces up (world xz, kept small)
+    float pfoot = max(length(dFdx(p.xz)), length(dFdy(p.xz)));
 
     vec3 base = b.rgb * mix(0.88, 1.1, hf(seed, prm.z + 7u));
     float metal = b.a, rough = KIT_ROUGH[m], ao = 1.0, height = 0.5;
@@ -142,6 +207,11 @@ vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ
         nn = normalize(n + (gT * tn.x - gB * tn.y) * k.y / max(tn.z, 0.2));   // image up is -gB
         ao = orm.r; rough = orm.g; height = orm.b;
         metal *= orm.a;
+    }
+    // the food (NB5): on what faces up in world xz (a lathe's metres swirl round its middle), else its own
+    if (m >= PMAT_BROTH && m <= PMAT_GINGER) {
+        bool top = abs(n.y) > 0.6;
+        kitFood(m, top ? pw + vec2(float(seed & 255u) * 0.37) : q, top ? pfoot : max(length(qx), length(qy)), base, rough);
     }
     // a plain steel hood weathered dull, mill scale and grime over it: not the galvanised one's sky-bright sheen
     if (steelHood) { rough = max(rough, 0.72); metal *= 0.45; }

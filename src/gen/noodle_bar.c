@@ -2,6 +2,7 @@
 #include "hash.h"
 #include "mathlib.h"
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 /* ===========================================================================
@@ -14,6 +15,14 @@
 #define RIVETS    0.06f     /* a rivet row's pitch */
 #define STOOL_OUT 0.48f     /* a stool's middle out from the counter's face */
 #define CUST      0.78f     /* the corner form: the customers' strip beyond its side run */
+/* the cooking line (NB5) */
+#define RANGE_TRAY  0.86f    /* the range's burner wells' floor */
+#define WOK_FLOOR   0.75f    /* the wok well's floor (the wok burner stands on it) */
+#define GRATE_TOP   0.047f   /* a grate's tips over its feet (pm_grate: 15 mm bars) */
+#define PIPE_R      0.011f   /* the gas line (22 mm copper), its middle 11 mm off the lining (the saddle clips) */
+#define BM_TOP      1.06f    /* the bain-marie's top: the pans' flanges rest on it */
+#define BM_DEPTH    0.43f    /* its box, front to back: the well (0.325) and the control panel */
+#define RAIL_LEN    0.6f     /* the utensil rail (pmodel_kit.c m_utensil_rail) */
 
 static int g_form = -1;
 void nb_force_form(int form) { g_form = form; }
@@ -453,30 +462,210 @@ static void duct_flange(Pm *pm, float x, float y, float z, float r) {
     pm_pop(pm);
 }
 
-static void kitchen(Pm *pm, const NbPlan *p) {
+static int bench_legs(float b0, float b1, float *x, int max);
+static void bench_span(const NbPlan *p, const NbLine *L, float *b0, float *b1);
+
+/* The range's carcass (NB5): stainless on a steel plinth, two doors, the knob rail proud along its front, a
+ * stainless top over its burner wells (a cast-iron tray under each ring burner, a deep well for a wok burner),
+ * a back guard the gas line drops into. */
+static void range_carcass(Pm *pm, const NbPlan *p, const NbLine *L) {
+    const float zl = p->lining, zf = zl + p->benchD, x0 = L->carc0, x1 = L->carc1, bz = L->burner[0][1], hw = 0.21f;
+    pm->part = 126;
+    pm_mat(pm, PMAT_STEEL);
+    bb(pm, x0 + 0.03f, 0.0f, zl + 0.03f, x1 - 0.03f, 0.10f, zf - 0.04f, 0.002f);
+    pm_mat(pm, PMAT_STAINLESS);
+    bb(pm, x0, 0.10f, zl, x1, 0.74f, zf, 0.003f);
+    bb(pm, x0, 0.74f, zl, x0 + 0.012f, RANGE_TRAY, zf, 0.0015f);
+    bb(pm, x1 - 0.012f, 0.74f, zl, x1, RANGE_TRAY, zf, 0.0015f);
+    bb(pm, x0, 0.74f, zl, x1, RANGE_TRAY, zl + 0.012f, 0.0015f);
+    bb(pm, x0, 0.74f, zf - 0.02f, x1, RANGE_TRAY, zf + 0.03f, 0.004f);   /* the knob rail */
+    /* the doors and their bar handles */
+    const int nd = x1 - x0 > 0.8f ? 2 : 1;
+    for (int d = 0; d < nd; ++d) {
+        const float a = x0 + (x1 - x0) * (float)d / (float)nd + 0.006f, b = x0 + (x1 - x0) * (float)(d + 1) / (float)nd - 0.006f;
+        pm->part = (uint8_t)(127 + d);
+        bb(pm, a, 0.14f, zf, b, 0.70f, zf + 0.008f, 0.002f);
+        pm_mat(pm, PMAT_STEEL);
+        const float hx0 = a + 0.08f, hx1 = b - 0.08f;
+        if (hx1 > hx0) {
+            PmPath pa, pf;
+            pm_path_init(&pa, 4);
+            pm_path_add(&pa, hx0, 0.64f, zf + 0.008f, 1); pm_path_add(&pa, hx0, 0.64f, zf + 0.04f, 1);
+            pm_path_add(&pa, hx1, 0.64f, zf + 0.04f, 1); pm_path_add(&pa, hx1, 0.64f, zf + 0.008f, 1);
+            pm_path_init(&pf, 24);
+            pm_path_fillet(&pa, 0.012f, 3, &pf);
+            pm_tube(pm, &pf, 0.007f, 8, 0);
+            pm_path_free(&pa); pm_path_free(&pf);
+        }
+        pm_mat(pm, PMAT_STAINLESS);
+    }
+    /* the top: stainless strips round the wells, at bench height (cast iron there read as blotched granite in
+     * the sun; the grates and the wells' trays stay cast iron) */
+    pm->part = 129;
+    pm_mat(pm, PMAT_STAINLESS);
+    float wx[2] = { L->burner[0][0], L->burner[1][0] };
+    if (wx[0] > wx[1]) { float t = wx[0]; wx[0] = wx[1]; wx[1] = t; }
+    const float yt = p->benchY;
+    bb(pm, x0, RANGE_TRAY, zl, x1, yt, bz - hw, 0.002f);
+    bb(pm, x0, RANGE_TRAY, bz + hw, x1, yt, zf + 0.03f, 0.003f);
+    bb(pm, x0, RANGE_TRAY, bz - hw, wx[0] - hw, yt, bz + hw, 0.002f);
+    bb(pm, wx[0] + hw, RANGE_TRAY, bz - hw, wx[1] - hw, yt, bz + hw, 0.002f);
+    bb(pm, wx[1] + hw, RANGE_TRAY, bz - hw, x1, yt, bz + hw, 0.002f);
+    /* the wells: a tray under a ring burner; a deep well, stainless walls, under a wok burner */
+    for (int b = 0; b < 2; ++b) {
+        const float x = L->burner[b][0];
+        const int wok = b == 1 && L->kind == NB_POT_WOK;
+        pm_mat(pm, PMAT_CAST_IRON);
+        if (!wok) { bb(pm, x - hw, RANGE_TRAY - 0.006f, bz - hw, x + hw, RANGE_TRAY, bz + hw, 0.0f); continue; }
+        bb(pm, x - hw, WOK_FLOOR - 0.006f, bz - hw, x + hw, WOK_FLOOR, bz + hw, 0.0f);
+        pm_mat(pm, PMAT_STAINLESS);
+        bb(pm, x - hw, WOK_FLOOR, bz - hw, x - hw + 0.004f, RANGE_TRAY, bz + hw, 0.0f);
+        bb(pm, x + hw - 0.004f, WOK_FLOOR, bz - hw, x + hw, RANGE_TRAY, bz + hw, 0.0f);
+        bb(pm, x - hw, WOK_FLOOR, bz - hw, x + hw, RANGE_TRAY, bz - hw + 0.004f, 0.0f);
+        bb(pm, x - hw, WOK_FLOOR, bz + hw - 0.004f, x + hw, RANGE_TRAY, bz + hw, 0.0f);
+    }
+    /* the back guard */
+    pm_mat(pm, PMAT_STAINLESS);
+    bb(pm, x0, yt, zl, x1, yt + 0.065f, zl + 0.06f, 0.004f);
+}
+
+/* The bain-marie (NB5): a stainless box on the bench, its top a frame round a well the GN pans hang in, a
+ * control panel along its front (the dial is a kit knob), a label, pilot lights, rubber feet. */
+static void bain_marie(Pm *pm, const NbPlan *p, const NbLine *L) {
+    (void)p;
+    if (!L->bmPans) return;
+    const float x0 = L->bm0, x1 = L->bm1, z0 = L->bmZ0, z1 = L->bmZ1, y0 = p->benchY + 0.012f, y1 = BM_TOP;
+    const float wx0 = x0 + 0.025f, wx1 = x1 - 0.025f, wz0 = z0 + 0.02f, wz1 = wz0 + 0.325f;
+    pm->part = 136;
+    pm_mat(pm, PMAT_RUBBER);
+    for (int k = 0; k < 4; ++k) {
+        const float fx = (k & 1) ? x1 - 0.04f : x0 + 0.04f, fz = (k & 2) ? z1 - 0.04f : z0 + 0.04f;
+        bb(pm, fx - 0.015f, p->benchY, fz - 0.015f, fx + 0.015f, y0, fz + 0.015f, 0.003f);
+    }
+    pm_mat(pm, PMAT_STAINLESS);
+    bb(pm, x0, y0, wz1, x1, y1, z1, 0.004f);                 /* the control panel's housing */
+    bb(pm, x0, y0, z0, x1, y1, wz0, 0.003f);                 /* the back */
+    bb(pm, x0, y0, wz0, wx0, y1, wz1, 0.002f);               /* the ends */
+    bb(pm, wx1, y0, wz0, x1, y1, wz1, 0.002f);
+    bb(pm, wx0, y0, wz0, wx1, y0 + 0.008f, wz1, 0.0f);       /* the well's floor */
+    /* the water in the well, glimpsed between the pans */
+    pm_mat(pm, PMAT_GLASS);
+    bb(pm, wx0, y1 - 0.09f, wz0, wx1, y1 - 0.088f, wz1, 0.0f);
+    /* the label, two pilot lights (NB6 lights them) */
+    pm_mat(pm, PMAT_PAPER);
+    pm->part = 137;
+    bb(pm, x0 + 0.13f, 1.0f, z1, x0 + 0.26f, 1.03f, z1 + 0.0012f, 0.0f);
+    for (int k = 0; k < 2; ++k) {
+        pm_mat(pm, k ? PMAT_RED : PMAT_GLASS);
+        pm_push(pm);
+        pm_translate(pm, x1 - 0.05f - 0.035f * (float)k, 0.985f, z1);
+        pm_rotate_x(pm, HALF_PI);
+        PmProf lp[5] = { { 0, 0, 0 }, { 0.0075f, 0, 1 }, { 0.0075f, 0.004f, 1 }, { 0.0055f, 0.0075f, 0 }, { 0, 0.009f, 0 } };
+        pm_lathe(pm, lp, 5, 12, 0.0f, 0.0f);
+        pm_pop(pm);
+    }
+}
+
+/* The gas line (NB5): 22 mm copper from its hose tail by the bottles, along the lining in its clips, down
+ * beside the splashback, behind the range into its back guard; the regulator's rubber hose to its tail. */
+static void gas_line(Pm *pm, const NbPlan *p, const NbLine *L) {
+    const float zl = p->lining, zp = zl + PIPE_R, y = L->pipeY, low = p->benchY + 0.095f;
+    const float xm = 0.5f * (L->burner[0][0] + L->burner[1][0]);
+    pm->part = 138;
+    pm_mat(pm, PMAT_COPPER);
+    PmPath pa;
+    pm_path_init(&pa, 8);
+    pm_path_add(&pa, L->pipeX0, y - 0.07f, zp, 1);
+    pm_path_add(&pa, L->pipeX0, y, zp, 1);
+    pm_path_add(&pa, L->pipeX1, y, zp, 1);
+    pm_path_add(&pa, L->pipeX1, low, zp, 1);
+    pm_path_add(&pa, xm, low, zp, 1);
+    pm_path_add(&pa, xm, p->benchY + 0.04f, zp, 1);
+    pm_pipe(pm, &pa, PIPE_R, 0.035f, 0);
+    pm_path_free(&pa);
+    /* the hose tail under the start, brass */
+    pm_mat(pm, PMAT_BRASS);
+    pm_push(pm);
+    pm_translate(pm, L->pipeX0, y - 0.07f, zp);
+    PmProf t[6] = { { 0, -0.035f, 0 }, { 0.0045f, -0.035f, 0 }, { 0.006f, -0.027f, 0 }, { 0.0045f, -0.022f, 0 }, { 0.0125f, -0.004f, 1 }, { 0, 0.002f, 0 } };
+    pm_lathe(pm, t, 6, 12, 0.0f, 0.0f);
+    pm_pop(pm);
+    /* the hose from the regulator's barb (pmodel_kit.c m_regulator: 0.065 along, 0.048 down from the outlet) */
+    const float toward = L->pipeX1 > L->pipeX0 ? 1.0f : -1.0f;
+    const float a[3] = { p->gasX + toward * (0.04f + 0.065f), 1.3f - 0.12f + 0.025f - 0.048f, zl + 0.24f };
+    const float b[3] = { L->pipeX0, y - 0.105f, zp };
+    pm_cable(pm, a, b, 0.07f, 0.0065f);
+}
+
+/* The power's cables (NB5): a bundle from the panel's insulators up the lining to the hood; to the fan along
+ * the wall; down from a gland to the socket strip; the strip's cords to the rice cooker and the bain-marie. */
+static void power_cables(Pm *pm, const NbPlan *p, const NbLine *L) {
+    const float zl = p->lining, px = L->panelX;
+    float py = 1.6f;
+    for (int i = 0; i < L->n; ++i) if (L->item[i].module == PMK_POWER_PANEL) py = L->item[i].y;
+    pm->part = 139;
+    const uint32_t s = hash_combine(p->seed, 0xCAB1u);
+    /* up from the insulators (0.04 over the panel's top: pmodel_kit.c m_power_panel) */
+    {
+        const float a[3] = { px, py + 0.72f, zl + 0.06f };
+        const float top = nb_ceil(p, px, zl + 0.06f) + 0.005f;
+        const float b[3] = { px, top, zl + 0.06f };
+        if (top > a[1] + 0.05f) pm_cable_bundle(pm, a, b, 0.0f, 3, 0.007f, s);
+    }
+    if (L->fan[1] > 0.0f) {
+        /* to the fan: along the lining to the corner, then the side wall to the housing */
+        const float xw = L->fan[0], sx = xw > px ? 1.0f : -1.0f, y = py + 0.68f;
+        const float a[3] = { px + sx * 0.15f, y, zl + 0.06f }, c[3] = { xw - sx * 0.03f, y + 0.02f, zl + 0.06f };
+        const float d[3] = { xw - sx * 0.03f, L->fan[1] + 0.05f, L->fan[2] - 0.2f };
+        pm_cable_bundle(pm, a, c, 0.05f, 2, 0.006f, s + 1u);
+        pm_cable_bundle(pm, c, d, 0.07f, 2, 0.006f, s + 2u);
+    }
+    /* down from a gland to the socket strip's end */
+    {
+        const float sx = L->stripX > px ? 1.0f : -1.0f;
+        const float a[3] = { px + sx * 0.12f, py - 0.03f, zl + 0.07f }, b[3] = { L->stripX - sx * 0.152f, 1.03f, zl + 0.02f };
+        pm_cable(pm, a, b, 0.03f, 0.006f);
+    }
+    /* cords from the strip's sockets to the rice cooker's and the bain-marie's backs */
+    if (L->cookerX != 0.0f) {
+        const float a[3] = { L->stripX - 0.02f, 1.02f, zl + 0.04f }, b[3] = { L->cookerX, 1.0f, L->cookerZ - 0.175f };
+        pm_cable(pm, a, b, 0.05f, 0.004f);
+    }
+    if (L->bmPans) {
+        const float a[3] = { L->stripX + 0.05f, 1.02f, zl + 0.04f }, b[3] = { L->rangeEnd < 0 ? L->bm1 - 0.08f : L->bm0 + 0.08f, 1.0f, L->bmZ0 };
+        pm_cable(pm, a, b, 0.06f, 0.004f);
+    }
+}
+
+static void kitchen(Pm *pm, const NbPlan *p, const NbLine *L) {
     const float zl = p->lining, by = p->benchY, bd = p->benchD;
     pm->part = 120;
     /* chequer plate over the kitchen's floor */
     pm_mat(pm, PMAT_CHEQUER);
     bb(pm, p->kx0, 0.0f, zl, p->kx1, 0.012f, p->kz1 + 0.04f, 0.002f);
-    /* the back bench: a worn steel top with its upstand and apron, an undershelf, square legs */
+    /* the back bench beside the range: a worn steel top with its upstand and apron, an undershelf, square legs */
     pm_mat(pm, PMAT_STAINLESS);
-    const float b0 = p->benchX0, b1 = p->benchX1;
+    float b0, b1;
+    bench_span(p, L, &b0, &b1);
     if (b1 - b0 > 0.3f) {
         pm->part = 121;
         bb(pm, b0, by - 0.035f, zl, b1, by, zl + bd, 0.004f);
         bb(pm, b0, by, zl, b1, by + 0.08f, zl + 0.012f, 0.002f);
         bb(pm, b0, by - 0.11f, zl + bd - 0.016f, b1, by - 0.035f, zl + bd, 0.002f);
         bb(pm, b0 + 0.03f, 0.16f, zl + 0.03f, b1 - 0.03f, 0.18f, zl + bd - 0.03f, 0.002f);
-        int nl = 2 + (int)((b1 - b0) / 1.2f);
-        for (int i = 0; i < nl; ++i) {
-            float x = b0 + 0.03f + (b1 - b0 - 0.06f) * (float)i / (float)(nl - 1);
+        float lx[8];
+        const int nl = bench_legs(b0, b1, lx, 8);
+        for (int i = 0; i < nl; ++i)
             for (int z = 0; z < 2; ++z) {
                 float zz = z ? zl + bd - 0.035f : zl + 0.035f;
-                bb(pm, x - 0.02f, 0.012f, zz - 0.02f, x + 0.02f, by - 0.035f, zz + 0.02f, 0.003f);
+                bb(pm, lx[i] - 0.02f, 0.012f, zz - 0.02f, lx[i] + 0.02f, by - 0.035f, zz + 0.02f, 0.003f);
             }
-        }
     }
+    range_carcass(pm, p, L);
+    bain_marie(pm, p, L);
+    gas_line(pm, p, L);
+    power_cables(pm, p, L);
+    pm_mat(pm, PMAT_STAINLESS);
     /* the splashback behind the range: small tiles on a backer, steel trims */
     {
         float x0 = maxf(p->kx0, p->rangeX0 - 0.15f), x1 = minf(p->kx1, p->rangeX1 + 0.15f), y0 = 1.04f, y1 = 1.85f;
@@ -650,7 +839,9 @@ void nb_body(Pm *pm, const NbPlan *p) {
     for (int i = 0; i < p->npost; ++i) { pm->part = (uint8_t)(100 + i); post(pm, p->post[i][0], p->post[i][1], p->post[i][2]); }
     column(pm, p);
     for (int i = 0; i < p->nrun; ++i) counter_run(pm, p, &p->run[i], i);
-    kitchen(pm, p);
+    NbLine line;
+    nb_line(p, &line);
+    kitchen(pm, p, &line);
     /* the stools, the bell and the A-frame */
     for (int i = 0; i < p->nstool; ++i) { pm->part = (uint8_t)(170 + i); put(pm, p->stool[i][0], 0.0f, p->stool[i][1], 0.0f, PMK_STOOL); }
     pm->part = 190;
@@ -806,7 +997,248 @@ void nb_shell(Pm *pm, const NbPlan *p) {
     }
 }
 
-/* ------------------------------------------------------- the stand-in line --- */
+/* ------------------------------------------------------ the cooking line --- */
+
+
+float nb_ceil(const NbPlan *p, float x, float z) {
+    const PmHood *h = &p->hood;
+    float out;
+    if (p->form == NB_CORNER) {
+        const int s = p->side;
+        const float zsp = p->lip - h->span, xsp = (s > 0 ? p->x1 : p->x0) - (float)s * h->span;
+        out = maxf(0.0f, maxf((float)s * (x - xsp), z - zsp));
+    } else {
+        out = maxf(0.0f, z - h->spine[0][1]);
+    }
+    return nb_hood_under(p, out) - 0.01f;
+}
+
+/* the bench's legs (kitchen(): two rows, at its ends and every ~1.2 m) */
+static int bench_legs(float b0, float b1, float *x, int max) {
+    int nl = 2 + (int)((b1 - b0) / 1.2f);
+    if (nl > max) nl = max;
+    for (int i = 0; i < nl; ++i) x[i] = b0 + 0.03f + (b1 - b0 - 0.06f) * (float)i / (float)(nl - 1);
+    return nl;
+}
+/* the bench's stretch beside the range's carcass */
+static void bench_span(const NbPlan *p, const NbLine *L, float *b0, float *b1) {
+    if (L->rangeEnd < 0) { *b0 = L->carc1; *b1 = p->benchX1; } else { *b0 = p->benchX0; *b1 = L->carc0; }
+}
+/* the side wall's inner face at the range's end (the utensil rail's), and which way it faces */
+static float side_inner(const NbPlan *p, int end, float *facing) {
+    *facing = end < 0 ? 1.0f : -1.0f;
+    return end < 0 ? p->x0 + 0.0065f : p->x1 - 0.0065f;
+}
+
+static void add_item(NbLine *L, int module, int on, int used, float x, float y, float z, float yaw) {
+    if (L->n >= NB_ITEMS_MAX) return;
+    NbItem *it = &L->item[L->n++];
+    it->module = (uint16_t)module; it->on = (uint8_t)on; it->used = (uint8_t)used;
+    it->x = x; it->y = y; it->z = z; it->yaw = yaw;
+}
+
+/* a round thing's radius on the bench (its widest, handles and all) */
+static float bench_r(int m) {
+    switch (m) {
+    case PMK_BOWL_STACK:  return 0.097f;
+    case PMK_CHOP_BLOCK:  return 0.175f;
+    case PMK_RICE_COOKER: return 0.197f;
+    case PMK_STEAMER:     return 0.155f;
+    case PMK_JAR_OIL:     return 0.05f;
+    case PMK_JAR_GINGER:  return 0.065f;
+    case PMK_BOTTLE:      return 0.033f;
+    case PMK_GN_PAN:      return 0.09f;
+    }
+    return 0.1f;
+}
+
+void nb_line(const NbPlan *p, NbLine *L) {
+    memset(L, 0, sizeof(*L));
+    Rng r = rng_make(hash_combine(p->seed, 0x4C494Eu));
+    /* every draw first, in order (hash.h) */
+    const float kindR = rng_float(&r), swapR = rng_float(&r), pansR = rng_float(&r), openR = rng_float(&r);
+    const float blockR = rng_float(&r), steamR = rng_float(&r), wokR = rng_float(&r), condR = rng_float(&r);
+    const float zl = p->lining, bd = p->benchD, yb = p->benchY, zf = zl + bd;
+    const int re = p->rangeX0 - p->benchX0 < p->benchX1 - p->rangeX1 ? -1 : 1;
+    const float dir = (float)-re;   /* along the bench away from the range */
+    L->rangeEnd = re;
+    L->kind = kindR < 0.4f ? NB_POT_NOODLES : kindR < 0.65f ? NB_POT_WOK : kindR < 0.85f ? NB_POT_STEAMER : NB_POT_SAUCEPAN;
+    if (re < 0) { L->carc0 = p->benchX0; L->carc1 = p->rangeX1; } else { L->carc0 = p->rangeX0; L->carc1 = p->benchX1; }
+
+    /* the range: two wells on a 0.45 m pitch, the stock pot's at the wall end unless swapped */
+    const float bz = zf - 0.30f;
+    float bx[2] = { p->rangeX0 + 0.25f, p->rangeX0 + 0.70f };
+    int wall0 = re < 0 ? 0 : 1;              /* the burner nearer the side wall */
+    if (swapR < 0.25f) wall0 = 1 - wall0;
+    L->burner[0][0] = bx[wall0];     L->burner[0][1] = bz;
+    L->burner[1][0] = bx[1 - wall0]; L->burner[1][1] = bz;
+    {
+        const float x = L->burner[0][0], top = yb + GRATE_TOP;
+        add_item(L, PMK_BURNER, NB_ON_RANGE, 1, x, RANGE_TRAY, bz, 0.0f);
+        add_item(L, PMK_GRATE, NB_ON_RANGE, 1, x, yb, bz, 0.0f);
+        add_item(L, PMK_STOCKPOT_L, NB_ON_RANGE, 1, x, top, bz, 0.0f);
+    }
+    {
+        const float x = L->burner[1][0], top = yb + GRATE_TOP;
+        if (L->kind == NB_POT_WOK) {
+            add_item(L, PMK_WOK_BURNER, NB_ON_RANGE, 1, x, WOK_FLOOR, bz, 0.0f);
+            /* the wok rests on the cradle's fingers (0.205 up, at 0.11 m out), its handle to the aisle */
+            const float S = 0.26f, at = S - sqrtf(S * S - 0.11f * 0.11f);
+            const float away = x > L->burner[0][0] ? 1.0f : -1.0f;   /* its handle swung away from the stock pot */
+            add_item(L, PMK_WOK, NB_ON_RANGE, 1, x, WOK_FLOOR + 0.212f - at, bz, away * (0.1f + 0.35f * wokR));
+        } else {
+            add_item(L, PMK_BURNER, NB_ON_RANGE, 1, x, RANGE_TRAY, bz, 0.0f);
+            add_item(L, PMK_GRATE, NB_ON_RANGE, 1, x, yb, bz, 0.0f);
+            if (L->kind == NB_POT_SAUCEPAN) {
+                add_item(L, PMK_SAUCEPAN, NB_ON_RANGE, 1, x, top, bz - 0.02f, 0.35f * dir);
+            } else {
+                add_item(L, PMK_STOCKPOT_S, NB_ON_RANGE, 1, x, top, bz, 0.0f);
+                if (L->kind == NB_POT_STEAMER) add_item(L, PMK_STEAMER, NB_ON_RANGE, 1, x, top + 0.30f, bz, 0.0f);
+                else for (int k = -1; k <= 1; k += 2) add_item(L, PMK_NOODLE_BASKET, NB_ON_RANGE, 1, x + 0.072f * (float)k, top + 0.312f, bz - 0.01f, 0.0f);
+            }
+        }
+    }
+
+    /* along the bench from the range: the bain-marie, bowls, the block, the rice cooker, a cold steamer */
+    float b0, b1;
+    bench_span(p, L, &b0, &b1);
+    float cur = re < 0 ? b0 : b1;                 /* the free bench starts at the range */
+    const float stop = re < 0 ? b1 - 0.04f : b0 + 0.04f;
+    #define ROOM(w) (dir * (stop - (cur + dir * (w))) >= 0.0f)
+    {
+        int n = pansR < 0.5f ? 3 : 4;
+        while (n >= 2 && !ROOM(0.06f + (float)n * 0.176f + 0.05f)) n--;
+        if (n >= 2) {
+            const float w = (float)n * 0.176f + 0.05f, a = cur + dir * 0.06f, b = a + dir * w;
+            L->bm0 = minf(a, b); L->bm1 = maxf(a, b);
+            L->bmZ0 = zl + 0.06f; L->bmZ1 = L->bmZ0 + BM_DEPTH;
+            L->bmPans = n;
+            const int open = (int)(openR * (float)n) % n;
+            for (int k = 0; k < n; ++k)
+                add_item(L, k == open ? PMK_GN_PAN_OPEN : PMK_GN_PAN, NB_ON_BENCH, 1,
+                         L->bm0 + 0.025f + 0.088f + 0.176f * (float)k, BM_TOP - 0.15f, L->bmZ0 + 0.02f + 0.1625f, HALF_PI);
+            cur = b;
+        }
+    }
+    const float zc = zl + 0.5f * bd + 0.02f;
+    static const int ORDER[4] = { PMK_BOWL_STACK, PMK_CHOP_BLOCK, PMK_RICE_COOKER, PMK_STEAMER };
+    for (int i = 0; i < 4; ++i) {
+        const int m = ORDER[i];
+        if (m == PMK_CHOP_BLOCK && blockR < 0.25f) continue;
+        if (m == PMK_STEAMER && (steamR < 0.4f || L->kind == NB_POT_STEAMER)) continue;
+        const float rr = bench_r(m), gap = 0.05f;
+        if (!ROOM(gap + 2.0f * rr)) continue;
+        const float x = cur + dir * (gap + rr);
+        float z = m == PMK_RICE_COOKER ? zl + 0.06f + rr : zc;
+        add_item(L, m, NB_ON_BENCH, 1, x, yb, z, 0.0f);
+        if (m == PMK_RICE_COOKER) { L->cookerX = x; L->cookerZ = z; }
+        cur = x + dir * rr;
+    }
+    #undef ROOM
+
+    /* the undershelf: spare bowls and lidded pans, clear of the legs */
+    {
+        float legs[8];
+        const int nl = bench_legs(b0, b1, legs, 8);
+        static const int SPARE[4] = { PMK_BOWL_STACK, PMK_GN_PAN, PMK_BOWL_STACK, PMK_GN_PAN };
+        float x = re < 0 ? b0 + 0.06f : b1 - 0.06f;
+        for (int i = 0; i < 4; ++i) {
+            const int m = SPARE[i];
+            const float rr = m == PMK_GN_PAN ? 0.09f : bench_r(m);
+            float c = x + dir * rr;
+            for (int k = 0; k < nl; ++k) if (fabsf(c - legs[k]) < rr + 0.03f) c = legs[k] + dir * (rr + 0.035f);
+            if (dir * ((re < 0 ? b1 : b0) - dir * 0.05f - (c + dir * rr)) < 0.0f) break;
+            add_item(L, m, NB_ON_UNDER, 0, c, 0.18f, zl + 0.5f * bd, m == PMK_GN_PAN ? HALF_PI : 0.0f);
+            x = c + dir * (rr + 0.04f);
+        }
+    }
+
+    /* the shelves' stock: bowls and jars low, bottles and jars high (a hash per place: no draws to keep in order) */
+    if (p->shelfX1 > p->shelfX0) {
+        for (int s = 0; s < 2; ++s) {
+            const float y = s ? 1.80f : 1.45f;
+            float x = p->shelfX0 + 0.09f;   /* clear of the brackets under the shelf above */
+            for (int k = 0; k < 12; ++k) {
+                const uint32_t h = hash_combine(p->seed, 0x5E1Fu + (uint32_t)(s * 16 + k));
+                const float u = hash_float(h);
+                /* the lower shelf starts with bowls (the assembly's spare), then bowls and jars; bottles high */
+                const int m = s ? (u < 0.6f ? PMK_BOTTLE : u < 0.8f ? PMK_JAR_OIL : PMK_JAR_GINGER)
+                                : (k == 0 || u < 0.4f ? PMK_BOWL_STACK : u < 0.7f ? PMK_JAR_OIL : PMK_JAR_GINGER);
+                const float rr = bench_r(m), gap = 0.015f + 0.05f * hash_float(hash_combine(h, 1u));
+                const float c = x + gap + rr;
+                if (c + rr > p->shelfX1 - 0.09f) break;
+                add_item(L, m, NB_ON_SHELF, 1, c, y, zl + 0.14f, 6.2831853f * hash_float(hash_combine(h, 2u)));
+                x = c + rr;
+            }
+        }
+    }
+
+    /* the utensil rail on the side wall by the range, clear of the wall's framing */
+    {
+        float facing;
+        const float xw = side_inner(p, re, &facing);
+        float zc2 = zl + 0.42f;
+        if (p->form == NB_CORNER) {
+            const float zsp = p->lip - p->hood.span;
+            if (zc2 + 0.5f * RAIL_LEN > zsp - 0.08f && zc2 - 0.5f * RAIL_LEN < zsp + 0.08f) zc2 = maxf(zl + 0.32f, zsp - 0.08f - 0.5f * RAIL_LEN);
+        }
+        L->rail[0] = xw; L->rail[1] = 1.60f; L->rail[2] = zc2; L->railFacing = facing;
+    }
+
+    /* the gas: the bottles at the bench's other end, the regulator on the big one's outlet towards the range */
+    {
+        const float xg = p->gasX, sg = p->gasX > p->rangeX1 ? 1.0f : -1.0f, toward = -sg;
+        add_item(L, PMK_GAS_47, NB_ON_FLOOR, 0, xg, 0.0f, zl + 0.24f, toward > 0 ? 0.0f : PI_F);
+        add_item(L, PMK_GAS_13, NB_ON_FLOOR, 0, xg + 0.04f * sg, 0.0f, zl + 0.66f, 0.0f);
+        add_item(L, PMK_REGULATOR, NB_ON_FLOOR, 0, xg + toward * 0.04f, 1.3f - 0.12f + 0.025f, zl + 0.24f, toward > 0 ? 0.0f : PI_F);
+        L->pipeY = 1.15f;
+        L->pipeX0 = xg + toward * 0.22f;
+        L->pipeX1 = re < 0 ? p->rangeX1 + 0.20f : p->rangeX0 - 0.20f;
+        /* the power: the panel over the bottles, under the hood with room for its insulators */
+        L->panelX = xg;
+        add_item(L, PMK_POWER_PANEL, NB_ON_WALL, 1, xg, minf(1.6f, nb_ceil(p, xg, zl + 0.06f) - 0.75f), zl, 0.0f);
+        /* the socket strip over the bench's end by the bottles */
+        L->stripX = (re < 0 ? b1 : b0) - dir * 0.24f;
+        add_item(L, PMK_POWER_STRIP, NB_ON_WALL, 1, L->stripX, 1.0f, zl, 0.0f);
+        /* the fan, high on the side wall at the bottles' end, over the aisle (straight form: the corner form
+         * has its side counter there) */
+        if (p->form == NB_STRAIGHT) {
+            float facing;
+            const float xw = side_inner(p, -re, &facing), fz = zf + 0.35f;
+            const float fy = minf(2.25f, p->hood.spring - 0.05f - 0.225f);
+            if (fy >= 2.17f && fz + 0.24f < p->kz1 - 0.05f) {
+                L->fan[0] = xw; L->fan[1] = fy; L->fan[2] = fz; L->fan[3] = facing;
+                add_item(L, PMK_FAN, NB_ON_WALL, 0, xw, fy, fz, facing > 0 ? HALF_PI : -HALF_PI);
+            }
+        }
+    }
+
+    /* on the counter: a set (chopsticks, chilli oil, a sauce bottle) before every other stool, clear of the
+     * gate and the bell */
+    for (int i = 0, set = condR < 0.5f ? 0 : 1; i < p->nstool; ++i) {
+        const float sx = p->stool[i][0], sz = p->stool[i][1];
+        for (int k = 0; k < p->nrun; ++k) {
+            const NbRun *c = &p->run[k];
+            const float ox = -c->u[1], oz = c->u[0];   /* out to the customers */
+            const float t = (sx - c->o[0]) * c->u[0] + (sz - c->o[1]) * c->u[1];
+            const float off = (sx - c->o[0]) * ox + (sz - c->o[1]) * oz;
+            if (off < 0.0f || off > 0.7f || t < 0.25f || t > c->len - 0.25f) continue;
+            if (set++ & 1) break;
+            const float g0 = c->gate0 - 0.2f, g1 = c->gate1 + 0.2f;
+            if (c->gate1 > c->gate0 && t > g0 && t < g1) break;
+            const float bt = (p->bell[0] - c->o[0]) * c->u[0] + (p->bell[2] - c->o[1]) * c->u[1];
+            if (fabsf(bt - t) < 0.3f) break;
+            static const int SET[3] = { PMK_CHOPSTICKS, PMK_JAR_OIL, PMK_BOTTLE };
+            static const float AT[3] = { -0.11f, 0.02f, 0.12f };
+            for (int j = 0; j < 3; ++j) {
+                const float tt = t + AT[j], d = -0.14f;
+                add_item(L, SET[j], NB_ON_COUNTER, 0, c->o[0] + c->u[0] * tt + ox * d, p->cy, c->o[1] + c->u[1] * tt + oz * d,
+                         6.2831853f * hash_float(hash_combine(p->seed, 0xC0Du + (uint32_t)(i * 4 + j))));
+            }
+            break;
+        }
+    }
+}
 
 static void put_knob(Pm *pm, float x, float y, float z) {
     pm_push(pm);
@@ -816,78 +1248,285 @@ static void put_knob(Pm *pm, float x, float y, float z) {
     pm_pop(pm);
 }
 
-void nb_standin(Pm *pm, const NbPlan *p) {
-    const float zl = p->lining, yb = p->benchY, zb = zl + 0.55f * p->benchD, zf = zl + p->benchD;
+void nb_line_place(Pm *pm, const NbPlan *p, const NbLine *L) {
+    const float zl = p->lining, zf = zl + p->benchD;
     int part = 200;
-    /* the range: two burners on a 0.45 m pitch with their grates, a large pot and a small lidded one; knobs */
-    for (int i = 0; i < 2; ++i) {
-        float x = p->rangeX0 + 0.25f + 0.45f * (float)i;
+    for (int i = 0; i < L->n; ++i) {
+        const NbItem *it = &L->item[i];
         pm->part = (uint8_t)part++;
-        put(pm, x, yb, zb, 0.0f, PMK_BURNER);
-        put(pm, x, yb, zb, 0.0f, PMK_GRATE);
-        put(pm, x, yb + 0.047f, zb, 0.0f, i == 0 ? PMK_STOCKPOT_L : PMK_STOCKPOT_S);
-        if (i == 1) put(pm, x, yb + 0.047f + 0.300f, zb, 0.0f, PMK_LID);
-        for (int k = 0; k < 2; ++k) put_knob(pm, x - 0.06f + 0.12f * (float)k, yb - 0.07f, zf);
+        put(pm, it->x, it->y, it->z, it->yaw, it->module);
     }
-    /* the rest of the bench: the bain-marie's pans (one open), the steamer and the rice cooker */
-    const int left = p->rangeX0 - p->benchX0 < p->benchX1 - p->rangeX1;   /* the range at the bench's -x end */
-    float r0 = left ? p->rangeX1 + 0.12f : p->benchX0 + 0.08f, r1 = left ? p->benchX1 - 0.08f : p->rangeX0 - 0.12f;
-    float x = r0;
-    for (int i = 0; i < 4 && x + 0.19f <= r1; ++i, x += 0.19f) {
-        pm->part = (uint8_t)part++;
-        put(pm, x + 0.095f, yb, zb, HALF_PI, i == 2 ? PMK_GN_PAN_OPEN : PMK_GN_PAN);
+    /* the range's knobs on its rail, one by each burner and one for the pilot */
+    pm->part = (uint8_t)part++;
+    for (int b = 0; b < 2; ++b) put_knob(pm, L->burner[b][0], 0.80f, zf + 0.03f);
+    put_knob(pm, L->rangeEnd < 0 ? L->carc0 + 0.075f : L->carc1 - 0.075f, 0.80f, zf + 0.03f);
+    /* the bain-marie's dial */
+    if (L->bmPans) put_knob(pm, L->bm0 + 0.07f, 0.985f, L->bmZ1);
+    /* the cleaver: on the block if there is one, else on the rail */
+    int block = -1;
+    for (int i = 0; i < L->n; ++i) if (L->item[i].module == PMK_CHOP_BLOCK) block = i;
+    if (block >= 0) {
+        const NbItem *b = &L->item[block];
+        pm_push(pm);
+        pm_translate(pm, b->x - 0.1f, b->y + 0.0725f, b->z + 0.03f);
+        pm_rotate_y(pm, 0.4f);
+        pm_rotate_x(pm, -HALF_PI);   /* the blade (its xy plane) laid flat */
+        pm_translate(pm, 0.0f, 0.06f, 0.0f);
+        pm_place(pm, PMK_CLEAVER);
+        pm_pop(pm);
     }
-    if (x + 0.36f <= r1) { pm->part = (uint8_t)part++; put(pm, x + 0.20f, yb, zb, 0.0f, PMK_STEAMER); x += 0.40f; }
-    if (x + 0.40f <= r1) { pm->part = (uint8_t)part++; put(pm, x + 0.21f, yb, zb, 0.0f, PMK_RICE_COOKER); }
-    /* the shelves' stock: bowls and jars low, bottles high */
-    if (p->shelfX1 > p->shelfX0) {
-        const float s0 = p->shelfX0, s1 = p->shelfX1;
-        static const int LOW[] = { PMK_BOWL_STACK, PMK_JAR_OIL, PMK_JAR_GINGER, PMK_JAR_OIL, PMK_BOWL_STACK, PMK_JAR_GINGER, PMK_JAR_OIL };
-        int nl = (int)((s1 - s0 - 0.2f) / 0.22f) + 1;
-        nl = nl < 1 ? 1 : nl > 7 ? 7 : nl;
-        for (int i = 0; i < nl; ++i) {
-            pm->part = (uint8_t)part++;
-            put(pm, s0 + 0.15f + (s1 - s0 - 0.3f) * (nl > 1 ? (float)i / (float)(nl - 1) : 0.5f), 1.45f, zl + 0.15f, 0.0f, LOW[i]);
-        }
-        int nb = nl > 4 ? 4 : nl;
-        for (int i = 0; i < nb; ++i) {
-            pm->part = (uint8_t)part++;
-            put(pm, s0 + 0.2f + (s1 - s0 - 0.4f) * (nb > 1 ? (float)i / (float)(nb - 1) : 0.5f), 1.80f, zl + 0.14f, 0.0f, PMK_BOTTLE);
-        }
-    }
-    /* the utensil rail over the range at 1.55 m, and what hangs from it */
+    /* the rail and what hangs from it */
     {
-        float xr = 0.5f * (p->rangeX0 + p->rangeX1), yr = 1.55f, z0 = zl + 0.01f, zr = z0 + 0.045f;
+        const float xw = L->rail[0], y = L->rail[1], zc = L->rail[2], f = L->railFacing;
         pm->part = (uint8_t)part++;
-        put(pm, xr, yr, z0, 0.0f, PMK_UTENSIL_RAIL);
-        put(pm, xr - 0.38f, yr + 0.02f, zr, 0.0f, PMK_LADLE);
-        put(pm, xr - 0.20f, yr + 0.02f, zr, 0.0f, PMK_SPIDER);
-        put(pm, xr - 0.02f, yr + 0.02f, zr, 0.0f, PMK_SPATULA);
-        for (int i = 0; i < 4; ++i) put(pm, xr + 0.12f + 0.09f * (float)i, yr + 0.02f, zr, 0.0f, PMK_S_HOOK);
-        put(pm, xr + 0.12f, yr + 0.02f - 0.063f, zr, 0.0f, PMK_CLEAVER);
-    }
-    /* the gas: bottles at the bench's far end, the power panel over them, the fan high up; the line along the
-     * lining at 1.0 m from the bottles to the range: saddles, a valve and its gauge */
-    {
-        const float xg = p->gasX, sg = p->gasX > p->rangeX1 ? 1.0f : -1.0f;
-        pm->part = (uint8_t)part++;
-        put(pm, xg, 0.0f, zl + 0.24f, 0.0f, PMK_GAS_47);
-        put(pm, xg + 0.04f * sg, 0.0f, zl + 0.66f, 0.0f, PMK_GAS_13);
-        put(pm, xg, 1.6f, zl, 0.0f, PMK_POWER_PANEL);
-        put(pm, xg, 2.25f, zl, 0.0f, PMK_FAN);
-        float a = sg > 0.0f ? p->rangeX1 - 0.1f : xg + 0.25f, b = sg > 0.0f ? xg - 0.25f : p->rangeX0 + 0.1f;
-        for (int i = 0; i < 6; ++i) {
+        pm_push(pm);
+        pm_translate(pm, xw, y, zc);
+        pm_rotate_y(pm, f > 0.0f ? HALF_PI : -HALF_PI);   /* its wall (z 0) on the side wall, out into the kitchen */
+        pm_place(pm, PMK_UTENSIL_RAIL);
+        static const int HANG[6] = { PMK_LADLE, PMK_SPIDER, PMK_SPATULA, PMK_S_HOOK, PMK_CLEAVER, PMK_S_HOOK };
+        static const float AT[6] = { -0.22f, -0.11f, 0.0f, 0.08f, 0.12f, 0.2f };
+        for (int k = 0; k < 6; ++k) {
+            if (HANG[k] == PMK_CLEAVER && block >= 0) continue;
             pm_push(pm);
-            pm_translate(pm, a + (b - a) * (float)i / 5.0f, 1.0f, zl);
+            pm_translate(pm, AT[k], 0.02f, 0.045f);
+            pm_place(pm, HANG[k]);
+            pm_pop(pm);
+        }
+        pm_pop(pm);
+    }
+    /* the gas line's fittings: its valve and gauge by the bottles, saddle clips along it */
+    {
+        const float zp = zl + PIPE_R, y = L->pipeY, toward = L->pipeX1 > L->pipeX0 ? 1.0f : -1.0f;
+        pm->part = (uint8_t)part++;
+        put(pm, L->pipeX0 + toward * 0.09f, y, zp, 0.0f, PMK_VALVE_LEVER);
+        put(pm, L->pipeX0 + toward * 0.20f, y + PIPE_R, zp, 0.0f, PMK_GAUGE);
+        const float a = L->pipeX0 + toward * 0.32f, b = L->pipeX1 - toward * 0.06f;
+        int ns = (int)ceilf(fabsf(b - a) / 0.5f);
+        if (ns < 1) ns = 1;
+        for (int i = 0; i <= ns; ++i) {
+            pm_push(pm);
+            pm_translate(pm, a + (b - a) * (float)i / (float)ns, y, zl);
             pm_rotate_x(pm, HALF_PI);   /* its surface (y 0) on the wall, out +z */
             pm_rotate_y(pm, HALF_PI);   /* its pipe along x */
             pm_place(pm, PMK_SADDLE);
             pm_pop(pm);
         }
-        put(pm, xg - 0.35f * sg, 1.0f, zl + 0.03f, 0.0f, PMK_VALVE_LEVER);
-        put(pm, xg - 0.20f * sg, 1.0f, zl + 0.03f, 0.0f, PMK_GAUGE);
+        /* one on the drop */
+        pm_push(pm);
+        pm_translate(pm, L->pipeX1, 0.5f * (y + 1.0f) + 0.02f, zl);
+        pm_rotate_x(pm, HALF_PI);
+        pm_place(pm, PMK_SADDLE);
+        pm_pop(pm);
     }
 }
+
+/* ------------------------------------------------------------ the checks --- */
+
+/* a module's bounds at its near level, and its reach round its axis in xz (computed once) */
+static void module_bounds(int module, float lo[3], float hi[3], float *rad) {
+    static float B[PMK_COUNT][7];
+    static uint8_t done[PMK_COUNT];
+    if (module < 0 || module >= PMK_COUNT) { for (int k = 0; k < 3; ++k) lo[k] = hi[k] = 0.0f; if (rad) *rad = 0.0f; return; }
+    if (!done[module]) {
+        PmMesh m = { 0 };
+        Pm pm;
+        pm_begin(&pm, &m, NULL, PM_LOD0);
+        pm_module(module)->build(&pm);
+        PmStats st;
+        pm_stats(&m, &st);
+        float r2 = 0.0f;
+        for (uint32_t i = 0; i < m.nv; ++i) r2 = maxf(r2, m.v[i].p[0] * m.v[i].p[0] + m.v[i].p[2] * m.v[i].p[2]);
+        for (int k = 0; k < 3; ++k) { B[module][k] = st.lo[k]; B[module][3 + k] = st.hi[k]; }
+        B[module][6] = sqrtf(r2);
+        pm_mesh_free(&m);
+        done[module] = 1;
+    }
+    for (int k = 0; k < 3; ++k) { lo[k] = B[module][k]; hi[k] = B[module][3 + k]; }
+    if (rad) *rad = B[module][6];
+}
+void nb_module_bounds(int module, float lo[3], float hi[3]) { module_bounds(module, lo, hi, NULL); }
+
+/* an item's box in the site's frame: its module's bounds turned by its yaw, no wider than its reach round
+ * its axis */
+static void item_box(const NbItem *it, float lo[3], float hi[3]) {
+    float a[3], b[3], rad;
+    module_bounds(it->module, a, b, &rad);
+    const float c = cosf(it->yaw), s = sinf(it->yaw);
+    lo[0] = lo[2] = 1e9f; hi[0] = hi[2] = -1e9f;
+    for (int k = 0; k < 4; ++k) {
+        const float x = (k & 1) ? b[0] : a[0], z = (k & 2) ? b[2] : a[2];
+        const float wx = x * c + z * s, wz = -x * s + z * c;   /* pm_rotate_y */
+        lo[0] = minf(lo[0], wx); hi[0] = maxf(hi[0], wx); lo[2] = minf(lo[2], wz); hi[2] = maxf(hi[2], wz);
+    }
+    lo[0] = maxf(lo[0], -rad); hi[0] = minf(hi[0], rad); lo[2] = maxf(lo[2], -rad); hi[2] = minf(hi[2], rad);
+    lo[0] += it->x; hi[0] += it->x; lo[2] += it->z; hi[2] += it->z;
+    lo[1] = it->y + a[1]; hi[1] = it->y + b[1];
+}
+/* An item's footprint for the checks: its turned box, or for a round body with a long handle (the wok, the
+ * saucepan) a circle and the handle's box (their turned boxes' corners swing wide of the real thing). */
+typedef struct NbShape { int round; float cx, cz, r, ax[2][2], h[2]; } NbShape;
+static int item_shapes(const NbItem *it, NbShape *sh) {
+    float lo[3], hi[3];
+    module_bounds(it->module, lo, hi, NULL);
+    const float c = cosf(it->yaw), s = sinf(it->yaw);
+    float body = 0.0f, hx = 0.0f, hz0 = 0.0f, hz1 = 0.0f;
+    if (it->module == PMK_WOK)      { body = 0.195f; hx = 0.02f; hz0 = 0.18f; hz1 = hi[2]; }
+    if (it->module == PMK_SAUCEPAN) { body = 0.102f; hx = 0.014f; hz0 = 0.09f; hz1 = hi[2]; }
+    int n = 0;
+    if (body > 0.0f) {
+        sh[n].round = 1; sh[n].cx = it->x; sh[n].cz = it->z; sh[n].r = body; n++;
+        lo[0] = -hx; hi[0] = hx; lo[2] = hz0; hi[2] = hz1;
+    }
+    NbShape *b = &sh[n++];
+    const float mx = 0.5f * (lo[0] + hi[0]), mz = 0.5f * (lo[2] + hi[2]);
+    b->round = 0;
+    b->cx = it->x + mx * c + mz * s; b->cz = it->z - mx * s + mz * c;
+    b->ax[0][0] = c; b->ax[0][1] = -s;   /* local x (pm_rotate_y) */
+    b->ax[1][0] = s; b->ax[1][1] = c;    /* local z */
+    b->h[0] = 0.5f * (hi[0] - lo[0]); b->h[1] = 0.5f * (hi[2] - lo[2]);
+    return n;
+}
+static int shapes_meet(const NbShape *a, const NbShape *b, float slack) {
+    if (a->round && b->round) {
+        const float dx = b->cx - a->cx, dz = b->cz - a->cz, rr = a->r + b->r - slack;
+        return dx * dx + dz * dz < rr * rr;
+    }
+    if (a->round || b->round) {
+        const NbShape *c = a->round ? a : b, *o = a->round ? b : a;
+        /* the circle's middle in the box's frame, the nearest point of the box */
+        const float dx = c->cx - o->cx, dz = c->cz - o->cz;
+        float d2 = 0.0f;
+        for (int k = 0; k < 2; ++k) {
+            const float t = dx * o->ax[k][0] + dz * o->ax[k][1], e = fabsf(t) - o->h[k];
+            if (e > 0.0f) d2 += e * e;
+        }
+        return d2 < (c->r - slack) * (c->r - slack) && c->r > slack;
+    }
+    for (int i = 0; i < 2; ++i)
+        for (int k = 0; k < 2; ++k) {
+            const NbShape *q = i ? b : a;
+            const float nx = q->ax[k][0], nz = q->ax[k][1];
+            const float d = fabsf((b->cx - a->cx) * nx + (b->cz - a->cz) * nz);
+            float r = 0.0f;
+            for (int e = 0; e < 2; ++e) r += a->h[e] * fabsf(a->ax[e][0] * nx + a->ax[e][1] * nz) + b->h[e] * fabsf(b->ax[e][0] * nx + b->ax[e][1] * nz);
+            if (d >= r - slack) return 0;
+        }
+    return 1;
+}
+/* whether two items meet, by more than `slack`: their heights, their reaches round their axes, their shapes */
+static int items_meet(const NbItem *A, const NbItem *Bi, float slack) {
+    float alo[3], ahi[3], blo[3], bhi[3], ra, rb;
+    module_bounds(A->module, alo, ahi, &ra);
+    module_bounds(Bi->module, blo, bhi, &rb);
+    if (A->y + ahi[1] - slack <= Bi->y + blo[1] || Bi->y + bhi[1] - slack <= A->y + alo[1]) return 0;
+    const float dx = Bi->x - A->x, dz = Bi->z - A->z;
+    if (dx * dx + dz * dz >= (ra + rb - slack) * (ra + rb - slack)) return 0;
+    NbShape sa[2], sb[2];
+    const int na = item_shapes(A, sa), nb = item_shapes(Bi, sb);
+    for (int i = 0; i < na; ++i)
+        for (int j = 0; j < nb; ++j)
+            if (shapes_meet(&sa[i], &sb[j], slack)) return 1;
+    return 0;
+}
+static int boxes_meet(const float alo[3], const float ahi[3], const float blo[3], const float bhi[3], float gap) {
+    for (int k = 0; k < 3; ++k) if (ahi[k] + gap <= blo[k] || bhi[k] + gap <= alo[k]) return 0;
+    return 1;
+}
+/* things meant to stand in or on each other */
+static int nested(int a, int b) {
+    if (a > b) { int t = a; a = b; b = t; }
+    static const int PAIRS[][2] = {
+        { PMK_STOCKPOT_S, PMK_STEAMER }, { PMK_STOCKPOT_S, PMK_NOODLE_BASKET }, { PMK_STOCKPOT_L, PMK_GRATE },
+        { PMK_STOCKPOT_S, PMK_GRATE }, { PMK_BURNER, PMK_GRATE }, { PMK_GRATE, PMK_SAUCEPAN }, { PMK_WOK_BURNER, PMK_WOK },
+        { PMK_GAS_47, PMK_REGULATOR }, { PMK_NOODLE_BASKET, PMK_NOODLE_BASKET }, { PMK_GRATE, PMK_GRATE } };
+    for (size_t i = 0; i < sizeof(PAIRS) / sizeof(PAIRS[0]); ++i) {
+        int x = PAIRS[i][0], y = PAIRS[i][1];
+        if (x > y) { int t = x; x = y; y = t; }
+        if (a == x && b == y) return 1;
+    }
+    return 0;
+}
+
+#define ERR(...) do { if (err && used < cap) used += snprintf(err + used, (size_t)(cap - used), __VA_ARGS__); if (err && used < cap) err[used++] = '\n'; if (err && used >= cap) used = cap - 1; ++bad; } while (0)
+
+int nb_line_check(const NbPlan *p, const NbLine *L, char *err, int cap) {
+    int bad = 0, used = 0;
+    if (err && cap > 0) err[0] = 0;
+    const float zl = p->lining, zf = zl + p->benchD;
+    /* burners on the pitch, and each pot on its burner */
+    {
+        const float pitch = fabsf(L->burner[0][0] - L->burner[1][0]);
+        if (pitch < 0.449f) ERR("burners %.2f m apart (0.45 at least)", pitch);
+    }
+    /* the aisle: where the cook stands */
+    const float ax0 = p->kx0, ax1 = p->kx1, az0 = zf, az1 = p->kz1;
+    int gas = 0;
+    for (int i = 0; i < L->n; ++i) {
+        const NbItem *it = &L->item[i];
+        const char *nm = pm_module(it->module)->name;
+        float lo[3], hi[3];
+        item_box(it, lo, hi);
+        if (it->module == PMK_GAS_13 || it->module == PMK_GAS_47) {
+            gas++;
+            for (int b = 0; b < 2; ++b) {
+                const float dx = it->x - L->burner[b][0], dz = it->z - L->burner[b][1];
+                if (dx * dx + dz * dz < 0.5f * 0.5f) ERR("%s %.2f m from a burner (0.5 at least)", nm, sqrtf(dx * dx + dz * dz));
+            }
+        }
+        /* inside the kitchen (the counter's things on the counter) */
+        if (it->on == NB_ON_COUNTER) {
+            if (fabsf(it->y - p->cy) > 0.001f) ERR("%s not on the counter's top", nm);
+        } else if (lo[0] < p->kx0 - 0.06f || hi[0] > p->kx1 + 0.06f || lo[2] < zl - 0.005f || hi[2] > p->kz1) {
+            ERR("%s outside the kitchen: x %.2f..%.2f z %.2f..%.2f (x %.2f..%.2f z %.2f..%.2f)", nm, lo[0], hi[0], lo[2], hi[2], p->kx0, p->kx1, zl, p->kz1);
+        }
+        /* the reach: what the cook uses within 0.7 m of the aisle, its foot no higher than 1.85 m */
+        if (it->used && it->on != NB_ON_COUNTER) {
+            const float cx = clampf(it->x, ax0, ax1), cz = clampf(it->z, az0, az1);
+            const float d = sqrtf((it->x - cx) * (it->x - cx) + (it->z - cz) * (it->z - cz));
+            if (d > 0.7f) ERR("%s %.2f m from the aisle (0.7 at most)", nm, d);
+            if (it->y > 1.85f) ERR("%s at %.2f m (1.85 at most)", nm, it->y);
+        }
+        /* under the hood (the ceiling over each corner of its box) */
+        {
+            float c = 1e9f;
+            for (int k = 0; k < 4; ++k) c = minf(c, nb_ceil(p, (k & 1) ? hi[0] : lo[0], (k & 2) ? hi[2] : lo[2]));
+            if (hi[1] > c - 0.03f) ERR("%s's top %.2f m through the hood (%.2f over it)", nm, hi[1], c);
+        }
+        /* under the extractor (its lip at 1.97) and the shelves (their undersides at 1.43, 1.78), with room */
+        {
+            const float elo[3] = { p->rangeX0 - 0.1f, 1.97f, zl }, ehi[3] = { p->rangeX1 + 0.1f, 2.40f, zl + 0.6f };
+            if (boxes_meet(lo, hi, elo, ehi, 0.0f)) ERR("%s in the extractor", nm);
+            if (it->on == NB_ON_RANGE && hi[1] > 1.97f - 0.35f) ERR("%s on the range %.2f m under the extractor (0.35 at least)", nm, 1.97f - hi[1]);
+            if (p->shelfX1 > p->shelfX0)
+                for (int s = 0; s < 2; ++s) {
+                    const float y = s ? 1.80f : 1.45f;
+                    if (it->on == NB_ON_SHELF && fabsf(it->y - y) < 0.01f) continue;
+                    /* the board (with 3 cm over what stands under it) and its two brackets */
+                    const float slo[3] = { p->shelfX0, y - 0.05f, zl }, shi[3] = { p->shelfX1, y, zl + 0.28f };
+                    if (boxes_meet(lo, hi, slo, shi, 0.0f)) ERR("%s under the shelf at %.2f m", nm, y);
+                    /* each bracket's gusset (pmodel_kit.c m_shelf_bracket) in three steps: its flange down the wall,
+                     * then deeper and shallower */
+                    static const float G[3][2] = { { 0.035f, 0.25f }, { 0.15f, 0.15f }, { 0.28f, 0.05f } };
+                    for (int e = 0; e < 2; ++e)
+                        for (int g = 0; g < 3; ++g) {
+                            const float bx = e ? p->shelfX1 - 0.05f : p->shelfX0 + 0.05f;
+                            const float blo[3] = { bx - 0.02f, y - G[g][1], zl }, bhi[3] = { bx + 0.02f, y, zl + G[g][0] };
+                            if (boxes_meet(lo, hi, blo, bhi, 0.0f)) { ERR("%s in a bracket of the shelf at %.2f m", nm, y); e = 2; break; }
+                        }
+                }
+        }
+        /* nothing in another's way */
+        for (int j = i + 1; j < L->n; ++j) {
+            const NbItem *o = &L->item[j];
+            if (nested(it->module, o->module)) continue;
+            if (items_meet(it, o, 0.002f)) ERR("%s and %s meet", nm, pm_module(o->module)->name);
+        }
+    }
+    if (gas > 2) ERR("%d gas bottles (2 at most)", gas);
+    if (L->fan[1] > 0.0f && L->fan[1] - 0.22f < 1.95f) ERR("the fan's foot at %.2f m over the aisle (1.95 at least)", L->fan[1] - 0.22f);
+    return bad;
+}
+#undef ERR
 
 int nb_at_range(const NbPlan *p, const float pos[3]) {
     return pos[0] > p->rangeX0 - 0.15f && pos[0] < p->rangeX1 + 0.15f && pos[2] < p->lining + p->benchD + 0.12f &&

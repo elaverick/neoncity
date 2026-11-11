@@ -494,11 +494,15 @@ void pm_pipe(Pm *pm, const PmPath *in, float r, float bend_r, int flanges) {
 void pm_cable(Pm *pm, const float a[3], const float b[3], float sag, float r) {
     PmPath pa;
     int n = pm->lod == PM_LOD0 ? 16 : pm->lod == PM_LOD1 ? 8 : 4;
+    /* NB5: a taut cable is one piece, a short one fewer (a segment every 6 cm at most) */
+    const float L = sqrtf((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]) + (b[2] - a[2]) * (b[2] - a[2]));
+    if (sag < 1e-4f) n = 1;
+    else if (n > 4 && (int)(L / 0.06f) < n) n = (int)(L / 0.06f) < 4 ? 4 : (int)(L / 0.06f);
     pm_path_init(&pa, n + 2);
     pm_path_catenary(&pa, a, b, sag, n);
     uint8_t mat0 = pm->mat;
     pm_mat(pm, PMAT_RUBBER);
-    pm_tube(pm, &pa, r, 8, 3);
+    pm_tube(pm, &pa, r, r < 0.009f ? 6 : 8, 3);
     pm->mat = mat0;
     pm_path_free(&pa);
 }

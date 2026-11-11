@@ -74,16 +74,16 @@ Sizes are targets; the generator may vary them within the ranges, the slice's fi
 | Part | Size | Notes |
 |---|---|---|
 | Back bench | 0.60 to 0.70 m deep, 0.90 m high, steel, undershelf | the range and bain-marie stand on or in it |
-| Range | 2 burners on a 0.45 m pitch (or 3) | cast-iron grates of 15 mm bars 0.45 x 0.45; knobs 40 mm on the front |
-| Wok burner | ring 0.35 m, a raised cradle | the second form may swap a burner for it |
+| Range | 2 burners on a 0.45 m pitch (or 3) | cast-iron grates of 15 mm bars 0.45 x 0.45; knobs 40 mm on the front. **NB5:** a stainless carcass (doors, a knob rail) to the bench's end, a cast-iron top over the wells, a back guard the gas line drops into |
+| Wok burner | ring 0.35 m, a raised cradle | **NB5:** the second burner holds noodle baskets in their pot (40%), a wok in a deep well (25%), a steamer on its pot (20%) or a copper saucepan (15%) |
 | Stock pots | 20 to 40 l: 0.30 to 0.40 m round and high | copper and steel; lids, loop handles; broth inside |
 | Steamer stack | 0.30 m round, 2 to 4 tiers | bamboo or steel |
-| Bain-marie | 3 to 4 GN 1/3 pans (325 x 176 mm, 100 to 150 deep) | lids with handles, one open (curry); dials, two pilot lights |
+| Bain-marie | 3 to 4 GN 1/3 pans (325 x 176 mm, 100 to 150 deep) | lids with handles, one open (curry); dials, two pilot lights. **NB5:** a stainless box on the bench beside the range, the pans hung in its well |
 | Rice cooker | 0.35 m round, 0.30 high | |
-| Utensil rail | 0.6 to 1.0 m long at 1.5 to 1.6 m | spider, ladle, slotted spatula, cleaver, S-hooks |
+| Utensil rail | 0.6 to 1.0 m long at 1.5 to 1.6 m | spider, ladle, slotted spatula, cleaver, S-hooks. **NB5:** 0.6 m at 1.6 m on the side wall by the range (behind the pots they hung into them) |
 | Shelves | at 1.45 and 1.80 m, 0.25 to 0.30 m deep, on brackets | stacked bowls (0.18 to 0.20 m round), labelled jars (0.12 to 0.20 m), bottles |
-| Extractor canopy | over the range, 0.6 m deep, lip at 1.95 to 2.0 m | a fan (0.3 to 0.4 m) in a grille; duct 0.25 to 0.30 m round up the host wall, bends and flanges |
-| Gas bottles | at most 2 (V_GAS_MAX): 47 kg (0.37 round, 1.3 high) or 13 kg (0.31, 0.6) | chained; the gas line to the range |
+| Extractor canopy | over the range, 0.6 m deep, lip at 1.95 to 2.0 m | a fan (0.3 to 0.4 m) in a grille; duct 0.25 to 0.30 m round up the host wall, bends and flanges. **NB5:** the fan high on the side wall at the bottles' end, over the aisle (straight form only: the corner form's side counter stands there) |
+| Gas bottles | at most 2 (V_GAS_MAX): 47 kg (0.37 round, 1.3 high) or 13 kg (0.31, 0.6) | chained; the gas line to the range. **NB5:** a regulator and hose to the line's tail, its valve and gauge by the bottles, 22 mm copper at 1.15 m in saddle clips, down beside the splashback into the range's back guard; at least 0.5 m from a burner |
 
 ### Services (the dressing that sells "built into the city")
 | Part | Size | Notes |
@@ -98,6 +98,7 @@ Sizes are targets; the generator may vary them within the ranges, the slice's fi
 |---|---|---|
 | Menu A-frame | 0.6 x 0.9 m | chalk board in a timber frame |
 | Bell | 85 mm brass dome | on the counter or the hatch's sill (the service hatch variant) |
+| Condiments (NB5) | a steel tub of chopsticks, a jar of chilli oil, a sauce bottle | before every other stool, 0.14 m in from the counter's face, clear of the gate and the bell |
 
 ## Materials
 

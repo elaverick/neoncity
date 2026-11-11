@@ -370,9 +370,25 @@ static void bowl(Pm *pm, int top) {
 }
 static void m_bowl_stack(Pm *pm) {
     pm_mat(pm, PMAT_ENAMEL);
-    if (L2) {
-        PmProf s[5] = { { 0, 0, 0 }, { 0.04f, 0, 0 }, { 0.08f, 0.03f, 0 }, { 0.095f, 0.072f + 0.11f, 0 }, { 0, 0.072f + 0.11f, 0 } };
-        lathe(pm, s, 5, 24);
+    if (!L0) {
+        /* NB5: the stack as one turned outline (the bottom bowl's outside, each bowl's wall rising out of the
+         * rim below it, the top one's inside): the kit draws a stack at these levels from a metre, where the
+         * old L1 (six whole bowls, 4,160 triangles) was too dense and the old L2 a plain cup */
+        PmProf s[40];
+        int n = 0;
+        static const float O[7][2] = { { 0, 0.004f }, { 0.031f, 0.004f }, { 0.033f, 0.0f }, { 0.039f, 0.0f }, { 0.041f, 0.007f }, { 0.07f, 0.025f }, { 0.088f, 0.05f } };
+        for (int k = 0; k < 7; ++k) { s[n].r = O[k][0]; s[n].y = O[k][1]; s[n].hard = (uint8_t)(k >= 2 && k <= 4); n++; }
+        for (int b = 0; b < 6; ++b) {
+            const float y = 0.022f * (float)b;
+            if (b) { s[n].r = 0.088f; s[n].y = y + 0.05f; s[n].hard = 1; n++; }
+            s[n].r = 0.095f; s[n].y = y + 0.072f; s[n].hard = 0; n++;
+            s[n].r = 0.0955f; s[n].y = y + 0.0745f; s[n].hard = 1; n++;
+            if (b < 5) { s[n].r = 0.0915f; s[n].y = y + 0.0745f; s[n].hard = 1; n++; }
+        }
+        const float t = 0.022f * 5.0f;
+        static const float I[5][2] = { { 0.091f, 0.0745f }, { 0.084f, 0.05f }, { 0.066f, 0.027f }, { 0.03f, 0.009f }, { 0, 0.008f } };
+        for (int k = 0; k < 5; ++k) { s[n].r = I[k][0]; s[n].y = t + I[k][1]; s[n].hard = (uint8_t)(k == 0); n++; }
+        lathe(pm, s, n, L2 ? 48 : 36);
         return;
     }
     for (int k = 0; k < 6; ++k) { pm_push(pm); pm_translate(pm, 0, 0.022f * (float)k, 0); pm->part = (uint8_t)k; bowl(pm, k == 5); pm_pop(pm); }
@@ -381,17 +397,23 @@ static void m_bowl_stack(Pm *pm) {
 
 /* A glass jar, its contents, a lid and a label. */
 static void jar(Pm *pm, float R, float H, int contents) {
+    const int sg = L2 ? 48 : 32;   /* NB5: its far level round enough from a metre (16 sides, not 10) */
     pm_mat(pm, PMAT_GLASS);
     PmProf o[7] = { { 0, 0, 0 }, { R - 0.006f, 0, 0 }, { R, 0.006f, 0 }, { R, H - 0.025f, 0 }, { R - 0.006f, H - 0.015f, 0 }, { R - 0.01f, H - 0.012f, 0 }, { R - 0.01f, H - 0.002f, 0 } };
-    shell(pm, o, 7, 0.003f, 0.0f, 32);
+    shell(pm, o, 7, 0.003f, 0.0f, sg);
     pm_mat(pm, contents);
     float fill = contents == PMAT_OIL ? 0.7f : 0.82f;
     PmProf c[4] = { { 0, 0.004f, 0 }, { R - 0.0035f, 0.004f, 0 }, { R - 0.0035f, fill * H, 0 }, { 0, fill * H, 0 } };
     lathe(pm, c, 4, 24);
-    pm_mat(pm, PMAT_RED);
+    /* the contents as seen through the glass (the kit draws no glass clear): a skin just outside it up to the
+     * fill, shaded glossy (NB5) */
+    band(pm, R + 0.0001f, R + 0.0004f, 0.007f, fill * H, sg);
+    pm_mat(pm, PMAT_STAINLESS);   /* a tin lid (NB5: red lids over red oil read as one red block) */
     PmProf l[6] = { { 0, H - 0.014f, 0 }, { R - 0.007f, H - 0.014f, 0 }, { R - 0.007f, H + 0.004f, 0 }, { R - 0.009f, H + 0.006f, 0 }, { 0, H + 0.006f, 0 } };
-    lathe(pm, l, 5, 32);
-    if (!L2) { pm_mat(pm, PMAT_PAPER); band(pm, R + 0.0001f, R + 0.0007f, 0.3f * H, 0.68f * H, 32); }
+    lathe(pm, l, 5, sg);
+    /* the label at every level (the kit draws a jar at its far level from a metre or two) */
+    pm_mat(pm, PMAT_PAPER);
+    band(pm, R + 0.0005f, R + 0.0009f, 0.36f * H, 0.66f * H, sg);
 }
 static void m_jar_oil(Pm *pm) { jar(pm, 0.05f, 0.16f, PMAT_OIL); }
 static void m_jar_ginger(Pm *pm) { jar(pm, 0.065f, 0.13f, PMAT_GINGER); }
@@ -405,7 +427,8 @@ static void m_bottle(Pm *pm) {
     pm_mat(pm, PMAT_RED);
     PmProf c[5] = { { 0, 0.226f, 0 }, { 0.0138f, 0.226f, 0 }, { 0.0138f, 0.249f, 0 }, { 0.0125f, 0.251f, 0 }, { 0, 0.251f, 0 } };
     lathe(pm, c, 5, 20);
-    if (!L2) { pm_mat(pm, PMAT_PAPER); band(pm, 0.0321f, 0.0326f, 0.04f, 0.12f, 28); }
+    pm_mat(pm, PMAT_PAPER);   /* the label at every level (NB5) */
+    band(pm, 0.0321f, 0.0326f, 0.04f, 0.12f, 28);
 }
 
 /* --------------------------------------------------------- the range --- */
@@ -480,9 +503,10 @@ static void m_steamer(Pm *pm) {
     pm->part = 0;
 }
 
-/* A GN 1/3 hotel pan (325 x 176, 150 deep), lidded or open on its curry. */
+/* A GN 1/3 hotel pan (325 x 176 over its flange, 150 deep), lidded or open on its curry; three fill a GN 1/1
+ * well side by side (NB5: the flange had stood 13 mm past the size). */
 static void gn_pan(Pm *pm, int lid) {
-    const float rc = 0.02f, hx = 0.1625f - rc, hz = 0.088f - rc;
+    const float rc = 0.02f, hx = 0.1625f - rc - 0.013f, hz = 0.088f - rc - 0.013f;
     int segs = pm_segs(pm, 24, 4);
     pm_mat(pm, PMAT_STAINLESS);
     PmProf o[6] = { { 0, 0, 0 }, { rc - 0.012f, 0, 0 }, { rc - 0.008f, 0.004f, 0 }, { rc, 0.146f, 0 }, { rc + 0.004f, 0.15f, 1 }, { rc + 0.013f, 0.15f, 0 } };
@@ -494,7 +518,7 @@ static void gn_pan(Pm *pm, int lid) {
     pm_lathe(pm, c, 4, segs, hx, hz);
     if (lid) {
         pm_mat(pm, PMAT_STAINLESS);
-        PmProf l[6] = { { 0, 0.1505f, 0 }, { rc + 0.012f, 0.1505f, 0 }, { rc + 0.014f, 0.153f, 0 }, { rc + 0.006f, 0.157f, 0 }, { 0.0f, 0.158f, 0 } };
+        PmProf l[6] = { { 0, 0.1505f, 0 }, { rc + 0.011f, 0.1505f, 0 }, { rc + 0.0125f, 0.153f, 0 }, { rc + 0.006f, 0.157f, 0 }, { 0.0f, 0.158f, 0 } };
         pm_lathe(pm, l, 5, segs, hx, hz);
         float a[3] = { -0.04f, 0.168f, 0 }, b[3] = { 0.04f, 0.168f, 0 };
         pm_beam(pm, a, b, 0.012f, 0.006f, 0.002f, NULL);
@@ -673,18 +697,19 @@ static void m_s_hook(Pm *pm) {
     pm_path_free(&pa);
 }
 
-/* A utensil rail, 1 m along x, 45 mm off the wall (z 0), on two stand-offs. */
+/* A utensil rail, 0.6 m along x (NB5: it hangs on a side wall by the range), 45 mm off the wall (z 0), on two
+ * stand-offs. */
 static void m_utensil_rail(Pm *pm) {
     pm_mat(pm, PMAT_STAINLESS);
     PmPath pa;
     pm_path_init(&pa, 2);
-    pm_path_add(&pa, -0.5f, 0, 0.045f, 0);
-    pm_path_add(&pa, 0.5f, 0, 0.045f, 0);
+    pm_path_add(&pa, -0.3f, 0, 0.045f, 0);
+    pm_path_add(&pa, 0.3f, 0, 0.045f, 0);
     pm_tube(pm, &pa, 0.008f, 14, 3);
     pm_path_free(&pa);
     for (int s = -1; s <= 1; s += 2) {
         pm_push(pm);
-        pm_translate(pm, 0.45f * (float)s, 0, 0);
+        pm_translate(pm, 0.26f * (float)s, 0, 0);
         pm_rotate_x(pm, 0.5f * PI_F);
         PmProf p[7] = { { 0, 0, 0 }, { 0.025f, 0, 0 }, { 0.025f, 0.004f, 0 }, { 0.01f, 0.008f, 0 }, { 0.008f, 0.012f, 0 }, { 0.008f, 0.046f, 0 }, { 0, 0.046f, 0 } };
         lathe(pm, p, 7, 16);
@@ -894,6 +919,185 @@ static void m_a_frame(Pm *pm) {
     }
 }
 
+/* ------------------------------------------------ the cooking line (NB5) --- */
+/* A carbon-steel wok, 0.38 m: a spherical bowl (its bottom at the origin), a long hollow handle out +z with a
+ * timber grip, a helper ear at -z. Seasoned black (cast iron's finish). */
+static void m_wok(Pm *pm) {
+    const float S = 0.26f, R = 0.19f, a1 = asinf(R / S), hr = S - sqrtf(S * S - R * R);
+    pm_mat(pm, PMAT_CAST_IRON);
+    PmProf o[12];
+    int e = L0 ? 9 : L2 ? 3 : 5, n = 0;
+    for (int k = 0; k <= e; ++k) { float a = a1 * (float)k / (float)e; o[n].r = S * sinf(a); o[n].y = S - S * cosf(a); o[n].hard = 0; n++; }
+    shell(pm, o, n, 0.0022f, 0.003f, 48);
+    /* the handle: a socket riveted under the rim, the tube rising out, the grip */
+    pm_mat(pm, PMAT_STEEL);
+    float s0[3] = { 0, hr - 0.035f, R - 0.012f }, s1[3] = { 0, hr - 0.012f, R + 0.06f };
+    pm_beam(pm, s0, s1, 0.03f, 0.018f, 0.004f, NULL);
+    PmPath pa;
+    pm_path_init(&pa, 4);
+    pm_path_add(&pa, 0, hr - 0.014f, R + 0.05f, 0);
+    pm_path_add(&pa, 0, hr + 0.035f, R + 0.17f, 0);
+    pm_tube(pm, &pa, 0.0105f, 12, 3);
+    pm_mat(pm, PMAT_TIMBER);
+    pa.n = 0;
+    pm_path_add(&pa, 0, hr + 0.03f, R + 0.155f, 0);
+    pm_path_add(&pa, 0, hr + 0.085f, R + 0.31f, 0);
+    pm_tube(pm, &pa, 0.0155f, 12, 3);
+    pm_path_free(&pa);
+    if (L0) for (int k = -1; k <= 1; k += 2) { pm_push(pm); pm_translate(pm, 0.012f * (float)k, hr - 0.024f, R + 0.02f); pm_rotate_z(pm, -0.5f * PI_F * (float)k); m_rivet(pm); pm_pop(pm); }
+    /* the ear: a loop of flat bar riveted under the rim at -z */
+    pm_mat(pm, PMAT_STEEL);
+    PmPath ear;
+    pm_path_init(&ear, 16);
+    int ne = L0 ? 8 : 3;
+    for (int k = 0; k <= ne; ++k) { float t = PI_F * (float)k / (float)ne; pm_path_add(&ear, 0.035f * cosf(t), hr - 0.012f, -(R - 0.004f) - 0.04f * sinf(t), 0); }
+    PmSect sc;
+    pm_sect_rect(&sc, 0.012f, 0.004f, 0.0f);
+    pm_sweep(pm, &ear, &sc, NULL, 3);
+    pm_path_free(&ear);
+}
+
+/* A noodle basket: a wire cup 0.13 m round and 0.16 deep, its rim at the origin, the handle out +z to a hook
+ * that sits on the pot's rim; noodles inside, their top above the broth. */
+static void m_noodle_basket(Pm *pm) {
+    const float r = 0.064f, d = 0.16f;
+    pm_mat(pm, PMAT_STAINLESS);
+    if (L2) {
+        PmProf c[6] = { { 0, -d, 0 }, { r, -d, 1 }, { r, 0.0f, 1 }, { r - 0.004f, 0.0f, 1 }, { r - 0.004f, -d + 0.004f, 1 }, { 0, -d + 0.004f, 0 } };
+        lathe(pm, c, 6, 36);   /* 12 sides at L2: 4 let the noodles through */
+    } else {
+        pm_torus(pm, r, 0.0028f, L0 ? 32 : 16, 6);
+        int nr = L0 ? 4 : 2;
+        for (int k = 1; k <= nr; ++k) { pm_push(pm); pm_translate(pm, 0, -d * (float)k / (float)nr, 0); pm_torus(pm, r, 0.0012f, L0 ? 32 : 16, 4); pm_pop(pm); }
+        int nw = L0 ? 16 : 8;
+        for (int k = 0; k < nw; ++k) {
+            float a = 2.0f * PI_F * (float)k / (float)nw, p0[3] = { r * cosf(a), 0.0f, r * sinf(a) }, p1[3] = { r * cosf(a), -d, r * sinf(a) };
+            pm_beam(pm, p0, p1, 0.0018f, 0.0018f, 0.0f, NULL);
+        }
+        pm_push(pm); pm_translate(pm, 0, -d, 0); pm_rotate_x(pm, -0.5f * PI_F); pm_grille_round(pm, r, 0.0011f, L0 ? 3 : 1, L0 ? 8 : 4); pm_pop(pm);
+    }
+    /* the handle: two wires twisted out and up from the rim, a timber grip, the hook down onto the rim */
+    pm_mat(pm, PMAT_STEEL);
+    PmPath pa;
+    pm_path_init(&pa, 8);
+    pm_path_add(&pa, 0, -0.01f, r, 0);
+    pm_path_add(&pa, 0, 0.02f, r + 0.07f, 0);
+    pm_path_add(&pa, 0, 0.06f, r + 0.15f, 0);
+    pm_tube(pm, &pa, 0.0032f, 8, 3);
+    pm_path_free(&pa);
+    pm_mat(pm, PMAT_TIMBER);
+    PmPath g;
+    pm_path_init(&g, 2);
+    pm_path_add(&g, 0, 0.055f, r + 0.14f, 0);
+    pm_path_add(&g, 0, 0.09f, r + 0.23f, 0);
+    pm_tube(pm, &g, 0.011f, 10, 3);
+    pm_path_free(&g);
+    pm_mat(pm, PMAT_STEEL);
+    PmPath h;
+    pm_path_init(&h, 8);
+    pm_path_add(&h, 0, 0.012f, r + 0.045f, 0);
+    pm_path_add(&h, 0, 0.022f, r + 0.07f, 0);
+    pm_path_add(&h, 0, 0.0f, r + 0.095f, 0);
+    pm_tube(pm, &h, 0.0025f, 6, 3);
+    pm_path_free(&h);
+    /* the noodles, a loose mound */
+    pm_mat(pm, PMAT_NOODLE);
+    PmProf nd[6] = { { 0, -d + 0.01f, 0 }, { r - 0.006f, -d + 0.01f, 0 }, { r - 0.005f, -0.07f, 0 }, { r - 0.016f, -0.04f, 0 }, { 0.025f, -0.028f, 0 }, { 0, -0.024f, 0 } };
+    lathe(pm, nd, 6, L2 ? 36 : 20);
+}
+
+/* A copper saucepan, 0.20 m round and 0.10 high, a long riveted handle out +z; broth inside. */
+static void m_saucepan(Pm *pm) {
+    const float R = 0.10f, H = 0.10f;
+    pm_mat(pm, PMAT_COPPER);
+    PmProf o[5] = { { 0, 0, 0 }, { R - 0.01f, 0, 0 }, { R - 0.002f, 0.004f, 0 }, { R, 0.012f, 0 }, { R, H, 0 } };
+    shell(pm, o, 5, 0.0022f, 0.003f, 40);
+    pm_mat(pm, PMAT_BRASS);
+    float a[3] = { 0, H - 0.03f, R - 0.004f }, b[3] = { 0, H + 0.01f, R + 0.06f };
+    pm_beam(pm, a, b, 0.026f, 0.012f, 0.003f, NULL);
+    PmPath pa;
+    pm_path_init(&pa, 4);
+    pm_path_add(&pa, 0, H + 0.005f, R + 0.05f, 0);
+    pm_path_add(&pa, 0, H + 0.04f, R + 0.2f, 0);
+    pm_tube(pm, &pa, 0.008f, 10, 3);
+    pm_path_free(&pa);
+    if (L0) for (int k = -1; k <= 1; k += 2) { pm_push(pm); pm_translate(pm, 0.008f * (float)k, H - 0.02f, R + 0.002f); pm_rotate_x(pm, 0.5f * PI_F); m_rivet(pm); pm_pop(pm); }
+    pm_mat(pm, PMAT_BROTH);
+    PmProf br[4] = { { 0, 0.62f * H, 0 }, { R - 0.003f, 0.62f * H, 0 }, { R - 0.003f, 0.65f * H, 0 }, { 0, 0.65f * H, 0 } };
+    lathe(pm, br, 4, 32);
+}
+
+/* A round chopping block, a slice of trunk 0.34 m across and 70 mm thick, its edge rough, a steel band. */
+static void m_chop_block(Pm *pm) {
+    pm_mat(pm, PMAT_TIMBER);
+    PmProf p[7] = { { 0, 0, 0 }, { 0.163f, 0, 0 }, { 0.17f, 0.006f, 1 }, { 0.172f, 0.035f, 0 }, { 0.168f, 0.065f, 1 }, { 0.16f, 0.07f, 0 }, { 0, 0.071f, 0 } };
+    lathe(pm, p, 7, 40);
+    if (!L2) { pm_mat(pm, PMAT_STEEL); band(pm, 0.1718f, 0.1738f, 0.02f, 0.04f, 40); }
+}
+
+/* A steel tub of bamboo chopsticks, 85 mm round, 0.11 high. */
+static void m_chopsticks(Pm *pm) {
+    pm_mat(pm, PMAT_STAINLESS);
+    PmProf o[4] = { { 0, 0, 0 }, { 0.04f, 0, 0 }, { 0.0425f, 0.004f, 0 }, { 0.0425f, 0.11f, 0 } };
+    shell(pm, o, 4, 0.0012f, 0.0015f, 24);
+    pm_mat(pm, PMAT_BAMBOO);
+    if (L2) { PmProf t[4] = { { 0, 0.09f, 0 }, { 0.038f, 0.09f, 0 }, { 0.05f, 0.21f, 0 }, { 0, 0.21f, 0 } }; lathe(pm, t, 4, 8); return; }
+    int n = L0 ? 18 : 8;
+    uint32_t h = 0x9E3779B9u;
+    for (int k = 0; k < n; ++k) {
+        h = h * 1664525u + 1013904223u;
+        float a = 2.0f * PI_F * (float)k / (float)n + 0.3f * (float)(h >> 24) / 255.0f;
+        float rr = 0.012f + 0.022f * (float)((h >> 16) & 255u) / 255.0f, lean = 0.06f + 0.05f * (float)((h >> 8) & 255u) / 255.0f;
+        float p0[3] = { rr * cosf(a), 0.003f, rr * sinf(a) };
+        float top = 0.2f + 0.035f * (float)(h & 255u) / 255.0f;
+        float p1[3] = { p0[0] + lean * cosf(a) * top, top, p0[2] + lean * sinf(a) * top };
+        pm_beam(pm, p0, p1, 0.006f, 0.006f, 0.0f, NULL);
+    }
+}
+
+/* A socket strip on a wall (z 0, out +z): a black box 0.30 x 0.05, three sockets, a lit switch, screws. */
+static void m_power_strip(Pm *pm) {
+    pm_mat(pm, PMAT_PLASTIC);
+    float c[3] = { 0, 0.025f, 0.019f }, h[3] = { 0.15f, 0.025f, 0.019f };
+    pm_bbox(pm, c, h, 0.006f, 2);
+    for (int k = 0; k < 3; ++k) {
+        float x = -0.09f + 0.07f * (float)k;
+        pm_mat(pm, PMAT_ENAMEL);   /* the sockets' faces, off-white */
+        float sc[3] = { x, 0.025f, 0.0385f }, sh[3] = { 0.021f, 0.019f, 0.0012f };
+        pm_bbox(pm, sc, sh, 0.003f, 1);
+        if (L0) {
+            pm_mat(pm, PMAT_PLASTIC);
+            for (int j = 0; j < 3; ++j) { float pc[3] = { x + (j == 2 ? 0.0f : (j ? 0.007f : -0.007f)), 0.022f + (j == 2 ? 0.01f : 0.0f), 0.0396f }, ph[3] = { 0.0022f, 0.0035f, 0.0004f }; pm_bbox(pm, pc, ph, 0.0f, 1); }
+        }
+    }
+    pm_mat(pm, PMAT_RED);
+    float wc[3] = { 0.125f, 0.025f, 0.039f }, wh[3] = { 0.009f, 0.014f, 0.003f };
+    pm_bbox(pm, wc, wh, 0.002f, 1);
+    if (L0) for (int k = -1; k <= 1; k += 2) { pm_push(pm); pm_translate(pm, 0.142f * (float)k, 0.025f, 0.038f); pm_rotate_x(pm, 0.5f * PI_F); pm_place(pm, PMK_BOLT); pm_pop(pm); }
+}
+
+/* A gas regulator on a bottle's outlet: the outlet's tip at the origin, the nut along +x, the diaphragm's
+ * round body over it, the hose barb pointing down. */
+static void m_regulator(Pm *pm) {
+    pm_mat(pm, PMAT_BRASS);
+    pm_push(pm);
+    pm_rotate_z(pm, -0.5f * PI_F);   /* +y onto +x */
+    hex(pm, 0.012f, 0.0f, 0.016f, L0 ? 0.001f : 0.0f);
+    PmProf s[4] = { { 0, 0.016f, 0 }, { 0.008f, 0.016f, 0 }, { 0.008f, 0.032f, 0 }, { 0, 0.032f, 0 } };
+    lathe(pm, s, 4, 12);
+    pm_pop(pm);
+    pm_mat(pm, PMAT_GALV);
+    pm_push(pm);
+    pm_translate(pm, 0.065f, -0.016f, 0);
+    PmProf b[8] = { { 0, 0, 0 }, { 0.038f, 0, 0 }, { 0.04f, 0.004f, 0 }, { 0.04f, 0.018f, 1 }, { 0.038f, 0.02f, 0 }, { 0.03f, 0.03f, 0 }, { 0.012f, 0.036f, 0 }, { 0, 0.037f, 0 } };
+    lathe(pm, b, 8, 28);
+    if (!L2) { pm_mat(pm, PMAT_RED); PmProf k[4] = { { 0, 0.036f, 0 }, { 0.008f, 0.036f, 0 }, { 0.008f, 0.046f, 0 }, { 0, 0.046f, 0 } }; lathe(pm, k, 4, 10); }
+    pm_mat(pm, PMAT_BRASS);
+    PmProf o[6] = { { 0, -0.032f, 0 }, { 0.0045f, -0.032f, 0 }, { 0.0058f, -0.024f, 0 }, { 0.0045f, -0.02f, 0 }, { 0.007f, 0.001f, 0 }, { 0, 0.001f, 0 } };
+    lathe(pm, o, 6, 10);
+    pm_pop(pm);
+}
+
 /* ----------------------------------------------------------- materials --- */
 const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_RUST] = "rust", [PMAT_PLATE] = "plate", [PMAT_STAINLESS] = "stainless", [PMAT_COPPER] = "copper",
@@ -935,10 +1139,10 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_STOCKPOT_S]   = { "stockpot_s",     m_stockpot_s,     { 4700, 1400, 550 },   1 },
     [PMK_STOCKPOT_L]   = { "stockpot_l",     m_stockpot_l,     { 4950, 1550, 550 },   1 },
     [PMK_LID]          = { "lid",            m_lid,            { 1000, 500, 250 },    1 },
-    [PMK_BOWL_STACK]   = { "bowl_stack",     m_bowl_stack,     { 7350, 4600, 100 },   1 },
-    [PMK_JAR_OIL]      = { "jar_oil",        m_jar_oil,        { 2950, 1600, 300 },    1 },
-    [PMK_JAR_GINGER]   = { "jar_ginger",     m_jar_ginger,     { 2800, 1600, 300 },    1 },
-    [PMK_BOTTLE]       = { "bottle",         m_bottle,         { 1400, 750, 200 },     1 },
+    [PMK_BOWL_STACK]   = { "bowl_stack",     m_bowl_stack,     { 7350, 2100, 900 },   1 },
+    [PMK_JAR_OIL]      = { "jar_oil",        m_jar_oil,        { 3200, 1800, 700 },    1 },
+    [PMK_JAR_GINGER]   = { "jar_ginger",     m_jar_ginger,     { 3100, 1800, 700 },    1 },
+    [PMK_BOTTLE]       = { "bottle",         m_bottle,         { 1400, 750, 250 },     1 },
     [PMK_BURNER]       = { "burner",         m_burner,         { 1450, 650, 200 },    1 },
     [PMK_GRATE]        = { "grate",          m_grate,          { 3100, 250, 250 },     1 },
     [PMK_WOK_BURNER]   = { "wok_burner",     m_wok_burner,     { 5900, 1750, 550 },   1 },
@@ -958,6 +1162,13 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_POWER_PANEL]  = { "power_panel",    m_power_panel,    { 10350, 3200, 1400 },   1 },
     [PMK_SHELF_BRACKET]= { "shelf_bracket",  m_shelf_bracket,  { 300, 150, 50 },      1 },
     [PMK_A_FRAME]      = { "a_frame",        m_a_frame,        { 4850, 450, 200 },    1 },
+    [PMK_WOK]          = { "wok",            m_wok,            { 4000, 1500, 400 },   1 },
+    [PMK_NOODLE_BASKET]= { "noodle_basket",  m_noodle_basket,  { 3600, 1100, 250 },   1 },
+    [PMK_SAUCEPAN]     = { "saucepan",       m_saucepan,       { 3000, 1200, 400 },   1 },
+    [PMK_CHOP_BLOCK]   = { "chop_block",     m_chop_block,     { 1450, 700, 200 },    1 },
+    [PMK_CHOPSTICKS]   = { "chopsticks",     m_chopsticks,     { 1400, 500, 150 },    1 },
+    [PMK_POWER_STRIP]  = { "power_strip",    m_power_strip,    { 1300, 300, 100 },    1 },
+    [PMK_REGULATOR]    = { "regulator",      m_regulator,      { 1000, 500, 200 },    1 },
 };
 
 int pm_module_count(void) { return PMK_COUNT; }

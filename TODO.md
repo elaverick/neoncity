@@ -891,12 +891,18 @@ baked by `tools/model_pack.c`). See the README. Left over:
 The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sites.c`, `mesh_vendor.c`,
 `shaders/city/vendor_room.glsl`); the rework's noodle bar slice continues (NB5-NB8, then street food SF1-SF6:
 `~/.claude/plans/street-vendors.md`). The modelling kit (`src/gen/pmodel*.c`) is drawn instanced
-(`src/render/kit_gpu.c`, NB2). Left over from the kit's instancing:
-- **Stand-ins:** the slice's cooking line is NB0's stand-in placed on NB4's bench, lining and counter (NB5
-  replaces it); `--kit all` gives every vendor that line whatever its trade or size (the cost spike).
-- **The bar's bake (NB4):** baking a body's occlusion takes ~60 ms (a corner bar ~75) on a worker thread, every
-  time its chunk's vendor layer is built; the far shell stands in meanwhile. A cache of baked bodies by site, or
-  fewer vertices baked, if streaming shows it. The target sheet's +3 ms a chunk is far exceeded.
+(`src/render/kit_gpu.c`, NB2); every canopy bar has its cooking line (`nb_line`, NB5). Left over:
+- **`--kit all`** gives every vendor a bar's line whatever its trade or size (the cost spike), without the
+  line's merged parts (the range's carcass, the bain-marie, the gas and cables are the bar's body).
+- **The bar's bake (NB4, NB5):** baking a body's occlusion takes ~85 ms with its line's parts (NB4: ~60) on a
+  worker thread, every time its chunk's vendor layer is built; the far shell stands in meanwhile. A cache of
+  baked bodies by site, or fewer vertices baked, if streaming shows it. The target sheet's +3 ms a chunk is far
+  exceeded.
+- **The bar's frame cost (NB5):** at the slice, night in rain, the vendor layer adds +0.69 ms from 3 m and
+  +0.38 ms from 8 m against the target's +0.3 (city pass, shadow rays and filter on the kitchen's surfaces;
+  the kit itself +0.14). NB8 re-gates; the kit's level rule (0.15 triangles a pixel) draws small round
+  modules at their far level from a metre, so each module's L1/L2 must stay presentable (NB5 regraded the
+  bowl stack and jars).
 - **The far shell swaps** for the near body the frame the vendor layer is resident (no cross-fade).
 - **The corner form** turns round one end of an ordinary site; real building corners and columns (SF3) aren't
   sought yet.

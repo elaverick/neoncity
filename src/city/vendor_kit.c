@@ -10,13 +10,13 @@
  * src/render/kit_gpu.c). While this layer is resident the base layer's far
  * shell of each bar (mesh_vendor.c) gives way to it (city.vert).
  *
- * Until NB5 builds the cooking line, a stand-in after
- * docs/noodle-bar-target.md stands on the plan's bench, lining and counter
- * (nb_standin): city_set_kit picks which vendors get it: the slice only (the
- * default), every vendor (KIT_ALL: NB2's cost spike, a lane's worth of
- * slices; a vendor that isn't a bar gets the stand-in of the bar its site
- * would hold), or none (KIT_OFF: no vendor layer at all, the far shells
- * everywhere).
+ * Each bar's cooking line (NB5, nb_line) is laid out from its plan: its
+ * merged parts (the range's carcass, the bain-marie, the gas line, the
+ * cables) are the body's, its modules set down with the rest. city_set_kit
+ * picks who gets them: the bars (KIT_SLICE, the default), every vendor
+ * (KIT_ALL: NB2's cost spike, a lane's worth of slices; a vendor that isn't a
+ * bar gets the line's modules of the bar its site would hold), or none
+ * (KIT_OFF: no vendor layer at all, the far shells everywhere).
  * ========================================================================= */
 
 static int g_kit = KIT_SLICE;
@@ -55,8 +55,8 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     KitEmit *E = (KitEmit *)ctx;
     if (g_kit == KIT_OFF) return;
     const int bar = v->archetype == VA_CANOPY;
-    const int line = g_kit == KIT_ALL || (g_kit == KIT_SLICE && s->site.slice);
-    if (!bar && !line) return;
+    const int line = bar || g_kit == KIT_ALL;
+    if (!line) return;
     Mesh *m = E->m;
     NbPlan other;
     const NbPlan *np = &v->nb;
@@ -70,9 +70,11 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
         pm_bake(&E->body, NB_BAKE_RAYS, pm_reach(&E->body));
         vendor_emit_body(m, s, v, &E->body, 0);
     }
-    if (line) {
+    {
+        NbLine L;
+        nb_line(np, &L);
         pm_begin(&pm, &E->none, &E->inst, PM_LOD0);
-        nb_standin(&pm, np);
+        nb_line_place(&pm, np, &L);
     }
     /* the site's frame to chunk-local: x across (fz, -fx), z out (fx, fz), y up from its floor */
     const float R[3][3] = { { s->fz, 0.0f, s->fx }, { 0.0f, 1.0f, 0.0f }, { -s->fx, 0.0f, s->fz } };
