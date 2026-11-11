@@ -104,3 +104,13 @@ int  nb_at_range(const NbPlan *p, const float pos[3]);
 int  nb_solids(const NbPlan *p, float (*box)[4], int max);
 /* The hood's sheet's underside height a distance `out` from its spine (0 at the spine, its span at the lip). */
 float nb_hood_under(const NbPlan *p, float out);
+
+/* The bar's finish (NB4b, the user's rules): its outside one coat of paint, a body colour and a trim colour
+ * (posts, fascia, stools' bases, about half the A-frames; the rest bare timber) from NB_COATS pairs (shaders/city/kit.glsl KIT_COAT); its hood
+ * bare metal, rusted or not by the district's affluence. Its kitchen is stainless whatever the vendor. */
+#define NB_COATS 8
+enum { NB_HOOD_RUST = 0, NB_HOOD_GALV = 1, NB_HOOD_STEEL = 2 };
+/* nb_finish's bit for an A-frame left bare timber rather than in the trim coat (src/city/city.h KIT_FLAG_BARE_WOOD) */
+#define NB_FINISH_BARE_WOOD (1u << 10)
+/* The finish's bits for the kit's flags (src/city/city.h KitInst: the coat << 5, the hood << 8). */
+uint32_t nb_finish(float affluence, uint32_t seed);

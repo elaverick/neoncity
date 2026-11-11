@@ -377,3 +377,4 @@ void    build_vendors(Mesh *m, ChunkGen *g);
 /* vendor_kit.c: a noodle bar's body or far shell (far: KIT_AUX_FAR), baked, in the vendor's frame, into m as
  * MAT_KIT triangles (src/core/common.h). */
 void    vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMesh *pm, int far);
+uint32_t vendor_kit_flags(const Vendor *v);

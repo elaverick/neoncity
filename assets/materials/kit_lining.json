@@ -1,0 +1,16 @@
+// Brushed stainless sheet, its grain running along it: the kitchen's lining, the back wall's and the side
+// walls' inner faces (PMAT_LINING; NB4b).
+// Metal009 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c; its metalness in orm's alpha.
+{
+  "maps": {
+    "albedo": "../textures/metal_009/albedo.png",
+    "normal": "../textures/metal_009/normal.png",
+    "orm":    "../textures/metal_009/orm.png"
+  },
+  "tile": 1.0,                 // metres per image
+  "albedo_mean": [0.289, 0.299, 0.310],   // per channel (pbr_pack)
+  // shadeKit (shaders/city/kit.glsl): how much of the albedo's variation shows (1 all); how strongly the normal
+  // map bends the surface (1 as authored); relief depth in metres (0: none); 1 the photograph's own colour, 0 its
+  // grain under the kit's colour for the material
+  "params": [1.0, 1.0, 0.0, 1.0]
+}

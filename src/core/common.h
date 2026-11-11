@@ -138,8 +138,9 @@ enum {
 
 /* The noodle bars' bodies, merged (MAT_KIT in a mesh; src/city/vendor_kit.c, src/gen/noodle_bar.c), as
  * the kit's instanced modules are drawn (shaders/kit.vert), but each vertex carries its own: params y
- * its material (PMAT_*), z its baked occlusion, w its baked wear; aux its piece (bits 0-7), its flags
- * (8-15: the vendor's wear, KIT_FLAG_HEAT), KIT_AUX_FAR; the seed the vendor's. A far shell's vertices
+ * its material (PMAT_*), z its baked occlusion, w its baked wear; aux its piece (bits 0-7), its flags'
+ * low byte (8-15: the vendor's wear, KIT_FLAG_HEAT, its coat), KIT_AUX_FAR (16), its flags' high byte
+ * (17-24: its hood's metal); the seed the vendor's. A far shell's vertices
  * (KIT_AUX_FAR, in the base layer) are dropped by city.vert wherever the chunk's vendor layer, holding
  * the near body, is drawn (ChunkGPU.origin[3] 1), and cast no ray-traced shadows. Must match
  * shaders/city.vert. */

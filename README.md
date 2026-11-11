@@ -1528,6 +1528,8 @@ it, so the kit's modules are drawn instanced instead (NB2).
   dirty grout; wet in the rain where the shelter map leaves it open. `pmodel_lab` checks that every set's file
   exists and that none covers over 40% of a noodle bar (the kit and the body's main surfaces: the hood's rusted
   sheet is the most, 37%). The lane at night with every vendor kitted: the kit's pass 0.30 -> 0.33 ms.
+  NB4b replaced the bar's outside paint and rusting walls with one intact coat per vendor and a stainless kitchen
+  (the body's "Finish", below); since then the brushed lining is the largest set, 24%, then the paint, 21%.
 - **Shadows it casts:** a BLAS over each module's L1, built once; a TLAS instance for every kit instance within
   35 m whose module reaches 10 cm (stools, pots, pans, gas, the fan), whatever the view.
 - **Not in the shelter map:** small modules shelter nothing worth the rain's map; the bars' far shells (base
@@ -1565,6 +1567,22 @@ in `Vendor.nb`), so its near body, far shell, collision and cooking line always 
 - **The grammar** (`build_canopy`) makes the plan and mirrors it in coarse parts that are never drawn, so the
   rules, bounds and dressing still read the bar (vendor_lab: all valid).
 - **Collision** from the plan (`nb_solids`): the kitchen behind its counter, posts, column, stools, A-frame.
+- **Finish** (NB4b, after the references: solid paint outside, a clean stainless kitchen, rust only on hoods
+  and services). `nb_finish` gives each bar one coat of paint, a body colour (`PMAT_PLATE`: counter fronts,
+  walls' outer sheets, the column) and a trim colour (`PMAT_PAINTED`: posts, the fascia, stools' bases, and
+  about half the A-frames' frames; the rest are bare timber), from eight pairs (bottle green, oxide red, cream, navy, near-black, teal, mid green, maroon:
+  `KIT_COAT` in `shaders/city/kit.glsl`), drawn over the fine grain of an intact powder coat (Metal027); and
+  its hood's bare metal by the district's affluence: rusted sheet (Rust006) for the poorer third, otherwise
+  galvanised (Metal043B, as the duct) or plain steel sheet (the kit's Metal056A) about evenly; no copper,
+  which tarnishes too readily for a hood. They ride in the kit's flags (coat bits 5-7, hood 8-9, the
+  A-frame's bare timber bit 10, set on the A-frame alone; `KitInst.flags` is 16 bits, the merged vertices carry the high byte in aux
+  bits 17-24). The kitchen is stainless: the back lining and the side walls' inner faces brushed sheet
+  (`PMAT_LINING`, Metal009), framing, bench, shelves and brackets, the extractor and its baffles, the fan and
+  the power panel's box. The wear is cut back to match: chips to steel only inside a few low-frequency patches
+  of the paint (more for the poor, never most of a surface, never rusted through), streaks down the hood from
+  its seams, faint dirt low on the paint, rust creeping a little up bare steel only, a trace of grime in the
+  kitchen, grease and soot at the range, the smoke's film over the extractor and under the hood.
+  `city_test --slice` prints the slice's finish; `--slice bars` every bar's, with a view of each.
 - **Cost:** at the slice at night in rain, the vendor layer on against off (off still draws the far shells; on, about 4 bars' bodies within 120 m and the slice's stand-in line, 1,204 instances offered), two rounds each: from 3 m, the bar filling the frame, +0.59 ms (city pass +0.18, kit +0.13, shadow rays +0.13, shadow filter +0.10), over the target's +0.3; from 8 m +0.25 ms. Down the market lane (no bars) `--kit all` +0.25 to 0.35 ms. Generation: ~60 ms a straight bar's bake, ~75 a corner's, on a worker (the slice's chunk's vendor layer ~105 ms with the group's grammar); NB8 re-gates both.
 - **Checks:** `pmodel_lab --only body` builds four bars (straight at the slice and wide, corner either way) and
   checks determinism, normals, budgets (the structure 16,000, the far shell 500) and the site, and renders them

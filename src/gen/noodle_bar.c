@@ -299,21 +299,27 @@ static void cyl_x(Pm *pm, float x0, float x1, float y, float z, float r, int seg
 
 /* ---------------------------------------------------------------- walls --- */
 
+/* A wall in its frame: x along it, z out (its outside: the street for a side wall, the kitchen for the back
+ * lining). A side wall (framing) is painted sheet outside, a flat brushed stainless lining inside, stainless
+ * angle framing over that; the back lining is brushed stainless sheet (NB4b: the kitchen's metal is
+ * stainless; the lining a sheet of its own, so no one set covers most of the bar). */
 static void wall(Pm *pm, const NbPlan *p, const NbWall *w, int k, int framing) {
     if (w->len < 0.05f || w->h < 0.05f) return;
     pm_push(pm);
     frame_on(pm, w->o[0], 0.0f, w->o[1], w->u[0], w->u[1]);
     pm_push(pm);
     pm_translate(pm, 0.0f, 0.0f, -2.0f * THICK);
-    pm_mat(pm, PMAT_RUST_STEEL);
+    pm_mat(pm, framing ? PMAT_PLATE : PMAT_LINING);
     pm->part = (uint8_t)(16 + k * 8);
     float sheet = 1.0f + 0.25f * hash_float(hash_combine(p->seed, 0x5711u + (uint32_t)k));
     pm_sheet_wall(pm, w->len, w->h, sheet, THICK, 1);
     pm_pop(pm);
     if (framing) {
-        /* angle framing inside: posts at the ends, a rail at the top and one at counter height */
-        pm_mat(pm, PMAT_STEEL);
+        /* the lining, then angle framing over it: posts at the ends, a rail at the top and one at counter height */
+        pm_mat(pm, PMAT_LINING);
         const float zi = -2.0f * THICK, L = w->len, H = w->h;
+        bb(pm, 0.0f, 0.012f, zi - 0.0035f, L, H, zi - 0.0015f, 0.0f);
+        pm_mat(pm, PMAT_STAINLESS);
         for (int e = 0; e < 2; ++e) {
             float a = e ? L - 0.04f : 0.0f, lg = e ? L - 0.004f : 0.0f;
             bb(pm, a, 0.0f, zi - 0.004f, a + 0.04f, H, zi, 0.0015f);
@@ -505,7 +511,6 @@ static void kitchen(Pm *pm, const NbPlan *p) {
         pm_frame(pm, o, ex, ey, ez);
         pm_extrude(pm, (const float (*)[2])poly, 5, 0.0f, e1 - e0);
         pm_pop(pm);
-        pm_mat(pm, PMAT_STEEL);
         float g[3] = { e0 + 0.03f, 1.963f, zl + 0.05f }, gx[3] = { 1, 0, 0 }, gy[3] = { 0, 0, 1 }, gz[3] = { 0, -1, 0 };
         pm_push(pm);
         pm_frame(pm, g, gx, gy, gz);
@@ -532,11 +537,9 @@ static void kitchen(Pm *pm, const NbPlan *p) {
         pm_pipe(pm, &pa, r, 0.2f, 0);
         pm_path_free(&pa);
         float ym = 0.5f * (2.40f + yh - 0.25f);
-        pm_mat(pm, PMAT_STEEL);
         pm_push(pm); pm_translate(pm, dx, ym, dz); pm_torus(pm, r + 0.005f, 0.006f, 24, 6); pm_pop(pm);
         float c0[3] = { dx, ym, dz - r - 0.005f }, c1[3] = { dx, ym, zl + 0.004f };
         pm_beam(pm, c0, c1, 0.04f, 0.005f, 0.0015f, NULL);
-        pm_mat(pm, PMAT_GALV);
         pm_push(pm);
         pm_translate(pm, dx, yh, dz);
         PmProf fl[5] = { { r + 0.004f, -0.004f, 1 }, { r + 0.07f, -0.004f, 1 }, { r + 0.07f, 0.006f, 1 }, { r + 0.012f, 0.11f, 1 }, { r + 0.004f, 0.11f, 1 } };
@@ -625,7 +628,7 @@ static void column(Pm *pm, const NbPlan *p) {
 static void deck(Pm *pm, const NbPlan *p) {
     if (p->deck[2] <= p->deck[0]) return;
     pm->part = 160;
-    pm_mat(pm, PMAT_RUST_STEEL);
+    pm_mat(pm, PMAT_RUST);   /* the hood's metal, whichever it is */
     float o[3] = { p->deck[0], p->hoodTop, p->deck[1] }, ex[3] = { 0, 0, 1 }, ey[3] = { 1, 0, 0 }, ez[3] = { 0, 1, 0 };
     pm_push(pm);
     pm_frame(pm, o, ex, ey, ez);
@@ -693,8 +696,8 @@ void nb_shell(Pm *pm, const NbPlan *p) {
         }
         s0 += L;
     }
-    /* the fascia along the lip, mitred */
-    pm_mat(pm, PMAT_PLATE);
+    /* the fascia along the lip, mitred: the trim's coat */
+    pm_mat(pm, PMAT_PAINTED);
     {
         PmPath pa;
         pm_path_init(&pa, 4);
@@ -745,7 +748,7 @@ void nb_shell(Pm *pm, const NbPlan *p) {
         }
     }
     /* walls, posts, the column, the deck, the counter, the bench, the extractor and duct, the icons, stools */
-    pm_mat(pm, PMAT_RUST_STEEL);
+    pm_mat(pm, PMAT_PLATE);
     for (int i = 0; i < p->nwall; ++i) {
         const NbWall *w = &p->wall[i];
         if (w->len < 0.05f) continue;
@@ -754,6 +757,7 @@ void nb_shell(Pm *pm, const NbPlan *p) {
         pm_box(pm, 0.0f, 0.0f, -0.02f, w->len, w->h, 0.0f);
         pm_pop(pm);
     }
+    pm_mat(pm, PMAT_RUST);
     if (p->deck[2] > p->deck[0]) pm_box(pm, p->deck[0], p->hoodTop, p->deck[1], p->deck[2], p->hoodTop + 0.01f, p->deck[3]);
     pm_mat(pm, PMAT_PAINTED);
     for (int i = 0; i < p->npost; ++i) pm_box(pm, p->post[i][0] - 0.03f, 0.0f, p->post[i][1] - 0.03f, p->post[i][0] + 0.03f, p->post[i][2], p->post[i][1] + 0.03f);
@@ -888,6 +892,18 @@ void nb_standin(Pm *pm, const NbPlan *p) {
 int nb_at_range(const NbPlan *p, const float pos[3]) {
     return pos[0] > p->rangeX0 - 0.15f && pos[0] < p->rangeX1 + 0.15f && pos[2] < p->lining + p->benchD + 0.12f &&
            pos[1] > 0.5f && pos[1] < 2.6f;
+}
+
+uint32_t nb_finish(float affluence, uint32_t seed) {
+    const uint32_t h = hash_combine(seed, 0xC0A7u);
+    const uint32_t coat = h % NB_COATS;
+    /* the poorer third rusty; above it plain steel about half the time, galvanised the rest (no copper: the
+     * user's call, it tarnishes too readily for a hood) */
+    const float a = affluence + 0.3f * (hash_float(hash_combine(h, 1u)) - 0.5f);
+    const uint32_t hood = a < 0.38f ? NB_HOOD_RUST : hash_float(hash_combine(h, 2u)) < 0.5f ? NB_HOOD_STEEL : NB_HOOD_GALV;
+    /* the A-frame: painted in the trim coat or left bare timber, about evenly */
+    const uint32_t wood = hash_float(hash_combine(h, 3u)) < 0.5f ? NB_FINISH_BARE_WOOD : 0u;
+    return coat << 5 | hood << 8 | wood;
 }
 
 int nb_solids(const NbPlan *p, float (*b)[4], int max) {

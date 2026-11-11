@@ -83,7 +83,7 @@ static void m_knob(Pm *pm) {
     lathe(pm, b, 7, 24);
     float c[3] = { 0, 0.03f, 0 }, h[3] = { 0.015f, 0.006f, 0.0045f };
     pm_bbox(pm, c, h, 0.002f, 2);
-    if (L0) { pm_mat(pm, PMAT_PAINTED); float c2[3] = { 0.0105f, 0.0362f, 0 }, h2[3] = { 0.0035f, 0.0003f, 0.0008f }; pm_bbox(pm, c2, h2, 0.0f, 1); }
+    if (L0) { pm_mat(pm, PMAT_DIAL); float c2[3] = { 0.0105f, 0.0362f, 0 }, h2[3] = { 0.0035f, 0.0003f, 0.0008f }; pm_bbox(pm, c2, h2, 0.0f, 1); }
 }
 
 /* A toggle switch on its plate, the panel's face at y 0. */
@@ -115,7 +115,7 @@ static void m_gauge(Pm *pm) {
     pm_push(pm);
     pm_translate(pm, 0, 0.066f, -0.012f);
     pm_rotate_x(pm, 0.5f * PI_F);   /* local +y (the face) to +z */
-    pm_mat(pm, PMAT_PAINTED);
+    pm_mat(pm, PMAT_STEEL);
     PmProf c[9] = { { 0, 0, 0 }, { 0.0300f, 0, 0 }, { 0.0320f, 0.002f, 0 }, { 0.0320f, 0.017f, 0 }, { 0.0337f, 0.018f, 0 },
                     { 0.0337f, 0.0225f, 0 }, { 0.0318f, 0.0245f, 0 }, { 0.0292f, 0.0245f, 1 }, { 0, 0.0245f, 0 } };
     /* the bezel's top drops to the face inside it */
@@ -202,7 +202,7 @@ static void m_valve_lever(Pm *pm) {
 
 /* An angle bracket on a wall (z 0, out +z): a 30 x 4 mm flat bar 0.2 m down the wall and 0.2 m out, braced. */
 static void m_bracket(Pm *pm) {
-    pm_mat(pm, PMAT_PAINTED);
+    pm_mat(pm, PMAT_STAINLESS);
     float a[3], b[3];
     set3(a, 0, 0.0f, 0.002f); set3(b, 0, -0.2f, 0.002f);
     float up[3] = { 0, 0, 1 };
@@ -730,7 +730,7 @@ static void m_gas_47(Pm *pm) { gas_bottle(pm, 0.185f, 1.3f); }
 
 /* An extractor fan, 0.35 m, in its housing on a wall (z 0), facing +z behind a grille. */
 static void m_fan(Pm *pm) {
-    pm_mat(pm, PMAT_PAINTED);
+    pm_mat(pm, PMAT_STAINLESS);
     float R = 0.175f;
     pm_push(pm);
     pm_rotate_x(pm, 0.5f * PI_F);   /* the lathe's axis (+y) out of the wall (+z) */
@@ -754,7 +754,7 @@ static void m_fan(Pm *pm) {
     PmProf hub[5] = { { 0, 0.085f, 0 }, { 0.035f, 0.085f, 0 }, { 0.035f, 0.105f, 0 }, { 0.02f, 0.115f, 0 }, { 0, 0.118f, 0 } };
     lathe(pm, hub, 5, 20);
     pm_pop(pm);
-    pm_mat(pm, PMAT_STEEL);
+    pm_mat(pm, PMAT_STAINLESS);
     pm_push(pm);
     pm_translate(pm, 0, 0, 0.143f);
     pm_grille_round(pm, R + 0.005f, 0.003f, L0 ? 5 : L2 ? 2 : 3, L0 ? 8 : 4);
@@ -765,11 +765,10 @@ static void m_fan(Pm *pm) {
  * insulators on a cross arm, glands underneath, a warning card. */
 static void m_power_panel(Pm *pm) {
     const float W = 0.4f, H = 0.6f, D = 0.15f;
-    pm_mat(pm, PMAT_PLATE);
+    pm_mat(pm, PMAT_STAINLESS);   /* NB4b: in the kitchen, so stainless */
     float c[3] = { 0, 0.5f * H, 0.5f * D - 0.006f }, h[3] = { 0.5f * W, 0.5f * H, 0.5f * D - 0.006f };
     pm_bbox(pm, c, h, 0.006f, 2);
     /* the door, proud of the front, and its frame */
-    pm_mat(pm, PMAT_PAINTED);
     float dc[3] = { 0, 0.5f * H, D - 0.006f }, dh[3] = { 0.5f * W - 0.012f, 0.5f * H - 0.012f, 0.007f };
     pm_bbox(pm, dc, dh, 0.004f, 2);
     float n[3] = { 0, 0, 1 };
@@ -830,7 +829,7 @@ static void m_power_panel(Pm *pm) {
 
 /* A shelf bracket on a wall (z 0): a gusset 0.28 deep, its top at y 0. */
 static void m_shelf_bracket(Pm *pm) {
-    pm_mat(pm, PMAT_PAINTED);
+    pm_mat(pm, PMAT_STAINLESS);
     float poly[5][2] = { { 0.0f, 0.0f }, { 0.0f, -0.25f }, { 0.03f, -0.25f }, { 0.28f, -0.03f }, { 0.28f, 0.0f } };
     pm_push(pm);
     pm_rotate_y(pm, -0.5f * PI_F);   /* the polygon's x (out) onto +z */
@@ -852,7 +851,7 @@ static void m_a_frame(Pm *pm) {
         pm_translate(pm, 0, H * cosf(splay), 0);
         pm_rotate_x(pm, (float)s * splay);
         pm_translate(pm, 0, -H, 0);
-        pm_mat(pm, PMAT_TIMBER);
+        pm_mat(pm, PMAT_PAINTED);   /* NB4b: its frame in the bar's trim coat, or bare timber (kit.glsl KIT_BARE_WOOD) */
         float fw = 0.035f, ft = 0.02f;
         float c[4][3] = { { -0.5f * W, 0, 0 }, { 0.5f * W, 0, 0 }, { 0.5f * W, H, 0 }, { -0.5f * W, H, 0 } };
         for (int k = 0; k < 4; ++k) {
@@ -903,17 +902,17 @@ const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_CHALK] = "chalk", [PMAT_CERAMIC] = "ceramic", [PMAT_BAMBOO] = "bamboo", [PMAT_PAPER] = "paper",
     [PMAT_PLASTIC] = "plastic", [PMAT_GALV] = "galv", [PMAT_STEEL] = "steel", [PMAT_DIAL] = "dial", [PMAT_RED] = "red",
     [PMAT_BROTH] = "broth", [PMAT_NOODLE] = "noodle", [PMAT_CURRY] = "curry", [PMAT_RICE] = "rice", [PMAT_OIL] = "oil",
-    [PMAT_GINGER] = "ginger", [PMAT_RUST_STEEL] = "rust_steel", [PMAT_CHEQUER] = "chequer",
+    [PMAT_GINGER] = "ginger", [PMAT_RUST_STEEL] = "rust_steel", [PMAT_CHEQUER] = "chequer", [PMAT_LINING] = "lining",
 };
 /* Mirrored by kitSet in shaders/city/kit.glsl. Sets may serve two materials in different colours (the
  * rubber's grain under black plastic, the white paint's under red): the share check counts them together. */
 const char *const PM_MAT_SET[PMAT_COUNT] = {
-    [PMAT_RUST] = "kit_rust_sheet", [PMAT_PLATE] = "kit_plate", [PMAT_STAINLESS] = "kit_stainless",
-    [PMAT_COPPER] = "kit_copper", [PMAT_CAST_IRON] = "kit_cast_iron", [PMAT_PAINTED] = "kit_painted",
+    [PMAT_RUST] = "kit_rust_sheet", [PMAT_PLATE] = "kit_paint", [PMAT_STAINLESS] = "kit_stainless",
+    [PMAT_COPPER] = "kit_copper", [PMAT_CAST_IRON] = "kit_cast_iron", [PMAT_PAINTED] = "kit_paint",
     [PMAT_TILE] = "kit_tile", [PMAT_RUBBER] = "kit_rubber", [PMAT_BRASS] = "kit_brass", [PMAT_TIMBER] = "vendor_planks",
     [PMAT_BAMBOO] = "kit_bamboo", [PMAT_PAPER] = "paper", [PMAT_PLASTIC] = "kit_rubber", [PMAT_GALV] = "kit_galv",
     [PMAT_STEEL] = "kit_steel", [PMAT_RED] = "kit_painted", [PMAT_RUST_STEEL] = "kit_rust_steel",
-    [PMAT_CHEQUER] = "kit_chequer",
+    [PMAT_CHEQUER] = "kit_chequer", [PMAT_LINING] = "kit_lining",
 };
 
 /* --------------------------------------------------------------- table --- */

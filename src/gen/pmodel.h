@@ -33,12 +33,12 @@ enum { PM_LOD0 = 0, PM_LOD1, PM_LOD2, PM_LODS };   /* near (to 8 m), mid (to 30 
  * food stay procedural. New ones go on the end: the library's vertices and
  * the shader's tables are indexed by them. */
 enum {
-    PMAT_RUST = 0,     /* rusted copper-brown sheet: the hood */
-    PMAT_PLATE,        /* riveted painted plate: counter front, panels */
-    PMAT_STAINLESS,    /* worn stainless: counter top, bench, pans, shelves */
+    PMAT_RUST = 0,     /* the hood's bare metal: rusted sheet, galvanised or plain steel by the vendor (kit.glsl) */
+    PMAT_PLATE,        /* the vendor's body coat of paint: counter fronts, walls outside, the column */
+    PMAT_STAINLESS,    /* worn stainless: counter top, the kitchen's lining, bench, shelves, brackets, fan, panel */
     PMAT_COPPER,       /* tarnished copper: stock pots, the gas line */
     PMAT_CAST_IRON,    /* grates, burners */
-    PMAT_PAINTED,      /* chipped painted metal: posts, stool bases, the extractor */
+    PMAT_PAINTED,      /* the vendor's trim coat: posts, the fascia, stool bases, the A-frame */
     PMAT_TILE,         /* small white tiles, dirty grout */
     PMAT_RUBBER,       /* stool seats, cable sheaths, grips */
     PMAT_ENAMEL,       /* bowls, the rice cooker */
@@ -60,8 +60,9 @@ enum {
     PMAT_RICE,
     PMAT_OIL,          /* chilli oil in a jar */
     PMAT_GINGER,       /* pickled ginger */
-    PMAT_RUST_STEEL,   /* rusting grey steel sheet: side walls, the back lining, framing */
+    PMAT_RUST_STEEL,   /* rusting grey steel sheet (unused by the bar since NB4b: services, later) */
     PMAT_CHEQUER,      /* chequer (diamond) plate: the floor behind the counter, steps */
+    PMAT_LINING,       /* brushed stainless sheet: the kitchen's lining (NB4b) */
     PMAT_COUNT
 };
 

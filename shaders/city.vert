@@ -209,7 +209,8 @@ void main() {
     vUV = inUV;
     vSeed = inSeed;
     vParams = inParams;
-    if (inParams.x == MAT_KIT) vParams = uvec4(MAT_KIT, inParams.y, inAux & 255u, (inAux >> 8) & 255u);   // as kit.vert's
+    if (inParams.x == MAT_KIT)   // as kit.vert's: the flags' low byte in aux bits 8-15, their high byte in 17-24
+        vParams = uvec4(MAT_KIT, inParams.y, inAux & 255u, ((inAux >> 8) & 255u) | ((inAux >> 17) & 255u) << 8);
     vChunk = uint(gl_InstanceIndex);
     vFacePack = uint(max(inUV.y, 0.0) + 0.5);
     if (inParams.x == MAT_FACADE) vFacePack |= uint(inNrm.w * 127.0 + 0.5) << 24;   // facade_mat (src/city/mesh_building.c)

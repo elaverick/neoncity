@@ -1,0 +1,18 @@
+// Intact powder-coated paint, its fine grain under the vendor's own coat (the colour from shaders/city/kit.glsl's
+// KIT_COAT): the outside of a noodle bar (counter fronts, walls' outer faces, the column, the fascia: PMAT_PLATE)
+// and its trim (posts, stools' bases, the A-frame: PMAT_PAINTED). Chips show only in patches (shadeKit).
+// Metal027 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c; its metalness in orm's alpha (all metal: the
+// kit's paint is drawn as a non-metal whatever the map says).
+{
+  "maps": {
+    "albedo": "../textures/metal_027/albedo.png",
+    "normal": "../textures/metal_027/normal.png",
+    "orm":    "../textures/metal_027/orm.png"
+  },
+  "tile": 1.0,                 // metres per image
+  "albedo_mean": [0.028, 0.026, 0.035],   // per channel (pbr_pack)
+  // shadeKit (shaders/city/kit.glsl): how much of the albedo's variation shows (1 all); how strongly the normal
+  // map bends the surface (1 as authored); relief depth in metres (0: none); 1 the photograph's own colour, 0 its
+  // grain under the kit's colour for the material
+  "params": [1.0, 0.6, 0.0, 0.0]
+}

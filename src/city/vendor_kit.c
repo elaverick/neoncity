@@ -25,9 +25,16 @@ int  city_kit_mode(void) { return g_kit; }
 
 typedef struct KitEmit { Mesh *m; PmInstances inst; PmMesh body, none; } KitEmit;
 
+/* A bar's flags but the heat: the vendor's wear (0..15) and its finish (its coat, its hood's metal, whether its
+ * A-frame is bare timber: nb_finish; the caller keeps that last bit for the A-frame alone). */
+uint32_t vendor_kit_flags(const Vendor *v) {
+    const uint32_t wear = (uint32_t)(clampf(v->wear, 0.0f, 1.0f) * 15.0f + 0.5f);
+    return wear | nb_finish(v->site.affluence, v->site.seed);
+}
+
 void vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMesh *pm, int far) {
     const float bx = (float)(s->x - m->ox), bz = (float)(s->z - m->oz);
-    const uint32_t wear = (uint32_t)(clampf(v->wear, 0.0f, 1.0f) * 15.0f + 0.5f);
+    const uint32_t wear = vendor_kit_flags(v) & ~KIT_FLAG_BARE_WOOD;
     const uint32_t seed = hash_combine(s->site.seed, 0x4B42u);
     m->grounded = 1;
     m->ground = s->y;   /* its heights count from its floor */
@@ -38,7 +45,7 @@ void vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMes
             vec3 n = v3(x->n[0] * s->fz + x->n[2] * s->fx, x->n[1], -x->n[0] * s->fx + x->n[2] * s->fz);
             uint8_t prm[4] = { MAT_KIT, x->mat, x->occ, x->wear };
             uint32_t fl = wear | (nb_at_range(&v->nb, x->p) ? KIT_FLAG_HEAT : 0u);
-            uint32_t aux = (uint32_t)x->part | fl << 8 | (far ? KIT_AUX_FAR : 0u);
+            uint32_t aux = (uint32_t)x->part | (fl & 255u) << 8 | (far ? KIT_AUX_FAR : 0u) | (fl >> 8) << 17;
             mesh_push_w(m, p, n, 0, x->uv[0], x->uv[1], seed, prm, aux);
         }
     m->grounded = 0;
@@ -70,8 +77,8 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     /* the site's frame to chunk-local: x across (fz, -fx), z out (fx, fz), y up from its floor */
     const float R[3][3] = { { s->fz, 0.0f, s->fx }, { 0.0f, 1.0f, 0.0f }, { -s->fx, 0.0f, s->fz } };
     const float t[3] = { (float)(s->x - m->ox), s->y, (float)(s->z - m->oz) };
-    /* the flags: the vendor's wear, and whether a module stands at the range (its grease and soot) */
-    const uint8_t wear = (uint8_t)(clampf(v->wear, 0.0f, 1.0f) * 15.0f + 0.5f);
+    /* the flags: the vendor's wear and finish, and whether a module stands at the range (its grease and soot) */
+    const uint32_t wear = vendor_kit_flags(v);
     if (m->nkit + E->inst.n > m->capkit) {
         m->capkit = (m->nkit + E->inst.n) * 2;
         m->kit = (KitInst *)realloc(m->kit, sizeof(KitInst) * m->capkit);
@@ -80,6 +87,7 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     for (uint32_t i = 0; i < E->inst.n; ++i) {
         const PmInstance *pi = &E->inst.v[i];
         KitInst *k = &m->kit[m->nkit++];
+        memset(k, 0, sizeof(*k));   /* its padding too: chunks compare and hash kit records byte for byte */
         for (int r = 0; r < 3; ++r) {
             for (int c = 0; c < 4; ++c)
                 k->xf[r * 4 + c] = R[r][0] * pi->xf[c] + R[r][1] * pi->xf[4 + c] + R[r][2] * pi->xf[8 + c];
@@ -89,7 +97,8 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
         k->part = pi->part;
         const float at[3] = { pi->xf[3], pi->xf[7], pi->xf[11] };
         const int heat = nb_at_range(np, at);
-        k->flags = (uint8_t)(wear | (heat ? KIT_FLAG_HEAT : 0u));
+        const uint32_t fin = pi->module == PMK_A_FRAME ? wear : wear & ~KIT_FLAG_BARE_WOOD;
+        k->flags = (uint16_t)(fin | (heat ? KIT_FLAG_HEAT : 0u));
         k->base = s->y;
         k->seed = hash_combine(s->site.seed, i + 0x4B49u);
         for (int a = 0; a < 3; ++a) {

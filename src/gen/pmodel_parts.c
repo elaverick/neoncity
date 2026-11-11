@@ -310,9 +310,9 @@ int pm_hood(Pm *pm, const PmHood *h) {
     /* ribs and lip without support loops (their faces are narrow; the structure's budget) */
     float sup0 = pm->support;
     pm->support = 0.0f;
-    /* ribs: an open channel (two flanks and a top) standing on the sheet along each station's arc; rusting
-     * steel (NB4: bare steel caught the sky and read as white paint in the sun) */
-    pm_mat(pm, PMAT_RUST_STEEL);
+    /* ribs: an open channel (two flanks and a top) standing on the sheet along each station's arc; the sheet's
+     * own metal (NB4b: the hood is bare metal, rusted or not by affluence: kit.glsl picks it per vendor) */
+    pm_mat(pm, PMAT_RUST);
     PmSect rib;
     rib.closed = 0; rib.n = 4;
     rib.p[0][0] = 0.5f * h->rib_w;  rib.p[0][1] = -0.002f;
@@ -353,7 +353,7 @@ int pm_hood(Pm *pm, const PmHood *h) {
     pm->support = sup0;
     /* the fascia under the lip: a plate 3 mm thick, rivets along its edges */
     if (h->fascia_h > 0.0f) {
-        pm_mat(pm, PMAT_PLATE);
+        pm_mat(pm, PMAT_PAINTED);   /* the trim's coat */
         PmSect fs;
         float th = 0.003f;
         fs.closed = 1; fs.n = 4;

@@ -123,13 +123,28 @@ static int slice_find(double x, double z) {
 
 /* The canopy noodle bars within 8 chunks of (x, z) (NB4's bodies), and the 120 m disc (the vendor layer's
  * reach) holding most of them, with a view into it from its edge: the view that loads the most bodies. */
-typedef struct SlBars { double x[1024], z[1024]; int n, corner; } SlBars;
+typedef struct SlBars {
+    double x[1024], z[1024], fx[1024], fz[1024], y[1024];
+    float aff[1024];
+    uint32_t finish[1024];
+    uint8_t form[1024];
+    int n, corner;
+} SlBars;
 static void sl_bar(void *ctx, const VendorSpot *s, const Vendor *v) {
     SlBars *B = (SlBars *)ctx;
     if (v->archetype != VA_CANOPY || B->n >= 1024) return;
     vendor_spot_middle(s, &B->x[B->n], &B->z[B->n]);
+    B->fx[B->n] = s->fx; B->fz[B->n] = s->fz; B->y[B->n] = s->y;
+    B->aff[B->n] = s->site.affluence;
+    B->finish[B->n] = nb_finish(s->site.affluence, s->site.seed);
+    B->form[B->n] = (uint8_t)v->nb.form;
     B->corner += v->nb.form == NB_CORNER;
     B->n++;
+}
+/* A bar's finish (NB4b: src/gen/noodle_bar.c nb_finish) as words. */
+static const char *sl_hood(uint32_t f) {
+    static const char *const H[4] = { "rusted", "galvanised", "steel", "?" };
+    return H[(f >> 8) & 3u];
 }
 static int slice_bars(double x, double z) {
     static SlBars B;
@@ -149,6 +164,19 @@ static int slice_bars(double x, double z) {
     for (int b = 0; b < B.n; ++b)
         if ((B.x[best] - B.x[b]) * (B.x[best] - B.x[b]) + (B.z[best] - B.z[b]) * (B.z[best] - B.z[b]) < 60.0 * 60.0)
             printf("  bar at (%.2f, %.2f)\n", B.x[b], B.z[b]);
+    /* every bar's finish, and a view of it from 6 m (NB4b's preview board) */
+    int hoods[3] = { 0 };
+    for (int b = 0; b < B.n; ++b) {
+        const uint32_t f = B.finish[b];
+        const uint32_t hk = (f >> 8) & 3u;
+        hoods[hk < 3u ? hk : 0]++;
+        printf("bar %d at (%.2f, %.2f): %s, affluence %.2f, coat %u, hood %s, A-frame %s\n", b, B.x[b], B.z[b],
+               B.form[b] == NB_CORNER ? "corner" : "straight", B.aff[b], (f >> 5) & 7u, sl_hood(f), f & NB_FINISH_BARE_WOOD ? "timber" : "painted");
+        char name[32];
+        snprintf(name, sizeof(name), "bar%d", b);
+        sl_view(name, B.x[b], B.y[b] + 1.6, B.z[b], B.fx[b], B.fz[b], 6.0, B.y[b], 0.0, 0);
+    }
+    printf("hoods: %d rusted, %d galvanised, %d steel\n", hoods[0], hoods[1], hoods[2]);
     return 0;
 }
 
@@ -235,6 +263,9 @@ static int slice_cams(int argc, char **argv) {
         printf("  plan: %s%s, bar %.2f m, counter front at %.2f, lip at %.2f, hood %.2f to %.2f m, %d stools, %d tubes, %d icons; far shell %u triangles\n",
                p->form == NB_CORNER ? "corner" : "straight", p->form == NB_CORNER ? (p->side > 0 ? " (+x)" : " (-x)") : "", p->x1 - p->x0,
                p->front, p->lip, p->hood.spring, p->hoodTop, p->nstool, p->ntube, p->nicon, fm.ni / 3);
+        const uint32_t fin = nb_finish(s->site.affluence, s->site.seed);
+        printf("  finish: coat %u, hood %s, A-frame %s (NB4b)\n", (fin >> 5) & 7u, sl_hood(fin),
+               fin & NB_FINISH_BARE_WOOD ? "timber" : "painted");
         CHECK(fm.ni / 3 <= 500, "the slice's far shell has %u triangles, over 500", fm.ni / 3);
         pm_mesh_free(&fm);
     }
