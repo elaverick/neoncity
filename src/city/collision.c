@@ -103,6 +103,25 @@ void city_layout(int cx, int cz, BlockLayout *L) {
         for (int k = 0; k < n; ++k) { L->collv[L->ncollv][0] = v[k][0]; L->collv[L->ncollv][1] = v[k][1]; L->ncollv++; }
     }
     free(pr);
+    {   /* SF2: the lane vaults' posts */
+        CityVault *cv = (CityVault *)malloc(sizeof(CityVault) * 32);
+        if (!cv) fatal("out of memory colliding vaults");
+        const int nv = city_vendor_vaults(&g, g.ox, g.oz, g.ox + CHUNK_SIZE, g.oz + CHUNK_SIZE, cv, 32);
+        for (int i = 0; i < nv; ++i)
+            for (int side = 0; side < 2; ++side)
+                for (int k = 0; k < cv[i].plan.npost[side]; ++k) {
+                    const float x = cv[i].plan.post[side][k], z = side ? cv[i].plan.span - cv[i].plan.inset : cv[i].plan.inset;
+                    double wx, wz;
+                    vault_world(&cv[i], x, z, &wx, &wz);
+                    if (wx < g.ox || wx >= g.ox + CHUNK_SIZE || wz < g.oz || wz >= g.oz + CHUNK_SIZE || !coll_begin(L, 4)) continue;
+                    static const float C[4][2] = { { -0.12f, -0.12f }, { -0.12f, 0.12f }, { 0.12f, 0.12f }, { 0.12f, -0.12f } };
+                    for (int c = 0; c < 4; ++c) {
+                        vault_world(&cv[i], x + C[c][0], z + C[c][1], &L->collv[L->ncollv][0], &L->collv[L->ncollv][1]);
+                        L->ncollv++;
+                    }
+                }
+        free(cv);
+    }
     /* the street vendors: last, so city_test can tell them apart (vcoll0) */
     L->vcoll0 = L->ncoll;
     city_vendors(&g, collide_vendor, L);

@@ -365,19 +365,24 @@ static int slice_cams(int argc, char **argv) {
         double kms = 1000.0 * (double)(clock() - c0) / CLOCKS_PER_SEC;
         city_build_vendor_kit(kx, kz, &km2);
         int counts[PMK_COUNT] = { 0 }, out = 0;
+        /* SF2: every site in the chunk holds a vendor on the kit, the slice's among them */
+        static VendorSpot cs[MAX_VENDOR_SPOTS];
+        const int ncs = city_chunk_vendor_spots(kx, kz, cs, MAX_VENDOR_SPOTS);
         for (uint32_t i = 0; i < km.nkit; ++i) {
             const KitInst *k = &km.kit[i];
             if (k->module < PMK_COUNT) counts[k->module]++;
-            /* within the site grown by a metre (its stools and A-frame stand at its front), chunk-local to world */
+            /* within a site grown by a metre (its stools and A-frame stand at its front), chunk-local to world */
             double wx = k->xf[3] + kx * (double)CHUNK_SIZE, wz = k->xf[11] + kz * (double)CHUNK_SIZE;
-            out += !vendor_spot_contains(s, wx, wz, 1.0, 1.0);
+            int in = 0;
+            for (int c = 0; c < ncs && !in; ++c) in = vendor_spot_contains(&cs[c], wx, wz, 1.0, 1.0);
+            out += !in;
         }
         CHECK(km.nkit > 0, "the slice sets down no kit");
         CHECK(km.nkit == km2.nkit && !memcmp(km.kit, km2.kit, sizeof(KitInst) * km.nkit), "the slice's kit is not deterministic");
         CHECK(km.count == km2.count && !memcmp(km.v, km2.v, sizeof(Vertex) * km.count), "the slice's body is not deterministic");
         printf("  vendor layer: %u body triangles (%.1f MB of the pool), built in %.0f ms\n", km.count / 3,
                (double)km.count * sizeof(Vertex) / 1048576.0, kms);
-        CHECK(out == 0, "%d of the slice's kit modules stand outside its site", out);
+        CHECK(out == 0, "%d of the chunk's kit modules stand outside its vendors' sites", out);
         printf("  kit: %u modules set down:", km.nkit);
         for (int m = 0; m < PMK_COUNT; ++m) if (counts[m]) printf(" %s %d", pm_module(m)->name, counts[m]);
         printf("\n");

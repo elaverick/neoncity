@@ -49,7 +49,7 @@
 #ifndef POOL_PAGES
 #define POOL_PAGES        4300          /* 4300 * 3072 * 40B = 504 MB */
 #endif
-#define MAX_CHUNK_PAGES   64
+#define MAX_CHUNK_PAGES   128   /* SF2: 64 -> 128 (15.7 MB a layer: inside STAGING_BYTES) for the vendor layer's bodies */
 #define MAX_FRAMES        2
 #define STAGING_BYTES     (24u * 1024u * 1024u)
 #define MAX_DRAW_CHUNKS   4096          /* 12 bits in the prepass G-buffer (PG_CHUNK in shaders/common.glsl) */
@@ -142,10 +142,14 @@ enum {
  * its material (PMAT_*), z its baked occlusion, w its baked wear; aux its piece (bits 0-7), its flags'
  * low byte (8-15: the vendor's wear, KIT_FLAG_HEAT, its coat), KIT_AUX_FAR (16), its flags' high byte
  * (17-24: its hood's metal); the seed the vendor's. A far shell's vertices
- * (KIT_AUX_FAR, in the base layer) are dropped by city.vert wherever the chunk's vendor layer, holding
- * the near body, is drawn (ChunkGPU.origin[3] 1), and cast no ray-traced shadows. Must match
+ * (KIT_AUX_FAR, in the base layer) carry their vendor's index in the chunk (bits 25-31, KIT_AUX_BODY_SHIFT)
+ * and are dropped by city.vert while that vendor's near body is resident (ChunkGPU.bodies; SF2: bodies are
+ * streamed per vendor within VENDOR_BODY_DISTANCE), and cast no ray-traced shadows. Must match
  * shaders/city.vert. */
 #define KIT_AUX_FAR (1u << 16)
+#define KIT_AUX_BODY_SHIFT 25
+#define VENDOR_BODIES_MAX  128        /* a chunk's vendors with bodies of their own (ChunkGPU.bodies' bits) */
+#define VENDOR_BODY_DISTANCE 28.0f    /* SF2: a vendor's near body is streamed within this of the camera */
 
 /* Industrial plants' surfaces (MAT_INDUSTRY params.y; src/city/mesh_industry.c):
  * paint, open grating, steam, glazing lit from within, wire mesh. Must match
@@ -179,6 +183,7 @@ typedef struct Vertex {
 typedef struct ChunkGPU {
     float   origin[4];   /* chunk origin relative to the camera */
     int32_t info[4];     /* cx, cz, first light record (-1 if none), graffiti at its corners (city_graffiti_corners; 0 but in the view's draws) */
+    uint32_t bodies[4];  /* SF2: a base layer's vendors whose near bodies are resident (bit i: its vendor i): city.vert drops their far shells */
 } ChunkGPU;
 
 /* std430, mirrored in shaders/clouds.comp. pos is chunk-local in a Mesh and

@@ -105,11 +105,15 @@ static void roof_slots(Vendor *v, float x0, float x1, float z0, float z1, float 
  * rules, the bounds, the footprint, the dressing's tops and slots) see the bar as it is built: the hood's legs
  * and the deck as roofs carried by the walls, posts and column; the counter's runs; the bench; the extractor
  * and its duct; the stools where the plan sets them; the tubes as its lights. */
-static int build_canopy(VGen *G, VFrame *F) {
+/* SF2: every form on the kit (noodle_bar.h) is planned the same way and mirrored in coarse parts that are never
+ * drawn (the rules, bounds and dressing see the vendor through them): the canopy bar (straight or corner, form
+ * -1: the plan chooses), the hatch kiosk, the arcade counter, the tiered kiosk. */
+static int build_kit(VGen *G, VFrame *F, int form) {
     Vendor *v = G->v;
     float ceil = ceiling_of(v);
     NbPlan *p = &v->nb;
-    if (!nb_plan(p, v->site.w, v->site.d, v->site.ceiling, v->site.seed, -1, v->trade, v->site.affluence)) return 0;
+    if (!nb_plan_site(p, v->site.w, v->site.d, v->site.ceiling, v->site.seed, form, v->trade, v->site.affluence,
+                      (v->site.hostWall ? NB_SITE_HOST : 0) | (v->site.vaulted ? NB_SITE_VAULT : 0))) return 0;
     if (p->top > ceil + 1e-3f) return 0;
     v->layout = p->form;
     v->variant = p->side > 0;
@@ -160,9 +164,26 @@ static int build_canopy(VGen *G, VFrame *F) {
         if (roof < 0) roof = k;
         for (int i = 0; i < ns; ++i) v_edge(v, sup[i], k, VE_SUPPORTS);
     }
+    const int legs = v->npart;   /* the hood's legs' roofs are the parts before it */
     if (p->deck[2] > p->deck[0]) {
         int k = v_box(v, VR_ROOF, VS_RUST, VCOL_BODY, p->deck[0], p->hoodTop - 0.02f, p->deck[1], p->deck[2], p->hoodTop, p->deck[3]);
         if (k >= 0) for (int i = 0; i < ns; ++i) v_edge(v, sup[i], k, VE_SUPPORTS);
+        /* SF2: the tiered kiosk's deck sits on its hood's spine all round (the legs carry its edges) */
+        if (k >= 0 && p->form == NB_TIERED)
+            for (int i = 0; i < legs; ++i) if (v->part[i].role == VR_ROOF) v_edge(v, i, k, VE_SUPPORTS);
+        if (roof < 0) roof = k;
+    }
+    if (p->form == NB_ARCADE && p->rodTop > 0.0f && roof >= 0) {   /* SF2: the arcade's deck hangs from the ceiling */
+        const int nr = p->x1 - p->x0 > 3.0f ? 3 : 2;
+        for (int r = 0; r < nr; ++r) {
+            const float x = r == 0 ? p->x0 + 0.15f : r == 1 ? p->x1 - 0.15f : 0.5f * (p->x0 + p->x1), z = p->lip - 0.03f;
+            int k = v_box(v, VR_SUPPORT, VS_STEEL, VCOL_TRIM, x - 0.008f, p->deckY, z - 0.008f, x + 0.008f, p->rodTop, z + 0.008f);
+            if (k >= 0) v_edge(v, k, roof, VE_SUPPORTS);
+        }
+    }
+    if (p->upper[2] > p->upper[0]) {   /* SF2: the tiered kiosk's upper tier on its deck */
+        int k = v_box(v, VR_SHELL, VS_STEEL, VCOL_BODY, p->upper[0], p->upper[4], p->upper[1], p->upper[2], p->upper[5], p->upper[3]);
+        if (k >= 0 && roof >= 0) v_edge(v, roof, k, VE_SUPPORTS);
     }
     F->roofTop = p->hoodTop; F->roofPart = roof;
     /* the counter's runs (their tops), the bench, the extractor, the duct */
@@ -173,7 +194,9 @@ static int build_canopy(VGen *G, VFrame *F) {
         float x0 = minf(minf(ax, bx), minf(ax - nx, bx - nx)), x1 = maxf(maxf(ax, bx), maxf(ax - nx, bx - nx));
         float z0 = minf(minf(az, bz), minf(az - nz, bz - nz)), z1 = maxf(maxf(az, bz), maxf(az - nz, bz - nz));
         int body = v_box(v, VR_SHELL, VS_STEEL, VCOL_ACC2, x0, 0.0f, z0, x1, p->cy - 0.04f, z1);
-        int top = v_box(v, VR_COUNTER, VS_STAINLESS, VCOL_TRIM, x0, p->cy - 0.04f, z0, x1, p->cy, z1);
+        /* SF2: the kiosk's counter is its inner counter and the sill outside it together */
+        const float zs = p->form == NB_HATCH && i == 0 ? z1 + p->sill : z1;
+        int top = v_box(v, VR_COUNTER, VS_STAINLESS, VCOL_TRIM, x0, p->cy - 0.04f, z0, x1, p->cy, zs);
         if (body >= 0 && top >= 0) v_edge(v, body, top, VE_SUPPORTS);
         add_surface(F, VSU_COUNTER, x0 + 0.05f, z0 + 0.05f, x1 - 0.05f, z1 - 0.05f, p->cy);
     }
@@ -217,89 +240,6 @@ static int build_canopy(VGen *G, VFrame *F) {
         v_slot(v, VSL_GROUND, p->x0 - 0.5f * sw, 0.0f, 0.5f * p->front, 0.0f, 1.0f, sw - 0.1f, 1.6f);
         v_slot(v, VSL_GROUND, p->x1 + 0.5f * sw, 0.0f, 0.5f * p->front, 0.0f, 1.0f, sw - 0.1f, 1.6f);
     }
-    return 1;
-}
-
-/* ------------------------------------------------------------ hatch kiosk --- */
-
-static int build_hatch(VGen *G, VFrame *F) {
-    Vendor *v = G->v;
-    Rng *r = &G->rs;
-    float W = v->site.w, D = v->site.d, ceil = ceiling_of(v);
-    if (W < 1.9f || D < 2.3f || ceil < 2.9f) return 0;
-    float bw = minf(W - 0.1f, rng_range(r, 1.8f, 3.0f)), bd = minf(D - 0.9f, rng_range(r, 1.5f, 2.4f));
-    if (bd < 1.4f) return 0;
-    float H = minf(rng_range(r, 2.45f, 2.8f), ceil - 0.45f);
-    if (H < 2.4f) return 0;
-    float x0 = -0.5f * bw, x1 = 0.5f * bw, t = 0.06f;
-    float sill = rng_range(r, 0.96f, 1.05f), head = minf(H - rng_range(r, 0.32f, 0.42f), sill + V_FLAP_MAX - 0.05f);
-    int nh = bw >= 2.6f && rng_float(r) < 0.45f ? 2 : 1;
-    v->layout = nh - 1;
-    float pier = 0.25f, hw = (bw - 2.0f * pier - (float)(nh - 1) * pier) / (float)nh;
-    v->front = bd + 0.3f;
-    v->clearMin = V_CLEAR_MIN;
-    float ov = minf(0.12f, 0.5f * (W - bw) - 0.01f);
-    int roofP = v_box(v, VR_ROOF, VS_STEEL, VCOL_TRIM, x0 - ov, H, 0.0f, x1 + ov, H + 0.1f, bd + rng_range(r, 0.12f, 0.3f));
-    F->roofTop = H + 0.1f; F->roofPart = roofP;
-    int walls[4];
-    walls[0] = wall(v, x0, 0.0f, 0.0f, x1, H, t);                     /* back */
-    walls[1] = wall(v, x0, 0.0f, t, x0 + t, H, bd - t);                /* sides */
-    walls[2] = wall(v, x1 - t, 0.0f, t, x1, H, bd - t);
-    walls[3] = wall(v, x0, 0.0f, bd - t, x1, sill, bd);                /* the front: below the sill, above the head */
-    int above = wall(v, x0, head, bd - t, x1, H, bd);
-    for (int k = 0; k < 4; ++k) if (walls[k] >= 0 && roofP >= 0) { v_edge(v, walls[k], roofP, VE_SUPPORTS); v->part[walls[k]].faces = VB_TOP | VB_BOT; }
-    if (above >= 0 && roofP >= 0) v_edge(v, above, roofP, VE_ATTACHED_TO);
-    /* the piers between and beside the hatches, a hatch, a flap on struts and a shelf under each */
-    /* the flaps' angle from the vertical: as open as the site leaves room for, and high
-     * enough over where a customer stands (0.35 m out from the shelf) */
-    float ang = rng_range(r, 0.95f, 1.3f), L = head - sill;
-    float maxOut = D - bd - 0.05f;
-    if (L * sinf(ang) > maxOut) ang = maxOut >= L ? ang : asinf(maxOut / L);
-    if (head < V_CLEAR_MIN + 0.03f) ang = minf(ang, atan2f(0.65f, V_CLEAR_MIN + 0.03f - head));
-    if (ang < 0.5f) return 0;
-    float hx = x0 + pier;
-    wall(v, x0, sill, bd - t, x0 + pier, head, bd);
-    for (int k = 0; k < nh; ++k) {
-        float a = hx, b = hx + hw;
-        int pierR = wall(v, b, sill, bd - t, k == nh - 1 ? x1 : b + pier, head, bd);
-        (void)pierR;
-        int room = v_opening(v, VO_HATCH, a, sill, bd, 1.0f, 0.0f, hw, head - sill, bd - t - 0.05f, walls[3] >= 0 ? walls[3] : 0);
-        (void)room;
-        float q[4][3] = { { a, head, bd + 0.01f }, { b, head, bd + 0.01f },
-                          { b, head + L * cosf(ang), bd + 0.01f + L * sinf(ang) }, { a, head + L * cosf(ang), bd + 0.01f + L * sinf(ang) } };
-        int flap = v_quad(v, VR_FLAP, VS_FINISH, VCOL_BODY, q, VPF_TWOSIDED);
-        if (flap >= 0 && above >= 0) v_edge(v, flap, above, VE_ATTACHED_TO);
-        for (int s = 0; s < 2; ++s) {
-            float xs = s ? b - 0.03f : a + 0.03f;
-            int st = v_beam(v, VR_STRUT, VS_STEEL, VCOL_TRIM, xs, head - 0.35f, bd + 0.02f, xs, q[2][1] - 0.02f, q[2][2] - 0.03f, 0.025f);
-            if (st >= 0 && flap >= 0) v_edge(v, st, flap, VE_SUPPORTS);
-        }
-        int shelf = v_box(v, VR_SHELL, VS_LAMINATE, VCOL_TRIM, a - 0.05f, sill - 0.04f, bd, b + 0.05f, sill, bd + 0.3f);
-        (void)shelf;
-        add_surface(F, VSU_SHELF, a, bd + 0.03f, b, bd + 0.27f, sill);
-        if (head - V_HANG_CLEAR >= 0.22f) add_rail(F, a + 0.1f, bd + 0.06f, b - 0.1f, bd + 0.06f, head - 0.03f, 1);
-        hx = b + pier;
-    }
-    uint32_t lc = lamp_rgb(v);
-    v_light(v, lamp_kind(v), 0.0f, head - 0.1f, 0.5f * bd, 0.8f, lc);
-    /* a door in a side wall */
-    int ds = rng_float(r) < 0.5f ? -1 : 1;
-    float dx = ds < 0 ? x0 - 0.01f : x1 + 0.01f, dz0 = maxf(0.15f, bd * 0.5f - 0.4f), dz1 = minf(bd - 0.15f, bd * 0.5f + 0.4f);
-    float dq[4][3] = { { dx, 0.05f, ds < 0 ? dz1 : dz0 }, { dx, 0.05f, ds < 0 ? dz0 : dz1 }, { dx, 2.0f, ds < 0 ? dz0 : dz1 }, { dx, 2.0f, ds < 0 ? dz1 : dz0 } };
-    v_quad(v, VR_SHELL, VS_STEEL, VCOL_TRIM, dq, 0);
-    v_slot(v, VSL_WALL, -dx, 1.5f, 0.5f * bd, (float)-ds, 0.0f, bd - 0.3f, 1.4f);
-    v_slot(v, VSL_WALL, 0.0f, 1.5f, -0.005f, 0.0f, -1.0f, bw - 0.3f, 1.4f);
-    if (V_TRADES[v->trade].cooking == 2) {
-        F->cook[0] = 0.0f; F->cook[1] = sill - 0.1f; F->cook[2] = 0.5f * bd;
-        float fx = x1 - 0.35f, fz = 0.35f;
-        int flue = v_cyl(v, VR_FLUE, VS_STEEL, VCOL_TRIM, fx, H + 0.1f, fz, fx, minf(H + 0.1f + rng_range(r, 0.65f, 1.0f), ceil - 0.05f), fz, 0.1f, 8);
-        if (flue >= 0 && roofP >= 0) v_edge(v, flue, roofP, VE_MOUNTED_ON);
-    }
-    F->front = bd + 0.3f;
-    F->signY = H + 0.1f; F->signW = minf(bw, 2.4f);
-    roof_slots(v, x0 + 0.2f, x1 - 0.2f, 0.1f, bd * 0.6f, H + 0.1f, 2);
-    if (W - bw > 0.9f) v_slot(v, VSL_GROUND, x1 + 0.25f + 0.25f * (W - bw - 0.9f), 0.0f, 0.5f * bd, 0.0f, 1.0f, 0.5f * (W - bw) - 0.15f, 1.5f);
-    v->box[0] = x0 - 0.12f; v->box[1] = -0.05f; v->box[2] = x1 + 0.12f; v->box[3] = bd + 0.3f;
     return 1;
 }
 
@@ -988,8 +928,10 @@ int v_build_structure(VGen *G, VFrame *F) {
     F->cook[1] = -1.0f;
     F->roofPart = -1;
     switch (G->v->archetype) {
-    case VA_CANOPY:    return build_canopy(G, F);
-    case VA_HATCH:     return build_hatch(G, F);
+    case VA_CANOPY:    return build_kit(G, F, -1);
+    case VA_HATCH:     return build_kit(G, F, NB_HATCH);
+    case VA_ARCADE:    return build_kit(G, F, NB_ARCADE);
+    case VA_TIERED:    return build_kit(G, F, NB_TIERED);
     case VA_LEANTO:    return build_leanto(G, F);
     case VA_CONTAINER: return build_container(G, F);
     case VA_PAIR:      return build_pair(G, F);
@@ -1001,8 +943,9 @@ int v_build_structure(VGen *G, VFrame *F) {
 
 void vendor_min_site(int a, float *w, float *d) {
     static const float M[VA_COUNT][2] = {
-        { 3.3f, 3.1f }, { 2.0f, 2.3f }, { 2.5f, 2.4f }, { V_BOX20 + 0.3f, V_BOX_W + 1.3f },
-        { V_BOX20 + 0.3f, V_BOX_W + V_BOX10 + 0.3f }, { 2.2f, 2.4f }, { 2.0f, 1.7f } };   /* a barrow: its bed up to 1 m wide, 0.65 m round it */
+        { 2.2f, 2.4f }, { 1.9f, 1.65f }, { 2.5f, 2.4f }, { V_BOX20 + 0.3f, V_BOX_W + 1.3f },
+        { V_BOX20 + 0.3f, V_BOX_W + V_BOX10 + 0.3f }, { 2.2f, 2.4f }, { 2.0f, 1.7f },   /* a barrow: its bed up to 1 m wide, 0.65 m round it */
+        { 2.2f, 2.2f }, { 4.0f, 3.4f } };   /* SF2: the canopy bar and hatch kiosk on the kit, the arcade counter, the tiered kiosk */
     *w = a >= 0 && a < VA_COUNT ? M[a][0] : 2.0f;
     *d = a >= 0 && a < VA_COUNT ? M[a][1] : 2.0f;
 }

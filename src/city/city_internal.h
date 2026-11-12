@@ -374,6 +374,8 @@ int     city_props(ChunkGen *g, double x0, double z0, double x1, double z1, int 
  * every block that reaches the rectangle. */
 enum { VSPOTS_OWNED = 0, VSPOTS_TOUCH, VSPOTS_BLOCKS };
 int     city_vendor_spots(ChunkGen *g, double x0, double z0, double x1, double z1, int touch, VendorSpot *out, int max);
+/* SF2: the lane vaults of the blocks reaching x0..x1, z0..z1 (whole; vendor_sites.h CityVault). */
+int     city_vendor_vaults(ChunkGen *g, double x0, double z0, double x1, double z1, struct CityVault *out, int max);
 
 /* mesh_vendor.c */
 /* city_chunk_vendors for g's chunk; g must hold the buildings of every block that reaches it. */
@@ -382,7 +384,13 @@ int     city_vendors(ChunkGen *g, VendorVisit fn, void *ctx);
 void    build_vendors(Mesh *m, ChunkGen *g);
 /* vendor_kit.c: a noodle bar's body or far shell (far: KIT_AUX_FAR), baked, in the vendor's frame, into m as
  * MAT_KIT triangles (src/core/common.h). */
-void    vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMesh *pm, int far);
+/* far: 0 the near body; 1 its far shell, dropped while body idx of the chunk is resident (SF2); 2 a far shell
+ * always drawn (a vendor past VENDOR_BODIES_MAX) */
+void    vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMesh *pm, int far, int refine, int idx);
 uint32_t vendor_kit_flags(const Vendor *v);
 /* light_tiles.c: a noodle bar's lights (nb_lights, NB6) into g's list for build_lights, chunk-local in m. */
 void    vendor_lights(ChunkGen *g, const Mesh *m, const VendorSpot *s, const Vendor *v);
+void    vendor_light_list(ChunkGen *g, const Mesh *m, const VendorSpot *s, const NbLight *L, int n);
+/* SF2: kit geometry of no vendor's (a lane vault's) into the base layer, in s's frame: flags as a vendor's
+ * (wear, finish) */
+void    vendor_emit_kit(Mesh *m, const VendorSpot *s, const PmMesh *pm, uint32_t flags, uint32_t seed);

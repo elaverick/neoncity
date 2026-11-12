@@ -31,7 +31,14 @@
  * site's ceiling if it has one. */
 
 /* Archetypes (section 2.1). */
-enum { VA_CANOPY = 0, VA_HATCH, VA_LEANTO, VA_CONTAINER, VA_PAIR, VA_MARKET, VA_BARROW, VA_COUNT };
+/* SF2: the forms on the kit (src/gen/noodle_bar.h NB_*) are the canopy (the wall stall or the corner bar), the
+ * hatch (the glazed service hatch kiosk), the arcade (the counter under a ceiling) and the tiered kiosk (forced
+ * only until SF3); the lean-to, container, pair, market stall and barrow are retired (never chosen; their code
+ * goes in SF6). */
+enum { VA_CANOPY = 0, VA_HATCH, VA_LEANTO, VA_CONTAINER, VA_PAIR, VA_MARKET, VA_BARROW, VA_ARCADE, VA_TIERED, VA_COUNT };
+/* Whether an archetype is built on the kit from a plan (Vendor.nb), and that plan's form for it. */
+static inline int vendor_is_kit(int a) { return a == VA_CANOPY || a == VA_HATCH || a == VA_ARCADE || a == VA_TIERED; }
+static inline int vendor_kit_form(int a) { return a == VA_HATCH ? NB_HATCH : a == VA_ARCADE ? NB_ARCADE : a == VA_TIERED ? NB_TIERED : -1; }
 /* Trades: the street-food trades (street_food.h, roadmap SF1; the doc's section 2.2 trades retired). */
 /* Affluence classes: below 1/3, to 2/3, above. */
 enum { VC_POOR = 0, VC_MID, VC_RICH, VC_COUNT };
@@ -148,6 +155,7 @@ typedef struct VendorSite {
     uint8_t  hostWall;      /* a solid wall along z = 0, which a lean-to may lean on */
     uint8_t  lunch;         /* a lunch stall for an office district */
     uint8_t  slice;         /* the noodle bar slice's site (vendor_sites.h VENDOR_SLICE_X; roadmap NB0) */
+    uint8_t  vaulted;       /* SF2: under a lane's vault (its ceiling the girders' underside, higher in front) */
     int8_t   archetype;     /* VA_*, or -1: chosen */
     int8_t   trade;         /* VT_*, or -1: chosen */
 } VendorSite;

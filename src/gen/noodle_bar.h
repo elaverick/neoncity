@@ -31,10 +31,26 @@
  * The frame is the vendor's (vendor.h): x across the site's frontage
  * (centred), z out from its back (0) to its front (d), y up from its floor. */
 
-enum { NB_STRAIGHT = 0, NB_CORNER, NB_FORMS };
-#define NB_RUNS_MAX    2
-#define NB_WALLS_MAX   5
-#define NB_POSTS_MAX   3
+/* SF2: the forms on the kit (one plan each, so the kitchen, the line, the lights, steam, grime and finish serve
+ * them all; ~/.claude/plans/street-vendors.md "SF2: the design"):
+ *   NB_STRAIGHT  the wall stall (the slice's bar), now down to 2.2 x 2.4 m; freestanding where there's no host
+ *                wall (its back clad in the body's paint);
+ *   NB_CORNER    the corner bar (against a host wall);
+ *   NB_HATCH     the glazed service hatch kiosk: a closed box under the hood, the kitchen inside, glazed over
+ *                its inner counter with one pane slid aside, a sill outside, a door in a side wall;
+ *   NB_ARCADE    the counter under an arcade or a vault (a site with a ceiling): no hood, a flat soffit deck
+ *                and a deep header across the front, hung from the ceiling;
+ *   NB_TIERED    the tiered kiosk round a column: the hood round three sides on a U spine, counters on three
+ *                runs, an upper tier on the deck round the column (forced only until SF3 finds columns). */
+enum { NB_STRAIGHT = 0, NB_CORNER, NB_HATCH, NB_ARCADE, NB_TIERED, NB_FORMS };
+const char *nb_form_name(int form);
+int         nb_form_by_name(const char *name);   /* -1 if none */
+#define NB_RUNS_MAX    3
+#define NB_WALLS_MAX   8
+#define NB_POSTS_MAX   4
+/* SF2: what a wall is: a side wall (painted sheet outside, the stainless lining and its framing inside), the
+ * kitchen's back lining (stainless), or a freestanding form's back cladding (painted sheet, seen from outside) */
+enum { NB_WALL_SIDE = 0, NB_WALL_LINING, NB_WALL_CLAD };
 #define NB_STOOLS_MAX  12
 #define NB_TUBES_MAX   6
 #define NB_ICONS_MAX   6
@@ -51,6 +67,18 @@ typedef struct NbWall { float o[2], u[2], len, h; } NbWall;
 
 typedef struct NbPlan {
     int      form, side;            /* NB_*; the corner form's corner: +1 at the site's +x end, -1 its -x end */
+    uint8_t  freestanding;          /* SF2: no host wall behind it: its back is clad (and seen) */
+    uint8_t  stools;                /* SF2: whether the depth left room for stools (else a standing counter) */
+    float    ceiling;               /* SF2: the site's (0: open sky) */
+    /* SF2, the hatch kiosk: its glazing over the inner counter (cy .. glazeTop), the hatch (the pane slid aside)
+     * across the front from hatch[0] to hatch[1], the sill outside (sill deep), the door in the side wall at
+     * door[0] (its x: x0 or x1) from z door[1] to door[2] */
+    float    glazeTop, hatch[2], sill, door[3];
+    /* SF2, the arcade counter: its soffit deck's underside (deckY; the header's bottom is hood.spring - fascia_h),
+     * the drop rods' tops (the ceiling: 0 none) */
+    float    deckY, rodTop;
+    /* SF2, the tiered kiosk: its upper tier's box x0, z0, x1, z1, y0, y1 (x0 >= x1: none) */
+    float    upper[6];
     int      trade;                 /* VT_* (street_food.h, SF1): what the line cooks, its icons and menu */
     float    affluence;             /* the district's, 0..1: the clutter (SF1; the coat and hood: nb_finish) */
     uint32_t seed;
@@ -75,6 +103,7 @@ typedef struct NbPlan {
     float    front;                 /* z of the front run's face: customers stand beyond it */
     int      nrun;   NbRun  run[NB_RUNS_MAX];
     int      nwall;  NbWall wall[NB_WALLS_MAX];
+    uint8_t  wallKind[NB_WALLS_MAX];                    /* NB_WALL_* */
     int      npost;  float  post[NB_POSTS_MAX][3];     /* x, z, height (60 mm square) */
     float    column[4];             /* the corner form's column: x, z, half size, height (half 0: none) */
     int      nstool; float  stool[NB_STOOLS_MAX][2];   /* where each stands (its foot's middle) */
@@ -117,6 +146,11 @@ uint8_t nb_icon_seed(const NbPlan *p, int icon);
  * where it does). The trade changes nothing the draws make (the body is the same for every trade): only the
  * line, its steam, lights and grime, the icons and the menu. */
 int  nb_plan(NbPlan *p, float w, float d, float ceiling, uint32_t seed, int form, int trade, float affluence);
+/* SF2: as nb_plan, for a site with or without a host wall behind it (nb_plan's have one; the straight form stands
+ * freestanding without, the corner form needs one) and under a lane's vault or not (the arcade counter hangs its
+ * header from a ceiling, but under a vault the ceiling's the girders' at its back: it stands it on posts). */
+enum { NB_SITE_HOST = 1, NB_SITE_VAULT = 2 };
+int  nb_plan_site(NbPlan *p, float w, float d, float ceiling, uint32_t seed, int form, int trade, float affluence, int site);
 /* The neon icons a trade's fascia cycles through (PMK_ICON_*), up to 3; returns how many. */
 int  nb_trade_icons(int trade, int *out);
 /* Forces every plan's form (-1: chosen; NB_* where it fits), for captures (NeonCity --nbform). */
@@ -217,6 +251,8 @@ int  nb_at_range(const NbPlan *p, const float pos[3]);
 int  nb_solids(const NbPlan *p, float (*box)[4], int max);
 /* The hood's sheet's underside height a distance `out` from its spine (0 at the spine, its span at the lip). */
 float nb_hood_under(const NbPlan *p, float out);
+/* SF2: whether the duct has room for its rain cap over it (else it goes up into the site's ceiling). */
+int   nb_duct_capped(const NbPlan *p);
 
 /* ---------------------------------------------------------------------------
  * Steam and smoke (NB7): what the cooking gives off, as volumes the smoke

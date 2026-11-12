@@ -21,9 +21,12 @@
 
 static int g_kit = KIT_SLICE;
 void city_set_kit(int mode) { g_kit = mode; }
+static int g_kit_lod = PM_LOD1;
+void city_set_kit_lod(int lod) { g_kit_lod = lod <= PM_LOD0 ? PM_LOD0 : PM_LOD1; }
+int  city_kit_lod(void) { return g_kit_lod; }
 int  city_kit_mode(void) { return g_kit; }
 
-typedef struct KitEmit { Mesh *m; PmInstances inst; PmMesh body, none, occ; } KitEmit;
+typedef struct KitEmit { Mesh *m; PmInstances inst; PmMesh body, none, occ; int want, seen; } KitEmit;   /* want: one vendor's body (its index), or -1 all */
 
 /* A bar's flags but the heat: the vendor's wear (0..15) and its finish (its coat, its hood's metal, whether its
  * A-frame is bare timber: nb_finish; the caller keeps that last bit for the A-frame alone), and its tubes'
@@ -43,7 +46,7 @@ static uint32_t icon_glow(const NbPlan *p, int i) {
 #define BODY_REFINE 3
 typedef struct BodyEmit {
     Mesh *m; const VendorSpot *s; const Vendor *v; const NbLine *L; const NbSteam *st; int nst;
-    uint32_t seed, wear; int far;
+    uint32_t seed, wear; int far, refine, idx;
 } BodyEmit;
 
 static void body_vertex(const BodyEmit *B, const PmVertex *x, float g) {
@@ -55,7 +58,8 @@ static void body_vertex(const BodyEmit *B, const PmVertex *x, float g) {
     uint32_t fl = B->wear | (nb_at_range(&B->v->nb, x->p) ? KIT_FLAG_HEAT : 0u);
     if (x->mat == PMAT_SIGN_FAR)   /* a far icon face: its own neon's colour (its part: 140 + the icon) */
         fl = (fl & ((1u << KIT_FLAG_GLOW_SHIFT) - 1u)) | icon_glow(&B->v->nb, (int)x->part - 140);
-    uint32_t aux = (uint32_t)x->part | (fl & 255u) << 8 | (B->far ? KIT_AUX_FAR : 0u) | (fl >> 8) << 17;
+    uint32_t aux = (uint32_t)x->part | (fl & 255u) << 8 | (fl >> 8) << 17 |
+                   (B->far == 1 ? KIT_AUX_FAR | (uint32_t)B->idx << KIT_AUX_BODY_SHIFT : 0u);   /* its body's index (SF2) */
     mesh_push_w(B->m, p, n, (int8_t)lrintf(127.0f * g), x->uv[0], x->uv[1], B->seed, prm, aux);
 }
 
@@ -72,7 +76,7 @@ static PmVertex body_mid(const PmVertex *a, const PmVertex *b) {
 }
 
 static void body_tri(const BodyEmit *B, const PmVertex t[3], const float g[3], int depth) {
-    if (depth < BODY_REFINE) {
+    if (depth < B->refine) {
         /* split when an edge is long and the grime at its middle isn't what the corners would give it */
         float e = 0.0f;
         for (int k = 0; k < 3; ++k) {
@@ -100,7 +104,7 @@ static void body_tri(const BodyEmit *B, const PmVertex t[3], const float g[3], i
     for (int k = 0; k < 3; ++k) body_vertex(B, &t[k], g[k]);
 }
 
-void vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMesh *pm, int far) {
+void vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMesh *pm, int far, int refine, int idx) {
     const uint32_t wear = vendor_kit_flags(v) & ~KIT_FLAG_BARE_WOOD;
     const uint32_t seed = hash_combine(s->site.seed, 0x4B42u);
     /* the near body's grime from the cooking (NB7): grease round the burners, condensation where the steam runs;
@@ -111,7 +115,8 @@ void vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMes
     if (!far) { nb_line(&v->nb, &L); nst = nb_steam(&v->nb, &L, s->site.ceiling, st, NB_STEAMS_MAX); }
     m->grounded = 1;
     m->ground = s->y;   /* its heights count from its floor */
-    BodyEmit B = { m, s, v, &L, st, nst, seed, wear, far };
+    /* SF2: a city body (LOD1, not the slice's) refines once less */
+    BodyEmit B = { m, s, v, &L, st, nst, seed, wear, far, refine, idx };
     for (uint32_t i = 0; i + 2 < pm->ni; i += 3) {
         PmVertex t[3];
         float g[3];
@@ -119,7 +124,22 @@ void vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMes
             t[k] = pm->v[pm->idx[i + k]];
             g[k] = far ? 0.0f : nb_grime(&v->nb, &L, st, nst, t[k].p, t[k].n);
         }
-        body_tri(&B, t, g, far ? BODY_REFINE : 0);
+        body_tri(&B, t, g, far ? B.refine : 0);
+    }
+    m->grounded = 0;
+}
+
+void vendor_emit_kit(Mesh *m, const VendorSpot *s, const PmMesh *pm, uint32_t flags, uint32_t seed) {
+    const float bx = (float)(s->x - m->ox), bz = (float)(s->z - m->oz);
+    m->grounded = 1;
+    m->ground = s->y;
+    for (uint32_t i = 0; i < pm->ni; ++i) {
+        const PmVertex *x = &pm->v[pm->idx[i]];
+        vec3 p = v3(bx + x->p[0] * s->fz + x->p[2] * s->fx, s->y + x->p[1], bz - x->p[0] * s->fx + x->p[2] * s->fz);
+        vec3 n = v3(x->n[0] * s->fz + x->n[2] * s->fx, x->n[1], -x->n[0] * s->fx + x->n[2] * s->fz);
+        uint8_t prm[4] = { MAT_KIT, x->mat, x->occ, x->wear };
+        uint32_t aux = (uint32_t)x->part | (flags & 255u) << 8 | (flags >> 8) << 17;
+        mesh_push_w(m, p, n, 0, x->uv[0], x->uv[1], seed, prm, aux);
     }
     m->grounded = 0;
 }
@@ -127,7 +147,13 @@ void vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMes
 static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     KitEmit *E = (KitEmit *)ctx;
     if (g_kit == KIT_OFF) return;
-    const int bar = v->archetype == VA_CANOPY;
+    const int bar = vendor_is_kit(v->archetype);
+    /* SF2: one vendor's body (city_build_vendor_body: the base layer's index of it), or every kit vendor's */
+    if (bar) {
+        const int idx = E->seen++;
+        if (E->want >= 0 && idx != E->want) return;
+    } else if (E->want >= 0) return;
+    const int lod = s->site.slice ? PM_LOD0 : g_kit_lod;
     const int line = bar || g_kit == KIT_ALL;
     if (!line) return;
     Mesh *m = E->m;
@@ -138,11 +164,11 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     Pm pm;
     if (bar) {
         E->body.nv = E->body.ni = 0;
-        pm_begin(&pm, &E->body, &E->inst, PM_LOD0);
+        pm_begin(&pm, &E->body, &E->inst, lod);
         nb_body(&pm, np);
         nb_line_occluders(np, &E->occ);   /* the line darkens the bench and counter round it (NB6) */
         pm_bake_with(&E->body, &E->occ, NB_BAKE_RAYS, pm_reach(&E->body));
-        vendor_emit_body(m, s, v, &E->body, 0);
+        vendor_emit_body(m, s, v, &E->body, 0, lod == PM_LOD0 ? BODY_REFINE : BODY_REFINE - 1, 0);
     }
     NbLine L;
     nb_line(np, &L);
@@ -194,16 +220,20 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     }
 }
 
-void city_build_vendor_kit(int cx, int cz, Mesh *m) {
+static void build_kit(int cx, int cz, int want, Mesh *m) {
     mesh_begin(m, cx, cz);
     m->nkit = 0;
     if (g_kit == KIT_OFF) return;
     KitEmit E;
     memset(&E, 0, sizeof(E));
     E.m = m;
+    E.want = want;
     city_chunk_vendors(cx, cz, kit_vendor, &E);
     pm_inst_free(&E.inst);
     pm_mesh_free(&E.body);
     pm_mesh_free(&E.none);
     pm_mesh_free(&E.occ);
 }
+
+void city_build_vendor_kit(int cx, int cz, Mesh *m) { build_kit(cx, cz, -1, m); }
+void city_build_vendor_body(int cx, int cz, int body, Mesh *m) { build_kit(cx, cz, body, m); }

@@ -500,11 +500,28 @@ static int over_vendor(const VendorSpot *vs, int nvs, DVec2 a, float ya, DVec2 b
     return 0;
 }
 
+/* SF2: whether a span passes through a lane's vault (under its top, over its footprint, grown 0.5 m) */
+static int through_vault(const CityVault *cv, int nv, DVec2 a, float ya, DVec2 b, float yb, float sag) {
+    for (int k = 0; k <= 16; ++k) {
+        float t = (float)k / 16.0f, y = lerpf(ya, yb, t) - 4.0f * sag * t * (1.0f - t);
+        DVec2 p = dadd(a, dscale(dsub(b, a), t));
+        for (int i = 0; i < nv; ++i) {
+            const double dx = p.x - cv[i].x, dz = p.z - cv[i].z;
+            const double lx = dx * cv[i].fz - dz * cv[i].fx, lz = dx * cv[i].fx + dz * cv[i].fz;
+            if (lx > -0.5 && lx < cv[i].plan.len + 0.5 && lz > -0.5 && lz < cv[i].plan.span + 0.5 && y < cv[i].y + vault_top(&cv[i].plan) + 0.5f) return 1;
+        }
+    }
+    return 0;
+}
+
 static void build_alley_cables(Mesh *m, ChunkGen *g) {
     /* the vendors' sites of the blocks of the buildings this chunk owns, which the cables pass high over */
     VendorSpot *vs = (VendorSpot *)malloc(sizeof(VendorSpot) * 1024);
     if (!vs) fatal("out of memory hanging cables");
     int nvs = city_vendor_spots(g, g->ox, g->oz, g->ox + CHUNK_SIZE, g->oz + CHUNK_SIZE, VSPOTS_BLOCKS, vs, 1024);
+    CityVault *cv = (CityVault *)malloc(sizeof(CityVault) * 32);
+    if (!cv) fatal("out of memory hanging cables");
+    const int ncv = city_vendor_vaults(g, g->ox - 20.0, g->oz - 20.0, g->ox + CHUNK_SIZE + 20.0, g->oz + CHUNK_SIZE + 20.0, cv, 32);
     for (int i = 0; i < g->nb; ++i) {
         const Building *b = &g->bld[i];
         if (!chunk_gen_owns(g, b->ox, b->oz)) continue;
@@ -555,7 +572,7 @@ static void build_alley_cables(Mesh *m, ChunkGen *g) {
                             if (glass_near(wb.bg, wb.s, wb.len, hb.u, yb - wb.base, ALLEY_GAP_U - 0.05f, ALLEY_GAP_V - 0.05f)) continue;
                             DVec2 pa = to_world(b, lx - e.ez * 0.08f, lz + e.ex * 0.08f);
                             float sag = span_sag(pa, ya, pb, yb, sagFrac * (1.0f + 0.4f * (float)j), gm + ALLEY_CLEAR);
-                            if (!clear_of_glass(&wa, pa, ya, pb, yb, sag) || !clear_of_glass(&wb, pa, ya, pb, yb, sag) || over_vendor(vs, nvs, pa, ya, pb, yb, sag)) continue;
+                            if (!clear_of_glass(&wa, pa, ya, pb, yb, sag) || !clear_of_glass(&wb, pa, ya, pb, yb, sag) || over_vendor(vs, nvs, pa, ya, pb, yb, sag) || through_vault(cv, ncv, pa, ya, pb, yb, sag)) continue;
                             emit_span(m, g, pa, ya, pb, yb, sag, thick, mt);
                         }
                     }
@@ -563,7 +580,7 @@ static void build_alley_cables(Mesh *m, ChunkGen *g) {
             }
         }
     }
-    free(vs);
+    free(vs); free(cv);
 }
 
 void build_cables(Mesh *m, ChunkGen *g) {

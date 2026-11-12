@@ -1281,6 +1281,28 @@ int main(int argc, char **argv) {
         return slice_cams(argc, argv);
     }
     if (argc > 3 && strcmp(argv[1], "--vs-probe") == 0) return vs_probe(atof(argv[2]), atof(argv[3]));
+    if (argc > 3 && strcmp(argv[1], "--kit-chunk") == 0) {   /* SF2: one chunk's vendor layer: its size and build time */
+        const int cx = (int)floor(atof(argv[2]) / CHUNK_SIZE), cz = (int)floor(atof(argv[3]) / CHUNK_SIZE);
+        Mesh km;
+        memset(&km, 0, sizeof(km));
+        clock_t c0 = clock();
+        city_build_vendor_kit(cx, cz, &km);
+        const double ms = 1000.0 * (double)(clock() - c0) / CLOCKS_PER_SEC;
+        printf("chunk (%d,%d): %u body triangles (%.1f MB, %u pages of %d), %u kit instances, built in %.0f ms\n", cx, cz,
+               km.count / 3, (double)km.count * sizeof(Vertex) / 1048576.0, (km.count + PAGE_VERTS - 1) / PAGE_VERTS, MAX_CHUNK_PAGES, km.nkit, ms);
+        {   /* and the base layer's far shells: dropped near (a body stands in) or kept */
+            Mesh bm;
+            memset(&bm, 0, sizeof(bm));
+            city_build_mesh(cx, cz, &bm);
+            uint32_t dropped = 0, kept = 0;
+            for (uint32_t i = 0; i < bm.count; i += 3)
+                if (bm.v[i].params[0] == MAT_KIT) { if (bm.v[i].aux & KIT_AUX_FAR) dropped++; else kept++; }
+            printf("  base layer: %u far-shell triangles dropped near, %u kit triangles kept (far shells without a body, vaults)\n", dropped, kept);
+            mesh_free(&bm);
+        }
+        return 0;
+    }
+    if (argc > 5 && strcmp(argv[1], "--big-site") == 0) return big_sites(atof(argv[2]), atof(argv[3]), atof(argv[4]), atof(argv[5]));
     if (argc > 1 && strcmp(argv[1], "--screens") == 0) return screens_cams();
     if (argc > 1 && strcmp(argv[1], "--facades") == 0) return facades_cams();
     if (argc > 1 && strcmp(argv[1], "--graffiti") == 0) return graffiti_cams();

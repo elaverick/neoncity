@@ -135,6 +135,7 @@ bool partialCoverage() {
     if (m == MAT_ARCOLOGY)                                     // ARS_SHAFT, ARS_SEARCH, ARS_PUDDLE, ARS_STEAM; ARS_RAIL's glass
         return (y >= 22u && y <= 25u) || (y == 19u && (inParams.z == 0u || inParams.z == 3u));
     if (m == MAT_INDUSTRY) return y == 2u || y == 4u;   // IND_STEAM, IND_MESH
+    if (m == MAT_KIT) return y == 46u;                  // PMAT_GLAZING (SF2: a kiosk's or a vault's glass, kit.glsl)
     return false;
 }
 #endif
@@ -217,8 +218,11 @@ void main() {
     if (inParams.x == MAT_FACADE) vFacePack |= uint(inNrm.w * 127.0 + 0.5) << 24;   // facade_mat (src/city/mesh_building.c)
     vAux = inAux;
     gl_Position = frame.viewProj * vec4(rel, 1.0);
-    // a noodle bar's far shell where its chunk's vendor layer draws the near body (src/core/common.h KIT_AUX_FAR)
-    if (inParams.x == MAT_KIT && (inAux & KIT_AUX_FAR) != 0u && c.origin.w > 0.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    // a vendor's far shell while its own near body is resident (src/core/common.h KIT_AUX_FAR, ChunkGPU.bodies; SF2)
+    if (inParams.x == MAT_KIT && (inAux & KIT_AUX_FAR) != 0u) {
+        uint b = (inAux >> 25) & 127u;
+        if ((c.bodies[b >> 5] & (1u << (b & 31u))) != 0u) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    }
 #ifdef PREPASS
     if (partialCoverage()) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // all three corners outside: the triangle is clipped away
 #endif

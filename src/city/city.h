@@ -189,6 +189,9 @@ static inline float city_grass_maintained(uint8_t w) { return w ? (float)(w - 1)
 #define KIT_FLAG_HOOD_SHIFT 8
 #define KIT_FLAG_BARE_WOOD 1024u   /* NB_FINISH_BARE_WOOD */
 #define KIT_FLAG_GLOW_SHIFT 11      /* NB6: 3 bits of colour or white, then 2 of flicker */
+/* SF2: a vendor of the base layer's with a near body of its own: its middle (chunk-local, its floor's height)
+ * and the radius it reaches (the streamer wants its body within VENDOR_BODY_DISTANCE of the camera). */
+typedef struct VendorBodySpot { float x, y, z, r; } VendorBodySpot;
 typedef struct KitInst { float xf[12]; uint16_t module, flags; uint8_t part; int8_t grime; uint8_t pad[2]; float base; uint32_t seed; } KitInst;   /* pad zeroed; grime: nb_grime's * 127 (NB7) */
 
 typedef struct Mesh {
@@ -209,6 +212,8 @@ typedef struct Mesh {
     uint32_t  ngrass;
     KitInst  *kit;       /* the vendors' kit modules set down in the chunk (city_build_vendor_kit) */
     uint32_t  nkit, capkit;
+    VendorBodySpot *vbody; /* SF2: the base layer's vendors with near bodies, in order (their far shells' index) */
+    uint32_t  nvbody, capvbody;
     int       xf;        /* emission transform: local frame -> chunk-local */
     float     xc, xs, xx, xz;
     float     xy;        /* ...raised this far: a building's or a lamp's base on the ground (city_ground_y),
@@ -258,9 +263,16 @@ void     city_build_props(int cx, int cz, Mesh *m);
  * Which vendors get them: city_set_kit (KIT_SLICE, the default: every bar, its body and its cooking line (NB5);
  * KIT_ALL: every vendor a line; KIT_OFF: no layer). */
 void     city_build_vendor_kit(int cx, int cz, Mesh *m);
+/* SF2: one vendor's near body and its kit (the base layer's vendor `body` of chunk (cx, cz): Mesh.vbody's order),
+ * which the streamer wants within VENDOR_BODY_DISTANCE of the camera. */
+void     city_build_vendor_body(int cx, int cz, int body, Mesh *m);
 enum { KIT_OFF = 0, KIT_SLICE, KIT_ALL };   /* none; the bars (named for the slice); every vendor (the cost spike) */
 void     city_set_kit(int mode);
 int      city_kit_mode(void);
+/* SF2: the detail the city builds the vendors' bodies at (PM_LOD0 or PM_LOD1, the default: with every site a body
+ * a dense apron's chunk held 740k triangles at LOD0); the slice's own bar is always LOD0 (NeonCity --kit-lod). */
+void     city_set_kit_lod(int lod);
+int      city_kit_lod(void);
 /* NB8's gate (NeonCity --bars all, city_test --slice ... all): every site a canopy noodle bar fits becomes one,
  * so the worst views (a row of six, a lane of bars) exist to be measured. Off by default; before any chunk. */
 void     city_force_bars(int on);

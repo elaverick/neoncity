@@ -308,27 +308,32 @@ static void vs_shell_visit(void *ctx, const VendorSpot *s, const Vendor *v) {
     }
     A->tris += t;
     /* a canopy bar's parts are never drawn: the chunk draws its plan's far shell (MAT_KIT, mesh_vendor.c) */
-    if (v->archetype != VA_CANOPY) A->drawn += t - lit;
+    if (!vendor_is_kit(v->archetype)) A->drawn += t - lit;
     if (t > A->trisMax) A->trisMax = t;
     /* everything it is stands in its site, below VENDOR_TOP_MAX (the cables) and its ceiling */
     const float hw = 0.5f * s->site.w + 0.02f, d = s->site.d + 0.02f;
     int out = 0;
+    char what[96] = "";
     for (int i = 0; i < v->nstructure; ++i) {
         float mn[3], mx[3];
         vendor_part_aabb(&v->part[i], mn, mx);
-        out |= mn[0] < -hw || mx[0] > hw || mn[2] < -0.02f || mx[2] > d;
+        const int o = mn[0] < -hw || mx[0] > hw || mn[2] < -0.02f || mx[2] > d;
+        if (o && !out) snprintf(what, sizeof(what), "part %d: x %.2f..%.2f z %.2f..%.2f", i, mn[0], mx[0], mn[2], mx[2]);
+        out |= o;
     }
     VendorSolid so[VENDOR_SOLIDS_MAX];
     int ns = vendor_solids(v, so, VENDOR_SOLIDS_MAX);
     for (int i = 0; i < ns; ++i) {
-        out |= so[i].x0 < -hw || so[i].x1 > hw || so[i].z0 < -0.02f || so[i].z1 > d;
+        const int o = so[i].x0 < -hw || so[i].x1 > hw || so[i].z0 < -0.02f || so[i].z1 > d;
+        if (o && !out) snprintf(what, sizeof(what), "solid %d: x %.2f..%.2f z %.2f..%.2f", i, so[i].x0, so[i].x1, so[i].z0, so[i].z1);
+        out |= o;
         A->floors += so[i].floor;
         A->solids += !so[i].floor;
     }
     double mx, mz;
     vendor_spot_middle(s, &mx, &mz);
     A->outside += out;
-    CHECK(!out, "%s: a %s at (%.1f, %.1f) reaches out of its %.1f x %.1f site", A->where, vendor_archetype_name(v->archetype), mx, mz, s->site.w, s->site.d);
+    CHECK(!out, "%s: a %s at (%.1f, %.1f) reaches out of its %.1f x %.1f site (%s)", A->where, vendor_archetype_name(v->archetype), mx, mz, s->site.w, s->site.d, what);
     int high = v->top > VENDOR_TOP_MAX + 0.01f || (s->site.ceiling > 0.0f && v->top > s->site.ceiling + 0.01f);
     A->high += high;
     CHECK(!high, "%s: a %s at (%.1f, %.1f) stands %.2f m high (ceiling %.1f)", A->where, vendor_archetype_name(v->archetype), mx, mz, v->top, s->site.ceiling);
@@ -476,9 +481,53 @@ static int vendor_cams(int argc, char **argv) {
         char where[64];
         snprintf(where, sizeof(where), "a %s at (%.0f, %.0f)", vendor_space_name(kinds[k]), x, z);
         check_vendor_shells((int)floor(x / CHUNK_SIZE), (int)floor(z / CHUNK_SIZE), where, 1);
+        if (kinds[k] == SPACE_LANE) {   /* SF2: the lane vaults round it, and views along them */
+            static CityVault cv[32];
+            const int nv = city_chunk_vaults((int)floor(x / CHUNK_SIZE), (int)floor(z / CHUNK_SIZE), cv, 32);
+            for (int i = 0; i < nv; ++i) {
+                const VaultPlan *P = &cv[i].plan;
+                int posts = P->npost[0] + P->npost[1];
+                CHECK(P->nbay >= 1, "vault %d: no bays", i);
+                double ax, az, bx, bz, ox, oz;
+                vault_world(&cv[i], 1.0, 0.5 * P->span, &ax, &az);
+                vault_world(&cv[i], 0.5 * P->len, 0.5 * P->span, &bx, &bz);
+                vault_world(&cv[i], -6.0, 0.5 * P->span + 1.0, &ox, &oz);
+                printf("  vault %.1f x %.1f m, spring %.2f, clear %.2f, crown %.2f, %d bays, %d posts%s: inside --cam %.2f %.2f %.1f 4 1.7; from its end --cam %.2f %.2f %.1f 2 3\n",
+                       P->len, P->span, P->spring, vault_clear(P), vault_top(P), P->nbay, posts, P->glazed ? ", glazed" : "",
+                       ax, az, atan2(bx - ax, -(bz - az)) * 57.2958, ox, oz, atan2(bx - ox, -(bz - oz)) * 57.2958);
+                if (P->npost[0] > 1) {   /* a post close up: from 1.6 m out in front of side 0's second post */
+                    double px, pz, cx2, cz2;
+                    vault_world(&cv[i], P->post[0][1], P->inset, &px, &pz);
+                    vault_world(&cv[i], P->post[0][1] + 0.8, 0.5 * P->span, &cx2, &cz2);
+                    printf("    its second post: --cam %.2f %.2f %.1f 10\n", cx2, cz2, atan2(px - cx2, -(pz - cz2)) * 57.2958);
+                }
+            }
+        }
     }
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     return 0;
+}
+
+/* city_test --big-site X Z W D: the open sites at least W x D within 6 chunks of (X, Z), with views (SF2: where a
+ * forced form such as the tiered kiosk can be seen). */
+static int big_sites(double x, double z, double W, double D) {
+    const int cx = (int)floor(x / CHUNK_SIZE), cz = (int)floor(z / CHUNK_SIZE);
+    static VendorSpot s[MAX_VENDOR_SPOTS];
+    int found = 0;
+    for (int j = -6; j <= 6 && found < 12; ++j)
+        for (int i = -6; i <= 6 && found < 12; ++i) {
+            const int n = city_chunk_vendor_spots(cx + i, cz + j, s, MAX_VENDOR_SPOTS);
+            for (int k = 0; k < n && found < 12; ++k) {
+                if (s[k].site.w < W || s[k].site.d < D || s[k].site.ceiling > 0.0f) continue;
+                double mx, mz;
+                vendor_spot_middle(&s[k], &mx, &mz);
+                const double ex = mx + s[k].fx * (s[k].site.d * 0.5 + 5.0) + s[k].fz * 2.0, ez = mz + s[k].fz * (s[k].site.d * 0.5 + 5.0) - s[k].fx * 2.0;
+                printf("%s site %.1f x %.1f at (%.1f, %.1f), wall %d: --cam %.2f %.2f %.1f -10\n", vendor_space_name(s[k].space), s[k].site.w, s[k].site.d,
+                       mx, mz, s[k].site.hostWall, ex, ez, atan2(mx - ex, -(mz - ez)) * 57.2958);
+                found++;
+            }
+        }
+    return found ? 0 : 1;
 }
 
 /* city_test --vs-probe X Z: what stands at (X, Z) (debugging the checks above). */

@@ -38,10 +38,12 @@ const uint PMAT_RUST = 0u, PMAT_PLATE = 1u, PMAT_STAINLESS = 2u, PMAT_COPPER = 3
            PMAT_TUBE = 30u, PMAT_NEON = 31u, PMAT_FLAME = 32u, PMAT_BULB = 33u, PMAT_SIGN_FAR = 34u,   // src/gen/pmodel.h
            // SF1: the street-food trades' food, and the coals' glow
            PMAT_MEAT = 35u, PMAT_DOUGH = 36u, PMAT_BREAD = 37u, PMAT_FRIED = 38u, PMAT_FRYOIL = 39u, PMAT_CHESTNUT = 40u,
-           PMAT_GREENS = 41u, PMAT_SAUCE = 42u, PMAT_GRIT = 43u, PMAT_EMBER = 44u, PMAT_RADIANT = 45u;
-bool kitGlows(uint m) { return (m >= PMAT_TUBE && m <= PMAT_SIGN_FAR) || m == PMAT_EMBER || m == PMAT_RADIANT; }
+           PMAT_GREENS = 41u, PMAT_SAUCE = 42u, PMAT_GRIT = 43u, PMAT_EMBER = 44u, PMAT_RADIANT = 45u,
+           // SF2: the forms' window glass, the far shell's lit window
+           PMAT_GLAZING = 46u, PMAT_WINDOW_FAR = 47u;
+bool kitGlows(uint m) { return (m >= PMAT_TUBE && m <= PMAT_SIGN_FAR) || m == PMAT_EMBER || m == PMAT_RADIANT || m == PMAT_WINDOW_FAR; }
 bool kitIsFood(uint m) { return (m >= PMAT_BROTH && m <= PMAT_GINGER) || (m >= PMAT_MEAT && m <= PMAT_GRIT); }
-const uint KIT_MATS = 46u;   // the tables below hold placeholders for the lit materials (kitGlows): kitGlow draws those
+const uint KIT_MATS = 48u;   // the tables below hold placeholders for the lit materials (kitGlows): kitGlow draws those
 const uint KIT_HEAT = 16u;   // flags: the instance stands at the range (kit_gpu.h)
 const uint KIT_HOOD_RUST = 0u, KIT_HOOD_GALV = 1u, KIT_HOOD_STEEL = 2u;
 const uint KIT_BARE_WOOD = 1024u;   // flags: the A-frame's frame bare timber, not the trim coat (src/city/city.h)   // flags >> 8 (src/gen/noodle_bar.h NB_HOOD_*)
@@ -62,7 +64,7 @@ const vec3 KIT_STEEL_SHEET = vec3(0.12, 0.12, 0.125);   // a plain steel hood's 
 
 // rgb: the colour (linear) a set's grain goes under (params.w 0) or the painted colour; a: metalness, times the
 // set's map where it has one (sets without one read 1 there, and are all non-metals)
-const vec4 KIT_BASE[46] = vec4[46](
+const vec4 KIT_BASE[48] = vec4[48](
     vec4(0.20, 0.085, 0.045, 1.0), vec4(0.10, 0.12, 0.11, 0.0), vec4(0.56, 0.56, 0.55, 1.0), vec4(0.62, 0.34, 0.22, 1.0),
     vec4(0.035, 0.034, 0.033, 0.6), vec4(0.17, 0.05, 0.035, 0.0), vec4(0.68, 0.68, 0.64, 0.0), vec4(0.022, 0.022, 0.022, 0.0),
     vec4(0.72, 0.71, 0.67, 0.0), vec4(0.04, 0.05, 0.045, 0.0), vec4(0.74, 0.56, 0.28, 1.0), vec4(0.22, 0.13, 0.07, 0.0),
@@ -75,12 +77,13 @@ const vec4 KIT_BASE[46] = vec4[46](
     // SF1's food (kitFood paints over these), the grit
     vec4(0.20, 0.09, 0.04, 0.0), vec4(0.72, 0.68, 0.58, 0.0), vec4(0.55, 0.34, 0.13, 0.0), vec4(0.60, 0.38, 0.11, 0.0),
     vec4(0.30, 0.19, 0.04, 0.0), vec4(0.16, 0.07, 0.03, 0.0), vec4(0.08, 0.22, 0.04, 0.0), vec4(0.33, 0.05, 0.02, 0.0),
-    vec4(0.035, 0.033, 0.03, 0.0), vec4(0.0), vec4(0.0));
+    vec4(0.035, 0.033, 0.03, 0.0), vec4(0.0), vec4(0.0),
+    vec4(0.0), vec4(0.0));                                                                           // SF2: glazing (its own), the far window
 // the painted materials' roughness (the sets carry their own)
-const float KIT_ROUGH[46] = float[46](0.82, 0.6, 0.32, 0.4, 0.75, 0.55, 0.2, 0.8, 0.25, 0.05, 0.35, 0.7, 0.9, 0.3, 0.6, 0.9,
+const float KIT_ROUGH[48] = float[48](0.82, 0.6, 0.32, 0.4, 0.75, 0.55, 0.2, 0.8, 0.25, 0.05, 0.35, 0.7, 0.9, 0.3, 0.6, 0.9,
                                       0.4, 0.5, 0.5, 0.4, 0.45, 0.08, 0.5, 0.35, 0.6, 0.08, 0.4, 0.6, 0.5, 0.35,
                                       0.5, 0.5, 0.5, 0.5, 0.5,
-                                      0.4, 0.6, 0.6, 0.55, 0.04, 0.3, 0.5, 0.3, 0.85, 0.9, 0.9);
+                                      0.4, 0.6, 0.6, 0.55, 0.04, 0.3, 0.5, 0.3, 0.85, 0.9, 0.9, 0.05, 0.5);
 
 // The authored set material m is drawn with, or -1 (painted here). Mirrors PM_MAT_SET (src/gen/pmodel_kit.c);
 // about a third of the copper pots are the bright one with verdigris.
@@ -347,6 +350,12 @@ vec3 kitGlow(uint m, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm) {
         vec3 c = mix(vec3(0.45, 0.03, 0.006), mix(vec3(1.0, 0.16, 0.025), vec3(1.0, 0.30, 0.06), heat), smoothstep(0.3, 0.8, heat));
         return c * (0.2 + 1.3 * heat);
     }
+    if (m == PMAT_WINDOW_FAR) {
+        // SF2: a kiosk's window seen from afar: the kitchen's warm light and its tubes behind the glass, the counter
+        // and the cook's things dark along its foot (uv: metres from its lower corner)
+        float foot = smoothstep(0.05, 0.3, uv.y);
+        return mix(vendorWhite(3u), vendorWhite(glow), 0.35) * (0.25 + 0.75 * foot) * 0.9;
+    }
     // the far shell's icon face: its neon's colour spread over the square (the tubes cover about a sixth)
     return neonColor(glow) * 1.4;
 }
@@ -355,6 +364,15 @@ vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ
     vec3 V = -normalize(rel);
     uint m = min(prm.y, KIT_MATS - 1u);
     if (kitGlows(m)) return kitGlow(m, p, n, V, uv, seed, prm);
+    if (m == PMAT_GLAZING) {
+        // SF2: window glass over the real kitchen (as the lobbies' glass): it covers a share of the pixel's samples,
+        // more at grazing angles where it reflects more, and the rest show what stands behind it
+        vec3 nv = dot(n, V) < 0.0 ? -n : n;
+        float F = glassFresnel(nv, V);
+        float cov = paneCoverage(F);
+        vec3 c = litterLight(p, nv, V, vec3(0.004, 0.006, 0.006), 0.05, 0.04, vec3(1.0), 1.0);
+        return (c * mix(1.0, 4.0, F) + vec3(0.002, 0.003, 0.003)) * 0.25 / cov;
+    }
     float vw = float(prm.w & 15u) / 15.0;   // the vendor's wear: 0 new .. 1 rusted and grimy
     bool heat = (prm.w & KIT_HEAT) != 0u;
     uint coat = (prm.w >> 5) & 7u, hood = (prm.w >> 8) & 3u;

@@ -1255,6 +1255,7 @@ const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_TUBE] = "tube", [PMAT_NEON] = "neon", [PMAT_FLAME] = "flame", [PMAT_BULB] = "bulb", [PMAT_SIGN_FAR] = "sign_far",
     [PMAT_MEAT] = "meat", [PMAT_DOUGH] = "dough", [PMAT_BREAD] = "bread", [PMAT_FRIED] = "fried", [PMAT_FRYOIL] = "fryoil",
     [PMAT_CHESTNUT] = "chestnut", [PMAT_GREENS] = "greens", [PMAT_SAUCE] = "sauce", [PMAT_GRIT] = "grit", [PMAT_EMBER] = "ember", [PMAT_RADIANT] = "radiant",
+    [PMAT_GLAZING] = "glazing", [PMAT_WINDOW_FAR] = "window_far",
 };
 /* Mirrored by kitSet in shaders/city/kit.glsl. Sets may serve two materials in different colours (the
  * rubber's grain under black plastic, the white paint's under red): the share check counts them together. */

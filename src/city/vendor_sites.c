@@ -45,6 +45,8 @@ typedef struct SGen {
     OBB         keep[MAX_KEEP];         /* ways kept clear: into a court */
     int         nkeep;
     float       aff;
+    CityVault   vault[MAX_BLOCK_VAULTS]; /* SF2: the vaults over its lanes */
+    int         nvault;
 } SGen;
 
 const char *vendor_space_name(int space) {
@@ -366,6 +368,119 @@ static Row space_row(const CitySpace *s, double u, double v, double du, double d
     return R;
 }
 
+/* ------------------------------------------------------------ lane vaults --- */
+
+static int free_at(const float *a, const float *b, int n, float x) {
+    for (int i = 0; i < n; ++i) if (x > a[i] - 0.3f && x < b[i] + 0.3f) return 0;
+    return 1;
+}
+
+/* SF2: a vault over a market lane (src/gen/vault.h), where the user said it makes sense: a lane between buildings,
+ * both its sides mostly walled by the block's buildings. Its posts stand under its girders in the gaps between
+ * the stalls of each row (and at its ends); the stalls under it get the girders' underside as their ceiling. */
+static int walled(const SGen *S, DVec2 a, DVec2 t, DVec2 out, double len) {
+    int n = 0, hit = 0;
+    for (double u = 1.0; u < len - 1.0; u += 3.0, ++n) {
+        DVec2 p = dadd(dadd(a, dscale(t, u)), dscale(out, 1.2));
+        int in = 0;
+        for (int k = 0; k < S->nbl && !in; ++k) in = inside_building(&S->g->bld[S->bl[k]], p.x, p.z, 0.0);
+        hit += in;
+    }
+    return n > 0 && (double)hit >= 0.6 * (double)n;
+}
+
+static void lane_vault(SGen *S, const CitySpace *s, int first) {
+    if (S->nvault >= MAX_BLOCK_VAULTS) return;
+    const uint32_t h = hash_combine(s->seed, 0xFA17u);
+    if (hash_float(h) >= 0.65f) return;
+    const DVec2 U = dv(s->ux, s->uz), V = dv(s->vx, s->vz), O = dv(s->ox, s->oz);
+    const double ua = s->u0 + 0.3, ub = s->u1 - 0.3, len = ub - ua, span = s->v1 - s->v0;
+    if (len < 8.0 || span < 5.0 || span > 12.0) return;
+    /* both sides walled */
+    const DVec2 a0 = dadd(O, dadd(dscale(U, ua), dscale(V, s->v0))), a1 = dadd(O, dadd(dscale(U, ua), dscale(V, s->v1)));
+    if (!walled(S, a0, U, dscale(V, -1.0), len) || !walled(S, a1, U, V, len)) return;
+    CityVault *cv = &S->vault[S->nvault];
+    memset(cv, 0, sizeof(*cv));
+    /* the frame: its +z across (V), its +x (V.z, -V.x) along the lane, from the lane's start that way */
+    const DVec2 xd = dv(V.z, -V.x);
+    const double us = ddot(xd, U) > 0.0 ? ua : ub, ud = ddot(xd, U) > 0.0 ? 1.0 : -1.0;
+    cv->seed = h;
+    cv->affluence = S->aff;
+    VaultPlan *P = &cv->plan;
+    vault_plan(P, (float)len, (float)span, h);
+    /* its floor: the lane's lowest, paved */
+    float lo = 1e30f;
+    for (double u = 0.0; u <= len + 1e-6; u += 2.0)
+        for (int e = 0; e < 3; ++e) {
+            const DVec2 q = dadd(O, dadd(dscale(U, us + ud * u), dscale(V, s->v0 + span * 0.5 * e)));
+            lo = minf(lo, city_ground_y(q.x, q.z));
+        }
+    const float floorY = lo + SIDEWALK_HEIGHT + 0.006f;
+    /* the user (SF2): attached to the buildings' sides at their first floor. Each side's wall: how far out of the
+     * lane's edge a building's wall stands at each rib (within 3 m), and that building's first floor */
+    float wd[2][VAULT_BAYS_MAX], dmin[2] = { 99.0f, 99.0f }, floor1 = 99.0f;
+    for (int side = 0; side < 2; ++side)
+        for (int b = 0; b < P->nbay; ++b) {
+            const DVec2 out = side ? V : dscale(V, -1.0);
+            const DVec2 e = dadd(O, dadd(dscale(U, us + ud * (P->pitch * b + (b == 0 ? 0.3 : 0.0))), dscale(V, side ? s->v1 : s->v0)));
+            wd[side][b] = 99.0f;
+            for (double t = 0.0; t <= 3.0; t += 0.1) {
+                const DVec2 q = dadd(e, dscale(out, t));
+                if (!solid(S, q.x, q.z, 0.02f)) continue;
+                wd[side][b] = (float)t;
+                for (int k = 0; k < S->nbl; ++k) {
+                    float lx, lz;
+                    const Building *bd = &S->g->bld[S->bl[k]];
+                    if (in_plot(bd, q.x, q.z, 0.2, &lx, &lz))
+                        floor1 = minf(floor1, building_base(bd) + chunk_gen_graph(S->g, S->bl[k])->groundH - floorY);
+                }
+                break;
+            }
+            dmin[side] = minf(dmin[side], wd[side][b]);
+        }
+    if (dmin[0] > 3.0f || dmin[1] > 3.0f || floor1 > 50.0f) return;
+    /* the span wall face to wall face (the nearest faces), the springing at the first floor */
+    vault_plan(P, (float)len, (float)span + dmin[0] + dmin[1], h);
+    vault_set_spring(P, clampf(floor1, 3.6f, 6.5f));
+    for (int side = 0; side < 2; ++side)
+        for (int b = 0; b < P->nbay; ++b) P->wall[side][b] = (uint8_t)(wd[side][b] <= dmin[side] + 0.25f);
+    const DVec2 org = dadd(O, dadd(dscale(U, us), dscale(V, s->v0 - dmin[0])));
+    cv->x = org.x; cv->z = org.z; cv->fx = (float)V.x; cv->fz = (float)V.z;
+    cv->y = floorY;
+    /* the stalls of each side, along the vault's x */
+    float sx0[2][MAX_BLOCK_SPOTS], sx1[2][MAX_BLOCK_SPOTS];
+    int ns[2] = { 0, 0 };
+    for (int k = first; k < S->n; ++k) {
+        VendorSpot *sp = &S->spot[k];
+        const int side = sp->fx * V.x + sp->fz * V.z > 0.0 ? 0 : 1;
+        const double lx = (sp->x - cv->x) * xd.x + (sp->z - cv->z) * xd.z;
+        sx0[side][ns[side]] = (float)lx - 0.5f * sp->site.w; sx1[side][ns[side]] = (float)lx + 0.5f * sp->site.w;
+        ns[side]++;
+        /* under the girders: the vault is its ceiling */
+        const float c = cv->y + vault_clear(P) - sp->y;
+        if (sp->site.ceiling == 0.0f || sp->site.ceiling > c) sp->site.ceiling = c;
+        sp->site.vaulted = 1;
+    }
+    /* posts: from either end, each as far on as it can stand within 6 m, clear of the stalls by 0.2 m */
+    for (int side = 0; side < 2; ++side) {
+        #define FREE(x) free_at(sx0[side], sx1[side], ns[side], (x))
+        float cur = -1.0f;
+        for (float x = 0.25f; x < 3.0f; x += 0.1f) if (FREE(x)) { cur = x; break; }
+        if (cur < 0.0f) cur = 0.25f;
+        vault_add_post(P, side, cur);
+        while (cur < P->len - 0.3f) {
+            float next = -1.0f;
+            for (float x = minf(cur + 6.0f, P->len - 0.25f); x > cur + 1.0f; x -= 0.1f) if (FREE(x)) { next = x; break; }
+            if (next < 0.0f) for (float x = cur + 6.0f; x < P->len - 0.25f; x += 0.1f) if (FREE(x)) { next = x; break; }
+            if (next < 0.0f) break;
+            if (!vault_add_post(P, side, next)) break;
+            cur = next;
+        }
+        #undef FREE
+    }
+    S->nvault++;
+}
+
 /* The rows of one of the filler's spaces. */
 static void fill_space(SGen *S, const CitySpace *s) {
     int member = 0;
@@ -382,6 +497,7 @@ static void fill_space(SGen *S, const CitySpace *s) {
         break;
     case SPACE_LANE: {
         /* a row down each side, facing across the way between them */
+        const int first = S->n;
         double d = fmin(3.5, (H - VENDOR_WALK_LOT - 0.2) * 0.5);
         for (int side = 0; side < 2; ++side) {
             R = side ? space_row(s, s->u1 - 1.0, s->v1 - 0.05, -1, 0, W - 2.0, 0, -1)
@@ -391,6 +507,7 @@ static void fill_space(SGen *S, const CitySpace *s) {
             R.seed = hash_combine(sd, 2u + (uint32_t)side);
             fill_row(S, &R, &member);
         }
+        lane_vault(S, s, first);   /* SF2 */
         break;
     }
     case SPACE_POCKET: {
@@ -602,7 +719,7 @@ static void kerb_pitches(SGen *S, int i) {
 static void plan_block(SGen *S, ChunkGen *g, int bi) {
     const Block *bk = &g->pa->blocks[bi];
     S->g = g; S->bi = bi; S->bk = bk;
-    S->n = S->nkeep = S->nbl = 0;
+    S->n = S->nkeep = S->nbl = S->nvault = 0;
     for (int i = 0; i < g->nb && S->nbl < 256; ++i)
         if (g->bblk[i] == bi) S->bl[S->nbl++] = i;
     S->nd = city_block_drops(g->pa, bk, S->dk, MAX_BLOCK_DROPS);
@@ -663,6 +780,32 @@ int city_vendor_spots(ChunkGen *g, double x0, double z0, double x1, double z1, i
         }
     }
     free(S);
+    return n;
+}
+
+int city_vendor_vaults(ChunkGen *g, double x0, double z0, double x1, double z1, CityVault *out, int max) {
+    SGen *S = (SGen *)malloc(sizeof(SGen));
+    if (!S) fatal("out of memory placing vaults");
+    int n = 0;
+    for (int bi = 0; bi < g->pa->nblocks; ++bi) {
+        const Block *bk = &g->pa->blocks[bi];
+        if (bk->x1 < x0 || bk->x0 > x1 || bk->z1 < z0 || bk->z0 > z1) continue;
+        if (bk->zone == ZONE_PARK || bk->zone == ZONE_RURAL) continue;
+        int lane = 0, nsp = city_block_spaces(bk, S->sp, MAX_BLOCK_SPACES);
+        for (int k = 0; k < nsp && !lane; ++k) lane = S->sp[k].kind == SPACE_LANE;
+        if (!lane) continue;
+        plan_block(S, g, bi);
+        for (int k = 0; k < S->nvault && n < max; ++k) out[n++] = S->vault[k];
+    }
+    free(S);
+    return n;
+}
+
+int city_chunk_vaults(int cx, int cz, CityVault *out, int max) {
+    ChunkGen g;
+    chunk_gen_init(&g, cx, cz, PROPS_PLAN_PAD, PROPS_BUILD_PAD, PROPS_LAMP_PAD);
+    const int n = city_vendor_vaults(&g, g.ox, g.oz, g.ox + CHUNK_SIZE, g.oz + CHUNK_SIZE, out, max);
+    chunk_gen_free(&g);
     return n;
 }
 

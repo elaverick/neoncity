@@ -156,6 +156,7 @@ layout(set = 0, binding = 0) uniform Frame {
 struct ChunkGPU {
     vec4  origin;    // chunk origin relative to camera
     ivec4 info;      // cx, cz, first light record (-1: none), graffiti at its corners (a byte each: graffitiLevel)
+    uvec4 bodies;    // SF2: the base layer's vendors whose near bodies are resident (bit i: vendor i; src/core/common.h)
 };
 layout(std430, set = SCENE_SET, binding = 1) readonly buffer Chunks { ChunkGPU chunks[]; };
 

@@ -48,6 +48,11 @@ static const float VL_AIR[4] = { 6.0f, 1.5f, 0.15f, 2.5f };
 void vendor_lights(ChunkGen *g, const Mesh *m, const VendorSpot *s, const Vendor *v) {
     NbLight L[NB_LIGHTS_MAX];
     const int n = nb_lights(&v->nb, L, NB_LIGHTS_MAX);
+    vendor_light_list(g, m, s, L, n);
+}
+
+/* SF2: lights in a site's frame (a vendor's, a lane vault's lamps) into the chunk's vendor lights. */
+void vendor_light_list(ChunkGen *g, const Mesh *m, const VendorSpot *s, const NbLight *L, int n) {
     const float bx = (float)(s->x - m->ox), bz = (float)(s->z - m->oz);
     for (int i = 0; i < n; ++i) {
         const NbLight *l = &L[i];

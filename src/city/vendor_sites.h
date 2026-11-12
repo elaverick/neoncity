@@ -40,6 +40,24 @@
 #define VENDOR_SLICE_X    332.60
 #define VENDOR_SLICE_Z    1182.58
 
+/* SF2: a market lane's vault (src/gen/vault.h), over some of the lanes between buildings (the user's call):
+ * its frame as a site's (x, z its origin, its +z across the lane (fx, fz), its +x (fz, -fx) along it, y its
+ * floor), its plan, the district's affluence (its sheet's metal and paint, as a vendor's). */
+#include "vault.h"
+typedef struct CityVault {
+    double   x, z;
+    float    fx, fz, y, affluence;
+    uint32_t seed;
+    VaultPlan plan;
+} CityVault;
+#define MAX_BLOCK_VAULTS 4
+/* The lane vaults of the blocks reaching chunk (cx, cz) (city_test). */
+int  city_chunk_vaults(int cx, int cz, CityVault *out, int max);
+/* A point of a vault's frame, world. */
+static inline void vault_world(const CityVault *v, double x, double z, double *wx, double *wz) {
+    *wx = v->x + v->fz * x + v->fx * z; *wz = v->z - v->fx * x + v->fz * z;
+}
+
 typedef struct VendorSpot {
     VendorSite site;
     double   x, z;        /* the middle of the site's back edge, world */

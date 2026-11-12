@@ -79,7 +79,7 @@ int city_chunk_vendors(int cx, int cz, VendorVisit fn, void *ctx) {
  * pair's second container, a market's table). Thin parts are grown to 12 cm. */
 int vendor_solids(const Vendor *v, VendorSolid *out, int max) {
     int n = 0;
-    if (v->archetype == VA_CANOPY) {
+    if (vendor_is_kit(v->archetype)) {
         /* a noodle bar: its plan's (the kitchen behind its counter, posts, column, stools, A-frame) */
         float b[NB_SOLIDS_MAX][4];
         int nb = nb_solids(&v->nb, b, NB_SOLIDS_MAX);
@@ -139,7 +139,7 @@ static uint32_t to_srgb8(const float lin[3]) {
     return o;
 }
 
-typedef struct VEmit { Mesh *m; ChunkGen *g; VendorMesh vm; PmMesh shell; int tris; } VEmit;
+typedef struct VEmit { Mesh *m; ChunkGen *g; VendorMesh vm; PmMesh shell; int tris, nbody; } VEmit;
 
 /* The opening a room quad's vertex lies on (in its plane, inside it): its index, or -1. */
 static int room_opening(const Vendor *v, const float p[3]) {
@@ -199,14 +199,29 @@ static void vendor_plumes(Mesh *m, const VendorSpot *s, const Vendor *v) {
 static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     VEmit *E = (VEmit *)ctx;
     Mesh *m = E->m;
-    if (v->archetype == VA_CANOPY) {
+    if (vendor_is_kit(v->archetype)) {
         /* a noodle bar: its far shell (src/gen/noodle_bar.c), which gives way to its body near (vendor_kit.c) */
         E->shell.nv = E->shell.ni = 0;
         Pm pm;
         pm_begin(&pm, &E->shell, NULL, PM_LOD2);
         nb_shell(&pm, &v->nb);
         pm_bake(&E->shell, NB_BAKE_RAYS, pm_reach(&E->shell));
-        vendor_emit_body(m, s, v, &E->shell, 1);
+        /* SF2: its body is streamed on its own near the camera (Mesh.vbody, the streamer's): its far shell gives
+         * way while that's resident */
+        const int idx = E->nbody++;
+        if (idx < VENDOR_BODIES_MAX) {
+            if (m->nvbody == m->capvbody) {
+                m->capvbody = m->capvbody ? m->capvbody * 2 : 16;
+                m->vbody = (VendorBodySpot *)realloc(m->vbody, sizeof(VendorBodySpot) * m->capvbody);
+                if (!m->vbody) fatal("out of memory listing the vendors' bodies");
+            }
+            double mx, mz;
+            vendor_spot_middle(s, &mx, &mz);
+            VendorBodySpot *b = &m->vbody[m->nvbody++];
+            b->x = (float)(mx - m->ox); b->z = (float)(mz - m->oz); b->y = s->y;
+            b->r = 0.5f * sqrtf(s->site.w * s->site.w + s->site.d * s->site.d);
+        }
+        vendor_emit_body(m, s, v, &E->shell, idx < VENDOR_BODIES_MAX ? 1 : 2, 0, idx);
         E->tris += (int)(E->shell.ni / 3);
         vendor_lights(E->g, m, s, v);
         vendor_plumes(m, s, v);
@@ -269,11 +284,58 @@ static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     m->grounded = 0;
 }
 
+/* SF2: the bays of the lane vaults (src/gen/vault.c) whose middles the chunk holds, in its base layer (seen far,
+ * sheltering the rain, casting), and their pendant lamps. */
+static void build_vaults(Mesh *m, ChunkGen *g, PmMesh *pmm) {
+    const double P = CHUNK_SIZE;
+    CityVault *cv = (CityVault *)malloc(sizeof(CityVault) * 32);
+    if (!cv) fatal("out of memory building the vaults");
+    const int n = city_vendor_vaults(g, g->ox, g->oz, g->ox + P, g->oz + P, cv, 32);
+    for (int i = 0; i < n; ++i) {
+        const CityVault *V = &cv[i];
+        VendorSpot fr;
+        memset(&fr, 0, sizeof(fr));
+        fr.x = V->x; fr.z = V->z; fr.fx = V->fx; fr.fz = V->fz; fr.y = V->y;
+        /* as a vendor's: its wear by the district, its paint and its sheet's metal (nb_finish) */
+        const float wearF = clampf(1.0f - V->affluence + 0.3f * (hash_float(hash_combine(V->seed, 9u)) - 0.5f), 0.0f, 1.0f);
+        const uint32_t flags = (uint32_t)(wearF * 15.0f + 0.5f) | (nb_finish(V->affluence, V->seed) & ~NB_FINISH_BARE_WOOD);
+        NbLight L[16];
+        int nl = 0;
+        for (int b = 0; b < V->plan.nbay; ++b) {
+            float x0, x1;
+            vault_bay_range(&V->plan, b, &x0, &x1);
+            double wx, wz;
+            vault_world(V, 0.5 * (x0 + x1), 0.5 * V->plan.span, &wx, &wz);
+            if (wx < g->ox || wx >= g->ox + P || wz < g->oz || wz >= g->oz + P) continue;
+            pmm->nv = pmm->ni = 0;
+            Pm pm;
+            pm_begin(&pm, pmm, NULL, PM_LOD1);
+            pm.part = 32;
+            vault_bay(&pm, &V->plan, b);
+            pm_bake(pmm, 6, 0.6f);
+            vendor_emit_kit(m, &fr, pmm, flags, hash_combine(V->seed, (uint32_t)b));
+            float at[3];
+            if (nl < 16 && vault_lamp(&V->plan, b, at)) {
+                NbLight *l = &L[nl++];
+                memset(l, 0, sizeof(*l));
+                /* a short tube under the shade: a tube's reach (a lamp's falls short of the floor from 4 m) */
+                l->kind = NB_LIGHT_TUBE; l->colour = NB_WHITE_5000;
+                l->a[0] = at[0] - 0.15f; l->a[1] = at[1]; l->a[2] = at[2];
+                l->b[0] = at[0] + 0.15f; l->b[1] = at[1]; l->b[2] = at[2];
+                l->seed = (uint8_t)hash_combine(V->seed, 0x1A0u + (uint32_t)b);
+            }
+        }
+        if (nl) vendor_light_list(g, m, &fr, L, nl);
+    }
+    free(cv);
+}
+
 void build_vendors(Mesh *m, ChunkGen *g) {
     VEmit E;
     memset(&E, 0, sizeof(E));
     E.m = m;
     E.g = g;
+    build_vaults(m, g, &E.shell);
     city_vendors(g, emit_vendor, &E);
     vendor_mesh_free(&E.vm);
     pm_mesh_free(&E.shell);

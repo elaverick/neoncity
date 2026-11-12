@@ -52,22 +52,25 @@ const VTradeInfo V_TRADES[VT_COUNT] = {
 };
 #undef N
 
-/*                                           canopy hatch  leanto box   pair  market barrow */
+/* SF2: the lean-to, container, pair, market stall and barrow are never chosen (0); the kit's forms only: the
+ * canopy (wall stall or corner bar), the glazed hatch kiosk, the arcade counter (only where the site has a
+ * ceiling: fits), the tiered kiosk (forced only until SF3)
+ *                                           canopy hatch  leanto box   pair  market barrow arcade tiered */
 const float V_ARCH_CLASS[VC_COUNT][VA_COUNT] = {
-    { 1.0f, 0.7f, 1.6f, 0.5f, 0.3f, 1.0f, 1.8f },   /* poor: shacks, tarps, barrows */
-    { 1.2f, 1.0f, 0.9f, 0.9f, 0.6f, 1.0f, 1.0f },
-    { 0.6f, 1.2f, 0.2f, 1.8f, 1.2f, 1.0f, 0.6f },   /* wealthy: containers and kiosks (refs 3-4) */
+    { 1.0f, 0.8f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f },
+    { 1.1f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f },
+    { 0.9f, 1.3f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f },   /* wealthy: more kiosks (refs 3-4) */
 };
 const float V_ARCH_SITE[VSITE_COUNT][VA_COUNT] = {
-    { 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.6f, 3.0f },   /* kerb: barrows and kiosks, the walk kept clear */
-    { 1.5f, 1.0f, 1.5f, 0.6f, 0.3f, 1.0f, 0.5f },   /* apron in front of a row */
-    { 1.0f, 0.6f, 2.0f, 0.3f, 0.2f, 1.5f, 0.6f },   /* market lane */
-    { 1.5f, 0.8f, 1.0f, 1.5f, 2.0f, 1.0f, 0.4f },   /* court */
-    { 1.0f, 0.8f, 0.6f, 1.0f, 1.0f, 2.0f, 0.5f },   /* pocket market */
-    { 0.6f, 1.5f, 0.0f, 1.5f, 0.8f, 1.2f, 1.0f },   /* lunch plaza */
-    { 1.5f, 1.0f, 0.4f, 0.3f, 0.0f, 1.0f, 1.0f },   /* arcology */
+    { 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },   /* kerb: kiosks, the walk kept clear (the user, SF2) */
+    { 1.5f, 0.7f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* apron in front of a row */
+    { 1.5f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* market lane (under its vault: arcade counters) */
+    { 1.5f, 0.8f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* court */
+    { 1.2f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* pocket market */
+    { 0.8f, 1.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* lunch plaza */
+    { 1.5f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* arcology */
 };
-const float V_ARCH_LUNCH[VA_COUNT] = { 0.8f, 1.5f, 0.3f, 1.4f, 1.0f, 1.3f, 1.2f };
+const float V_ARCH_LUNCH[VA_COUNT] = { 0.9f, 1.4f, 0.3f, 1.4f, 1.0f, 1.3f, 1.2f, 1.0f, 1.0f };
 
 /* sRGB colours (0xRRGGBB, as every colour in these tables): body, trim, two accents; the engine's neon colours (shaders/common.glsl: neonColor) */
 const VPalette V_PALETTE[V_PALETTES] = {
@@ -208,8 +211,8 @@ int v_pick(Rng *r, const float *w, int n) {
 
 int vendor_class(float a) { return a < 1.0f / 3.0f ? VC_POOR : a < 2.0f / 3.0f ? VC_MID : VC_RICH; }
 
-static const char *const ARCH_NAME[VA_COUNT] = { "canopy noodle bar", "hatch kiosk", "lean-to", "container shop",
-                                                 "container pair", "market stall", "hand barrow" };
+static const char *const ARCH_NAME[VA_COUNT] = { "canopy bar", "hatch kiosk", "lean-to", "container shop",
+                                                 "container pair", "market stall", "hand barrow", "arcade counter", "tiered kiosk" };
 static const char *const CLASS_NAME[VC_COUNT] = { "poor", "middling", "wealthy" };
 static const char *const SITE_NAME[VSITE_COUNT] = { "kerb", "apron", "lane", "court", "pocket market", "lunch plaza", "arcology" };
 static const char *const MOTIF_NAME[VM_COUNT] = { "serpent", "bowl", "fish", "cup", "bottle", "eye", "lotus", "sunburst", "gear", "leaf" };

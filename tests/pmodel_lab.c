@@ -189,7 +189,8 @@ static const uint32_t MAT_RGB[PMAT_COUNT] = {
     0x262A28, 0xE8E4DA, 0xC2A46A, 0xE2D8B0, 0x222222, 0x8A9092, 0x4A4C4E, 0xF0EEE6, 0xA02A20, 0xB07A3A, 0xE8D49A, 0xB8761C,
     0xF2EFE6, 0x9A1A0A, 0xE8A0A0, 0x5E4A40, 0x6A6E72, 0xA8AAAC,
     0xF4F8FF, 0xFF3060, 0x4080FF, 0xFFD090, 0xC04080,     /* NB6: tube, neon, flame, bulb, the far icon face */
-    0x6A2E14, 0xE6DCC4, 0xC89050, 0xD49A30, 0x8A5A10, 0x4A2410, 0x3A7A20, 0xA02010, 0x1E1C1A, 0xFF7020, 0xFF6418 };   /* SF1's food, grit, embers */
+    0x6A2E14, 0xE6DCC4, 0xC89050, 0xD49A30, 0x8A5A10, 0x4A2410, 0x3A7A20, 0xA02010, 0x1E1C1A, 0xFF7020, 0xFF6418,   /* SF1's food, grit, embers */
+    0x7FA0A8, 0xFFC888 };   /* SF2: glazing, the far window */
 
 /* A 5 x 7 font: digits, letters, underscore, point. */
 static const uint8_t *glyph(char c) {
@@ -365,11 +366,19 @@ static void render(Image *im, const PmMesh *m, int cx, int cy, int cw, int ch, i
 #define NB_FAR_BUDGET    500
 
 static void body_section(const char *out) {
-    static const struct { const char *name; float w, d; int form, side; uint32_t seed; } B[] = {
-        { "straight (slice)", 3.85f, 3.48f, NB_STRAIGHT, 0, 0x5EED01u },
-        { "straight wide", 5.2f, 3.3f, NB_STRAIGHT, 0, 0x5EED04u },
-        { "corner right", 4.4f, 3.6f, NB_CORNER, 1, 0x5EED02u },
-        { "corner left", 4.0f, 3.4f, NB_CORNER, -1, 0x5EED03u } };
+    static const struct { const char *name; float w, d, ceil; int form, side, host; uint32_t seed; } B[] = {
+        { "straight (slice)", 3.85f, 3.48f, 0.0f, NB_STRAIGHT, 0, 1, 0x5EED01u },
+        { "straight wide", 5.2f, 3.3f, 0.0f, NB_STRAIGHT, 0, 1, 0x5EED04u },
+        { "corner right", 4.4f, 3.6f, 0.0f, NB_CORNER, 1, 1, 0x5EED02u },
+        { "corner left", 4.0f, 3.4f, 0.0f, NB_CORNER, -1, 1, 0x5EED03u },
+        /* SF2's forms */
+        { "stall compact", 2.4f, 2.5f, 0.0f, NB_STRAIGHT, 0, 1, 0x5EED05u },
+        { "stall free", 3.4f, 3.1f, 0.0f, NB_STRAIGHT, 0, 0, 0x5EED06u },
+        { "hatch kerb", 2.3f, 1.8f, 0.0f, NB_HATCH, 0, 0, 0x5EED07u },
+        { "hatch wide", 3.2f, 2.6f, 0.0f, NB_HATCH, 0, 1, 0x5EED08u },
+        { "arcade low", 3.2f, 3.0f, 2.9f, NB_ARCADE, 0, 1, 0x5EED09u },
+        { "arcade vault", 3.6f, 3.3f, 3.8f, NB_ARCADE, 0, 1, 0x5EED0Au },
+        { "tiered", 4.6f, 3.9f, 0.0f, NB_TIERED, 0, 0, 0x5EED0Bu } };
     const int nb = (int)(sizeof(B) / sizeof(B[0]));
     const int BW = 620, BH = 460;
     Image im = { 0, 0, NULL };
@@ -380,7 +389,7 @@ static void body_section(const char *out) {
         uint32_t seed = B[b].seed;
         int fits = 0;
         for (int t = 0; t < 64; ++t, seed += 7919u) {   /* a seed whose plan turns the corner the way asked */
-            fits = nb_plan(&p, B[b].w, B[b].d, 0.0f, seed, B[b].form, VT_NOODLE, 0.5f);
+            fits = nb_plan_site(&p, B[b].w, B[b].d, B[b].ceil, seed, B[b].form, VT_NOODLE, 0.5f, B[b].host);
             if (!B[b].side || p.side == B[b].side) break;
         }
         CHECK(fits, "body %s: the plan doesn't fit its %.2f x %.2f m site", B[b].name, B[b].w, B[b].d);
@@ -400,7 +409,7 @@ static void body_section(const char *out) {
         PmStats s, s2;
         pm_stats(&m, &s);
         NbPlan q;
-        nb_plan(&q, B[b].w, B[b].d, 0.0f, seed, B[b].form, VT_NOODLE, 0.5f);
+        nb_plan_site(&q, B[b].w, B[b].d, B[b].ceil, seed, B[b].form, VT_NOODLE, 0.5f, B[b].host);
         pm_begin(&pm, &m2, &li2, PM_LOD0);
         nb_body(&pm, &q);
         nb_line_occluders(&q, &oc);
@@ -417,8 +426,24 @@ static void body_section(const char *out) {
             printf("\n");
         }
         CHECK(s.hash == s2.hash && li.n == li2.n, "body %s: not deterministic", B[b].name);
+        {   /* SF2: the body at the coarser levels (what a lane of bodies would cost the pool) */
+            PmMesh m1 = { 0 };
+            int lt[2];
+            for (int l = 0; l < 2; ++l) {
+                m1.nv = m1.ni = 0;
+                pm_begin(&pm, &m1, &li2, l ? PM_LOD2 : PM_LOD1);
+                li2.n = 0;
+                nb_body(&pm, &p);
+                lt[l] = (int)(m1.ni / 3);
+            }
+            pm_mesh_free(&m1);
+            li2.n = 0;
+            printf("  %s: body at LOD1 %d, LOD2 %d triangles\n", B[b].name, lt[0], lt[1]);
+        }
         CHECK(s.bad_normals == 0, "body %s: %d vertices whose normals disagree with their faces", B[b].name, s.bad_normals);
-        CHECK(s.tris <= NB_STRUCT_BUDGET, "body %s: %d structure triangles, over %d", B[b].name, s.tris, NB_STRUCT_BUDGET);
+        /* SF2: the tiered kiosk (three counters, an upper tier) has a budget of its own */
+        const int sbud = B[b].form == NB_TIERED ? 24000 : NB_STRUCT_BUDGET, fbud = B[b].form == NB_TIERED ? 700 : NB_FAR_BUDGET;
+        CHECK(s.tris <= sbud, "body %s: %d structure triangles, over %d", B[b].name, s.tris, sbud);
         t0 = now_ms();
         pm_begin(&pm, &f, NULL, PM_LOD2);
         nb_shell(&pm, &p);
@@ -426,11 +451,19 @@ static void body_section(const char *out) {
         double tf = now_ms() - t0;
         PmStats sf;
         pm_stats(&f, &sf);
-        CHECK(sf.tris <= NB_FAR_BUDGET, "body %s: far shell %d triangles, over %d", B[b].name, sf.tris, NB_FAR_BUDGET);
+        CHECK(sf.tris <= fbud, "body %s: far shell %d triangles, over %d", B[b].name, sf.tris, fbud);
         CHECK(sf.bad_normals == 0, "body %s: far shell: %d vertices whose normals disagree with their faces", B[b].name, sf.bad_normals);
         /* inside the site, under the duct's cap */
         CHECK(s.lo[0] > -0.5f * B[b].w - 0.01f && s.hi[0] < 0.5f * B[b].w + 0.01f && s.lo[2] > -0.01f && s.hi[2] < B[b].d + 0.25f,
               "body %s: reaches x %.2f..%.2f z %.2f..%.2f on a %.2f x %.2f m site", B[b].name, s.lo[0], s.hi[0], s.lo[2], s.hi[2], B[b].w, B[b].d);
+        CHECK(B[b].ceil <= 0.0f || s.hi[1] <= B[b].ceil + 0.002f, "body %s: reaches %.2f m, over its ceiling at %.2f", B[b].name, s.hi[1], B[b].ceil);
+        {   /* SF2: the line's rules hold in every form */
+            NbLine Lc;
+            nb_line(&p, &Lc);
+            char err[512];
+            const int bad = nb_line_check(&p, &Lc, err, sizeof(err));
+            CHECK(bad == 0, "body %s: the line breaks %d rules: %s", B[b].name, bad, err);
+        }
         /* the drawn bar: the structure, its modules and the cooking line's built in */
         NbLine L;
         nb_line(&p, &L);
@@ -443,7 +476,7 @@ static void body_section(const char *out) {
         pm_stats(&m, &sd);
         printf("%-18s %7d %6u %8d %5d %8.0f %6.1f %6.1f %6.1f  %s %s, %.2f x %.2f, %d stools, %d tubes, %d icons, open %d\n",
                B[b].name, s.tris, ninst, sd.tris, sf.tris, (double)(s.tris * 3 * 40) / 1024.0, tb, tk, tf,
-               p.form == NB_CORNER ? "corner" : "straight", p.side > 0 ? "+x" : "-x", B[b].w, B[b].d, p.nstool, p.ntube, p.nicon, s.open_edges);
+               nb_form_name(p.form), p.side > 0 ? "+x" : "-x", B[b].w, B[b].d, p.nstool, p.ntube, p.nicon, s.open_edges);
         if (out) {
             render(&im, &m, 0, b * BH, BW, BH, SHOW_LIT);
             render(&im, &f, BW, b * BH, BW, BH, SHOW_LIT);

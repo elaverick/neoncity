@@ -22,11 +22,15 @@ enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
  * furniture (city_build_props), wanted within PROPS_DISTANCE and lit as the litter,
  * 5 the near vendor layer (city_build_vendor_kit), wanted within KIT_DISTANCE: the
  * noodle bars' bodies (merged, MAT_KIT) and the kit's instances (Mesh.kit), drawn by
- * kit_gpu.c; while it is resident the base layer's far shells of those bars give way
- * (its chunk record's origin[3]: city.vert). */
+ * kit_gpu.c (no longer wanted: city_test builds it); and from LAYER_VBODY up (SF2), each vendor's own
+ * near body (city_build_vendor_body; LAYER_VBODY + its index in the base layer's Mesh.vbody), wanted
+ * within VENDOR_BODY_DISTANCE of the camera; while one is resident its far shell in the base layer
+ * gives way (the base chunk record's bodies mask: city.vert). */
 #define LAYER_PLANTS 3
 #define LAYER_PROPS  4
 #define LAYER_VENDOR 5
+#define LAYER_VBODY  16
+static int is_vendor_layer(int layer) { return layer == LAYER_VENDOR || layer >= LAYER_VBODY; }
 
 /* Prefetching (want_chunks). Ahead of a moving camera chunks are queued
  * sooner: their priority is cut by up to LEAD_GAIN straight ahead, in full
@@ -76,6 +80,8 @@ typedef struct Entry {
     uint32_t  ngrass;
     KitInst  *kit;          /* the vendor layer's kit instances, kept while RESIDENT (kit_gpu.c) */
     uint32_t  nkit;
+    VendorBodySpot *vbody;  /* a base layer's vendors with bodies of their own, kept while RESIDENT (SF2) */
+    uint32_t  nvbody;
     int       drawRec;     /* its chunk record in the view's draws, when drawRecFrame is this frame's + 1 */
     uint64_t  drawRecFrame;
     /* ray-traced shadows (src/render/rt.c): the casting triangles of each page, as
@@ -215,6 +221,9 @@ static void table_remove(ChunkSystem *cs, int idx) {
     free(e->kit);
     e->kit = NULL;
     e->nkit = 0;
+    free(e->vbody);
+    e->vbody = NULL;
+    e->nvbody = 0;
     e->rtIdx = NULL;
     e->grass = NULL;
     e->ngrass = 0;
@@ -248,12 +257,13 @@ static int worker_main(void *arg) {
         else if (job.layer == 2) city_build_litter(job.cx, job.cz, &r.mesh);
         else if (job.layer == LAYER_PLANTS) city_build_plants(job.cx, job.cz, &r.mesh);
         else if (job.layer == LAYER_PROPS) city_build_props(job.cx, job.cz, &r.mesh);
-        else if (job.layer == LAYER_VENDOR) {
+        else if (is_vendor_layer(job.layer)) {
             double t0 = glfwGetTime();
-            city_build_vendor_kit(job.cx, job.cz, &r.mesh);
+            if (job.layer >= LAYER_VBODY) city_build_vendor_body(job.cx, job.cz, job.layer - LAYER_VBODY, &r.mesh);
+            else city_build_vendor_kit(job.cx, job.cz, &r.mesh);
             if (g_vendorLog && r.mesh.count)
-                printf("vendor layer (%d, %d): %u body triangles, %u kit instances, built in %.0f ms on a worker\n",
-                       job.cx, job.cz, r.mesh.count / 3, r.mesh.nkit, 1000.0 * (glfwGetTime() - t0));
+                printf("vendor body (%d, %d) %d: %u body triangles, %u kit instances, built in %.0f ms on a worker\n",
+                       job.cx, job.cz, job.layer - LAYER_VBODY, r.mesh.count / 3, r.mesh.nkit, 1000.0 * (glfwGetTime() - t0));
         }
         else city_build_mesh(job.cx, job.cz, &r.mesh);
 
@@ -499,7 +509,7 @@ static void caster_indices(Entry *e, const Vertex *v, uint32_t vc) {
     e->rtTotal = n;
 }
 
-static uint32_t rt_mask(int layer) { return layer == 0 || layer == LAYER_PROPS || layer == LAYER_VENDOR ? RT_MASK_CITY : layer == 1 ? RT_MASK_INTERIOR : RT_MASK_LITTER; }
+static uint32_t rt_mask(int layer) { return layer == 0 || layer == LAYER_PROPS || is_vendor_layer(layer) ? RT_MASK_CITY : layer == 1 ? RT_MASK_INTERIOR : RT_MASK_LITTER; }
 
 /* Distance from the camera to the chunk's square, horizontally. */
 static float chunk_dist(const Entry *e, const double cam[3]) {
@@ -700,7 +710,20 @@ static void want_chunks(ChunkSystem *cs, const Frustum *frp, const double cam[3]
             if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, LAYER_PLANTS, kp, kp * f, inView);
             if (d < LITTER_DISTANCE) push_want(cs, cx, cz, 2, kt, kt * f, inView);
             if (d < PROPS_DISTANCE) push_want(cs, cx, cz, LAYER_PROPS, kf, kf * f, inView);
-            if (d < KIT_DISTANCE && city_kit_mode() != KIT_OFF) push_want(cs, cx, cz, LAYER_VENDOR, kf, kf * f, inView);
+            /* SF2: each vendor's near body within VENDOR_BODY_DISTANCE (the base layer lists them), nearest first */
+            if (d < VENDOR_BODY_DISTANCE + CHUNK_SIZE && city_kit_mode() != KIT_OFF && idx >= 0 && cs->entries[idx].state == CS_RESIDENT) {
+                const Entry *eb = &cs->entries[idx];
+                for (uint32_t b = 0; b < eb->nvbody; ++b) {
+                    const VendorBodySpot *v = &eb->vbody[b];
+                    const float bx = x0 + v->x, bz = z0 + v->z;
+                    const float bd = maxf(sqrtf(bx * bx + bz * bz) - v->r, 0.0f);
+                    if (bd > VENDOR_BODY_DISTANCE) continue;
+                    const float by = v->y - (float)cam[1];
+                    const int bin = frustum_test_aabb(&fr, v3(bx - v->r, by - 0.5f, bz - v->r), v3(bx + v->r, by + 6.0f, bz + v->r));
+                    const float kb = bd + 20.0f + (bin ? 0.0f : bd * 2.0f);
+                    push_want(cs, cx, cz, LAYER_VBODY + (int)b, kb, kb * f, bin);
+                }
+            }
         }
     }
     qsort(cs->want, cs->wantCount, sizeof(Want), cmp_want);
@@ -830,6 +853,9 @@ static int upload_ready(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t
         e->kit = e->mesh.kit;
         e->nkit = e->mesh.nkit;
         e->mesh.kit = NULL;
+        e->vbody = e->mesh.vbody;
+        e->nvbody = e->mesh.nvbody;
+        e->mesh.vbody = NULL;
         mesh_free(&e->mesh);
         e->state = CS_RESIDENT;
         uploads++;
@@ -883,10 +909,13 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
         e->drawRecFrame = cs->frame + 1;
         ChunkGPU *g = &gpu[nchunk];
         g->origin[0] = x0; g->origin[1] = y0; g->origin[2] = z0; g->origin[3] = 0;
+        memset(g->bodies, 0, sizeof(g->bodies));
         if (e->layer == 0) {
-            /* the noodle bars' far shells give way where the vendor layer draws their near bodies (city.vert) */
-            int vi = table_find(cs, e->cx, e->cz, LAYER_VENDOR);
-            if (vi >= 0 && cs->entries[vi].state == CS_RESIDENT && cs->entries[vi].npages) g->origin[3] = 1.0f;
+            /* SF2: the vendors' far shells give way where their own near bodies are resident (city.vert) */
+            for (uint32_t b = 0; b < e->nvbody && b < VENDOR_BODIES_MAX; ++b) {
+                int vi = table_find(cs, e->cx, e->cz, LAYER_VBODY + (int)b);
+                if (vi >= 0 && cs->entries[vi].state == CS_RESIDENT && cs->entries[vi].npages) g->bodies[b >> 5] |= 1u << (b & 31u);
+            }
         }
         g->info[0] = e->cx; g->info[1] = e->cz;
         int lp = e->lightPage;
@@ -946,6 +975,7 @@ static uint32_t build_land_records(ChunkSystem *cs, int slot, const double cam[3
             ChunkGPU *g = &gpu[rec];
             g->origin[0] = x0; g->origin[1] = -(float)cam[1]; g->origin[2] = z0; g->origin[3] = 0;
             g->info[0] = e->cx; g->info[1] = e->cz; g->info[2] = e->lightPage * LIGHT_PAGE_RECS; g->info[3] = 0;
+            memset(g->bodies, 0, sizeof(g->bodies));
         }
         int c = gz * LAND_GRID + gx;
         ll->cell[c] = rec;
@@ -971,6 +1001,7 @@ static uint32_t build_shelter_draws(ChunkSystem *cs, int slot, const double cam[
         ChunkGPU *g = &gpu[nchunk];
         g->origin[0] = x0; g->origin[1] = -(float)cam[1]; g->origin[2] = z0; g->origin[3] = 0;
         g->info[0] = e->cx; g->info[1] = e->cz; g->info[2] = -1; g->info[3] = 0;
+        memset(g->bodies, 0, sizeof(g->bodies));
         for (int p = 0; p < e->npages; ++p) {
             uint32_t first = p * PAGE_VERTS;
             VkDrawIndirectCommand *c = &cmds[ndraw++];
@@ -1013,7 +1044,7 @@ static void update_kit(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t 
     const double P = CHUNK_SIZE;
     for (int i = 0; i < MAX_ENTRIES; ++i) {
         const Entry *e = &cs->entries[i];
-        if (e->state != CS_RESIDENT || e->layer != LAYER_VENDOR || !e->nkit) continue;
+        if (e->state != CS_RESIDENT || !is_vendor_layer(e->layer) || !e->nkit) continue;
         float o[3] = { (float)(e->cx * P - cam[0]), -(float)cam[1], (float)(e->cz * P - cam[2]) };
         kit_add(cs->kit, slot, e->kit, e->nkit, o, e->drawRecFrame == cs->frame + 1 ? e->drawRec : -1);
     }

@@ -172,6 +172,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
             else if (strcmp(v, "all") == 0) o->kit = KIT_ALL;
             else return false;
         }
+        else if (strcmp(argv[i], "--kit-lod") == 0 && i + 1 < argc) city_set_kit_lod(atoi(argv[++i]));   /* SF2: 0 or 1 */
         else if (strcmp(argv[i], "--bars") == 0 && i + 1 < argc) {
             if (strcmp(argv[++i], "all") != 0) return false;
             city_force_bars(1);   /* NB8's gate: every site a canopy bar fits */
@@ -182,10 +183,10 @@ static bool parse_args(int argc, char **argv, Options *o) {
             vendor_force_trade(t);   /* SF1's captures: every vendor this trade */
         }
         else if (strcmp(argv[i], "--nbform") == 0 && i + 1 < argc) {
-            const char *v = argv[++i];
-            if (strcmp(v, "straight") == 0) nb_force_form(NB_STRAIGHT);
-            else if (strcmp(v, "corner") == 0) nb_force_form(NB_CORNER);
-            else return false;
+            /* NB4, SF2: every vendor this form where it fits (straight, corner, hatch, arcade, tiered) */
+            const int f = nb_form_by_name(argv[++i]);
+            if (f < 0) return false;
+            nb_force_form(f);
         }
         else if (strcmp(argv[i], "--grass-cap") == 0 && i + 1 < argc) o->grassCap = (uint32_t)strtoul(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--grass-debug") == 0 && i + 1 < argc) {

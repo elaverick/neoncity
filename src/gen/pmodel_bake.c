@@ -96,16 +96,21 @@ static void bvh_split(PmBvh *b, uint32_t ni, float (*cen)[3]) {
 
 PmBvh *pm_bvh_build(const PmMesh *m) {
     PmBvh *b = (PmBvh *)calloc(1, sizeof(PmBvh));
-    b->ntri = m->ni / 3;
+    /* SF2: window glass lets the light through: it shuts nothing in */
+    uint32_t nt = 0;
+    for (uint32_t t = 0; t < m->ni / 3; ++t) nt += m->v[m->idx[t * 3]].mat != PMAT_GLAZING;
+    b->ntri = nt;
     if (!b->ntri) return b;
     b->tri = (float (*)[9])malloc(sizeof(float) * 9 * b->ntri);
     b->order = (uint32_t *)malloc(sizeof(uint32_t) * b->ntri);
     b->node = (BNode *)malloc(sizeof(BNode) * 2 * b->ntri);
     float (*cen)[3] = (float (*)[3])malloc(sizeof(float) * 3 * b->ntri);
-    for (uint32_t t = 0; t < b->ntri; ++t) {
-        for (int k = 0; k < 3; ++k) memcpy(&b->tri[t][k * 3], m->v[m->idx[t * 3 + k]].p, sizeof(float) * 3);
+    for (uint32_t s = 0, t = 0; s < m->ni / 3; ++s) {
+        if (m->v[m->idx[s * 3]].mat == PMAT_GLAZING) continue;
+        for (int k = 0; k < 3; ++k) memcpy(&b->tri[t][k * 3], m->v[m->idx[s * 3 + k]].p, sizeof(float) * 3);
         for (int k = 0; k < 3; ++k) cen[t][k] = (b->tri[t][k] + b->tri[t][3 + k] + b->tri[t][6 + k]) / 3.0f;
         b->order[t] = t;
+        t++;
     }
     b->nnode = 1;
     b->node[0].first = 0; b->node[0].count = b->ntri; b->node[0].left = 0;

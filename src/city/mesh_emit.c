@@ -5,7 +5,7 @@
  * Mesh emission helpers
  * ========================================================================= */
 
-void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); free(m->air); free(m->flame); free(m->plume); free(m->grass); free(m->kit); memset(m, 0, sizeof(*m)); }
+void mesh_free(Mesh *m) { free(m->v); free(m->lights); free(m->sky); free(m->air); free(m->flame); free(m->plume); free(m->grass); free(m->kit); free(m->vbody); memset(m, 0, sizeof(*m)); }
 
 void mesh_begin(Mesh *m, int cx, int cz) {
     m->count = 0;
@@ -17,6 +17,7 @@ void mesh_begin(Mesh *m, int cx, int cz) {
     m->ox = cx * (double)CHUNK_SIZE; m->oz = cz * (double)CHUNK_SIZE;
     m->cell = city_drape_cell(m->ox + 0.5 * CHUNK_SIZE, m->oz + 0.5 * CHUNK_SIZE);
     m->sink = city_footing_sink(m->ox + 0.5 * CHUNK_SIZE, m->oz + 0.5 * CHUNK_SIZE);
+    m->nvbody = 0;
     m->mn[0] = m->mn[1] = m->mn[2] = 1e30f;
     m->mx[0] = m->mx[1] = m->mx[2] = -1e30f;
     free(m->lights);

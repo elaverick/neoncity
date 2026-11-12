@@ -152,14 +152,23 @@ static int fits(const VendorSite *s, int a) {
     vendor_min_site(a, &w, &d);
     if (s->w < w || s->d < d) return 0;
     if (a == VA_LEANTO && !s->hostWall) return 0;
-    if (s->ceiling > 0.0f && s->ceiling < (a == VA_BARROW ? 2.5f : a == VA_CONTAINER || a == VA_PAIR ? 3.0f : 2.9f)) return 0;
+    /* SF2: the arcade counter only under a ceiling (it hangs from it) unless forced; a canopy bar's hood and
+     * duct want room over it (its plan says whether it fits) */
+    if (a == VA_ARCADE) return s->ceiling > 0.0f ? s->ceiling >= 2.55f : nb_forced_form() == NB_ARCADE;
+    if (a == VA_TIERED) return nb_forced_form() == NB_TIERED || s->archetype == VA_TIERED;
+    if (s->ceiling > 0.0f && s->ceiling < (a == VA_BARROW ? 2.5f : a == VA_CONTAINER || a == VA_PAIR ? 3.0f : a == VA_CANOPY ? 3.1f : 2.9f)) return 0;
     return 1;
 }
 
 static float arch_weight(const VendorSite *s, int cls, int t, int a) {
     if (!fits(s, a)) return 0.0f;
-    float w = V_TRADES[t].arch[a] * V_ARCH_CLASS[cls][a] * V_ARCH_SITE[s->kind < VSITE_COUNT ? s->kind : 0][a];
+    /* SF2: the arcade and tiered forms take the canopy bar's affinity for the trade */
+    float w = V_TRADES[t].arch[a == VA_ARCADE || a == VA_TIERED ? VA_CANOPY : a] * V_ARCH_CLASS[cls][a] * V_ARCH_SITE[s->kind < VSITE_COUNT ? s->kind : 0][a];
     if (s->lunch) w *= V_ARCH_LUNCH[a];
+    /* forced for captures (NeonCity --nbform): the form's archetype wherever it fits, else the site's own choice */
+    const int f = nb_forced_form();
+    if (f >= 0 && w > 0.0f && (f == NB_STRAIGHT || f == NB_CORNER ? a == VA_CANOPY : vendor_kit_form(a) == f)) w *= 1e4f;
+    if (f == NB_TIERED && a == VA_TIERED) w = 1e4f;
     return w;
 }
 
@@ -372,7 +381,7 @@ static int dress(VGen *G, const VFrame *F, const VendorFinger *ctx, int n, Rng *
     dw[VI_DGAS - VI_DECOR_FIRST] *= T->cooking == 2 ? 0.0f : 0.5f;     /* cooks get their own bottles */
     dw[VI_PLANTER - VI_DECOR_FIRST] *= v->cls == VC_RICH ? 3.0f : 0.5f;
     dw[VI_MENUBOARD - VI_DECOR_FIRST] *= T->cooking || v->cls == VC_RICH ? 2.5f : 0.7f;
-    dw[VI_CHAIR - VI_DECOR_FIRST] *= v->archetype == VA_CANOPY ? 0.3f : 1.0f;
+    dw[VI_CHAIR - VI_DECOR_FIRST] *= vendor_is_kit(v->archetype) ? 0.3f : 1.0f;
     for (int k = 0, tries = 0; k < want && tries < want * 4 + 4; ++tries) {
         int d = v_pick(r, dw, VI_DECOR_COUNT);
         if (d < 0) break;

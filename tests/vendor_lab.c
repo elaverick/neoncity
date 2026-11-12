@@ -40,10 +40,13 @@ static VendorSite site_for(int arch, uint32_t seed, float affluence) {
     s.archetype = (int8_t)arch;
     s.trade = -1;
     s.hostWall = arch == VA_LEANTO || rng_float(&r) < 0.4f;
-    static const uint8_t KIND[VA_COUNT] = { VSITE_APRON, VSITE_KERB, VSITE_LANE, VSITE_COURT, VSITE_COURT, VSITE_POCKET, VSITE_KERB };
+    static const uint8_t KIND[VA_COUNT] = { VSITE_APRON, VSITE_KERB, VSITE_LANE, VSITE_COURT, VSITE_COURT, VSITE_POCKET, VSITE_KERB,
+                                            VSITE_LANE, VSITE_PLAZA };
     s.kind = KIND[arch];
     if (rng_float(&r) < 0.15f) { s.kind = VSITE_ARCOLOGY; s.ceiling = rng_range(&r, 4.0f, 6.0f); }
     if (arch == VA_PAIR && s.kind == VSITE_ARCOLOGY) s.kind = VSITE_COURT, s.ceiling = 0.0f;
+    if (arch == VA_ARCADE) s.ceiling = rng_range(&r, 2.7f, 4.5f);   /* SF2: under an overhang or a lane's vault */
+    if (arch == VA_TIERED) s.ceiling = 0.0f;
     return s;
 }
 

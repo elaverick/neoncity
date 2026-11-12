@@ -81,6 +81,9 @@ enum {
     PMAT_GRIT,         /* the black grit chestnuts roast in, ash */
     PMAT_EMBER,        /* glowing charcoal (it glows: kitGlow) */
     PMAT_RADIANT,      /* a spit's infrared ceramic tiles, glowing (kitGlow; its uv a tile's own metres from its middle) */
+    /* SF2: the forms */
+    PMAT_GLAZING,      /* window glass over real geometry (kit.glsl: the lobbies' paneCoverage); casts and shuts in nothing */
+    PMAT_WINDOW_FAR,   /* the far shell's window: the kitchen's light behind it (it glows: kitGlow) */
     PMAT_COUNT
 };
 
@@ -288,7 +291,7 @@ void pm_place(Pm *pm, int id);
 /* Whether module id casts shadows (the city's ray-traced ones): not the lights' own glass and flames. */
 int  pm_module_casts(int id);
 /* Whether a material glows (the lights' own surfaces: they cast nothing). */
-static inline int pm_mat_glows(int mat) { return (mat >= PMAT_TUBE && mat <= PMAT_SIGN_FAR) || mat == PMAT_EMBER || mat == PMAT_RADIANT; }
+static inline int pm_mat_glows(int mat) { return (mat >= PMAT_TUBE && mat <= PMAT_SIGN_FAR) || mat == PMAT_EMBER || mat == PMAT_RADIANT || mat == PMAT_WINDOW_FAR; }
 /* Whether a module is a neon icon (its instance carries its icon's colour and flicker). */
 int  pm_module_is_icon(int id);
 #define PM_ICON_SIZE 0.36f   /* the icons' square, which instances scale to their housing */
