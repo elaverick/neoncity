@@ -544,6 +544,17 @@ static void line_section(const char *out) {
                     const int trade = (int)(k % VT_COUNT);
                     if (!nb_plan(&p, WS[wi], DS[di], 0.0f, seed, form, trade, (float)((k * 37u) % 100u) / 100.0f)) continue;
                     trades[trade]++; mids += p.rangeMid; aframes += p.aframeOn;
+                    if (p.aframeOn) {   /* SF2: the A-frame clear of the stools, posts and counters (nb_solids) */
+                        float sb[NB_SOLIDS_MAX][4];
+                        NbPlan q = p;
+                        q.aframeOn = 0;
+                        const int ns = nb_solids(&q, sb, NB_SOLIDS_MAX);
+                        const float ca = fabsf(cosf(p.aframe[2])), sa = fabsf(sinf(p.aframe[2]));
+                        const float hx = 0.32f * ca + 0.22f * sa, hz = 0.32f * sa + 0.22f * ca;
+                        for (int i = 0; i < ns; ++i)
+                            CHECK(!(p.aframe[0] + hx > sb[i][0] && p.aframe[0] - hx < sb[i][2] && p.aframe[1] + hz > sb[i][1] && p.aframe[1] - hz < sb[i][3]),
+                                  "line %.2f x %.2f seed %08x: the A-frame meets solid %d", WS[wi], DS[di], seed, i);
+                    }
                     NbLine L, L2;
                     nb_line(&p, &L);
                     nb_line(&p, &L2);

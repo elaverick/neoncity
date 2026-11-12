@@ -520,6 +520,47 @@ static void plan_signs(NbPlan *p) {
     }
 }
 
+/* The A-frame's turned footprint (half sizes, its legs splayed) at yaw, a few centimetres to spare. */
+static void aframe_half(float yaw, float *hx, float *hz) {
+    const float c = fabsf(cosf(yaw)), sn = fabsf(sinf(yaw));
+    *hx = 0.32f * c + 0.22f * sn + 0.04f; *hz = 0.32f * sn + 0.22f * c + 0.04f;
+}
+/* Whether the A-frame at (x, z, yaw) meets anything the bar stands on the ground (nb_solids: the body, the counters,
+ * posts, the column, stools, the kiosk's sill) or leaves the site. */
+static int aframe_hits(const NbPlan *p, float W, float D, float x, float z, float yaw) {
+    float hx, hz;
+    aframe_half(yaw, &hx, &hz);
+    /* inside the site (its own footprint, as the clamp above), clear of the solids by the margin */
+    if (x - hx + 0.04f < -0.5f * W - 1e-3f || x + hx - 0.04f > 0.5f * W + 1e-3f || z - hz + 0.04f < -1e-3f || z + hz - 0.04f > D + 1e-3f) return 1;
+    NbPlan q = *p;
+    q.aframeOn = 0;
+    float b[NB_SOLIDS_MAX][4];
+    const int n = nb_solids(&q, b, NB_SOLIDS_MAX);
+    for (int i = 0; i < n; ++i)
+        if (x + hx > b[i][0] && x - hx < b[i][2] && z + hz > b[i][1] && z - hz < b[i][3]) return 1;
+    return 0;
+}
+/* SF2 (the user: A-frames clipped into stools): the A-frame where its draws put it if that's clear, else the
+ * nearest clear place along the front (or along the bar's side, beside it), else none. */
+static void aframe_clear(NbPlan *p, float W, float D, int beside) {
+    const float x = p->aframe[0], z = p->aframe[1], yaw = p->aframe[2];
+    if (!aframe_hits(p, W, D, x, z, yaw)) return;
+    float hx, hz;
+    aframe_half(yaw, &hx, &hz);
+    /* along the front where it stands, then out at the site's front edge, beyond the stools */
+    const float zs[2] = { z, D - (hz - 0.04f) - 0.01f };
+    for (int r = 0; r < (beside ? 1 : 2); ++r) {
+        if (r && zs[1] <= z + 0.01f) break;
+        for (int k = r ? 0 : 1; k <= 8; ++k)
+            for (int sg = -1; sg <= 1; sg += 2) {
+                const float d = (float)sg * 0.25f * (float)k;
+                const float cx = beside ? x : x + d, cz = beside ? z + d : zs[r];
+                if (!aframe_hits(p, W, D, cx, cz, yaw)) { p->aframe[0] = cx; p->aframe[1] = cz; return; }
+            }
+    }
+    p->aframeOn = 0;
+}
+
 /* The A-frame out front at the closed end; the bell on the counter near the gate (the kiosk's on its sill). */
 static void plan_front(NbPlan *p, float W, float D, int re) {
     const float cy = p->cy, cd = p->cd;
@@ -565,12 +606,13 @@ static void plan_front(NbPlan *p, float W, float D, int re) {
         /* on the sill, at the hatch's end towards the middle */
         const float bx = p->hatch[0] + p->hatch[1] < 0.0f ? p->hatch[1] - 0.12f : p->hatch[0] + 0.12f;
         p->bell[0] = bx; p->bell[1] = cy; p->bell[2] = p->front + 0.5f * p->sill;
-        return;
+    } else {
+        const NbRun *c = &p->run[0];
+        float g = c->gate1 > c->gate0 ? 0.5f * (c->gate0 + c->gate1) : 0.0f;
+        float at = clampf(g < 0.5f * c->len ? g + 0.75f : g - 0.75f, 0.2f, c->len - 0.2f);
+        p->bell[0] = c->o[0] + c->u[0] * at; p->bell[1] = cy; p->bell[2] = p->front - 0.45f * cd;
     }
-    const NbRun *c = &p->run[0];
-    float g = c->gate1 > c->gate0 ? 0.5f * (c->gate0 + c->gate1) : 0.0f;
-    float at = clampf(g < 0.5f * c->len ? g + 0.75f : g - 0.75f, 0.2f, c->len - 0.2f);
-    p->bell[0] = c->o[0] + c->u[0] * at; p->bell[1] = cy; p->bell[2] = p->front - 0.45f * cd;
+    if (p->aframeOn) aframe_clear(p, W, D, beside);
 }
 
 /* NB6: light and signs, by hash (the draws stay NB5's) */
