@@ -70,6 +70,15 @@ ray-query device features they need), `--shadowdebug` starts in the shadow debug
 share (default 0.4; 0 turns them off) of the office towers' curtain-wall and ribbon-window floors as baked interior impostors, and `--validation` enables the
 Khronos validation layer if it is installed. A `--shot` also prints how long the GPU spends on each pass.
 
+Start-up and exit: the pipelines are kept in `pipeline.cache` beside the executable. The driver's own cache leaves out
+the city's and the kit's ray-traced fragment shaders, which take about 27 s each to compile, so the first run after
+either changes is that much slower. Deleting the file only costs one slow start, and the file is started afresh once it
+passes 512 MB. On quitting, the game ends the process without destroying its Vulkan device: the driver takes 12-15 s
+over `vkDestroyDevice`. With `--validation` it tears everything down so the layer can report what was left. A `--shot`
+of the default view takes about 30 s: about 16 s laying out the world's plan, then 900 frames. The chunk pool is always
+full by then, so the shot waits out its 900-frame limit, and it doesn't wait on distant proxy tiles their full pool
+turned away.
+
 ## How it works
 
 ### The plan (`src/plan/plan.c`)

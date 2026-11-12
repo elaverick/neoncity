@@ -1,4 +1,5 @@
 #include "vkcore.h"
+#include "assets.h"
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cb(VkDebugUtilsMessageSeverityFlagBitsEXT sev,
                                                VkDebugUtilsMessageTypeFlagsEXT type,
@@ -219,6 +220,60 @@ static void create_device(VkCore *vk, bool wantRt) {
     vkGetDeviceQueue(vk->device, vk->queueFamily, 0, &vk->queue);
 }
 
+#define PIPELINE_CACHE_FILE "pipeline.cache"
+#define PIPELINE_CACHE_MAX  (512u << 20)   /* bigger than this, it has gathered too many stale shaders: started afresh */
+
+/* The pipeline cache, from the last run's if it was made by this device and driver (the header's
+ * vendor, device and cache UUID; the driver checks again and ignores what it can't use). */
+static void pipeline_cache_load(VkCore *vk) {
+    char path[1024];
+    exe_file(PIPELINE_CACHE_FILE, path);
+    void *data = NULL;
+    size_t size = 0;
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        long n = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (n >= 32 && (unsigned long)n <= PIPELINE_CACHE_MAX && (data = malloc((size_t)n)) && fread(data, 1, (size_t)n, f) == (size_t)n) {
+            const uint8_t *h = (const uint8_t *)data;
+            uint32_t len, version, vendor, device;
+            memcpy(&len, h, 4); memcpy(&version, h + 4, 4); memcpy(&vendor, h + 8, 4); memcpy(&device, h + 12, 4);
+            if (len >= 32 && version == VK_PIPELINE_CACHE_HEADER_VERSION_ONE && vendor == vk->props.vendorID &&
+                device == vk->props.deviceID && memcmp(h + 16, vk->props.pipelineCacheUUID, VK_UUID_SIZE) == 0)
+                size = (size_t)n;
+        }
+        fclose(f);
+    }
+    VkPipelineCacheCreateInfo ci = { VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
+    ci.initialDataSize = size;
+    ci.pInitialData = size ? data : NULL;
+    VK_CHECK(vkCreatePipelineCache(vk->device, &ci, NULL, &vk->pipelineCache));
+    vk->pipelineCacheLoaded = size;
+    free(data);
+}
+
+void vk_pipeline_cache_save(VkCore *vk) {
+    if (!vk->pipelineCache) return;
+    size_t size = 0;
+    if (vkGetPipelineCacheData(vk->device, vk->pipelineCache, &size, NULL) != VK_SUCCESS || size == vk->pipelineCacheLoaded) return;
+    void *data = malloc(size);
+    if (!data) return;
+    if (vkGetPipelineCacheData(vk->device, vk->pipelineCache, &size, data) == VK_SUCCESS) {
+        /* through a temporary file, so another instance never reads half of one */
+        char path[1024], tmp[1060];
+        exe_file(PIPELINE_CACHE_FILE, path);
+        snprintf(tmp, sizeof(tmp), "%s.%u.tmp", path, (unsigned)(uintptr_t)vk);
+        FILE *f = fopen(tmp, "wb");
+        bool ok = f && fwrite(data, 1, size, f) == size;
+        if (f) ok = fclose(f) == 0 && ok;
+        remove(path);
+        if (!ok || rename(tmp, path) != 0) remove(tmp);
+        else vk->pipelineCacheLoaded = size;
+    }
+    free(data);
+}
+
 void vk_init(VkCore *vk, GLFWwindow *window, bool validation, bool rt, float hdrPaper, float hdrPeak) {
     memset(vk, 0, sizeof(*vk));
     vk->window = window;
@@ -230,6 +285,7 @@ void vk_init(VkCore *vk, GLFWwindow *window, bool validation, bool rt, float hdr
     VK_CHECK(glfwCreateWindowSurface(vk->instance, window, NULL, &vk->surface));
     pick_device(vk);
     create_device(vk, rt);
+    pipeline_cache_load(vk);
     vk_create_swapchain(vk);
 }
 
@@ -350,6 +406,7 @@ void vk_destroy_swapchain(VkCore *vk) {
 
 void vk_shutdown(VkCore *vk) {
     if (vk->swapchain) vk_destroy_swapchain(vk);
+    if (vk->pipelineCache) vkDestroyPipelineCache(vk->device, vk->pipelineCache, NULL);
     vkDestroyDevice(vk->device, NULL);
     if (vk->surface) vkDestroySurfaceKHR(vk->instance, vk->surface, NULL);
     if (vk->messenger) vkDestroyDebugUtilsMessengerEXT(vk->instance, vk->messenger, NULL);

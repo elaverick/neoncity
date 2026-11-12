@@ -14,3 +14,8 @@ int asset_roots(char roots[2][1024]);
  * working directory and its parent (the source tree, seen from build/).
  * Returns how many. */
 int data_roots(char roots[3][1024]);
+
+/* The path of a file beside the executable (or in the working directory when
+ * the executable's own path is unknown): what the game keeps between runs,
+ * such as its pipeline cache. */
+void exe_file(const char *name, char out[1024]);

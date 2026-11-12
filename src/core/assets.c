@@ -36,6 +36,12 @@ int asset_roots(char roots[2][1024]) {
     return n;
 }
 
+void exe_file(const char *name, char out[1024]) {
+    char exe[1024];
+    exe_dir(exe);
+    snprintf(out, 1024, "%s%s", exe, name);
+}
+
 int data_roots(char roots[3][1024]) {
     char exe[1024];
     exe_dir(exe);

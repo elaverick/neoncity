@@ -4,6 +4,8 @@
 #include "terrain.h"
 #include "thread.h"
 
+#include <float.h>
+
 /* The distant proxies' GPU side (src/city/proxy.c makes them). Every tile
  * within PROXY_DISTANCE of the camera is generated on a worker thread of its
  * own and its boxes uploaded into one device-local pool, in pages; tiles that
@@ -56,6 +58,7 @@ enum { PT_FREE = 0, PT_QUEUED, PT_READY, PT_EMPTY };
 typedef struct PTile {
     int      tx, tz, state;
     uint64_t retry;      /* the pool had no room for it: not queued again before this frame */
+    int      turnedAway; /* the pool has had no room for it, here, at least once (kept through its retries) */
     int      n, npages;
     uint16_t page[TILE_PAGES];
     int      first[PROXY_TILE_CELLS + 1];
@@ -112,6 +115,8 @@ struct ProxyGpu {
     const TerrainFrame *tf;     /* the active frame (proxy_gpu_set_frame) */
     int      inRange, readyTiles, drawnTiles, drawnBoxes, residentBoxes, layers;
     int      starved;           /* tiles generated that the pool had no room for, so far */
+    int      turnedAway;        /* tiles in range not ready that the pool has turned away (PTile.turnedAway), this frame */
+    bool     settled;           /* renderer_proxies_settled, this frame */
     double   created, filled;   /* when, and how long after it every tile in range was first ready (s) */
 };
 
@@ -326,7 +331,7 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
         int pages = (j->t.n + PAGE_BOXES - 1) / PAGE_BOXES;
         if (want && pages > TILE_PAGES) fatal("proxies: a tile has more boxes than it can hold");
         if (want && staged > 0 && staged + (uint32_t)j->t.n > UPLOAD_BOXES) break;   /* the rest next frame */
-        if (want && pages > p->nfree) { t->state = PT_FREE; t->retry = frame + RETRY_FRAMES; want = 0; p->starved++; }   /* asked for again later */
+        if (want && pages > p->nfree) { t->state = PT_FREE; t->retry = frame + RETRY_FRAMES; t->turnedAway = 1; want = 0; p->starved++; }   /* asked for again later */
         if (!want) continue;
         t->n = j->t.n;
         t->npages = pages;
@@ -357,7 +362,8 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
      *    can hold any of the city is asked in the layer's frame. */
     place_layers(p, cam, frame);
     int ncand = 0;
-    p->inRange = p->readyTiles = 0;
+    p->inRange = p->readyTiles = p->turnedAway = 0;
+    float nearestAway = FLT_MAX, nearestMissing = FLT_MAX;   /* the nearest tiles in range turned away, and missing otherwise */
     for (int l = 0; l < PROXY_LAYERS; ++l) {
         PLayer *L = &p->layer[l];
         if (L->settlement < 0) continue;
@@ -378,15 +384,23 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
                 }
                 if (t->state == PT_FREE && (t->tx != tx || t->tz != tz)) {   /* another tile's slot */
                     t->retry = 0;
+                    t->turnedAway = 0;
                     t->tx = tx; t->tz = tz;
                     if (city_proxy_tile_empty(tx, tz)) t->state = PT_EMPTY;
                 }
                 if (t->state == PT_FREE && frame >= t->retry) { p->cand[ncand].layer = l; p->cand[ncand].slot = s; p->cand[ncand].d = d; ncand++; }
-                else if (t->state == PT_READY || t->state == PT_EMPTY) p->readyTiles++;
+                if (t->state == PT_READY || t->state == PT_EMPTY) p->readyTiles++;
+                else if (t->turnedAway) { p->turnedAway++; nearestAway = fminf(nearestAway, d); }   /* waiting out its retry, or asked again */
+                else nearestMissing = fminf(nearestMissing, d);
             }
         terrain_frame_bind(NULL);
     }
     if (p->filled == 0.0 && p->readyTiles == p->inRange) p->filled = glfwGetTime() - p->created;
+    /* Tiles are asked for nearest first, so once the pool has turned one away
+     * the missing tiles beyond it would be too: those wait on the pool, not on
+     * the workers. The retries of the turned-away ones fill the queue, so the
+     * farther ones may never even be asked for. */
+    p->settled = nearestMissing >= nearestAway;
     if (ncand) {
         qsort(p->cand, (size_t)ncand, sizeof(PCand), cmp_cand);
         mutex_lock(&p->lock);
@@ -493,14 +507,17 @@ void proxy_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     }
 }
 
-bool renderer_proxies_ready(Renderer *r) { return r->proxies->readyTiles == r->proxies->inRange; }
+/* Every tile in range is ready, or is no nearer than one a full pool has
+ * turned away: nothing more will fit until the camera moves. */
+bool renderer_proxies_settled(Renderer *r) { return r->proxies->settled; }
 
 void renderer_proxy_stats(Renderer *r, char *buf, size_t n) {
     const ProxyGpu *p = r->proxies;
     char filled[48] = "";
     if (p->filled > 0.0) snprintf(filled, sizeof(filled), ", all first ready after %.2f s", p->filled);
-    char starved[48] = "";
-    if (p->starved > 0) snprintf(starved, sizeof(starved), ", %d turned away by a full pool", p->starved);
+    char starved[96] = "";
+    if (p->starved > 0)
+        snprintf(starved, sizeof(starved), ", %d tiles turned away by a full pool so far, %d of those in range now", p->starved, p->turnedAway);
     snprintf(buf, n, "proxies: %d of %d tiles in range of %d cities ready%s (%d boxes, %d of %d pages%s), %d tiles and %d boxes drawn in %u draws",
              p->readyTiles, p->inRange, p->layers, filled, p->residentBoxes, POOL_PAGES_P - p->nfree - p->npending, POOL_PAGES_P, starved,
              p->drawnTiles, p->drawnBoxes, p->ndraw[(r->frameIndex + MAX_FRAMES - 1) % MAX_FRAMES]);

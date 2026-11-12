@@ -324,7 +324,7 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
                          float emaDt, uint64_t totalFrames) {
     if (!c->path) return;
     ChunkStats s = chunks_stats(chunks);
-    bool distant = renderer_proxies_ready(renderer) && renderer_terrain_settled(renderer);
+    bool distant = renderer_proxies_settled(renderer) && renderer_terrain_settled(renderer);
     c->settledFrames = (s.queued + s.ready == 0 && distant && totalFrames > 10) ? c->settledFrames + 1 : 0;
     if (c->walkSeconds <= 0.0f) c->framesAfterWalk++;
     else if (c->walkStarted) {
@@ -334,11 +334,15 @@ static void capture_step(Capture *c, GLFWwindow *win, ChunkSystem *chunks, Rende
     }
     /* Capture once streaming has settled. The chunks may never settle when
      * their pool is full, so after 900 frames they are let off; the proxies
-     * and the terrain still have to be ready (bar a last timeout). */
+     * and the terrain still have to be ready (bar a last timeout), the
+     * proxies bar the far tiles their own full pool turned away. */
     if (c->shotTaken) glfwSetWindowShouldClose(win, GLFW_TRUE);
     else if (c->walkSeconds <= 0.0f && ((c->atWalkEnd && c->walkStarted) || c->settledFrames > 60 || (c->framesAfterWalk > 900 && distant) || c->framesAfterWalk > 20000)) {
         renderer_request_screenshot(renderer, c->path);
         c->shotTaken = true;
+        if (c->framesAfterWalk > 20000)
+            printf("shot: timed out waiting for%s%s%s\n", s.queued + s.ready ? " chunks" : "",
+                   renderer_proxies_settled(renderer) ? "" : " proxies", renderer_terrain_settled(renderer) ? "" : " terrain");
         printf("frame time %.2f ms (avg), drawn chunks %d, draws %d, resident %d, pool %d/%d pages\n",
                emaDt * 1000.0f, s.drawnChunks, s.drawCalls, s.resident, s.pagesUsed, s.pagesTotal);
         if (c->missingFrames > 0)
@@ -670,6 +674,7 @@ int main(int argc, char **argv) {
     city_set_kit(opt.kit);         /* before any chunk */
     ChunkSystem *chunks = chunks_create(&vk);
     Renderer *renderer = renderer_create(&vk, chunks);
+    vk_pipeline_cache_save(&vk);   /* the pipelines it made, for the next run */
     renderer_set_shadow_debug(renderer, opt.shadowDebug);
     renderer_set_vendor_debug(renderer, opt.vendorDebug);
     chunks_set_vendor_log(opt.vendorDebug);
@@ -695,6 +700,14 @@ int main(int argc, char **argv) {
     layouts_shutdown();
 
     vkDeviceWaitIdle(vk.device);
+    /* The driver takes 12-15 s over vkDestroyDevice (RTX 4080 SUPER, 2026-11-12: with every object
+     * already destroyed, ray tracing or not), where ending the process frees it all at once. The
+     * screenshot and the pipeline cache are written by now. The full teardown is kept for
+     * --validation, whose layer reports what is left undestroyed. */
+    if (!opt.validation) {
+        fflush(NULL);
+        _exit(0);
+    }
     renderer_destroy(renderer);
     chunks_destroy(chunks);
     frames_shutdown(&frames);

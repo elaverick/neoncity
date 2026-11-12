@@ -53,6 +53,13 @@ typedef struct VkCore {
     VkImage          images[MAX_SWAP_IMAGES];
     VkImageView      views[MAX_SWAP_IMAGES];
     VkSemaphore      renderDone[MAX_SWAP_IMAGES];
+
+    /* Every pipeline is made through it (make_graphics, make_compute), and it is kept beside the
+     * executable between runs (vk_pipeline_cache_save): the driver's own cache leaves out the city's
+     * ray-traced fragment shaders, which take it about half a minute each to compile. Headless
+     * tools leave it null. */
+    VkPipelineCache  pipelineCache;
+    size_t           pipelineCacheLoaded;   /* bytes read at start-up */
 } VkCore;
 
 typedef struct Buffer {
@@ -77,6 +84,9 @@ void     vk_init(VkCore *vk, GLFWwindow *window, bool validation, bool rt, float
 /* The same device without a window, surface or swapchain, for tools (tools/interior_bake). */
 void     vk_init_headless(VkCore *vk, bool validation, bool rt);
 void     vk_shutdown(VkCore *vk);
+/* Writes the pipeline cache beside the executable if it has grown since it was read (once the
+ * pipelines are made, so a crash later doesn't lose them). */
+void     vk_pipeline_cache_save(VkCore *vk);
 void     vk_create_swapchain(VkCore *vk);
 void     vk_destroy_swapchain(VkCore *vk);
 

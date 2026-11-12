@@ -142,8 +142,9 @@ void      renderer_gpu_last(Renderer *r, char *buf, size_t n);
 bool      renderer_terrain_settled(Renderer *r);
 /* The terrain clipmap's state and update cost (one line of text). */
 void      renderer_terrain_stats(Renderer *r, char *buf, size_t n);
-/* Whether every distant proxy tile in range is ready to draw. */
-bool      renderer_proxies_ready(Renderer *r);
+/* Whether every distant proxy tile in range is ready to draw, bar those a
+ * full pool turned away (the far edge, as the tiles are asked for nearest first). */
+bool      renderer_proxies_settled(Renderer *r);
 /* The distant proxies' tiles and draws (one line of text). */
 void      renderer_proxy_stats(Renderer *r, char *buf, size_t n);
 /* Auto exposure (src/render/exposure_gpu.c): manualEv shows the frames at

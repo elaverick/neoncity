@@ -38,6 +38,13 @@ same city; screenshots of the same `--cam` with `--rain 0` show the renderer's r
   before and after.
 - **Constants shared by C and GLSL** (`MAT_*`, `LK_*`, `PBR_*`, the shadow ranges) are kept in step by hand ("must
   match shaders/common.glsl"). A `#define`-only header included by both `common.h` and `common.glsl` would end that.
+- **The distant proxies' pool is too small for the 60-150 km cities** (2026-11-12): at the default spawn 2654 of 6674
+  tiles in range fit its 6144 pages (24 MB, sized for a 985-tile city). The far ones are left out, and the nearest of
+  those are generated again every `RETRY_FRAMES` (120) for ever and turned away each time. Either enlarge the pool to
+  hold the range (about 1.7M boxes, about 14k pages, 55 MB), or stop retrying until the camera moves a tile. Captures no
+  longer wait on it (`renderer_proxies_settled`).
+- **`plan_world_init` takes about 16 s at every start** (2026-11-12), most of what is left of a `--shot`'s 30 s. Cache
+  it on disk like the Earth's bake, or make it lazier.
 - **Four polygon clippers** (`poly_clip` in `src/plan/plan.c`, `clip_hp` in `drops.c`, `clip_half` in `mesh_lobby.c`,
   `clip_axis` in `streets.c`) differ in precision and edge labels; merging them would change generated geometry, so it
   needs a deliberate re-baseline of the fingerprint.

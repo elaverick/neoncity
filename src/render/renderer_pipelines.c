@@ -503,7 +503,7 @@ VkPipeline make_graphics(VkCore *vk, const GfxDesc *d) {
     ci.pDynamicState = &dy;
     ci.layout = d->layout;
     VkPipeline p;
-    VK_CHECK(vkCreateGraphicsPipelines(vk->device, VK_NULL_HANDLE, 1, &ci, NULL, &p));
+    VK_CHECK(vkCreateGraphicsPipelines(vk->device, vk->pipelineCache, 1, &ci, NULL, &p));
     vkDestroyShaderModule(vk->device, vs, NULL);
     vkDestroyShaderModule(vk->device, fs, NULL);
     return p;
@@ -518,7 +518,7 @@ VkPipeline make_compute(VkCore *vk, const uint32_t *code, size_t bytes, VkPipeli
     ci.stage.pName = "main";
     ci.layout = layout;
     VkPipeline p;
-    VK_CHECK(vkCreateComputePipelines(vk->device, VK_NULL_HANDLE, 1, &ci, NULL, &p));
+    VK_CHECK(vkCreateComputePipelines(vk->device, vk->pipelineCache, 1, &ci, NULL, &p));
     vkDestroyShaderModule(vk->device, cs, NULL);
     return p;
 }
