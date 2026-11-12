@@ -35,8 +35,13 @@ const uint PMAT_RUST = 0u, PMAT_PLATE = 1u, PMAT_STAINLESS = 2u, PMAT_COPPER = 3
            PMAT_CHALK = 12u, PMAT_CERAMIC = 13u, PMAT_BAMBOO = 14u, PMAT_PAPER = 15u, PMAT_PLASTIC = 16u, PMAT_GALV = 17u,
            PMAT_STEEL = 18u, PMAT_DIAL = 19u, PMAT_RED = 20u, PMAT_BROTH = 21u, PMAT_NOODLE = 22u, PMAT_CURRY = 23u,
            PMAT_RICE = 24u, PMAT_OIL = 25u, PMAT_GINGER = 26u, PMAT_RUST_STEEL = 27u, PMAT_CHEQUER = 28u, PMAT_LINING = 29u,
-           PMAT_TUBE = 30u, PMAT_NEON = 31u, PMAT_FLAME = 32u, PMAT_BULB = 33u, PMAT_SIGN_FAR = 34u;   // src/gen/pmodel.h
-const uint KIT_MATS = 35u;   // the tables below stop at the lit materials (30 on): kitGlow draws those
+           PMAT_TUBE = 30u, PMAT_NEON = 31u, PMAT_FLAME = 32u, PMAT_BULB = 33u, PMAT_SIGN_FAR = 34u,   // src/gen/pmodel.h
+           // SF1: the street-food trades' food, and the coals' glow
+           PMAT_MEAT = 35u, PMAT_DOUGH = 36u, PMAT_BREAD = 37u, PMAT_FRIED = 38u, PMAT_FRYOIL = 39u, PMAT_CHESTNUT = 40u,
+           PMAT_GREENS = 41u, PMAT_SAUCE = 42u, PMAT_GRIT = 43u, PMAT_EMBER = 44u, PMAT_RADIANT = 45u;
+bool kitGlows(uint m) { return (m >= PMAT_TUBE && m <= PMAT_SIGN_FAR) || m == PMAT_EMBER || m == PMAT_RADIANT; }
+bool kitIsFood(uint m) { return (m >= PMAT_BROTH && m <= PMAT_GINGER) || (m >= PMAT_MEAT && m <= PMAT_GRIT); }
+const uint KIT_MATS = 46u;   // the tables below hold placeholders for the lit materials (kitGlows): kitGlow draws those
 const uint KIT_HEAT = 16u;   // flags: the instance stands at the range (kit_gpu.h)
 const uint KIT_HOOD_RUST = 0u, KIT_HOOD_GALV = 1u, KIT_HOOD_STEEL = 2u;
 const uint KIT_BARE_WOOD = 1024u;   // flags: the A-frame's frame bare timber, not the trim coat (src/city/city.h)   // flags >> 8 (src/gen/noodle_bar.h NB_HOOD_*)
@@ -57,7 +62,7 @@ const vec3 KIT_STEEL_SHEET = vec3(0.12, 0.12, 0.125);   // a plain steel hood's 
 
 // rgb: the colour (linear) a set's grain goes under (params.w 0) or the painted colour; a: metalness, times the
 // set's map where it has one (sets without one read 1 there, and are all non-metals)
-const vec4 KIT_BASE[30] = vec4[30](
+const vec4 KIT_BASE[46] = vec4[46](
     vec4(0.20, 0.085, 0.045, 1.0), vec4(0.10, 0.12, 0.11, 0.0), vec4(0.56, 0.56, 0.55, 1.0), vec4(0.62, 0.34, 0.22, 1.0),
     vec4(0.035, 0.034, 0.033, 0.6), vec4(0.17, 0.05, 0.035, 0.0), vec4(0.68, 0.68, 0.64, 0.0), vec4(0.022, 0.022, 0.022, 0.0),
     vec4(0.72, 0.71, 0.67, 0.0), vec4(0.04, 0.05, 0.045, 0.0), vec4(0.74, 0.56, 0.28, 1.0), vec4(0.22, 0.13, 0.07, 0.0),
@@ -65,10 +70,17 @@ const vec4 KIT_BASE[30] = vec4[30](
     vec4(0.018, 0.018, 0.018, 0.0), vec4(0.40, 0.41, 0.41, 1.0), vec4(0.16, 0.155, 0.15, 1.0), vec4(0.74, 0.72, 0.64, 0.0),
     vec4(0.30, 0.03, 0.02, 1.0), vec4(0.33, 0.18, 0.07, 0.0), vec4(0.62, 0.52, 0.28, 0.0), vec4(0.42, 0.23, 0.04, 0.0),
     vec4(0.78, 0.76, 0.70, 0.0), vec4(0.33, 0.04, 0.01, 0.0), vec4(0.72, 0.43, 0.38, 0.0), vec4(0.30, 0.25, 0.22, 1.0),
-    vec4(0.30, 0.30, 0.31, 1.0), vec4(0.56, 0.56, 0.55, 1.0));
+    vec4(0.30, 0.30, 0.31, 1.0), vec4(0.56, 0.56, 0.55, 1.0),
+    vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0),                                          // the lit ones (30-34)
+    // SF1's food (kitFood paints over these), the grit
+    vec4(0.20, 0.09, 0.04, 0.0), vec4(0.72, 0.68, 0.58, 0.0), vec4(0.55, 0.34, 0.13, 0.0), vec4(0.60, 0.38, 0.11, 0.0),
+    vec4(0.30, 0.19, 0.04, 0.0), vec4(0.16, 0.07, 0.03, 0.0), vec4(0.08, 0.22, 0.04, 0.0), vec4(0.33, 0.05, 0.02, 0.0),
+    vec4(0.035, 0.033, 0.03, 0.0), vec4(0.0), vec4(0.0));
 // the painted materials' roughness (the sets carry their own)
-const float KIT_ROUGH[30] = float[30](0.82, 0.6, 0.32, 0.4, 0.75, 0.55, 0.2, 0.8, 0.25, 0.05, 0.35, 0.7, 0.9, 0.3, 0.6, 0.9,
-                                      0.4, 0.5, 0.5, 0.4, 0.45, 0.08, 0.5, 0.35, 0.6, 0.08, 0.4, 0.6, 0.5, 0.35);
+const float KIT_ROUGH[46] = float[46](0.82, 0.6, 0.32, 0.4, 0.75, 0.55, 0.2, 0.8, 0.25, 0.05, 0.35, 0.7, 0.9, 0.3, 0.6, 0.9,
+                                      0.4, 0.5, 0.5, 0.4, 0.45, 0.08, 0.5, 0.35, 0.6, 0.08, 0.4, 0.6, 0.5, 0.35,
+                                      0.5, 0.5, 0.5, 0.5, 0.5,
+                                      0.4, 0.6, 0.6, 0.55, 0.04, 0.3, 0.5, 0.3, 0.85, 0.9, 0.9);
 
 // The authored set material m is drawn with, or -1 (painted here). Mirrors PM_MAT_SET (src/gen/pmodel_kit.c);
 // about a third of the copper pots are the bright one with verdigris.
@@ -159,13 +171,147 @@ void kitFood(uint m, vec2 f, float foot, inout vec3 base, inout float rough) {
         float slice = mix(0.5, max(a, 0.8 * b), aa);
         base = mix(vec3(0.46, 0.27, 0.22), vec3(0.74, 0.52, 0.45), slice);
         rough = 0.1;
+    } else if (m == PMAT_MEAT) {
+        // SF1: grilled and roast meat, caramel to dark crust, char marks, fat glistening
+        float aa = 1.0 - smoothstep(0.003, 0.01, foot);
+        base = mix(vec3(0.10, 0.04, 0.018), vec3(0.34, 0.15, 0.055), fbm(f * 40.0, 0x3E1u));
+        float charM = kitBeads(f, 60.0, 0.3, 0x3E2u) * aa;
+        base = mix(base, vec3(0.025, 0.012, 0.006), 0.7 * charM);
+        float fat = smoothstep(0.65, 0.85, vnoise(f * 70.0, 0x3E3u)) * aa;
+        base = mix(base, vec3(0.42, 0.25, 0.12), 0.4 * fat);
+        rough = mix(0.45, 0.2, fat);
+    } else if (m == PMAT_DOUGH) {
+        // steamed dough: soft off-white, a sheen where it is stretched thin
+        base = mix(vec3(0.66, 0.62, 0.52), vec3(0.78, 0.75, 0.66), fbm(f * 25.0, 0xD01u));
+        rough = 0.55;
+    } else if (m == PMAT_BREAD) {
+        // baked and toasted: pale crumb to golden crust, toasted spots
+        float aa = 1.0 - smoothstep(0.003, 0.01, foot);
+        base = mix(vec3(0.62, 0.43, 0.20), vec3(0.78, 0.62, 0.38), fbm(f * 18.0, 0xB21u));
+        float spot = kitBeads(f, 35.0, 0.35, 0xB22u) * aa;
+        base = mix(base, vec3(0.30, 0.15, 0.05), 0.6 * spot);
+        rough = 0.65;
+    } else if (m == PMAT_FRIED) {
+        // golden batter, its crumbs catching the light
+        float aa = 1.0 - smoothstep(0.002, 0.007, foot);
+        base = mix(vec3(0.42, 0.24, 0.06), vec3(0.70, 0.48, 0.15), fbm(f * 30.0, 0xF41u));
+        float crumb = kitBeads(f, 120.0, 0.4, 0xF42u) * aa;
+        base = mix(base, vec3(0.80, 0.60, 0.25), 0.45 * crumb);
+        rough = mix(0.6, 0.35, crumb);
+    } else if (m == PMAT_FRYOIL) {
+        // hot oil: amber, glossy, bubbles rising at the basket
+        float aa = 1.0 - smoothstep(0.003, 0.01, foot);
+        float bub = kitBeads(f + vec2(0.0, gTime * 0.05), 50.0, 0.25, 0x011u) * aa;
+        base = mix(vec3(0.22, 0.13, 0.025), vec3(0.36, 0.24, 0.05), fbm(f * 6.0, 0x012u));
+        base = mix(base, vec3(0.55, 0.42, 0.18), 0.5 * bub);
+        rough = 0.03;
+    } else if (m == PMAT_CHESTNUT) {
+        // roast skins, glossy dark brown, a scorch here and there
+        base = mix(vec3(0.07, 0.03, 0.015), vec3(0.22, 0.09, 0.035), fbm(f * 50.0, 0xC51u));
+        rough = 0.3;
+    } else if (m == PMAT_GREENS) {
+        // herbs and sprouts: leaves two greens, pale sprouts and onion through them
+        float aa = 1.0 - smoothstep(0.003, 0.01, foot);
+        float leaf = kitBeads(f, 45.0, 0.45, 0x6E1u), pale = kitBeads(f + 0.7, 70.0, 0.3, 0x6E2u) * aa;
+        base = mix(vec3(0.03, 0.10, 0.015), vec3(0.10, 0.30, 0.04), mix(0.5, leaf, aa));
+        base = mix(base, vec3(0.62, 0.62, 0.48), 0.6 * pale);
+        rough = 0.45;
+    } else if (m == PMAT_SAUCE) {
+        // salsa and chilli sauce: red, chunks of onion and green through it, wet
+        float aa = 1.0 - smoothstep(0.003, 0.01, foot);
+        base = mix(vec3(0.22, 0.025, 0.01), vec3(0.42, 0.07, 0.02), fbm(f * 20.0, 0x5A1u));
+        base = mix(base, vec3(0.58, 0.52, 0.40), 0.6 * kitBeads(f, 60.0, 0.3, 0x5A2u) * aa);
+        base = mix(base, vec3(0.06, 0.20, 0.03), 0.7 * kitBeads(f + 1.3, 50.0, 0.25, 0x5A3u) * aa);
+        rough = 0.15;
+    } else if (m == PMAT_GRIT) {
+        // black grit and ash: dark grains, a few grey
+        float aa = 1.0 - smoothstep(0.002, 0.006, foot);
+        base = mix(vec3(0.02, 0.019, 0.018), vec3(0.09, 0.085, 0.08), mix(0.3, kitBeads(f, 200.0, 0.45, 0x6A1u), aa));
+        rough = 0.9;
     }
+}
+
+// The A-frame's chalk menu (SF1): a heading, a drawing of the trade's food, rows of hand-written dishes and
+// their prices; the trade in the instance seed's top byte (src/city/vendor_kit.c). uv: the board's metres
+// (its middle at x 0, from y 0.035 to 0.865). Returns the chalk's cover.
+float kitChalkLine(vec2 p, vec2 a, vec2 b, float w) {
+    vec2 pa = p - a, ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-8), 0.0, 1.0);
+    return 1.0 - smoothstep(0.5 * w, w, length(pa - ba * h));
+}
+float kitChalkRing(vec2 p, vec2 c, vec2 r, float a0, float a1, float w) {
+    vec2 q = (p - c) / r;
+    float a = atan(q.y, q.x), d = abs(length(q) - 1.0) * min(r.x, r.y);
+    float inA = a1 > a0 ? step(a0, a) * step(a, a1) : 1.0;
+    return inA * (1.0 - smoothstep(0.5 * w, w, d));
+}
+float kitChalkWriting(vec2 p, float y, float x0, float x1, float hgt, uint salt) {
+    // a line of hand-written letters: strokes in a band, words with gaps between them
+    if (abs(p.y - y) > hgt || p.x < x0 || p.x > x1) return 0.0;
+    float cell = (p.x - x0) / (0.6 * hgt * 2.0);
+    float i = floor(cell), t = fract(cell);
+    uint h = hash2i(salt, int(i), int(y * 997.0));
+    float word = step(0.16, hfloat(hash_combine(h, 9u)));       // the odd space
+    float v = (p.y - y) / hgt;                                     // -1 .. 1
+    float up = step(0.7, hfloat(h)) * step(-0.2, v);               // an ascender
+    float stem = (1.0 - smoothstep(0.08, 0.16, abs(t - 0.3 - 0.4 * hfloat(hash_combine(h, 1u))))) * step(abs(v), mix(0.55, 1.0, up));
+    float bowl = (1.0 - smoothstep(0.06, 0.14, abs(length(vec2((t - 0.5) * 1.6, v * 1.6 + 0.2)) - 0.55))) * step(0.45, hfloat(hash_combine(h, 2u)));
+    float bar = (1.0 - smoothstep(0.06, 0.13, abs(v - 0.55 * (hfloat(hash_combine(h, 3u)) - 0.5)))) * step(0.6, hfloat(hash_combine(h, 4u)));
+    return word * max(stem, max(bowl, bar));
+}
+float kitChalkDrawing(vec2 p, uint trade) {
+    const float w = 0.006;
+    vec2 c = vec2(0.0, 0.60);
+    // noodles, soup, curry, dumplings: a bowl (with steam, or noodles, or dumplings over its rim)
+    if (trade == 0u || trade == 1u || trade == 2u || trade == 7u) {
+        float b = kitChalkRing(p, c, vec2(0.11, 0.075), -3.1416, 0.0, w) + kitChalkLine(p, c - vec2(0.12, 0.0), c + vec2(0.12, 0.0), w);
+        float top = trade == 2u ? kitChalkRing(p, c + vec2(0.0, 0.0), vec2(0.06, 0.05), 0.0, 3.1416, w)
+                  : kitChalkLine(p, c + vec2(-0.03, 0.03), c + vec2(-0.015, 0.09), w) + kitChalkLine(p, c + vec2(0.03, 0.03), c + vec2(0.045, 0.09), w);
+        return max(b, top);
+    }
+    // skewers, kebab: a stick with chunks
+    if (trade == 3u || trade == 4u) {
+        float s = kitChalkLine(p, c + vec2(-0.12, -0.06), c + vec2(0.12, 0.06), w);
+        for (int k = 0; k < 3; ++k) s = max(s, kitChalkRing(p, c + vec2(-0.06 + 0.06 * float(k), -0.03 + 0.03 * float(k)), vec2(0.022), 4.0, -4.0, w));
+        return s;
+    }
+    // burgers, tacos: a bun or a shell
+    if (trade == 5u || trade == 8u) {
+        float s = kitChalkRing(p, c + vec2(0.0, trade == 5u ? -0.01 : 0.03), vec2(0.11, 0.07), trade == 5u ? 0.0 : -3.1416, trade == 5u ? 3.1416 : 0.0, w);
+        s = max(s, kitChalkLine(p, c + vec2(-0.11, trade == 5u ? -0.01 : 0.03), c + vec2(0.11, trade == 5u ? -0.01 : 0.03), w));
+        if (trade == 5u) s = max(s, kitChalkLine(p, c + vec2(-0.1, -0.05), c + vec2(0.1, -0.05), w));
+        return s;
+    }
+    // fried, crepes, chestnuts: a paper cone
+    if (trade == 6u || trade == 9u || trade == 10u) {
+        float s = kitChalkLine(p, c + vec2(-0.07, 0.06), c + vec2(0.0, -0.08), w);
+        s = max(s, kitChalkLine(p, c + vec2(0.07, 0.06), c + vec2(0.0, -0.08), w));
+        s = max(s, kitChalkRing(p, c + vec2(0.0, 0.06), vec2(0.07, 0.03), 0.0, 3.1416, w));
+        return s;
+    }
+    // drinks: a cup and its steam
+    float s = kitChalkLine(p, c + vec2(-0.07, 0.05), c + vec2(-0.05, -0.06), w);
+    s = max(s, kitChalkLine(p, c + vec2(0.07, 0.05), c + vec2(0.05, -0.06), w));
+    s = max(s, kitChalkLine(p, c + vec2(-0.05, -0.06), c + vec2(0.05, -0.06), w));
+    s = max(s, kitChalkRing(p, c + vec2(0.085, 0.0), vec2(0.03, 0.03), -1.6, 1.6, w));
+    s = max(s, kitChalkLine(p, c + vec2(-0.02, 0.07), c + vec2(0.0, 0.11), w));
+    return s;
+}
+float kitChalk(vec2 uv, uint seed, float foot) {
+    uint trade = seed >> 24;
+    // the drawing alone for now (the user, SF1: the writing waits for the text run), twice its first size, a little
+    // above the board's middle
+    vec2 p = vec2(0.0, 0.60) + (uv - vec2(0.0, 0.50)) / 2.0;
+    float c = kitChalkDrawing(p, trade);
+    // past a few pixels a letter, the writing's average
+    float far = smoothstep(0.002, 0.006, foot);
+    return mix(c, 0.18 * step(0.1, c + 0.001), far);
 }
 
 /* What glows (NB6): the light the bar's own lamps give off (their light on everything else is the chunk's light
  * table's: src/city/light_tiles.c vendor_lights). The flags' glow bits (src/city/city.h KIT_FLAG_GLOW_SHIFT): a
  * tube's white, a neon's colour and flicker; a neon flickers with the light it throws (the same seed). */
-vec3 kitGlow(uint m, vec3 p, vec3 n, vec3 V, uint seed, uvec4 prm) {
+vec3 kitGlow(uint m, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm) {
     uint glow = (prm.w >> 11) & 7u, flick = (prm.w >> 14) & 3u;
     float facing = abs(dot(n, V));
     if (m == PMAT_TUBE)   // a fluorescent tube: even along it, a little brighter seen through more glass at its edges
@@ -182,6 +328,25 @@ vec3 kitGlow(uint m, vec3 p, vec3 n, vec3 V, uint seed, uvec4 prm) {
         float d = vnoise(vec2(dot(p, vec3(37.0, 51.0, 23.0)), gTime * 14.0), 0xF1A6u);
         return vec3(0.10, 0.26, 1.0) * (2.5 + 2.5 * d) * (0.6 + 0.4 * facing);
     }
+    if (m == PMAT_EMBER) {   // SF1: glowing charcoal and a spit's radiants: orange cracks over black, breathing
+        float crack = smoothstep(0.35, 0.75, vnoise(p.xz * 140.0 + vec2(p.y * 60.0), 0xE3Bu));
+        float breath = 0.7 + 0.3 * vnoise(vec2(dot(p, vec3(13.0, 7.0, 11.0)), gTime * 1.3), 0xE3Cu);
+        return vec3(1.0, 0.32, 0.06) * (0.15 + 5.0 * crack) * breath;
+    }
+    if (m == PMAT_RADIANT) {
+        // SF1: a spit's infrared ceramic tile (uv its own metres from its middle, 62 x 87 mm): orange-red, hottest
+        // in its middle, cooler and redder to its edges, the ceramic's grain mottling it, breathing slowly as the
+        // gas does; its sides and the back of the tile dull
+        vec2 t = uv / vec2(0.031, 0.0435);
+        float edge = max(abs(t.x), abs(t.y));
+        float heat = (0.55 + 0.45 * (1.0 - smoothstep(0.3, 1.2, length(t)))) * (1.0 - smoothstep(0.86, 1.0, edge));
+        if (edge > 1.1) heat = 0.7;   // the far level's whole panel in one box: evenly lit
+        float grain = fbm(uv * 90.0 + vec2(float(seed & 63u)), 0xCE1u);
+        float breath = 0.85 + 0.15 * vnoise(vec2(gTime * 0.7, float(prm.z) * 3.1), 0xCE2u);
+        heat = clamp(heat * (0.8 + 0.4 * grain), 0.0, 1.0) * breath;
+        vec3 c = mix(vec3(0.45, 0.03, 0.006), mix(vec3(1.0, 0.16, 0.025), vec3(1.0, 0.30, 0.06), heat), smoothstep(0.3, 0.8, heat));
+        return c * (0.2 + 1.3 * heat);
+    }
     // the far shell's icon face: its neon's colour spread over the square (the tubes cover about a sixth)
     return neonColor(glow) * 1.4;
 }
@@ -189,7 +354,7 @@ vec3 kitGlow(uint m, vec3 p, vec3 n, vec3 V, uint seed, uvec4 prm) {
 vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ, float wear, float grime) {
     vec3 V = -normalize(rel);
     uint m = min(prm.y, KIT_MATS - 1u);
-    if (m >= PMAT_TUBE) return kitGlow(m, p, n, V, seed, prm);
+    if (kitGlows(m)) return kitGlow(m, p, n, V, uv, seed, prm);
     float vw = float(prm.w & 15u) / 15.0;   // the vendor's wear: 0 new .. 1 rusted and grimy
     bool heat = (prm.w & KIT_HEAT) != 0u;
     uint coat = (prm.w >> 5) & 7u, hood = (prm.w >> 8) & 3u;
@@ -235,7 +400,7 @@ vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ
         metal *= orm.a;
     }
     // the food (NB5): on what faces up in world xz (a lathe's metres swirl round its middle), else its own
-    if (m >= PMAT_BROTH && m <= PMAT_GINGER) {
+    if (kitIsFood(m)) {
         bool top = abs(n.y) > 0.6;
         kitFood(m, top ? pw + vec2(float(seed & 255u) * 0.37) : q, top ? pfoot : max(length(qx), length(qy)), base, rough);
     }
@@ -252,7 +417,13 @@ vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ
     bool coated = m == PMAT_PAINTED || m == PMAT_PLATE;
     bool painted = coated || m == PMAT_RED;
     bool bright = m == PMAT_STAINLESS || m == PMAT_LINING || m == PMAT_COPPER || m == PMAT_BRASS;
-    bool food = m >= PMAT_BROTH && m <= PMAT_GINGER;
+    bool food = kitIsFood(m);
+    // the A-frame's chalk menu (SF1)
+    if (m == PMAT_CHALK) {
+        float ink = kitChalk(uv, seed, max(length(qx), length(qy)));
+        base = mix(base, vec3(0.55, 0.55, 0.52), ink);
+        rough = mix(rough, 0.95, ink);
+    }
     // the kitchen's and the table's things: clean but for a trace of grime, grease at the range, faint streaks
     bool clean = bright || food || m == PMAT_TILE || m == PMAT_CHEQUER || m == PMAT_CAST_IRON || m == PMAT_ENAMEL
               || m == PMAT_GLASS || m == PMAT_CERAMIC || m == PMAT_BAMBOO || m == PMAT_DIAL || m == PMAT_PAPER;

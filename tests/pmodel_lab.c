@@ -67,7 +67,7 @@ static void material_share(void) {
     {
         /* the slice's bar (NB4, NB5): its body, its modules and its cooking line's, built in */
         NbPlan p;
-        nb_plan(&p, 3.85f, 3.48f, 0.0f, 0x5EED01u, NB_STRAIGHT);
+        nb_plan(&p, 3.85f, 3.48f, 0.0f, 0x5EED01u, NB_STRAIGHT, VT_NOODLE, 0.5f);
         NbLine L;
         nb_line(&p, &L);
         PmMesh m = { 0 }, none = { 0 };
@@ -188,7 +188,8 @@ static const uint32_t MAT_RGB[PMAT_COUNT] = {
     0x7A4A2E, 0x56605E, 0x9A9C9E, 0xB06A3C, 0x2E2C2A, 0x3F5A52, 0xD8D6CC, 0x1C1C1C, 0xE0DCCF, 0x6F8A86, 0xB89A4A, 0x7A5A3A,
     0x262A28, 0xE8E4DA, 0xC2A46A, 0xE2D8B0, 0x222222, 0x8A9092, 0x4A4C4E, 0xF0EEE6, 0xA02A20, 0xB07A3A, 0xE8D49A, 0xB8761C,
     0xF2EFE6, 0x9A1A0A, 0xE8A0A0, 0x5E4A40, 0x6A6E72, 0xA8AAAC,
-    0xF4F8FF, 0xFF3060, 0x4080FF, 0xFFD090, 0xC04080 };   /* NB6: tube, neon, flame, bulb, the far icon face */
+    0xF4F8FF, 0xFF3060, 0x4080FF, 0xFFD090, 0xC04080,     /* NB6: tube, neon, flame, bulb, the far icon face */
+    0x6A2E14, 0xE6DCC4, 0xC89050, 0xD49A30, 0x8A5A10, 0x4A2410, 0x3A7A20, 0xA02010, 0x1E1C1A, 0xFF7020, 0xFF6418 };   /* SF1's food, grit, embers */
 
 /* A 5 x 7 font: digits, letters, underscore, point. */
 static const uint8_t *glyph(char c) {
@@ -379,7 +380,7 @@ static void body_section(const char *out) {
         uint32_t seed = B[b].seed;
         int fits = 0;
         for (int t = 0; t < 64; ++t, seed += 7919u) {   /* a seed whose plan turns the corner the way asked */
-            fits = nb_plan(&p, B[b].w, B[b].d, 0.0f, seed, B[b].form);
+            fits = nb_plan(&p, B[b].w, B[b].d, 0.0f, seed, B[b].form, VT_NOODLE, 0.5f);
             if (!B[b].side || p.side == B[b].side) break;
         }
         CHECK(fits, "body %s: the plan doesn't fit its %.2f x %.2f m site", B[b].name, B[b].w, B[b].d);
@@ -399,7 +400,7 @@ static void body_section(const char *out) {
         PmStats s, s2;
         pm_stats(&m, &s);
         NbPlan q;
-        nb_plan(&q, B[b].w, B[b].d, 0.0f, seed, B[b].form);
+        nb_plan(&q, B[b].w, B[b].d, 0.0f, seed, B[b].form, VT_NOODLE, 0.5f);
         pm_begin(&pm, &m2, &li2, PM_LOD0);
         nb_body(&pm, &q);
         nb_line_occluders(&q, &oc);
@@ -463,12 +464,42 @@ static void body_section(const char *out) {
     }
 }
 
+/* The kitchen of a bar's mesh m, cut away (the hood, the counter and the street taken off), into im's tile. */
+static void cutaway(Image *im, const PmMesh *mm, const NbPlan *pp, int x, int y, int w, int h) {
+    const PmMesh m = *mm;
+    const NbPlan p = *pp;
+    PmMesh cut = { 0 };
+    /* keep the kitchen: under 2.5 m, behind the counter's back, inside the side walls (the near one, +x,
+     * taken off to see the bottles' end); its vertices compacted so the view fits it */
+    cut.v = (PmVertex *)malloc(sizeof(PmVertex) * m.nv);
+    cut.shell = (uint16_t *)malloc(sizeof(uint16_t) * m.nv);
+    cut.idx = (uint32_t *)malloc(sizeof(uint32_t) * m.ni);
+    uint32_t *remap = (uint32_t *)malloc(sizeof(uint32_t) * m.nv);
+    for (uint32_t i = 0; i < m.nv; ++i) remap[i] = UINT32_MAX;
+    for (uint32_t i = 0; i + 2 < m.ni; i += 3) {
+        float c[3] = { 0, 0, 0 };
+        for (int k = 0; k < 3; ++k) for (int a = 0; a < 3; ++a) c[a] += m.v[m.idx[i + k]].p[a] / 3.0f;
+        if (c[1] > 2.5f || c[2] > p.kz1 - 0.02f || c[0] < p.x0 + 0.003f || c[0] > p.kx1 + 0.02f) continue;
+        for (int k = 0; k < 3; ++k) {
+        uint32_t v = m.idx[i + k];
+        if (remap[v] == UINT32_MAX) { remap[v] = cut.nv; cut.shell[cut.nv] = m.shell[v]; cut.v[cut.nv++] = m.v[v]; }
+        cut.idx[cut.ni++] = remap[v];
+        }
+    }
+    free(remap);
+    render(im, &cut, x, y, w, h, SHOW_LIT);
+    free(cut.idx); free(cut.v); free(cut.shell);
+}
+
+static const char *const TRADE_NAME[VT_COUNT] = { "noodles", "soup", "dumplings", "skewers", "kebab", "burgers", "fried",
+                                                  "curry", "tacos", "crepes", "roast", "drinks" };
+
 /* --------------------------------------------------- the cooking line --- */
 /* NB5: the line's rules over a sweep of sites and seeds in both forms (nb_line_check), its determinism, the
  * second burner's mix; cutaway renders of four kitchens (the hood, the counter and the street taken off). */
 static void line_section(const char *out) {
     static const float WS[] = { 3.2f, 3.5f, 3.85f, 4.2f, 4.6f, 5.2f }, DS[] = { 3.0f, 3.3f, 3.48f, 3.8f };
-    int lines = 0, failing = 0, shown = 0, kinds[NB_POT_KINDS] = { 0 }, items = 0, fans = 0, bms = 0, steams = 0;
+    int lines = 0, failing = 0, shown = 0, kinds[NB_POT_KINDS] = { 0 }, items = 0, fans = 0, bms = 0, steams = 0, trades[VT_COUNT] = { 0 }, mids = 0, aframes = 0;
     double t0 = now_ms();
     for (size_t wi = 0; wi < sizeof(WS) / sizeof(WS[0]); ++wi)
         for (size_t di = 0; di < sizeof(DS) / sizeof(DS[0]); ++di)
@@ -476,7 +507,10 @@ static void line_section(const char *out) {
                 for (uint32_t k = 0; k < 40; ++k) {
                     NbPlan p;
                     const uint32_t seed = hash_combine(0x11E5u, (uint32_t)(wi * 1000 + di * 100 + (size_t)form * 50) + k);
-                    if (!nb_plan(&p, WS[wi], DS[di], 0.0f, seed, form)) continue;
+                    /* SF1: every trade, every clutter */
+                    const int trade = (int)(k % VT_COUNT);
+                    if (!nb_plan(&p, WS[wi], DS[di], 0.0f, seed, form, trade, (float)((k * 37u) % 100u) / 100.0f)) continue;
+                    trades[trade]++; mids += p.rangeMid; aframes += p.aframeOn;
                     NbLine L, L2;
                     nb_line(&p, &L);
                     nb_line(&p, &L2);
@@ -508,11 +542,15 @@ static void line_section(const char *out) {
                     }
                     if (bad) {
                         failing++;
-                        if (shown < 6) { printf("  line %.2f x %.2f %s seed %08x (%s): %d broken\n%s", WS[wi], DS[di], p.form ? "corner" : "straight", seed, L.kind == NB_POT_WOK ? "wok" : L.kind == NB_POT_STEAMER ? "steamer" : L.kind == NB_POT_SAUCEPAN ? "saucepan" : "noodles", bad, err); shown++; }
+                        if (shown < 24) { printf("  line %.2f x %.2f %s seed %08x (%s, %s): %d broken\n%s", WS[wi], DS[di], p.form ? "corner" : "straight", seed, TRADE_NAME[trade], L.kind == NB_POT_WOK ? "wok" : L.kind == NB_POT_STEAMER ? "steamer" : L.kind == NB_POT_SAUCEPAN ? "saucepan" : "noodles", bad, err); shown++; }
                     }
                 }
     printf("\nthe cooking line: %d lines over the sweep (%.1f ms), %d break a rule; %.1f items a line; second burner: noodles %d, wok %d, steamer %d, saucepan %d; a bain-marie in %d, a fan in %d; %d plumes\n",
            lines, now_ms() - t0, failing, lines ? (double)items / lines : 0.0, kinds[0], kinds[1], kinds[2], kinds[3], bms, fans, steams);
+    printf("  the range along the bench in %d, an A-frame out at %d\n", mids, aframes);
+    printf("  by trade:");
+    for (int t = 0; t < VT_COUNT; ++t) printf(" %s %d", TRADE_NAME[t], trades[t]);
+    printf("\n");
     CHECK(failing == 0, "%d of %d cooking lines break a rule", failing, lines);
     if (!out) return;
     /* cutaways of the body_section's four bars */
@@ -525,12 +563,12 @@ static void line_section(const char *out) {
         NbPlan p;
         uint32_t seed = B[b].seed;
         for (int t = 0; t < 64; ++t, seed += 7919u) {
-            nb_plan(&p, B[b].w, B[b].d, 0.0f, seed, B[b].form);
+            nb_plan(&p, B[b].w, B[b].d, 0.0f, seed, B[b].form, VT_NOODLE, 0.5f);
             if (!B[b].side || p.side == B[b].side) break;
         }
         NbLine L;
         nb_line(&p, &L);
-        PmMesh m = { 0 }, none = { 0 }, cut = { 0 };
+        PmMesh m = { 0 }, none = { 0 };
         PmInstances li = { 0 };
         Pm pm;
         pm_begin(&pm, &m, &li, PM_LOD0);
@@ -538,36 +576,41 @@ static void line_section(const char *out) {
         pm_begin(&pm, &none, &li, PM_LOD0);
         nb_line_place(&pm, &p, &L);
         pm_instances_bake(&m, &li, PM_LOD0);
-        /* keep the kitchen: under 2.5 m, behind the counter's back, inside the side walls (the near one, +x,
-         * taken off to see the bottles' end); its vertices compacted so the view fits it */
-        cut.v = (PmVertex *)malloc(sizeof(PmVertex) * m.nv);
-        cut.shell = (uint16_t *)malloc(sizeof(uint16_t) * m.nv);
-        cut.idx = (uint32_t *)malloc(sizeof(uint32_t) * m.ni);
-        uint32_t *remap = (uint32_t *)malloc(sizeof(uint32_t) * m.nv);
-        for (uint32_t i = 0; i < m.nv; ++i) remap[i] = UINT32_MAX;
-        for (uint32_t i = 0; i + 2 < m.ni; i += 3) {
-            float c[3] = { 0, 0, 0 };
-            for (int k = 0; k < 3; ++k) for (int a = 0; a < 3; ++a) c[a] += m.v[m.idx[i + k]].p[a] / 3.0f;
-            if (c[1] > 2.5f || c[2] > p.kz1 - 0.02f || c[0] < p.x0 + 0.003f || c[0] > p.kx1 + 0.02f) continue;
-            for (int k = 0; k < 3; ++k) {
-                uint32_t v = m.idx[i + k];
-                if (remap[v] == UINT32_MAX) { remap[v] = cut.nv; cut.shell[cut.nv] = m.shell[v]; cut.v[cut.nv++] = m.v[v]; }
-                cut.idx[cut.ni++] = remap[v];
-            }
-        }
-        free(remap);
-        render(&im, &cut, (b & 1) * CWL, (b >> 1) * CHL, CWL, CHL, SHOW_LIT);
+        cutaway(&im, &m, &p, (b & 1) * CWL, (b >> 1) * CHL, CWL, CHL);
         static const char *const KIND[NB_POT_KINDS] = { "noodles", "wok", "steamer", "saucepan" };
         char label[96];
         snprintf(label, sizeof(label), "%s %.2fx%.2f %s %d pans", p.form ? "corner" : "straight", B[b].w, B[b].d, KIND[L.kind], L.bmPans);
         text(&im, (b & 1) * CWL + 8, (b >> 1) * CHL + 8, label, 2);
-        free(cut.idx); free(cut.v); free(cut.shell);
         pm_mesh_free(&m); pm_mesh_free(&none); pm_inst_free(&li);
     }
     char path[512];
     snprintf(path, sizeof(path), "%s/pmodel_line.png", out);
     stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
     free(im.p);
+    /* SF1: the slice's bar in every trade */
+    Image tr = image_new(4 * CWL, 3 * CHL);
+    for (int t = 0; t < VT_COUNT; ++t) {
+        NbPlan p;
+        nb_plan(&p, 3.85f, 3.48f, 0.0f, 0x5EED01u, NB_STRAIGHT, t, 0.3f);
+        NbLine L;
+        nb_line(&p, &L);
+        PmMesh m = { 0 }, none = { 0 };
+        PmInstances li = { 0 };
+        Pm pm;
+        pm_begin(&pm, &m, &li, PM_LOD0);
+        nb_body(&pm, &p);
+        pm_begin(&pm, &none, &li, PM_LOD0);
+        nb_line_place(&pm, &p, &L);
+        pm_instances_bake(&m, &li, PM_LOD0);
+        cutaway(&tr, &m, &p, (t & 3) * CWL, (t >> 2) * CHL, CWL, CHL);
+        char label[96];
+        snprintf(label, sizeof(label), "%s %d items", TRADE_NAME[t], L.n);
+        text(&tr, (t & 3) * CWL + 8, (t >> 2) * CHL + 8, label, 2);
+        pm_mesh_free(&m); pm_mesh_free(&none); pm_inst_free(&li);
+    }
+    snprintf(path, sizeof(path), "%s/pmodel_trades.png", out);
+    stbi_write_png(path, tr.w, tr.h, 3, tr.p, tr.w * 3);
+    free(tr.p);
 }
 
 /* ----------------------------------------------------------------- main --- */
@@ -661,12 +704,12 @@ int main(int argc, char **argv) {
         stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
         free(im.p); im.p = NULL;
     }
-    printf("library: %ld triangles over its levels (NB0's budget 300000)\n", total);
-    if (!only) CHECK(total <= 300000, "the library holds %ld triangles over its levels, over 300000", total);
+    printf("library: %ld triangles over its levels (budget 340000: NB0's 300000 raised for SF1's trades)\n", total);
+    if (!only) CHECK(total <= 340000, "the library holds %ld triangles over its levels, over 340000", total);
     if (!only) {
         /* the slice's cooking line (NB5) at each level: its modules as set down */
         NbPlan p;
-        nb_plan(&p, 3.85f, 3.48f, 0.0f, 0x5EED01u, NB_STRAIGHT);
+        nb_plan(&p, 3.85f, 3.48f, 0.0f, 0x5EED01u, NB_STRAIGHT, VT_NOODLE, 0.5f);
         NbLine L;
         nb_line(&p, &L);
         PmMesh none = { 0 };

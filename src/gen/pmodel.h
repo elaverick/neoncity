@@ -69,6 +69,18 @@ enum {
     PMAT_FLAME,        /* a gas burner's blue flame */
     PMAT_BULB,         /* a warm lamp's glass */
     PMAT_SIGN_FAR,     /* the far shell's icon face: its neon's colour spread thin over the face */
+    /* SF1: the street-food trades' food (kit.glsl kitFood) and the coals' glow */
+    PMAT_MEAT,         /* grilled or roast meat: skewers, the spit's cone, patties, sausages */
+    PMAT_DOUGH,        /* steamed dough: dumplings and bao */
+    PMAT_BREAD,        /* toasted and baked: buns, flatbreads, tortillas, crepes */
+    PMAT_FRIED,        /* golden batter and fries */
+    PMAT_FRYOIL,       /* a fryer's hot oil */
+    PMAT_CHESTNUT,     /* roast chestnuts' and sweet potatoes' skins */
+    PMAT_GREENS,       /* herbs, leaves and sprouts */
+    PMAT_SAUCE,        /* salsa and chilli sauce */
+    PMAT_GRIT,         /* the black grit chestnuts roast in, ash */
+    PMAT_EMBER,        /* glowing charcoal (it glows: kitGlow) */
+    PMAT_RADIANT,      /* a spit's infrared ceramic tiles, glowing (kitGlow; its uv a tile's own metres from its middle) */
     PMAT_COUNT
 };
 
@@ -252,6 +264,15 @@ enum {
     /* NB6, light and signs: neon icons (bent tube, facing +z, a 0.36 m square centred on the origin; the
      * housing's back at z -0.03), the burners' flames (on the burner's origin), the kitchen's lamp */
     PMK_ICON_BOWL, PMK_ICON_CHOPSTICKS, PMK_ICON_STEAM, PMK_ICON_CUP, PMK_FLAME_RING, PMK_FLAME_JET, PMK_LAMP,
+    /* SF1, the street-food trades (pmodel_food.c): the stations, which stand on the range's flat top (their foot
+     * on y 0, centred, their front +z towards the cook), and what they cook */
+    PMK_CHAR_GRILL, PMK_SKEWERS, PMK_SKEWER_TRAY, PMK_SPIT, PMK_GRIDDLE, PMK_GRIDDLE_S, PMK_PATTY, PMK_SAUSAGE,
+    PMK_BUN, PMK_BREAD_STACK, PMK_TORTILLA, PMK_FRYER, PMK_FRY_BASKET, PMK_FRIED_TRAY, PMK_CREPE_PLATE, PMK_CREPE,
+    PMK_CREPE_RAKE, PMK_URN, PMK_ESPRESSO, PMK_CUP_STACK, PMK_CHESTNUT_WOK, PMK_ROAST_PAN, PMK_DUMPLING_TRAY,
+    PMK_GN_GREENS, PMK_GN_MEAT, PMK_GN_SAUCE, PMK_CURRY_POT, PMK_PAPER_CONES,
+    /* SF1's neon icons (as NB6's) */
+    PMK_ICON_SKEWER, PMK_ICON_DUMPLING, PMK_ICON_KEBAB, PMK_ICON_BURGER, PMK_ICON_HOTDOG, PMK_ICON_DRUMSTICK,
+    PMK_ICON_FRIES, PMK_ICON_TACO, PMK_ICON_CREPE, PMK_ICON_CHESTNUT, PMK_ICON_TEAPOT, PMK_ICON_FLAME,
     PMK_COUNT
 };
 typedef struct PmModuleDef {
@@ -267,7 +288,9 @@ void pm_place(Pm *pm, int id);
 /* Whether module id casts shadows (the city's ray-traced ones): not the lights' own glass and flames. */
 int  pm_module_casts(int id);
 /* Whether a material glows (the lights' own surfaces: they cast nothing). */
-static inline int pm_mat_glows(int mat) { return mat >= PMAT_TUBE && mat <= PMAT_SIGN_FAR; }
+static inline int pm_mat_glows(int mat) { return (mat >= PMAT_TUBE && mat <= PMAT_SIGN_FAR) || mat == PMAT_EMBER || mat == PMAT_RADIANT; }
+/* Whether a module is a neon icon (its instance carries its icon's colour and flicker). */
+int  pm_module_is_icon(int id);
 #define PM_ICON_SIZE 0.36f   /* the icons' square, which instances scale to their housing */
 /* Builds module id at a level into out (cleared first) and bakes its occlusion and wear. */
 void pm_module_mesh(int id, int lod, PmMesh *out);

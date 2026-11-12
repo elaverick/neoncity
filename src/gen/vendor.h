@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "building.h"   /* BLog */
 #include "noodle_bar.h"
+#include "street_food.h"
 
 /* Street vendors: noodle bars, kiosks, lean-tos, container shops, market
  * stalls and barrows, after docs/street-vendor-generation.md (the design;
@@ -31,10 +32,7 @@
 
 /* Archetypes (section 2.1). */
 enum { VA_CANOPY = 0, VA_HATCH, VA_LEANTO, VA_CONTAINER, VA_PAIR, VA_MARKET, VA_BARROW, VA_COUNT };
-/* Trades (section 2.2), and three for the wealthy end of the scale. */
-enum { VT_NOODLE = 0, VT_SKEWER, VT_DUMPLING, VT_SEAFOOD, VT_PRODUCE, VT_APOTHECARY, VT_ELECTRONICS, VT_RECORDS,
-       VT_CLOTH, VT_CURIOS, VT_DRINKS, VT_HARDWARE, VT_BIOPLANT, VT_GREENGROCER, VT_FLOWERS, VT_BAKER, VT_CHESTNUT,
-       VT_BUTCHER, VT_BOOKS, VT_COFFEE, VT_LUNCH, VT_HOMEWARE, VT_COUNT };
+/* Trades: the street-food trades (street_food.h, roadmap SF1; the doc's section 2.2 trades retired). */
 /* Affluence classes: below 1/3, to 2/3, above. */
 enum { VC_POOR = 0, VC_MID, VC_RICH, VC_COUNT };
 /* Budget tiers (section 9.1). */
@@ -313,6 +311,11 @@ void vendor_palette_rgb(int palette, int slot, float rgb[3]);
 
 const char *vendor_archetype_name(int a);
 const char *vendor_trade_name(int t);
+/* Forces every vendor's trade (VT_*, -1: chosen), for captures (NeonCity --trade, city_test --trade); a trade's
+ * key (noodles, soup, dumplings, skewers, kebab, burgers, fried, curry, tacos, crepes, roast, drinks), -1 if none. */
+void vendor_force_trade(int t);
+int  vendor_forced_trade(void);
+int  vendor_trade_by_name(const char *name);
 const char *vendor_class_name(int c);
 const char *vendor_site_name(int k);
 const char *vendor_item_name(int k);

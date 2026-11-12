@@ -306,7 +306,7 @@ static int slice_cams(int argc, char **argv) {
         return 1;
     }
     const VendorSpot *s = &F.spot;
-    CHECK(F.v.archetype == VA_CANOPY && F.v.trade == VT_NOODLE, "the slice is a %s (%s), not a canopy noodle bar",
+    CHECK(F.v.archetype == VA_CANOPY && (F.v.trade == VT_NOODLE || vendor_forced_trade() >= 0), "the slice is a %s (%s), not a canopy noodle bar",
           vendor_archetype_name(F.v.archetype), vendor_trade_name(F.v.trade));
     double mx, mz;
     vendor_spot_middle(s, &mx, &mz);

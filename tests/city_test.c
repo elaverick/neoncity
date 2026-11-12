@@ -1270,7 +1270,16 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--props") == 0) return props_cams();
     if (argc > 1 && strcmp(argv[1], "--vendor-sites") == 0) return vendor_sites_cams(argc, argv);
     if (argc > 1 && strcmp(argv[1], "--vendors") == 0) return vendor_cams(argc, argv);
-    if (argc > 1 && strcmp(argv[1], "--slice") == 0) return slice_cams(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "--slice") == 0) {
+        /* SF1: --trade NAME at the end makes every vendor that trade */
+        if (argc > 3 && strcmp(argv[argc - 2], "--trade") == 0) {
+            const int t = vendor_trade_by_name(argv[argc - 1]);
+            if (t < 0) { fprintf(stderr, "no trade %s\n", argv[argc - 1]); return 1; }
+            vendor_force_trade(t);
+            argc -= 2;
+        }
+        return slice_cams(argc, argv);
+    }
     if (argc > 3 && strcmp(argv[1], "--vs-probe") == 0) return vs_probe(atof(argv[2]), atof(argv[3]));
     if (argc > 1 && strcmp(argv[1], "--screens") == 0) return screens_cams();
     if (argc > 1 && strcmp(argv[1], "--facades") == 0) return facades_cams();

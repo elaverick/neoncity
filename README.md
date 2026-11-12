@@ -29,7 +29,7 @@ build/city_test --props        # --cam views of the street furniture near the sp
 build/city_test --vendor-sites # the vendors' sites round the spawn and the nearest lane, pocket market, plaza, apron: checks, --cam views
 build/city_test --slice        # the noodle bar slice (docs/noodle-bar-target.md): its site, plan, checks, views (also: lane, bars, find); tools/slice_capture.py, tools/slice_board.py
 build/city_test --slice lane   # a view down the nearest market lane: the vendors' worst view (NeonCity --kit all for the kit's cost)
-build/city_test --slice bars 332.6 1182.58 all   # every site a bar fits made one (NeonCity --bars all): the densest 30 m row, its views, its chunks' build times
+build/city_test --slice bars 332.6 1182.58 all   # every site a bar fits made one (NeonCity --bars all; its trades chosen as any bar's): the densest 30 m row, its views, its chunks' build times
 build/pmodel_lab out           # the procedural modelling kit: determinism, closure, normals, budgets per level; lit contact sheets
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
 build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the world chart within 5400 km; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
@@ -1606,6 +1606,17 @@ in `Vendor.nb`), so its near body, far shell, collision and cooking line always 
   retired). A bar's vendor layer takes ~190 ms on a worker, 93% of it the occlusion bake; the row's chunks
   0.6-1.5 s; the far shell stands in meanwhile. `--vendor-debug` (F7) draws the far shells magenta and logs each
   vendor layer's build, so the wait can be seen; the user accepted it (the pop-in shows only at fly speed).
+- **Street-food trades (SF1):** twelve trades (`src/gen/street_food.h`: noodles, soup, dumplings, skewers, kebab,
+  burgers, fried, curry, tacos, crepes, roast, drinks) on the bar's body. Each lays out its own line
+  (`nb_line`: the range two burner wells or a flat top with the trade's station on it, a charcoal grill, the
+  spit, a griddle, the fryer, crepe plates, the urn and espresso machine; its bench, pans and condiments), its
+  heat spots' flames or embers, steam and grease, its neon icons and the A-frame's chalk menu (`kit.glsl`
+  `kitChalk`: its drawing only, the writing waits for a text run). Affluence moves the clutter (spares, how packed
+  the shelves are) besides the coat and hood. A third of straight bars stand the range along the bench (a short
+  bench by the side wall); about two in three put an A-frame out, placed and turned by hash; crepes and drinks
+  have no gas; the spit's radiants are tiled infrared ceramic (`PMAT_RADIANT`).
+  `NeonCity --trade NAME` (and `city_test --slice ... --trade NAME`) makes every vendor one trade;
+  `pmodel_lab out` sweeps the line over every trade and draws `pmodel_trades.png`.
 
 ### Textures (`src/render/materials.c`, `assets/materials/`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual surfaces can opt in to authored PBR

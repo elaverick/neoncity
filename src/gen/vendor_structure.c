@@ -109,7 +109,7 @@ static int build_canopy(VGen *G, VFrame *F) {
     Vendor *v = G->v;
     float ceil = ceiling_of(v);
     NbPlan *p = &v->nb;
-    if (!nb_plan(p, v->site.w, v->site.d, v->site.ceiling, v->site.seed, -1)) return 0;
+    if (!nb_plan(p, v->site.w, v->site.d, v->site.ceiling, v->site.seed, -1, v->trade, v->site.affluence)) return 0;
     if (p->top > ceil + 1e-3f) return 0;
     v->layout = p->form;
     v->variant = p->side > 0;
@@ -720,7 +720,6 @@ static int build_market(VGen *G, VFrame *F) {
     v->variant = kind;
     int skirt = rng_float(r) < 0.6f;
     int tiers = 1 + (rng_float(r) < 0.6f) + (rng_float(r) < 0.35f);
-    if (v->trade == VT_GREENGROCER || v->trade == VT_PRODUCE || v->trade == VT_FLOWERS) if (tiers < 2) tiers = 2;
     v->layout = kind * 8 + tiers * 2 + skirt;
     v->front = tz1;
     v->clearMin = V_MARKET_LIP;
@@ -850,7 +849,6 @@ static int build_barrow(VGen *G, VFrame *F) {
     /* the variant first: a parasol needs the bed set where its canopy fits the site */
     float w4[4] = { 0.3f, 0.3f, 0.2f, 0.2f };
     if (V_TRADES[v->trade].cooking == 2) { w4[0] = 0.75f; w4[1] = 0.12f; w4[2] = 0.03f; w4[3] = 0.1f; }
-    if (v->trade == VT_CLOTH || v->trade == VT_BOOKS || v->trade == VT_CURIOS || v->trade == VT_HARDWARE) w4[2] = 0.5f;
     int var = v_pick(r, w4, 4);
     float pR = minf(minf(V_PARASOL_R, rng_range(r, 1.1f, V_PARASOL_R)), minf(0.5f * W - 0.05f - 0.5f * hl, 0.5f * D - 0.05f));
     if (var == 1 && pR < 0.9f) var = 3;

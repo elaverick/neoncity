@@ -133,7 +133,7 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     Mesh *m = E->m;
     NbPlan other;
     const NbPlan *np = &v->nb;
-    if (!bar) { nb_plan(&other, s->site.w, s->site.d, s->site.ceiling, s->site.seed, -1); np = &other; }
+    if (!bar) { nb_plan(&other, s->site.w, s->site.d, s->site.ceiling, s->site.seed, -1, v->trade, s->site.affluence); np = &other; }
     E->inst.n = 0;
     Pm pm;
     if (bar) {
@@ -175,7 +175,9 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
         const int heat = nb_at_range(np, at);
         uint32_t fin = pi->module == PMK_A_FRAME ? wear : wear & ~KIT_FLAG_BARE_WOOD;
         k->seed = hash_combine(s->site.seed, i + 0x4B49u);
-        if (pi->module >= PMK_ICON_BOWL && pi->module <= PMK_ICON_CUP) {
+        /* the A-frame's chalk menu reads the trade from its seed's top byte (kit.glsl kitChalk, SF1) */
+        if (pi->module == PMK_A_FRAME) k->seed = (k->seed & 0x00FFFFFFu) | (uint32_t)np->trade << 24;
+        if (pm_module_is_icon(pi->module)) {
             /* a neon icon (its part 140 + its place on the fascia): its colour and flicker, its light's seed */
             const int ic = (int)pi->part - 140;
             fin = (fin & ((1u << KIT_FLAG_GLOW_SHIFT) - 1u)) | icon_glow(np, ic);

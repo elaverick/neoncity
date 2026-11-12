@@ -360,10 +360,11 @@ float vendorLen(uint w) { return float((w >> 24) & 31u) * 0.125; }
 vec3  vendorWay(uint w) { float a = float((w >> 16) & 255u) * (6.2831853 / 256.0); return vec3(cos(a), 0.0, sin(a)); }
 // how far each kind reaches (light_tiles.c VL_REACH)
 float vendorReach(uint w) { uint k = vendorKind(w); return k == VL_TUBE ? 9.0 : k == VL_LAMP ? 5.0 : k == VL_FLAME ? 1.6 : 6.0; }
-// the whites by temperature (src/gen/noodle_bar.h NB_WHITE_*): 6500, 5000, 3000, 2700 K; then the burners' blue
+// the whites by temperature (src/gen/noodle_bar.h NB_WHITE_*): 6500, 5000, 3000, 2700 K; then the burners' blue,
+// and coals' and a spit's radiants' orange (NB_EMBER, SF1)
 vec3 vendorWhite(uint i) {
     return i == 0u ? vec3(0.90, 0.96, 1.00) : i == 1u ? vec3(1.00, 0.95, 0.87) : i == 2u ? vec3(1.00, 0.73, 0.47)
-         : i == 3u ? vec3(1.00, 0.66, 0.37) : vec3(0.16, 0.36, 1.00);
+         : i == 3u ? vec3(1.00, 0.66, 0.37) : i == 5u ? vec3(1.00, 0.42, 0.12) : vec3(0.16, 0.36, 1.00);
 }
 // its colour before flicker; neon (8 and over) is the signs' own
 vec3 vendorTint(uint w) { uint c = (w >> 4) & 15u; return c >= 8u ? neonColor(c - 8u) : vendorWhite(c); }
@@ -372,7 +373,8 @@ vec3 vendorTint(uint w) { uint c = (w >> 4) & 15u; return c >= 8u ? neonColor(c 
 float vendorPower(uint w) {
     uint k = vendorKind(w);
     float warm = ((w >> 4) & 15u) >= 2u ? 0.3 : 1.0;
-    return k == VL_TUBE ? 2.2 * warm * max(vendorLen(w), 0.3) : k == VL_LAMP ? 0.8 : k == VL_FLAME ? 0.12 : 1.2;
+    float ember = ((w >> 4) & 15u) == 5u ? 3.3 : 1.0;   // coals glow harder than a burner's flame (SF1)
+    return k == VL_TUBE ? 2.2 * warm * max(vendorLen(w), 0.3) : k == VL_LAMP ? 0.8 : k == VL_FLAME ? 0.12 * ember : 1.2;
 }
 // The point it lights p from: the nearest on a tube's axis, else its place.
 vec3 vendorPoint(vec3 lp, uint w, vec3 p) {

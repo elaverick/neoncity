@@ -307,7 +307,8 @@ static void vs_shell_visit(void *ctx, const VendorSpot *s, const Vendor *v) {
         A->rooms += x->surf == VS_ROOM;
     }
     A->tris += t;
-    A->drawn += t - lit;
+    /* a canopy bar's parts are never drawn: the chunk draws its plan's far shell (MAT_KIT, mesh_vendor.c) */
+    if (v->archetype != VA_CANOPY) A->drawn += t - lit;
     if (t > A->trisMax) A->trisMax = t;
     /* everything it is stands in its site, below VENDOR_TOP_MAX (the cables) and its ceiling */
     const float hw = 0.5f * s->site.w + 0.02f, d = s->site.d + 0.02f;

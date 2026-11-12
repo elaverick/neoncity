@@ -13,6 +13,7 @@
 #include "thread.h"
 #include "weather.h"
 #include "models.h"
+#include "vendor.h"
 #include "frames.h"
 #include "lobby_doors.h"
 #include "grass_rules.h"
@@ -84,7 +85,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--bars all] [--vendor-debug] [--nbform straight|corner] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--bars all] [--vendor-debug] [--nbform straight|corner] [--trade noodles|soup|dumplings|skewers|kebab|burgers|fried|curry|tacos|crepes|roast|drinks] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -112,6 +113,7 @@ static void usage(void) {
            "               beyond 120 m) and log each vendor layer's build time; F7 toggles\n"
            "  --bars all  every vendor site a canopy noodle bar fits becomes one (NB8's gate: the worst views)\n"
            "  --nbform  build every canopy noodle bar straight or turning a corner, where it fits (NB4's captures)\n"
+           "  --trade  every vendor one street-food trade (SF1's captures)\n"
            "  --nograss  draw no grass blades\n"
            "  --nowake  the grass doesn't part where the player walks\n"
            "  --grass-cap  give each of the grass's levels of detail room for at most N blades (the far ones give way)\n"
@@ -173,6 +175,11 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--bars") == 0 && i + 1 < argc) {
             if (strcmp(argv[++i], "all") != 0) return false;
             city_force_bars(1);   /* NB8's gate: every site a canopy bar fits */
+        }
+        else if (strcmp(argv[i], "--trade") == 0 && i + 1 < argc) {
+            const int t = vendor_trade_by_name(argv[++i]);
+            if (t < 0) return false;
+            vendor_force_trade(t);   /* SF1's captures: every vendor this trade */
         }
         else if (strcmp(argv[i], "--nbform") == 0 && i + 1 < argc) {
             const char *v = argv[++i];

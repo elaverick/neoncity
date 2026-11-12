@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include "pmodel.h"
+#include "street_food.h"
 
 /* The noodle bar's body (street vendor rework NB4; docs/noodle-bar-target.md).
  *
@@ -50,6 +51,8 @@ typedef struct NbWall { float o[2], u[2], len, h; } NbWall;
 
 typedef struct NbPlan {
     int      form, side;            /* NB_*; the corner form's corner: +1 at the site's +x end, -1 its -x end */
+    int      trade;                 /* VT_* (street_food.h, SF1): what the line cooks, its icons and menu */
+    float    affluence;             /* the district's, 0..1: the clutter (SF1; the coat and hood: nb_finish) */
     uint32_t seed;
     float    w, d;                  /* the site */
     float    x0, x1;                /* the bar across the site */
@@ -75,7 +78,9 @@ typedef struct NbPlan {
     int      npost;  float  post[NB_POSTS_MAX][3];     /* x, z, height (60 mm square) */
     float    column[4];             /* the corner form's column: x, z, half size, height (half 0: none) */
     int      nstool; float  stool[NB_STOOLS_MAX][2];   /* where each stands (its foot's middle) */
-    float    aframe[3];             /* the menu A-frame: x, z, its turn about y */
+    float    aframe[3];             /* the menu A-frame: x, z, its turn about y (SF1: not every bar has one) */
+    uint8_t  aframeOn;              /* whether the bar puts an A-frame out */
+    uint8_t  rangeMid;              /* SF1: the range stands along the bench, a bench either side, not at its end */
     float    bell[3];
     int      ntube;  float  tube[NB_TUBES_MAX][6];     /* the strip lights' tubes: ends a, b (x, y, z each) */
     int      nicon;  float  icon[NB_ICONS_MAX][6];     /* the fascia's icon housings: middle, facing (x, z), size */
@@ -97,7 +102,7 @@ typedef struct NbPlan {
  * flicker). */
 enum { NB_LIGHT_TUBE = 0, NB_LIGHT_LAMP, NB_LIGHT_FLAME, NB_LIGHT_NEON };
 /* colours: whites by temperature, the burners' blue; a neon's is NB_NEON + its neonColor index */
-enum { NB_WHITE_6500 = 0, NB_WHITE_5000, NB_WHITE_3000, NB_WHITE_2700, NB_FLAME_BLUE, NB_NEON = 8 };
+enum { NB_WHITE_6500 = 0, NB_WHITE_5000, NB_WHITE_3000, NB_WHITE_2700, NB_FLAME_BLUE, NB_EMBER, NB_NEON = 8 };   /* NB_EMBER: coals, a spit's radiants (SF1) */
 #define NB_LIGHTS_MAX 16
 /* a: a tube's first end, else the light's place; b: a tube's other end, a neon's facing (x, z); size: a neon's
  * square; flicker and seed: a neon's (its icon's), a flame's own */
@@ -107,9 +112,13 @@ int  nb_lights(const NbPlan *p, NbLight *out, int max);
 uint8_t nb_icon_seed(const NbPlan *p, int icon);
 
 /* Makes the plan for a site w x d (ceiling: 0 open sky) from seed. form: NB_* or -1 (chosen; the corner when
- * the site is wide enough, about a third of the time). Always fills the plan; returns whether the bar fits
- * the site (the canopy archetype only stands where it does). */
-int  nb_plan(NbPlan *p, float w, float d, float ceiling, uint32_t seed, int form);
+ * the site is wide enough, about a third of the time); trade: VT_* (street_food.h; out of range: noodles);
+ * affluence 0..1. Always fills the plan; returns whether the bar fits the site (the canopy archetype only stands
+ * where it does). The trade changes nothing the draws make (the body is the same for every trade): only the
+ * line, its steam, lights and grime, the icons and the menu. */
+int  nb_plan(NbPlan *p, float w, float d, float ceiling, uint32_t seed, int form, int trade, float affluence);
+/* The neon icons a trade's fascia cycles through (PMK_ICON_*), up to 3; returns how many. */
+int  nb_trade_icons(int trade, int *out);
 /* Forces every plan's form (-1: chosen; NB_* where it fits), for captures (NeonCity --nbform). */
 void nb_force_form(int form);
 int  nb_forced_form(void);
@@ -147,17 +156,32 @@ void nb_shell(Pm *pm, const NbPlan *p);
  * the shelves with clearance; the gas bottles (at most two) away from the
  * burners. nb_line_check says which are broken. */
 
-enum { NB_POT_NOODLES = 0, NB_POT_WOK, NB_POT_STEAMER, NB_POT_SAUCEPAN, NB_POT_KINDS };   /* the second burner */
+enum { NB_POT_NOODLES = 0, NB_POT_WOK, NB_POT_STEAMER, NB_POT_SAUCEPAN, NB_POT_KINDS };   /* the noodle bar's second burner */
+/* The range's top (SF1): two burner wells (the noodle bar's), or flat stainless with the trade's station standing
+ * on it (a charcoal grill, the spit, a griddle, the fryer, crepe plates, the urn and espresso machine). */
+enum { NB_TOP_WELLS = 0, NB_TOP_FLAT };
+/* What heats each of the line's two heat spots: a ring burner, a wok burner (both blue flames), coals and a spit's
+ * radiants (embers' light), a plate, a fryer's oil, an electric urn or machine (no light of their own), none. */
+enum { NB_HEAT_NONE = 0, NB_HEAT_RING, NB_HEAT_WOK, NB_HEAT_COALS, NB_HEAT_SPIT, NB_HEAT_PLATE, NB_HEAT_OIL, NB_HEAT_ELECTRIC };
 enum { NB_ON_RANGE = 0, NB_ON_BENCH, NB_ON_UNDER, NB_ON_SHELF, NB_ON_FLOOR, NB_ON_WALL, NB_ON_COUNTER, NB_ON_HUNG };
 #define NB_ITEMS_MAX 72
 /* A module set down: where its origin goes (the site's frame), its turn about y, what it stands on, whether
  * the cook works with it (the reach rule). */
 typedef struct NbItem { uint16_t module; uint8_t on, used; float x, y, z, yaw; } NbItem;
 typedef struct NbLine {
-    int   kind;                       /* NB_POT_*: what the second burner holds */
+    int   trade;                      /* the plan's (VT_*) */
+    int   kind;                       /* NB_POT_*: what the noodle bar's second burner holds */
+    int   top;                        /* NB_TOP_* */
     int   rangeEnd;                   /* -1: the range at the bench's -x end; +1 its +x end */
     float carc0, carc1;               /* the range's carcass along x (it runs to the bench's end) */
-    float burner[2][2];               /* x, z of each burner: [0] the stock pot's, [1] the second's */
+    float burner[2][2];               /* x, z of each heat spot: a wells top's burners ([0] the stock pot's, [1] the
+                                       * second's); a flat top's station's (its middle, or its two halves) */
+    /* each heat spot (SF1): its heat (NB_HEAT_*), the height of what it heats (a burner's tray, a plate's top),
+     * its steam or smoke: the mouth's height over the bench, radius, strength (0: none) and whether smoke (the wok's
+     * bursts, greyer), and how far its grease reaches */
+    uint8_t heat[2], smoke[2];
+    float heatY[2], steamH[2], steamR[2], steamS[2], greaseR[2];
+    float ductS;                      /* the duct's wisp's strength */
     float bm0, bm1, bmZ0, bmZ1;       /* the bain-marie's box (x0 >= x1: none) */
     int   bmPans;
     float pipeY;                      /* the gas line's height along the lining */

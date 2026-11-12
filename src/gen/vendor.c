@@ -163,7 +163,18 @@ static float arch_weight(const VendorSite *s, int cls, int t, int a) {
     return w;
 }
 
+static int g_trade = -1;
+void vendor_force_trade(int t) { g_trade = t >= 0 && t < VT_COUNT ? t : -1; }
+int  vendor_forced_trade(void) { return g_trade; }
+int  vendor_trade_by_name(const char *name) {
+    static const char *const KEY[VT_COUNT] = { "noodles", "soup", "dumplings", "skewers", "kebab", "burgers", "fried",
+                                               "curry", "tacos", "crepes", "roast", "drinks" };
+    for (int t = 0; t < VT_COUNT; ++t) if (strcmp(name, KEY[t]) == 0) return t;
+    return -1;
+}
+
 static int pick_trade(const VendorSite *s, int cls, Rng *r) {
+    if (g_trade >= 0) return g_trade;
     if (s->trade >= 0 && s->trade < VT_COUNT) return s->trade;
     float w[VT_COUNT];
     for (int t = 0; t < VT_COUNT; ++t) {
@@ -328,9 +339,9 @@ static int dress(VGen *G, const VFrame *F, const VendorFinger *ctx, int n, Rng *
     if (v->wear > 0.7f) fw[VF_RUST] += 1.0f;
     v->finish = (uint8_t)v_pick(r, fw, VF_COUNT);
     float ww[VW_COUNT] = { 3.0f, T->cooking ? 3.0f : 0.5f, 1.0f, v->cls == VC_POOR ? 1.5f : 0.5f,
-                           v->trade == VT_ELECTRONICS || v->trade == VT_RECORDS ? 3.0f : 0.4f,
-                           v->trade == VT_HARDWARE ? 3.0f : 0.4f,
-                           v->archetype == VA_MARKET || v->trade == VT_GREENGROCER || v->trade == VT_PRODUCE ? 2.0f : 0.5f,
+                           v->trade == VT_DRINKS ? 1.5f : 0.4f,
+                           0.3f,
+                           v->archetype == VA_MARKET || v->trade == VT_ROAST ? 2.0f : 0.5f,
                            v->cls == VC_RICH ? 2.0f : 0.5f };
     v->feature = (uint8_t)v_pick(r, ww, VW_COUNT);
     float mw[VM_COUNT];
@@ -375,8 +386,8 @@ static int dress(VGen *G, const VFrame *F, const VendorFinger *ctx, int n, Rng *
         sw[s] = 1.0f;
         if (!sig_possible(v, F, s)) sw[s] = 0.0f;
         (void)S;
-        if (s == VSIG_SHRINE && !T->cooking && v->trade != VT_APOTHECARY && v->trade != VT_CURIOS) sw[s] *= 0.4f;
-        if (s == VSIG_FISHRACK && v->trade != VT_SEAFOOD && v->trade != VT_NOODLE) sw[s] *= 0.2f;
+        if (s == VSIG_SHRINE && !T->cooking) sw[s] *= 0.4f;
+        if (s == VSIG_FISHRACK && v->trade != VT_NOODLE && v->trade != VT_SOUP) sw[s] *= 0.2f;
         if (s == VSIG_DEADNEON) sw[s] = v->cls == VC_RICH ? 0.1f : 1.2f;
         for (int i = 0; i < n; ++i) if (ctx[i].signature == s) sw[s] = 0.0f;
     }
@@ -479,7 +490,7 @@ static void fill(VGen *G, const VFrame *F, Rng *r) {
         }
         for (int t = 0; t < 8 && !placed && F->nsurf; ++t) {
             const VSurface *S = &F->surf[rng_u32(r) % (uint32_t)F->nsurf];
-            if (S->kind == VSU_BED && v->archetype == VA_BARROW && t < 4 && T->goods[0] && v->trade >= VT_GREENGROCER && v->trade <= VT_BUTCHER) continue;
+            if (S->kind == VSU_BED && v->archetype == VA_BARROW && t < 4 && T->goods[0] && v->trade == VT_ROAST) continue;
             if (S->x1 - S->x0 < w || S->z1 - S->z0 < d * 0.8f) continue;
             float x = rng_range(r, S->x0 + 0.5f * w, S->x1 - 0.5f * w), z = clampf(rng_range(r, S->z0 + 0.5f * d, S->z1 - 0.5f * d), S->z0 + 0.4f * d, S->z1 - 0.4f * d);
             if (overlaps(foot, nf, x - 0.5f * w, z - 0.5f * d, x + 0.5f * w, z + 0.5f * d, S->y)) continue;

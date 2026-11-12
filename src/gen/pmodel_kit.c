@@ -1,4 +1,5 @@
 #include "pmodel.h"
+#include "pmodel_food.h"
 #include "mathlib.h"
 #include <math.h>
 #include <stdlib.h>
@@ -1252,6 +1253,8 @@ const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_BROTH] = "broth", [PMAT_NOODLE] = "noodle", [PMAT_CURRY] = "curry", [PMAT_RICE] = "rice", [PMAT_OIL] = "oil",
     [PMAT_GINGER] = "ginger", [PMAT_RUST_STEEL] = "rust_steel", [PMAT_CHEQUER] = "chequer", [PMAT_LINING] = "lining",
     [PMAT_TUBE] = "tube", [PMAT_NEON] = "neon", [PMAT_FLAME] = "flame", [PMAT_BULB] = "bulb", [PMAT_SIGN_FAR] = "sign_far",
+    [PMAT_MEAT] = "meat", [PMAT_DOUGH] = "dough", [PMAT_BREAD] = "bread", [PMAT_FRIED] = "fried", [PMAT_FRYOIL] = "fryoil",
+    [PMAT_CHESTNUT] = "chestnut", [PMAT_GREENS] = "greens", [PMAT_SAUCE] = "sauce", [PMAT_GRIT] = "grit", [PMAT_EMBER] = "ember", [PMAT_RADIANT] = "radiant",
 };
 /* Mirrored by kitSet in shaders/city/kit.glsl. Sets may serve two materials in different colours (the
  * rubber's grain under black plastic, the white paint's under red): the share check counts them together. */
@@ -1321,9 +1324,54 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_FLAME_RING]   = { "flame_ring",     m_flame_ring,     { 1200, 400, 200 },    1 },
     [PMK_FLAME_JET]    = { "flame_jet",      m_flame_jet,      { 1000, 400, 400 },    1 },
     [PMK_LAMP]         = { "lamp",           m_lamp,           { 700, 350, 150 },     1 },
+    /* SF1: the street-food trades (pmodel_food.c) */
+    [PMK_CHAR_GRILL   ] = { "char_grill",     m_char_grill,      { 9000, 3800, 900 }, 1 },
+    [PMK_SKEWERS      ] = { "skewers",        m_skewers,         { 4000, 1600, 600 }, 1 },
+    [PMK_SKEWER_TRAY  ] = { "skewer_tray",    m_skewer_tray,     { 3600, 2000, 500 }, 1 },
+    [PMK_SPIT         ] = { "spit",           m_spit,            { 6000, 2400, 800 }, 1 },
+    [PMK_GRIDDLE      ] = { "griddle",        m_griddle,         { 5600, 1600, 500 }, 1 },
+    [PMK_GRIDDLE_S    ] = { "griddle_s",      m_griddle_s,       { 5000, 1600, 500 }, 1 },
+    [PMK_PATTY        ] = { "patty",          m_patty,           { 300, 200, 100 }, 1 },
+    [PMK_SAUSAGE      ] = { "sausage",        m_sausage,         { 300, 200, 100 }, 1 },
+    [PMK_BUN          ] = { "bun",            m_bun,             { 300, 200, 100 }, 1 },
+    [PMK_BREAD_STACK  ] = { "bread_stack",    m_bread_stack,     { 1700, 600, 200 }, 1 },
+    [PMK_TORTILLA     ] = { "tortilla",       m_tortilla,        { 250, 150, 80 }, 1 },
+    [PMK_FRYER        ] = { "fryer",          m_fryer,           { 6000, 2000, 600 }, 1 },
+    [PMK_FRY_BASKET   ] = { "fry_basket",     m_fry_basket,      { 5200, 1800, 300 }, 1 },
+    [PMK_FRIED_TRAY   ] = { "fried_tray",     m_fried_tray,      { 4200, 1800, 500 }, 1 },
+    [PMK_CREPE_PLATE  ] = { "crepe_plate",    m_crepe_plate,     { 3400, 1300, 500 }, 1 },
+    [PMK_CREPE        ] = { "crepe",          m_crepe,           { 400, 250, 100 }, 1 },
+    [PMK_CREPE_RAKE   ] = { "crepe_rake",     m_crepe_rake,      { 300, 150, 60 }, 1 },
+    [PMK_URN          ] = { "urn",            m_urn,             { 4200, 1900, 650 }, 1 },
+    [PMK_ESPRESSO     ] = { "espresso",       m_espresso,        { 12500, 5200, 1200 }, 1 },
+    [PMK_CUP_STACK    ] = { "cup_stack",      m_cup_stack,       { 2900, 1100, 250 }, 1 },
+    [PMK_CHESTNUT_WOK ] = { "chestnut_wok",   m_chestnut_wok,    { 9000, 3200, 600 }, 1 },
+    [PMK_ROAST_PAN    ] = { "roast_pan",      m_roast_pan,       { 3200, 1600, 500 }, 1 },
+    [PMK_DUMPLING_TRAY] = { "dumpling_tray",  m_dumpling_tray,   { 5600, 3000, 300 }, 1 },
+    [PMK_GN_GREENS    ] = { "gn_greens",      m_gn_greens,       { 2600, 1400, 400 }, 1 },
+    [PMK_GN_MEAT      ] = { "gn_meat",        m_gn_meat,         { 2600, 1400, 400 }, 1 },
+    [PMK_GN_SAUCE     ] = { "gn_sauce",       m_gn_sauce,        { 2600, 1400, 400 }, 1 },
+    [PMK_CURRY_POT    ] = { "curry_pot",      m_curry_pot,       { 4200, 1400, 500 }, 1 },
+    [PMK_PAPER_CONES  ] = { "paper_cones",    m_paper_cones,     { 1600, 600, 250 }, 1 },
+    [PMK_ICON_SKEWER  ] = { "icon_skewer",    m_icon_skewer,     { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_DUMPLING] = { "icon_dumpling",  m_icon_dumpling,   { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_KEBAB   ] = { "icon_kebab",     m_icon_kebab,      { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_BURGER  ] = { "icon_burger",    m_icon_burger,     { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_HOTDOG  ] = { "icon_hotdog",    m_icon_hotdog,     { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_DRUMSTICK] = { "icon_drumstick", m_icon_drumstick,  { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_FRIES   ] = { "icon_fries",     m_icon_fries,      { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_TACO    ] = { "icon_taco",      m_icon_taco,       { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_CREPE   ] = { "icon_crepe",     m_icon_crepe,      { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_CHESTNUT] = { "icon_chestnut",  m_icon_chestnut,   { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_TEAPOT  ] = { "icon_teapot",    m_icon_teapot,     { 4000, 1800, 800 }, 1 },
+    [PMK_ICON_FLAME   ] = { "icon_flame",     m_icon_flame,      { 4000, 1800, 800 }, 1 },
 };
 
-int pm_module_casts(int id) { return id >= 0 && id < PMK_ICON_BOWL; }
+int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CUP) || (id >= PMK_ICON_SKEWER && id <= PMK_ICON_FLAME); }
+/* everything but the lights' own glass, flames and neon (SF1's stations cast, their coals included) */
+int pm_module_casts(int id) {
+    return id >= 0 && id < PMK_COUNT && !pm_module_is_icon(id) && id != PMK_FLAME_RING && id != PMK_FLAME_JET && id != PMK_LAMP;
+}
 
 int pm_module_count(void) { return PMK_COUNT; }
 const PmModuleDef *pm_module(int id) { return id >= 0 && id < PMK_COUNT ? &DEFS[id] : NULL; }

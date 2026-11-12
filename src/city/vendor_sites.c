@@ -296,8 +296,7 @@ static void keep_site(SGen *S, const VendorSpot *sp, int space, uint32_t group, 
         float mw, md;
         vendor_min_site(VA_CANOPY, &mw, &md);
         if (o->site.w >= mw && o->site.d >= md && (o->site.ceiling == 0.0f || o->site.ceiling >= 2.9f)) {
-            o->site.archetype = VA_CANOPY;
-            o->site.trade = VT_NOODLE;
+            o->site.archetype = VA_CANOPY;   /* its trade chosen as any bar's (SF1) */
         }
     }
     DVec2 B = dv(sp->x, sp->z), f = dv(sp->fx, sp->fz);
