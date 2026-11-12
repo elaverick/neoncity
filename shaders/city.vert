@@ -19,7 +19,7 @@ layout(location = 5) flat out uvec4 vParams;
 layout(location = 6) flat out uint  vChunk;
 layout(location = 7) flat out uint  vFacePack;   // facades: packed face widths (exact, so not interpolated), the plate's depth
 layout(location = 8) flat out uint  vAux;        // facades: face identity, neighbour width, corners
-layout(location = 9) out vec2 vLitter;           // litter: ambient occlusion, how soaked
+layout(location = 9) out vec3 vLitter;           // litter: ambient occlusion, how soaked; z: the kit's grime (NB7)
 layout(location = 10) out float vBase;           // the ground its heights count from (Vertex.base), world Y
 // The depth prepass (renderer.c: record_prepass) and the scene pass must agree to the bit.
 invariant gl_Position;
@@ -204,7 +204,8 @@ void main() {
     vRel = rel;
     vLocal = local;
     vNrm = normalize(nrm);
-    vLitter = lit;
+    // a noodle bar's body: the cooking's grime (src/city/vendor_kit.c vendor_emit_body: nb_grime in the normal's w)
+    vLitter = vec3(lit, inParams.x == MAT_KIT ? inNrm.w : 0.0);
     vBase = inBase;
     vUV = inUV;
     vSeed = inSeed;

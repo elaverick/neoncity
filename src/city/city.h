@@ -189,7 +189,7 @@ static inline float city_grass_maintained(uint8_t w) { return w ? (float)(w - 1)
 #define KIT_FLAG_HOOD_SHIFT 8
 #define KIT_FLAG_BARE_WOOD 1024u   /* NB_FINISH_BARE_WOOD */
 #define KIT_FLAG_GLOW_SHIFT 11      /* NB6: 3 bits of colour or white, then 2 of flicker */
-typedef struct KitInst { float xf[12]; uint16_t module, flags; uint8_t part, pad[3]; float base; uint32_t seed; } KitInst;   /* pad zeroed */
+typedef struct KitInst { float xf[12]; uint16_t module, flags; uint8_t part; int8_t grime; uint8_t pad[2]; float base; uint32_t seed; } KitInst;   /* pad zeroed; grime: nb_grime's * 127 (NB7) */
 
 typedef struct Mesh {
     Vertex  *v;

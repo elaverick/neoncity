@@ -194,6 +194,37 @@ int  nb_solids(const NbPlan *p, float (*box)[4], int max);
 /* The hood's sheet's underside height a distance `out` from its spine (0 at the spine, its span at the lip). */
 float nb_hood_under(const NbPlan *p, float out);
 
+/* ---------------------------------------------------------------------------
+ * Steam and smoke (NB7): what the cooking gives off, as volumes the smoke
+ * pass marches (src/core/common.h Plume, PLUME_STALL and PLUME_WOK;
+ * shaders/smoke.frag). Off each pot on the range (the stock pot simmering,
+ * the second burner's at the boil, or the wok's smoke in bursts) a path in
+ * the plane of the bar's depth: up to the extractor's baffles, out under it
+ * to its front edge, up under the hood, along under it to the lip, down
+ * behind the fascia and out under it, then rising free into the street,
+ * spreading sideways as a sheet wherever it runs under a ceiling; and a wisp
+ * out of the duct's cap over the hood (what the extractor draws off). Each
+ * carries the bar's own light on it, summed as the city shades the lights
+ * (over the pot, under the hood, past the fascia), so the steam takes the
+ * tubes' white and the neon's colour. And the grime the cooking leaves
+ * (nb_grime): grease round the burners, condensation where the steam runs. */
+enum { NB_STEAM_POT = 0, NB_STEAM_WOK, NB_STEAM_DUCT };
+#define NB_STEAMS_MAX 3
+#define NB_KNOTS_MAX  8
+typedef struct NbSteam {
+    uint8_t kind;                     /* NB_STEAM_* */
+    int     nknot;                    /* 1: no path, a free wisp */
+    float   pos[3];                   /* its mouth (a pot's rim, the duct's cap) in the site's frame */
+    float   radius, strength, rise;   /* the mouth's; how thick (0..1); how far it climbs past the path's end */
+    float   knot[NB_KNOTS_MAX][3];    /* the path: out (+z), up from the mouth, and the ceiling over the knot (0: none) */
+    float   light[3][3];              /* the bar's light (linear) over the mouth, under the hood, past the fascia */
+} NbSteam;
+/* The bar's steam and smoke, under a ceiling (0: open sky); returns how many. */
+int   nb_steam(const NbPlan *p, const NbLine *L, float ceiling, NbSteam *out, int max);
+/* The cooking's grime at a point of the bar (its normal n, or NULL for a small thing set down there): + the
+ * steam's condensation, - the burners' grease, 0 none; -1..1. */
+float nb_grime(const NbPlan *p, const NbLine *L, const NbSteam *st, int nst, const float pos[3], const float *n);
+
 /* The bar's finish (NB4b, the user's rules): its outside one coat of paint, a body colour and a trim colour
  * (posts, fascia, stools' bases, about half the A-frames; the rest bare timber) from NB_COATS pairs (shaders/city/kit.glsl KIT_COAT); its hood
  * bare metal, rusted or not by the district's affluence. Its kitchen is stainless whatever the vendor. */

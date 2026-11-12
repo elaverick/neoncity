@@ -1267,10 +1267,10 @@ static void keep_nearest(Plume *near, float *d2s, uint32_t *n, uint32_t max, con
 
 uint32_t chunks_plumes(ChunkSystem *cs, const double cam[3], PlumeSet *dst) {
     const double P = CHUNK_SIZE;
-    /* stacks and vents kept apart, so the street's many wisps never crowd out a refinery */
-    Plume stack[PLUME_STACKS], vent[PLUME_VENTS];
-    float sd2[PLUME_STACKS], vd2[PLUME_VENTS];
-    uint32_t ns = 0, nv = 0;
+    /* stacks, vents and stalls kept apart, so the street's many wisps never crowd out a refinery */
+    Plume stack[PLUME_STACKS], vent[PLUME_VENTS], stall[PLUME_STALLS];
+    float sd2[PLUME_STACKS], vd2[PLUME_VENTS], td2[PLUME_STALLS];
+    uint32_t ns = 0, nv = 0, nt = 0;
     for (int i = 0; i < MAX_ENTRIES; ++i) {
         const Entry *e = &cs->entries[i];
         if (e->state != CS_RESIDENT || !e->nplume) continue;
@@ -1283,14 +1283,18 @@ uint32_t chunks_plumes(ChunkSystem *cs, const double cam[3], PlumeSet *dst) {
             float d2 = p.pos[0] * p.pos[0] + p.pos[1] * p.pos[1] + p.pos[2] * p.pos[2];
             if (p.kind == PLUME_VENT) {
                 if (d2 <= VENT_RANGE * VENT_RANGE) keep_nearest(vent, vd2, &nv, PLUME_VENTS, &p, d2);
+            } else if (p.kind >= PLUME_STALL) {
+                if (d2 <= STALL_RANGE * STALL_RANGE) keep_nearest(stall, td2, &nt, PLUME_STALLS, &p, d2);
             } else if (d2 <= PLUME_RANGE * PLUME_RANGE) keep_nearest(stack, sd2, &ns, PLUME_STACKS, &p, d2);
         }
     }
-    /* farthest first, merging the two: the pass blends them back to front */
-    uint32_t n = 0, a = ns, b = nv;
-    while (a || b) {
-        if (b == 0 || (a && sd2[a - 1] >= vd2[b - 1])) dst->plumes[n++] = stack[--a];
-        else dst->plumes[n++] = vent[--b];
+    /* farthest first, merging the three: the pass blends them back to front */
+    uint32_t n = 0, a = ns, b = nv, c = nt;
+    while (a || b || c) {
+        float da = a ? sd2[a - 1] : -1.0f, db = b ? vd2[b - 1] : -1.0f, dc = c ? td2[c - 1] : -1.0f;
+        if (da >= db && da >= dc) dst->plumes[n++] = stack[--a];
+        else if (db >= dc) dst->plumes[n++] = vent[--b];
+        else dst->plumes[n++] = stall[--c];
     }
     dst->count = n;
     return n;

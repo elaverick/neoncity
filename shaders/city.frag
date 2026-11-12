@@ -21,7 +21,7 @@ layout(location = 5) flat in uvec4 vParams;
 layout(location = 6) flat in uint  vChunk;
 layout(location = 7) flat in uint  vFacePack;
 layout(location = 8) flat in uint  vAux;
-layout(location = 9) in vec2 vLitter;     // litter: ambient occlusion, how soaked (city.vert: litter)
+layout(location = 9) in vec3 vLitter;     // litter: ambient occlusion, how soaked (city.vert: litter); the kit's grime
 layout(location = 10) in float vBase;     // the ground its heights count from (city.vert)
 
 layout(location = 0) out vec4 outColor;
@@ -149,7 +149,7 @@ void shadePixel() {
     else if (mat == MAT_INDUSTRY)  col = shadeIndustry(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_PROP)      col = shadeProp(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_VENDOR)    col = shadeVendor(vLocal, vRel, n, vUV, vSeed, vParams, vAux, vLitter.x * 6.35);
-    else if (mat == MAT_KIT)       col = shadeKit(vLocal, vRel, n, vUV, vSeed, vParams, vLitter.x, vLitter.y);
+    else if (mat == MAT_KIT)       col = shadeKit(vLocal, vRel, n, vUV, vSeed, vParams, vLitter.x, vLitter.y, vLitter.z);
     else {
         // LED strip: steady or chasing
         float chase = vParams.z == 1u ? 0.25 + 0.75 * step(0.5, fract(vUV.x / 6.0 - gTime * 0.7)) : 1.0;

@@ -175,6 +175,27 @@ static void room_word(const Vendor *v, int oi, uint8_t prm[4], uint32_t *aux, ui
     *seed = (hash_combine(v->site.seed, (uint32_t)oi + 0x7700u) & 0xFFFFu) | c565 << 16;
 }
 
+/* A noodle bar's steam and smoke (NB7: nb_steam) as the chunk's plumes, for the smoke pass (chunks_plumes). */
+static void vendor_plumes(Mesh *m, const VendorSpot *s, const Vendor *v) {
+    NbLine L;
+    nb_line(&v->nb, &L);
+    NbSteam st[NB_STEAMS_MAX];
+    const int n = nb_steam(&v->nb, &L, s->site.ceiling, st, NB_STEAMS_MAX);
+    const float bx = (float)(s->x - m->ox), bz = (float)(s->z - m->oz);
+    for (int i = 0; i < n; ++i) {
+        const NbSteam *e = &st[i];
+        vec3 c = v3(bx + e->pos[0] * s->fz + e->pos[2] * s->fx, s->y + e->pos[1], bz - e->pos[0] * s->fx + e->pos[2] * s->fz);
+        push_plume(m, c, e->radius, e->rise, hash_combine(s->site.seed, 0x57EAu + (uint32_t)i),
+                   e->kind == NB_STEAM_WOK ? PLUME_WOK : PLUME_STALL);
+        Plume *p = &m->plume[m->nplume - 1];
+        p->strength = e->strength;
+        p->dir[0] = s->fx; p->dir[1] = s->fz;   /* the site's +z, out to the street */
+        p->nknot = (uint32_t)e->nknot;
+        for (int k = 0; k < e->nknot && k < PLUME_KNOTS; ++k) memcpy(p->knot[k], e->knot[k], sizeof(e->knot[k]));
+        for (int k = 0; k < 3; ++k) memcpy(p->light[k], e->light[k], sizeof(e->light[k]));
+    }
+}
+
 static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     VEmit *E = (VEmit *)ctx;
     Mesh *m = E->m;
@@ -188,6 +209,7 @@ static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
         vendor_emit_body(m, s, v, &E->shell, 1);
         E->tris += (int)(E->shell.ni / 3);
         vendor_lights(E->g, m, s, v);
+        vendor_plumes(m, s, v);
         return;
     }
     VendorMesh *vm = &E->vm;

@@ -222,23 +222,35 @@ typedef struct FlameSet { uint32_t count, pad[3]; Flame flames[FLAME_MAX]; } Fla
 /* Stacks' smoke and steam (src/city/mesh_industry.c) and the steam off manhole
  * covers (build_vents in src/city/streets.c), volumes ray-marched by the flame
  * pass before the fire (shaders/smoke.frag). Each frame the PLUME_STACKS
- * stacks' plumes nearest the camera within PLUME_RANGE, and the PLUME_VENTS
- * covers' within VENT_RANGE, are gathered camera-relative, farthest first so
- * they blend back to front (chunks_plumes). std430: must match
- * shaders/smoke.glsl. */
+ * stacks' plumes nearest the camera within PLUME_RANGE, the PLUME_VENTS
+ * covers' within VENT_RANGE and the PLUME_STALLS noodle bars' (NB7:
+ * src/city/mesh_vendor.c vendor_plumes) within STALL_RANGE are gathered
+ * camera-relative, farthest first so they blend back to front
+ * (chunks_plumes). std430: must match shaders/smoke.glsl. */
 #define PLUME_STACKS      48
 #define PLUME_VENTS       32
-#define PLUME_MAX         (PLUME_STACKS + PLUME_VENTS)
+#define PLUME_STALLS      24   /* the noodle bars' steam and smoke (NB7), within STALL_RANGE */
+#define PLUME_MAX         (PLUME_STACKS + PLUME_VENTS + PLUME_STALLS)
 #define PLUME_RANGE       1500.0f
 #define VENT_RANGE        250.0f
-enum { PLUME_SMOKE = 0, PLUME_STEAM = 1, PLUME_VENT = 2 };
+#define STALL_RANGE       160.0f
+#define PLUME_KNOTS       8    /* src/gen/noodle_bar.h NB_KNOTS_MAX */
+#define STEAM_PUFFS       64   /* puffs a stall's plume (shaders/steam.vert: must match) */
+/* PLUME_STALL: steam off a stall's pot or out of its duct; PLUME_WOK: a wok's smoke, in bursts. Both follow
+ * their knots (a path under the bar's extractor and hood, then up free past the last) and carry the bar's light. */
+enum { PLUME_SMOKE = 0, PLUME_STEAM = 1, PLUME_VENT = 2, PLUME_STALL = 3, PLUME_WOK = 4 };
 typedef struct Plume {
     float    pos[3];   /* the stack's mouth (chunk-local in a Mesh, camera-relative on the GPU) */
     float    radius;   /* the mouth's (m) */
-    float    rise;     /* how high it climbs before it has thinned away (m) */
+    float    rise;     /* how high it climbs before it has thinned away (m); a stall's: past its last knot */
     uint32_t seed;
     uint32_t kind;     /* PLUME_* */
+    float    strength; /* a stall's: how thick, 0..1 */
+    float    dir[2];   /* a stall's: the way its knots run out (world xz, unit) */
+    uint32_t nknot;    /* a stall's: how many knots (0 for the rest; 1: a free wisp) */
     float    pad;
+    float    knot[PLUME_KNOTS][4];   /* a stall's path: out along dir, up, from the mouth; the ceiling over it (0: none) */
+    float    light[3][4];            /* a stall's light (linear rgb): over the mouth, under the hood, past the fascia */
 } Plume;
 typedef struct PlumeSet { uint32_t count, pad[3]; Plume plumes[PLUME_MAX]; } PlumeSet;
 

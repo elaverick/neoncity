@@ -257,7 +257,7 @@ void renderer_destroy(Renderer *r) {
     proxy_gpu_destroy(r);
     vk_buffer_destroy(vk, &r->shotBuf);
     VkPipeline pipes[] = { r->impDemandPipe, r->cityPipe, r->plantPipe, r->terrainPipe, r->terrainCutPipe, r->terrainPrePipe, r->planetPipe, r->cavePipe, r->caveXrayPipe, r->caveShelterPipe, r->proxyPipe, r->skyPipe, r->compositePipe, r->bloomDownPipe, r->bloomUpPipe, r->cloudPipe, r->cloudCompPipe,
-                           r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->flamePipe, r->smokePipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe, r->kitPipe, r->kitPrePipe };
+                           r->ssrPipe, r->ssrApplyPipe, r->shelterPipe, r->flamePipe, r->smokePipe, r->steamPipe, r->prepassPipe, r->prepassPlantPipe, r->tracePipe, r->denoisePipe, r->kitPipe, r->kitPrePipe };
     for (size_t i = 0; i < ARRAY_LEN(pipes); ++i) vkDestroyPipeline(vk->device, pipes[i], NULL);
     vkDestroyPipelineLayout(vk->device, r->scenePL, NULL);
     vkDestroyPipelineLayout(vk->device, r->compositePL, NULL);

@@ -122,6 +122,12 @@ static const uint32_t SPV_smoke_vert[] = {
 static const uint32_t SPV_smoke_frag[] = {
 #include "smoke.frag.inc"
 };
+static const uint32_t SPV_steam_vert[] = {
+#include "steam.vert.inc"
+};
+static const uint32_t SPV_steam_frag[] = {
+#include "steam.frag.inc"
+};
 
 /* ------------------------------------------------------------ layouts --- */
 
@@ -595,6 +601,10 @@ void create_pipelines(Renderer *r) {
     GfxDesc sm = { SPV_smoke_vert, sizeof(SPV_smoke_vert), SPV_smoke_frag, sizeof(SPV_smoke_frag),
                    r->flamePL, HDR_FORMAT, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT, false, false, false, false, true };
     r->smokePipe = make_graphics(vk, &sm);
+    /* the noodle bars' steam: puffs, blended the same way (steam.vert, steam.frag) */
+    GfxDesc stm = sm;
+    stm.vs = SPV_steam_vert; stm.vsBytes = sizeof(SPV_steam_vert); stm.fs = SPV_steam_frag; stm.fsBytes = sizeof(SPV_steam_frag);
+    r->steamPipe = make_graphics(vk, &stm);
     if (r->rt) {
         GfxDesc pre = { SPV_city_pre_vert, sizeof(SPV_city_pre_vert), SPV_prepass_frag, sizeof(SPV_prepass_frag),
                         r->scenePL, GBUF_FORMAT, DEPTH_FORMAT, vk->msaa, true, true, true, true };

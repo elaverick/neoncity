@@ -186,7 +186,7 @@ vec3 kitGlow(uint m, vec3 p, vec3 n, vec3 V, uint seed, uvec4 prm) {
     return neonColor(glow) * 1.4;
 }
 
-vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ, float wear) {
+vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ, float wear, float grime) {
     vec3 V = -normalize(rel);
     uint m = min(prm.y, KIT_MATS - 1u);
     if (m >= PMAT_TUBE) return kitGlow(m, p, n, V, seed, prm);
@@ -318,6 +318,34 @@ vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ
         base = mix(base, vec3(0.05, 0.03, 0.012), 0.6 * greasy); rough = mix(rough, 0.25, greasy); metal *= 1.0 - 0.5 * greasy;
         float soot = (1.0 - smoothstep(0.95, 1.2, hgt)) * smoothstep(0.88, 0.95, hgt) * mix(0.5, 0.9, vw);
         base = mix(base, vec3(0.012, 0.011, 0.01), soot * up); rough = mix(rough, 0.95, soot * up); metal *= 1.0 - soot * up;
+    }
+    // the cooking's grime, placed from the line (NB7: src/gen/noodle_bar.c nb_grime, interpolated over the body,
+    // the instance's own on the kit): grease round the burners on what faces them (the splashback, the range's
+    // top, the extractor's baffles), an amber film thickening to a brown-black crust nearest the flame;
+    // condensation where the steam runs (under the extractor and the hood, down the fascia's back): damp and
+    // glossy, dried tide marks, drips down what stands upright, beads on the undersides; on a rusted hood the
+    // marks bloom fresh rust, on bare and stainless steel they dry to pale scale
+    float greaseL = max(-grime, 0.0), wetL = max(grime, 0.0);
+    if (greaseL > 0.01 && !food) {
+        float spat = vnoise(q * 18.0, 0x6F1u) * 0.55 + vnoise(q * 4.0, 0x6F2u) * 0.65;
+        float a = smoothstep(0.15, 0.6, greaseL * mix(0.8, 1.2, vw) + 0.45 * (spat - 0.6)) * mix(0.5, 0.9, vw);
+        vec3 crust = mix(vec3(0.16, 0.085, 0.025), vec3(0.03, 0.019, 0.009), smoothstep(0.45, 0.9, greaseL));
+        base = mix(base, crust, 0.75 * a); rough = mix(rough, 0.24, a); metal *= 1.0 - 0.55 * a;
+    }
+    if (wetL > 0.01 && !food && m != PMAT_GLASS) {
+        float amt = wetL * mix(0.55, 1.0, vw);
+        float tn = fbm(q * 2.3 + vec2(float(seed & 63u)), 0x6F3u);
+        float ring = smoothstep(0.43, 0.49, abs(fract(tn * 4.0 + 0.5 * wetL) - 0.5)) * smoothstep(0.15, 0.5, amt);
+        float drip = smoothstep(0.55, 0.8, fbm(vec2(uv.x * 14.0, p.y * 1.3) + float(seed & 127u), 0x6F4u)) * up;
+        float bead = smoothstep(0.72, 0.86, vnoise(q * 55.0, 0x6F5u)) * smoothstep(-0.3, -0.7, n.y);
+        float mark = clamp(max(ring, drip * 0.8) * amt, 0.0, 1.0);
+        vec3 col = isHood && hood == KIT_HOOD_RUST ? vec3(0.24, 0.075, 0.018)
+                 : bright || bare || isHood ? vec3(0.30, 0.29, 0.27)
+                 : base * 0.55;
+        base = mix(base, col, 0.6 * mark);
+        metal *= 1.0 - 0.4 * mark * float(isHood && hood == KIT_HOOD_RUST);
+        rough = mix(rough, 0.12, clamp(0.55 * amt + bead * amt, 0.0, 1.0));   // damp: glossy, the beads glossier
+        base *= 1.0 - 0.15 * amt * (1.0 - metal);
     }
     // the smoke's film: over the extractor and what is up by it, and under the hood (what faces down up there);
     // nowhere else in the kitchen

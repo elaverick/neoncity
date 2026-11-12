@@ -86,6 +86,9 @@ void record_clouds(Renderer *r, VkCommandBuffer cmd, int slot) {
     if (r->plumeCount[slot]) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->smokePipe);
         vkCmdDraw(cmd, 36, r->plumeCount[slot], 0, 0);
+        /* the noodle bars' steam as puffs (steam.vert: STEAM_PUFFS a plume; the rest thrown away) */
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->steamPipe);
+        vkCmdDraw(cmd, 6, r->plumeCount[slot] * STEAM_PUFFS, 0, 0);
     }
     if (r->flameCount[slot]) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->flamePipe);

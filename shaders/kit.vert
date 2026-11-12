@@ -32,7 +32,7 @@ layout(location = 5) flat out uvec4 vParams;
 layout(location = 6) flat out uint  vChunk;
 layout(location = 7) flat out uint  vFacePack;
 layout(location = 8) flat out uint  vAux;
-layout(location = 9) out vec2 vLitter;   // the kit: baked occlusion, wear
+layout(location = 9) out vec3 vLitter;   // the kit: baked occlusion, wear, the cooking's grime (NB7)
 layout(location = 10) out float vBase;
 invariant gl_Position;
 
@@ -47,11 +47,11 @@ void main() {
     vNrm = normalize(nrm + vec3(0.0, 1e-6, 0.0));   // a module shrunk to nothing as it fades has no normal left
     vUV = inUV;
     vSeed = inInst.x;
-    vParams = uvec4(MAT_KIT, inParams.y, inInst.z & 255u, inInst.z >> 8);
+    vParams = uvec4(MAT_KIT, inParams.y, inInst.z & 255u, (inInst.z >> 8) & 0xFFFFu);
     vChunk = inInst.y;
     vFacePack = 0u;
     vAux = inAux;
-    vLitter = vec2(float(inParams.z), float(inParams.w)) / 255.0;
+    vLitter = vec3(vec2(float(inParams.z), float(inParams.w)) / 255.0, float(int(inInst.z) >> 24) / 127.0);   // grime: the instance's (kit_gpu.c)
     vBase = uintBitsToFloat(inInst.w);
     gl_Position = frame.viewProj * vec4(rel, 1.0);
 }

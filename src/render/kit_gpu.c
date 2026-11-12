@@ -258,7 +258,7 @@ void kit_add(KitGpu *k, int slot, const KitInst *inst, uint32_t n, const float o
         }
         o->seed = ki->seed;
         o->chunk = (uint32_t)rec;
-        o->part = ki->part | (uint32_t)ki->flags << 8;
+        o->part = ki->part | (uint32_t)ki->flags << 8 | (uint32_t)(uint8_t)ki->grime << 24;   /* NB7: the cooking's grime, kit.vert */
         memcpy(&o->base, &ki->base, 4);
         k->key[k->ncand++] = (uint16_t)(m * PM_LODS + lod);
         k->st.drawn[lod]++;

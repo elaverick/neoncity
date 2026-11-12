@@ -278,6 +278,23 @@ static int slice_cams(int argc, char **argv) {
         const int bad = nb_line_check(p, &L, err, sizeof(err));
         if (bad) printf("%s", err);
         CHECK(bad == 0, "the slice's cooking line breaks %d rules", bad);
+        /* its steam and smoke (NB7): every knot under the ceiling over it, the light each carries */
+        NbSteam st[NB_STEAMS_MAX];
+        const int nst = nb_steam(p, &L, s->site.ceiling, st, NB_STEAMS_MAX);
+        static const char *const SK[3] = { "pot", "wok", "duct" };
+        for (int i = 0; i < nst; ++i) {
+            const NbSteam *e = &st[i];
+            printf("  steam: %s at (%.2f, %.2f, %.2f) r %.2f, strength %.2f, %d knots, rise %.2f; light %.2f %.2f %.2f | %.2f %.2f %.2f | %.2f %.2f %.2f\n",
+                   SK[e->kind], e->pos[0], e->pos[1], e->pos[2], e->radius, e->strength, e->nknot, e->rise,
+                   e->light[0][0], e->light[0][1], e->light[0][2], e->light[1][0], e->light[1][1], e->light[1][2],
+                   e->light[2][0], e->light[2][1], e->light[2][2]);
+            for (int k = 1; k < e->nknot; ++k) {
+                const float y = e->pos[1] + e->knot[k][1], z = e->pos[2] + e->knot[k][0];
+                CHECK(y < nb_ceil(p, e->pos[0], z) - 0.02f || z > p->lip,
+                      "the slice's %s steam's knot %d (%.2f m up at z %.2f) is through the hood", SK[e->kind], k, y, z);
+            }
+        }
+        CHECK(nst == 3, "the slice gives off %d plumes, not 3 (two pots and the duct)", nst);
     }
     {   /* the near vendor layer: the kit's modules set down at the slice (NB2), the same from either build */
         Mesh km, km2;

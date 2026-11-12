@@ -468,7 +468,7 @@ static void body_section(const char *out) {
  * second burner's mix; cutaway renders of four kitchens (the hood, the counter and the street taken off). */
 static void line_section(const char *out) {
     static const float WS[] = { 3.2f, 3.5f, 3.85f, 4.2f, 4.6f, 5.2f }, DS[] = { 3.0f, 3.3f, 3.48f, 3.8f };
-    int lines = 0, failing = 0, shown = 0, kinds[NB_POT_KINDS] = { 0 }, items = 0, fans = 0, bms = 0;
+    int lines = 0, failing = 0, shown = 0, kinds[NB_POT_KINDS] = { 0 }, items = 0, fans = 0, bms = 0, steams = 0;
     double t0 = now_ms();
     for (size_t wi = 0; wi < sizeof(WS) / sizeof(WS[0]); ++wi)
         for (size_t di = 0; di < sizeof(DS) / sizeof(DS[0]); ++di)
@@ -484,13 +484,35 @@ static void line_section(const char *out) {
                     char err[2048];
                     const int bad = nb_line_check(&p, &L, err, sizeof(err));
                     lines++; items += L.n; kinds[L.kind]++; fans += L.fan[1] > 0.0f; bms += L.bmPans > 0;
+                    /* NB7: its steam's paths stay under the extractor and the hood, out past the lip, lit */
+                    NbSteam st[NB_STEAMS_MAX];
+                    const float ceil = (k & 3u) == 3u ? 3.4f : 0.0f;
+                    const int nst = nb_steam(&p, &L, ceil, st, NB_STEAMS_MAX);
+                    steams += nst;
+                    CHECK(nst >= 2, "line %.2f x %.2f seed %08x: %d plumes", WS[wi], DS[di], seed, nst);
+                    for (int i = 0; i < nst; ++i) {
+                        const NbSteam *e = &st[i];
+                        for (int c = 0; c < 9; ++c)
+                            CHECK(e->light[c / 3][c % 3] >= 0.0f && e->light[c / 3][c % 3] < 200.0f, "line seed %08x: steam %d's light %g", seed, i, e->light[c / 3][c % 3]);
+                        CHECK(e->rise > 0.0f || ceil > 0.0f, "line seed %08x: steam %d rises %g", seed, i, e->rise);
+                        for (int q = 1; q < e->nknot; ++q) {
+                            const float y = e->pos[1] + e->knot[q][1], z = e->pos[2] + e->knot[q][0];
+                            CHECK(z > p.lip || y < nb_ceil(&p, e->pos[0], z) - 0.02f,
+                                  "line %.2f x %.2f seed %08x: steam %d's knot %d (%.2f m up at z %.2f) through the hood", WS[wi], DS[di], seed, i, q, y, z);
+                            CHECK(q != 1 || y < 1.97f, "line seed %08x: steam %d over the extractor's baffles", seed, i);
+                            CHECK(e->knot[q][0] >= e->knot[q - 1][0] - 1e-4f, "line seed %08x: steam %d runs back in", seed, i);
+                            if (e->knot[q][2] > 0.0f) CHECK(e->knot[q][1] < e->knot[q][2], "line seed %08x: steam %d's knot %d over its ceiling", seed, i, q);
+                        }
+                        const float g0 = nb_grime(&p, &L, st, nst, e->pos, NULL), g1 = nb_grime(&p, &L, st, nst, e->pos, NULL);
+                        CHECK(g0 == g1 && g0 >= -1.0f && g0 <= 1.0f, "line seed %08x: grime %g %g", seed, g0, g1);
+                    }
                     if (bad) {
                         failing++;
                         if (shown < 6) { printf("  line %.2f x %.2f %s seed %08x (%s): %d broken\n%s", WS[wi], DS[di], p.form ? "corner" : "straight", seed, L.kind == NB_POT_WOK ? "wok" : L.kind == NB_POT_STEAMER ? "steamer" : L.kind == NB_POT_SAUCEPAN ? "saucepan" : "noodles", bad, err); shown++; }
                     }
                 }
-    printf("\nthe cooking line: %d lines over the sweep (%.1f ms), %d break a rule; %.1f items a line; second burner: noodles %d, wok %d, steamer %d, saucepan %d; a bain-marie in %d, a fan in %d\n",
-           lines, now_ms() - t0, failing, lines ? (double)items / lines : 0.0, kinds[0], kinds[1], kinds[2], kinds[3], bms, fans);
+    printf("\nthe cooking line: %d lines over the sweep (%.1f ms), %d break a rule; %.1f items a line; second burner: noodles %d, wok %d, steamer %d, saucepan %d; a bain-marie in %d, a fan in %d; %d plumes\n",
+           lines, now_ms() - t0, failing, lines ? (double)items / lines : 0.0, kinds[0], kinds[1], kinds[2], kinds[3], bms, fans, steams);
     CHECK(failing == 0, "%d of %d cooking lines break a rule", failing, lines);
     if (!out) return;
     /* cutaways of the body_section's four bars */

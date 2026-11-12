@@ -139,7 +139,7 @@ struct Renderer {
     VkPipelineLayout      scenePL, compositePL, bloomPL, cloudPL, cloudCompPL, ssrPL, ssrApplyPL, shelterPL, flamePL;
     VkPipeline            impDemandPipe;   /* impostor_demand.frag: what the interiors' near tier streams by */
     VkPipeline            cityPipe, plantPipe, skyPipe, compositePipe, bloomDownPipe, bloomUpPipe, cloudPipe, cloudCompPipe, ssrPipe, ssrApplyPipe,
-                          shelterPipe, flamePipe, smokePipe;
+                          shelterPipe, flamePipe, smokePipe, steamPipe;
 
     /* Ray-traced shadows (rt: NULL without ray queries). The depth prepass
      * writes the MSAA G-buffer, resolved into gbuf (sample 0, as is the depth

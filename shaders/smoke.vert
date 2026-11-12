@@ -14,6 +14,7 @@ const int CORNER[36] = int[](0, 1, 3, 0, 3, 2,  4, 6, 7, 4, 7, 5,  0, 4, 5, 0, 5
 
 void main() {
     Plume pl = plumes[gl_InstanceIndex];
+    if (plumeStall(pl)) { vRel = vec3(0.0); vIdx = 0u; gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }   // steam.vert's
     vec3 lo, hi;
     plumeBox(pl, lo, hi);
     int c = CORNER[gl_VertexIndex];

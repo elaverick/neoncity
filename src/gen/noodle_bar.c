@@ -1701,3 +1701,164 @@ int nb_solids(const NbPlan *p, float (*b)[4], int max) {
 #undef ADD
     return n;
 }
+
+/* ------------------------------------------------------------ steam (NB7) --- */
+
+/* The bar's lights as the city shades them (shaders/common.glsl vendorWhite, neonColor, vendorPower,
+ * vendorFalloff; lighting.glsl addVendor's neon facing), summed at q without a surface's turn: what a puff
+ * of steam there is lit by. */
+static const float NB_WHITE_RGB[5][3] = { { 0.90f, 0.96f, 1.00f }, { 1.00f, 0.95f, 0.87f }, { 1.00f, 0.73f, 0.47f },
+                                          { 1.00f, 0.66f, 0.37f }, { 0.16f, 0.36f, 1.00f } };
+static const float NB_NEON_RGB[8][3] = { { 1.00f, 0.08f, 0.50f }, { 0.05f, 0.85f, 1.00f }, { 1.00f, 0.10f, 0.04f },
+                                         { 1.00f, 0.50f, 0.06f }, { 0.55f, 0.12f, 1.00f }, { 0.15f, 1.00f, 0.40f },
+                                         { 0.65f, 0.85f, 1.00f }, { 1.00f, 0.85f, 0.15f } };
+static void light_at(const NbLight *lt, int nl, const float q[3], float out[3]) {
+    out[0] = out[1] = out[2] = 0.0f;
+    for (int i = 0; i < nl; ++i) {
+        const NbLight *l = &lt[i];
+        float c[3], at[3] = { l->a[0], l->a[1], l->a[2] }, power, soft, reach;
+        if (l->colour >= NB_NEON) memcpy(c, NB_NEON_RGB[(l->colour - NB_NEON) & 7], sizeof(c));
+        else memcpy(c, NB_WHITE_RGB[l->colour < 5 ? l->colour : 0], sizeof(c));
+        if (l->kind == NB_LIGHT_TUBE) {
+            const float u[3] = { l->b[0] - l->a[0], l->b[1] - l->a[1], l->b[2] - l->a[2] };
+            const float len = sqrtf(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+            float t = len > 1e-4f ? ((q[0] - l->a[0]) * u[0] + (q[1] - l->a[1]) * u[1] + (q[2] - l->a[2]) * u[2]) / (len * len) : 0.0f;
+            t = clampf(t, 0.0f, 1.0f);
+            for (int k = 0; k < 3; ++k) at[k] = l->a[k] + u[k] * t;
+            power = 2.2f * (l->colour >= 2 ? 0.3f : 1.0f) * maxf(len, 0.3f); soft = 0.25f; reach = 9.0f;
+        } else if (l->kind == NB_LIGHT_LAMP) { power = 0.8f; soft = 0.05f; reach = 5.0f; }
+        else if (l->kind == NB_LIGHT_FLAME) { power = 0.12f; soft = 0.01f; reach = 1.6f; }
+        else { power = 1.2f; soft = 0.1f; reach = 6.0f; }
+        const float d[3] = { q[0] - at[0], q[1] - at[1], q[2] - at[2] };
+        const float dd = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        float att = power / (dd * dd + soft);
+        const float f = clampf((reach - dd) / (0.55f * reach), 0.0f, 1.0f);
+        att *= f * f * (3.0f - 2.0f * f);
+        if (l->kind == NB_LIGHT_NEON && dd > 1e-4f)   /* in front of the sign */
+            att *= 0.25f + 0.75f * maxf((d[0] * l->b[0] + d[2] * l->b[1]) / dd, 0.0f);
+        for (int k = 0; k < 3; ++k) out[k] += c[k] * att;
+    }
+}
+
+#define STEAM_GAP 0.07f   /* how far under a ceiling the sheet of steam runs (its middle) */
+
+int nb_steam(const NbPlan *p, const NbLine *L, float ceiling, NbSteam *out, int max) {
+    NbLight lt[NB_LIGHTS_MAX];
+    const int nl = nb_lights(p, lt, NB_LIGHTS_MAX);
+    const float top = p->benchY + GRATE_TOP;     /* a pot's foot on its grate */
+    const float ez = p->lining + 0.004f + 0.60f; /* the extractor canopy's front edge (its underside at 1.97) */
+    const float lip = p->lip, under = p->hood.spring, fascia = p->hood.spring - p->hood.fascia_h;
+    int n = 0;
+    for (int b = 0; b < 2 && n < max; ++b) {
+        NbSteam *s = &out[n];
+        memset(s, 0, sizeof(*s));
+        float h, r, str;
+        if (b == 0) { h = 0.38f; r = 0.17f; str = 0.75f; }   /* the stock pot, open, simmering */
+        else switch (L->kind) {
+            case NB_POT_WOK:      h = WOK_FLOOR + 0.212f - 0.024f + 0.083f - top; r = 0.16f; str = 1.0f; break;   /* its rim */
+            case NB_POT_STEAMER:  h = 0.30f + 0.23f; r = 0.13f; str = 1.0f; break;
+            case NB_POT_SAUCEPAN: h = 0.10f; r = 0.08f; str = 0.45f; break;
+            default:              h = 0.30f; r = 0.14f; str = 1.0f; break;   /* the noodles' pot, at the boil */
+        }
+        s->kind = (uint8_t)(b == 1 && L->kind == NB_POT_WOK ? NB_STEAM_WOK : NB_STEAM_POT);
+        s->pos[0] = L->burner[b][0]; s->pos[1] = top + h; s->pos[2] = L->burner[b][1];
+        s->radius = r; s->strength = str;
+        const float x = s->pos[0], y0 = s->pos[1], z0 = s->pos[2];
+        /* up to the extractor's baffles, out under it to its front edge, up under the hood, along under it to
+         * the lip, down behind the fascia and out under it into the street; the third value the ceiling over
+         * the knot (0: none), which the steam never rises through */
+        const float ya = 1.97f - STEAM_GAP - y0, ze = ez + 0.06f, zm = 0.5f * (ze + lip - 0.08f);
+        const float ce = nb_ceil(p, x, ze), cm = nb_ceil(p, x, zm);
+        const float K[NB_KNOTS_MAX][3] = {
+            { 0.0f, 0.0f, 0.0f },
+            { 0.0f, ya, 0.0f },
+            { ze - z0, ya, 0.0f },
+            { ze - z0, ce - STEAM_GAP - y0, ce - y0 },
+            { zm - z0, cm - STEAM_GAP - y0, cm - y0 },
+            { lip - 0.08f - z0, under - STEAM_GAP - y0, under - y0 },
+            { lip - 0.08f - z0, fascia - STEAM_GAP - y0, 0.0f },
+            { lip + 0.22f - z0, fascia + 0.05f - y0, 0.0f },
+        };
+        s->nknot = NB_KNOTS_MAX;
+        memcpy(s->knot, K, sizeof(K));
+        s->rise = 1.5f;
+        if (ceiling > 0.0f) s->rise = clampf(ceiling - 0.2f - (y0 + K[7][1]), 0.0f, 1.5f);
+        /* the light on it: over the pot, under the hood, out past the fascia */
+        const float q0[3] = { x, y0 + 0.35f, z0 };
+        const float q1[3] = { x, y0 + K[4][1], z0 + K[4][0] };
+        const float q2[3] = { x, y0 + K[7][1] + 0.3f, z0 + K[7][0] };
+        light_at(lt, nl, q0, s->light[0]);
+        light_at(lt, nl, q1, s->light[1]);
+        light_at(lt, nl, q2, s->light[2]);
+        n++;
+    }
+    /* what the extractor draws off, out of the duct's cap over the hood */
+    if (n < max && (ceiling <= 0.0f || ceiling - p->top > 0.8f)) {
+        NbSteam *s = &out[n++];
+        memset(s, 0, sizeof(*s));
+        s->kind = NB_STEAM_DUCT;
+        s->pos[0] = p->ductX; s->pos[1] = p->ductTop + 0.12f; s->pos[2] = p->ductZ;
+        s->radius = p->ductR; s->strength = L->kind == NB_POT_WOK ? 0.6f : 0.45f;
+        s->nknot = 1;
+        s->rise = ceiling > 0.0f ? minf(1.5f, ceiling - p->top - 0.3f) : 1.5f;
+        const float q[3] = { s->pos[0], s->pos[1] + 0.4f, s->pos[2] };
+        light_at(lt, nl, q, s->light[0]);
+        memcpy(s->light[1], s->light[0], sizeof(s->light[0]));
+        memcpy(s->light[2], s->light[0], sizeof(s->light[0]));
+    }
+    return n;
+}
+
+/* the nearest point of segment a-b (in the plane: out, up) to q; returns the squared distance, t its share */
+static float seg_d2(const float a[3], const float b[3], const float q[2], float *t) {
+    const float u[2] = { b[0] - a[0], b[1] - a[1] }, w[2] = { q[0] - a[0], q[1] - a[1] };
+    const float uu = u[0] * u[0] + u[1] * u[1];
+    *t = uu > 1e-8f ? clampf((w[0] * u[0] + w[1] * u[1]) / uu, 0.0f, 1.0f) : 0.0f;
+    const float d[2] = { w[0] - u[0] * *t, w[1] - u[1] * *t };
+    return d[0] * d[0] + d[1] * d[1];
+}
+
+float nb_grime(const NbPlan *p, const NbLine *L, const NbSteam *st, int nst, const float pos[3], const float *n) {
+    /* grease: spat and fumes round each burner's flame, reaching higher than wide (the wok's further) */
+    float grease = 0.0f;
+    for (int b = 0; b < 2; ++b) {
+        const int wok = b == 1 && L->kind == NB_POT_WOK;
+        const float c[3] = { L->burner[b][0], p->benchY + GRATE_TOP + 0.1f, L->burner[b][1] };
+        const float d[3] = { pos[0] - c[0], pos[1] - c[1], pos[2] - c[2] };
+        const float dy = d[1] > 0.0f ? d[1] * 0.5f : d[1] * 2.0f;
+        const float r = sqrtf(d[0] * d[0] + dy * dy + d[2] * d[2]);
+        const float reach = wok ? 0.95f : 0.7f;
+        float g = 1.0f - clampf((r - 0.15f) / (reach - 0.15f), 0.0f, 1.0f);
+        g = g * (2.0f - g) * (wok ? 1.0f : 0.8f);
+        if (n && r > 1e-3f) g *= clampf(0.3f - (n[0] * d[0] + n[1] * d[1] + n[2] * d[2]) / r, 0.0f, 1.0f);   /* facing the flame */
+        grease = maxf(grease, g);
+    }
+    /* condensation: where the steam runs, from the extractor out to the fascia, on what faces it */
+    float wet = 0.0f;
+    for (int i = 0; i < nst; ++i) {
+        const NbSteam *s = &st[i];
+        if (s->kind == NB_STEAM_DUCT || s->nknot < 3) continue;
+        const float q[2] = { pos[2] - s->pos[2], pos[1] - s->pos[1] };
+        float best = 1e9f, along = 0.0f, acc = 0.0f, ny = 0.0f;
+        for (int k = 1; k + 1 < s->nknot; ++k) {
+            float t;
+            const float d2 = seg_d2(s->knot[k], s->knot[k + 1], q, &t);
+            const float du = s->knot[k + 1][0] - s->knot[k][0], dv = s->knot[k + 1][1] - s->knot[k][1];
+            const float len = sqrtf(du * du + dv * dv);
+            if (d2 < best) { best = d2; along = acc + t * len; ny = s->knot[k][1] + t * dv; }
+            acc += len;
+        }
+        /* across the frontage the sheet spreads as it goes */
+        const float side = maxf(fabsf(pos[0] - s->pos[0]) - (0.15f + 0.08f * along), 0.0f);
+        const float d = sqrtf(best + side * side);
+        float w = 1.0f - clampf((d - 0.08f) / 0.5f, 0.0f, 1.0f);
+        w = w * w * s->strength * (s->kind == NB_STEAM_WOK ? 0.7f : 1.0f);
+        /* on what faces the steam: an underside over it facing down, a face beside or under it facing up or out */
+        if (n) {
+            const float above = q[1] - ny;
+            w *= above > 0.0f ? clampf(0.2f - n[1] * 1.2f, 0.0f, 1.0f) : clampf(0.4f + n[1], 0.0f, 1.0f);
+        }
+        wet = maxf(wet, w);
+    }
+    return wet >= grease ? wet : -grease;
+}
