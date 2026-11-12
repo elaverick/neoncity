@@ -898,8 +898,9 @@ The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sit
   occlusion bake (`pm_bake_with`: 8 rays a vertex, scalar BVH, single-threaded); a chunk of 4-6 bars 0.6-1.5 s,
   every time it is built; the far shell stands in meanwhile. The target sheet's +3 ms a chunk is ~300 times
   exceeded. Options: bake fewer points (welded positions, a coarser proxy), a cache of baked bodies by site, or
-  the GPU (ray queries). `--vendor-debug` (F7) shows the wait (far shells magenta) and logs each build; the user
-  is to look before deciding.
+  the GPU (ray queries). `--vendor-debug` (F7) shows the wait (far shells magenta) and logs each build. The user
+  looked (2026-11-12): the pop-in shows only at fly speed, a debug feature, so it stays as it is. Revisit if
+  street food's density makes it show at walking or sprinting pace.
 - **The bar's frame cost (NB8):** night in rain, the vendor layer on against off: the slice +1.34 ms from 3 m,
   +0.58 from 8 m; a row of 7 bars +0.98 to 1.13. The user took ~1 ms for a street of bars as the budget (the
   target's +0.3 retired). The city pass and shadow filter lead (a bar's eight casting lights), the kit pass

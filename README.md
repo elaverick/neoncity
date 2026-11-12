@@ -1596,7 +1596,7 @@ in `Vendor.nb`), so its near body, far shell, collision and cooking line always 
   `--kit all` +0.20 to 0.38. The user took ~1 ms for a street of bars as the budget (the target sheet's +0.3 is
   retired). A bar's vendor layer takes ~190 ms on a worker, 93% of it the occlusion bake; the row's chunks
   0.6-1.5 s; the far shell stands in meanwhile. `--vendor-debug` (F7) draws the far shells magenta and logs each
-  vendor layer's build, so the wait can be seen.
+  vendor layer's build, so the wait can be seen; the user accepted it (the pop-in shows only at fly speed).
 
 ### Textures (`src/render/materials.c`, `assets/materials/`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual surfaces can opt in to authored PBR
