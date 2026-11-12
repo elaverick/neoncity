@@ -29,6 +29,7 @@ build/city_test --props        # --cam views of the street furniture near the sp
 build/city_test --vendor-sites # the vendors' sites round the spawn and the nearest lane, pocket market, plaza, apron: checks, --cam views
 build/city_test --slice        # the noodle bar slice (docs/noodle-bar-target.md): its site, plan, checks, views (also: lane, bars, find); tools/slice_capture.py, tools/slice_board.py
 build/city_test --slice lane   # a view down the nearest market lane: the vendors' worst view (NeonCity --kit all for the kit's cost)
+build/city_test --slice bars 332.6 1182.58 all   # every site a bar fits made one (NeonCity --bars all): the densest 30 m row, its views, its chunks' build times
 build/pmodel_lab out           # the procedural modelling kit: determinism, closure, normals, budgets per level; lit contact sheets
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
 build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the world chart within 5400 km; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
@@ -55,6 +56,7 @@ procedural look.
 | Shift | Sprint |
 | Space | Jump |
 | F | Toggle fly mode (debug; Space/Ctrl to rise/descend, Shift for speed) |
+| F7 | Vendor debug view: noodle bars' far shells magenta (their near bodies still baking, or beyond 120 m), and each vendor layer's build time logged (`--vendor-debug`) |
 | F8 | Toggle the baked interior impostors on office floors (`--impostors`) |
 | F9 | Toggle ray-traced shadows |
 | F10 | Shadow debug view: only the light the city's lamps, shopfronts and lobbies throw on each surface (on the land also the moon's, the light its shadows take in red) |
@@ -1588,6 +1590,13 @@ in `Vendor.nb`), so its near body, far shell, collision and cooking line always 
   checks determinism, normals, budgets (the structure 16,000, the far shell 500) and the site, and renders them
   near, far and their occlusion (`pmodel_body.png`); `city_test --slice` prints the slice's plan, far shell and
   vendor layer; `city_test --slice bars [X Z]` lists the canopy bars round a point and the densest 60 m.
+- **The gate (NB8):** `NeonCity --bars all` (and `city_test --slice bars|lane X Z all`) makes every site a canopy
+  bar fits into one, so the worst views exist: a row of 7 within 30 m round (326.6, 1229.2). Night in rain, the
+  vendor layer on against off: the slice from 3 m +1.34 ms, from 8 m +0.58; the row +0.98 to 1.13; the lane with
+  `--kit all` +0.20 to 0.38. The user took ~1 ms for a street of bars as the budget (the target sheet's +0.3 is
+  retired). A bar's vendor layer takes ~190 ms on a worker, 93% of it the occlusion bake; the row's chunks
+  0.6-1.5 s; the far shell stands in meanwhile. `--vendor-debug` (F7) draws the far shells magenta and logs each
+  vendor layer's build, so the wait can be seen.
 
 ### Textures (`src/render/materials.c`, `assets/materials/`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual surfaces can opt in to authored PBR

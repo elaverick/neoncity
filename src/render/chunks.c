@@ -228,6 +228,9 @@ static void table_remove(ChunkSystem *cs, int idx) {
 
 /* -------------------------------------------------------------- workers --- */
 
+static volatile int g_vendorLog;
+void chunks_set_vendor_log(bool on) { g_vendorLog = on; }
+
 static int worker_main(void *arg) {
     ChunkSystem *cs = (ChunkSystem *)arg;
     for (;;) {
@@ -245,7 +248,13 @@ static int worker_main(void *arg) {
         else if (job.layer == 2) city_build_litter(job.cx, job.cz, &r.mesh);
         else if (job.layer == LAYER_PLANTS) city_build_plants(job.cx, job.cz, &r.mesh);
         else if (job.layer == LAYER_PROPS) city_build_props(job.cx, job.cz, &r.mesh);
-        else if (job.layer == LAYER_VENDOR) city_build_vendor_kit(job.cx, job.cz, &r.mesh);
+        else if (job.layer == LAYER_VENDOR) {
+            double t0 = glfwGetTime();
+            city_build_vendor_kit(job.cx, job.cz, &r.mesh);
+            if (g_vendorLog && r.mesh.count)
+                printf("vendor layer (%d, %d): %u body triangles, %u kit instances, built in %.0f ms on a worker\n",
+                       job.cx, job.cz, r.mesh.count / 3, r.mesh.nkit, 1000.0 * (glfwGetTime() - t0));
+        }
         else city_build_mesh(job.cx, job.cz, &r.mesh);
 
         mutex_lock(&cs->doneLock);

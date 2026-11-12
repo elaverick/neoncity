@@ -274,6 +274,10 @@ static int candidate(SGen *S, DVec2 B, DVec2 f, double w, double d, double walk,
     return 1;
 }
 
+static int g_bars;
+void city_force_bars(int on) { g_bars = on; }
+int  city_forced_bars(void) { return g_bars; }
+
 static void keep_site(SGen *S, const VendorSpot *sp, int space, uint32_t group, int member, int lunch) {
     if (S->n >= MAX_BLOCK_SPOTS) return;
     VendorSpot *o = &S->spot[S->n];
@@ -287,6 +291,14 @@ static void keep_site(SGen *S, const VendorSpot *sp, int space, uint32_t group, 
         o->site.slice = 1;
         o->site.archetype = VA_CANOPY;
         o->site.trade = VT_NOODLE;
+    }
+    else if (g_bars) {
+        float mw, md;
+        vendor_min_site(VA_CANOPY, &mw, &md);
+        if (o->site.w >= mw && o->site.d >= md && (o->site.ceiling == 0.0f || o->site.ceiling >= 2.9f)) {
+            o->site.archetype = VA_CANOPY;
+            o->site.trade = VT_NOODLE;
+        }
     }
     DVec2 B = dv(sp->x, sp->z), f = dv(sp->fx, sp->fz);
     S->box[S->n] = site_box(B, f, sp->site.w, sp->site.d);

@@ -889,28 +889,34 @@ baked by `tools/model_pack.c`). See the README. Left over:
 
 ## Street vendors (next)
 The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sites.c`, `mesh_vendor.c`,
-`shaders/city/vendor_room.glsl`); the rework's noodle bar slice continues (NB5-NB8, then street food SF1-SF6:
+`shaders/city/vendor_room.glsl`); the rework's noodle bar slice is done (NB0-NB8, the gate passed 2026-11-12); street food follows (SF1-SF6:
 `~/.claude/plans/street-vendors.md`). The modelling kit (`src/gen/pmodel*.c`) is drawn instanced
 (`src/render/kit_gpu.c`, NB2); every canopy bar has its cooking line (`nb_line`, NB5). Left over:
 - **`--kit all`** gives every vendor a bar's line whatever its trade or size (the cost spike), without the
   line's merged parts (the range's carcass, the bain-marie, the gas and cables are the bar's body).
-- **The bar's bake (NB4-NB6):** baking a body's occlusion takes ~115 ms a straight bar and ~185 a corner bar with
-  its line's parts and the line as occluders (NB6's contact darkening; NB5 ~88, NB4 ~60) on a worker thread, every time its chunk's vendor layer is built; the far shell stands in meanwhile. A cache of
-  baked bodies by site, or fewer vertices baked, if streaming shows it. The target sheet's +3 ms a chunk is far
-  exceeded.
-- **The bar's frame cost (NB5, NB6):** at the slice, night in rain, the vendor layer adds +1.25 ms from 3 m and
-  +0.67 ms from 8 m with NB6's lights (NB5: +0.69 and +0.38) against the target's +0.3; a bar's own lights
-  (eight that cast) fill a pixel's shadow slots (city pass, shadow rays and filter on the kitchen's surfaces;
-  the kit itself +0.14). NB8 re-gates; the kit's level rule (0.15 triangles a pixel) draws small round
+- **The bar's bake (NB8 measured):** a bar's vendor layer takes ~190 ms on a worker, 93% of it the body's
+  occlusion bake (`pm_bake_with`: 8 rays a vertex, scalar BVH, single-threaded); a chunk of 4-6 bars 0.6-1.5 s,
+  every time it is built; the far shell stands in meanwhile. The target sheet's +3 ms a chunk is ~300 times
+  exceeded. Options: bake fewer points (welded positions, a coarser proxy), a cache of baked bodies by site, or
+  the GPU (ray queries). `--vendor-debug` (F7) shows the wait (far shells magenta) and logs each build; the user
+  is to look before deciding.
+- **The bar's frame cost (NB8):** night in rain, the vendor layer on against off: the slice +1.34 ms from 3 m,
+  +0.58 from 8 m; a row of 7 bars +0.98 to 1.13. The user took ~1 ms for a street of bars as the budget (the
+  target's +0.3 retired). The city pass and shadow filter lead (a bar's eight casting lights), the kit pass
+  +0.2-0.3. The kit's level rule (0.15 triangles a pixel) draws small round
   modules at their far level from a metre, so each module's L1/L2 must stay presentable (NB5 regraded the
   bowl stack and jars).
+- **Steam judders** where it escapes under the hood's lip (the user, NB8): the puffs' motion along the knots
+  steps there. A mop-up.
+- **Bar bodies vary only in paint, hood and icons** (seen down a row with `--bars all`); the user deferred the
+  call until the bars are built into buildings (SF3).
 - **The far shell swaps** for the near body the frame the vendor layer is resident (no cross-fade).
 - **The corner form** turns round one end of an ordinary site; real building corners and columns (SF3) aren't
   sought yet.
 - **The canopy's grammar parts** mirror the plan for the rules only; `vendor_lab`'s contact sheets show those
   boxes, not the bar (`pmodel_lab --only body` draws the bar).
-- **Cost:** +0.35 to 0.41 ms down the market lane with all 32 vendors kitted (the target is +0.3 ms at the
-  worst view): mostly the shading of the kit's pixels. NB8 measures again with the real bodies and trades.
+- **Cost down the lane:** +0.20 to 0.38 ms with all 32 vendors given stand-in lines (`--kit all`, NB8); lane
+  sites are too small for a bar, so SF1's trades will set the real number.
 - **The city pass may shade what is hidden:** `city.frag` writes `gl_SampleMask` (and some materials discard),
   which can make the driver test depth after shading. The kit's pass, built with `early_fragment_tests`, fell
   from 0.54 to 0.33 ms at the lane. The city's opaque materials are all in the depth prepass when shadows are

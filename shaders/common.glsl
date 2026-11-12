@@ -229,6 +229,7 @@ const vec3 LOBBY_SPILL = vec3(1.0, 0.66, 0.37);
  * isn't the one the prepass saw. */
 const float SHADOW_FADE = 350.0, SHADOW_FAR = 450.0;    // src/core/common.h
 const uint  SHADOWS_ON = 1u, SHADOWS_DEBUG = 2u;         // frame.shadow.y (renderer.c)
+const uint  VENDOR_DEBUG = 4u;                           // frame.shadow.y: --vendor-debug / F7, far shells drawn magenta
 bool shadowsOn() { return (uint(frame.shadow.y) & SHADOWS_ON) != 0u; }
 const int   SHADOW_SLOTS = 8;                            // lights a pixel keeps soft shadows for
 const uint  RT_MASK_LITTER = 0x04u;                      // src/render/rt.h

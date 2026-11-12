@@ -147,7 +147,7 @@ struct Renderer {
      * shadow_denoise.comp sVis, which the scene pass reads. sIds and sVis
      * alternate between frames: the denoiser blends in the previous frame's. */
     Rt          *rt;
-    bool         shadowsOn, shadowDebug, historyValid, shadowTargetsFresh, havePrev;
+    bool         shadowsOn, shadowDebug, vendorDebug, historyValid, shadowTargetsFresh, havePrev;
     bool         dirShadowsOff;   /* NEONCITY_MOON_SHADOWS=0: the moon casts no shadows (terrain/dir_shadow.glsl) */
     int          grassDebug;     /* the --grass-debug view (GRASS_DEBUG_*) */
     Image        gbufMsaa, gbuf, sIds[MAX_FRAMES], sRaw, sVis[MAX_FRAMES];

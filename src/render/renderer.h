@@ -112,6 +112,9 @@ bool      renderer_shadows(Renderer *r);
 /* Shadow debug view: only the city's lights on each surface, so their shadows stand out. */
 void      renderer_set_shadow_debug(Renderer *r, bool on);
 bool      renderer_shadow_debug(Renderer *r);
+/* --vendor-debug / F7: noodle bars' far shells drawn magenta (their near bodies not resident: still baking, or far). */
+void      renderer_set_vendor_debug(Renderer *r, bool on);
+bool      renderer_vendor_debug(Renderer *r);
 /* The --grass-debug view painted on the land (GRASS_DEBUG_*: src/grass/grass_rules.h; 0 off). */
 void      renderer_set_grass_debug(Renderer *r, int view);
 /* The caves' debug view (shaders/terrain/cave.frag): 0 off, 1 their normals,

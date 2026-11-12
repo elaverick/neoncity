@@ -1,7 +1,7 @@
 /* NeonCity - a vast, deterministic, cyberpunk city walk in C + Vulkan.
  *
  * Controls: mouse look, WASD move, Shift sprint, Space jump,
- *           F toggle fly (debug: Space/Ctrl up/down), F9 toggle shadows, F10 shadow debug view,
+ *           F toggle fly (debug: Space/Ctrl up/down), F7 vendor debug view, F9 toggle shadows, F10 shadow debug view,
  *           F11 fullscreen, Esc release mouse (Esc again to quit), click to recapture. */
 #include "vkcore.h"
 #include "renderer.h"
@@ -28,7 +28,7 @@ static bool   g_captured = true;
 static double g_lastMX, g_lastMY;
 static bool   g_haveMouse;
 static float  g_mouseDX, g_mouseDY;
-static bool   g_flyPressed, g_jumpPressed, g_shotPressed, g_shadowPressed, g_debugPressed, g_impostorPressed;
+static bool   g_flyPressed, g_jumpPressed, g_shotPressed, g_shadowPressed, g_debugPressed, g_impostorPressed, g_vendorDebugPressed;
 static int    g_windowed[4];
 
 static void on_resize(GLFWwindow *w, int width, int height) { g_resized = true; }
@@ -71,6 +71,7 @@ static void on_key(GLFWwindow *w, int key, int sc, int action, int mods) {
     }
     if (key == GLFW_KEY_F) g_flyPressed = true;
     if (key == GLFW_KEY_SPACE) g_jumpPressed = true;
+    if (key == GLFW_KEY_F7) g_vendorDebugPressed = true;
     if (key == GLFW_KEY_F8) g_impostorPressed = true;
     if (key == GLFW_KEY_F9) g_shadowPressed = true;
     if (key == GLFW_KEY_F10) g_debugPressed = true;
@@ -83,7 +84,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--nbform straight|corner] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--bars all] [--vendor-debug] [--nbform straight|corner] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -107,6 +108,9 @@ static void usage(void) {
            "  --lockdoors  lock every lobby's automatic doors: sliding ones stay shut, revolving ones stand still\n"
            "  --kit  which street vendors set down the modelling kit's modules (NB2): none (the far shells only),\n"
            "         the noodle bars (slice, the default: bodies and cooking lines) or every vendor a line (the cost)\n"
+           "  --vendor-debug  draw noodle bars' far shells magenta (shown until the near body is baked and resident, or\n"
+           "               beyond 120 m) and log each vendor layer's build time; F7 toggles\n"
+           "  --bars all  every vendor site a canopy noodle bar fits becomes one (NB8's gate: the worst views)\n"
            "  --nbform  build every canopy noodle bar straight or turning a corner, where it fits (NB4's captures)\n"
            "  --nograss  draw no grass blades\n"
            "  --nowake  the grass doesn't part where the player walks\n"
@@ -123,7 +127,7 @@ static void usage(void) {
 
 /* Command-line options. */
 typedef struct Options {
-    bool        validation, shadows, shadowDebug, lockDoors, noGrass;
+    bool        validation, shadows, shadowDebug, vendorDebug, lockDoors, noGrass;
     uint32_t    grassCap;        /* --grass-cap: each level of detail's room (0: its own) */
     const char *shotPath;
     const char *city;            /* --city: a name's beginning, or a number */
@@ -156,6 +160,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
         if (strcmp(argv[i], "--validation") == 0) o->validation = true;
         else if (strcmp(argv[i], "--noshadows") == 0) o->shadows = false;
         else if (strcmp(argv[i], "--shadowdebug") == 0) o->shadowDebug = true;
+        else if (strcmp(argv[i], "--vendor-debug") == 0) o->vendorDebug = true;
         else if (strcmp(argv[i], "--lockdoors") == 0) o->lockDoors = true;
         else if (strcmp(argv[i], "--nograss") == 0) o->noGrass = true;
         else if (strcmp(argv[i], "--kit") == 0 && i + 1 < argc) {
@@ -164,6 +169,10 @@ static bool parse_args(int argc, char **argv, Options *o) {
             else if (strcmp(v, "slice") == 0) o->kit = KIT_SLICE;
             else if (strcmp(v, "all") == 0) o->kit = KIT_ALL;
             else return false;
+        }
+        else if (strcmp(argv[i], "--bars") == 0 && i + 1 < argc) {
+            if (strcmp(argv[++i], "all") != 0) return false;
+            city_force_bars(1);   /* NB8's gate: every site a canopy bar fits */
         }
         else if (strcmp(argv[i], "--nbform") == 0 && i + 1 < argc) {
             const char *v = argv[++i];
@@ -257,7 +266,7 @@ static PlayerInput read_input(GLFWwindow *win, const Player *player, bool script
     return in;
 }
 
-/* F8 interior impostors, F9 shadows, F10 shadow debug view, F12 screenshot. */
+/* F7 vendor debug view, F8 interior impostors, F9 shadows, F10 shadow debug view, F12 screenshot. */
 static void handle_toggles(Renderer *renderer, int *shotCount) {
     static float impostorShare = 0.4f;   /* what F8 turns them back on to */
     if (g_impostorPressed) {
@@ -274,6 +283,12 @@ static void handle_toggles(Renderer *renderer, int *shotCount) {
     if (g_debugPressed) {
         renderer_set_shadow_debug(renderer, !renderer_shadow_debug(renderer));
         g_debugPressed = false;
+    }
+    if (g_vendorDebugPressed) {
+        renderer_set_vendor_debug(renderer, !renderer_vendor_debug(renderer));
+        chunks_set_vendor_log(renderer_vendor_debug(renderer));
+        printf("Vendor debug view: %s\n", renderer_vendor_debug(renderer) ? "on (far shells magenta; vendor layer build times logged)" : "off");
+        g_vendorDebugPressed = false;
     }
     if (g_shotPressed) {
         char name[64];
@@ -656,6 +671,8 @@ int main(int argc, char **argv) {
     ChunkSystem *chunks = chunks_create(&vk);
     Renderer *renderer = renderer_create(&vk, chunks);
     renderer_set_shadow_debug(renderer, opt.shadowDebug);
+    renderer_set_vendor_debug(renderer, opt.vendorDebug);
+    chunks_set_vendor_log(opt.vendorDebug);
     renderer_set_grass_debug(renderer, opt.grassDebug);
     renderer_set_cave_debug(renderer, opt.caveDebug);
     renderer_set_grass(renderer, !opt.noGrass);

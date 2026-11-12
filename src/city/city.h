@@ -261,6 +261,10 @@ void     city_build_vendor_kit(int cx, int cz, Mesh *m);
 enum { KIT_OFF = 0, KIT_SLICE, KIT_ALL };   /* none; the bars (named for the slice); every vendor (the cost spike) */
 void     city_set_kit(int mode);
 int      city_kit_mode(void);
+/* NB8's gate (NeonCity --bars all, city_test --slice ... all): every site a canopy noodle bar fits becomes one,
+ * so the worst views (a row of six, a lane of bars) exist to be measured. Off by default; before any chunk. */
+void     city_force_bars(int on);
+int      city_forced_bars(void);
 #define KIT_PAD 1.5f   /* m: the largest module's reach from its origin, and some */
 /* A piece of street furniture. (x, z) is where it stands: its footprint's
  * centre, a crossing's signal pole, a condenser's back on its wall; y the

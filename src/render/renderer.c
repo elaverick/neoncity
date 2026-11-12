@@ -11,6 +11,8 @@ void renderer_set_shadows(Renderer *r, bool on) { r->shadowsOn = on && r->rt; }
 bool renderer_shadows(Renderer *r) { return r->shadowsOn; }
 void renderer_set_shadow_debug(Renderer *r, bool on) { r->shadowDebug = on; }
 bool renderer_shadow_debug(Renderer *r) { return r->shadowDebug; }
+void renderer_set_vendor_debug(Renderer *r, bool on) { r->vendorDebug = on; }
+bool renderer_vendor_debug(Renderer *r) { return r->vendorDebug; }
 void renderer_set_grass_debug(Renderer *r, int view) { r->grassDebug = view; }
 void renderer_set_cave_debug(Renderer *r, int view) { r->caveDebug = view; cave_gpu_set_debug(r, view); }
 void renderer_set_impostors(Renderer *r, float share) { interiors_set_share(r->interiors, share); }
@@ -375,7 +377,7 @@ static void frame_uniforms(Renderer *r, int slot, const FrameUBO *uboIn, const d
      * locations); the denoiser reprojects this frame's camera-relative
      * positions into the last frame's view. */
     ubo->shadow[0] = (float)(r->frameIndex & 1023u);
-    ubo->shadow[1] = (float)((shadows ? 1 : 0) | (r->shadowDebug ? 2 : 0));   /* SHADOWS_ON | SHADOWS_DEBUG (common.glsl) */
+    ubo->shadow[1] = (float)((shadows ? 1 : 0) | (r->shadowDebug ? 2 : 0) | (r->vendorDebug ? 4 : 0));   /* SHADOWS_ON | SHADOWS_DEBUG | VENDOR_DEBUG (common.glsl) */
     ubo->shadow[2] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.375f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
     ubo->shadow[3] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.125f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
     /* The directional light (src/app/main.c: sky_ubo) is the sun while it

@@ -156,6 +156,12 @@ void shadePixel() {
         col = neonColor(vParams.y) * 6.0 * chase;
     }
 
+    if (mat == MAT_KIT && (vAux & KIT_AUX_FAR) != 0u && (uint(frame.shadow.y) & VENDOR_DEBUG) != 0u) {
+        // --vendor-debug: a bar's far shell, drawn while its near body isn't resident (still baking, or past KIT_DISTANCE)
+        outColor = vec4(vec3(1.5, 0.0, 1.5) * frame.exposure.y, 1.0);
+        outRefl = vec4(0.0);
+        return;
+    }
     if (mat <= MAT_LOT && int(frame.grass.z + 0.5) == GRASS_DEBUG_ALBEDO) {   // --grass-debug albedo: the ground unhazed
         outColor = vec4(col, 1.0);
         outRefl = vec4(0.0);

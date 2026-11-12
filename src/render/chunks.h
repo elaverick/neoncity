@@ -37,6 +37,8 @@ typedef struct LandLights {
 
 ChunkSystem *chunks_create(VkCore *vk);
 void         chunks_destroy(ChunkSystem *cs);
+/* --vendor-debug / F7: the workers print each vendor layer (the noodle bars' near bodies) they build, and its time. */
+void         chunks_set_vendor_log(bool on);
 
 /* The frame (TerrainFrame) the chunks are built in: the active one. On a
  * change of lineage every chunk built in the old one is dropped and streamed

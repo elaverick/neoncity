@@ -10,6 +10,8 @@
  *   city_test --slice lane [X Z] a view down the nearest market lane (NB2's cost spike)
  *   city_test --slice bars [X Z] the canopy noodle bars round X Z (default the slice) and the
  *                                60 m round one holding the most (NB4's bodies' worst view)
+ *   city_test --slice bars|lane X Z all   the same with every site a bar it fits (NeonCity --bars
+ *                                all; NB8's gate); bars adds views along the 30 m holding the most
  *   city_test --slice find [X Z] apron sites against a wall under the open sky
  *                                near X Z (default the old canopy bar's lane):
  *                                candidates for VENDOR_SLICE_X/Z
@@ -146,6 +148,61 @@ static const char *sl_hood(uint32_t f) {
     static const char *const H[4] = { "rusted", "galvanised", "steel", "?" };
     return H[(f >> 8) & 3u];
 }
+/* NB8's row of six (every site a bar: city_test --slice bars X Z all): the 30 m holding the most bars, and a view
+ * along them from 4 m past each end, stood 3 m out in front of their faces, at eye height. */
+static void slice_row(const SlBars *B) {
+    int best = -1, most = 0;
+    for (int a = 0; a < B->n; ++a) {
+        int c = 0;
+        for (int b = 0; b < B->n; ++b) c += hypot(B->x[a] - B->x[b], B->z[a] - B->z[b]) < 30.0;
+        if (c > most) { most = c; best = a; }
+    }
+    if (best < 0 || most < 2) { printf("row: no two bars within 30 m\n"); return; }
+    static int idx[1024];
+    double mx = 0, mz = 0, my = 0, fx = 0, fz = 0, sxx = 0, sxz = 0, szz = 0;
+    int n = 0;
+    for (int b = 0; b < B->n; ++b)
+        if (hypot(B->x[best] - B->x[b], B->z[best] - B->z[b]) < 30.0) idx[n++] = b;
+    for (int i = 0; i < n; ++i) { mx += B->x[idx[i]]; mz += B->z[idx[i]]; my += B->y[idx[i]]; fx += B->fx[idx[i]]; fz += B->fz[idx[i]]; }
+    mx /= n; mz /= n; my /= n;
+    for (int i = 0; i < n; ++i) { double a = B->x[idx[i]] - mx, b = B->z[idx[i]] - mz; sxx += a * a; sxz += a * b; szz += b * b; }
+    double th = 0.5 * atan2(2.0 * sxz, sxx - szz), ux = cos(th), uz = sin(th), t0 = 1e30, t1 = -1e30;
+    for (int i = 0; i < n; ++i) { double t = (B->x[idx[i]] - mx) * ux + (B->z[idx[i]] - mz) * uz; t0 = fmin(t0, t); t1 = fmax(t1, t); }
+    double fl = hypot(fx, fz);
+    if (fl > 1e-6) { fx /= fl; fz /= fl; }
+    printf("row: %d bars within 30 m round (%.2f, %.2f), %.0f m along (%.2f, %.2f)\n", n, B->x[best], B->z[best], t1 - t0, ux, uz);
+    for (int i = 0; i < n; ++i) printf("  row bar at (%.2f, %.2f)\n", B->x[idx[i]], B->z[idx[i]]);
+    sl_load(mx, mz, 2);
+    for (int end = 0; end < 2; ++end) {
+        double t = end ? t1 + 4.0 : t0 - 4.0, ex = mx + ux * t + fx * 3.0, ez = mz + uz * t + fz * 3.0;
+        double eye = fmax(my, city_ground_y(ex, ez) + SIDEWALK_HEIGHT) + 1.68;
+        printf("view row_%s --cam %.2f %.2f %.1f -6.0 %.2f%s\n", end ? "back" : "down", ex, ez, atan2(mx - ex, -(mz - ez)) * 57.2958, eye,
+               vs_solid(ex, ez) || sl_under_building(ex, ez) ? "   (the eye stands in something: move it)" : "");
+    }
+    /* the row's chunks' vendor layers: generation time (one worker) and pool */
+    int ck[64][3], nck = 0;
+    for (int i = 0; i < n; ++i) {
+        int cx = (int)floor(B->x[idx[i]] / CHUNK_SIZE), cz = (int)floor(B->z[idx[i]] / CHUNK_SIZE), k = 0;
+        while (k < nck && (ck[k][0] != cx || ck[k][1] != cz)) k++;
+        if (k == nck && nck < 64) { ck[nck][0] = cx; ck[nck][1] = cz; ck[nck][2] = 0; nck++; }
+        if (k < nck) ck[k][2]++;
+    }
+    double total = 0.0, mb = 0.0;
+    for (int k = 0; k < nck; ++k) {
+        Mesh km;
+        memset(&km, 0, sizeof(km));
+        clock_t c0 = clock();
+        city_build_vendor_kit(ck[k][0], ck[k][1], &km);
+        double ms = 1000.0 * (double)(clock() - c0) / CLOCKS_PER_SEC;
+        total += ms;
+        mb += (double)km.count * sizeof(Vertex) / 1048576.0;
+        int all = 0;
+        for (int b = 0; b < B->n; ++b) all += (int)floor(B->x[b] / CHUNK_SIZE) == ck[k][0] && (int)floor(B->z[b] / CHUNK_SIZE) == ck[k][1];
+        printf("  row chunk (%d, %d): %d bars, %d of them the row's; vendor layer %u body triangles (%.1f MB of the pool), %u instances, built in %.0f ms\n",
+               ck[k][0], ck[k][1], all, ck[k][2], km.count / 3, (double)km.count * sizeof(Vertex) / 1048576.0, km.nkit, ms);
+        mesh_free(&km);    }
+    printf("row: %d chunks' vendor layers, %.1f MB of the pool, built in %.0f ms on one worker\n", nck, mb, total);
+}
 static int slice_bars(double x, double z) {
     static SlBars B;
     memset(&B, 0, sizeof(B));
@@ -174,9 +231,10 @@ static int slice_bars(double x, double z) {
                B.form[b] == NB_CORNER ? "corner" : "straight", B.aff[b], (f >> 5) & 7u, sl_hood(f), f & NB_FINISH_BARE_WOOD ? "timber" : "painted");
         char name[32];
         snprintf(name, sizeof(name), "bar%d", b);
-        sl_view(name, B.x[b], B.y[b] + 1.6, B.z[b], B.fx[b], B.fz[b], 6.0, B.y[b], 0.0, 0);
+        if (!city_forced_bars()) sl_view(name, B.x[b], B.y[b] + 1.6, B.z[b], B.fx[b], B.fz[b], 6.0, B.y[b], 0.0, 0);
     }
     printf("hoods: %d rusted, %d galvanised, %d steel\n", hoods[0], hoods[1], hoods[2]);
+    if (city_forced_bars()) slice_row(&B);
     return 0;
 }
 
@@ -219,6 +277,7 @@ static int slice_lane(double x, double z) {
 }
 
 static int slice_cams(int argc, char **argv) {
+    if (argc > 3 && strcmp(argv[argc - 1], "all") == 0) { city_force_bars(1); argc--; }   /* NB8: every site a bar */
     if (argc > 2 && strcmp(argv[2], "find") == 0)
         return slice_find(argc > 4 ? atof(argv[3]) : 732.2, argc > 4 ? atof(argv[4]) : -735.1);
     if (argc > 2 && strcmp(argv[2], "bars") == 0)
