@@ -1268,6 +1268,13 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--fingerprint") == 0) return fingerprint();
     if (argc > 1 && strcmp(argv[1], "--proxies") == 0) return proxy_survey();
     if (argc > 1 && strcmp(argv[1], "--props") == 0) return props_cams();
+    /* SF2: --nbform NAME at the end forces every vendor's form where it fits (as NeonCity's) */
+    if (argc > 3 && strcmp(argv[argc - 2], "--nbform") == 0) {
+        const int f = nb_form_by_name(argv[argc - 1]);
+        if (f < 0) { fprintf(stderr, "no form %s\n", argv[argc - 1]); return 1; }
+        nb_force_form(f);
+        argc -= 2;
+    }
     if (argc > 1 && strcmp(argv[1], "--vendor-sites") == 0) return vendor_sites_cams(argc, argv);
     if (argc > 1 && strcmp(argv[1], "--vendors") == 0) return vendor_cams(argc, argv);
     if (argc > 1 && strcmp(argv[1], "--slice") == 0) {

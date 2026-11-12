@@ -75,6 +75,17 @@ const char *nb_form_name(int form) {
     static const char *const N[NB_FORMS] = { "straight", "corner", "hatch", "arcade", "tiered" };
     return form >= 0 && form < NB_FORMS ? N[form] : "?";
 }
+static int g_upper = -1;
+void nb_force_upper(int kind) { g_upper = kind >= 0 && kind < NB_UPPERS ? kind : -1; }
+const char *nb_upper_name(int kind) {
+    static const char *const N[NB_UPPERS] = { "lantern", "plant", "both" };
+    return kind >= 0 && kind < NB_UPPERS ? N[kind] : "?";
+}
+int nb_upper_by_name(const char *name) {
+    for (int k = 0; k < NB_UPPERS; ++k) if (strcmp(name, nb_upper_name(k)) == 0) return k;
+    return -1;
+}
+
 int nb_form_by_name(const char *name) {
     for (int f = 0; f < NB_FORMS; ++f) if (strcmp(name, nb_form_name(f)) == 0) return f;
     return -1;
@@ -419,7 +430,9 @@ static int plan_tiered(NbPlan *p, const NbDraws *dr, float W, float D, float cei
     p->post[3][0] = sr + fo; p->post[3][1] = sf + fo; p->post[3][2] = ph;
     p->npost = 4;
     /* the upper tier on the deck round the column, the column through it */
-    const float y0 = p->hoodTop, y1 = minf(y0 + 1.2f + 0.3f * u[3], 4.45f);
+    p->upperKind = (uint8_t)(g_upper >= 0 ? g_upper : (int)(u[4] * (float)NB_UPPERS) % NB_UPPERS);
+    static const float UH[NB_UPPERS] = { 0.70f, 1.05f, 1.25f };   /* lantern, plant box, both */
+    const float y0 = p->hoodTop, y1 = minf(y0 + UH[p->upperKind] + 0.1f * u[3], 4.45f);
     p->upper[0] = sl + 0.12f; p->upper[1] = 0.02f; p->upper[2] = sr - 0.12f; p->upper[3] = sf - 0.12f;
     p->upper[4] = y0; p->upper[5] = y1;
     p->column[0] = 0.0f; p->column[1] = ch + 0.02f; p->column[2] = ch; p->column[3] = minf(4.98f, y1 + 0.45f);
@@ -437,7 +450,12 @@ static void plan_kitchen(NbPlan *p, int re, float ceil) {
     const float benchLen = p->kx1 - p->kx0 - 0.6f;
     const float midB = clampf(0.3f * (benchLen - 0.95f), 0.45f, 0.85f);
     p->rangeMid = (uint8_t)(p->form == NB_STRAIGHT && benchLen - 0.95f - midB >= 1.0f && hash_float(hash_combine(p->seed, 0x4D1Du)) < 0.35f);
-    const float inset = p->rangeMid ? midB : 0.15f;
+    float inset = p->rangeMid ? midB : 0.15f;
+    if (p->form == NB_TIERED) {
+        /* SF2: the range in the middle of the bench, under the upper tier, so its duct rises into it */
+        p->rangeMid = 1;
+        inset = maxf(0.45f, re < 0 ? -0.475f - p->kx0 : p->kx1 - 0.475f);
+    }
     if (re < 0) {
         p->benchX0 = p->kx0; p->benchX1 = p->kx1 - 0.6f; p->gasX = p->kx1 - 0.3f;
         p->rangeX0 = p->benchX0 + inset; p->rangeX1 = p->rangeX0 + 0.95f;
@@ -452,8 +470,8 @@ static void plan_kitchen(NbPlan *p, int re, float ceil) {
     p->ductX = 0.5f * (p->rangeX0 + p->rangeX1);
     p->ductZ = p->lining + 0.035f + p->ductR;
     if (p->form == NB_TIERED) {
-        /* up through the deck and the upper tier, out over its roof */
-        p->ductTop = minf(p->upper[5] + 0.3f, 4.98f - 0.27f);
+        /* up through the deck and the plant box, out over its roof; into the lantern, which vents it */
+        p->ductTop = p->upperKind == NB_UPPER_LANTERN ? p->upper[4] + 0.30f : minf(p->upper[5] + 0.3f, 4.98f - 0.27f);
         p->top = maxf(p->ductTop + 0.27f, p->column[3]);
         return;
     }
@@ -464,7 +482,10 @@ static void plan_kitchen(NbPlan *p, int re, float ceil) {
     if (p->ceiling > 0.0f && p->ductTop + 0.27f > p->ceiling) { p->ductTop = p->ceiling - 0.005f; p->top = p->ceiling; }
 }
 
-int nb_duct_capped(const NbPlan *p) { return p->ceiling <= 0.0f || p->ductTop + 0.27f <= p->ceiling + 1e-3f; }
+int nb_duct_capped(const NbPlan *p) {
+    if (p->form == NB_TIERED && p->upperKind == NB_UPPER_LANTERN) return 0;   /* it ends inside the lantern */
+    return p->ceiling <= 0.0f || p->ductTop + 0.27f <= p->ceiling + 1e-3f;
+}
 
 /* The strip lights' tubes and the icon housings: behind and on the hood's fascia, or the arcade's header. */
 static void plan_signs(NbPlan *p) {
@@ -721,7 +742,7 @@ int nb_lights(const NbPlan *p, NbLight *out, int max) {
         NbLight *l = NB_ADD(NB_LIGHT_LAMP, NB_WHITE_2700);
         if (l) { l->a[0] = p->lamp[0]; l->a[1] = p->lamp[1] - 0.035f; l->a[2] = p->lamp[2]; }
     }
-    if (p->upper[2] > p->upper[0]) {   /* SF2: the tiered kiosk's upper tier, lit warm behind its glass */
+    if (0 && p->upper[2] > p->upper[0]) {   /* SF2: (the glazed tier's lamp: retired with its glass) */
         NbLight *l = NB_ADD(NB_LIGHT_LAMP, NB_WHITE_3000);
         if (l) { l->a[0] = 0.5f * (p->upper[0] + p->upper[2]); l->a[1] = p->upper[5] - 0.2f; l->a[2] = p->upper[3] - 0.25f; }
     }
@@ -1280,8 +1301,9 @@ static void kitchen(Pm *pm, const NbPlan *p, const NbLine *L) {
         pm_pop(pm);
         float t = p->ductTop;
         if (!nb_duct_capped(p)) {
-            /* SF2: up into a ceiling close over the deck: a flashing plate where it goes through */
-            bb(pm, dx - 0.2f, t - 0.012f, dz - 0.2f, dx + 0.2f, t, dz + 0.2f, 0.002f);
+            /* SF2: up into a ceiling close over the deck: a flashing plate where it goes through (none in a lantern:
+             * its open mouth vents there) */
+            if (p->form != NB_TIERED) bb(pm, dx - 0.2f, t - 0.012f, dz - 0.2f, dx + 0.2f, t, dz + 0.2f, 0.002f);
             return;
         }
         if (p->upper[2] > p->upper[0] && dx > p->upper[0] && dx < p->upper[2] && dz > p->upper[1] && dz < p->upper[3]) {
@@ -1545,52 +1567,103 @@ static void arcade_parts(Pm *pm, const NbPlan *p) {
     }
 }
 
-/* A glazed face of the tiered kiosk's upper tier: in its frame (x along, y up, z out), plate under and over the
- * band, mullions every ~0.7 m in the trim coat, panes between. */
-static void upper_face(Pm *pm, float ox, float oz, float ux, float uz, float L, float y0, float g0, float g1, float y1) {
-    pm_push(pm);
-    frame_on(pm, ox, 0.0f, oz, ux, uz);
-    pm_mat(pm, PMAT_PLATE);
-    bb(pm, 0.0f, y0, -0.03f, L, g0, 0.0f, 0.003f);
-    bb(pm, 0.0f, g1, -0.03f, L, y1, 0.0f, 0.003f);
+/* A band of louvre blades in a face's frame (x along 0..L, y up, z out, the face at z 0): its frame of angles, the
+ * blades every 75 mm tilted 40 degrees down and out so the rain runs off them. */
+static void louvres(Pm *pm, float L, float y0, float y1) {
     pm_mat(pm, PMAT_PAINTED);
-    const int np = (int)maxf(1.0f, floorf(L / 0.7f + 0.5f));
-    for (int k = 0; k <= np; ++k) {
-        const float x = 0.025f + (L - 0.05f) * (float)k / (float)np;
-        bb(pm, x - 0.025f, g0, -0.04f, x + 0.025f, g1, 0.0f, 0.002f);
-        if (k < np) pane(pm, x + 0.025f, g0, 0.025f + (L - 0.05f) * (float)(k + 1) / (float)np - 0.025f, g1, -0.02f);
+    bb(pm, 0.0f, y0, -0.05f, 0.035f, y1, 0.0f, 0.002f);
+    bb(pm, L - 0.035f, y0, -0.05f, L, y1, 0.0f, 0.002f);
+    bb(pm, 0.0f, y0, -0.05f, L, y0 + 0.03f, 0.0f, 0.002f);
+    bb(pm, 0.0f, y1 - 0.03f, -0.05f, L, y1, 0.0f, 0.002f);
+    const float up[3] = { 0.0f, 0.766f, 0.643f };
+    for (float y = y0 + 0.07f; y < y1 - 0.04f; y += 0.075f) {
+        const float a[3] = { 0.035f, y, -0.025f }, b[3] = { L - 0.035f, y, -0.025f };
+        pm_beam(pm, a, b, 0.07f, 0.005f, 0.0f, up);
     }
-    pm_pop(pm);
 }
 
-/* The tiered kiosk's upper tier on the deck round the column: a solid back, the band glazed on its three
- * other faces, the cornice, a shelf of stock inside under a warm lamp. */
+/* A face of the plant box (x along 0..L, z out): riveted plate from y0 to y1, its edges' rivet rows. */
+static void plate_face(Pm *pm, float L, float y0, float y1) {
+    pm_mat(pm, PMAT_PLATE);
+    bb(pm, 0.0f, y0, -0.03f, L, y1, 0.0f, 0.003f);
+    rivets(pm, 0.04f, y0 + 0.04f, 0.0f, L - 0.04f, y0 + 0.04f, 0.0f, 0, 0, 1);
+    rivets(pm, 0.04f, y1 - 0.04f, 0.0f, L - 0.04f, y1 - 0.04f, 0.0f, 0, 0, 1);
+    rivets(pm, 0.04f, y0 + 0.08f, 0.0f, 0.04f, y1 - 0.08f, 0.0f, 0, 0, 1);
+    rivets(pm, L - 0.04f, y0 + 0.08f, 0.0f, L - 0.04f, y1 - 0.08f, 0.0f, 0, 0, 1);
+}
+
+/* An access door in a face's frame at x a..b, y0..y1: a framed plate leaf, two hinges, a turn handle, a warning
+ * plate. */
+static void access_door(Pm *pm, float a, float b, float y0, float y1) {
+    pm_mat(pm, PMAT_PAINTED);
+    bb(pm, a - 0.025f, y0 - 0.025f, 0.0f, b + 0.025f, y0, 0.018f, 0.002f);
+    bb(pm, a - 0.025f, y1, 0.0f, b + 0.025f, y1 + 0.025f, 0.018f, 0.002f);
+    bb(pm, a - 0.025f, y0, 0.0f, a, y1, 0.018f, 0.002f);
+    bb(pm, b, y0, 0.0f, b + 0.025f, y1, 0.018f, 0.002f);
+    pm_mat(pm, PMAT_PLATE);
+    bb(pm, a + 0.004f, y0 + 0.004f, 0.002f, b - 0.004f, y1 - 0.004f, 0.014f, 0.002f);
+    pm_mat(pm, PMAT_STEEL);
+    for (int h = 0; h < 2; ++h) { pm_push(pm); pm_translate(pm, a + 0.004f, h ? y1 - 0.18f : y0 + 0.08f, 0.018f); pm_cyl(pm, 0.0f, 0.1f, 0.008f, 8); pm_pop(pm); }
+    const float hy = 0.5f * (y0 + y1);
+    bb(pm, b - 0.07f, hy - 0.06f, 0.014f, b - 0.045f, hy + 0.06f, 0.03f, 0.002f);
+    pm_mat(pm, PMAT_PAPER);
+    bb(pm, 0.5f * (a + b) - 0.07f, y1 - 0.2f, 0.014f, 0.5f * (a + b) + 0.07f, y1 - 0.08f, 0.016f, 0.0f);
+}
+
+/* The tiered kiosk's upper tier on the deck round the column (SF2; the user asked for variations, NB_UPPER_*):
+ * built face by face (front +z, the sides, the back behind the column), its roof over them. */
 static void tiered_upper(Pm *pm, const NbPlan *p) {
     const float *u = p->upper;
     if (u[2] <= u[0]) return;
     const float X0 = u[0], Z0 = u[1], X1 = u[2], Z1 = u[3], Y0 = u[4], Y1 = u[5];
-    const float g0 = Y0 + 0.45f, g1 = Y1 - 0.28f;
+    const float W = X1 - X0, Dp = Z1 - Z0;
+    const int kind = p->upperKind;
+    /* the faces' frames: origin, along (ux, uz), length; each faces cross(along, up): out of the tier */
+    const float F[4][5] = { { X0, Z1, 1.0f, 0.0f, W }, { X1, Z1, 0.0f, -1.0f, Dp }, { X1, Z0, -1.0f, 0.0f, W }, { X0, Z0, 0.0f, 1.0f, Dp } };
+    const float split = kind == NB_UPPER_BOTH ? Y0 + 0.55f : Y0;   /* the solid band's top (both) */
     pm->part = 220;
-    pm_mat(pm, PMAT_PLATE);
-    bb(pm, X0, Y0, Z0, X1, Y1, Z0 + 0.03f, 0.003f);
-    upper_face(pm, X0, Z1, 1.0f, 0.0f, X1 - X0, Y0, g0, g1, Y1);                   /* the front, facing +z */
-    upper_face(pm, X0, Z0 + 0.03f, 0.0f, 1.0f, Z1 - Z0 - 0.03f, Y0, g0, g1, Y1);   /* the left, facing -x */
-    upper_face(pm, X1, Z1, 0.0f, -1.0f, Z1 - Z0 - 0.03f, Y0, g0, g1, Y1);          /* the right, facing +x */
-    pm->part = 221;
-    pm_mat(pm, PMAT_PAINTED);
-    bb(pm, X0 - 0.09f, Y1, Z0 - 0.02f, X1 + 0.09f, Y1 + 0.05f, Z1 + 0.09f, 0.008f);
-    bb(pm, X0 - 0.04f, Y1 + 0.05f, Z0, X1 + 0.04f, Y1 + 0.09f, Z1 + 0.04f, 0.006f);
-    /* inside: a stainless shelf along the back, bowls and pans on it, the lamp */
-    pm->part = 222;
-    pm_mat(pm, PMAT_STAINLESS);
-    const float sy = g0 + 0.25f, sz = Z0 + 0.03f;
-    const float a = maxf(X0 + 0.05f, p->column[0] + p->column[2] + 0.05f), b = X1 - 0.05f;
-    if (b - a > 0.4f) {
-        bb(pm, a, sy - 0.02f, sz, b, sy, sz + 0.3f, 0.003f);
-        for (int k = 0; 0.12f + 0.25f * (float)k < b - a - 0.1f && k < 6; ++k)
-            put(pm, a + 0.12f + 0.25f * (float)k, sy, sz + 0.15f, 0.0f, (k & 1) ? PMK_GN_PAN : PMK_BOWL_STACK);
+    for (int f = 0; f < 4; ++f) {
+        pm_push(pm);
+        frame_on(pm, F[f][0], 0.0f, F[f][1], F[f][2], F[f][3]);
+        const float L = F[f][4];
+        if (kind == NB_UPPER_LANTERN) louvres(pm, L, Y0 + 0.02f, Y1 - 0.02f);
+        else if (kind == NB_UPPER_PLANT) {
+            plate_face(pm, L, Y0, Y1);
+            if (f == 0) access_door(pm, 0.5f * L - 0.32f, 0.5f * L + 0.32f, Y0 + 0.08f, Y1 - 0.1f);
+            if (f == 1 || f == 3) {   /* a small vent grille, proud of the plate, its slats */
+                pm_push(pm); pm_translate(pm, 0.5f * L - 0.22f, 0.0f, 0.045f); louvres(pm, 0.44f, Y1 - 0.48f, Y1 - 0.14f); pm_pop(pm);
+            }
+        } else {
+            plate_face(pm, L, Y0, split);
+            louvres(pm, L, split, Y1 - 0.02f);
+            if (f == 0) access_door(pm, 0.5f * L - 0.3f, 0.5f * L + 0.3f, Y0 + 0.06f, split - 0.06f);
+        }
+        pm_pop(pm);
     }
-    put(pm, 0.5f * (X0 + X1), Y1 - 0.2f + 0.035f, Z1 - 0.25f, 0.0f, PMK_LAMP);
+    /* the corner angles over the faces' ends */
+    pm_mat(pm, PMAT_PAINTED);
+    const float cx[2] = { X0, X1 }, cz[2] = { Z0, Z1 };
+    for (int i = 0; i < 2; ++i)
+        for (int j = 0; j < 2; ++j)
+            bb(pm, cx[i] - 0.03f, Y0, cz[j] - 0.03f, cx[i] + 0.03f, Y1, cz[j] + 0.03f, 0.003f);
+    /* the roof: an overhanging cap (the lantern's wider, to keep the rain off its slats), a lip round it */
+    pm->part = 221;
+    const float ov = kind == NB_UPPER_LANTERN ? 0.18f : 0.08f;
+    pm_mat(pm, kind == NB_UPPER_PLANT ? PMAT_PLATE : PMAT_RUST);
+    bb(pm, X0 - ov, Y1, Z0 - 0.02f, X1 + ov, Y1 + 0.04f, Z1 + ov, 0.006f);
+    pm_mat(pm, PMAT_PAINTED);
+    bb(pm, X0 - ov - 0.01f, Y1 - 0.05f, Z1 + ov - 0.01f, X1 + ov + 0.01f, Y1 + 0.04f, Z1 + ov + 0.01f, 0.003f);
+    if (kind == NB_UPPER_LANTERN) {
+        /* a low ridge over the cap: the lantern's own small roof */
+        pm_mat(pm, PMAT_RUST);
+        bb(pm, X0 + 0.15f, Y1 + 0.04f, Z0 + 0.1f, X1 - 0.15f, Y1 + 0.1f, Z1 - 0.1f, 0.01f);
+    } else {
+        /* the plant box's conduit: down its side by the back from under the roof to the deck, in saddles */
+        pm_mat(pm, PMAT_GALV);
+        const float x = X1 + 0.025f, z = Z0 + 0.15f;
+        pm_push(pm); pm_translate(pm, x, 0.0f, z); pm_cyl(pm, Y0 - 0.02f, Y1 - 0.06f, 0.016f, 10); pm_pop(pm);
+        for (float y = Y0 + 0.2f; y < Y1 - 0.1f; y += 0.35f) bb(pm, x - 0.025f, y, z - 0.03f, x + 0.004f, y + 0.02f, z + 0.03f, 0.0f);
+    }
 }
 
 /* What one form has that the others haven't. */
@@ -1671,8 +1744,8 @@ static void shell_form(Pm *pm, const NbPlan *p) {
         pm_mat(pm, PMAT_PLATE);
         pm_box(pm, u[0], u[4], u[1], u[2], u[5], u[3]);
         pm_mat(pm, PMAT_PAINTED);
-        pm_box(pm, u[0] - 0.09f, u[5], u[1] - 0.02f, u[2] + 0.09f, u[5] + 0.09f, u[3] + 0.09f);
-        far_window(pm, u[0] + 0.03f, g0, u[2] - 0.03f, g1, u[3] + 0.003f);
+        pm_box(pm, u[0] - 0.12f, u[5], u[1] - 0.02f, u[2] + 0.12f, u[5] + 0.06f, u[3] + 0.12f);
+        (void)g0; (void)g1;
     }
 }
 

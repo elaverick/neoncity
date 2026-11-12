@@ -205,7 +205,9 @@ static int build_kit(VGen *G, VFrame *F, int form) {
         add_surface(F, VSU_COUNTER, p->benchX0 + 0.05f, p->lining + 0.03f, p->benchX1 - 0.05f, p->lining + p->benchD - 0.03f, p->benchY);
     }
     int hood = v_box(v, VR_HOOD, VS_STAINLESS, VCOL_TRIM, p->rangeX0 - 0.1f, 1.97f, p->lining, p->rangeX1 + 0.1f, 2.40f, p->lining + 0.6f);
-    int flue = v_cyl(v, VR_FLUE, VS_STEEL, VCOL_TRIM, p->ductX, 2.40f, p->ductZ, p->ductX, p->ductTop, p->ductZ, p->ductR, 8);
+    /* SF2: a tiered kiosk's lantern is its flue's outlet (the duct ends inside it, the lantern vents it) */
+    const float flueTop = p->form == NB_TIERED && p->upperKind == NB_UPPER_LANTERN ? p->upper[5] + 0.1f : p->ductTop;
+    int flue = v_cyl(v, VR_FLUE, VS_STEEL, VCOL_TRIM, p->ductX, 2.40f, p->ductZ, p->ductX, flueTop, p->ductZ, p->ductR, 8);
     if (flue >= 0 && hood >= 0) v_edge(v, flue, hood, VE_ATTACHED_TO);
     if (hood >= 0 && roof >= 0) v_edge(v, hood, roof, VE_MOUNTED_ON);
     F->cook[0] = 0.5f * (p->rangeX0 + p->rangeX1); F->cook[1] = p->benchY; F->cook[2] = p->lining + 0.5f * p->benchD;

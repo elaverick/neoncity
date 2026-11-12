@@ -44,6 +44,14 @@
  *                runs, an upper tier on the deck round the column (forced only until SF3 finds columns). */
 enum { NB_STRAIGHT = 0, NB_CORNER, NB_HATCH, NB_ARCADE, NB_TIERED, NB_FORMS };
 const char *nb_form_name(int form);
+/* SF2 (the user asked for variations): what the tiered kiosk's upper tier is. A ventilation lantern (slatted
+ * sides under an overhanging cap, the extract duct ending inside it: the lantern is the vent); a plant box (a closed
+ * riveted enclosure for the fan and the electrics, an access door, small vent grilles, a conduit, the exhaust stack
+ * out of its roof); or both (solid panels and the door below, a band of slats above, the stack). */
+enum { NB_UPPER_LANTERN = 0, NB_UPPER_PLANT, NB_UPPER_BOTH, NB_UPPERS };
+const char *nb_upper_name(int kind);
+int         nb_upper_by_name(const char *name);   /* -1 if none */
+void        nb_force_upper(int kind);             /* -1: chosen by hash (NeonCity --tier-style) */
 int         nb_form_by_name(const char *name);   /* -1 if none */
 #define NB_RUNS_MAX    3
 #define NB_WALLS_MAX   8
@@ -77,8 +85,10 @@ typedef struct NbPlan {
     /* SF2, the arcade counter: its soffit deck's underside (deckY; the header's bottom is hood.spring - fascia_h),
      * the drop rods' tops (the ceiling: 0 none) */
     float    deckY, rodTop;
-    /* SF2, the tiered kiosk: its upper tier's box x0, z0, x1, z1, y0, y1 (x0 >= x1: none) */
+    /* SF2, the tiered kiosk: its upper tier's box x0, z0, x1, z1, y0, y1 (x0 >= x1: none), and what it is
+     * (NB_UPPER_*) */
     float    upper[6];
+    uint8_t  upperKind;
     int      trade;                 /* VT_* (street_food.h, SF1): what the line cooks, its icons and menu */
     float    affluence;             /* the district's, 0..1: the clutter (SF1; the coat and hood: nb_finish) */
     uint32_t seed;

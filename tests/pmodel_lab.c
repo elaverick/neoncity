@@ -378,7 +378,9 @@ static void body_section(const char *out) {
         { "hatch wide", 3.2f, 2.6f, 0.0f, NB_HATCH, 0, 1, 0x5EED08u },
         { "arcade low", 3.2f, 3.0f, 2.9f, NB_ARCADE, 0, 1, 0x5EED09u },
         { "arcade vault", 3.6f, 3.3f, 3.8f, NB_ARCADE, 0, 1, 0x5EED0Au },
-        { "tiered", 4.6f, 3.9f, 0.0f, NB_TIERED, 0, 0, 0x5EED0Bu } };
+        { "tiered lantern", 4.6f, 3.9f, 0.0f, NB_TIERED, 0, 0, 0x5EED0Bu },
+        { "tiered plant", 4.6f, 3.9f, 0.0f, NB_TIERED, 0, 0, 0x5EED0Bu },
+        { "tiered both", 4.6f, 3.9f, 0.0f, NB_TIERED, 0, 0, 0x5EED0Bu } };
     const int nb = (int)(sizeof(B) / sizeof(B[0]));
     const int BW = 620, BH = 460;
     Image im = { 0, 0, NULL };
@@ -388,6 +390,9 @@ static void body_section(const char *out) {
         NbPlan p;
         uint32_t seed = B[b].seed;
         int fits = 0;
+        /* SF2: the tiered kiosk's upper tier in each of its kinds */
+        nb_force_upper(strstr(B[b].name, "lantern") ? NB_UPPER_LANTERN : strstr(B[b].name, "plant") ? NB_UPPER_PLANT :
+                       strstr(B[b].name, "both") ? NB_UPPER_BOTH : -1);
         for (int t = 0; t < 64; ++t, seed += 7919u) {   /* a seed whose plan turns the corner the way asked */
             fits = nb_plan_site(&p, B[b].w, B[b].d, B[b].ceil, seed, B[b].form, VT_NOODLE, 0.5f, B[b].host);
             if (!B[b].side || p.side == B[b].side) break;

@@ -172,6 +172,11 @@ static bool parse_args(int argc, char **argv, Options *o) {
             else if (strcmp(v, "all") == 0) o->kit = KIT_ALL;
             else return false;
         }
+        else if (strcmp(argv[i], "--tier-style") == 0 && i + 1 < argc) {   /* SF2: the tiered kiosk's upper tier */
+            const int k = nb_upper_by_name(argv[++i]);
+            if (k < 0) return false;
+            nb_force_upper(k);
+        }
         else if (strcmp(argv[i], "--kit-lod") == 0 && i + 1 < argc) city_set_kit_lod(atoi(argv[++i]));   /* SF2: 0 or 1 */
         else if (strcmp(argv[i], "--bars") == 0 && i + 1 < argc) {
             if (strcmp(argv[++i], "all") != 0) return false;
