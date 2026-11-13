@@ -6,7 +6,9 @@
       way while the body was resident, but the body is only drawn while wanted (within
       VENDOR_BODY_DISTANCE), so backing off left neither. The shell now gives way only to a body that is
       resident and wanted this frame (chunks.c build_draw_list).
-- [ ] Vendors with the sliding glass window z-fight on the sides of the window frame.
+- [x] Vendors with the sliding glass window z-fight on the sides of the window frame: the hatch kiosk's side
+      walls ran to the front, so their sheet, lining and corner angle ended in the jambs' face. They now stop
+      at the back of the frame (noodle_bar.c wall). city_test --zfight now scans the vendors' near bodies too.
 - [ ] Inset (corner, bay) vendors' shutters disappear when you back off: they ride the interior's LOD.
       With the shutter down, draw the shutter quad at any distance and skip what it hides.
 - [ ] Clouds sink into cities on high ground and block the view: keep the layer a constant height above

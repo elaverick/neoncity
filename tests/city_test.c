@@ -904,6 +904,13 @@ static int zfight_scan(double X, double Z, double R) {
                 Mesh m = { 0 };
                 LAYERS[L](cx, cz, &m);
                 zf_gather(&m, X, Z, R, &tris, &n, &cap);
+                /* the vendors' near bodies (SF2), listed by the base layer */
+                for (uint32_t b = 0; L == 0 && b < m.nvbody && b < VENDOR_BODIES_MAX; ++b) {
+                    Mesh vb = { 0 };
+                    city_build_vendor_body(cx, cz, (int)b, &vb);
+                    zf_gather(&vb, X, Z, R, &tris, &n, &cap);
+                    mesh_free(&vb);
+                }
                 mesh_free(&m);
             }
     ZfGroup g[256];

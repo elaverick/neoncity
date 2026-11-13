@@ -13,6 +13,7 @@
 
 #define HALF_PI   1.5707963f
 #define THICK     0.0015f   /* sheet */
+#define HATCH_FW  0.04f     /* a hatch kiosk's glazing frame: its members' width and depth (hatch_front) */
 #define RIVETS    0.06f     /* a rivet row's pitch */
 #define STOOL_OUT 0.48f     /* a stool's middle out from the counter's face */
 #define CUST      0.78f     /* the corner form: the customers' strip beyond its side run */
@@ -1161,6 +1162,17 @@ static void cyl_x(Pm *pm, float x0, float x1, float y, float z, float r, int seg
 static void wall(Pm *pm, const NbPlan *p, const NbWall *w, int k, int kind) {
     if (w->len < 0.05f || w->h < 0.05f) return;
     const int framing = kind == NB_WALL_SIDE;
+    /* a hatch kiosk's side walls stop at the back of its glazing's frame (hatch_front), whose jambs close their
+     * ends: run to the front, their sheet, lining and corner angle ended in the jambs' face and fought them */
+    float t0 = 0.0f, t1 = 0.0f;
+    if (framing && p->form == NB_HATCH && fabsf(w->u[0]) < 0.01f) {
+        if (fabsf(w->o[1] - p->front) < 1e-3f) t0 = HATCH_FW;
+        if (fabsf(w->o[1] + w->u[1] * w->len - p->front) < 1e-3f) t1 = HATCH_FW;
+    }
+    NbWall tw = *w;
+    tw.o[0] += w->u[0] * t0; tw.o[1] += w->u[1] * t0; tw.len -= t0 + t1;
+    w = &tw;
+    if (w->len < 0.05f) return;
     pm_push(pm);
     frame_on(pm, w->o[0], 0.0f, w->o[1], w->u[0], w->u[1]);
     pm_push(pm);
@@ -1751,7 +1763,7 @@ static void pane(Pm *pm, float x0, float y0, float x1, float y1, float z) {
 /* The kiosk's front over its inner counter: the header up to the hood, the glazing in its frame with the hatch
  * open (its pane slid behind its neighbour in a track), the sill outside on its brackets. */
 static void hatch_front(Pm *pm, const NbPlan *p) {
-    const float z = p->front, cy = p->cy, gt = p->glazeTop, x0 = p->x0, x1 = p->x1, fw = 0.04f;
+    const float z = p->front, cy = p->cy, gt = p->glazeTop, x0 = p->x0, x1 = p->x1, fw = HATCH_FW;
     const float hf = nb_hood_under(p, z - p->lining) - 0.004f;
     const float h0 = p->hatch[0], h1 = p->hatch[1], hw = h1 - h0;
     pm->part = 200;
