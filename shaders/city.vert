@@ -213,11 +213,14 @@ void main() {
     vUV = inUV;
     vSeed = inSeed;
     vParams = inParams;
+    bool kitShutOpen = false;
     if (inParams.x == MAT_KIT) {   // as kit.vert's: the flags' low byte in aux bits 8-15, their high byte in 17-24
         // SF4: the vendor's hours (a far shell's in the normal's w, the rest in aux bits 25-31): shut, its lit
         // glass goes dark (KIT_SHUT in the material's word: kit.glsl)
         uint hours = kitFar ? uint(max(inNrm.w, 0.0) * 127.0 + 0.5) : inAux >> 25;
         vParams = uvec4(MAT_KIT, inParams.y | (vendorOpen(hours) ? 0u : KIT_SHUT), inAux & 255u, ((inAux >> 8) & 255u) | ((inAux >> 17) & 255u) << 8);
+        // a far shell's shutter curtains (PMAT_SHUTTER, 48: src/gen/pmodel.h; nb_shell_shutters) only while shut
+        if (inParams.y == 48u && vendorOpen(hours)) kitShutOpen = true;
     }
     vChunk = uint(gl_InstanceIndex);
     vFacePack = uint(max(inUV.y, 0.0) + 0.5);
@@ -229,6 +232,7 @@ void main() {
         uint b = (inAux >> 25) & 127u;
         if ((c.bodies[b >> 5] & (1u << (b & 31u))) != 0u) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     }
+    if (kitShutOpen) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 #ifdef PREPASS
     if (partialCoverage()) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // all three corners outside: the triangle is clipped away
 #endif

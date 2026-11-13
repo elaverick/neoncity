@@ -2308,6 +2308,30 @@ void nb_body(Pm *pm, const NbPlan *p) {
 
 /* ------------------------------------------------------------ far shell --- */
 
+/* The shutters' curtains on the far shell (snag 3): one flat quad each in the curtain's plane, facing out, in
+ * PMAT_SHUTTER, which city.vert folds away while the vendor is open. Without them a shut bar showed its shutters
+ * only with its near body (VENDOR_BODY_DISTANCE): backing off, they vanished. Added after the shell's bake, so
+ * they neither shade it nor are shaded. */
+void nb_shell_shutters(Pm *pm, const NbPlan *p) {
+    NbShutter sh[NB_SHUTTERS_MAX];
+    const int ns = nb_shutters(p, sh, NB_SHUTTERS_MAX);
+    const uint8_t mat = pm->mat, part = pm->part;
+    pm_mat(pm, PMAT_SHUTTER);
+    for (int i = 0; i < ns; ++i) {
+        const NbShutter *s = &sh[i];
+        if (s->len < 0.05f || s->y1 - s->y0 < 0.05f) continue;
+        pm->shell++;
+        pm->part = (uint8_t)(s->y0 > 0.1f ? 244 + i : 236 + i);   /* as nb_shut_place's */
+        const float n[3] = { -s->u[1], 0.0f, s->u[0] };   /* cross(u, up) */
+        const float ex = s->o[0] + s->u[0] * s->len, ez = s->o[1] + s->u[1] * s->len;
+        const float q[4][3] = { { s->o[0], s->y0, s->o[1] }, { ex, s->y0, ez }, { ex, s->y1, ez }, { s->o[0], s->y1, s->o[1] } };
+        uint32_t id[4];
+        for (int k = 0; k < 4; ++k) id[k] = pm_vert(pm, q[k], n, (k == 1 || k == 2) ? s->len : 0.0f, q[k][1] - s->y0);
+        pm_quad(pm, id[0], id[1], id[2], id[3]);
+    }
+    pm->mat = mat; pm->part = part;
+}
+
 /* A far window: the kitchen's light behind the glass, in the local xy plane at z facing +z. */
 static void far_window(Pm *pm, float x0, float y0, float x1, float y1, float z) {
     if (x1 - x0 < 0.05f || y1 - y0 < 0.05f) return;

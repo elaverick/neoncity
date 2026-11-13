@@ -62,8 +62,8 @@ int city_casts_shadow(const Vertex *v) {
     case MAT_VENDOR:   /* not a vendor's glass, nor a sign's painted face (its board casts) */
         return p[1] != VS_GLASS && p[1] != VS_NEON;
     case MAT_KIT:      /* a noodle bar's body, not its glass or what glows (its lamps' light passes); its far
-                        * shell never (the near body casts) */
-        return !(v->aux & KIT_AUX_FAR) && p[1] != PMAT_GLASS && p[1] != PMAT_GLAZING && !pm_mat_glows(p[1]);
+                        * shell never (the near body casts), nor a shell's shutters (there only while shut: city.vert) */
+        return !(v->aux & KIT_AUX_FAR) && p[1] != PMAT_SHUTTER && p[1] != PMAT_GLASS && p[1] != PMAT_GLAZING && !pm_mat_glows(p[1]);
     default:
         return 1;
     }

@@ -210,6 +210,7 @@ static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
         pm_begin(&pm, &E->shell, NULL, PM_LOD2);
         nb_shell(&pm, &v->nb);
         pm_bake(&E->shell, NB_BAKE_RAYS, pm_reach(&E->shell));
+        nb_shell_shutters(&pm, &v->nb);   /* shown while shut at any distance (city.vert) */
         /* SF2: its body is streamed on its own near the camera (Mesh.vbody, the streamer's): its far shell gives
          * way while that's resident */
         const int idx = E->nbody++;

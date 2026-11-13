@@ -9,8 +9,10 @@
 - [x] Vendors with the sliding glass window z-fight on the sides of the window frame: the hatch kiosk's side
       walls ran to the front, so their sheet, lining and corner angle ended in the jambs' face. They now stop
       at the back of the frame (noodle_bar.c wall). city_test --zfight now scans the vendors' near bodies too.
-- [ ] Inset (corner, bay) vendors' shutters disappear when you back off: they ride the interior's LOD.
-      With the shutter down, draw the shutter quad at any distance and skip what it hides.
+- [x] Shut vendors' shutters disappear when you back off: they were kit instances of the near body only.
+      The far shell now carries each curtain as one flat quad (nb_shell_shutters), folded away in city.vert
+      while the vendor is open, casting no ray-traced shadow. Not done: skipping the near body's hidden
+      kitchen while shut (the far shell is ~500 triangles; the saving is only within 28 m).
 - [ ] Clouds sink into cities on high ground and block the view: keep the layer a constant height above
       the city's highest terrain (or follow the terrain).
 

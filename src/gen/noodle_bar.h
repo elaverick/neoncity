@@ -210,6 +210,8 @@ int  nb_forced_form(void);
 void nb_body(Pm *pm, const NbPlan *p);
 /* The far shell (built in, about 500 triangles). */
 void nb_shell(Pm *pm, const NbPlan *p);
+/* The far shell's shutter curtains (PMAT_SHUTTER quads, shown only while shut: city.vert), after its bake. */
+void nb_shell_shutters(Pm *pm, const NbPlan *p);
 /* ---------------------------------------------------------------------------
  * The cooking line (NB5): what stands in the kitchen and on the counter, laid
  * out by rules from the plan (a pure function of it, so the body, the kit and
