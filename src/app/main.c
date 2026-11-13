@@ -3,6 +3,7 @@
  * Controls: mouse look, WASD move, Shift sprint, Space jump,
  *           F toggle fly (debug: Space/Ctrl up/down), F7 vendor debug view, F9 toggle shadows, F10 shadow debug view,
  *           F11 fullscreen, Esc release mouse (Esc again to quit), click to recapture. */
+#include <time.h>
 #include "vkcore.h"
 #include "renderer.h"
 #include "chunks.h"
@@ -683,7 +684,17 @@ int main(int argc, char **argv) {
     if (!parse_args(argc, argv, &opt)) { usage(); return 1; }
     terrain_earth_load(NULL);       /* the Earth's bake, if built, before the plan reads the ground */
     plan_world_init(cpu_count());   /* the settlements and roads, before any worker asks for them */
-    city_settlement_ground(0);      /* every settlement's ground, which the deck hangs over (weather.c, mesh_emit.c) */
+    {   /* every settlement's ground, and the highest of it, which the deck hangs over (weather.c, mesh_emit.c) */
+        const clock_t t0 = clock();
+        city_settlement_ground(0);
+        city_settlement_deck(0);
+        int top = 0, risen = 0;
+        for (int k = 0; k < plan_settlement_count(); ++k) risen += city_settlement_deck(k) - city_settlement_ground(k) > CLOUD_LOW;
+        for (int k = 1; k < plan_settlement_count(); ++k)
+            if (city_settlement_deck(k) - city_settlement_ground(k) > city_settlement_deck(top) - city_settlement_ground(top)) top = k;
+        printf("decks: %d settlements' highest ground in %.0f ms, %d of them over CLOUD_LOW above their core, the most %.0f m (%s)\n",
+               plan_settlement_count(), 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC, risen, city_settlement_deck(top) - city_settlement_ground(top), plan_settlement_name(top));
+    }
     models_load(NULL);              /* the street furniture's and lobbies' models (assets/models), before any chunk */
     Frames frames;
     frames_init(&frames, opt.city ? find_city(opt.city) : 0);   /* the frame the camera starts in, before anything is built */

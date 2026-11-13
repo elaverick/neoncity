@@ -360,6 +360,12 @@ float    city_ground_y(double x, double z);
  * and the rest count from it: src/core/clouds.h). All of them are read at
  * the first call, which main makes before any worker starts. */
 float    city_settlement_ground(int k);
+/* The ground settlement k's cloud deck hangs over (world Y): the highest of
+ * its ground sampled across its footprint, so a city whose districts climb
+ * above its core keeps the deck as high over its highest streets as over the
+ * core of a flat one (CLOUD_LOW and the rest count from it). Read for all at
+ * the first call, which main makes before any worker starts. */
+float    city_settlement_deck(int k);
 /* Round the city's outline (where it ends, PlanArea.bounded) a grass verge
  * slopes from the asphalt down to the land over CITY_VERGE_W, to
  * CITY_VERGE_DROP under the city's ground: a little under the land there,

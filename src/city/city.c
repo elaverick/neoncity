@@ -41,6 +41,32 @@ float city_settlement_ground(int k) {
     return k >= 0 && k < plan_settlement_count() ? ground[k] : 0.0f;
 }
 
+#define DECK_SAMPLES 40   /* a side of the grid over the footprint's disc city_settlement_deck samples */
+float city_settlement_deck(int k) {
+    static float deck[PLAN_MAX_SETTLEMENTS];
+    static int known;
+    if (!known) {
+        const TerrainFrame *was = terrain_frame_bound();
+        for (int q = 0; q < plan_settlement_count(); ++q) {
+            const PlanSettlement s = plan_settlement(q);
+            const double R = plan_settlement_reach(q);
+            terrain_frame_bind(plan_frame_settlement(q));
+            float hi = city_settlement_ground(q);
+            for (int j = 0; j < DECK_SAMPLES; ++j)
+                for (int i = 0; i < DECK_SAMPLES; ++i) {
+                    const double x = s.disc.x + R * (2.0 * (i + 0.5) / DECK_SAMPLES - 1.0);
+                    const double z = s.disc.z + R * (2.0 * (j + 0.5) / DECK_SAMPLES - 1.0);
+                    if (plan_settlement_near(x, z) != q || plan_city_edge(x, z) > 0.0) continue;   /* its own footprint */
+                    hi = fmaxf(hi, city_ground_y(x, z));
+                }
+            deck[q] = hi;
+        }
+        terrain_frame_bind(was);
+        known = 1;
+    }
+    return k >= 0 && k < plan_settlement_count() ? deck[k] : 0.0f;
+}
+
 /* The relief of the ground at (x, z): its settlement's (m). */
 static double ground_relief(double x, double z) { return plan_settlement(plan_settlement_near(x, z)).relief_m; }
 

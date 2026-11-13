@@ -270,9 +270,9 @@ void push_light(SkyLight **arr, uint32_t *n, uint32_t *cap, const SkyLight *L) {
 
 /* Whether a light at height y (world Y) reaching `reach` can light the deck,
  * which hangs over the ground of the settlement whose frame the chunk is
- * built in (city_settlement_ground; src/core/clouds.h). */
+ * built in (city_settlement_deck; src/core/clouds.h). */
 static int in_deck(float y, float reach) {
-    float g = city_settlement_ground(terrain_frame()->settlement);
+    float g = city_settlement_deck(terrain_frame()->settlement);
     return y + reach >= CLOUD_LOW + g && y - reach <= CLOUD_HIGH + g;
 }
 

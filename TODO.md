@@ -13,8 +13,10 @@
       The far shell now carries each curtain as one flat quad (nb_shell_shutters), folded away in city.vert
       while the vendor is open, casting no ray-traced shadow. Not done: skipping the near body's hidden
       kitchen while shut (the far shell is ~500 triangles; the saving is only within 28 m).
-- [ ] Clouds sink into cities on high ground and block the view: keep the layer a constant height above
-      the city's highest terrain (or follow the terrain).
+- [x] Clouds sink into cities on high ground and block the view: the deck hung over the core's ground, and
+      99 of 177 cities climb more than its 115 m base above their core. It now hangs over the highest ground
+      across the footprint (city_settlement_deck, 116 ms at start). Lima's footprint climbs 4290 m into the
+      Andes, so its deck is ~4.4 km over the coast: following the terrain instead is the fix if that looks wrong.
 
 ## Shadows
 Every light in the chunks' light tables casts ray-traced shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`,

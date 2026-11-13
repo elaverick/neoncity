@@ -20,11 +20,11 @@
  * DECK_DAYLIGHT: how much of the open sky's daylight gets through the deck to
  * the street under its middle (day/night cycle: a storm sky's, at noon some
  * 250 lux); its share of the moon's and the sky's light likewise.
- * The deck hangs over each settlement's own ground (its core's:
- * city_settlement_ground; FrameUBO.cities[i].w): its heights (CLOUD_LOW..
- * CLOUD_HIGH in common.h, DECK_OVER, and clouds.comp's) count from there, so
- * a city on raised ground has its deck as high over its streets as Los
- * Angeles has. Between two settlements it runs from one's ground to the
+ * The deck hangs over each settlement's own ground (the highest of it across
+ * its footprint: city_settlement_deck; FrameUBO.cities[i].w): its heights
+ * (CLOUD_LOW..CLOUD_HIGH in common.h, DECK_OVER, and clouds.comp's) count
+ * from there, so a city on raised ground, or climbing a hillside, has its deck
+ * at least as high over its streets as a flat one has. Between two settlements it runs from one's ground to the
  * other's: each weighs (DECK_BLEND / (DECK_BLEND + how far beyond its
  * footprint))^4 (deckDatum in shaders/common.glsl, weather.c at the eye).
  * DECK_OVER: ground, or an eye, from DECK_OVER up through CLOUD_HIGH stands

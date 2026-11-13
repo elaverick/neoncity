@@ -57,7 +57,7 @@ void weather_frame(const Weather *w, const double eye[3], FrameUBO *ubo) {
         ubo->cities[i][0] = (float)(x - eye[0]);
         ubo->cities[i][1] = (float)(z - eye[2]);
         ubo->cities[i][2] = (float)plan_settlement(nearest[i].k).radius;
-        ubo->cities[i][3] = city_settlement_ground(nearest[i].k);   /* the ground its deck hangs over */
+        ubo->cities[i][3] = city_settlement_deck(nearest[i].k);   /* the ground its deck hangs over: its highest */
     }
     double edge = n > 0 ? nearest[0].edge : 1e9;
     /* the ground the deck over the eye hangs over (deckDatum in shaders/common.glsl) */
