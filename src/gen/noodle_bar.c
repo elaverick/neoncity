@@ -244,6 +244,300 @@ static int plan_bar(NbPlan *p, const NbDraws *dr, float W, float D, float ceil, 
     return fits;
 }
 
+/* ------------------------------------------------- the shop bay's stall (SF3) --- */
+
+#define RECESS_PANEL 0.56f   /* the header panel kept over the hood at the building line: the shop's board on it */
+
+/* The straight form taking over a shop bay: its back R (the plan's recess) inside the building line, across the
+ * whole opening (W), the kitchen filling the recess and its counter's front on the line; the side walls are the
+ * opening's jambs and go up with the lining to its head (ceil), where a soffit closes the recess; the hood springs
+ * from the lining and comes out through the opening, its lip on posts over the sidewalk; a header panel in the
+ * facade's plane closes the opening over the hood (recess_parts). */
+static int plan_recessed(NbPlan *p, const NbDraws *dr, float W, float D, float ceil, int *reOut) {
+    const float R = p->recess;
+    float bd = dr->bd, cd = dr->cd, ov = dr->ov, spring = dr->spring, rise = dr->rise, fh = dr->fh;
+    int fits = W >= 3.0f && R >= 1.9f && D >= R + 0.45f && ceil >= 3.1f;
+    p->form = NB_STRAIGHT;
+    p->side = dr->sideR < 0.5f ? 1 : -1;
+    p->head = ceil;
+    W -= 0.1f;   /* the opening; the site is 5 cm wider each side, for the hood's end plates and the walls' rivets */
+    p->x0 = -0.5f * W; p->x1 = 0.5f * W;
+    float aisle = R - 0.10f - bd - cd;
+    if (aisle < 0.75f) { bd = maxf(0.60f, bd - (0.75f - aisle)); aisle = R - 0.10f - bd - cd; }
+    aisle = clampf(aisle, 0.70f, 1.25f);
+    p->lining = R - bd - aisle - cd;
+    if (p->lining < 0.08f) fits = 0;
+    p->cd = cd; p->cy = dr->cy; p->benchD = bd; p->benchY = 0.90f;
+    p->front = R;
+    p->stools = (uint8_t)(D >= R + 0.68f);
+    p->lip = minf(R + ov, D - 0.02f);
+    if (p->lip < R + (p->stools ? 0.55f : 0.40f)) fits = 0;
+    /* the hood under the opening's head, the fascia 2.05 m clear */
+    if (spring + rise > ceil - 0.15f) rise = maxf(0.35f, ceil - 0.15f - spring);
+    if (spring + rise > ceil - 0.15f) spring = maxf(2.4f, ceil - 0.15f - rise);
+    fh = minf(fh, spring - 2.05f);
+    PmHood *h = &p->hood;
+    pm_hood_default(h, W, 1.0f);
+    h->spring = spring; h->rise = rise; h->pitch = dr->pitch; h->fascia_h = fh;
+    p->hoodTop = spring + rise;
+    h->spine[0][0] = p->x0; h->spine[0][1] = p->lining;
+    h->spine[1][0] = p->x1; h->spine[1][1] = p->lining;
+    h->nspine = 2;
+    h->span = p->lip - p->lining;
+    /* SF3 (the user, on the first board): the shop's neon board goes on the header panel over the hood
+     * (mesh_building.c face_signs, vendor_stall_board), so the hood leaves RECESS_PANEL of it under the head */
+    for (int it = 0; it < 12 && nb_hood_under(p, R - p->lining) > ceil - RECESS_PANEL; ++it) {
+        if (h->rise > 0.351f) h->rise = maxf(0.35f, h->rise - 0.06f);
+        else if (h->spring > 2.401f) h->spring = maxf(2.4f, h->spring - 0.05f);
+        else break;
+    }
+    spring = h->spring; rise = h->rise;
+    fh = minf(fh, spring - 2.05f);
+    h->fascia_h = fh;
+    p->hoodTop = spring + rise;
+    const int re = dr->rangeL < 0.5f ? -1 : 1;
+    /* the jambs from the back to the building line (a centimetre short: their ends not in the facade's plane), and
+     * the lining, all up to the head */
+    set_wall(p, 0, p->x0, 0.0f, 0.0f, 1.0f, R - 0.01f, ceil, NB_WALL_SIDE);
+    set_wall(p, 1, p->x1, R - 0.01f, 0.0f, -1.0f, R - 0.01f, ceil, NB_WALL_SIDE);
+    set_wall(p, 2, p->x0, p->lining, 1.0f, 0.0f, W, ceil, NB_WALL_LINING);
+    p->kx0 = p->x0 + 0.05f; p->kx1 = p->x1 - 0.05f; p->kz1 = R - cd;
+    /* the counter between the jambs, the cook's gate at the end away from the range */
+    NbRun *c = &p->run[0];
+    const float cl = W - 0.08f;
+    c->o[0] = p->x0 + 0.04f; c->o[1] = R; c->u[0] = 1.0f; c->u[1] = 0.0f; c->len = cl;
+    if (re < 0) { c->gate0 = cl - 0.68f; c->gate1 = cl - 0.06f; } else { c->gate0 = 0.06f; c->gate1 = 0.68f; }
+    p->nrun = 1;
+    if (p->stools) stool_line(p, p->x0 + 0.45f, R + STOOL_OUT, p->x1 - 0.45f, R + STOOL_OUT, dr->spitch, 7);
+    /* the posts at the lip's corners */
+    p->fascia = h->span - 0.5f * h->lip_r + 0.0015f;
+    const float ph = spring - fh, z = p->lining + p->fascia - 0.035f - 0.003f;
+    p->post[0][0] = p->x0 + 0.035f; p->post[0][1] = z; p->post[0][2] = ph;
+    p->post[1][0] = p->x1 - 0.035f; p->post[1][1] = z; p->post[1][2] = ph;
+    p->npost = 2;
+    p->panel = nb_hood_under(p, R - p->lining);
+    *reOut = re;
+    return fits;
+}
+
+/* ------------------------------------------- the inset corner unit (SF3) --- */
+
+/* SF3 (the user, on the second board): a building's lit corner shop taken over by the corner form set into it: the
+ * corner shop opened up on both faces, the building's corner left standing on a pier (INSET_PIER square), the counter
+ * in an L along both faces inside the building lines, stools all along both, the customers sitting under the
+ * building. The site's frame: z out of the front face F (its building line at recess), x along it; the side face S's
+ * building line at x = side * (w/2 - 0.05) (side: the site's end the corner is at); the closed end's jamb at the
+ * site's other end, 5 cm in (the jamb's rivets). The hood wraps the corner inside the pier's inner faces, its fascia
+ * and icons seen under the header panels that close both openings over it (inset_parts); the kitchen along the
+ * back; the soffit at the opening's head over all of it. */
+#define INSET_PIER   NB_INSET_PIER     /* the corner's pier, square (its outer faces the building's) */
+#define INSET_LINING NB_INSET_LINING   /* the lining's face: the side face's opening runs back to it */
+
+static int plan_inset(NbPlan *p, const NbDraws *dr, float W, float ceil, int s, int *reOut) {
+    const float R = p->recess, P = INSET_PIER, sf = (float)s;
+    const float xB = sf * (0.5f * W - 0.05f), xj = -sf * (0.5f * W - 0.05f);   /* S's building line; the jamb */
+    const float lip = R - P - 0.03f, xe = xB - sf * (P + 0.03f);               /* the hood's lips, inside the pier */
+    float bd = dr->bd, cd = dr->cd, spring = dr->spring, rise = dr->rise, fh = dr->fh;
+    p->form = NB_CORNER;
+    p->side = s;
+    p->inset = (int8_t)s;
+    p->head = ceil;
+    p->x0 = minf(xj, xe); p->x1 = maxf(xj, xe);
+    const float bw = p->x1 - p->x0;
+    int fits = bw >= 3.4f && bw <= 5.5f && R >= 3.0f && ceil >= 3.1f;
+    p->lining = INSET_LINING;
+    /* the kitchen's depth from the customers' strip (0.95 m at least, inside the pier) back to the lining */
+    float aisle = lip - 0.95f - p->lining - bd - cd;
+    if (aisle < 0.75f) { bd = maxf(0.60f, bd - (0.75f - aisle)); aisle = lip - 0.95f - p->lining - bd - cd; }
+    aisle = clampf(aisle, 0.70f, 1.25f);
+    p->cd = cd; p->cy = dr->cy; p->benchD = bd; p->benchY = 0.90f;
+    p->front = p->lining + bd + aisle + cd;
+    if (lip - p->front < 0.90f) fits = 0;
+    p->stools = 1;
+    p->lip = lip;
+    /* the hood under the soffit, the header panels' bottoms just over its springing (their boards on them: the
+     * hood leaves RECESS_PANEL of panel under the head) */
+    if (spring + rise > ceil - 0.15f) rise = maxf(0.35f, ceil - 0.15f - spring);
+    if (spring + rise > ceil - 0.15f) spring = maxf(2.4f, ceil - 0.15f - rise);
+    if (spring + 0.04f > ceil - RECESS_PANEL) spring = maxf(2.4f, ceil - RECESS_PANEL - 0.04f);
+    fh = minf(fh, spring - 2.05f);
+    p->panel = spring + 0.04f;
+    PmHood *h = &p->hood;
+    pm_hood_default(h, bw, 1.0f);
+    h->spring = spring; h->rise = rise; h->pitch = dr->pitch; h->fascia_h = fh;
+    p->hoodTop = spring + rise;
+    const float cz0 = p->front - cd;                 /* the counter's back */
+    const float xo = s > 0 ? p->x0 : p->x1;          /* the closed end (the jamb) */
+    const float xc = xe - sf * CUST;                 /* the side run's face */
+    const float xi = xc - sf * cd;                   /* its back */
+    const float zs = p->lining + bd + 0.15f;         /* where it starts */
+    const float span = clampf(dr->spanC, 1.4f, minf(lip - p->lining - 0.5f, bw - 0.9f));
+    const float zsp = lip - span, xsp = xe - sf * span;
+    h->span = span;
+    if (s > 0) {
+        h->spine[0][0] = p->x0; h->spine[0][1] = zsp;
+        h->spine[1][0] = xsp;   h->spine[1][1] = zsp;
+        h->spine[2][0] = xsp;   h->spine[2][1] = p->lining;
+    } else {
+        h->spine[0][0] = xsp;   h->spine[0][1] = p->lining;
+        h->spine[1][0] = xsp;   h->spine[1][1] = zsp;
+        h->spine[2][0] = p->x1; h->spine[2][1] = zsp;
+    }
+    h->nspine = 3;
+    p->deck[0] = minf(xo, xsp); p->deck[2] = maxf(xo, xsp); p->deck[1] = p->lining; p->deck[3] = zsp;
+    const int re = -s;
+    /* the jamb at the closed end, from the back to F's building line, and the lining from it to S's building line,
+     * both up to the head; the short wall at the corner end from the lining to the side run, up under the side leg */
+    /* (both a centimetre short of the building lines: their ends not in the facade's plane) */
+    if (s > 0) {
+        set_wall(p, 0, p->x0, 0.0f, 0.0f, 1.0f, R - 0.01f, ceil, NB_WALL_SIDE);
+        set_wall(p, 1, p->x0, p->lining, 1.0f, 0.0f, xB - 0.01f - p->x0, ceil, NB_WALL_LINING);
+        set_wall(p, 2, xc, zs, 0.0f, -1.0f, zs, 0.0f, NB_WALL_SIDE);
+    } else {
+        set_wall(p, 0, p->x1, R - 0.01f, 0.0f, -1.0f, R - 0.01f, ceil, NB_WALL_SIDE);
+        set_wall(p, 1, xB + 0.01f, p->lining, 1.0f, 0.0f, p->x1 - xB - 0.01f, ceil, NB_WALL_LINING);
+        set_wall(p, 2, xc, 0.0f, 0.0f, 1.0f, zs, 0.0f, NB_WALL_SIDE);
+    }
+    p->wall[2].h = nb_hood_under(p, fabsf(xc - xsp)) - 0.01f;
+    p->kx0 = s > 0 ? p->x0 + 0.05f : xi; p->kx1 = s > 0 ? xi : p->x1 - 0.05f; p->kz1 = cz0;
+    /* the counter: the front run from the jamb (inside its rivets) to the side run's face, the side run back to the
+     * short wall; the cook's gate in the front run at the closed end */
+    NbRun *c = p->run;
+    const float flen = fabsf(xc - xo) - 0.04f;
+    if (s > 0) { c[0] = (NbRun){ { p->x0 + 0.04f, p->front }, { 1.0f, 0.0f }, flen, 0.06f, 0.68f };
+                 c[1] = (NbRun){ { xc, cz0 }, { 0.0f, -1.0f }, cz0 - zs, 0.0f, 0.0f }; }
+    else       { c[0] = (NbRun){ { xc, p->front }, { 1.0f, 0.0f }, flen, flen - 0.68f, flen - 0.06f };
+                 c[1] = (NbRun){ { xc, zs }, { 0.0f, 1.0f }, cz0 - zs, 0.0f, 0.0f }; }
+    p->nrun = 2;
+    /* the column in the counter's corner, up under the hood's hip */
+    const float colx = xc - sf * 0.5f * cd, colz = p->front - 0.5f * cd;
+    p->column[0] = colx; p->column[1] = colz; p->column[2] = 0.5f * cd + 0.04f;
+    p->column[3] = nb_hood_under(p, maxf(colz - zsp, sf * (colx - xsp)) + p->column[2]) - 0.005f;
+    /* stools all along both runs */
+    stool_line(p, xo + sf * 0.45f, p->front + STOOL_OUT, xc - sf * 0.32f, p->front + STOOL_OUT, dr->spitch, 8);
+    stool_line(p, xc + sf * STOOL_OUT, p->front - 0.2f, xc + sf * STOOL_OUT, zs + 0.3f, dr->spitch, 4);
+    /* the posts at the lip's free ends: by the jamb, and the side leg's at the lining */
+    p->fascia = h->span - 0.5f * h->lip_r + 0.0015f;
+    const float ph = spring - fh;
+    p->post[0][0] = xo + sf * 0.035f; p->post[0][1] = zsp + p->fascia - 0.038f; p->post[0][2] = ph;
+    p->post[1][0] = xsp + sf * (p->fascia - 0.038f); p->post[1][1] = p->lining + 0.04f; p->post[1][2] = ph;
+    p->npost = 2;
+    *reOut = re;
+    return fits;
+}
+
+/* ------------------------------------------------ the deep shop unit (SF3) --- */
+
+#define DEEP_WALL   0.06f   /* the room's walls, inside the opening's edges */
+#define DEEP_FRAME  0.10f   /* the shopfront's frame, in from the building line (its glass in its middle) */
+#define DEEP_LEDGE  0.30f   /* the window ledge, inside the frame */
+#define DEEP_SEAT   0.47f   /* a low stool's middle out from its table's */
+
+static void hash_units(uint32_t h, float *u, int n);
+
+static void add_seat(NbPlan *p, float x, float z) {
+    if (p->nseat < NB_SEATS_MAX) { p->seat[p->nseat][0] = x; p->seat[p->nseat][1] = z; p->nseat++; }
+}
+
+/* SF3 (the user, on the first board): a shop bay taken over deep. The bay's own glazed shopfront stays on the
+ * building line (real glass in a frame in the trim coat, mullions on the bay's thirds as the shops' windows, a
+ * stall riser under them, a glazed door at one end under a fanlight); behind it a room about as deep as the shops'
+ * interior mapping (5 m: shaders/city/facade.glsl), tiled to the dado, its ceiling the opening's head. The serving
+ * bar at its back is the arcade counter (its deck and riveted header hung from the ceiling on rods, the kitchen
+ * behind), against the room's wall away from the door, the passage from the door to the cook's gate beside it. In
+ * front of it tables with low stools, a ledge along the window with stools at it, battens on the ceiling; an
+ * awning out over the street where the site reaches out for one (the site's depth past the building line). */
+static int plan_deep(NbPlan *p, const NbDraws *dr, float W, float D, float ceil, int *reOut) {
+    float u[12];
+    hash_units(hash_combine(p->seed, 0xDEE9u), u, 12);
+    const float R = p->recess, OH = 0.5f * (W - 0.1f);
+    int fits = W >= 4.6f && R >= 4.2f && ceil >= 3.0f;
+    p->form = NB_ARCADE;
+    p->deep = 1;
+    p->head = ceil;
+    p->roomX0 = -OH + DEEP_WALL; p->roomX1 = OH - DEEP_WALL;
+    const int ds = u[0] < 0.5f ? 1 : -1;
+    p->doorSide = (int8_t)ds;
+    /* the door against the jamb at its end */
+    const float dw = 0.9f + 0.1f * u[1];
+    if (ds > 0) { p->shopDoor[1] = p->roomX1; p->shopDoor[0] = p->roomX1 - dw; }
+    else        { p->shopDoor[0] = p->roomX0; p->shopDoor[1] = p->roomX0 + dw; }
+    /* the kitchen against the far wall, the passage (0.85 m at least) on the door's side */
+    const float RW = p->roomX1 - p->roomX0;
+    const float bw = clampf(minf(dr->bw, RW - 0.95f), 2.4f, 4.4f);
+    if (RW - bw < 0.85f) fits = 0;
+    if (ds > 0) { p->x0 = p->roomX0 + 0.01f; p->x1 = p->x0 + bw; } else { p->x1 = p->roomX1 - 0.01f; p->x0 = p->x1 - bw; }
+    p->lining = 0.10f;
+    const float bd = dr->bd, aisle = dr->aisle, cd = dr->cd;
+    p->cd = cd; p->cy = dr->cy; p->benchD = bd; p->benchY = 0.90f;
+    p->front = p->lining + bd + aisle + cd;
+    p->lip = p->front + 0.35f + 0.2f * u[2];   /* the header over the queue at the counter */
+    p->stools = 0;                              /* the customers sit at the tables and the ledge */
+    const float deckY = clampf(ceil - 0.08f, 2.4f, 2.75f), hb = maxf(2.02f, deckY - (0.42f + 0.14f * u[3]));
+    p->deckY = deckY;
+    p->rodTop = ceil - 0.03f;   /* the ceiling's underside */
+    PmHood *h = &p->hood;
+    pm_hood_default(h, bw, 1.0f);
+    h->nspine = 0;
+    h->spring = deckY; h->rise = 0.0f; h->fascia_h = deckY - hb;
+    h->span = p->lip - p->lining;
+    p->hoodTop = deckY;
+    p->fascia = h->span;
+    p->deck[0] = p->x0; p->deck[1] = 0.0f; p->deck[2] = p->x1; p->deck[3] = p->lip;
+    const int re = -ds;   /* the range at the far wall's end, the cook's gate at the passage's */
+    const float cz0 = p->front - cd;
+    /* its side wall on the passage (the far wall is the room's own), its lining */
+    if (ds > 0) set_wall(p, 0, p->x1, cz0, 0.0f, -1.0f, cz0, deckY, NB_WALL_SIDE);
+    else        set_wall(p, 0, p->x0, 0.0f, 0.0f, 1.0f, cz0, deckY, NB_WALL_SIDE);
+    set_wall(p, 1, p->x0, p->lining, 1.0f, 0.0f, bw, deckY, NB_WALL_LINING);
+    p->kx0 = p->x0 + 0.05f; p->kx1 = p->x1 - 0.05f; p->kz1 = cz0;
+    NbRun *c = &p->run[0];
+    c->o[0] = p->x0; c->o[1] = p->front; c->u[0] = 1.0f; c->u[1] = 0.0f; c->len = bw;
+    if (re < 0) { c->gate0 = bw - 0.68f; c->gate1 = bw - 0.06f; } else { c->gate0 = 0.06f; c->gate1 = 0.68f; }
+    p->nrun = 1;
+    /* the window ledge along the glazed thirds (not the door's), stools at it facing the street, along the
+     * kitchen's stretch of the room (the passage kept) */
+    const float zl = R - DEEP_FRAME - DEEP_LEDGE;
+    const float lx0 = ds > 0 ? p->roomX0 : -1.0f + 0.03f, lx1 = ds > 0 ? 1.0f - 0.03f : p->roomX1;
+    p->ledge[0] = lx0; p->ledge[1] = lx1; p->ledge[2] = zl;
+    const float tx0 = p->x0 + 0.05f, tx1 = p->x1 - 0.05f;
+    stool_line(p, maxf(lx0, tx0) + 0.30f, zl - 0.30f, minf(lx1, tx1) - 0.30f, zl - 0.30f, 0.62f, 6);
+    /* the tables between the queue and the ledge stools' backs: four seats where the room's deep enough, else two
+     * (a stool each side along the row) */
+    const float za = p->lip + 0.15f, zb = zl - 0.30f - 0.40f, dz = zb - za;
+    if (dz >= 0.60f) {
+        const int four = dz >= 1.30f;
+        const float cell = 2.0f * (DEEP_SEAT + 0.17f), gap = 0.14f, zt = 0.5f * (za + zb);
+        int n = (int)floorf((tx1 - tx0 + gap) / (cell + gap));
+        if (n > NB_TABLES_MAX) n = NB_TABLES_MAX;
+        const float used = (float)n * cell + (float)(n - 1) * gap, xt0 = 0.5f * (tx0 + tx1 - used) + 0.5f * cell;
+        for (int k = 0; k < n; ++k) {
+            const float x = xt0 + (float)k * (cell + gap);
+            p->table[p->ntable][0] = x; p->table[p->ntable][1] = zt; p->table[p->ntable][2] = four ? 4.0f : 2.0f;
+            p->ntable++;
+            add_seat(p, x - DEEP_SEAT, zt); add_seat(p, x + DEEP_SEAT, zt);
+            if (four) { add_seat(p, x, zt - DEEP_SEAT); add_seat(p, x, zt + DEEP_SEAT); }
+        }
+    }
+    if (p->ntable == 0 && p->nstool == 0) fits = 0;
+    /* the awning where the site reaches out past the building line for one */
+    p->awning = D - R >= 0.85f ? D - R - 0.03f : 0.0f;
+    *reOut = re;
+    return fits;
+}
+
+/* The deep unit's battens on its ceiling, over the tables and the window: the last of the plan's tubes (lit as
+ * the bar's), after plan_signs' (the header's). */
+static void deep_tubes(NbPlan *p) {
+    const float zf = p->recess - DEEP_FRAME, y = p->head - 0.03f - 0.06f, cx = 0.5f * (p->roomX0 + p->roomX1);
+    const float zs[2] = { p->lip + 0.45f * (zf - p->lip), p->lip + 0.85f * (zf - p->lip) };
+    for (int k = 0; k < 2 && p->ntube < NB_TUBES_MAX; ++k) {
+        float *t = p->tube[p->ntube++];
+        t[0] = cx - 0.6f; t[1] = y; t[2] = zs[k]; t[3] = cx + 0.6f; t[4] = y; t[5] = zs[k];
+        p->roomTubes++;
+    }
+}
+
 /* ---------------------------------------------------- the hatch kiosk (SF2) --- */
 
 static void hash_units(uint32_t h, float *u, int n) { for (int k = 0; k < n; ++k) u[k] = hash_float(hash_combine(h, (uint32_t)k)); }
@@ -432,7 +726,8 @@ static int plan_tiered(NbPlan *p, const NbDraws *dr, float W, float D, float cei
     /* the upper tier on the deck round the column, the column through it */
     p->upperKind = (uint8_t)(g_upper >= 0 ? g_upper : (int)(u[4] * (float)NB_UPPERS) % NB_UPPERS);
     static const float UH[NB_UPPERS] = { 0.70f, 1.05f, 1.25f };   /* lantern, plant box, both */
-    const float y0 = p->hoodTop, y1 = minf(y0 + UH[p->upperKind] + 0.1f * u[3], 4.45f);
+    const float y0 = p->hoodTop, y1 = minf(minf(y0 + UH[p->upperKind] + 0.1f * u[3], 4.45f), ceil - 0.60f);
+    if (y1 - y0 < 0.6f) fits = 0;
     p->upper[0] = sl + 0.12f; p->upper[1] = 0.02f; p->upper[2] = sr - 0.12f; p->upper[3] = sf - 0.12f;
     p->upper[4] = y0; p->upper[5] = y1;
     p->column[0] = 0.0f; p->column[1] = ch + 0.02f; p->column[2] = ch; p->column[3] = minf(4.98f, y1 + 0.45f);
@@ -471,7 +766,7 @@ static void plan_kitchen(NbPlan *p, int re, float ceil) {
     p->ductZ = p->lining + 0.035f + p->ductR;
     if (p->form == NB_TIERED) {
         /* up through the deck and the plant box, out over its roof; into the lantern, which vents it */
-        p->ductTop = p->upperKind == NB_UPPER_LANTERN ? p->upper[4] + 0.30f : minf(p->upper[5] + 0.3f, 4.98f - 0.27f);
+        p->ductTop = p->upperKind == NB_UPPER_LANTERN ? p->upper[4] + 0.30f : minf(p->upper[5] + 0.3f, minf(4.98f, ceil - 0.02f) - 0.27f);
         p->top = maxf(p->ductTop + 0.27f, p->column[3]);
         return;
     }
@@ -663,10 +958,21 @@ static void plan_lights(NbPlan *p) {
 }
 
 int nb_plan(NbPlan *p, float W, float D, float ceiling, uint32_t seed, int form, int trade, float affluence) {
-    return nb_plan_site(p, W, D, ceiling, seed, form, trade, affluence, 1);
+    return nb_plan_site(p, W, D, ceiling, seed, form, trade, affluence, 1, 0.0f);
 }
 
-int nb_plan_site(NbPlan *p, float W, float D, float ceiling, uint32_t seed, int form, int trade, float affluence, int site) {
+/* SF3: the deep unit's A-frame stands out on the sidewalk by the window away from the door, where the site reaches
+ * out past the building line. */
+static void deep_front(NbPlan *p, float W, float D) {
+    const float R = p->recess;
+    p->aframeOn = (uint8_t)(D - R >= 0.6f && hash_float(hash_combine(p->seed, 0xDEEAu)) < 0.65f);
+    p->aframe[0] = -(float)p->doorSide * (0.5f * W - 0.75f);
+    p->aframe[1] = minf(R + 0.34f, D - 0.30f);
+    p->aframe[2] = 0.4f * (hash_float(hash_combine(p->seed, 0xDEEBu)) - 0.5f);
+}
+
+int nb_plan_site(NbPlan *p, float W, float D, float ceiling, uint32_t seed, int form, int trade, float affluence, int site,
+                 float recess) {
     const int host = site & NB_SITE_HOST, hang = !(site & NB_SITE_VAULT);
     memset(p, 0, sizeof(*p));
     p->trade = trade >= 0 && trade < VT_COUNT ? trade : VT_NOODLE;
@@ -675,6 +981,8 @@ int nb_plan_site(NbPlan *p, float W, float D, float ceiling, uint32_t seed, int 
     p->seed = seed; p->w = W; p->d = D;
     p->ceiling = ceiling > 0.0f ? ceiling : 0.0f;
     p->freestanding = (uint8_t)!host;
+    p->recess = recess > 0.0f ? recess : 0.0f;
+    const int forceSide = (site & NB_SITE_CORNER_POS) ? 1 : (site & NB_SITE_CORNER_NEG) ? -1 : 0;
     const float ceil = ceiling > 0.0f ? ceiling : 99.0f;
     /* every draw first, in order (hash.h: draws are sequenced) */
     NbDraws dr;
@@ -695,15 +1003,22 @@ int nb_plan_site(NbPlan *p, float W, float D, float ceiling, uint32_t seed, int 
     dr.sideR  = rng_float(&r);
 
     int re, fits;
-    switch (form) {
+    if (p->recess > 0.0f && forceSide) fits = plan_inset(p, &dr, W, ceil, forceSide, &re);   /* SF3 */
+    else if (p->recess > 0.0f && (site & NB_SITE_DEEP)) fits = plan_deep(p, &dr, W, D, ceil, &re);
+    else switch (form) {
     case NB_HATCH:  fits = plan_hatch(p, W, D, ceil, host, &re); break;
     case NB_ARCADE: fits = plan_arcade(p, &dr, W, D, ceiling, host, hang, &re); break;
     case NB_TIERED: fits = plan_tiered(p, &dr, W, D, ceil, &re); break;
-    default:        fits = plan_bar(p, &dr, W, D, ceil, form, host, &re); break;
+    default:
+        fits = p->recess > 0.0f ? plan_recessed(p, &dr, W, D, ceil, &re) : plan_bar(p, &dr, W, D, ceil, form, host, &re);
+        break;
     }
     plan_kitchen(p, re, ceil);
     plan_signs(p);
+    if (p->deep) deep_tubes(p);
     plan_front(p, W, D, re);
+    if (p->deep) deep_front(p, W, D);
+    if (p->inset) p->aframeOn = 0;   /* (nothing of it out on the sidewalks) */
     plan_lights(p);
     return fits;
 }
@@ -1329,8 +1644,8 @@ static void kitchen(Pm *pm, const NbPlan *p, const NbLine *L) {
 /* --------------------------------------------------------- hood fittings --- */
 
 static void hood_fittings(Pm *pm, const NbPlan *p) {
-    /* the tube channels behind the fascia, on brackets to it */
-    for (int i = 0; i < p->ntube; ++i) {
+    /* the tube channels behind the fascia, on brackets to it (SF3: not the deep unit's ceiling battens) */
+    for (int i = 0; i < p->ntube - p->roomTubes; ++i) {
         const float *t = p->tube[i];
         float dx = t[3] - t[0], dz = t[5] - t[2], L = sqrtf(dx * dx + dz * dz);
         if (L < 0.1f) continue;
@@ -1667,7 +1982,262 @@ static void tiered_upper(Pm *pm, const NbPlan *p) {
 }
 
 /* What one form has that the others haven't. */
+/* SF3: a shop bay's stall closes its opening: the soffit over the recess at the head, the header panel in the
+ * facade's plane from the hood up to it (riveted along its edges), and a painted angle frame round the opening,
+ * standing just proud of the facade. */
+static void recess_parts(Pm *pm, const NbPlan *p) {
+    const float R = p->recess, H = p->head, x0 = p->x0, x1 = p->x1;
+    const float hy = nb_hood_under(p, R - p->lining);
+    pm->part = 240;
+    pm_mat(pm, PMAT_PLATE);
+    bb(pm, x0 + 0.04f, H - 0.03f, 0.0f, x1 - 0.04f, H, R - 0.03f, 0.002f);
+    pm->part = 241;
+    pm_mat(pm, PMAT_PAINTED);
+    if (H - hy > 0.06f) {
+        bb(pm, x0 + 0.04f, hy, R - 0.03f, x1 - 0.04f, H, R, 0.003f);
+        rivets(pm, x0 + 0.1f, H - 0.06f, R, x1 - 0.1f, H - 0.06f, R, 0, 0, 1);
+        if (H - hy > 0.3f) rivets(pm, x0 + 0.1f, hy + 0.12f, R, x1 - 0.1f, hy + 0.12f, R, 0, 0, 1);
+    }
+    pm->part = 242;
+    bb(pm, x0, 0.0f, R, x0 + 0.06f, H, R + 0.025f, 0.003f);
+    bb(pm, x1 - 0.06f, 0.0f, R, x1, H, R + 0.025f, 0.003f);
+    bb(pm, x0 + 0.06f, H - 0.08f, R, x1 - 0.06f, H, R + 0.025f, 0.003f);
+}
+
+/* SF3: the inset corner unit closes its two openings: the soffit over the whole room at the head; the header panels
+ * in both faces' planes from just over the hood's springing up to it (riveted; the shop's boards on them); the corner's
+ * pier, its inner faces in the trim coat (its outer faces are the building's), a centimetre behind the facade; a
+ * painted angle frame round each opening, standing just proud of the facade; the customers' floor (tiles) in an L
+ * round the counter, out to the building lines. */
+static void inset_parts(Pm *pm, const NbPlan *p) {
+    const int s = p->inset;
+    const float sf = (float)s, R = p->recess, H = p->head, P = INSET_PIER, hy = p->panel, lin = p->lining;
+    const float xB = sf * (0.5f * p->w - 0.05f), xo = s > 0 ? p->x0 : p->x1, xp = xB - sf * P;
+    const float xa = minf(xo, xB), xb = maxf(xo, xB);          /* the room across */
+    const float fa = minf(xo, xp), fb = maxf(xo, xp);          /* F's opening */
+    const float sa = minf(xB - sf * 0.005f, xB - sf * 0.035f), sb = maxf(xB - sf * 0.005f, xB - sf * 0.035f);   /* S's panel, through x
+                                                                                                          * (5 mm behind the facade) */
+    pm->part = 240;
+    pm_mat(pm, PMAT_PLATE);
+    bb(pm, xa + 0.03f, H - 0.03f, 0.0f, xb - 0.03f, H, R - 0.03f, 0.002f);
+    pm->part = 241;
+    pm_mat(pm, PMAT_PAINTED);
+    if (H - hy > 0.06f) {
+        bb(pm, fa + (s > 0 ? 0.04f : 0.0f), hy, R - 0.035f, fb - (s > 0 ? 0.0f : 0.04f), H, R - 0.005f, 0.003f);
+        rivets(pm, fa + 0.1f, H - 0.06f, R, fb - 0.1f, H - 0.06f, R, 0, 0, 1);
+        bb(pm, sa, hy, lin, sb, H, R - P, 0.003f);
+        rivets(pm, xB, H - 0.06f, lin + 0.1f, xB, H - 0.06f, R - P - 0.1f, sf, 0, 0);
+        if (H - hy > 0.3f) {
+            rivets(pm, fa + 0.1f, hy + 0.12f, R, fb - 0.1f, hy + 0.12f, R, 0, 0, 1);
+            rivets(pm, xB, hy + 0.12f, lin + 0.1f, xB, hy + 0.12f, R - P - 0.1f, sf, 0, 0);
+        }
+    }
+    /* the pier */
+    bb(pm, minf(xp, xB - sf * 0.01f), 0.0f, R - P, maxf(xp, xB - sf * 0.01f), H, R - 0.01f, 0.003f);
+    /* the frames: F's jambs (the closed end's, the pier's) and head; S's jambs (the pier's, the lining's) and head */
+    pm->part = 242;
+    const float j0 = s > 0 ? xo : xo - 0.06f, j1 = s > 0 ? xp - 0.06f : xp;
+    bb(pm, j0, 0.0f, R, j0 + 0.06f, H, R + 0.025f, 0.003f);
+    bb(pm, j1, 0.0f, R, j1 + 0.06f, H, R + 0.025f, 0.003f);
+    bb(pm, fa + 0.06f, H - 0.08f, R, fb - 0.06f, H, R + 0.025f, 0.003f);
+    const float ox0 = minf(xB, xB + sf * 0.025f), ox1 = maxf(xB, xB + sf * 0.025f);
+    bb(pm, ox0, 0.0f, R - P - 0.06f, ox1, H, R - P, 0.003f);
+    bb(pm, ox0, 0.0f, lin, ox1, H, lin + 0.06f, 0.003f);
+    bb(pm, ox0, H - 0.08f, lin + 0.06f, ox1, H, R - P - 0.06f, 0.003f);
+    /* the floor round the counter: along F's line, then down the side to the lining */
+    pm->part = 243;
+    pm_mat(pm, PMAT_TILE);
+    const float xc = p->run[1].o[0];
+    bb(pm, xa, -0.02f, p->front, xb, 0.0f, R, 0.0f);
+    bb(pm, minf(xc, xB), -0.02f, lin, maxf(xc, xB), 0.0f, p->front, 0.0f);
+}
+
+static void far_window(Pm *pm, float x0, float y0, float x1, float y1, float z);
+/* SF3: the deep unit's awning: its drop at the front and its sheet's frame (o the back edge's -x end at the head,
+ * ex down the slope, ey across, ez up out of it). */
+static float deep_awning(const NbPlan *p, float o[3], float ex[3], float ey[3], float ez[3], float *L) {
+    const float R = p->recess, H = p->head, ad = p->awning - 0.02f;
+    const float drop = minf(0.30f + 0.15f * hash_float(hash_combine(p->seed, 0xA7A1u)), H - 2.6f);
+    *L = sqrtf(ad * ad + drop * drop);
+    o[0] = p->roomX0 - DEEP_WALL + 0.04f; o[1] = H - 0.03f; o[2] = R + 0.02f;
+    ex[0] = 0.0f; ex[1] = -drop / *L; ex[2] = ad / *L;
+    ey[0] = 1.0f; ey[1] = 0.0f; ey[2] = 0.0f;
+    ez[0] = 0.0f; ez[1] = ad / *L; ez[2] = drop / *L;
+    return drop;
+}
+
+/* SF3: the deep unit's room (its walls tiled to the dado and painted over it in the body's coat, the floor's tiles
+ * round the kitchen's chequer plate, the ceiling in the trim coat with its battens), its shopfront on the building
+ * line (the frame in the trim coat: jambs over the room walls' ends, the head, mullions on the bay's thirds, the
+ * door's own mullion and transom; a stall riser and sill under the windows; the glass; the door: a glazed leaf, its
+ * pull handles, a kick plate, the threshold), the window ledge on its brackets, and the awning. The tables and seats
+ * are set down with the stools (nb_body). */
+static void deep_parts(Pm *pm, const NbPlan *p) {
+    const float R = p->recess, H = p->head, rx0 = p->roomX0, rx1 = p->roomX1, OX0 = rx0 - DEEP_WALL, OX1 = rx1 + DEEP_WALL;
+    const float zf = R - DEEP_FRAME, dado = 1.2f, sk = 0.004f;   /* the tiles stand 4 mm proud of the paint */
+    const int ds = p->doorSide;
+    const float d0 = p->shopDoor[0], d1 = p->shopDoor[1];
+    /* the walls: the coat full height, the tiles over it to the dado */
+    pm->part = 250;
+    pm_mat(pm, PMAT_PLATE);
+    bb(pm, OX0, 0.0f, 0.0f, rx0 - sk, H, zf, 0.0f);
+    bb(pm, rx1 + sk, 0.0f, 0.0f, OX1, H, zf, 0.0f);
+    bb(pm, rx0 - sk, 0.0f, 0.0f, rx1 + sk, H, 0.04f - sk, 0.0f);
+    pm_mat(pm, PMAT_TILE);
+    bb(pm, rx0 - sk, 0.0f, 0.04f, rx0, dado, zf, 0.0f);
+    bb(pm, rx1, 0.0f, 0.04f, rx1 + sk, dado, zf, 0.0f);
+    bb(pm, rx0, 0.0f, 0.04f - sk, rx1, dado, 0.04f, 0.0f);
+    /* the floor round the kitchen's plate: the room in front of it, the passage beside it, the strips round it */
+    {
+        const float kz = p->kz1 + 0.04f, px0 = ds > 0 ? p->x1 : rx0, px1 = ds > 0 ? rx1 : p->x0;
+        const float r[5][4] = { { rx0, kz, rx1, zf }, { px0, 0.04f, px1, kz }, { p->x0, 0.04f, p->kx0, kz },
+                                { p->kx1, 0.04f, p->x1, kz }, { p->kx0, 0.04f, p->kx1, p->lining } };
+        for (int k = 0; k < 5; ++k)
+            if (r[k][2] - r[k][0] > 0.005f && r[k][3] - r[k][1] > 0.005f) bb(pm, r[k][0], -0.02f, r[k][1], r[k][2], 0.0f, r[k][3], 0.0f);
+    }
+    pm->part = 251;
+    pm_mat(pm, PMAT_PAINTED);
+    bb(pm, OX0, H - 0.03f, 0.0f, OX1, H, zf, 0.0f);
+    /* the battens on the ceiling (the plan's last tubes) */
+    for (int i = p->ntube - p->roomTubes; i < p->ntube; ++i) {
+        const float *t = p->tube[i], z = t[2];
+        pm_mat(pm, PMAT_STEEL);
+        bb(pm, t[0] - 0.06f, H - 0.03f - 0.045f, z - 0.065f, t[3] + 0.06f, H - 0.03f, z + 0.065f, 0.003f);
+        pm_mat(pm, PMAT_TUBE);
+        bb(pm, t[0], t[1] - 0.012f, z - 0.045f, t[3], H - 0.075f, z + 0.045f, 0.004f);
+    }
+    /* the shopfront's frame: the jambs, the head, the mullions on the thirds, the door's mullion and transom */
+    pm->part = 252;
+    pm_mat(pm, PMAT_PAINTED);
+    const float fx0 = rx0 + 0.02f, fx1 = rx1 - 0.02f, yh = H - 0.10f, ys = 0.50f, yt = 2.15f;
+    bb(pm, OX0, 0.0f, zf, fx0, H, R, 0.003f);
+    bb(pm, fx1, 0.0f, zf, OX1, H, R, 0.003f);
+    bb(pm, fx0, yh, zf, fx1, H, R, 0.003f);
+    const float dm = ds > 0 ? d0 - 0.05f : d1;   /* the door's mullion: its -x edge */
+    const float mx[3] = { -1.025f, 0.975f, dm };
+    for (int k = 0; k < 3; ++k) bb(pm, mx[k], k == 2 ? 0.0f : ys, zf + 0.02f, mx[k] + 0.05f, yh, R - 0.02f, 0.002f);
+    const float tx0 = ds > 0 ? dm + 0.05f : fx0, tx1 = ds > 0 ? fx1 : dm;   /* the door's bay */
+    bb(pm, tx0, yt, zf + 0.02f, tx1, yt + 0.06f, R - 0.02f, 0.002f);
+    /* the riser and sill under the windows (not the door's bay) */
+    const float wx0 = ds > 0 ? fx0 : dm + 0.05f, wx1 = ds > 0 ? dm : fx1;
+    pm_mat(pm, PMAT_PLATE);
+    bb(pm, wx0, 0.0f, zf + 0.01f, wx1, ys - 0.05f, R - 0.005f, 0.003f);
+    pm_mat(pm, PMAT_PAINTED);
+    bb(pm, wx0, ys - 0.05f, zf, wx1, ys, R + 0.03f, 0.004f);
+    /* the glass: the windows between the mullions, the door's fanlight */
+    const float zg = R - 0.05f;
+    {
+        float e[6];
+        int ne = 0;
+        e[ne++] = wx0;
+        for (int k = 0; k < 2; ++k) if (mx[k] > wx0 && mx[k] < wx1) { e[ne++] = mx[k]; e[ne++] = mx[k] + 0.05f; }
+        e[ne++] = wx1;
+        for (int k = 0; k + 1 < ne; k += 2) pane(pm, e[k], ys, e[k + 1], yh, zg);
+    }
+    pane(pm, tx0, yt + 0.06f, tx1, yh, zg);
+    /* the door: a glazed leaf in its frame, handles both sides at its lock stile, a kick plate; the threshold */
+    pm->part = 253;
+    {
+        const float a = tx0, b = tx1, z0 = zf + 0.025f, z1 = R - 0.025f, st = 0.075f;
+        pm_mat(pm, PMAT_PAINTED);
+        bb(pm, a, 0.0f, z0, a + st, yt - 0.005f, z1, 0.003f);
+        bb(pm, b - st, 0.0f, z0, b, yt - 0.005f, z1, 0.003f);
+        bb(pm, a + st, yt - 0.085f, z0, b - st, yt - 0.005f, z1, 0.003f);
+        bb(pm, a + st, 0.0f, z0, b - st, 0.24f, z1, 0.003f);
+        pane(pm, a + st, 0.24f, b - st, yt - 0.085f, zg);
+        pm_mat(pm, PMAT_STAINLESS);
+        bb(pm, a + st, 0.02f, z1, b - st, 0.22f, z1 + 0.003f, 0.001f);
+        const float hx = ds > 0 ? a + 0.11f : b - 0.11f;   /* the lock stile: away from the hinges at the jamb */
+        for (int sd = 0; sd < 2; ++sd) {
+            const float zz = sd ? z1 + 0.05f : z0 - 0.05f, zb = sd ? z1 : z0;
+            pm_push(pm); pm_translate(pm, hx, 0.0f, zz); pm_cyl(pm, 0.86f, 1.36f, 0.014f, 12); pm_pop(pm);
+            for (int k = 0; k < 2; ++k) {
+                const float y = k ? 1.30f : 0.92f;
+                bb(pm, hx - 0.008f, y - 0.008f, minf(zz, zb), hx + 0.008f, y + 0.008f, maxf(zz, zb), 0.0f);
+            }
+        }
+        bb(pm, a, 0.0f, zf, b, 0.008f, R + 0.04f, 0.002f);
+    }
+    /* the window ledge (timber) on steel brackets */
+    pm->part = 254;
+    {
+        const float l0 = p->ledge[0] + 0.01f, l1 = p->ledge[1] - 0.01f, zl = p->ledge[2];
+        pm_mat(pm, PMAT_TIMBER);
+        bb(pm, l0, 1.02f, zl, l1, 1.05f, zf, 0.004f);
+        pm_mat(pm, PMAT_STEEL);
+        const int nbk = 2 + (int)((l1 - l0) / 1.4f);
+        for (int k = 0; k < nbk; ++k) {
+            const float x = l0 + 0.12f + (l1 - l0 - 0.24f) * (float)k / (float)(nbk - 1);
+            bb(pm, x - 0.006f, 0.80f, zf - 0.02f, x + 0.006f, 1.02f, zf, 0.0f);
+            const float a[3] = { x, 0.84f, zf - 0.01f }, b[3] = { x, 1.015f, zl + 0.04f };
+            pm_beam(pm, a, b, 0.012f, 0.02f, 0.001f, NULL);
+        }
+    }
+    /* the awning: the hood's metal sloping out from the head, a valance in the trim coat, cheeks, two arms */
+    if (p->awning > 0.0f) {
+        pm->part = 255;
+        float o[3], ex[3], ey[3], ez[3], L;
+        const float drop = deep_awning(p, o, ex, ey, ez, &L), W = OX1 - OX0 - 0.08f;
+        const float yf = o[1] - drop, zfr = R + p->awning;
+        pm_mat(pm, PMAT_RUST);
+        pm_push(pm);
+        pm_frame(pm, o, ex, ey, ez);
+        pm_sheet_wall(pm, L, W, 1.1f, THICK, 1);
+        pm_pop(pm);
+        pm_mat(pm, PMAT_PAINTED);
+        bb(pm, o[0], yf - 0.20f, zfr - 0.03f, o[0] + W, yf + 0.03f, zfr, 0.003f);
+        bb(pm, o[0], o[1] - 0.06f, R, o[0] + W, o[1], R + 0.05f, 0.003f);
+        for (int e = 0; e < 2; ++e) {
+            const float poly[3][2] = { { R + 0.02f, yf }, { zfr - 0.03f, yf }, { R + 0.02f, o[1] } };
+            const float oo[3] = { e ? o[0] + W : o[0] + 0.015f, 0.0f, 0.0f }, ax[3] = { 0, 0, 1 }, ay[3] = { 0, 1, 0 }, az[3] = { -1, 0, 0 };
+            pm_push(pm);
+            pm_frame(pm, oo, ax, ay, az);
+            pm_extrude(pm, poly, 3, 0.0f, 0.015f);
+            pm_pop(pm);
+        }
+        pm_mat(pm, PMAT_STEEL);
+        for (int e = 0; e < 2; ++e) {
+            const float x = e ? o[0] + W - 0.08f : o[0] + 0.08f;
+            const float a[3] = { x, yf - 0.55f, R + 0.03f }, b[3] = { x, yf - 0.02f, zfr - 0.08f };
+            pm_beam(pm, a, b, 0.03f, 0.03f, 0.003f, NULL);
+            bb(pm, x - 0.04f, yf - 0.62f, R, x + 0.04f, yf - 0.48f, R + 0.012f, 0.002f);
+        }
+    }
+}
+
+/* SF3: the deep unit's far shell: its shopfront, the windows one lit far window over the room, the awning. */
+static void shell_deep(Pm *pm, const NbPlan *p) {
+    const float R = p->recess, H = p->head, rx0 = p->roomX0, rx1 = p->roomX1, OX0 = rx0 - DEEP_WALL, OX1 = rx1 + DEEP_WALL;
+    const float zf = R - DEEP_FRAME, yh = H - 0.10f;
+    pm->part = 0;
+    pm_mat(pm, PMAT_PAINTED);
+    pm_box(pm, OX0, 0.0f, zf, rx0 + 0.02f, H, R);
+    pm_box(pm, rx1 - 0.02f, 0.0f, zf, OX1, H, R);
+    pm_box(pm, rx0 + 0.02f, yh, zf, rx1 - 0.02f, H, R);
+    const float dm = p->doorSide > 0 ? p->shopDoor[0] - 0.05f : p->shopDoor[1];
+    const float wx0 = p->doorSide > 0 ? rx0 + 0.02f : dm + 0.05f, wx1 = p->doorSide > 0 ? dm : rx1 - 0.02f;
+    pm_box(pm, -1.025f, 0.5f, R - 0.06f, -0.975f, yh, R - 0.02f);
+    pm_box(pm, 0.975f, 0.5f, R - 0.06f, 1.025f, yh, R - 0.02f);
+    pm_box(pm, dm, 0.0f, R - 0.06f, dm + 0.05f, yh, R - 0.02f);
+    pm_mat(pm, PMAT_PLATE);
+    pm_box(pm, wx0, 0.0f, zf, wx1, 0.5f, R);
+    far_window(pm, rx0 + 0.02f, 0.5f, rx1 - 0.02f, yh, R - 0.05f);
+    far_window(pm, p->doorSide > 0 ? dm + 0.05f : rx0 + 0.02f, 0.0f, p->doorSide > 0 ? rx1 - 0.02f : dm, 0.5f, R - 0.05f);
+    if (p->awning > 0.0f) {
+        float o[3], ex[3], ey[3], ez[3], L;
+        const float drop = deep_awning(p, o, ex, ey, ez, &L), W = OX1 - OX0 - 0.08f;
+        const float a[3] = { o[0] + 0.5f * W, o[1] - 0.005f, o[2] }, b[3] = { o[0] + 0.5f * W, o[1] - drop - 0.005f, R + p->awning };
+        pm_mat(pm, PMAT_RUST);
+        pm_beam(pm, a, b, W, 0.01f, 0.0f, ez);
+        pm_mat(pm, PMAT_PAINTED);
+        pm_box(pm, o[0], o[1] - drop - 0.20f, R + p->awning - 0.03f, o[0] + W, o[1] - drop + 0.03f, R + p->awning);
+    }
+}
+
 static void form_parts(Pm *pm, const NbPlan *p) {
+    if (p->deep) deep_parts(pm, p);
+    else if (p->inset) inset_parts(pm, p);
+    else if (p->recess > 0.0f) recess_parts(pm, p);
     if (p->form == NB_HATCH) { hatch_front(pm, p); side_door(pm, p); }
     if (p->form == NB_ARCADE) arcade_parts(pm, p);
     if (p->form == NB_TIERED) tiered_upper(pm, p);
@@ -1699,6 +2269,18 @@ void nb_body(Pm *pm, const NbPlan *p) {
     kitchen(pm, p, &line);
     /* the stools, the bell and the A-frame */
     for (int i = 0; i < p->nstool; ++i) { pm->part = (uint8_t)(170 + i); put(pm, p->stool[i][0], 0.0f, p->stool[i][1], 0.0f, PMK_STOOL); }
+    /* SF3: the deep unit's tables, each with chopsticks and a jar of chilli oil, and their low stools */
+    for (int i = 0; i < p->ntable; ++i) {
+        const float x = p->table[i][0], z = p->table[i][1], yaw = 0.3f * (hash_float(hash_combine(p->seed, 0x7AB0u + (uint32_t)i)) - 0.5f);
+        pm->part = (uint8_t)(220 + i);
+        put(pm, x, 0.0f, z, 0.0f, PMK_CAFE_TABLE);
+        put(pm, x - 0.13f, 0.74f, z + 0.09f, 0.0f, PMK_CHOPSTICKS);
+        put(pm, x + 0.12f, 0.74f, z - 0.08f, yaw, PMK_JAR_OIL);
+    }
+    for (int i = 0; i < p->nseat; ++i) {
+        pm->part = (uint8_t)(226 + (i & 3));
+        put(pm, p->seat[i][0], 0.0f, p->seat[i][1], 0.5f * hash_float(hash_combine(p->seed, 0x5EA7u + (uint32_t)i)), PMK_LOW_STOOL);
+    }
     pm->part = 190;
     put(pm, p->bell[0], p->bell[1], p->bell[2], 0.0f, PMK_BELL);
     pm->part = 191;
@@ -1723,6 +2305,28 @@ static void far_window(Pm *pm, float x0, float y0, float x1, float y1, float z) 
 /* The far shell's form parts (SF2): the kiosk's header, lit window and sill; the arcade's header and returns;
  * the tiered kiosk's upper tier with its lit band. */
 static void shell_form(Pm *pm, const NbPlan *p) {
+    if (p->inset) {   /* SF3: the soffit, the header panels, the pier */
+        const int s = p->inset;
+        const float sf = (float)s, R = p->recess, H = p->head, P = INSET_PIER, hy = p->panel;
+        const float xB = sf * (0.5f * p->w - 0.05f), xo = s > 0 ? p->x0 : p->x1, xp = xB - sf * P;
+        pm_mat(pm, PMAT_PLATE);
+        pm_box(pm, minf(xo, xB - sf * 0.01f), H - 0.03f, 0.0f, maxf(xo, xB - sf * 0.01f), H, R - 0.03f);
+        pm_mat(pm, PMAT_PAINTED);
+        if (H - hy > 0.06f) {
+            pm_box(pm, minf(xo, xp), hy, R - 0.035f, maxf(xo, xp), H, R - 0.005f);
+            pm_box(pm, minf(xB - sf * 0.005f, xB - sf * 0.035f), hy, p->lining, maxf(xB - sf * 0.005f, xB - sf * 0.035f), H, R - P);
+        }
+        pm_box(pm, minf(xp, xB - sf * 0.01f), 0.0f, R - P, maxf(xp, xB - sf * 0.01f), H, R - 0.01f);
+    } else if (p->recess > 0.0f) {   /* SF3: the soffit, the header and the frame (the opening is in the base layer) */
+        const float R = p->recess, H = p->head, hy = nb_hood_under(p, R - p->lining);
+        pm_mat(pm, PMAT_PLATE);
+        pm_box(pm, p->x0, H - 0.03f, 0.0f, p->x1, H, R - 0.03f);
+        pm_mat(pm, PMAT_PAINTED);
+        if (H - hy > 0.06f) pm_box(pm, p->x0, hy, R - 0.03f, p->x1, H, R);
+        pm_box(pm, p->x0, 0.0f, R, p->x0 + 0.06f, H, R + 0.025f);
+        pm_box(pm, p->x1 - 0.06f, 0.0f, R, p->x1, H, R + 0.025f);
+        pm_box(pm, p->x0 + 0.06f, H - 0.08f, R, p->x1 - 0.06f, H, R + 0.025f);
+    }
     if (p->form == NB_HATCH) {
         const float z = p->front, hf = nb_hood_under(p, z - p->lining);
         pm_mat(pm, PMAT_PLATE);
@@ -1752,6 +2356,7 @@ static void shell_form(Pm *pm, const NbPlan *p) {
 void nb_shell(Pm *pm, const NbPlan *p) {
     const PmHood *h = &p->hood;
     pm->part = 0;
+    if (p->deep) { shell_deep(pm, p); return; }   /* SF3: nothing of the bar shows through its far window */
     /* the hood: each leg one bay, four steps round the arc, the sheet's top and underside */
     pm_mat(pm, PMAT_RUST);
     float s0 = 0.0f;
@@ -2703,12 +3308,14 @@ int nb_solids(const NbPlan *p, float (*b)[4], int max) {
     } else if (p->form == NB_TIERED) {
         /* the counters' ring and the back wall's wings behind the side legs */
         ADD(p->x0 - 0.03f, 0.0f, p->x1 + 0.03f, p->front + 0.03f);
+    } else if (p->deep) {
+        ADD(p->roomX0 - DEEP_WALL, 0.0f, p->roomX1 + DEEP_WALL, p->recess);   /* SF3: the room, behind its glass */
     } else {
         ADD(p->x0, 0.0f, p->x1, p->front + 0.03f);
         if (p->form == NB_HATCH) ADD(minf(p->hatch[0], p->bell[0]) - 0.25f, p->front, maxf(p->hatch[1], p->bell[0]) + 0.25f, p->front + p->sill);
     }
     for (int i = 0; i < p->npost; ++i) ADD(p->post[i][0] - 0.06f, p->post[i][1] - 0.06f, p->post[i][0] + 0.06f, p->post[i][1] + 0.06f);
-    for (int i = 0; i < p->nstool; ++i) ADD(p->stool[i][0] - 0.2f, p->stool[i][1] - 0.2f, p->stool[i][0] + 0.2f, p->stool[i][1] + 0.2f);
+    for (int i = 0; i < p->nstool && !p->deep; ++i) ADD(p->stool[i][0] - 0.2f, p->stool[i][1] - 0.2f, p->stool[i][0] + 0.2f, p->stool[i][1] + 0.2f);
     if (p->aframeOn) {   /* its turned footprint's box */
         const float c = fabsf(cosf(p->aframe[2])), s = fabsf(sinf(p->aframe[2]));
         const float hx = 0.32f * c + 0.22f * s, hz = 0.32f * s + 0.22f * c;

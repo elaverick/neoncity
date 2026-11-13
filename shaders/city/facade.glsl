@@ -227,6 +227,9 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
         vec3 spec;
         vec3 diffL = wallLighting(p, n, V, 20.0, 0.1, vAbs, spec);
         vec3 wallC = mix(wallAlb * wallTint * 0.8, grafOnWall, grafWall) * diffL + spec;
+        // SF3: the stretches of a corner shop an inset corner unit took over that it doesn't open (its pier, its side
+        // bay past its lining: emit_walls' shut pieces, 64) are the building's wall, the shop's window gone
+        if ((prm.w & 64u) != 0u) return wallC;
         if (lit) {
             Room r = makeRoom(h, 1.0, 0.0, true, shopColor(h));
             vec3 d = vec3(dot(-V, T), -V.y, -dot(-V, n));

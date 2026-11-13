@@ -56,7 +56,7 @@ const BGraph *chunk_gen_graph(ChunkGen *g, int i) {
 void chunk_gen_free(ChunkGen *g) {
     if (g->graph) for (int i = 0; i < g->nb; ++i) free(g->graph[i]);
     free(g->graph);
-    free(g->pa); free(g->bld); free(g->bblk); free(g->lamp); free(g->vl);
+    free(g->pa); free(g->bld); free(g->bblk); free(g->lamp); free(g->vl); free(g->stall);
     memset(g, 0, sizeof(*g));
 }
 

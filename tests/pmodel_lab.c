@@ -366,7 +366,7 @@ static void render(Image *im, const PmMesh *m, int cx, int cy, int cw, int ch, i
 #define NB_FAR_BUDGET    500
 
 static void body_section(const char *out) {
-    static const struct { const char *name; float w, d, ceil; int form, side, host; uint32_t seed; } B[] = {
+    static const struct { const char *name; float w, d, ceil; int form, side, host; uint32_t seed; float recess; int site; } B[] = {
         { "straight (slice)", 3.85f, 3.48f, 0.0f, NB_STRAIGHT, 0, 1, 0x5EED01u },
         { "straight wide", 5.2f, 3.3f, 0.0f, NB_STRAIGHT, 0, 1, 0x5EED04u },
         { "corner right", 4.4f, 3.6f, 0.0f, NB_CORNER, 1, 1, 0x5EED02u },
@@ -380,7 +380,16 @@ static void body_section(const char *out) {
         { "arcade vault", 3.6f, 3.3f, 3.8f, NB_ARCADE, 0, 1, 0x5EED0Au },
         { "tiered lantern", 4.6f, 3.9f, 0.0f, NB_TIERED, 0, 0, 0x5EED0Bu },
         { "tiered plant", 4.6f, 3.9f, 0.0f, NB_TIERED, 0, 0, 0x5EED0Bu },
-        { "tiered both", 4.6f, 3.9f, 0.0f, NB_TIERED, 0, 0, 0x5EED0Bu } };
+        { "tiered both", 4.6f, 3.9f, 0.0f, NB_TIERED, 0, 0, 0x5EED0Bu },
+        /* SF3's sites: a shop bay's stall (stools; a standing counter), the deep shop unit (the arcade counter at
+         * the back of its room; with an awning), the inset corner unit in a building's corner shop (a whole bay; a
+         * short one under a high head) */
+        { "shop bay", 5.5f, 3.9f, 3.6f, NB_STRAIGHT, 0, 1, 0x5EED0Cu, 2.45f, 0 },
+        { "shop standing", 5.5f, 2.95f, 4.4f, NB_STRAIGHT, 0, 1, 0x5EED0Du, 2.45f, 0 },
+        { "shop deep", 5.5f, 5.8f, 3.4f, NB_ARCADE, 0, 1, 0x5EED0Eu, 5.2f, NB_SITE_DEEP },
+        { "shop deep awning", 5.5f, 6.5f, 4.3f, NB_ARCADE, 0, 1, 0x5EED0Fu, 5.5f, NB_SITE_DEEP },
+        { "corner inset", 5.8f, 3.6f, 3.6f, NB_CORNER, 1, 1, 0x5EED10u, 3.55f, NB_SITE_CORNER_POS },
+        { "corner inset short", 4.2f, 3.4f, 4.6f, NB_CORNER, -1, 1, 0x5EED11u, 3.35f, NB_SITE_CORNER_NEG } };
     const int nb = (int)(sizeof(B) / sizeof(B[0]));
     const int BW = 620, BH = 460;
     Image im = { 0, 0, NULL };
@@ -394,7 +403,7 @@ static void body_section(const char *out) {
         nb_force_upper(strstr(B[b].name, "lantern") ? NB_UPPER_LANTERN : strstr(B[b].name, "plant") ? NB_UPPER_PLANT :
                        strstr(B[b].name, "both") ? NB_UPPER_BOTH : -1);
         for (int t = 0; t < 64; ++t, seed += 7919u) {   /* a seed whose plan turns the corner the way asked */
-            fits = nb_plan_site(&p, B[b].w, B[b].d, B[b].ceil, seed, B[b].form, VT_NOODLE, 0.5f, B[b].host);
+            fits = nb_plan_site(&p, B[b].w, B[b].d, B[b].ceil, seed, B[b].form, VT_NOODLE, 0.5f, B[b].host | B[b].site, B[b].recess);
             if (!B[b].side || p.side == B[b].side) break;
         }
         CHECK(fits, "body %s: the plan doesn't fit its %.2f x %.2f m site", B[b].name, B[b].w, B[b].d);
@@ -414,7 +423,7 @@ static void body_section(const char *out) {
         PmStats s, s2;
         pm_stats(&m, &s);
         NbPlan q;
-        nb_plan_site(&q, B[b].w, B[b].d, B[b].ceil, seed, B[b].form, VT_NOODLE, 0.5f, B[b].host);
+        nb_plan_site(&q, B[b].w, B[b].d, B[b].ceil, seed, B[b].form, VT_NOODLE, 0.5f, B[b].host | B[b].site, B[b].recess);
         pm_begin(&pm, &m2, &li2, PM_LOD0);
         nb_body(&pm, &q);
         nb_line_occluders(&q, &oc);
@@ -447,7 +456,7 @@ static void body_section(const char *out) {
         }
         CHECK(s.bad_normals == 0, "body %s: %d vertices whose normals disagree with their faces", B[b].name, s.bad_normals);
         /* SF2: the tiered kiosk (three counters, an upper tier) has a budget of its own */
-        const int sbud = B[b].form == NB_TIERED ? 24000 : NB_STRUCT_BUDGET, fbud = B[b].form == NB_TIERED ? 700 : NB_FAR_BUDGET;
+        const int sbud = B[b].form == NB_TIERED ? 24000 : B[b].recess > 0.0f ? 22000 : NB_STRUCT_BUDGET,   /* SF3: the widest, its jambs to the head */ fbud = B[b].form == NB_TIERED ? 700 : B[b].site & (NB_SITE_CORNER_POS | NB_SITE_CORNER_NEG) ? 600 : NB_FAR_BUDGET;   /* (SF3: the inset unit's two panels, eight stools) */
         CHECK(s.tris <= sbud, "body %s: %d structure triangles, over %d", B[b].name, s.tris, sbud);
         t0 = now_ms();
         pm_begin(&pm, &f, NULL, PM_LOD2);

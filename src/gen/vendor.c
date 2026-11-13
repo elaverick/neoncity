@@ -190,7 +190,7 @@ static int pick_trade(const VendorSite *s, int cls, Rng *r) {
         float aw = 0.0f;
         for (int a = 0; a < VA_COUNT; ++a) aw += arch_weight(s, cls, t, a);
         w[t] = aw > 0.0f ? by_affluence(V_TRADES[t].cls, s->affluence) * (s->lunch ? V_TRADES[t].lunch : 1.0f) : 0.0f;
-        if (s->archetype >= 0) w[t] *= V_TRADES[t].arch[s->archetype];
+        if (s->archetype >= 0) w[t] *= V_TRADES[t].arch[s->archetype == VA_ARCADE || s->archetype == VA_TIERED ? VA_CANOPY : s->archetype];
     }
     int t = v_pick(r, w, VT_COUNT);
     return t < 0 ? VT_NOODLE : t;

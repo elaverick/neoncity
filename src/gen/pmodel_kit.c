@@ -302,6 +302,47 @@ static void m_stool(Pm *pm) {
     if (L0) { pm_push(pm); pm_translate(pm, 0, 0.7105f, 0); pm_torus(pm, 0.1845f, 0.0035f, 32, 6); pm_pop(pm); }
 }
 
+/* SF3: a cafe table (the deep shop unit's room): a 0.6 m square stainless top at 0.74 m on a steel frame, a 76 mm
+ * pedestal, a cross foot of two flat bars on rubber pads. */
+static void m_cafe_table(Pm *pm) {
+    const float e = 0.3f, ty = 0.74f;
+    pm_mat(pm, PMAT_STAINLESS);
+    { float c[3] = { 0.0f, ty - 0.016f, 0.0f }, h[3] = { e, 0.016f, e }; pm_bbox(pm, c, h, L2 ? 0.0f : 0.008f, L0 ? 2 : 1); }
+    pm_mat(pm, PMAT_STEEL);
+    { float c[3] = { 0.0f, ty - 0.05f, 0.0f }, h[3] = { 0.2f, 0.018f, 0.2f }; pm_bbox(pm, c, h, 0.002f, 1); }
+    PmProf col[6] = { { 0, 0.034f, 0 }, { 0.038f, 0.034f, 0 }, { 0.038f, ty - 0.074f, 0 }, { 0.06f, ty - 0.072f, 1 }, { 0.06f, ty - 0.066f, 0 }, { 0, ty - 0.066f, 0 } };
+    lathe(pm, col, 6, 20);
+    for (int k = 0; k < 2; ++k) {
+        float a[3] = { k ? 0.0f : -0.27f, 0.019f, k ? -0.27f : 0.0f }, b[3] = { k ? 0.0f : 0.27f, 0.019f, k ? 0.27f : 0.0f };
+        pm_beam(pm, a, b, 0.05f, 0.03f, 0.003f, NULL);
+    }
+    pm_mat(pm, PMAT_RUBBER);
+    for (int k = 0; k < 4; ++k) {
+        const float x = k == 0 ? -0.25f : k == 1 ? 0.25f : 0.0f, z = k == 2 ? -0.25f : k == 3 ? 0.25f : 0.0f;
+        pm_push(pm); pm_translate(pm, x, 0.0f, z); pm_cyl(pm, 0.0f, 0.0045f, 0.018f, pm_segs(pm, 10, 4)); pm_pop(pm);
+    }
+}
+
+/* SF3: a low stool (at the deep shop unit's tables): a 0.32 m round seat at 0.45 m in the trim coat, four splayed
+ * steel legs, a ring between them, rubber feet. */
+static void m_low_stool(Pm *pm) {
+    pm_mat(pm, PMAT_PAINTED);
+    PmProf s[6] = { { 0, 0.422f, 0 }, { 0.148f, 0.422f, 0 }, { 0.16f, 0.43f, 0 }, { 0.16f, 0.444f, 0 }, { 0.152f, 0.45f, 0 }, { 0, 0.45f, 0 } };
+    lathe(pm, s, 6, 24);
+    pm_mat(pm, PMAT_STEEL);
+    for (int k = 0; k < 4; ++k) {
+        const float a = 0.25f * PI_F + 0.5f * PI_F * (float)k, c = cosf(a), sn = sinf(a);
+        float p0[3] = { 0.10f * c, 0.424f, 0.10f * sn }, p1[3] = { 0.165f * c, 0.012f, 0.165f * sn };
+        pm_beam(pm, p0, p1, 0.022f, 0.022f, 0.004f, NULL);
+        if (!L2) {
+            pm_mat(pm, PMAT_RUBBER);
+            pm_push(pm); pm_translate(pm, 0.166f * c, 0.0f, 0.166f * sn); pm_cyl(pm, 0.0f, 0.014f, 0.016f, pm_segs(pm, 10, 4)); pm_pop(pm);
+            pm_mat(pm, PMAT_STEEL);
+        }
+    }
+    pm_push(pm); pm_translate(pm, 0.0f, 0.16f, 0.0f); pm_torus(pm, 0.141f, 0.007f, pm_segs(pm, 20, 8), L2 ? 3 : 5); pm_pop(pm);
+}
+
 /* ----------------------------------------------------------- the pots --- */
 static void loop_handle(Pm *pm, float R, float y, float side, float span, float out, float r) {
     PmPath pa;
@@ -1366,6 +1407,8 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_ICON_CHESTNUT] = { "icon_chestnut",  m_icon_chestnut,   { 4000, 1800, 800 }, 1 },
     [PMK_ICON_TEAPOT  ] = { "icon_teapot",    m_icon_teapot,     { 4000, 1800, 800 }, 1 },
     [PMK_ICON_FLAME   ] = { "icon_flame",     m_icon_flame,      { 4000, 1800, 800 }, 1 },
+    [PMK_CAFE_TABLE   ] = { "cafe_table",     m_cafe_table,      { 2600, 800, 300 }, 1 },
+    [PMK_LOW_STOOL    ] = { "low_stool",      m_low_stool,       { 2400, 900, 300 }, 1 },
 };
 
 int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CUP) || (id >= PMK_ICON_SKEWER && id <= PMK_ICON_FLAME); }

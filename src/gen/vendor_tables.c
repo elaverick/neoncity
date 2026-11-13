@@ -57,9 +57,9 @@ const VTradeInfo V_TRADES[VT_COUNT] = {
  * ceiling: fits), the tiered kiosk (forced only until SF3)
  *                                           canopy hatch  leanto box   pair  market barrow arcade tiered */
 const float V_ARCH_CLASS[VC_COUNT][VA_COUNT] = {
-    { 1.0f, 0.8f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f },
-    { 1.1f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f },
-    { 0.9f, 1.3f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f },   /* wealthy: more kiosks (refs 3-4) */
+    { 1.0f, 0.8f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f },   /* (the tiered kiosk only where a site asks: fits) */
+    { 1.1f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f },
+    { 0.9f, 1.3f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f },   /* wealthy: more kiosks (refs 3-4) */
 };
 const float V_ARCH_SITE[VSITE_COUNT][VA_COUNT] = {
     { 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },   /* kerb: kiosks, the walk kept clear (the user, SF2) */
@@ -69,6 +69,8 @@ const float V_ARCH_SITE[VSITE_COUNT][VA_COUNT] = {
     { 1.2f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* pocket market */
     { 0.8f, 1.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* lunch plaza */
     { 1.5f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* arcology */
+    { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },   /* SF3: a shop bay (the recessed bar, the deep unit) */
+    { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },   /* SF3: a building's corner (the corner bar) */
 };
 const float V_ARCH_LUNCH[VA_COUNT] = { 0.9f, 1.4f, 0.3f, 1.4f, 1.0f, 1.3f, 1.2f, 1.0f, 1.0f };
 
@@ -214,7 +216,7 @@ int vendor_class(float a) { return a < 1.0f / 3.0f ? VC_POOR : a < 2.0f / 3.0f ?
 static const char *const ARCH_NAME[VA_COUNT] = { "canopy bar", "hatch kiosk", "lean-to", "container shop",
                                                  "container pair", "market stall", "hand barrow", "arcade counter", "tiered kiosk" };
 static const char *const CLASS_NAME[VC_COUNT] = { "poor", "middling", "wealthy" };
-static const char *const SITE_NAME[VSITE_COUNT] = { "kerb", "apron", "lane", "court", "pocket market", "lunch plaza", "arcology" };
+static const char *const SITE_NAME[VSITE_COUNT] = { "kerb", "apron", "lane", "court", "pocket market", "lunch plaza", "arcology", "shop bay", "building corner" };
 static const char *const MOTIF_NAME[VM_COUNT] = { "serpent", "bowl", "fish", "cup", "bottle", "eye", "lotus", "sunburst", "gear", "leaf" };
 static const char *const TIER_NAME[VTIER_COUNT] = { "lean", "standard", "hero" };
 static const char *const HANG_NAME[VI_HANG_END - VI_PROP_END] = { "lantern", "dried bunch", "duck", "cable", "garment", "bunting", "tools", "joint", "umbrella" };

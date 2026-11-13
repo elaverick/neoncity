@@ -26,7 +26,9 @@
  * Sites are a pure function of the plan: a block's are planned whole, whichever
  * chunk asks, and each belongs to the chunk holding its middle. */
 
-#define SPACE_KERB        SPACE_KINDS   /* VendorSpot.space: a kerb pitch */
+#define SPACE_KERB        SPACE_KINDS        /* VendorSpot.space: a kerb pitch */
+#define SPACE_SHOP        (SPACE_KINDS + 1)  /* SF3: a stall taking over a lit shop bay (VendorSpot.bseed...) */
+#define SPACE_CORNER      (SPACE_KINDS + 2)  /* SF3: the inset corner unit taking over a lit corner shop */
 #define VENDOR_WALK_KERB  1.8f          /* the sidewalk kept clear behind a kerb pitch */
 #define VENDOR_WALK_LOT   1.5f          /* the way kept clear in front of a stall in a lane, court or market */
 #define VENDOR_REACH      8.0           /* how far a site reaches from its middle, at most (m) */
@@ -66,12 +68,29 @@ typedef struct VendorSpot {
     float    walk;        /* the way kept clear in front of it, m */
     uint32_t group;       /* its group: ... */
     uint16_t member, members;   /* ...and its place in it, in the order they are generated */
-    uint8_t  space;       /* SPACE_* or SPACE_KERB */
+    uint8_t  space;       /* SPACE_* or SPACE_KERB, SPACE_SHOP, SPACE_CORNER */
+    /* SF3, a shop bay's stall: the bay it takes over (its building's seed, section, outer face, 6 m bay: as
+     * city_shop_hash keys it) and the opening's head, the building's local y (emit_walls cuts the opening); an
+     * inset corner unit's front face's bay, and its side face's (bface2, bseg2) */
+    uint32_t bseed;
+    uint8_t  bsec, bface, bseg, bface2, bseg2;
+    float    head;
 } VendorSpot;
 #define MAX_VENDOR_SPOTS 256   /* in one chunk */
 
 /* The sites in chunk (cx, cz). */
 int  city_chunk_vendor_spots(int cx, int cz, VendorSpot *out, int max);
+/* SF3: the shop bay's stall (or inset corner unit) taking over bay (seed, section, face, seg), if any (else NULL),
+ * among n spots. */
+const VendorSpot *vendor_stall_at(const VendorSpot *s, int n, uint32_t bseed, int sec, int face, int seg);
+/* SF3: the opening a stall cuts in that bay (u0..u1 along the face, faceLen long), and the stretches of the bay left
+ * plain wall, its shop's window gone (sh[i] from..to, *nsh of them, at most 2: an inset corner unit's pier, and its
+ * side face past its lining). 0 if it isn't the stall's bay. */
+int  vendor_stall_opening(const VendorSpot *v, int face, int seg, float faceLen, float *u0, float *u1, float (*sh)[2], int *nsh);
+/* SF3: where the shop's neon board goes on a recessed stall's (or an inset corner unit's) header panel (the user, on
+ * SF3's first board): its bottom and top over the stall's floor; 0 if the stall has none (a deep unit's board stays
+ * over its shopfront). */
+int  vendor_stall_board(const VendorSpot *s, float *y0, float *y1);
 /* The sites whose middles lie within `grow` m of chunk (cx, cz), planned from
  * that chunk's own view of the plan (city_test compares them across chunks). */
 int  city_vendor_spots_near(int cx, int cz, double grow, VendorSpot *out, int max);

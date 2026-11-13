@@ -153,7 +153,9 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
         Interiors in;
         interiors_plan(b, bg, &in);
         m->footing = 1;
-        emit_building(m, b, bg, &in);
+        int nst;
+        const VendorSpot *st = chunk_gen_stalls(&g, &nst);
+        emit_building(m, b, bg, &in, st, nst);
         m->footing = 0;
         interiors_free(&in);
         m->xf = 0;

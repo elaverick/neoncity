@@ -276,6 +276,9 @@ enum {
     /* SF1's neon icons (as NB6's) */
     PMK_ICON_SKEWER, PMK_ICON_DUMPLING, PMK_ICON_KEBAB, PMK_ICON_BURGER, PMK_ICON_HOTDOG, PMK_ICON_DRUMSTICK,
     PMK_ICON_FRIES, PMK_ICON_TACO, PMK_ICON_CREPE, PMK_ICON_CHESTNUT, PMK_ICON_TEAPOT, PMK_ICON_FLAME,
+    /* SF3, the deep shop unit's room: a cafe table (a 0.6 m square stainless top at 0.74 m on a pedestal and a
+     * cross foot) and a low stool (a round seat at 0.45 m on four splayed legs with a ring), on y 0, centred */
+    PMK_CAFE_TABLE, PMK_LOW_STOOL,
     PMK_COUNT
 };
 typedef struct PmModuleDef {

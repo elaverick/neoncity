@@ -41,7 +41,11 @@
  *   NB_ARCADE    the counter under an arcade or a vault (a site with a ceiling): no hood, a flat soffit deck
  *                and a deep header across the front, hung from the ceiling;
  *   NB_TIERED    the tiered kiosk round a column: the hood round three sides on a U spine, counters on three
- *                runs, an upper tier on the deck round the column (forced only until SF3 finds columns). */
+ *                runs, an upper tier on the deck round the column (forced only: the user turned down SF3's
+ *                kiosks at the arcades' columns).
+ * SF3 adds the shop bay's forms: the straight form recessed into a bay (NbPlan.recess), the deep shop unit
+ * (NbPlan.deep: a room behind the bay's glazed shopfront, the arcade counter's serving bar at its back), and the
+ * inset corner unit (NbPlan.inset: the corner form set into a building's corner shop, open on both faces). */
 enum { NB_STRAIGHT = 0, NB_CORNER, NB_HATCH, NB_ARCADE, NB_TIERED, NB_FORMS };
 const char *nb_form_name(int form);
 /* SF2 (the user asked for variations): what the tiered kiosk's upper tier is. A ventilation lantern (slatted
@@ -60,6 +64,8 @@ int         nb_form_by_name(const char *name);   /* -1 if none */
  * kitchen's back lining (stainless), or a freestanding form's back cladding (painted sheet, seen from outside) */
 enum { NB_WALL_SIDE = 0, NB_WALL_LINING, NB_WALL_CLAD };
 #define NB_STOOLS_MAX  12
+#define NB_TABLES_MAX  4      /* SF3: the deep shop unit's tables and their low stools */
+#define NB_SEATS_MAX   16
 #define NB_TUBES_MAX   6
 #define NB_ICONS_MAX   6
 #define NB_SOLIDS_MAX  20
@@ -89,6 +95,29 @@ typedef struct NbPlan {
      * (NB_UPPER_*) */
     float    upper[6];
     uint8_t  upperKind;
+    /* SF3: a shop bay's stall: z of the building line (its kitchen behind it, its front on it; 0: none), the
+     * opening's head (the soffit closing the recess, the header panel's top) and the header panel's bottom (the
+     * shop's board goes between: vendor_stall_board) */
+    float    recess, head, panel;
+    /* SF3, the inset corner unit (the user, on SF3's second board): a building's corner shop taken over by the
+     * corner form (form NB_CORNER, side = inset) set into it: the corner's side (+1 the site's +x end), 0 none. The
+     * front face's building line at recess, the side face's at x = inset * (w/2 - 0.05); the corner's pier
+     * (noodle_bar.c INSET_PIER) between the openings; the hood, the L counter and the stools all inside them. */
+    int8_t   inset;
+    /* SF3, the deep shop unit (deep; the user, on SF3's first board): a room from its back (z 0) to the bay's own
+     * glazed shopfront on the building line (recess), across roomX0..roomX1 (the room walls' inner faces), its
+     * ceiling the opening's head; the serving bar at its back is the arcade counter's (form NB_ARCADE: its deck
+     * and header hung from the ceiling), against the room wall away from the door; the door at the shopfront's
+     * doorSide end (+1 its +x end) from shopDoor[0] to [1]; the window ledge along the glazed thirds (ledge: x0,
+     * x1, its inner edge's z; the stools at it in stool[]); the tables (x, z, seats: 2 or 4) and their low stools
+     * (x, z); the awning out over the street (its depth; 0 none); the room's ceiling battens, the last roomTubes
+     * of tube[] (lit as the bar's tubes, fitted to the ceiling, not the fascia) */
+    uint8_t  deep;
+    int8_t   doorSide;
+    float    roomX0, roomX1, shopDoor[2], ledge[3], awning;
+    int      ntable; float table[NB_TABLES_MAX][3];
+    int      nseat;  float seat[NB_SEATS_MAX][2];
+    uint8_t  roomTubes;
     int      trade;                 /* VT_* (street_food.h, SF1): what the line cooks, its icons and menu */
     float    affluence;             /* the district's, 0..1: the clutter (SF1; the coat and hood: nb_finish) */
     uint32_t seed;
@@ -159,8 +188,17 @@ int  nb_plan(NbPlan *p, float w, float d, float ceiling, uint32_t seed, int form
 /* SF2: as nb_plan, for a site with or without a host wall behind it (nb_plan's have one; the straight form stands
  * freestanding without, the corner form needs one) and under a lane's vault or not (the arcade counter hangs its
  * header from a ceiling, but under a vault the ceiling's the girders' at its back: it stands it on posts). */
-enum { NB_SITE_HOST = 1, NB_SITE_VAULT = 2 };
-int  nb_plan_site(NbPlan *p, float w, float d, float ceiling, uint32_t seed, int form, int trade, float affluence, int site);
+/* SF3: NB_SITE_DEEP: the shop bay's deep unit (recess the room's depth; noodle_bar.h NbPlan.deep); NB_SITE_CORNER_POS,
+ * _NEG with a recess: the inset corner unit (NbPlan.inset), the building's corner at the site's +x (-x) end. */
+enum { NB_SITE_HOST = 1, NB_SITE_VAULT = 2, NB_SITE_DEEP = 4, NB_SITE_CORNER_POS = 8, NB_SITE_CORNER_NEG = 16 };
+/* SF3: recess > 0: a shop bay's stall, its back that far inside the building line (the straight form across the
+ * whole site, the ceiling the opening's head), or with NB_SITE_DEEP the deep unit's room. */
+int  nb_plan_site(NbPlan *p, float w, float d, float ceiling, uint32_t seed, int form, int trade, float affluence, int site,
+                  float recess);
+/* SF3: the inset corner unit's pier at the building's corner (square), and its lining's face from the site's back
+ * (the side face's opening runs back to it: src/city/vendor_sites.c vendor_stall_opening) */
+#define NB_INSET_PIER   0.30f
+#define NB_INSET_LINING 0.10f
 /* The neon icons a trade's fascia cycles through (PMK_ICON_*), up to 3; returns how many. */
 int  nb_trade_icons(int trade, int *out);
 /* Forces every plan's form (-1: chosen; NB_* where it fits), for captures (NeonCity --nbform). */

@@ -51,7 +51,11 @@ typedef struct ChunkGen {
     BGraph  **graph;        /* building graphs, generated on demand */
     struct VendorLight *vl; /* the vendors' lights (build_vendors gathers them, build_lights tables them) */
     int       nvl, capvl;
+    VendorSpot *stall;      /* SF3: the shop bays' stalls of the blocks round it (chunk_gen_stalls) */
+    int       nstall, stallDone;
 } ChunkGen;
+/* SF3: the stalls taking over shop bays in the blocks reaching within 16 m of g's chunk (planned once). */
+const VendorSpot *chunk_gen_stalls(ChunkGen *g, int *n);
 
 /* A vendor's light in the chunk's table (light_tiles.c: type 3 with VENDOR_LIGHT set), chunk-local, how far
  * it reaches, and for the rain's mist its power and facing. */
@@ -223,7 +227,8 @@ FaceKey face_key(const BLoop *l, int k, int base);
 int face_openings(const BGraph *g, const Behind *bh, int li, int k, float (*op)[3], int max);
 int envelope_spans(const BGraph *g, const Behind *bh, const BLoop *l, int li, int k, float (*span)[2], uint8_t *lined, int max);
 void emit_cap(Mesh *m, const BFoot *f, float y, int down, Mat mt);
-void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors *in);
+/* stalls: the shop bays' stalls round it (chunk_gen_stalls): each of its own cuts its bay's opening (SF3) */
+void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors *in, const VendorSpot *stalls, int nstalls);
 /* Are section s's upper floors open plan behind full-height glass (interior impostors)? */
 int open_plan_section(const BGraph *g, const BSection *s);
 /* Is (x, z) on the open roof of section si (not under anything standing on it)? */

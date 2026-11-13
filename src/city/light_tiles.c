@@ -101,6 +101,8 @@ static void air_light(Mesh *m, float x, float y, float z, float power, float nx,
 
 void build_lights(Mesh *m, ChunkGen *g) {
     if (!m->count) return;
+    int nstalls;
+    const VendorSpot *stalls = chunk_gen_stalls(g, &nstalls);   /* SF3: the shop bays they take over */
     float bx0 = m->mn[0], bz0 = m->mn[2], bx1 = m->mx[0], bz1 = m->mx[2];
     int cap = 1024, ns = 0;
     float top = -1e30f;   /* record 5: how high the fire's light reaches */
@@ -185,6 +187,7 @@ void build_lights(Mesh *m, ChunkGen *g) {
                     if (retail) {
                         h = city_shop_hash(b->seed, si, fk.face, seg, e.len, fk.next, fk.endConvex);
                         if (!city_shop_lit(h, b->shop)) continue;
+                        if (vendor_stall_at(stalls, nstalls, b->seed, si, k, seg)) continue;   /* SF3: a stall's (its own lights) */
                         h = (h & ~3u) | 2u;
                     }
                     float u = (u0 + u1) * 0.5f;

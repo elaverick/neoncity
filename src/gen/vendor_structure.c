@@ -113,7 +113,8 @@ static int build_kit(VGen *G, VFrame *F, int form) {
     float ceil = ceiling_of(v);
     NbPlan *p = &v->nb;
     if (!nb_plan_site(p, v->site.w, v->site.d, v->site.ceiling, v->site.seed, form, v->trade, v->site.affluence,
-                      (v->site.hostWall ? NB_SITE_HOST : 0) | (v->site.vaulted ? NB_SITE_VAULT : 0))) return 0;
+                      (v->site.hostWall ? NB_SITE_HOST : 0) | (v->site.vaulted ? NB_SITE_VAULT : 0) | (v->site.deep ? NB_SITE_DEEP : 0) |
+                      (v->site.corner > 0 ? NB_SITE_CORNER_POS : v->site.corner < 0 ? NB_SITE_CORNER_NEG : 0), v->site.recess)) return 0;
     if (p->top > ceil + 1e-3f) return 0;
     v->layout = p->form;
     v->variant = p->side > 0;
@@ -238,7 +239,7 @@ static int build_kit(VGen *G, VFrame *F, int form) {
         v_slot(v, VSL_WALL, w->o[0] + nx * 0.005f, 1.4f, w->o[1] + w->u[1] * 0.5f * w->len, nx, 0.0f, w->len - 0.3f, 1.2f);
     }
     float sw = 0.5f * (v->site.w - (p->x1 - p->x0));
-    if (sw > 0.8f) {
+    if (sw > 0.8f && !p->deep) {   /* (SF3: the deep unit's room has its tables there) */
         v_slot(v, VSL_GROUND, p->x0 - 0.5f * sw, 0.0f, 0.5f * p->front, 0.0f, 1.0f, sw - 0.1f, 1.6f);
         v_slot(v, VSL_GROUND, p->x1 + 0.5f * sw, 0.0f, 0.5f * p->front, 0.0f, 1.0f, sw - 0.1f, 1.6f);
     }

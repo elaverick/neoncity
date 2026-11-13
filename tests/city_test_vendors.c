@@ -87,7 +87,7 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
     enum { R = 4, W = 2 * R + 1, MAXS = MAX_VENDOR_SPOTS };
     static VendorSpot sp[W][W][MAXS], near[MAXS];
     static int ns[W][W];
-    int bySpace[SPACE_KINDS + 1] = { 0 }, total = 0;
+    int bySpace[SPACE_CORNER + 1] = { 0 }, total = 0, deep = 0;
     for (int j = 0; j < W; ++j)
         for (int i = 0; i < W; ++i) ns[j][i] = city_chunk_vendor_spots(hx - R + i, hz - R + j, sp[j][i], MAXS);
 
@@ -181,6 +181,7 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
                 const VendorSpot *s = &sp[j][i][k];
                 total++;
                 bySpace[s->space]++;
+                deep += s->site.deep;
                 hosts += s->site.hostWall;
                 lunch += s->site.lunch;
                 roofed += s->site.ceiling > 0.0f;
@@ -190,14 +191,30 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
                 /* walls: sample the site against the blocked cells (not grown) */
                 int hit = 0, wayHit = 0;
                 double wx = 0.0, wz = 0.0;
+                /* SF3: a shop bay's stall (or deep unit) stands in its building from the line back */
+                const double e0 = s->site.recess > 0.0f ? s->site.recess + 0.05 : 0.05;
+                if (s->space == SPACE_CORNER) {   /* SF3: an inset corner unit stands in its building: the sidewalk
+                                                   * outside its side face's opening (its front's is its way) */
+                    const double sd = s->site.corner, xb = sd * (0.5 * s->site.w - 0.05);
+                    const double z0 = NB_INSET_LINING + 0.1, z1 = s->site.recess - NB_INSET_PIER - 0.1;
+                    for (int b = 0; b <= 4 && !hit; ++b)
+                        for (int a = 0; a <= 8 && !hit; ++a) {
+                            double u = xb + sd * (0.15 + 0.75 * b / 4.0), e = z0 + (z1 - z0) * a / 8.0;
+                            double x = s->x + s->fz * u + s->fx * e, z = s->z - s->fx * u + s->fz * e;
+                            hit = vs_solid(x, z);
+                            if (hit) { wx = x; wz = z; }
+                        }
+                } else
                 for (int b = 0; b <= 8 && !hit; ++b)
                     for (int a = 0; a <= 8 && !hit; ++a) {
-                        double u = (a / 8.0 - 0.5) * (s->site.w - 0.1), e = 0.05 + (s->site.d - 0.1) * b / 8.0;
+                        double u = (a / 8.0 - 0.5) * (s->site.w - 0.1), e = e0 + (s->site.d - 0.05 - e0) * b / 8.0;
                         double x = s->x + s->fz * u + s->fx * e, z = s->z - s->fx * u + s->fz * e;
                         hit = vs_solid(x, z);
+                        if (hit) { wx = x; wz = z; }
                     }
                 walls += hit;
-                CHECK(!hit, "%s: %s site at (%.1f, %.1f) stands in a wall or a piece of street furniture (--cam %.2f %.2f %.1f -20)", where, vendor_space_name(s->space), mx, mz,
+                CHECK(!hit, "%s: %s%s site at (%.1f, %.1f) stands in a wall or a piece of street furniture at (%.2f, %.2f) (--cam %.2f %.2f %.1f -20)", where,
+                      vendor_space_name(s->space), s->site.deep ? " (deep)" : "", mx, mz, wx, wz,
                       mx + s->fx * (s->site.d + 3.0), mz + s->fz * (s->site.d + 3.0), atan2(-s->fx, s->fz) * 57.2958);
                 for (int b = 1; b <= 4 && !wayHit; ++b)
                     for (int a = 0; a <= 8 && !wayHit; ++a) {
@@ -215,7 +232,8 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
                     for (int di = -1; di <= 1; ++di)
                         for (int o = 0; o < ns[j + dj][i + di]; ++o) {
                             const VendorSpot *t = &sp[j + dj][i + di][o];
-                            if (t == s) continue;
+                            const int bay = (t->space == SPACE_SHOP || t->space == SPACE_CORNER) && (s->space == SPACE_SHOP || s->space == SPACE_CORNER);
+                            if (t == s || bay) continue;   /* bays side by side (an inset corner unit's among them) */
                             double w[4][2];
                             vendor_spot_corners(t, w);
                             double gap = vs_gap((const double (*)[2])v, 4, (const double (*)[2])w, 4);
@@ -232,18 +250,22 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
                     propsIn += in;
                     CHECK(!in, "%s: a piece of street furniture (kind %d) at (%.1f, %.1f) stands on a %s site or its way", where, pr[p].kind, pr[p].x, pr[p].z, vendor_space_name(s->space));
                 }
-                /* reachable: the way's middle reached from off the lots */
+                /* reachable: the way's middle reached from off the lots (at least 0.6 m out: the site's cells and the
+                 * walker's growth round them reach 0.5 m past its front on the grid, so an arcade's 0.4 m way, between
+                 * its colonnade's columns, is probed past them) */
                 if (s->space != SPACE_KERB) {
                     int ok = 0;
+                    const double probe = s->walk > 0.6f ? s->walk : 0.6;
                     for (int a = -2; a <= 2 && !ok; ++a)
-                        for (int b = 1; b <= 3 && !ok; ++b) {
-                            double u = a * s->site.w * 0.2, e = s->site.d + s->walk * b / 4.0;
+                        for (int b = 1; b <= 4 && !ok; ++b) {
+                            double u = a * s->site.w * 0.2, e = s->site.d + probe * b / 4.0 - (b == 4 ? 0.02 : 0.0);
                             double x = s->x + s->fz * u + s->fx * e, z = s->z - s->fx * u + s->fz * e;
                             int gi = (int)((x - G.x0) / G.h), gj = (int)((z - G.z0) / G.h);
                             ok = gi >= 0 && gj >= 0 && gi < G.nx && gj < G.nz && (G.m[(size_t)gj * G.nx + gi] & VS_REACHED);
                         }
                     cut += !ok;
-                    CHECK(ok, "%s: a %s site at (%.1f, %.1f) can't be reached from the street", where, vendor_space_name(s->space), mx, mz);
+                    CHECK(ok, "%s: a %s%s site at (%.1f, %.1f) can't be reached from the street (way %.2f deep)", where, vendor_space_name(s->space),
+                          s->site.deep ? " (deep)" : "", mx, mz, s->walk);
                 }
                 /* the grammar builds a valid vendor on it */
                 tried++;
@@ -266,8 +288,8 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
     free(pa);
     free(G.m);
     printf("vendor sites round %s (%d x %d chunks): %d: %d kerb, %d apron, %d lane, %d pocket market, %d plaza, %d court; "
-           "%d against a wall, %d under a roof, %d lunch\n", where, W - 4, W - 4, total, bySpace[SPACE_KERB], bySpace[SPACE_APRON],
-           bySpace[SPACE_LANE], bySpace[SPACE_POCKET], bySpace[SPACE_PLAZA], bySpace[SPACE_COURT], hosts, roofed, lunch);
+           "%d against a wall, %d under a roof, %d lunch; %d shop bays (%d deep), %d building corners\n", where, W - 4, W - 4, total, bySpace[SPACE_KERB], bySpace[SPACE_APRON],
+           bySpace[SPACE_LANE], bySpace[SPACE_POCKET], bySpace[SPACE_PLAZA], bySpace[SPACE_COURT], hosts, roofed, lunch, bySpace[SPACE_SHOP], deep, bySpace[SPACE_CORNER]);
     printf("  %d seen from a neighbour (%d differ); %d in walls, %d too close, %d ways blocked, %d cut off, %d with furniture on them; "
            "%d of %d built valid\n", seen, differ, walls, close, ways, cut, propsIn, built, tried);
     for (int k = 0; k < VSITE_COUNT; ++k) {
@@ -441,6 +463,45 @@ static int vendor_sites_cams(int argc, char **argv) {
     city_spawn(&sx, &sz, &yaw);
     if (argc > 3) { sx = atof(argv[2]); sz = atof(argv[3]); }
     check_vendor_sites((int)floor(sx / CHUNK_SIZE), (int)floor(sz / CHUNK_SIZE), "the spawn");
+    {   /* SF3: the nearest shop bays' stalls, deep units and corner bars, with views from the street */
+        int shown[3] = { 0, 0, 0 };
+        static const int most[3] = { 3, 4, 4 };
+        const int cx = (int)floor(sx / CHUNK_SIZE), cz = (int)floor(sz / CHUNK_SIZE);
+        static VendorSpot s[MAX_VENDOR_SPOTS];
+        for (int r = 0; r <= 8 && (shown[0] < most[0] || shown[1] < most[1] || shown[2] < most[2]); ++r)
+            for (int j = -r; j <= r; ++j)
+                for (int i = -r; i <= r; ++i) {
+                    if (abs(i) != r && abs(j) != r) continue;
+                    const int n = city_chunk_vendor_spots(cx + i, cz + j, s, MAX_VENDOR_SPOTS);
+                    for (int k = 0; k < n; ++k) {
+                        const VendorSpot *q = &s[k];
+                        const int c = q->space == SPACE_SHOP ? (q->site.deep ? 1 : 0) : q->space == SPACE_CORNER ? 2 : -1;
+                        if (c < 0 || shown[c] >= most[c]) continue;
+                        double mx, mz, tx, tz, ex, ez;
+                        vendor_spot_middle(q, &mx, &mz);
+                        double pitch = -8.0, h = 0.0;
+                        if (c == 0) {   /* from across its sidewalk, level: the board on its panel over the hood */
+                            vendor_spot_world(q, 0.0, q->site.recess, &tx, &tz);
+                            vendor_spot_world(q, 2.0, q->site.d + 5.0, &ex, &ez);
+                            pitch = 4.0;
+                        } else if (c == 1) {   /* from the sidewalk through its window, a little to one side */
+                            vendor_spot_world(q, 0.0, q->site.recess - 2.0, &tx, &tz);
+                            vendor_spot_world(q, 1.6, q->site.recess + 3.2, &ex, &ez);
+                        } else {   /* the inset corner unit: from diagonally across its corner, level, into both openings */
+                            const double xb = q->site.corner * (0.5 * q->site.w - 0.05);
+                            vendor_spot_world(q, xb - q->site.corner * 1.6, q->site.recess - 1.2, &tx, &tz);
+                            vendor_spot_world(q, xb + q->site.corner * 4.2, q->site.recess + 4.2, &ex, &ez);
+                            pitch = 0.0;
+                        }
+                        printf("  %s%s site %.1f x %.1f (recess %.2f, corner %d, ceiling %.2f, aff %.2f) at (%.1f, %.1f): --cam %.2f %.2f %.1f %.0f %.1f\n",
+                               vendor_space_name(q->space), c == 1 ? " (deep)" : "", q->site.w, q->site.d, q->site.recess, q->site.corner,
+                               q->site.ceiling, q->site.affluence, mx, mz, ex, ez, atan2(tx - ex, -(tz - ez)) * 57.2958, pitch, h);
+                        const double fx = mx + q->fx * 35.0, fz = mz + q->fz * 35.0;
+                        printf("    from 35 m: --cam %.2f %.2f %.1f -3\n", fx, fz, atan2(mx - fx, -(mz - fz)) * 57.2958);
+                        shown[c]++;
+                    }
+                }
+    }
     static const int kinds[4] = { SPACE_LANE, SPACE_POCKET, SPACE_PLAZA, SPACE_APRON };
     for (int k = 0; k < 4; ++k) {
         double x, z;
@@ -540,7 +601,11 @@ static int vs_probe(double x, double z) {
             for (int c = 0; c < L.ncoll; ++c) {
                 const CollPoly *cp = &L.coll[c];
                 if (vs_in_poly((const double (*)[2])&L.collv[cp->first], cp->n, x, z))
-                    printf("chunk (%d,%d) coll %d: %d points, first (%.2f, %.2f)\n", cx + di, cz + dj, c, cp->n, L.collv[cp->first][0], L.collv[cp->first][1]);
+                {
+                    printf("chunk (%d,%d) coll %d: %d points:", cx + di, cz + dj, c, cp->n);
+                    for (int q = 0; q < cp->n && q < 8; ++q) printf(" (%.2f, %.2f)", L.collv[cp->first + q][0], L.collv[cp->first + q][1]);
+                    printf("%s\n", c >= L.vcoll0 ? " (a vendor's)" : "");
+                }
             }
             for (int b = 0; b < L.nbuild; ++b) {
                 const Building *B = &L.build[b];

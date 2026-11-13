@@ -47,7 +47,11 @@ enum { VTIER_LEAN = 0, VTIER_STANDARD, VTIER_HERO, VTIER_COUNT };
 /* Where a vendor stands: by the kerb, on a frontage's apron, in a market
  * lane, in a court behind the buildings, on a lot left for a market, on an
  * office tower's forecourt (lunch), in an arcology. */
-enum { VSITE_KERB = 0, VSITE_APRON, VSITE_LANE, VSITE_COURT, VSITE_POCKET, VSITE_PLAZA, VSITE_ARCOLOGY, VSITE_COUNT };
+/* SF3: VSITE_SHOP a stall taking over a lit shop bay: its kitchen recessed into the building (VendorSite.recess), or
+ * a deep shop unit (VendorSite.deep: the bar at the back of a room behind the bay's own glazed shopfront);
+ * VSITE_CORNER the inset corner unit in a building's corner shop (VendorSite.corner: the corner's end; the L counter
+ * along both faces inside the building lines) */
+enum { VSITE_KERB = 0, VSITE_APRON, VSITE_LANE, VSITE_COURT, VSITE_POCKET, VSITE_PLAZA, VSITE_ARCOLOGY, VSITE_SHOP, VSITE_CORNER, VSITE_COUNT };
 
 /* Surfaces. The shell's are shaded procedurally in the shader (section 9:
  * corrugation, tile, plank, brick), coloured from the palette slot. */
@@ -156,6 +160,10 @@ typedef struct VendorSite {
     uint8_t  lunch;         /* a lunch stall for an office district */
     uint8_t  slice;         /* the noodle bar slice's site (vendor_sites.h VENDOR_SLICE_X; roadmap NB0) */
     uint8_t  vaulted;       /* SF2: under a lane's vault (its ceiling the girders' underside, higher in front) */
+    float    recess;        /* SF3: z of the building line (a shop bay's stall: its kitchen behind it), 0 none */
+    uint8_t  deep;          /* SF3: the shop bay's a deep unit: a room recess deep, the bar at its back */
+    int8_t   corner;        /* SF3: the inset corner unit (with recess): +1 the building's corner at the site's +x end,
+                             * -1 its -x end; 0 none */
     int8_t   archetype;     /* VA_*, or -1: chosen */
     int8_t   trade;         /* VT_*, or -1: chosen */
 } VendorSite;

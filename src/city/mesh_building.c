@@ -162,7 +162,7 @@ static Mat facade_mat(const Building *b, const BGraph *g, int si, const FaceKey 
 /* With a real interior behind it (bh), each face is cut round its openings
  * (a lobby's entrance, an arcology's portals), so you can walk in, and split
  * where something opaque stands against it, so the facade there is opaque. */
-static void emit_walls(Mesh *m, const Building *b, const BGraph *g, int si, const Behind *bh) {
+static void emit_walls(Mesh *m, const Building *b, const BGraph *g, int si, const Behind *bh, const VendorSpot *stalls, int nstalls) {
     const BSection *s = &g->sec[si];
     const BLoop *loops[2] = { &s->foot.outer, &s->foot.hole };
     int base = 0;
@@ -175,8 +175,27 @@ static void emit_walls(Mesh *m, const Building *b, const BGraph *g, int si, cons
             Xf sv = xf_save(m);
             float len = enter_face(m, l, k);
             int nop = face_openings(g, bh, li, k, op, 8);
+            /* SF3: the shop bays a stall takes over: the whole shop window, up to just over it (no step: the stall's
+             * counter stands on the building line); its head kept negative, so it is told apart. An inset corner
+             * unit's openings on both faces of its corner; its pier and the rest of its side face's bay shut (shut:
+             * the wall there full height, plain wall where its shop's window was: facade.glsl, prm.w's 64 on a
+             * storefront) */
+            uint8_t shut[8] = { 0 };
+            if (li == 0 && nstalls > 0 && bsec_grounded(s))
+                for (int seg = 0; (float)seg * 6.0f < fk.len && nop < 6; ++seg) {
+                    const VendorSpot *v = vendor_stall_at(stalls, nstalls, b->seed, si, k, seg);
+                    float u0, u1, sh[2][2];
+                    int nsh;
+                    if (!v || !vendor_stall_opening(v, k, seg, fk.len, &u0, &u1, sh, &nsh)) continue;
+                    op[nop][0] = u0; op[nop][1] = u1; op[nop][2] = -v->head; nop++;
+                    for (int q = 0; q < nsh; ++q)
+                        if (sh[q][1] > sh[q][0] + 1e-3f) { op[nop][0] = sh[q][0]; op[nop][1] = sh[q][1]; op[nop][2] = 0.0f; shut[nop] = 1; nop++; }
+                }
             for (int i = 0; i < nop; ++i)                     /* left to right */
-                for (int j = i; j > 0 && op[j][0] < op[j - 1][0]; --j) { float t[3]; memcpy(t, op[j], sizeof(t)); memcpy(op[j], op[j - 1], sizeof(t)); memcpy(op[j - 1], t, sizeof(t)); }
+                for (int j = i; j > 0 && op[j][0] < op[j - 1][0]; --j) {
+                    float t[3]; memcpy(t, op[j], sizeof(t)); memcpy(op[j], op[j - 1], sizeof(t)); memcpy(op[j - 1], t, sizeof(t));
+                    const uint8_t sh = shut[j]; shut[j] = shut[j - 1]; shut[j - 1] = sh;
+                }
             float span[64][2] = { { 0.0f, len } };
             uint8_t lined[64] = { 0 };
             int ns = bh ? envelope_spans(g, bh, l, li, k, span, lined, 64) : 1;
@@ -192,18 +211,20 @@ static void emit_walls(Mesh *m, const Building *b, const BGraph *g, int si, cons
                     int np = 1;
                     if (o < nop) {
                         pieces[1][0] = maxf(sa, op[o][0]); pieces[1][1] = minf(sb, op[o][1]);
-                        pieces[1][2] = op[o][2]; pieces[1][3] = s->y1; np = 2;
+                        pieces[1][2] = shut[o] ? s->y0 : fabsf(op[o][2]); pieces[1][3] = s->y1; np = 2;
                         cur = maxf(cur, op[o][1]);
                     }
                     for (int p = 0; p < np; ++p) {
                         float pa = pieces[p][0], pc = pieces[p][1], y0 = pieces[p][2], y1 = pieces[p][3];
                         if (pc - pa < 1e-3f || y1 - y0 < 1e-3f) continue;
                         float uv[4][2] = { { pa, pw }, { pc, pw }, { pc, pw }, { pa, pw } };
-                        emit_quad(m, v3(pa, y0, 0), v3(pc, y0, 0), v3(pc, y1, 0), v3(pa, y1, 0), v3(0, 0, 1), uv, mq);
+                        Mat mp = mq;
+                        if (p == 1 && shut[o]) mp.p[3] |= 64;
+                        emit_quad(m, v3(pa, y0, 0), v3(pc, y0, 0), v3(pc, y1, 0), v3(pa, y1, 0), v3(0, 0, 1), uv, mp);
                     }
                     /* the step up to the opening: from its sill (the floor) down to the ground,
                      * or a flight of steps out over the sidewalk where that is too high a step */
-                    if (o < nop && bsec_grounded(s)) {
+                    if (o < nop && !shut[o] && bsec_grounded(s) && op[o][2] > 0.0f) {
                         float pa = maxf(sa, op[o][0]), pc = minf(sb, op[o][1]);
                         float ga = mesh_ground_local(m, pa, 0.0f) + SIDEWALK_HEIGHT, gc = mesh_ground_local(m, pc, 0.0f) + SIDEWALK_HEIGHT;
                         if (pc - pa >= 1e-3f && minf(ga, gc) < s->y0 - 0.005f) {
@@ -544,7 +565,8 @@ static int face_toward(const Building *b, const EdgeInfo *e) {
 }
 
 /* Street-level signs on one ground-floor face (in the face's frame). */
-static void face_signs(Mesh *m, const Building *b, const BGraph *g, int si, const FaceKey *fk, float top, Rng *r) {
+static void face_signs(Mesh *m, const Building *b, const BGraph *g, int si, int k, const FaceKey *fk, float top, Rng *r,
+                       const VendorSpot *stalls, int nstalls) {
     const float gy = G0;
     float gh = g->groundH, fh = g->floorH;
     Face f = face_local(fk->len);
@@ -557,11 +579,33 @@ static void face_signs(Mesh *m, const Building *b, const BGraph *g, int si, cons
             float u0 = seg * 6.0f + 0.4f, u1 = minf(seg * 6.0f + 6.0f, f.width) - 0.4f;
             if (u1 - u0 < 2.6f) continue;
             uint32_t h = city_shop_hash(b->seed, si, fk->face, seg, fk->len, fk->next, fk->endConvex);
-            if (!city_shop_lit(h, b->shop) || hash_float(hash_combine(h, 0xB0A2u)) > 0.8f) continue;
+            if (!city_shop_lit(h, b->shop)) continue;
+            /* SF3 (the user, on the first board): a recessed stall's bay has its board on the stall's header panel,
+             * between its hood and the opening's head (a board of its own where the shop had none); the draws as
+             * every other board's, so the signs after it are the same */
+            const VendorSpot *st = nstalls ? vendor_stall_at(stalls, nstalls, b->seed, si, k, seg) : NULL;
+            float by0 = gy + gh - 1.3f, by1 = gy + gh - 0.35f, py0, py1;
+            const int panel = st && vendor_stall_board(st, &py0, &py1);
+            if (panel) {
+                const float fl = st->y - building_base(b);
+                by0 = fl + py0; by1 = fl + py1;
+                float a0, a1, sh[2][2];   /* an inset corner unit's: over its opening on this face */
+                int nsh;
+                if (st->space == SPACE_CORNER && vendor_stall_opening(st, k, seg, fk->len, &a0, &a1, sh, &nsh)) { u0 = a0 + 0.25f; u1 = a1 - 0.25f; }
+            }
+            if (hash_float(hash_combine(h, 0xB0A2u)) > 0.8f) {
+                if (panel) {
+                    const uint32_t hb = hash_combine(h, 0xB0A3u);
+                    emit_face_panel(m, &f, u0, u1, by0, by1, 0.14f,
+                                    mat(MAT_NEON, hb, (uint8_t)((hb & 7u) | (1 << 3)), q_half(u1 - u0), q_half(by1 - by0)));
+                }
+                continue;
+            }
             uint8_t col = (uint8_t)(rng_u32(r) & 7);
             uint8_t flick = (uint8_t)(rng_float(r) < 0.15f ? 1 : 0);
-            emit_face_panel(m, &f, u0, u1, gy + gh - 1.3f, gy + gh - 0.35f, 0.14f,
-                            mat(MAT_NEON, rng_u32(r), (uint8_t)(col | (1 << 3) | (flick << 6)), q_half(u1 - u0), q_half(0.95f)));
+            const uint32_t ns = rng_u32(r);
+            emit_face_panel(m, &f, u0, u1, by0, by1, 0.14f,
+                            mat(MAT_NEON, ns, (uint8_t)(col | (1 << 3) | (flick << 6)), q_half(u1 - u0), q_half(by1 - by0)));
         }
     }
 
@@ -808,21 +852,48 @@ static void emit_supports(Mesh *m, const BGraph *g) {
     }
 }
 
+/* SF3: the boards on the recessed stalls' header panels of a face that isn't onto a street (face_signs draws those
+ * of the street faces): by hash, the building's stream untouched. */
+static void stall_boards(Mesh *m, const Building *b, const BGraph *g, int si, int k, const FaceKey *fk, const VendorSpot *stalls, int nstalls) {
+    if (!nstalls || g->groundMode != GF_RETAIL || !b->shop) return;
+    Face f = face_local(fk->len);
+    for (int seg = 0; seg * 6.0f < f.width; ++seg) {
+        const VendorSpot *st = vendor_stall_at(stalls, nstalls, b->seed, si, k, seg);
+        float py0, py1;
+        if (!st || !vendor_stall_board(st, &py0, &py1)) continue;
+        float u0 = seg * 6.0f + 0.4f, u1 = minf(seg * 6.0f + 6.0f, f.width) - 0.4f, a0, a1, sh[2][2];
+        int nsh;
+        const float fl = st->y - building_base(b);
+        if (st->space == SPACE_CORNER && vendor_stall_opening(st, k, seg, fk->len, &a0, &a1, sh, &nsh)) { u0 = a0 + 0.25f; u1 = a1 - 0.25f; }
+        const uint32_t hb = hash_combine(city_shop_hash(b->seed, si, fk->face, seg, fk->len, fk->next, fk->endConvex), 0xB0A3u);
+        emit_face_panel(m, &f, u0, u1, fl + py0, fl + py1, 0.14f,
+                        mat(MAT_NEON, hb, (uint8_t)((hb & 7u) | (1 << 3)), q_half(u1 - u0), q_half(py1 - py0)));
+    }
+}
+
 /* Street-level signs on faces onto the street, and big elements on tall faces. */
-static void emit_street_signs(Mesh *m, const Building *b, const BGraph *g, Rng *rp) {
+static void emit_street_signs(Mesh *m, const Building *b, const BGraph *g, Rng *rp, const VendorSpot *stalls, int nstalls) {
     const float gy = G0;
     for (int si = 0; si < g->nsec; ++si) {
         const BSection *s = &g->sec[si];
         const BLoop *l = &s->foot.outer;
         for (int k = 0; k < l->n; ++k) {
             EdgeInfo e = edge_of(l, k);
-            if (!face_toward(b, &e)) continue;
             FaceKey fk = face_key(l, k, 0);
+            if (!face_toward(b, &e)) {
+                if (s->y0 <= gy + 0.01f && nstalls) {
+                    Xf sv = xf_save(m);
+                    enter_face(m, l, k);
+                    stall_boards(m, b, g, si, k, &fk, stalls, nstalls);
+                    xf_restore(m, sv);
+                }
+                continue;
+            }
             Xf sv = xf_save(m);
             enter_face(m, l, k);
             if (s->y0 <= gy + 0.01f) {
                 float px = e.ax + e.ex * e.len * 0.5f + e.ez * 0.3f, pz = e.az + e.ez * e.len * 0.5f - e.ex * 0.3f;
-                face_signs(m, b, g, si, &fk, facade_top(g, si, px, pz), rp);
+                face_signs(m, b, g, si, k, &fk, facade_top(g, si, px, pz), rp, stalls, nstalls);
                 if (g->groundMode == GF_LOBBY || g->groundMode == GF_DOUBLE) lobby_lights(m, g, si, k, e.len);
             }
             face_feature(m, g, s, e.len, rp);
@@ -875,14 +946,14 @@ static void emit_billboards(Mesh *m, const Building *b, const BGraph *g, Rng *rp
 /* Everything that makes up one building, in its own frame. The building's
  * stream r is drawn from in this order: roofs and tops section by section,
  * then signs, then billboards. */
-void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors *in) {
+void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors *in, const VendorSpot *stalls, int nstalls) {
     Rng r = rng_make(b->seed ^ 0x77u);
     int fins = 0, plant = bgen_industrial(g);
     float bay = bgen_bay_width(g->seed, g->fine);
     for (int si = 0; si < g->nsec; ++si) {
         if (!bsec_facade(&g->sec[si])) continue;   /* a plant's units and decks: emit_industry */
         Behind bh;
-        emit_walls(m, b, g, si, behind_of(in, si, &bh) ? &bh : NULL);
+        emit_walls(m, b, g, si, behind_of(in, si, &bh) ? &bh : NULL, stalls, nstalls);
         emit_section_caps(m, g, si, in);
         emit_face_trims(m, g, si, bay, &fins);
         emit_relief(m, g, si);
@@ -902,6 +973,6 @@ void emit_building(Mesh *m, const Building *b, const BGraph *g, const Interiors 
     }
     else emit_doors(m, g, in);
     for (int k = 0; k < in->n; ++k) emit_interior_doors(m, g, in->lay[k]);   /* the lobbies themselves: city_build_interiors */
-    emit_street_signs(m, b, g, &r);
+    emit_street_signs(m, b, g, &r, stalls, nstalls);
     emit_billboards(m, b, g, &r);
 }
