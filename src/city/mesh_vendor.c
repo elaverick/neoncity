@@ -82,14 +82,17 @@ int vendor_solids(const Vendor *v, VendorSolid *out, int max) {
     if (vendor_is_kit(v->archetype)) {
         /* a noodle bar: its plan's (the kitchen behind its counter, posts, column, stools, A-frame) */
         float b[NB_SOLIDS_MAX][4];
-        int nb = nb_solids(&v->nb, b, NB_SOLIDS_MAX);
+        uint8_t show[NB_SOLIDS_MAX];
+        const uint8_t hours = vendor_hours(v);
+        int nb = nb_solids_shown(&v->nb, b, show, NB_SOLIDS_MAX);
         for (int i = 0; i < nb && n < max; ++i) {
             VendorSolid *o = &out[n++];
             o->x0 = b[i][0]; o->z0 = b[i][1]; o->x1 = b[i][2]; o->z1 = b[i][3]; o->y = 0.0f; o->floor = 0;
+            o->show = show[i]; o->hours = hours;
         }
         return n;
     }
-#define ADD(a, b, c, d, yy, fl) do { if (n < max) { VendorSolid *o_ = &out[n++]; o_->x0 = (a); o_->z0 = (b); o_->x1 = (c); o_->z1 = (d); o_->y = (yy); o_->floor = (uint8_t)(fl); } } while (0)
+#define ADD(a, b, c, d, yy, fl) do { if (n < max) { VendorSolid *o_ = &out[n++]; o_->x0 = (a); o_->z0 = (b); o_->x1 = (c); o_->z1 = (d); o_->y = (yy); o_->floor = (uint8_t)(fl); o_->show = 0; o_->hours = 0; } } while (0)
     float body[2][4];
     int nb = 0;
     if (v->ncbox)
@@ -191,6 +194,7 @@ static void vendor_plumes(Mesh *m, const VendorSpot *s, const Vendor *v) {
         p->strength = e->strength;
         p->dir[0] = s->fx; p->dir[1] = s->fz;   /* the site's +z, out to the street */
         p->nknot = (uint32_t)e->nknot;
+        p->hours = vendor_hours(v);   /* SF4: none while shut (steam.vert) */
         for (int k = 0; k < e->nknot && k < PLUME_KNOTS; ++k) memcpy(p->knot[k], e->knot[k], sizeof(e->knot[k]));
         for (int k = 0; k < 3; ++k) memcpy(p->light[k], e->light[k], sizeof(e->light[k]));
     }
@@ -220,6 +224,7 @@ static void emit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
             VendorBodySpot *b = &m->vbody[m->nvbody++];
             b->x = (float)(mx - m->ox); b->z = (float)(mz - m->oz); b->y = s->y;
             b->r = 0.5f * sqrtf(s->site.w * s->site.w + s->site.d * s->site.d);
+            b->hours = vendor_hours(v);
         }
         vendor_emit_body(m, s, v, &E->shell, idx < VENDOR_BODIES_MAX ? 1 : 2, 0, idx);
         E->tris += (int)(E->shell.ni / 3);
@@ -325,7 +330,7 @@ static void build_vaults(Mesh *m, ChunkGen *g, PmMesh *pmm) {
                 l->seed = (uint8_t)hash_combine(V->seed, 0x1A0u + (uint32_t)b);
             }
         }
-        if (nl) vendor_light_list(g, m, &fr, L, nl);
+        if (nl) vendor_light_list(g, m, &fr, L, nl, 0);   /* the lane's: always lit */
     }
     free(cv);
 }

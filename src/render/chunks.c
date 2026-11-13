@@ -4,6 +4,7 @@
 #include "thread.h"
 #include "grass_gpu.h"
 #include "kit_gpu.h"
+#include "noodle_bar.h"
 
 #define MAX_ENTRIES    8192
 #define ENTRY_QUEUE_MIN 64                /* fewer entries free than this, nothing new is queued (queue_wanted) */
@@ -912,6 +913,7 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
     VkDrawIndirectCommand *cmds = (VkDrawIndirectCommand *)cs->indirect[slot].mapped;
     ChunkGPU *gpu = (ChunkGPU *)cs->chunkData[slot].mapped;
     uint32_t ndraw = 0, nchunk = 0;
+    uint32_t seen[4] = { 0, 0, 0, 0 };   /* SF4 */
     cs->plantFirst[slot] = UINT32_MAX;
     for (int k = 0; k < 2 * cs->wantCount && nchunk < MAX_DRAW_CHUNKS; ++k) {
         if (k == cs->wantCount) cs->plantFirst[slot] = ndraw;
@@ -933,6 +935,15 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
         g->origin[0] = x0; g->origin[1] = y0; g->origin[2] = z0; g->origin[3] = 0;
         memset(g->bodies, 0, sizeof(g->bodies));
         if (e->layer == 0) {
+            /* SF4: the hours codes of the vendors in view (their sites, and their lights' reach, within VENDOR_SEEN_FAR
+             * and the frustum): those codes keep what they show this frame (nb_hours_update) */
+            for (uint32_t b = 0; b < e->nvbody; ++b) {
+                const VendorBodySpot *v = &e->vbody[b];
+                const float cx = x0 + v->x, cy = y0 + v->y, cz = z0 + v->z, r = v->r + 10.0f;
+                if (cx * cx + cy * cy + cz * cz > (VENDOR_SEEN_FAR + r) * (VENDOR_SEEN_FAR + r)) continue;
+                if (!frustum_test_aabb(&fr, v3(cx - r, cy - r, cz - r), v3(cx + r, cy + r, cz + r))) continue;
+                seen[(v->hours >> 5) & 3] |= 1u << (v->hours & 31);
+            }
             /* SF2: the vendors' far shells give way where their own near bodies are resident (city.vert) */
             for (uint32_t b = 0; b < e->nvbody && b < VENDOR_BODIES_MAX; ++b) {
                 int vi = table_find(cs, e->cx, e->cz, LAYER_VBODY + (int)b);
@@ -959,6 +970,7 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
     }
     cs->drawCount[slot] = ndraw;
     if (cs->plantFirst[slot] > ndraw) cs->plantFirst[slot] = ndraw;   /* no plants this frame */
+    nb_hours_update(seen);   /* SF4: the codes out of view take the clock's */
     *nchunkOut = nchunk;
     return ndraw;
 }

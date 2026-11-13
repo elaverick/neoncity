@@ -33,7 +33,7 @@ void main() {
     Plume P = plumes[pi];
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // thrown away unless it is drawn
     vUV = vec2(0.0); vCol = vec4(0.0); vRel = vec3(0.0); vPuff = vec4(0.0);
-    if (!plumeStall(P) || P.nknot == 0u) return;
+    if (!plumeStall(P) || P.nknot == 0u || !vendorOpen(P.hours)) return;   // SF4: no steam while the bar is shut
     float dist = length(P.pos);
     // fewer puffs far off, each the denser
     int use = int(mix(float(STEAM_PUFFS), 16.0, smoothstep(20.0, 150.0, dist)));

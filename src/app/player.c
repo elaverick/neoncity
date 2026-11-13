@@ -2,6 +2,7 @@
 #include "layouts.h"
 #include "terrain.h"
 #include "lobby_doors.h"
+#include "noodle_bar.h"
 
 #define EYE_HEIGHT    1.68f
 #define RADIUS        0.32f
@@ -251,7 +252,8 @@ static void collide(double *x, double *z, double feet) {
         for (int dz = -1; dz <= 1; ++dz)
             for (int dx = -1; dx <= 1; ++dx) {
                 const BlockLayout *L = layouts_get(ccx + dx, ccz + dz);
-                for (int i = 0; i < L->ncoll; ++i) push_out_poly(x, z, L, &L->coll[i]);
+                for (int i = 0; i < L->ncoll; ++i)
+                    if (L->coll[i].hours < 0 || nb_open_now((uint8_t)L->coll[i].hours)) push_out_poly(x, z, L, &L->coll[i]);   /* SF4 */
                 if (dx == 0 && dz == 0) lobby_doors_collide(x, z, feet, RADIUS);   /* every door near: lobby_doors_update's */
                 for (int i = 0; i < L->nlamps; ++i) push_out_frame(x, z, L->lamp[i].x, L->lamp[i].z, 1.0f, 0.0f, pole);
                 for (int i = 0; i < L->nbarrier; ++i) {

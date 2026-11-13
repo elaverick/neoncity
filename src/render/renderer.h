@@ -84,6 +84,7 @@ typedef struct FrameUBO {
      * week there (0 Monday .. 6 Sunday), unused, unused. The windows and the
      * impostors' light states follow it (shaders/common.glsl: cityHours) */
     float   clock[4];
+    uint32_t vendorOpen[4]; /* SF4: the street vendors' hours codes shown open (bit c: code c; src/gen/noodle_bar.c nb_hours_shown) */
     float   smog[4];       /* the smog's top over the cities' cloud (hazeAmount), in the haze's heights (over weather[2]): over the eye, cloud cover over the eye (the deck's, whatever the eye's height), the lowest over any drawn city (1e9: none), unused (src/app/weather.c) */
 } FrameUBO;
 

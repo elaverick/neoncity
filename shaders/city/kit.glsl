@@ -40,10 +40,12 @@ const uint PMAT_RUST = 0u, PMAT_PLATE = 1u, PMAT_STAINLESS = 2u, PMAT_COPPER = 3
            PMAT_MEAT = 35u, PMAT_DOUGH = 36u, PMAT_BREAD = 37u, PMAT_FRIED = 38u, PMAT_FRYOIL = 39u, PMAT_CHESTNUT = 40u,
            PMAT_GREENS = 41u, PMAT_SAUCE = 42u, PMAT_GRIT = 43u, PMAT_EMBER = 44u, PMAT_RADIANT = 45u,
            // SF2: the forms' window glass, the far shell's lit window
-           PMAT_GLAZING = 46u, PMAT_WINDOW_FAR = 47u;
+           PMAT_GLAZING = 46u, PMAT_WINDOW_FAR = 47u,
+           // SF4: a roller shutter's curtain
+           PMAT_SHUTTER = 48u;
 bool kitGlows(uint m) { return (m >= PMAT_TUBE && m <= PMAT_SIGN_FAR) || m == PMAT_EMBER || m == PMAT_RADIANT || m == PMAT_WINDOW_FAR; }
 bool kitIsFood(uint m) { return (m >= PMAT_BROTH && m <= PMAT_GINGER) || (m >= PMAT_MEAT && m <= PMAT_GRIT); }
-const uint KIT_MATS = 48u;   // the tables below hold placeholders for the lit materials (kitGlows): kitGlow draws those
+const uint KIT_MATS = 49u;   // the tables below hold placeholders for the lit materials (kitGlows): kitGlow draws those
 const uint KIT_HEAT = 16u;   // flags: the instance stands at the range (kit_gpu.h)
 const uint KIT_HOOD_RUST = 0u, KIT_HOOD_GALV = 1u, KIT_HOOD_STEEL = 2u;
 const uint KIT_BARE_WOOD = 1024u;   // flags: the A-frame's frame bare timber, not the trim coat (src/city/city.h)   // flags >> 8 (src/gen/noodle_bar.h NB_HOOD_*)
@@ -64,7 +66,7 @@ const vec3 KIT_STEEL_SHEET = vec3(0.12, 0.12, 0.125);   // a plain steel hood's 
 
 // rgb: the colour (linear) a set's grain goes under (params.w 0) or the painted colour; a: metalness, times the
 // set's map where it has one (sets without one read 1 there, and are all non-metals)
-const vec4 KIT_BASE[48] = vec4[48](
+const vec4 KIT_BASE[49] = vec4[49](
     vec4(0.20, 0.085, 0.045, 1.0), vec4(0.10, 0.12, 0.11, 0.0), vec4(0.56, 0.56, 0.55, 1.0), vec4(0.62, 0.34, 0.22, 1.0),
     vec4(0.035, 0.034, 0.033, 0.6), vec4(0.17, 0.05, 0.035, 0.0), vec4(0.68, 0.68, 0.64, 0.0), vec4(0.022, 0.022, 0.022, 0.0),
     vec4(0.72, 0.71, 0.67, 0.0), vec4(0.04, 0.05, 0.045, 0.0), vec4(0.74, 0.56, 0.28, 1.0), vec4(0.22, 0.13, 0.07, 0.0),
@@ -78,18 +80,21 @@ const vec4 KIT_BASE[48] = vec4[48](
     vec4(0.20, 0.09, 0.04, 0.0), vec4(0.72, 0.68, 0.58, 0.0), vec4(0.55, 0.34, 0.13, 0.0), vec4(0.60, 0.38, 0.11, 0.0),
     vec4(0.30, 0.19, 0.04, 0.0), vec4(0.16, 0.07, 0.03, 0.0), vec4(0.08, 0.22, 0.04, 0.0), vec4(0.33, 0.05, 0.02, 0.0),
     vec4(0.035, 0.033, 0.03, 0.0), vec4(0.0), vec4(0.0),
-    vec4(0.0), vec4(0.0));                                                                           // SF2: glazing (its own), the far window
+    vec4(0.0), vec4(0.0),                                                                            // SF2: glazing (its own), the far window
+    vec4(0.20, 0.205, 0.21, 0.45));                                                                  // SF4: the shutter's galvanised slats, dulled
 // the painted materials' roughness (the sets carry their own)
-const float KIT_ROUGH[48] = float[48](0.82, 0.6, 0.32, 0.4, 0.75, 0.55, 0.2, 0.8, 0.25, 0.05, 0.35, 0.7, 0.9, 0.3, 0.6, 0.9,
+const float KIT_ROUGH[49] = float[49](0.82, 0.6, 0.32, 0.4, 0.75, 0.55, 0.2, 0.8, 0.25, 0.05, 0.35, 0.7, 0.9, 0.3, 0.6, 0.9,
                                       0.4, 0.5, 0.5, 0.4, 0.45, 0.08, 0.5, 0.35, 0.6, 0.08, 0.4, 0.6, 0.5, 0.35,
                                       0.5, 0.5, 0.5, 0.5, 0.5,
-                                      0.4, 0.6, 0.6, 0.55, 0.04, 0.3, 0.5, 0.3, 0.85, 0.9, 0.9, 0.05, 0.5);
+                                      0.4, 0.6, 0.6, 0.55, 0.04, 0.3, 0.5, 0.3, 0.85, 0.9, 0.9, 0.05, 0.5,
+                                      0.62);
 
 // The authored set material m is drawn with, or -1 (painted here). Mirrors PM_MAT_SET (src/gen/pmodel_kit.c);
 // about a third of the copper pots are the bright one with verdigris.
 int kitSet(uint m, uint seed) {
     switch (m) {
     case PMAT_RUST:       return PBR_KIT_RUST_SHEET;
+    case PMAT_SHUTTER:    return PBR_SHUTTER;
     case PMAT_RUST_STEEL: return PBR_KIT_RUST_STEEL;
     case PMAT_PLATE:
     case PMAT_PAINTED:    return PBR_KIT_PAINT;
@@ -360,10 +365,29 @@ vec3 kitGlow(uint m, vec3 p, vec3 n, vec3 V, vec2 uv, uint seed, uvec4 prm) {
     return neonColor(glow) * 1.4;
 }
 
+/* What glows, unlit (SF4: its vendor shut, KIT_SHUT): the tubes' and the lamp's milky glass, neon's tinted glass,
+ * cold coals, a spit's dull ceramic, dark windows; lit only by what lights everything else. */
+vec3 kitDark(uint m, vec3 p, vec3 n, vec3 V, uint seed, uvec4 prm) {
+    uint glow = (prm.w >> 11) & 7u;
+    vec3 alb = vec3(0.012);
+    float rough = 0.2, f0 = 0.04;
+    if (m == PMAT_TUBE || m == PMAT_BULB) { alb = vec3(0.32, 0.32, 0.30); rough = 0.35; }
+    else if (m == PMAT_NEON) { alb = neonColor(glow) * 0.05 + vec3(0.02); rough = 0.12; }
+    else if (m == PMAT_EMBER) {
+        float ash = smoothstep(0.45, 0.8, vnoise(p.xz * 140.0 + vec2(p.y * 60.0), 0xE3Bu));
+        alb = mix(vec3(0.02), vec3(0.09, 0.088, 0.085), ash); rough = 0.95;
+    }
+    else if (m == PMAT_RADIANT) { alb = vec3(0.16, 0.08, 0.055); rough = 0.85; }
+    else if (m == PMAT_SIGN_FAR) { alb = neonColor(glow) * 0.03 + vec3(0.01); }
+    vec3 nv = dot(n, V) < 0.0 ? -n : n;
+    return litterLight(p, nv, V, alb, rough, f0, vec3(1.0), 1.0);
+}
+
 vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ, float wear, float grime) {
     vec3 V = -normalize(rel);
-    uint m = min(prm.y, KIT_MATS - 1u);
-    if (kitGlows(m)) return kitGlow(m, p, n, V, uv, seed, prm);
+    bool shut = (prm.y & KIT_SHUT) != 0u;   // SF4: its vendor's hours (city.vert, kit.vert)
+    uint m = min(prm.y & 255u, KIT_MATS - 1u);
+    if (kitGlows(m)) return shut ? kitDark(m, p, n, V, seed, prm) : kitGlow(m, p, n, V, uv, seed, prm);
     if (m == PMAT_GLAZING) {
         // SF2: window glass over the real kitchen (as the lobbies' glass): it covers a share of the pixel's samples,
         // more at grazing angles where it reflects more, and the rest show what stands behind it
@@ -390,6 +414,8 @@ vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ
     // the surface's frame and metres in it: image right along u, image up along v; each instance and piece
     // shifted in the image, so a row of stools or a wall's panels never repeat each other
     vec3 gT, gB;
+    // a shutter's curtain is stretched to its opening: its slats laid on its plane in metres (along it, up)
+    if (m == PMAT_SHUTTER) { vec2 h = normalize(vec2(-n.z, n.x) + vec2(1e-5, 0.0)); uv = vec2(dot(p.xz, h), p.y); }
     modelFrame(p, uv, n, gT, gB);
     vec2 q = vec2(uv.x, -uv.y) + vec2(hf(seed, 3u + prm.z), hf(seed, 5u + prm.z)) * 7.3;
     vec2 qx = dFdx(q), qy = dFdy(q);
@@ -422,6 +448,16 @@ vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ
         bool top = abs(n.y) > 0.6;
         kitFood(m, top ? pw + vec2(float(seed & 255u) * 0.37) : q, top ? pfoot : max(length(qx), length(qy)), base, rough);
     }
+    // a shutter's graffiti (the user, SF4's board), as the street's shutters get it by the district's affluence
+    // (graffitiLevel): over a counter between 1.1 and 2.15 m (part 244 on), on the ground 0.2 to 2.6 m (part 236 on)
+    if (m == PMAT_SHUTTER && pbrLoaded(PBR_GRAFFITI)) {
+        bool counter = (prm.z & 255u) >= 244u;
+        vec2 gq = vec2(uv.x, hgt);
+        float chance = pbrParams(PBR_GRAFFITI).z * graffitiLevel();
+        vec4 graf = graffitiPaint(graffitiBand(gq, vec2(dFdx(uv.x), hx), vec2(dFdy(uv.x), hy), hash_combine(seed, 0x6A14u),
+                                               counter ? 1.1 : 0.2, counter ? 2.15 : 2.6, 3.0, chance, 2));
+        base = mix(base, graf.rgb, graf.a); metal *= 1.0 - graf.a; rough = mix(rough, 0.6, graf.a);
+    }
     // a plain steel hood weathered dull, mill scale and grime over it: not the galvanised one's sky-bright sheen
     if (steelHood) { rough = max(rough, 0.72); metal *= 0.45; }
     // the red paint's set's rust (where the photograph is clearly red over green) browner and duller: its own reads
@@ -445,7 +481,7 @@ vec3 shadeKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ
     // the kitchen's and the table's things: clean but for a trace of grime, grease at the range, faint streaks
     bool clean = bright || food || m == PMAT_TILE || m == PMAT_CHEQUER || m == PMAT_CAST_IRON || m == PMAT_ENAMEL
               || m == PMAT_GLASS || m == PMAT_CERAMIC || m == PMAT_BAMBOO || m == PMAT_DIAL || m == PMAT_PAPER;
-    bool bare = !isHood && (m == PMAT_STEEL || m == PMAT_GALV || m == PMAT_RUST_STEEL);   // bare steel outside
+    bool bare = !isHood && (m == PMAT_STEEL || m == PMAT_GALV || m == PMAT_RUST_STEEL || m == PMAT_SHUTTER);   // bare steel outside
     const vec3 RUST = vec3(0.13, 0.045, 0.02), GRIME = vec3(0.035, 0.03, 0.024);
 
     // edges: the paint chipped to steel only inside a few low-frequency patches (more of them as the vendor wears,

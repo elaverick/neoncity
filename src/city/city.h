@@ -100,7 +100,8 @@ typedef struct DropKerb {
 } DropKerb;
 
 /* Solid ground-level outline (world coordinates in BlockLayout.collv), with an optional courtyard. */
-typedef struct CollPoly { int first, n, holeFirst, holeN; } CollPoly;
+/* hours (SF4): -1 always solid; else a street vendor's hours code, solid only while it is open (nb_open_now) */
+typedef struct CollPoly { int first, n, holeFirst, holeN, hours; } CollPoly;
 /* A floor walked on at a building at street level, a lobby or an arcology's
  * concourse, or a tread of the steps up to it: its outline (in collv, as
  * CollPoly), at world height y. A floor lies at the building's base, above the
@@ -191,8 +192,10 @@ static inline float city_grass_maintained(uint8_t w) { return w ? (float)(w - 1)
 #define KIT_FLAG_GLOW_SHIFT 11      /* NB6: 3 bits of colour or white, then 2 of flicker */
 /* SF2: a vendor of the base layer's with a near body of its own: its middle (chunk-local, its floor's height)
  * and the radius it reaches (the streamer wants its body within VENDOR_BODY_DISTANCE of the camera). */
-typedef struct VendorBodySpot { float x, y, z, r; } VendorBodySpot;
-typedef struct KitInst { float xf[12]; uint16_t module, flags; uint8_t part; int8_t grime; uint8_t pad[2]; float base; uint32_t seed; } KitInst;   /* pad zeroed; grime: nb_grime's * 127 (NB7) */
+typedef struct VendorBodySpot { float x, y, z, r; uint32_t hours; } VendorBodySpot;   /* hours: its code (SF4: what is in view) */
+/* grime: nb_grime's * 127 (NB7); hours, show (SF4): the vendor's hours code and when the instance is seen
+ * (src/gen/noodle_bar.h nb_hours, NB_SHOW_*: the streamer draws it, and casts its shadow, only then) */
+typedef struct KitInst { float xf[12]; uint16_t module, flags; uint8_t part; int8_t grime; uint8_t hours, show; float base; uint32_t seed; } KitInst;
 
 typedef struct Mesh {
     Vertex  *v;

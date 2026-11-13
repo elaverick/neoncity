@@ -173,8 +173,9 @@ static void collide_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
             if (L->nfloor >= MAX_FLOORS || L->ncollv + 4 > MAX_COLL_VERTS) continue;
             FloorPoly *f = &L->floor[L->nfloor++];
             f->y = s->y + so[i].y;
-            f->at.first = at; f->at.n = 4; f->at.holeFirst = 0; f->at.holeN = 0;
+            f->at.first = at; f->at.n = 4; f->at.holeFirst = 0; f->at.holeN = 0; f->at.hours = -1;
         } else if (!coll_begin(L, 4)) continue;
+        else if (so[i].show == NB_SHOW_OPEN) L->coll[L->ncoll - 1].hours = so[i].hours;   /* SF4: stools, A-frame */
         for (int k = 0; k < 4; ++k) {
             vendor_spot_world(s, c[k][0], c[k][1], &L->collv[L->ncollv][0], &L->collv[L->ncollv][1]);
             L->ncollv++;
@@ -185,7 +186,7 @@ static void collide_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
 static int coll_begin(BlockLayout *L, int n) {
     if (L->ncoll >= MAX_COLL || L->ncollv + n > MAX_COLL_VERTS) return 0;
     CollPoly *c = &L->coll[L->ncoll++];
-    c->first = L->ncollv; c->n = n; c->holeFirst = 0; c->holeN = 0;
+    c->first = L->ncollv; c->n = n; c->holeFirst = 0; c->holeN = 0; c->hours = -1;
     return 1;
 }
 

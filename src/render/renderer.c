@@ -3,6 +3,7 @@
 #include "grass_rules.h"
 #include "grass.h"
 #include "atmosphere.h"
+#include "noodle_bar.h"
 
 static const char *const GT_NAMES[GT_COUNT] = { "", "air", "streaming", "terrain upload", "grass prepare", "shelter", "prepass", "shadow rays", "shadow filter",
                                                 "city", "plants", "kit", "proxies", "caves", "terrain", "grass", "sky", "clouds", "flames", "post" };
@@ -377,7 +378,10 @@ static void frame_uniforms(Renderer *r, int slot, const FrameUBO *uboIn, const d
      * locations); the denoiser reprojects this frame's camera-relative
      * positions into the last frame's view. */
     ubo->shadow[0] = (float)(r->frameIndex & 1023u);
-    ubo->shadow[1] = (float)((shadows ? 1 : 0) | (r->shadowDebug ? 2 : 0) | (r->vendorDebug ? 4 : 0));   /* SHADOWS_ON | SHADOWS_DEBUG | VENDOR_DEBUG (common.glsl) */
+    /* SHADOWS_ON | SHADOWS_DEBUG | VENDOR_DEBUG | VENDORS_OPEN | VENDORS_SHUT (common.glsl; SF4: NeonCity --hours) */
+    const int hoursForce = nb_hours_forced();
+    ubo->shadow[1] = (float)((shadows ? 1 : 0) | (r->shadowDebug ? 2 : 0) | (r->vendorDebug ? 4 : 0) |
+                             (hoursForce == 1 ? 8 : hoursForce == 0 ? 16 : 0));
     ubo->shadow[2] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.375f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
     ubo->shadow[3] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.125f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
     /* The directional light (src/app/main.c: sky_ubo) is the sun while it

@@ -35,6 +35,8 @@ uint32_t vendor_kit_flags(const Vendor *v) {
     const uint32_t wear = (uint32_t)(clampf(v->wear, 0.0f, 1.0f) * 15.0f + 0.5f);
     return wear | nb_finish(v->site.affluence, v->site.seed) | (uint32_t)v->nb.tubeWhite << KIT_FLAG_GLOW_SHIFT;
 }
+/* SF4: the vendor's hours code (src/gen/noodle_bar.h nb_hours: its trade's and its site's) */
+uint8_t vendor_hours(const Vendor *v) { return nb_hours(&v->nb, v->site.lunch); }
 /* A neon icon's glow bits (its colour and flicker), icon i of the plan. */
 static uint32_t icon_glow(const NbPlan *p, int i) {
     return i >= 0 && i < p->nicon ? (uint32_t)p->iconGlow[i] << KIT_FLAG_GLOW_SHIFT : 0u;
@@ -46,7 +48,7 @@ static uint32_t icon_glow(const NbPlan *p, int i) {
 #define BODY_REFINE 3
 typedef struct BodyEmit {
     Mesh *m; const VendorSpot *s; const Vendor *v; const NbLine *L; const NbSteam *st; int nst;
-    uint32_t seed, wear; int far, refine, idx;
+    uint32_t seed, wear; int far, refine, idx; uint8_t hours;
 } BodyEmit;
 
 static void body_vertex(const BodyEmit *B, const PmVertex *x, float g) {
@@ -58,9 +60,12 @@ static void body_vertex(const BodyEmit *B, const PmVertex *x, float g) {
     uint32_t fl = B->wear | (nb_at_range(&B->v->nb, x->p) ? KIT_FLAG_HEAT : 0u);
     if (x->mat == PMAT_SIGN_FAR)   /* a far icon face: its own neon's colour (its part: 140 + the icon) */
         fl = (fl & ((1u << KIT_FLAG_GLOW_SHIFT) - 1u)) | icon_glow(&B->v->nb, (int)x->part - 140);
+    /* a far shell (in the base layer while the near body isn't): its body's index (SF2) in aux and its hours (SF4)
+     * in the normal's w; else the hours in aux (KIT_AUX_HOURS_SHIFT) and the cooking's grime in the w (NB7) */
     uint32_t aux = (uint32_t)x->part | (fl & 255u) << 8 | (fl >> 8) << 17 |
-                   (B->far == 1 ? KIT_AUX_FAR | (uint32_t)B->idx << KIT_AUX_BODY_SHIFT : 0u);   /* its body's index (SF2) */
-    mesh_push_w(B->m, p, n, (int8_t)lrintf(127.0f * g), x->uv[0], x->uv[1], B->seed, prm, aux);
+                   (B->far == 1 ? KIT_AUX_FAR | (uint32_t)B->idx << KIT_AUX_BODY_SHIFT : (uint32_t)B->hours << KIT_AUX_HOURS_SHIFT);
+    const int8_t w = B->far == 1 ? (int8_t)B->hours : (int8_t)lrintf(127.0f * g);
+    mesh_push_w(B->m, p, n, w, x->uv[0], x->uv[1], B->seed, prm, aux);
 }
 
 static PmVertex body_mid(const PmVertex *a, const PmVertex *b) {
@@ -116,7 +121,7 @@ void vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMes
     m->grounded = 1;
     m->ground = s->y;   /* its heights count from its floor */
     /* SF2: a city body (LOD1, not the slice's) refines once less */
-    BodyEmit B = { m, s, v, &L, st, nst, seed, wear, far, refine, idx };
+    BodyEmit B = { m, s, v, &L, st, nst, seed, wear, far, refine, idx, vendor_hours(v) };
     for (uint32_t i = 0; i + 2 < pm->ni; i += 3) {
         PmVertex t[3];
         float g[3];
@@ -174,6 +179,7 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     nb_line(np, &L);
     pm_begin(&pm, &E->none, &E->inst, PM_LOD0);
     nb_line_place(&pm, np, &L);
+    if (bar) nb_shut_place(&pm, np);   /* SF4: the shutters and the stools up on the counter, shown while shut */
     NbSteam st[NB_STEAMS_MAX];
     const int nst = nb_steam(np, &L, s->site.ceiling, st, NB_STEAMS_MAX);
     /* the site's frame to chunk-local: x across (fz, -fx), z out (fx, fz), y up from its floor */
@@ -181,6 +187,7 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     const float t[3] = { (float)(s->x - m->ox), s->y, (float)(s->z - m->oz) };
     /* the flags: the vendor's wear and finish, and whether a module stands at the range (its grease and soot) */
     const uint32_t wear = vendor_kit_flags(v);
+    const uint8_t hours = vendor_hours(v);
     if (m->nkit + E->inst.n > m->capkit) {
         m->capkit = (m->nkit + E->inst.n) * 2;
         m->kit = (KitInst *)realloc(m->kit, sizeof(KitInst) * m->capkit);
@@ -212,6 +219,8 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
         k->flags = (uint16_t)(fin | (heat ? KIT_FLAG_HEAT : 0u));
         k->grime = (int8_t)lrintf(127.0f * nb_grime(np, &L, st, nst, at, NULL));
         k->base = s->y;
+        k->hours = hours;
+        k->show = pi->show;
         for (int a = 0; a < 3; ++a) {
             float p = k->xf[a * 4 + 3];
             m->mn[a] = minf(m->mn[a], p - KIT_PAD);

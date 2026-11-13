@@ -3,6 +3,7 @@
 #include "thread.h"
 #include "city.h"
 #include "pmodel.h"
+#include "noodle_bar.h"
 
 /* The vendors' kit drawn instanced: see kit_gpu.h. */
 
@@ -214,6 +215,10 @@ void kit_add(KitGpu *k, int slot, const KitInst *inst, uint32_t n, const float o
         const KitInst *ki = &inst[i];
         int m = ki->module;
         if (m >= PMK_COUNT) continue;
+        /* SF4: the vendor's hours: what shows only while it is open (stools, flames, the A-frame) or shut (the
+         * shutters, the stools up on the counter) is neither drawn nor casts outside them */
+        const int open = nb_open_now(ki->hours);
+        if ((ki->show == NB_SHOW_OPEN && !open) || (ki->show == NB_SHOW_SHUT && open)) continue;
         k->st.offered++;
         const float *x = ki->xf, *ce = k->centre[m];
         float sc = sqrtf(x[0] * x[0] + x[4] * x[4] + x[8] * x[8]);
@@ -257,7 +262,7 @@ void kit_add(KitGpu *k, int slot, const KitInst *inst, uint32_t n, const float o
             o->row[r][3] = row[r][3] + (1.0f - s) * lin;
         }
         o->seed = ki->seed;
-        o->chunk = (uint32_t)rec;
+        o->chunk = (uint32_t)rec | (open ? 0u : KIT_INST_SHUT);   /* kit.vert: its lit glass dark */
         o->part = ki->part | (uint32_t)ki->flags << 8 | (uint32_t)(uint8_t)ki->grime << 24;   /* NB7: the cooking's grime, kit.vert */
         memcpy(&o->base, &ki->base, 4);
         k->key[k->ncand++] = (uint16_t)(m * PM_LODS + lod);

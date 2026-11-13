@@ -84,6 +84,8 @@ enum {
     /* SF2: the forms */
     PMAT_GLAZING,      /* window glass over real geometry (kit.glsl: the lobbies' paneCoverage); casts and shuts in nothing */
     PMAT_WINDOW_FAR,   /* the far shell's window: the kitchen's light behind it (it glows: kitGlow) */
+    /* SF4: hours */
+    PMAT_SHUTTER,      /* a roller shutter's slats (shutter.json, mapped on the curtain's plane in world metres: kit.glsl) */
     PMAT_COUNT
 };
 
@@ -112,7 +114,8 @@ typedef struct PmMesh {
 
 /* A library module set down: a row-major 3x4 transform (x' = M x + t, the
  * translation in [3], [7], [11]), its module and a tint seed. */
-typedef struct PmInstance { float xf[12]; uint16_t module; uint8_t part, pad; } PmInstance;
+/* show (SF4): when the instance is seen, by the vendor's hours (src/gen/noodle_bar.h NB_SHOW_*: always, open, shut) */
+typedef struct PmInstance { float xf[12]; uint16_t module; uint8_t part, show; } PmInstance;
 typedef struct PmInstances { PmInstance *v; uint32_t n, cap; } PmInstances;
 
 #define PM_STACK 24
@@ -123,6 +126,7 @@ typedef struct Pm {
     float        support;        /* support loops this far beside creases (0: none); set by level */
     float        maxlen;         /* lathe profiles' edges split to at most this (0: not); set by level */
     uint8_t      mat, part;
+    uint8_t      show;           /* SF4: what pm_place gives the instances it lists (NB_SHOW_*) */
     uint16_t     shell;          /* bumped by each primitive */
     float        xf[12];
     float        stack[PM_STACK][12];
@@ -279,6 +283,11 @@ enum {
     /* SF3, the deep shop unit's room: a cafe table (a 0.6 m square stainless top at 0.74 m on a pedestal and a
      * cross foot) and a low stool (a round seat at 0.45 m on four splayed legs with a ring), on y 0, centred */
     PMK_CAFE_TABLE, PMK_LOW_STOOL,
+    /* SF4, the shutters (src/gen/noodle_bar.c nb_shut_place): stretched to fit by their instances. The curtain a
+     * 1 m square (x -0.5..0.5, y 0..1) in the xy plane, facing +z; its bottom bar 1 m long (x), 60 mm high from y 0;
+     * a guide channel 1 m high (y 0..1), its slot along +x round x 0 (the curtain's end), its web out at -x; the
+     * padlock and hasp on the bar's front (its middle at y 0.03, z 0.02), not stretched. */
+    PMK_SHUTTER, PMK_SHUTTER_BAR, PMK_SHUTTER_GUIDE, PMK_SHUTTER_LOCK,
     PMK_COUNT
 };
 typedef struct PmModuleDef {

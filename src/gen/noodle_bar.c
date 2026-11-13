@@ -2267,8 +2267,12 @@ void nb_body(Pm *pm, const NbPlan *p) {
     NbLine line;
     nb_line(p, &line);
     kitchen(pm, p, &line);
-    /* the stools, the bell and the A-frame */
+    /* the stools, the bell and the A-frame (SF4: shown while open; the stools go up on the counter when shut,
+     * nb_shut_place, but a deep unit's at its ledge and a hatch kiosk's stay out) */
+    const uint8_t show = pm->show;
+    if (!p->deep && p->form != NB_HATCH) pm->show = NB_SHOW_OPEN;
     for (int i = 0; i < p->nstool; ++i) { pm->part = (uint8_t)(170 + i); put(pm, p->stool[i][0], 0.0f, p->stool[i][1], 0.0f, PMK_STOOL); }
+    pm->show = show;
     /* SF3: the deep unit's tables, each with chopsticks and a jar of chilli oil, and their low stools */
     for (int i = 0; i < p->ntable; ++i) {
         const float x = p->table[i][0], z = p->table[i][1], yaw = 0.3f * (hash_float(hash_combine(p->seed, 0x7AB0u + (uint32_t)i)) - 0.5f);
@@ -2281,10 +2285,12 @@ void nb_body(Pm *pm, const NbPlan *p) {
         pm->part = (uint8_t)(226 + (i & 3));
         put(pm, p->seat[i][0], 0.0f, p->seat[i][1], 0.5f * hash_float(hash_combine(p->seed, 0x5EA7u + (uint32_t)i)), PMK_LOW_STOOL);
     }
+    pm->show = NB_SHOW_OPEN;
     pm->part = 190;
     put(pm, p->bell[0], p->bell[1], p->bell[2], 0.0f, PMK_BELL);
     pm->part = 191;
     if (p->aframeOn) put(pm, p->aframe[0], 0.0f, p->aframe[1], p->aframe[2], PMK_A_FRAME);
+    pm->show = show;
     pm->maxlen = maxlen; pm->support = support;
 }
 
@@ -2978,22 +2984,27 @@ static void put_knob(Pm *pm, float x, float y, float z) {
 void nb_line_place(Pm *pm, const NbPlan *p, const NbLine *L) {
     const float zl = p->lining, zf = zl + p->benchD;
     int part = 200;
+    const uint8_t show = pm->show;
     for (int i = 0; i < L->n; ++i) {
         const NbItem *it = &L->item[i];
         pm->part = (uint8_t)part++;
+        pm->show = it->on == NB_ON_COUNTER ? NB_SHOW_OPEN : show;   /* SF4: the condiments taken in when shut */
         put(pm, it->x, it->y, it->z, it->yaw, it->module);
     }
+    pm->show = show;
     /* the range's knobs on its rail, one by each burner and one for the pilot */
     pm->part = (uint8_t)part++;
     for (int b = 0; b < 2; ++b) put_knob(pm, L->burner[b][0], 0.80f, zf + 0.03f);
     put_knob(pm, L->rangeEnd < 0 ? L->carc0 + 0.075f : L->carc1 - 0.075f, 0.80f, zf + 0.03f);
-    /* both burners alight (NB6): a ring burner's flames on its crown, the wok burner's jets roaring */
+    /* both burners alight (NB6): a ring burner's flames on its crown, the wok burner's jets roaring; out when shut (SF4) */
     pm->part = (uint8_t)part++;
+    pm->show = NB_SHOW_OPEN;
     for (int b = 0; b < 2; ++b) {
         if (L->heat[b] != NB_HEAT_RING && L->heat[b] != NB_HEAT_WOK) continue;   /* SF1: only gas burners show flames */
         const int wok = L->heat[b] == NB_HEAT_WOK;
         put(pm, L->burner[b][0], wok ? WOK_FLOOR : RANGE_TRAY, L->burner[b][1], 0.0f, wok ? PMK_FLAME_JET : PMK_FLAME_RING);
     }
+    pm->show = show;
     /* the bain-marie's dial */
     if (L->bmPans) put_knob(pm, L->bm0 + 0.07f, 0.985f, L->bmZ1);
     /* the cleaver: on the block if there is one, else on the rail */
@@ -3297,9 +3308,12 @@ uint32_t nb_finish(float affluence, uint32_t seed) {
     return coat << 5 | hood << 8 | wood;
 }
 
-int nb_solids(const NbPlan *p, float (*b)[4], int max) {
+int nb_solids(const NbPlan *p, float (*b)[4], int max) { return nb_solids_shown(p, b, NULL, max); }
+
+int nb_solids_shown(const NbPlan *p, float (*b)[4], uint8_t *show, int max) {
     int n = 0;
-#define ADD(a, c, d, e) do { if (n < max) { b[n][0] = (a); b[n][1] = (c); b[n][2] = (d); b[n][3] = (e); n++; } } while (0)
+    uint8_t sh = NB_SHOW_ALWAYS;
+#define ADD(a, c, d, e) do { if (n < max) { b[n][0] = (a); b[n][1] = (c); b[n][2] = (d); b[n][3] = (e); if (show) show[n] = sh; n++; } } while (0)
     if (p->form == NB_CORNER) {
         const int s = p->side;
         float xo = s > 0 ? p->x0 : p->x1, xc = p->run[1].o[0] + (float)s * 0.03f;
@@ -3315,7 +3329,10 @@ int nb_solids(const NbPlan *p, float (*b)[4], int max) {
         if (p->form == NB_HATCH) ADD(minf(p->hatch[0], p->bell[0]) - 0.25f, p->front, maxf(p->hatch[1], p->bell[0]) + 0.25f, p->front + p->sill);
     }
     for (int i = 0; i < p->npost; ++i) ADD(p->post[i][0] - 0.06f, p->post[i][1] - 0.06f, p->post[i][0] + 0.06f, p->post[i][1] + 0.06f);
+    /* SF4: the stools up on the counter and the A-frame taken in while shut (a hatch kiosk's stools stay out) */
+    sh = p->form == NB_HATCH ? NB_SHOW_ALWAYS : NB_SHOW_OPEN;
     for (int i = 0; i < p->nstool && !p->deep; ++i) ADD(p->stool[i][0] - 0.2f, p->stool[i][1] - 0.2f, p->stool[i][0] + 0.2f, p->stool[i][1] + 0.2f);
+    sh = NB_SHOW_OPEN;
     if (p->aframeOn) {   /* its turned footprint's box */
         const float c = fabsf(cosf(p->aframe[2])), s = fabsf(sinf(p->aframe[2]));
         const float hx = 0.32f * c + 0.22f * s, hz = 0.32f * s + 0.22f * c;
@@ -3482,4 +3499,244 @@ float nb_grime(const NbPlan *p, const NbLine *L, const NbSteam *st, int nst, con
         wet = maxf(wet, w);
     }
     return wet >= grease ? wet : -grease;
+}
+
+/* ------------------------------------------------------------ hours (SF4) --- */
+
+const char *nb_hours_name(int kind) {
+    static const char *N[NB_HOURS_KINDS] = { "always", "lunch", "day", "two", "evening", "late", "morning", "allday" };
+    return kind >= 0 && kind < NB_HOURS_KINDS ? N[kind] : "?";
+}
+
+/* Each trade's share of the kinds (rows sum to 1; NB_HOURS_LUNCH is the site's, not the trade's): the night food
+ * keeps the evening and the small hours, the soups and dumplings the morning, the drinks and crepes the day. */
+static const float HOURS_BY_TRADE[VT_COUNT][NB_HOURS_KINDS] = {
+    /*               always lunch day    two    even   late   morn   allday */
+    [VT_NOODLE]   = { 0.15f, 0, 0.00f, 0.30f, 0.20f, 0.20f, 0.00f, 0.15f },
+    [VT_SOUP]     = { 0.00f, 0, 0.00f, 0.20f, 0.00f, 0.15f, 0.45f, 0.20f },
+    [VT_DUMPLING] = { 0.00f, 0, 0.00f, 0.20f, 0.15f, 0.00f, 0.35f, 0.30f },
+    [VT_SKEWER]   = { 0.00f, 0, 0.00f, 0.10f, 0.45f, 0.45f, 0.00f, 0.00f },
+    [VT_KEBAB]    = { 0.10f, 0, 0.00f, 0.00f, 0.20f, 0.45f, 0.00f, 0.25f },
+    [VT_BURGER]   = { 0.00f, 0, 0.00f, 0.10f, 0.30f, 0.25f, 0.00f, 0.35f },
+    [VT_FRIED]    = { 0.00f, 0, 0.00f, 0.00f, 0.40f, 0.35f, 0.00f, 0.25f },
+    [VT_CURRY]    = { 0.00f, 0, 0.00f, 0.40f, 0.25f, 0.00f, 0.00f, 0.35f },
+    [VT_TACO]     = { 0.00f, 0, 0.00f, 0.00f, 0.40f, 0.30f, 0.00f, 0.30f },
+    [VT_CREPE]    = { 0.00f, 0, 0.50f, 0.00f, 0.20f, 0.00f, 0.00f, 0.30f },
+    [VT_ROAST]    = { 0.00f, 0, 0.30f, 0.00f, 0.40f, 0.00f, 0.00f, 0.30f },
+    [VT_DRINKS]   = { 0.15f, 0, 0.45f, 0.00f, 0.00f, 0.00f, 0.15f, 0.25f },
+};
+#define LUNCH_SHARE 0.7f   /* of an office forecourt's stalls, those keeping the lunch hours */
+
+uint8_t nb_hours(const NbPlan *p, int lunch) {
+    const uint32_t h = hash_combine(p->seed, 0x4F9Eu);
+    const float u = hash_float(h);
+    const uint8_t jitter = (uint8_t)(hash_combine(h, 1u) & 15u);
+    int kind = NB_HOURS_ALLDAY;
+    if (lunch && u < LUNCH_SHARE) kind = NB_HOURS_LUNCH;
+    else {
+        const float *w = HOURS_BY_TRADE[p->trade >= 0 && p->trade < VT_COUNT ? p->trade : VT_NOODLE];
+        const float r = lunch ? (u - LUNCH_SHARE) / (1.0f - LUNCH_SHARE) : u;
+        float acc = 0.0f;
+        for (int k = 0; k < NB_HOURS_KINDS; ++k) {
+            acc += w[k];
+            if (w[k] > 0.0f && r < acc) { kind = k; break; }
+        }
+    }
+    return (uint8_t)(kind | jitter << 3);
+}
+
+/* Whether a kind's window (or windows) on that day holds its hour t (t past 24: the small hours after it). */
+static int hours_window(int kind, int jitter, float t, int day) {
+    const int weekend = day >= 5, late = day == 4 || day == 5;   /* Saturday, Sunday; the nights after Friday, Saturday */
+    float a, b, a2 = -1.0f, b2 = -1.0f;
+    switch (kind) {
+    case NB_HOURS_LUNCH:   if (weekend) return 0; a = 11.0f; b = 14.5f; break;
+    case NB_HOURS_DAY:     a = weekend ? 9.0f : 7.0f; b = 19.0f; break;
+    case NB_HOURS_TWO:     a = 11.0f; b = 14.5f; a2 = 17.0f; b2 = 23.0f; break;
+    case NB_HOURS_EVENING: a = 17.0f; b = 24.0f; break;
+    case NB_HOURS_LATE:    a = 19.0f; b = late ? 28.0f : 27.0f; break;
+    case NB_HOURS_MORNING: a = weekend ? 7.0f : 6.0f; b = 15.0f; break;
+    default:               a = 10.0f; b = 23.0f; break;
+    }
+    const float da = ((float)(jitter & 3) - 1.5f) * 0.25f, db = ((float)(jitter >> 2) - 1.5f) * (1.0f / 3.0f);
+    if (t >= a + da && t < b + db) return 1;
+    return a2 >= 0.0f && t >= a2 + da && t < b2 + db;
+}
+
+int nb_hours_open(uint8_t code, float hours, int weekday) {
+    const int kind = code & 7, jitter = (code >> 3) & 15;
+    if (kind == NB_HOURS_ALWAYS) return 1;
+    const float t = fmodf(fmodf(hours, 24.0f) + 24.0f, 24.0f);
+    const int d = ((weekday % 7) + 7) % 7;
+    /* today's window, or yesterday's running on past midnight */
+    return hours_window(kind, jitter, t, d) || hours_window(kind, jitter, t + 24.0f, (d + 6) % 7);
+}
+
+static float g_hoursNow = 18.95f;   /* the captures' hour (SKY_CAPTURE_UTC: a weekday, 18:57) until the clock's set */
+static int   g_dayNow = 2, g_hoursForce = -1;
+/* What is shown: one bit a code (open), changed to the clock's only while no vendor of that code is in view (the
+ * user, SF4's board: nobody sees a stall open or shut); every code takes the clock's at the first update. */
+static uint32_t g_shown[4];
+static int      g_shownInit;
+void nb_hours_now(float hours, int weekday) { g_hoursNow = hours; g_dayNow = weekday; }
+void nb_hours_force(int mode) { g_hoursForce = mode < 0 ? -1 : mode > 0; }
+int  nb_hours_forced(void) { return g_hoursForce; }
+void nb_hours_update(const uint32_t seen[4]) {
+    for (int c = 0; c < 128; ++c) {
+        const uint32_t bit = 1u << (c & 31);
+        if (g_shownInit && seen && (seen[c >> 5] & bit)) continue;
+        if (nb_hours_open((uint8_t)c, g_hoursNow, g_dayNow)) g_shown[c >> 5] |= bit;
+        else g_shown[c >> 5] &= ~bit;
+    }
+    g_shownInit = 1;
+}
+void nb_hours_shown(uint32_t out[4]) {
+    if (!g_shownInit) nb_hours_update(NULL);
+    memcpy(out, g_shown, sizeof(g_shown));
+}
+int  nb_open_now(uint8_t code) {
+    if (g_hoursForce >= 0) return g_hoursForce;
+    if (!g_shownInit) nb_hours_update(NULL);
+    return (int)(g_shown[(code >> 5) & 3] >> (code & 31)) & 1;
+}
+
+/* ----------------------------------------------------------- shutters (SF4) --- */
+
+#define SHUT_BACK  0.04f   /* the curtain stands this far in from the counter top's back edge */
+#define SHUT_GUIDE 0.03f   /* the guides' channels: the curtain's span is inset this much at each end */
+
+/* Whether another run starts or ends at this run's point q (a corner of the L or the U). */
+static int run_joined(const NbPlan *p, int self, float qx, float qz) {
+    for (int k = 0; k < p->nrun; ++k) {
+        if (k == self) continue;
+        const NbRun *c = &p->run[k];
+        const float e[2][2] = { { c->o[0], c->o[1] }, { c->o[0] + c->u[0] * c->len, c->o[1] + c->u[1] * c->len } };
+        for (int j = 0; j < 2; ++j) {
+            const float dx = e[j][0] - qx, dz = e[j][1] - qz;
+            if (dx * dx + dz * dz < 0.15f * 0.15f) return 1;
+        }
+    }
+    return 0;
+}
+
+int nb_shutters(const NbPlan *p, NbShutter *out, int max) {
+    int n = 0;
+    if (p->deep) {
+        /* the shopfront, just out from the building line, from the ground to the head, across the opening */
+        if (n < max) {
+            const float x0 = p->roomX0 - DEEP_WALL, x1 = p->roomX1 + DEEP_WALL;
+            out[n++] = (NbShutter){ { x0, p->recess + 0.035f }, { 1.0f, 0.0f }, x1 - x0, 0.0f, p->head - 0.01f };
+        }
+        return n;
+    }
+    if (p->form == NB_HATCH) {
+        /* over the glazing, outside it: from the sill to the header */
+        if (n < max) out[n++] = (NbShutter){ { p->x0 + 0.02f, p->front + 0.035f }, { 1.0f, 0.0f }, p->x1 - p->x0 - 0.04f, p->cy, p->glazeTop };
+        return n;
+    }
+    for (int i = 0; i < p->nrun && n < max; ++i) {
+        const NbRun *c = &p->run[i];
+        const float ox = -c->u[1], oz = c->u[0];   /* out to the customers */
+        const float din = maxf(p->cd - SHUT_BACK, 0.12f);
+        const float t0 = run_joined(p, i, c->o[0], c->o[1]) ? din : 0.0f;
+        const float t1 = c->len - (run_joined(p, i, c->o[0] + c->u[0] * c->len, c->o[1] + c->u[1] * c->len) ? din : 0.0f);
+        if (t1 - t0 < 0.4f) continue;
+        const float x = c->o[0] + c->u[0] * t0 - ox * din, z = c->o[1] + c->u[1] * t0 - oz * din;
+        /* up into what is overhead: the lowest of it along the curtain (a hood's sheet, the deck; a shop bay's
+         * soffit) */
+        float top = 1e9f;
+        for (int k = 0; k <= 4; ++k) {
+            const float t = (t1 - t0) * (0.05f + 0.225f * (float)k);
+            top = minf(top, nb_ceil(p, x + c->u[0] * t, z + c->u[1] * t));
+        }
+        if (p->recess > 0.0f && p->head > 0.0f) top = minf(top, p->head - 0.01f);
+        if (top - p->cy < 0.3f) continue;
+        out[n++] = (NbShutter){ { x, z }, { c->u[0], c->u[1] }, t1 - t0, p->cy, top, 0 };
+        /* side panels (the user, SF4's board): where a front run's free end has no wall closing the kitchen beside
+         * it (the arcade counter's passage, a freestanding end), a panel from the curtain back to the lining, from
+         * the ground up into what is overhead, just outside the counter's end */
+        if (fabsf(c->u[1]) > 0.01f || c->u[0] < 0.0f) continue;
+        const float zc = z, zl = p->lining;
+        if (zc - zl < 0.3f) continue;
+        for (int k = 0; k < 2 && n < max; ++k) {
+            const float xe = k ? c->o[0] + c->len : c->o[0];
+            if (run_joined(p, i, xe, c->o[1])) continue;
+            float cover = 0.0f;
+            for (int w = 0; w < p->nwall; ++w) {
+                const NbWall *wl = &p->wall[w];
+                if (fabsf(wl->u[0]) > 0.01f || fabsf(wl->o[0] - xe) > 0.15f || wl->h < 1.5f) continue;
+                const float a = minf(wl->o[1], wl->o[1] + wl->u[1] * wl->len), b = maxf(wl->o[1], wl->o[1] + wl->u[1] * wl->len);
+                cover += maxf(0.0f, minf(b, zc) - maxf(a, zl));
+            }
+            if (cover > 0.7f * (zc - zl)) continue;
+            const float xs = xe + (k ? 0.03f : -0.03f);
+            float top = nb_ceil(p, xs, 0.5f * (zc + zl));
+            if (p->recess > 0.0f && p->head > 0.0f) top = minf(top, p->head - 0.01f);
+            if (top < 1.5f) continue;
+            out[n++] = k ? (NbShutter){ { xs, zc }, { 0.0f, -1.0f }, zc - zl, 0.0f, top, 1 }
+                         : (NbShutter){ { xs, zl }, { 0.0f, 1.0f }, zc - zl, 0.0f, top, 1 };
+        }
+    }
+    return n;
+}
+
+/* A module stretched over a frame: its x along u (scaled sx), y up (scaled sy), z out, its origin at o. */
+static void put_frame(Pm *pm, const float o[3], const float u[2], float sx, float sy, int id) {
+    const float ex[3] = { u[0] * sx, 0.0f, u[1] * sx }, ey[3] = { 0.0f, sy, 0.0f }, ez[3] = { -u[1], 0.0f, u[0] };
+    pm_push(pm);
+    pm_frame(pm, o, ex, ey, ez);
+    pm_place(pm, id);
+    pm_pop(pm);
+}
+
+void nb_shut_place(Pm *pm, const NbPlan *p) {
+    const uint8_t show = pm->show;
+    pm->show = NB_SHOW_SHUT;
+    NbShutter sh[NB_SHUTTERS_MAX];
+    const int ns = nb_shutters(p, sh, NB_SHUTTERS_MAX);
+    for (int i = 0; i < ns; ++i) {
+        const NbShutter *s = &sh[i];
+        /* its part: 244 + i over a counter, 236 + i standing on the ground (kit.glsl: where its graffiti goes) */
+        pm->part = (uint8_t)(s->y0 > 0.1f ? 244 + i : 236 + i);
+        const float w = s->len - 2.0f * SHUT_GUIDE, mx = s->o[0] + s->u[0] * 0.5f * s->len, mz = s->o[1] + s->u[1] * 0.5f * s->len;
+        const float bar = 0.062f;
+        const float c0[3] = { mx, s->y0 + bar, mz }, b0[3] = { mx, s->y0, mz };
+        put_frame(pm, c0, s->u, w, s->y1 - s->y0 - bar, PMK_SHUTTER);
+        put_frame(pm, b0, s->u, w, 1.0f, PMK_SHUTTER_BAR);
+        /* the guides: the first's web out at -u, the other turned round (its web out at +u) */
+        const float g0[3] = { s->o[0] + s->u[0] * SHUT_GUIDE, s->y0, s->o[1] + s->u[1] * SHUT_GUIDE };
+        const float g1[3] = { s->o[0] + s->u[0] * (s->len - SHUT_GUIDE), s->y0, s->o[1] + s->u[1] * (s->len - SHUT_GUIDE) };
+        const float back[2] = { -s->u[0], -s->u[1] };
+        put_frame(pm, g0, s->u, 1.0f, s->y1 - s->y0, PMK_SHUTTER_GUIDE);
+        put_frame(pm, g1, back, 1.0f, s->y1 - s->y0, PMK_SHUTTER_GUIDE);
+        /* the padlock on the bar, off its middle by the seed (a side panel is bolted from inside) */
+        if (s->side) continue;
+        const float off = (hash_float(hash_combine(p->seed, 0x10C4u + (uint32_t)i)) - 0.5f) * 0.4f * w;
+        const float l0[3] = { mx + s->u[0] * off, s->y0, mz + s->u[1] * off };
+        put_frame(pm, l0, s->u, 1.0f, 1.0f, PMK_SHUTTER_LOCK);
+    }
+    /* the stools upside down on the counter's top, in front of the curtain (a deep unit's stay at its ledge) */
+    if (!p->deep && p->form != NB_HATCH) {
+        for (int i = 0; i < p->nstool; ++i) {
+            const float sx = p->stool[i][0], sz = p->stool[i][1];
+            for (int k = 0; k < p->nrun; ++k) {
+                const NbRun *c = &p->run[k];
+                const float ox = -c->u[1], oz = c->u[0];
+                const float t = (sx - c->o[0]) * c->u[0] + (sz - c->o[1]) * c->u[1];
+                const float off = (sx - c->o[0]) * ox + (sz - c->o[1]) * oz;
+                if (off < 0.0f || off > 0.8f || t < 0.0f || t > c->len) continue;
+                const float din = maxf(p->cd - SHUT_BACK, 0.12f), tt = clampf(t, 0.22f, c->len - 0.22f);
+                const float x = c->o[0] + c->u[0] * tt - ox * 0.5f * din, z = c->o[1] + c->u[1] * tt - oz * 0.5f * din;
+                pm->part = (uint8_t)(170 + i);
+                pm_push(pm);
+                pm_translate(pm, x, p->cy + 0.751f, z);   /* the seat's top on the counter */
+                pm_rotate_y(pm, 6.2831853f * hash_float(hash_combine(p->seed, 0x5700u + (uint32_t)i)));
+                pm_rotate_x(pm, 3.14159265f);
+                pm_place(pm, PMK_STOOL);
+                pm_pop(pm);
+                break;
+            }
+        }
+    }
+    pm->show = show;
 }

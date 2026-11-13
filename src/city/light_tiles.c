@@ -33,6 +33,9 @@
  *          towards +z: a tube's axis, a neon's facing), 24..28 its length (a
  *          tube's, a neon's square: eighths of a metre), 29..30 a neon's
  *          flicker (neonFlicker). shaders/common.glsl: isVendorLight and after.
+ *          SF4: its vendor's hours code (src/gen/noodle_bar.h nb_hours) in
+ *          the low 7 bits of its height's float (vendorLightOff: a shut
+ *          vendor's lights are skipped); its mist record's kind's low byte.
  * ========================================================================= */
 
 enum { LE_LAMP = 0, LE_ARC_SODIUM = 1, LE_ARC_CROWN = 2, LE_FLAME = 3 };   /* must match emitterPoint in shaders/common.glsl */
@@ -48,11 +51,11 @@ static const float VL_AIR[4] = { 6.0f, 1.5f, 0.15f, 2.5f };
 void vendor_lights(ChunkGen *g, const Mesh *m, const VendorSpot *s, const Vendor *v) {
     NbLight L[NB_LIGHTS_MAX];
     const int n = nb_lights(&v->nb, L, NB_LIGHTS_MAX);
-    vendor_light_list(g, m, s, L, n);
+    vendor_light_list(g, m, s, L, n, vendor_hours(v));
 }
 
 /* SF2: lights in a site's frame (a vendor's, a lane vault's lamps) into the chunk's vendor lights. */
-void vendor_light_list(ChunkGen *g, const Mesh *m, const VendorSpot *s, const NbLight *L, int n) {
+void vendor_light_list(ChunkGen *g, const Mesh *m, const VendorSpot *s, const NbLight *L, int n, uint8_t hours) {
     const float bx = (float)(s->x - m->ox), bz = (float)(s->z - m->oz);
     for (int i = 0; i < n; ++i) {
         const NbLight *l = &L[i];
@@ -87,6 +90,7 @@ void vendor_light_list(ChunkGen *g, const Mesh *m, const VendorSpot *s, const Nb
         /* the mist lit in front of a neon; under the hood, out of the bar's front */
         o->nx = l->kind == NB_LIGHT_NEON ? ux : s->fx;
         o->nz = l->kind == NB_LIGHT_NEON ? uz : s->fz;
+        o->hours = hours;
     }
 }
 
@@ -210,8 +214,14 @@ void build_lights(Mesh *m, ChunkGen *g) {
     for (int i = 0; i < g->nvl; ++i) {   /* the vendors' (build_vendors gathered them: vendor_lights) */
         const VendorLight *L = &g->vl[i];
         if (L->x < bx0 - L->range || L->x > bx1 + L->range || L->z < bz0 - L->range || L->z > bz1 + L->range) continue;
-        ADD_LIGHT(L->x, L->y, L->z, L->range, L->w);
-        air_light(m, L->x, L->y, L->z, L->power, L->nx, L->nz, L->w, AIR_VENDOR << 8);
+        /* SF4: its vendor's hours in the low 7 bits of its height (under 4 mm at 300 m: vendorLightOff) */
+        uint32_t yb;
+        memcpy(&yb, &L->y, 4);
+        yb = (yb & ~127u) | L->hours;
+        float y;
+        memcpy(&y, &yb, 4);
+        ADD_LIGHT(L->x, y, L->z, L->range, L->w);
+        air_light(m, L->x, L->y, L->z, L->power, L->nx, L->nz, L->w, AIR_VENDOR << 8 | L->hours);
     }
 #undef ADD_LIGHT
 

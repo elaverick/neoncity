@@ -41,14 +41,15 @@ void main() {
     vec3 rel = vec3(dot(inRow0, p), dot(inRow1, p), dot(inRow2, p));
     vec3 n = inNrm.xyz;
     vec3 nrm = vec3(dot(inRow0.xyz, n), dot(inRow1.xyz, n), dot(inRow2.xyz, n));
-    ChunkGPU c = chunks[inInst.y];
+    uint rec = inInst.y & 0x7FFFFFFFu;   // the chunk record; the top bit: its vendor shut (kit_gpu.h KIT_INST_SHUT, SF4)
+    ChunkGPU c = chunks[rec];
     vRel = rel;
     vLocal = rel - c.origin.xyz;
     vNrm = normalize(nrm + vec3(0.0, 1e-6, 0.0));   // a module shrunk to nothing as it fades has no normal left
     vUV = inUV;
     vSeed = inInst.x;
-    vParams = uvec4(MAT_KIT, inParams.y, inInst.z & 255u, (inInst.z >> 8) & 0xFFFFu);
-    vChunk = inInst.y;
+    vParams = uvec4(MAT_KIT, inParams.y | ((inInst.y & 0x80000000u) != 0u ? KIT_SHUT : 0u), inInst.z & 255u, (inInst.z >> 8) & 0xFFFFu);
+    vChunk = rec;
     vFacePack = 0u;
     vAux = inAux;
     vLitter = vec3(vec2(float(inParams.z), float(inParams.w)) / 255.0, float(int(inInst.z) >> 24) / 127.0);   // grime: the instance's (kit_gpu.c)

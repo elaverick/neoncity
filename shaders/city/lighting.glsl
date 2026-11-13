@@ -293,6 +293,7 @@ void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, in
     int first = base + int(tile >> 16), count = int(tile & 0xFFFFu);
     for (int i = 0; i < count; ++i) {
         uvec4 r = lightRec[first + i];
+        if (vendorLightOff(r)) continue;   // SF4: a shut vendor's lights
         vec3 lp = uintBitsToFloat(r.xyz);
         uint type = r.w & 3u;
         bool flame = isFlame(r.w);
@@ -351,6 +352,7 @@ vec3 paneSheen(vec3 p, vec3 n, vec3 V) {
         int first = base + int(tile >> 16), count = int(tile & 0xFFFFu);
         for (int i = 0; i < count; ++i) {
             uvec4 r = lightRec[first + i];
+            if (vendorLightOff(r)) continue;   // SF4: a shut vendor's lights
             vec3 l = uintBitsToFloat(r.xyz) - p;
             float d = length(l);
             if (dot(l, n) <= 0.0) continue;   // behind the pane

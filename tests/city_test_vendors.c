@@ -313,7 +313,10 @@ typedef struct VsShells {
     VendorSpot spot[VA_COUNT];
     int trade[VA_COUNT];
     const char *where;
+    /* SF4: the bars' hours: each kind's count, how many open at the sample hours (HOURS_AT), how many can't shut */
+    int bars, hours[NB_HOURS_KINDS], openAt[4], unshut, sides;
 } VsShells;
+static const float HOURS_AT[4][2] = { { 12.0f, 2 }, { 19.0f, 2 }, { 3.0f, 2 }, { 12.0f, 5 } };   /* weekday noon, 19:00, 03:00; Saturday noon */
 
 static void vs_shell_visit(void *ctx, const VendorSpot *s, const Vendor *v) {
     VsShells *A = (VsShells *)ctx;
@@ -360,6 +363,19 @@ static void vs_shell_visit(void *ctx, const VendorSpot *s, const Vendor *v) {
     A->high += high;
     CHECK(!high, "%s: a %s at (%.1f, %.1f) stands %.2f m high (ceiling %.1f)", A->where, vendor_archetype_name(v->archetype), mx, mz, v->top, s->site.ceiling);
     CHECK(ns > 0, "%s: a %s at (%.1f, %.1f) has nothing solid", A->where, vendor_archetype_name(v->archetype), mx, mz);
+    if (vendor_is_kit(v->archetype)) {
+        /* SF4: its hours, and that it has a shutter to shut */
+        const uint8_t code = nb_hours(&v->nb, v->site.lunch);
+        A->bars++;
+        A->hours[code & 7]++;
+        for (int k = 0; k < 4; ++k) A->openAt[k] += nb_hours_open(code, HOURS_AT[k][0], (int)HOURS_AT[k][1]);
+        NbShutter sh[NB_SHUTTERS_MAX];
+        const int nsh = nb_shutters(&v->nb, sh, NB_SHUTTERS_MAX);
+        A->unshut += nsh == 0;
+        for (int k = 0; k < nsh; ++k) A->sides += sh[k].side;
+        CHECK(nsh > 0, "%s: a %s (%s) at (%.1f, %.1f) has no shutter to shut", A->where, vendor_archetype_name(v->archetype),
+              nb_form_name(v->nb.form), mx, mz);
+    }
     double dd = hypot(mx - A->px, mz - A->pz);
     if (dd < A->best[v->archetype]) { A->best[v->archetype] = dd; A->spot[v->archetype] = *s; A->trade[v->archetype] = v->trade; }
 }
@@ -416,6 +432,10 @@ static void check_vendor_shells(int hx, int hz, const char *where, int views) {
     printf("\n  shells: %d triangles (%.0f a vendor, most %d); a chunk's most %d (of %d vertices in its base layer); %d outlines, %d floors; "
            "%d out of their sites, %d too high\n", A.tris, A.vendors ? (double)A.tris / A.vendors : 0.0, A.trisMax, chunkMax, baseMax, colls, floors,
            A.outside, A.high);
+    printf("  hours (%d bars):", A.bars);
+    for (int k = 0; k < NB_HOURS_KINDS; ++k) printf(" %s %d", nb_hours_name(k), A.hours[k]);
+    printf("; open %d at noon, %d at 19:00, %d at 03:00 (weekday), %d Saturday noon; %d without a shutter, %d side panels\n",
+           A.openAt[0], A.openAt[1], A.openAt[2], A.openAt[3], A.unshut, A.sides);
     if (views)
         for (int a = 0; a < VA_COUNT; ++a) {
             if (A.best[a] > 1e29) continue;

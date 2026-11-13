@@ -120,6 +120,7 @@ static inline void vendor_spot_world(const VendorSpot *s, double x, double z, do
 /* What of a vendor the walker meets, in its frame: a box it can't walk into
  * (floor 0), or a floor it steps up onto at height y over the site's floor
  * (a container's deck, its step). Returns how many. */
-typedef struct VendorSolid { float x0, z0, x1, z1, y; uint8_t floor; } VendorSolid;
+/* show, hours (SF4): when it is there (NB_SHOW_*: a bar's stools and A-frame only while open) and its vendor's hours code */
+typedef struct VendorSolid { float x0, z0, x1, z1, y; uint8_t floor, show, hours; } VendorSolid;
 #define VENDOR_SOLIDS_MAX 24
 int  vendor_solids(const Vendor *v, VendorSolid *out, int max);

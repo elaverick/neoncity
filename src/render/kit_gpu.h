@@ -35,8 +35,9 @@ struct KitInst;
 /* One frame's instance on the GPU (kit.vert, binding 1): the module's frame to camera-relative, rows. */
 typedef struct KitInstGPU {
     float    row[3][4];
-    uint32_t seed, chunk, part, base;   /* base: the float's bits (Vertex.base) */
+    uint32_t seed, chunk, part, base;   /* base: the float's bits (Vertex.base); chunk: its record | KIT_INST_SHUT */
 } KitInstGPU;
+#define KIT_INST_SHUT 0x80000000u   /* SF4: its vendor is shut (kit.vert: its lit glass dark) */
 
 typedef struct KitStats {
     int      modules, levels;

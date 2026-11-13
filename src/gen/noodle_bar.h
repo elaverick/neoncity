@@ -342,3 +342,66 @@ enum { NB_HOOD_RUST = 0, NB_HOOD_GALV = 1, NB_HOOD_STEEL = 2 };
 #define NB_FINISH_BARE_WOOD (1u << 10)
 /* The finish's bits for the kit's flags (src/city/city.h KitInst: the coat << 5, the hood << 8). */
 uint32_t nb_finish(float affluence, uint32_t seed);
+
+/* ---------------------------------------------------------------------------
+ * Hours (SF4; the plan's decision 11): each vendor keeps hours by its trade
+ * and its site, a pure function of the plan, as a 7-bit code (nb_hours: the
+ * kind in bits 0-2, a jitter in 3-6 moving its opening by up to 22 minutes
+ * and its closing by up to 30 either way, so a street doesn't open on the
+ * stroke). The code rides everything that changes with the hours: the body's
+ * vertices (shaders/city.vert: the lit materials go dark), the kit's
+ * instances (src/render/kit_gpu.c: what is shown open or shut), the lights
+ * (src/city/light_tiles.c), the rain's mist, the steam and the walker's
+ * collision (stools, A-frame). The CPU keeps which codes show open (the
+ * user, SF4's board: nobody sees a vendor open or shut): each code takes
+ * the city clock's rule (DN7; nb_hours_open) only while none of its
+ * vendors is in view (src/render/chunks.c, nb_hours_update); the kit and
+ * the walker read nb_open_now, the shaders frame.vendorOpen (common.glsl
+ * vendorOpen). Code 0 is always open (what carries no code: a lane vault's
+ * lamps).
+ *   NB_HOURS_ALWAYS   round the clock
+ *   NB_HOURS_LUNCH    weekdays 11:00-14:30 (an office forecourt's lunch stalls)
+ *   NB_HOURS_DAY      07:00-19:00 (09:00 at weekends): coffee, crepes, chestnuts
+ *   NB_HOURS_TWO      11:00-14:30 and 17:00-23:00: lunch and dinner
+ *   NB_HOURS_EVENING  17:00-24:00
+ *   NB_HOURS_LATE     19:00-03:00 (04:00 after Friday and Saturday)
+ *   NB_HOURS_MORNING  06:00-15:00 (07:00 at weekends): pho, dumplings, tea
+ *   NB_HOURS_ALLDAY   10:00-23:00
+ * Shut: the roller shutters down over the counters (a shop bay's deep unit:
+ * over its shopfront; side panels where a kitchen's end is open), with
+ * graffiti by the district's affluence, the stools upside down on the counters, the A-frame,
+ * the bell and the counter's condiments taken in, the flames out, the lights,
+ * neon and lit glass dark, no steam. */
+enum { NB_HOURS_ALWAYS = 0, NB_HOURS_LUNCH, NB_HOURS_DAY, NB_HOURS_TWO, NB_HOURS_EVENING, NB_HOURS_LATE,
+       NB_HOURS_MORNING, NB_HOURS_ALLDAY, NB_HOURS_KINDS };
+const char *nb_hours_name(int kind);
+/* The vendor's hours code (lunch: its site is an office forecourt's lunch stall). */
+uint8_t nb_hours(const NbPlan *p, int lunch);
+/* Whether code keeps its vendor open at local solar time hours (0..24) on weekday (0 Monday .. 6 Sunday). */
+int     nb_hours_open(uint8_t code, float hours, int weekday);
+/* The city's clock this frame (src/app/main.c: frame.clock's), for nb_open_now. */
+void    nb_hours_now(float hours, int weekday);
+/* Every vendor open (1), shut (0) or by the clock (-1: NeonCity --hours open|shut|clock). */
+void    nb_hours_force(int mode);
+int     nb_hours_forced(void);
+int     nb_open_now(uint8_t code);
+/* What is shown (SF4, the user: no vendor opens or shuts in view): each code's bit takes the clock's only while
+ * seen (the codes of the vendors in view, src/render/chunks.c) has it clear; nb_open_now and the shaders' mask
+ * (frame.vendorOpen) read it. */
+void    nb_hours_update(const uint32_t seen[4]);
+void    nb_hours_shown(uint32_t out[4]);
+/* nb_solids, with when each box is there (NB_SHOW_*: the stools and A-frame only while open). */
+int     nb_solids_shown(const NbPlan *p, float (*box)[4], uint8_t *show, int max);
+/* When an instance is seen (PmInstance.show; Pm.show sets it for what pm_place lists). */
+enum { NB_SHOW_ALWAYS = 0, NB_SHOW_OPEN, NB_SHOW_SHUT };
+/* A roller shutter: its curtain's plane from o along u (unit, level) for len, its front facing cross(u, up),
+ * from y0 (its bottom bar's foot) to y1 (into what is overhead). */
+#define NB_SHUTTERS_MAX (NB_RUNS_MAX + 2)
+typedef struct NbShutter { float o[2], u[2], len, y0, y1; uint8_t side; } NbShutter;   /* side: a panel closing an open end */
+/* The bar's shutters: one over each counter run, standing on the counter's top at its back edge (the stools go
+ * up on the top in front of it), up to the hood, deck or soffit over it; a hatch kiosk's over its glazing; a
+ * deep unit's over its shopfront on the building line, from the ground to the head. Returns how many. */
+int     nb_shutters(const NbPlan *p, NbShutter *out, int max);
+/* Sets down what shows only while the bar is shut (Pm.show NB_SHOW_SHUT): the shutters (curtain, bar, guides,
+ * the padlock) and the stools upside down on the counter. */
+void    nb_shut_place(Pm *pm, const NbPlan *p);

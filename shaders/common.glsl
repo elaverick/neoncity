@@ -124,6 +124,7 @@ layout(set = 0, binding = 0) uniform Frame {
     vec4 air[8];     // the air's light at the eye (AIR_SUN, AIR_MOON, AIR_SKY, skyIrradiance; shaders/atmo_eye.comp), a couple of frames late
     vec4 dirMix;     // x the sun's share of the land's light (1 while it is dirLight), y the moon's, z dirLight's disc's radius (rad) (src/render/renderer.c)
     vec4 clock;      // x the local mean solar time at the camera (hours), y the day of the week (0 Monday .. 6 Sunday) (src/app/main.c: frame_ubo; cityHours)
+    uvec4 vendorOpen; // SF4: the vendors' hours codes shown open (bit c of word c >> 5: code c; vendorOpen)
     vec4 smog;       // the smog's top over the cities' cloud (hazeAmount), in the haze's heights: x over the eye, y the deck's cover over the eye (whatever its height), z the lowest over any city drawn (1e9: none) (src/app/weather.c)
 } frame;
 
@@ -231,6 +232,8 @@ const vec3 LOBBY_SPILL = vec3(1.0, 0.66, 0.37);
 const float SHADOW_FADE = 350.0, SHADOW_FAR = 450.0;    // src/core/common.h
 const uint  SHADOWS_ON = 1u, SHADOWS_DEBUG = 2u;         // frame.shadow.y (renderer.c)
 const uint  VENDOR_DEBUG = 4u;                           // frame.shadow.y: --vendor-debug / F7, far shells drawn magenta
+const uint  VENDORS_OPEN = 8u, VENDORS_SHUT = 16u;       // frame.shadow.y: NeonCity --hours open|shut (SF4)
+const uint  KIT_SHUT = 256u;                             // MAT_KIT's material word (vParams.y): its vendor shut (SF4)
 bool shadowsOn() { return (uint(frame.shadow.y) & SHADOWS_ON) != 0u; }
 const int   SHADOW_SLOTS = 8;                            // lights a pixel keeps soft shadows for
 const uint  RT_MASK_LITTER = 0x04u;                      // src/render/rt.h
@@ -356,6 +359,18 @@ float lampGround(vec3 lp, uint w) {
  * (coloured squares facing the street, flickering as their tubes do). */
 const uint VL_TUBE = 0u, VL_LAMP = 1u, VL_FLAME = 2u, VL_NEON = 3u;
 bool  isVendorLight(uint w) { return (w & 0x80000003u) == 0x80000003u; }
+
+/* A vendor's hours (SF4): whether its 7-bit code (src/gen/noodle_bar.c nb_hours) shows it open. The CPU keeps
+ * which codes show open (frame.vendorOpen, nb_hours_shown: each takes the city clock's rule, nb_hours_open, only
+ * while none of its vendors is in view, so nobody sees a stall open or shut); --hours open|shut forces it. */
+bool vendorOpen(uint code) {
+    uint force = uint(frame.shadow.y);
+    if ((force & VENDORS_OPEN) != 0u) return true;
+    if ((force & VENDORS_SHUT) != 0u) return false;
+    return ((frame.vendorOpen[(code >> 5) & 3u] >> (code & 31u)) & 1u) != 0u;
+}
+// a light record (lightRec) a shut vendor's: its hours in its height's low 7 bits (src/city/light_tiles.c)
+bool vendorLightOff(uvec4 r) { return isVendorLight(r.w) && !vendorOpen(r.y & 127u); }
 uint  vendorKind(uint w) { return (w >> 2) & 3u; }
 float vendorLen(uint w) { return float((w >> 24) & 31u) * 0.125; }
 vec3  vendorWay(uint w) { float a = float((w >> 16) & 255u) * (6.2831853 / 256.0); return vec3(cos(a), 0.0, sin(a)); }

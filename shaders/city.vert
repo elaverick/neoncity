@@ -205,14 +205,20 @@ void main() {
     vRel = rel;
     vLocal = local;
     vNrm = normalize(nrm);
-    // a noodle bar's body: the cooking's grime (src/city/vendor_kit.c vendor_emit_body: nb_grime in the normal's w)
-    vLitter = vec3(lit, inParams.x == MAT_KIT ? inNrm.w : 0.0);
+    // a noodle bar's body: the cooking's grime (src/city/vendor_kit.c vendor_emit_body: nb_grime in the normal's w;
+    // a far shell's w holds its hours instead, SF4)
+    bool kitFar = inParams.x == MAT_KIT && (inAux & KIT_AUX_FAR) != 0u;
+    vLitter = vec3(lit, inParams.x == MAT_KIT && !kitFar ? inNrm.w : 0.0);
     vBase = inBase;
     vUV = inUV;
     vSeed = inSeed;
     vParams = inParams;
-    if (inParams.x == MAT_KIT)   // as kit.vert's: the flags' low byte in aux bits 8-15, their high byte in 17-24
-        vParams = uvec4(MAT_KIT, inParams.y, inAux & 255u, ((inAux >> 8) & 255u) | ((inAux >> 17) & 255u) << 8);
+    if (inParams.x == MAT_KIT) {   // as kit.vert's: the flags' low byte in aux bits 8-15, their high byte in 17-24
+        // SF4: the vendor's hours (a far shell's in the normal's w, the rest in aux bits 25-31): shut, its lit
+        // glass goes dark (KIT_SHUT in the material's word: kit.glsl)
+        uint hours = kitFar ? uint(max(inNrm.w, 0.0) * 127.0 + 0.5) : inAux >> 25;
+        vParams = uvec4(MAT_KIT, inParams.y | (vendorOpen(hours) ? 0u : KIT_SHUT), inAux & 255u, ((inAux >> 8) & 255u) | ((inAux >> 17) & 255u) << 8);
+    }
     vChunk = uint(gl_InstanceIndex);
     vFacePack = uint(max(inUV.y, 0.0) + 0.5);
     if (inParams.x == MAT_FACADE) vFacePack |= uint(inNrm.w * 127.0 + 0.5) << 24;   // facade_mat (src/city/mesh_building.c)

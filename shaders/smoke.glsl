@@ -10,7 +10,7 @@ struct Plume {
     float strength; // a stall's: how thick, 0..1
     vec2  dir;      // a stall's: the way its knots run out (world xz)
     uint  nknot;    // a stall's knots (1: a free wisp)
-    float pad;
+    uint  hours;    // a stall's: its vendor's hours code (SF4: common.glsl vendorOpen; none while shut)
     vec4  knot[8];  // a stall's path: out along dir, up, from the mouth; the ceiling over the knot (0: none)
     vec4  light[3]; // a stall's light (linear): over the mouth, under the hood, past the fascia
 };

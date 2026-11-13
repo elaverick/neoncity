@@ -85,7 +85,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--bars all] [--vendor-debug] [--nbform straight|corner] [--trade noodles|soup|dumplings|skewers|kebab|burgers|fried|curry|tacos|crepes|roast|drinks] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--bars all] [--vendor-debug] [--hours open|shut|clock] [--nbform straight|corner] [--trade noodles|soup|dumplings|skewers|kebab|burgers|fried|curry|tacos|crepes|roast|drinks] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -93,6 +93,7 @@ static void usage(void) {
            "  --walk  hold W for this many seconds before a --shot\n"
            "  --turn  and turn this fast while walking (degrees a second, + to the right)\n"
            "  --walk-shot  take the --shot as the walk ends, not once streaming settles again (to catch the grass's wake)\n"
+           "  --hours every street vendor open or shut whatever the hour (the board's A/B), or by the clock (the default)\n"
            "  --rain  fix the rain intensity (0 dry, 0.1 drizzle .. 1 downpour); otherwise it drifts\n"
            "  --time  hold the shaders' clock at this many seconds (flames, signs, steam: for captures)\n"
            "  --utc   start the world's clock (the sun, the moon, the stars) at this UTC instant, from which it runs at 1x;\n"
@@ -163,6 +164,10 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--noshadows") == 0) o->shadows = false;
         else if (strcmp(argv[i], "--shadowdebug") == 0) o->shadowDebug = true;
         else if (strcmp(argv[i], "--vendor-debug") == 0) o->vendorDebug = true;
+        else if (strcmp(argv[i], "--hours") == 0 && i + 1 < argc) {
+            const char *h = argv[++i];
+            nb_hours_force(strcmp(h, "open") == 0 ? 1 : strcmp(h, "shut") == 0 ? 0 : -1);
+        }
         else if (strcmp(argv[i], "--lockdoors") == 0) o->lockDoors = true;
         else if (strcmp(argv[i], "--nograss") == 0) o->noGrass = true;
         else if (strcmp(argv[i], "--kit") == 0 && i + 1 < argc) {
@@ -503,6 +508,8 @@ static void frame_ubo(const Player *player, const VkCore *vk, double t, double j
     terrain_dir_latlon(sky.up, &lat, &lon);
     ubo->clock[0] = (float)sky_local_solar_hours(jd, lon);
     ubo->clock[1] = (float)sky_local_weekday(jd, lon);
+    nb_hours_now(ubo->clock[0], (int)lrintf(ubo->clock[1]));   /* SF4: the vendors' hours (what the kit draws) */
+    nb_hours_shown(ubo->vendorOpen);                              /* ...as shown: none changes in view (chunks.c) */
 }
 
 /* frame.exposure (shaders/common.glsl; src/core/light_units.h). The exposure

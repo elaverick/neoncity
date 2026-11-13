@@ -144,11 +144,15 @@ enum {
  * (17-24: its hood's metal); the seed the vendor's. A far shell's vertices
  * (KIT_AUX_FAR, in the base layer) carry their vendor's index in the chunk (bits 25-31, KIT_AUX_BODY_SHIFT)
  * and are dropped by city.vert while that vendor's near body is resident (ChunkGPU.bodies; SF2: bodies are
- * streamed per vendor within VENDOR_BODY_DISTANCE), and cast no ray-traced shadows. Must match
+ * streamed per vendor within VENDOR_BODY_DISTANCE), and cast no ray-traced shadows; their normal's w holds
+ * the vendor's hours code (SF4: src/gen/noodle_bar.h nb_hours). Every other body vertex carries the hours in
+ * bits 25-31 (KIT_AUX_HOURS_SHIFT; 0 always open) and the cooking's grime in its normal's w. Must match
  * shaders/city.vert. */
 #define KIT_AUX_FAR (1u << 16)
 #define KIT_AUX_BODY_SHIFT 25
+#define KIT_AUX_HOURS_SHIFT 25
 #define VENDOR_BODIES_MAX  128        /* a chunk's vendors with bodies of their own (ChunkGPU.bodies' bits) */
+#define VENDOR_SEEN_FAR   400.0f      /* SF4: a vendor this near and in the frustum keeps its hours' look (no change in view) */
 #define VENDOR_BODY_DISTANCE 28.0f    /* SF2: a vendor's near body is streamed within this of the camera */
 
 /* Industrial plants' surfaces (MAT_INDUSTRY params.y; src/city/mesh_industry.c):
@@ -253,7 +257,7 @@ typedef struct Plume {
     float    strength; /* a stall's: how thick, 0..1 */
     float    dir[2];   /* a stall's: the way its knots run out (world xz, unit) */
     uint32_t nknot;    /* a stall's: how many knots (0 for the rest; 1: a free wisp) */
-    float    pad;
+    uint32_t hours;    /* a stall's: its vendor's hours code (SF4: src/gen/noodle_bar.h nb_hours; no steam while shut) */
     float    knot[PLUME_KNOTS][4];   /* a stall's path: out along dir, up, from the mouth; the ceiling over it (0: none) */
     float    light[3][4];            /* a stall's light (linear rgb): over the mouth, under the hood, past the fascia */
 } Plume;

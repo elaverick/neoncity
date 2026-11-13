@@ -343,6 +343,43 @@ static void m_low_stool(Pm *pm) {
     pm_push(pm); pm_translate(pm, 0.0f, 0.16f, 0.0f); pm_torus(pm, 0.141f, 0.007f, pm_segs(pm, 20, 8), L2 ? 3 : 5); pm_pop(pm);
 }
 
+/* ------------------------------------------------------ SF4: shutters --- */
+/* A roller shutter's curtain (stretched by its instance to the opening: its slats are the shutter set's, laid in
+ * world metres on its plane by kit.glsl), its bottom bar with a rubber seal, the guide channels at its ends and a
+ * padlock on a hasp. */
+static void m_shutter(Pm *pm) {
+    pm_mat(pm, PMAT_SHUTTER);
+    pm_box(pm, -0.5f, 0.0f, -0.006f, 0.5f, 1.0f, 0.006f);
+}
+static void m_shutter_bar(Pm *pm) {
+    pm_mat(pm, PMAT_GALV);
+    float c[3] = { 0.0f, 0.036f, 0.0f }, h[3] = { 0.5f, 0.026f, 0.019f };
+    pm_bbox(pm, c, h, L2 ? 0.0f : 0.004f, 1);
+    pm_mat(pm, PMAT_RUBBER);
+    pm_box(pm, -0.5f, 0.0f, -0.012f, 0.5f, 0.010f, 0.012f);
+}
+static void m_shutter_guide(Pm *pm) {
+    pm_mat(pm, PMAT_GALV);
+    pm_box(pm, -0.032f, 0.0f, 0.009f, 0.022f, 1.0f, 0.032f);
+    pm_box(pm, -0.032f, 0.0f, -0.032f, 0.022f, 1.0f, -0.009f);
+    pm_box(pm, -0.032f, 0.0f, -0.009f, -0.026f, 1.0f, 0.009f);
+}
+static void m_shutter_lock(Pm *pm) {
+    pm_mat(pm, PMAT_STEEL);
+    pm_box(pm, -0.03f, 0.005f, 0.019f, 0.03f, 0.055f, 0.023f);   /* the hasp's plate on the bar */
+    float c[3] = { 0.0f, 0.032f, 0.026f }, h[3] = { 0.008f, 0.014f, 0.004f };
+    pm_bbox(pm, c, h, 0.0f, 1);                                  /* its staple */
+    pm_mat(pm, PMAT_BRASS);
+    float lc[3] = { 0.0f, -0.004f, 0.036f }, lh[3] = { 0.019f, 0.017f, 0.008f };
+    pm_bbox(pm, lc, lh, L2 ? 0.0f : 0.003f, L0 ? 2 : 1);         /* the padlock's body, hanging below the staple */
+    if (!L2) {
+        pm_mat(pm, PMAT_STEEL);
+        pm_push(pm); pm_translate(pm, 0.0f, 0.020f, 0.036f); pm_rotate_x(pm, 0.5f * PI_F);
+        pm_torus(pm, 0.011f, 0.0028f, pm_segs(pm, 16, 6), 5);   /* its shackle through the staple */
+        pm_pop(pm);
+    }
+}
+
 /* ----------------------------------------------------------- the pots --- */
 static void loop_handle(Pm *pm, float R, float y, float side, float span, float out, float r) {
     PmPath pa;
@@ -1296,7 +1333,7 @@ const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_TUBE] = "tube", [PMAT_NEON] = "neon", [PMAT_FLAME] = "flame", [PMAT_BULB] = "bulb", [PMAT_SIGN_FAR] = "sign_far",
     [PMAT_MEAT] = "meat", [PMAT_DOUGH] = "dough", [PMAT_BREAD] = "bread", [PMAT_FRIED] = "fried", [PMAT_FRYOIL] = "fryoil",
     [PMAT_CHESTNUT] = "chestnut", [PMAT_GREENS] = "greens", [PMAT_SAUCE] = "sauce", [PMAT_GRIT] = "grit", [PMAT_EMBER] = "ember", [PMAT_RADIANT] = "radiant",
-    [PMAT_GLAZING] = "glazing", [PMAT_WINDOW_FAR] = "window_far",
+    [PMAT_GLAZING] = "glazing", [PMAT_WINDOW_FAR] = "window_far", [PMAT_SHUTTER] = "shutter",
 };
 /* Mirrored by kitSet in shaders/city/kit.glsl. Sets may serve two materials in different colours (the
  * rubber's grain under black plastic, the white paint's under red): the share check counts them together. */
@@ -1306,7 +1343,7 @@ const char *const PM_MAT_SET[PMAT_COUNT] = {
     [PMAT_TILE] = "kit_tile", [PMAT_RUBBER] = "kit_rubber", [PMAT_BRASS] = "kit_brass", [PMAT_TIMBER] = "vendor_planks",
     [PMAT_BAMBOO] = "kit_bamboo", [PMAT_PAPER] = "paper", [PMAT_PLASTIC] = "kit_rubber", [PMAT_GALV] = "kit_galv",
     [PMAT_STEEL] = "kit_steel", [PMAT_RED] = "kit_painted", [PMAT_RUST_STEEL] = "kit_rust_steel",
-    [PMAT_CHEQUER] = "kit_chequer", [PMAT_LINING] = "kit_lining",
+    [PMAT_CHEQUER] = "kit_chequer", [PMAT_LINING] = "kit_lining", [PMAT_SHUTTER] = "shutter",
 };
 
 /* --------------------------------------------------------------- table --- */
@@ -1409,6 +1446,10 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_ICON_FLAME   ] = { "icon_flame",     m_icon_flame,      { 4000, 1800, 800 }, 1 },
     [PMK_CAFE_TABLE   ] = { "cafe_table",     m_cafe_table,      { 2600, 800, 300 }, 1 },
     [PMK_LOW_STOOL    ] = { "low_stool",      m_low_stool,       { 2400, 900, 300 }, 1 },
+    [PMK_SHUTTER      ] = { "shutter",        m_shutter,         { 200, 60, 12 },   1 },
+    [PMK_SHUTTER_BAR  ] = { "shutter_bar",    m_shutter_bar,     { 600, 400, 24 },  1 },
+    [PMK_SHUTTER_GUIDE] = { "shutter_guide",  m_shutter_guide,   { 300, 100, 36 },  1 },
+    [PMK_SHUTTER_LOCK ] = { "shutter_lock",   m_shutter_lock,    { 900, 300, 40 },  1 },
 };
 
 int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CUP) || (id >= PMK_ICON_SKEWER && id <= PMK_ICON_FLAME); }
@@ -1428,7 +1469,7 @@ void pm_place(Pm *pm, int id) {
         if (l->n == l->cap) { l->cap = l->cap ? l->cap * 2 : 64; l->v = (PmInstance *)realloc(l->v, sizeof(PmInstance) * l->cap); }
         PmInstance *o = &l->v[l->n++];
         memcpy(o->xf, pm->xf, sizeof(o->xf));
-        o->module = (uint16_t)id; o->part = pm->part; o->pad = 0;
+        o->module = (uint16_t)id; o->part = pm->part; o->show = pm->show;
         return;
     }
     uint8_t mat = pm->mat, part = pm->part;

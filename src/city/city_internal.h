@@ -59,7 +59,7 @@ const VendorSpot *chunk_gen_stalls(ChunkGen *g, int *n);
 
 /* A vendor's light in the chunk's table (light_tiles.c: type 3 with VENDOR_LIGHT set), chunk-local, how far
  * it reaches, and for the rain's mist its power and facing. */
-typedef struct VendorLight { float x, y, z, range; uint32_t w; float power, nx, nz; } VendorLight;
+typedef struct VendorLight { float x, y, z, range; uint32_t w; float power, nx, nz; uint8_t hours; } VendorLight;   /* hours: SF4 */
 
 /* planPad: plan area margin. Buildings are generated for blocks within
  * buildPad of the chunk and lamps within lampPad; lampPad must stay 20 m
@@ -393,9 +393,10 @@ void    build_vendors(Mesh *m, ChunkGen *g);
  * always drawn (a vendor past VENDOR_BODIES_MAX) */
 void    vendor_emit_body(Mesh *m, const VendorSpot *s, const Vendor *v, const PmMesh *pm, int far, int refine, int idx);
 uint32_t vendor_kit_flags(const Vendor *v);
+uint8_t  vendor_hours(const Vendor *v);   /* SF4: its hours code (nb_hours) */
 /* light_tiles.c: a noodle bar's lights (nb_lights, NB6) into g's list for build_lights, chunk-local in m. */
 void    vendor_lights(ChunkGen *g, const Mesh *m, const VendorSpot *s, const Vendor *v);
-void    vendor_light_list(ChunkGen *g, const Mesh *m, const VendorSpot *s, const NbLight *L, int n);
+void    vendor_light_list(ChunkGen *g, const Mesh *m, const VendorSpot *s, const NbLight *L, int n, uint8_t hours);
 /* SF2: kit geometry of no vendor's (a lane vault's) into the base layer, in s's frame: flags as a vendor's
  * (wear, finish) */
 void    vendor_emit_kit(Mesh *m, const VendorSpot *s, const PmMesh *pm, uint32_t flags, uint32_t seed);
