@@ -6,6 +6,9 @@
 #include "kit_gpu.h"
 
 #define MAX_ENTRIES    8192
+#define ENTRY_QUEUE_MIN 64                /* fewer entries free than this, nothing new is queued (queue_wanted) */
+#define ENTRY_LOW      (MAX_ENTRIES / 8)  /* evict_entries frees unwanted ones below this, */
+#define ENTRY_HIGH     (MAX_ENTRIES / 4)  /* up to this */
 #define HASH_BUCKETS   16384
 #define MAX_JOBS       1024
 #define MAX_WORKERS    16
@@ -447,6 +450,25 @@ static void evict_to_watermark(ChunkSystem *cs, uint64_t frame, const double cam
 #undef POOLS_HIGH
 }
 
+/* Keep a reserve of free entries too. Chunks with nothing to draw (the land
+ * round a city, a chunk's empty layers) hold no pages, so evict_to_watermark
+ * never takes them; flying over the land would otherwise fill the table with
+ * them, and with fewer than ENTRY_QUEUE_MIN entries free nothing is queued
+ * again (queue_wanted) and the next city stays as its proxies. Chunks not
+ * wanted this frame go, oldest first. Called after queue_wanted, which marks
+ * this frame's wanted chunks. */
+static void evict_entries(ChunkSystem *cs, uint64_t frame) {
+    if (cs->freeEntryCount >= ENTRY_LOW) return;
+    static EvictCand cand[MAX_ENTRIES];
+    int n = 0;
+    for (int i = 0; i < MAX_ENTRIES; ++i) {
+        const Entry *e = &cs->entries[i];
+        if (e->state == CS_RESIDENT && e->lastSeen < frame) { cand[n].idx = i; cand[n].key = (double)e->lastSeen; n++; }
+    }
+    qsort(cand, n, sizeof(EvictCand), cmp_evict);
+    for (int i = 0; i < n && cs->freeEntryCount < ENTRY_HIGH; ++i) evict(cs, cand[i].idx, frame);
+}
+
 /* Lets the reach grow back while the pool has room for more: REACH_ROOM of its
  * pages free, waiting to be, or held by chunks not wanted this frame (which
  * evict_to_watermark takes first). After an eviction of wanted chunks the pool
@@ -743,7 +765,7 @@ static int queue_wanted(ChunkSystem *cs, uint64_t frame, const double cam[3]) {
         Want *w = &cs->want[cs->wantOrder[i]];
         int idx = table_find(cs, w->cx, w->cz, w->layer);
         if (idx < 0) {
-            if (nj >= MAX_JOBS || cs->freeEntryCount < 64) continue;
+            if (nj >= MAX_JOBS || cs->freeEntryCount < ENTRY_QUEUE_MIN) continue;
             double x = (w->cx + 0.5) * P - cam[0], z = (w->cz + 0.5) * P - cam[2];
             if (x * x + z * z > reach2) continue;   /* its proxies stand in (relax_reach) */
             idx = table_insert(cs, w->cx, w->cz, w->layer);
@@ -1101,6 +1123,7 @@ void chunks_update(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t fram
     withdraw_jobs(cs);
     want_chunks(cs, &fr, cam);
     int queued = queue_wanted(cs, frame, cam);
+    evict_entries(cs, frame);
     relax_reach(cs, frame);
     int uploads = upload_ready(cs, cmd, slot, frame, cam);
     uint32_t viewChunks;

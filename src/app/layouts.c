@@ -8,9 +8,10 @@
  * layout while it is BUILDING, and the main thread only reads a READY one or
  * builds into one it has taken (EMPTY until done), so the layouts themselves
  * need no lock; g_lock guards the slots' keys and states, the queue and the
- * counts. Only READY and EMPTY slots are ever reused, least recently used
- * first. A queued slot the main thread needs before the worker has started
- * on it is taken back and built at once; one already building is waited for.
+ * counts. EMPTY slots are reused first, then READY ones and then QUEUED ones,
+ * least recently used first (victim); a BUILDING one never. A queued slot the
+ * main thread needs before the worker has started on it is taken back and
+ * built at once; one already building is waited for.
  * The queue holds each job's chunk as well as its slot, so a job whose slot
  * has since been taken back is skipped. A layout belongs to the lineage of
  * the frame it was asked for in (TerrainFrame: the asking thread's), and is
@@ -74,16 +75,21 @@ static int find(int cx, int cz, uint32_t f) {
     return -1;
 }
 
-/* The least recently used slot that is free to reuse, or -1. Under g_lock. */
+/* The slot to reuse, or -1: an empty one, else the least recently used ready
+ * one, else the least recently used queued one (its job is skipped: the
+ * worker checks the slot's key). Moving fast, the queue fills with chunks
+ * already left behind faster than the one worker builds them, and those
+ * would otherwise hold every slot. Only a slot being built is never taken.
+ * Under g_lock. */
 static int victim(void) {
-    int v = -1;
+    int ready = -1, queued = -1;
     for (int i = 0; i < LAYOUT_CACHE; ++i) {
         int st = g_slot[i].state;
-        if (st != LS_EMPTY && st != LS_READY) continue;
-        if (v < 0 || st == LS_EMPTY || (g_slot[v].state == LS_READY && g_slot[i].use < g_slot[v].use)) v = i;
-        if (st == LS_EMPTY) break;
+        if (st == LS_EMPTY) return i;
+        if (st == LS_READY && (ready < 0 || g_slot[i].use < g_slot[ready].use)) ready = i;
+        if (st == LS_QUEUED && (queued < 0 || g_slot[i].use < g_slot[queued].use)) queued = i;
     }
-    return v;
+    return ready >= 0 ? ready : queued;
 }
 
 const BlockLayout *layouts_get(int cx, int cz) {
