@@ -1,5 +1,17 @@
 # TODO
 
+## Snagging (2026-11-13)
+
+- [x] Street food vendors vanish when you back away after their near bodies have loaded: the far shell gave
+      way while the body was resident, but the body is only drawn while wanted (within
+      VENDOR_BODY_DISTANCE), so backing off left neither. The shell now gives way only to a body that is
+      resident and wanted this frame (chunks.c build_draw_list).
+- [ ] Vendors with the sliding glass window z-fight on the sides of the window frame.
+- [ ] Inset (corner, bay) vendors' shutters disappear when you back off: they ride the interior's LOD.
+      With the shutter down, draw the shutter quad at any distance and skip what it hides.
+- [ ] Clouds sink into cities on high ground and block the view: keep the layer a constant height above
+      the city's highest terrain (or follow the terrain).
+
 ## Shadows
 Every light in the chunks' light tables casts ray-traced shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`,
 `shaders/shadow_denoise.comp`; see the README).

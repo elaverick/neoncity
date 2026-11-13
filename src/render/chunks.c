@@ -944,10 +944,13 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
                 if (!frustum_test_aabb(&fr, v3(cx - r, cy - r, cz - r), v3(cx + r, cy + r, cz + r))) continue;
                 seen[(v->hours >> 5) & 3] |= 1u << (v->hours & 31);
             }
-            /* SF2: the vendors' far shells give way where their own near bodies are resident (city.vert) */
+            /* SF2: the vendors' far shells give way where their own near bodies are resident (city.vert), and
+             * still wanted this frame: a body left resident once the camera backs out of VENDOR_BODY_DISTANCE is
+             * no longer drawn, so its shell must come back */
             for (uint32_t b = 0; b < e->nvbody && b < VENDOR_BODIES_MAX; ++b) {
                 int vi = table_find(cs, e->cx, e->cz, LAYER_VBODY + (int)b);
-                if (vi >= 0 && cs->entries[vi].state == CS_RESIDENT && cs->entries[vi].npages) g->bodies[b >> 5] |= 1u << (b & 31u);
+                if (vi >= 0 && cs->entries[vi].state == CS_RESIDENT && cs->entries[vi].npages && cs->entries[vi].lastSeen == cs->frame)
+                    g->bodies[b >> 5] |= 1u << (b & 31u);
             }
         }
         g->info[0] = e->cx; g->info[1] = e->cz;
