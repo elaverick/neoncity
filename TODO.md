@@ -1,22 +1,34 @@
 # TODO
 
-## Snagging (2026-11-13)
+## Snagging
 
-- [x] Street food vendors vanish when you back away after their near bodies have loaded: the far shell gave
-      way while the body was resident, but the body is only drawn while wanted (within
-      VENDOR_BODY_DISTANCE), so backing off left neither. The shell now gives way only to a body that is
-      resident and wanted this frame (chunks.c build_draw_list).
-- [x] Vendors with the sliding glass window z-fight on the sides of the window frame: the hatch kiosk's side
-      walls ran to the front, so their sheet, lining and corner angle ended in the jambs' face. They now stop
-      at the back of the frame (noodle_bar.c wall). city_test --zfight now scans the vendors' near bodies too.
-- [x] Shut vendors' shutters disappear when you back off: they were kit instances of the near body only.
-      The far shell now carries each curtain as one flat quad (nb_shell_shutters), folded away in city.vert
-      while the vendor is open, casting no ray-traced shadow. Not done: skipping the near body's hidden
-      kitchen while shut (the far shell is ~500 triangles; the saving is only within 28 m).
-- [x] Clouds sink into cities on high ground and block the view: the deck hung over the core's ground, and
-      99 of 177 cities climb more than its 115 m base above their core. It now hangs over the highest ground
-      across the footprint (city_settlement_deck, 116 ms at start). Lima's footprint climbs 4290 m into the
-      Andes, so its deck is ~4.4 km over the coast: following the terrain instead is the fix if that looks wrong.
+Bugs to fix one by one, each committed and pushed before the next. Fixed ones leave the list (the commits record them).
+
+## Daylight quality issues
+
+Night looks a lot better than day (the user, 2026-11-13). Likely causes, from the day/night plan and the shaders,
+not yet confirmed by captures (first step: one street at noon and at midnight, side by side):
+
+- Flat, directionless light: the cities sit under the deck, which lets through DECK_DAYLIGHT (0.25% of open
+  daylight, ~250 lux). No sun, so no hard shadows, no modelling, no warm/cool contrast. At night hundreds of
+  coloured point lights with ray-traced shadows give the depth.
+- Auto exposure lifts the overcast to mid-grey, so the neon, lit windows and adverts that carry the night look
+  become a small extra on top of the grey.
+- The daylight fill (ambientLight, one per-frame sky probe from DN6) seems not to be occluded by how much sky a
+  point sees: a narrow street canyon's floor gets about what an open plaza gets; corners and undersides don't
+  darken. Point lights and their shadows hide this at night.
+- Everything before DN (materials, vendors, facades, grime, wet streets) was tuned in night captures; even light
+  shows repetition, flat albedo and low texel detail. Wet streets reflect grey sky instead of neon.
+- The smog and rain mist go from coloured glow to a grey wash that lowers contrast.
+
+Fixes, best value first:
+
+- [ ] Sky-visibility occlusion for the daylight fill (street canyons and recesses darker than plazas): a few
+      sky rays in the ray-traced shadow pass, or a cheaper estimate from street width and building height.
+- [ ] A lower exposure target by day, so it reads gloomy and the neon still carries the image.
+- [ ] Some direction to the light: the deck brighter towards the sun's side, or occasional thin patches, for a
+      soft directional light and shadow.
+- [ ] Retune materials and grime against day captures, as they were against night ones.
 
 ## Shadows
 Every light in the chunks' light tables casts ray-traced shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`,
@@ -772,6 +784,10 @@ DN0-DN9; README "Day and night"). Left over:
     `dayOvercast`: the light over pi), so reflections match the sky above them. Needs checking against the anchor,
     and if so the sky's writers times pi, with the night's sky constants (`MOON_AIR`, `nightGlow`) retuned.
 
+- [ ] Lima's deck: the deck hangs over a city's highest ground (city_settlement_deck, snag 4 of 2026-11-13), and
+      Lima's footprint climbs 4290 m into the Andes, so its deck is ~4.4 km over the coast. If that looks wrong,
+      a deck that follows the terrain (a constant height over the ground under it) is the fix.
+
 ## Curtain wall relief
 Piers, beams, mullions and a coping on office towers' curtain walls (`src/city/mesh_relief.c`, `shadeTrim`), after
 `Bishopsgate.png`; see "Surfaces and roofs" in the README. Calls made that could go the other way:
@@ -980,6 +996,10 @@ Left over from the first vendors (SV0-SV3):
 - **Forced changes:** in rows of identical sites with one trade, about one vendor in twenty needs its dressing forced
   (palette, then feature wall, motif, finish, a sideline stock) to stay distinct; the city's mixed rows will need
   it far less.
+
+- [ ] Check in game that a shut bar's shutters show from beyond ~30 m (the far shell's curtains,
+      nb_shell_shutters, 03ae9df): no capture found a clear sightline.
+- [ ] Optional: skip drawing the near body behind a shut shutter (the kitchen it hides; a saving only within 28 m).
 
 ## Industrial plants and substations
 Section 11 of `docs/procedural-building-generation.md` (`src/gen/building_industry.c`,
