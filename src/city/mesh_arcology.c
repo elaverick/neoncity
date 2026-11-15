@@ -416,9 +416,11 @@ static void emit_arc_blocks(Mesh *m, const ALayout *A) {
     free(rc);
 }
 
-/* A stall: side walls, a lit back, a canopy, and a shutter if it is closed. */
+/* A stall: side walls, a lit back, a canopy, and a shutter if it is closed. SF5: a kit bar's unit (st->vendor) only
+ * the block's faces outside it, the ends of its sides on its front (5 cm: the bar's jambs stand just inside them) and
+ * its roof slab, sides and all (its head may stand over its neighbours'), but no underside: the bar's soffit is that. */
 static void emit_arc_stall(Mesh *m, const ALayout *A, const AStall *st) {
-    float fy = A->floorY, h = 3.2f, t = 0.08f;
+    float fy = A->floorY, h = st->vendor ? st->head : 3.2f, t = 0.08f;
     ARect r = st->r;
     int d = st->facing;
     Mat in = amat(A, ARS_STALL, st->kind, 0.0f), roof = amat(A, ARS_STALLROOF, st->kind, 0.0f), shut = amat(A, ARS_SHUTTER, 0, 0.0f);
@@ -431,6 +433,22 @@ static void emit_arc_stall(Mesh *m, const ALayout *A, const AStall *st) {
     float mx = 0.5f * (r.x0 + r.x1), mz = 0.5f * (r.z0 + r.z1);
     int outNX = arcology_use_at(A, r.x0 - 0.25f, mz) != AU_OUT, outPX = arcology_use_at(A, r.x1 + 0.25f, mz) != AU_OUT;
     int outNZ = arcology_use_at(A, mx, r.z0 - 0.25f) != AU_OUT, outPZ = arcology_use_at(A, mx, r.z1 + 0.25f) != AU_OUT;
+    if (st->vendor) {
+        const float e = 0.05f;
+        if (d == 0 || d == 2) {
+            if (outNX) awall(m, A, r.x0, r.z0, r.x0, r.z1, fy, fy + h, -1.0f, 0.0f, r.z0, r.z1, 0.0f, h, out);
+            if (outPX) awall(m, A, r.x1, r.z0, r.x1, r.z1, fy, fy + h, 1.0f, 0.0f, r.z0, r.z1, 0.0f, h, out);
+            abox(m, A, r.x0, d == 0 ? r.z0 : r.z1 - 0.01f, r.x0 + e, d == 0 ? r.z0 + 0.01f : r.z1, fy, fy + h, d == 0 ? F_NZ : F_PZ, out);
+            abox(m, A, r.x1 - e, d == 0 ? r.z0 : r.z1 - 0.01f, r.x1, d == 0 ? r.z0 + 0.01f : r.z1, fy, fy + h, d == 0 ? F_NZ : F_PZ, out);
+        } else {
+            if (outNZ) awall(m, A, r.x0, r.z0, r.x1, r.z0, fy, fy + h, 0.0f, -1.0f, r.x0, r.x1, 0.0f, h, out);
+            if (outPZ) awall(m, A, r.x0, r.z1, r.x1, r.z1, fy, fy + h, 0.0f, 1.0f, r.x0, r.x1, 0.0f, h, out);
+            abox(m, A, d == 3 ? r.x0 : r.x1 - 0.01f, r.z0, d == 3 ? r.x0 + 0.01f : r.x1, r.z0 + e, fy, fy + h, d == 3 ? F_NX : F_PX, out);
+            abox(m, A, d == 3 ? r.x0 : r.x1 - 0.01f, r.z1 - e, d == 3 ? r.x0 + 0.01f : r.x1, r.z1, fy, fy + h, d == 3 ? F_NX : F_PX, out);
+        }
+        abox(m, A, r.x0, r.z0, r.x1, r.z1, fy + h, fy + h + 0.15f, F_TOP | F_SIDES, roof);
+        return;
+    }
     if (d == 0 || d == 2) {
         /* side walls: lit shelves inside, the block's own face outside */
         awall(m, A, r.x0 + t, r.z0, r.x0 + t, r.z1, fy, fy + h, 1.0f, 0.0f, r.z0, r.z1, 0.0f, h, in);

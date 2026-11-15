@@ -99,6 +99,7 @@ typedef struct NbPlan {
      * opening's head (the soffit closing the recess, the header panel's top) and the header panel's bottom (the
      * shop's board goes between: vendor_stall_board) */
     float    recess, head, panel;
+    uint8_t  arc;                   /* SF5: NB_SITE_ARC (an arcology's unit: its sign on the panel from NB_ARC_HOOD up) */
     /* SF3, the inset corner unit (the user, on SF3's second board): a building's corner shop taken over by the
      * corner form (form NB_CORNER, side = inset) set into it: the corner's side (+1 the site's +x end), 0 none. The
      * front face's building line at recess, the side face's at x = inset * (w/2 - 0.05); the corner's pier
@@ -190,7 +191,11 @@ int  nb_plan(NbPlan *p, float w, float d, float ceiling, uint32_t seed, int form
  * header from a ceiling, but under a vault the ceiling's the girders' at its back: it stands it on posts). */
 /* SF3: NB_SITE_DEEP: the shop bay's deep unit (recess the room's depth; noodle_bar.h NbPlan.deep); NB_SITE_CORNER_POS,
  * _NEG with a recess: the inset corner unit (NbPlan.inset), the building's corner at the site's +x (-x) end. */
-enum { NB_SITE_HOST = 1, NB_SITE_VAULT = 2, NB_SITE_DEEP = 4, NB_SITE_CORNER_POS = 8, NB_SITE_CORNER_NEG = 16 };
+/* SF5: NB_SITE_ARC: a recessed bar in an arcology's stall unit. The arcology's sign goes on its header panel (the user,
+ * on SF5a's board), from NB_ARC_HOOD + 6 cm up (src/gen/arcology_style.c place_signage), so the hood stays under
+ * NB_ARC_HOOD at the unit's front; and it fits a 3 m unit (a 2.88 m opening). */
+enum { NB_SITE_HOST = 1, NB_SITE_VAULT = 2, NB_SITE_DEEP = 4, NB_SITE_CORNER_POS = 8, NB_SITE_CORNER_NEG = 16, NB_SITE_ARC = 32 };
+#define NB_ARC_HOOD 3.05f
 /* SF3: recess > 0: a shop bay's stall, its back that far inside the building line (the straight form across the
  * whole site, the ceiling the opening's head), or with NB_SITE_DEEP the deep unit's room. */
 int  nb_plan_site(NbPlan *p, float w, float d, float ceiling, uint32_t seed, int form, int trade, float affluence, int site,

@@ -257,7 +257,8 @@ static int plan_bar(NbPlan *p, const NbDraws *dr, float W, float D, float ceil, 
 static int plan_recessed(NbPlan *p, const NbDraws *dr, float W, float D, float ceil, int *reOut) {
     const float R = p->recess;
     float bd = dr->bd, cd = dr->cd, ov = dr->ov, spring = dr->spring, rise = dr->rise, fh = dr->fh;
-    int fits = W >= 3.0f && R >= 1.9f && D >= R + 0.45f && ceil >= 3.1f;
+    /* (SF5: an arcology's 3 m units take a 2.9 m opening: the kitchen still fits, as the small wall stall's does) */
+    int fits = W >= (p->arc ? 2.85f : 3.0f) && R >= 1.9f && D >= R + 0.45f && ceil >= 3.1f;
     p->form = NB_STRAIGHT;
     p->side = dr->sideR < 0.5f ? 1 : -1;
     p->head = ceil;
@@ -287,7 +288,8 @@ static int plan_recessed(NbPlan *p, const NbDraws *dr, float W, float D, float c
     h->span = p->lip - p->lining;
     /* SF3 (the user, on the first board): the shop's neon board goes on the header panel over the hood
      * (mesh_building.c face_signs, vendor_stall_board), so the hood leaves RECESS_PANEL of it under the head */
-    for (int it = 0; it < 12 && nb_hood_under(p, R - p->lining) > ceil - RECESS_PANEL; ++it) {
+    const float keep = p->arc ? maxf(RECESS_PANEL, ceil - NB_ARC_HOOD) : RECESS_PANEL;   /* (SF5: the arcology's sign's room) */
+    for (int it = 0; it < 12 && nb_hood_under(p, R - p->lining) > ceil - keep; ++it) {
         if (h->rise > 0.351f) h->rise = maxf(0.35f, h->rise - 0.06f);
         else if (h->spring > 2.401f) h->spring = maxf(2.4f, h->spring - 0.05f);
         else break;
@@ -983,6 +985,7 @@ int nb_plan_site(NbPlan *p, float W, float D, float ceiling, uint32_t seed, int 
     p->ceiling = ceiling > 0.0f ? ceiling : 0.0f;
     p->freestanding = (uint8_t)!host;
     p->recess = recess > 0.0f ? recess : 0.0f;
+    p->arc = (uint8_t)((site & NB_SITE_ARC) != 0);
     const int forceSide = (site & NB_SITE_CORNER_POS) ? 1 : (site & NB_SITE_CORNER_NEG) ? -1 : 0;
     const float ceil = ceiling > 0.0f ? ceiling : 99.0f;
     /* every draw first, in order (hash.h: draws are sequenced) */

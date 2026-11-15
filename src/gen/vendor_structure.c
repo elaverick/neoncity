@@ -114,7 +114,8 @@ static int build_kit(VGen *G, VFrame *F, int form) {
     NbPlan *p = &v->nb;
     if (!nb_plan_site(p, v->site.w, v->site.d, v->site.ceiling, v->site.seed, form, v->trade, v->site.affluence,
                       (v->site.hostWall ? NB_SITE_HOST : 0) | (v->site.vaulted ? NB_SITE_VAULT : 0) | (v->site.deep ? NB_SITE_DEEP : 0) |
-                      (v->site.corner > 0 ? NB_SITE_CORNER_POS : v->site.corner < 0 ? NB_SITE_CORNER_NEG : 0), v->site.recess)) return 0;
+                      (v->site.corner > 0 ? NB_SITE_CORNER_POS : v->site.corner < 0 ? NB_SITE_CORNER_NEG : 0) |
+                      (v->site.kind == VSITE_ARCOLOGY ? NB_SITE_ARC : 0), v->site.recess)) return 0;
     if (p->top > ceil + 1e-3f) return 0;
     v->layout = p->form;
     v->variant = p->side > 0;

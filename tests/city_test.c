@@ -894,6 +894,7 @@ static void zf_gather(const Mesh *m, double X, double Z, double R, ZfTri **tris,
     }
 }
 
+static int g_zfNoKit;   /* --zfight ... nokit: leave out pairs of kit triangles (the bodies' many benign seams) */
 static int zfight_scan(double X, double Z, double R) {
     static void (*const LAYERS[])(int, int, Mesh *) = { city_build_mesh, city_build_interiors, city_build_props, city_build_plants, city_build_litter };
     ZfTri *tris = NULL;
@@ -925,6 +926,7 @@ static int zfight_scan(double X, double Z, double R) {
             for (int k = 0; k < 3 && flush; ++k)
                 flush = fabsf(a->n[0] * b->p[k][0] + a->n[1] * b->p[k][1] + a->n[2] * b->p[k][2] - a->d) < ZF_GAP;
             if (!flush || !zf_overlap(a, b)) continue;
+            if (g_zfNoKit && a->prm[0] == MAT_KIT && b->prm[0] == MAT_KIT) continue;   /* (a kit body's own seams) */
             pairs++;
             /* the pair's materials, in a fixed order, so a/b and b/a group together */
             const uint8_t *pa = a->prm, *pb = b->prm;
@@ -1284,6 +1286,7 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && strcmp(argv[1], "--vendor-sites") == 0) return vendor_sites_cams(argc, argv);
     if (argc > 1 && strcmp(argv[1], "--vendors") == 0) return vendor_cams(argc, argv);
+    if (argc > 1 && strcmp(argv[1], "--arc-vendors") == 0) return arc_vendor_cams(argc, argv);
     if (argc > 1 && strcmp(argv[1], "--slice") == 0) {
         /* SF1: --trade NAME at the end makes every vendor that trade */
         if (argc > 3 && strcmp(argv[argc - 2], "--trade") == 0) {
@@ -1321,7 +1324,8 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--facades") == 0) return facades_cams();
     if (argc > 1 && strcmp(argv[1], "--graffiti") == 0) return graffiti_cams();
     if (argc > 1 && strcmp(argv[1], "--zfight") == 0) {
-        if (argc < 5) { fprintf(stderr, "city_test --zfight X Z RADIUS\n"); return 2; }
+        if (argc < 5) { fprintf(stderr, "city_test --zfight X Z RADIUS [nokit]\n"); return 2; }
+        g_zfNoKit = argc > 5 && strcmp(argv[5], "nokit") == 0;
         return zfight_scan(atof(argv[2]), atof(argv[3]), atof(argv[4]));
     }
     if (argc > 1 && strcmp(argv[1], "--grass") == 0) return grass_cams(argc > 3 ? atof(argv[2]) : 64598.0, argc > 3 ? atof(argv[3]) : 11010.0);

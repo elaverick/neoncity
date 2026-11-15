@@ -12,6 +12,14 @@ const char *arcology_use_name(int u)     { return u >= 0 && u < AB_COUNT ? USE_N
 const char *arcology_stratum_name(int s) { return s >= 0 && s <= AS_CORPORATE ? STRATUM_NAMES[s] : "?"; }
 
 int arcology_public(int u) { return u == AU_CONCOURSE || u == AU_COLONNADE || u == AU_PLAZA || u == AU_HALL; }
+int arcology_food(int kind) { return kind == AB_MARKET || kind == AB_NOODLE; }
+void arcology_stall_frame(const AStall *st, float *bx, float *bz, float *fx, float *fz, float *w, float *d) {
+    const ARect r = st->r;
+    const int f = st->facing;
+    *fx = (float)DX[f]; *fz = (float)DZ[f];
+    if (f == 0 || f == 2) { *bx = 0.5f * (r.x0 + r.x1); *bz = f == 0 ? r.z1 : r.z0; *w = r.x1 - r.x0; *d = r.z1 - r.z0; }
+    else                  { *bz = 0.5f * (r.z0 + r.z1); *bx = f == 1 ? r.x0 : r.x1; *w = r.z1 - r.z0; *d = r.x1 - r.x0; }
+}
 
 /* ===========================================================================
  * Decision log (section 12): info, simplify, reject, pass
@@ -382,6 +390,7 @@ static int attempt_layout(Gen *G) {
     place_stairs(G);
     find_blocks(G);
     place_stalls(G);
+    place_food(G);
     place_galleries(G);
     place_fixtures(G);
     place_signage(G);

@@ -293,6 +293,7 @@ static void collide_arcology(BlockLayout *BL, const Building *b, const BGraph *g
     for (int s = 0; s < A->nstall; ++s) {
         const AStall *st = &A->stall[s];
         ARect r = st->r;
+        if (st->vendor) continue;   /* SF5: a kit bar's unit: the bar's solids (collide_vendor) */
         if (st->closed) { coll_arc_box(BL, b, A, r); continue; }
         if (st->facing == 0 || st->facing == 2) {
             coll_arc_box(BL, b, A, (ARect){ r.x0, r.z0, r.x0 + 0.1f, r.z1 });

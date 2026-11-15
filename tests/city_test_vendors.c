@@ -6,8 +6,10 @@
  *   vendor_sites_cams    city_test --vendor-sites [X Z]: counts and --cam views
  *   check_vendor_shells  the vendors on them (SV2): in their sites, in the
  *                        chunk's mesh and its collision
- *   vendor_cams          city_test --vendors [X Z]: counts, costs, --cam views */
+ *   vendor_cams          city_test --vendors [X Z]: counts, costs, --cam views
+ *   arc_vendor_cams      city_test --arc-vendors [X Z]: the kit bars in the nearest arcology (SF5) */
 #include "vendor_sites.h"
+#include "arcology.h"
 
 /* Even-odd point in polygon. */
 static int vs_in_poly(const double (*v)[2], int n, double x, double z) {
@@ -87,7 +89,7 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
     enum { R = 4, W = 2 * R + 1, MAXS = MAX_VENDOR_SPOTS };
     static VendorSpot sp[W][W][MAXS], near[MAXS];
     static int ns[W][W];
-    int bySpace[SPACE_CORNER + 1] = { 0 }, total = 0, deep = 0;
+    int bySpace[SPACE_ARC + 1] = { 0 }, total = 0, deep = 0;
     for (int j = 0; j < W; ++j)
         for (int i = 0; i < W; ++i) ns[j][i] = city_chunk_vendor_spots(hx - R + i, hz - R + j, sp[j][i], MAXS);
 
@@ -232,8 +234,9 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
                     for (int di = -1; di <= 1; ++di)
                         for (int o = 0; o < ns[j + dj][i + di]; ++o) {
                             const VendorSpot *t = &sp[j + dj][i + di][o];
-                            const int bay = (t->space == SPACE_SHOP || t->space == SPACE_CORNER) && (s->space == SPACE_SHOP || s->space == SPACE_CORNER);
-                            if (t == s || bay) continue;   /* bays side by side (an inset corner unit's among them) */
+                            const int bay = ((t->space == SPACE_SHOP || t->space == SPACE_CORNER) && (s->space == SPACE_SHOP || s->space == SPACE_CORNER)) ||
+                                            (t->space == SPACE_ARC && s->space == SPACE_ARC);
+                            if (t == s || bay) continue;   /* bays side by side (an inset corner unit's among them; SF5: an arcology's units) */
                             double w[4][2];
                             vendor_spot_corners(t, w);
                             double gap = vs_gap((const double (*)[2])v, 4, (const double (*)[2])w, 4);
@@ -288,8 +291,9 @@ static void check_vendor_sites(int hx, int hz, const char *where) {
     free(pa);
     free(G.m);
     printf("vendor sites round %s (%d x %d chunks): %d: %d kerb, %d apron, %d lane, %d pocket market, %d plaza, %d court; "
-           "%d against a wall, %d under a roof, %d lunch; %d shop bays (%d deep), %d building corners\n", where, W - 4, W - 4, total, bySpace[SPACE_KERB], bySpace[SPACE_APRON],
-           bySpace[SPACE_LANE], bySpace[SPACE_POCKET], bySpace[SPACE_PLAZA], bySpace[SPACE_COURT], hosts, roofed, lunch, bySpace[SPACE_SHOP], deep, bySpace[SPACE_CORNER]);
+           "%d against a wall, %d under a roof, %d lunch; %d shop bays (%d deep), %d building corners, %d arcology stalls\n", where, W - 4, W - 4, total, bySpace[SPACE_KERB], bySpace[SPACE_APRON],
+           bySpace[SPACE_LANE], bySpace[SPACE_POCKET], bySpace[SPACE_PLAZA], bySpace[SPACE_COURT], hosts, roofed, lunch, bySpace[SPACE_SHOP], deep, bySpace[SPACE_CORNER],
+           bySpace[SPACE_ARC]);
     printf("  %d seen from a neighbour (%d differ); %d in walls, %d too close, %d ways blocked, %d cut off, %d with furniture on them; "
            "%d of %d built valid\n", seen, differ, walls, close, ways, cut, propsIn, built, tried);
     for (int k = 0; k < VSITE_COUNT; ++k) {
@@ -638,5 +642,97 @@ static int vs_probe(double x, double z) {
     int n = city_chunk_props(cx, cz, pr, MAX_PROPS);
     for (int i = 0; i < n; ++i)
         if (hypot(pr[i].x - x, pr[i].z - z) < 2.0) printf("prop kind %d at (%.2f, %.2f)\n", pr[i].kind, pr[i].x, pr[i].z);
+    return 0;
+}
+
+/* ------------------------------------------------------- the arcologies (SF5) --- */
+
+/* city_test --arc-vendors [X Z]: the arcology nearest (X, Z) (the spawn): every food stall unit its planner gave a kit
+ * bar (AStall.vendor) has its site (SPACE_ARC) and a valid bar on it; the sites' checks and the shells' round it; counts
+ * by trade and --cam views of a few bars from the colonnade in front of them. */
+static int arc_vendor_cams(int argc, char **argv) {
+    double sx, sz;
+    float yaw;
+    city_spawn(&sx, &sz, &yaw);
+    if (argc > 3) { sx = atof(argv[2]); sz = atof(argv[3]); }
+    PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
+    Building *bl = (Building *)malloc(sizeof(Building) * 256), best;
+    BGraph *g = (BGraph *)malloc(sizeof(BGraph));
+    ALayout *A = (ALayout *)calloc(1, sizeof(ALayout));
+    double bestD = 1e30;
+    const double T = 300.0;
+    for (double tz = sz - 3000.0; tz < sz + 3000.0; tz += T)
+        for (double tx = sx - 3000.0; tx < sx + 3000.0; tx += T) {
+            plan_area(tx, tz, tx + T, tz + T, pa);
+            for (int bi = 0; bi < pa->nblocks; ++bi) {
+                if (pa->blocks[bi].zone != ZONE_CORE || pa->blocks[bi].density < 0.9f) continue;
+                const int n = city_block_buildings(&pa->blocks[bi], bl, 256);
+                for (int i = 0; i < n; ++i) {
+                    const Building *b = &bl[i];
+                    if (b->kind != BK_MEGA || b->ox < tx || b->ox >= tx + T || b->oz < tz || b->oz >= tz + T) continue;
+                    const double d = hypot(b->ox - sx, b->oz - sz);
+                    if (d >= bestD) continue;
+                    bgen_build(b, g, NULL);
+                    if (!arcology_plan(b, g, 0, A, NULL) || !A->ok) continue;
+                    bestD = d; best = *b;
+                }
+            }
+        }
+    if (bestD > 1e29) { printf("no arcology within 3 km of (%.0f, %.0f)\n", sx, sz); free(pa); free(bl); free(g); free(A); return 1; }
+    const Building *b = &best;
+    bgen_build(b, g, NULL);
+    arcology_plan(b, g, 0, A, NULL);
+    int flagged = 0, food = 0, slim = 0;
+    for (int s = 0; s < A->nstall; ++s) { food += arcology_food(A->stall[s].kind); flagged += A->stall[s].vendor; slim += A->stall[s].vendor && A->stall[s].out < 1.0f; }
+    printf("arcology %08x at (%.1f, %.1f): %d stalls, %d of a food use, %d kit bars (%d standing counters)\n", b->seed, b->ox, b->oz,
+           A->nstall, food, flagged, slim);
+    /* its sites, from the chunks its plot reaches */
+    static VendorSpot s[MAX_VENDOR_SPOTS];
+    static VendorSpot arc[AR_MAX_STALL];
+    int narc = 0;
+    const double reach = 0.5 * hypot(b->foot.x1 - b->foot.x0, b->foot.z1 - b->foot.z0) + 8.0;
+    for (int cz = (int)floor((b->oz - reach) / CHUNK_SIZE); cz <= (int)floor((b->oz + reach) / CHUNK_SIZE); ++cz)
+        for (int cx = (int)floor((b->ox - reach) / CHUNK_SIZE); cx <= (int)floor((b->ox + reach) / CHUNK_SIZE); ++cx) {
+            const int n = city_chunk_vendor_spots(cx, cz, s, MAX_VENDOR_SPOTS);
+            for (int k = 0; k < n; ++k)
+                if (s[k].space == SPACE_ARC && s[k].bseed == b->seed && narc < AR_MAX_STALL) arc[narc++] = s[k];
+        }
+    CHECK(narc == flagged, "arcology %08x: %d kit bar sites for %d units", b->seed, narc, flagged);
+    Vendor *V = (Vendor *)malloc(sizeof(Vendor));
+    int built = 0, trades[VT_COUNT] = { 0 }, stools = 0;
+    for (int k = 0; k < narc; ++k) {
+        const int ok = vendor_generate(&arc[k].site, VTIER_STANDARD, NULL, 0, V, NULL);
+        CHECK(ok && vendor_is_kit(V->archetype) && V->nb.recess > 0.0f, "arcology %08x: no recessed bar on the unit at (%.1f, %.1f) (%.2f x %.2f, head %.2f)",
+              b->seed, arc[k].x, arc[k].z, arc[k].site.w, arc[k].site.d, arc[k].site.ceiling);
+        if (!ok) continue;
+        /* the arcology's sign on its header panel (place_signage): the hood under it */
+        CHECK(V->nb.panel <= NB_ARC_HOOD + 1e-3f && arc[k].site.ceiling - 0.12f - AR_BAR_BOARD >= AR_BAR_BOARD_MIN - 1e-3f,
+              "arcology %08x: the bar at (%.1f, %.1f) leaves its sign no room (hood %.2f at the front, head %.2f)", b->seed, arc[k].x, arc[k].z,
+              V->nb.panel, arc[k].site.ceiling);
+        built++;
+        trades[V->trade]++;
+        stools += V->nb.stools;
+    }
+    printf("  %d of %d sites built (%d with stools):", built, narc, stools);
+    for (int t = 0; t < VT_COUNT; ++t) if (trades[t]) printf(" %s %d", vendor_trade_name(t), trades[t]);
+    printf("\n");
+    for (int k = 0; k < narc && k < 6; ++k) {
+        const VendorSpot *q = &arc[k];
+        double tx, tz, ex, ez, fx, fz;
+        vendor_spot_world(q, 0.0, q->site.recess - 1.0, &tx, &tz);
+        vendor_spot_world(q, 1.2, q->site.d + 3.0, &ex, &ez);
+        vendor_spot_world(q, -4.0, q->site.d + 9.0, &fx, &fz);
+        printf("  bar %d (%.1f x %.1f, head %.2f, floor %.2f, aff %.2f): --cam %.2f %.2f %.1f 2 %.1f; from 9 m --cam %.2f %.2f %.1f -2 %.1f\n", k,
+               q->site.w, q->site.d, q->site.ceiling, q->y, q->site.affluence, ex, ez, atan2(tx - ex, -(tz - ez)) * 57.2958, q->y + 1.65,
+               fx, fz, atan2(tx - fx, -(tz - fz)) * 57.2958, q->y + 1.65);
+    }
+    free(V);
+    const int hx = (int)floor(b->ox / CHUNK_SIZE), hz = (int)floor(b->oz / CHUNK_SIZE);
+    char where[64];
+    snprintf(where, sizeof(where), "the arcology at (%.0f, %.0f)", b->ox, b->oz);
+    check_vendor_sites(hx, hz, where);
+    check_vendor_shells(hx, hz, where, 0);
+    free(pa); free(bl); free(g); free(A);
+    if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     return 0;
 }

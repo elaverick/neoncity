@@ -105,6 +105,7 @@ float travel(Gen *G, int *farCell);
 void place_stairs(Gen *G);
 void find_blocks(Gen *G);
 void place_stalls(Gen *G);
+void place_food(Gen *G);
 void place_galleries(Gen *G);
 
 /* arcology_style.c */

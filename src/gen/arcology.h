@@ -77,7 +77,16 @@ typedef struct AConcourse { ARect r; uint8_t axis, main, boulevard, rib; float l
 /* An opening on face `face` of the ground section's outline, centred at u (metres along it). */
 typedef struct APortal { int face; float u, width, height; float fx, fz, nx, nz; uint8_t main, service; } APortal;
 typedef struct ABlock { ARect box; int cells, core; uint8_t use; float height; } ABlock;
-typedef struct AStall { ARect r; uint8_t facing, block, kind, closed; uint32_t seed; } AStall;  /* facing 0..3 = -z, +x, +z, -x */
+/* facing 0..3 = -z, +x, +z, -x. SF5 (street vendors, ~/.claude/plans/street-vendors.md): vendor: a food use's unit
+ * taken by a kit bar (src/city/vendor_sites.c arc_stalls; the arcology draws only the block's faces round it and its
+ * roof slab), its head (the soffit, over the floor) and how far its bar reaches out over the colonnade (out) */
+typedef struct AStall { ARect r; uint8_t facing, block, kind, closed, vendor; float head, out; uint32_t seed; } AStall;
+/* SF5: a bar's unit's head at most (over the floor), and its sign's band on the bar's header panel: from AR_BAR_BOARD
+ * (over the hood: noodle_bar.h NB_ARC_HOOD + 6 cm) to 12 cm under the head, at most AR_BAR_BOARD_H tall */
+#define AR_BAR_HEAD     4.0f
+#define AR_BAR_BOARD    3.11f
+#define AR_BAR_BOARD_H  0.95f
+#define AR_BAR_BOARD_MIN 0.3f
 typedef struct ACore { ARect r; int topTier, lifts; uint8_t door; } ACore;     /* door: the side its hall leaves by */
 typedef struct AStair { ARect r; uint8_t facing; } AStair;
 typedef struct ABridge { int level; ARect r; uint8_t axis; } ABridge;           /* axis: the span runs along x (0) or z (1) */
@@ -163,6 +172,9 @@ int         arcology_use_at(const ALayout *A, float fx, float fz);      /* AU_*,
 float       arcology_t(const ALayout *A, float y);                       /* stratum height at absolute height y */
 int         arcology_stratum(const ALayout *A, float t);
 int         arcology_public(int use);                                    /* walkable by anyone */
+int         arcology_food(int kind);                                     /* SF5: a use whose stalls cook (AB_*) */
+/* SF5: the unit's back (the block's face) middle and its front direction, in the frame; its width across it */
+void        arcology_stall_frame(const AStall *st, float *bx, float *bz, float *fx, float *fz, float *w, float *d);
 const char *arcology_canyon_name(int m);
 const char *arcology_pattern_name(int p);
 const char *arcology_use_name(int u);

@@ -29,6 +29,7 @@
 #define SPACE_KERB        SPACE_KINDS        /* VendorSpot.space: a kerb pitch */
 #define SPACE_SHOP        (SPACE_KINDS + 1)  /* SF3: a stall taking over a lit shop bay (VendorSpot.bseed...) */
 #define SPACE_CORNER      (SPACE_KINDS + 2)  /* SF3: the inset corner unit taking over a lit corner shop */
+#define SPACE_ARC         (SPACE_KINDS + 3)  /* SF5: a kit bar in an arcology's food stall unit (arc_stalls) */
 #define VENDOR_WALK_KERB  1.8f          /* the sidewalk kept clear behind a kerb pitch */
 #define VENDOR_WALK_LOT   1.5f          /* the way kept clear in front of a stall in a lane, court or market */
 #define VENDOR_REACH      8.0           /* how far a site reaches from its middle, at most (m) */

@@ -68,6 +68,7 @@ void place_fixtures(Gen *G) {
         ARect r = st->r;
         int d = st->facing;
         float c0, c1;                                   /* the counter: 0.6 m deep at the front */
+        if (st->vendor) continue;                       /* SF5: a kit bar's (its counter, hood, duct and steam its own) */
         if (d == 0)      { c0 = r.z0 + 0.1f; c1 = c0 + 0.6f; add_fix(A, AX_COUNTER, d, r.x0 + 0.4f, c0, r.x1 - 0.9f, c1, 0.0f, 1.05f, st->seed); }
         else if (d == 2) { c1 = r.z1 - 0.1f; c0 = c1 - 0.6f; add_fix(A, AX_COUNTER, d, r.x0 + 0.4f, c0, r.x1 - 0.9f, c1, 0.0f, 1.05f, st->seed); }
         else if (d == 1) { c1 = r.x1 - 0.1f; c0 = c1 - 0.6f; add_fix(A, AX_COUNTER, d, c0, r.z0 + 0.4f, c1, r.z1 - 0.9f, 0.0f, 1.05f, st->seed); }
@@ -167,11 +168,17 @@ void place_signage(Gen *G) {
         if (rng_float(&G->rn) > sd0 + 0.1f) continue;
         ARect r = st->r;
         int d = st->facing;
-        float y0 = fy + 3.35f, y1 = fy + 3.35f + rng_range(&G->rn, 0.7f, 1.1f);
-        if (d == 0)      add_sign(A, AG_FASCIA, r.x0 + 0.15f, r.z0 - 0.08f, r.x1 - 0.15f, r.z0 - 0.08f, y0, y1, 0, -1, &G->rn);
-        else if (d == 2) add_sign(A, AG_FASCIA, r.x0 + 0.15f, r.z1 + 0.08f, r.x1 - 0.15f, r.z1 + 0.08f, y0, y1, 0, 1, &G->rn);
-        else if (d == 1) add_sign(A, AG_FASCIA, r.x1 + 0.08f, r.z0 + 0.15f, r.x1 + 0.08f, r.z1 - 0.15f, y0, y1, 1, 0, &G->rn);
-        else             add_sign(A, AG_FASCIA, r.x0 - 0.08f, r.z0 + 0.15f, r.x0 - 0.08f, r.z1 - 0.15f, y0, y1, -1, 0, &G->rn);
+        float y0 = fy + 3.35f, y1 = y0 + rng_range(&G->rn, 0.7f, 1.1f);
+        float in = 0.15f;
+        if (st->vendor) {   /* SF5 (the user, on SF5a's board): on the bar's header panel, between its frame's jambs */
+            const float lo = AR_BAR_BOARD, hi = st->head - 0.12f, bh = minf(AR_BAR_BOARD_H, hi - lo), mid = 0.5f * (lo + hi);
+            y0 = fy + mid - 0.5f * bh; y1 = fy + mid + 0.5f * bh;
+            in = 0.22f;
+        }
+        if (d == 0)      add_sign(A, AG_FASCIA, r.x0 + in, r.z0 - 0.08f, r.x1 - in, r.z0 - 0.08f, y0, y1, 0, -1, &G->rn);
+        else if (d == 2) add_sign(A, AG_FASCIA, r.x0 + in, r.z1 + 0.08f, r.x1 - in, r.z1 + 0.08f, y0, y1, 0, 1, &G->rn);
+        else if (d == 1) add_sign(A, AG_FASCIA, r.x1 + 0.08f, r.z0 + in, r.x1 + 0.08f, r.z1 - in, y0, y1, 1, 0, &G->rn);
+        else             add_sign(A, AG_FASCIA, r.x0 - 0.08f, r.z0 + in, r.x0 - 0.08f, r.z1 - in, y0, y1, -1, 0, &G->rn);
     }
     /* blade signs off column faces over the concourses, above the clear height */
     float top = A->ceilY - 0.7f;

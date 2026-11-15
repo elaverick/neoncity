@@ -280,6 +280,66 @@ void place_stalls(Gen *G) {
     alog(G, "  info: %d stalls\n", A->nstall);
 }
 
+/* SF5 (street vendors, ~/.claude/plans/street-vendors.md "SF5: the design"): the food uses' units that a kit bar
+ * takes (SF3's recessed straight form: its back on the block, its counter on the unit's front, its hood out over the
+ * colonnade). A unit at least 3 m across (the bar's 2.88 between its jambs) and 2.5 deep, its head (to AR_BAR_HEAD)
+ * 0.3 m under the block's top and high enough for the arcology's sign on the bar's header panel (AR_BAR_BOARD_MIN
+ * tall over the hood: place_signage), and the way in front of it public and clear of columns: 1.1 m (stools under the hood) or,
+ * failing that, 0.55 m (a standing counter). Its own hashes, so nothing else of the layout moves. */
+#define FOOD_W    3.0f
+#define FOOD_OUT  1.1f
+#define FOOD_SLIM 0.55f
+#define FOOD_WAY  0.5f    /* the way kept clear past a bar's stools (src/city/vendor_sites.c: its site's walk) */
+static ARect food_front(const AStall *st, float out) {
+    const ARect r = st->r;
+    switch (st->facing) {
+    case 0:  return rect(r.x0, r.z0 - out, r.x1, r.z0);
+    case 2:  return rect(r.x0, r.z1, r.x1, r.z1 + out);
+    case 1:  return rect(r.x1, r.z0, r.x1 + out, r.z1);
+    default: return rect(r.x0 - out, r.z0, r.x0, r.z1);
+    }
+}
+static int food_front_clear(const ALayout *A, const AStall *st, float out) {
+    const ARect f = food_front(st, out);
+    /* clear of the bars taken before it (two units at an inside corner of a block face into one corner) */
+    for (int s = 0; s < (int)(st - A->stall); ++s)
+        if (A->stall[s].vendor && overlap(expand(f, 0.3f), food_front(&A->stall[s], A->stall[s].out))) return 0;
+    if (!all_cells(A, f, PUBLIC)) return 0;
+    /* nor by the facade (its wall stands 0.3 m into the building) */
+    if (!rect_inside(&A->tier[0].foot, f, 0.45f)) return 0;
+    /* the way past its stools (FOOD_WAY) public and clear of columns too */
+    const ARect way = food_front(st, out + FOOD_WAY);
+    if (!all_cells(A, way, PUBLIC)) return 0;
+    for (int c = 0; c < A->ncol; ++c) {
+        const float h = 0.575f * A->col[c].size + 0.1f;   /* (the walker meets a column 15% larger than it's drawn) */
+        if (overlap(way, rect(A->col[c].x - h, A->col[c].z - h, A->col[c].x + h, A->col[c].z + h))) return 0;
+    }
+    return 1;
+}
+void place_food(Gen *G) {
+    ALayout *A = G->A;
+    int n = 0, food = 0, narrow = 0, low = 0, shut = 0, slim = 0;
+    for (int s = 0; s < A->nstall; ++s) {
+        AStall *st = &A->stall[s];
+        st->vendor = 0; st->head = 3.2f; st->out = 0.0f;
+        if (!arcology_food(st->kind)) continue;
+        food++;
+        float bx, bz, fx, fz, w, d;
+        arcology_stall_frame(st, &bx, &bz, &fx, &fz, &w, &d);
+        const float top = A->block[st->block].height;
+        const float head = clampf(top - 0.3f, 3.2f, AR_BAR_HEAD);
+        if (w < FOOD_W - 1e-3f || d < 2.5f - 1e-3f) { narrow++; continue; }
+        if (head < AR_BAR_BOARD + 0.12f + AR_BAR_BOARD_MIN || head > top - 0.3f) { low++; continue; }
+        const float out = food_front_clear(A, st, FOOD_OUT) ? FOOD_OUT : food_front_clear(A, st, FOOD_SLIM) ? FOOD_SLIM : 0.0f;
+        if (out <= 0.0f) { shut++; continue; }
+        slim += out < FOOD_OUT;
+        st->vendor = 1; st->head = head; st->out = out; st->closed = 0;   /* (shut by the bar's hours) */
+        n++;
+    }
+    alog(G, "  info: %d of %d stalls kit bars (%d food: %d too narrow, %d too low, %d with no way in front; %d standing counters)\n",
+         n, A->nstall, food, narrow, low, shut, slim);
+}
+
 /* 5. Galleries: one per floor the canyon passes. Bridges: at least one per level, staggered. */
 void place_galleries(Gen *G) {
     ALayout *A = G->A;

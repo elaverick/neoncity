@@ -56,8 +56,9 @@ typedef struct SGen {
 } SGen;
 
 const char *vendor_space_name(int space) {
-    static const char *const N[SPACE_CORNER + 1] = { "apron", "lane", "pocket market", "plaza", "court", "kerb", "shop bay", "building corner" };
-    return space >= 0 && space <= SPACE_CORNER ? N[space] : "?";
+    static const char *const N[SPACE_ARC + 1] = { "apron", "lane", "pocket market", "plaza", "court", "kerb", "shop bay", "building corner",
+                                                  "arcology stall" };
+    return space >= 0 && space <= SPACE_ARC ? N[space] : "?";
 }
 
 static int site_kind(int space) {
@@ -69,6 +70,7 @@ static int site_kind(int space) {
     case SPACE_COURT:  return VSITE_COURT;
     case SPACE_SHOP:   return VSITE_SHOP;
     case SPACE_CORNER: return VSITE_CORNER;
+    case SPACE_ARC:    return VSITE_ARCOLOGY;
     default:           return VSITE_KERB;
     }
 }
@@ -1192,6 +1194,56 @@ static void prune_shut_in(SGen *S) {
     S->n = m;
 }
 
+/* SF5 (~/.claude/plans/street-vendors.md "SF5: the design"): the arcologies' food stall units that the planner gave a
+ * kit bar (AStall.vendor): SF3's recessed straight form, its back on the block's face, the building line on the unit's
+ * front, its hood and stools out over the colonnade (st->out). One group per market block, in stall order. A noodle
+ * hall's bars cook noodles, soup or dumplings; a night market's choose as any bar does. */
+static void arc_stalls(SGen *S) {
+    ChunkGen *g = S->g;
+    ALayout *A = NULL;
+    for (int q = 0; q < S->nbl; ++q) {
+        const int i = S->bl[q];
+        const Building *b = &g->bld[i];
+        const BGraph *bg = chunk_gen_graph(g, i);
+        if (bg->archetype != ARCH_ARCOLOGY) continue;
+        if (!A && !(A = (ALayout *)malloc(sizeof(ALayout)))) fatal("out of memory placing arcology vendors");
+        if (!arcology_plan(b, bg, 0, A, NULL) || !A->ok) continue;
+        const float base = building_base(b);
+        uint16_t member[AR_MAX_BLOCK] = { 0 };
+        for (int s = 0; s < A->nstall; ++s) {
+            const AStall *st = &A->stall[s];
+            if (!st->vendor) continue;
+            float bx, bz, fx, fz, w, d, lx, lz, ux, uz;
+            arcology_stall_frame(st, &bx, &bz, &fx, &fz, &w, &d);
+            arcology_to_local(A, bx, bz, &lx, &lz);
+            arcology_to_local(A, fx, fz, &ux, &uz);   /* (a quarter turn: a direction turns as a point) */
+            const DVec2 B = to_world(b, lx, lz);
+            VendorSpot sp;
+            memset(&sp, 0, sizeof(sp));
+            sp.x = B.x; sp.z = B.z;
+            sp.fx = (float)(b->c * ux - b->s * uz); sp.fz = (float)(b->s * ux + b->c * uz);
+            sp.site.w = w - 0.02f; sp.site.d = d + st->out;   /* (a centimetre clear of its neighbours' sites) */
+            sp.y = base + A->floorY;
+            sp.ground = sp.y;
+            sp.walk = 0.5f;   /* (the planner kept it public and clear of columns: arcology_subdivide.c FOOD_WAY) */
+            sp.site.ceiling = st->head;
+            sp.site.affluence = plan_affluence(B.x, B.z);
+            sp.site.hostWall = 1;
+            sp.site.archetype = VA_CANOPY;
+            sp.site.trade = -1;
+            if (st->kind == AB_NOODLE) {
+                static const int8_t HALL[3] = { VT_NOODLE, VT_SOUP, VT_DUMPLING };
+                sp.site.trade = HALL[hash_u32(st->seed ^ 0xF00Du) % 3u];
+            }
+            sp.site.recess = d;
+            sp.bseed = b->seed;
+            sp.head = st->head;
+            keep_site(S, &sp, SPACE_ARC, hash_combine(hash_combine(b->seed, 0xA4C5u), (uint32_t)st->block), member[st->block]++, 0);
+        }
+    }
+    free(A);
+}
+
 /* ---------------------------------------------------------------- a block --- */
 
 static void plan_block(SGen *S, ChunkGen *g, int bi) {
@@ -1219,6 +1271,7 @@ static void plan_block(SGen *S, ChunkGen *g, int bi) {
     /* SF3: the shop bays' stalls and the buildings' corner bars first, so the rows and the kerb pitches keep clear */
     shop_stalls(S);
     corner_units(S);
+    arc_stalls(S);
     for (int k = 0; k < S->nsp; ++k) fill_space(S, &S->sp[k]);
     CitySpace court;
     if (S->nsp < MAX_BLOCK_SPACES + 1 && find_court(S, &court)) {
