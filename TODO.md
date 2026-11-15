@@ -14,8 +14,8 @@ Bugs to fix one by one, each committed and pushed before the next. Fixed ones le
 Night looks a lot better than day (the user, 2026-11-13). Likely causes, from the day/night plan and the shaders,
 not yet confirmed by captures (first step: one street at noon and at midnight, side by side):
 
-- Flat, directionless light: the cities sit under the deck, which lets through DECK_DAYLIGHT (0.25% of open
-  daylight, ~250 lux). No sun, so no hard shadows, no modelling, no warm/cool contrast. At night hundreds of
+- Flat, directionless light: the cities sit under the deck, which lets through DECK_DAYLIGHT (0.1% of open
+  daylight since DL1, ~60 lux). No sun, so no hard shadows, no modelling, no warm/cool contrast. At night hundreds of
   coloured point lights with ray-traced shadows give the depth.
 - Auto exposure lifts the overcast to mid-grey, so the neon, lit windows and adverts that carry the night look
   become a small extra on top of the grey.
@@ -30,7 +30,9 @@ Fixes, best value first:
 
 - [ ] Sky-visibility occlusion for the daylight fill (street canyons and recesses darker than plazas): a few
       sky rays in the ray-traced shadow pass, or a cheaper estimate from street width and building height.
-- [ ] A lower exposure target by day, so it reads gloomy and the neon still carries the image.
+- [ ] By day the gloom key (DL1, `KEY_GLOOM`) also darkens places under the deck that take no daylight (an
+      arcology's ground floor shows 0.8 stop darker at noon than at night). Weight it by the daylight's share of
+      what is metered if that matters.
 - [ ] Some direction to the light: the deck brighter towards the sun's side, or occasional thin patches, for a
       soft directional light and shadow.
 - [ ] Retune materials and grime against day captures, as they were against night ones.

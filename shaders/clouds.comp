@@ -134,10 +134,11 @@ float density(vec3 p, Column c, bool detail) { return max(deck(p, c, detail), sc
 /* The deck by day (DN5). The cities' cloud is thick and sooty: of the light
  * it takes it scatters DECK_ALBEDO, and the soot absorbs the rest. So the
  * daylight that diffuses down through it dies away with the optical depth
- * above as exp(-DECK_K od). Seen from above, its top sends back a third of
- * the light on it (1 / (1 + DECK_K)); seen from below, through a whole
- * column (optical depth about 6, -ln(DECK_DAYLIGHT)), its base shows about
- * DECK_DAYLIGHT (clouds.h) of it, the overcast the street is lit by
+ * above as exp(-DECK_K od). Seen from above, its top sends back about a
+ * third of the light on it (1 / (1 + DECK_K)); seen from below, through a
+ * whole column (the day's optical depth about DECK_COLUMN, so DECK_K od about
+ * -ln(DECK_DAYLIGHT)), its base shows about DECK_DAYLIGHT (clouds.h) of it,
+ * in the deck's colour (deckTint), the overcast the street is lit by
  * (landDaylight, deckThrough): a storm sky's. The sun scattered once lights
  * its tops and the flanks turned to it, and silvers a thin edge with the sun
  * behind it (forward scattering). Seen from outside, the deck stands as a
@@ -158,7 +159,8 @@ const float DECK_DENSE  = 2.0;
 const float SHEET_TOP   = 430.0;
 const float SHEET_OD    = 4.0;
 const float DECK_ALBEDO = 0.5;
-const float DECK_K      = 2.0;
+const float DECK_COLUMN = 3.0;
+const float DECK_K      = -log(DECK_DAYLIGHT) / DECK_COLUMN;
 const float SUN_RUN     = 3000.0;   // how far towards the sun its light is followed through the cloud (m)
 vec3  gDayTop;    // the daylight on the deck's top: the sun's on level cloud and the clear sky's
 bool  gDay;       // whether there is any to speak of
@@ -208,7 +210,7 @@ float depthSun(vec3 p, Column c, float fieldFar) {
 float dayPhase(float muS) { return mix(hgPhase(muS, -0.15), hgPhase(muS, 0.75), 0.5); }
 vec3 dayAt(vec3 p, Column c, float fieldFar, float muS) {
     vec3 sun = AIR_SUN * (exp(-depthSun(p, c, fieldFar)) * dayPhase(muS));
-    vec3 diffused = gDayTop * (exp(-DECK_K * depthUp(p, c)) * (1.0 / AIR_PI));
+    vec3 diffused = gDayTop * deckTint(c.field) * (exp(-DECK_K * depthUp(p, c)) * (1.0 / AIR_PI));
     return DECK_ALBEDO * sun + diffused;
 }
 
@@ -427,7 +429,7 @@ void farDeck(vec3 ro, vec3 dir, float tMin, float tMax, vec3 haze, inout vec3 L)
     float alpha = smoothstep(0.6 * CLOUD_REACH, CLOUD_REACH, length(rel.xz)) * (1.0 - deckThrough(field));
     if (alpha <= 1e-3) return;
     vec3 col = above ? DECK_ALBEDO * 0.5 * AIR_SUN * dayPhase(dot(dir, SUN_DIR)) + gDayTop * (1.0 / (AIR_PI * (1.0 + DECK_K)))
-                     : gDayTop * (deckThrough(field) / AIR_PI);
+                     : gDayTop * (deckLight(field) / AIR_PI);
     float w = gTd * alpha * gDayMix;
     L += w * mix(col, haze, cloudFog(rel, t, airDensity()));
     gSeen += vec2(t, 1.0) * w;
@@ -490,7 +492,7 @@ void main() {
     // By day the rain also scatters the grey light under the deck (its
     // underside's radiance, about deckThrough of the daylight on its top).
     vec3 mist = mistLight(dir, tScene, frame.weather.x);
-    if (gDay) mist += gDayTop * (daylightThrough() / AIR_PI) * (1.0 - exp(-MIST_DAY * frame.weather.x * min(tScene, MIST_DAY_RANGE)));
+    if (gDay) mist += gDayTop * (deckLight(frame.sky.z) / AIR_PI) * (1.0 - exp(-MIST_DAY * frame.weather.x * min(tScene, MIST_DAY_RANGE)));
     imageStore(mistOut, hp, vec4(EXPOSE(mist), 1.0));
 
     // The ray's span inside the cloud layer, up to the scene and CLOUD_REACH,

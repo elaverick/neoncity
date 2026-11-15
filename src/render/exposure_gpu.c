@@ -21,7 +21,7 @@ static const uint32_t SPV_exposure_adapt[] = {
 #define METER_STATE_OFFSET (METER_BINS * sizeof(uint32_t))
 #define METER_BYTES        (METER_STATE_OFFSET + 4 * sizeof(float))
 
-typedef struct MeterPush { float invPre, dt, manualEv; int32_t flags; } MeterPush;   /* shaders/exposure.glsl */
+typedef struct MeterPush { float invPre, dt, manualEv; int32_t flags; float gloom; } MeterPush;   /* shaders/exposure.glsl */
 
 void exposure_gpu_create(Renderer *r) {
     VkCore *vk = r->vk;
@@ -84,8 +84,10 @@ void exposure_gpu_record(Renderer *r, VkCommandBuffer cmd, int slot, const Frame
         vk_memory_barrier(cmd, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | XFER | CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                           CS, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
     }
+    /* the gloom (light_units.h, KEY_GLOOM): the deck's cover over the eye, by day (the sun's altitude's sine) */
+    float day = fminf(fmaxf((ubo->sun[3] + 0.02f) / 0.22f, 0.0f), 1.0f);
     MeterPush pc = { ubo->exposure[1], r->meterDt, isnan(r->manualEv) ? 0.0f : r->manualEv,
-                     (isnan(r->manualEv) ? 0 : 1) | (r->meterSnap ? 2 : 0) };
+                     (isnan(r->manualEv) ? 0 : 1) | (r->meterSnap ? 2 : 0), ubo->sky[2] * day * day * (3.0f - 2.0f * day) };
     r->meterSnap = false;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->meterPL, 0, 1, &r->meterSet, 0, NULL);
     vkCmdPushConstants(cmd, r->meterPL, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);

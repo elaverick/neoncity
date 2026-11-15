@@ -747,6 +747,13 @@ vec3 skyRadiance(vec3 dir) {
  * moon's and the sky's light likewise. */
 float deckThrough(float cover) { return pow(DECK_DAYLIGHT, cover); }
 float daylightThrough() { return deckThrough(frame.sky.z); }
+/* The colour the sooty deck gives the daylight through it: a cool,
+ * slightly green grey, so the lamps' sodium and the neon read warm against
+ * it (DL1). Luminance-neutral (luma 1), all of it under the whole deck. And
+ * deckLight, the daylight's share through the deck in that colour. */
+const vec3 DECK_TINT = vec3(0.88, 1.0, 1.0) / 0.97449;
+vec3 deckTint(float cover) { return mix(vec3(1.0), DECK_TINT, cover); }
+vec3 deckLight(float cover) { return deckThrough(cover) * deckTint(cover); }
 
 /* ---------------- the city by day (DN6) ----------------
  * The cities' cloud over a point at rel (camera-relative, as drawn) whose
@@ -782,7 +789,7 @@ struct CityDay { vec3 even, sun, bounce; };
 CityDay cityDaylightParts(vec3 n, float cover, float open) {
     vec3 level = dayLevel();
     vec3 grey = level * (0.5 + 0.5 * n.y);
-    float through = deckThrough(cover);
+    vec3 through = deckLight(cover);
     CityDay d;
     d.even = mix(skyIrradiance(n), grey, cover) * through;
     d.sun = SUN_LAND * (max(dot(n, SUN_DIR), 0.0) * (1.0 - cover) * through);
@@ -828,10 +835,10 @@ vec3 cityAmbient(vec3 n, float h, float cover) {
  * the deck's even grey under it; and its mean radiance (dayOvercast), what a
  * window or skylight sees of it. None by night. */
 vec3 daySky(vec3 R, float cover) {
-    return mix(skyRadiance(R), dayLevel() * (1.0 / AIR_PI), cover) * deckThrough(cover);
+    return mix(skyRadiance(R), dayLevel() * (1.0 / AIR_PI), cover) * deckLight(cover);
 }
 vec3 dayOvercast(float cover) {
-    return mix(skyIrradiance(vec3(0.0, 1.0, 0.0)), dayLevel(), cover) * (deckThrough(cover) / AIR_PI);
+    return mix(skyIrradiance(vec3(0.0, 1.0, 0.0)), dayLevel(), cover) * (deckLight(cover) / AIR_PI);
 }
 
 /* ---------------- the city's own clock (DN7) ----------------
@@ -1007,7 +1014,7 @@ const vec3 CLOUD_DECK = vec3(0.10, 0.052, 0.034);
 const float DAY_FACADES = 0.03, DAY_STREET = 0.02;
 vec3 envReflection(vec3 R) {
     float cover = frame.sky.z;
-    vec3 day = dayLevel() * deckThrough(cover);   // on open ground round the camera
+    vec3 day = dayLevel() * deckLight(cover);   // on open ground round the camera
     vec3 c = mix(hazeColor(R) * 1.5, CLOUD_DECK + daySky(R, cover), smoothstep(0.03, 0.3, R.y) * 0.85);
     float az = atan(R.z, R.x);
     float band = smoothstep(-0.3, -0.03, R.y) * (1.0 - smoothstep(0.08, 0.45, R.y));

@@ -25,10 +25,11 @@ uint meterBin(float l) {
     return uint(clamp(1.0 + t * float(METER_BINS - 1), 1.0, float(METER_BINS - 1)));
 }
 
-// The exposure the eye settles on for a metered EV100 (light_units.h: the key).
-float meterTarget(float metered) {
+// The exposure the eye settles on for a metered EV100, gloom 0..1 how much
+// it stands under the cities' cloud by day (light_units.h: the key).
+float meterTarget(float metered, float gloom) {
     float night = EV100_REF + KEY_NIGHT_SLOPE * (min(metered, KEY_DUSK_EV) - KEY_NIGHT_EV);
-    return clamp(night + max(metered - KEY_DUSK_EV, 0.0), EXPOSURE_MIN, EXPOSURE_MAX);
+    return clamp(night + max(metered - KEY_DUSK_EV, 0.0) + KEY_GLOOM * gloom, EXPOSURE_MIN, EXPOSURE_MAX);
 }
 
 #ifdef METER_PASS
@@ -38,5 +39,6 @@ layout(push_constant) uniform MeterPush {
     float dt;         // seconds since the last frame
     float manualEv;   // --ev: shown at this (flags & 1)
     int   flags;      // 1 manual, 2 no adaptation: straight to the target (a capture, a new frame)
+    float gloom;      // 0..1: under the cities' cloud by day (exposure_gpu.c)
 } pc;
 #endif

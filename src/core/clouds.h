@@ -18,8 +18,9 @@
  * CLOUD_REACH: how far across the ground the deck is marched (clouds.comp),
  * so that from out in the countryside a city's clouds stand on the skyline.
  * DECK_DAYLIGHT: how much of the open sky's daylight gets through the deck to
- * the street under its middle (day/night cycle: a storm sky's, at noon some
- * 250 lux); its share of the moon's and the sky's light likewise.
+ * the street under its middle (a storm sky's gloom, at noon some 60-100 lux:
+ * the lamps, signs and windows carry the city by day as by night, DL1); its
+ * share of the moon's and the sky's light likewise.
  * The deck hangs over each settlement's own ground (the highest of it across
  * its footprint: city_settlement_deck; FrameUBO.cities[i].w): its heights
  * (CLOUD_LOW..CLOUD_HIGH in common.h, DECK_OVER, and clouds.comp's) count
@@ -37,7 +38,7 @@
 #define CLOUD_RAGGED   1500.0f
 #define CLOUD_REACH    30000.0f
 #define RAIN_DRIZZLE   0.1f
-#define DECK_DAYLIGHT  0.0025f
+#define DECK_DAYLIGHT  0.001f
 #define DECK_OVER      330.0f
 #define DECK_BLEND     2000.0f
 

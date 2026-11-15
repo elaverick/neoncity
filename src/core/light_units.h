@@ -55,11 +55,17 @@
  * camera would by day (sunlit land, metering about 15, shown at 14.5). The
  * result is held within EXPOSURE_MIN and EXPOSURE_MAX: EXPOSURE_MIN is the
  * floor that keeps a cave dark however little light it has (one meters -4
- * to -11), a stop over the night's. The eye adapts at ADAPT_UP a second
- * (e-foldings) to a brighter scene, ADAPT_DOWN to a darker one. */
+ * to -11), a stop over the night's. Under the cities' cloud by day the key
+ * is KEY_GLOOM of a stop higher (darker; DL1): a storm day's gloom, shown as
+ * the night is, about a stop under its meter, so the lamps, the signs and
+ * the windows carry the street. It goes as the deck's cover over the eye
+ * and the sun's height (gloom in exposure_gpu.c), none by night or out in
+ * the countryside. The eye adapts at ADAPT_UP a second (e-foldings) to a
+ * brighter scene, ADAPT_DOWN to a darker one. */
 #define KEY_NIGHT_EV    2.75f
 #define KEY_NIGHT_SLOPE 0.35f
 #define KEY_DUSK_EV     5.0f
+#define KEY_GLOOM       0.8f
 #define EXPOSURE_MIN    2.7f
 #define EXPOSURE_MAX    16.0f
 #define ADAPT_UP      3.0f

@@ -39,7 +39,7 @@ void main() {
     vec4 st = meter.state;
     if (acc[0].y > 0.0) {
         st.z = acc[0].x / acc[0].y + log2(LIGHT_NIT * 8.0);   // L x 100 / 12.5, L in cd/m2
-        st.y = meterTarget(st.z);
+        st.y = meterTarget(st.z, pc.gloom);
     } else if (st.w == 0.0) {   // nothing metered yet
         st.y = st.z = EV100_REF;
     }

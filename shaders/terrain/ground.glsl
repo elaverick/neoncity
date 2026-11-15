@@ -58,7 +58,7 @@ vec3 landDaylight(LandSky s, vec3 n) {
     vec3 bounce = level * (LAND_BOUNCE * (0.5 - 0.5 * n.y));
     vec3 clear = sun * (max(dot(n, SUN_DIR), 0.0) * landDir(s)) + skyIrradiance(n);
     vec3 grey = level * (0.5 + 0.5 * n.y);
-    return (mix(clear, grey, s.cover) + bounce) * deckThrough(s.cover);
+    return (mix(clear, grey, s.cover) + bounce) * deckLight(s.cover);
 }
 
 // F10's view (terrain.frag, cave.frag): the directional light on ground under
@@ -517,7 +517,7 @@ const float LAND_FILM_ROUGH = 0.45, LAND_POOL_ROUGH = 0.04, WATER_F0 = 0.02;
 vec3 landReflection(vec3 R, LandSky s) {
     float up = smoothstep(0.03, 0.3, R.y);
     vec3 sky = mix(hazeColor(R), nightGlow(R) + skyRadiance(R), up) * 1.5;
-    vec3 deck = CLOUD_DECK * s.city + skyIrradiance(vec3(0.0, 1.0, 0.0)) * (DECK_DAYLIGHT / 3.14159265);
+    vec3 deck = CLOUD_DECK * s.city + skyIrradiance(vec3(0.0, 1.0, 0.0)) * (DECK_TINT * (DECK_DAYLIGHT / 3.14159265));
     return mix(sky, deck, up * 0.85 * s.cover);
 }
 
