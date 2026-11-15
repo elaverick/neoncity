@@ -214,7 +214,7 @@ static void emit_arc_floor(Mesh *m, const BGraph *g, const ALayout *A) {
     for (int f = 0; f < (int)ARRAY_LEN(F); ++f) {
         int n = arc_rects_skip(A, 1u << F[f].use, -1, F[f].use == AU_COLONNADE ? paved : NULL, rc, 1024);
         Mat mt = iframe(m, amat(A, ARS_FLOOR, F[f].var, 0.0f));
-        for (int k = 0; k < n; ++k) aflat(m, A, rc[k], fy + (F[f].use == AU_COLONNADE ? 0.02f : 0.025f), 0, NULL, mt);
+        for (int k = 0; k < n; ++k) aflat(m, A, rc[k], fy + (F[f].use == AU_COLONNADE ? 0.02f : AR_TILE_UP), 0, NULL, mt);
     }
     free(rc);
     free(paved);

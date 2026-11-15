@@ -1236,10 +1236,10 @@ void city_hall_bar(const Building *b, const ALayout *A, int hall, int k, VendorS
     sp->x = wx; sp->z = wz;
     city_arc_dir(b, A, (float)((br->facing == 1) - (br->facing == 3)), (float)((br->facing == 2) - (br->facing == 0)), &sp->fx, &sp->fz);
     sp->site.w = br->w; sp->site.d = br->d;
-    sp->y = building_base(b) + A->floorY + 0.025f;   /* on the hall's tiles (mesh_arcology.c emit_arc_floor) */
+    sp->y = building_base(b) + A->floorY + AR_TILE_UP;   /* on the hall's tiles (mesh_arcology.c emit_arc_floor) */
     sp->ground = sp->y;
     sp->walk = VENDOR_WALK_LOT;   /* (the planner kept it clear: arcology_subdivide.c HALL_WAY) */
-    sp->site.ceiling = H->roof;
+    sp->site.ceiling = H->roof - AR_TILE_UP;
     sp->site.affluence = plan_affluence(wx, wz);
     sp->site.hostWall = 1;
     sp->site.archetype = VA_CANOPY;
@@ -1332,10 +1332,10 @@ static void arc_stalls(SGen *S) {
             sp.x = B.x; sp.z = B.z;
             sp.fx = (float)(b->c * ux - b->s * uz); sp.fz = (float)(b->s * ux + b->c * uz);
             sp.site.w = w - 0.02f; sp.site.d = d + st->out;   /* (a centimetre clear of its neighbours' sites) */
-            sp.y = base + A->floorY;
+            sp.y = base + A->floorY + AR_TILE_UP;   /* on the unit's tiles (mesh_arcology.c emit_arc_floor) */
             sp.ground = sp.y;
             sp.walk = 0.5f;   /* (the planner kept it public and clear of columns: arcology_subdivide.c FOOD_WAY) */
-            sp.site.ceiling = st->head;
+            sp.site.ceiling = st->head - AR_TILE_UP;   /* (the soffit, over the tiles it stands on) */
             sp.site.affluence = plan_affluence(B.x, B.z);
             sp.site.hostWall = 1;
             sp.site.archetype = VA_CANOPY;

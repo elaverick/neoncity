@@ -85,6 +85,9 @@ typedef struct AStall { ARect r; uint8_t facing, block, kind, closed, vendor; fl
 /* SF5: a bar's unit's head at most (over the floor), and its sign's band on the bar's header panel: from AR_BAR_BOARD
  * (over the hood: noodle_bar.h NB_ARC_HOOD + 6 cm) to 12 cm under the head, at most AR_BAR_BOARD_H tall */
 #define AR_BAR_HEAD     4.0f
+/* The stall units' and halls' tiles stand this far over the concourse floor (src/city/mesh_arcology.c emit_arc_floor): the
+ * kit bars in them stand on the tiles */
+#define AR_TILE_UP      0.025f
 #define AR_BAR_BOARD    3.11f
 #define AR_BAR_BOARD_H  0.95f
 #define AR_BAR_BOARD_MIN 0.3f
