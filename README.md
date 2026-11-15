@@ -1437,8 +1437,9 @@ by the clock. No people yet, anywhere (the user's call).
   the bar (`pmodel_lab` draws the bars).
 - **Retired** (SF6): the doc's lean-to, container shop, container pair, market stall and hand barrow (never
   chosen since SF2), the shells drawn as `MAT_VENDOR` (SV2; the id stays, so the others keep theirs) and the
-  rooms painted behind their openings (SV3, `vendor_room.glsl`). The bars' own plans, far shells, bodies and
-  lights replaced all three.
+  rooms painted behind their openings (SV3, `vendor_room.glsl`), with the eight materials only they read (flake
+  board, pine, grey planks, corrugated sheet, grime streaks) and the unused `kit_plate`. The bars' own plans, far
+  shells, bodies and lights replaced all three.
 
 ### The procedural modelling kit (`src/gen/pmodel*.c`)
 The street vendors' rework (the noodle bar slice, `docs/noodle-bar-target.md`) builds them in far more
@@ -1903,15 +1904,7 @@ procedural noise. All are ambientCG (CC0), packed at 1024 from the 2K downloads:
 | `mulch` | [WoodChips003](https://ambientcg.com/view?id=WoodChips003) | lobby pots' bark-mulch dressing |
 | `paper` | [Paper003](https://ambientcg.com/view?id=Paper003) | litter's newspapers, flyers, receipts, wads, cups and noodle boxes |
 | `cardboard` | [Cardboard002](https://ambientcg.com/view?id=Cardboard002) | litter's flattened boxes and pizza boxes |
-| `vendor_osb` | [Chipboard003](https://ambientcg.com/view?id=Chipboard003) | street vendors' flake-board counters, shelves, cabinets, tiers, tables and sheet walls (unused since SF6 retired the old shells) |
-| `vendor_flakeboard` | [Chipboard006](https://ambientcg.com/view?id=Chipboard006) | the same, the paler board (chosen per vendor) (unused since SF6 retired the old shells) |
 | `vendor_planks` | [Planks012](https://ambientcg.com/view?id=Planks012) | the kit's timber (`PMAT_TIMBER`: A-frames, ledges, boards) |
-| `vendor_planks_grey` | [Planks023A](https://ambientcg.com/view?id=Planks023A) | the same, gone grey (chosen per vendor) (unused since SF6 retired the old shells) |
-| `vendor_pine` | [Planks009](https://ambientcg.com/view?id=Planks009) | the cleaner street vendors' pine boards (unused since SF6 retired the old shells) |
-| `vendor_sheet_worn` | [CorrugatedSteel008C](https://ambientcg.com/view?id=CorrugatedSteel008C) | worn street vendors' painted corrugated iron, rusting through (in the vendor's own colour) (unused since SF6 retired the old shells) |
-| `vendor_sheet_rust` | [CorrugatedSteel007C](https://ambientcg.com/view?id=CorrugatedSteel007C) | street vendors' rusted corrugated iron, flecks of their paint left (unused since SF6 retired the old shells) |
-| `grime_streaks_a` | [Leaking001](https://ambientcg.com/view?id=Leaking001) | dirt run down street vendors' walls from their top edges (unused since SF6 retired the old shells) |
-| `grime_streaks_b` | [Leaking003](https://ambientcg.com/view?id=Leaking003) | the same, greener (unused since SF6 retired the old shells) |
 
 The lobby woods and white marble (`wood_mid`, `wood_dark`, `wood_light`, `marble_white`) also
 carry an `albedo_mean` and grain `params`, so they serve as grain too: arcology timber soffits,

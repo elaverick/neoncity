@@ -940,15 +940,11 @@ The street vendor roadmap is complete (`~/.claude/plans/street-vendors.md`: SV0-
 street food SF1-SF6, 2026-11-15): twelve trades on four forms on the kit, in the streets, built into buildings and in
 the arcologies' units and halls, open by the clock. The doc's old archetypes, the MAT_VENDOR shells and the painted
 rooms were retired in SF6. Other shop types (the doc's non-food trades) wait for a roadmap of their own. Left over:
-- **Unused materials since SF6:** `vendor_osb`, `vendor_flakeboard`, `vendor_pine`, `vendor_planks_grey`,
-  `vendor_sheet_worn`, `vendor_sheet_rust`, `grime_streaks_a`, `grime_streaks_b` (and `kit_plate`, unused before)
-  were read only by the retired vendor shader; about 50 MB of textures. Keep for other shop types, or remove: the
-  user's call.
-- **Over budget (SF6):** every worst view is over the ~1 ms a street NB8 set: the vaulted lane +4.2 ms (+4.1 at
-  its arcade counters), the row of shop bays +3.5, the slice from 3 m +2.4, a shop bay, a corner unit and the noodle
-  hall's mouth +1.6-1.7 (README, the noodle bar section). Mostly the city pass shading the bodies' pixels under the
-  bars' lights, then shadow rays and filter. Levers: the city pass's late-Z (below), fewer casting lights a bar,
-  bodies at LOD1 sooner. Wants a decision on the budget or a cost pass.
+- [ ] **Review the vendors' frame cost (later; the user, 2026-11-15: accepted for now).** Every worst view is over
+  the ~1 ms a street NB8 set: the vaulted lane +4.2 ms (+4.1 at its arcade counters), the row of shop bays +3.5, the
+  slice from 3 m +2.4, a shop bay, a corner unit and the noodle hall's mouth +1.6-1.7 (README, the noodle bar
+  section; `build/perf_sf6/`). Mostly the city pass shading the bodies' pixels under the bars' lights, then shadow
+  rays and filter. Levers: the city pass's late-Z (below), fewer casting lights a bar, bodies at LOD1 sooner.
 - **`--kit all`** gives every vendor a bar's line whatever its trade or size (the cost spike), without the
   line's merged parts (the range's carcass, the bain-marie, the gas and cables are the bar's body).
 - **The bar's bake (NB8 measured):** a bar's vendor layer takes ~190 ms on a worker, 93% of it the body's
