@@ -230,6 +230,11 @@ void shadePixel() {
                 outRefl = vec4(0.0);
                 return;
             }
+            if ((uint(frame.shadow.y) & DAYLIGHT_DEBUG) != 0u) {
+                outColor = vec4(cityDaylightDebug(vGround, gSkyCover, cityOpen(vGround, h)), 1.0);
+                outRefl = vec4(0.0);
+                return;
+            }
             diff += neonBounce(gWorld, h);
             col = albedo * (face * (diff + GRASS_THIN_FACE * own * gThinFace) + through * gThinBack) + sheen * gThinSpec;
             // the wet blade's sheen of the sky and the lit streets round (envReflection, city.frag's)

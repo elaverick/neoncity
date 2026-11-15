@@ -233,6 +233,7 @@ const float SHADOW_FADE = 350.0, SHADOW_FAR = 450.0;    // src/core/common.h
 const uint  SHADOWS_ON = 1u, SHADOWS_DEBUG = 2u;         // frame.shadow.y (renderer.c)
 const uint  VENDOR_DEBUG = 4u;                           // frame.shadow.y: --vendor-debug / F7, far shells drawn magenta
 const uint  VENDORS_OPEN = 8u, VENDORS_SHUT = 16u;       // frame.shadow.y: NeonCity --hours open|shut (SF4)
+const uint  DAYLIGHT_DEBUG = 32u;                        // frame.shadow.y: --daylightdebug / F10 twice (cityDaylightDebug)
 const uint  KIT_SHUT = 256u;                             // MAT_KIT's material word (vParams.y): its vendor shut (SF4)
 bool shadowsOn() { return (uint(frame.shadow.y) & SHADOWS_ON) != 0u; }
 const int   SHADOW_SLOTS = 8;                            // lights a pixel keeps soft shadows for
@@ -773,12 +774,38 @@ vec3 dayLevel() { return SUN_LAND * max(SUN_DIR.y, 0.0) + skyIrradiance(vec3(0.0
  * doesn't show comes back off the streets and the facades round about,
  * CITY_BOUNCE of the light on them. */
 const float CITY_BOUNCE = 0.15;
-vec3 cityDaylight(vec3 n, float cover, float open) {
+/* Its terms, each through the deck: the even light from the sky above (the
+ * deck's grey, or a clear sky's own light), the sun's share with a direction,
+ * both before `open` takes its share of them; and the bounce, which grows as
+ * `open` falls. cityDaylight = (even + sun) * open + bounce. */
+struct CityDay { vec3 even, sun, bounce; };
+CityDay cityDaylightParts(vec3 n, float cover, float open) {
     vec3 level = dayLevel();
-    vec3 clear = SUN_LAND * max(dot(n, SUN_DIR), 0.0) + skyIrradiance(n);
     vec3 grey = level * (0.5 + 0.5 * n.y);
-    vec3 bounce = level * (CITY_BOUNCE * (0.5 - 0.5 * n.y + (1.0 - open)));
-    return (mix(clear, grey, cover) * open + bounce) * deckThrough(cover);
+    float through = deckThrough(cover);
+    CityDay d;
+    d.even = mix(skyIrradiance(n), grey, cover) * through;
+    d.sun = SUN_LAND * (max(dot(n, SUN_DIR), 0.0) * (1.0 - cover) * through);
+    d.bounce = level * (CITY_BOUNCE * (0.5 - 0.5 * n.y + (1.0 - open)) * through);
+    return d;
+}
+vec3 cityDaylight(vec3 n, float cover, float open) {
+    CityDay d = cityDaylightParts(n, cover, open);
+    return (d.even + d.sun) * open + d.bounce;
+}
+
+/* The daylight debug view (DAYLIGHT_DEBUG: --daylightdebug, F10 twice): the
+ * city's daylight on white, each term in a false colour at its own
+ * luminance: the even light from the sky grey-white, the sun's share yellow,
+ * the bounce blue, and in red what the sky's occlusion (open) takes from the
+ * first two, so a surface lit fully is pale and a closed-in one red-and-blue.
+ * At the same scale as the lights' view (SHADOWS_DEBUG). */
+vec3 cityDaylightDebug(vec3 n, float cover, float open) {
+    CityDay d = cityDaylightParts(n, cover, open);
+    float even = luma(d.even), sun = luma(d.sun), bounce = luma(d.bounce);
+    vec3 c = vec3(0.92, 0.95, 1.0) * (even * open) + vec3(1.0, 0.8, 0.25) * (sun * open) +
+             vec3(0.2, 0.4, 1.0) * bounce + vec3(1.0, 0.05, 0.03) * ((even + sun) * (1.0 - open));
+    return c * 0.3 + vec3(0.004);
 }
 
 /* How much of the sky a city surface facing n sees, h metres above the ground

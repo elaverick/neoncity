@@ -139,6 +139,12 @@ void shadePixel() {
     vec3 n = normalize(vNrm);
     float dist = length(vRel);
     vec3 V = -vRel / max(dist, 1e-4);
+    if ((uint(frame.shadow.y) & DAYLIGHT_DEBUG) != 0u) {   // daylight debug view: a proxy's walls as the city's (cityDaylightDebug)
+        gSkyCover = skyCover(vRel);
+        outColor = vec4(cityDaylightDebug(n, gSkyCover, cityOpen(n, max(vFace.y, 0.0))), 1.0);
+        outRefl = vec4(0.0);
+        return;
+    }
     vec3 col = shadeProxy(n, V);
     outColor = vec4(airFog(col, vRel, dist, fogAmount(vRel, dist)), 1.0);
     outRefl = vec4(0.0);

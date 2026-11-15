@@ -147,6 +147,11 @@ void shadePixel() {
         return;
     }
 #endif
+    if ((uint(frame.shadow.y) & DAYLIGHT_DEBUG) != 0u) {   // daylight debug view: the land's daylight on white, plain (ground.glsl landDaylight)
+        outColor = vec4(landDaylight(l.sky, n) * 0.3 + vec3(0.004), 1.0);
+        outRefl = vec4(0.0);
+        return;
+    }
     int grassView = int(frame.grass.z + 0.5);
     if (grassView != GRASS_DEBUG_OFF && grassView != GRASS_DEBUG_ALBEDO) {   // --grass-debug: the grass's rules, unlit
         outColor = vec4(grassDebug(grassView, vRel, n, city, cover, onRoad, road, l.px), 1.0);

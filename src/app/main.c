@@ -1,7 +1,7 @@
 /* NeonCity - a vast, deterministic, cyberpunk city walk in C + Vulkan.
  *
  * Controls: mouse look, WASD move, Shift sprint, Space jump,
- *           F toggle fly (debug: Space/Ctrl up/down), F7 vendor debug view, F9 toggle shadows, F10 shadow debug view,
+ *           F toggle fly (debug: Space/Ctrl up/down), F7 vendor debug view, F9 toggle shadows, F10 debug views (lights, daylight),
  *           F11 fullscreen, Esc release mouse (Esc again to quit), click to recapture. */
 #include <time.h>
 #include "vkcore.h"
@@ -89,6 +89,7 @@ static void usage(void) {
     printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--bars all] [--vendor-debug] [--hours open|shut|clock] [--nbform straight|corner] [--trade noodles|soup|dumplings|skewers|kebab|burgers|fried|curry|tacos|crepes|roast|drinks] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
+           "  --daylightdebug  start in the daylight debug view (F10 twice): only the city's daylight, on white\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
            "  --cam   start position (world metres, in the city's frame); a HEIGHT starts in fly mode at that altitude\n"
            "  --walk  hold W for this many seconds before a --shot\n"
@@ -131,7 +132,8 @@ static void usage(void) {
 
 /* Command-line options. */
 typedef struct Options {
-    bool        validation, shadows, shadowDebug, vendorDebug, lockDoors, noGrass;
+    bool        validation, shadows, vendorDebug, lockDoors, noGrass;
+    int         shadowDebug;     /* --shadowdebug / --daylightdebug: the F10 view to start in (DEBUG_VIEW_*) */
     uint32_t    grassCap;        /* --grass-cap: each level of detail's room (0: its own) */
     const char *shotPath;
     const char *city;            /* --city: a name's beginning, or a number */
@@ -163,7 +165,8 @@ static bool parse_args(int argc, char **argv, Options *o) {
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--validation") == 0) o->validation = true;
         else if (strcmp(argv[i], "--noshadows") == 0) o->shadows = false;
-        else if (strcmp(argv[i], "--shadowdebug") == 0) o->shadowDebug = true;
+        else if (strcmp(argv[i], "--shadowdebug") == 0) o->shadowDebug = DEBUG_VIEW_LIGHTS;
+        else if (strcmp(argv[i], "--daylightdebug") == 0) o->shadowDebug = DEBUG_VIEW_DAYLIGHT;
         else if (strcmp(argv[i], "--vendor-debug") == 0) o->vendorDebug = true;
         else if (strcmp(argv[i], "--hours") == 0 && i + 1 < argc) {
             const char *h = argv[++i];
@@ -285,7 +288,7 @@ static PlayerInput read_input(GLFWwindow *win, const Player *player, bool script
     return in;
 }
 
-/* F7 vendor debug view, F8 interior impostors, F9 shadows, F10 shadow debug view, F12 screenshot. */
+/* F7 vendor debug view, F8 interior impostors, F9 shadows, F10 debug views (lights, daylight), F12 screenshot. */
 static void handle_toggles(Renderer *renderer, int *shotCount) {
     static float impostorShare = 0.4f;   /* what F8 turns them back on to */
     if (g_impostorPressed) {
@@ -300,7 +303,7 @@ static void handle_toggles(Renderer *renderer, int *shotCount) {
         g_shadowPressed = false;
     }
     if (g_debugPressed) {
-        renderer_set_shadow_debug(renderer, !renderer_shadow_debug(renderer));
+        renderer_set_shadow_debug(renderer, (renderer_shadow_debug(renderer) + 1) % DEBUG_VIEW_COUNT);
         g_debugPressed = false;
     }
     if (g_vendorDebugPressed) {

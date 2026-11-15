@@ -110,9 +110,11 @@ uint64_t  renderer_frame_index(Renderer *r);
 /* Ray-traced shadows on or off (they stay off without ray queries). */
 void      renderer_set_shadows(Renderer *r, bool on);
 bool      renderer_shadows(Renderer *r);
-/* Shadow debug view: only the city's lights on each surface, so their shadows stand out. */
-void      renderer_set_shadow_debug(Renderer *r, bool on);
-bool      renderer_shadow_debug(Renderer *r);
+/* Debug views (F10 steps through them): DEBUG_VIEW_LIGHTS only the city's lights on each surface, so their
+ * shadows stand out; DEBUG_VIEW_DAYLIGHT only the city's daylight terms (common.glsl cityDaylightParts). */
+enum { DEBUG_VIEW_OFF, DEBUG_VIEW_LIGHTS, DEBUG_VIEW_DAYLIGHT, DEBUG_VIEW_COUNT };
+void      renderer_set_shadow_debug(Renderer *r, int view);
+int       renderer_shadow_debug(Renderer *r);
 /* --vendor-debug / F7: noodle bars' far shells drawn magenta (their near bodies not resident: still baking, or far). */
 void      renderer_set_vendor_debug(Renderer *r, bool on);
 bool      renderer_vendor_debug(Renderer *r);

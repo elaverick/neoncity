@@ -130,6 +130,13 @@ void shadePixel() {
         outRefl = vec4(0.0);
         return;
     }
+    if ((uint(frame.shadow.y) & DAYLIGHT_DEBUG) != 0u) {
+        // daylight debug view (F10 twice): only the daylight, its terms in false colour (common.glsl cityDaylightDebug)
+        vec3 nv = dot(n, V) < 0.0 ? -n : n;
+        outColor = vec4(cityDaylightDebug(nv, gSkyCover, cityOpen(nv, vLocal.y - gBase)), 1.0);
+        outRefl = vec4(0.0);
+        return;
+    }
 
     vec3 col;
     if (mat <= MAT_LOT)            col = shadeGround(mat, vLocal, n, V, vUV, vSeed, vParams);
