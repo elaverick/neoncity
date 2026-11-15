@@ -59,8 +59,6 @@ int city_casts_shadow(const Vertex *v) {
         return p[1] == LK_CAN || p[1] == LK_BOTTLE || p[1] == LK_CUP || p[1] == LK_BOX || p[1] == LK_BINBAG;
     case MAT_TRIM:     /* a mullion is too slight to matter, and shrinks away far off (city.vert) */
         return (p[2] & 3) != TRIM_MULLION;
-    case MAT_VENDOR:   /* not a vendor's glass, nor a sign's painted face (its board casts) */
-        return p[1] != VS_GLASS && p[1] != VS_NEON;
     case MAT_KIT:      /* a noodle bar's body, not its glass or what glows (its lamps' light passes); its far
                         * shell never (the near body casts), nor a shell's shutters (there only while shut: city.vert) */
         return !(v->aux & KIT_AUX_FAR) && p[1] != PMAT_SHUTTER && p[1] != PMAT_GLASS && p[1] != PMAT_GLAZING && !pm_mat_glows(p[1]);

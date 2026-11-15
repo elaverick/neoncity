@@ -1400,64 +1400,45 @@ What stands on the ground collides (`city_layout`), and the litter lies clear of
 nothing closes the way past a dumpster; `city_test --props` prints `--cam` views of a few of
 each kind near the spawn. The layer averages about 49,000 vertices a chunk (130,000 at most).
 
-### Street vendors (`src/gen/vendor.c`)
-Noodle bars, kiosks, lean-tos, container shops, market stalls and barrows follow
-`docs/street-vendor-generation.md`. So far the grammar (SV0 of the vendor roadmap), the sites (SV1), the
-shells in the city (SV2) and the rooms seen through their openings (SV3) are built.
+### Street vendors (`src/gen/vendor.c`, `src/gen/noodle_bar.c`)
+Street food, after `docs/street-vendor-generation.md` and the vendor roadmap (`~/.claude/plans/street-vendors.md`:
+SV0-SV3, then the rework, NB0-NB8 and SF1-SF6). Every vendor is a food bar built in detail on the procedural
+modelling kit (below): twelve trades, four forms, in the streets, built into buildings and in the arcologies, open
+by the clock. No people yet, anywhere (the user's call).
 
 - **Room for them** (`src/city/lots.c`, `city_block_spaces`): in the centres' poorer and middling districts
   about one block in six has a market lane (an alley across it widened to 7-10 m), one in six or seven a hawker
   frontage (its row set back 4-7 m behind a paved apron) and one in ten a pocket market (a plot left unbuilt);
   in the wealthy cores one block in five has a lunch plaza (an office tower set back 8-16 m behind its
   forecourt). These are paved as the sidewalks are. The choices are hashes of the block, so a block with none
-  keeps its buildings.
-- **Sites** (`src/city/vendor_sites.c`, `vendor_sites.h`): rows along each space (against an apron's row,
-  down both sides of a lane, across a pocket market's aisles, at a forecourt's sides), round a court (the
-  largest open yard behind a block's buildings that a 1.5 m way joins to the street) and by the kerb where the
-  sidewalk leaves 1.8 m behind a pitch. Every site stands clear of walls, columns, relief piers and door ways,
-  1 m from the next, with its own way clear; street furniture, litter and alley cables keep off them. A
-  block's sites are planned whole, whichever chunk asks; those of one space are a group, generated in order.
-  `city_test --vendor-sites` checks them (the same from every chunk, clear, reachable, each taking a valid
-  vendor) and `city_map` draws them.
-- **Rooms** (`shaders/city/vendor_room.glsl`; the doc's section 6): behind each opening (a hatch, a
-  container's walk-in front, a canopy bar's or lean-to's shelf recess, the gap behind a market stall's table,
-  a barrow's cabinet) a box is traced from its one quad, and what it holds is painted procedurally from the
-  vendor's stock, feature wall, palette, cooking and wear, which `mesh_vendor.c` (`room_word`) packs into the
-  quad's vertex words: shelves with real depth (the boards' fronts, tops and undersides) and 25 kinds of
-  painted stock on them (bowls, bottles, jars, steamers, tanks, screens, books, sleeves, fruit in crates...);
-  the feature wall (a menu board, a tiled splashback, a mural, a wall of screens, a pegboard, stacked crates,
-  backlit photographs); stock painted flat on the side walls; the floor, and the ceiling's strip light. Two
-  cut-outs at fixed depths give parallax: the prep table (pots, steamers, a wok over its flame, a drinks
-  machine, a till, the stock laid out) and what hangs inside the head (utensils, lanterns, fish, joints,
-  garments, herbs, cables, the bare bulb). No figures. The vendor's lamp lights it, with what falls on the
-  opening from outside; the box's corners darken, grime grows with wear, goods narrower than a few pixels give
-  way to their average, and far off the room is its mean. Shut (a bit in the words, for SV8's hours), the
-  opening is a roller shutter, a tarp over a market's gap or a board. About 0.06 ms with a kiosk's room in
-  view; nothing measurable down a market lane. `city_test --vendors` checks every room's words.
-
-- **Input:** a site, a rectangle with its back (a wall a lean-to may lean on) and its front, where the
-  customers come from; its kind (kerb, apron, market lane, court, pocket market, lunch plaza, arcology),
-  a ceiling if it has one, and the district's affluence (`plan_affluence`).
-- **Stages:** the trade (22: the doc's 19 and coffee, lunch boxes and homeware for the wealthy streets and the
-  office districts' lunch) and the archetype, by affinity, affluence and what fits the site; the structure
-  (`vendor_structure.c`, section 5: bays no wider than 4.5 m, cantilevers within 1.2 m, a container's corner
-  posts and head rail, a barrow's wheels and handles...); the dressing (palette, finish, feature wall, neon
-  motif, shelf stock, decorations in sized slots and a signature piece), rerolled while it shares more than
-  three of nine axes with a neighbour; the fill (counter props, heaps of loose stock, hanging goods clear of
-  heads, gas bottles, signs, neon, steam emitters). Affluence moves all of it: barrows, lean-tos and canopy
-  bars in rust, tarp and corrugated sheet, cold tubes, dying neon and clutter in the poorest streets; kiosks and
-  containers in painted steel and timber under warm LED, with little clutter, in the wealthiest.
-- **Budget:** `vendor_mesh` makes the triangles (the shell, seen from afar, and the dressing, near only), and
-  the tier's budget is measured on them. Over it, the reduction order of section 9.2 runs; a vendor that
-  fails validation is retried at a simpler level.
-- **Validation** (`vendor_validate.c`) reads every bounded rule of section 4 back from the parts and the graph
-  alone, whatever built them, and logs each failure with its measure.
-- `vendor_lab [seeds] [out_dir]` checks every archetype, tier and affluence class over many seeds (valid,
-  byte-identical twice, within budget), rows of five neighbours with one archetype and one trade (none too
-  alike), and the automatic mix by affluence; with a directory it renders contact sheets. `vendor_lab dump
-  <archetype> <seed> [affluence] [tier]` prints one vendor's log, parts, graph and items. Over 200 seeds, all
-  12,600 pass; at the standard tier the median noodle bar is about 1,200 triangles, a kiosk 510, a market
-  stall 670, a barrow 490, a container pair 1,320.
+  keeps its buildings. About two in three market lanes whose sides are mostly building are roofed by a riveted
+  steel **vault** sprung from the buildings' first floors (`src/gen/vault.c`).
+- **Sites** (`src/city/vendor_sites.c`, `vendor_sites.h`): rows along each space (down both sides of a lane, across
+  a pocket market's aisles, at a forecourt's sides, a few on an apron), round a court (the largest open yard behind a
+  block's buildings that a 1.5 m way joins to the street) and a few kiosks by the kerb. Besides these, stalls
+  **built into buildings**: a lit shop bay taken over by a recessed stall (its hood under the bay's head, the
+  shop's board on its header panel) or, in half of them, a deep shop unit (a room behind the bay's own glazed
+  shopfront, the counter at the back, tables and a ledge); a lit corner shop taken over by an inset corner bar
+  (counters and stools along both faces). In the **arcologies**, the food stall units of the night markets and
+  noodle halls become recessed bars, and some of those blocks open up as walk-in food halls (bars round the
+  walls, tables in rows, fans and battens under the roof). Every site stands clear of walls, columns, relief
+  piers and door ways, with its own way out to the street; street furniture, litter and alley cables keep off
+  them. A block's sites are planned whole, whichever chunk asks; those of one space are a group, generated in
+  order. `city_test --vendor-sites` checks them (the same from every chunk, clear, reachable), `city_test
+  --vendors` and `--arc-vendors` check the vendors on them, and `city_map` draws them.
+- **The grammar** (`src/gen/vendor*.c`): from the site and the district's affluence it picks the trade (by
+  affinity, affluence and lunch sites) and the form that fits (`VA_CANOPY`: the wall stall or corner bar,
+  `VA_HATCH`: the glazed kiosk, `VA_ARCADE`: the counter under a ceiling, `VA_TIERED`: the kiosk with an upper
+  tier), plans the bar (`nb_plan_site`, held in `Vendor.nb`) and mirrors its plan as parts and a graph, which the
+  validator (`vendor_validate.c`) reads every bounded rule of section 4 back from. The dressing stage (palette,
+  motif, signature) still runs for section 8's fingerprints, rerolled while a vendor shares too much with a
+  neighbour in its group. `vendor_lab [seeds] [out_dir]` checks every form, tier and affluence over many seeds
+  (valid, deterministic, rows not too alike, the mix by affluence); its contact sheets draw the mirrored parts, not
+  the bar (`pmodel_lab` draws the bars).
+- **Retired** (SF6): the doc's lean-to, container shop, container pair, market stall and hand barrow (never
+  chosen since SF2), the shells drawn as `MAT_VENDOR` (SV2; the id stays, so the others keep theirs) and the
+  rooms painted behind their openings (SV3, `vendor_room.glsl`). The bars' own plans, far shells, bodies and
+  lights replaced all three.
 
 ### The procedural modelling kit (`src/gen/pmodel*.c`)
 The street vendors' rework (the noodle bar slice, `docs/noodle-bar-target.md`) builds them in far more
@@ -1617,6 +1598,52 @@ in `Vendor.nb`), so its near body, far shell, collision and cooking line always 
   have no gas; the spit's radiants are tiled infrared ceramic (`PMAT_RADIANT`).
   `NeonCity --trade NAME` (and `city_test --slice ... --trade NAME`) makes every vendor one trade;
   `pmodel_lab out` sweeps the line over every trade and draws `pmodel_trades.png`.
+- **Forms (SF2):** one plan for every form (`plan_bar`, `plan_hatch`, `plan_arcade`, `plan_tiered`, then the shared
+  kitchen, signs, front and lights): the wall stall down to 2.2 x 2.4 m (a standing counter where stools don't fit),
+  freestanding (the back clad, a cap over the spine), the corner bar; the glazed hatch kiosk (1.8-3.2 m: panes in
+  the trim coat's frame, one slid behind its neighbour, a sill on gussets, `PMAT_GLAZING` glass the bake and shadows
+  let through); the arcade counter under a ceiling (a soffit deck hung on rods, a riveted box header); the tiered
+  kiosk (a U spine, counters on three runs, an upper tier that is a ventilation lantern, a plant box or both, by
+  seed). Kerbs take kiosks only. The **lane vaults** (`src/gen/vault.c`, `CityVault`): box-section ribs 1.9-2.4 m
+  apart on a segmental arc, sheet over them in the hoods' metal, a glazed crown strip in 45%, tie rods, pendant
+  lamps, riveted I-beam posts in the gaps between stalls; base layer, bay by bay. **Bodies are streamed per
+  vendor**: the base layer lists its vendors (`Mesh.vbody`) and tags each far shell with its index (aux bits 25-31);
+  the streamer builds `LAYER_VBODY + i` for each vendor within `VENDOR_BODY_DISTANCE` (28 m) and the chunk record's
+  `bodies` mask drops exactly those far shells (`city.vert`). A chunk layer holds `MAX_CHUNK_PAGES` (128) pages.
+- **Built into buildings (SF3):** `shop_stalls` and `corner_units` in vendor_sites.c, planned first in a block. A
+  recessed stall opens a lit shop bay (`emit_walls` leaves the opening, the bay's shop light goes; `plan_recessed`
+  keeps 0.56 m of header panel at the building line for the shop's board). Deep shop units (`NB_SITE_DEEP`,
+  `plan_deep`): a room 4.9-5.6 m deep behind the bay's own shopfront (glass, a glazed door with fanlight), walls
+  tiled to 1.2 m, the arcade counter at the back, a ledge with stools along the glass, cafe tables, an awning or an
+  A-frame where the sidewalk allows. Inset corner units (`NbPlan.inset`, `plan_inset`) in a building's lit corner
+  shop (both faces at least 6.5 m): the corner form inside both building lines, counters and stools along both, the
+  building's pier left standing at the corner and the rest of the side bay shown as plain wall (`prm.w & 64`). A
+  way out is checked for each (`lot_open`, `prune_shut_in`). Kerb pitches and aprons were thinned to a fraction of
+  their rate; lanes and vaults kept.
+- **Hours (SF4):** a 7-bit code a vendor (`nb_hours`: always, lunch, day, two sittings, evening, late, morning, all
+  day, by trade or, at 70% of lunch sites, lunch; opening and closing jittered by up to half an hour; weekends
+  shift). Shut: roller shutters down over each counter run, the kiosk's glazing and the deep unit's whole front
+  (`nb_shutters`, the curtain in `shutter.json` with graffiti by the district), side panels where a kitchen's end is
+  open, stools upside down on the counter, the A-frame, bell and condiments taken in (collision too), lights, neon,
+  flames and steam off. A code changes only while none of its vendors is in view (`nb_hours_update`,
+  `frame.vendorOpen`), so nothing switches before the eye. `--hours open|shut|clock` forces it.
+- **Arcologies (SF5):** a night market's or noodle hall's food stall units at least 3 m across with the colonnade
+  clear in front become recessed bars (`place_food` in `arcology_subdivide.c`, `AStall.vendor`; the unit's head
+  raised to up to 4 m, the arcology's fascia sign on the bar's header panel, `NB_SITE_ARC`). Food halls
+  (`place_halls`, `AHall`): such a block with a long enough row of units on one line opens them as its mouth (steel
+  piers and a header with the hall's sign) into a roofed hall: wall stalls round it facing in (a noodle hall's
+  noodles, soup and dumplings in turn, a night market's dealt from every trade), hawker or long tables in rows on
+  a grid square to the mouth, a ceiling fan over each, twin-tube battens hung low on drop rods between the rows.
+  The hall's furniture is streamed as a vendor body of its own per chunk (`kit_hall`). Each batten is one 2.88 m
+  tube light of short reach (5 m); every other one keeps the hours of the bar nearest it, so a hall dims round shut
+  bars and to half when all are shut. `city_test --arc-vendors [X Z]` checks the units, halls and bodies.
+- **Costs at the worst views (SF6):** night in rain, the bodies on against `--kit off` (which still draws the
+  far shells and the lights), best of two (`build/perf_sf6/`). The slice +2.36 ms from 3 m, +1.28 from 8 m; the row
+  of 27 shop bays with `--bars all` +2.29 / +3.49 from its ends; the vaulted market lane +4.23 / +2.00 from its ends,
+  +4.10 at its arcade counters; a shop bay +1.73; an inset corner unit +1.58; the noodle hall from its mouth +1.73.
+  The city pass (the bodies' pixels under the bars' lights) is most of it (up to +3.0 ms in the lane), then the
+  shadow rays and filter; the kit pass +0.05-0.67. Every view is over the ~1 ms a street NB8 set; NB8's +1.34 at
+  the slice is +2.36 now, with SF3's stalls and deep units in the same view.
 
 ### Textures (`src/render/materials.c`, `assets/materials/`, `assets/textures/`)
 Most surfaces are shaded procedurally. Individual surfaces can opt in to authored PBR
@@ -1876,15 +1903,15 @@ procedural noise. All are ambientCG (CC0), packed at 1024 from the 2K downloads:
 | `mulch` | [WoodChips003](https://ambientcg.com/view?id=WoodChips003) | lobby pots' bark-mulch dressing |
 | `paper` | [Paper003](https://ambientcg.com/view?id=Paper003) | litter's newspapers, flyers, receipts, wads, cups and noodle boxes |
 | `cardboard` | [Cardboard002](https://ambientcg.com/view?id=Cardboard002) | litter's flattened boxes and pizza boxes |
-| `vendor_osb` | [Chipboard003](https://ambientcg.com/view?id=Chipboard003) | street vendors' flake-board counters, shelves, cabinets, tiers, tables and sheet walls |
-| `vendor_flakeboard` | [Chipboard006](https://ambientcg.com/view?id=Chipboard006) | the same, the paler board (chosen per vendor) |
-| `vendor_planks` | [Planks012](https://ambientcg.com/view?id=Planks012) | street vendors' weathered posts, beams, barrow beds and decks |
-| `vendor_planks_grey` | [Planks023A](https://ambientcg.com/view?id=Planks023A) | the same, gone grey (chosen per vendor) |
-| `vendor_pine` | [Planks009](https://ambientcg.com/view?id=Planks009) | the cleaner street vendors' pine boards |
-| `vendor_sheet_worn` | [CorrugatedSteel008C](https://ambientcg.com/view?id=CorrugatedSteel008C) | worn street vendors' painted corrugated iron, rusting through (in the vendor's own colour) |
-| `vendor_sheet_rust` | [CorrugatedSteel007C](https://ambientcg.com/view?id=CorrugatedSteel007C) | street vendors' rusted corrugated iron, flecks of their paint left |
-| `grime_streaks_a` | [Leaking001](https://ambientcg.com/view?id=Leaking001) | dirt run down street vendors' walls from their top edges |
-| `grime_streaks_b` | [Leaking003](https://ambientcg.com/view?id=Leaking003) | the same, greener |
+| `vendor_osb` | [Chipboard003](https://ambientcg.com/view?id=Chipboard003) | street vendors' flake-board counters, shelves, cabinets, tiers, tables and sheet walls (unused since SF6 retired the old shells) |
+| `vendor_flakeboard` | [Chipboard006](https://ambientcg.com/view?id=Chipboard006) | the same, the paler board (chosen per vendor) (unused since SF6 retired the old shells) |
+| `vendor_planks` | [Planks012](https://ambientcg.com/view?id=Planks012) | the kit's timber (`PMAT_TIMBER`: A-frames, ledges, boards) |
+| `vendor_planks_grey` | [Planks023A](https://ambientcg.com/view?id=Planks023A) | the same, gone grey (chosen per vendor) (unused since SF6 retired the old shells) |
+| `vendor_pine` | [Planks009](https://ambientcg.com/view?id=Planks009) | the cleaner street vendors' pine boards (unused since SF6 retired the old shells) |
+| `vendor_sheet_worn` | [CorrugatedSteel008C](https://ambientcg.com/view?id=CorrugatedSteel008C) | worn street vendors' painted corrugated iron, rusting through (in the vendor's own colour) (unused since SF6 retired the old shells) |
+| `vendor_sheet_rust` | [CorrugatedSteel007C](https://ambientcg.com/view?id=CorrugatedSteel007C) | street vendors' rusted corrugated iron, flecks of their paint left (unused since SF6 retired the old shells) |
+| `grime_streaks_a` | [Leaking001](https://ambientcg.com/view?id=Leaking001) | dirt run down street vendors' walls from their top edges (unused since SF6 retired the old shells) |
+| `grime_streaks_b` | [Leaking003](https://ambientcg.com/view?id=Leaking003) | the same, greener (unused since SF6 retired the old shells) |
 
 The lobby woods and white marble (`wood_mid`, `wood_dark`, `wood_light`, `marble_white`) also
 carry an `albedo_mean` and grain `params`, so they serve as grain too: arcology timber soffits,

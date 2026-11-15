@@ -935,11 +935,20 @@ baked by `tools/model_pack.c`). See the README. Left over:
   industrial plants' yards or the parks, and none against a boundary wall or fence.
 - **Collision** is a box round each piece (a post box's round its box, not its post).
 
-## Street vendors (next)
-The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sites.c`, `mesh_vendor.c`,
-`shaders/city/vendor_room.glsl`); the rework's noodle bar slice is done (NB0-NB8, the gate passed 2026-11-12); street food follows (SF1-SF6:
-`~/.claude/plans/street-vendors.md`). The modelling kit (`src/gen/pmodel*.c`) is drawn instanced
-(`src/render/kit_gpu.c`, NB2); every canopy bar has its cooking line (`nb_line`, NB5). Left over:
+## Street vendors
+The street vendor roadmap is complete (`~/.claude/plans/street-vendors.md`: SV0-SV3, the noodle bar slice NB0-NB8,
+street food SF1-SF6, 2026-11-15): twelve trades on four forms on the kit, in the streets, built into buildings and in
+the arcologies' units and halls, open by the clock. The doc's old archetypes, the MAT_VENDOR shells and the painted
+rooms were retired in SF6. Other shop types (the doc's non-food trades) wait for a roadmap of their own. Left over:
+- **Unused materials since SF6:** `vendor_osb`, `vendor_flakeboard`, `vendor_pine`, `vendor_planks_grey`,
+  `vendor_sheet_worn`, `vendor_sheet_rust`, `grime_streaks_a`, `grime_streaks_b` (and `kit_plate`, unused before)
+  were read only by the retired vendor shader; about 50 MB of textures. Keep for other shop types, or remove: the
+  user's call.
+- **Over budget (SF6):** every worst view is over the ~1 ms a street NB8 set: the vaulted lane +4.2 ms (+4.1 at
+  its arcade counters), the row of shop bays +3.5, the slice from 3 m +2.4, a shop bay, a corner unit and the noodle
+  hall's mouth +1.6-1.7 (README, the noodle bar section). Mostly the city pass shading the bodies' pixels under the
+  bars' lights, then shadow rays and filter. Levers: the city pass's late-Z (below), fewer casting lights a bar,
+  bodies at LOD1 sooner. Wants a decision on the budget or a cost pass.
 - **`--kit all`** gives every vendor a bar's line whatever its trade or size (the cost spike), without the
   line's merged parts (the range's carcass, the bain-marie, the gas and cables are the bar's body).
 - **The bar's bake (NB8 measured):** a bar's vendor layer takes ~190 ms on a worker, 93% of it the body's
@@ -958,12 +967,12 @@ The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sit
 - **Steam judders** where it escapes under the hood's lip (the user, NB8): the puffs' motion along the knots
   steps there. A mop-up.
 - **Bar bodies vary only in paint, hood and icons** (seen down a row with `--bars all`); the user deferred the
-  call until the bars are built into buildings (SF3).
+  call until the bars are built into buildings (SF3), which varied the forms and sites but not one bar's body. Open.
 - **The far shell swaps** for the near body the frame the vendor layer is resident (no cross-fade).
-- **The corner form** turns round one end of an ordinary site; real building corners and columns (SF3) aren't
-  sought yet.
-- **The canopy's grammar parts** mirror the plan for the rules only; `vendor_lab`'s contact sheets show those
-  boxes, not the bar (`pmodel_lab --only body` draws the bar).
+- **The grammar's parts** mirror each plan for the rules only; `vendor_lab`'s contact sheets show those boxes,
+  not the bar (`pmodel_lab --only body` draws the bar). The grammar's dressing (palette, motif, signature, stock)
+  now only feeds the fingerprints; the bars' look comes from their plans. Folding the fingerprints into the plan
+  would let the dressing stage go.
 - **Cost down the lane:** +0.20 to 0.38 ms with all 32 vendors given stand-in lines (`--kit all`, NB8); lane
   sites are too small for a bar, so SF1's trades will set the real number.
 - **The city pass may shade what is hidden:** `city.frag` writes `gl_SampleMask` (and some materials discard),
@@ -975,8 +984,7 @@ The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sit
 - **Rivets** draw only within 6 m (rows within 8 m): beyond, a riveted panel shows none. NB3 left it so: the
   materials have no rivets of their own. NB4 left it: at 8-30 m the ribs, laps and frames carry the
   panelling; painted rivet rows there are still possible.
-- **Kit materials (NB3), left:** the vendor's affluence only scales the wear (cleanliness and paint colour per
-  vendor wait for SF1); `KIT_FLAG_HEAT` is the stand-in kit's range rectangle (NB5's line should say where its
+- **Kit materials (NB3), left:** `KIT_FLAG_HEAT` is the stand-in kit's range rectangle (NB5's line should say where its
   heat is); dial faces, labels and the chalk board are flat colour (NB5); metre UVs on lathes still swirl on
   domed lids (no triplanar: the kit's cost is its pixels); rust runs are noise, not sourced from the
   rivets and seams (NB4 has their positions).
@@ -988,16 +996,8 @@ The grammar, sites, shells and rooms are built (`src/gen/vendor*.c`, `vendor_sit
   `pmodel_lab`'s.
 
 Left over from the first vendors (SV0-SV3):
-- **People:** none anywhere, no vendor in the rooms and no patrons on the stools, until people are a project
+- **People:** none anywhere, no cooks behind the counters and no patrons on the stools, until people are a project
   of their own (the user's call).
-- **Painted stock** is simple shapes per kind (25 kinds); if it reads too plain close up, an authored stock
-  atlas (as the graffiti's) could replace the shapes for the nearest rooms.
-- **Rooms' light** is the vendor's lamp inside the room only: it lights nothing outside (NB6 put only the noodle
-  bars' lights in the light table; the old archetypes' `VLight`s wait for SF2's forms). Rooms are never shut until SV8 keeps hours (the shut look is built and was checked).
-- **Walk-in containers** (wealthy courts) are rare: `city_test --vendors` found only hatched containers to view; their
-  room (a display table in place of a prep table) was not seen in the game.
-- **The lab's renders** are flat-shaded previews, not the engine's look: the patterns (corrugation, stripes,
-  tiles, the painted rooms) are stand-ins for what the shaders will do.
 - **Small sites** (a kiosk on a narrow kerb) can run out of places for a signature piece no neighbour has; such a
   vendor goes without one rather than repeating a neighbour's (logged).
 - **Forced changes:** in rows of identical sites with one trade, about one vendor in twenty needs its dressing forced

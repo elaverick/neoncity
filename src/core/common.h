@@ -125,17 +125,8 @@ enum {
     MAT_PROP, MAT_TRIM, MAT_VENDOR, MAT_KIT
 };
 
-/* Street vendors' shells (MAT_VENDOR; src/city/mesh_vendor.c, src/gen/vendor.h):
- * params y the surface (VS_* in vendor.h), z its flags (VPF_*), w its wear
- * (0 new .. 255 rusted and grimy); aux its colour (sRGB, 0xRRGGBB) | its part's
- * role (VR_*) << 24; seed the vendor's; the normal's w its part's top over the
- * vendor's floor in 5 cm steps (what grime runs down from). A painted sign's face (VS_NEON): z and w
- * its size in half metres, aux its sign word (vendor_mesh.c neon_word), uv 0..1
- * across it. Lit neon is drawn as the facades' (MAT_NEON). A room behind an opening (VS_ROOM;
- * mesh_vendor.c room_word): z and w its width and height (2.5 cm), the normal's w its depth
- * (2.5 cm), aux its stock (3 x 5 bits), feature wall (3), opening kind (3), palette (4),
- * cooking (2), wear (3), a tube lamp (1), shut (1, top bit); the seed its lamp (RGB565, high
- * half) and a hash (low half). Must match shaders/city/vendor.glsl and vendor_room.glsl. */
+/* MAT_VENDOR: retired in SF6 (the street vendors' SV2 shells and SV3 painted rooms); the id stays so the
+ * others keep theirs. */
 
 /* The noodle bars' bodies, merged (MAT_KIT in a mesh; src/city/vendor_kit.c, src/gen/noodle_bar.c), as
  * the kit's instanced modules are drawn (shaders/kit.vert), but each vertex carries its own: params y

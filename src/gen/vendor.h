@@ -31,13 +31,12 @@
  * site's ceiling if it has one. */
 
 /* Archetypes (section 2.1). */
-/* SF2: the forms on the kit (src/gen/noodle_bar.h NB_*) are the canopy (the wall stall or the corner bar), the
- * hatch (the glazed service hatch kiosk), the arcade (the counter under a ceiling) and the tiered kiosk (forced
- * only until SF3); the lean-to, container, pair, market stall and barrow are retired (never chosen; their code
- * goes in SF6). */
-enum { VA_CANOPY = 0, VA_HATCH, VA_LEANTO, VA_CONTAINER, VA_PAIR, VA_MARKET, VA_BARROW, VA_ARCADE, VA_TIERED, VA_COUNT };
-/* Whether an archetype is built on the kit from a plan (Vendor.nb), and that plan's form for it. */
-static inline int vendor_is_kit(int a) { return a == VA_CANOPY || a == VA_HATCH || a == VA_ARCADE || a == VA_TIERED; }
+/* The forms, all on the kit (src/gen/noodle_bar.h NB_*): the canopy (the wall stall or the corner bar), the
+ * hatch (the glazed service hatch kiosk), the arcade (the counter under a ceiling) and the tiered kiosk (where a
+ * site asks for it). The doc's lean-to, container, pair, market stall and barrow were retired in SF6. */
+enum { VA_CANOPY = 0, VA_HATCH, VA_ARCADE, VA_TIERED, VA_COUNT };
+/* Whether an archetype is built on the kit from a plan (Vendor.nb: every one is since SF6), and that plan's form. */
+static inline int vendor_is_kit(int a) { return a >= 0 && a < VA_COUNT; }
 static inline int vendor_kit_form(int a) { return a == VA_HATCH ? NB_HATCH : a == VA_ARCADE ? NB_ARCADE : a == VA_TIERED ? NB_TIERED : -1; }
 /* Trades: the street-food trades (street_food.h, roadmap SF1; the doc's section 2.2 trades retired). */
 /* Affluence classes: below 1/3, to 2/3, above. */
@@ -141,7 +140,6 @@ enum { VPF_SWAY = 1, VPF_TWOSIDED = 2, VPF_EMISSIVE = 4, VPF_SCALLOP = 8, VPF_NO
 
 #define V_MAX_PART    480
 #define V_MAX_EDGE    480
-#define V_MAX_OPEN    4
 #define V_MAX_SIGN    6
 #define V_MAX_NEON    8
 #define V_MAX_LIGHT   8
@@ -185,12 +183,6 @@ typedef struct VPart {
     uint32_t rgb, seed;
 } VPart;
 typedef struct VEdge { uint16_t from, to; uint8_t kind; } VEdge;
-
-/* An opening a painted room shows through (section 6): its lower left corner
- * o seen from outside, u along it (unit, level), n out of it (unit, level),
- * w x h, and the room's depth behind it. */
-enum { VO_HATCH = 0, VO_WALKIN, VO_RECESS, VO_BACKCLOTH, VO_CABINET };
-typedef struct VOpening { float o[3], u[3], n[3], w, h, depth; uint8_t kind, cbox; uint16_t part; } VOpening;   /* cbox: its container, 255 none */
 
 /* Signs: a board of w x h centred at c, facing n (both faces for a blade). */
 enum { VSG_ROOF = 0, VSG_BLADE, VSG_FASCIA, VSG_POLE, VSG_HOOD, VSG_MENU, VSG_VALANCE };
@@ -266,14 +258,9 @@ typedef struct Vendor {
     float        roofY;             /* the roof's underside where people stand (0: none) */
     float        front;             /* z of the counter's, table's, shelf's or bed's front: customers stand beyond it */
     float        clearMin;          /* the clear height its roof must leave where customers stand (V_CLEAR_MIN, the market's lip...) */
-    float        court;             /* a container pair's court, across (m) */
-    int          ncbox;             /* its shipping containers: x0, z0, x1, z1, y0 (underside), y1 (top); axis 0: long along x */
-    float        cbox[2][6];
-    uint8_t      cboxAxis[2];
-    int          npart, nedge, nopen, nsign, nneon, nlight, nemit, nslot, nitem;
+    int          npart, nedge, nsign, nneon, nlight, nemit, nslot, nitem;
     VPart        part[V_MAX_PART];
     VEdge        edge[V_MAX_EDGE];
-    VOpening     open[V_MAX_OPEN];
     VSign        sign[V_MAX_SIGN];
     VNeon        neon[V_MAX_NEON];
     VLight       light[V_MAX_LIGHT];

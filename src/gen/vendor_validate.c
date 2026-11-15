@@ -139,11 +139,6 @@ int vendor_validate(const Vendor *v, const VendorFinger *ctx, int n, BLog *log) 
                 if (gap > V_SPAN_MAX + EPS) fail(&K, "unbraced span %.2f m over %.1f m (%s)", gap, V_SPAN_MAX, ax ? "deep" : "across");
                 if (over > V_CANTILEVER_MAX + EPS) fail(&K, "cantilever %.2f m beyond its last support, over %.1f m (%s)", over, V_CANTILEVER_MAX, ax ? "deep" : "across");
             }
-            if (p->shape == VP_QUAD) {
-                float fall = p->b[1] - p->a[1];
-                if (fall < V_FALL_MIN - EPS && (v->archetype == VA_MARKET || v->archetype == VA_BARROW || v->archetype == VA_LEANTO || v->archetype == VA_PAIR))
-                    fail(&K, "canopy falls %.2f m, under %.2f m: the rain won't shed", fall, V_FALL_MIN);
-            }
             if (p->role == VR_AWNING && p->shape == VP_QUAD) {
                 float dz = fabsf(0.5f * (p->q[2][2] + p->q[3][2]) - 0.5f * (p->q[0][2] + p->q[1][2])) + fabsf(0.5f * (p->q[2][0] + p->q[3][0]) - 0.5f * (p->q[0][0] + p->q[1][0]));
                 if (dz > V_AWNING_MAX + EPS) fail(&K, "cloth awning %.2f m deep, over %.1f m", dz, V_AWNING_MAX);
@@ -178,8 +173,6 @@ int vendor_validate(const Vendor *v, const VendorFinger *ctx, int n, BLog *log) 
                 if (x < rf[0] || x > rf[2] || z < rf[1] || z > rf[3]) continue;
                 roof = maxf(roof, maxf(r->a[1], r->b[1]));
             }
-            for (int k = 0; k < v->ncbox; ++k)
-                if (x > v->cbox[k][0] && x < v->cbox[k][2] && z > v->cbox[k][1] && z < v->cbox[k][3]) roof = maxf(roof, v->cbox[k][5]);
             if (roof > 0.0f && top < roof + V_FLUE_ABOVE - EPS && top < ceil - 0.1f) fail(&K, "flue %.2f m above the roof, under %.1f m", top - roof, V_FLUE_ABOVE);
             break;
         }
@@ -260,30 +253,6 @@ int vendor_validate(const Vendor *v, const VendorFinger *ctx, int n, BLog *log) 
         }
         if (g->kind == VSG_ROOF && g->w * g->h > V_ROOFSIGN_AREA + EPS) fail(&K, "roof sign %.2f m2, over %.1f m2", g->w * g->h, V_ROOFSIGN_AREA);
     }
-
-    /* containers: openings, corner posts, sills, head rails; the court */
-    for (int i = 0; i < v->nopen; ++i) {
-        const VOpening *o = &v->open[i];
-        if (o->cbox == 255) continue;
-        const float *c = v->cbox[o->cbox];
-        if (o->kind == VO_HATCH && o->o[1] - (c[4] + 0.15f) < V_SILL_MIN - EPS) fail(&K, "container sill %.2f m, under %.1f m", o->o[1] - (c[4] + 0.15f), V_SILL_MIN);
-        if (c[5] - (o->o[1] + o->h) < V_HEAD_RAIL - EPS) fail(&K, "container head rail %.2f m, under %.1f m", c[5] - (o->o[1] + o->h), V_HEAD_RAIL);
-    }
-    for (int b = 0; b < v->ncbox; ++b) {
-        const float *c = v->cbox[b];
-        int alongX = v->cboxAxis[b] == 0;
-        float L = alongX ? c[2] - c[0] : c[3] - c[1], base = alongX ? c[0] : c[1], total = 0.0f, first = 1e9f, last = -1e9f;
-        for (int i = 0; i < v->nopen; ++i) {
-            const VOpening *o = &v->open[i];
-            if (o->cbox != b) continue;
-            float a = (alongX ? o->o[0] : o->o[2]) - base;
-            total += o->w; first = minf(first, a); last = maxf(last, a + o->w);
-        }
-        if (total <= 0.0f) continue;
-        if (total > V_OPENING_SHARE * L + EPS) fail(&K, "container openings %.2f m of %.2f m, over %.0f%%", total, L, V_OPENING_SHARE * 100.0f);
-        if (first < V_CORNER_POST - EPS || L - last < V_CORNER_POST - EPS) fail(&K, "container corner post %.2f m, under %.1f m", minf(first, L - last), V_CORNER_POST);
-    }
-    if (v->archetype == VA_PAIR && v->court > V_COURT_MAX + EPS) fail(&K, "covered court %.2f m across, over %.1f m", v->court, V_COURT_MAX);
 
     /* the budget */
     if (v->st.tris > V_TIER[v->tier].tris) fail(&K, "%d triangles, over the %s tier's %d", v->st.tris, vendor_tier_name(v->tier), V_TIER[v->tier].tris);

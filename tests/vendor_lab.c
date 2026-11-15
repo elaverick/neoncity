@@ -34,17 +34,15 @@ static VendorSite site_for(int arch, uint32_t seed, float affluence) {
     float w, d;
     vendor_min_site(arch, &w, &d);
     s.seed = seed;
-    s.w = w + rng_range(&r, 0.2f, arch == VA_CONTAINER || arch == VA_PAIR ? 7.5f : 3.5f);
+    s.w = w + rng_range(&r, 0.2f, 3.5f);
     s.d = d + rng_range(&r, 0.3f, 2.5f);
     s.affluence = affluence;
     s.archetype = (int8_t)arch;
     s.trade = -1;
-    s.hostWall = arch == VA_LEANTO || rng_float(&r) < 0.4f;
-    static const uint8_t KIND[VA_COUNT] = { VSITE_APRON, VSITE_KERB, VSITE_LANE, VSITE_COURT, VSITE_COURT, VSITE_POCKET, VSITE_KERB,
-                                            VSITE_LANE, VSITE_PLAZA };
+    s.hostWall = rng_float(&r) < 0.4f;
+    static const uint8_t KIND[VA_COUNT] = { VSITE_APRON, VSITE_KERB, VSITE_LANE, VSITE_PLAZA };
     s.kind = KIND[arch];
     if (rng_float(&r) < 0.15f) { s.kind = VSITE_ARCOLOGY; s.ceiling = rng_range(&r, 4.0f, 6.0f); }
-    if (arch == VA_PAIR && s.kind == VSITE_ARCOLOGY) s.kind = VSITE_COURT, s.ceiling = 0.0f;
     if (arch == VA_ARCADE) s.ceiling = rng_range(&r, 2.7f, 4.5f);   /* SF2: under an overhang or a lane's vault */
     if (arch == VA_TIERED) s.ceiling = 0.0f;
     return s;
@@ -442,7 +440,6 @@ int main(int argc, char **argv) {
                 int c = col / 2;
                 uint32_t seed = hash3i(0x5EE7u, arch, col, 0);
                 VendorSite site = site_for(arch, seed, AFF[c]);
-                site.kind = arch == VA_LEANTO ? VSITE_LANE : site.kind;
                 site.ceiling = 0.0f;
                 if (!vendor_generate(&site, VTIER_STANDARD, NULL, 0, a, NULL)) continue;
                 render(&im, a, col * CW, arch * CH, CW, CH, 0.6f);

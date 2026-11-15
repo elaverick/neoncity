@@ -83,25 +83,6 @@ void v_slot(Vendor *v, int kind, float x, float y, float z, float nx, float nz, 
     s->kind = (uint8_t)kind; s->c[0] = x; s->c[1] = y; s->c[2] = z; s->n[0] = nx; s->n[2] = nz; s->w = w; s->h = h;
 }
 
-int v_opening(Vendor *v, int kind, float ox, float oy, float oz, float ux, float uz, float w, float h, float depth, int part) {
-    if (v->nopen >= V_MAX_OPEN || w < 0.2f || h < 0.2f) return -1;
-    VOpening *o = &v->open[v->nopen];
-    memset(o, 0, sizeof(*o));
-    o->o[0] = ox; o->o[1] = oy; o->o[2] = oz;
-    o->u[0] = ux; o->u[2] = uz;
-    o->n[0] = -uz; o->n[2] = ux;   /* u x up: out of the opening, towards whoever sees it */
-    o->w = w; o->h = h; o->depth = depth; o->kind = (uint8_t)kind; o->cbox = 255;
-    /* the quad the room is painted on, in the opening's plane */
-    float q[4][3] = { { ox, oy, oz }, { ox + ux * w, oy, oz + uz * w }, { ox + ux * w, oy + h, oz + uz * w }, { ox, oy + h, oz } };
-    int r = v_quad(v, VR_ROOM, VS_ROOM, VCOL_RGB, q, 0);
-    if (r >= 0) {
-        v->part[r].rgb = V_TRADES[v->trade].lamp;
-        v_edge(v, r, part, VE_OPEN_INTO);
-    }
-    o->part = (uint16_t)(r >= 0 ? r : 0);
-    return v->nopen++;
-}
-
 int v_light(Vendor *v, int kind, float x, float y, float z, float power, uint32_t rgb) {
     if (v->nlight >= V_MAX_LIGHT) return -1;
     VLight *L = &v->light[v->nlight];
@@ -151,19 +132,18 @@ static int fits(const VendorSite *s, int a) {
     float w, d;
     vendor_min_site(a, &w, &d);
     if (s->w < w || s->d < d) return 0;
-    if (a == VA_LEANTO && !s->hostWall) return 0;
     /* SF2: the arcade counter only under a ceiling (it hangs from it) unless forced; a canopy bar's hood and
      * duct want room over it (its plan says whether it fits) */
     if (a == VA_ARCADE) return s->ceiling > 0.0f ? s->ceiling >= 2.55f : nb_forced_form() == NB_ARCADE;
     if (a == VA_TIERED) return nb_forced_form() == NB_TIERED || s->archetype == VA_TIERED;
-    if (s->ceiling > 0.0f && s->ceiling < (a == VA_BARROW ? 2.5f : a == VA_CONTAINER || a == VA_PAIR ? 3.0f : a == VA_CANOPY ? 3.1f : 2.9f)) return 0;
+    if (s->ceiling > 0.0f && s->ceiling < (a == VA_CANOPY ? 3.1f : 2.9f)) return 0;
     return 1;
 }
 
 static float arch_weight(const VendorSite *s, int cls, int t, int a) {
     if (!fits(s, a)) return 0.0f;
     /* SF2: the arcade and tiered forms take the canopy bar's affinity for the trade */
-    float w = V_TRADES[t].arch[a == VA_ARCADE || a == VA_TIERED ? VA_CANOPY : a] * V_ARCH_CLASS[cls][a] * V_ARCH_SITE[s->kind < VSITE_COUNT ? s->kind : 0][a];
+    float w = V_TRADES[t].arch[a == VA_HATCH] * V_ARCH_CLASS[cls][a] * V_ARCH_SITE[s->kind < VSITE_COUNT ? s->kind : 0][a];
     if (s->lunch) w *= V_ARCH_LUNCH[a];
     /* forced for captures (NeonCity --nbform): the form's archetype wherever it fits, else the site's own choice */
     const int f = nb_forced_form();
@@ -190,7 +170,7 @@ static int pick_trade(const VendorSite *s, int cls, Rng *r) {
         float aw = 0.0f;
         for (int a = 0; a < VA_COUNT; ++a) aw += arch_weight(s, cls, t, a);
         w[t] = aw > 0.0f ? by_affluence(V_TRADES[t].cls, s->affluence) * (s->lunch ? V_TRADES[t].lunch : 1.0f) : 0.0f;
-        if (s->archetype >= 0) w[t] *= V_TRADES[t].arch[s->archetype == VA_ARCADE || s->archetype == VA_TIERED ? VA_CANOPY : s->archetype];
+        if (s->archetype >= 0) w[t] *= V_TRADES[t].arch[s->archetype == VA_HATCH];
     }
     int t = v_pick(r, w, VT_COUNT);
     return t < 0 ? VT_NOODLE : t;
@@ -350,7 +330,7 @@ static int dress(VGen *G, const VFrame *F, const VendorFinger *ctx, int n, Rng *
     float ww[VW_COUNT] = { 3.0f, T->cooking ? 3.0f : 0.5f, 1.0f, v->cls == VC_POOR ? 1.5f : 0.5f,
                            v->trade == VT_DRINKS ? 1.5f : 0.4f,
                            0.3f,
-                           v->archetype == VA_MARKET || v->trade == VT_ROAST ? 2.0f : 0.5f,
+                           v->trade == VT_ROAST ? 2.0f : 0.5f,
                            v->cls == VC_RICH ? 2.0f : 0.5f };
     v->feature = (uint8_t)v_pick(r, ww, VW_COUNT);
     float mw[VM_COUNT];
@@ -499,7 +479,6 @@ static void fill(VGen *G, const VFrame *F, Rng *r) {
         }
         for (int t = 0; t < 8 && !placed && F->nsurf; ++t) {
             const VSurface *S = &F->surf[rng_u32(r) % (uint32_t)F->nsurf];
-            if (S->kind == VSU_BED && v->archetype == VA_BARROW && t < 4 && T->goods[0] && v->trade == VT_ROAST) continue;
             if (S->x1 - S->x0 < w || S->z1 - S->z0 < d * 0.8f) continue;
             float x = rng_range(r, S->x0 + 0.5f * w, S->x1 - 0.5f * w), z = clampf(rng_range(r, S->z0 + 0.5f * d, S->z1 - 0.5f * d), S->z0 + 0.4f * d, S->z1 - 0.4f * d);
             if (overlaps(foot, nf, x - 0.5f * w, z - 0.5f * d, x + 0.5f * w, z + 0.5f * d, S->y)) continue;
@@ -511,29 +490,6 @@ static void fill(VGen *G, const VFrame *F, Rng *r) {
             placed = 1;
         }
         if (placed) { k++; np++; }
-    }
-    /* heaps of loose stock over the tables, tiers and barrow beds (section 7) */
-    int loose = v->archetype == VA_MARKET || v->archetype == VA_BARROW;
-    int heapCap = v->tier == VTIER_LEAN ? 10 : v->tier == VTIER_STANDARD ? 22 : 36;
-    if (G->level == 2) heapCap /= 3;
-    int heaps = 0;
-    for (int s = 0; s < F->nsurf && loose; ++s) {
-        const VSurface *S = &F->surf[s];
-        if (S->kind != VSU_TABLE && S->kind != VSU_TIER && S->kind != VSU_BED) continue;
-        float area = (S->x1 - S->x0) * (S->z1 - S->z0);
-        int nh = (int)(area / 0.06f);
-        for (int k = 0, tries = 0; k < nh && heaps < heapCap && tries < nh * 3; ++tries) {
-            float hw = rng_range(r, 0.16f, 0.28f), hd = hw * rng_range(r, 0.7f, 1.0f), hh = rng_range(r, 0.07f, 0.15f);
-            if (S->x1 - S->x0 < hw || S->z1 - S->z0 < hd) break;
-            float x = rng_range(r, S->x0 + 0.5f * hw, S->x1 - 0.5f * hw), z = rng_range(r, S->z0 + 0.5f * hd, S->z1 - 0.5f * hd);
-            if (overlaps(foot, nf, x - 0.5f * hw, z - 0.5f * hd, x + 0.5f * hw, z + 0.5f * hd, S->y)) continue;
-            VItem *it = v_item(v, VI_HEAP, VR_HEAP);
-            if (!it) break;
-            it->p[0] = x; it->p[1] = S->y; it->p[2] = z; it->s[0] = hw; it->s[1] = hh; it->s[2] = hd; it->seed = rng_u32(r);
-            it->rgb = v_shade(T->goods[it->seed % 3], rng_range(r, 0.8f, 1.1f));
-            if (nf < V_MAX_ITEM) { foot[nf].x0 = x - 0.5f * hw; foot[nf].x1 = x + 0.5f * hw; foot[nf].z0 = z - 0.5f * hd; foot[nf].z1 = z + 0.5f * hd; foot[nf].y = S->y; nf++; }
-            heaps++; k++;
-        }
     }
     /* hanging goods from the rails, clear of heads where people stand (V_HANG_CLEAR) */
     int nhk = 0;
@@ -598,7 +554,7 @@ static void fill(VGen *G, const VFrame *F, Rng *r) {
             v_sign(v, VSG_ROOF, cx, y, maxf(rz1 - 0.25f, 0.2f), 0.0f, 1.0f, w, h, rng_float(r) < pNeon);
         }
     }
-    if (G->level < 2 && (v->archetype == VA_CANOPY || v->archetype == VA_LEANTO || v->archetype == VA_CONTAINER) && rng_float(r) < (v->cls == VC_POOR ? 0.65f : 0.45f)) {
+    if (G->level < 2 && v->archetype == VA_CANOPY && rng_float(r) < (v->cls == VC_POOR ? 0.65f : 0.45f)) {
         float w = rng_range(r, 0.5f, 0.9f), h = rng_range(r, 0.6f, 1.1f), y = V_BLADE_CLEAR + 0.05f + 0.5f * h;
         float side = rng_float(r) < 0.5f ? -1.0f : 1.0f, x = side < 0 ? v->box[0] + 0.1f : v->box[2] - 0.1f;
         /* out from the front corner, beyond the roof's edge, over the footway */
@@ -844,8 +800,8 @@ int vendor_generate(const VendorSite *site, int tier, const VendorFinger *ctx, i
             int a = v_pick(&rsel, aw, VA_COUNT);
             if (a < 0) break;
             int keepItems = 0;
-            v->npart = v->nedge = v->nopen = v->nsign = v->nneon = v->nlight = v->nemit = v->nslot = v->nitem = keepItems;
-            v->ncbox = 0; v->roofY = 0.0f; v->court = 0.0f; v->layout = v->variant = 0;
+            v->npart = v->nedge = v->nsign = v->nneon = v->nlight = v->nemit = v->nslot = v->nitem = keepItems;
+            v->roofY = 0.0f; v->layout = v->variant = 0;
             v->archetype = a;
             G.rs = rng_make(hash3i(site->seed ^ 0x57C7u, a, level, 0));
             built = v_build_structure(&G, &F);

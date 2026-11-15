@@ -8,71 +8,71 @@
 
 #define N 255
 /* The street-food trades (street_food.h, roadmap SF1). The canopy bar builds each trade's line from its plan
- * (noodle_bar.c); the rest of a row here (painted stock, props, hangings, motifs, lamp, heaps) serves the old
- * archetypes until SF2 retires them. archetype affinity: canopy, hatch, lean-to, container, pair, market,
- * barrow; class: poor, middling, wealthy (the user: affluence moves condition, clutter and paint, not the
+ * (noodle_bar.c); the rest of a row here (stock, props, hangings, motifs, lamp) feeds only the grammar's
+ * dressing and fingerprints (section 8). archetype affinity: canopy (the arcade counter and tiered kiosk take
+ * its), hatch; class: poor, middling, wealthy (the user: affluence moves condition, clutter and paint, not the
  * trade's material class, so the classes lean only gently) */
 const VTradeInfo V_TRADES[VT_COUNT] = {
-    { "noodles", 2, { 6.0f, 1.5f, 1.0f, 1.0f, 1.0f, 0.5f, 1.5f }, { 1.2f, 1.2f, 0.8f }, 1.0f,
+    { "noodles", 2, { 6.0f, 1.5f }, { 1.2f, 1.2f, 0.8f }, 1.0f,
       { VK_BOWLS, VK_BOTTLES, VK_JARS, VK_STEAMERS, N }, { VI_POT, VI_BOWLS, VI_WOK, VI_KETTLE, VI_BOTTLES, VI_CASHBOX },
       { VI_LANTERN, VI_BUNCH, N }, { VM_SERPENT, VM_BOWL, VM_SUNBURST }, 0xF2F6FFu, { 0xD8C27Au, 0xE9E1CCu, 0x8E1E1Eu } },
-    { "soup and pho", 2, { 5.0f, 1.5f, 1.0f, 1.0f, 1.0f, 0.6f, 1.0f }, { 1.1f, 1.1f, 0.8f }, 1.0f,
+    { "soup and pho", 2, { 5.0f, 1.5f }, { 1.1f, 1.1f, 0.8f }, 1.0f,
       { VK_BOWLS, VK_JARS, VK_BOTTLES, N, N }, { VI_POT, VI_BOWLS, VI_BOTTLES, VI_CASHBOX, N, N },
       { VI_LANTERN, VI_BUNCH, N }, { VM_BOWL, VM_LEAF, N }, 0xF2F6FFu, { 0x6AA83Au, 0xE9E1CCu, 0xC9A03Au } },
-    { "dumplings and bao", 2, { 5.0f, 2.0f, 0.8f, 1.0f, 0.6f, 0.6f, 1.0f }, { 1.0f, 1.0f, 0.9f }, 1.0f,
+    { "dumplings and bao", 2, { 5.0f, 2.0f }, { 1.0f, 1.0f, 0.9f }, 1.0f,
       { VK_STEAMERS, VK_BOWLS, VK_JARS, N, N }, { VI_STEAMER, VI_POT, VI_BOWLS, VI_CASHBOX, N, N },
       { VI_LANTERN, N, N }, { VM_BOWL, VM_LOTUS, N }, 0xFFE0B0u, { 0xEFE6D2u, 0xD8C9A8u, 0xB8A27Au } },
-    { "skewers", 2, { 4.0f, 1.0f, 1.5f, 0.6f, 0.4f, 1.0f, 2.0f }, { 1.3f, 0.9f, 0.6f }, 0.6f,
+    { "skewers", 2, { 4.0f, 1.0f }, { 1.3f, 0.9f, 0.6f }, 0.6f,
       { VK_BOTTLES, VK_JARS, N, N, N }, { VI_GRILL, VI_BOWLS, VI_BOTTLES, VI_CASHBOX, N, N },
       { VI_LANTERN, VI_BUNTING, N }, { VM_SUNBURST, VM_FISH, N }, 0xFFB060u, { 0x8C4A2Au, 0xC07A3Au, 0x5A3A22u } },
-    { "kebab and shawarma", 2, { 4.0f, 2.0f, 0.8f, 1.5f, 0.8f, 0.6f, 0.6f }, { 1.2f, 1.0f, 0.6f }, 1.2f,
+    { "kebab and shawarma", 2, { 4.0f, 2.0f }, { 1.2f, 1.0f, 0.6f }, 1.2f,
       { VK_JOINTS, VK_BOTTLES, VK_JARS, N, N }, { VI_GRILL, VI_BOWLS, VI_BOTTLES, VI_CASHBOX, N, N },
       { VI_BUNTING, N, N }, { VM_SUNBURST, VM_LEAF, N }, 0xF2F6FFu, { 0x9A5A2Au, 0x6AA83Au, 0xE8D8B0u } },
-    { "burgers and hot dogs", 2, { 4.0f, 2.0f, 0.6f, 1.5f, 1.0f, 0.6f, 0.8f }, { 1.0f, 1.0f, 0.8f }, 1.2f,
+    { "burgers and hot dogs", 2, { 4.0f, 2.0f }, { 1.0f, 1.0f, 0.8f }, 1.2f,
       { VK_BOXES, VK_BOTTLES, N, N, N }, { VI_GRILL, VI_BOTTLES, VI_CASHBOX, VI_CUPS, N, N },
       { VI_BUNTING, N, N }, { VM_SUNBURST, VM_CUP, N }, 0xFFE8C8u, { 0xC88A4Au, 0xD84A3Au, 0xE8C83Au } },
-    { "fried food", 2, { 4.0f, 1.5f, 1.0f, 1.0f, 0.6f, 0.8f, 0.8f }, { 1.3f, 1.0f, 0.5f }, 0.8f,
+    { "fried food", 2, { 4.0f, 1.5f }, { 1.3f, 1.0f, 0.5f }, 0.8f,
       { VK_BOXES, VK_BOTTLES, VK_JARS, N, N }, { VI_POT, VI_BOWLS, VI_BOTTLES, VI_CASHBOX, N, N },
       { VI_LANTERN, N, N }, { VM_SUNBURST, VM_FISH, N }, 0xFFE0B0u, { 0xE0B06Au, 0xC88A4Au, 0x9A5A2Au } },
-    { "curry and rice", 2, { 5.0f, 1.5f, 1.0f, 1.0f, 1.0f, 0.8f, 0.8f }, { 1.1f, 1.1f, 0.8f }, 2.0f,
+    { "curry and rice", 2, { 5.0f, 1.5f }, { 1.1f, 1.1f, 0.8f }, 2.0f,
       { VK_BOXES, VK_BOWLS, VK_JARS, N, N }, { VI_LUNCHBOXES, VI_POT, VI_BOWLS, VI_CASHBOX, N, N },
       { VI_BUNTING, N, N }, { VM_BOWL, VM_SUNBURST, N }, 0xFFE8C8u, { 0xE8D8B0u, 0xD8902Au, 0x8A4A1Au } },
-    { "tacos", 2, { 4.0f, 1.5f, 1.0f, 1.0f, 0.8f, 0.8f, 1.0f }, { 1.1f, 1.0f, 0.8f }, 1.2f,
+    { "tacos", 2, { 4.0f, 1.5f }, { 1.1f, 1.0f, 0.8f }, 1.2f,
       { VK_BOWLS, VK_BOTTLES, VK_JARS, N, N }, { VI_GRILL, VI_BOWLS, VI_BOTTLES, VI_CASHBOX, N, N },
       { VI_BUNTING, VI_BUNCH, N }, { VM_SUNBURST, VM_LEAF, N }, 0xFFE8C8u, { 0xE8C83Au, 0x6AA83Au, 0xD84A3Au } },
-    { "crepes", 2, { 3.0f, 2.0f, 0.6f, 1.5f, 1.0f, 0.8f, 1.0f }, { 0.8f, 1.0f, 1.3f }, 1.0f,
+    { "crepes", 2, { 3.0f, 2.0f }, { 0.8f, 1.0f, 1.3f }, 1.0f,
       { VK_JARS, VK_BOXES, VK_CUPS, N, N }, { VI_BOWLS, VI_JARS, VI_CASHBOX, VI_CUPS, N, N },
       { VI_BUNTING, N, N }, { VM_SUNBURST, VM_CUP, N }, 0xFFD8A0u, { 0xE0B06Au, 0x5A3A2Au, 0xE8D8C8u } },
-    { "chestnuts and yams", 2, { 3.0f, 1.0f, 0.6f, 0.4f, 0.2f, 1.2f, 2.5f }, { 1.3f, 1.0f, 0.5f }, 0.5f,
+    { "chestnuts and yams", 2, { 3.0f, 1.0f }, { 1.3f, 1.0f, 0.5f }, 0.5f,
       { VK_JARS, VK_BOXES, N, N, N }, { VI_ROASTER, VI_CRATE, VI_CASHBOX, VI_BUCKET, N, N },
       { VI_LANTERN, N, N }, { VM_SUNBURST, N, N }, 0xFFA850u, { 0x6A3A1Au, 0x8A5A2Au, 0x4A2A1Au } },
-    { "tea, coffee and drinks", 1, { 3.0f, 3.0f, 0.6f, 2.5f, 1.0f, 0.6f, 1.5f }, { 0.9f, 1.0f, 1.4f }, 2.0f,
+    { "tea, coffee and drinks", 1, { 3.0f, 3.0f }, { 0.9f, 1.0f, 1.4f }, 2.0f,
       { VK_CUPS, VK_BOTTLES, VK_BOXES, N, N }, { VI_ESPRESSO, VI_CUPS, VI_CASHBOX, VI_KETTLE, N, N },
       { VI_BUNTING, N, N }, { VM_CUP, VM_BOTTLE, N }, 0xFFD9A8u, { 0x5A3A2Au, 0xE8DCC8u, 0x2A2A2Au } },
 };
 #undef N
 
-/* SF2: the lean-to, container, pair, market stall and barrow are never chosen (0); the kit's forms only: the
- * canopy (wall stall or corner bar), the glazed hatch kiosk, the arcade counter (only where the site has a
- * ceiling: fits), the tiered kiosk (forced only until SF3)
- *                                           canopy hatch  leanto box   pair  market barrow arcade tiered */
+/* The kit's forms (SF2; the lean-to, container, pair, market stall and barrow retired in SF6): the canopy
+ * (wall stall or corner bar), the glazed hatch kiosk, the arcade counter (only where the site has a ceiling:
+ * fits), the tiered kiosk (only where a site asks: fits)
+ *                                           canopy hatch arcade tiered */
 const float V_ARCH_CLASS[VC_COUNT][VA_COUNT] = {
-    { 1.0f, 0.8f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f },   /* (the tiered kiosk only where a site asks: fits) */
-    { 1.1f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f },
-    { 0.9f, 1.3f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f },   /* wealthy: more kiosks (refs 3-4) */
+    { 1.0f, 0.8f, 1.0f, 1.0f },   /* (the tiered kiosk only where a site asks: fits) */
+    { 1.1f, 1.0f, 1.0f, 1.0f },
+    { 0.9f, 1.3f, 1.0f, 1.0f },   /* wealthy: more kiosks (refs 3-4) */
 };
 const float V_ARCH_SITE[VSITE_COUNT][VA_COUNT] = {
-    { 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },   /* kerb: kiosks, the walk kept clear (the user, SF2) */
-    { 1.5f, 0.7f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* apron in front of a row */
-    { 1.5f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* market lane (under its vault: arcade counters) */
-    { 1.5f, 0.8f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* court */
-    { 1.2f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* pocket market */
-    { 0.8f, 1.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* lunch plaza */
-    { 1.5f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 6.0f, 0.0f },   /* arcology */
-    { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },   /* SF3: a shop bay (the recessed bar, the deep unit) */
-    { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f },   /* SF3: a building's corner (the corner bar) */
+    { 0.0f, 1.0f, 0.0f, 0.0f },   /* kerb: kiosks, the walk kept clear (the user, SF2) */
+    { 1.5f, 0.7f, 6.0f, 0.0f },   /* apron in front of a row */
+    { 1.5f, 0.5f, 6.0f, 0.0f },   /* market lane (under its vault: arcade counters) */
+    { 1.5f, 0.8f, 6.0f, 0.0f },   /* court */
+    { 1.2f, 1.0f, 6.0f, 0.0f },   /* pocket market */
+    { 0.8f, 1.5f, 6.0f, 0.0f },   /* lunch plaza */
+    { 1.5f, 1.0f, 6.0f, 0.0f },   /* arcology */
+    { 1.0f, 0.0f, 0.0f, 0.0f },   /* SF3: a shop bay (the recessed bar, the deep unit) */
+    { 1.0f, 0.0f, 0.0f, 0.0f },   /* SF3: a building's corner (the corner bar) */
 };
-const float V_ARCH_LUNCH[VA_COUNT] = { 0.9f, 1.4f, 0.3f, 1.4f, 1.0f, 1.3f, 1.2f, 1.0f, 1.0f };
+const float V_ARCH_LUNCH[VA_COUNT] = { 0.9f, 1.4f, 1.0f, 1.0f };
 
 /* sRGB colours (0xRRGGBB, as every colour in these tables): body, trim, two accents; the engine's neon colours (shaders/common.glsl: neonColor) */
 const VPalette V_PALETTE[V_PALETTES] = {
@@ -213,8 +213,7 @@ int v_pick(Rng *r, const float *w, int n) {
 
 int vendor_class(float a) { return a < 1.0f / 3.0f ? VC_POOR : a < 2.0f / 3.0f ? VC_MID : VC_RICH; }
 
-static const char *const ARCH_NAME[VA_COUNT] = { "canopy bar", "hatch kiosk", "lean-to", "container shop",
-                                                 "container pair", "market stall", "hand barrow", "arcade counter", "tiered kiosk" };
+static const char *const ARCH_NAME[VA_COUNT] = { "canopy bar", "hatch kiosk", "arcade counter", "tiered kiosk" };
 static const char *const CLASS_NAME[VC_COUNT] = { "poor", "middling", "wealthy" };
 static const char *const SITE_NAME[VSITE_COUNT] = { "kerb", "apron", "lane", "court", "pocket market", "lunch plaza", "arcology", "shop bay", "building corner" };
 static const char *const MOTIF_NAME[VM_COUNT] = { "serpent", "bowl", "fish", "cup", "bottle", "eye", "lotus", "sunburst", "gear", "leaf" };

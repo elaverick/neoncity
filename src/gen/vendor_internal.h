@@ -17,7 +17,7 @@
 typedef struct VTradeInfo {
     const char *name;
     uint8_t  cooking;            /* 0 none, 1 hot drinks (steam, no hood), 2 full cooking (hood, flue, steam) */
-    float    arch[VA_COUNT];     /* archetype affinity */
+    float    arch[2];            /* affinity for the canopy (the arcade and tiered forms take it) and the hatch */
     float    cls[VC_COUNT];      /* how likely in a poor, middling, wealthy district */
     float    lunch;              /* how likely on an office lunch site */
     uint8_t  stock[5];           /* painted stock (VK_*), the first likeliest; 255 ends */
@@ -119,7 +119,6 @@ int  v_cyl(Vendor *v, int role, int surf, int col, float ax, float ay, float az,
 int  v_quad(Vendor *v, int role, int surf, int col, const float q[4][3], int flags);
 void v_edge(Vendor *v, int from, int to, int kind);
 void v_slot(Vendor *v, int kind, float x, float y, float z, float nx, float nz, float w, float h);
-int  v_opening(Vendor *v, int kind, float ox, float oy, float oz, float ux, float uz, float w, float h, float depth, int part);
 int  v_light(Vendor *v, int kind, float x, float y, float z, float power, uint32_t rgb);
 int  v_sign(Vendor *v, int kind, float cx, float cy, float cz, float nx, float nz, float w, float h, int neon);
 VItem *v_item(Vendor *v, int kind, int role);
