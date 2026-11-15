@@ -245,8 +245,9 @@ const uint  RT_INST_TERRAIN = 1u, RT_INST_CAVE = 2u;     // src/render/rt.h: an 
 const float LIGHT_NEGLIGIBLE = 0.002;                    // a light this faint shows no shadow worth tracing
 // Prepass G-buffer (prepass.frag): x the normal (octEncode), y the draw chunk (PG_CHUNK; MAX_DRAW_CHUNKS
 // in src/core/common.h) | these flags; for a lobby surface (PG_LOBBY), bits 12..19 hold its ceiling's
-// height above the floor (half metres) and bits 20..27 its own (eighths of a metre).
-const uint  PG_LIT = 1u << 30, PG_LITTER = 1u << 29, PG_LOBBY = 1u << 28, PG_CHUNK = 0xFFFu;
+// height above the floor (half metres) and bits 20..27 its own (eighths of a metre). PG_SKY: a surface
+// that takes the city's daylight (ambientLight), whose sky the shadow passes trace by day (DL2).
+const uint  PG_LIT = 1u << 30, PG_LITTER = 1u << 29, PG_LOBBY = 1u << 28, PG_CHUNK = 0xFFFu, PG_SKY = 1u << 31;
 // Higher than this above their ground no street lamp or shopfront reaches (cityLights).
 const float CITY_LIGHTS_TOP = 32.0;
 /* Whether any light in the chunk's table (at record base; -1: none) can reach a
@@ -265,6 +266,17 @@ const int   CEIL_SLOTS = 4;
 const uint  CEIL_ID = 0xFFF0u;
 // Shadow slots (shadow_trace.comp, shadow_denoise.comp): flags in raw.x and vis.w.
 const uint  SH_VALID = 1u << 30, SH_OVERFLOW = 1u << 31;
+/* The sky's visibility by day (DL2), in the same targets' spare bits, under
+ * SH_SKY. raw.x (shadow_trace.comp: traceSky): bits 16..17 how many of the
+ * pixel's SKY_RAYS went up, 18..19 how many of those reached the sky, 20..21
+ * how many of them all met nothing within SKY_NEAR. vis.w (shadow_denoise.comp):
+ * bits 16..23 the sky's share (0..255), 24..28 the near occlusion's (0..31).
+ * The chunk in bits 0..11 stays alone in the low 16 bits, as the readers want. */
+const uint  SH_SKY = 1u << 29;
+const int   SKY_RAYS = 2;
+const float SKY_RANGE = 90.0, SKY_NEAR = 1.5;              // m: a ray this long counts as sky; a blocker this near shuts out the bounce
+float skyVisOf(uint w) { return float((w >> 16) & 255u) / 255.0; }
+float skyAoOf(uint w)  { return float((w >> 24) & 31u) / 31.0; }
 
 // Street lamp falloff (city.frag: addLamp), l = light - p: the beam below the
 // head, and a spill all round it that carries up the columns and facades.
@@ -784,22 +796,34 @@ const float CITY_BOUNCE = 0.15;
 /* Its terms, each through the deck: the even light from the sky above (the
  * deck's grey, or a clear sky's own light), the sun's share with a direction,
  * both before `open` takes its share of them; and the bounce, which grows as
- * `open` falls. cityDaylight = (even + sun) * open + bounce. */
+ * `open` falls. cityDaylight = (even + sun) * open + bounce. Where the sky is
+ * traced (DL2), `ao` scales the bounce (city/lighting.glsl cityOpenHere: by how
+ * lit what is round about is, and how near it shuts the surface in). */
 struct CityDay { vec3 even, sun, bounce; };
-CityDay cityDaylightParts(vec3 n, float cover, float open) {
+CityDay cityDaylightParts(vec3 n, float cover, float open, float ao) {
     vec3 level = dayLevel();
     vec3 grey = level * (0.5 + 0.5 * n.y);
     vec3 through = deckLight(cover);
     CityDay d;
     d.even = mix(skyIrradiance(n), grey, cover) * through;
     d.sun = SUN_LAND * (max(dot(n, SUN_DIR), 0.0) * (1.0 - cover) * through);
-    d.bounce = level * (CITY_BOUNCE * (0.5 - 0.5 * n.y + (1.0 - open)) * through);
+    d.bounce = level * (CITY_BOUNCE * (0.5 - 0.5 * n.y + (1.0 - open)) * ao * through);
     return d;
 }
-vec3 cityDaylight(vec3 n, float cover, float open) {
-    CityDay d = cityDaylightParts(n, cover, open);
+CityDay cityDaylightParts(vec3 n, float cover, float open) { return cityDaylightParts(n, cover, open, 1.0); }
+vec3 cityDaylight(vec3 n, float cover, float open, float ao) {
+    CityDay d = cityDaylightParts(n, cover, open, ao);
     return (d.even + d.sun) * open + d.bounce;
 }
+vec3 cityDaylight(vec3 n, float cover, float open) { return cityDaylight(n, cover, open, 1.0); }
+
+/* Whether the shadow passes trace the city's sky (DL2): while the daylight
+ * under the whole deck is more than about the night's fill (0.007, cityAmbient),
+ * from deep in the twilight; skyTraceWeight brings the traced sky in over
+ * cityOpen as the daylight grows, so its starting never shows. */
+float skyTraceLevel() { return luma(dayLevel()) * DECK_DAYLIGHT; }
+bool  skyTraceOn() { return skyTraceLevel() > 0.003; }
+float skyTraceWeight() { return smoothstep(0.003, 0.015, skyTraceLevel()); }
 
 /* The daylight debug view (DAYLIGHT_DEBUG: --daylightdebug, F10 twice): the
  * city's daylight on white, each term in a false colour at its own
@@ -807,29 +831,33 @@ vec3 cityDaylight(vec3 n, float cover, float open) {
  * the bounce blue, and in red what the sky's occlusion (open) takes from the
  * first two, so a surface lit fully is pale and a closed-in one red-and-blue.
  * At the same scale as the lights' view (SHADOWS_DEBUG). */
-vec3 cityDaylightDebug(vec3 n, float cover, float open) {
-    CityDay d = cityDaylightParts(n, cover, open);
+vec3 cityDaylightDebug(vec3 n, float cover, float open, float ao) {
+    CityDay d = cityDaylightParts(n, cover, open, ao);
     float even = luma(d.even), sun = luma(d.sun), bounce = luma(d.bounce);
     vec3 c = vec3(0.92, 0.95, 1.0) * (even * open) + vec3(1.0, 0.8, 0.25) * (sun * open) +
              vec3(0.2, 0.4, 1.0) * bounce + vec3(1.0, 0.05, 0.03) * ((even + sun) * (1.0 - open));
     return c * 0.3 + vec3(0.004);
 }
+vec3 cityDaylightDebug(vec3 n, float cover, float open) { return cityDaylightDebug(n, cover, open, 1.0); }
 
 /* How much of the sky a city surface facing n sees, h metres above the ground
  * its building stands on: down among the towers less than half of it (a
- * wall's own half the more so), all of it from the rooftops. */
+ * wall's own half the more so), all of it from the rooftops. The estimate
+ * where the sky isn't traced (DL2: beyond SHADOW_FAR, the proxies, impostors). */
 float cityOpen(vec3 n, float h) { return mix(0.4 + 0.15 * max(n.y, 0.0), 1.0, smoothstep(0.0, 90.0, h)); }
 
 /* The city's light all round (city/lighting.glsl ambientLight, the proxies'):
  * by night the overcast's faint fill from above and the streets' warm bounce
  * from below, twice as much near the ground (0.007-0.009, about 0.4 lux,
- * LIGHT_LUX); by day the daylight (cityDaylight). */
-vec3 cityAmbient(vec3 n, float h, float cover) {
+ * LIGHT_LUX); by day the daylight (cityDaylight), seeing `open` of the sky
+ * with `ao` of the bounce (traced, or cityOpen's estimate and 1). */
+vec3 cityAmbient(vec3 n, float h, float cover, float open, float ao) {
     vec3 sky = vec3(0.006, 0.007, 0.013);
     vec3 bounce = vec3(0.013, 0.008, 0.006);
     float up = n.y * 0.5 + 0.5;
-    return mix(bounce, sky, up) * (0.8 + 0.8 * exp(-h / 30.0)) + cityDaylight(n, cover, cityOpen(n, h));
+    return mix(bounce, sky, up) * (0.8 + 0.8 * exp(-h / 30.0)) + cityDaylight(n, cover, open, ao);
 }
+vec3 cityAmbient(vec3 n, float h, float cover) { return cityAmbient(n, h, cover, cityOpen(n, h), 1.0); }
 
 /* The sky by day seen along R from under cover: the clear sky (skyRadiance),
  * the deck's even grey under it; and its mean radiance (dayOvercast), what a

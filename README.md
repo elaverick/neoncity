@@ -1086,6 +1086,16 @@ points the galleries and bridges would black out the canyon.) They need a GPU wi
   gallery's underside, the top of a wall) and are blocked by furniture, planters, plants and the foot of a wall. They
   are filtered like any light's, under ids of their own (`CEIL_ID`), and their mean scales the panels' light, down to
   a fifth (`PANEL_FILL`) in full shadow, as what the lit room throws back.
+- **The sky by day** (DL2 of the daylight roadmap). While the daylight under the deck is more than the night's fill,
+  every pixel whose material takes the city's daylight (`PG_SKY` in the prepass, at any height, lights or none) also
+  traces two rays cosine-weighted about its surface (`traceSky`). Of those going up, the share that meet nothing within
+  `SKY_RANGE` (90 m) is the sky it sees; any meeting something within `SKY_NEAR` (1.5 m) count against its bounce.
+  The counts ride in `raw.x`'s spare bits, so no target is added. The filter (`skyFilter`) averages them with eight
+  neighbours on the same surface over a disc 1.2 m across (four once the pixel has a history) and blends them into the
+  history at 0.12, rounding to the bits with a dither so the slow blend never sticks; the result rides in `vis.w`'s
+  spare bits (`SH_SKY`). `ambientLight` reads it (`skyFromVis`, a neighbour's at an edge sample 0 missed) and fades it
+  to `cityOpen` from `SHADOW_FADE` to `SHADOW_FAR` and through the twilight. About 0.3 ms by day at the capture views
+  (RTX 4080 SUPER, 1600 x 900, MSAA x4), none at night.
 - **Lookup.** `cityLights` takes each light's visibility from those eight slots when they were made for this
   fragment's surface (same draw chunk, same depth). Anything else bright enough to matter, on a surface the prepass
   didn't see (an edge that misses sample 0) or beyond the eight, gets a hard shadow ray traced in the fragment shader.
@@ -1271,8 +1281,16 @@ ground, under the deck only `deckThrough` of it (0.1% where the cover is whole: 
 deck's underside as an even overcast with no sun and no shadow, in the sooty deck's cool green-grey (`deckTint`,
 `deckLight`: luminance-neutral, so the sodium and the neon read warm against it). The cover is the fragment's own (`skyCover`: the cities' cloud
 over it, none where it stands up out of the deck), so a tower over the deck is in the sun. A surface sees only
-part of the sky (`cityOpen`: 0.4-0.55 at street level, a wall less than a pavement, all of it from 90 m up), and
-what it doesn't see comes back off the streets and facades round it (`CITY_BOUNCE`, 15% of the light on them).
+part of the sky, and what it doesn't see comes back off the streets and facades round it (`CITY_BOUNCE`, 15% of
+the light on them). Within `SHADOW_FAR` that part is ray-traced (DL2: `traceSky` in `shadow_trace.comp`, two
+cosine-weighted rays a pixel, a ray that goes up and meets nothing within 90 m reaching the sky, filtered and
+accumulated in `shadow_denoise.comp`; see Shadows), so a street's floor among the towers sees a fifth to a half of
+the sky, the walls down there under a fifth, rooftops and open ground most of it, and the underside of an awning,
+a vault or a colonnade none. The bounce falls with it, as
+the square root of the traced share against the street's old estimate, and further where something shuts the
+surface in within 1.5 m (`cityOpenHere` in `city/lighting.glsl`). Beyond that, on the proxies and impostors, and
+before the twilight's daylight is worth tracing, an estimate stands in (`cityOpen`: 0.4-0.55 at street level, a
+wall less than a pavement, all of it from 90 m up).
 The reflections' fallback (`envReflection`) has the day's sky round the camera (`daySky`: the clear sky's L1
 radiance, the deck's even grey under it), the facades across under it and the street. The light through a window
 into a dark room or an impostor's office, a lobby's skylight and an arcology's glazed crown take the overcast's

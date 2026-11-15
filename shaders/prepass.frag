@@ -37,15 +37,16 @@ void main() {
         float yy = vLocal.y - vBase - SIDEWALK_HEIGHT, fs = fract(vUV.x / 1.5);
         if (yy > 0.08 && yy < groundH - (groundMode == 2u ? 1.2 : 0.7) && fs > 0.04 && fs < 0.96) discard;
     }
-    // the materials whose shading calls cityLights (city.frag), where the lights can reach (lightsReach)
+    // the materials whose shading calls cityLights (city.frag), where the lights can reach (lightsReach);
+    // they take the city's daylight too (ambientLight), at any height (PG_SKY)
     float above = vLocal.y - vBase;
-    bool lit = (m <= MAT_ROOF || m == MAT_METAL || m == MAT_DOOR || m == MAT_LITTER || m == MAT_ARCOLOGY || m == MAT_INDUSTRY || m == MAT_PROP || m == MAT_TRIM || m == MAT_KIT) &&
-               lightsReach(chunks[vChunk].info.z, vLocal.y, above);
+    bool sky = m <= MAT_ROOF || m == MAT_METAL || m == MAT_DOOR || m == MAT_LITTER || m == MAT_ARCOLOGY || m == MAT_INDUSTRY || m == MAT_PROP || m == MAT_TRIM || m == MAT_KIT;
+    bool lit = sky && lightsReach(chunks[vChunk].info.z, vLocal.y, above);
     // lobby surfaces the ceiling's panels light (not its lights, screens, signs, skylight or the offices above)
     uint is = vParams.y;
     bool lobby = m == MAT_INTERIOR && is != 9u && (is < 15u || is > 18u);
     // a lobby surface's height above its floor (shadeInterior's y), eighths of a metre
     uint floorY = uint(clamp((above - SIDEWALK_HEIGHT) * 8.0 + 0.5, 0.0, 255.0));
     outG = uvec2(octEncode(normalize(vNrm)), (vChunk & PG_CHUNK) | (lit ? PG_LIT : 0u) | (m == MAT_LITTER ? PG_LITTER : 0u) |
-                 (lobby ? PG_LOBBY | min(vParams.w, 255u) << 12 | floorY << 20 : 0u));
+                 (sky ? PG_SKY : 0u) | (lobby ? PG_LOBBY | min(vParams.w, 255u) << 12 | floorY << 20 : 0u));
 }

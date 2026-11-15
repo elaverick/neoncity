@@ -24,9 +24,12 @@
  *   emitters each frame, and the taps turn, so the average settles on the true
  *   soft shadow.
  *
+ * By day the sky's visibility rides along (skyFilter).
+ *
  * Out (vis): x, y 8 bits of visibility per slot (slots as ids); z the pixel's
- * forward distance; w its draw chunk | SH_VALID | SH_OVERFLOW. city.frag uses
- * the slots only for the surface they were made for. */
+ * forward distance; w its draw chunk | SH_VALID | SH_OVERFLOW | the sky's
+ * bits (SH_SKY). city.frag uses the slots only for the surface they were made
+ * for. */
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 8) uniform sampler2D depthTex;
 layout(set = 0, binding = 9) uniform usampler2D gbufTex;
@@ -72,18 +75,56 @@ vec2 vogel(int i, int n, float rot) {
 }
 
 // How far a neighbour's sample lies on this pixel's surface (1: on its plane,
-// facing the same way); its slots come back in ids and raw.
-float sameSurface(ivec2 q, out uvec4 ids, out uvec2 raw) {
-    ids = uvec4(0u); raw = uvec2(0u);
+// facing the same way); its raw rays come back in raw (sameSurfaceRaw), and its
+// slots in ids too (sameSurface).
+float sameSurfaceRaw(ivec2 q, out uvec2 raw) {
+    raw = uvec2(0u);
     if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, gSize))) return 0.0;
     raw = imageLoad(rawIn, q).xy;
     float z = texelFetch(depthTex, q, 0).r;
     if ((raw.x & SH_VALID) == 0u || z <= 0.0) return 0.0;
     float plane = abs(dot(gN, relAt(q, z) - gRel)) / (0.02 + gLin * 0.003);
     if (plane > 2.0) return 0.0;
-    ids = imageLoad(idsIn, q);
     vec3 n = octDecode(texelFetch(gbufTex, q, 0).x);
     return exp(-plane * plane) * pow(max(dot(gN, n), 0.0), 8.0);
+}
+float sameSurface(ivec2 q, out uvec4 ids, out uvec2 raw) {
+    float w = sameSurfaceRaw(q, raw);
+    ids = w > 0.0 ? imageLoad(idsIn, q) : uvec4(0u);
+    return w;
+}
+
+/* The sky by day (DL2: shadow_trace.comp traceSky): this pixel's rays and
+ * those of SKY_TAPS neighbours on its surface within a disc about SKY_M
+ * across (half as many once it has a history), blended into it more slowly than a light's slot (two rays
+ * a pixel are a noisy estimate; the city doesn't move). Rounded to its bits
+ * with a dither, so a slow blend never sticks a step short. Out: vis.w's
+ * SH_SKY bits (common.glsl). */
+const int   SKY_TAPS = 8;
+const float SKY_M = 1.2;
+const float SKY_ALPHA = 0.12;
+float skyUp(uvec2 raw)    { return float((raw.x >> 16) & 3u); }
+float skyOpen(uvec2 raw)  { return float((raw.x >> 18) & 3u); }
+float skyClear(uvec2 raw) { return float((raw.x >> 20) & 3u); }
+uint skyFilter(ivec2 px, uvec2 raw, bool hist, uint hw, float ppm, float rot) {
+    float up = skyUp(raw), open = skyOpen(raw), clear = skyClear(raw), cnt = 1.0;
+    float r = clamp(SKY_M * 0.5 * ppm, 2.0, 24.0);
+    int taps = hist ? SKY_TAPS / 2 : SKY_TAPS;   // the history carries most of it once there
+    for (int i = 0; i < taps; ++i) {
+        ivec2 q = px + ivec2(round(vogel(i, taps, rot + 2.6) * r));
+        if (q == px) continue;
+        uvec2 traw;
+        float w = sameSurfaceRaw(q, traw);
+        if (w < 0.25 || (traw.x & SH_SKY) == 0u) continue;
+        up += w * skyUp(traw); open += w * skyOpen(traw); clear += w * skyClear(traw); cnt += w;
+    }
+    // facing down, no ray goes up: no sky (cityDaylight's even light is nothing there anyway)
+    float s = up > 0.01 ? open / up : (hist ? skyVisOf(hw) : 0.0);
+    float a = clear / (cnt * float(SKY_RAYS));
+    if (hist) { s = mix(skyVisOf(hw), s, SKY_ALPHA); a = mix(skyAoOf(hw), a, SKY_ALPHA); }
+    float fr = float(uint(frame.shadow.x) & 63u);
+    float d0 = ign(vec2(px) + vec2(31.0, 3.0) + fr * 5.588238), d1 = ign(vec2(px.yx) + vec2(5.0, 61.0) + fr * 5.588238);
+    return SH_SKY | (uint(min(s * 255.0 + d0, 255.0)) << 16) | (uint(min(a * 31.0 + d1, 31.0)) << 24);
 }
 
 void main() {
@@ -98,27 +139,37 @@ void main() {
     uvec4 ids = imageLoad(idsIn, px);
     int ns = 0;
     while (ns < SHADOW_SLOTS && slotId(ids, ns) != 0u) ++ns;
-    if ((raw.x & SH_VALID) == 0u || ns == 0) { imageStore(visOut, px, outv); return; }
+    bool sky = (raw.x & SH_SKY) != 0u;
+    if ((raw.x & SH_VALID) == 0u || (ns == 0 && !sky)) { imageStore(visOut, px, outv); return; }
     gRel = relAt(px, z);
     gN = octDecode(g.x);
+    float ppm = frame.screen.y / (2.0 * length(frame.rayBasis[1].xyz) * gLin);   // pixels per metre here
+    float rot = (ign(vec2(px)) + float(uint(frame.shadow.x) & 63u) * 0.618034) * 6.2831853;
 
-    // the history, and which slots it settles
-    float vis[SHADOW_SLOTS], hist[SHADOW_SLOTS];
-    for (int k = 0; k < ns; ++k) hist[k] = -1.0;
+    // the history, where this surface was last frame
+    bool hasHist = false;
+    uvec4 hv = uvec4(0u), hid = uvec4(0u);
     if (pc.history != 0u) {
         vec4 c = frame.prevViewProj * vec4(gRel, 1.0);
         if (c.w > 1e-3) {
             ivec2 pq = ivec2(floor((c.xy / c.w * 0.5 + 0.5) * vec2(gSize) - frame.shadow.zw + 0.5));
             if (all(greaterThanEqual(pq, ivec2(0))) && all(lessThan(pq, gSize))) {
-                uvec4 hv = texelFetch(prevVis, pq, 0);
-                if ((hv.w & SH_VALID) != 0u && abs(uintBitsToFloat(hv.z) - c.w) < 0.02 * c.w + 0.05) {
-                    uvec4 hid = texelFetch(prevIds, pq, 0);
-                    for (int k = 0; k < ns; ++k) {
-                        int j = findSlot(hid, slotId(ids, k), k);
-                        if (j >= 0) hist[k] = float((hv[j >> 2] >> (8u * uint(j & 3))) & 255u) / 255.0;
-                    }
-                }
+                hv = texelFetch(prevVis, pq, 0);
+                hasHist = (hv.w & SH_VALID) != 0u && abs(uintBitsToFloat(hv.z) - c.w) < 0.02 * c.w + 0.05;
+                if (hasHist) hid = texelFetch(prevIds, pq, 0);
             }
+        }
+    }
+    if (sky) outv.w |= skyFilter(px, raw, hasHist && (hv.w & SH_SKY) != 0u, hv.w, ppm, rot);
+    if (ns == 0) { imageStore(visOut, px, outv); return; }
+
+    // which slots the history settles
+    float vis[SHADOW_SLOTS], hist[SHADOW_SLOTS];
+    for (int k = 0; k < ns; ++k) hist[k] = -1.0;
+    if (hasHist) {
+        for (int k = 0; k < ns; ++k) {
+            int j = findSlot(hid, slotId(ids, k), k);
+            if (j >= 0) hist[k] = float((hv[j >> 2] >> (8u * uint(j & 3))) & 255u) / 255.0;
         }
     }
     uint need = 0u;
@@ -129,8 +180,6 @@ void main() {
     }
 
     if (need != 0u) {
-        float ppm = frame.screen.y / (2.0 * length(frame.rayBasis[1].xyz) * gLin);   // pixels per metre here
-        float rot = (ign(vec2(px)) + float(uint(frame.shadow.x) & 63u) * 0.618034) * 6.2831853;
         bool settled = true;   // every slot that needs filtering has a history to blend into
         for (int k = 0; k < ns; ++k) if ((need & (1u << uint(k))) != 0u && hist[k] < 0.0) settled = false;
         int searchTaps = settled ? HISTORY_TAPS : SEARCH_TAPS, filterTaps = settled ? HISTORY_TAPS : FILTER_TAPS;

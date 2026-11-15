@@ -28,8 +28,13 @@ not yet confirmed by captures (first step: one street at noon and at midnight, s
 
 Fixes, best value first:
 
-- [ ] Sky-visibility occlusion for the daylight fill (street canyons and recesses darker than plazas): a few
-      sky rays in the ray-traced shadow pass, or a cheaper estimate from street width and building height.
+- [x] Sky-visibility occlusion for the daylight fill (DL2: `traceSky`, two rays a pixel in the shadow pass).
+- [ ] The sky's visibility is only traced for city surfaces with an opaque material (`PG_SKY`): the lobbies' glazed
+      panes and the curtain walls' glass keep the `cityOpen` estimate, so in the daylight debug view they stand out
+      paler than the frames round them. Small in the image (the glass shows its room and reflections); borrow the
+      frame's value if it ever shows.
+- [ ] The land beside the city and the land's grass under the deck keep `landDaylight`'s open sky; the city's grass
+      takes the traced sky of the ground at its root.
 - [ ] By day the gloom key (DL1, `KEY_GLOOM`) also darkens places under the deck that take no daylight (an
       arcology's ground floor shows 0.8 stop darker at noon than at night). Weight it by the daylight's share of
       what is metered if that matters.

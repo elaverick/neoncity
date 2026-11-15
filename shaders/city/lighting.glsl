@@ -8,6 +8,7 @@
 
 // The cities' cloud over the fragment being shaded (common.glsl skyCover): the includer sets it.
 float gSkyCover = 1.0;
+float gShadowFade = 1.0;         // 1: unshadowed (shadows off, or faded out with distance): the ray-traced shadows below
 
 /* With LIGHTING_RELIEF (city.frag), a surface lit with its relief in depth (pbr.glsl:
  * pbrGrainRelief, between reliefLightsOn and reliefLightsOff) shadows itself: its ribs and
@@ -21,15 +22,43 @@ float reliefShadow(vec3 L);
 #define RELIEF_SHADOW(L) 1.0
 #endif
 
+/* The sky the shadow passes traced by day for this pixel's surface (DL2:
+ * shadow_trace.comp traceSky; -1: none), and how much of the bounce isn't
+ * shut off close by; skyFromVis reads them from a pixel's shadow results.
+ * cityOpenHere: the share of the sky a surface facing n, h metres above its
+ * ground, sees: the traced one, faded to cityOpen's estimate from SHADOW_FADE
+ * to SHADOW_FAR (gShadowFade) and through the twilight (skyTraceWeight).
+ * Its `ao` scales the bounce: what is round a surface is lit about as it is,
+ * so where the traced sky is less than cityOpen's street-level estimate
+ * (SKY_BOUNCE_REF) the bounce off it falls too, as a softer power (deep in a
+ * canyon or under a vault the light dies away, rather than the bounce
+ * standing in flat for the sky), and less again near what shuts it in. */
+const float SKY_BOUNCE_REF = 0.45;
+float gSkyOpen = -1.0, gSkyAo = 1.0;
+void skyFromVis(uint w) {
+    if ((w & SH_SKY) != 0u) { gSkyOpen = skyVisOf(w); gSkyAo = skyAoOf(w); }
+}
+float cityOpenHere(vec3 n, float h, out float ao) {
+    float open = cityOpen(n, h);
+    ao = 1.0;
+    if (gSkyOpen >= 0.0) {
+        float w = (1.0 - gShadowFade) * skyTraceWeight();
+        open = mix(open, gSkyOpen, w);
+        ao = mix(1.0, (0.3 + 0.7 * gSkyAo) * clamp(sqrt(gSkyOpen / SKY_BOUNCE_REF), 0.15, 1.2), w);
+    }
+    return open;
+}
+
 // The light all round, at h metres above the ground: the night's fill and bounce, and the daylight (cityAmbient).
 // The sun's own share of it (cityDaylight's clear sky, square on to it) is the one with a direction, so the
 // relief shadows that, as it does the lamps.
 vec3 ambientLight(vec3 n, float h) {
-    vec3 a = cityAmbient(n, h, gSkyCover);
+    float ao, open = cityOpenHere(n, h, ao);
+    vec3 a = cityAmbient(n, h, gSkyCover, open, ao);
 #ifdef LIGHTING_RELIEF
     float sunN = dot(n, SUN_DIR);
     if (sunN > 0.0 && gSkyCover < 1.0 && frame.dirMix.x > 0.0) {
-        vec3 sun = SUN_LAND * sunN * (1.0 - gSkyCover) * cityOpen(n, h) * deckThrough(gSkyCover);
+        vec3 sun = SUN_LAND * sunN * (1.0 - gSkyCover) * open * deckThrough(gSkyCover);
         a -= sun * (1.0 - RELIEF_SHADOW(SUN_DIR));
     }
 #endif
@@ -195,7 +224,6 @@ vec3  gGeoN = vec3(0.0, 1.0, 0.0);
 uint  gShadowCull = RT_MASK_LAMPS;   // instance mask (src/render/rt.h)
 float gFwd, gFwdTol;             // this fragment's forward distance, and how near a slot's must be to be ours
 #endif
-float gShadowFade = 1.0;         // 1: unshadowed (shadows off, or faded out with distance)
 
 #if !defined(LIGHTING_FOR_GRASS) && !defined(LIGHTING_FOR_LAND)
 void shadowsBegin() {
@@ -211,6 +239,15 @@ void shadowsBegin() {
     gSlotVis = texelFetch(shadowVisTex, px, 0);
     gSlotsOurs = (gSlotVis.w & SH_VALID) != 0u && (gSlotVis.w & 0xFFFFu) == vChunk && abs(uintBitsToFloat(gSlotVis.z) - fwd) < tol;
     if (gSlotsOurs) gSlotIds = texelFetch(shadowIdsTex, px, 0);
+    // the sky by day: this pixel's, or (at an edge the prepass's sample 0 missed) a neighbour's on this surface
+    if (gSlotsOurs) skyFromVis(gSlotVis.w);
+    else if (gShadowFade < 1.0 && skyTraceOn()) {
+        const ivec2 NB[4] = ivec2[](ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1));
+        for (int i = 0; i < 4 && gSkyOpen < 0.0; ++i) {
+            uvec4 v = texelFetch(shadowVisTex, px + NB[i], 0);
+            if ((v.w & SH_VALID) != 0u && (v.w & 0xFFFFu) == vChunk && abs(uintBitsToFloat(v.z) - fwd) < tol * 2.0) skyFromVis(v.w);
+        }
+    }
 #endif
 }
 #endif

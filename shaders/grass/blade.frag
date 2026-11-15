@@ -149,7 +149,7 @@ void rootShadows() {
     gSlotVis = texelFetch(shadowVisTex, px, 0);
     float tol = 0.05 + vRootPx.z * 0.01;
     gSlotsOurs = (gSlotVis.w & SH_VALID) != 0u && (gSlotVis.w & 0xFFFFu) == vChunk && abs(uintBitsToFloat(gSlotVis.z) - vRootPx.z) < tol;
-    if (gSlotsOurs) gSlotIds = texelFetch(shadowIdsTex, px, 0);
+    if (gSlotsOurs) { gSlotIds = texelFetch(shadowIdsTex, px, 0); skyFromVis(gSlotVis.w); }   // and the ground's sky by day (DL2)
 #endif
 }
 
@@ -231,7 +231,8 @@ void shadePixel() {
                 return;
             }
             if ((uint(frame.shadow.y) & DAYLIGHT_DEBUG) != 0u) {
-                outColor = vec4(cityDaylightDebug(vGround, gSkyCover, cityOpen(vGround, h)), 1.0);
+                float ao, open = cityOpenHere(vGround, h, ao);
+                outColor = vec4(cityDaylightDebug(vGround, gSkyCover, open, ao), 1.0);
                 outRefl = vec4(0.0);
                 return;
             }

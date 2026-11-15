@@ -14,7 +14,9 @@
  * each frame (interleaved gradient noise), against the TLAS of the city round
  * the camera.
  *
- * A lobby's pixels trace its ceiling instead (traceCeiling).
+ * A lobby's pixels trace its ceiling instead (traceCeiling). By day every
+ * surface the city's daylight lights (PG_SKY, at any height) traces its sky
+ * too (traceSky), into raw.x's spare bits under SH_SKY.
  *
  * Out: ids, each slot's lightId (16 bits; 0 for an empty slot), most
  * important first; raw.x, a bit per slot set where its ray got through, plus
@@ -67,6 +69,35 @@ void traceCeiling(ivec2 px, vec3 rel, float dist, vec3 p, vec3 n, vec3 V, uint g
     }
 }
 
+/* The sky by day (DL2), for a surface that takes the city's daylight (PG_SKY):
+ * SKY_RAYS rays cosine-weighted about the side of it we see. One that goes
+ * up and meets nothing within SKY_RANGE has reached the sky; the share of the
+ * up-going ones that do is how much of the overcast lights the surface
+ * (cityDaylight's `open`; the rays going down are the ground's, which the
+ * bounce stands for). Any ray that meets something within SKY_NEAR is shut in
+ * close by: a corner, a doorway, an awning over it, which keep the bounce out. */
+void traceSky(ivec2 px, vec3 rel, float dist, vec3 n, vec3 V, uint mask, inout uvec2 raw) {
+    vec3 nn = dot(n, V) >= 0.0 ? n : -n;
+    vec3 o = rel + nn * (0.01 + dist * 2e-4);
+    float s = nn.z >= 0.0 ? 1.0 : -1.0, a = -1.0 / (s + nn.z), b = nn.x * nn.y * a;   // an orthonormal basis (Duff et al. 2017)
+    vec3 t1 = vec3(1.0 + s * nn.x * nn.x * a, s * b, -s * nn.x), t2 = vec3(b, s + nn.y * nn.y * a, -nn.y);
+    float fr = float(uint(frame.shadow.x) & 63u);
+    vec2 xi0 = vec2(ign(vec2(px) + vec2(59.0, 7.0) + fr * 5.588238), ign(vec2(px.yx) + vec2(13.0, 97.0) + fr * 5.588238));
+    uint up = 0u, open = 0u, clear = 0u;
+    for (int k = 0; k < SKY_RAYS; ++k) {
+        vec2 xi = fract(xi0 + float(k) * vec2(0.7548777, 0.5698403));
+        float r = sqrt(xi.x), ang = (float(k) + xi.y) * (6.2831853 / float(SKY_RAYS));
+        vec3 d = normalize(t1 * (r * cos(ang)) + t2 * (r * sin(ang)) + nn * sqrt(max(1.0 - xi.x, 0.0)));
+        rayQueryEXT q;
+        rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, mask, o, 0.0, d, SKY_RANGE);
+        while (rayQueryProceedEXT(q)) {}
+        bool miss = rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT;
+        if (d.y > 0.0) { up++; if (miss) open++; }
+        if (miss || rayQueryGetIntersectionTEXT(q, true) > SKY_NEAR) clear++;
+    }
+    raw.x |= SH_SKY | (up << 16) | (open << 18) | (clear << 20);
+}
+
 void main() {
     ivec2 px = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(px, imageSize(idsOut)))) return;
@@ -87,7 +118,13 @@ void main() {
         imageStore(rawOut, px, uvec4(raw, 0u, 0u));
         return;
     }
+    bool sky = z > 0.0 && (g.y & PG_SKY) != 0u && shadowsOn() && dist <= SHADOW_FAR && skyTraceOn();
+    uint mask = (g.y & PG_LITTER) != 0u ? RT_MASK_LAMPS & ~RT_MASK_LITTER : RT_MASK_LAMPS;   // litter's own shape moves (city.vert)
     if (z <= 0.0 || (g.y & PG_LIT) == 0u || !shadowsOn() || dist > SHADOW_FAR || base < 0) {   // (PG_LIT: low enough for the lights)
+        if (sky) {   // no lights here, but the sky: valid, with no slots
+            raw.x = SH_VALID;
+            traceSky(px, rel, dist, octDecode(g.x), -rel / dist, mask, raw);
+        }
         imageStore(idsOut, px, ids);
         imageStore(rawOut, px, uvec4(raw, 0u, 0u));
         return;
@@ -131,7 +168,6 @@ void main() {
     }
 
     raw.x = SH_VALID | (overflow ? SH_OVERFLOW : 0u);
-    uint mask = (g.y & PG_LITTER) != 0u ? RT_MASK_LAMPS & ~RT_MASK_LITTER : RT_MASK_LAMPS;   // litter's own shape moves (city.vert)
     float fr = float(uint(frame.shadow.x) & 63u);
     vec3 xi0 = vec3(ign(vec2(px) + fr * 5.588238), ign(vec2(px.yx) + vec2(41.0, 17.0) + fr * 5.588238),
                     ign(vec2(px) + vec2(23.0, 71.0) + fr * 5.588238));
@@ -157,6 +193,7 @@ void main() {
             raw.y |= penEncode(size * th / max(len - th, 0.05)) << (4u * uint(k));
         }
     }
+    if (sky) traceSky(px, rel, dist, n, V, mask, raw);
     imageStore(idsOut, px, ids);
     imageStore(rawOut, px, uvec4(raw, 0u, 0u));
 }
