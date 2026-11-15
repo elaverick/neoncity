@@ -382,6 +382,27 @@ int     city_vendor_spots(ChunkGen *g, double x0, double z0, double x1, double z
 /* SF2: the lane vaults of the blocks reaching x0..x1, z0..z1 (whole; vendor_sites.h CityVault). */
 int     city_vendor_vaults(ChunkGen *g, double x0, double z0, double x1, double z1, struct CityVault *out, int max);
 
+/* SF5b: the arcologies' food halls (src/gen/arcology.h AHall) among g's buildings within reach (m) of its chunk: fn for
+ * each, with its building, plan and floor (world Y). */
+typedef void (*HallVisit)(void *ctx, const Building *b, const ALayout *A, float floorY, int hall);
+void    city_halls(ChunkGen *g, double reach, HallVisit fn, void *ctx);
+/* SF5b: hall h's bar k as its site (its seed and group as the site list gives them), and the hours its bar keeps
+ * (its trade's, nb_hours: the hall's battens over it dim with them). */
+void    city_hall_bar(const Building *b, const ALayout *A, int hall, int k, VendorSpot *out);
+uint8_t city_hall_bar_hours(const VendorSpot *s);
+/* SF5b: hall h's furniture (tables, fans, battens) standing in the chunk whose corner is (ox, oz): how many pieces,
+ * their middle and how far they reach from it (world). A hall's furniture streams as a vendor body of its own in each
+ * chunk holding some (after the chunk's bars, the halls ordered by their building's seed, then their number: the base
+ * layer's list, mesh_vendor.c, and the body's build, vendor_kit.c, agree whatever buildings their ChunkGens hold). */
+int     city_hall_in_chunk(const Building *b, const ALayout *A, int hall, double ox, double oz, double *mx, double *mz, float *r);
+#define HALL_BODY_REACH 30.0f   /* a hall's body is wanted this much further out than a bar's (from its furniture's reach) */
+static inline uint64_t city_hall_key(const Building *b, int hall) { return (uint64_t)b->seed << 8 | (uint64_t)(hall & 255); }
+/* SF5b: the hours of hall h's batten k's second tube: the nearest bar's (none: always lit). */
+uint8_t city_hall_batten_hours(const Building *b, const ALayout *A, int hall, int k);
+/* A point and a direction of an arcology's frame, world. */
+void    city_arc_world(const Building *b, const ALayout *A, float fx, float fz, double *wx, double *wz);
+void    city_arc_dir(const Building *b, const ALayout *A, float dx, float dz, float *wx, float *wz);
+
 /* mesh_vendor.c */
 /* city_chunk_vendors for g's chunk; g must hold the buildings of every block that reaches it. */
 int     city_vendors(ChunkGen *g, VendorVisit fn, void *ctx);

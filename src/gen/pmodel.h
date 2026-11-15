@@ -288,6 +288,13 @@ enum {
      * a guide channel 1 m high (y 0..1), its slot along +x round x 0 (the curtain's end), its web out at -x; the
      * padlock and hasp on the bar's front (its middle at y 0.03, z 0.02), not stretched. */
     PMK_SHUTTER, PMK_SHUTTER_BAR, PMK_SHUTTER_GUIDE, PMK_SHUTTER_LOCK,
+    /* SF5b, the arcologies' food halls (src/gen/arcology_subdivide.c place_halls): a hawker table with four stools
+     * fixed to its frame (a noodle hall's; the stools' middles 0.6 m out along +-x and +-z), a long table
+     * with its benches (a night market's: 2.4 m along x, the benches' middles 0.62 m out along z), both standing on
+     * y 0 centred; a ceiling fan and a twin-tube batten (1.5 m along x) hung from the origin; the batten's second tube */
+    PMK_HAWKER_TABLE, PMK_LONG_TABLE, PMK_CEILING_FAN, PMK_BATTEN, PMK_BATTEN_TUBE,
+    /* a drop rod, 1 m down from a ceiling cup at y 0 (stretched by its instance: a batten's hangers to the roof) */
+    PMK_DROP_ROD,
     PMK_COUNT
 };
 typedef struct PmModuleDef {

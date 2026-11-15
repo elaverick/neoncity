@@ -71,7 +71,7 @@ static inline int use_ij(const ALayout *A, int i, int j) { return in_grid(A, i, 
 static inline ARect rect(float x0, float z0, float x1, float z1) { ARect r = { x0, z0, x1, z1 }; return r; }
 static inline ARect expand(ARect r, float m) { return rect(r.x0 - m, r.z0 - m, r.x1 + m, r.z1 + m); }
 #define BIT(u) (1u << (u))
-#define PUBLIC (BIT(AU_CONCOURSE) | BIT(AU_COLONNADE) | BIT(AU_PLAZA) | BIT(AU_HALL))
+#define PUBLIC (BIT(AU_CONCOURSE) | BIT(AU_COLONNADE) | BIT(AU_PLAZA) | BIT(AU_HALL) | BIT(AU_FOOD))
 #define WALK   (PUBLIC | BIT(AU_COREHALL) | BIT(AU_YARD))
 
 /* ---------------------------------------------------------------------------
@@ -105,6 +105,7 @@ float travel(Gen *G, int *farCell);
 void place_stairs(Gen *G);
 void find_blocks(Gen *G);
 void place_stalls(Gen *G);
+void place_halls(Gen *G);
 void place_food(Gen *G);
 void place_galleries(Gen *G);
 

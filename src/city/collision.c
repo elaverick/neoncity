@@ -303,6 +303,37 @@ static void collide_arcology(BlockLayout *BL, const Building *b, const BGraph *g
             coll_arc_box(BL, b, A, (ARect){ r.x0, r.z1 - 0.1f, r.x1, r.z1 });
         }
     }
+    /* SF5b: the halls' walls (a skin 4 cm thick behind them (clear of the sites beside them, an SF5a bar out over the colonnade along one): the stall units' backs aren't solid; the facade's its own), the mouths' piers,
+     * the tables with their stools or benches (the bars are the vendors': collide_vendor) */
+    AHallWall *wl = (AHallWall *)malloc(sizeof(AHallWall) * 1024);
+    if (!wl) fatal("out of memory building collision");
+    for (int h = 0; h < A->nfhall; ++h) {
+        const AHall *H = &A->fhall[h];
+        const int nw = arcology_hall_walls(A, h, wl, 1024);
+        for (int k = 0; k < nw; ++k) {
+            const AHallWall *w = &wl[k];
+            if (w->other == AU_OUT) continue;
+            if (w->other == AU_STALL && w->stall >= 0 && A->stall[w->stall].vendor) continue;   /* (a kit bar's unit: its solids) */
+            /* (on a street the skin's inside: the ways of the bars out over it may run along the wall) */
+            const float l0 = w->line, l1 = w->line + (arcology_public(w->other) ? 0.04f : -0.04f) * (float)(w->nx + w->nz);
+            if (w->nz) coll_arc_box(BL, b, A, (ARect){ w->a0, minf(l0, l1), w->a1, maxf(l0, l1) });
+            else       coll_arc_box(BL, b, A, (ARect){ minf(l0, l1), w->a0, maxf(l0, l1), w->a1 });
+        }
+        const int mx = H->facing == 0 || H->facing == 2;
+        const float p1 = H->line + (H->facing == 0 || H->facing == 3 ? 1.0f : -1.0f) * AR_HALL_PIER;
+        for (int k = 0; k < H->npier; ++k) {
+            const float a = H->pier[k], hp = 0.5f * AR_HALL_PIER;
+            if (mx) coll_arc_box(BL, b, A, (ARect){ a - hp, minf(H->line, p1), a + hp, maxf(H->line, p1) });
+            else    coll_arc_box(BL, b, A, (ARect){ minf(H->line, p1), a - hp, maxf(H->line, p1), a + hp });
+        }
+        for (int k = 0; k < H->nseat; ++k) {
+            const float *s = H->seat[k];
+            const int alongZ = H->seating == AH_LONG && fabsf(sinf(s[2])) > 0.5f;
+            const float hx = H->seating == AH_LONG ? (alongZ ? 0.77f : 1.2f) : 0.7f, hz = H->seating == AH_LONG ? (alongZ ? 1.2f : 0.77f) : 0.7f;
+            coll_arc_box(BL, b, A, (ARect){ s[0] - hx, s[1] - hz, s[0] + hx, s[1] + hz });
+        }
+    }
+    free(wl);
     for (int f = 0; f < A->nfix; ++f) {
         const AFix *x = &A->fix[f];
         if (x->y0 > 0.5f || x->y1 < 0.3f || x->type == AX_PUDDLE || x->type == AX_AWNING || x->type == AX_STEAM) continue;

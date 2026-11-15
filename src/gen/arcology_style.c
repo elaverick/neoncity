@@ -180,6 +180,20 @@ void place_signage(Gen *G) {
         else if (d == 1) add_sign(A, AG_FASCIA, r.x1 + 0.08f, r.z0 + in, r.x1 + 0.08f, r.z1 - in, y0, y1, 1, 0, &G->rn);
         else             add_sign(A, AG_FASCIA, r.x0 - 0.08f, r.z0 + in, r.x0 - 0.08f, r.z1 - in, y0, y1, -1, 0, &G->rn);
     }
+    /* SF5b: each food hall's sign on its mouth's header, facing out (its own draws: the rest keep theirs) */
+    for (int h = 0; h < A->nfhall; ++h) {
+        const AHall *H = &A->fhall[h];
+        Rng r = rng_make(hash_combine(H->seed, 0x5160u));
+        const float w = minf(H->m1 - H->m0 - 1.2f, rng_range(&r, 3.5f, 6.0f)), mid = 0.5f * (H->m0 + H->m1);
+        const float y0 = fy + H->head + 0.1f, y1 = fy + minf(H->roof - 0.08f, H->head + 1.2f);
+        if (w < 1.5f || y1 - y0 < 0.3f) continue;
+        const int f = H->facing;
+        const float o = H->line + (float)(DX[f] + DZ[f]) * 0.06f;
+        ASign *sg;
+        if (f == 0 || f == 2) sg = add_sign(A, AG_FASCIA, mid - 0.5f * w, o, mid + 0.5f * w, o, y0, y1, 0, DZ[f], &r);
+        else                  sg = add_sign(A, AG_FASCIA, o, mid - 0.5f * w, o, mid + 0.5f * w, y0, y1, DX[f], 0, &r);
+        if (sg) { sg->style = 1; sg->flick = 0; }
+    }
     /* blade signs off column faces over the concourses, above the clear height */
     float top = A->ceilY - 0.7f;
     for (int c = 0; c < A->ncol; ++c) {

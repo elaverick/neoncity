@@ -168,6 +168,7 @@ static const uint8_t USE_COL[AU_COUNT][3] = {
     { 200, 140, 80 },   /* stall */
     { 175, 120, 160 },  /* kiosk strip */
     { 140, 150, 120 },  /* service yard */
+    { 215, 170, 120 },  /* food hall (SF5b) */
 };
 
 static float ax_(const ALayout *A, float x) { return (x - A->gx0) / AR_CELL * APX + APX; }
@@ -204,6 +205,33 @@ static void render_arcology_plan(const ALayout *A, const char *path) {
     for (int k = 0; k < gl->n; ++k) { int k1 = (k + 1) % gl->n; line_px(&im, ax_(A, gl->x[k]), ay_(A, gl->z[k]), ax_(A, gl->x[k1]), ay_(A, gl->z[k1]), 1.0f, 40, 120, 220); }
     for (int s = 0; s < A->nstall; ++s) outline(&im, ax_(A, A->stall[s].r.x0), ay_(A, A->stall[s].r.z1), ax_(A, A->stall[s].r.x1), ay_(A, A->stall[s].r.z0), 120, 70, 30, 0);
     for (int b = 0; b < A->nbeam; ++b) line_px(&im, ax_(A, A->beam[b].x0), ay_(A, A->beam[b].z0), ax_(A, A->beam[b].x1), ay_(A, A->beam[b].z1), 1.0f, 90, 160, 90);
+    for (int h = 0; h < A->nfhall; ++h) {   /* SF5b: the halls' bars (their sites), tables, fans, battens, mouth */
+        const AHall *H = &A->fhall[h];
+        for (int k = 0; k < H->nbar; ++k) {
+            const AHallBar *br = &H->bar[k];
+            const int f = br->facing;
+            float x0, z0, x1, z1;
+            if (f == 0 || f == 2) { x0 = br->bx - 0.5f * br->w; x1 = br->bx + 0.5f * br->w; z0 = f == 2 ? br->bz : br->bz - br->d; z1 = z0 + br->d; }
+            else                  { z0 = br->bz - 0.5f * br->w; z1 = br->bz + 0.5f * br->w; x0 = f == 1 ? br->bx : br->bx - br->d; x1 = x0 + br->d; }
+            rectf(&im, ax_(A, x0), ay_(A, z1), ax_(A, x1), ay_(A, z0), 150, 60, 40);
+            outline(&im, ax_(A, x0), ay_(A, z1), ax_(A, x1), ay_(A, z0), 60, 20, 10, 0);
+        }
+        for (int k = 0; k < H->nseat; ++k) {
+            const float *s = H->seat[k];
+            const int along = H->seating == AH_LONG && fabsf(sinf(s[2])) > 0.5f;   /* its length along z */
+            const float hx = H->seating == AH_LONG ? (along ? 0.78f : 1.2f) : 0.78f, hz = H->seating == AH_LONG ? (along ? 1.2f : 0.78f) : 0.78f;
+            rectf(&im, ax_(A, s[0] - hx), ay_(A, s[1] + hz), ax_(A, s[0] + hx), ay_(A, s[1] - hz), 60, 130, 120);
+        }
+        for (int k = 0; k < H->nfan; ++k) outline(&im, ax_(A, H->fan[k][0] - 0.67f), ay_(A, H->fan[k][1] + 0.67f), ax_(A, H->fan[k][0] + 0.67f), ay_(A, H->fan[k][1] - 0.67f), 240, 240, 240, 0);
+        for (int k = 0; k < H->nbatten; ++k) {
+            const float *b = H->batten[k];
+            line_px(&im, ax_(A, b[0] - (b[2] < 0.5f ? 0.75f : 0.0f)), ay_(A, b[1] - (b[2] < 0.5f ? 0.0f : 0.75f)),
+                    ax_(A, b[0] + (b[2] < 0.5f ? 0.75f : 0.0f)), ay_(A, b[1] + (b[2] < 0.5f ? 0.0f : 0.75f)), 0.6f, 255, 255, 200);
+        }
+        const int f = H->facing;
+        if (f == 0 || f == 2) line_px(&im, ax_(A, H->m0), ay_(A, H->line), ax_(A, H->m1), ay_(A, H->line), 1.0f, 255, 60, 60);
+        else                  line_px(&im, ax_(A, H->line), ay_(A, H->m0), ax_(A, H->line), ay_(A, H->m1), 1.0f, 255, 60, 60);
+    }
     for (int c = 0; c < A->ncol; ++c) {
         float h = A->col[c].size * 0.5f;
         rectf(&im, ax_(A, A->col[c].x - h), ay_(A, A->col[c].z + h), ax_(A, A->col[c].x + h), ay_(A, A->col[c].z - h), A->col[c].ring ? 30 : 10, A->col[c].ring ? 100 : 10, A->col[c].ring ? 30 : 10);
@@ -343,6 +371,7 @@ static int arcology_mode(int argc, char **argv) {
     int found = 0, passed = 0, first = 0, failures = 0, rendered = 0;
     int attempts[AR_ATTEMPTS + 1] = { 0 }, canyon[4] = { 0 }, pattern[3] = { 0 }, uses[AB_COUNT] = { 0 };
     double worst = 0.0, total = 0.0, stalls = 0, signs = 0, cores = 0, levels = 0, tiers = 0, lamps = 0, stairs = 0;
+    int halls = 0, hallBars = 0, hallSeats = 0;
     double meshVerts = 0, meshWorst = 0, meshTime = 0, baseWorst = 0, baseTime = 0;
     int meshed = 0;
     Mesh mesh;
@@ -381,6 +410,13 @@ static int arcology_mode(int argc, char **argv) {
                     canyon[A->canyon]++;
                     pattern[A->pattern]++;
                     for (int k = 0; k < A->nblock; ++k) uses[A->block[k].use]++;
+                    for (int h = 0; h < A->nfhall; ++h) {   /* SF5b */
+                        const AHall *H = &A->fhall[h];
+                        halls++; hallBars += H->nbar; hallSeats += H->nseat;
+                        printf("  hall: arcology %08x block %d %s: mouth %.1f m, roof %.2f, %d bars, %d tables, %d fans, %d battens\n", b->seed, H->block,
+                               arcology_use_name(H->use), H->m1 - H->m0, H->roof, H->nbar, H->nseat, H->nfan, H->nbatten);
+                        if (H->nbar < 2) { printf("FAIL: arcology %08x hall %d has %d bars\n", b->seed, h, H->nbar); failures++; }
+                    }
                     stalls += A->nstall; signs += A->nsign; cores += A->ncore; levels += A->nlevel; tiers += A->ntier; lamps += A->nlamp; stairs += A->nstair;
                     {   /* the near-only interior mesh of the chunk that owns it: in budget, and the same when rebuilt */
                         int cx = (int)floor(b->ox / CHUNK_SIZE), cz = (int)floor(b->oz / CHUNK_SIZE);
@@ -448,7 +484,7 @@ static int arcology_mode(int argc, char **argv) {
                tiers / passed, levels / passed, stalls / passed, cores / passed, stairs / passed, signs / passed, lamps / passed);
         printf("  blocks:");
         for (int u = 0; u < AB_COUNT; ++u) if (uses[u]) printf(" %d %s,", uses[u], arcology_use_name(u));
-        printf("\n");
+        printf("\n  food halls (SF5b): %d, with %d bars and %d tables\n", halls, hallBars, hallSeats);
     }
     printf("  time: average %.1f ms, worst %.1f ms\n", found ? 1000.0 * total / found : 0.0, 1000.0 * worst);
     if (meshed) {

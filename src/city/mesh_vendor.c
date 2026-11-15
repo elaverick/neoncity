@@ -336,13 +336,74 @@ static void build_vaults(Mesh *m, ChunkGen *g, PmMesh *pmm) {
     free(cv);
 }
 
+/* SF5b: the food halls' battens' light (their geometry's the vendor layer's, vendor_kit.c kit_hall): each a tube for
+ * each of its two lamps, the first always lit, the second keeping the hours of the bar nearest it; those whose middles
+ * the chunk holds. */
+typedef struct HallBody { uint64_t key; VendorBodySpot spot; } HallBody;
+typedef struct HallLights { Mesh *m; ChunkGen *g; HallBody body[32]; int nbody; } HallLights;
+static void light_hall(void *ctx, const Building *b, const ALayout *A, float floorY, int hall) {
+    HallLights *E = (HallLights *)ctx;
+    const AHall *H = &A->fhall[hall];
+    /* its furniture's body in this chunk (city_hall_in_chunk), listed after the bars' */
+    double mx, mz;
+    float r;
+    if (E->nbody < 32 && city_hall_in_chunk(b, A, hall, E->g->ox, E->g->oz, &mx, &mz, &r)) {
+        HallBody *o = &E->body[E->nbody++];
+        o->key = city_hall_key(b, hall);
+        o->spot.x = (float)(mx - E->m->ox); o->spot.z = (float)(mz - E->m->oz); o->spot.y = floorY;
+        o->spot.r = r + HALL_BODY_REACH;
+        o->spot.hours = 0;
+    }
+    const uint8_t white = H->use == AB_NOODLE ? NB_WHITE_6500 : NB_WHITE_5000;
+    for (int k = 0; k < H->nbatten; ++k) {
+        const float *bt = H->batten[k];
+        VendorSpot fr;
+        memset(&fr, 0, sizeof(fr));
+        city_arc_world(b, A, bt[0], bt[1], &fr.x, &fr.z);
+        if (fr.x < E->g->ox || fr.x >= E->g->ox + CHUNK_SIZE || fr.z < E->g->oz || fr.z >= E->g->oz + CHUNK_SIZE) continue;
+        float ux, uz;   /* along it, world: the frame's +x as the site's (its +x is (fz, -fx)) */
+        city_arc_dir(b, A, bt[2] > 0.5f ? 0.0f : 1.0f, bt[2] > 0.5f ? 1.0f : 0.0f, &ux, &uz);
+        fr.fz = ux; fr.fx = -uz;
+        fr.y = floorY;
+        /* one light for its two tubes: 2.88 m long (a tube's strength goes by its length: both tubes' worth) over its
+         * 1.5 m; every other batten's on the nearest bar's hours, the rest always lit, so a hall whose bars are all
+         * shut keeps half its light (the user: dimmed) and the frame pays for one light a batten, not two */
+        NbLight l;
+        memset(&l, 0, sizeof(l));
+        l.kind = NB_LIGHT_TUBE; l.colour = white;
+        const float y = arcology_hall_batten_y(H->roof);
+        l.a[0] = -1.44f; l.a[1] = y; l.a[2] = 0.0f;
+        l.b[0] = 1.44f;  l.b[1] = y; l.b[2] = 0.0f;
+        l.seed = (uint8_t)hash_combine(H->seed, 0xBA70u + (uint32_t)k);
+        l.flicker = 1;   /* a hall's batten: its reach short (shaders/common.glsl vendorReach) */
+        vendor_light_list(E->g, E->m, &fr, &l, 1, (k & 1) ? city_hall_batten_hours(b, A, hall, k) : 0);
+    }
+}
+
 void build_vendors(Mesh *m, ChunkGen *g) {
     VEmit E;
     memset(&E, 0, sizeof(E));
     E.m = m;
     E.g = g;
     build_vaults(m, g, &E.shell);
+    HallLights *HL = (HallLights *)calloc(1, sizeof(HallLights));
+    if (!HL) fatal("out of memory building the halls");
+    HL->m = m; HL->g = g;
+    city_halls(g, 110.0, light_hall, HL);
     city_vendors(g, emit_vendor, &E);
+    /* SF5b: the halls' furniture as bodies after the bars', in their keys' order */
+    for (int i = 0; i < HL->nbody; ++i)
+        for (int j = i + 1; j < HL->nbody; ++j)
+            if (HL->body[j].key < HL->body[i].key) { HallBody t = HL->body[i]; HL->body[i] = HL->body[j]; HL->body[j] = t; }
+    for (int i = 0; i < HL->nbody && E.nbody < VENDOR_BODIES_MAX; ++i, ++E.nbody) {
+        if (m->nvbody == m->capvbody) {
+            m->capvbody = m->capvbody ? m->capvbody * 2 : 16;
+            m->vbody = (VendorBodySpot *)realloc(m->vbody, sizeof(VendorBodySpot) * m->capvbody);
+            if (!m->vbody) fatal("out of memory listing the vendors' bodies");
+        }
+        m->vbody[m->nvbody++] = HL->body[i].spot;
+    }
+    free(HL);
     vendor_mesh_free(&E.vm);
     pm_mesh_free(&E.shell);
 }

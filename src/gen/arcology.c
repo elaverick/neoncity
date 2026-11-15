@@ -11,7 +11,7 @@ const char *arcology_pattern_name(int p) { return p >= 0 && p <= AP_BOULEVARD ? 
 const char *arcology_use_name(int u)     { return u >= 0 && u < AB_COUNT ? USE_NAMES[u] : "?"; }
 const char *arcology_stratum_name(int s) { return s >= 0 && s <= AS_CORPORATE ? STRATUM_NAMES[s] : "?"; }
 
-int arcology_public(int u) { return u == AU_CONCOURSE || u == AU_COLONNADE || u == AU_PLAZA || u == AU_HALL; }
+int arcology_public(int u) { return u == AU_CONCOURSE || u == AU_COLONNADE || u == AU_PLAZA || u == AU_HALL || u == AU_FOOD; }
 int arcology_food(int kind) { return kind == AB_MARKET || kind == AB_NOODLE; }
 void arcology_stall_frame(const AStall *st, float *bx, float *bz, float *fx, float *fz, float *w, float *d) {
     const ARect r = st->r;
@@ -30,6 +30,59 @@ void arcology_stall_frame(const AStall *st, float *bx, float *bz, float *fx, flo
  * ========================================================================= */
 
 void arcology_to_local(const ALayout *A, float fx, float fz, float *x, float *z) { quarter_turn(A->quarter, fx, fz, x, z); }
+
+/* SF5b: a hall's walls, cell edge by cell edge, joined into runs while what's beyond stays the same. */
+static int hall_stall_at(const ALayout *A, float x, float z) {
+    for (int s = 0; s < A->nstall; ++s) if (in_rect(A->stall[s].r, x, z)) return s;
+    return -1;
+}
+int arcology_hall_walls(const ALayout *A, int hall, AHallWall *out, int max) {
+    const AHall *H = &A->fhall[hall];
+    const int b = H->block;
+    int n = 0;
+    for (int axis = 0; axis < 2; ++axis) {   /* 0: edges along x (between rows j-1 and j), 1: along z */
+        const int nLines = axis == 0 ? A->nz + 1 : A->nx + 1, nAlong = axis == 0 ? A->nx : A->nz;
+        for (int line = 0; line < nLines; ++line) {
+            const float lc = (axis == 0 ? A->gz0 : A->gx0) + (float)line * CELL;
+            int open = 0;
+            for (int k = 0; k <= nAlong; ++k) {
+                int sgn = 0, other = AU_OUT, stall = -1;
+                if (k < nAlong) {
+                    const int ia = axis == 0 ? k : line - 1, ja = axis == 0 ? line - 1 : k;     /* the cell on the low side */
+                    const int ib = axis == 0 ? k : line, jb = axis == 0 ? line : k;             /* the high side */
+                    const int ua = use_ij(A, ia, ja), ub = use_ij(A, ib, jb);
+                    const int ha = ua == AU_FOOD && A->blk[IDX(A, ia, ja)] == b, hb = ub == AU_FOOD && A->blk[IDX(A, ib, jb)] == b;
+                    if (ha != hb) {
+                        sgn = hb ? 1 : -1;     /* the face looks up the axis into the high cell, or down into the low */
+                        other = hb ? ua : ub;
+                        const float at = (axis == 0 ? A->gx0 : A->gz0) + ((float)k + 0.5f) * CELL;
+                        /* the mouth: on its line, between its ends, facing in from it */
+                        const int mouthSgn = H->facing == 0 || H->facing == 3 ? 1 : -1, mouthAxis = H->facing == 0 || H->facing == 2 ? 0 : 1;
+                        if (axis == mouthAxis && sgn == mouthSgn && fabsf(lc - H->line) < 1e-3f && at > H->m0 && at < H->m1) sgn = 0;
+                        if (sgn && other == AU_STALL) {
+                            const int oi = hb ? ia : ib, oj = hb ? ja : jb;
+                            stall = hall_stall_at(A, ccx(A, oi), ccz(A, oj));
+                        }
+                    }
+                }
+                AHallWall *w = open ? &out[n - 1] : NULL;
+                if (w && sgn && (axis == 0 ? w->nz : w->nx) == sgn && w->other == other && w->stall == stall) {
+                    w->a1 = (axis == 0 ? A->gx0 : A->gz0) + (float)(k + 1) * CELL;
+                    continue;
+                }
+                open = 0;
+                if (!sgn || n >= max) continue;
+                w = &out[n++];
+                w->line = lc;
+                w->a0 = (axis == 0 ? A->gx0 : A->gz0) + (float)k * CELL; w->a1 = w->a0 + CELL;
+                w->nx = (int8_t)(axis == 1 ? sgn : 0); w->nz = (int8_t)(axis == 0 ? sgn : 0);
+                w->other = (uint8_t)other; w->stall = (int16_t)stall;
+                open = 1;
+            }
+        }
+    }
+    return n;
+}
 void arcology_to_frame(const ALayout *A, float x, float z, float *fx, float *fz) { quarter_turn(4 - A->quarter, x, z, fx, fz); }
 
 int arcology_use_at(const ALayout *A, float fx, float fz) {
@@ -370,7 +423,7 @@ static int validate(Gen *G) {
 static void reset_attempt(Gen *G) {
     ALayout *A = G->A;
     memcpy(A->use, G->base, (size_t)A->nx * (size_t)A->nz);
-    A->ncol = A->nbeam = A->nconc = A->nportal = A->nblock = A->nstall = A->ncore = A->nstair = A->nbridge = 0;
+    A->ncol = A->nbeam = A->nconc = A->nportal = A->nblock = A->nstall = A->ncore = A->nstair = A->nbridge = A->nfhall = 0;
     A->nsign = A->nlamp = A->nduct = A->nfix = A->nlight = A->nshaft = A->nsearch = A->nsky = 0;
     A->nvoid = 0; A->nlevel = 0; A->topTier = -1;
     G->alen = 0; G->abuf[0] = 0; G->why[0] = 0;
@@ -390,6 +443,7 @@ static int attempt_layout(Gen *G) {
     place_stairs(G);
     find_blocks(G);
     place_stalls(G);
+    place_halls(G);
     place_food(G);
     place_galleries(G);
     place_fixtures(G);

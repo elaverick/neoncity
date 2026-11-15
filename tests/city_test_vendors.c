@@ -686,6 +686,32 @@ static int arc_vendor_cams(int argc, char **argv) {
     for (int s = 0; s < A->nstall; ++s) { food += arcology_food(A->stall[s].kind); flagged += A->stall[s].vendor; slim += A->stall[s].vendor && A->stall[s].out < 1.0f; }
     printf("arcology %08x at (%.1f, %.1f): %d stalls, %d of a food use, %d kit bars (%d standing counters)\n", b->seed, b->ox, b->oz,
            A->nstall, food, flagged, slim);
+    /* SF5b: its halls, their bars (wall stalls facing in), tables, fans and battens; views in from the mouth and across */
+    int hallBars = 0;
+    for (int h = 0; h < A->nfhall; ++h) {
+        const AHall *H = &A->fhall[h];
+        hallBars += H->nbar;
+        const int f = H->facing;
+        const float ox = (float)((f == 1) - (f == 3)), oz = (float)((f == 2) - (f == 0));   /* out of the mouth */
+        const float mid = 0.5f * (H->m0 + H->m1);
+        const float mx = f == 0 || f == 2 ? mid : H->line, mz = f == 0 || f == 2 ? H->line : mid;
+        const float cx = 0.5f * (H->box.x0 + H->box.x1), cz = 0.5f * (H->box.z0 + H->box.z1);
+        float views[3][4] = { { mx + ox * 4.0f, mz + oz * 4.0f, cx, cz },          /* from the concourse, in through the mouth */
+                              { mx - ox * 1.2f, mz - oz * 1.2f, cx - ox * 3.0f, cz - oz * 3.0f },   /* just inside, to the back */
+                              { cx - ox * 1.0f + oz * 2.0f, cz - oz * 1.0f - ox * 2.0f, mx, mz } };   /* across the tables to the mouth */
+        printf("  hall %d (%s, block %d): mouth %.1f m, roof %.2f, %.0f x %.0f m, %d bars, %d %s tables, %d fans, %d battens\n", h,
+               arcology_use_name(H->use), H->block, H->m1 - H->m0, H->roof, H->box.x1 - H->box.x0, H->box.z1 - H->box.z0, H->nbar, H->nseat,
+               H->seating == AH_LONG ? "long" : "hawker", H->nfan, H->nbatten);
+        for (int v = 0; v < 3; ++v) {
+            float ex, ez, tx, tz;
+            arcology_to_local(A, views[v][0], views[v][1], &ex, &ez);
+            arcology_to_local(A, views[v][2], views[v][3], &tx, &tz);
+            const double Ex = b->ox + b->c * ex - b->s * ez, Ez = b->oz + b->s * ex + b->c * ez;
+            const double Tx = b->ox + b->c * tx - b->s * tz, Tz = b->oz + b->s * tx + b->c * tz;
+            printf("    view %d: --cam %.2f %.2f %.1f %d %.1f\n", v, Ex, Ez, atan2(Tx - Ex, -(Tz - Ez)) * 57.2958, v == 2 ? -6 : -2,
+                   b->base + A->floorY + 1.65f);
+        }
+    }
     /* its sites, from the chunks its plot reaches */
     static VendorSpot s[MAX_VENDOR_SPOTS];
     static VendorSpot arc[AR_MAX_STALL];
@@ -697,11 +723,72 @@ static int arc_vendor_cams(int argc, char **argv) {
             for (int k = 0; k < n; ++k)
                 if (s[k].space == SPACE_ARC && s[k].bseed == b->seed && narc < AR_MAX_STALL) arc[narc++] = s[k];
         }
-    CHECK(narc == flagged, "arcology %08x: %d kit bar sites for %d units", b->seed, narc, flagged);
+    CHECK(narc == flagged + hallBars, "arcology %08x: %d kit bar sites for %d units and %d hall bars", b->seed, narc, flagged, hallBars);
+    /* SF5b: the halls' furniture in the vendor layers of the chunks its plot reaches: every table, fan and batten once */
+    {
+        int want[4] = { 0 }, got[4] = { 0 };
+        for (int h = 0; h < A->nfhall; ++h) { want[0] += A->fhall[h].nseat; want[1] += A->fhall[h].nfan; want[2] += A->fhall[h].nbatten; want[3] += A->fhall[h].nbatten; }
+        for (int cz = (int)floor((b->oz - reach) / CHUNK_SIZE); cz <= (int)floor((b->oz + reach) / CHUNK_SIZE); ++cz)
+            for (int cx = (int)floor((b->ox - reach) / CHUNK_SIZE); cx <= (int)floor((b->ox + reach) / CHUNK_SIZE); ++cx) {
+                Mesh km;
+                memset(&km, 0, sizeof(km));
+                city_build_vendor_kit(cx, cz, &km);
+                for (uint32_t k = 0; k < km.nkit; ++k) {
+                    const int md = km.kit[k].module;
+                    got[0] += md == PMK_HAWKER_TABLE || md == PMK_LONG_TABLE; got[1] += md == PMK_CEILING_FAN;
+                    got[2] += md == PMK_BATTEN; got[3] += md == PMK_BATTEN_TUBE;
+                }
+                mesh_free(&km);
+            }
+        printf("  halls' furniture in the vendor layers: %d of %d tables, %d of %d fans, %d of %d battens (%d second tubes)\n", got[0], want[0], got[1], want[1],
+               got[2], want[2], got[3]);
+        CHECK(got[0] == want[0] && got[1] == want[1] && got[2] == want[2] && got[3] == want[3], "arcology %08x: the halls' furniture isn't all set down once", b->seed);
+        /* and as the streamer gets it: the bodies the base layers list, each built on its own */
+        int gotB[4] = { 0 }, bodies = 0;
+        for (int cz = (int)floor((b->oz - reach) / CHUNK_SIZE); cz <= (int)floor((b->oz + reach) / CHUNK_SIZE); ++cz)
+            for (int cx = (int)floor((b->ox - reach) / CHUNK_SIZE); cx <= (int)floor((b->ox + reach) / CHUNK_SIZE); ++cx) {
+                Mesh base;
+                memset(&base, 0, sizeof(base));
+                city_build_mesh(cx, cz, &base);
+                const uint32_t cap = (uint32_t)MAX_CHUNK_PAGES * PAGE_VERTS;   /* (the streamer truncates past it) */
+                CHECK(base.count <= cap, "chunk (%d, %d): its base layer has %u vertices (most %u)", cx, cz, base.count, cap);
+                {
+                    Mesh mi;
+                    memset(&mi, 0, sizeof(mi));
+                    city_build_interiors(cx, cz, &mi);
+                    CHECK(mi.count <= cap, "chunk (%d, %d): its interiors have %u vertices (most %u)", cx, cz, mi.count, cap);
+                    mesh_free(&mi);
+                }
+                for (uint32_t bi = 0; bi < base.nvbody; ++bi) {
+                    Mesh km;
+                    memset(&km, 0, sizeof(km));
+                    city_build_vendor_body(cx, cz, (int)bi, &km);
+                    CHECK(km.count <= cap, "chunk (%d, %d): vendor body %u has %u vertices (most %u)", cx, cz, bi, km.count, cap);
+                    int hallBody = 0;
+                    for (uint32_t k = 0; k < km.nkit; ++k) {
+                        const int md = km.kit[k].module;
+                        const int t = md == PMK_HAWKER_TABLE || md == PMK_LONG_TABLE ? 0 : md == PMK_CEILING_FAN ? 1 : md == PMK_BATTEN ? 2 : md == PMK_BATTEN_TUBE ? 3 : -1;
+                        if (t >= 0) { gotB[t]++; hallBody = 1; }
+                    }
+                    bodies += hallBody;
+                    mesh_free(&km);
+                }
+                mesh_free(&base);
+            }
+        printf("  as streamed: %d hall bodies, %d tables, %d fans, %d battens (%d second tubes)\n", bodies, gotB[0], gotB[1], gotB[2], gotB[3]);
+        CHECK(gotB[0] == want[0] && gotB[1] == want[1] && gotB[2] == want[2] && gotB[3] == want[3], "arcology %08x: the halls' bodies don't hold all their furniture once", b->seed);
+    }
     Vendor *V = (Vendor *)malloc(sizeof(Vendor));
     int built = 0, trades[VT_COUNT] = { 0 }, stools = 0;
     for (int k = 0; k < narc; ++k) {
         const int ok = vendor_generate(&arc[k].site, VTIER_STANDARD, NULL, 0, V, NULL);
+        if (arc[k].site.recess <= 0.0f) {   /* SF5b: a hall's wall stall */
+            CHECK(ok && vendor_is_kit(V->archetype) && V->nb.form == NB_STRAIGHT && V->nb.top <= arc[k].site.ceiling + 1e-3f,
+                  "arcology %08x: no wall stall in the hall at (%.1f, %.1f) (%.2f x %.2f, roof %.2f; form %d)", b->seed, arc[k].x, arc[k].z,
+                  arc[k].site.w, arc[k].site.d, arc[k].site.ceiling, ok ? V->nb.form : -1);
+            if (ok) { built++; trades[V->trade]++; stools += V->nb.stools; }
+            continue;
+        }
         CHECK(ok && vendor_is_kit(V->archetype) && V->nb.recess > 0.0f, "arcology %08x: no recessed bar on the unit at (%.1f, %.1f) (%.2f x %.2f, head %.2f)",
               b->seed, arc[k].x, arc[k].z, arc[k].site.w, arc[k].site.d, arc[k].site.ceiling);
         if (!ok) continue;
@@ -716,8 +803,10 @@ static int arc_vendor_cams(int argc, char **argv) {
     printf("  %d of %d sites built (%d with stools):", built, narc, stools);
     for (int t = 0; t < VT_COUNT; ++t) if (trades[t]) printf(" %s %d", vendor_trade_name(t), trades[t]);
     printf("\n");
-    for (int k = 0; k < narc && k < 6; ++k) {
+    for (int k = 0, shown = 0; k < narc && shown < 6; ++k) {
         const VendorSpot *q = &arc[k];
+        if (q->site.recess <= 0.0f) continue;   /* (the halls' views are above) */
+        shown++;
         double tx, tz, ex, ez, fx, fz;
         vendor_spot_world(q, 0.0, q->site.recess - 1.0, &tx, &tz);
         vendor_spot_world(q, 1.2, q->site.d + 3.0, &ex, &ez);

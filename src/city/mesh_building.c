@@ -53,7 +53,7 @@ static int behind_lined(const Behind *bh, const EdgeInfo *e, float u) {
     float px = e->ax + e->ex * u + e->ez * 0.4f, pz = e->az + e->ez * u - e->ex * 0.4f, fx, fz;
     arcology_to_frame(bh->A, px, pz, &fx, &fz);
     int use = arcology_use_at(bh->A, fx, fz);
-    return use == AU_BLOCK || use == AU_STALL || use == AU_CORE || use == AU_STAIR || use == AU_SPINE || use == AU_KIOSK;
+    return use == AU_BLOCK || use == AU_STALL || use == AU_CORE || use == AU_STAIR || use == AU_SPINE || use == AU_KIOSK || use == AU_FOOD;
 }
 
 /* Openings cut through face k of loop li: (u0, u1, top) — the lobby's entrance or the arcology's portals. */

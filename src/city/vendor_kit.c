@@ -229,6 +229,96 @@ static void kit_vendor(void *ctx, const VendorSpot *s, const Vendor *v) {
     }
 }
 
+/* SF5b: a food hall's furniture (arcology.h AHall) as kit instances: its tables (a hawker table and its fixed stools
+ * in a noodle hall, a long table and its benches in a night market) on the floor, its fans and twin-tube battens hung
+ * from the roof (low, on drop rods: arcology_hall_batten_y); those standing in the chunk. Every other batten's second
+ * tube (PMK_BATTEN_TUBE, an instance of its own) keeps the hours of the bar nearest it, as its light does (one light a
+ * batten, mesh_vendor.c light_hall), so the hall dims round the shut bars and to half once every bar is shut (the
+ * user, SF5b: always walk-in, dimmed when every bar's shut). */
+static void hall_inst(Mesh *m, int module, double wx, double y, double wz, float ax, float az, float yaw, float ys, uint32_t flags,
+                      uint32_t seed, uint8_t hours, float base) {
+    if (wx < m->ox || wx >= m->ox + CHUNK_SIZE || wz < m->oz || wz >= m->oz + CHUNK_SIZE) return;
+    if (m->nkit + 1 > m->capkit) {
+        m->capkit = (m->nkit + 1) * 2;
+        m->kit = (KitInst *)realloc(m->kit, sizeof(KitInst) * m->capkit);
+        if (!m->kit) fatal("out of memory setting down the halls' kit");
+    }
+    KitInst *k = &m->kit[m->nkit++];
+    memset(k, 0, sizeof(*k));
+    /* the module's x along (ax, az) turned by yaw, its z square to it, y up */
+    const float c = cosf(yaw), s = sinf(yaw);
+    const float mx = c * ax - s * az, mz = c * az + s * ax;
+    const float px[3] = { (float)(wx - m->ox), (float)y, (float)(wz - m->oz) };
+    k->xf[0] = mx;   k->xf[1] = 0.0f; k->xf[2] = -mz;  k->xf[3] = px[0];
+    k->xf[4] = 0.0f; k->xf[5] = ys;   k->xf[6] = 0.0f; k->xf[7] = px[1];   /* (ys: stretched up and down, a drop rod) */
+    k->xf[8] = mz;   k->xf[9] = 0.0f; k->xf[10] = mx;  k->xf[11] = px[2];
+    k->module = (uint16_t)module;
+    k->seed = seed;
+    k->flags = (uint16_t)flags;
+    k->base = base;
+    k->hours = hours;
+    k->show = NB_SHOW_ALWAYS;
+    for (int a = 0; a < 3; ++a) {
+        m->mn[a] = minf(m->mn[a], px[a] - KIT_PAD);
+        m->mx[a] = maxf(m->mx[a], px[a] + KIT_PAD);
+    }
+}
+/* The halls' bodies: each hall with furniture in the chunk, its key and its instances' range in Mesh.kit. */
+typedef struct HallRange { uint64_t key; uint32_t first, count; } HallRange;
+typedef struct HallEmit { Mesh *m; HallRange r[32]; int n; } HallEmit;
+static void kit_hall(void *ctx, const Building *b, const ALayout *A, float floorY, int hall) {
+    HallEmit *HE = (HallEmit *)ctx;
+    Mesh *m = HE->m;
+    const AHall *H = &A->fhall[hall];
+    double mx, mz;
+    float rr;
+    if (HE->n >= 32 || !city_hall_in_chunk(b, A, hall, m->ox, m->oz, &mx, &mz, &rr)) return;
+    HallRange *range = &HE->r[HE->n++];
+    range->key = city_hall_key(b, hall);
+    range->first = m->nkit;
+    float ax, az;
+    city_arc_dir(b, A, 1.0f, 0.0f, &ax, &az);   /* the frame's +x, world */
+    double cx, cz;
+    city_arc_world(b, A, 0.5f * (H->box.x0 + H->box.x1), 0.5f * (H->box.z0 + H->box.z1), &cx, &cz);
+    const float aff = plan_affluence(cx, cz);
+    /* the hall's trim coat and wear as a vendor's (nb_finish), its tubes' white: cold in a noodle hall, cool white in a
+     * night market */
+    const float wearF = clampf(1.0f - aff + 0.3f * (hash_float(hash_combine(H->seed, 9u)) - 0.5f), 0.0f, 1.0f);
+    const uint32_t white = H->use == AB_NOODLE ? NB_WHITE_6500 : NB_WHITE_5000;
+    const uint32_t flags = (uint32_t)(wearF * 15.0f + 0.5f) | (nb_finish(aff, H->seed) & ~NB_FINISH_BARE_WOOD) | white << KIT_FLAG_GLOW_SHIFT;
+    const float roof = floorY + H->roof;
+    for (int k = 0; k < H->nseat; ++k) {
+        double wx, wz;
+        city_arc_world(b, A, H->seat[k][0], H->seat[k][1], &wx, &wz);
+        hall_inst(m, H->seating == AH_LONG ? PMK_LONG_TABLE : PMK_HAWKER_TABLE, wx, floorY, wz, ax, az, H->seat[k][2], 1.0f, flags,
+                  hash_combine(H->seed, 0x7AB0u + (uint32_t)k), 0, floorY);
+    }
+    for (int k = 0; k < H->nfan; ++k) {
+        double wx, wz;
+        city_arc_world(b, A, H->fan[k][0], H->fan[k][1], &wx, &wz);
+        hall_inst(m, PMK_CEILING_FAN, wx, roof, wz, ax, az, 6.2831853f * hash_float(hash_combine(H->seed, 0xFA40u + (uint32_t)k)), 1.0f, flags,
+                  hash_combine(H->seed, 0xFA00u + (uint32_t)k), 0, floorY);
+    }
+    for (int k = 0; k < H->nbatten; ++k) {
+        const float *bt = H->batten[k];
+        double wx, wz;
+        city_arc_world(b, A, bt[0], bt[1], &wx, &wz);
+        const float yaw = bt[2] > 0.5f ? 1.5707963f : 0.0f;
+        const uint32_t seed = hash_combine(H->seed, 0xBA70u + (uint32_t)k);
+        /* hung low (arcology_hall_batten_y), its two drop rods up to the roof */
+        const float top = floorY + arcology_hall_batten_y(H->roof) + 0.352f;
+        hall_inst(m, PMK_BATTEN, wx, top, wz, ax, az, yaw, 1.0f, flags, seed, 0, floorY);
+        hall_inst(m, PMK_BATTEN_TUBE, wx, top, wz, ax, az, yaw, 1.0f, flags, seed, (k & 1) ? city_hall_batten_hours(b, A, hall, k) : 0, floorY);   /* (as its light: mesh_vendor.c) */
+        if (roof - top > 0.05f) {
+            float ux, uz;   /* along it, world */
+            city_arc_dir(b, A, bt[2] > 0.5f ? 0.0f : 1.0f, bt[2] > 0.5f ? 1.0f : 0.0f, &ux, &uz);
+            for (int e = -1; e <= 1; e += 2)
+                hall_inst(m, PMK_DROP_ROD, wx + ux * 0.55 * e, roof, wz + uz * 0.55 * e, ax, az, 0.0f, roof - top, flags, seed, 0, floorY);
+        }
+    }
+    range->count = m->nkit - range->first;
+}
+
 static void build_kit(int cx, int cz, int want, Mesh *m) {
     mesh_begin(m, cx, cz);
     m->nkit = 0;
@@ -237,7 +327,39 @@ static void build_kit(int cx, int cz, int want, Mesh *m) {
     memset(&E, 0, sizeof(E));
     E.m = m;
     E.want = want;
-    city_chunk_vendors(cx, cz, kit_vendor, &E);
+    ChunkGen g;
+    chunk_gen_init(&g, cx, cz, PROPS_PLAN_PAD, PROPS_BUILD_PAD, PROPS_LAMP_PAD);
+    city_vendors(&g, kit_vendor, &E);
+    /* SF5b: the halls' furniture: every hall's (the whole layer: city_test), or the one hall body `want` is (the bodies
+     * after the bars', mesh_vendor.c build_vendors: in their keys' order) */
+    if (want < 0 || want >= E.seen) {
+        const uint32_t before = m->nkit;
+        HallEmit *HE = (HallEmit *)calloc(1, sizeof(HallEmit));
+        if (!HE) fatal("out of memory setting down the halls");
+        HE->m = m;
+        city_halls(&g, 110.0, kit_hall, HE);
+        if (want >= 0) {
+            /* keep only the wanted hall's (its rank among the keys) */
+            const int rank = want - E.seen;
+            int pick = -1;
+            for (int i = 0; i < HE->n; ++i) {
+                int below = 0;
+                for (int j = 0; j < HE->n; ++j) below += HE->r[j].key < HE->r[i].key;
+                if (below == rank) pick = i;
+            }
+            const uint32_t first = pick >= 0 ? HE->r[pick].first : before, count = pick >= 0 ? HE->r[pick].count : 0;
+            memmove(m->kit + before, m->kit + first, sizeof(KitInst) * count);
+            m->nkit = before + count;
+            for (int a = 0; a < 3; ++a) { m->mn[a] = 1e30f; m->mx[a] = -1e30f; }
+            for (uint32_t k = 0; k < m->nkit; ++k)
+                for (int a = 0; a < 3; ++a) {
+                    m->mn[a] = minf(m->mn[a], m->kit[k].xf[a * 4 + 3] - KIT_PAD);
+                    m->mx[a] = maxf(m->mx[a], m->kit[k].xf[a * 4 + 3] + KIT_PAD);
+                }
+        }
+        free(HE);
+    }
+    chunk_gen_free(&g);
     pm_inst_free(&E.inst);
     pm_mesh_free(&E.body);
     pm_mesh_free(&E.none);

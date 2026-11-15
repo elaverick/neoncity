@@ -802,7 +802,10 @@ static int upload_ready(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t
         Entry *e = &cs->entries[cs->ready[r]];
         uint32_t vc = e->mesh.count;
         int np = (int)((vc + PAGE_VERTS - 1) / PAGE_VERTS);
-        if (np > MAX_CHUNK_PAGES) { np = MAX_CHUNK_PAGES; vc = np * PAGE_VERTS; fprintf(stderr, "chunk too large, truncated\n"); }
+        if (np > MAX_CHUNK_PAGES) {
+            fprintf(stderr, "chunk (%d, %d) layer %d too large (%u vertices), truncated\n", e->cx, e->cz, e->layer, vc);
+            np = MAX_CHUNK_PAGES; vc = np * PAGE_VERTS;
+        }
         VkDeviceSize bytes = (VkDeviceSize)vc * sizeof(Vertex);
         VkDeviceSize lbytes = (VkDeviceSize)e->mesh.nlights * 16;
         VkDeviceSize lightOff = (stgOff + bytes + 255) & ~(VkDeviceSize)255;

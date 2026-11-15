@@ -210,7 +210,7 @@ static void emit_arc_floor(Mesh *m, const BGraph *g, const ALayout *A) {
     }
     ARect *rc = (ARect *)malloc(sizeof(ARect) * 1024);
     if (!rc) fatal("out of memory realising an arcology");
-    static const struct { int use, var; } F[] = { { AU_COLONNADE, 4 }, { AU_PLAZA, 0 }, { AU_HALL, 2 }, { AU_YARD, 1 }, { AU_STALL, 3 }, { AU_COREHALL, 6 }, { AU_KIOSK, 7 } };
+    static const struct { int use, var; } F[] = { { AU_COLONNADE, 4 }, { AU_PLAZA, 0 }, { AU_HALL, 2 }, { AU_YARD, 1 }, { AU_STALL, 3 }, { AU_COREHALL, 6 }, { AU_KIOSK, 7 }, { AU_FOOD, 3 } };
     for (int f = 0; f < (int)ARRAY_LEN(F); ++f) {
         int n = arc_rects_skip(A, 1u << F[f].use, -1, F[f].use == AU_COLONNADE ? paved : NULL, rc, 1024);
         Mat mt = iframe(m, amat(A, ARS_FLOOR, F[f].var, 0.0f));
@@ -413,6 +413,79 @@ static void emit_arc_blocks(Mesh *m, const ALayout *A) {
         Mat roof = iframe(m, amat(A, ARS_ROOF, B->use, 0.0f));
         for (int k = 0; k < n; ++k) aflat(m, A, rc[k], fy + B->height, 0, NULL, roof);
     }
+    free(rc);
+}
+
+/* SF5b: a food hall (arcology.h AHall): its walls (plaster inside; outside, the block's face where the street or a
+ * stall's roof sees it), the mouth's piers and header, the roof slab (its top the block's roof, its underside
+ * a painted steel deck), light steel beams under it running in from the mouth. Where a stall unit's side stands on the wall the
+ * stall draws that face up to its roof: the hall's starts over it. What stands in it (bars, tables, fans, battens) is
+ * the vendor layers' (src/city/vendor_kit.c, mesh_vendor.c). */
+#define HALL_BEAM_D 0.25f
+static void emit_arc_halls(Mesh *m, const ALayout *A) {
+    const float fy = A->floorY;
+    AHallWall *wl = (AHallWall *)malloc(sizeof(AHallWall) * 1024);
+    ARect *rc = (ARect *)malloc(sizeof(ARect) * 512);
+    if (!wl || !rc) fatal("out of memory realising an arcology's halls");
+    for (int h = 0; h < A->nfhall; ++h) {
+        const AHall *H = &A->fhall[h];
+        const float roof = fy + H->roof, slab = roof + 0.15f;
+        Mat in = amat(A, ARS_FASCIA, 9, 0.0f), out = amat(A, ARS_BLOCK, H->use, 0.0f), dark = amat(A, ARS_FASCIA, 1, 0.0f);
+        Mat steel = amat(A, ARS_METAL, 0, 0.0f), under = amat(A, ARS_METAL, 0, 0.0f);   /* (a painted steel deck, as the beams) */
+        in.seed = under.seed = H->seed;
+        out.seed = hash_combine(A->seed, (uint32_t)H->block);
+        const int nw = arcology_hall_walls(A, h, wl, 1024);
+        for (int k = 0; k < nw; ++k) {
+            const AHallWall *w = &wl[k];
+            /* each face 3 mm off the line, out of the way of whatever stands on it (a bar's back, a unit's side) */
+            float x0, z0, x1, z1;
+            const float ix = 0.003f * (float)w->nx, iz = 0.003f * (float)w->nz;
+            if (w->nz) { x0 = w->a0; x1 = w->a1; z0 = z1 = w->line; } else { z0 = w->a0; z1 = w->a1; x0 = x1 = w->line; }
+            const float u0 = w->a0, u1 = w->a1;
+            /* inside: from the floor, or over a stall's side (its own face) */
+            float iy = fy;
+            if (w->other == AU_STALL && w->stall >= 0) {
+                const AStall *st = &A->stall[w->stall];
+                if (((st->facing == 1) - (st->facing == 3)) * w->nx + ((st->facing == 2) - (st->facing == 0)) * w->nz == 0) iy = fy + (st->vendor ? st->head : 3.2f) + 0.15f;
+            }
+            awall(m, A, x0 + ix, z0 + iz, x1 + ix, z1 + iz, iy, roof, (float)w->nx, (float)w->nz, u0, u1, iy - fy, H->roof, in);
+            /* outside (none against the facade, which is lined there): to the slab's top */
+            if (w->other != AU_OUT)
+                awall(m, A, x0 - ix, z0 - iz, x1 - ix, z1 - iz, fy, slab, (float)-w->nx, (float)-w->nz, u0, u1, 0.0f, slab - fy, out);
+        }
+        /* the mouth: piers inside its line, the header over them to the slab's top */
+        const int mx = H->facing == 0 || H->facing == 2;
+        const float in1 = H->facing == 0 || H->facing == 3 ? 1.0f : -1.0f;   /* into the hall from the line */
+        const float l0 = H->line, l1 = H->line + in1 * 0.3f, p1 = H->line + in1 * AR_HALL_PIER;
+        if (mx) abox(m, A, H->m0, minf(l0, l1), H->m1, maxf(l0, l1), fy + H->head, slab, F_SIDES | F_TOP | F_BOT, dark);
+        else    abox(m, A, minf(l0, l1), H->m0, maxf(l0, l1), H->m1, fy + H->head, slab, F_SIDES | F_TOP | F_BOT, dark);
+        for (int k = 0; k < H->npier; ++k) {
+            const float a = H->pier[k], hp = 0.5f * AR_HALL_PIER;
+            if (mx) abox(m, A, a - hp, minf(l0, p1), a + hp, maxf(l0, p1), fy, fy + H->head, F_SIDES, steel);
+            else    abox(m, A, minf(l0, p1), a - hp, maxf(l0, p1), a + hp, fy, fy + H->head, F_SIDES, steel);
+        }
+        /* the roof */
+        const int nr = arc_rects(A, 1u << AU_FOOD, H->block, rc, 512);
+        Mat top = iframe(m, amat(A, ARS_ROOF, H->use, 0.0f)), soffit = iframe(m, under);
+        for (int k = 0; k < nr; ++k) { aflat(m, A, rc[k], slab, 0, NULL, top); aflat(m, A, rc[k], roof, 1, NULL, soffit); }
+        /* beams under it, running in from the mouth every 3 m along it, over the hall's floor */
+        for (float a = H->m0 + 1.5f; a < (mx ? H->box.x1 : H->box.z1) - 0.5f; a += 3.0f) {
+            const float b0 = mx ? H->box.z0 : H->box.x0, b1 = mx ? H->box.z1 : H->box.x1;
+            float start = 0.0f;
+            int run = 0;
+            for (float t = b0; t <= b1 + 1e-3f; t += AR_CELL) {
+                const float x = mx ? a : t + 0.25f, z = mx ? t + 0.25f : a;
+                int ok = t < b1 && arcology_use_at(A, x, z) == AU_FOOD;
+                if (ok && !run) { run = 1; start = t; }
+                if (ok || !run) continue;
+                run = 0;
+                if (t - start < 2.0f) continue;
+                if (mx) abox(m, A, a - 0.08f, start, a + 0.08f, t, roof - HALL_BEAM_D, roof, F_SIDES | F_BOT, steel);
+                else    abox(m, A, start, a - 0.08f, t, a + 0.08f, roof - HALL_BEAM_D, roof, F_SIDES | F_BOT, steel);
+            }
+        }
+    }
+    free(wl);
     free(rc);
 }
 
@@ -928,6 +1001,7 @@ void emit_arcology(Mesh *m, const BGraph *g, const ALayout *A) {
         emit_arc_lifts(m, A, s->r, s->facing, 1, 1.2f, 2.2f, 2);
     }
     emit_arc_blocks(m, A);
+    emit_arc_halls(m, A);
     for (int s = 0; s < A->nstall; ++s) emit_arc_stall(m, A, &A->stall[s]);
     for (int f = 0; f < A->nfix; ++f) emit_arc_fixture(m, A, &A->fix[f]);
     emit_arc_retrofit(m, A);

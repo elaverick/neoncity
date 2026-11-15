@@ -45,9 +45,10 @@ enum { AC_SPINE = 0, AC_TWIN, AC_WELL, AC_PLAZA };                 /* canyon mod
 enum { AP_CROSS = 0, AP_GRID, AP_BOULEVARD };                      /* concourse patterns */
 enum { AS_STREET = 0, AS_HABITAT, AS_COMMERCE, AS_CORPORATE };     /* strata */
 
-/* What each concourse-level cell is. Public walkable: concourse, colonnade, plaza, hall. */
+/* What each concourse-level cell is. Public walkable: concourse, colonnade, plaza, hall, and a food hall's floor
+ * (AU_FOOD, SF5b: a noodle hall's or night market's block opened up, place_halls). */
 enum { AU_OUT = 0, AU_CONCOURSE, AU_COLONNADE, AU_PLAZA, AU_HALL, AU_SPINE, AU_CORE, AU_COREHALL,
-       AU_STAIR, AU_BLOCK, AU_STALL, AU_KIOSK, AU_YARD, AU_COUNT };
+       AU_STAIR, AU_BLOCK, AU_STALL, AU_KIOSK, AU_YARD, AU_FOOD, AU_COUNT };
 
 /* One use per market block (section 11.6, step 5). */
 enum { AB_MARKET = 0, AB_NOODLE, AB_ARCADE, AB_CLINIC, AB_CAPSULE, AB_REPAIR, AB_BATH, AB_EXCHANGE,
@@ -87,6 +88,43 @@ typedef struct AStall { ARect r; uint8_t facing, block, kind, closed, vendor; fl
 #define AR_BAR_BOARD    3.11f
 #define AR_BAR_BOARD_H  0.95f
 #define AR_BAR_BOARD_MIN 0.3f
+/* SF5b (street vendors, ~/.claude/plans/street-vendors.md "SF5b"): a noodle hall's or night market's block opened
+ * into a hall you walk into (the user's calls: only those blocks, one mouth, seating by the hall's use, always open).
+ * Its mouth is the block's longest row of stall units on a concourse, given up: open between piers under a header
+ * on the line (z for facing 0 and 2, else x) from m0 to m1, facing out of the hall. The rest of the block (its other
+ * stall units keep their places, their backs the hall's walls) is its floor (AU_FOOD) under its roof (the block's
+ * height). Bars stand against its walls facing in (a wall stall's site: its back's middle, facing, w across, d deep;
+ * src/city/vendor_sites.c arc_halls); in the middle, tables (x, z, a quarter turn or not: hawker tables in a noodle
+ * hall, long tables in a night market); under the roof, fans (x, z) and twin-tube battens (x, z, along z or not). */
+#define AR_MAX_HALL      4
+#define AR_HALL_BARS     16
+#define AR_HALL_SEATS    24
+#define AR_HALL_FANS     12
+#define AR_HALL_BATTENS  24
+#define AR_HALL_PIERS    8
+enum { AH_ROUND = 0, AH_LONG };    /* the seating: hawker tables, long tables */
+typedef struct AHallBar { float bx, bz, w, d; uint8_t facing; } AHallBar;
+typedef struct AHall {
+    uint8_t  block, use, facing, seating;
+    float    line, m0, m1;          /* the mouth */
+    float    roof, head;            /* over the floor: the roof's underside, the mouth's header's bottom */
+    ARect    box;                   /* the hall's cells' bounds */
+    int      nbar, nseat, nfan, nbatten, npier;
+    AHallBar bar[AR_HALL_BARS];
+    float    seat[AR_HALL_SEATS][3];
+    float    fan[AR_HALL_FANS][2];
+    float    batten[AR_HALL_BATTENS][3];
+    float    pier[AR_HALL_PIERS];   /* the piers' middles along the mouth (on the line, AR_HALL_PIER square inside it) */
+    uint32_t seed;
+} AHall;
+#define AR_HALL_PIER 0.4f
+/* The battens' tubes hang this high over the floor (or 0.35 m under the roof if that's lower), on drop rods from it: low,
+ * their light kept short (shaders/common.glsl vendorReach), so each patch of floor is lit by the few round it */
+#define AR_HALL_BATTEN_Y 3.3f
+static inline float arcology_hall_batten_y(float roof) { return roof - 0.352f < AR_HALL_BATTEN_Y ? roof - 0.352f : AR_HALL_BATTEN_Y; }
+/* A run of a hall's wall: on the line (z if nz, else x) from a0 to a1 along it, its face into the hall (nx, nz), what
+ * stands beyond (AU_*) and, beyond it a stall unit, which (else -1). The mouth isn't wall. */
+typedef struct AHallWall { float line, a0, a1; int8_t nx, nz; uint8_t other; int16_t stall; } AHallWall;
 typedef struct ACore { ARect r; int topTier, lifts; uint8_t door; } ACore;     /* door: the side its hall leaves by */
 typedef struct AStair { ARect r; uint8_t facing; } AStair;
 typedef struct ABridge { int level; ARect r; uint8_t axis; } ABridge;           /* axis: the span runs along x (0) or z (1) */
@@ -135,7 +173,7 @@ typedef struct ALayout {
     float    crownY;                       /* the light crown: the canyon's glazed cap */
     int      nlevel;
     float    levelY[AR_MAX_LEVEL];         /* gallery floors */
-    int      ncol, nbeam, nconc, nportal, nblock, nstall, ncore, nstair, nbridge;
+    int      ncol, nbeam, nconc, nportal, nblock, nstall, ncore, nstair, nbridge, nfhall;
     AColumn  col[AR_MAX_COL];
     ABeam    beam[AR_MAX_BEAM];
     AConcourse conc[AR_MAX_CONC];
@@ -145,6 +183,7 @@ typedef struct ALayout {
     ACore    core[AR_MAX_CORE];
     AStair   stair[AR_MAX_STAIR];
     ABridge  bridge[AR_MAX_BRIDGE];
+    AHall    fhall[AR_MAX_HALL];       /* SF5b: the food halls */
     /* dressing */
     int      nsign, nlamp, nduct, nfix, nlight, nshaft, nsearch, nsky;
     ASign    sign[AR_MAX_SIGN];
@@ -175,6 +214,8 @@ int         arcology_public(int use);                                    /* walk
 int         arcology_food(int kind);                                     /* SF5: a use whose stalls cook (AB_*) */
 /* SF5: the unit's back (the block's face) middle and its front direction, in the frame; its width across it */
 void        arcology_stall_frame(const AStall *st, float *bx, float *bz, float *fx, float *fz, float *w, float *d);
+/* SF5b: hall `hall`'s wall runs (AHallWall); returns how many. */
+int arcology_hall_walls(const ALayout *A, int hall, AHallWall *out, int max);
 const char *arcology_canyon_name(int m);
 const char *arcology_pattern_name(int p);
 const char *arcology_use_name(int u);

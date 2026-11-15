@@ -375,7 +375,8 @@ uint  vendorKind(uint w) { return (w >> 2) & 3u; }
 float vendorLen(uint w) { return float((w >> 24) & 31u) * 0.125; }
 vec3  vendorWay(uint w) { float a = float((w >> 16) & 255u) * (6.2831853 / 256.0); return vec3(cos(a), 0.0, sin(a)); }
 // how far each kind reaches (light_tiles.c VL_REACH)
-float vendorReach(uint w) { uint k = vendorKind(w); return k == VL_TUBE ? 9.0 : k == VL_LAMP ? 5.0 : k == VL_FLAME ? 1.6 : 6.0; }
+// (a tube with its flicker bits 1: a food hall's batten (SF5b), hung low, its light kept short among its many neighbours)
+float vendorReach(uint w) { uint k = vendorKind(w); return k == VL_TUBE ? (((w >> 29) & 3u) == 1u ? 5.0 : 9.0) : k == VL_LAMP ? 5.0 : k == VL_FLAME ? 1.6 : 6.0; }
 // the whites by temperature (src/gen/noodle_bar.h NB_WHITE_*): 6500, 5000, 3000, 2700 K; then the burners' blue,
 // and coals' and a spit's radiants' orange (NB_EMBER, SF1)
 vec3 vendorWhite(uint i) {

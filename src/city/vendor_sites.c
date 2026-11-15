@@ -1198,6 +1198,115 @@ static void prune_shut_in(SGen *S) {
  * kit bar (AStall.vendor): SF3's recessed straight form, its back on the block's face, the building line on the unit's
  * front, its hood and stools out over the colonnade (st->out). One group per market block, in stall order. A noodle
  * hall's bars cook noodles, soup or dumplings; a night market's choose as any bar does. */
+/* ------------------------------------------------------- SF5b: the halls --- */
+
+void city_arc_world(const Building *b, const ALayout *A, float fx, float fz, double *wx, double *wz) {
+    float lx, lz;
+    arcology_to_local(A, fx, fz, &lx, &lz);
+    const DVec2 w = to_world(b, lx, lz);
+    *wx = w.x; *wz = w.z;
+}
+void city_arc_dir(const Building *b, const ALayout *A, float dx, float dz, float *wx, float *wz) {
+    float ux, uz;
+    arcology_to_local(A, dx, dz, &ux, &uz);   /* (a quarter turn: a direction turns as a point) */
+    *wx = (float)(b->c * ux - b->s * uz); *wz = (float)(b->s * ux + b->c * uz);
+}
+/* A hall bar's trade: a noodle hall's noodles, soup and dumplings in turn; a night market's dealt from every trade
+ * shuffled (by the hall), so none repeats in a hall before all have stood there. Fixed at the site (not chosen as
+ * the vendor's made) so the hours its bar keeps are known without making it (city_hall_bar_hours). */
+static int hall_trade(const AHall *H, int k) {
+    if (H->use == AB_NOODLE) {
+        static const int8_t T[3] = { VT_NOODLE, VT_SOUP, VT_DUMPLING };
+        return T[(hash_u32(H->seed ^ 0xF00Du) + (uint32_t)k) % 3u];
+    }
+    int deck[VT_COUNT];
+    for (int i = 0; i < VT_COUNT; ++i) deck[i] = i;
+    for (int i = VT_COUNT - 1; i > 0; --i) {
+        const int j = (int)(hash_u32(hash_combine(H->seed, 0xDEC0u + (uint32_t)i)) % (uint32_t)(i + 1));
+        const int t = deck[i]; deck[i] = deck[j]; deck[j] = t;
+    }
+    return deck[k % VT_COUNT];
+}
+void city_hall_bar(const Building *b, const ALayout *A, int hall, int k, VendorSpot *sp) {
+    const AHall *H = &A->fhall[hall];
+    const AHallBar *br = &H->bar[k];
+    double wx, wz;
+    city_arc_world(b, A, br->bx, br->bz, &wx, &wz);
+    memset(sp, 0, sizeof(*sp));
+    sp->x = wx; sp->z = wz;
+    city_arc_dir(b, A, (float)((br->facing == 1) - (br->facing == 3)), (float)((br->facing == 2) - (br->facing == 0)), &sp->fx, &sp->fz);
+    sp->site.w = br->w; sp->site.d = br->d;
+    sp->y = building_base(b) + A->floorY + 0.025f;   /* on the hall's tiles (mesh_arcology.c emit_arc_floor) */
+    sp->ground = sp->y;
+    sp->walk = VENDOR_WALK_LOT;   /* (the planner kept it clear: arcology_subdivide.c HALL_WAY) */
+    sp->site.ceiling = H->roof;
+    sp->site.affluence = plan_affluence(wx, wz);
+    sp->site.hostWall = 1;
+    sp->site.archetype = VA_CANOPY;
+    sp->site.trade = (int8_t)hall_trade(H, k);
+    sp->bseed = b->seed;
+    sp->head = H->roof;
+    sp->group = hash_combine(hash_combine(b->seed, 0xF00Du), (uint32_t)H->block);
+    sp->member = (uint16_t)k;
+    sp->site.seed = hash_combine(sp->group, (uint32_t)k + 1u);   /* (as keep_site gives it) */
+}
+uint8_t city_hall_bar_hours(const VendorSpot *s) {
+    static NbPlan p;   /* (nb_hours reads its seed and trade; the plan's too big for the stack it shares) */
+    memset(&p, 0, sizeof(p));
+    p.seed = s->site.seed; p.trade = s->site.trade;
+    return nb_hours(&p, 0);
+}
+int city_hall_in_chunk(const Building *b, const ALayout *A, int hall, double ox, double oz, double *mx, double *mz, float *r) {
+    const AHall *H = &A->fhall[hall];
+    double p[AR_HALL_SEATS + AR_HALL_FANS + AR_HALL_BATTENS][2];
+    int n = 0;
+    for (int k = 0; k < H->nseat + H->nfan + H->nbatten; ++k) {
+        const float *q = k < H->nseat ? H->seat[k] : k < H->nseat + H->nfan ? H->fan[k - H->nseat] : H->batten[k - H->nseat - H->nfan];
+        double wx, wz;
+        city_arc_world(b, A, q[0], q[1], &wx, &wz);
+        if (wx < ox || wx >= ox + CHUNK_SIZE || wz < oz || wz >= oz + CHUNK_SIZE) continue;
+        p[n][0] = wx; p[n][1] = wz; n++;
+    }
+    if (!n) return 0;
+    double sx = 0.0, sz = 0.0;
+    for (int k = 0; k < n; ++k) { sx += p[k][0]; sz += p[k][1]; }
+    *mx = sx / n; *mz = sz / n;
+    double rr = 0.0;
+    for (int k = 0; k < n; ++k) rr = fmax(rr, hypot(p[k][0] - *mx, p[k][1] - *mz));
+    *r = (float)rr + 1.3f;   /* (a long table's reach from its middle) */
+    return n;
+}
+uint8_t city_hall_batten_hours(const Building *b, const ALayout *A, int hall, int k) {
+    const AHall *H = &A->fhall[hall];
+    int best = -1;
+    float bd = 1e30f;
+    for (int q = 0; q < H->nbar; ++q) {
+        const AHallBar *br = &H->bar[q];
+        const float mx = br->bx + 0.5f * br->d * (float)((br->facing == 1) - (br->facing == 3));
+        const float mz = br->bz + 0.5f * br->d * (float)((br->facing == 2) - (br->facing == 0));
+        const float dx = mx - H->batten[k][0], dz = mz - H->batten[k][1], d = dx * dx + dz * dz;
+        if (d < bd) { bd = d; best = q; }
+    }
+    if (best < 0) return 0;
+    VendorSpot sp;
+    city_hall_bar(b, A, hall, best, &sp);
+    return city_hall_bar_hours(&sp);
+}
+void city_halls(ChunkGen *g, double reach, HallVisit fn, void *ctx) {
+    ALayout *A = NULL;
+    for (int i = 0; i < g->nb; ++i) {
+        const Building *b = &g->bld[i];
+        if (b->ox < g->ox - reach || b->ox > g->ox + CHUNK_SIZE + reach || b->oz < g->oz - reach || b->oz > g->oz + CHUNK_SIZE + reach) continue;
+        if (b->kind != BK_MEGA) continue;
+        const BGraph *bg = chunk_gen_graph(g, i);
+        if (bg->archetype != ARCH_ARCOLOGY) continue;
+        if (!A && !(A = (ALayout *)malloc(sizeof(ALayout)))) fatal("out of memory finding the food halls");
+        if (!arcology_plan(b, bg, 0, A, NULL) || !A->ok || !A->nfhall) continue;
+        for (int h = 0; h < A->nfhall; ++h) fn(ctx, b, A, building_base(b) + A->floorY, h);
+    }
+    free(A);
+}
+
 static void arc_stalls(SGen *S) {
     ChunkGen *g = S->g;
     ALayout *A = NULL;
@@ -1240,6 +1349,13 @@ static void arc_stalls(SGen *S) {
             sp.head = st->head;
             keep_site(S, &sp, SPACE_ARC, hash_combine(hash_combine(b->seed, 0xA4C5u), (uint32_t)st->block), member[st->block]++, 0);
         }
+        /* SF5b: the halls' bars, wall stalls against their walls facing in (a group a hall, in the planner's order) */
+        for (int h = 0; h < A->nfhall; ++h)
+            for (int k = 0; k < A->fhall[h].nbar; ++k) {
+                VendorSpot sp;
+                city_hall_bar(b, A, h, k, &sp);
+                keep_site(S, &sp, SPACE_ARC, sp.group, k, 0);
+            }
     }
     free(A);
 }

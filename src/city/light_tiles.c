@@ -32,7 +32,8 @@
  *          a neon's: its icon's), 16..23 its way (256ths of a turn from +x
  *          towards +z: a tube's axis, a neon's facing), 24..28 its length (a
  *          tube's, a neon's square: eighths of a metre), 29..30 a neon's
- *          flicker (neonFlicker). shaders/common.glsl: isVendorLight and after.
+ *          flicker (neonFlicker); a tube's 1: a food hall's batten, its reach
+ *          5 m, not 9 (SF5b). shaders/common.glsl: isVendorLight and after.
  *          SF4: its vendor's hours code (src/gen/noodle_bar.h nb_hours) in
  *          the low 7 bits of its height's float (vendorLightOff: a shut
  *          vendor's lights are skipped); its mist record's kind's low byte.
@@ -45,6 +46,8 @@ typedef struct LightSrc { float x, y, z, range; uint32_t w; } LightSrc;
 #define VENDOR_LIGHT (1u << 31)
 /* how far each kind of vendor light reaches (shaders/common.glsl vendorReach) */
 static const float VL_REACH[4] = { 9.0f, 5.0f, 1.6f, 6.0f };
+/* SF5b: a tube with its flicker 1: a food hall's batten (shaders/common.glsl vendorReach) */
+#define VL_HALL_REACH 5.0f
 /* the rain's mist: each kind's power (sky_light_range's units: emitted radiance x area) */
 static const float VL_AIR[4] = { 6.0f, 1.5f, 0.15f, 2.5f };
 
@@ -84,7 +87,7 @@ void vendor_light_list(ChunkGen *g, const Mesh *m, const VendorSpot *s, const Nb
         }
         VendorLight *o = &g->vl[g->nvl++];
         o->x = x; o->y = s->y + a[1]; o->z = z;
-        o->range = VL_REACH[l->kind & 3u];
+        o->range = l->kind == NB_LIGHT_TUBE && (l->flicker & 3u) == 1u ? VL_HALL_REACH : VL_REACH[l->kind & 3u];
         o->w = w;
         o->power = VL_AIR[l->kind & 3u] * (l->kind == NB_LIGHT_TUBE ? maxf(len, 0.3f) : 1.0f);
         /* the mist lit in front of a neon; under the hood, out of the bar's front */

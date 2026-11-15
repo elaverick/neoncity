@@ -343,6 +343,196 @@ static void m_low_stool(Pm *pm) {
     pm_push(pm); pm_translate(pm, 0.0f, 0.16f, 0.0f); pm_torus(pm, 0.141f, 0.007f, pm_segs(pm, 20, 8), L2 ? 3 : 5); pm_pop(pm);
 }
 
+/* ------------------------------------------------------ SF5b: the halls --- */
+/* A hawker table: a 0.80 m round top at 0.74 m (a pale laminate, a steel edge band) on a 76 mm pedestal, and four
+ * stools welded to its frame: arms of 40 x 25 mm tube out from a hub bolted to the floor, each turning up into a
+ * post under a 0.34 m round seat at 0.45 m in the trim coat, rubber pads under the arms' elbows. Its frame painted. */
+static void m_hawker_table(Pm *pm) {
+    const float ty = 0.74f, R = 0.40f, arm = 0.60f, sy = 0.45f;
+    pm_mat(pm, PMAT_ENAMEL);
+    PmProf top[6] = { { 0, ty - 0.022f, 0 }, { R - 0.01f, ty - 0.022f, 1 }, { R, ty - 0.014f, 0 }, { R, ty - 0.006f, 0 }, { R - 0.006f, ty, 1 }, { 0, ty, 0 } };
+    lathe(pm, top, 6, 32);
+    pm_mat(pm, PMAT_STEEL);
+    band(pm, R - 0.001f, R + 0.004f, ty - 0.02f, ty - 0.004f, 32);
+    /* under the top: a spider of four flat bars, a boss on the pedestal */
+    for (int k = 0; k < 4; ++k) {
+        const float a = 0.25f * PI_F + 0.5f * PI_F * (float)k;
+        float p0[3] = { 0.04f * cosf(a), ty - 0.034f, 0.04f * sinf(a) }, p1[3] = { 0.30f * cosf(a), ty - 0.034f, 0.30f * sinf(a) };
+        pm_beam(pm, p0, p1, 0.03f, 0.012f, 0.002f, NULL);
+    }
+    pm_mat(pm, PMAT_PAINTED);
+    PmProf col[8] = { { 0, 0.0f, 0 }, { 0.12f, 0.0f, 1 }, { 0.12f, 0.01f, 1 }, { 0.06f, 0.03f, 0 }, { 0.038f, 0.05f, 1 },
+                      { 0.038f, ty - 0.05f, 1 }, { 0.055f, ty - 0.04f, 1 }, { 0, ty - 0.028f, 0 } };
+    lathe(pm, col, 8, 20);
+    if (!L2) {   /* the hub's bolts */
+        pm_mat(pm, PMAT_STEEL);
+        for (int k = 0; k < 4; ++k) {
+            const float a = 0.5f * PI_F * (float)k;
+            pm_push(pm); pm_translate(pm, 0.09f * cosf(a), 0.01f, 0.09f * sinf(a)); hex(pm, 0.008f, 0.0f, 0.007f, 0.0015f); pm_pop(pm);
+        }
+    }
+    /* the arms are straight tube: no support loops beside their bevels (they'd double the table for what the bake
+     * can't see) */
+    const float sup = pm->support;
+    pm->support = 0.0f;
+    for (int k = 0; k < 4; ++k) {
+        const float a = 0.5f * PI_F * (float)k, c = cosf(a), s = sinf(a);
+        pm_mat(pm, PMAT_PAINTED);
+        /* the arm: out low from the hub, a knee, up to the seat's post */
+        float h0[3] = { 0.05f * c, 0.10f, 0.05f * s }, h1[3] = { (arm - 0.07f) * c, 0.10f, (arm - 0.07f) * s };
+        float k0[3] = { arm * c, 0.16f, arm * s }, k1[3] = { arm * c, sy - 0.03f, arm * s };
+        float side[3] = { -s, 0.0f, c };
+        pm_beam(pm, h0, h1, 0.04f, 0.025f, 0.004f, NULL);
+        pm_beam(pm, h1, k0, 0.04f, 0.025f, 0.004f, side);
+        pm_beam(pm, k0, k1, 0.04f, 0.04f, 0.004f, side);
+        /* the seat: a pressed plate, its rim rolled */
+        pm_push(pm);
+        pm_translate(pm, arm * c, 0.0f, arm * s);
+        PmProf seat[7] = { { 0, sy - 0.032f, 0 }, { 0.10f, sy - 0.032f, 1 }, { 0.165f, sy - 0.016f, 0 }, { 0.17f, sy - 0.008f, 0 },
+                           { 0.166f, sy, 1 }, { 0.08f, sy + 0.004f, 0 }, { 0, sy + 0.004f, 0 } };
+        lathe(pm, seat, 7, 20);
+        pm_pop(pm);
+        if (!L2) {   /* a rubber pad under the knee */
+            pm_mat(pm, PMAT_RUBBER);
+            pm_push(pm); pm_translate(pm, (arm - 0.035f) * c, 0.0f, (arm - 0.035f) * s); pm_cyl(pm, 0.0f, 0.012f, 0.022f, pm_segs(pm, 10, 4)); pm_pop(pm);
+            pm_mat(pm, PMAT_PAINTED);
+            float f0[3] = { (arm - 0.035f) * c, 0.012f, (arm - 0.035f) * s }, f1[3] = { (arm - 0.035f) * c, 0.10f, (arm - 0.035f) * s };
+            pm_beam(pm, f0, f1, 0.025f, 0.025f, 0.003f, side);
+        }
+    }
+    pm->support = sup;
+}
+
+/* A long communal table (a night market's): a 2.4 x 0.76 m top of boards at 0.74 m in steel edge angles, on two
+ * painted trestles of 40 mm square tube, each with a cross bar carrying a bench along both sides (two boards at
+ * 0.45 m, 0.30 m wide, their middles 0.62 m out), a stretcher between the trestles under the top, rubber feet. */
+static void m_long_table(Pm *pm) {
+    const float L = 1.2f, W = 0.38f, ty = 0.74f, by = 0.45f, bz = 0.62f, tx = 0.92f;
+    /* flat boards and straight tube: no support loops (they'd triple it for nothing the bake can't see) */
+    const float sup = pm->support, mxl = pm->maxlen;
+    pm->support = 0.0f; pm->maxlen = 0.0f;
+    pm_mat(pm, PMAT_TIMBER);
+    for (int b = 0; b < 4; ++b) {   /* the top's boards, a 6 mm gap between */
+        const float z0 = -W + (float)b * (2.0f * W / 4.0f) + 0.003f, z1 = z0 + 2.0f * W / 4.0f - 0.006f;
+        float c[3] = { 0.0f, ty - 0.014f, 0.5f * (z0 + z1) }, h[3] = { L, 0.014f, 0.5f * (z1 - z0) };
+        pm_bbox(pm, c, h, L2 ? 0.0f : 0.003f, 1);
+    }
+    for (int s = -1; s <= 1; s += 2)
+        for (int b = 0; b < 2; ++b) {   /* the benches' boards */
+            const float z0 = (float)s * bz - 0.15f + (float)b * 0.15f + 0.003f, z1 = z0 + 0.144f;
+            float c[3] = { 0.0f, by - 0.013f, 0.5f * (z0 + z1) }, h[3] = { L, 0.013f, 0.072f };
+            pm_bbox(pm, c, h, L2 ? 0.0f : 0.003f, 1);
+        }
+    pm_mat(pm, PMAT_STEEL);
+    for (int s = -1; s <= 1; s += 2) {   /* the top's edge angles along its long sides */
+        pm_box(pm, -L, ty - 0.04f, (float)s * W - (s > 0 ? 0.004f : 0.0f), L, ty - 0.028f, (float)s * W + (s > 0 ? 0.0f : 0.004f));
+        float a[3] = { -L + 0.02f, ty - 0.046f, (float)s * (W - 0.02f) }, b[3] = { L - 0.02f, ty - 0.046f, (float)s * (W - 0.02f) };
+        pm_beam(pm, a, b, 0.04f, 0.006f, 0.0f, NULL);
+    }
+    pm_mat(pm, PMAT_PAINTED);
+    for (int t = -1; t <= 1; t += 2) {
+        const float x = (float)t * tx;
+        for (int s = -1; s <= 1; s += 2) {   /* the legs: splayed a little, from the top's frame to the floor */
+            float a[3] = { x, ty - 0.03f, (float)s * (W - 0.06f) }, b[3] = { x, 0.012f, (float)s * (W + 0.02f) };
+            pm_beam(pm, a, b, 0.04f, 0.04f, 0.004f, NULL);
+            if (!L2) {
+                pm_mat(pm, PMAT_RUBBER);
+                pm_push(pm); pm_translate(pm, x, 0.0f, (float)s * (W + 0.02f)); pm_cyl(pm, 0.0f, 0.012f, 0.024f, pm_segs(pm, 10, 4)); pm_pop(pm);
+                pm_mat(pm, PMAT_PAINTED);
+            }
+            /* the bench's leg, out at the cross bar's end */
+            float c0[3] = { x, by - 0.03f, (float)s * (bz + 0.10f) }, c1[3] = { x, 0.012f, (float)s * (bz + 0.10f) };
+            pm_beam(pm, c0, c1, 0.04f, 0.04f, 0.004f, NULL);
+            if (!L2) {
+                pm_mat(pm, PMAT_RUBBER);
+                pm_push(pm); pm_translate(pm, x, 0.0f, (float)s * (bz + 0.10f)); pm_cyl(pm, 0.0f, 0.012f, 0.024f, pm_segs(pm, 10, 4)); pm_pop(pm);
+                pm_mat(pm, PMAT_PAINTED);
+            }
+        }
+        /* the top's cross rail, and the low cross bar out under both benches */
+        float r0[3] = { x, ty - 0.048f, -W + 0.03f }, r1[3] = { x, ty - 0.048f, W - 0.03f };
+        pm_beam(pm, r0, r1, 0.04f, 0.03f, 0.003f, NULL);
+        float c0[3] = { x, by - 0.046f, -(bz + 0.15f) }, c1[3] = { x, by - 0.046f, bz + 0.15f };
+        pm_beam(pm, c0, c1, 0.05f, 0.03f, 0.003f, NULL);
+    }
+    float s0[3] = { -tx, 0.22f, 0.0f }, s1[3] = { tx, 0.22f, 0.0f };
+    pm_beam(pm, s0, s1, 0.04f, 0.04f, 0.004f, NULL);
+    for (int t = -1; t <= 1; t += 2) {   /* the stretcher's braces up to the legs */
+        float a[3] = { (float)t * tx, 0.22f, 0.0f }, b[3] = { (float)t * tx, 0.22f, W - 0.04f }, c[3] = { (float)t * tx, 0.22f, -(W - 0.04f) };
+        pm_beam(pm, a, b, 0.03f, 0.03f, 0.003f, NULL);
+        pm_beam(pm, a, c, 0.03f, 0.03f, 0.003f, NULL);
+    }
+    pm->support = sup; pm->maxlen = mxl;
+}
+
+/* A ceiling fan hung from the origin (the roof's underside at y 0): a canopy, a 12 mm downrod to 0.55 m, the motor's
+ * housing, three pitched blades 0.56 m long on steel irons. */
+static void m_ceiling_fan(Pm *pm) {
+    pm_mat(pm, PMAT_ENAMEL);
+    PmProf can[5] = { { 0, -0.07f, 0 }, { 0.03f, -0.07f, 1 }, { 0.07f, -0.02f, 0 }, { 0.075f, 0.0f, 1 }, { 0, 0.0f, 0 } };
+    lathe(pm, can, 5, 24);
+    pm_mat(pm, PMAT_STEEL);
+    PmProf rod[4] = { { 0, -0.56f, 0 }, { 0.012f, -0.56f, 1 }, { 0.012f, -0.065f, 1 }, { 0, -0.065f, 0 } };
+    lathe(pm, rod, 4, 12);
+    pm_mat(pm, PMAT_ENAMEL);
+    PmProf mot[9] = { { 0, -0.70f, 0 }, { 0.04f, -0.70f, 0 }, { 0.09f, -0.685f, 0 }, { 0.11f, -0.66f, 0 }, { 0.112f, -0.63f, 1 },
+                      { 0.10f, -0.60f, 0 }, { 0.05f, -0.575f, 0 }, { 0.02f, -0.555f, 1 }, { 0, -0.555f, 0 } };
+    lathe(pm, mot, 9, 32);
+    for (int k = 0; k < 3; ++k) {
+        pm_push(pm);
+        pm_rotate_y(pm, 2.0f * PI_F * (float)k / 3.0f + 0.4f);
+        pm_mat(pm, PMAT_STEEL);
+        float i0[3] = { 0.09f, -0.645f, 0.0f }, i1[3] = { 0.20f, -0.655f, 0.0f };
+        pm_beam(pm, i0, i1, 0.035f, 0.006f, 0.001f, NULL);
+        pm_mat(pm, PMAT_ENAMEL);
+        pm_translate(pm, 0.47f, -0.66f, 0.0f);
+        pm_rotate_x(pm, 0.21f);
+        float c[3] = { 0.0f, 0.0f, 0.0f }, h[3] = { 0.28f, 0.004f, 0.062f };
+        pm_bbox(pm, c, h, L2 ? 0.0f : 0.003f, 1);
+        pm_pop(pm);
+    }
+}
+
+/* A twin-tube batten hung from the origin on two rods (0.3 m): a 1.5 m galvanised channel along x, its first tube
+ * under it at z -0.018 (PMK_BATTEN_TUBE is the second, at z +0.018: an instance of its own, so its hours can put it
+ * out while the first stays lit: the hall dims, src/city/vendor_kit.c). The tubes' middles 0.352 m under the origin. */
+#define BATTEN_HALF 0.75f
+static void batten_tube(Pm *pm, float z) {
+    pm_mat(pm, PMAT_TUBE);
+    pm_push(pm);
+    pm_translate(pm, -BATTEN_HALF + 0.03f, -0.352f, z);
+    pm_rotate_z(pm, -0.5f * PI_F);
+    pm_cyl(pm, 0.0f, 2.0f * (BATTEN_HALF - 0.03f), 0.013f, pm_segs(pm, 12, 6));
+    pm_pop(pm);
+    if (!L2) {   /* the lamp holders */
+        pm_mat(pm, PMAT_PLASTIC);
+        for (int e = -1; e <= 1; e += 2) pm_box(pm, (float)e * (BATTEN_HALF - 0.005f) - 0.025f, -0.37f, z - 0.016f, (float)e * (BATTEN_HALF - 0.005f) + 0.025f, -0.335f, z + 0.016f);
+    }
+}
+static void m_batten(Pm *pm) {
+    pm_mat(pm, PMAT_GALV);
+    pm_box(pm, -BATTEN_HALF, -0.335f, -0.04f, BATTEN_HALF, -0.30f, 0.04f);
+    pm_box(pm, -BATTEN_HALF, -0.345f, -0.04f, BATTEN_HALF, -0.335f, -0.036f);
+    pm_box(pm, -BATTEN_HALF, -0.345f, 0.036f, BATTEN_HALF, -0.335f, 0.04f);
+    pm_mat(pm, PMAT_STEEL);
+    for (int e = -1; e <= 1; e += 2) {
+        PmProf rod[4] = { { 0, -0.30f, 0 }, { 0.005f, -0.30f, 1 }, { 0.005f, 0.0f, 1 }, { 0, 0.0f, 0 } };
+        pm_push(pm); pm_translate(pm, (float)e * 0.55f, 0.0f, 0.0f); lathe(pm, rod, 4, 8);
+        PmProf cup[4] = { { 0, -0.012f, 0 }, { 0.022f, -0.012f, 1 }, { 0.022f, 0.0f, 1 }, { 0, 0.0f, 0 } };
+        lathe(pm, cup, 4, 12);
+        pm_pop(pm);
+    }
+    batten_tube(pm, -0.018f);
+}
+static void m_batten_tube(Pm *pm) { batten_tube(pm, 0.018f); }
+static void m_drop_rod(Pm *pm) {
+    pm_mat(pm, PMAT_STEEL);
+    PmProf rod[4] = { { 0, -1.0f, 0 }, { 0.006f, -1.0f, 1 }, { 0.006f, 0.0f, 1 }, { 0, 0.0f, 0 } };
+    lathe(pm, rod, 4, 8);
+    PmProf cup[4] = { { 0, -0.015f, 0 }, { 0.025f, -0.015f, 1 }, { 0.025f, 0.0f, 1 }, { 0, 0.0f, 0 } };
+    lathe(pm, cup, 4, 12);
+}
+
 /* ------------------------------------------------------ SF4: shutters --- */
 /* A roller shutter's curtain (stretched by its instance to the opening: its slats are the shutter set's, laid in
  * world metres on its plane by kit.glsl), its bottom bar with a rubber seal, the guide channels at its ends and a
@@ -1450,12 +1640,19 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_SHUTTER_BAR  ] = { "shutter_bar",    m_shutter_bar,     { 600, 400, 24 },  1 },
     [PMK_SHUTTER_GUIDE] = { "shutter_guide",  m_shutter_guide,   { 300, 100, 36 },  1 },
     [PMK_SHUTTER_LOCK ] = { "shutter_lock",   m_shutter_lock,    { 900, 300, 40 },  1 },
+    [PMK_HAWKER_TABLE ] = { "hawker_table",   m_hawker_table,    { 5600, 2600, 700 }, 1 },
+    [PMK_LONG_TABLE   ] = { "long_table",     m_long_table,      { 1800, 900, 400 }, 1 },
+    [PMK_CEILING_FAN  ] = { "ceiling_fan",    m_ceiling_fan,     { 2600, 900, 300 }, 1 },
+    [PMK_BATTEN       ] = { "batten",         m_batten,          { 1000, 500, 200 },  1 },
+    [PMK_BATTEN_TUBE  ] = { "batten_tube",    m_batten_tube,     { 450, 150, 40 },    1 },
+    [PMK_DROP_ROD     ] = { "drop_rod",       m_drop_rod,        { 360, 150, 40 },     1 },
 };
 
 int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CUP) || (id >= PMK_ICON_SKEWER && id <= PMK_ICON_FLAME); }
 /* everything but the lights' own glass, flames and neon (SF1's stations cast, their coals included) */
 int pm_module_casts(int id) {
-    return id >= 0 && id < PMK_COUNT && !pm_module_is_icon(id) && id != PMK_FLAME_RING && id != PMK_FLAME_JET && id != PMK_LAMP;
+    return id >= 0 && id < PMK_COUNT && !pm_module_is_icon(id) && id != PMK_FLAME_RING && id != PMK_FLAME_JET && id != PMK_LAMP &&
+           id != PMK_BATTEN_TUBE;
 }
 
 int pm_module_count(void) { return PMK_COUNT; }

@@ -4,6 +4,11 @@
 
 Bugs to fix one by one, each committed and pushed before the next. Fixed ones leave the list (the commits record them).
 
+1. **Base layers over the page cap.** Chunks (-31, -46) and (-30, -53) build 494k and 475k vertices in their base
+   layer, over MAX_CHUNK_PAGES (393k), and the streamer truncates them ("chunk (cx, cz) layer 0 too large", logged
+   every time they upload: 800+ times in a capture from the market arcology's noodle hall, 1-2 km away). Found during
+   SF5b; not the halls' (no hall near them). Find what fills them before raising the cap.
+
 ## Daylight quality issues
 
 Night looks a lot better than day (the user, 2026-11-13). Likely causes, from the day/night plan and the shaders,
@@ -878,8 +883,10 @@ Arcology interiors are planned and built (`src/gen/arcology.c`, `emit_arcology` 
 - **Above the concourse:** sky lobbies and the floors round the canyon are planned but only seen
   as the galleries' unit fronts and the lit band outside; nothing above the ground can be reached
   (collision is 2D, lifts don't run).
-- **Block interiors** are solid masses behind their stall rows; a night market or noodle hall you
-  can walk into would want its own small grammar.
+- **Block interiors** are solid masses behind their stall rows, but for the noodle halls and night
+  markets, which open into food halls you walk into (SF5b: `place_halls`). The halls' fans don't
+  turn; their tables carry nothing (no bowls, condiments or trays); a hall dims by its bars'
+  nearest hours, batten by batten, not as one.
 - **Signage** reuses the street's glyph and screen shaders; the arcology's own brands, kanji-style
   vertical boards and animated holographic adverts would set it apart.
 - **Crowds, steam and rain:** no people; steam is a simple veil; rain doesn't fall through the
