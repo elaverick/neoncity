@@ -1163,7 +1163,16 @@ The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the targe
   re-run it.
 - **Backland.** A suburb block deeper than two plots keeps its middle unused (green). Garages, allotments or a
   back lane (HM7).
-- **Storeys by street, not by style.** Three rows in four take their street's storeys; HM2's grammar should decide
-  storeys from the style (ranches one, Victorian terraces two or three).
+- **Houses' rules interpreted (HM2).** A gabled porch faces the street whatever its shape (exempt from "spans the
+  shorter side"); the 4 m between detached houses is between the houses, a garage wing keeping its own metre to
+  the boundary; front projections keep 1 m to the street boundary (§13.5 gives no figure). In
+  docs/residential-target.md, "The graph and rules"; revisit if the look says otherwise.
+- **Repairs are common on one-storey houses (HM2).** A ranch's or bungalow's porch, extension and garage lean-tos
+  rarely fit under its low eaves and are made flat (`home_lab`: ~0.2 "lean" repairs a house). HM3's intersecting
+  roofs could tuck them into the main roof instead.
+- **Semis' garages rarely fit (HM2).** 7-10 m halves leave no room for a garage beside a 5 m house: ~0.2 "garage"
+  repairs a house. Fine for Britain (few semis have them); widen the semis' plots where a region wants them.
+- **No tree is planted yet.** The graph keeps the places a tree may stand (`HE_TREE`); whether trees come in HM7 or
+  a roadmap of their own is the user's call.
 - **The inner pockets' look** is the user's call at HM8: pockets of a few streets among the estates (54 within 5 km
   of LA's centre, the largest 6 blocks).

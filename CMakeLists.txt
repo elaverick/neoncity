@@ -231,7 +231,7 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/pl
                 src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/channels.c src/city/road_bridges.c src/city/light_tiles.c src/city/cables.c
                 src/city/litter.c src/city/props.c src/city/vendor_sites.c src/city/mesh_vendor.c src/city/vendor_kit.c src/city/models.c src/city/proxy.c src/city/grass_city.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c src/plan/plan_water.c
                 src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_erosion.c src/terrain/terrain_cave.c src/terrain/terrain_cave_mesh.c src/terrain/terrain_cave_light.c src/terrain/terrain_cave_walk.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c src/core/thread.c src/core/assets.c
-                src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c
+                src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c src/gen/building_residential.c src/gen/building_residential_rules.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
                 src/gen/interior_fixtures.c src/gen/interior_validate.c src/gen/interior_lights.c src/gen/interior_doors.c
@@ -252,6 +252,10 @@ target_include_directories(city_test PRIVATE ${SRC_DIRS})
 # Top-down map of the generated plan (city_map out.bmp [x z] [size] [m/px]).
 add_executable(city_map tests/city_map.c ${GEN_SOURCES})
 target_include_directories(city_map PRIVATE ${SRC_DIRS})
+# House generator lab (residential HM2): 10k rows an archetype over every style, repairs and rejects by tag,
+# plan sheets (home_lab [seeds] [out_dir] [verbose_seed]).
+add_executable(home_lab tests/home_lab.c ${GEN_SOURCES})
+target_include_directories(home_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # Building generator lab: archetype mix, retries, rejections; fails on invalid buildings.
 add_executable(building_lab tests/building_lab.c ${GEN_SOURCES})
 target_include_directories(building_lab PRIVATE ${SRC_DIRS})
@@ -306,7 +310,7 @@ if(MSVC)
 elseif(UNIX)
   target_link_libraries(grass_test PRIVATE dl)   # volk loads the Vulkan loader
 endif()
-foreach(T city_test city_map building_lab interior_lab plant_lab vendor_lab pmodel_lab terrain_test world_test material_test grass_test sky_test)
+foreach(T city_test city_map building_lab home_lab interior_lab plant_lab vendor_lab pmodel_lab terrain_test world_test material_test grass_test sky_test)
   # the assets the tests read (the models: src/city/models.h), from the source tree
   target_compile_definitions(${T} PRIVATE NEONCITY_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/assets")
   if(MSVC)
@@ -320,6 +324,7 @@ foreach(T city_test city_map building_lab interior_lab plant_lab vendor_lab pmod
 endforeach()
 add_test(NAME city_determinism COMMAND city_test)
 add_test(NAME building_rules COMMAND building_lab 2000)
+add_test(NAME home_rules COMMAND home_lab 10000)
 # Industrial plants and substations, over the fringe where the industrial zones lie.
 add_test(NAME industry_rules COMMAND building_lab industry 14000)
 add_test(NAME interior_rules COMMAND interior_lab 1500)

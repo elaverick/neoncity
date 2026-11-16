@@ -57,8 +57,9 @@ Graffiti follows the city's existing rule (by affluence, on walls, shutters and 
 | Region | na (Los Angeles) |
 | Check | `city_test --home [ARCHETYPE] [--style STYLE]`: the block is residential with a street frontage, and the five views have lines of sight |
 
-Since HM1 the block is a suburb's: `--home` lists its 16 detached plots (14-18 m frontages, 36-42 m deep). HM2-HM3
-put houses on them, forced by archetype and style through `--home` once the generator exists. If a change to the
+Since HM1 the block is a suburb's: `--home` lists its 16 detached plots (14-18 m frontages, 36-42 m deep). Since HM2
+it lists each row's house and the first one's decisions; `--home ARCHETYPE --style STYLE` forces both on every suburb
+street (`city_home_force`; a style of another region is noted, and HM3 draws them). If a change to the
 zoning moves the block out of the suburbs, the check fails: pick another with `city_test --home find` and update the
 constants and this table.
 
@@ -91,8 +92,9 @@ to back with the far side's where the block is shallow), laid with one archetype
 
 Local streets are laid before busier ones, the longest first; a later strip keeps clear of the earlier ones' plots, so
 a corner plot fronts one street and the side street's first plot starts behind its rear garden. What a row leaves at
-the end of a strip takes a detached house if it fits. A row's units share its storeys and front garden; three rows in
-four take the street's storeys (a street was mostly built at once). The plot's planned height (`city_home_height`)
+the end of a strip takes a detached house if it fits. A row's units share its style, storeys and front garden; three rows
+in four take the street's style and storeys (a street was mostly built at once). Since HM2 the storeys follow the
+style (`home_style_storeys`: a ranch one, a triple-decker three, a Victorian terrace two or three). The plot's planned height (`city_home_height`)
 stands in the skyline check until HM3 builds the houses; until then their plots are lawns.
 
 ## Plots (§13.5, kept as written)
@@ -107,6 +109,69 @@ stands in the skyline check until HM3 builds the houses; until then their plots 
 | Detached | 10-18 m frontage; 2.0 m clear each side, 4 m between two houses | |
 | Garage wing | 1 m from the plot boundary, set back from the front wall | lean-to or flat roof |
 | Plot depth | 25-45 m | from the street frame's frontage (`street_frame`, `frame_rect`), not §13's 60 m cell |
+
+## The graph and rules (HM2)
+
+`src/gen/home.h` (`HGraph`), `src/gen/building_residential.c` (the styles, the grammar, the garden, the driver),
+`src/gen/building_residential_rules.c` (the repairs and rules). A graph is one row of plots: a detached house, a semi
+pair or a terrace. §13.2's relationships are fields: `shares_party_wall_with` the `HParty` list, `attached_to`
+`HVol.parent`, `supported_by` the ground (`y0 = 0`; a canopy hangs on its wall), `opens_on` `HDoor.path`. A row's
+choices (roof, pitch, eaves, depth, porch kind, bays, outriggers, garage, front boundary) come from its style's
+weights (`HStyleDef`, 26 styles); owners vary a unit's porch and boundary one time in seven, and add rear extensions
+unit by unit. Semis are mirrored about their party wall; handed terraces (Victorian, Georgian, rowhouse) pair their
+doors and outriggers on alternate party walls.
+
+| §13.5 / §13.4 / §13.8 | Checked as | Tag |
+|---|---|---|
+| Pitched roof: span at most 12 m, the shorter side, 25° at least | every gable and hip; the style's least pitch | `span`, `span side`, `pitch` |
+| Terrace row at most 48 m; units 4.2 m wide | the row's main; each unit | `row`, `unit width` |
+| Detached: 2 m each side | every volume and stack but a garage wing | `side clearance` |
+| Semi: 1.2 m on the open side | the same | `open side` |
+| Front garden 3 m; rear garden 8 m | the main's front; each unit's rearmost volume | `front garden`, `rear garden` |
+| Garage wing 1 m from the boundary, set back, lean-to or flat | | `garage`, `garage clearance` |
+| Front door 1 m wide, on the street side, a path crossing no building | the volumes' outlines (a canted bay's trapezoid), not a bounding box (§13.8) | `door width`, `door side`, `door wall`, `path`, `path crosses` |
+| A porch or canopy over every door (§13.8); a gate where its path meets a boundary | | `porch`, `gate` |
+| Site fit: nothing leaves the plot, nothing overlaps unless attached | every volume, stack and garden element | `site`, `overlap`, `attached` |
+| A rear extension lower than its main; a lean-to rising to its parent's wall (§13.4) | and every attached part under its main's top; a lean-to or flat part under its eaves | `extension`, `lean`, `height` |
+| A flat roof has a parapet (§13.4) | habitable volumes (a main's 0.7 m, an extension's 0.3 m upstand) | `parapet` |
+| Chimneys on the ridge, a gable end or a party wall, never mid-slope (§13.4) | a hip's ridge runs between its hips; a gable stack within 0.8 m of the wall | `chimney mid-slope`, `chimney height` |
+| One shared roof over a pair or row, its party walls through it | | `shared roof`, `party wall` |
+| Boundaries cross no building; sheds and trees clear of buildings, paths and drives; cars on drives (§13.8) | | `boundary`, `garden clear`, `car` |
+
+Repairs, each logged with its tag: §13.10's span over 12 m made flat (`simplify`, its stacks removed) and a row
+too long cut (`row`); and the grammar's own: a rear garden won back by shortening, then removing, the unit's
+extension or outrigger, then a shallower main, then the house nearer the street (`rear garden`); a porch or bay
+shallower, a porch made a canopy, a bay removed (`projection`); a lean-to's pitch or eaves lowered under its main's
+eaves, else made flat (`lean`, `height`); a gabled porch or outrigger whose ridge would clear the main's made flat
+(`ridge`); no room for a garage or a bay (`garage`, `bay`); a stack moved inside its gable or removed when its roof
+turned (`chimney`). Level 1 drops the garage, outriggers and extensions; level 2 is the plain form (a gable or flat
+main, a canopy, a path); then the simplest valid house at the least clearances; a plot even that cannot take is left
+a garden (`HGraph.empty`; never, on HM1's plots).
+
+Departures, written here as the code has them:
+- **A gabled porch faces the street** whatever its proportions: it is exempt from "spans the shorter side".
+- **Bays and porches keep 1 m from the street boundary** (`PROJ_MIN`): §13.5 gives the 3 m garden but no figure for
+  what stands in it; a metre leaves the boundary, its gate and the path's start.
+- **The 4 m between two detached houses is between the houses.** A garage wing keeps its own metre to the boundary
+  (§13.5's access rule), so beside a neighbour's 2 m clearance it stands 3 m off. Checked across rows by `city_test`.
+- **A ranch's roof pitches from 18°** (the target's departure above); every other style keeps §13.5's 25°.
+
+Measured (2026-11-16): `home_lab` builds 10,000 rows an archetype over every style: all accepted at level 0 (no
+rejects), none empty, invalid or different twice; levels 1, 2 and the simplest built on their own on every fourth
+seed, all valid; each of 12 rules broken on purpose is caught by its tag every time. 0.012 ms a detached house,
+0.012 a semi half, 0.018 a terrace unit (40 houses a chunk: under 1 ms of the 30 ms budget). Repairs a house:
+detached 0.51, semi 0.46, terrace 0.57, mostly lean-tos under one-storey eaves and rear gardens won back.
+`city_test` builds 8,060 houses on the home city's suburb plots (the ring and the pockets): all valid, none
+overlapping across rows, no two detached houses under 4 m apart.
+
+```
+build/home_lab 10000 out    # stats, the rules broken on purpose, out/home_detached.png, home_semi.png, home_terrace.png
+build/home_lab 30 "" 12     # seed 12's decision log for each archetype
+```
+
+The plan sheets draw a row of each style top-down, the street along the bottom: plots in green, roofs by kind with
+their ridges and hips (a lean-to's high side, a parapet's line), bays blue, porches yellow, party walls black, stacks
+dark red, doors red, paths and drives, walls, hedges and fences, sheds, cars and the trees' places as rings.
 
 ## Massing and parts
 

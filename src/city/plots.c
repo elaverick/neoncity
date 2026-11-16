@@ -1,4 +1,5 @@
 #include "city_internal.h"
+#include "home.h"
 #include "terrain.h"
 
 /* ===========================================================================
@@ -94,24 +95,6 @@ static double plot_depth(int arch, int region, Rng *r) {
     return region == PLAN_REGION_NA ? fmin(d + 4.0, 45.0) : d;
 }
 
-static int storeys(int arch, int region, uint32_t h) {
-    float x = hash_float(h);
-    if (arch == HOME_TERRACE) {
-        switch (region) {
-        case PLAN_REGION_NA: case PLAN_REGION_SEU: case PLAN_REGION_SEA: case PLAN_REGION_SAS: return x < 0.6f ? 3 : 2;
-        case PLAN_REGION_LAT: return x < 0.4f ? 1 : 2;
-        default: return x < 0.25f ? 3 : 2;
-        }
-    }
-    if (arch == HOME_SEMI) return 2;
-    switch (region) {
-    case PLAN_REGION_NA:  return x < 0.45f ? 1 : 2;   /* ranches */
-    case PLAN_REGION_SSA: case PLAN_REGION_LAT: return x < 0.5f ? 1 : 2;
-    case PLAN_REGION_SAS: case PLAN_REGION_SEU: return x < 0.3f ? 3 : 2;
-    default: return x < 0.1f ? 1 : 2;   /* the odd bungalow */
-    }
-}
-
 /* The front garden: 3 m at least (section 13.5); open lawns in North America, tight in the old rows. */
 static float front_garden(int arch, int region, uint32_t h) {
     float x = hash_float(h);
@@ -123,7 +106,15 @@ typedef struct PlotCtx {
     const Block *bk;
     HomePlot    *out;
     int          n, max, rows, region;
+    double       lat, lon;
 } PlotCtx;
+
+/* The harness's forcing (city_home_force): an archetype for every street, a style for every row. */
+static int g_forceArch = -1, g_forceStyle = -1;
+void city_home_force(int arch, int style) {
+    g_forceArch = arch >= 0 && arch < HOME_ARCH_COUNT ? arch : -1;
+    g_forceStyle = style >= 0 && style < HS_COUNT ? style : -1;
+}
 
 static void add_plot(PlotCtx *P, const Strip *s, uint32_t road, double u0, double u1, int arch, int unit, int units, uint32_t rowSeed) {
     if (P->n >= P->max) return;
@@ -141,9 +132,10 @@ static void add_plot(PlotCtx *P, const Strip *s, uint32_t road, double u0, doubl
     p->unit = (uint8_t)unit; p->units = (uint8_t)units;
     p->region = (uint8_t)P->region;
     /* a row is built as one: its storeys and front garden are the row's; a street's houses
-     * were mostly built together, so three rows in four take the street's storeys */
+     * were mostly built together, so three rows in four take the street's style and storeys */
     uint32_t built = hash_float(hash_combine(rowSeed, 0x5702u)) < 0.75f ? hash_combine(road, (uint32_t)arch) : rowSeed;
-    p->storeys = (uint8_t)storeys(arch, P->region, hash_combine(built, 0x5701u));
+    p->style = (uint8_t)(g_forceStyle >= 0 ? g_forceStyle : home_style_pick(P->region, arch, P->lat, P->lon, hash_combine(built, 0x57E1u)));
+    p->storeys = (uint8_t)home_style_storeys(p->style, arch, hash_combine(built, 0x5701u));
     /* and room behind it for the house (9 m) and the rear garden (8 m) */
     p->front = fmaxf(3.0f, fminf(front_garden(arch, P->region, hash_combine(rowSeed, 0xF407u)), p->depth - 17.0f));
     P->n++;
@@ -190,6 +182,7 @@ int city_block_plots(const Block *bk, HomePlot *out, int max) {
     PlotCtx P;
     P.bk = bk; P.out = out; P.n = 0; P.max = max; P.rows = 0;
     P.region = plan_region_of(lat, lon);
+    P.lat = lat; P.lon = lon;
     float w[HOME_ARCH_COUNT];
     region_weights(P.region, lat, lon, w);
     Rng r = rng_make(bk->seed ^ 0x9107u);
@@ -224,6 +217,7 @@ int city_block_plots(const Block *bk, HomePlot *out, int max) {
         float pick = hash_float(hash_combine(bk->seed ^ 0xA2C4u, (uint32_t)i));
         int arch = 0;
         for (float acc = 0.0f; arch < HOME_ARCH_COUNT - 1; ++arch) { acc += w[arch]; if (pick < acc) break; }
+        if (g_forceArch >= 0) arch = g_forceArch;
         /* the block's depth square to this edge: back to back with the far side's plots, or alone */
         double vmax = 0.0;
         for (int v = 0; v < lot->n; ++v) vmax = fmax(vmax, ddot(dsub(lot->v[v], s.o), s.n));

@@ -331,10 +331,14 @@ typedef struct HomePlot {
     uint8_t  unit, units;  /* its place in its row, and how many the row has */
     uint8_t  storeys;      /* planned */
     uint8_t  region;       /* PLAN_REGION_* of the city */
+    uint8_t  style;        /* HS_* (src/gen/home.h): the row's, from its region's palette */
 } HomePlot;
 int      city_block_plots(const Block *bk, HomePlot *out, int max);
 /* A plot's house's planned height to its ridge (m), for the skyline until HM3 builds it. */
 float    city_home_height(const HomePlot *p);
+/* Forces every suburb street's archetype (HOME_*) and every row's style (HS_*), -1 for neither: the
+ * residential slice's harness (`city_test --home ARCHETYPE --style STYLE`). Not for the game's own use. */
+void     city_home_force(int arch, int style);
 /* The open spaces the lot filler (src/city/lots.c) leaves in a block for the
  * street vendors (src/city/vendor_sites.c, docs/street-vendor-generation.md):
  *   SPACE_APRON  a shophouse row set back 4-7 m behind a paved hawker frontage;

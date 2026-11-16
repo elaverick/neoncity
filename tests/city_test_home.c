@@ -36,18 +36,7 @@
 /* The regions (docs/residential-target.md, "Regions"; plan_region_of): each
  * settlement's houses take the palette of the region its centre lies in. */
 #define HR_COUNT PLAN_REGION_COUNT
-/* the styles of each region's palette (the mood board's), "" ending each */
-static const char *const HR_STYLES[HR_COUNT][8] = {
-    { "craftsman", "spanish", "ranch", "tract", "rowhouse", "tripledecker", "" },
-    { "victorian", "georgian", "interwar", "postwar", "modern", "" },
-    { "villa", "townhouse", "" },
-    { "japan", "china", "korea", "" },
-    { "shophouse", "linkhouse", "" },
-    { "rcc", "bungalow", "" },
-    { "villa", "courtyard", "" },
-    { "block", "walled", "" },
-    { "selfbuilt", "colonial", "" },
-};
+/* the styles of each region's palette (the mood board's) are the house generator's: src/gen/home.h, HS_* */
 static const char *const HM_ARCH[] = { "detached", "semi", "terrace" };
 
 static int home_regions(void) {
@@ -258,19 +247,20 @@ static int home_cams(int argc, char **argv) {
         else arch = argv[i];
     }
     const int region = plan_settlement_region(0);
+    int forceArch = -1, forceStyle = -1;
     if (arch) {
-        int ok = 0;
-        for (int k = 0; k < 3; ++k) ok |= strcmp(arch, HM_ARCH[k]) == 0;
-        CHECK(ok, "no house archetype %s (detached, semi, terrace)", arch);
+        for (int k = 0; k < 3; ++k)
+            if (strcmp(arch, HM_ARCH[k]) == 0) forceArch = k;
+        CHECK(forceArch >= 0, "no house archetype %s (detached, semi, terrace)", arch);
     }
     if (style) {
-        int ok = -1;
-        for (int r = 0; r < HR_COUNT && ok < 0; ++r)
-            for (int k = 0; HR_STYLES[r][k][0]; ++k)
-                if (strcmp(style, HR_STYLES[r][k]) == 0) { ok = r; break; }
-        CHECK(ok >= 0, "no house style %s", style);
-        if (ok >= 0 && ok != region) printf("note: %s is a %s style, forced in a %s city\n", style, plan_region_code(ok), plan_region_code(region));
+        forceStyle = home_style_find(region, style);   /* the city's own region's first ("villa" is seu's and mena's) */
+        if (forceStyle < 0) forceStyle = home_style_find(-1, style);
+        CHECK(forceStyle >= 0, "no house style %s", style);
+        const int ok = home_style_region(forceStyle);
+        if (forceStyle >= 0 && ok != region) printf("note: %s is a %s style, forced in a %s city\n", style, plan_region_code(ok), plan_region_code(region));
     }
+    city_home_force(forceArch, forceStyle);   /* HM2: the slice's plots and houses take them */
 
     PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
     if (!pa) fatal("out of memory");
@@ -327,7 +317,11 @@ static int home_cams(int argc, char **argv) {
  * HM1: the suburbs' plots and where the suburbs go
  * ------------------------------------------------------------------------- */
 
-typedef struct PlotStats { int blocks, plots, rows, arch[HOME_ARCH_COUNT], semisNA; double lotArea, plotArea; } PlotStats;
+typedef struct PlotStats {
+    int    blocks, plots, rows, arch[HOME_ARCH_COUNT], semisNA;
+    int    houses, levels[4], repairs, closeDetached;   /* HM2: the houses built on them */
+    double lotArea, plotArea, ms;
+} PlotStats;
 
 static void plot_corner(const HomePlot *p, double u, double v, double *x, double *z) {
     *x = p->ox + p->tx * u + p->nx * v;
@@ -351,6 +345,101 @@ static int plots_overlap(const HomePlot *p, const HomePlot *q) {
         if (a1 <= b0 || b1 <= a0) return 0;
     }
     return 1;
+}
+
+/* HM2: a block's houses (src/gen/building_residential*.c), each row's built on its plots and valid by
+ * section 13.5's rules; across rows (which home_validate cannot see) no two houses overlap, and two detached
+ * houses stand 4 m apart at least, measured between their outlines in the world. A garage wing is held to
+ * its own rule (a metre from the boundary) instead: 1 m beside a neighbour's 2 m side clearance is 3 m. */
+typedef struct HouseShape { int row, arch, role; double p[4][2], x0, z0, x1, z1; } HouseShape;
+
+static double hs_gap(const HouseShape *a, const HouseShape *b) {
+    /* separating axes: the largest gap along the edges' normals (negative: they overlap) */
+    double best = -1e30;
+    for (int pass = 0; pass < 2; ++pass) {
+        const HouseShape *s = pass ? b : a;
+        for (int i = 0; i < 4; ++i) {
+            const int j = (i + 1) % 4;
+            double nx = -(s->p[j][1] - s->p[i][1]), nz = s->p[j][0] - s->p[i][0];
+            const double l = sqrt(nx * nx + nz * nz);
+            if (l < 1e-9) continue;
+            nx /= l; nz /= l;
+            double a0 = 1e30, a1 = -1e30, b0 = 1e30, b1 = -1e30;
+            for (int k = 0; k < 4; ++k) {
+                const double da = a->p[k][0] * nx + a->p[k][1] * nz, db = b->p[k][0] * nx + b->p[k][1] * nz;
+                a0 = fmin(a0, da); a1 = fmax(a1, da); b0 = fmin(b0, db); b1 = fmax(b1, db);
+            }
+            best = fmax(best, fmax(b0 - a1, a0 - b1));
+        }
+    }
+    if (best <= 0.0) return best;
+    /* apart: the least distance from a corner of one to an edge of the other */
+    double d = 1e30;
+    for (int pass = 0; pass < 2; ++pass) {
+        const HouseShape *s = pass ? b : a, *t = pass ? a : b;
+        for (int i = 0; i < 4; ++i)
+            for (int e = 0; e < 4; ++e) {
+                const double *q0 = t->p[e], *q1 = t->p[(e + 1) % 4], ex = q1[0] - q0[0], ez = q1[1] - q0[1];
+                double u = ((s->p[i][0] - q0[0]) * ex + (s->p[i][1] - q0[1]) * ez) / fmax(ex * ex + ez * ez, 1e-12);
+                u = fmax(0.0, fmin(1.0, u));
+                d = fmin(d, hypot(s->p[i][0] - (q0[0] + u * ex), s->p[i][1] - (q0[1] + u * ez)));
+            }
+    }
+    return d;
+}
+
+static void check_block_houses(const Block *b, const HomePlot *P, int n, PlotStats *st) {
+    enum { MAXS = 4096 };
+    static HGraph g;
+    static HouseShape S[MAXS];
+    int ns = 0;
+    for (int i = 0; i < n;) {
+        int j = i + 1;
+        while (j < n && P[j].row == P[i].row) j++;
+        const DVec2 c = dv(P[i].ox, P[i].oz);
+        const clock_t t0 = clock();
+        home_build(&P[i], j - i, plan_affluence(c.x, c.z), &g, NULL);
+        st->ms += 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC;
+        st->houses += j - i;
+        st->levels[g.level & 3]++;
+        st->repairs += g.repairs;
+        CHECK(!g.empty, "block %08x row %d (%s, %s): no house on its %d plots", b->seed, P[i].row, HM_ARCH[P[i].arch % 3], home_style_name(P[i].style), j - i);
+        if (!g.empty && !home_validate(&g, NULL)) {
+            static char buf[1 << 14];
+            BLog log = { buf, sizeof(buf), 0 };
+            buf[0] = 0;
+            home_validate(&g, &log);
+            CHECK(0, "block %08x row %d (%s, %s) breaks the rules:\n%s", b->seed, P[i].row, HM_ARCH[P[i].arch % 3], home_style_name(P[i].style), buf);
+        }
+        for (int v = 0; v < g.nvol && ns < MAXS; ++v) {
+            const HVol *h = &g.vol[v];
+            if (h->role == HV_PORCH && h->kind == HP_CANOPY) continue;
+            float o[6][2];
+            hvol_outline(h, o);
+            HouseShape *s = &S[ns++];
+            s->row = P[i].row; s->arch = P[i].arch; s->role = h->role;
+            s->x0 = s->z0 = 1e30; s->x1 = s->z1 = -1e30;
+            for (int k = 0; k < 4; ++k) {
+                home_to_world(&g, o[k][0], o[k][1], &s->p[k][0], &s->p[k][1]);
+                s->x0 = fmin(s->x0, s->p[k][0]); s->x1 = fmax(s->x1, s->p[k][0]);
+                s->z0 = fmin(s->z0, s->p[k][1]); s->z1 = fmax(s->z1, s->p[k][1]);
+            }
+        }
+        i = j;
+    }
+    for (int i = 0; i < ns; ++i)
+        for (int j = i + 1; j < ns; ++j) {
+            const HouseShape *a = &S[i], *q = &S[j];
+            if (a->row == q->row || a->x1 + 4.0 < q->x0 || q->x1 + 4.0 < a->x0 || a->z1 + 4.0 < q->z0 || q->z1 + 4.0 < a->z0) continue;
+            const double d = hs_gap(a, q);
+            CHECK(d > -0.02, "block %08x: rows %d and %d's houses overlap by %.2f m", b->seed, a->row, q->row, -d);
+            /* a garage wing keeps its own metre to the boundary (section 13.5's access rule), so the 4 m is between the houses */
+            if (a->arch == HOME_DETACHED && q->arch == HOME_DETACHED && a->role != HV_WING && q->role != HV_WING && d < 4.0 - 0.02) {
+                st->closeDetached++;
+                CHECK(0, "block %08x: detached houses of rows %d and %d stand %.2f m apart (4 m at least: their %s and %s)", b->seed, a->row, q->row, d,
+                      home_role_name(a->role), home_role_name(q->role));
+            }
+        }
 }
 
 /* One suburb block's plots (src/city/plots.c) against docs/residential-target.md, "Plots": each inside
@@ -392,12 +481,17 @@ static void check_block_plots(const Block *b, PlotStats *st) {
     for (int i = 0; i < n; ++i)
         if (P[i].arch == HOME_TERRACE)
             CHECK(rowLen[P[i].row % HOME_MAX_PLOTS] <= 48.0 + 1e-3, "block %08x's terrace %d is %.1f m long", b->seed, P[i].row, rowLen[P[i].row % HOME_MAX_PLOTS]);
+    check_block_houses(b, P, n, st);
 }
 
 static void print_plot_stats(const char *what, const PlotStats *st) {
     printf("  %s: %d suburb blocks, %d plots in %d rows (%d detached, %d semi, %d terrace), %.0f%% of the lots' land; %.1f plots a block\n",
            what, st->blocks, st->plots, st->rows, st->arch[HOME_DETACHED], st->arch[HOME_SEMI], st->arch[HOME_TERRACE],
            st->lotArea > 0.0 ? 100.0 * st->plotArea / st->lotArea : 0.0, st->blocks ? (double)st->plots / st->blocks : 0.0);
+    const int rows = st->levels[0] + st->levels[1] + st->levels[2] + st->levels[3];
+    printf("    houses: %d in %d rows, accepted at level 0 %d, 1 %d, 2 %d, the simplest %d; %.2f repairs a row; %.3f ms a house\n",
+           st->houses, rows, st->levels[0], st->levels[1], st->levels[2], st->levels[3], rows ? (double)st->repairs / rows : 0.0,
+           st->houses ? st->ms / st->houses : 0.0);
 }
 
 /* Where the suburbs go (the user's answers, 2026-11-16, in the roadmap): a ring of houses 2-4 km deep
@@ -516,9 +610,29 @@ static int home_slice_plots(const Block *b) {
     print_plot_stats("the slice's plots", &st);
     for (int i = 0; i < n; ++i) {
         const HomePlot *p = &P[i];
-        printf("    plot %2d: %-8s row %2d, unit %d of %d, %4.1f m wide, %4.1f deep, front garden %.1f m, %d storeys, %.1f m high\n", i,
-               HM_ARCH[p->arch % 3], p->row, p->unit + 1, p->units, p->u1 - p->u0, p->depth, p->front, p->storeys, city_home_height(p));
+        printf("    plot %2d: %-8s %-12s row %2d, unit %d of %d, %4.1f m wide, %4.1f deep, front garden %.1f m, %d storeys, %.1f m high\n", i,
+               HM_ARCH[p->arch % 3], home_style_name(p->style), p->row, p->unit + 1, p->units, p->u1 - p->u0, p->depth, p->front, p->storeys,
+               city_home_height(p));
     }
     CHECK(n >= 6, "the slice's block has only %d plots", n);
+    /* HM2: the rows' houses, and the first one's decisions */
+    static HGraph g;
+    static char buf[1 << 15];
+    for (int i = 0, first = 1; i < n; first = 0) {
+        int j = i + 1;
+        while (j < n && P[j].row == P[i].row) j++;
+        BLog log = { buf, sizeof(buf), 0 };
+        buf[0] = 0;
+        home_build(&P[i], j - i, plan_affluence(P[i].ox, P[i].oz), &g, first ? &log : NULL);
+        int roles[HV_ROLE_COUNT] = { 0 };
+        for (int v = 0; v < g.nvol; ++v) roles[g.vol[v].role]++;
+        const int mi = 0;
+        printf("    row %2d: %s %s, level %d, %d repairs: %s roof at %.0f deg, %.1f m deep, ridge %.1f m; %d bays, %d porches, %d garages, %d extensions, %d outriggers, %d stacks\n",
+               P[i].row, home_style_name(g.style), HM_ARCH[g.arch % 3], g.level, g.repairs, g.nvol ? home_roof_name(g.vol[mi].roof) : "-",
+               g.nvol ? g.vol[mi].pitch : 0.0f, g.nvol ? g.vol[mi].z1 - g.vol[mi].z0 : 0.0f, g.nvol ? g.vol[mi].top : 0.0f,
+               roles[HV_BAY], roles[HV_PORCH], roles[HV_WING], roles[HV_EXTENSION], roles[HV_OUTRIGGER], g.nchim);
+        if (first) printf("%s", buf);
+        i = j;
+    }
     return n;
 }

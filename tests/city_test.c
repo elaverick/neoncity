@@ -20,6 +20,7 @@
 #include "models.h"
 #include "advert_def.h"
 #include "pmodel.h"
+#include "home.h"
 #include <time.h>
 
 #define N_CHUNKS 400

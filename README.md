@@ -18,6 +18,7 @@ cmake --build build
 ctest --test-dir build         # determinism, layout and building-rule tests
 build/city_map map.bmp         # top-down map of the plan (6 km around the spawn)
 build/building_lab 3000 5      # building archetypes, retries and rejections; 5 decision logs
+build/home_lab 10000 out        # houses (residential HM2): every style, levels, repairs and rejects by tag, the rules broken on purpose; plan sheets
 build/interior_lab 3000 12 out # office lobbies: pass rate, attempts, rejections; 12 plan renders and cameras
 build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders, cameras
 build/interior_lab office 400 out        # baked office floors: the generator's catalogue and a sweep; plans
@@ -108,7 +109,8 @@ generated as a pure function of world position:
   - rural: open land with the odd farmstead, towards the city's edge
   - suburb: houses (detached, semi-detached, terraced) on plots cut along the streets
     (`src/city/plots.c`): the ring round the city's edge, and the odd pocket inside it. Until
-    the residential roadmap's HM3 builds the houses, their plots are lawns
+    the residential roadmap's HM3 builds the houses, their plots are lawns (HM2 generates them:
+    `src/gen/building_residential.c`, "Houses" below)
 - **The city's edge.** The city is finite. Its footprint is a warped disc (`plan_city_edge`),
   cut at the coast and the mountains (below), whose outer 1.5 km belt gives way to the land.
   Los Angeles's disc is 155 km across, its edge 20 km from its core at the nearest (the Pacific)
@@ -406,6 +408,24 @@ vessels pass through decks by, are lists of their own.
 `building_lab industry [size]` surveys the industrial fringe: styles, tiers, units, pipes and
 rejections, with a camera for a few of each kind, and measures the mesh and litter of the chunks
 holding the largest plants against the page budget.
+
+### Houses (`src/gen/building_residential.c`)
+The houses of the suburbs (section 13 of `docs/procedural-building-generation.md`; the residential roadmap,
+target `docs/residential-target.md`) are a graph of their own (`src/gen/home.h`, `HGraph`), built over one row
+of the plots `src/city/plots.c` cuts: a detached house, a semi-detached pair or a terrace of 3-12 units. It
+holds section 13.2's volumes (a main, or a pair's or row's main under one roof, and the wings, extensions, bays,
+outriggers and porches attached to it), each a rectangle with storeys and a gable, hip, lean-to or flat roof;
+the units with their doors and party walls; the chimney stacks; and the garden: front and rear gardens,
+boundaries with gates, paths, drives, sheds, parked cars and the places a tree may stand. Each row takes a
+style from its city's region (26, `HS_*`: craftsman to colonial) that weights every choice; the rules are the
+same everywhere. Section 13.10's driver proposes at three levels (full, without the optional parts, plain),
+repairs what it can (`repair <tag>` in the log: a lean-to lowered under the eaves, a rear garden won back, a
+porch made a canopy), validates every rule of section 13.5 on the volumes' own outlines (`rejected <tag>`), and
+falls back to the simplest valid house. `home_lab` builds 10,000 rows an archetype over every style (none
+empty, invalid or different twice; every fallback level valid on its own), breaks each rule on purpose to
+see it caught, and draws a plan sheet per archetype; `city_test` builds the houses on every suburb plot it
+checks and measures across rows (no overlaps, detached houses 4 m apart). Nothing is drawn from them until
+HM3: the plots are lawns.
 
 ### Office lobbies (`src/gen/interior.c`)
 The ground floors of office buildings with a lobby are real interiors, planned by the method in
