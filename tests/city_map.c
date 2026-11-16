@@ -10,11 +10,15 @@
  * and on maps up to 2.5 km across the vendors' sites are orange, their fronts
  * yellow. A map of the whole city (30 km at 20 m/px, say) is quicker without
  * the buildings. It ends with a survey of the spaces: how many blocks of each
- * zone, poor, middling and wealthy, have each kind. */
+ * zone, poor, middling and wealthy, have each kind. With the buildings, the
+ * suburbs' plots (src/city/plots.c) are drawn by archetype: detached green,
+ * semi-detached blue, terraced brown, each with its house's place lighter. */
 #include "building.h"
 #include "vendor_sites.h"
 #include "hash.h"
 #include "mathlib.h"
+#include "terrain.h"
+#include "thread.h"
 
 static uint8_t *g_px;
 static int g_w, g_h;
@@ -100,6 +104,8 @@ static void write_bmp(const char *path) {
 }
 
 int main(int argc, char **argv) {
+    terrain_earth_load(NULL);       /* the game's world (the Earth's bake beside the exe), as city_test does */
+    plan_world_init(cpu_count());
     const char *out = argc > 1 ? argv[1] : "city_map.bmp";
     DVec2 c = plan_town_centre(0, 0);
     double size = 6000.0, mpp = 3.0;
@@ -113,7 +119,7 @@ int main(int argc, char **argv) {
     g_px = (uint8_t *)malloc((size_t)g_w * g_h * 3);
     memset(g_px, 0, (size_t)g_w * g_h * 3);
 
-    static const uint32_t zoneCol[ZONE_COUNT] = { 0x3a2f3f, 0x4a3a28, 0x2c3440, 0x343434, 0x1f3a22, 0x3a4a1c };
+    static const uint32_t zoneCol[ZONE_COUNT] = { 0x3a2f3f, 0x4a3a28, 0x2c3440, 0x343434, 0x1f3a22, 0x3a4a1c, 0x9a7a3a };
     BlockRec *rec = NULL;
     int nrec = 0, caprec = 0;
     PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
@@ -167,6 +173,30 @@ int main(int argc, char **argv) {
                 for (int k = 0; k < nsp; ++k) {
                     double r0 = fabs(sp[k].u0) + fabs(sp[k].u1) + fabs(sp[k].v0) + fabs(sp[k].v1);
                     fill(&sp[k], in_space, sp[k].ox - r0, sp[k].oz - r0, sp[k].ox + r0, sp[k].oz + r0, clip, 0xb09a6a);
+                }
+                if (withBuildings) {
+                    /* the suburbs' plots (HM1), by archetype, each with its house's place (front garden to 9 m behind it) lighter */
+                    static HomePlot hp[HOME_MAX_PLOTS];
+                    static const uint32_t PLOT[HOME_ARCH_COUNT][2] = { { 0x4f6a3a, 0xc8b89a }, { 0x3a5a6a, 0x9ab8c8 }, { 0x6a4a3a, 0xc89a8a } };
+                    int nh = city_block_plots(bk, hp, HOME_MAX_PLOTS);
+                    for (int k = 0; k < nh; ++k) {
+                        const HomePlot *p = &hp[k];
+                        const double side = p->arch == HOME_TERRACE ? 0.0 : p->arch == HOME_SEMI ? 1.2 : 2.0;
+                        const double lo[2][4] = { { p->u0 + 0.3, 0.3, p->u1 - 0.3, p->depth - 0.3 },
+                                                  { p->u0 + (p->arch == HOME_SEMI && p->unit == 1 ? 0.0 : side), p->front,
+                                                    p->u1 - (p->arch == HOME_SEMI && p->unit == 0 ? 0.0 : side), p->front + 9.0 } };
+                        for (int s = 0; s < 2; ++s) {
+                            Poly q; memset(&q, 0, sizeof(q)); q.n = 4;
+                            const double uv[4][2] = { { lo[s][0], lo[s][1] }, { lo[s][2], lo[s][1] }, { lo[s][2], lo[s][3] }, { lo[s][0], lo[s][3] } };
+                            for (int v = 0; v < 4; ++v) {
+                                q.v[v].x = p->ox + p->tx * uv[v][0] + p->nx * uv[v][1];
+                                q.v[v].z = p->oz + p->tz * uv[v][0] + p->nz * uv[v][1];
+                            }
+                            double x0, z0, x1, z1;
+                            poly_bounds(&q, &x0, &z0, &x1, &z1);
+                            fill(&q, in_poly, x0, z0, x1, z1, clip, PLOT[p->arch % HOME_ARCH_COUNT][s]);
+                        }
+                    }
                 }
                 if (nrec == caprec) { caprec = caprec ? 2 * caprec : 4096; rec = (BlockRec *)realloc(rec, sizeof(BlockRec) * caprec); }
                 DVec2 cen = poly_centroid(&bk->lot);
@@ -231,7 +261,7 @@ int main(int argc, char **argv) {
         qsort(rec, (size_t)nrec, sizeof(BlockRec), rec_cmp);
         int u = 0;
         for (int i = 0; i < nrec; ++i) if (!u || rec[u - 1].seed != rec[i].seed) rec[u++] = rec[i];
-        static const char *const ZN[ZONE_COUNT] = { "core", "centre", "residential", "industrial", "park", "rural" };
+        static const char *const ZN[ZONE_COUNT] = { "core", "centre", "residential", "industrial", "park", "rural", "suburb" };
         static const char *const CN[3] = { "poor", "middling", "wealthy" };
         static const char *const SN[SPACE_KINDS] = { "apron", "lane", "pocket", "plaza", "court" };
         printf("spaces for vendors, by block (%d blocks):\n", u);

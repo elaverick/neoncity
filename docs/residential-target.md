@@ -51,14 +51,49 @@ Graffiti follows the city's existing rule (by affluence, on walls, shutters and 
 |---|---|
 | Where | the residential block holding (8196.7, 7477.6), home city frame (`HOME_SLICE_X/Z`, `tests/city_test_home.c`) |
 | Lot | 131 x 99 m (12,411 m²), a local street along its longest side |
-| Fringe | 0.30 (the fringe's inner half, where HM1 puts the suburbs) |
+| Zone | suburb (HM1): 1.9 km inside the built edge by the edge measure, in a ring 3.4 km deep there |
+| Fringe | 0.30 |
 | Affluence | 0.45 (middling); density 0.37 |
 | Region | na (Los Angeles) |
 | Check | `city_test --home [ARCHETYPE] [--style STYLE]`: the block is residential with a street frontage, and the five views have lines of sight |
 
-Today the block holds `fill_estate`'s slabs and points; HM1-HM3 put houses on it, forced by archetype and style
-through `--home` once the generator exists. If HM1's re-banding moves the block out of residential, the check fails:
-pick another with `city_test --home find` and update the constants and this table.
+Since HM1 the block is a suburb's: `--home` lists its 16 detached plots (14-18 m frontages, 36-42 m deep). HM2-HM3
+put houses on them, forced by archetype and style through `--home` once the generator exists. If a change to the
+zoning moves the block out of the suburbs, the check fails: pick another with `city_test --home find` and update the
+constants and this table.
+
+## Where the suburbs go (HM1)
+
+The user's answers (2026-11-16): most people live at high density; the houses are the outer ring and a few pockets.
+
+| What | Where | Measured (`city_test`, `city_test --home ring`) |
+|---|---|---|
+| The ring | `ZONE_SUBURB` from the open land at the edge in to `plan_suburb_depth`: 2.6-4.6 km of the edge measure, a slow field round the edge. The towns are built whole, so the last blocks stand ~1 km of the measure in: 2-4 km of houses on the ground | houses reach 3.1 km in on average (0-5 over 24 rays); 54% of the land 0.5-2.5 km in |
+| Open land | the outermost `plan_open_depth` (1.0-1.6 km of the measure): two thirds fields, the rest parks and houses thinning out | |
+| Through the ring | industrial estates and parks in patches (slow fields), green buffers on the boulevards; the ring's inner 400 m mixes houses and estates | ~10% each |
+| Centres in the ring | town centres keep their high street (170 m), ringed by estates to 350 m, not a core; a third of the neighbourhood centres keep a parade | |
+| Inner pockets | three neighbourhoods in ten hold a disc of houses 110-170 m in radius, set off the site, if the density there is 0.34 or less | 54 pockets within 5 km of LA's centre, the largest 6 blocks (0.08 km2), 3.5% of the inner residential land |
+| The estates | everything else residential inside the ring, as before (`fill_estate`) | |
+
+The plots (`src/city/plots.c`, `city_block_plots`): each street side of a suburb block is a strip one plot deep (back
+to back with the far side's where the block is shallow), laid with one archetype by the region's weights:
+
+| Region | Detached / semi / terrace (a street side's chance) |
+|---|---|
+| na | 0.90 / 0 / 0.10; the north-east's old cities (east of 82° W, north of 37° N) 0.45 / 0 / 0.55 |
+| uk | 0.31 / 0.31 / 0.38 (§13.9's suburb weights over its houses) |
+| seu | 0.40 / 0 / 0.60 |
+| eas, mena | 0.60 / 0 / 0.40 |
+| sea | 0.25 / 0.05 / 0.70 |
+| sas | 0.35 / 0 / 0.65 |
+| ssa | 0.90 / 0 / 0.10 |
+| lat | 0.15 / 0 / 0.85 |
+
+Local streets are laid before busier ones, the longest first; a later strip keeps clear of the earlier ones' plots, so
+a corner plot fronts one street and the side street's first plot starts behind its rear garden. What a row leaves at
+the end of a strip takes a detached house if it fits. A row's units share its storeys and front garden; three rows in
+four take the street's storeys (a street was mostly built at once). The plot's planned height (`city_home_height`)
+stands in the skyline check until HM3 builds the houses; until then their plots are lawns.
 
 ## Plots (§13.5, kept as written)
 

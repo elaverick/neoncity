@@ -760,7 +760,7 @@ static void kerb_pitches(SGen *S, int i) {
     double len = dlen(dsub(B, A)), walk = c->e[i].walk;
     double room = walk - KERB_BACK - VENDOR_WALK_KERB - 0.05;
     if (len < 2.0 * KERB_END + 2.0 || room < 1.7) return;
-    static const float RATE[ZONE_COUNT] = { 1.0f / 160.0f, 1.0f / 55.0f, 1.0f / 140.0f, 1.0f / 260.0f, 0.0f, 0.0f };
+    static const float RATE[ZONE_COUNT] = { 1.0f / 160.0f, 1.0f / 55.0f, 1.0f / 140.0f, 1.0f / 260.0f, 0.0f, 0.0f, 0.0f };
     float rate = RATE[bk->zone] * (1.4f - S->aff) * KERB_SHARE;
     if (rate <= 0.0f) return;
     DVec2 t = dscale(dsub(B, A), 1.0 / len), in = dv(-t.z, t.x);

@@ -364,6 +364,39 @@ const char *plan_settlement_name(int k) {
     return W.name[k >= 0 && k < W.n ? k : 0];
 }
 
+/* The regions' bounds (docs/residential-target.md, "Regions"), by the
+ * city's centre: the first that holds it. */
+int plan_region_of(double lat, double lon) {
+    if (lon < -30.0) return lat >= 24.0 ? PLAN_REGION_NA : PLAN_REGION_LAT;
+    if (lon >= 110.0 && lat < -10.0) return PLAN_REGION_UK;   /* Australia and New Zealand: brick and tile */
+    if (lon >= 92.0) return lat >= 22.0 ? PLAN_REGION_EAS : PLAN_REGION_SEA;
+    if (lon >= 60.0 && lat >= 5.0 && lat < 37.0) return PLAN_REGION_SAS;
+    if (lat >= 45.0) return PLAN_REGION_UK;
+    if (lat >= 36.0) return PLAN_REGION_SEU;
+    if (lat >= 12.0) return PLAN_REGION_MENA;
+    return PLAN_REGION_SSA;
+}
+
+void plan_settlement_latlon(int k, double *lat, double *lon) { terrain_dir_latlon(plan_settlement(k).dir, lat, lon); }
+
+int plan_settlement_region(int k) {
+    double lat, lon;
+    plan_settlement_latlon(k, &lat, &lon);
+    return plan_region_of(lat, lon);
+}
+
+const char *plan_region_code(int r) {
+    static const char *const C[PLAN_REGION_COUNT] = { "na", "uk", "seu", "eas", "sea", "sas", "mena", "ssa", "lat" };
+    return r >= 0 && r < PLAN_REGION_COUNT ? C[r] : "?";
+}
+
+const char *plan_region_title(int r) {
+    static const char *const T[PLAN_REGION_COUNT] = {
+        "North America", "Britain and NW Europe", "Southern Europe", "East Asia", "South-East Asia",
+        "South Asia", "Middle East and North Africa", "Sub-Saharan Africa", "Latin America" };
+    return r >= 0 && r < PLAN_REGION_COUNT ? T[r] : "?";
+}
+
 void plan_settlement_relief_range(double *lo, double *hi) {
     ensure();
     *lo = W.relief_lo;

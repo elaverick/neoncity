@@ -1146,3 +1146,24 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
   shadow. Where the cities' cloud thins, a direct moon term would give the ribs moon shadows too.
 - **Lamps on walls are faint.** A wall's light is mostly the overcast fill and bounce, which have no
   direction, so the lamps' rib and slat shadows change little at night.
+
+## Residential buildings
+
+The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
+
+- **The suburbs are lawns until HM3** (HM1, 2026-11-16). `ZONE_SUBURB` blocks build no buildings and their plots
+  (`city_block_plots`) are grass; the skyline check counts the houses' planned heights (`city_home_height`). The ring
+  reads as parkland from the air until the houses arrive.
+- **The edge's tallest is the industry's, not two storeys.** The ring's industrial estates keep the plants' 45-70 m
+  limit (stacks and flares), so the outermost 600 m band's tallest is ~70 m (`check_skyline`). Lower the units there
+  (not the stacks) if the edge should read as houses only.
+- **The ring is set in edge-measure metres, calibrated by hand.** `PLAN_SUBURB_MIN/MAX` (2.6-4.6 km of the measure)
+  give 2-4 km of houses because the last blocks stand ~1 km of the measure in and it runs ~0.85 m a metre
+  (`city_test --home ring` prints both). A change to `CITY_BELT`, the warp or `plan_town_built` moves the ring:
+  re-run it.
+- **Backland.** A suburb block deeper than two plots keeps its middle unused (green). Garages, allotments or a
+  back lane (HM7).
+- **Storeys by street, not by style.** Three rows in four take their street's storeys; HM2's grammar should decide
+  storeys from the style (ranches one, Victorian terraces two or three).
+- **The inner pockets' look** is the user's call at HM8: pockets of a few streets among the estates (54 within 5 km
+  of LA's centre, the largest 6 blocks).

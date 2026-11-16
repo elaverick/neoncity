@@ -660,9 +660,10 @@ static void emit_lot(Mesh *m, const ChunkGen *g, const BlockFrame *F) {
     for (int i = 0; i < bk->lot.n; ++i) l[i] = dv(bk->lot.v[i].x - g->ox, bk->lot.v[i].z - g->oz);
     int k = clip_chunk(l, bk->lot.n, cl);
     pave_uv(F, cl, k, uv);
-    uint8_t green = bk->zone == ZONE_PARK || bk->zone == ZONE_RURAL;   /* open land is grass, as a park is */
-    /* its blades (city.h city_grass_param): a park is mown unless it lies in squalor, a field left rough */
-    float kept = bk->zone == ZONE_PARK ? 1.0f - smoothstepf(0.45f, 0.8f, (float)F->sq / 255.0f) : 0.0f;
+    /* open land is grass, as a park is; so are the suburbs' gardens (HM7 divides them) */
+    uint8_t green = bk->zone == ZONE_PARK || bk->zone == ZONE_RURAL || bk->zone == ZONE_SUBURB;
+    /* its blades (city.h city_grass_param): a park or a garden is mown unless it lies in squalor, a field left rough */
+    float kept = bk->zone == ZONE_PARK || bk->zone == ZONE_SUBURB ? 1.0f - smoothstepf(0.45f, 0.8f, (float)F->sq / 255.0f) : 0.0f;
     uint8_t blades = green ? city_grass_param(kept) : CITY_GRASS_NONE;
     if (!k) return;
     /* the market lanes, hawker frontages, pocket markets and forecourts left for

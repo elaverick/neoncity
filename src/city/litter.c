@@ -125,11 +125,12 @@ static void lgen_free(LGen *g) {
  * the litter's vertex BUDGET and lose their doorways and lamp posts. For the
  * same reason industrial land stops at 0.9: its yards are wide open ground. */
 float city_squalor(int zone, double x, double z) {
-    static const float base[ZONE_COUNT + 1] = { 0.42f, 0.22f, 0.5f, 0.42f, 0.66f, 0.3f, 0.3f };   /* a road, core, centre, estate, industrial, park, rural */
+    static const float base[ZONE_COUNT + 1] = { 0.42f, 0.22f, 0.5f, 0.42f, 0.66f, 0.3f, 0.3f, 0.24f };   /* a road, core, centre, estate, industrial, park, rural, suburb */
     float aff = plan_affluence(x, z), most = 1.0f;
     if (zone == ZONE_INDUSTRIAL) { aff *= 0.6f; most = 0.9f; }
     float sq = clampf(base[zone + 1] + 1.1f * (0.5f - aff), 0.04f, most);
     float border = smoothstepf(0.4f, 0.65f, plan_fringe(x, z));
+    if (zone == ZONE_SUBURB) border *= 0.3f;   /* the houses are mostly kept up, out there too (docs/residential-target.md, "Upkeep") */
     return sq + maxf(0.85f - sq, 0.0f) * border;
 }
 
@@ -183,7 +184,7 @@ static Ground ground_at(LGen *g, double x, double z) {
         if (x < bk->x0 || x > bk->x1 || z < bk->z0 || z > bk->z1 || !poly_contains(&bk->curb, x, z, 0.0)) continue;
         gr.block = k;
         if (bk->lot.n && poly_contains(&bk->lot, x, z, 0.0)) {
-            gr.type = bk->zone == ZONE_PARK || bk->zone == ZONE_RURAL ? G_PARK : G_LOT;
+            gr.type = bk->zone == ZONE_PARK || bk->zone == ZONE_RURAL || bk->zone == ZONE_SUBURB ? G_PARK : G_LOT;
             gr.y = SIDEWALK_HEIGHT + 0.006f;
         } else {
             gr.type = G_SIDEWALK;

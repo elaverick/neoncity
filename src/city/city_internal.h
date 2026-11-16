@@ -16,6 +16,7 @@
  *   city.c           entry points (city_build_mesh, _interiors, _plants), shared rules, spawn
  *   chunk_gen.c      everything near one chunk: plan area, buildings, lamps
  *   lots.c           filling plan blocks with building plots
+ *   plots.c          the houses' plots of the suburbs' blocks
  *   drops.c          drop kerbs at the crosswalks
  *   lamps.c          street lamp positions
  *   collision.c      what the player collides with (city_layout)

@@ -325,7 +325,7 @@ static void kerb_edge(PGen *P, int bi, int i) {
     float u[64];
     uint32_t ss[64];
     /* litter bins: a few to a street in the centres, sparser out in the estates */
-    static const float BIN_RATE[ZONE_COUNT] = { 1.0f / 45.0f, 1.0f / 50.0f, 1.0f / 90.0f, 1.0f / 150.0f, 1.0f / 70.0f, 0.0f };
+    static const float BIN_RATE[ZONE_COUNT] = { 1.0f / 45.0f, 1.0f / 50.0f, 1.0f / 90.0f, 1.0f / 150.0f, 1.0f / 70.0f, 0.0f, 1.0f / 200.0f };
     int nb = stations(hash_combine(es, 1u), len, BIN_RATE[zone], u, ss, 64);
     for (int k = 0; k < nb && n < 90; ++k) {
         if (!have(PM_BIN)) break;
@@ -335,7 +335,7 @@ static void kerb_edge(PGen *P, int bi, int i) {
         TRY(PROP_BIN, PM_BIN, u[k], KERB_STONE_WIDTH + 0.12f + hd, hw, hd, 1, ss[k]);
     }
     /* a post box to a block, now and then */
-    static const float MAIL_P[ZONE_COUNT] = { 0.3f, 0.45f, 0.45f, 0.1f, 0.15f, 0.05f };
+    static const float MAIL_P[ZONE_COUNT] = { 0.3f, 0.45f, 0.45f, 0.1f, 0.15f, 0.05f, 0.35f };
     Rng r = rng_make(hash_combine(bk->seed ^ 0x9057u, 0u));
     int mailEdge = (int)(rng_u32(&r) % (uint32_t)c->n);
     if (i == mailEdge && rng_float(&r) < MAIL_P[zone] && have(PM_MAILBOX)) {
@@ -512,7 +512,7 @@ static void aircons(PGen *P, int i) {
     const Building *b = &g->bld[i];
     const BGraph *bg = chunk_gen_graph(g, i);
     if (bgen_industrial(bg) || b->kind == BK_MEGA || !have(PM_AIRCON)) return;
-    static const float LOT_P[ZONE_COUNT] = { 0.05f, 0.12f, 0.14f, 0.0f, 0.0f, 0.1f }, STREET_P[ZONE_COUNT] = { 0.0f, 0.0f, 0.07f, 0.0f, 0.0f, 0.0f };
+    static const float LOT_P[ZONE_COUNT] = { 0.05f, 0.12f, 0.14f, 0.0f, 0.0f, 0.1f, 0.0f }, STREET_P[ZONE_COUNT] = { 0.0f, 0.0f, 0.07f, 0.0f, 0.0f, 0.0f, 0.0f };
     if (LOT_P[b->zone] <= 0.0f) return;
     const Block *bk = &g->pa->blocks[g->bblk[i]];
     uint32_t sh = style_hash(bg->seed);
@@ -589,7 +589,7 @@ static void dumpsters(PGen *P, int i) {
     const BGraph *bg = chunk_gen_graph(g, i);
     /* behind shophouses, walk-ups and sheds: not against an office lobby's glass, nor under a void deck */
     if (bgen_industrial(bg) || b->kind == BK_MEGA || bg->groundMode != GF_RETAIL || !have(PM_DUMPSTER)) return;
-    static const float RATE[ZONE_COUNT] = { 1.0f / 60.0f, 1.0f / 40.0f, 1.0f / 80.0f, 1.0f / 40.0f, 0.0f, 0.0f };
+    static const float RATE[ZONE_COUNT] = { 1.0f / 60.0f, 1.0f / 40.0f, 1.0f / 80.0f, 1.0f / 40.0f, 0.0f, 0.0f, 0.0f };
     if (RATE[b->zone] <= 0.0f) return;
     const Block *bk = &g->pa->blocks[g->bblk[i]];
     if (!bk->lot.n) return;

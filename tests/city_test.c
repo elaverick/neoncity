@@ -533,7 +533,8 @@ static void check_skyline(void) {
     DVec2 c = plan_town_centre(0, 0);
     PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
     Building *bs = (Building *)malloc(sizeof(Building) * MAX_B);
-    if (!pa || !bs) fatal("out of memory checking the skyline");
+    HomePlot *hp = (HomePlot *)malloc(sizeof(HomePlot) * HOME_MAX_PLOTS);
+    if (!pa || !bs || !hp) fatal("out of memory checking the skyline");
     double tall[BANDS] = { 0 };
     for (int ray = 0; ray < RAYS; ++ray) {
         double th = (ray + 0.5) * 2.0 * 3.14159265358979 / RAYS, dx = cos(th), dz = sin(th), rad = ray_end(pa, c, dx, dz, 1);   /* past the last block */
@@ -543,6 +544,9 @@ static void check_skyline(void) {
             for (int b = 0; b < pa->nblocks; ++b) {
                 int n = city_block_buildings(&pa->blocks[b], bs, MAX_B);
                 for (int i = 0; i < n; ++i) top = fmax(top, bs[i].height);
+                /* the suburbs' houses, as planned until HM3 builds them */
+                n = city_block_plots(&pa->blocks[b], hp, HOME_MAX_PLOTS);
+                for (int i = 0; i < n; ++i) top = fmax(top, city_home_height(&hp[i]));
             }
             tall[k] += top / RAYS;
         }
@@ -553,6 +557,7 @@ static void check_skyline(void) {
     for (int k = 0; k + 1 < BANDS; ++k)
         CHECK(tall[k] <= tall[k + 1] * 1.15 + 10.0, "the skyline rises towards the edge: %.0f m at band %d, %.0f m inside it", tall[k], k, tall[k + 1]);
     CHECK(tall[0] < 0.4 * tall[BANDS - 1], "the edge's skyline (%.0f m) is no lower than %.1f km in (%.0f m)", tall[0], 0.6 * (BANDS - 1), tall[BANDS - 1]);
+    free(hp);
     free(bs);
     free(pa);
 }
@@ -1565,9 +1570,10 @@ int main(int argc, char **argv) {
         printf("spawn at (%.1f, %.1f) yaw %.0f deg, plan density %.2f\n", sx, sz, yaw * 57.2958f, plan_density(sx, sz));
     }
 
-    /* 6. The city's edge. */
+    /* 6. The city's edge, and the suburbs round it (HM1). */
     check_edge();
     check_skyline();
+    check_suburbs();
 
     /* 7. Distant proxies. */
     check_proxies();

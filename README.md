@@ -106,15 +106,24 @@ generated as a pure function of world position:
   - industrial: process plants and substations, sheds on the smallest plots
   - park: more likely along the boulevards, as green buffers between towns
   - rural: open land with the odd farmstead, towards the city's edge
+  - suburb: houses (detached, semi-detached, terraced) on plots cut along the streets
+    (`src/city/plots.c`): the ring round the city's edge, and the odd pocket inside it. Until
+    the residential roadmap's HM3 builds the houses, their plots are lawns
 - **The city's edge.** The city is finite. Its footprint is a warped disc (`plan_city_edge`),
   cut at the coast and the mountains (below), whose outer 1.5 km belt gives way to the land.
   Los Angeles's disc is 155 km across, its edge 20 km from its core at the nearest (the Pacific)
   and the San Gabriels a hole in it. It is built of whole towns, each only where its ground provably
   lies inside that belt (`plan_town_built`), so the city's ground and the terrain's agree
-  wherever they meet. Over the last 3 km the city thins (`plan_fringe`): density falls, the skyline
-  steps down (`city_height_cap` falls from 800 m to 60 m), and the land is zoned in bands,
-  wobbled so they don't ring the city: industry and logistics, then parks and allotments,
-  then open land; town and neighbourhood centres keep their high streets. The outermost boulevards are
+  wherever they meet. Over the last 3 km the city thins (`plan_fringe`): density falls and the skyline
+  steps down (`city_height_cap` falls from 800 m to 60 m). It ends in suburbs: a ring of houses
+  2-4 km deep in from its last blocks (`plan_suburb_depth`, varied round the edge so it isn't a
+  band, and round the holes the mountains cut too), with industrial estates and parks in patches
+  through it, giving way to open land at the very edge. Town centres in the ring keep their high
+  streets, ringed by estates rather than a core; a third of the neighbourhood centres keep a parade
+  of shops. Inside the ring are the estates, with inner suburbs only as pockets of a few streets
+  where the density is lowest between the centres (a few per cent of the land: `city_test --home
+  ring` and the city tests measure both). Each city's houses take the styles of its world region
+  (`plan_settlement_region`). The outermost boulevards are
   its perimeter road; the asphalt reaches a shoulder beyond them, and a grass verge slopes
   from it down to the land (asphalt where a road leaves for another city: see below).
 
@@ -220,8 +229,8 @@ Blocks are divided into plots that conform to the plan:
 - **Estates** are filled with rows of slab plots or a grid of point-block plots.
 - **Rare whole-block arcologies** appear in the densest regional cores.
 - **Industrial plots** have a limit of 45-70 m for a plant's stacks and flares, or, on about a
-  third of them inside the city, 150-240 m for the colossal tier. The industrial belt round the
-  city's edge keeps to the lower limit, so the skyline still steps down there.
+  third of them inside the city, 150-240 m for the colossal tier. The industrial estates in the
+  suburbs round the city's edge keep to the lower limit, so the skyline still steps down there.
 
 Each plot is an oriented site rectangle with a seed, a height limit and the faces that look onto
 the street. The building on it is generated inside that rectangle and never leaves it.
@@ -822,7 +831,7 @@ profile, an asset file (below).
   to none by 46, under snow, and into the last 40 m before the city's ground. There is none on a road or its gravel.
 - **Species.** Each root makes a weighted choice of species, never an interpolated id. Reeds grow in mud and right by
   the water, and meadow grows on the rest of the land. In the city, lawn grows where the grass is kept and rough
-  where it isn't: a park is mown unless it lies in squalor (kept from 1 at squalor 0.45 to 0 at 0.8, so a park in the
+  where it isn't: a park (or a suburb's gardens) is mown unless it lies in squalor (kept from 1 at squalor 0.45 to 0 at 0.8, so a park in the
   poor fringe goes rough and one in between is a mix), and the fields and the edge verge are rough.
 - **Clumps.** Clumps are Voronoi cells, 2-4 m across by species. Each gives its roots a height, a density, a lean, a
   stiffness and a tint. Some clumps are bare spots, and roots thin towards a clump's border. The clump lookup is

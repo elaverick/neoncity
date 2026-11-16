@@ -18,14 +18,14 @@
  *                  by local streets, giving staggered T-junctions rather than a
  *                  through grid. Leaves are inset by the road and sidewalk
  *                  widths of their edges and zoned (core, centre, estate,
- *                  industrial, park, rural) from density, distance to the
- *                  centres and nearness to the city's edge.
+ *                  industrial, park, rural, suburb) from density, distance to
+ *                  the centres and nearness to the city's edge.
  *
  * The city is finite (plan_city_edge). It is built of whole towns: a town is
  * built when all of its ground lies where plan_urban is 1, so the city's
  * ground and the terrain beyond agree wherever the two meet. Towards the edge
- * the city thins (plan_fringe): lower, with more industry, parks and open
- * land. Its outermost boulevards are the city's perimeter road; the ground
+ * the city thins (plan_fringe) and steps down to the suburbs, a ring of
+ * houses (plan_suburb_depth), then open land. Its outermost boulevards are the city's perimeter road; the ground
  * reaches across them and ends a shoulder beyond, where the land begins.
  *
  * Nothing here depends on query order or region: a road or block comes out
@@ -143,6 +143,20 @@ const char *plan_settlement_name(int k);
 /* The settlement whose footprint lies nearest (x, z), among those within
  * PLAN_EDGE_CAP of it; the megacity, 0, where none is. */
 int    plan_settlement_near(double x, double z);
+/* The world regions whose house styles a city's suburbs take, by where its
+ * centre lies (docs/residential-target.md, "Regions"): North America,
+ * Britain and NW Europe (with Australia and New Zealand), Southern Europe,
+ * East Asia, South-East Asia, South Asia, the Middle East and North Africa,
+ * Sub-Saharan Africa, Latin America. */
+enum { PLAN_REGION_NA = 0, PLAN_REGION_UK, PLAN_REGION_SEU, PLAN_REGION_EAS, PLAN_REGION_SEA, PLAN_REGION_SAS,
+       PLAN_REGION_MENA, PLAN_REGION_SSA, PLAN_REGION_LAT, PLAN_REGION_COUNT };
+int         plan_region_of(double lat_deg, double lon_deg);
+int         plan_settlement_region(int k);
+/* Settlement k's centre's latitude and longitude (degrees). */
+void        plan_settlement_latlon(int k, double *lat_deg, double *lon_deg);
+/* The short code (na, uk, ...) and the name of region r. */
+const char *plan_region_code(int r);
+const char *plan_region_title(int r);
 /* plan_settlement_near's settlement, and (x, z) in its own frame: the same
  * numbers in its frame, taken through the sphere in any other. What belongs
  * to a settlement's ground (its relief's noise, its channels) is read there,
@@ -307,7 +321,9 @@ typedef struct PlanRoadSpan { int road, bridge; } PlanRoadSpan;
 int             plan_road_bridges_in(double x0, double z0, double x1, double z1, double pad, PlanRoadSpan *out, int max);
 
 enum { ROAD_NONE = 0, ROAD_LOCAL, ROAD_ARTERIAL, ROAD_BOULEVARD };
-enum { ZONE_CORE = 0, ZONE_CENTRE, ZONE_RESIDENTIAL, ZONE_INDUSTRIAL, ZONE_PARK, ZONE_RURAL, ZONE_COUNT };
+/* ZONE_RESIDENTIAL is the housing estates (slabs and point blocks); ZONE_SUBURB
+ * the houses (residential roadmap HM1: src/city/plots.c cuts their plots). */
+enum { ZONE_CORE = 0, ZONE_CENTRE, ZONE_RESIDENTIAL, ZONE_INDUSTRIAL, ZONE_PARK, ZONE_RURAL, ZONE_SUBURB, ZONE_COUNT };
 
 /* Attributes of a polygon edge: the road (if any) running along it. */
 typedef struct RoadAttr {
@@ -441,6 +457,36 @@ float plan_density(double x, double z);
 /* How far into the city's fringe a point is: exactly 0 more than CITY_FRINGE
  * inside the built edge, rising smoothly to 1 at it (and beyond). */
 float plan_fringe(double x, double z);
+/* How far inside the built edge (CITY_BUILT_EDGE) a point is, by the edge
+ * measure (m; negative beyond it). The towns are built whole, so the last
+ * blocks stand about 1 km of it in (0.7-1.3), and in from there it runs at
+ * about 0.85 of a metre a metre. Through the outermost plan_open_depth
+ * (1.0-1.6 km) the land is mostly open, with houses thinning out into it;
+ * then, to plan_suburb_depth (2.6-4.6 km: 2-4 km of houses in from the last
+ * blocks, varied round the edge so it isn't a band; city_test --home ring
+ * measures it), the suburbs; inside them the estates. Both vary slowly. */
+#define PLAN_SUBURB_MIN 2600.0
+#define PLAN_SUBURB_MAX 4600.0
+double plan_edge_depth(double x, double z);
+double plan_suburb_depth(double x, double z);
+double plan_open_depth(double x, double z);
+/* The ring's industrial estates and parks come in patches where slow fields
+ * pass these (about a tenth of the ring each, with the boulevards' green
+ * buffers). */
+#define PLAN_RING_INDUSTRY 0.72f
+#define PLAN_RING_PARKS    0.76f
+/* In the ring only this share of the neighbourhood centres keeps its high
+ * street (a parade of shops); a town's centre keeps its own, ringed within
+ * PLAN_RING_TOWN_ESTATES by estates (the odd block standing out), not a core. */
+#define PLAN_RING_PARADES      0.35f
+#define PLAN_RING_TOWN_ESTATES 350.0
+/* Inside the ring, a neighbourhood with PLAN_POCKET_ODDS holds an inner
+ * suburb: a disc of houses PLAN_POCKET_MIN_R to _MAX_R in radius, a few
+ * streets, where the density is at most PLAN_POCKET_DENSITY. */
+#define PLAN_POCKET_ODDS    0.3f
+#define PLAN_POCKET_DENSITY 0.34f
+#define PLAN_POCKET_MIN_R   110.0
+#define PLAN_POCKET_MAX_R   170.0
 /* Affluence 0 (poor) .. 1 (wealthy): highest in the regional cores, with whole
  * districts and neighbourhoods better or worse off than their density says. */
 float plan_affluence(double x, double z);

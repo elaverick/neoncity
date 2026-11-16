@@ -307,6 +307,34 @@ int      city_casts_shadow(const Vertex *v);
 
 /* Buildings filling one plan block (all of them, wherever their centres are). */
 int      city_block_buildings(const Block *bk, Building *out, int max);
+
+/* The houses' plots of a suburb block (residential roadmap HM1, src/city/plots.c;
+ * docs/residential-target.md, "Plots"): rectangles along its streets, each in
+ * its street's frame: u along the street (o + u t), v in from the plot's
+ * boundary on it (o + v n), u0 to u1 by 0 to depth. Each belongs to a row
+ * (a terrace, a semi-detached pair, or a detached house on its own) whose
+ * units share the row's storeys and front garden. The houses are generated on
+ * them from HM2 on; until HM3 builds them nothing stands there. */
+enum { HOME_DETACHED = 0, HOME_SEMI, HOME_TERRACE, HOME_ARCH_COUNT };
+#define HOME_MAX_PLOTS 256
+typedef struct HomePlot {
+    double   ox, oz;       /* the frame's origin, on the lot's street edge */
+    float    tx, tz;       /* along the street (unit) */
+    float    nx, nz;       /* in from it (unit) */
+    float    u0, u1;       /* the frontage */
+    float    depth;        /* from the boundary on the street to the back fence */
+    float    front;        /* the front garden's depth (planned) */
+    uint32_t seed;
+    uint32_t road;         /* the street's id */
+    uint16_t row;          /* its row in the block */
+    uint8_t  arch;         /* HOME_* */
+    uint8_t  unit, units;  /* its place in its row, and how many the row has */
+    uint8_t  storeys;      /* planned */
+    uint8_t  region;       /* PLAN_REGION_* of the city */
+} HomePlot;
+int      city_block_plots(const Block *bk, HomePlot *out, int max);
+/* A plot's house's planned height to its ridge (m), for the skyline until HM3 builds it. */
+float    city_home_height(const HomePlot *p);
 /* The open spaces the lot filler (src/city/lots.c) leaves in a block for the
  * street vendors (src/city/vendor_sites.c, docs/street-vendor-generation.md):
  *   SPACE_APRON  a shophouse row set back 4-7 m behind a paved hawker frontage;

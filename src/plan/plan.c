@@ -116,6 +116,17 @@ float plan_fringe(double x, double z) {
     return smoothstepf((float)(CITY_BUILT_EDGE - CITY_FRINGE), (float)CITY_BUILT_EDGE, (float)plan_city_edge(x, z));
 }
 
+double plan_edge_depth(double x, double z) { return CITY_BUILT_EDGE - plan_city_edge(x, z); }
+
+/* A slow field (wavelength ~6 km) stretched so it reaches both ends of the
+ * range round the edge, not only its middle. */
+double plan_suburb_depth(double x, double z) {
+    float n = clampf((vnoise(x / 5200.0, z / 5200.0, 0x5B1Du) - 0.5f) * 2.2f + 0.5f, 0.0f, 1.0f);
+    return PLAN_SUBURB_MIN + (PLAN_SUBURB_MAX - PLAN_SUBURB_MIN) * n;
+}
+
+double plan_open_depth(double x, double z) { return 1300.0 + 600.0 * (vnoise(x / 1100.0, z / 1100.0, 0xF41Bu) - 0.5); }
+
 /* ===========================================================================
  * Convex polygons with per-edge road attributes
  * ========================================================================= */
@@ -591,28 +602,57 @@ typedef struct SplitCtx {
     uint8_t         lamp;
 } SplitCtx;
 
-/* Towards the edge the city gives way in bands of the fringe (plan_fringe,
- * wobbled by a slow field so they don't ring the city): industry and
- * logistics, then parks and allotments, then open land with the odd
- * farmstead. A town's or neighbourhood's centre keeps its high street
- * wherever it stands; the core has thinned out with the density. */
-#define FRINGE_INDUSTRY 0.35f
-#define FRINGE_PARKS    0.6f
-#define FRINGE_RURAL    0.8f
+/* An inner suburb (residential roadmap HM1): a pocket of a few streets of
+ * houses where the density is lowest between the town centres. A
+ * neighbourhood holds at most one, a disc PLAN_POCKET_MIN_R to _MAX_R across
+ * set off its site (away from its high street); a block is in it when its
+ * centre is, and is no denser than PLAN_POCKET_DENSITY. Never a district: the
+ * disc holds a few blocks at most (city_test checks). */
+static int in_pocket(const SplitCtx *sc, DVec2 cen, float d) {
+    Site nb = sc->pc->nb;
+    uint32_t h = hash2i(WORLD_SEED ^ 0x5B0Bu, nb.i, nb.j);
+    if (d > PLAN_POCKET_DENSITY || hf(h, 1u) >= PLAN_POCKET_ODDS) return 0;
+    double a = 2.0 * PI_F * hf(h, 2u), off = 150.0 + 110.0 * hf(h, 3u);
+    DVec2 pc = dv(nb.p.x + off * cos(a), nb.p.z + off * sin(a));
+    if (plan_density(pc.x, pc.z) > PLAN_POCKET_DENSITY) return 0;
+    double R = PLAN_POCKET_MIN_R + (PLAN_POCKET_MAX_R - PLAN_POCKET_MIN_R) * hf(h, 4u);
+    return dlen(dsub(cen, pc)) < R;
+}
+
+/* Towards the edge (residential roadmap HM1): open land with the odd
+ * farmstead, and houses thinning out into it; inside that the suburbs, a
+ * ring of houses plan_suburb_depth deep (2-4 km of them), with industrial
+ * estates and parks in patches through it rather than rings of their own;
+ * inside the ring the estates, with the odd pocket of houses. Each boundary
+ * is wobbled by a slow field so nothing rings the city exactly. A town's
+ * centre keeps its high street wherever it stands, and so does a
+ * neighbourhood's, but in the ring only a share of them (PLAN_RING_PARADES,
+ * a suburb's parade of shops). The ring has no core: a town there is its
+ * high street with estates round it. */
 static int zone_for(const SplitCtx *sc, const Block *b, DVec2 cen, float d) {
-    if (d > 0.62f) return ZONE_CORE;
-    if (dlen(dsub(cen, sc->pc->nb.p)) < 110.0 || dlen(dsub(cen, sc->tp->t.p)) < 170.0) return ZONE_CENTRE;
-    float f = plan_fringe(cen.x, cen.z);
-    if (f > 0.0f) f = clampf(f + 0.3f * (vnoise(cen.x / 1100.0, cen.z / 1100.0, 0xF41Bu) - 0.5f), 0.0f, 1.0f);
+    double s = plan_edge_depth(cen.x, cen.z), ring = plan_suburb_depth(cen.x, cen.z);
+    int inRing = s < ring;
+    double town = dlen(dsub(cen, sc->tp->t.p));
+    if (d > 0.62f && !inRing) return ZONE_CORE;
+    if (town < 170.0) return ZONE_CENTRE;
+    if (dlen(dsub(cen, sc->pc->nb.p)) < 110.0 && (!inRing || hf(sc->pc->nb.h, 7u) < PLAN_RING_PARADES)) return ZONE_CENTRE;
     float r = hf(b->seed, 3u);
-    if (f >= FRINGE_RURAL) return r < 0.8f ? ZONE_RURAL : r < 0.9f ? ZONE_PARK : ZONE_RESIDENTIAL;
-    if (f >= FRINGE_PARKS) return r < 0.45f ? ZONE_PARK : r < 0.6f ? ZONE_RURAL : ZONE_RESIDENTIAL;
-    if (f >= FRINGE_INDUSTRY) return r < 0.55f ? ZONE_INDUSTRIAL : r < 0.65f ? ZONE_PARK : ZONE_RESIDENTIAL;
     int boulevard = 0;
     for (int i = 0; i < b->curb.n; ++i) if (b->curb.e[i].cls == ROAD_BOULEVARD) boulevard = 1;
+    if (s < plan_open_depth(cen.x, cen.z)) return r < 0.66f ? ZONE_RURAL : r < 0.78f ? ZONE_PARK : ZONE_SUBURB;
+    if (inRing) {
+        if (vnoise(cen.x / 1500.0, cen.z / 1500.0, 0x1D57u) > PLAN_RING_INDUSTRY && r < 0.85f) return ZONE_INDUSTRIAL;
+        if (vnoise(cen.x / 800.0, cen.z / 800.0, 0x9A4Bu) > PLAN_RING_PARKS && r < 0.8f) return ZONE_PARK;
+        if (hf(b->seed, 1u) < (boulevard ? 0.12f : 0.03f)) return ZONE_PARK;   /* green buffers along the boulevards */
+        if (town < PLAN_RING_TOWN_ESTATES && r < 0.7f) return ZONE_RESIDENTIAL;
+        /* the ring's inner 400 m mixes houses with the estates */
+        double t = (ring - s) / 400.0;
+        return t < 1.0 && hf(b->seed, 4u) > t ? ZONE_RESIDENTIAL : ZONE_SUBURB;
+    }
+    float f = plan_fringe(cen.x, cen.z);
     if (hf(b->seed, 1u) < (boulevard ? 0.22f : 0.07f) + 0.2f * f) return ZONE_PARK;   /* green buffers along the boulevards */
     if (d < 0.32f && hf(b->seed, 2u) < 0.25f + 0.3f * f) return ZONE_INDUSTRIAL;
-    return ZONE_RESIDENTIAL;
+    return in_pocket(sc, cen, d) ? ZONE_SUBURB : ZONE_RESIDENTIAL;
 }
 
 static void emit_block(SplitCtx *sc, const Poly *leaf, uint32_t path) {
