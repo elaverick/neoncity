@@ -796,6 +796,7 @@ static void check_props(int hx, int hz) {
 
 #include "city_test_vendors.c"
 #include "city_test_slice.c"
+#include "city_test_home.c"
 
 /* city_test --props: --cam views of the street furniture nearest the spawn, a
  * few of each kind, from in front of each piece (a condenser's from the
@@ -1297,6 +1298,7 @@ int main(int argc, char **argv) {
         }
         return slice_cams(argc, argv);
     }
+    if (argc > 1 && strcmp(argv[1], "--home") == 0) return home_cams(argc, argv);   /* HM0: the residential slice */
     if (argc > 3 && strcmp(argv[1], "--vs-probe") == 0) return vs_probe(atof(argv[2]), atof(argv[3]));
     if (argc > 3 && strcmp(argv[1], "--kit-chunk") == 0) {   /* SF2: one chunk's vendor layer: its size and build time */
         const int cx = (int)floor(atof(argv[2]) / CHUNK_SIZE), cz = (int)floor(atof(argv[3]) / CHUNK_SIZE);

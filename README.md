@@ -28,6 +28,7 @@ build/vendor_lab 60 out        # street vendors: validity, determinism, budgets,
 build/city_test --props        # --cam views of the street furniture near the spawn
 build/city_test --vendor-sites # the vendors' sites round the spawn and the nearest lane, pocket market, plaza, apron: checks, --cam views
 build/city_test --slice        # the noodle bar slice (docs/noodle-bar-target.md): its site, plan, checks, views (also: lane, bars, find); tools/slice_capture.py, tools/slice_board.py
+build/city_test --home         # the residential slice (docs/residential-target.md): its block, region, views (also: find, regions); tools/home_capture.py, tools/home_board.py
 build/city_test --slice lane   # a view down the nearest market lane: the vendors' worst view (NeonCity --kit all for the kit's cost)
 build/city_test --slice bars 332.6 1182.58 all   # every site a bar fits made one (NeonCity --bars all; its trades chosen as any bar's): the densest 30 m row, its views, its chunks' build times
 build/pmodel_lab out           # the procedural modelling kit: determinism, closure, normals, budgets per level; lit contact sheets
