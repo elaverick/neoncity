@@ -1310,12 +1310,19 @@ The reflections' fallback (`envReflection`) has the day's sky round the camera (
 radiance, the deck's even grey under it), the facades across under it and the street. The light through a window
 into a dark room or an impostor's office, a lobby's skylight and an arcology's glazed crown take the overcast's
 mean radiance (`dayOvercast`); the lobbies take the day through their glass as they took the night's fill; the
-plumes are lit from above by it. Signs and adverts are as they are at night; the lamps and windows keep the
-city's clock (below). At noon under the deck the street meters about 5.1 (the night's 2.75-3.4) and is shown at 4.6-4.7: a grey
-storm-lit day, the lamps' pools and the neon still showing. With the sun at 4 degrees it is a dusk under the
-lamps; in civil twilight the night. Looking up at the built edge the deck meters 6.65. The night is unchanged (at
-a fixed exposure the spawn, the street and the built edge differ from the build before only along edges, by the
-sub-pixel shift two runs make, with equal means).
+plumes are lit from above by it. Down among the towers the air takes less of the day (DL4: `eyeClear`,
+`eyeAirDaylight` in `common.glsl`, 0.45 of it in a city's streets, all of it from 90 m up or outside the city): the
+haze, the smog's sun-and-sky part and the day's rain mist darken with the street instead of standing as a grey
+wash, and the reflections show the day's sky only where they look up steeply (or the eye is clear), the facades
+below that. LED signage turns up by day (`signDayGain`, `SIGN_DAY_GAIN` 2.3 once the sun is up: neon, screens,
+LED strips and the mist's sign glow) so it blooms as at night; the lamps, shopfronts, lobbies, lit rooms and
+vendors' lights keep their levels. The sky behind thin poles and cables is drawn dimmed under the deck
+(`skyUnderDeck` in `sky.frag`, undone over pure sky in `clouds.comp`) so their antialiased edges don't speckle (DL5).
+Hours are the city's clock (below). At noon under the deck the street meters 3.6-4.5 and is shown at 4.8-5.1
+(`KEY_GLOOM`, Light and exposure): a storm-lit day shown about a stop under its meter, as the night is, so the
+lamps' pools, the neon and the lit windows carry it. With the sun at 4 degrees it is a dusk under the lamps; in
+civil twilight the night. The night is unchanged by the daylight work (DL0-DL5: the same EVs, frames within
+run-to-run noise).
 
 **The city's clock** (DN7). The windows keep the local mean solar time at the camera's longitude and the day of
 the week there (`frame.clock`, from the world's UTC clock; a settlement spans a few minutes of it). A building's

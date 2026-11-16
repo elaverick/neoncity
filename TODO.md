@@ -11,22 +11,10 @@ Bugs to fix one by one, each committed and pushed before the next. Fixed ones le
 
 ## Daylight quality issues
 
-Night looks a lot better than day (the user, 2026-11-13). Likely causes, from the day/night plan and the shaders,
-not yet confirmed by captures (first step: one street at noon and at midnight, side by side):
-
-- Flat, directionless light: the cities sit under the deck, which lets through DECK_DAYLIGHT (0.1% of open
-  daylight since DL1, ~60 lux; 0.14%, ~85 lux, since DL3). No sun, so no hard shadows, no modelling, no warm/cool contrast. At night hundreds of
-  coloured point lights with ray-traced shadows give the depth.
-- Auto exposure lifts the overcast to mid-grey, so the neon, lit windows and adverts that carry the night look
-  become a small extra on top of the grey.
-- The daylight fill (ambientLight, one per-frame sky probe from DN6) seems not to be occluded by how much sky a
-  point sees: a narrow street canyon's floor gets about what an open plaza gets; corners and undersides don't
-  darken. Point lights and their shadows hide this at night.
-- Everything before DN (materials, vendors, facades, grime, wet streets) was tuned in night captures; even light
-  shows repetition, flat albedo and low texel detail. Wet streets reflect grey sky instead of neon.
-- The smog and rain mist go from coloured glow to a grey wash that lowers contrast.
-
-Fixes, best value first:
+Night looked a lot better than day (the user, 2026-11-13). The daylight roadmap (DL0-DL6, 2026-11-15/16) cut the
+light under the deck to a storm's gloom (DL1), exposed the day like the night (`KEY_GLOOM`), traced the sky each
+surface sees (DL2) and a soft sun side (DL3), darkened the air and reflections in the streets and turned the signs
+up (DL4), and retuned the materials that failed by day (DL5). What is left:
 
 - [x] Sky-visibility occlusion for the daylight fill (DL2: `traceSky`, two rays a pixel in the shadow pass).
 - [ ] The sky's visibility is only traced for city surfaces with an opaque material (`PG_SKY`): the lobbies' glazed
