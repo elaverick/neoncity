@@ -89,7 +89,7 @@ The footprint grammar defines how a section's polygon is created or modified. Be
 
 The system should use robust polygon operations and validate the result after each modification. Footprints must have valid boundaries and must not self-intersect. A subtracted void must lie wholly inside its outer polygon and keep a minimum width of floor plate around it. Rules should also limit extreme slivers, tiny edges and other shapes that are unsuitable for the intended building scale.
 
-**Minimum width.** No section above the ground floor may be thinner than four bays at its narrowest point, measured as the smallest extent of the footprint across any direction (the narrowest calliper width). With bays of 2.5 to 3.6 m that is roughly 10 to 14 m, so a tall tower can never end in a needle only one or two windows wide. The rule applies to every tower slice, setback and crown, not just the base, and it is checked when footprints are generated (so a narrow proposal is rejected and another is tried) and again when the finished building is validated. A taper, waist or setback that would breach it is rejected for that seed, and the generator falls back to a plainer profile if every attempt fails. On a plot too narrow for four bays, the upper floors need only be as wide as the plot leaves room for (its narrow side less 2.5 m), so a narrow shophouse keeps its storeys. A sky bridge, a link between two towers rather than a floor plate, is exempt.
+**Minimum width.** No section above the ground floor may be thinner than four bays at its narrowest point, measured as the smallest extent of the footprint across any direction (the narrowest calliper width). With bays of 2.5 to 3.6 m that is roughly 10 to 14 m, so a tall tower can never end in a needle only one or two windows wide. The rule applies to every tower slice, setback and crown, not just the base, and it is checked when footprints are generated (so a narrow proposal is rejected and another is tried) and again when the finished building is validated. A taper, waist or setback that would breach it is rejected for that seed, and the generator falls back to a plainer profile if every attempt fails.
 
 An upper footprint that is placed within a lower one is checked against the lower footprint with conservative sampling along its boundary. This test is the basis for deciding whether a connection is an ordinary stack or needs a support arrangement.
 
@@ -399,3 +399,153 @@ The proposed system generates buildings by selecting a permitted structural patt
 Industrial plants extend the same foundation to a second family of structures, where the explicit rules are slenderness, supports, spans, pipe routes and access rather than floors and façades.
 
 This provides a foundation for generating coherent, repeatable city architecture, with ordinary office buildings as the baseline and more distinctive forms, such as stepped, flared or twisting towers, bridged twin towers and supported overhangs, introduced as explicit, validated variations.
+
+## 13. Residential buildings
+
+Residential buildings are a third family beside office towers (§4–§10) and industrial plants (§11). They reuse the same foundation: a seeded generator, a building graph of volumes and relationships, rules checked before any geometry exists, logged rejections and repairs, and bounded retries. What changes is the vocabulary. Towers are governed by floors, bays and slenderness, and plants by supports, spans and pipe routes. Homes are governed by **plots, party walls, roof spans, stair cores and gardens**. A residential site is the same 60 m by 60 m cell with the street along one edge, and everything is placed relative to that street.
+
+### 13.1 Archetypes
+
+Six archetypes are added. The first three are houses, the other three are blocks.
+
+| Archetype | What it is | Typical size |
+|---|---|---|
+| Detached house | One to three separate houses, each on its own plot | 2 storeys, with optional garage wing and rear extension |
+| Semi-detached | Pairs of mirrored houses sharing one party wall and one continuous roof | 2 to 3 pairs per site |
+| Terrace | A single row of houses sharing party walls | 5 to 10 houses, 2 to 3 storeys |
+| Apartment block | A mid-rise brick block with a corridor and several stair cores | 3 to 6 storeys |
+| Block of flats | A taller panel-clad slab, point block or L-shaped block | 6 to 14 storeys |
+| Brutalist block | A raw concrete housing block of one of three variants (§13.6) | 7 to 20 storeys |
+
+### 13.2 Graph additions
+
+The building graph of §3 gains new volume roles and relationships. Nothing in the existing graph changes.
+
+- **Volume roles:** `main`, `pair`, `row`, `wing`, `extension`, `bay`, `outrigger`, `block`, `core`, `slab`, `tower`. Each volume is a rectangle with a number of storeys and a roof type: `gable`, `hip`, `lean` or `flat` with a parapet.
+- **Site elements:** `plot`, `garden`, `boundary` (fence, hedge or wall, with gaps for gates), `path`, `drive`, `tree`, `car` and `shed`.
+- **Relationships:**
+  - `shares_party_wall_with` joins semi-detached halves and terrace neighbours.
+  - `attached_to` joins a wing, bay, porch or outrigger to its parent volume.
+  - `supported_by` joins every volume to the ground, to its plinth, or to the piers beneath it.
+  - `serves` joins a stair core or lift to the storeys it reaches.
+  - `opens_on` joins a front door to the path that leads to the street.
+  - `links` joins two volumes by a bridge (brutalist variant C).
+
+### 13.3 Grammar
+
+```
+Home          → Plot+ + Garden+ + Boundary + Paths
+Detached      → Plot × (1..3), each  Plot → House + Garden + Drive?
+House         → Main + Porch + Bay? + GarageWing? + RearExtension? + Chimney*
+Semi          → Plot × (2..3 pairs), each pair → Main(mirrored) + SharedRoof + Porch × 2
+Terrace       → Row(n units) + Outrigger* + Bay* + Porch × n + Chimney × party walls
+Apartments    → Block(plan) + Core+ + Balcony* + Entrance + Roof
+Flats         → Slab | Point | LShape  + Core+ + Balcony strips + Entrance + Roof
+Brutalist     → DeckSlab | PilotiSlab | SlabWithTower   (see §13.6)
+Block plan    → Rectangle | L | U
+```
+
+A house is chosen first as a plan (the main volume and which optional parts it gets), then given its roof, then given its features. A block is chosen as a plan, then given storeys, then its stair cores are placed along the front, and only then are balconies and entrances added.
+
+### 13.4 Footprints, roofs and clearances
+
+- **Houses:** the main volume is a simple rectangle. Wings, bays and extensions are further rectangles attached to it. A garage wing is set back from the front wall and has a lean-to or flat roof. A rear extension is lower than the main volume.
+- **Roofs:** a pitched roof is a `gable` or a `hip` spanning the shorter side of the volume. A `lean` roof is used for wings and outriggers, rising towards the parent wall. A `flat` roof has a parapet and is used for blocks. Chimneys are placed on the ridge, at the gable end or on a party wall, never in the middle of a slope.
+- **Terraces:** three styles change only the treatment. *Victorian* has bay windows, outriggers and tall chimneys; *Georgian* has a flat front, tall windows and a parapet; *modern* has a plain front and a shallow roof. Every unit has its own door, its own path and its own rear garden strip, divided by party fences.
+- **Plot layout:** from the street inwards the order is boundary, front garden, house, rear garden. Doors always face the street.
+
+### 13.5 Support and bounded-quantity rules
+
+These are the residential counterpart of the rules in §4.2 and §7. Every quantity is capped, and every cap has a stated reason.
+
+| Arrangement | Support or reason | Bounded quantity |
+|---|---|---|
+| Pitched roof | Rafters span between two walls | Span at most 12 m; pitch at least 25° so that water drains |
+| Terrace row | Fire spread and drainage | Row at most 48 m long; each unit at least 4.2 m wide |
+| Detached house | Light, access and fire | Side clearance at least 2.0 m each side; gap between two houses at least 4 m |
+| Semi-detached house | Party wall on one side | Clearance at least 1.2 m on the open side |
+| Front garden | Privacy and the path | At least 3 m between the street boundary and the front wall |
+| Rear garden | Light and amenity | At least 8 m between the rear wall and the rear boundary |
+| Garage wing | Access | At least 1 m from the plot boundary |
+| Front door | Access | At least 1 m wide, on the street side, joined by a path that crosses no building |
+| Block depth | Daylight in a double-loaded corridor | Depth at most 15 m |
+| Stair core spacing | Escape distance | Apartment blocks at most 24 m between cores; flats and brutalist blocks at most 30 m |
+| Lift | Access above the walk-up limit | A lift is required at 5 storeys or more |
+| Second stair | Fire escape | At least two stairs above 6 storeys |
+| Balcony | Cantilever from the slab | Depth at most 1.8 m on apartments and 2.4 m on flats |
+| Minimum bays across | Slenderness, as in §4.2 | At least 4 bays across on a block of 5 or more storeys, at least 3 on 3 to 4 storeys; houses are exempt |
+| Stair core width | A core must hold a stair and a lift | At least 5.6 m wide |
+| Site fit | The whole building and its garden | Everything stays inside the site, and no volume overlaps another unless it is declared `attached_to` it |
+
+The minimum-bays rule is the same prohibition on thin tall buildings used for towers in §4.2. It is measured on the narrowest width of the block, so an L-shaped or U-shaped plan is judged on its narrowest arm.
+
+### 13.6 Brutalist blocks
+
+Some blocks of flats are brutalist. A brutalist block is a block of flats in raw cast concrete, with the structure left visible and the scale made heavy and deliberate. It has three variants, each with its own grammar and extra rules.
+
+1. **Deck-access slab.** A long slab with a stair tower at each end of a run and projecting access decks on every second storey, which serve the flats by an open walkway instead of an internal corridor. A slab can be stepped into wings of different heights.
+   - *Rules:* a step between adjacent wings is at most 3 storeys; stair towers every 30 m at most; the slab is at most 60 m long.
+2. **Slab on pilotis.** A slab lifted on a row of concrete piers (*pilotis*) so that the ground floor is open, with deep recessed loggias carrying concrete sunshades and a plant room on the roof.
+   - *Rules:* pier spacing at most 9 m; the end of the slab may cantilever beyond the last pier by at most 4.5 m; every pier stands on the ground, not on another volume.
+3. **Slab with a detached service tower.** A residential slab and a separate tower holding the lifts, stairs and services, joined by link bridges every third storey and finished with a crown.
+   - *Rules:* a link bridge spans at most 6 m; the tower stands inside the site and clear of the slab.
+
+Rules shared by all three: the height of the block is at most 6 times its depth, which keeps it from becoming a needle; the minimum-bays rule of §13.5 applies; and no part of the slab may leave the site. A raw-concrete plinth about 5.5 m high is allowed under any variant.
+
+### 13.7 Styles and materials
+
+Style changes appearance only, as in §8. Each archetype draws a material from a palette, and the choice is seeded.
+
+| Archetype | Wall treatments | Roof treatments |
+|---|---|---|
+| Houses | Brick (warm reds and browns), render (cream, white, pale grey) | Clay tile, slate, concrete tile |
+| Apartment block | Brick with a contrasting stone band | Flat with parapet, or a hip roof if the span allows |
+| Block of flats | Concrete or coloured panels in a regular grid | Flat with a plant enclosure |
+| Brutalist block | Board-marked or raw concrete in greys, with occasional ochre or blue accents | Flat with plant and parapet |
+
+Windows are drawn by a facade texture, with a bay width of about 2.7 m for houses, 3.0 m for apartments and 2.6 m for brutalist blocks. At night a share of the windows are lit and the entrance lamps come on.
+
+### 13.8 Entrances, paths and gardens
+
+- **Houses:** every house gets a porch or a canopy over its door, a path from the door to a gate in the front boundary, and a drive if it has a garage. The front boundary is a hedge, a low wall or a fence, with a gap at the gate. Side and rear fences divide the plots. Trees, a shed and a parked car are scattered, but only where they stand clear of the buildings, the paths and the drives.
+- **Blocks:** each stair core has a lobby door under a canopy at the front, with a path to the street. Cars are parked along the front, and trees are placed in the remaining open space.
+- **Validation:** a path must not cross a building, and each door must face the street. This is checked against the building's polygon and not its bounding box, so L-shaped and U-shaped blocks are not rejected wrongly.
+
+### 13.9 Districts
+
+Two districts are added. The existing districts are unchanged, and the new archetypes can also be chosen directly from the Type control, in any district.
+
+| District | Archetype weights |
+|---|---|
+| Residential (suburb) | Detached 0.22, semi-detached 0.22, terrace 0.26, apartment block 0.16, block of flats 0.09, brutalist 0.05 |
+| Housing estate | Terrace 0.20, apartment block 0.18, block of flats 0.30, brutalist 0.32 |
+
+A residential district reads as a suburb, with the low-rise houses as the bulk of it and the odd block standing out. A housing estate reads as a planned development of blocks, with brutalist slabs as its most common form.
+
+### 13.10 Algorithm sketch
+
+```
+generateResidential(seed, cell, district, archetype):
+    for level in 0..2:                               # bounded retries
+        rng = stream(seed, "home", level)
+        proposal = choose plan for archetype         # houses, row length, block plan, variant
+        place volumes inside the site                # plots and gardens first for houses
+        assign storeys, roofs, and stair cores
+        apply repairs while rules fail:
+            roof span > 12 m    -> change hip or gable to flat, log "simplify"
+            row too long        -> drop houses until it fits
+            balcony too deep    -> shorten balcony
+            cores too far apart -> add a core
+        add features: doors, porches, bays, extensions, balconies, decks, piers
+        add garden: boundary, paths, drives, trees, cars
+        errs = validateHomes(proposal)               # all rules in §13.5, with every reject logged
+        if errs is empty: return proposal
+        log "reject", then retry at level + 1 with a simpler proposal
+    return the simplest valid proposal for the archetype
+```
+
+Level 0 is the full proposal. Level 1 removes optional parts (extensions, garage wings, decks). Level 2 uses the plain form of the archetype: a single rectangular volume, a flat or gable roof and the minimum number of features. Every rejection, repair and simplification is written to the log with a tag, so that the reason a building took its form can be read back.
+
+### 13.11 Residential result
+
+Residential buildings extend the same foundation to a third family of structures, where the explicit rules are plots, party walls, roof spans, escape distances and gardens rather than the floors and façades of a tower or the pipe routes of a plant. A suburb of detached, semi-detached and terraced houses, a block of brick apartments, a slab of panel-clad flats and a brutalist concrete block can sit side by side in one generator, each produced by the same method of choosing a permitted pattern, checking it against bounded rules and repairing or simplifying whatever fails.
