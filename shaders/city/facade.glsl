@@ -333,12 +333,13 @@ vec3 shadeFacade(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     float wallSpecK = glassWall ? 0.4 : 0.05 * grainSpec(wallG);
     reliefLightsOn();   // the wall's corrugations shadow their own lights (pbrGrainRelief)
     vec3 wdiff = wallLighting(p, wallG.n, V, wallShin, wallSpecK, vAbs, wspec);   // the wall's relief (flat on glass)
+    vec3 wallSun = gSunDiff;   // the daylight's sun side on it (addDaySun): not the lamps'
     reliefLightsOff();
     // a dark room has only what reaches its window: the lamps, neon and city glow on the facade, through the glass
     gWinE = (wdiff + (mix(CLOUD_DECK, vec3(0.03, 0.035, 0.045), 0.5) + dayOvercast(gSkyCover)) * 0.45) * glassT;   // the window's view: overcast and facades across
     if (imp.m >= 0) {
         // the module relit for this window (impostors.glsl), and its bay's mean under that light
-        vec3 lamps = max(wdiff - ambientLight(n, vAbs) - neonBounce(gWorld, vAbs) * 1.5, vec3(0.0));
+        vec3 lamps = max(wdiff - ambientLight(n, vAbs) - wallSun - neonBounce(gWorld, vAbs) * 1.5, vec3(0.0));
         impostorLight(lamps, glassT, vAbs, floorH_, litChance);
         room.light = impostorBayMean(imp.m, impostorX(imp, (bayIdx + 0.5) * bayW)) / 0.42; room.bright = 1.0;   // so roomAvg below is the bay's mean
         // too small to tell apart, a floor settles to the average the far term draws, so nothing pops there

@@ -225,6 +225,7 @@ void shadePixel() {
             cityLights(p, vGround, gV, 8.0, 0.0, -1.0, diff, spec);
             if ((uint(frame.shadow.y) & SHADOWS_DEBUG) != 0u) {
                 vec3 d = vec3(0.0), sp2 = vec3(0.0);
+                gDaySun = false;   // the lights' alone
                 cityLights(p, vGround, gV, 1.0, 0.0, -1.0, d, sp2);
                 outColor = vec4(d * 0.3 + vec3(0.004), 1.0);
                 outRefl = vec4(0.0);
@@ -232,7 +233,7 @@ void shadePixel() {
             }
             if ((uint(frame.shadow.y) & DAYLIGHT_DEBUG) != 0u) {
                 float ao, open = cityOpenHere(vGround, h, ao);
-                outColor = vec4(cityDaylightDebug(vGround, gSkyCover, open, ao), 1.0);
+                outColor = vec4(cityDaylightDebug(vGround, gSkyCover, open, ao, daySunVis(vGround, h)), 1.0);
                 outRefl = vec4(0.0);
                 return;
             }
@@ -261,6 +262,7 @@ void shadePixel() {
                 gBase = vRoot.y - gC.origin.y;
                 rootShadows();
                 vec3 diff = vec3(0.0), spec = vec3(0.0);
+                gDaySun = false;   // the land's daylight is groundLightIn's
                 cityLights(p, vGround, gV, 8.0, 0.0, -1.0, diff, spec);
                 E += diff * (1.0 - smoothstep(LAND_LIGHTS_FAR - 100.0, LAND_LIGHTS_FAR, length(vRoot)));
             }

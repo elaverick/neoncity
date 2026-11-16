@@ -277,6 +277,14 @@ const int   SKY_RAYS = 2;
 const float SKY_RANGE = 90.0, SKY_NEAR = 1.5;              // m: a ray this long counts as sky; a blocker this near shuts out the bounce
 float skyVisOf(uint w) { return float((w >> 16) & 255u) / 255.0; }
 float skyAoOf(uint w)  { return float((w >> 24) & 31u) / 31.0; }
+/* The daylight's directional share by day (DL3: daySun), traced as a light of
+ * its own: slot 0 of a pixel that takes the daylight holds SUN_ID, its ray
+ * aimed at a point in the light's cone (shadow_trace.comp traceSun), so
+ * shadow_denoise.comp softens it as any light's. The deck's bright side lies
+ * past SKY_RANGE, as the sky does for traceSky (beyond it the towers would
+ * shade nearly every street); a clear sun's blockers count to SUN_RANGE. */
+const uint  SUN_ID = 0xFFF8u;
+const float SUN_RANGE = 200.0;
 
 // Street lamp falloff (city.frag: addLamp), l = light - p: the beam below the
 // head, and a spill all round it that carries up the columns and facades.
@@ -784,38 +792,87 @@ float skyCover(vec3 rel) {
 // The daylight on level ground under a clear sky, unshadowed: the sun's (SUN_LAND) and the sky's.
 vec3 dayLevel() { return SUN_LAND * max(SUN_DIR.y, 0.0) + skyIrradiance(vec3(0.0, 1.0, 0.0)); }
 
+/* The deck's sun side (DL3). Seen from under it, a sooty deck isn't evenly
+ * grey: it glows brighter on the sun's side, so the light through it has a
+ * direction. DECK_SUN_SHARE of what gets through comes from there, from
+ * DECK_SUN_TILT of the way from straight up towards the sun (never lower than
+ * DECK_SUN_LOW, so a low sun doesn't send it along the street), out of a cone
+ * DECK_SUN_CONE wide, so its shadows are soft; none of it once the sun has
+ * set. The rest stays the even overcast. */
+const float DECK_SUN_SHARE = 0.35, DECK_SUN_TILT = 0.6;
+const float DECK_SUN_LOW = 0.5736;    // sin 35 degrees
+const float DECK_SUN_CONE = 0.35;     // half-angle, rad (20 degrees)
+float deckSunShare() { return DECK_SUN_SHARE * smoothstep(-0.02, 0.2, SUN_DIR.y); }
+vec3 deckSunDir() {
+    vec3 d = normalize(mix(vec3(0.0, 1.0, 0.0), SUN_DIR, DECK_SUN_TILT));
+    if (d.y < DECK_SUN_LOW) {
+        vec2 h = d.xz / max(length(d.xz), 1e-5) * sqrt(1.0 - DECK_SUN_LOW * DECK_SUN_LOW);
+        d = vec3(h.x, DECK_SUN_LOW, h.y);
+    }
+    return d;
+}
+/* How bright the deck's underside is seen along dir (dir.y > 0) against its
+ * mean: dimmer than the even grey away from the sun, brighter towards it, a
+ * broad lobe (cos^2 about deckSunDir, about the light's own share over the
+ * sky above). 1 looking down, and at night. */
+float deckSunGlow(vec3 dir) {
+    float s = deckSunShare(), c = max(dot(dir, deckSunDir()), 0.0);
+    return mix(1.0, (1.0 - s) + s * 2.0 * c * c, smoothstep(-0.1, 0.05, dir.y));
+}
+/* The daylight's one directional light on the city under cover `cover`: the
+ * deck's sun side (all of it under the whole deck) and a clear sky's sun
+ * (where a tower stands up through the deck, and out past its edge), as one
+ * light from between them, weighted by how bright each is. light: what it
+ * throws on a surface square on to dir, through the deck; cone: its
+ * half-angle (the sun's own disc, or the deck's bright side). */
+struct DaySun { vec3 dir, light; float cone; };
+DaySun daySun(float cover) {
+    vec3 dd = deckSunDir();
+    vec3 deck = dayLevel() * (deckSunShare() * cover / dd.y);   // square on: dayLevel's share on level ground
+    vec3 sun = SUN_LAND * (1.0 - cover);
+    float wd = luma(deck), ws = luma(sun);
+    DaySun s;
+    s.dir = normalize(dd * wd + SUN_DIR * ws + vec3(0.0, 1e-6, 0.0));
+    s.light = (deck + sun) * deckLight(cover);
+    s.cone = (wd * DECK_SUN_CONE + ws * SUN_RADIUS) / max(wd + ws, 1e-9);
+    return s;
+}
+
 /* What the city's surfaces take of the daylight, facing n, under the cities'
  * cloud where its cover is `cover`, seeing `open` of the sky (cityOpen). Under
  * the deck deckThrough of it gets through, spread over its underside as an
- * even overcast (the land's landDaylight); a clear sky's sun has no shadow in
- * the city (none is cast there: TODO, "The sun"), so it is only thinned by
- * how much of the sky the surface sees, as the sky's light is. What the sky
- * doesn't show comes back off the streets and the facades round about,
- * CITY_BOUNCE of the light on them. */
+ * even overcast (the land's landDaylight) brighter on the sun's side (daySun).
+ * Where its shadow is traced the city's lights add that side as a light
+ * (city/lighting.glsl addDaySun); elsewhere it is only thinned by how much of
+ * the sky the surface sees, as the sky's light is. What the sky doesn't show
+ * comes back off the streets and the facades round about, CITY_BOUNCE of the
+ * light on them. */
 const float CITY_BOUNCE = 0.15;
 /* Its terms, each through the deck: the even light from the sky above (the
- * deck's grey, or a clear sky's own light), the sun's share with a direction,
- * both before `open` takes its share of them; and the bounce, which grows as
- * `open` falls. cityDaylight = (even + sun) * open + bounce. Where the sky is
- * traced (DL2), `ao` scales the bounce (city/lighting.glsl cityOpenHere: by how
- * lit what is round about is, and how near it shuts the surface in). */
+ * deck's grey less its sun side, or a clear sky's own light), the light with
+ * a direction (daySun), both before `open` takes its share of them; and the
+ * bounce, which grows as `open` falls. cityDaylight = (even + sun * sunK) *
+ * open + bounce (sunK 0: the caller adds the sun itself, shadowed). Where the
+ * sky is traced (DL2), `ao` scales the bounce (city/lighting.glsl cityOpenHere:
+ * by how lit what is round about is, and how near it shuts the surface in). */
 struct CityDay { vec3 even, sun, bounce; };
 CityDay cityDaylightParts(vec3 n, float cover, float open, float ao) {
     vec3 level = dayLevel();
-    vec3 grey = level * (0.5 + 0.5 * n.y);
+    vec3 grey = level * ((0.5 + 0.5 * n.y) * (1.0 - deckSunShare()));
     vec3 through = deckLight(cover);
+    DaySun s = daySun(cover);
     CityDay d;
     d.even = mix(skyIrradiance(n), grey, cover) * through;
-    d.sun = SUN_LAND * (max(dot(n, SUN_DIR), 0.0) * (1.0 - cover) * through);
+    d.sun = s.light * max(dot(n, s.dir), 0.0);
     d.bounce = level * (CITY_BOUNCE * (0.5 - 0.5 * n.y + (1.0 - open)) * ao * through);
     return d;
 }
 CityDay cityDaylightParts(vec3 n, float cover, float open) { return cityDaylightParts(n, cover, open, 1.0); }
-vec3 cityDaylight(vec3 n, float cover, float open, float ao) {
+vec3 cityDaylight(vec3 n, float cover, float open, float ao, float sunK) {
     CityDay d = cityDaylightParts(n, cover, open, ao);
-    return (d.even + d.sun) * open + d.bounce;
+    return (d.even + d.sun * sunK) * open + d.bounce;
 }
-vec3 cityDaylight(vec3 n, float cover, float open) { return cityDaylight(n, cover, open, 1.0); }
+vec3 cityDaylight(vec3 n, float cover, float open) { return cityDaylight(n, cover, open, 1.0, 1.0); }
 
 /* Whether the shadow passes trace the city's sky (DL2): while the daylight
  * under the whole deck is more than about the night's fill (0.007, cityAmbient),
@@ -827,18 +884,19 @@ float skyTraceWeight() { return smoothstep(0.003, 0.015, skyTraceLevel()); }
 
 /* The daylight debug view (DAYLIGHT_DEBUG: --daylightdebug, F10 twice): the
  * city's daylight on white, each term in a false colour at its own
- * luminance: the even light from the sky grey-white, the sun's share yellow,
- * the bounce blue, and in red what the sky's occlusion (open) takes from the
- * first two, so a surface lit fully is pale and a closed-in one red-and-blue.
- * At the same scale as the lights' view (SHADOWS_DEBUG). */
-vec3 cityDaylightDebug(vec3 n, float cover, float open, float ao) {
+ * luminance: the even light from the sky grey-white, the sun's side yellow
+ * (seen by sunVis of it: its traced shadow, or open), the bounce blue, and in
+ * red what the sky's occlusion and the sun's shadow take from the first two,
+ * so a surface lit fully is pale and a closed-in one red-and-blue. At the
+ * same scale as the lights' view (SHADOWS_DEBUG). */
+vec3 cityDaylightDebug(vec3 n, float cover, float open, float ao, float sunVis) {
     CityDay d = cityDaylightParts(n, cover, open, ao);
     float even = luma(d.even), sun = luma(d.sun), bounce = luma(d.bounce);
-    vec3 c = vec3(0.92, 0.95, 1.0) * (even * open) + vec3(1.0, 0.8, 0.25) * (sun * open) +
-             vec3(0.2, 0.4, 1.0) * bounce + vec3(1.0, 0.05, 0.03) * ((even + sun) * (1.0 - open));
+    vec3 c = vec3(0.92, 0.95, 1.0) * (even * open) + vec3(1.0, 0.8, 0.25) * (sun * sunVis) +
+             vec3(0.2, 0.4, 1.0) * bounce + vec3(1.0, 0.05, 0.03) * (even * (1.0 - open) + sun * (1.0 - sunVis));
     return c * 0.3 + vec3(0.004);
 }
-vec3 cityDaylightDebug(vec3 n, float cover, float open) { return cityDaylightDebug(n, cover, open, 1.0); }
+vec3 cityDaylightDebug(vec3 n, float cover, float open) { return cityDaylightDebug(n, cover, open, 1.0, open); }
 
 /* How much of the sky a city surface facing n sees, h metres above the ground
  * its building stands on: down among the towers less than half of it (a
@@ -851,19 +909,19 @@ float cityOpen(vec3 n, float h) { return mix(0.4 + 0.15 * max(n.y, 0.0), 1.0, sm
  * from below, twice as much near the ground (0.007-0.009, about 0.4 lux,
  * LIGHT_LUX); by day the daylight (cityDaylight), seeing `open` of the sky
  * with `ao` of the bounce (traced, or cityOpen's estimate and 1). */
-vec3 cityAmbient(vec3 n, float h, float cover, float open, float ao) {
+vec3 cityAmbient(vec3 n, float h, float cover, float open, float ao, float sunK) {
     vec3 sky = vec3(0.006, 0.007, 0.013);
     vec3 bounce = vec3(0.013, 0.008, 0.006);
     float up = n.y * 0.5 + 0.5;
-    return mix(bounce, sky, up) * (0.8 + 0.8 * exp(-h / 30.0)) + cityDaylight(n, cover, open, ao);
+    return mix(bounce, sky, up) * (0.8 + 0.8 * exp(-h / 30.0)) + cityDaylight(n, cover, open, ao, sunK);
 }
-vec3 cityAmbient(vec3 n, float h, float cover) { return cityAmbient(n, h, cover, cityOpen(n, h), 1.0); }
+vec3 cityAmbient(vec3 n, float h, float cover) { return cityAmbient(n, h, cover, cityOpen(n, h), 1.0, 1.0); }
 
 /* The sky by day seen along R from under cover: the clear sky (skyRadiance),
  * the deck's even grey under it; and its mean radiance (dayOvercast), what a
  * window or skylight sees of it. None by night. */
 vec3 daySky(vec3 R, float cover) {
-    return mix(skyRadiance(R), dayLevel() * (1.0 / AIR_PI), cover) * deckLight(cover);
+    return mix(skyRadiance(R), dayLevel() * (deckSunGlow(R) / AIR_PI), cover) * deckLight(cover);
 }
 vec3 dayOvercast(float cover) {
     return mix(skyIrradiance(vec3(0.0, 1.0, 0.0)), dayLevel(), cover) * (deckLight(cover) / AIR_PI);

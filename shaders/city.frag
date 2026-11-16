@@ -120,6 +120,7 @@ void shadePixel() {
     if ((uint(frame.shadow.y) & SHADOWS_DEBUG) != 0u) {
         // shadow debug view (F10): only the light the lamps, shopfronts and lobbies throw on each surface
         vec3 d = vec3(0.0), sp = vec3(0.0);
+        gDaySun = false;   // the lights' alone, not the daylight's sun side (the daylight view's)
         cityLights(vLocal, n, V, 1.0, 0.0, -1.0, d, sp);
         if (mat == MAT_INTERIOR && vParams.y != IS_GLASS && vParams.y != IS_LEAF) {
             // and in a lobby, the ceiling panels' light on what faces up or sideways
@@ -134,7 +135,8 @@ void shadePixel() {
         // daylight debug view (F10 twice): only the daylight, its terms in false colour (common.glsl cityDaylightDebug)
         vec3 nv = dot(n, V) < 0.0 ? -n : n;
         float ao, open = cityOpenHere(nv, vLocal.y - gBase, ao);
-        outColor = vec4(cityDaylightDebug(nv, gSkyCover, open, ao), 1.0);        outRefl = vec4(0.0);
+        outColor = vec4(cityDaylightDebug(nv, gSkyCover, open, ao, daySunVis(nv, vLocal.y - gBase)), 1.0);
+        outRefl = vec4(0.0);
         return;
     }
 

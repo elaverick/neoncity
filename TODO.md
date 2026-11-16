@@ -38,8 +38,13 @@ Fixes, best value first:
 - [ ] By day the gloom key (DL1, `KEY_GLOOM`) also darkens places under the deck that take no daylight (an
       arcology's ground floor shows 0.8 stop darker at noon than at night). Weight it by the daylight's share of
       what is metered if that matters.
-- [ ] Some direction to the light: the deck brighter towards the sun's side, or occasional thin patches, for a
-      soft directional light and shadow.
+- [x] Some direction to the light: the deck brighter towards the sun's side (DL3: `daySun`, traced in slot 0 as
+      `SUN_ID`). Occasional thin patches in the deck are still open.
+- [ ] The sun side is subtle at street level: from 35 degrees up, the towers hide the deck's bright side from most
+      streets within `SKY_RANGE`, so it mostly models the upper facades and anything seen from above. If the street
+      wants more, raise `DECK_SUN_SHARE` or lower `DECK_SUN_TILT` (a steeper light), not the range.
+- [ ] The land and the land's grass under the deck take no sun side (`landDaylight` stays even), so the city's
+      ground and the land beside it differ a little by day at the built edge.
 - [ ] Retune materials and grime against day captures, as they were against night ones.
 
 ## Shadows
@@ -265,8 +270,9 @@ planet's patches beyond it to the horizon (`src/render/planet_gpu.c`); the miles
     - **Casters beyond `RT_RANGE`** (584 m): a low sun throws buildings' shadows hundreds of metres. The far city
       needs the proxies in it (a shadow map over the proxy boxes, or bottom-level structures of them) and the
       chunks' structures out to their draw distance, not just the TLAS's range.
-    - **City receivers**: `city.frag` and the city's grass take `dirShadow` (the lamps' slots are separate and stay
-      as they are). The lobbies and the interiors behind the windows would need the sun through their glass.
+    - **City receivers**: since DL3 the city's surfaces trace the daylight's directional light in slot 0 (`SUN_ID`,
+      `traceSun`), the sun's own where the sky is clear. The lobbies and the interiors behind the windows would need
+      the sun through their glass.
     - **Past the clipmap**: the planet's patches cast and receive nothing; a horizon map per patch or a coarse march
       over them.
     - **A soft edge from the disc** (0.5 degrees) over long casters near the camera: jittered rays and the
@@ -783,8 +789,9 @@ DN0-DN9; README "Day and night"). Left over:
   - **How much sky a surface sees is a guess by height** (`cityOpen`: 0.4-0.55 at street level, all of it from 90 m
     up), not the street's real canyon: a low-rise street under the deck is as dim as one among towers. A per-chunk
     sky-view factor (from the plan's heights, or traced once per chunk) would tell them apart.
-  - **The sun has no shadow in the city** where it reaches it: towers standing up out of the deck, and settlements
-    on raised ground until the deck hangs over their own streets (DN10). See "The sun", above.
+  - **The sun's shadow in the city** (DL3: `daySun`'s slot) reaches 200 m (`SUN_RANGE`) from a receiver within
+    `SHADOW_FAR`, with the TLAS's casters only (see "The sun", above: casters beyond `RT_RANGE`); past `SHADOW_FAR`
+    the sun is only thinned by the sky a surface sees.
   - **The arcologies' halls** keep the night's light inside; only their glazed crowns show the day's sky.
   - **Falling rain** is lit by the day through the rain mist (DN5), as the street's lights light it; the drops' own
     floor (`composite.frag`, a constant) is the night's.

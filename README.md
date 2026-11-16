@@ -1096,6 +1096,14 @@ points the galleries and bridges would black out the canyon.) They need a GPU wi
   spare bits (`SH_SKY`). `ambientLight` reads it (`skyFromVis`, a neighbour's at an edge sample 0 missed) and fades it
   to `cityOpen` from `SHADOW_FADE` to `SHADOW_FAR` and through the twilight. About 0.3 ms by day at the capture views
   (RTX 4080 SUPER, 1600 x 900, MSAA x4), none at night.
+- **The sun's side by day** (DL3). The same pixels give slot 0 to the daylight's directional light (`SUN_ID`;
+  `traceSun`) and the lamps the other seven: one ray a pixel to a point in its cone, from the side of the surface it
+  lights. The deck's bright side counts as reached past `SKY_RANGE`, as the sky does (at 35 degrees and up, the
+  towers within a couple of hundred metres would shade nearly every street); a clear sun's blockers count to
+  `SUN_RANGE` (200 m). The penumbra is the cone's spread over the blocker's distance, so the filter softens it like
+  any light's: wide, soft edges under the deck, a sun's sharp ones over it. `daySunVis` reads the slot (a
+  neighbour's at an edge, else the sky's share it sees, which is all it gets past `SHADOW_FAR`). About 0.2-0.3 ms by
+  day on top of the sky's, mostly in the filter; none at night.
 - **Lookup.** `cityLights` takes each light's visibility from those eight slots when they were made for this
   fragment's surface (same draw chunk, same depth). Anything else bright enough to matter, on a surface the prepass
   didn't see (an edge that misses sample 0) or beyond the eight, gets a hard shadow ray traced in the fragment shader.
@@ -1278,9 +1286,16 @@ open.
 light all round (`ambientLight`, `cityAmbient` in `common.glsl`, which the proxies share) is the night's faint
 fill and the daylight (`cityDaylight`). The daylight is the land's (`landDaylight`): the sun and the sky on level
 ground, under the deck only `deckThrough` of it (0.1% where the cover is whole: a storm's gloom, DL1), spread over the
-deck's underside as an even overcast with no sun and no shadow, in the sooty deck's cool green-grey (`deckTint`,
+deck's underside, in the sooty deck's cool green-grey (`deckTint`,
 `deckLight`: luminance-neutral, so the sodium and the neon read warm against it). The cover is the fragment's own (`skyCover`: the cities' cloud
-over it, none where it stands up out of the deck), so a tower over the deck is in the sun. A surface sees only
+over it, none where it stands up out of the deck), so a tower over the deck is in the sun. The deck glows brighter
+on the sun's side (DL3: `daySun` in `common.glsl`): 35% of what gets through (`DECK_SUN_SHARE`, none once the sun
+has set) comes from a 20-degree cone 0.6 of the way from straight up towards the sun, never lower than 35 degrees,
+and the rest is the even overcast. Blended with a clear sky's own sun by how bright each is, that is one light,
+which `cityLights` adds (`addDaySun`: Lambert, a GGX lobe widened by the cone, the relief's own shadows) with its
+traced shadow (see Shadows); the lights' debug view leaves it out, and indoors (an arcology's floor, a lobby's room)
+and the land go without it. The deck's underside seen from below (`clouds.comp`, `deckSunGlow`) and the
+reflections' day sky are brighter towards it to match. A surface sees only
 part of the sky, and what it doesn't see comes back off the streets and facades round it (`CITY_BOUNCE`, 15% of
 the light on them). Within `SHADOW_FAR` that part is ray-traced (DL2: `traceSky` in `shadow_trace.comp`, two
 cosine-weighted rays a pixel, a ray that goes up and meets nothing within 90 m reaching the sky, filtered and

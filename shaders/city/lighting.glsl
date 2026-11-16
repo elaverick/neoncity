@@ -49,20 +49,13 @@ float cityOpenHere(vec3 n, float h, out float ao) {
     return open;
 }
 
-// The light all round, at h metres above the ground: the night's fill and bounce, and the daylight (cityAmbient).
-// The sun's own share of it (cityDaylight's clear sky, square on to it) is the one with a direction, so the
-// relief shadows that, as it does the lamps.
+/* The light all round, at h metres above the ground: the night's fill and
+ * bounce, and the daylight (cityAmbient) but for its sun side (daySun), which
+ * cityLights adds as a light (addDaySun). What lights itself without them (a
+ * lobby's room) goes without it, as indoors it should. */
 vec3 ambientLight(vec3 n, float h) {
     float ao, open = cityOpenHere(n, h, ao);
-    vec3 a = cityAmbient(n, h, gSkyCover, open, ao);
-#ifdef LIGHTING_RELIEF
-    float sunN = dot(n, SUN_DIR);
-    if (sunN > 0.0 && gSkyCover < 1.0 && frame.dirMix.x > 0.0) {
-        vec3 sun = SUN_LAND * sunN * (1.0 - gSkyCover) * open * deckThrough(gSkyCover);
-        a -= sun * (1.0 - RELIEF_SHADOW(SUN_DIR));
-    }
-#endif
-    return a;
+    return cityAmbient(n, h, gSkyCover, open, ao, 0.0);
 }
 
 /* Specular lobes. Procedural materials use a normalised Blinn-Phong lobe
@@ -319,8 +312,67 @@ float ceilingVis() {
 #endif
 }
 
+/* How much of the daylight's sun side (daySun) reaches a surface facing n, h
+ * metres above its ground: its slot (SUN_ID: shadow_trace.comp traceSun), or
+ * on a surface whose slots aren't there (glass, a veil, a triangle's edge
+ * sample 0 missed) a neighbour's on the same surface, else the share of the
+ * sky it sees (cityOpenHere), which is all it gets from SHADOW_FADE to
+ * SHADOW_FAR on (gShadowFade) and on the proxies. */
+float daySunVis(vec3 n, float h) {
+    float ao, open = cityOpenHere(n, h, ao);
+#ifdef SLOT_SHADOWS
+    if (gShadowFade >= 1.0) return open;
+    uvec4 ids = gSlotIds, vis = gSlotVis;
+    bool ours = gSlotsOurs;
+#if !defined(LIGHTING_FOR_GRASS) && !defined(LIGHTING_FOR_LAND)
+    const ivec2 NB[4] = ivec2[](ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1));
+    for (int i = 0; i < 4 && !ours; ++i) {
+        ivec2 q = ivec2(gl_FragCoord.xy) + NB[i];
+        vis = texelFetch(shadowVisTex, q, 0);
+        ours = (vis.w & SH_VALID) != 0u && (vis.w & 0xFFFFu) == vChunk && abs(uintBitsToFloat(vis.z) - gFwd) < gFwdTol * 2.0;
+        if (ours) ids = texelFetch(shadowIdsTex, q, 0);
+    }
+#endif
+    if (!ours || (ids.x & 0xFFFFu) != SUN_ID) return open;
+    return mix(float(vis.x & 255u) / 255.0, open, gShadowFade);
+#else
+    return open;
+#endif
+}
+
+/* The daylight's sun side (daySun) as a light, shadowed (daySunVis): Lambert,
+ * the lobe (widened by the cone it comes from, so the deck's bright side
+ * gives the wet street a broad sheen towards it, not a sun's spark), and the
+ * relief's own shadows. gDaySun false (indoors: an arcology's floor; the
+ * land, which takes its own daylight; the lights' debug view) leaves it out;
+ * gSunDiff keeps what it threw on the surface last. */
+#ifdef LIGHTING_FOR_LAND
+bool gDaySun = false;
+#else
+bool gDaySun = true;
+#endif
+vec3 gSunDiff = vec3(0.0);
+void addDaySun(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, inout vec3 diff, inout vec3 spec) {
+    gSunDiff = vec3(0.0);
+    if (!gDaySun) return;
+    DaySun s = daySun(gSkyCover);
+    if (s.light.g <= 1e-6) return;   // night
+    float vis = daySunVis(n, p.y - gBase);
+    GRASS_THIN(s.dir, s.light * vis);
+    float ndl = dot(n, s.dir);
+    if (ndl <= 0.0) return;
+    vis *= RELIEF_SHADOW(s.dir);
+    if (vis <= 0.0) return;
+    vec3 c = s.light * vis;
+    gSunDiff = c * ndl;
+    diff += gSunDiff;
+    if (rough >= 0.0) spec += c * ggxSpec(n, s.dir, V, min(max(rough * rough, 0.002) + 0.5 * s.cone, 1.0), specK, ndl);
+    else spec += c * specLobe(n, s.dir, V, min(shin, 2.0 / max(s.cone * s.cone, 1e-4)), specK, -1.0, ndl);
+}
+
 // rough < 0: procedural Blinn-Phong (shin, specK); rough >= 0: GGX with F0 = specK.
 void cityLights(vec3 p, vec3 n, vec3 V, float shin, float specK, float rough, inout vec3 diff, inout vec3 spec) {
+    addDaySun(p, n, V, shin, specK, rough, diff, spec);
     int base = gC.info.z;
     if (!lightsReach(base, p.y, p.y - gBase)) return;
     vec4 hdr = uintBitsToFloat(lightRec[base]);

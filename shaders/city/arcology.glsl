@@ -460,6 +460,7 @@ vec3 shadeArcology(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     }
 
     reliefLightsOn();   // a market block's or stall roof's corrugations shadow their own lights (pbrGrainRelief)
+    gDaySun = false;    // indoors: no daylight (as its ambient)
     cityLights(p, n, V, 30.0, specK, rough, diff, spec);
     reliefLightsOff();
     vec3 col = alb * diff + spec + emit;

@@ -206,11 +206,11 @@ float depthSun(vec3 p, Column c, float fieldFar) {
 }
 
 // The daylight scattered toward the eye at p (muS: the cosine between the
-// ray and the sun).
+// ray and the sun; glow: the deck's sun side seen along it, deckSunGlow, DL3).
 float dayPhase(float muS) { return mix(hgPhase(muS, -0.15), hgPhase(muS, 0.75), 0.5); }
-vec3 dayAt(vec3 p, Column c, float fieldFar, float muS) {
+vec3 dayAt(vec3 p, Column c, float fieldFar, float muS, float glow) {
     vec3 sun = AIR_SUN * (exp(-depthSun(p, c, fieldFar)) * dayPhase(muS));
-    vec3 diffused = gDayTop * deckTint(c.field) * (exp(-DECK_K * depthUp(p, c)) * (1.0 / AIR_PI));
+    vec3 diffused = gDayTop * deckTint(c.field) * (exp(-DECK_K * depthUp(p, c)) * (mix(1.0, glow, c.field) / AIR_PI));
     return DECK_ALBEDO * sun + diffused;
 }
 
@@ -353,7 +353,7 @@ float cloudFog(vec3 rel, float dist, float density) {
 void march(vec3 ro, vec3 dir, float ta, float tb, int steps, bool detail, float jitter, vec3 haze, inout vec3 L, inout float T) {
     float ds = (tb - ta) / float(steps);
     vec3 drift = WIND * gTime;
-    float mu = dot(dir, MOON_DIR), muS = dot(dir, SUN_DIR), air = airDensity();
+    float mu = dot(dir, MOON_DIR), muS = dot(dir, SUN_DIR), air = airDensity(), glow = deckSunGlow(dir);
     for (int i = 0; i < steps; ++i) {
         float t = ta + (float(i) + jitter) * ds;
         vec3 rel = dir * t;
@@ -388,7 +388,7 @@ void march(vec3 ro, vec3 dir, float ta, float tb, int steps, bool detail, float 
             // the step's start, not at its jittered sample: its light falls off
             // so fast with depth that it dithered with where the sample fell.
             float back = max(jitter * ds - 1.0 / max(sigD, 1e-6), 0.0);
-            L += wD * (1.0 - f) * dayAt(p - dir * back, c, fieldFar, muS);
+            L += wD * (1.0 - f) * dayAt(p - dir * back, c, fieldFar, muS, glow);
         }
         gSeen += vec2(t, 1.0) * w;
         T *= Ts;
@@ -429,7 +429,7 @@ void farDeck(vec3 ro, vec3 dir, float tMin, float tMax, vec3 haze, inout vec3 L)
     float alpha = smoothstep(0.6 * CLOUD_REACH, CLOUD_REACH, length(rel.xz)) * (1.0 - deckThrough(field));
     if (alpha <= 1e-3) return;
     vec3 col = above ? DECK_ALBEDO * 0.5 * AIR_SUN * dayPhase(dot(dir, SUN_DIR)) + gDayTop * (1.0 / (AIR_PI * (1.0 + DECK_K)))
-                     : gDayTop * (deckLight(field) / AIR_PI);
+                     : gDayTop * (deckLight(field) * mix(1.0, deckSunGlow(dir), field) / AIR_PI);
     float w = gTd * alpha * gDayMix;
     L += w * mix(col, haze, cloudFog(rel, t, airDensity()));
     gSeen += vec2(t, 1.0) * w;

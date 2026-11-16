@@ -98,6 +98,33 @@ void traceSky(ivec2 px, vec3 rel, float dist, vec3 n, vec3 V, uint mask, inout u
     raw.x |= SH_SKY | (up << 16) | (open << 18) | (clear << 20);
 }
 
+/* The daylight's sun side by day (DL3: common.glsl daySun), for a surface
+ * that takes the daylight: slot 0, under SUN_ID, one ray to a point in the
+ * light's cone (a different one at each pixel and in each frame), from the
+ * side of the surface it is on. Its penumbra is the cone's spread over the
+ * blocker's distance, so the deck's broad bright side casts wide soft edges and
+ * a clear sky's sun sharp ones. A ray that would leave below the surface is
+ * the surface's own shadow. */
+void traceSun(ivec2 px, vec3 rel, float dist, vec3 n, uint mask, DaySun s, inout uvec4 ids, inout uvec2 raw) {
+    ids.x |= SUN_ID;
+    vec3 nn = dot(n, s.dir) >= 0.0 ? n : -n;
+    vec3 o = rel + nn * (0.01 + dist * 2e-4);
+    float sg = s.dir.z >= 0.0 ? 1.0 : -1.0, a = -1.0 / (sg + s.dir.z), b = s.dir.x * s.dir.y * a;   // (Duff et al. 2017)
+    vec3 t1 = vec3(1.0 + sg * s.dir.x * s.dir.x * a, sg * b, -sg * s.dir.x), t2 = vec3(b, sg + s.dir.y * s.dir.y * a, -s.dir.y);
+    float fr = float(uint(frame.shadow.x) & 63u);
+    vec2 xi = vec2(ign(vec2(px) + vec2(3.0, 89.0) + fr * 5.588238), ign(vec2(px.yx) + vec2(71.0, 29.0) + fr * 5.588238));
+    float ct = 1.0 - xi.x * (1.0 - cos(s.cone)), st = sqrt(max(1.0 - ct * ct, 0.0)), ph = 6.2831853 * xi.y;
+    vec3 d = normalize(t1 * (st * cos(ph)) + t2 * (st * sin(ph)) + s.dir * ct);
+    if (dot(d, nn) <= 0.0) { raw.y |= penEncode(0.01); return; }
+    // the deck's bright side is sky past SKY_RANGE, as traceSky's is; a clear sun's rays go on to SUN_RANGE
+    float range = mix(SUN_RANGE, SKY_RANGE, clamp((s.cone - SUN_RADIUS) / (DECK_SUN_CONE - SUN_RADIUS), 0.0, 1.0));
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, mask, o, 0.0, d, range);
+    while (rayQueryProceedEXT(q)) {}
+    if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT) raw.x |= 1u;
+    else raw.y |= penEncode(2.0 * tan(s.cone) * rayQueryGetIntersectionTEXT(q, true));
+}
+
 void main() {
     ivec2 px = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(px, imageSize(idsOut)))) return;
@@ -120,9 +147,14 @@ void main() {
     }
     bool sky = z > 0.0 && (g.y & PG_SKY) != 0u && shadowsOn() && dist <= SHADOW_FAR && skyTraceOn();
     uint mask = (g.y & PG_LITTER) != 0u ? RT_MASK_LAMPS & ~RT_MASK_LITTER : RT_MASK_LAMPS;   // litter's own shape moves (city.vert)
+    // the daylight's sun side, where it is bright enough to show a shadow (common.glsl daySun)
+    DaySun ds;
+    bool sun = false;
+    if (sky) { ds = daySun(skyCover(rel)); sun = luma(ds.light) > LIGHT_NEGLIGIBLE; }
     if (z <= 0.0 || (g.y & PG_LIT) == 0u || !shadowsOn() || dist > SHADOW_FAR || base < 0) {   // (PG_LIT: low enough for the lights)
-        if (sky) {   // no lights here, but the sky: valid, with no slots
+        if (sky) {   // no lights here, but the daylight: valid, with the sun's slot alone
             raw.x = SH_VALID;
+            if (sun) traceSun(px, rel, dist, octDecode(g.x), mask, ds, ids, raw);
             traceSky(px, rel, dist, octDecode(g.x), -rel / dist, mask, raw);
         }
         imageStore(idsOut, px, ids);
@@ -146,19 +178,19 @@ void main() {
     }
     float faint = max(LIGHT_NEGLIGIBLE, total * 0.01);
 
-    // the most important lights, in order
+    // the most important lights, in order (after the sun's slot by day)
     int   keep[SHADOW_SLOTS];
     float imp[SHADOW_SLOTS];
-    int nk = 0;
+    int nk = 0, s0 = sun ? 1 : 0, cap = SHADOW_SLOTS - s0;
     bool overflow = false;
     for (int i = 0; i < count; ++i) {
         uvec4 r = lightRec[first + i];
         if (vendorLightOff(r)) continue;   // SF4: a shut vendor's lights
         float m = lightImportance(p, n, V, uintBitsToFloat(r.xyz), r.w);
         if (m < faint || !castsShadow(r.w)) continue;
-        if (nk == SHADOW_SLOTS) {
+        if (nk == cap) {
             overflow = true;
-            if (m <= imp[SHADOW_SLOTS - 1]) continue;
+            if (m <= imp[cap - 1]) continue;
             nk--;
         }
         int k = nk++;
@@ -168,16 +200,18 @@ void main() {
     }
 
     raw.x = SH_VALID | (overflow ? SH_OVERFLOW : 0u);
+    if (sun) traceSun(px, rel, dist, n, mask, ds, ids, raw);
     float fr = float(uint(frame.shadow.x) & 63u);
     vec3 xi0 = vec3(ign(vec2(px) + fr * 5.588238), ign(vec2(px.yx) + vec2(41.0, 17.0) + fr * 5.588238),
                     ign(vec2(px) + vec2(23.0, 71.0) + fr * 5.588238));
-    for (int k = 0; k < nk; ++k) {
-        uvec4 r = lightRec[first + keep[k]];
+    for (int j = 0; j < nk; ++j) {
+        int k = j + s0;   // its slot
+        uvec4 r = lightRec[first + keep[j]];
         vec3 lp = uintBitsToFloat(r.xyz);
         ids[k >> 1] |= lightId(c.info.xy, lp, r.w) << (16u * uint(k & 1));
 
         float size;
-        vec3 xi = fract(xi0 + float(k) * vec3(0.7548777, 0.5698403, 0.618034));
+        vec3 xi = fract(xi0 + float(j) * vec3(0.7548777, 0.5698403, 0.618034));
         vec3 e = emitterPoint(lp, r.w, xi, p, size) + c.origin.xyz;
         vec3 nn = dot(n, e - rel) >= 0.0 ? n : -n;   // leave from the side the light is on (leaves are seen from both)
         vec3 o = rel + nn * (0.01 + dist * 2e-4);
