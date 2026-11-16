@@ -15,7 +15,7 @@ Night looks a lot better than day (the user, 2026-11-13). Likely causes, from th
 not yet confirmed by captures (first step: one street at noon and at midnight, side by side):
 
 - Flat, directionless light: the cities sit under the deck, which lets through DECK_DAYLIGHT (0.1% of open
-  daylight since DL1, ~60 lux). No sun, so no hard shadows, no modelling, no warm/cool contrast. At night hundreds of
+  daylight since DL1, ~60 lux; 0.14%, ~85 lux, since DL3). No sun, so no hard shadows, no modelling, no warm/cool contrast. At night hundreds of
   coloured point lights with ray-traced shadows give the depth.
 - Auto exposure lifts the overcast to mid-grey, so the neon, lit windows and adverts that carry the night look
   become a small extra on top of the grey.
@@ -41,8 +41,9 @@ Fixes, best value first:
 - [x] Some direction to the light: the deck brighter towards the sun's side (DL3: `daySun`, traced in slot 0 as
       `SUN_ID`). Occasional thin patches in the deck are still open.
 - [ ] The sun side is subtle at street level: from 35 degrees up, the towers hide the deck's bright side from most
-      streets within `SKY_RANGE`, so it mostly models the upper facades and anything seen from above. If the street
-      wants more, raise `DECK_SUN_SHARE` or lower `DECK_SUN_TILT` (a steeper light), not the range.
+      streets within `SKY_RANGE`, so it mostly models the upper facades and anything seen from above (raised from 0.35
+      to 0.45 with `DECK_DAYLIGHT` 0.001 -> 0.0014 at the user's call, 2026-11-16). If the street wants more, raise
+      `DECK_SUN_SHARE` or lower `DECK_SUN_TILT` (a steeper light), not the range.
 - [ ] The land and the land's grass under the deck take no sun side (`landDaylight` stays even), so the city's
       ground and the land beside it differ a little by day at the built edge.
 - [ ] Retune materials and grime against day captures, as they were against night ones.

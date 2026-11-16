@@ -1285,11 +1285,11 @@ open.
 **By day** (DN6 of the day/night roadmap) the city takes the daylight its cloud lets through. Every surface's
 light all round (`ambientLight`, `cityAmbient` in `common.glsl`, which the proxies share) is the night's faint
 fill and the daylight (`cityDaylight`). The daylight is the land's (`landDaylight`): the sun and the sky on level
-ground, under the deck only `deckThrough` of it (0.1% where the cover is whole: a storm's gloom, DL1), spread over the
+ground, under the deck only `deckThrough` of it (0.14% where the cover is whole: a storm's gloom, DL1, eased in DL3), spread over the
 deck's underside, in the sooty deck's cool green-grey (`deckTint`,
 `deckLight`: luminance-neutral, so the sodium and the neon read warm against it). The cover is the fragment's own (`skyCover`: the cities' cloud
 over it, none where it stands up out of the deck), so a tower over the deck is in the sun. The deck glows brighter
-on the sun's side (DL3: `daySun` in `common.glsl`): 35% of what gets through (`DECK_SUN_SHARE`, none once the sun
+on the sun's side (DL3: `daySun` in `common.glsl`): 45% of what gets through (`DECK_SUN_SHARE`, none once the sun
 has set) comes from a 20-degree cone 0.6 of the way from straight up towards the sun, never lower than 35 degrees,
 and the rest is the even overcast. Blended with a clear sky's own sun by how bright each is, that is one light,
 which `cityLights` adds (`addDaySun`: Lambert, a GGX lobe widened by the cone, the relief's own shadows) with its
@@ -2203,7 +2203,7 @@ it has set, and by night the moonlit air's faint blue over the stars (DN3 of the
   (`nightGlow`: the sodium-lit smog near a city, the airglow out in the countryside), and the light of the sun, the
   moon and the sky scattered in it (`smogLight`: Henyey-Greenstein, g 0.6, albedo 0.9), so it is a white haze by
   day with the sun's aureole round it, gold at sunset, and the moon's glow by night. Under the cities' cloud only
-  `DECK_DAYLIGHT` (0.1%) of the daylight reaches it (`daylightThrough`, from the cover over the camera, none once
+  `DECK_DAYLIGHT` (0.14%) of the daylight reaches it (`daylightThrough`, from the cover over the camera, none once
   the camera is up out of the deck: see Weather). Over the cities' cloud the smog stops at the deck's top, an
   inversion capping it (`hazeMeanCapped`, `FrameUBO.smog`): the line of sight's heights clipped to under the top,
   the top and the cover taken at the line's higher end (the eye looking down, the far end looking up), so from the
@@ -2254,7 +2254,7 @@ torn scud drifting beneath it. The deck swallows the tops of the tallest towers.
 - **By day** (DN5 of the day/night roadmap): the deck is a thick, sooty storm cloud. The daylight on its top (the
   sun's on level cloud and the clear sky's, `gDayTop`) diffuses down through it and dies away with the optical depth
   above as exp(-`DECK_K` od), `DECK_K` set so a whole column (about 3 deep, `DECK_COLUMN`) lets through
-  `DECK_DAYLIGHT`: its top sends back about a third of the light on it, and its base shows `DECK_DAYLIGHT` (0.1%)
+  `DECK_DAYLIGHT`: its top sends back about a third of the light on it, and its base shows `DECK_DAYLIGHT` (0.14%)
   of it in the deck's colour (`deckTint`): the same overcast the street is lit by (`deckLight`). The sun scattered
   once (`DECK_ALBEDO` 0.5, a forward and a backward Henyey-Greenstein lobe) lights its tops and the flanks turned to
   it, and silvers a thin edge with the sun behind it; towards the sun its light is followed 3 km (`SUN_RUN`), the
@@ -2312,7 +2312,7 @@ The lighting works in the engine's own units, now pinned to physical ones so tha
   | the city's low haze (`nightGlow`) | 0.059 | 0.9 cd/m2 | |
   | the sun above the air (`SUN_ILLUMINANCE`); at the ground, 32 degrees up | 2560; 2350 | 128 000; 117 000 lux | 128 000; ~100 000 lux |
   | the noon sky all round (`AIR_SKY`, 32 degrees) | 105 | 1700 cd/m2 | |
-  | noon under the whole deck, open level ground (`DECK_DAYLIGHT` of sun and sky, 32 degrees; DL1) | 1.25 | 60 lux | a storm sky's 100-1000 lux, a dark one's less |
+  | noon under the whole deck, open level ground (`DECK_DAYLIGHT` of sun and sky, 32 degrees; DL1) | 1.75 | 85 lux | a storm sky's 100-1000 lux, a dark one's less |
   | the light on a lobby's floor | 0.55 | 27 lux | 200-500 lux |
 
   So the moon and the stars are about 70 times the real ones (`NIGHT_LIFT`): a game's night, which the eye's
@@ -2398,7 +2398,7 @@ cloud (the day/night roadmap, DN0-DN9; ~/.claude/plans/day-night-cycle.md has ea
 - **The units, the exposure, the display:** Light and exposure (DN1 the anchor and pre-exposure, DN2 the eye,
   DN8 HDR).
 - **The sky, the air and the smog; the sun on the land:** Sky (DN3, DN4).
-- **The deck by day:** Clouds, "By day" (DN5). Under the cities' cloud the daylight is `DECK_DAYLIGHT` (0.1%, DL1) of the
+- **The deck by day:** Clouds, "By day" (DN5). Under the cities' cloud the daylight is `DECK_DAYLIGHT` (0.14%, DL1/DL3) of the
   open sky's, the same number for the land, the deck's base, the city and the haze.
 - **The city by day and on its own clock:** Streets and light, "By day" (DN6) and "The city's clock" (DN7).
 

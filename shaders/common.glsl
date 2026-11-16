@@ -799,7 +799,7 @@ vec3 dayLevel() { return SUN_LAND * max(SUN_DIR.y, 0.0) + skyIrradiance(vec3(0.0
  * DECK_SUN_LOW, so a low sun doesn't send it along the street), out of a cone
  * DECK_SUN_CONE wide, so its shadows are soft; none of it once the sun has
  * set. The rest stays the even overcast. */
-const float DECK_SUN_SHARE = 0.35, DECK_SUN_TILT = 0.6;
+const float DECK_SUN_SHARE = 0.45, DECK_SUN_TILT = 0.6;
 const float DECK_SUN_LOW = 0.5736;    // sin 35 degrees
 const float DECK_SUN_CONE = 0.35;     // half-angle, rad (20 degrees)
 float deckSunShare() { return DECK_SUN_SHARE * smoothstep(-0.02, 0.2, SUN_DIR.y); }

@@ -38,7 +38,7 @@
 #define CLOUD_RAGGED   1500.0f
 #define CLOUD_REACH    30000.0f
 #define RAIN_DRIZZLE   0.1f
-#define DECK_DAYLIGHT  0.001f
+#define DECK_DAYLIGHT  0.0014f
 #define DECK_OVER      330.0f
 #define DECK_BLEND     2000.0f
 
