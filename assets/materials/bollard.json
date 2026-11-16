@@ -6,5 +6,8 @@
     "normal":   "../textures/bollard/normal.png",
     "orm":      "../textures/bollard/orm.png"
   },
-  "albedo_scale": 0.5     // into the city's night palette
+  "albedo_scale": 0.5,    // into the city's night palette
+  // the least roughness, dry (shadeProp): street steel is scuffed dull, not the model's polished 0.4,
+  // which by day mirrored the lit facades as chrome
+  "params": [0.62]
 }

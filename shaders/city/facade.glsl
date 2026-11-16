@@ -550,7 +550,7 @@ vec3 shadeTrim(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
                        : palette == 2u ? vec3(0.17, 0.25, 0.25)                                    // verdigris
                        : tone < 0.5 ? vec3(0.27, 0.285, 0.31) : vec3(0.31, 0.29, 0.26))            // silver, champagne
                       : (tone < 0.5 ? vec3(0.33, 0.30, 0.25) : vec3(0.29, 0.285, 0.27));           // warm stone, grey stone
-    pier *= 0.72 + 0.26 * hf(sh, 72u);
+    pier *= (0.72 + 0.26 * hf(sh, 72u)) * 0.82;   // a little darker than first set: by day the palest thing in the street (DL5)
     vec3 alb = kind == TRIM_PIER ? pier : pier * vec3(0.30, 0.27, 0.24);
 
     float faceW = float(vFacePack & 4095u) / 16.0, u = uv.x;
@@ -591,9 +591,11 @@ vec3 shadeTrim(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 spec;
     vec3 diff = wallLighting(p, g.n, V, metal ? 48.0 : 14.0, (metal ? 0.35 : 0.07) * grainSpec(g), vAbs, spec);
     vec3 col = alb * diff * ao + spec * ao;
-    // the overcast's and the city's glow: what lets a pale pier stand out from dark glass where no lamp reaches
+    // the overcast's and the city's glow: what lets a pale pier stand out from dark glass where no lamp reaches.
+    // By day the traced daylight (wallLighting) already lights it, with its occlusion: this untraced share on
+    // top flattened the piers into the street's palest, most even surface, so it all but goes (DL5).
     vec3 glowSky = envReflection(reflect(-V, n));
-    col += glowSky * ao * (alb * 0.7 + (metal ? 0.06 : 0.015));
+    col += glowSky * ao * (alb * 0.7 + (metal ? 0.06 : 0.015)) * (1.0 - 0.8 * skyTraceWeight());
 
     // A face of the reveal looks across the glass beside it, into the room: lit, it lights this, most near the glass.
     float lod = smoothstep(0.1, 0.35, dU);

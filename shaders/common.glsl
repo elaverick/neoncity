@@ -767,6 +767,14 @@ vec3 skyRadiance(vec3 dir) {
  * moon's and the sky's light likewise. */
 float deckThrough(float cover) { return pow(DECK_DAYLIGHT, cover); }
 float daylightThrough() { return deckThrough(frame.sky.z); }
+/* What sky.frag dims the sky by before the clouds go over it: about what the
+ * deck over the eye lets through along dir (all of it towards the horizon,
+ * where the deck thins out to the country). clouds.comp divides it back out
+ * of its transmittance over the sky, so a pixel of sky comes out the same;
+ * but a pixel the MSAA resolve shares between the sky and a thin near thing
+ * (a lamp post, a cable), which the clouds take as the near thing's and pass
+ * through, then holds the deck's dim sky, not the bare day's white (DL5). */
+float skyUnderDeck(vec3 dir) { return deckThrough(frame.sky.z * smoothstep(0.02, 0.25, dir.y)); }
 /* The colour the sooty deck gives the daylight through it: a cool,
  * slightly green grey, so the lamps' sodium and the neon read warm against
  * it (DL1). Luminance-neutral (luma 1), all of it under the whole deck. And

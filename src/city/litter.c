@@ -34,7 +34,7 @@
  *
  * Vertex layout (MAT_LITTER):
  *   pos      rest position (chunk-local)
- *   nrm.w    ambient occlusion, 0..127
+ *   nrm.w    ambient occlusion, 0..127; negative for an item lying in grass
  *   uv       the item's own surface coordinates (print, labels)
  *   seed     the item's hash (its colours and print)
  *   params   y kind (LK_*); z flex 0..255, how freely the vertex moves in the
@@ -534,12 +534,14 @@ typedef struct Item {
     uint32_t seed;
     int      kind;
     uint8_t  flags;      /* LF_* */
+    uint8_t  grass;      /* lies in a park's or the open land's grass */
 } Item;
 
-/* A litter vertex: its ambient occlusion rides in the normal's w. Litter
- * meshes have no emission transform (city_build_litter clears it). */
+/* A litter vertex: its ambient occlusion rides in the normal's w, negated for
+ * an item lying in grass (shadeLitter: dirtier there). Litter meshes have no
+ * emission transform (city_build_litter clears it). */
 static void push(Mesh *m, vec3 p, vec3 n, float ao, float u, float v, uint32_t seed, const uint8_t prm[4], uint32_t aux) {
-    mesh_push_w(m, p, n, (int8_t)(clampf(ao, 0.0f, 1.0f) * 127.0f), u, v, seed, prm, aux);
+    mesh_push_w(m, p, n, (int8_t)(clampf(ao, -1.0f, 1.0f) * 127.0f), u, v, seed, prm, aux);
 }
 
 static int quant(float v, float unit, int lo, int hi) {
@@ -565,7 +567,7 @@ static void commit(LGen *g, const Item *it, int first, int kind, float aoH) {
         uint8_t prm[4] = { MAT_LITTER, (uint8_t)kind, (uint8_t)(clampf(v->flex, 0.0f, 1.0f) * 255.0f + 0.5f), (uint8_t)(fade | it->flags) };
         vec3 n = v3(c * v->n.x - s * v->n.z, v->n.y, s * v->n.x + c * v->n.z);
         float ao = aoH > 0.0f ? 0.35f + 0.65f * smoothstepf(0.0f, aoH, oy) : 1.0f;
-        push(g->m, v3(ax + ox, it->y + oy, az + oz), n, ao, v->u, v->v, it->seed, prm, aux);
+        push(g->m, v3(ax + ox, it->y + oy, az + oz), n, it->grass ? -ao : ao, v->u, v->v, it->seed, prm, aux);
     }
     g->m->grounded = 0;
 }
@@ -700,7 +702,7 @@ static int drop(LGen *g, int kind, double x, double z, float yaw, uint32_t seed,
     if (!chunk_gen_owns(&g->c, x, z) || g->m->count > BUDGET) return 0;
     Item it;
     if (!site_ok(g, x, z, RADIUS[kind], want, &it.y)) return 0;
-    it.x = x; it.z = z; it.yaw = yaw; it.seed = seed; it.kind = kind; it.flags = flags;
+    it.x = x; it.z = z; it.yaw = yaw; it.seed = seed; it.kind = kind; it.flags = flags; it.grass = want == G_PARK;
     build_item(g, &it);
     return 1;
 }

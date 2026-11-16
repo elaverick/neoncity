@@ -522,7 +522,9 @@ void main() {
     t0 = max(t0, sa);
     t1 = min(t1, sb);
     bool marched = t1 > t0;
-    if (!marched && !gDay) { imageStore(cloudOut, hp, vec4(0.0, 0.0, 0.0, 1.0)); return; }
+    // over the sky, the transmittance undoes the dimming sky.frag drew it with (common.glsl skyUnderDeck)
+    float skyUndo = dz > 0.0 ? 1.0 : 1.0 / skyUnderDeck(dir);
+    if (!marched && !gDay) { imageStore(cloudOut, hp, vec4(0.0, 0.0, 0.0, skyUndo)); return; }
 
     float jitter = ign(vec2(hp));
     vec3 haze = hazeColor(dir);
@@ -551,5 +553,5 @@ void main() {
         L = L * Ta + aL * (1.0 - mix(T, gTd, gDayMix));
     }
     T = mix(T, gTd, gDayMix);   // what shows through: the day's thick deck by day
-    imageStore(cloudOut, hp, vec4(EXPOSE(L), T));   // pre-exposed, as the scene it is blended over
+    imageStore(cloudOut, hp, vec4(EXPOSE(L), T * skyUndo));   // pre-exposed, as the scene it is blended over
 }

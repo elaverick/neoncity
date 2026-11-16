@@ -46,7 +46,9 @@ Fixes, best value first:
       `DECK_SUN_SHARE` or lower `DECK_SUN_TILT` (a steeper light), not the range.
 - [ ] The land and the land's grass under the deck take no sun side (`landDaylight` stays even), so the city's
       ground and the land beside it differ a little by day at the built edge.
-- [ ] Retune materials and grime against day captures, as they were against night ones.
+- [x] Retune materials and grime against day captures (DL5: duller bollards, darker piers without their untraced
+      glow by day, litter in grass muddied, and the bare day sky no longer showing round thin poles and cables).
+      Most materials held up by day as tuned at night; recheck vendors, graffiti and grime if a day view shows them.
 
 ## Shadows
 Every light in the chunks' light tables casts ray-traced shadows (`src/render/rt.c`, `shaders/shadow_trace.comp`,

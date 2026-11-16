@@ -117,7 +117,8 @@ void shadePixel() {
         col += vec3(0.075, 0.036, 0.030) * band * frame.sky.x;
     }
     // the sun's disc, pre-exposed, within what the 16-bit target holds (the bloom spreads it)
-    outColor = vec4(min(col, vec3(30000.0 * frame.exposure.y)), 1.0);
+    // and dimmed by about the deck in front of it, which clouds.comp divides back out (common.glsl skyUnderDeck)
+    outColor = vec4(min(col, vec3(30000.0 * frame.exposure.y)) * skyUnderDeck(dir), 1.0);
     outRefl = vec4(0.0);
 }
 

@@ -148,7 +148,8 @@ vec3 shadeLitter(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     uint kind = prm.y;
     if (kind == LK_SHADOW) return litterShadow(uv);
     vec3 V = -normalize(rel);
-    float ao = clamp(vLitter.x, 0.0, 1.0), soak = vLitter.y;
+    float ao = clamp(abs(vLitter.x), 0.0, 1.0), soak = vLitter.y;
+    bool inGrass = vLitter.x < 0.0;   // lies in a park's or the open land's grass (src/city/litter.c)
     uint h = seed, var = (seed >> 4) & 3u;   // var: the variant src/city/litter.c built
     vec2 fw = fwidth(uv) + 1e-5;
     vec3 alb = vec3(0.4), tint = vec3(1.0);
@@ -257,6 +258,9 @@ vec3 shadeLitter(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     }
 
     alb *= mix(1.0, 0.6, hf(h, 21u) * hf(h, 21u));   // the longer it has lain there, the dirtier
+    // In grass it sits among the blades' shade and takes the soil's stain: against the dark green (about 0.05)
+    // clean paper (0.4) read as white confetti by day. Muddied and greyed, the more so the longer it has lain.
+    if (inGrass) alb = mix(alb, vec3(luma(alb)) * vec3(1.0, 0.92, 0.78), 0.4) * mix(0.5, 0.3, hf(h, 21u));
     if (porous) {
         // Soaks in patches as the rain goes on, a sheet from its edges in:
         // darker, duller, glossy with water. Sodden sheets wrinkle where they

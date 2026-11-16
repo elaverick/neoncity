@@ -33,7 +33,7 @@ vec3 shadeProp(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm) {
     vec3 T, B;
     modelFrame(p, uv, n, T, B);
     Surface s = samplePBR(m, uv, T, B, n);
-    float metal = s.height, rough = s.rough;
+    float metal = s.height, rough = max(s.rough, pbrParams(m).x);   // params x: the least roughness, dry (its file's)
     vec3 base = s.albedo * pbrAlbedoScale(m) * mix(0.8, 1.05, hf(seed, 3u));   // some kept cleaner than others
 
     // rain on what stands in the open: glossier, and beaded with drops
