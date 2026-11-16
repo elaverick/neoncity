@@ -305,7 +305,7 @@ vec3 airColor(SkyLight L) {
     if (cls == AIR_FLAME) return fireColor(0.6) * flameGout(L.seed, gTime).power;
     if (cls == AIR_VENDOR)   // a vendor's tube, lamp, flame or neon (NB6), dark while it is shut (SF4: its hours in the kind's low byte)
         return vendorOpen(L.kind & 127u) ? vendorLightColor(L.seed, gTime) : vec3(0.0);
-    return skyLightColor(L);
+    return skyLightColor(L) * signDayGain();   // a sign, turned up by day as its face is
 }
 
 vec3 mistLight(vec3 dir, float tEnd, float rain) {
@@ -490,9 +490,10 @@ void main() {
     gDayMix = smoothstep(0.02, 1.0, dayLum);
     gSeen = vec2(0.0);
     // By day the rain also scatters the grey light under the deck (its
-    // underside's radiance, about deckThrough of the daylight on its top).
+    // underside's radiance, about deckThrough of the daylight on its top),
+    // as much of it as the air among the towers sees (eyeAirDaylight).
     vec3 mist = mistLight(dir, tScene, frame.weather.x);
-    if (gDay) mist += gDayTop * (deckLight(frame.sky.z) / AIR_PI) * (1.0 - exp(-MIST_DAY * frame.weather.x * min(tScene, MIST_DAY_RANGE)));
+    if (gDay) mist += gDayTop * (deckLight(frame.sky.z) * eyeAirDaylight() / AIR_PI) * (1.0 - exp(-MIST_DAY * frame.weather.x * min(tScene, MIST_DAY_RANGE)));
     imageStore(mistOut, hp, vec4(EXPOSE(mist), 1.0));
 
     // The ray's span inside the cloud layer, up to the scene and CLOUD_REACH,

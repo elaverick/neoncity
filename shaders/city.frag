@@ -146,10 +146,10 @@ void shadePixel() {
     else if (mat == MAT_TRIM)      col = shadeTrim(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_ROOF)      col = shadeRoof(vLocal, vRel, n, vUV, vParams);
     else if (mat == MAT_DOOR)      col = shadeDoor(vLocal, vRel, n, vUV, vSeed, vParams);
-    else if (mat == MAT_NEON)      col = shadeNeon(vUV, vSeed, vParams, vRel);
+    else if (mat == MAT_NEON)      col = shadeNeon(vUV, vSeed, vParams, vRel) * signDayGain();
     else if (mat == MAT_METAL)     col = shadeMetal(vLocal, vRel, n, vUV, vParams);
     else if (mat == MAT_EMISSIVE)  col = shadeEmissive(vParams, vSeed);
-    else if (mat == MAT_SCREEN)    col = shadeScreen(vUV, vSeed, vParams);
+    else if (mat == MAT_SCREEN)    col = shadeScreen(vUV, vSeed, vParams) * signDayGain();
     else if (mat == MAT_INTERIOR)  col = shadeInterior(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_LITTER)    col = shadeLitter(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_ARCOLOGY)  col = shadeArcology(vLocal, vRel, n, vUV, vSeed, vParams);
@@ -159,7 +159,7 @@ void shadePixel() {
     else {
         // LED strip: steady or chasing
         float chase = vParams.z == 1u ? 0.25 + 0.75 * step(0.5, fract(vUV.x / 6.0 - gTime * 0.7)) : 1.0;
-        col = neonColor(vParams.y) * 6.0 * chase;
+        col = neonColor(vParams.y) * (6.0 * chase * signDayGain());
     }
 
     if (mat == MAT_KIT && (vAux & KIT_AUX_FAR) != 0u && (uint(frame.shadow.y) & VENDOR_DEBUG) != 0u) {

@@ -917,6 +917,27 @@ vec3 cityAmbient(vec3 n, float h, float cover, float open, float ao, float sunK)
 }
 vec3 cityAmbient(vec3 n, float h, float cover) { return cityAmbient(n, h, cover, cityOpen(n, h), 1.0, 1.0); }
 
+/* How much of the sky the eye sees from among a city's towers (DL4): 0 at
+ * street level, 1 from 90 m up (cityOpen's rise) or out of the city. */
+float eyeClear() {
+    float h = max(frame.camPos.y - frame.weather.z, 0.0);
+    return mix(1.0, smoothstep(0.0, 90.0, h), frame.sky.x);
+}
+/* The share of the day's light the air round the eye gets (DL4): down in the
+ * streets the haze and the rain's mist see the sky as the walls do, about
+ * EYE_AIR_STREET of it (cityOpen's 0.4-0.55), so they darken with the street
+ * instead of hanging as a bright grey wash in front of the lamps and signs.
+ * 1 by night, so the night's haze is as it was. */
+const float EYE_AIR_STREET = 0.45;
+float eyeAirDaylight() { return mix(1.0, mix(EYE_AIR_STREET, 1.0, eyeClear()), smoothstep(-0.02, 0.2, SUN_DIR.y)); }
+
+/* The signs, screens and LED strips turn up by day, as LED signage does (it
+ * dims at night): SIGN_DAY_GAIN once the sun is up, about the stop the day
+ * under the deck is exposed over the night (DL1's key), so they read and
+ * bloom by day as they do at night (DL4). Lamps and lit rooms keep theirs. */
+const float SIGN_DAY_GAIN = 2.3;
+float signDayGain() { return mix(1.0, SIGN_DAY_GAIN, smoothstep(-0.02, 0.2, SUN_DIR.y)); }
+
 /* The sky by day seen along R from under cover: the clear sky (skyRadiance),
  * the deck's even grey under it; and its mean radiance (dayOvercast), what a
  * window or skylight sees of it. None by night. */
@@ -1005,8 +1026,8 @@ vec3 nightGlow(vec3 dir) {
  * light from all round (AIR_SKY), the more for the light the smog passes on
  * through itself. Dimmed under the cities' cloud. */
 vec3 smogLight(vec3 dir) {
-    vec3 L = AIR_SUN * hgPhase(dot(dir, SUN_DIR), SMOG_G) + AIR_MOON * hgPhase(dot(dir, MOON_DIR), SMOG_G) + AIR_SKY * SMOG_MS;
-    return L * (SMOG_ALBEDO * daylightThrough());
+    vec3 day = (AIR_SUN * hgPhase(dot(dir, SUN_DIR), SMOG_G) + AIR_SKY * SMOG_MS) * eyeAirDaylight();
+    return (day + AIR_MOON * hgPhase(dot(dir, MOON_DIR), SMOG_G)) * (SMOG_ALBEDO * daylightThrough());
 }
 
 // The haze's colour along dir: what fog mixes towards.
@@ -1096,12 +1117,17 @@ const vec3 CLOUD_DECK = vec3(0.10, 0.052, 0.034);
  * direction; and below, the dark wet street under its lamps. By day the sky
  * (daySky) as it is round the camera, and the facades and street under it
  * (DAY_FACADES, DAY_STREET of the daylight on open ground, less light than
- * they take: radiance off a dark wall in a canyon). */
+ * they take: radiance off a dark wall in a canyon). Down among the towers
+ * (eyeClear) a reflection only reaches the day's sky steeply up; lower it
+ * meets the facades across, so a puddle shows the dark street and its lamps
+ * and signs, not a grey sky (DL4). */
 const float DAY_FACADES = 0.03, DAY_STREET = 0.02;
 vec3 envReflection(vec3 R) {
     float cover = frame.sky.z;
     vec3 day = dayLevel() * deckLight(cover);   // on open ground round the camera
-    vec3 c = mix(hazeColor(R) * 1.5, CLOUD_DECK + daySky(R, cover), smoothstep(0.03, 0.3, R.y) * 0.85);
+    float clear = mix(smoothstep(0.35, 0.95, R.y), 1.0, eyeClear());
+    vec3 up = CLOUD_DECK + daySky(R, cover) * clear + day * (DAY_FACADES * (1.0 - clear));
+    vec3 c = mix(hazeColor(R) * 1.5, up, smoothstep(0.03, 0.3, R.y) * 0.85);
     float az = atan(R.z, R.x);
     float band = smoothstep(-0.3, -0.03, R.y) * (1.0 - smoothstep(0.08, 0.45, R.y));
     float rows = 0.45 + 0.55 * vnoise(vec2(az * 7.0, 0.0), 0xFAC1u);          // blocks of lit windows

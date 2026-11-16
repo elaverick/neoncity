@@ -241,7 +241,7 @@ vec3 shadeEmissive(uvec4 prm, uint seed) {
         return vec3(1.0, 0.05, 0.02) * (0.3 + 30.0 * b);
     }
     if (mode >= 2u) return vec3(0.02, 0.02, 0.021) + lampColor(int(mode) - 2) * lampState(seed, gTime) * 22.0;   // dead: cold glass
-    return neonColor(prm.y) * 8.0;
+    return neonColor(prm.y) * (8.0 * signDayGain());
 }
 
 vec3 shadeMetal(vec3 p, vec3 rel, vec3 n, vec2 uv, uvec4 prm) {
