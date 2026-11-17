@@ -21,9 +21,10 @@
 
 int hvol_outline(const HVol *v, float (*p)[2]) {
     if (v->role == HV_BAY && v->kind == HBAY_CANTED) {
-        /* canted at 45 degrees from the wall (z1) out to its front (z0), keeping a 0.6 m face */
+        /* canted at 45 degrees from the wall (z1) out to its front (z0), keeping its front light (CANT_FACE_MIN at
+         * least: steeper sides rather than a point) */
         float c = v->z1 - v->z0;
-        if (v->x1 - v->x0 - 2.0f * c < 0.6f) c = 0.5f * (v->x1 - v->x0 - 0.6f);
+        if (v->x1 - v->x0 - 2.0f * c < CANT_FACE_MIN) c = 0.5f * (v->x1 - v->x0 - CANT_FACE_MIN);
         if (c < 0.0f) c = 0.0f;
         p[0][0] = v->x0 + c; p[0][1] = v->z0;
         p[1][0] = v->x1 - c; p[1][1] = v->z0;

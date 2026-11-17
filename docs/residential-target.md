@@ -274,7 +274,7 @@ drawing them in the shells' place at the slice); they leave out wings, porches a
 | Eaves | overhang 0.2-0.6 m (craftsman 0.6-0.9, georgian 0 behind a parapet) | soffit, fascia; rafter tails or brackets by style |
 | Chimneys | stack 0.6-1.2 m wide, 0.45-0.6 m deep, 0.9-1.5 m over the ridge; a pot a flue | on a ridge, a gable end or a party wall, never mid-slope (§13.4) |
 | Porch | depth 1.2-2.0 m; craftsman verandas to 2.5 m | over every front door |
-| Bay window | projection 0.6-0.9 m, 1.8-2.7 m wide; one or two storeys | inside the front yard, short of the boundary (no bay where the yard leaves under 0.45 m) |
+| Bay window | projection 0.6-0.9 m (0.45 at least); square 1.8-2.7 m wide; canted set out from its front light, 1.1-1.5 m (1.0 at least, else square), its sides at 45 degrees, so 2.3-3.3 m overall; one or two storeys | inside the front yard, short of the boundary (no bay where the yard leaves under 0.45 m) |
 | Window bay | 2.7 m (§13.7) | near: real reveals, glass set back 0.08-0.15 m, sills, frames, glazing bars |
 | Door | 0.9-1.0 m wide (§13.5's 1 m clear with its frame), 2.0-2.1 m high | |
 | Dormers | 1.2-2.4 m wide, gabled, hipped or flat | |

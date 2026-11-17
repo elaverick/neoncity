@@ -402,14 +402,30 @@ static void front_features(HCtx *c, int ui, int mi, Front f) {
     if (left) { b0 = f.ux0 + 0.35f; b1 = px0 - 0.4f; }
     else      { b0 = px0 + pw + 0.4f; b1 = f.ux1 - 0.35f; }
     float bw = rng_range(&c->r, 1.8f, 2.7f);
+    const float face0 = rng_range(&c->r, CANT_FACE0, CANT_FACE1);
     if (b1 - b0 < 1.8f) { home_repair(g, c->log, "bay", "unit %d: no room beside its door (%.1f m), no bay", ui, b1 - b0); return; }
     if (bw > b1 - b0) bw = b1 - b0;
-    const float bc = 0.5f * (b0 + b1), proj = fminf(rng_range(&c->r, 0.6f, 0.9f), front - c->Y->proj);
+    const float bc = 0.5f * (b0 + b1);
+    float proj = fminf(rng_range(&c->r, 0.6f, 0.9f), front - c->Y->proj);
     if (proj < 0.45f) { home_repair(g, c->log, "bay", "unit %d: a %.1f m front yard, no bay", ui, front); return; }
+    /* a canted bay is set out from its front light (CANT_FACE0-1), its sides at 45 degrees as deep as it projects:
+     * where the room beside the door can't hold that, it projects less, then narrows its light to CANT_FACE_MIN,
+     * and below that it is built square (the user, 2026-11-17: they came to a point) */
+    int canted = c->canted;
+    if (canted) {
+        const float room = b1 - b0;
+        float face = face0;
+        if (face + 2.0f * proj > room) proj = fmaxf(0.45f, 0.5f * (room - face));
+        if (face + 2.0f * proj > room) face = room - 2.0f * proj;
+        if (face < CANT_FACE_MIN) {
+            canted = 0;
+            home_repair(g, c->log, "bay", "unit %d: %.1f m beside its door, too narrow for a canted bay: square", ui, room);
+        } else bw = face + 2.0f * proj;
+    }
     const int bi = add_vol(g, HV_BAY, ui, mi, bc - 0.5f * bw, front - proj, bc + 0.5f * bw, front, 1, HR_LEAN);
     if (bi < 0) return;
     HVol *b = &g->vol[bi];
-    b->kind = (uint8_t)(c->canted ? HBAY_CANTED : HBAY_SQUARE);
+    b->kind = (uint8_t)(canted ? HBAY_CANTED : HBAY_SQUARE);
     b->storeys = (uint8_t)(c->bay2 && m->storeys >= 2 ? 2 : 1);
     lean_against(b, m, fmaxf(c->S->minPitch, c->pitch));
     /* its roof tucked under the main's eaves */

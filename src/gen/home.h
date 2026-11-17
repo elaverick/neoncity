@@ -57,6 +57,10 @@ enum { HSIDE_W = 0, HSIDE_E, HSIDE_S, HSIDE_N };
 enum { HP_OPEN = 0, HP_LEAN, HP_ENCLOSED, HP_RECESSED, HP_CANOPY, HP_VERANDA, HP_COUNT };
 /* HVol.kind of an HV_BAY and an HV_WING. */
 enum { HBAY_SQUARE = 0, HBAY_CANTED };
+/* A canted bay's front light (m): drawn from CANT_FACE0-1, never under CANT_FACE_MIN (narrower, it is built square) */
+#define CANT_FACE0    1.1f
+#define CANT_FACE1    1.5f
+#define CANT_FACE_MIN 1.0f
 enum { HWING_ROOM = 0, HWING_GARAGE };
 /* Boundaries: kinds, and where they run. */
 enum { HB_NONE = 0, HB_WALL, HB_HEDGE, HB_FENCE, HB_COUNT };
