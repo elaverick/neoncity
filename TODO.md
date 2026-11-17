@@ -76,11 +76,11 @@ same city; screenshots of the same `--cam` with `--rain 0` show the renderer's r
   before and after.
 - **Constants shared by C and GLSL** (`MAT_*`, `LK_*`, `PBR_*`, the shadow ranges) are kept in step by hand ("must
   match shaders/common.glsl"). A `#define`-only header included by both `common.h` and `common.glsl` would end that.
-- **The distant proxies' pool is too small for the 60-150 km cities** (2026-11-12): at the default spawn 2654 of 6674
-  tiles in range fit its 6144 pages (24 MB, sized for a 985-tile city). The far ones are left out, and the nearest of
-  those are generated again every `RETRY_FRAMES` (120) for ever and turned away each time. Either enlarge the pool to
-  hold the range (about 1.7M boxes, about 14k pages, 55 MB), or stop retrying until the camera moves a tile. Captures no
-  longer wait on it (`renderer_proxies_settled`).
+- **The distant proxies' pool** (2026-11-12; enlarged in HM3b, 2026-11-17): it held 6144 pages (24 MB) and turned
+  away half the tiles in range at Los Angeles' edge. It now holds 20,480 (80 MB): the edge view's 6,670 tiles take
+  16,165 pages with the houses' prisms. A larger city (or two in range) could still overfill it, and then the
+  nearest tiles turned away are generated again every `RETRY_FRAMES` (120) for ever: stop retrying until the camera
+  moves a tile. Half a page a tile is padding (128 boxes a page, 6,670 tiles); smaller pages would win it back.
 - **`plan_world_init` takes about 16 s at every start** (2026-11-12), most of what is left of a `--shot`'s 30 s. Cache
   it on disk like the Earth's bake, or make it lazier.
 - **Four polygon clippers** (`poly_clip` in `src/plan/plan.c`, `clip_hp` in `drops.c`, `clip_half` in `mesh_lobby.c`,
@@ -537,8 +537,8 @@ Left over:
     would go undrawn). On the Earth no neighbour's towns come within 32 km of a camera in another's frame
     (`world_test --neighbours`), so it shows only on the test bake and the stand-in (Seoul and Daejeon, Milan
     and Turin, 10-15 km). A neighbour's chunks are never drawn; world_test checks none come within their
-    reach. The proxy pool is full at Los Angeles's edge view (6144 pages, about 36,000 boxes turned away: the
-    S1 city has more boxes within 20 km than it holds), so a neighbour's tiles there would compete for it.
+    reach. The proxy pool holds Los Angeles's edge view since HM3b (16,165 of 20,480 pages with the houses'
+    prisms), with about a fifth to spare for a neighbour's tiles.
   - *The bend far out in a city's frame.* A city's frame is kept to 45 km beyond the disc its footprint lies
     in; out there the chart's distortion moves the clipmap's edge (32 km off) up to about 4 m from where the
     planet's patches put it (world_test's flight measures it), a tenth of a pixel. Within a travel frame it
@@ -1151,12 +1151,16 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **HM3b: the houses' materials and proxies** (HM3 split 2026-11-17; HM3a, the shells, done). Fetch and pack the
-  ambientCG sets the styles want (slate, concrete tile, asphalt shingle, house brick in Flemish and stretcher bond,
-  roughcast and pebbledash render, clapboard siding, brownstone) NB3's way, and draw slate, shingles, siding and
-  corrugated sheet from them instead of `shaders/city/house.glsl`'s courses; the proxies: one roof prism a row
-  (`src/city/proxy.c`: beyond the 1.9 km view distance the suburbs stand as nothing today, as they did as lawns);
-  the budgets at the worst views; the board against the references.
+- **Next: HM4, the character kit** (modules: eaves parts, porches, bays, dormers, frames, chimney pots; a board for
+  the user's sign-off before the commit).
+- **The houses' grime is a stand-in for upkeep** (HM3b): the rain's runs and splashback on the walls take an amount
+  each unit draws from its seed (`shadeHouse`). HM6 sets it from the upkeep spread (kept, tired, run-down), and gives
+  run-down sheet roofs rust (CorrugatedSteel007B was looked at and left for that).
+- **Sets ambientCG lacks** (HM3b): Flemish bond (stretcher bond stands in), an asphalt shingle (square tabs,
+  RoofingTiles015C), a true pebbledash (Concrete035's mottled roughcast). Find or make them if the slice's board
+  shows the stand-ins.
+- **The prisms leave out wings, porches and bays** (HM3b), and are lit as the boxes are (the city's glow and the
+  sky, no sun or lamps). Past 1.9 km a house is a few pixels; revisit if a rise shows the step at the handover.
 - **The skyline check counts the houses' rough heights** (`city_home_height`: 2.85 m storeys and a 3.2 m roof).
   The shells' own (`home_top`) differ by a metre or so; switch the check to them if it matters.
 - **Steps, stoops and porch floors are not in the collision** (HM3a): the walker passes through them (they are

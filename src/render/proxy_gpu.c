@@ -33,19 +33,26 @@
  *
  * A box is drawn as 30 vertices (its four sides and top) that
  * shaders/proxy/proxy.vert builds from gl_VertexIndex: box = index / 30. Each
- * draw's firstInstance picks its tile's camera-relative origin and turn. */
+ * draw's firstInstance picks its tile's camera-relative origin and turn. A
+ * house row's prism (HM3b, PX_HOUSE) takes a box's slot in the same pool,
+ * after its tile's boxes, and is drawn by a list and pipeline of its own as
+ * 42 vertices (proxy.vert built with HOUSE_PRISM). */
 
 #define PROXY_DISTANCE  TERRAIN_DISTANCE
 #define PT_SIDE         128                          /* table side; > 2 * PROXY_DISTANCE / PROXY_TILE + 2 */
 #define PT_SLOTS        (PT_SIDE * PT_SIDE)
 #define PAGE_BOXES      128
-#define POOL_PAGES_P    6144                         /* 768k boxes, 24 MB (the city: about 320k in 985 tiles) */
-#define TILE_PAGES      16                           /* at most 2048 boxes a tile (the city's largest: about 820) */
+#define POOL_PAGES_P    20480                        /* 2.6M boxes and prisms, 80 MB: the 20 km range round Los Angeles'
+                                                        edge takes 16,165 pages with its suburbs' prisms (HM3b; it held
+                                                        6144, 24 MB, and turned tiles away even before the houses) */
+#define TILE_PAGES      32                           /* at most 4096 boxes and prisms a tile (the city's largest: about 820 boxes; a suburb's about 1,200 prisms) */
 #define UPLOAD_BOXES    (64 * PAGE_BOXES)            /* uploaded a frame, at most (bar one large tile) */
-#define MAX_DRAWS       32768                        /* a tile drawn in part takes a draw per chunk run */
+#define MAX_DRAWS       65536                        /* a list's: a tile drawn in part takes a draw per chunk run (about 22k at
+                                                        Los Angeles' edge, from a rise) */
 #define PROXY_LOD_PX    1.0f                         /* boxes smaller than this on screen (pixels) are left out */
 #define MAX_JOBS_P      64                           /* tiles queued, or generated and not yet taken */
 #define BOX_VERTS       30
+#define PRISM_VERTS     42
 #define RETRY_FRAMES    120                          /* a tile the pool had no room for waits this long to be generated again */
 #define PROXY_LAYERS    4                            /* settlements drawn at once */
 #define LAYER_KEEP      2000.0                       /* a layer is let go this far beyond PROXY_DISTANCE (m) */
@@ -63,6 +70,8 @@ typedef struct PTile {
     uint16_t page[TILE_PAGES];
     int      first[PROXY_TILE_CELLS + 1];
     uint16_t lod[PROXY_TILE_CELLS][PROXY_LOD_BINS];
+    int      hfirst[PROXY_TILE_CELLS + 1];          /* the house rows' prisms (ProxyTile.hfirst) */
+    uint16_t hlod[PROXY_TILE_CELLS][PROXY_LOD_BINS];
     float    mn[3], mx[3];
 } PTile;
 
@@ -94,9 +103,9 @@ struct ProxyGpu {
     int      nfree;
     PFree    pending[POOL_PAGES_P];
     int      npending;
-    Buffer   staging[MAX_FRAMES], indirect[MAX_FRAMES], origins[MAX_FRAMES];
+    Buffer   staging[MAX_FRAMES], indirect[MAX_FRAMES], hindirect[MAX_FRAMES], origins[MAX_FRAMES];
     VkBufferCopy copies[MAX_JOBS_P * TILE_PAGES];   /* one per page uploaded */
-    uint32_t ndraw[MAX_FRAMES];
+    uint32_t ndraw[MAX_FRAMES], nhdraw[MAX_FRAMES];   /* the boxes' draws, the prisms' */
     VkDescriptorPool pool;
     VkDescriptorSet  set[MAX_FRAMES];
 
@@ -113,7 +122,7 @@ struct ProxyGpu {
     PCand    cand[PROXY_LAYERS * PT_SLOTS];
 
     const TerrainFrame *tf;     /* the active frame (proxy_gpu_set_frame) */
-    int      inRange, readyTiles, drawnTiles, drawnBoxes, residentBoxes, layers;
+    int      inRange, readyTiles, drawnTiles, drawnBoxes, drawnPrisms, residentBoxes, layers;
     int      starved;           /* tiles generated that the pool had no room for, so far */
     int      turnedAway;        /* tiles in range not ready that the pool has turned away (PTile.turnedAway), this frame */
     bool     settled;           /* renderer_proxies_settled, this frame */
@@ -168,6 +177,7 @@ void proxy_gpu_create(Renderer *r) {
     for (int i = 0; i < MAX_FRAMES; ++i) {
         p->staging[i] = vk_buffer(vk, (VkDeviceSize)(UPLOAD_BOXES + TILE_PAGES * PAGE_BOXES) * sizeof(ProxyBox), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, host);
         p->indirect[i] = vk_buffer(vk, sizeof(VkDrawIndirectCommand) * MAX_DRAWS, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, host);
+        p->hindirect[i] = vk_buffer(vk, sizeof(VkDrawIndirectCommand) * MAX_DRAWS, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, host);
         p->origins[i] = vk_buffer(vk, sizeof(float) * 4 * PROXY_LAYERS * PT_SLOTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, host);
     }
 
@@ -223,6 +233,7 @@ void proxy_gpu_destroy(Renderer *r) {
     for (int i = 0; i < MAX_FRAMES; ++i) {
         vk_buffer_destroy(vk, &p->staging[i]);
         vk_buffer_destroy(vk, &p->indirect[i]);
+        vk_buffer_destroy(vk, &p->hindirect[i]);
         vk_buffer_destroy(vk, &p->origins[i]);
     }
     vk_buffer_destroy(vk, &p->boxes);
@@ -306,6 +317,38 @@ static float tile_dist(int tx, int tz, const double cam[3]) {
     return (float)sqrt(dx * dx + dz * dz);
 }
 
+/* Draws for tile t's runs (first, lod: its boxes' or its prisms') of `verts` vertices each, leaving out the
+ * chunks the active frame draws in full, at level of detail bin (-1: all), into cmds (nd so far, at most
+ * MAX_DRAWS); returns the records drawn. */
+static int tile_runs(Renderer *r, const PLayer *L, const PTile *t, int inst, int bin, const int *first,
+                     const uint16_t (*lod)[PROXY_LOD_BINS], uint32_t verts, VkDrawIndirectCommand *cmds, uint32_t *nd) {
+    int drawn = 0, run0 = -1, run1 = -1;
+    for (int k = 0; k <= PROXY_TILE_CELLS; ++k) {
+        /* the active frame's chunks drawn in full are left out; no other frame's are drawn */
+        int keep = k < PROXY_TILE_CELLS && (!L->active || !chunks_drawn(r->chunks, t->tx * PROXY_TILE_CHUNKS + k % PROXY_TILE_CHUNKS,
+                                                                           t->tz * PROXY_TILE_CHUNKS + k / PROXY_TILE_CHUNKS));
+        int end = keep ? first[k] + (bin < 0 ? first[k + 1] - first[k] : lod[k][bin]) : 0;
+        if (keep && end == first[k]) keep = 0;   /* nothing big enough */
+        if (keep && run0 >= 0 && run1 == first[k]) { run1 = end; continue; }   /* runs on from the last chunk */
+        if (run0 >= 0) {
+            /* records [run0, run1), split where they cross from one page to the next */
+            for (int b = run0, e = run1; b < e && *nd < MAX_DRAWS;) {
+                int pg = b / PAGE_BOXES, pe = (pg + 1) * PAGE_BOXES < e ? (pg + 1) * PAGE_BOXES : e;
+                VkDrawIndirectCommand *dc = &cmds[(*nd)++];
+                dc->vertexCount = (uint32_t)(pe - b) * verts;
+                dc->instanceCount = 1;
+                dc->firstVertex = ((uint32_t)t->page[pg] * PAGE_BOXES + (uint32_t)(b - pg * PAGE_BOXES)) * verts;
+                dc->firstInstance = (uint32_t)inst;
+                drawn += pe - b;
+                b = pe;
+            }
+            run0 = -1;
+        }
+        if (keep) { run0 = first[k]; run1 = end; }
+    }
+    return drawn;
+}
+
 /* Takes the generated tiles off the front of the queue while their uploads fit
  * this frame's staging; places the layers; in each, frees tiles out of range
  * and queues the nearest missing ones. Then builds the frame's draws. */
@@ -337,6 +380,8 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
         t->npages = pages;
         memcpy(t->first, j->t.first, sizeof(t->first));
         memcpy(t->lod, j->t.lod, sizeof(t->lod));
+        memcpy(t->hfirst, j->t.hfirst, sizeof(t->hfirst));
+        memcpy(t->hlod, j->t.hlod, sizeof(t->hlod));
         memcpy(t->mn, j->t.mn, sizeof(t->mn));
         memcpy(t->mx, j->t.mx, sizeof(t->mx));
         for (int k = 0; k < pages; ++k) {
@@ -427,9 +472,10 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
     const float *vm = viewProj->m;
     float K = 0.5f * (float)r->vk->extent.height * sqrtf(vm[1] * vm[1] + vm[5] * vm[5] + vm[9] * vm[9]);
     VkDrawIndirectCommand *cmds = (VkDrawIndirectCommand *)p->indirect[slot].mapped;
+    VkDrawIndirectCommand *hcmds = (VkDrawIndirectCommand *)p->hindirect[slot].mapped;
     float (*org)[4] = (float (*)[4])p->origins[slot].mapped;
-    uint32_t nd = 0;
-    p->drawnTiles = p->drawnBoxes = 0;
+    uint32_t nd = 0, nhd = 0;
+    p->drawnTiles = p->drawnBoxes = p->drawnPrisms = 0;
     for (int l = 0; l < PROXY_LAYERS; ++l) {
         const PLayer *L = &p->layer[l];
         if (L->settlement < 0) continue;
@@ -460,50 +506,39 @@ void proxy_gpu_update(Renderer *r, VkCommandBuffer cmd, int slot, uint64_t frame
             float need = PROXY_LOD_PX * tile_dist(t->tx, t->tz, L->cam) / K;
             int bin = -1;
             while (bin + 1 < PROXY_LOD_BINS && PROXY_LOD_SIZE(bin + 1) <= need) bin++;
-            int run0 = -1, run1 = -1;
-            for (int k = 0; k <= PROXY_TILE_CELLS; ++k) {
-                /* the active frame's chunks drawn in full are left out; no other frame's are drawn */
-                int keep = k < PROXY_TILE_CELLS && (!L->active || !chunks_drawn(r->chunks, t->tx * PROXY_TILE_CHUNKS + k % PROXY_TILE_CHUNKS,
-                                                                                   t->tz * PROXY_TILE_CHUNKS + k / PROXY_TILE_CHUNKS));
-                int end = keep ? t->first[k] + (bin < 0 ? t->first[k + 1] - t->first[k] : t->lod[k][bin]) : 0;
-                if (keep && end == t->first[k]) keep = 0;   /* nothing big enough */
-                if (keep && run0 >= 0 && run1 == t->first[k]) { run1 = end; continue; }   /* runs on from the last chunk */
-                if (run0 >= 0) {
-                    /* boxes [run0, run1), split where they cross from one page to the next */
-                    for (int b = run0, e = run1; b < e && nd < MAX_DRAWS;) {
-                        int pg = b / PAGE_BOXES, pe = (pg + 1) * PAGE_BOXES < e ? (pg + 1) * PAGE_BOXES : e;
-                        VkDrawIndirectCommand *dc = &cmds[nd++];
-                        dc->vertexCount = (uint32_t)(pe - b) * BOX_VERTS;
-                        dc->instanceCount = 1;
-                        dc->firstVertex = ((uint32_t)t->page[pg] * PAGE_BOXES + (uint32_t)(b - pg * PAGE_BOXES)) * BOX_VERTS;
-                        dc->firstInstance = (uint32_t)inst;
-                        p->drawnBoxes += pe - b;
-                        b = pe;
-                    }
-                    run0 = -1;
-                }
-                if (keep) { run0 = t->first[k]; run1 = end; }
-            }
+            p->drawnBoxes += tile_runs(r, L, t, inst, bin, t->first, (const uint16_t (*)[PROXY_LOD_BINS])t->lod, BOX_VERTS, cmds, &nd);
+            p->drawnPrisms += tile_runs(r, L, t, inst, bin, t->hfirst, (const uint16_t (*)[PROXY_LOD_BINS])t->hlod, PRISM_VERTS, hcmds, &nhd);
             p->drawnTiles++;
         }
     }
     p->ndraw[slot] = nd;
+    p->nhdraw[slot] = nhd;
+}
+
+static void draw_list(Renderer *r, VkCommandBuffer cmd, const Buffer *list, uint32_t n) {
+    if (r->vk->mdi) {
+        uint32_t maxCount = r->vk->props.limits.maxDrawIndirectCount;
+        for (uint32_t first = 0; first < n; first += maxCount)
+            vkCmdDrawIndirect(cmd, list->buf, first * sizeof(VkDrawIndirectCommand), n - first < maxCount ? n - first : maxCount,
+                              sizeof(VkDrawIndirectCommand));
+    } else {
+        const VkDrawIndirectCommand *c = (const VkDrawIndirectCommand *)list->mapped;
+        for (uint32_t i = 0; i < n; ++i) vkCmdDraw(cmd, c[i].vertexCount, 1, c[i].firstVertex, c[i].firstInstance);
+    }
 }
 
 void proxy_gpu_draw(Renderer *r, VkCommandBuffer cmd, int slot) {
     ProxyGpu *p = r->proxies;
-    uint32_t n = p->ndraw[slot];
-    if (!n) return;
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->proxyPipe);
+    uint32_t n = p->ndraw[slot], nh = p->nhdraw[slot];
+    if (!n && !nh) return;
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->proxyPL, 0, 1, &p->set[slot], 0, NULL);
-    if (r->vk->mdi) {
-        uint32_t maxCount = r->vk->props.limits.maxDrawIndirectCount;
-        for (uint32_t first = 0; first < n; first += maxCount)
-            vkCmdDrawIndirect(cmd, p->indirect[slot].buf, first * sizeof(VkDrawIndirectCommand), n - first < maxCount ? n - first : maxCount,
-                              sizeof(VkDrawIndirectCommand));
-    } else {
-        const VkDrawIndirectCommand *c = (const VkDrawIndirectCommand *)p->indirect[slot].mapped;
-        for (uint32_t i = 0; i < n; ++i) vkCmdDraw(cmd, c[i].vertexCount, 1, c[i].firstVertex, c[i].firstInstance);
+    if (n) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->proxyPipe);
+        draw_list(r, cmd, &p->indirect[slot], n);
+    }
+    if (nh) {   /* the house rows' prisms (HM3b) */
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r->proxyHousePipe);
+        draw_list(r, cmd, &p->hindirect[slot], nh);
     }
 }
 
@@ -518,7 +553,8 @@ void renderer_proxy_stats(Renderer *r, char *buf, size_t n) {
     char starved[96] = "";
     if (p->starved > 0)
         snprintf(starved, sizeof(starved), ", %d tiles turned away by a full pool so far, %d of those in range now", p->starved, p->turnedAway);
-    snprintf(buf, n, "proxies: %d of %d tiles in range of %d cities ready%s (%d boxes, %d of %d pages%s), %d tiles and %d boxes drawn in %u draws",
+    const int last = (r->frameIndex + MAX_FRAMES - 1) % MAX_FRAMES;
+    snprintf(buf, n, "proxies: %d of %d tiles in range of %d cities ready%s (%d boxes and prisms, %d of %d pages%s), %d tiles, %d boxes and %d house prisms drawn in %u draws",
              p->readyTiles, p->inRange, p->layers, filled, p->residentBoxes, POOL_PAGES_P - p->nfree - p->npending, POOL_PAGES_P, starved,
-             p->drawnTiles, p->drawnBoxes, p->ndraw[(r->frameIndex + MAX_FRAMES - 1) % MAX_FRAMES]);
+             p->drawnTiles, p->drawnBoxes, p->drawnPrisms, p->ndraw[last] + p->nhdraw[last]);
 }

@@ -2,61 +2,17 @@
 
 /* ======================================================================
  * The houses' shells (residential roadmap HM3a; src/gen/home_shell.c, src/city/homes.c; what a vertex
- * carries: src/core/house_surf.h). Each surface takes its finish's colour from the palettes below (the
- * entries src/gen/home_shell.c's styles pick) under an authored grain: brick, render (plaster), stone and
- * concrete on the walls, clay tiles on most roofs; slate, shingles, corrugated sheet and siding's boards are
- * drawn here until their own sets arrive (HM3b). A far wall paints its windows in its rhythm; near, the
- * windows are real openings, their glass set back.
+ * carries: src/core/house_surf.h). Each surface takes its finish's colour from the palettes
+ * (city/house_palette.glsl: the entries src/gen/home_shell.c's styles pick) under an authored grain, one set
+ * a covering (HM3b, assets/materials/house_*.json): chosen for the city's air over the references, so
+ * weathered, sooted and stained rather than clean (old stock brick on the pre-war styles, stained render,
+ * roughcast, grimed siding; slate, sooted concrete tiles, lichened shingles and clay, scuffed sheet). Over
+ * them the rain's runs down the walls and a unit's own grime. A far wall paints its windows in its rhythm;
+ * near, the windows are real openings, their glass set back.
  * ==================================================================== */
 
-// The palettes (linear albedo): the walls' by finish, the roofs', the trim's, doors' and garage doors'.
-const vec3 H_BRICK[8] = vec3[](vec3(0.30, 0.11, 0.07), vec3(0.20, 0.08, 0.055), vec3(0.36, 0.15, 0.08), vec3(0.42, 0.33, 0.20),
-                               vec3(0.19, 0.11, 0.075), vec3(0.075, 0.068, 0.068), vec3(0.24, 0.24, 0.23), vec3(0.50, 0.44, 0.33));
-const vec3 H_RENDER[16] = vec3[](vec3(0.66, 0.64, 0.60), vec3(0.64, 0.57, 0.44), vec3(0.60, 0.54, 0.44), vec3(0.46, 0.46, 0.45),
-                                 vec3(0.36, 0.34, 0.31), vec3(0.56, 0.46, 0.31), vec3(0.56, 0.36, 0.13), vec3(0.50, 0.22, 0.12),
-                                 vec3(0.64, 0.43, 0.31), vec3(0.62, 0.38, 0.38), vec3(0.40, 0.50, 0.58), vec3(0.42, 0.52, 0.40),
-                                 vec3(0.66, 0.56, 0.20), vec3(0.20, 0.45, 0.45), vec3(0.48, 0.40, 0.55), vec3(0.38, 0.33, 0.27));
-const vec3 H_SIDING[12] = vec3[](vec3(0.66, 0.66, 0.63), vec3(0.62, 0.57, 0.45), vec3(0.64, 0.58, 0.34), vec3(0.36, 0.42, 0.33),
-                                 vec3(0.25, 0.32, 0.42), vec3(0.40, 0.41, 0.41), vec3(0.16, 0.17, 0.18), vec3(0.34, 0.09, 0.07),
-                                 vec3(0.42, 0.53, 0.62), vec3(0.50, 0.42, 0.30), vec3(0.10, 0.20, 0.13), vec3(0.24, 0.15, 0.09));
-const vec3 H_STONE[4] = vec3[](vec3(0.52, 0.47, 0.37), vec3(0.48, 0.36, 0.24), vec3(0.24, 0.15, 0.10), vec3(0.34, 0.34, 0.33));
-const vec3 H_BLOCK[6] = vec3[](vec3(0.36, 0.35, 0.33), vec3(0.24, 0.24, 0.23), vec3(0.56, 0.55, 0.51), vec3(0.58, 0.44, 0.42),
-                               vec3(0.42, 0.50, 0.56), vec3(0.55, 0.46, 0.34));
-const vec3 H_CLAY[4] = vec3[](vec3(0.30, 0.10, 0.05), vec3(0.40, 0.17, 0.08), vec3(0.22, 0.11, 0.07), vec3(0.16, 0.09, 0.07));
-const vec3 H_SLATE[3] = vec3[](vec3(0.065, 0.075, 0.085), vec3(0.055, 0.055, 0.06), vec3(0.085, 0.075, 0.085));
-const vec3 H_CONC[4] = vec3[](vec3(0.18, 0.12, 0.09), vec3(0.18, 0.18, 0.18), vec3(0.09, 0.09, 0.09), vec3(0.25, 0.11, 0.07));
-const vec3 H_SHINGLE[6] = vec3[](vec3(0.07, 0.07, 0.07), vec3(0.16, 0.16, 0.15), vec3(0.15, 0.10, 0.07), vec3(0.08, 0.12, 0.09),
-                                 vec3(0.25, 0.20, 0.14), vec3(0.15, 0.06, 0.05));
-const vec3 H_METAL[6] = vec3[](vec3(0.30, 0.31, 0.32), vec3(0.25, 0.12, 0.06), vec3(0.35, 0.08, 0.06), vec3(0.10, 0.25, 0.18),
-                               vec3(0.10, 0.18, 0.35), vec3(0.55, 0.55, 0.53));
-const vec3 H_BARREL[3] = vec3[](vec3(0.42, 0.16, 0.08), vec3(0.50, 0.24, 0.10), vec3(0.36, 0.17, 0.10));
-const vec3 H_GLAZED[3] = vec3[](vec3(0.06, 0.07, 0.09), vec3(0.24, 0.25, 0.26), vec3(0.04, 0.04, 0.045));
-const vec3 H_TRIM[8] = vec3[](vec3(0.70, 0.70, 0.68), vec3(0.62, 0.58, 0.48), vec3(0.03, 0.03, 0.03), vec3(0.04, 0.12, 0.07),
-                              vec3(0.30, 0.30, 0.30), vec3(0.12, 0.07, 0.04), vec3(0.04, 0.06, 0.14), vec3(0.35, 0.06, 0.04));
-const vec3 H_DOOR[12] = vec3[](vec3(0.40, 0.04, 0.03), vec3(0.06, 0.12, 0.35), vec3(0.03, 0.05, 0.13), vec3(0.04, 0.16, 0.08),
-                               vec3(0.025, 0.025, 0.025), vec3(0.68, 0.68, 0.66), vec3(0.62, 0.48, 0.08), vec3(0.28, 0.29, 0.30),
-                               vec3(0.30, 0.18, 0.08), vec3(0.10, 0.05, 0.03), vec3(0.05, 0.25, 0.26), vec3(0.20, 0.06, 0.20));
-const vec3 H_GARAGE[6] = vec3[](vec3(0.66, 0.66, 0.64), vec3(0.60, 0.55, 0.45), vec3(0.34, 0.35, 0.35), vec3(0.20, 0.13, 0.08),
-                                vec3(0.08, 0.16, 0.10), vec3(0.10, 0.10, 0.11));
+#include "city/house_palette.glsl"
 
-vec3 houseWallColour(uint fin, uint c) {
-    if (fin == HW_BRICK)  return H_BRICK[c & 7u];
-    if (fin == HW_RENDER) return H_RENDER[c & 15u];
-    if (fin == HW_SIDING) return H_SIDING[c % 12u];
-    if (fin == HW_STONE)  return H_STONE[c & 3u];
-    return H_BLOCK[c % 6u];
-}
-vec3 houseRoofColour(uint fin, uint c) {
-    if (fin == HRM_CLAY)     return H_CLAY[c & 3u];
-    if (fin == HRM_SLATE)    return H_SLATE[c % 3u];
-    if (fin == HRM_CONCRETE) return H_CONC[c & 3u];
-    if (fin == HRM_SHINGLE)  return H_SHINGLE[c % 6u];
-    if (fin == HRM_METAL)    return H_METAL[c % 6u];
-    if (fin == HRM_BARREL)   return H_BARREL[c % 3u];
-    if (fin == HRM_GLAZED)   return H_GLAZED[c % 3u];
-    if (fin == HRM_FELT)     return c == 0u ? vec3(0.045) : vec3(0.11, 0.11, 0.105);
-    return c == 0u ? vec3(0.32, 0.31, 0.29) : vec3(0.22, 0.21, 0.20);   // HRM_SLAB
-}
 const float HOME_FAR_SHADE = 170.0;   // m: shadeHouse's far path from here
 vec3 gLocalHouse;   // the pixel's chunk-local position (paneSheen)
 float gHouseDist;   // and its distance
@@ -64,7 +20,22 @@ float gHouseDist;   // and its distance
 // A box-filtered stripe: 1 on [a, b] of each period of 1 in x, w the pixel's footprint (filteredPulse).
 float hStripe(float x, float a, float b, float w) { return filteredPulse(x, a, b, w); }
 
-// Courses of a roof's covering drawn here: slate, shingles, a sheet's ribs. q: metres along the eaves and up
+// A pitched covering's authored set (HM3b); barrel and glazed tiles share the city's clay roof tiles.
+int houseRoofSet(uint fin) {
+    return fin == HRM_CLAY ? PBR_HOUSE_CLAY : fin == HRM_SLATE ? PBR_HOUSE_SLATE : fin == HRM_CONCRETE ? PBR_HOUSE_CONCRETE_TILE :
+           fin == HRM_SHINGLE ? PBR_HOUSE_SHINGLE : fin == HRM_METAL ? PBR_HOUSE_SHEET : PBR_ROOF_TILES;
+}
+// A wall's (walls, reveals, stacks): old stock brick on the pre-war styles (HOUSE_COL_OLD), roughcast for
+// pebbledash and concrete block.
+int houseWallSet(uint fin, uint col) {
+    if (fin == HW_BRICK)  return (col & HOUSE_COL_OLD) != 0u ? PBR_HOUSE_BRICK : PBR_FACADE_BRICK;
+    if (fin == HW_RENDER) return (col & 15u) == 15u ? PBR_HOUSE_ROUGHCAST : PBR_HOUSE_RENDER;
+    if (fin == HW_SIDING) return PBR_HOUSE_SIDING;
+    if (fin == HW_STONE)  return PBR_FACADE_STONE;
+    return PBR_HOUSE_ROUGHCAST;
+}
+
+// Where a set has not loaded: the courses of a covering drawn here (slate, shingles, a sheet's ribs). q: metres along the eaves and up
 // the slope. Returns the tone (x) and the slope of the bump across courses (y: along the slope).
 vec2 houseCourses(uint fin, vec2 q, vec2 fw, uint seed) {
     if (fin == HRM_SLATE || fin == HRM_SHINGLE) {
@@ -193,13 +164,15 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
         vec3 T = normalize(vec3(n.z, 0.0, -n.x)), B = normalize(cross(n, T));
         if (dot(B, vec3(0.0, 1.0, 0.0)) < 0.0) B = -B;
         vec2 q = vec2(uv.x, -uv.y);
-        vec2 cr = houseCourses(fin, uv, fw, seed);
-        if ((fin == HRM_CLAY || fin == HRM_BARREL || fin == HRM_CONCRETE || fin == HRM_GLAZED) && pbrLoaded(PBR_ROOF_TILES)) {
-            Grain g = pbrGrain(PBR_ROOF_TILES, q * (fin == HRM_CONCRETE ? 1.25 : fin == HRM_GLAZED ? 0.85 : 1.0), dFdx(q), dFdy(q), T, B, n);
+        int m = houseRoofSet(fin);
+        if (pbrLoaded(m)) {
+            Grain g = pbrGrain(m, q * (fin == HRM_GLAZED ? 0.85 : 1.0), dFdx(q), dFdy(q), T, B, n);
             alb *= g.tint * g.ao;
             nn = g.n;
-            specK = 0.05 * grainSpec(g);
+            specK = (fin == HRM_METAL ? 0.12 : 0.05) * grainSpec(g);
+            if (fin == HRM_METAL) shin = 40.0;
         } else {
+            vec2 cr = houseCourses(fin, uv, fw, seed);
             alb *= cr.x * (0.85 + 0.3 * vnoise(gWorld.xz * 0.7, 0x4A11u));
             nn = normalize(n - B * cr.y * 0.6);
             if (fin == HRM_METAL) { float r = cos(uv.x / 0.076 * 6.2831853); nn = normalize(n + T * r * 0.35); shin = 40.0; specK = 0.2; }
@@ -279,10 +252,9 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
     vec3 T = abs(n.y) > 0.9 ? vec3(1.0, 0.0, 0.0) : normalize(vec3(n.z, 0.0, -n.x));
     vec3 B = abs(n.y) > 0.9 ? vec3(0.0, 0.0, -1.0) : vec3(0.0, 1.0, 0.0);
     vec2 q = abs(n.y) > 0.9 ? vec2(gWorld.x, gWorld.z) : vec2(uv.x, -uv.y);
-    int m = fin == HW_BRICK ? PBR_FACADE_BRICK : fin == HW_RENDER ? PBR_PLASTER : fin == HW_STONE ? PBR_FACADE_STONE :
-            fin == HW_BLOCK ? PBR_CONCRETE : PBR_KIT_PAINT;
+    int m = houseWallSet(fin, col);
     if (surf == HF_COPING && fin == HW_BRICK) m = PBR_CONCRETE;
-    if (fin == HW_SIDING && surf != HF_COPING) {
+    if (fin == HW_SIDING && surf != HF_COPING && !pbrLoaded(m)) {
         // boards lapped up the wall, the lower edge of each in its own shadow
         float f = fract(uv.y / 0.18);
         alb *= mix(0.62, 1.0, smoothstep(0.0, 0.12, f)) * (0.95 + 0.1 * hf(hash_combine(seed, uint(floor(uv.y / 0.18)) + 0x5D00u), 1u));
@@ -299,8 +271,13 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
         specK = 0.04 * grainSpec(g);
     }
     if (surf == HF_REVEAL) alb *= 0.85;
-    // grime: darker towards the ground and in streaks under the eaves
-    alb *= mix(0.8, 1.0, smoothstep(0.0, 1.2, h)) * mix(0.85, 1.05, vnoise(vec2(dot(gWorld.xz, T.xz) * 0.8, gWorld.y * 0.15), 0x4A15u));
+    // grime: splashback towards the ground, blotches, and the rain's runs down the wall, each unit's own amount
+    // (upkeep, HM6, will set it; until then a spread by the unit's seed)
+    float along = dot(gWorld.xz, T.xz);
+    float grime = mix(0.35, 1.0, hf(seed, 0x4A16u));
+    float runs = smoothstep(0.55, 0.85, vnoise(vec2(along * 3.1, gWorld.y * 0.22), 0x4A17u)) * smoothstep(0.3, 0.7, vnoise(vec2(along * 0.7, gWorld.y * 0.05), 0x4A18u));
+    alb *= mix(0.8, 1.0, smoothstep(0.0, 1.2, h)) * mix(0.85, 1.05, vnoise(vec2(along * 0.8, gWorld.y * 0.15), 0x4A15u));
+    alb *= 1.0 - 0.28 * grime * runs * (abs(n.y) > 0.9 ? 0.0 : 1.0);
     alb *= mix(1.0, 0.8, wet);
     vec3 diff = wallLighting(p, nn, V, shin, specK, h, spec);
     vec3 c = alb * diff + spec;

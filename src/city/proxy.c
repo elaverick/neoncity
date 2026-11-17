@@ -1,7 +1,9 @@
 #include "city_internal.h"
+#include "home.h"
 
 /* Distant proxies (see city.h): every building centred in a tile, as a box
- * round each section of its graph. */
+ * round each section of its graph; and every house row whose middle lies in
+ * it, as a prism round its main volume (HM3b). */
 
 /* IEEE half from float, rounding to nearest even; tiny values flush to zero
  * (nothing a proxy holds needs them). Unpacked by the shader's unpackHalf2x16. */
@@ -79,6 +81,41 @@ static int building_boxes(const Building *b, const BGraph *g, int k, double ox, 
     return n;
 }
 
+#define TILE_PRISMS 4096   /* house rows' prisms a block may give a tile */
+
+/* House row prism q (city.h: PX_HOUSE), owned by the tile's chunk k. */
+static void house_prism(const HomePrism *q, int k, double ox, double oz, Pending *p) {
+    const float top = q->eaves + q->rise;
+    p->chunk = k;
+    p->reach = sqrtf(q->hx * q->hx + q->hz * q->hz);
+    p->b.x = (float)(q->x - ox); p->b.z = (float)(q->z - oz);
+    p->b.y0 = q->y0;
+    p->b.y1 = q->eaves;
+    p->b.half = pack2(q->hx, q->hz);
+    p->b.axis = pack2(q->ax, q->az);
+    p->b.seed = pack2(q->rise, q->inset);
+    p->b.info = (uint32_t)k << PX_CHUNK_SHIFT | PX_HOUSE | (uint32_t)(q->wall & 7u) << PXH_WALL_SHIFT |
+                (uint32_t)(q->wallCol & 31u) << PXH_WALLCOL_SHIFT | (uint32_t)(q->roof & 15u) << PXH_ROOF_SHIFT |
+                (uint32_t)(q->roofCol & 7u) << PXH_ROOFCOL_SHIFT | (uint32_t)(q->storeys & 3u) << PXH_STOREYS_SHIFT;
+    p->size = maxf(top - q->y0, 2.0f * maxf(q->hx, q->hz));
+}
+
+/* Sorts pend (n of them) by chunk, largest first, counts each chunk's run (first, counted from base) and its
+ * levels of detail, and copies them to out. */
+static void lay_runs(Pending *pend, int n, int base, ProxyBox *out, int *first, uint16_t (*lod)[PROXY_LOD_BINS]) {
+    qsort(pend, (size_t)n, sizeof(Pending), cmp_pending);
+    for (int k = 0; k <= PROXY_TILE_CELLS; ++k) first[k] = 0;
+    memset(lod, 0, sizeof(uint16_t) * PROXY_TILE_CELLS * PROXY_LOD_BINS);
+    for (int i = 0; i < n; ++i) {
+        int k = pend[i].chunk;
+        first[k + 1]++;
+        for (int b = 0; b < PROXY_LOD_BINS && pend[i].size >= PROXY_LOD_SIZE(b); ++b) lod[k][b]++;
+    }
+    first[0] = base;
+    for (int k = 0; k < PROXY_TILE_CELLS; ++k) first[k + 1] += first[k];
+    for (int i = 0; i < n; ++i) out[i] = pend[i].b;
+}
+
 void city_proxy_tile(int tx, int tz, ProxyTile *t) {
     const double T = PROXY_TILE, ox = tx * T, oz = tz * T;
     PlanArea *pa = (PlanArea *)malloc(sizeof(PlanArea));
@@ -86,13 +123,31 @@ void city_proxy_tile(int tx, int tz, ProxyTile *t) {
     BGraph *g = (BGraph *)malloc(sizeof(BGraph));
     int npend = 0, cappend = 1024;
     Pending *pend = (Pending *)malloc(sizeof(Pending) * cappend);
-    if (!pa || !bl || !g || !pend) fatal("out of memory generating proxies");
+    int nhp = 0, caphp = 1024;
+    Pending *hpend = (Pending *)malloc(sizeof(Pending) * caphp);
+    HomePrism *hp = (HomePrism *)malloc(sizeof(HomePrism) * TILE_PRISMS);
+    HGraph *hg = (HGraph *)malloc(sizeof(HGraph));
+    if (!pa || !bl || !g || !pend || !hpend || !hp || !hg) fatal("out of memory generating proxies");
     /* Every building centred in the tile stands on a block that reaches into it. */
     plan_area(ox, oz, ox + T, oz + T, pa);
     if (pa->nblocks >= PLAN_MAX_BLOCKS) fatal("proxies: a tile may have more blocks than a plan area holds");
     t->tx = tx; t->tz = tz;
     t->nbuild = 0;
+    t->nrow = 0;
     for (int bi = 0; bi < pa->nblocks; ++bi) {
+        /* the house rows whose middles lie in the tile: a prism each (HM3b) */
+        const int nh = city_home_prisms(&pa->blocks[bi], ox, oz, ox + T, oz + T, hg, hp, TILE_PRISMS);
+        for (int i = 0; i < nh; ++i) {
+            int cx = (int)floor(hp[i].mx / CHUNK_SIZE) - tx * PROXY_TILE_CHUNKS, cz = (int)floor(hp[i].mz / CHUNK_SIZE) - tz * PROXY_TILE_CHUNKS;
+            if (cx < 0 || cx >= PROXY_TILE_CHUNKS || cz < 0 || cz >= PROXY_TILE_CHUNKS) continue;
+            if (nhp == caphp) {
+                caphp *= 2;
+                hpend = (Pending *)realloc(hpend, sizeof(Pending) * caphp);
+                if (!hpend) fatal("out of memory generating proxies");
+            }
+            house_prism(&hp[i], cx + PROXY_TILE_CHUNKS * cz, ox, oz, &hpend[nhp++]);
+            t->nrow++;
+        }
         int n = city_block_buildings(&pa->blocks[bi], bl, 256);
         for (int i = 0; i < n; ++i) {
             const Building *b = &bl[i];
@@ -109,34 +164,29 @@ void city_proxy_tile(int tx, int tz, ProxyTile *t) {
         }
     }
 
-    /* Grouped by chunk, largest first within each (see PROXY_LOD_BINS). */
-    if (npend > t->cap) {
-        t->cap = npend;
+    /* Grouped by chunk, largest first within each (see PROXY_LOD_BINS): the boxes, then the prisms. */
+    if (npend + nhp > t->cap) {
+        t->cap = npend + nhp;
         t->box = (ProxyBox *)realloc(t->box, sizeof(ProxyBox) * t->cap);
         if (!t->box) fatal("out of memory generating proxies");
     }
-    for (int i = 0; i < npend; ++i) { pend[i].order = i; pend[i].size = proxy_box_size(&pend[i].b); }
-    qsort(pend, (size_t)npend, sizeof(Pending), cmp_pending);
-    memset(t->first, 0, sizeof(t->first));
-    memset(t->lod, 0, sizeof(t->lod));
-    for (int i = 0; i < npend; ++i) {
-        int k = pend[i].chunk;
-        t->first[k + 1]++;
-        for (int b = 0; b < PROXY_LOD_BINS && pend[i].size >= PROXY_LOD_SIZE(b); ++b) t->lod[k][b]++;
-    }
-    for (int k = 0; k < PROXY_TILE_CELLS; ++k) t->first[k + 1] += t->first[k];
-    t->n = npend;
     t->mn[0] = t->mn[1] = t->mn[2] = 1e30f;
     t->mx[0] = t->mx[1] = t->mx[2] = -1e30f;
-    for (int i = 0; i < npend; ++i) {
-        ProxyBox b = pend[i].b;
-        t->box[i] = b;
-        /* a box's reach on the ground plane is at most its half diagonal */
-        float r = pend[i].reach;
-        t->mn[0] = minf(t->mn[0], b.x - r); t->mx[0] = maxf(t->mx[0], b.x + r);
-        t->mn[2] = minf(t->mn[2], b.z - r); t->mx[2] = maxf(t->mx[2], b.z + r);
-        t->mn[1] = minf(t->mn[1], b.y0); t->mx[1] = maxf(t->mx[1], b.y1);
+    for (int i = 0; i < npend + nhp; ++i) {
+        const Pending *q = i < npend ? &pend[i] : &hpend[i - npend];
+        const ProxyBox *b = &q->b;
+        /* a box's reach on the ground plane is at most its half diagonal; a prism's top is its ridge */
+        float r = q->reach, top = (b->info & PX_HOUSE) ? b->y1 + h16(b->seed & 0xFFFFu) : b->y1;
+        t->mn[0] = minf(t->mn[0], b->x - r); t->mx[0] = maxf(t->mx[0], b->x + r);
+        t->mn[2] = minf(t->mn[2], b->z - r); t->mx[2] = maxf(t->mx[2], b->z + r);
+        t->mn[1] = minf(t->mn[1], b->y0); t->mx[1] = maxf(t->mx[1], top);
     }
+    for (int i = 0; i < npend; ++i) { pend[i].order = i; pend[i].size = proxy_box_size(&pend[i].b); }
+    for (int i = 0; i < nhp; ++i) hpend[i].order = i;
+    lay_runs(pend, npend, 0, t->box, t->first, t->lod);
+    lay_runs(hpend, nhp, npend, t->box + npend, t->hfirst, t->hlod);
+    t->n = npend + nhp;
+    free(hg); free(hp); free(hpend);
     free(pend); free(g); free(bl); free(pa);
 }
 

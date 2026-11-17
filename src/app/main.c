@@ -23,6 +23,7 @@
 #include "light_units.h"
 #include "kit_gpu.h"
 #include "city.h"
+#include "home.h"   /* home_style_find: --home-style */
 #include "noodle_bar.h"
 
 static bool   g_resized;
@@ -193,6 +194,19 @@ static bool parse_args(int argc, char **argv, Options *o) {
             else if (strcmp(v, "far") == 0) city_set_homes(HOMES_FAR);
             else if (strcmp(v, "near") == 0) city_set_homes(HOMES_NEAR);
             else return false;
+        }
+        else if ((strcmp(argv[i], "--home-arch") == 0 || strcmp(argv[i], "--home-style") == 0) && i + 1 < argc) {
+            /* HM3b: every suburb's archetype or style forced, as city_test --home ARCH --style STYLE (the captures) */
+            static int arch = -1, style = -1;
+            static const char *const ARCH[] = { "detached", "semi", "terrace" };
+            const int isArch = argv[i][7] == 'a';
+            const char *v = argv[++i];
+            if (isArch) {
+                for (int k = 0; k < 3; ++k)
+                    if (strcmp(v, ARCH[k]) == 0) arch = k;
+                if (arch < 0) return false;
+            } else if ((style = home_style_find(-1, v)) < 0) return false;
+            city_home_force(arch, style);
         }
         else if (strcmp(argv[i], "--bars") == 0 && i + 1 < argc) {
             if (strcmp(argv[++i], "all") != 0) return false;

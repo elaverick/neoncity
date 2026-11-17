@@ -1,0 +1,15 @@
+// Square-tab shingles, dirty and spotted with lichen: the houses' asphalt-shingle roofs (shadeHouse),
+// under the roof's own colour (pbrGrain). ambientCG has no asphalt shingle; this reads as one at a
+// street's distance.
+// RoofingTiles015C (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/roofing_tiles_015c/albedo.png",
+    "normal": "../textures/roofing_tiles_015c/normal.png",
+    "orm":    "../textures/roofing_tiles_015c/orm.png"
+  },
+  "tile": 2.9,                 // metres per image (ambientCG's size): tabs about 0.36 m
+  "albedo_mean": [0.097, 0.077, 0.068],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.8, 1.0]
+}

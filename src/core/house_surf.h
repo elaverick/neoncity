@@ -41,6 +41,10 @@
 #define HW_BLOCK     4    /* concrete block, bare or painted */
 #define HW_COUNT     5
 
+/* params w of a brick wall, reveal, stack or coping: old stock brick, sooted (assets/materials/house_brick.json),
+ * the styles built before the war; without it, facade_brick's wire-cut. The palette entry is the low three bits. */
+#define HOUSE_COL_OLD 0x10u
+
 /* Roof finishes (params z of HF_ROOF and HF_FLAT) */
 #define HRM_CLAY     0    /* plain clay tiles, pantiles */
 #define HRM_SLATE    1

@@ -1,0 +1,14 @@
+// Corrugated sheet, its paint scuffed and streaked with dirt down its fall: the houses' sheet roofs
+// (shadeHouse), under the roof's own paint (pbrGrain); its ribs run up the image, down the slope.
+// CorrugatedSteel003 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/corrugated_steel_003/albedo.png",
+    "normal": "../textures/corrugated_steel_003/normal.png",
+    "orm":    "../textures/corrugated_steel_003/orm.png"
+  },
+  "tile": 1.0,                 // metres per image: six ribs, 17 cm apart
+  "albedo_mean": [0.637, 0.630, 0.632],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.8, 1.0]
+}

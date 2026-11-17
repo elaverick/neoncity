@@ -180,7 +180,8 @@ set(SHADER_VARIANTS city_rt.frag:city.frag:RT_SHADOWS city_pre.vert:city.vert:PR
                     terrain/terrain_cut.frag:terrain/terrain.frag:CAVE_CUT   # the caves' mouths cut: only the tiles near one
                     terrain/terrain_rt.frag:terrain/terrain.frag:RT_SHADOWS   # the land beside the city: its lamps' shadows
                     terrain/cave_rt.frag:terrain/cave.frag:RT_SHADOWS   # the moon traced in the caves
-                    terrain/cave_shelter.vert:terrain/cave.vert:CAVE_SHELTER)   # the caves into the shelter map
+                    terrain/cave_shelter.vert:terrain/cave.vert:CAVE_SHELTER   # the caves into the shelter map
+                    proxy/proxy_house.vert:proxy/proxy.vert:HOUSE_PRISM)   # the house rows' far prisms
 # Shaders also include the #define-only headers they share with C.
 set(SHADER_SHARED_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/distances.h ${CMAKE_CURRENT_SOURCE_DIR}/src/core/clouds.h
                           ${CMAKE_CURRENT_SOURCE_DIR}/src/core/light_units.h ${CMAKE_CURRENT_SOURCE_DIR}/src/core/atmosphere.h ${CMAKE_CURRENT_SOURCE_DIR}/src/core/house_surf.h

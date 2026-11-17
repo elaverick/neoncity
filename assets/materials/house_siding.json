@@ -1,0 +1,14 @@
+// Painted lap siding, the paint dulled and the boards' edges grimed: the houses' siding
+// (shadeHouse), under the house's paint (pbrGrain).
+// WoodSiding009 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/wood_siding_009/albedo.png",
+    "normal": "../textures/wood_siding_009/normal.png",
+    "orm":    "../textures/wood_siding_009/orm.png"
+  },
+  "tile": [2.88, 1.44],        // metres per image (a 2:1 image): boards 18 cm apart
+  "albedo_mean": [0.591, 0.536, 0.352],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.85, 1.0]
+}

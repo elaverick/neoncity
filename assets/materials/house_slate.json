@@ -1,0 +1,14 @@
+// Natural slate, weathered dark and streaked: the houses' slate roofs (shadeHouse), under the roof's own
+// grey (pbrGrain).
+// RoofingTiles003 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/roofing_tiles_003/albedo.png",
+    "normal": "../textures/roofing_tiles_003/normal.png",
+    "orm":    "../textures/roofing_tiles_003/orm.png"
+  },
+  "tile": 2.2,                 // metres per image: eight slates across, 27 cm each, in courses of about the same
+  "albedo_mean": [0.038, 0.041, 0.038],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.9, 1.0]
+}

@@ -1,0 +1,15 @@
+// Old stock brick in stretcher bond, sooted, spalled and its mortar smeared: the walls of the houses
+// built before the war (Victorian, Georgian, rowhouses, inter-war, China, self-built; shadeHouse), under
+// the house's own brick colour (pbrGrain). Later houses keep facade_brick (Bricks085).
+// Bricks097 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/bricks_097/albedo.png",
+    "normal": "../textures/bricks_097/normal.png",
+    "orm":    "../textures/bricks_097/orm.png"
+  },
+  "tile": [2.6, 1.3],          // metres per image (a 2:1 image): 26 cm bricks in 6.8 cm courses
+  "albedo_mean": [0.256, 0.170, 0.107],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.85, 1.0]
+}

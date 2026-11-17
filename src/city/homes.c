@@ -121,6 +121,69 @@ const HGraph *chunk_gen_home(ChunkGen *g, int ri) {
 int chunk_gen_owns_home(const ChunkGen *g, int ri) { return chunk_gen_owns(g, g->hrow[ri].mx, g->hrow[ri].mz); }
 
 /* ---------------------------------------------------------------------------
+ * The far proxies' prisms (HM3b)
+ * ------------------------------------------------------------------------- */
+
+int city_home_prisms(const Block *bk, double x0, double z0, double x1, double z1, HGraph *G, HomePrism *out, int max) {
+    if (bk->zone != ZONE_SUBURB || city_homes_mode() == HOMES_OFF) return 0;
+    HomePlot *P = (HomePlot *)malloc(sizeof(HomePlot) * HOME_MAX_PLOTS);
+    if (!P) fatal("out of memory gathering houses");
+    const int np = city_block_plots(bk, P, HOME_MAX_PLOTS);
+    int n = 0;
+    for (int i = 0; i < np && n < max;) {
+        int j = i + 1;
+        while (j < np && P[j].row == P[i].row) j++;
+        HomeRow r;
+        memset(&r, 0, sizeof(r));
+        row_extent(&P[i], j - i, &r);
+        if (r.mx >= x0 && r.mx < x1 && r.mz >= z0 && r.mz < z1) {
+            city_home_row(&P[i], j - i, G);
+            if (!G->empty) {
+                row_bases(G, &r);
+                float lift = 0.0f;   /* the units' mean height over the lowest */
+                for (int k = 0; k < G->nunit; ++k) lift += r.dy[k] / (float)G->nunit;
+                HFinish f;
+                home_finish(G, 0, &f);
+                for (int vi = 0; vi < G->nvol && n < max; ++vi) {
+                    const HVol *v = &G->vol[vi];
+                    if (v->role != HV_MAIN && v->role != HV_PAIR && v->role != HV_ROW) continue;
+                    HomePrism *q = &out[n++];
+                    double cx, cz, ex, ez;
+                    const float mx = 0.5f * (v->x0 + v->x1), mz = 0.5f * (v->z0 + v->z1);
+                    home_to_world(G, mx, mz, &cx, &cz);
+                    if (v->ridgeX) home_to_world(G, mx + 1.0f, mz, &ex, &ez);
+                    else home_to_world(G, mx, mz + 1.0f, &ex, &ez);
+                    q->x = cx; q->z = cz; q->mx = r.mx; q->mz = r.mz;
+                    q->ax = (float)(ex - cx); q->az = (float)(ez - cz);
+                    q->hx = 0.5f * (v->ridgeX ? v->x1 - v->x0 : v->z1 - v->z0);
+                    q->hz = 0.5f * (v->ridgeX ? v->z1 - v->z0 : v->x1 - v->x0);
+                    float lo = 1e9f;
+                    for (int c = 0; c < 4; ++c) {
+                        double wx, wz;
+                        home_to_world(G, c & 1 ? v->x1 : v->x0, c & 2 ? v->z1 : v->z0, &wx, &wz);
+                        lo = fminf(lo, city_ground_y(wx, wz));
+                    }
+                    const float y = r.base + lift + SIDEWALK_HEIGHT;
+                    q->y0 = fminf(lo, r.base) - 0.5f;
+                    q->wall = f.wall; q->wallCol = f.wallCol; q->storeys = v->storeys;
+                    if (v->roof == HR_FLAT) {
+                        q->eaves = y + v->top; q->rise = 0.0f; q->inset = 0.0f;
+                        q->roof = f.flat; q->roofCol = f.flatCol;
+                    } else {
+                        q->eaves = y + v->eaves; q->rise = fmaxf(0.0f, v->top - v->eaves);
+                        q->inset = v->roof == HR_HIP ? fminf(q->hx, q->hz) : 0.0f;
+                        q->roof = f.roof; q->roofCol = f.roofCol;
+                    }
+                }
+            }
+        }
+        i = j;
+    }
+    free(P);
+    return n;
+}
+
+/* ---------------------------------------------------------------------------
  * The shells into a mesh
  * ------------------------------------------------------------------------- */
 

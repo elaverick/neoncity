@@ -351,6 +351,19 @@ void     city_build_homes(int cx, int cz, Mesh *m);
 enum { HOMES_OFF = 0, HOMES_FAR, HOMES_NEAR };
 void     city_set_homes(int mode);
 int      city_homes_mode(void);
+/* The far proxies of a suburb block's house rows (residential roadmap HM3b; src/city/proxy.c): a prism for each
+ * row's main volume (a terrace's, a pair's, a detached house's; wings, porches and bays left out), as the
+ * chunks build it: centre (world), the ridge's way, half its length along the ridge and half its span, the
+ * ground under it less half a metre, its eaves (world Y), the roof's rise over them and how far the ridge stops
+ * short of each end (a hip's), its walls' and roof's finishes (house_surf.h), its storeys; and its row's middle,
+ * whose chunk owns it. Rows whose middles lie outside [x0, x1) x [z0, z1) are skipped unbuilt. g: working
+ * space. Returns how many (at most max). */
+typedef struct HomePrism {
+    double  x, z, mx, mz;
+    float   ax, az, hx, hz, y0, eaves, rise, inset;
+    uint8_t wall, wallCol, roof, roofCol, storeys;
+} HomePrism;
+int      city_home_prisms(const Block *bk, double x0, double z0, double x1, double z1, struct HGraph *g, HomePrism *out, int max);
 /* Forces every suburb street's archetype (HOME_*) and every row's style (HS_*), -1 for neither: the
  * residential slice's harness (`city_test --home ARCHETYPE --style STYLE`). Not for the game's own use. */
 void     city_home_force(int arch, int style);
@@ -468,6 +481,19 @@ typedef struct ProxyBox {
 #define PX_ARCOLOGY       (1u << 29)
 #define PX_PLAIN          (1u << 30)   /* a plant's unit or deck: painted steel, no windows */
 
+/* A house row's prism (residential roadmap HM3b): the main volume of a row, a pair or a detached house as
+ * walls to its eaves under a gabled or hipped roof, drawn by its own pass (shaders/proxy/proxy.vert built
+ * with HOUSE_PRISM). It takes a ProxyBox's slot: x, z its centre; y0 the ground under it less a metre, y1
+ * its eaves; half its half length along the ridge and half span across it; axis the ridge's way; seed the
+ * roof's rise over the eaves and how far the ridge stops short of each end (a hip's: packHalf2x16); info
+ * its chunk, PX_HOUSE and its finishes (house_surf.h): */
+#define PX_HOUSE          (1u << 31)
+#define PXH_WALL_SHIFT    4    /* 3 bits: HW_* */
+#define PXH_WALLCOL_SHIFT 7    /* 5: its palette entry and HOUSE_COL_OLD */
+#define PXH_ROOF_SHIFT    12   /* 4: HRM_* */
+#define PXH_ROOFCOL_SHIFT 16   /* 3 */
+#define PXH_STOREYS_SHIFT 19   /* 2 */
+
 /* Level of detail: within each chunk's run the boxes come largest first (by
  * their largest side), and lod[k][b] counts chunk k's boxes at least
  * PROXY_LOD_SIZE(b) metres, so a renderer drawing a far tile can draw each
@@ -477,10 +503,15 @@ typedef struct ProxyBox {
 
 typedef struct ProxyTile {
     int       tx, tz;                      /* the tile; its origin is (tx, tz) * PROXY_TILE */
-    int       n, cap;
+    int       n, cap;                      /* n: boxes and prisms */
     ProxyBox *box;                         /* chunk k's boxes are box[first[k]] .. box[first[k + 1] - 1] */
     int       first[PROXY_TILE_CELLS + 1];
     uint16_t  lod[PROXY_TILE_CELLS][PROXY_LOD_BINS];
+    /* then the house rows' prisms (PX_HOUSE): chunk k's are box[hfirst[k]] .. box[hfirst[k + 1] - 1], after all
+     * the boxes, their levels of detail as the boxes' */
+    int       hfirst[PROXY_TILE_CELLS + 1];
+    uint16_t  hlod[PROXY_TILE_CELLS][PROXY_LOD_BINS];
+    int       nrow;                        /* house rows */
     int       nbuild;
     float     mn[3], mx[3];                /* bounds (n > 0): x and z relative to the origin, world Y */
 } ProxyTile;

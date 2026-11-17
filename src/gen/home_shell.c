@@ -40,14 +40,14 @@ typedef struct FinishDef {
 } FinishDef;
 
 static const FinishDef FIN[HS_COUNT] = {
-    [HS_CRAFTSMAN]    = { { 0.15f, 0.15f, 0.70f, 0, 0 }, { "014", "125f", "34ab9017", "", "" }, { [HRM_SHINGLE] = 0.9f, [HRM_CLAY] = 0.1f }, "0153", HG_GRID, HST_TIMBER, 1.0f, 1.4f },
+    [HS_CRAFTSMAN]    = { { 0.15f, 0.15f, 0.70f, 0, 0 }, { "014", "125f", "34ab9017", "", "" }, { [HRM_SHINGLE] = 0.8f, [HRM_METAL] = 0.1f, [HRM_CLAY] = 0.1f }, "0153", HG_GRID, HST_TIMBER, 1.0f, 1.4f },
     [HS_SPANISH]      = { { 0, 1, 0, 0, 0 }, { "", "01285", "", "", "" }, { [HRM_BARREL] = 0.9f, [HRM_CLAY] = 0.1f }, "503", HG_CASEMENT, HST_TILE, 1.0f, 1.3f },
-    [HS_RANCH]        = { { 0.40f, 0.25f, 0.35f, 0, 0 }, { "0143", "01235", "05961", "", "" }, { [HRM_SHINGLE] = 0.85f, [HRM_CONCRETE] = 0.15f }, "015", HG_PLAIN, HST_CONCRETE, 1.5f, 1.1f },
-    [HS_TRACT]        = { { 0.20f, 0.30f, 0.50f, 0, 0 }, { "043", "1235", "015689", "", "" }, { [HRM_SHINGLE] = 1.0f }, "01", HG_PLAIN, HST_CONCRETE, 1.2f, 1.3f },
+    [HS_RANCH]        = { { 0.40f, 0.25f, 0.35f, 0, 0 }, { "0143", "01235", "05961", "", "" }, { [HRM_SHINGLE] = 0.6f, [HRM_CONCRETE] = 0.25f, [HRM_METAL] = 0.15f }, "015", HG_PLAIN, HST_CONCRETE, 1.5f, 1.1f },
+    [HS_TRACT]        = { { 0.20f, 0.30f, 0.50f, 0, 0 }, { "043", "1235", "015689", "", "" }, { [HRM_SHINGLE] = 0.8f, [HRM_CONCRETE] = 0.2f }, "01", HG_PLAIN, HST_CONCRETE, 1.2f, 1.3f },
     [HS_ROWHOUSE]     = { { 0.70f, 0, 0, 0.30f, 0 }, { "0124", "", "", "220", "" }, { [HRM_SLATE] = 0.6f, [HRM_SHINGLE] = 0.4f }, "4023", HG_SASH, HST_STONE, 0.95f, 1.7f },
     [HS_TRIPLEDECKER] = { { 0, 0, 1, 0, 0 }, { "", "", "01234589", "", "" }, { [HRM_SHINGLE] = 1.0f }, "01", HG_SASH, HST_TIMBER, 0.9f, 1.5f },
-    [HS_VICTORIAN]    = { { 0.75f, 0.25f, 0, 0, 0 }, { "01342", "013", "", "", "" }, { [HRM_SLATE] = 0.9f, [HRM_CLAY] = 0.1f }, "0123", HG_SASH, HST_STONE, 0.95f, 1.6f },
-    [HS_GEORGIAN]     = { { 0.60f, 0.40f, 0, 0, 0 }, { "1403", "012", "", "", "" }, { [HRM_SLATE] = 1.0f }, "02", HG_GEORGIAN, HST_STONE, 0.95f, 1.6f },
+    [HS_VICTORIAN]    = { { 0.75f, 0.25f, 0, 0, 0 }, { "01342", "013", "", "", "" }, { [HRM_SLATE] = 0.65f, [HRM_CONCRETE] = 0.25f, [HRM_CLAY] = 0.1f }, "0123", HG_SASH, HST_STONE, 0.95f, 1.6f },
+    [HS_GEORGIAN]     = { { 0.60f, 0.40f, 0, 0, 0 }, { "1403", "012", "", "", "" }, { [HRM_SLATE] = 0.8f, [HRM_CONCRETE] = 0.2f }, "02", HG_GEORGIAN, HST_STONE, 0.95f, 1.6f },
     [HS_INTERWAR]     = { { 0.45f, 0.55f, 0, 0, 0 }, { "024", "012f3", "", "", "" }, { [HRM_CLAY] = 0.8f, [HRM_CONCRETE] = 0.2f }, "031", HG_CASEMENT, HST_CONCRETE, 1.5f, 1.2f },
     [HS_POSTWAR]      = { { 0.70f, 0.30f, 0, 0, 0 }, { "0432", "01f3", "", "", "" }, { [HRM_CONCRETE] = 0.8f, [HRM_CLAY] = 0.2f }, "045", HG_CASEMENT, HST_CONCRETE, 1.4f, 1.2f },
     [HS_MODERN]       = { { 0.50f, 0.30f, 0.20f, 0, 0 }, { "3074", "034", "6b59", "", "" }, { [HRM_CONCRETE] = 0.7f, [HRM_SLATE] = 0.3f }, "240", HG_PLAIN, HST_CONCRETE, 1.6f, 1.3f },
@@ -113,6 +113,11 @@ void home_finish(const HGraph *g, int unit, HFinish *f) {
     if (f->wall == HW_BRICK) { f->stack = HW_BRICK; f->stackCol = f->wallCol; }
     else if (g->region == PLAN_REGION_UK || g->region == PLAN_REGION_NA) { f->stack = HW_BRICK; f->stackCol = (uint8_t)pick_hex("014", hash_combine(row, 8u)); }
     else { f->stack = f->wall; f->stackCol = f->wallCol; }
+    /* the styles built before the war lay old stock brick, sooted (house_brick); later ones a cleaner wire-cut */
+    const int old = g->style == HS_VICTORIAN || g->style == HS_GEORGIAN || g->style == HS_ROWHOUSE || g->style == HS_INTERWAR ||
+                    g->style == HS_CHINA || g->style == HS_SELFBUILT;
+    if (old && f->wall == HW_BRICK) f->wallCol |= HOUSE_COL_OLD;
+    if (old && f->stack == HW_BRICK) f->stackCol |= HOUSE_COL_OLD;
     f->glazing = D->glazing;
     f->step = D->step;
     f->winW = D->winW;

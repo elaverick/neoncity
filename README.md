@@ -444,7 +444,26 @@ triangles a unit) is a layer of its own (`city_build_homes`, within `HOME_NEAR_D
 holds the far shell (about 25: walls and roof planes, stacks; the windows painted by the shader), which gives
 way while its chunk's near layer is drawn (`CHUNK_HOMES_NEAR_BIT`, `city.vert`). Both draw with `MAT_HOUSE`
 (`shaders/city/house.glsl`; what a vertex carries: `src/core/house_surf.h`), each surface its finish's colour
-from the style's palette (`home_finish`) under an authored grain; past 170 m without it. The far shell's walls
+from the style's palette (`home_finish`, `shaders/city/house_palette.glsl`) under an authored grain; past 170 m
+without it.
+
+**Their materials** (HM3b). Each covering has its own ambientCG set (`assets/materials/house_*.json`, table
+under "Materials"), chosen for the setting over the mood board's photographs: a megacity's air and rain, so
+weathered rather than clean. The styles built before the war lay old stock brick, sooted and spalled
+(`house_brick`, flagged `HOUSE_COL_OLD` in the colour); later ones keep the facades' wire-cut. Render is stained
+by the rain, pebbledash and concrete block roughcast, siding painted and grimed along its boards; roofs are
+slate, sooted concrete tiles, lichened shingles and old clay, corrugated sheet scuffed down its fall. Painted
+colours are a little dulled (`houseSoot`), every wall carries the rain's runs and splashback, by an amount each
+unit draws (upkeep sets it from HM6). The setting also moved some roofs: a quarter of Victorian and a fifth of
+Georgian and tract houses re-roofed in concrete tiles, ranches partly in tiles and sheet. Slate, shingles,
+siding's boards and corrugated ribs come from the sets now; the shader's drawn courses stay only for a set
+that fails to load.
+
+**Their proxies** (HM3b). Beyond the view distance each row's main volume (a terrace's, a pair's, a detached
+house's; wings and porches left out) stands as a prism: walls to its eaves under a gabled or hipped roof
+(`city_home_prisms`, `PX_HOUSE` in `src/city/city.h`), in its walls' and roof's palette colours with its windows
+blurred in, lit by the homes' hours. A prism takes a box's slot in the proxies' pool, after its tile's boxes,
+and is drawn by its own list and pipeline (`shaders/proxy/proxy.vert` built with `HOUSE_PRISM`: 42 vertices). The far shell's walls
 cast no ray-traced shadows (they would stand over the near shell's set-back windows). Collision takes the
 houses' bodies, enclosed porches and porches' posts; the grass keeps clear of them. `NeonCity --homes
 off|far|near` leaves them out, or the near layer, to measure them. `home_lab` builds both shells of 2,600 rows an
@@ -673,9 +692,10 @@ proxies (`src/city/proxy.c`, `src/render/proxy_gpu.c`, `shaders/proxy/`), out to
 every building as a box round each section of its graph, the same buildings the chunks build, with
 the facade's far shading from the same seeds (wall and glass, floor and bay rhythm, the share and
 colour of lit rooms, LED crowns). They come in tiles of 4 x 4 chunks, generated round the camera on
-a worker thread of their own (the whole city, about 590,000 boxes, takes about two seconds) into a 24 MB
-pool, and drawn by one indirect draw list that leaves out every chunk the streamer draws in full that
-frame. So a chunk still streaming in, or one turned towards, shows as its proxies rather than a gap,
+a worker thread of their own into an 80 MB pool (the 20 km round Los Angeles' edge, about 1.75M boxes and
+house prisms, take 16,165 of its 20,480 pages and about 12.5 s to fill), and drawn by indirect draw lists that
+leave out every chunk the streamer draws in full that frame. The suburbs' houses stand as a prism a row
+(see "Houses"). So a chunk still streaming in, or one turned towards, shows as its proxies rather than a gap,
 and the haze is only the city's air (a 1.1 km mean free path at street level, thinning with height),
 not a wall hiding where the chunks end. A chunk replacing its proxies pops from boxes to the full
 mesh, behind a band of haze at the chunks' edge (`edgeFog`: 70% more of what is left, rising over the
@@ -1983,7 +2003,7 @@ procedural noise. All are ambientCG (CC0), packed at 1024 from the 2K downloads:
 | `granite` | [Granite003A](https://ambientcg.com/view?id=Granite003A) | buildings' base course, stone piers, lobby granite floors and planters, arcology black stone, polished floors and stone decks |
 | `shutter` | [CorrugatedSteel009](https://ambientcg.com/view?id=CorrugatedSteel009) | shut shopfronts, loading bays, arcology stalls |
 | `roof_gravel` | [Gravel043](https://ambientcg.com/view?id=Gravel043) | flat roofs |
-| `roof_tiles` | [RoofingTiles012A](https://ambientcg.com/view?id=RoofingTiles012A) | hip roofs |
+| `roof_tiles` | [RoofingTiles012A](https://ambientcg.com/view?id=RoofingTiles012A) | hip roofs, houses' barrel and glazed tiles |
 | `lot_asphalt` | [Asphalt033](https://ambientcg.com/view?id=Asphalt033) | lots, yards, verges, bridge soffits |
 | `grass` | [Grass001](https://ambientcg.com/view?id=Grass001) | parks and lawns, arcology terrace planting |
 | `painted_steel` | [Metal016](https://ambientcg.com/view?id=Metal016) | plants' tanks, frames and gratings, rooftop plant and vents, lobby shelving, bins, lockers, steel doors and linings; arcology ducts, pipes, kiosks, crates and AC units |
@@ -2001,6 +2021,15 @@ procedural noise. All are ambientCG (CC0), packed at 1024 from the 2K downloads:
 | `paper` | [Paper003](https://ambientcg.com/view?id=Paper003) | litter's newspapers, flyers, receipts, wads, cups and noodle boxes |
 | `cardboard` | [Cardboard002](https://ambientcg.com/view?id=Cardboard002) | litter's flattened boxes and pizza boxes |
 | `vendor_planks` | [Planks012](https://ambientcg.com/view?id=Planks012) | the kit's timber (`PMAT_TIMBER`: A-frames, ledges, boards) |
+| `house_brick` | [Bricks097](https://ambientcg.com/view?id=Bricks097) | houses' old stock brick (the pre-war styles); later houses take `facade_brick` |
+| `house_render` | [Plaster007](https://ambientcg.com/view?id=Plaster007) | houses' painted render and stucco, stained |
+| `house_roughcast` | [Concrete035](https://ambientcg.com/view?id=Concrete035) | houses' pebbledash and roughcast, concrete block |
+| `house_siding` | [WoodSiding009](https://ambientcg.com/view?id=WoodSiding009) | houses' painted lap siding |
+| `house_slate` | [RoofingTiles003](https://ambientcg.com/view?id=RoofingTiles003) | houses' slate roofs |
+| `house_concrete_tile` | [RoofingTiles009](https://ambientcg.com/view?id=RoofingTiles009) | houses' concrete-tile roofs, sooted |
+| `house_shingle` | [RoofingTiles015C](https://ambientcg.com/view?id=RoofingTiles015C) | houses' shingle roofs (ambientCG has no asphalt shingle) |
+| `house_clay` | [RoofingTiles014B](https://ambientcg.com/view?id=RoofingTiles014B) | houses' plain clay roofs; barrel and glazed tiles take `roof_tiles` |
+| `house_sheet` | [CorrugatedSteel003](https://ambientcg.com/view?id=CorrugatedSteel003) | houses' corrugated sheet roofs |
 
 The lobby woods and white marble (`wood_mid`, `wood_dark`, `wood_light`, `marble_white`) also
 carry an `albedo_mean` and grain `params`, so they serve as grain too: arcology timber soffits,

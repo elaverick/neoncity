@@ -314,7 +314,13 @@ static int home_cams(int argc, char **argv) {
         printf("view home_aerial --cam %.2f %.2f %.1f %.1f %.2f   (150 m out, 90 m up)\n", px, pz, yaw, pitch, eye);
         views++;
     }
-    CHECK(views == 5, "only %d of the 5 views have a line of sight", views);
+    {   /* over the roofs (HM3b): 40 m out over the street, 22 m up, the coverings close */
+        const double px = c.x + nx * 40.0, pz = c.z + nz * 40.0, eye = city_ground_y(c.x, c.z) + 22.0;
+        const double yaw = atan2(c.x - px, -(c.z - pz)) * 57.2958, pitch = atan2(city_ground_y(c.x, c.z) + 6.0 - eye, 40.0) * 57.2958;
+        printf("view home_roofs --cam %.2f %.2f %.1f %.1f %.2f   (40 m out, 22 m up)\n", px, pz, yaw, pitch, eye);
+        views++;
+    }
+    CHECK(views == 6, "only %d of the 6 views have a line of sight", views);
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("ok\n");
     return 0;

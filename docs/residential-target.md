@@ -223,8 +223,7 @@ dark red, doors red, paths and drives, walls, hedges and fences, sheds, cars and
 ## The shells (HM3a)
 
 HM3 was split before it started (the roadmap's rule for a milestone past its size): **HM3a** the shells, **HM3b**
-the materials (ambientCG sets per style: slate, concrete tile, shingle, house brick, render, siding) and the
-proxies' roof prisms. `src/gen/home_shell.c` builds a graph's shell, `src/city/homes.c` sets it down, and
+the materials (ambientCG sets per covering, "Materials" below) and the proxies' roof prisms ("Budgets"). `src/gen/home_shell.c` builds a graph's shell, `src/city/homes.c` sets it down, and
 `shaders/city/house.glsl` shades it (`src/core/house_surf.h`: what a vertex carries).
 
 | Part | How |
@@ -253,6 +252,16 @@ views, two runs each with `--homes off`, `far` and `near` (noon):
 With a flat shader the far shells cost nothing and the near layer 0.3 ms: the rest is shading (lighting about
 half), which is why the far path drops the grain past 170 m (the air view was +1.5 ms before it).
 
+**HM3b** (2026-11-17, noon, `--homes off` against `near`, four runs from the air, two elsewhere): the authored sets
+cost no more than the drawn courses did. From the air 6.6 ms to 7.33 ms (**+0.75**, budget +1.0; one run of five
+read 8.27); down the street at 30 m 6.13 to 3.61 (-2.5); along the ring 82 m up, the houses filling the view to
+the horizon, 8.6-9.0 to 9.4-10.1 (about +0.9). The proxies' prisms (`city_home_prisms`, one a row's main) add
+0.02 ms to the proxies' pass (17,550 drawn along the ring) and 108,000 records to the pool: the 20 km round Los
+Angeles' edge holds 1.75M boxes and prisms in 16,165 pages, so the pool grew to 20,480 (80 MB; it had turned half
+the range away at 6,144 even before the houses). Filling the range takes 12.5 s instead of 10.8 (the rows' graphs
+are built for their prisms). The prisms match the far shells' place, height, roof form and colours (checked by
+drawing them in the shells' place at the slice); they leave out wings, porches and bays.
+
 ## Massing and parts
 
 | Part | Size | Notes |
@@ -273,22 +282,40 @@ half), which is why the far path drops the grain past 170 m (the air view was +1
 
 ## Materials
 
-Designed here, fetched in HM3 (walls, roofs) and HM4 (the kit), NB3's way: ambientCG sets packed by
-`tools/pbr_pack.c` into `assets/materials/*.json`, "own" sets showing the photograph's colour, "grain" sets under
-the material's. The candidates, to be confirmed against the sets when they are fetched:
+Fetched in HM3b (walls, roofs; the kit's in HM4), NB3's way: ambientCG sets (CC0) packed at 1024 by
+`tools/pbr_pack.c` into `assets/materials/*.json`, every one a grain under the palette's colour (the shells'
+colours stay the style's).
 
-| Surface | Kind | Regions |
-|---|---|---|
-| Brick, red and brown, stretcher and Flemish bond | own, 2-3 sets | uk, na rowhouses, seu, eas (china grey brick) |
-| Render and stucco: smooth, roughcast, pebbledash | grain under the house's colour | everywhere |
-| Painted timber siding (clapboard, shingle) | grain under paint | na craftsman and tripledecker, eas japan (as panel siding) |
-| Stone: sandstone, brownstone, limestone dressing | own | uk georgian, na rowhouse, mena |
-| Concrete block, bare and painted | own and grain | sas, lat, ssa |
-| Roof: slate | own | uk |
-| Roof: clay tile (plain, pantile, Spanish barrel) | own | na spanish, seu, uk, lat |
-| Roof: concrete tile, asphalt shingle | own | uk postwar and modern, na tract and ranch |
-| Roof: corrugated metal, flat concrete with a parapet | own; the vendors' corrugated iron | sas, lat, ssa, mena, eas |
-| Timber (porch posts, fences), painted metal (railings, grilles), glass | the kit's existing materials | everywhere |
+**The setting over the references** (the user, 2026-11-17: "consider our setting when selecting materials, the
+setting should carry more weight than the mood board"). The mood board's houses are photographs of real, mostly
+tidy suburbs; these stand in a rain-soaked megacity under a deck of cloud and its soot. So each set is the most
+weathered that still reads as kept (the upkeep spread above: no derelict, few run-down): stained, sooted, mossed or
+lichened, scuffed, never broken. Over the sets, painted colours are dulled a little (`houseSoot`: 18% towards
+grey, 8% darker), and every wall carries the rain's runs and splashback by an amount each unit draws (a stand-in
+for upkeep, which HM6 sets). The setting also moved the roofs a little towards the cheap: a quarter of Victorian
+and a fifth of Georgian and tract roofs re-laid in concrete tiles, ranches partly tiles and sheet, a tenth of
+craftsman roofs sheet.
+
+| Surface | Set | Chosen for | Where |
+|---|---|---|---|
+| Old stock brick, stretcher bond | `house_brick` ([Bricks097](https://ambientcg.com/view?id=Bricks097)) | sooted, spalled, mortar smeared | the pre-war styles (Victorian, Georgian, rowhouse, inter-war, China, self-built: `HOUSE_COL_OLD`) |
+| Wire-cut brick | `facade_brick` (Bricks085, the city's) | cleaner, later | post-war, modern, North American and the rest |
+| Render and stucco | `house_render` ([Plaster007](https://ambientcg.com/view?id=Plaster007)) | rain-stained, blotched | everywhere |
+| Pebbledash, roughcast, concrete block | `house_roughcast` ([Concrete035](https://ambientcg.com/view?id=Concrete035)) | mottled, dark | render colour f, every block wall |
+| Painted lap siding | `house_siding` ([WoodSiding009](https://ambientcg.com/view?id=WoodSiding009)) | paint dulled, boards' edges grimed | na craftsman, tract, ranch, tripledecker; uk modern; Japan |
+| Stone (ashlar, brownstone) | `facade_stone` (Tiles143, the city's) | stained limestone | rowhouse, seu, mena |
+| Slate | `house_slate` ([RoofingTiles003](https://ambientcg.com/view?id=RoofingTiles003)) | streaked dark grey | uk, rowhouse, Japan |
+| Concrete tiles | `house_concrete_tile` ([RoofingTiles009](https://ambientcg.com/view?id=RoofingTiles009)) | blackened, moss down the joints | uk post-war and modern, re-roofed Victorian and Georgian, na tract and ranch, sea, sas, ssa |
+| Shingles | `house_shingle` ([RoofingTiles015C](https://ambientcg.com/view?id=RoofingTiles015C)) | dirty, lichen-spotted | na; ambientCG has no asphalt shingle, these square tabs read as one from the street |
+| Plain clay tiles | `house_clay` ([RoofingTiles014B](https://ambientcg.com/view?id=RoofingTiles014B)) | old, dirty, lichen | uk inter-war, seu, mena, lat, sas, sea shophouses, China and Korea in part |
+| Barrel and glazed tiles | `roof_tiles` (RoofingTiles012A, the city's) | the rolled form | na spanish; China, Korea and Japan's kawara |
+| Corrugated sheet | `house_sheet` ([CorrugatedSteel003](https://ambientcg.com/view?id=CorrugatedSteel003)) | paint scuffed, dirt down its fall | sas, ssa, lat, Japan, Korea; some na |
+| Flat roofs | `roof_gravel`, `concrete` (the city's) | | everywhere |
+| Timber (porch posts, fences), painted metal (railings, grilles), glass | the kit's existing materials (HM4) | | everywhere |
+
+Not found on ambientCG: Flemish bond (stretcher bond stands in), an asphalt shingle (square tabs stand in), a
+true pebbledash (a mottled roughcast). Rust-through sheet (CorrugatedSteel007B) was looked at and left for HM6's
+run-down houses, not every sheet roof.
 
 No one set over 40% of a house's visible surface (NB3's rule): a wall set and a roof set at most share most of it.
 
@@ -325,7 +352,7 @@ view is proxies.
 `city_test --home` prints the views (`view NAME --cam X Z YAW PITCH EYE_Y`): the slice's frontage from the street at
 3 and 10 m (looking in at a house front 6 m back, turned off the front if a line of sight needs it), 30 and 100 m down
 the street (at the pavement in front of the slice: since HM3a the houses across the street stand where those views
-were) and one from the air (150 m out, 90 m up).
+were), one from the air (150 m out, 90 m up) and one over the roofs (40 m out, 22 m up: HM3b). `--home ARCHETYPE --style STYLE` forces them in the game too (`--home-arch`, `--home-style`), so another region's style can be shot in Los Angeles.
 
 ```
 python tools/home_capture.py LABEL [--only noon|dusk|night] [--home ARCHETYPE --style STYLE]

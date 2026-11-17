@@ -133,6 +133,7 @@ struct Renderer {
     VkDescriptorSetLayout proxyLayout;
     VkPipelineLayout      proxyPL;
     VkPipeline            proxyPipe;
+    VkPipeline            proxyHousePipe;   /* the house rows' prisms (HM3b) */
     VkDescriptorPool      staticPool;
     VkDescriptorSetLayout sceneLayout, texLayout, bloomLayout, cloudLayout, cloudCompLayout, ssrLayout, ssrApplyLayout, flameLayout;
     VkDescriptorSet       sceneSet[MAX_FRAMES];

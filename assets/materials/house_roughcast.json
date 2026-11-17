@@ -1,0 +1,14 @@
+// Rough, mottled render: pebbledash and roughcast (render colour f) and the concrete-block walls
+// (shadeHouse), under their own colour (pbrGrain).
+// Concrete035 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/concrete_035/albedo.png",
+    "normal": "../textures/concrete_035/normal.png",
+    "orm":    "../textures/concrete_035/orm.png"
+  },
+  "tile": [3.0, 1.5],          // metres per image (a 2:1 image)
+  "albedo_mean": [0.241, 0.233, 0.195],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.9, 1.0]
+}

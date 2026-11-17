@@ -1,0 +1,15 @@
+// Interlocking concrete tiles gone black with soot and moss down their joints: the houses' concrete-tile
+// roofs (shadeHouse), under the roof's own colour (pbrGrain). Chosen for the city's air over the
+// references' clean ones.
+// RoofingTiles009 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/roofing_tiles_009/albedo.png",
+    "normal": "../textures/roofing_tiles_009/normal.png",
+    "orm":    "../textures/roofing_tiles_009/orm.png"
+  },
+  "tile": 3.2,                 // metres per image (ambientCG's size)
+  "albedo_mean": [0.015, 0.016, 0.016],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.3, 1.0]
+}

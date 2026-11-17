@@ -1,7 +1,7 @@
 """Comparison boards for the residential slice (roadmap HM0, docs/residential-target.md).
 
 For each light tools/home_capture.py shot, one board: the slice at 3, 10, 30
-and 100 m and from the air along the top, and the references of one region
+and 100 m, from the air and over the roofs along the top, and the references of one region
 (docs/reference/residential/<region>_*.jpg, the signed-off mood board's)
 below, four to a row.
 
@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REFS = os.path.join(ROOT, "docs", "reference", "residential")
-VIEWS = [("home_003m", "3 m"), ("home_010m", "10 m"), ("home_030m", "30 m"), ("home_100m", "100 m"), ("home_aerial", "aerial")]
+VIEWS = [("home_003m", "3 m"), ("home_010m", "10 m"), ("home_030m", "30 m"), ("home_100m", "100 m"), ("home_aerial", "aerial"), ("home_roofs", "roofs")]
 TILE_W, TILE_H = 448, 252   # 16:9
 REF_COLS, REF_W, REF_H = 4, 0, 0
 PAD, HEAD = 8, 26

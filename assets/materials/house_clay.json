@@ -1,0 +1,14 @@
+// Old plain clay tiles, dirty and spotted with lichen: the houses' clay roofs (shadeHouse), under the
+// roof's own red (pbrGrain). The barrel and glazed tiles keep roof_tiles (RoofingTiles012A).
+// RoofingTiles014B (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/roofing_tiles_014b/albedo.png",
+    "normal": "../textures/roofing_tiles_014b/normal.png",
+    "orm":    "../textures/roofing_tiles_014b/orm.png"
+  },
+  "tile": 2.9,                 // metres per image (ambientCG's size)
+  "albedo_mean": [0.244, 0.106, 0.061],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.9, 1.0]
+}

@@ -110,6 +110,9 @@ static const uint32_t SPV_proxy_vert[] = {
 static const uint32_t SPV_proxy_frag[] = {
 #include "proxy/proxy.frag.inc"
 };
+static const uint32_t SPV_proxy_house_vert[] = {
+#include "proxy/proxy_house.vert.inc"
+};
 static const uint32_t SPV_flame_vert[] = {
 #include "flame.vert.inc"
 };
@@ -573,6 +576,8 @@ void create_pipelines(Renderer *r) {
                       r->proxyPL, HDR_FORMAT, DEPTH_FORMAT, vk->msaa, false, true, true, true };
     proxy.colorFormat2 = HDR_FORMAT;
     r->proxyPipe = make_graphics(vk, &proxy);
+    proxy.vs = SPV_proxy_house_vert; proxy.vsBytes = sizeof(SPV_proxy_house_vert);   /* the house rows' prisms */
+    r->proxyHousePipe = make_graphics(vk, &proxy);
     make_composite_pipe(r);
     r->bloomDownPipe = make_compute(vk, SPV_bloom_down, sizeof(SPV_bloom_down), r->bloomPL);
     r->bloomUpPipe = make_compute(vk, SPV_bloom_up, sizeof(SPV_bloom_up), r->bloomPL);

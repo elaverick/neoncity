@@ -9,7 +9,11 @@
  * full mesh. Rooms are lit floor by floor and bay by bay with the facade's
  * odds, though not the very rooms its faces would light; finer than a pixel
  * they blur to the average lit window. Plus the LED strips under a section's
- * top edge. Lit only by the city's glow, and seen through the city's haze. */
+ * top edge. Lit only by the city's glow, and seen through the city's haze.
+ *
+ * A house row's prism (PX_HOUSE, HM3b) takes its walls' and roof's colours
+ * from the houses' palettes as their far shells do, its windows (an eighth of
+ * a wall, lit by the homes' hours) blurred into the wall. */
 
 layout(location = 0) in vec3 vRel;
 layout(location = 1) in vec2 vFace;
@@ -21,7 +25,9 @@ layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outRefl;   // nothing for the screen-space reflections (city.frag)
 
 // PX_* (src/city/city.h)
-const uint PX_BANDS = 1u << 9, PX_FINE = 1u << 10, PX_LEDTOP = 1u << 11, PX_PLAIN = 1u << 30;
+const uint PX_BANDS = 1u << 9, PX_FINE = 1u << 10, PX_LEDTOP = 1u << 11, PX_PLAIN = 1u << 30, PX_HOUSE = 1u << 31;
+
+#include "city/house_palette.glsl"
 
 // As shaders/city.frag's helpers and city/lighting.glsl's and city/rooms.glsl's
 // (which need a chunk's state, so can't be included here).
@@ -54,7 +60,27 @@ vec3 kelvin(float k) {
     return mix(c5000, c6500, clamp((k - 5000.0) / 1500.0, 0.0, 1.0));
 }
 
+// A house row's prism (PX_HOUSE: src/city/city.h's PXH_* fields): its palette colours as house.glsl's far path
+// has them, under the same lights as the boxes; its windows an eighth of a wall, a share lit by the hour.
+vec3 shadeHouseProxy(vec3 n, vec3 V) {
+    uint info = vInfo;
+    uint wf = (info >> 4) & 7u, wc = (info >> 7) & 31u, rf = (info >> 12) & 15u, rc = (info >> 16) & 7u;
+    float h = max(vFace.y, 0.0);
+    vec3 world = frame.camPos.xyz + vRel;
+    gSkyCover = skyCover(vRel);
+    vec3 wdiff = ambientLight(n, h) + neonBounce(world, h) * 1.5;
+    float vary = mix(0.88, 1.12, hf(vSeed, 0x41u));
+    if (n.y > 0.3) return houseRoofColour(rf, rc) * 0.85 * vary * mix(0.7, 1.05, vnoise(world.xz * 0.15, 0x4A12u)) * wdiff;
+    vec3 wall = houseWallColour(wf, wc) * (wf == HW_SIDING ? 0.85 : 0.82) * vary * wdiff;
+    float F = glassFresnel(n, V);
+    float lit = 0.38 * cityHours(true) * (1.0 - smoothstep(0.1, 0.6, lampDaylight(gSkyCover)));
+    vec3 room = kelvin(2900.0) * 0.42 * 0.3 * lit + wdiff * 0.012;
+    vec3 win = room * (1.0 - F) + envReflection(reflect(-V, n)) * F;
+    return mix(wall, win, h > 0.6 && h < vSize.y - 0.6 ? 0.125 : 0.0);
+}
+
 vec3 shadeProxy(vec3 n, vec3 V) {
+    if ((vInfo & PX_HOUSE) != 0u) return shadeHouseProxy(n, V);
     uint seed = vSeed, info = vInfo, sh = styleHash(seed);
     int type = int((info >> 4) & 3u), section = int((info >> 13) & 31u);
     uint palette = (info >> 6) & 7u;
