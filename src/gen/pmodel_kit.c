@@ -1,5 +1,6 @@
 #include "pmodel.h"
 #include "pmodel_food.h"
+#include "pmodel_house.h"
 #include "mathlib.h"
 #include <math.h>
 #include <stdlib.h>
@@ -1524,6 +1525,9 @@ const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_MEAT] = "meat", [PMAT_DOUGH] = "dough", [PMAT_BREAD] = "bread", [PMAT_FRIED] = "fried", [PMAT_FRYOIL] = "fryoil",
     [PMAT_CHESTNUT] = "chestnut", [PMAT_GREENS] = "greens", [PMAT_SAUCE] = "sauce", [PMAT_GRIT] = "grit", [PMAT_EMBER] = "ember", [PMAT_RADIANT] = "radiant",
     [PMAT_GLAZING] = "glazing", [PMAT_WINDOW_FAR] = "window_far", [PMAT_SHUTTER] = "shutter",
+    [PMAT_HTRIM] = "h_trim", [PMAT_HDOOR] = "h_door", [PMAT_HSTONE] = "h_stone", [PMAT_HBRICK] = "h_brick", [PMAT_HCLAY] = "h_clay",
+    [PMAT_HTILE] = "h_tile", [PMAT_HRAIN] = "h_rain", [PMAT_HLEAD] = "h_lead", [PMAT_HIRON] = "h_iron", [PMAT_HPLANT] = "h_plant",
+    [PMAT_HGLASS] = "h_glass", [PMAT_HTIMBER] = "h_timber", [PMAT_HUPVC] = "h_upvc", [PMAT_HROOF] = "h_roof", [PMAT_HCEMENT] = "h_cement",
 };
 /* Mirrored by kitSet in shaders/city/kit.glsl. Sets may serve two materials in different colours (the
  * rubber's grain under black plastic, the white paint's under red): the share check counts them together. */
@@ -1534,6 +1538,11 @@ const char *const PM_MAT_SET[PMAT_COUNT] = {
     [PMAT_BAMBOO] = "kit_bamboo", [PMAT_PAPER] = "paper", [PMAT_PLASTIC] = "kit_rubber", [PMAT_GALV] = "kit_galv",
     [PMAT_STEEL] = "kit_steel", [PMAT_RED] = "kit_painted", [PMAT_RUST_STEEL] = "kit_rust_steel",
     [PMAT_CHEQUER] = "kit_chequer", [PMAT_LINING] = "kit_lining", [PMAT_SHUTTER] = "shutter",
+    /* HM4, the houses' kit (shaders/city/house.glsl shadeHouseKit): the shells' own sets where they match a shell's
+     * surface (paint on trim and doors, the walls' stone, roughcast's grain under brick, the clay tiles, the
+     * steps' concrete); the roof's covering is the unit's (house.glsl houseRoofSet); the rest painted there */
+    [PMAT_HTRIM] = "kit_paint", [PMAT_HDOOR] = "kit_paint", [PMAT_HSTONE] = "facade_stone", [PMAT_HBRICK] = "house_roughcast",
+    [PMAT_HTILE] = "house_clay", [PMAT_HTIMBER] = "vendor_planks", [PMAT_HCEMENT] = "concrete",
 };
 
 /* --------------------------------------------------------------- table --- */
@@ -1646,6 +1655,77 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_BATTEN       ] = { "batten",         m_batten,          { 1000, 500, 200 },  1 },
     [PMK_BATTEN_TUBE  ] = { "batten_tube",    m_batten_tube,     { 450, 150, 40 },    1 },
     [PMK_DROP_ROD     ] = { "drop_rod",       m_drop_rod,        { 360, 150, 40 },     1 },
+    /* HM4: the houses' character kit (pmodel_house.c) */
+    [PMK_H_RAFTER_TAIL] = { "h_rafter_tail", m_h_rafter_tail, { 40, 40, 20 }, 1 },
+    [PMK_H_KNEE_BRACE] = { "h_knee_brace", m_h_knee_brace, { 200, 130, 50 }, 1 },
+    [PMK_H_EAVES_BRACKET] = { "h_eaves_bracket", m_h_eaves_bracket, { 240, 100, 40 }, 1 },
+    [PMK_H_BARGE_SCALLOP] = { "h_barge_scallop", m_h_barge_scallop, { 150, 100, 70 }, 1 },
+    [PMK_H_BARGE_GOTHIC] = { "h_barge_gothic", m_h_barge_gothic, { 140, 80, 50 }, 1 },
+    [PMK_H_FINIAL] = { "h_finial", m_h_finial, { 400, 290, 160 }, 1 },
+    [PMK_H_GUTTER_HALF] = { "h_gutter_half", m_h_gutter_half, { 120, 80, 40 }, 1 },
+    [PMK_H_GUTTER_OGEE] = { "h_gutter_ogee", m_h_gutter_ogee, { 70, 70, 70 }, 1 },
+    [PMK_H_GUTTER_STOP] = { "h_gutter_stop", m_h_gutter_stop, { 50, 30, 20 }, 1 },
+    [PMK_H_SWAN_NECK] = { "h_swan_neck", m_h_swan_neck, { 320, 110, 70 }, 1 },
+    [PMK_H_SWAN_NECK_L] = { "h_swan_neck_l", m_h_swan_neck_l, { 320, 110, 70 }, 1 },
+    [PMK_H_DOWNPIPE] = { "h_downpipe", m_h_downpipe, { 60, 30, 20 }, 1 },
+    [PMK_H_PIPE_CLIP] = { "h_pipe_clip", m_h_pipe_clip, { 230, 100, 80 }, 1 },
+    [PMK_H_PIPE_SHOE] = { "h_pipe_shoe", m_h_pipe_shoe, { 160, 60, 40 }, 1 },
+    [PMK_H_HOPPER] = { "h_hopper", m_h_hopper, { 520, 240, 240 }, 1 },
+    [PMK_H_RIDGE_ROLL] = { "h_ridge_roll", m_h_ridge_roll, { 350, 240, 60 }, 1 },
+    [PMK_H_RIDGE_CREST] = { "h_ridge_crest", m_h_ridge_crest, { 520, 360, 120 }, 1 },
+    [PMK_H_STRING_COURSE] = { "h_string_course", m_h_string_course, { 30, 20, 20 }, 1 },
+    [PMK_H_PLINTH] = { "h_plinth", m_h_plinth, { 20, 20, 20 }, 1 },
+    [PMK_H_QUOIN] = { "h_quoin", m_h_quoin, { 220, 220, 60 }, 1 },
+    [PMK_H_SOLDIER] = { "h_soldier", m_h_soldier, { 700, 190, 30 }, 1 },
+    [PMK_H_TIMBER] = { "h_timber", m_h_timber, { 60, 60, 20 }, 1 },
+    [PMK_H_HUNG_TILES] = { "h_hung_tiles", m_h_hung_tiles, { 860, 140, 20 }, 1 },
+    [PMK_H_SILL_STONE] = { "h_sill_stone", m_h_sill_stone, { 40, 20, 20 }, 1 },
+    [PMK_H_SILL_TIMBER] = { "h_sill_timber", m_h_sill_timber, { 30, 30, 30 }, 1 },
+    [PMK_H_SILL_CONCRETE] = { "h_sill_concrete", m_h_sill_concrete, { 20, 20, 20 }, 1 },
+    [PMK_H_LINTEL_STONE] = { "h_lintel_stone", m_h_lintel_stone, { 20, 20, 20 }, 1 },
+    [PMK_H_LINTEL_CONCRETE] = { "h_lintel_concrete", m_h_lintel_concrete, { 20, 20, 20 }, 1 },
+    [PMK_H_KEYSTONE] = { "h_keystone", m_h_keystone, { 70, 20, 20 }, 1 },
+    [PMK_H_ARCH_BRICK] = { "h_arch_brick", m_h_arch_brick, { 270, 270, 110 }, 1 },
+    [PMK_H_HOOD_MOULD] = { "h_hood_mould", m_h_hood_mould, { 240, 160, 50 }, 1 },
+    [PMK_H_CASING] = { "h_casing", m_h_casing, { 190, 70, 70 }, 1 },
+    [PMK_H_WIN_SASH] = { "h_win_sash", m_h_win_sash, { 800, 350, 160 }, 1 },
+    [PMK_H_WIN_GEORGIAN] = { "h_win_georgian", m_h_win_georgian, { 740, 400, 160 }, 1 },
+    [PMK_H_WIN_CASEMENT] = { "h_win_casement", m_h_win_casement, { 1250, 610, 80 }, 1 },
+    [PMK_H_WIN_GRID] = { "h_win_grid", m_h_win_grid, { 700, 360, 160 }, 1 },
+    [PMK_H_WIN_PICTURE] = { "h_win_picture", m_h_win_picture, { 740, 430, 80 }, 1 },
+    [PMK_H_WIN_UPVC] = { "h_win_upvc", m_h_win_upvc, { 850, 740, 80 }, 1 },
+    [PMK_H_SHUTTER_LOUVRE] = { "h_shutter_louvre", m_h_shutter_louvre, { 700, 280, 80 }, 1 },
+    [PMK_H_SHUTTER_PANEL] = { "h_shutter_panel", m_h_shutter_panel, { 440, 110, 80 }, 1 },
+    [PMK_H_GRILLE] = { "h_grille", m_h_grille, { 330, 210, 120 }, 1 },
+    [PMK_H_WINDOW_BOX] = { "h_window_box", m_h_window_box, { 730, 310, 130 }, 1 },
+    [PMK_H_DOOR_4P] = { "h_door_4p", m_h_door_4p, { 880, 160, 110 }, 1 },
+    [PMK_H_DOOR_6P] = { "h_door_6p", m_h_door_6p, { 990, 190, 110 }, 1 },
+    [PMK_H_DOOR_CRAFT] = { "h_door_craft", m_h_door_craft, { 680, 180, 150 }, 1 },
+    [PMK_H_DOOR_HALF] = { "h_door_half", m_h_door_half, { 590, 150, 120 }, 1 },
+    [PMK_H_DOOR_UPVC] = { "h_door_upvc", m_h_door_upvc, { 450, 310, 140 }, 1 },
+    [PMK_H_FANLIGHT] = { "h_fanlight", m_h_fanlight, { 530, 200, 70 }, 1 },
+    [PMK_H_DOORCASE] = { "h_doorcase", m_h_doorcase, { 980, 480, 190 }, 1 },
+    [PMK_H_DOORCASE_PED] = { "h_doorcase_ped", m_h_doorcase_ped, { 1010, 510, 230 }, 1 },
+    [PMK_H_POST_TURNED] = { "h_post_turned", m_h_post_turned, { 560, 420, 190 }, 1 },
+    [PMK_H_POST_CRAFT] = { "h_post_craft", m_h_post_craft, { 180, 180, 60 }, 1 },
+    [PMK_H_POST_SQUARE] = { "h_post_square", m_h_post_square, { 160, 120, 40 }, 1 },
+    [PMK_H_SPANDREL] = { "h_spandrel", m_h_spandrel, { 130, 60, 40 }, 1 },
+    [PMK_H_BALUSTRADE] = { "h_balustrade", m_h_balustrade, { 550, 160, 160 }, 1 },
+    [PMK_H_CANOPY_FLAT] = { "h_canopy_flat", m_h_canopy_flat, { 200, 160, 90 }, 1 },
+    [PMK_H_CANOPY_GABLE] = { "h_canopy_gable", m_h_canopy_gable, { 230, 200, 120 }, 1 },
+    [PMK_H_BAY_POST] = { "h_bay_post", m_h_bay_post, { 30, 30, 30 }, 1 },
+    [PMK_H_BAY_CORNICE] = { "h_bay_cornice", m_h_bay_cornice, { 260, 40, 20 }, 1 },
+    [PMK_H_BAY_APRON] = { "h_bay_apron", m_h_bay_apron, { 280, 80, 70 }, 1 },
+    [PMK_H_DORMER_GABLE] = { "h_dormer_gable", m_h_dormer_gable, { 1370, 700, 230 }, 1 },
+    [PMK_H_DORMER_HIP] = { "h_dormer_hip", m_h_dormer_hip, { 1400, 690, 240 }, 1 },
+    [PMK_H_DORMER_FLAT] = { "h_dormer_flat", m_h_dormer_flat, { 1400, 730, 240 }, 1 },
+    [PMK_H_POT_PLAIN] = { "h_pot_plain", m_h_pot_plain, { 430, 250, 60 }, 1 },
+    [PMK_H_POT_CANNON] = { "h_pot_cannon", m_h_pot_cannon, { 640, 380, 110 }, 1 },
+    [PMK_H_POT_CROWN] = { "h_pot_crown", m_h_pot_crown, { 510, 330, 70 }, 1 },
+    [PMK_H_POT_COWL] = { "h_pot_cowl", m_h_pot_cowl, { 520, 320, 140 }, 1 },
+    [PMK_H_STACK_CAP] = { "h_stack_cap", m_h_stack_cap, { 180, 60, 60 }, 1 },
+    [PMK_H_VENT_PIPE] = { "h_vent_pipe", m_h_vent_pipe, { 220, 130, 100 }, 1 },
+    [PMK_H_ROOFLIGHT] = { "h_rooflight", m_h_rooflight, { 240, 240, 80 }, 1 },
 };
 
 int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CUP) || (id >= PMK_ICON_SKEWER && id <= PMK_ICON_FLAME); }

@@ -156,7 +156,8 @@ void shadePixel() {
     else if (mat == MAT_ARCOLOGY)  col = shadeArcology(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_INDUSTRY)  col = shadeIndustry(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_PROP)      col = shadeProp(vLocal, vRel, n, vUV, vSeed, vParams);
-    else if (mat == MAT_KIT)       col = shadeKit(vLocal, vRel, n, vUV, vSeed, vParams, vLitter.x, vLitter.y, vLitter.z);
+    else if (mat == MAT_KIT)       col = kitIsHouse(vParams.y & 255u) ? shadeHouseKit(vLocal, vRel, n, vUV, vSeed, vParams, vLitter.x, vAux)   // HM4
+                                         : shadeKit(vLocal, vRel, n, vUV, vSeed, vParams, vLitter.x, vLitter.y, vLitter.z);
     else if (mat == MAT_HOUSE)     col = shadeHouse(vLocal, vRel, n, vUV, vSeed, vParams, vAux);
     else {
         // LED strip: steady or chasing

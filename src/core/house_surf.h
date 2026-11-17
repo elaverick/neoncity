@@ -82,6 +82,24 @@
 #define HG_CASEMENT  3    /* two casements and a top light */
 #define HG_GRID      4    /* a grid of small panes (craftsman, Japanese) */
 
+/* The character kit (HM4: src/gen/pmodel_house.c, materials PMAT_HTRIM on; shaders/city/house.glsl shadeHouseKit):
+ * what a house kit instance carries of its unit's finishes, so its parts take the shell's colours. In the
+ * instance's 16 flag bits (KitInst.flags, the fragment's params w): */
+#define HOUSE_KIT_TRIM      0     /* 3 bits: the trim's palette entry (H_TRIM) */
+#define HOUSE_KIT_DOOR      3     /* 4 bits: the door's (H_DOOR; shutters too) */
+#define HOUSE_KIT_BRICK     7     /* 3 bits: the brick's (H_BRICK) */
+#define HOUSE_KIT_OLD       10    /* 1 bit: old stock brick (HOUSE_COL_OLD) */
+#define HOUSE_KIT_STONE     11    /* 2 bits: the stone's (H_STONE) */
+#define HOUSE_KIT_RAIN      13    /* 2 bits: rainwater goods, HKR_* */
+/* ...and in its part byte (the fragment's params z): */
+#define HOUSE_KIT_ROOF      0     /* 4 bits: the roof's covering (HRM_*) */
+#define HOUSE_KIT_ROOFCOL   4     /* 3 bits: its colour */
+/* Rainwater goods */
+#define HKR_IRON     0    /* black painted cast iron */
+#define HKR_WHITE    1    /* white plastic */
+#define HKR_GREY     2    /* grey plastic */
+#define HKR_BROWN    3    /* brown plastic */
+
 /* The chunk record's bodies bit (ChunkGPU.bodies, src/core/common.h): the chunk's houses' near layer is drawn,
  * so the base layer's far shells give way (city.vert). The vendors' bodies keep bits 0-126 (VENDOR_BODIES_MAX). */
 #define CHUNK_HOMES_NEAR_BIT 127

@@ -1151,8 +1151,23 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM4, the character kit** (modules: eaves parts, porches, bays, dormers, frames, chimney pots; a board for
-  the user's sign-off before the commit).
+- **Next: HM5, the character grammar** (placement: style x affluence x upkeep picks a set a house, rows share it with
+  owners' variations; the kit's assemblies set down on the shells; a sign-off board). What the kit leaves it (HM4):
+  the shells' openings sized to the kit's (a bay's lights to `hk_bay`'s, a doorcase's door and its fanlight over
+  it), the shader's painted glazing bars off where a frame stands, the shell's stack cap left out under a
+  corbelled one, a dormer's opening in the roof (or none: its front stands on the slope), bargeboards proud of
+  the verge's own board, and `KitInst` records for the houses (their flags `HOUSE_KIT_*`, the unit's seed).
+- **The houses get no ray-traced lamp shadows or sky trace** (found at HM4): `prepass.frag` leaves `MAT_HOUSE` out
+  of `PG_SKY`/`PG_LIT`, and the houses' kit (`PMAT_HTRIM` on) out with it, so both light alike. Put the shells in
+  and the far shell's roofs (in the TLAS while the near layer is drawn) cover the near decks: flat roofs turn black
+  and the houses darken under them, at +0.35 ms from the air (shadow rays 0.50 to 0.70 ms, the filter 0.40 to 0.56).
+  Take the far shell out of the TLAS where the near layer stands (a second, near-only BLAS, or the near shell's
+  own), then flag both.
+- **The kit's L0 has no support loops** (HM4, `quiet` in `pmodel_house.c`): baked occlusion and wear smear across a
+  part's faces. Fine for parts seen from the street (the house shader barely uses wear); add loops to the few
+  that look flat close up.
+- **Dormers are built for 30-degree roofs** and bury their backs in steeper ones; a ranch's 18-25 degree roof
+  would show the back. No style puts a dormer on one yet (HM5: keep it so, or a shallow variant).
 - **The houses' grime is a stand-in for upkeep** (HM3b): the rain's runs and splashback on the walls take an amount
   each unit draws from its seed (`shadeHouse`). HM6 sets it from the upkeep spread (kept, tired, run-down), and gives
   run-down sheet roofs rust (CorrugatedSteel007B was looked at and left for that).

@@ -34,6 +34,7 @@ build/city_test --home         # the residential slice (docs/residential-target.
 build/city_test --slice lane   # a view down the nearest market lane: the vendors' worst view (NeonCity --kit all for the kit's cost)
 build/city_test --slice bars 332.6 1182.58 all   # every site a bar fits made one (NeonCity --bars all; its trades chosen as any bar's): the densest 30 m row, its views, its chunks' build times
 build/pmodel_lab out           # the procedural modelling kit: determinism, closure, normals, budgets per level; lit contact sheets
+build/pmodel_lab out --only house   # the houses' character kit alone (HM4): its modules' sheets and the vignettes, their instances
 build/model_pack in.glb name --height 1 --preview p.png  # a .glb into a model (see Models)
 build/world_test --map world.ppm         # the settlements and roads over the planet (--chart out.ppm: the world chart within 5400 km; --local out.ppm km [x z]: round a point, with the bake's rivers and lakes and the roads' bridges; --earth <bake> first: on the Earth)
 cmake --build build --target earth       # stages data/earth and bakes build/earth.bake, the planet's real ground (data/earth/SOURCE.md)
@@ -469,6 +470,30 @@ houses' bodies, enclosed porches and porches' posts; the grass keeps clear of th
 off|far|near` leaves them out, or the near layer, to measure them. `home_lab` builds both shells of 2,600 rows an
 archetype: none with a bad face (not finite, off its plots, wound wrong), none different twice, no two faces
 z-fighting over 20 cm2, within the budgets (docs/residential-target.md, "Budgets").
+
+**Their character kit** (`src/gen/pmodel_house.c`, HM4; placed on the houses from HM5). The shells carry the
+massing; the depth a real house has comes from 70 modules of the procedural modelling kit (below), each at three
+levels and drawn instanced as the vendors' are: exposed rafter tails, craftsman knee braces, Victorian eaves
+brackets, scalloped and gothic bargeboards, finials; half-round and ogee gutters with their stop ends, swan necks
+(two reaches), downpipes, clips, shoes and hopper heads; plain and crested ridge tiles on their bedding; stone
+string courses, plinths, quoins, soldier courses, mock-Tudor timbers, hung tiles; stone, timber and concrete sills,
+stone and concrete lintels, keystones, segmental brick arches, hood moulds and craftsman casings; sash (two over
+two, horned), Georgian six over six, inter-war casement, craftsman grid, ranch picture and plastic replacement
+frames; louvred and panelled shutters, security grilles, window boxes; four-panel, six-panel, craftsman,
+half-glazed and plastic doors with their furniture, sunburst fanlights, doorcases flat or pedimented; turned,
+craftsman (tapered on a brick pier) and square porch posts, spandrels, balustrades; flat and gabled door canopies
+on brackets; bays' corner posts, cornices and aprons; gabled, hipped and flat dormers; four kinds of chimney pot, a
+corbelled stack cap with its flaunching, vent pipes and rooflights. Runs (gutters, courses, sills, ridges) are a
+metre long and stretched along their length by their instance, which keeps their sections true; frames and doors
+are built at a usual size and stretched to their opening; dormers are built for the shallowest roof (30 degrees)
+and bury their backs in a steeper one. The assemblies in `pmodel_house.h` (`hk_window`, `hk_door`, `hk_gutter`,
+`hk_downpipe`, `hk_bargeboards`, `hk_bay`, `hk_dormer`, `hk_chimney_top`...) set them down from a few figures.
+The kit has its own materials (`PMAT_HTRIM` on), shaded by the shells' code (`shadeHouseKit` in
+`shaders/city/house.glsl`): trim, roof coverings and hung tiles go through `shadeHouse` itself, stone, brick and
+cement take the shells' palettes and sets mapped in the world (a stretched run keeps its grain), and the colours are
+the unit's, carried in the instance (`HOUSE_KIT_*` in `house_surf.h`), so one module serves every house.
+`pmodel_lab out --only house` draws the modules' sheets and seven vignettes (a style's street side dressed over
+stand-in walls and roofs), counting their instances against the target's 150 a house.
 
 ### Office lobbies (`src/gen/interior.c`)
 The ground floors of office buildings with a lobby are real interiors, planned by the method in
@@ -1588,7 +1613,8 @@ NB2 draws its modules in the game, instanced (below); NB4 builds the bar's body 
   (lidded, and open on curry), a rice cooker; a ladle, a spider, a slotted spatula, a cleaver, S hooks and the
   utensil rail; 13 and 47 kg gas bottles, the extractor fan, the power panel, shelf brackets and the menu
   A-frame. Each has a triangle budget per level. `pm_place` puts one down: into an instance list
-  (`PmInstances`, for NB2) or built in place.
+  (`PmInstances`, for NB2) or built in place. The street food (SF1) and the houses' character kit (HM4,
+  `pmodel_house.c`: 70 modules, 45,000 triangles over their levels, no support loops) joined it since.
 - `pmodel_lab [out_dir] [--only NAME]` builds every module at every level, and every part, and checks them:
   the same mesh twice, closed modules watertight and the right way out, every vertex normal agreeing with its
   faces, each level within its budget, the library within 300,000 triangles over its levels (139,000 now).

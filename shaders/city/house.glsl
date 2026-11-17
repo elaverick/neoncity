@@ -161,7 +161,7 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
 
     if (surf == HF_ROOF) {
         alb = houseRoofColour(fin, col) * vary;
-        vec3 T = normalize(vec3(n.z, 0.0, -n.x)), B = normalize(cross(n, T));
+        vec3 T = abs(n.y) > 0.98 ? vec3(1.0, 0.0, 0.0) : normalize(vec3(n.z, 0.0, -n.x)), B = normalize(cross(n, T));   // (level: a kit dormer's cheek's top)
         if (dot(B, vec3(0.0, 1.0, 0.0)) < 0.0) B = -B;
         vec2 q = vec2(uv.x, -uv.y);
         int m = houseRoofSet(fin);
@@ -284,4 +284,78 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
 
     if ((aux & HOUSE_AUX_WINDOWS) != 0u && surf == HF_WALL) c = houseFarWindows(c, n, V, uv, fw, seed, aux);
     return c;
+}
+
+/* ======================================================================
+ * The character kit (residential roadmap HM4: src/gen/pmodel_house.c, its materials PMAT_HTRIM on in
+ * src/gen/pmodel.h), drawn instanced as MAT_KIT but shaded here, with the shells' own palettes and sets, so a
+ * sill, a soldier course or a dormer's cheek matches the walls and roof it stands on. Its colours come from the
+ * instance (house_surf.h HOUSE_KIT_*: the unit's trim, door, brick, stone, rainwater goods; the roof in its part
+ * byte). Runs of stone, brick and cement are stretched along their length by their instances, so their grain is
+ * mapped in the world, not along the module's own metres. occ: the module's baked occlusion; aux: its piece.
+ * ==================================================================== */
+const uint PMAT_HTRIM = 49u, PMAT_HDOOR = 50u, PMAT_HSTONE = 51u, PMAT_HBRICK = 52u, PMAT_HCLAY = 53u, PMAT_HTILE = 54u,
+           PMAT_HRAIN = 55u, PMAT_HLEAD = 56u, PMAT_HIRON = 57u, PMAT_HPLANT = 58u, PMAT_HGLASS = 59u, PMAT_HTIMBER = 60u,
+           PMAT_HUPVC = 61u, PMAT_HROOF = 62u, PMAT_HCEMENT = 63u;   // src/gen/pmodel.h
+bool kitIsHouse(uint m) { return m >= PMAT_HTRIM && m <= PMAT_HCEMENT; }
+vec3 shadeHouseKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ, uint aux) {
+    uint m = prm.y & 255u, fl = prm.w, part = prm.z;
+    uint trim = (fl >> HOUSE_KIT_TRIM) & 7u, door = (fl >> HOUSE_KIT_DOOR) & 15u, brick = (fl >> HOUSE_KIT_BRICK) & 7u;
+    uint stone = (fl >> HOUSE_KIT_STONE) & 3u, rain = (fl >> HOUSE_KIT_RAIN) & 3u;
+    uint roofFin = (part >> HOUSE_KIT_ROOF) & 15u, roofCol = (part >> HOUSE_KIT_ROOFCOL) & 7u;
+    bool old = ((fl >> HOUSE_KIT_OLD) & 1u) != 0u;
+    float ao = mix(0.4, 1.0, occ);
+    // the shells' own surfaces: trim, the roof's covering (a dormer's or a canopy's), hung clay tiles
+    if (m == PMAT_HTRIM)  return shadeHouse(p, rel, n, uv, seed, uvec4(MAT_HOUSE, HF_TRIM, 0u, trim), 0u) * ao;
+    if (m == PMAT_HROOF)  return shadeHouse(p, rel, n, uv, seed, uvec4(MAT_HOUSE, HF_ROOF, roofFin, roofCol), 0u) * ao;
+    if (m == PMAT_HTILE)  return shadeHouse(p, rel, n, uv, seed, uvec4(MAT_HOUSE, HF_ROOF, HRM_CLAY, roofFin == HRM_CLAY ? roofCol : 1u), 0u) * ao;
+
+    vec3 V = -normalize(rel);
+    gLocalHouse = p;
+    gHouseDist = length(rel);
+    float h = p.y - gBase;
+    float wet = WETNESS > 0.0 ? WETNESS * (1.0 - shelterAt(rel)) : 0.0;
+    uint key = hash_combine(seed, aux * 0x9E37u + m);
+    float vary = mix(0.9, 1.1, hf(key, 0x4B01u));
+    if (m == PMAT_HGLASS) {   // the kit's own glass (dormers, fanlights, a door's lights): the shells' glass
+        vec3 g = houseGlass(dot(n, V) < 0.0 ? -n : n, V, key, uv, vec2(1.0));
+        return g;
+    }
+    vec3 T, B, nn = n, spec;
+    vec2 q;
+    planarFrame(n, gWorld, T, B, q);
+    vec3 alb;
+    int set = -1;
+    float shin = 14.0, specK = 0.04, grainK = 1.0;
+    if (m == PMAT_HSTONE)       { alb = H_STONE[stone] * 1.04; set = PBR_FACADE_STONE; }
+    else if (m == PMAT_HBRICK)  { alb = houseWallColour(HW_BRICK, brick) * (old ? 0.85 : 1.0) * mix(0.85, 1.15, hf(key, 0x4B02u)); set = PBR_HOUSE_ROUGHCAST; grainK = 0.6; }
+    else if (m == PMAT_HCEMENT) { alb = vec3(0.34, 0.33, 0.31); set = PBR_CONCRETE; }
+    else if (m == PMAT_HCLAY) {   // terracotta pots and ridge tiles: red, buff or near brown, sooted
+        uint t = uint(hf(key, 0x4B03u) * 3.0);
+        alb = t == 0u ? vec3(0.40, 0.15, 0.07) : t == 1u ? vec3(0.46, 0.27, 0.13) : vec3(0.24, 0.11, 0.06);
+        alb *= mix(0.45, 1.0, vnoise(gWorld.xz * 3.0 + gWorld.y * 2.0, 0x4B04u));
+    }
+    else if (m == PMAT_HRAIN) {   // gutters and pipes: black cast iron, white, grey or brown plastic, grimed
+        alb = rain == HKR_IRON ? vec3(0.025) : rain == HKR_WHITE ? vec3(0.56, 0.56, 0.54) : rain == HKR_GREY ? vec3(0.20, 0.20, 0.21) : vec3(0.11, 0.065, 0.04);
+        alb *= mix(0.7, 1.0, vnoise(vec2(dot(gWorld.xz, vec2(0.7, 0.7)) * 2.0, gWorld.y * 0.6), 0x4B05u));
+        shin = 40.0; specK = 0.07;
+    }
+    else if (m == PMAT_HLEAD)   { alb = mix(vec3(0.17, 0.18, 0.19), vec3(0.36, 0.37, 0.36), smoothstep(0.55, 0.85, vnoise(gWorld.xz * 4.0 + gWorld.y, 0x4B06u))); shin = 20.0; specK = 0.06; }
+    else if (m == PMAT_HIRON)   { alb = vec3(0.022, 0.022, 0.024); shin = 30.0; specK = 0.06; set = PBR_KIT_PAINT; grainK = 0.3; }
+    else if (m == PMAT_HPLANT)  { alb = mix(vec3(0.03, 0.08, 0.02), vec3(0.09, 0.14, 0.04), hf(key, 0x4B07u)) * mix(0.6, 1.1, vnoise(gWorld.xz * 9.0 + gWorld.y * 7.0, 0x4B08u)); specK = 0.03; }
+    else if (m == PMAT_HTIMBER) { alb = vec3(0.04, 0.028, 0.02); set = PBR_VENDOR_PLANKS; grainK = 0.5; }
+    else if (m == PMAT_HUPVC)   { alb = vec3(0.60, 0.60, 0.57) * mix(0.9, 1.0, hf(seed, 0x4B09u)); shin = 40.0; specK = 0.06; }
+    else                        { alb = H_DOOR[door % 12u]; set = PBR_KIT_PAINT; grainK = 0.5; shin = 30.0; specK = 0.1; }   // PMAT_HDOOR
+    alb *= vary;
+    if (set >= 0 && pbrLoaded(set)) {
+        Grain g = pbrGrain(set, q, dFdx(q), dFdy(q), T, B, n);
+        alb *= mix(vec3(1.0), g.tint * g.ao, grainK);
+        nn = normalize(mix(n, g.n, grainK));
+    }
+    // the city's grime: in the module's corners and down what faces up, more on the stone and brick
+    alb *= mix(0.75, 1.0, occ) * mix(0.85, 1.0, smoothstep(0.0, 1.2, h));
+    alb *= mix(1.0, 0.75, wet);
+    shin = mix(shin, 60.0, wet); specK = mix(specK, 0.3, wet);
+    vec3 diff = wallLighting(p, nn, V, shin, specK, h, spec);
+    return alb * diff * ao + spec;
 }

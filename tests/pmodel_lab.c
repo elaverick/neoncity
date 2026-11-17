@@ -26,6 +26,7 @@
  *   pmodel_lab [out_dir] [--only NAME]   (NAME body: the noodle bar's bodies and lines; line: the lines) */
 #include "pmodel.h"
 #include "noodle_bar.h"
+#include "pmodel_house.h"
 #include "hash.h"
 #include "mathlib.h"
 #include <stdio.h>
@@ -190,7 +191,16 @@ static const uint32_t MAT_RGB[PMAT_COUNT] = {
     0xF2EFE6, 0x9A1A0A, 0xE8A0A0, 0x5E4A40, 0x6A6E72, 0xA8AAAC,
     0xF4F8FF, 0xFF3060, 0x4080FF, 0xFFD090, 0xC04080,     /* NB6: tube, neon, flame, bulb, the far icon face */
     0x6A2E14, 0xE6DCC4, 0xC89050, 0xD49A30, 0x8A5A10, 0x4A2410, 0x3A7A20, 0xA02010, 0x1E1C1A, 0xFF7020, 0xFF6418,   /* SF1's food, grit, embers */
-    0x7FA0A8, 0xFFC888 };   /* SF2: glazing, the far window */
+    0x7FA0A8, 0xFFC888,     /* SF2: glazing, the far window */
+    0x8A9092,               /* SF4: the shutter */
+    /* HM4, the houses' kit: trim, door, stone, brick, clay, hung tile, rainwater, lead, iron, plant, glass, timber,
+     * plastic, the roof (slate here), cement */
+    0xD6D0C2, 0x1F4A33, 0xB5A88C, 0x8C4A32, 0xA4542F, 0x9A4A30, 0x1E1F20, 0x6B7275, 0x1A1A1C, 0x3E6B2C, 0x2B3A40,
+    0x2E241D, 0xEEEEEA, 0x464C55, 0x9A978F };
+/* The house vignettes' stand-ins for the shells' surfaces (a part number from LAB_STANDIN: drawn flat in these) */
+#define LAB_STANDIN 250
+static const uint32_t STANDIN_RGB[6] = { 0xC9BFA6, 0x7D8A80, 0x40454C, 0x8E3F2A, 0x7A4030, 0x5A5550 };   /* render, siding, slate, clay roof, brick, dark */
+static float g_az = 0.65f, g_el = 0.42f;   /* the view (the vignettes turn it to the street) */
 
 /* A 5 x 7 font: digits, letters, underscore, point. */
 static const uint8_t *glyph(char c) {
@@ -238,7 +248,7 @@ enum { SHOW_LIT = 0, SHOW_OCC, SHOW_WEAR };
 static void render(Image *im, const PmMesh *m, int cx, int cy, int cw, int ch, int show) {
     if (!m->ni) return;
     const int SS = 2, W = cw * SS, H = ch * SS;
-    float az = 0.65f, el = 0.42f;
+    float az = g_az, el = g_el;
     float ez[3] = { sinf(az) * cosf(el), sinf(el), cosf(az) * cosf(el) };   /* to the viewer */
     float ex[3] = { cosf(az), 0.0f, -sinf(az) };
     float ey[3] = { ez[1] * ex[2] - ez[2] * ex[1], ez[2] * ex[0] - ez[0] * ex[2], ez[0] * ex[1] - ez[1] * ex[0] };
@@ -333,8 +343,9 @@ static void render(Image *im, const PmMesh *m, int cx, int cy, int cw, int ch, i
                         } else {
                             float base[3];
                             hex_lin(MAT_RGB[v0->mat < PMAT_COUNT ? v0->mat : 0], base);
+                            if (v0->part >= LAB_STANDIN && v0->part < LAB_STANDIN + 6) hex_lin(STANDIN_RGB[v0->part - LAB_STANDIN], base);
                             /* per-part variation and the 10 cm checker */
-                            float pv = 0.9f + 0.2f * hash_float(hash_u32(v0->part * 7919u + 13u));
+                            float pv = v0->part >= LAB_STANDIN ? 1.0f : 0.9f + 0.2f * hash_float(hash_u32(v0->part * 7919u + 13u));
                             int chk = ((int)floorf(uv[0] / 0.1f) + (int)floorf(uv[1] / 0.1f)) & 1;
                             float k = pv * (chk ? 1.06f : 0.94f);
                             float w = (wear - 0.5f) * 2.0f;
@@ -695,12 +706,367 @@ static void sheet_row(Image *im, int row, const char *name, PmMesh lods[PM_LODS]
     text(im, 4 * CW + 6, y + CH - 14, "wear", 1);
 }
 
+/* ------------------------------------------------ the houses' kit (HM4) --- */
+/* Vignettes: the kit's assemblies (pmodel_house.h) dressing stand-ins for the house shells (walls with their
+ * openings, roofs, stacks, drawn flat in LAB_STANDIN colours), each the street side of a style, so the board
+ * shows what the kit adds to a house. Each is built twice: its modules as instances (counted against the
+ * target's 150 instances a house within 60 m, and their triangles at each level) and built in (drawn). */
+enum { SI_RENDER = LAB_STANDIN, SI_SIDING, SI_SLATE, SI_CLAY, SI_BRICK, SI_DARK };
+static void si(Pm *pm, int part) { pm_mat(pm, PMAT_HCEMENT); pm->part = (uint8_t)part; }
+static void si_end(Pm *pm) { pm->part = 0; }
+/* a wall in the xy plane from (x0, y0) w by h, its face at z 0 (t behind), less openings o (x0, y0, x1, y1 in
+ * the wall's own frame), each with dark glass `reveal` behind the face */
+static void si_wall(Pm *pm, int part, float x0, float y0, float w, float h, float t, const float (*o)[4], int n, float reveal) {
+    float xs[64], ys[64];
+    int nx = 0, ny = 0;
+    xs[nx++] = x0; xs[nx++] = x0 + w; ys[ny++] = y0; ys[ny++] = y0 + h;
+    for (int k = 0; k < n; ++k) { xs[nx++] = o[k][0]; xs[nx++] = o[k][2]; ys[ny++] = o[k][1]; ys[ny++] = o[k][3]; }
+    for (int i = 0; i < nx; ++i) for (int j = i + 1; j < nx; ++j) if (xs[j] < xs[i]) { float q = xs[i]; xs[i] = xs[j]; xs[j] = q; }
+    for (int i = 0; i < ny; ++i) for (int j = i + 1; j < ny; ++j) if (ys[j] < ys[i]) { float q = ys[i]; ys[i] = ys[j]; ys[j] = q; }
+    si(pm, part);
+    for (int i = 0; i + 1 < nx; ++i)
+        for (int j = 0; j + 1 < ny; ++j) {
+            const float a = xs[i], b = xs[i + 1], c = ys[j], d = ys[j + 1];
+            if (b - a < 1e-4f || d - c < 1e-4f || a < x0 - 1e-4f || b > x0 + w + 1e-4f || c < y0 - 1e-4f || d > y0 + h + 1e-4f) continue;
+            const float mx = 0.5f * (a + b), my = 0.5f * (c + d);
+            int hole = 0;
+            for (int k = 0; k < n; ++k) if (mx > o[k][0] && mx < o[k][2] && my > o[k][1] && my < o[k][3]) hole = 1;
+            if (!hole) pm_box(pm, a, c, -t, b, d, 0.0f);
+        }
+    si_end(pm);
+    pm_mat(pm, PMAT_HGLASS);
+    for (int k = 0; k < n; ++k) pm_box(pm, o[k][0], o[k][1], -reveal - 0.03f, o[k][2], o[k][3], -reveal);
+}
+/* a box stand-in */
+static void si_box(Pm *pm, int part, float x0, float y0, float z0, float x1, float y1, float z1) { si(pm, part); pm_box(pm, x0, y0, z0, x1, y1, z1); si_end(pm); }
+/* a gabled roof over x0..x1 (its ridge along x): the front eaves at (y, zf), depth back to the rear eaves, pitch
+ * degrees, slabs t thick; returns the ridge's top (y, z) */
+static void si_roof(Pm *pm, int part, float x0, float x1, float y, float zf, float depth, float pitch, float t, float *ry, float *rz) {
+    const float a = pitch * PI_F / 180.0f, run = 0.5f * depth / cosf(a);
+    si(pm, part);
+    pm_push(pm); pm_translate(pm, x0, y, zf); pm_rotate_x(pm, a); pm_box(pm, 0.0f, 0.0f, -run, x1 - x0, t, 0.0f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, x0, y, zf - depth); pm_rotate_x(pm, -a); pm_box(pm, 0.0f, 0.0f, 0.0f, x1 - x0, t, run); pm_pop(pm);
+    si_end(pm);
+    *ry = y + t * cosf(a) + run * sinf(a);
+    *rz = zf - 0.5f * depth + t * sinf(a) * 0.0f;
+}
+/* a point on a roof plane rising from the eaves (y, zf) at pitch: s metres up the slope, on its top (t thick) */
+static void slope_pt(float y, float zf, float pitch, float t, float s, float *py, float *pz) {
+    const float a = pitch * PI_F / 180.0f;
+    *py = y + t * cosf(a) + s * sinf(a);
+    *pz = zf + t * sinf(a) - s * cosf(a);
+}
+
+/* 1. Victorian terraced: brick, a two-storey canted bay, sashes, stone dressings, a hood mould, a hopper. */
+static void vig_victorian(Pm *pm) {
+    const float W = 5.0f, pl = 0.3f, sh = 2.9f, eaves = 6.0f;
+    const float o[3][4] = { { 3.45f, pl, 4.35f, pl + 2.15f }, { 3.45f, pl + sh + 0.8f, 4.35f, pl + sh + 2.4f }, { 0.4f, 0.0f, 0.401f, 0.001f } };
+    si_wall(pm, SI_BRICK, 0.0f, 0.0f, W, eaves, 0.3f, o, 2, 0.14f);
+    si_box(pm, SI_DARK, 3.45f, 0.0f, -0.6f, 4.35f, pl, 0.0f);   /* the step into the recess */
+    /* the bay's walls */
+    HkBay b = { HK_BAY_CANTED, 2, HK_FRAME_SASH, HK_SILL_STONE, 1.3f, 0.75f, sh, 0.8f, 2.4f };
+    const float bx0 = 1.6f, F = b.front, P = b.proj;
+    const float c[4][2] = { { -0.5f * F - P, 0 }, { -0.5f * F, P }, { 0.5f * F, P }, { 0.5f * F + P, 0 } };
+    for (int f = 0; f < 3; ++f) {
+        const float dx = c[f + 1][0] - c[f][0], dz = c[f + 1][1] - c[f][1], len = sqrtf(dx * dx + dz * dz), light = len - 0.13f;
+        const float ex[3] = { dx / len, 0, dz / len }, ey[3] = { 0, 1, 0 }, ez[3] = { -dz / len, 0, dx / len };
+        const float org[3] = { bx0 + 0.5f * (c[f][0] + c[f + 1][0]), 0.0f, 0.5f * (c[f][1] + c[f + 1][1]) };
+        pm_push(pm); pm_frame(pm, org, ex, ey, ez);
+        float oo[2][4];
+        for (int s = 0; s < 2; ++s) { oo[s][0] = -0.5f * light; oo[s][2] = 0.5f * light; oo[s][1] = pl + sh * (float)s + b.sillH; oo[s][3] = pl + sh * (float)s + b.headH; }
+        si_wall(pm, SI_BRICK, -0.5f * len, 0.0f, len, eaves - 0.25f, 0.25f, (const float (*)[4])oo, 2, 0.08f);
+        pm_pop(pm);
+    }
+    si_box(pm, SI_DARK, bx0 - 0.5f * F - P - 0.05f, eaves - 0.25f, 0.0f, bx0 + 0.5f * F + P + 0.05f, eaves - 0.17f, P + 0.08f);
+    pm_push(pm); pm_translate(pm, bx0, pl, 0.0f); hk_bay(pm, &b); pm_pop(pm);
+    /* the door with a fanlight, the window over it with its hood mould */
+    pm_push(pm); pm_translate(pm, 3.9f, pl, 0.0f); hk_door(pm, HK_DOOR_4P, HK_CASE_NONE, 0.9f, 2.15f, 0.14f); pm_pop(pm);
+    HkWindow w = { HK_FRAME_SASH, HK_SILL_STONE, HK_HEAD_HOOD, 0, 0, 0, 0.9f, 1.6f, 0.14f };
+    pm_push(pm); pm_translate(pm, 3.9f, pl + sh + 0.8f, 0.0f); hk_window(pm, &w); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.0f, pl + sh - 0.1f, 0.0f); hk_run(pm, PMK_H_STRING_COURSE, W, 0.0f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.0f, 0.0f, 0.0f); hk_run(pm, PMK_H_PLINTH, W, 0.0f); pm_pop(pm);
+    /* eaves: brackets under a shallow soffit, a fascia, the ogee gutter */
+    si_box(pm, SI_DARK, 0.0f, eaves - 0.02f, 0.0f, W, eaves, 0.3f);
+    for (int k = 0; k < 4; ++k) { pm_push(pm); pm_translate(pm, 3.0f + 0.65f * (float)k, eaves - 0.02f, 0.0f); pm_place(pm, PMK_H_EAVES_BRACKET); pm_pop(pm); }
+    pm_mat(pm, PMAT_HTRIM); pm_box(pm, 0.0f, eaves - 0.18f, 0.28f, W, eaves + 0.05f, 0.31f);
+    pm_push(pm); pm_translate(pm, 0.0f, eaves - 0.02f, 0.31f); hk_gutter(pm, HK_GUTTER_OGEE, W, 1); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, W - 0.12f, 0.0f, 0.0f); hk_downpipe(pm, eaves - 0.12f, 0.31f + HK_GUTTER_Z, 1); pm_pop(pm);
+    float ry, rz;
+    si_roof(pm, SI_SLATE, 0.0f, W, eaves + 0.05f, 0.33f, 6.6f, 40.0f, 0.12f, &ry, &rz);
+    pm_push(pm); pm_translate(pm, 0.0f, ry, rz); hk_ridge(pm, 1, W); pm_pop(pm);
+    si_box(pm, SI_BRICK, W - 0.55f, ry - 1.5f, rz - 0.3f, W + 0.45f, ry + 1.2f, rz + 0.3f);
+    pm_push(pm); pm_translate(pm, W - 0.05f, ry + 1.2f, rz); hk_chimney_top(pm, 1.0f, 0.6f, 4, 7u); pm_pop(pm);
+}
+
+/* 2. Georgian: three storeys of brick over a stone plinth, six over six sashes under lintels and keystones, quoins,
+ * a string course, a pedimented doorcase, a cornice under the parapet. */
+static void vig_georgian(Pm *pm) {
+    const float W = 6.5f, pl = 0.45f, sh = 3.0f, top = 9.6f;
+    const float xs[3] = { 1.2f, 3.25f, 5.3f };
+    const float sill[3] = { 0.75f, 0.6f, 0.6f }, hgt[3] = { 1.8f, 2.0f, 1.4f };
+    float o[9][4];
+    int n = 0;
+    for (int f = 0; f < 3; ++f)
+        for (int k = 0; k < 3; ++k) {
+            if (f == 0 && k == 2) { o[n][0] = 4.8f; o[n][1] = pl; o[n][2] = 5.8f; o[n][3] = pl + 2.1f; n++; continue; }
+            o[n][0] = xs[k] - 0.475f; o[n][2] = xs[k] + 0.475f; o[n][1] = pl + sh * (float)f + sill[f]; o[n][3] = o[n][1] + hgt[f]; n++;
+        }
+    si_wall(pm, SI_BRICK, 0.0f, 0.0f, W, top, 0.3f, (const float (*)[4])o, n, 0.14f);
+    for (int f = 0; f < 3; ++f)
+        for (int k = 0; k < 3; ++k) {
+            if (f == 0 && k == 2) continue;
+            HkWindow w = { HK_FRAME_GEORGIAN, HK_SILL_STONE, f == 2 ? HK_HEAD_LINTEL : HK_HEAD_KEYSTONE, 0, 0, 0, 0.95f, hgt[f], 0.14f };
+            pm_push(pm); pm_translate(pm, xs[k], pl + sh * (float)f + sill[f], 0.0f); hk_window(pm, &w); pm_pop(pm);
+        }
+    si_box(pm, SI_DARK, 4.7f, 0.0f, 0.0f, 5.9f, 0.15f, 0.35f);
+    si_box(pm, SI_DARK, 4.75f, 0.15f, 0.0f, 5.85f, 0.3f, 0.2f);
+    pm_push(pm); pm_translate(pm, 5.3f, pl, 0.0f); hk_door(pm, HK_DOOR_6P, HK_CASE_PEDIMENT, 1.0f, 2.1f, 0.14f); pm_pop(pm);
+    hk_run(pm, PMK_H_PLINTH, W, 0.0f);
+    pm_push(pm); pm_translate(pm, 0.0f, pl + sh - 0.12f, 0.0f); hk_run(pm, PMK_H_STRING_COURSE, W, 0.0f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.0f, top - 0.75f, 0.0f); hk_run(pm, PMK_H_BAY_CORNICE, W, 1.0f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, W, 0.45f, 0.0f); hk_quoins(pm, top - 1.3f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.0f, 0.45f, 0.0f); pm_rotate_y(pm, -0.5f * PI_F); hk_quoins(pm, top - 1.3f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.15f, 0.0f, 0.0f); hk_downpipe(pm, top - 0.4f, 0.1f, 1); pm_pop(pm);
+}
+
+/* 3. Craftsman bungalow: siding, a front gable on knee braces, exposed rafter tails along the side, a porch on
+ * tapered columns over brick piers, grid windows in casings, the craftsman door. */
+static void vig_craftsman(Pm *pm) {
+    const float W = 8.0f, deck = 0.6f, wall = 3.2f, pitch = 30.0f, tp = tanf(pitch * PI_F / 180.0f), ov = 0.6f;
+    const float o[3][4] = { { 1.85f, deck, 2.75f, deck + 2.05f }, { 5.0f, deck + 0.9f, 6.0f, deck + 2.3f }, { 6.6f, deck + 0.9f, 7.6f, deck + 2.3f } };
+    si_wall(pm, SI_SIDING, 0.0f, 0.0f, W, wall, 0.25f, o, 3, 0.10f);
+    {   /* the gable's triangle */
+        si(pm, SI_SIDING);
+        const float tri[3][2] = { { 0.0f, wall }, { W, wall }, { 0.5f * W, wall + 0.5f * W * tp } };
+        pm_extrude(pm, tri, 3, -0.25f, 0.0f);
+        si_end(pm);
+    }
+    /* the roof: two slopes, the ridge along z, the verges 0.6 m out over the gable */
+    si(pm, SI_DARK);
+    for (int s = 0; s < 2; ++s) {
+        const float a = pitch * PI_F / 180.0f, run = (0.5f * W + ov) / cosf(a);
+        pm_push(pm);
+        pm_translate(pm, 0.5f * W, wall + 0.5f * W * tp + 0.05f, 0.0f);
+        pm_rotate_z(pm, s ? -a : a);
+        if (s) pm_box(pm, 0.0f, 0.0f, -9.0f, run, 0.15f, ov); else pm_box(pm, -run, 0.0f, -9.0f, 0.0f, 0.15f, ov);
+        pm_pop(pm);
+    }
+    si_end(pm);
+    /* knee braces under the verges, a plain bargeboard (the shell's verge) */
+    const float bxs[3] = { 0.5f, 0.5f * W, W - 0.5f };
+    for (int k = 0; k < 3; ++k) {
+        const float y = wall + (0.5f * W - fabsf(bxs[k] - 0.5f * W)) * tp + 0.05f;
+        pm_push(pm); pm_translate(pm, bxs[k], y - 0.05f, 0.0f); pm_scale(pm, 1.0f, 1.0f, ov / 0.75f); pm_place(pm, PMK_H_KNEE_BRACE); pm_pop(pm);
+    }
+    /* rafter tails along the right side's eaves */
+    pm_push(pm); pm_translate(pm, W, wall, 0.0f); pm_rotate_y(pm, 0.5f * PI_F); hk_rafter_tails(pm, 8.0f, 0.6f, pitch, ov); pm_pop(pm);
+    si_box(pm, SI_SIDING, W - 0.25f, 0.0f, -8.0f, W, wall, 0.0f);
+    /* the porch: a deck, piers and columns, a beam, a shed roof back to the wall */
+    si_box(pm, SI_DARK, 0.2f, 0.0f, 0.0f, 4.6f, deck, 2.6f);
+    for (int k = 0; k < 2; ++k) { pm_push(pm); pm_translate(pm, k ? 4.25f : 0.55f, 0.0f, 2.25f); pm_scale(pm, 1.0f, 2.7f / HK_POST_H, 1.0f); pm_place(pm, PMK_H_POST_CRAFT); pm_pop(pm); }
+    pm_mat(pm, PMAT_HTRIM); pm_box(pm, 0.25f, 2.7f, 2.1f, 4.55f, 3.0f, 2.4f);
+    {
+        si(pm, SI_DARK);
+        const float a = atan2f(0.45f, 2.6f);
+        pm_push(pm); pm_translate(pm, 0.1f, 3.0f, 2.75f); pm_rotate_x(pm, a); pm_box(pm, 0.0f, 0.0f, -2.9f, 4.6f, 0.12f, 0.0f); pm_pop(pm);
+        si_end(pm);
+    }
+    pm_push(pm); pm_translate(pm, 0.55f, deck, 2.25f); hk_balustrade(pm, 1.0f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 2.3f, deck, 0.0f); hk_door(pm, HK_DOOR_CRAFT, HK_CASE_NONE, 0.9f, 2.05f, 0.1f); pm_pop(pm);
+    for (int k = 0; k < 2; ++k) {
+        HkWindow w = { HK_FRAME_GRID, HK_SILL_TIMBER, HK_HEAD_CASING, 0, 0, 0, 1.0f, 1.4f, 0.10f };
+        pm_push(pm); pm_translate(pm, k ? 7.1f : 5.5f, deck + 0.9f, 0.0f); hk_window(pm, &w); pm_pop(pm);
+    }
+}
+
+/* 4. Inter-war semi: render over brick, a square bay under a half-timbered gable with scalloped bargeboards,
+ * casements, a tile-hung band, a gabled door canopy, a half-glazed door, the half-round gutter. */
+static void vig_interwar(Pm *pm) {
+    const float W = 5.5f, pl = 0.25f, sh = 2.75f, eaves = 5.7f, pitch = 45.0f;
+    const float o[3][4] = { { 3.9f, pl, 4.8f, pl + 2.05f }, { 3.75f, pl + sh + 0.8f, 4.95f, pl + sh + 1.8f }, { 0, 0, 0, 0 } };
+    si_wall(pm, SI_BRICK, 0.0f, 0.0f, W, pl + sh, 0.25f, o, 1, 0.1f);
+    si_wall(pm, SI_RENDER, 0.0f, pl + sh, W, eaves - pl - sh, 0.25f, o + 1, 1, 0.1f);
+    /* the square bay */
+    HkBay b = { HK_BAY_SQUARE, 2, HK_FRAME_CASEMENT, HK_SILL_TIMBER, 2.4f, 0.6f, sh, 0.85f, 2.2f };
+    const float bc = 1.6f;
+    for (int s = 0; s < 2; ++s) {
+        float oo[1][4] = { { bc - 1.2f + 0.065f, pl + sh * (float)s + b.sillH, bc + 1.2f - 0.065f, pl + sh * (float)s + b.headH } };
+        pm_push(pm); pm_translate(pm, 0.0f, 0.0f, b.proj);
+        si_wall(pm, s ? SI_RENDER : SI_BRICK, bc - 1.2f, pl + sh * (float)s - (s ? 0.0f : pl), 2.4f, s ? eaves - pl - sh : pl + sh, 0.6f, (const float (*)[4])oo, 1, 0.08f);
+        pm_pop(pm);
+    }
+    pm_push(pm); pm_translate(pm, bc, pl, 0.0f); hk_bay(pm, &b); pm_pop(pm);
+    /* the gable over the bay: render, half-timbered, bargeboards, a finial */
+    const float half = 1.45f, tp = tanf(pitch * PI_F / 180.0f);
+    {
+        si(pm, SI_RENDER);
+        const float tri[3][2] = { { bc - half, eaves }, { bc + half, eaves }, { bc, eaves + half * tp } };
+        pm_push(pm); pm_translate(pm, 0.0f, 0.0f, b.proj); pm_extrude(pm, tri, 3, -0.6f, 0.0f); pm_pop(pm);
+        si_end(pm);
+        si(pm, SI_CLAY);
+        for (int s = 0; s < 2; ++s) {
+            const float a = pitch * PI_F / 180.0f, run = (half + 0.25f) / cosf(a);
+            pm_push(pm); pm_translate(pm, bc, eaves + half * tp + 0.03f, 0.0f); pm_rotate_z(pm, s ? -a : a);
+            if (s) pm_box(pm, 0.0f, 0.0f, -3.0f, run, 0.1f, b.proj + 0.25f); else pm_box(pm, -run, 0.0f, -3.0f, 0.0f, 0.1f, b.proj + 0.25f);
+            pm_pop(pm);
+        }
+        si_end(pm);
+    }
+    pm_push(pm); pm_translate(pm, bc, eaves, b.proj); hk_tudor_gable(pm, half, pitch, 0.45f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, bc, eaves + half * tp + 0.02f, b.proj + 0.27f); hk_bargeboards(pm, HK_BARGE_SCALLOP, half + 0.25f, pitch, 1); pm_pop(pm);
+    /* the tile-hung band between the storeys on the right, the casement over it */
+    pm_push(pm); pm_translate(pm, 3.3f, pl + 2.35f, 0.0f); hk_hung_tiles(pm, 2.2f, 1.1f); pm_pop(pm);
+    HkWindow w = { HK_FRAME_CASEMENT, HK_SILL_TIMBER, HK_HEAD_NONE, 0, 0, 0, 1.2f, 1.0f, 0.1f };
+    pm_push(pm); pm_translate(pm, 4.35f, pl + sh + 0.8f, 0.0f); hk_window(pm, &w); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 4.35f, pl, 0.0f); hk_door(pm, HK_DOOR_HALF, HK_CASE_NONE, 0.9f, 2.05f, 0.1f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 4.35f, pl + 2.25f, 0.0f); pm_place(pm, PMK_H_CANOPY_GABLE); pm_pop(pm);
+    /* the main roof, its eaves and gutter */
+    pm_mat(pm, PMAT_HTRIM); pm_box(pm, 2.9f, eaves - 0.2f, 0.25f, W, eaves + 0.02f, 0.28f);
+    pm_push(pm); pm_translate(pm, 2.9f, eaves, 0.28f); hk_gutter(pm, HK_GUTTER_HALF, W - 2.9f, 1); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, W - 0.12f, 0.0f, 0.0f); hk_downpipe(pm, eaves - 0.1f, 0.28f + HK_GUTTER_Z, 0); pm_pop(pm);
+    float ry, rz;
+    si_roof(pm, SI_CLAY, 0.0f, W, eaves + 0.02f, 0.3f, 7.0f, 40.0f, 0.12f, &ry, &rz);
+    pm_push(pm); pm_translate(pm, 0.0f, ry, rz); hk_ridge(pm, 0, W); pm_pop(pm);
+}
+
+/* 5. The roofscape: a slate roof with a gable verge (gothic bargeboards, a finial), the three dormers, a rooflight,
+ * a vent pipe, ridge tiles, a stack with its cap and each kind of pot, the ogee gutter and a swan neck. */
+static void vig_roofscape(Pm *pm) {
+    const float W = 7.0f, eaves = 3.0f, pitch = 45.0f, t = 0.12f, depth = 7.0f;
+    si_wall(pm, SI_BRICK, 0.0f, 0.0f, W, eaves, 0.3f, NULL, 0, 0.1f);
+    float ry, rz;
+    si_roof(pm, SI_SLATE, -0.3f, W, eaves, 0.3f, depth, pitch, t, &ry, &rz);
+    {   /* the gable end's wall */
+        si(pm, SI_BRICK);
+        const float h = 0.5f * depth * tanf(pitch * PI_F / 180.0f);
+        const float tri[3][2] = { { 0.3f, eaves }, { 0.3f - depth, eaves }, { 0.3f - 0.5f * depth, eaves + h - 0.1f } };
+        pm_push(pm); pm_rotate_y(pm, -0.5f * PI_F);   /* its plane x 0, facing -x: the triangle's x along +z */
+        pm_extrude(pm, tri, 3, -0.3f, 0.0f);
+        pm_pop(pm);
+        si_end(pm);
+        si_box(pm, SI_BRICK, -0.0f, 0.0f, 0.3f - depth, 0.3f, eaves, 0.0f);
+    }
+    pm_push(pm); pm_translate(pm, -0.33f, ry - 0.06f, rz); pm_rotate_y(pm, -0.5f * PI_F); hk_bargeboards(pm, HK_BARGE_GOTHIC, 0.5f * depth + 0.3f, pitch, 1); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, -0.3f, ry, rz); hk_ridge(pm, 0, W + 0.3f); pm_pop(pm);
+    const int kinds[3] = { HK_DORMER_GABLE, HK_DORMER_HIP, HK_DORMER_FLAT };
+    for (int k = 0; k < 3; ++k) {
+        float py, pz;
+        slope_pt(eaves, 0.3f, pitch, t, 1.1f, &py, &pz);
+        pm_push(pm); pm_translate(pm, 1.3f + 1.95f * (float)k, py, pz); hk_dormer(pm, kinds[k], k == 2 ? 2.0f : 1.6f); pm_pop(pm);
+    }
+    {
+        float py, pz;
+        slope_pt(eaves, 0.3f, pitch, t, 3.4f, &py, &pz);
+        pm_push(pm); pm_translate(pm, 2.3f, py, pz); pm_rotate_x(pm, pitch * PI_F / 180.0f); pm_place(pm, PMK_H_ROOFLIGHT); pm_pop(pm);
+        slope_pt(eaves, 0.3f, pitch, t, 3.0f, &py, &pz);
+        pm_push(pm); pm_translate(pm, 5.6f, py, pz); pm_place(pm, PMK_H_VENT_PIPE); pm_pop(pm);
+    }
+    /* the stack on the ridge, its cap and four pots, one of each */
+    si_box(pm, SI_BRICK, 3.9f, ry - 1.2f, rz - 0.3f, 5.1f, ry + 1.1f, rz + 0.3f);
+    pm_push(pm); pm_translate(pm, 4.5f, ry + 1.1f, rz); pm_scale(pm, 1.2f, 1.0f, 0.6f / HK_STACK_D); pm_place(pm, PMK_H_STACK_CAP); pm_pop(pm);
+    const int pots[4] = { PMK_H_POT_PLAIN, PMK_H_POT_CANNON, PMK_H_POT_CROWN, PMK_H_POT_COWL };
+    for (int k = 0; k < 4; ++k) { pm_push(pm); pm_translate(pm, 4.5f - 0.45f + 0.3f * (float)k, ry + 1.14f, rz); pm_place(pm, pots[k]); pm_pop(pm); }
+    pm_mat(pm, PMAT_HTRIM); pm_box(pm, -0.3f, eaves - 0.18f, 0.28f, W, eaves + 0.02f, 0.31f);
+    pm_push(pm); pm_translate(pm, -0.3f, eaves - 0.02f, 0.31f); hk_gutter(pm, HK_GUTTER_OGEE, W + 0.3f, 1); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 6.5f, 0.0f, 0.0f); hk_downpipe(pm, eaves - 0.1f, 0.31f + HK_GUTTER_Z, 0); pm_pop(pm);
+}
+
+/* 6. Post-war, run-down: render, plastic replacement windows and door, concrete sills and lintels, a flat canopy, a
+ * grille over a ground-floor window, grey plastic rainwater goods. */
+static void vig_postwar(Pm *pm) {
+    const float W = 6.0f, pl = 0.15f, sh = 2.6f, eaves = 5.4f;
+    const float o[5][4] = { { 0.7f, pl + 0.85f, 1.9f, pl + 2.05f }, { 2.55f, pl, 3.45f, pl + 2.05f }, { 4.0f, pl + 0.85f, 5.2f, pl + 2.05f },
+                            { 0.7f, pl + sh + 0.85f, 1.9f, pl + sh + 2.05f }, { 4.0f, pl + sh + 0.85f, 5.2f, pl + sh + 2.05f } };
+    si_wall(pm, SI_RENDER, 0.0f, 0.0f, W, eaves, 0.25f, o, 5, 0.08f);
+    for (int k = 0; k < 5; ++k) {
+        if (k == 1) continue;
+        HkWindow w = { HK_FRAME_UPVC, HK_SILL_CONCRETE, HK_HEAD_CONCRETE, 0, k == 0, 0, 1.2f, 1.2f, 0.08f };
+        pm_push(pm); pm_translate(pm, 0.5f * (o[k][0] + o[k][2]), o[k][1], 0.0f); hk_window(pm, &w); pm_pop(pm);
+    }
+    pm_push(pm); pm_translate(pm, 3.0f, pl, 0.0f); hk_door(pm, HK_DOOR_UPVC, HK_CASE_NONE, 0.9f, 2.05f, 0.08f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 3.0f, pl + 2.3f, 0.0f); pm_place(pm, PMK_H_CANOPY_FLAT); pm_pop(pm);
+    pm_mat(pm, PMAT_HTRIM); pm_box(pm, 0.0f, eaves - 0.2f, 0.2f, W, eaves + 0.02f, 0.23f);
+    pm_push(pm); pm_translate(pm, 0.0f, eaves, 0.23f); hk_gutter(pm, HK_GUTTER_HALF, W, 3); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.15f, 0.0f, 0.0f); hk_downpipe(pm, eaves - 0.1f, 0.23f + HK_GUTTER_Z, 0); pm_pop(pm);
+    float ry, rz;
+    si_roof(pm, SI_DARK, -0.2f, W + 0.2f, eaves + 0.02f, 0.25f, 7.5f, 35.0f, 0.12f, &ry, &rz);
+    pm_push(pm); pm_translate(pm, -0.2f, ry, rz); hk_ridge(pm, 0, W + 0.4f); pm_pop(pm);
+}
+
+/* 7. Shutters and the southern dressings: render, panelled shutters, louvred ones, a window box, a grille, flat
+ * sills, a pedimented door (fanlight alone over it). */
+static void vig_shutters(Pm *pm) {
+    const float W = 5.6f, pl = 0.2f, sh = 3.1f, top = 6.6f;
+    const float o[5][4] = { { 0.9f, pl + 0.8f, 1.9f, pl + 2.1f }, { 3.75f, pl, 4.75f, pl + 2.2f }, { 0.95f, pl + sh + 0.6f, 1.85f, pl + sh + 2.2f },
+                            { 3.8f, pl + sh + 0.6f, 4.7f, pl + sh + 2.2f }, { 0, 0, 0, 0 } };
+    si_wall(pm, SI_RENDER, 0.0f, 0.0f, W, top, 0.3f, o, 4, 0.12f);
+    HkWindow a = { HK_FRAME_CASEMENT, HK_SILL_STONE, HK_HEAD_NONE, HK_SHUT_PANEL, 0, 1, 1.0f, 1.3f, 0.12f };
+    pm_push(pm); pm_translate(pm, 1.4f, pl + 0.8f, 0.0f); hk_window(pm, &a); pm_pop(pm);
+    HkWindow b = { HK_FRAME_SASH, HK_SILL_STONE, HK_HEAD_LINTEL, HK_SHUT_LOUVRE, 0, 0, 0.9f, 1.6f, 0.12f };
+    pm_push(pm); pm_translate(pm, 1.4f, pl + sh + 0.6f, 0.0f); hk_window(pm, &b); pm_pop(pm);
+    HkWindow c = { HK_FRAME_SASH, HK_SILL_STONE, HK_HEAD_LINTEL, 0, 1, 0, 0.9f, 1.6f, 0.12f };
+    pm_push(pm); pm_translate(pm, 4.25f, pl + sh + 0.6f, 0.0f); hk_window(pm, &c); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 4.25f, pl, 0.0f); hk_door(pm, HK_DOOR_6P, HK_CASE_FANLIGHT, 1.0f, 2.2f, 0.12f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.0f, top - 0.2f, 0.0f); hk_run(pm, PMK_H_BAY_CORNICE, W, 1.0f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.0f, pl + sh - 0.15f, 0.0f); hk_run(pm, PMK_H_STRING_COURSE, W, 0.0f); pm_pop(pm);
+}
+
+typedef void (*VigFn)(Pm *pm);
+static const struct { const char *name; VigFn fn; float az, el; } VIG[] = {
+    { "victorian", vig_victorian, 0.42f, 0.16f }, { "georgian", vig_georgian, 0.38f, 0.10f }, { "craftsman", vig_craftsman, 0.75f, 0.02f },
+    { "interwar", vig_interwar, 0.45f, 0.15f }, { "roofscape", vig_roofscape, 0.55f, 0.42f }, { "postwar", vig_postwar, 0.4f, 0.12f },
+    { "shutters", vig_shutters, 0.35f, 0.1f },
+};
+#define NVIG ((int)(sizeof(VIG) / sizeof(VIG[0])))
+
+/* The house kit: its modules' rows (as the rest of the library) are drawn by main; here the vignettes. */
+static void house_section(const char *out, const char *one) {
+    static int tris[PMK_COUNT][PM_LODS];
+    for (int id = 0; id < PMK_COUNT; ++id)
+        for (int l = 0; l < PM_LODS; ++l) { PmMesh m = { 0 }; pm_module_mesh(id, l, &m); tris[id][l] = (int)(m.ni / 3); pm_mesh_free(&m); }
+    printf("\nthe house kit's vignettes: instances (budget 150 a house within 60 m), their triangles by level, the stand-ins'\n");
+    printf("%-11s %6s %8s %8s %8s %8s\n", "vignette", "inst", "L0", "L1", "L2", "shell");
+    for (int v = 0; v < NVIG; ++v) {
+        if (one && strcmp(one, VIG[v].name)) continue;
+        PmMesh m = { 0 };
+        PmInstances li = { 0 };
+        Pm pm;
+        pm_begin(&pm, &m, &li, PM_LOD0);
+        VIG[v].fn(&pm);
+        long k[PM_LODS] = { 0, 0, 0 };
+        for (uint32_t i = 0; i < li.n; ++i) for (int l = 0; l < PM_LODS; ++l) k[l] += tris[li.v[i].module][l];
+        int house = 0;
+        for (uint32_t i = 0; i < li.n; ++i) if (pm_module_is_house(li.v[i].module)) house++;
+        CHECK(house == (int)li.n, "vignette %s places %d modules that are not the houses'", VIG[v].name, (int)li.n - house);
+        CHECK(li.n <= 150, "vignette %s places %u instances (a house's budget is 150)", VIG[v].name, li.n);
+        printf("%-11s %6u %8ld %8ld %8ld %8u\n", VIG[v].name, li.n, k[0], k[1], k[2], m.ni / 3);
+        pm_mesh_free(&m); pm_inst_free(&li);
+        if (!out) continue;
+        PmMesh d = { 0 };
+        pm_begin(&pm, &d, NULL, PM_LOD0);
+        VIG[v].fn(&pm);
+        pm_bake(&d, 16, 0.5f);
+        const int W = 1100, H = 820;
+        Image im = image_new(W, H);
+        g_az = VIG[v].az; g_el = VIG[v].el;
+        render(&im, &d, 0, 0, W, H, SHOW_LIT);
+        g_az = 0.65f; g_el = 0.42f;
+        text(&im, 10, 10, VIG[v].name, 3);
+        char path[512];
+        snprintf(path, sizeof(path), "%s/house_vignette_%s.png", out, VIG[v].name);
+        stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
+        free(im.p);
+        pm_mesh_free(&d);
+    }
+}
+
 int main(int argc, char **argv) {
     const char *out = NULL, *only = NULL;
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--only") && i + 1 < argc) only = argv[++i];
         else out = argv[i];
     }
+    const int house_only = only && !strcmp(only, "house");   /* HM4: the house kit's modules and vignettes alone */
     printf("pmodel_lab: %d modules, %d parts\n", pm_module_count(), PART_COUNT);
     printf("%-15s %4s %7s %7s %8s %8s %6s  %s\n", "module", "lod", "tris", "budget", "verts", "KB", "ms", "checks");
     long total = 0;
@@ -710,7 +1076,7 @@ int main(int argc, char **argv) {
     const int nmod = pm_module_count();
     for (int id = 0; id < nmod; ++id) {
         const PmModuleDef *d = pm_module(id);
-        if (only && strcmp(only, d->name)) continue;
+        if (house_only ? !pm_module_is_house(id) : only && strcmp(only, d->name)) continue;
         PmMesh lods[PM_LODS];
         memset(lods, 0, sizeof(lods));
         for (int l = 0; l < PM_LODS; ++l) {
@@ -748,7 +1114,7 @@ int main(int argc, char **argv) {
             sheet_row(&im, row, d->name, lods);
             if (++row == ROWS_PER_SHEET) {
                 char path[512];
-                snprintf(path, sizeof(path), "%s/pmodel_modules_%d.png", out, sheet++);
+                snprintf(path, sizeof(path), "%s/%s_%d.png", out, house_only ? "house_modules" : "pmodel_modules", sheet++);
                 stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
                 free(im.p); im.p = NULL; row = 0;
             }
@@ -757,13 +1123,18 @@ int main(int argc, char **argv) {
     }
     if (out && im.p) {
         char path[512];
-        snprintf(path, sizeof(path), "%s/pmodel_modules_%d.png", out, sheet++);
+        snprintf(path, sizeof(path), "%s/%s_%d.png", out, house_only ? "house_modules" : "pmodel_modules", sheet++);
         im.h = row * CH;
         stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
         free(im.p); im.p = NULL;
     }
-    printf("library: %ld triangles over its levels (budget 340000: NB0's 300000 raised for SF1's trades)\n", total);
-    if (!only) CHECK(total <= 340000, "the library holds %ld triangles over its levels, over 340000", total);
+    printf("library: %ld triangles over its levels (budget 400000: NB0's 300000 raised for SF1's trades, then HM4's house kit)\n", total);
+    if (!only) CHECK(total <= 400000, "the library holds %ld triangles over its levels, over 400000", total);
+    if (house_only) {
+        house_section(out, NULL);
+        printf("\n%s (%d failures)\n", g_fail ? "FAILED" : "ok", g_fail);
+        return g_fail ? 1 : 0;
+    }
     if (!only) {
         /* the slice's cooking line (NB5) at each level: its modules as set down */
         NbPlan p;
@@ -840,6 +1211,7 @@ int main(int argc, char **argv) {
         stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
         free(im.p);
     }
+    if (!only) house_section(out, NULL);
     if (!only || !strcmp(only, "body")) body_section(out);
     if (!only || !strcmp(only, "body") || !strcmp(only, "line")) line_section(out);
     printf("\n%s (%d failures)\n", g_fail ? "FAILED" : "ok", g_fail);

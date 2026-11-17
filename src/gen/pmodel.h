@@ -86,6 +86,24 @@ enum {
     PMAT_WINDOW_FAR,   /* the far shell's window: the kitchen's light behind it (it glows: kitGlow) */
     /* SF4: hours */
     PMAT_SHUTTER,      /* a roller shutter's slats (shutter.json, mapped on the curtain's plane in world metres: kit.glsl) */
+    /* HM4: the houses' character kit (pmodel_house.c). Drawn by the houses' own shading (shaders/city/house.glsl
+     * shadeHouseKit), so a sill or a soldier course matches the shell's walls: their colours come from the
+     * instance (house_surf.h HOUSE_KIT_*: the unit's trim, door, brick, stone and roof), not the vendors' coats. */
+    PMAT_HTRIM,        /* painted timber trim: frames, boards, brackets, posts, doorcases (the unit's trim colour) */
+    PMAT_HDOOR,        /* a front door's or a shutter's paint (the unit's door colour) */
+    PMAT_HSTONE,       /* dressed stone: sills, lintels, keystones, quoins, string courses, plinths (the unit's stone) */
+    PMAT_HBRICK,       /* brick: soldier courses, arches, corbelled caps, piers (the unit's brick) */
+    PMAT_HCLAY,        /* terracotta: chimney pots, ridge tiles, finials' bases */
+    PMAT_HTILE,        /* hung clay tiles (house_clay) */
+    PMAT_HRAIN,        /* rainwater goods: gutters, downpipes, hoppers (black, white, grey or brown: the instance's) */
+    PMAT_HLEAD,        /* lead and zinc: flashings, a flat dormer's or canopy's top, cowls */
+    PMAT_HIRON,        /* black ironmongery: grilles, door furniture, brackets, a rooflight's frame */
+    PMAT_HPLANT,       /* a window box's plants */
+    PMAT_HGLASS,       /* glass the kit carries itself (dormers, fanlights, a door's lights): the shells' glass */
+    PMAT_HTIMBER,      /* dark stained timber: half-timbering, exposed rafters */
+    PMAT_HUPVC,        /* white plastic: replacement windows and doors */
+    PMAT_HROOF,        /* the unit's roof covering (a dormer's or a canopy's roof and cheeks): the shell's roof sets */
+    PMAT_HCEMENT,      /* cement and concrete: flaunching, post-war sills and lintels */
     PMAT_COUNT
 };
 
@@ -295,6 +313,22 @@ enum {
     PMK_HAWKER_TABLE, PMK_LONG_TABLE, PMK_CEILING_FAN, PMK_BATTEN, PMK_BATTEN_TUBE,
     /* a drop rod, 1 m down from a ceiling cup at y 0 (stretched by its instance: a batten's hangers to the roof) */
     PMK_DROP_ROD,
+    /* HM4, the houses' character kit (pmodel_house.c; frames and sizes in pmodel_house.h, which also places them) */
+    PMK_H_RAFTER_TAIL, PMK_H_KNEE_BRACE, PMK_H_EAVES_BRACKET, PMK_H_BARGE_SCALLOP, PMK_H_BARGE_GOTHIC, PMK_H_FINIAL,
+    PMK_H_GUTTER_HALF, PMK_H_GUTTER_OGEE, PMK_H_GUTTER_STOP, PMK_H_SWAN_NECK, PMK_H_SWAN_NECK_L, PMK_H_DOWNPIPE,
+    PMK_H_PIPE_CLIP, PMK_H_PIPE_SHOE, PMK_H_HOPPER, PMK_H_RIDGE_ROLL, PMK_H_RIDGE_CREST,
+    PMK_H_STRING_COURSE, PMK_H_PLINTH, PMK_H_QUOIN, PMK_H_SOLDIER, PMK_H_TIMBER, PMK_H_HUNG_TILES,
+    PMK_H_SILL_STONE, PMK_H_SILL_TIMBER, PMK_H_SILL_CONCRETE, PMK_H_LINTEL_STONE, PMK_H_LINTEL_CONCRETE, PMK_H_KEYSTONE,
+    PMK_H_ARCH_BRICK, PMK_H_HOOD_MOULD, PMK_H_CASING,
+    PMK_H_WIN_SASH, PMK_H_WIN_GEORGIAN, PMK_H_WIN_CASEMENT, PMK_H_WIN_GRID, PMK_H_WIN_PICTURE, PMK_H_WIN_UPVC,
+    PMK_H_SHUTTER_LOUVRE, PMK_H_SHUTTER_PANEL, PMK_H_GRILLE, PMK_H_WINDOW_BOX,
+    PMK_H_DOOR_4P, PMK_H_DOOR_6P, PMK_H_DOOR_CRAFT, PMK_H_DOOR_HALF, PMK_H_DOOR_UPVC,
+    PMK_H_FANLIGHT, PMK_H_DOORCASE, PMK_H_DOORCASE_PED,
+    PMK_H_POST_TURNED, PMK_H_POST_CRAFT, PMK_H_POST_SQUARE, PMK_H_SPANDREL, PMK_H_BALUSTRADE,
+    PMK_H_CANOPY_FLAT, PMK_H_CANOPY_GABLE,
+    PMK_H_BAY_POST, PMK_H_BAY_CORNICE, PMK_H_BAY_APRON,
+    PMK_H_DORMER_GABLE, PMK_H_DORMER_HIP, PMK_H_DORMER_FLAT,
+    PMK_H_POT_PLAIN, PMK_H_POT_CANNON, PMK_H_POT_CROWN, PMK_H_POT_COWL, PMK_H_STACK_CAP, PMK_H_VENT_PIPE, PMK_H_ROOFLIGHT,
     PMK_COUNT
 };
 typedef struct PmModuleDef {
@@ -313,6 +347,9 @@ int  pm_module_casts(int id);
 static inline int pm_mat_glows(int mat) { return (mat >= PMAT_TUBE && mat <= PMAT_SIGN_FAR) || mat == PMAT_EMBER || mat == PMAT_RADIANT || mat == PMAT_WINDOW_FAR; }
 /* Whether a module is a neon icon (its instance carries its icon's colour and flicker). */
 int  pm_module_is_icon(int id);
+/* Whether a module is the houses' (HM4: its materials PMAT_HTRIM on, its instance's flags house_surf.h HOUSE_KIT_*). */
+static inline int pm_module_is_house(int id) { return id >= PMK_H_RAFTER_TAIL && id < PMK_COUNT; }
+static inline int pm_mat_is_house(int mat) { return mat >= PMAT_HTRIM && mat < PMAT_COUNT; }
 #define PM_ICON_SIZE 0.36f   /* the icons' square, which instances scale to their housing */
 /* Builds module id at a level into out (cleared first) and bakes its occlusion and wear. */
 void pm_module_mesh(int id, int lod, PmMesh *out);

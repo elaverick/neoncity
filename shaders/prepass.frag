@@ -40,7 +40,9 @@ void main() {
     // the materials whose shading calls cityLights (city.frag), where the lights can reach (lightsReach);
     // they take the city's daylight too (ambientLight), at any height (PG_SKY)
     float above = vLocal.y - vBase;
-    bool sky = m <= MAT_ROOF || m == MAT_METAL || m == MAT_DOOR || m == MAT_LITTER || m == MAT_ARCOLOGY || m == MAT_INDUSTRY || m == MAT_PROP || m == MAT_TRIM || m == MAT_KIT;
+    bool sky = m <= MAT_ROOF || m == MAT_METAL || m == MAT_DOOR || m == MAT_LITTER || m == MAT_ARCOLOGY || m == MAT_INDUSTRY || m == MAT_PROP || m == MAT_TRIM ||
+               (m == MAT_KIT && (vParams.y & 255u) < 49u);   // not the houses' kit (PMAT_HTRIM on: HM4): it lights as the shells do,
+                                                              // which stay out while their far shells' roofs are in the TLAS over the near decks
     bool lit = sky && lightsReach(chunks[vChunk].info.z, vLocal.y, above);
     // lobby surfaces the ceiling's panels light (not its lights, screens, signs, skylight or the offices above)
     uint is = vParams.y;

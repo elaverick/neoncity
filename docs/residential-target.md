@@ -262,6 +262,60 @@ the range away at 6,144 even before the houses). Filling the range takes 12.5 s 
 are built for their prisms). The prisms match the far shells' place, height, roof form and colours (checked by
 drawing them in the shells' place at the slice); they leave out wings, porches and bays.
 
+## The character kit (HM4)
+
+The shells give the massing; the kit gives a house the depth the user asked for (the roadmap's "too flat"): 70
+modules of the procedural modelling kit (`src/gen/pmodel_house.c`, `PMK_H_*`), each at three levels, drawn
+instanced (NB2's way) and placed by the assemblies in `src/gen/pmodel_house.h` (HM5 sets them down on the
+shells). Every part is the vocabulary of "The character layer" in the roadmap:
+
+| Group | Modules |
+|---|---|
+| Roof edges | rafter tail (craftsman, notched end), knee brace, eaves bracket (Victorian console with scrolls and a drop), bargeboards (scalloped, gothic cusps), finial (turned, with a pendant), half-round and ogee gutters, stop end, swan necks (0.3 and 0.6 m reach), downpipe, clip, shoe, hopper head, ridge tiles (rolls on their bedding; crested) |
+| Walls | string course, plinth, quoins (two courses, long and short), soldier course, timber (half-timbering), hung tiles |
+| Openings | sills (stone with a drip, timber, concrete), lintels (stone, concrete), keystone, segmental brick arch, hood mould with its stops, craftsman casing; frames: sash (two over two, horned), Georgian six over six, inter-war casement (bars in the top lights and across the leaves), craftsman grid (four over one), ranch picture, plastic replacement |
+| Dressings | louvred and panelled shutters, security grille, window box with plants |
+| Doors | four-panel, six-panel, craftsman (three lights over a dentil shelf), half-glazed, plastic; knob, letterbox, knocker at L0; sunburst fanlight; doorcases (pilasters, frieze, cornice; pedimented), each with its fanlight |
+| Porches | turned post, craftsman column (tapered on a brick pier with a stone cap), square post, spandrel, balustrade, flat canopy (lead top) and gabled canopy on brackets |
+| Bays | corner post (stretched to the storey), cornice with dentils, apron panel |
+| Roofscape | gabled, hipped and flat dormers (casement, glass, cheeks in the roof's covering), chimney pots (plain, cannon, crown, cowl), corbelled stack cap with flaunching, vent pipe, rooflight |
+
+**Frames.** A wall piece has the wall's face at z 0, out along +z; only what sits in a reveal (sills, frames,
+doors) goes behind it, to the glass's plane or hidden by it. Runs are a metre along x and stretched by their
+instance along their length, which leaves their sections exact (gutters, courses, sills, lintels, cornices,
+ridges, bargeboards, balustrades); runs of repeated parts are laid as whole metres. Frames and doors are built at a
+usual size (a sash 0.95 x 1.6, a casement 1.5 x 1.2, a door 0.9 x 2.05...) and stretched to their opening, within
+about a quarter so bars stay bars. Dormers are built for a 30-degree roof and bury their backs in a steeper one.
+No instance is mirrored (a negative scale turns a module inside out under the city's culling): handed parts are
+placed the other way round instead (the left bargeboards climb from the eaves, the right fall from the apex).
+
+**Materials.** The kit has its own (`PMAT_HTRIM` on in `pmodel.h`), shaded by the houses' code, not the vendors'
+(`shadeHouseKit`, `shaders/city/house.glsl`): trim, a dormer's or canopy's roof and hung tiles go through
+`shadeHouse` itself (the shells' trim paint, roof sets and clay); stone, brick and cement take the shells' palettes
+and sets mapped in the world, so a stretched course keeps its grain; terracotta, rainwater goods (black iron, white,
+grey or brown plastic), lead, black ironmongery, stained timber, white plastic, plants and the shells' glass are
+painted there. The colours are the unit's, in the instance (`house_surf.h` `HOUSE_KIT_*`: trim, door, brick and old
+stock, stone, rainwater goods in the flags; the roof's covering and colour in the part byte), so one module serves
+every house. The kit lights as the shells do: neither takes the ray-traced lamp shadows or the sky trace yet (TODO).
+
+**Measured** (`pmodel_lab --only house`, 2026-11-17): 44,890 triangles over the kit's three levels (the whole
+library 381,476, 21.3 MB, built in 191 ms at start-up); the library's budget raised from 340,000 to 400,000. No
+support loops (their L0 was three times heavier for nothing a street view shows). Each module's budget is its
+measure plus a tenth. The vignettes (a style's street side dressed over stand-in walls and roofs):
+
+| Vignette | Instances | L0 | L1 | L2 |
+|---|---|---|---|---|
+| Victorian terrace (two-storey canted bay, sashes, hood mould, hopper, crested ridge, stack with four pots) | 61 | 16,600 | 7,500 | 3,600 |
+| Georgian (three storeys of six over six, keystones, quoins, string course, pedimented doorcase, cornice) | 77 | 16,800 | 10,300 | 3,900 |
+| Craftsman bungalow (knee braces, rafter tails, tapered columns on piers, grid windows in casings) | 27 | 4,000 | 2,100 | 1,200 |
+| Inter-war semi (square bay, half-timbered gable, scalloped bargeboards, hung tiles, gabled canopy) | 66 | 18,700 | 8,200 | 2,700 |
+| Roofscape (three dormers, rooflight, vent, gothic bargeboards and finial, four pots, ogee gutter) | 35 | 11,000 | 6,300 | 2,400 |
+| Post-war (plastic windows and door, concrete sills and lintels, flat canopy, a grille) | 31 | 7,400 | 5,300 | 1,500 |
+| Southern (panelled and louvred shutters, a window box, a grille, a fanlight) | 23 | 8,500 | 3,000 | 1,200 |
+
+All within the 150 instances a house. L0 is drawn within 8 m only, L1 to 30 m; a house's L1 dressing is
+2,000-10,000 triangles.
+
 ## Massing and parts
 
 | Part | Size | Notes |
