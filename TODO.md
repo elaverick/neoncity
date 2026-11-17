@@ -1151,12 +1151,29 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM5, the character grammar** (placement: style x affluence x upkeep picks a set a house, rows share it with
-  owners' variations; the kit's assemblies set down on the shells; a sign-off board). What the kit leaves it (HM4):
-  the shells' openings sized to the kit's (a bay's lights to `hk_bay`'s, a doorcase's door and its fanlight over
-  it), the shader's painted glazing bars off where a frame stands, the shell's stack cap left out under a
-  corbelled one, a dormer's opening in the roof (or none: its front stands on the slope), bargeboards proud of
-  the verge's own board, and `KitInst` records for the houses (their flags `HOUSE_KIT_*`, the unit's seed).
+- **Next: HM6, lived-in and lit** (dishes, aerials, air-con, solar, cables between houses, roller shutters, numbers,
+  bins, patched roofs, graffiti; porch lamps in the light table; lit windows with a cheap room behind the glass). The
+  character layer (HM5) gives it each unit's upkeep (`HCharSet.upkeep`) and the shell's records (`HsWin`, `HsDoor`,
+  `HsRoof`: where to hang a dish, a lamp, a number).
+- **The character layer's leftovers** (HM5):
+  - Doorcases' fanlights stand on the wall's face over the door (opaque glass in the doorcase's frame), not in the
+    opening. Cut the opening to the fanlight's head if a close view shows it.
+  - Ridge tiles are terracotta whatever the roof (`PMAT_HCLAY`): on concrete tiles and slate real ones are often
+    concrete or matching. The shader can't tell a ridge from a pot (both `PMAT_HCLAY`, the part byte holds the roof):
+    give ridges a material of their own if the board shows it.
+  - Past 120 m (`KIT_DISTANCE`) the kit is gone and the glass paints the chosen frame's bars again; the near shell
+    reaches 220 m. Fine from the street; a rise may show sills and gutters fading.
+  - The kit draws mostly at L2 even at 10 m (`KIT_TRI_PX` coarsens it: a house's frames are many small modules).
+    Raise the share for the houses if close views look coarse.
+  - Two detached houses in 2,600 stay over the 150 instances even dressed lean (the most 156: three-storey Georgian,
+    craftsman with rafter tails all round, shuttered villas). Within reason; drop more if HM8's gate needs it.
+  - Spandrels and turned posts stay rare (6% of Victorian units): Victorian porches are mostly recessed or canopies
+    in HM2b's tight yards. A gabled bay (the inter-war and Victorian street gable) would also give bargeboards and
+    half-timbering a gable on the front; it is a grammar change (HM2's bay roofs are lean-tos).
+  - Dormers are rare (0.025-0.06 a house): most slopes are too short or steep for a dormer under the ridge. Fine for
+    now (loft conversions are the owners'); a shallow-pitch variant would let ranch and tract roofs take one.
+  - The other regions' sets are first drafts (South-East Asia, South Asia, MENA, Sub-Saharan Africa, Latin America:
+    plain frames, grilles, flat canopies); HM5b (the other regions' kit and grammar breadth) refines them.
 - **The houses get no ray-traced lamp shadows or sky trace** (found at HM4): `prepass.frag` leaves `MAT_HOUSE` out
   of `PG_SKY`/`PG_LIT`, and the houses' kit (`PMAT_HTRIM` on) out with it, so both light alike. Put the shells in
   and the far shell's roofs (in the TLAS while the near layer is drawn) cover the near decks: flat roofs turn black
@@ -1167,7 +1184,7 @@ The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the targe
   part's faces. Fine for parts seen from the street (the house shader barely uses wear); add loops to the few
   that look flat close up.
 - **Dormers are built for 30-degree roofs** and bury their backs in steeper ones; a ranch's 18-25 degree roof
-  would show the back. No style puts a dormer on one yet (HM5: keep it so, or a shallow variant).
+  would show the back. The character layer only sets them on 30-52 degree slopes (HM5).
 - **The houses' grime is a stand-in for upkeep** (HM3b): the rain's runs and splashback on the walls take an amount
   each unit draws from its seed (`shadeHouse`). HM6 sets it from the upkeep spread (kept, tired, run-down), and gives
   run-down sheet roofs rust (CorrugatedSteel007B was looked at and left for that).

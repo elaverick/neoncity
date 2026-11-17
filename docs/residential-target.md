@@ -316,6 +316,102 @@ measure plus a tenth. The vignettes (a style's street side dressed over stand-in
 All within the 150 instances a house. L0 is drawn within 8 m only, L1 to 30 m; a house's L1 dressing is
 2,000-10,000 triangles.
 
+## The character layer (HM5)
+
+The kit set down on the houses (`src/gen/home_character.c`): a second grammar over the shells, run on the near
+shell's own solids before its faces are emitted (`home_shell_kit`), its instances riding in the near layer.
+
+**The sets.** Style and affluence choose a row's set (`home_char_set`: the street's windows' frame, sill and head
+and the rest's, door and surround, gutter and its colour, hopper or swan neck, eaves, the street's gables, ridge,
+the front's reliefs, shutters, boxes, grilles, porch posts, spandrels, balustrade, door canopy, dormers). A row or a
+pair is built as one and shares it; each unit then draws its upkeep and its owner's changes:
+
+| Upkeep | Share (affluence a) | What it moves |
+|---|---|---|
+| kept | 0.45 + 0.35a | the row's set as built |
+| tired | 72% of the rest | replacements 1.4 times as likely; shutters taken down |
+| run-down | the rest (about 10% at middling affluence) | replacements 1.8 times as likely; grilles on the ground floor (two in five), no window boxes |
+
+| Owners' changes | How often |
+|---|---|
+| replacement windows (plastic in Britain, vinyl in North America; the ranch's picture window kept) | Victorian 15%, Georgian 6%, inter-war 25%, post-war 20%, rowhouse and triple-decker 18%, tract and ranch 15%, craftsman 10%, southern Europe 12%, elsewhere 10%; times the upkeep's factor; otherwise the back alone 12% |
+| a door of their own (plastic in Britain, a steel six-panel in North America) | 18%, times the upkeep's factor |
+| plastic gutters where the row's were iron, or a colour of their own | 30% (times upkeep), 12% |
+| a canopy of their own (flat for gabled, gabled for flat) | 12% |
+| a loft conversion's flat dormer at the back (Britain); a gabled one (craftsman, tract) | 20-35% by affluence; 10% |
+| a dormer on the street's slope (Victorian gabled, inter-war hipped, a tract house's Cape Cod gabled; a craftsman row's flat ones as built) | 20%, 20%, 15% |
+| window boxes on a kept house's upper street windows (Britain, North America) | 12% |
+| porch posts their own (turned for plain or the other way; spandrels with turned posts, half the time) | 15% |
+| rooflights on the back slope; a soil vent | modern 40%, Britain and southern Europe 20%, else 5%; Britain and North America 50% |
+
+**What goes where.** Every window the shell cut gets its frame (several lights side by side where the opening is
+over a third wider than the frame's usual size), sill and head (brick heads only on brick walls; a Georgian top
+floor's plain lintels); the street's windows shutters where the wall has their width free each side, boxes on the
+upper floors; ground floor grilles by the row's custom or the owner's upkeep. Bays get a frame, sill and apron in
+each light, a cornice round each storey's head and posts on their corners. Doors get their leaf (an enclosed
+porch's own door half glazed) and the surround the row's set gives where the wall has room (a doorcase only on a
+bare front, a fanlight also at the back of a recess); a porch `HP_CANOPY` gets the kit's canopy unless a doorcase
+stands there (Georgian). Open, lean-to and veranda porches get the set's posts, spandrels on turned posts, a
+balustrade off the steps. Every eaves of a pitched roof gets a gutter where nothing stands in its way (stop ends
+but at a party wall); a main's, wing's, outrigger's or extension's longest run a downpipe at a corner or a party
+wall; brackets under a front's eaves (scaled to the overhang), rafter tails along the walls (not round a hip).
+Street gables get bargeboards and a finial, half-timbering; every craftsman gable knee braces (the shell's
+craftsman verges now reach as far as the eaves, to 0.75 m). Ridges and hips get their tiles (none on shingle or
+sheet); stacks their corbelled cap and a pot a flue; fronts their plinth (to the floor's height), string course
+at the first floor, cornice under a parapet, hung tiles between the storeys, quoins on free corners.
+
+**The rules, as checks with logged repairs** (`repair char-<rule>:`; `home_lab`'s counts a unit, 2,600 rows an
+archetype): downpipes (none where both ends of the run are blocked: 0.013-0.036), dormers (none where the slope has
+no clear place: 0.005-0.007), shutters (0.02-0.03), doorcases and fanlights (a plainer surround: 0.05-0.06), quoins
+(0.001-0.003), canopies (a smaller one, or none: under 0.001), a front door left with no porch, canopy or doorcase
+(0.001), bargeboards (the verge meets another roof), the budget (2 detached houses in 2,600 over 150 even dressed
+lean, the most 156; none of the semis or terraces). Nothing is placed through a roof plane or another solid: every
+run is sampled along its line against the shell's solids.
+
+**Trim.** The frames, bays' posts and cornices, doorcases and porch posts take the unit's trim colour, so a row
+whose trim drew black or dark green read as black holes or green bays from end to end. Victorian, Georgian and
+rowhouse rows' trim is now white, cream or grey (`FIN` in `home_shell.c`); owners still paint their own (one
+in five).
+
+**Coverage** (the user, before sign-off: "the modules prepared had a lot more options than you've used"). The first
+pass built the whole kit but placed little of it: bargeboards, finials and half-timbering only on gables facing the
+street (Victorian and inter-war mains face the street with their eaves, so almost none), a fanlight never fit a
+Victorian recess (its head 0.15 m too low) and was hidden under a canopy, the surround test counted a recess as
+blocked (the body still holds its space), and plastic replacements were set high for the setting (the most placed
+module of all, eight a house). Now: the gables seen from the street (their own and the sides', never the back's)
+take bargeboards, finials and half-timbering; a fanlight shrinks to the room under a recess's head or a porch's
+ceiling (0.3 m at least) and a canopy lifts over it; replacement rates are halved; owners add window boxes and swap
+porch posts. `home_lab` checks it: each North American and British style's signature pieces on at least a set share
+of its units (43 pieces: a Victorian's sashes, hood moulds, bays, gothic bargeboards, finials, fanlights, hoppers,
+brackets, string courses and crested ridges; a Georgian's six over six, keystones and doorcases; an inter-war's
+casements, scalloped bargeboards, half-timbering, hung tiles, bays and soldier courses; a craftsman's rafter
+tails, knee braces, columns, grids, casings and door...), and `home_lab N --coverage` prints every style's share of
+every module. Before and after, a Victorian unit: gothic bargeboards 10% to 44%, finials 10% to 44%, fanlights 19%
+to 73%, original sashes 65% to 83%; an inter-war's scalloped bargeboards 13% to 25%, half-timbering 4% to 13%,
+original casements 47% to 73%. Still rare by the houses' own make-up: spandrels and turned posts (6%: Victorian
+porches are mostly recessed or canopies in tight yards), gabled and hipped dormers (most slopes too short or steep).
+
+**Departures.** Wall reliefs are instanced, not merged: a course is one stretched instance a wall, so merging saves
+nothing. Lights split rather than stretch. Doorcases' fanlights stand on the wall's face over the door, not in the
+opening (their glass is opaque, set back in the doorcase's frame). Dormers stand on the slope with no opening cut
+(their backs are buried in the tiles; only roofs of 30-52 degrees take them).
+
+**Measured** (2026-11-17). `home_lab`, 2,600 rows an archetype, both mirrors: 76 instances a detached house (the
+most 156), 59 a semi half (150), 44 a terrace unit (149); the dressed near shell 0.12-0.14 ms a unit (the bare one
+0.12-0.16 for both levels); no instance mirrored, none different twice, no bad face or z-fight in a dressed shell.
+Most placed a house: plastic frames 8, ridge rolls 8, pipe clips 6, sills 6-9, gutter stop ends 4. In the game
+(noon, the slice's views, two runs each, `--homes bare` against the default):
+
+| View | Bare | Dressed | Kit drawn |
+|---|---|---|---|
+| From the air (150 m out, 90 m up) | 7.94 ms | 7.94-7.96 (+0.0) | 649 instances at L2 (past 120 m the kit is gone) |
+| Down the street, 30 m | 3.39-3.69 | 3.56-3.58 (+0.0 to +0.2) | 1,768 |
+| At the front, 10 m | 3.22 | 3.38-3.46 (+0.16 to +0.24) | 1,801 (115 at L1) |
+| Over the roofs (40 m out, 22 m up) | 5.13-5.14 | 5.30 (+0.17) | 1,940; 458 in the TLAS |
+
+Within the budgets (+0.5 ms on the ground, +1.0 from the air). The pool fell a point (the shell lost its stack
+caps and posts to the kit).
+
 ## Massing and parts
 
 | Part | Size | Notes |

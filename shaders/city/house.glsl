@@ -149,6 +149,9 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
         vec2 s = vec2(float((aux >> HOUSE_AUX_W) & 1023u), float((aux >> HOUSE_AUX_H) & 1023u)) * 0.01;
         float aa = max(fw.x, fw.y);
         float bars = houseBars(uv, s, (aux >> HOUSE_AUX_PATTERN) & 15u, aa);
+        // HM5: where the kit's frame stands in it, its bars are painted only as the frame shrinks away (kit_gpu.c:
+        // a frame fades out over the last quarter of KIT_DISTANCE)
+        if ((aux & HOUSE_AUX_FRAMED) != 0u) bars *= smoothstep(92.0, 116.0, gHouseDist);
         // the window's own key, from its lower left corner (an opening's u runs along (-n.z, n.x): src/city/homes.c)
         vec3 c = gWorld - uv.x * vec3(-n.z, 0.0, n.x) - vec3(0.0, uv.y, 0.0);
         uint key = hash3i(seed ^ 0x6A55u, int(round(c.x * 4.0)), int(round(c.y * 4.0)), int(round(c.z * 4.0)));

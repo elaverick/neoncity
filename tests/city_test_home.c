@@ -302,8 +302,17 @@ static int home_cams(int argc, char **argv) {
         snprintf(name, sizeof(name), "home_%03dm", DIST[k]);
         /* near, square on to a house front 6 m back; from 30 m on (HM3a: the houses stand), down the street, at the
          * pavement in front of the slice: across the street stand its other houses */
-        if (DIST[k] < 30) views += sl_view(name, tx, gy + 3.0, tz, nx, nz, DIST[k] + 6.0, gy, 0.0, 0);
-        else {
+        if (DIST[k] < 30) {
+            /* a terrace's or a pair's front stands nearer the street than 6 m (HM2b's tight yards): the point looked at
+             * steps out into its front yard until there is a line of sight to it (HM5: the forced styles' close views) */
+            int got = 0;
+            static const double IN[4] = { 6.0, 3.0, 1.5, 0.4 };
+            for (int q = 0; q < 4 && !got; ++q) {
+                const double qx = mid.x - nx * IN[q], qz = mid.z - nz * IN[q];
+                got = sl_view(name, qx, gy + 3.0, qz, nx, nz, DIST[k] + IN[q], gy, 0.0, q < 3);
+            }
+            views += got;
+        } else {
             const double px = mid.x + nx * 1.0, pz = mid.z + nz * 1.0;
             views += sl_view(name, px, city_ground_y(px, pz) + 3.5, pz, nx, nz, (double)DIST[k], gy, 0.0, 0);
         }

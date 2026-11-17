@@ -1106,7 +1106,7 @@ static void update_kit(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t 
     const double P = CHUNK_SIZE;
     for (int i = 0; i < MAX_ENTRIES; ++i) {
         const Entry *e = &cs->entries[i];
-        if (e->state != CS_RESIDENT || !is_vendor_layer(e->layer) || !e->nkit) continue;
+        if (e->state != CS_RESIDENT || (!is_vendor_layer(e->layer) && e->layer != LAYER_HOMES) || !e->nkit) continue;   /* HM5: the houses' kit too */
         float o[3] = { (float)(e->cx * P - cam[0]), -(float)cam[1], (float)(e->cz * P - cam[2]) };
         kit_add(cs->kit, slot, e->kit, e->nkit, o, e->drawRecFrame == cs->frame + 1 ? e->drawRec : -1);
     }

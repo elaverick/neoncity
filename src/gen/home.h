@@ -126,6 +126,7 @@ typedef struct HGraph {
     uint8_t  arch, style, region;      /* HOME_*, HS_*, PLAN_REGION_* */
     uint8_t  level;                    /* the proposal accepted: 0 full, 1 without optional parts, 2 plain, 3 the simplest */
     uint8_t  empty;                    /* no house fits: the plot is left a garden */
+    float    affluence;                /* plan_affluence of the row (the character layer's sets, HM5) */
     int      attempts, repairs;
     float    storeyH, plinth;          /* floor to floor; the ground floor over the garden */
     float    u0;                       /* the row's first plot's u0: x = u - u0 */

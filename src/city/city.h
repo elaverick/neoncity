@@ -346,9 +346,10 @@ void     city_home_row(const HomePlot *row, int n, struct HGraph *g);
  * middles lie in the chunk, streamed within HOME_NEAR_DISTANCE; their far shells, in the base layer, give way
  * while it is drawn (CHUNK_HOMES_NEAR_BIT, src/core/house_surf.h). */
 void     city_build_homes(int cx, int cz, Mesh *m);
-/* The houses drawn (NeonCity --homes): none, their far shells alone, or near shells too (the default). For
- * measuring their cost; before any chunk. */
-enum { HOMES_OFF = 0, HOMES_FAR, HOMES_NEAR };
+/* The houses drawn (NeonCity --homes): none, their far shells alone, near shells too dressed in the character
+ * kit (the default; HM5: the kit's instances ride in the near layer's Mesh.kit), or near shells bare (HM3's look,
+ * for comparing). For measuring their cost; before any chunk. */
+enum { HOMES_OFF = 0, HOMES_FAR, HOMES_NEAR, HOMES_BARE };
 void     city_set_homes(int mode);
 int      city_homes_mode(void);
 /* The far proxies of a suburb block's house rows (residential roadmap HM3b; src/city/proxy.c): a prism for each

@@ -11,9 +11,17 @@
  * porches, bays, garages, extensions, outriggers, chimneys, boundaries, sheds,
  * cars, trees) and the time a house; with out_dir, a top-down plan sheet per
  * archetype (one row of each style) as home_<archetype>.png. verbose_seed
- * prints that seed's decision log for each archetype. */
+ * prints that seed's decision log for each archetype.
+ *
+ * HM3a: the shells (shell_check); HM5: the shells dressed in the character kit
+ * (dress_check: instances a house against the budget, the placement rules'
+ * repairs, every instance a proper rotation, the same twice; with out_dir,
+ * dressed_<archetype>.png, the kit drawn on the shells).
+ *
+ *   home_lab --view ARCH STYLE SEED OUT.png YAW [PITCH [LOD|kit]]  one row, large */
 #include "home.h"
 #include "home_shell.h"
+#include "pmodel_house.h"
 #include "hash.h"
 #include "mathlib.h"
 #include <time.h>
@@ -425,6 +433,16 @@ static uint32_t faces_hash(const FaceList *L) {
 
 /* Rough colours for the contact sheet: the surface, its finish. */
 static void face_colour(const HShellFace *f, float c[3]) {
+    if (f->surf >= 100) {   /* a kit triangle (HM5): by its material */
+        static const float K[PMAT_COUNT - PMAT_HTRIM][3] = {
+            { 0.93f, 0.92f, 0.88f }, { 0.20f, 0.30f, 0.55f }, { 0.80f, 0.76f, 0.66f }, { 0.62f, 0.28f, 0.20f }, { 0.70f, 0.36f, 0.22f },
+            { 0.66f, 0.30f, 0.20f }, { 0.12f, 0.12f, 0.13f }, { 0.45f, 0.47f, 0.50f }, { 0.08f, 0.08f, 0.09f }, { 0.20f, 0.45f, 0.15f },
+            { 0.30f, 0.45f, 0.60f }, { 0.25f, 0.17f, 0.10f }, { 0.97f, 0.97f, 0.95f }, { 0.35f, 0.33f, 0.36f }, { 0.60f, 0.60f, 0.58f } };
+        const int m = f->surf - 100 - PMAT_HTRIM;
+        const float *k = m >= 0 && m < PMAT_COUNT - PMAT_HTRIM ? K[m] : K[0];
+        memcpy(c, k, sizeof(float) * 3);
+        return;
+    }
     static const float WALL[HW_COUNT][3] = { { 0.62f, 0.30f, 0.22f }, { 0.86f, 0.82f, 0.72f }, { 0.68f, 0.76f, 0.80f }, { 0.78f, 0.70f, 0.56f }, { 0.60f, 0.60f, 0.58f } };
     static const float ROOF[HRM_COUNT][3] = { { 0.62f, 0.26f, 0.16f }, { 0.26f, 0.28f, 0.32f }, { 0.42f, 0.34f, 0.30f }, { 0.30f, 0.30f, 0.30f }, { 0.55f, 0.58f, 0.60f },
                                               { 0.75f, 0.36f, 0.20f }, { 0.22f, 0.26f, 0.32f }, { 0.20f, 0.20f, 0.20f }, { 0.50f, 0.50f, 0.48f } };
@@ -512,6 +530,26 @@ static void draw_shell(Image *im, int cx, int cy, int cw, int ch, const FaceList
     for (int i = 0; i < R.w * R.h; ++i) R.z[i] = 1e30f;
     for (int i = 0; i < L->n; ++i) raster_face(&R, &L->f[i]);
     free(R.z);
+}
+
+/* The kit built into a mesh (pm with no instance list) as faces for the raster: a triangle each, surf 100 + its
+ * material, facing as its vertices' normals do. */
+static void kit_faces(const PmMesh *M, FaceList *L) {
+    for (uint32_t t = 0; t + 2 < M->ni; t += 3) {
+        HShellFace f;
+        memset(&f, 0, sizeof(f));
+        f.n = 3;
+        const PmVertex *v[3] = { &M->v[M->idx[t]], &M->v[M->idx[t + 1]], &M->v[M->idx[t + 2]] };
+        for (int q = 0; q < 3; ++q) memcpy(f.p[q], v[q]->p, sizeof(float) * 3);
+        const float e1[3] = { f.p[1][0] - f.p[0][0], f.p[1][1] - f.p[0][1], f.p[1][2] - f.p[0][2] };
+        const float e2[3] = { f.p[2][0] - f.p[0][0], f.p[2][1] - f.p[0][1], f.p[2][2] - f.p[0][2] };
+        float n[3] = { e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0] };
+        const float l = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (l < 1e-9f) continue;
+        for (int k = 0; k < 3; ++k) f.nrm[k] = n[k] / l;
+        f.surf = (uint8_t)(100 + v[0]->mat);
+        collect_face(L, &f);
+    }
 }
 
 typedef struct ShellStats { double nearTris, farTris, ms; int nearMax, farMax, units, houses, bad, nondet, windows, zfight; } ShellStats;
@@ -619,8 +657,203 @@ static int shell_check(int a, int seeds, const char *out, HGraph *g, HomePlot *P
     return failures;
 }
 
+/* ---------------------------------------------------------------------------
+ * HM5: the dressing
+ * ------------------------------------------------------------------------- */
+
+static uint32_t inst_hash(const PmInstances *l, const uint8_t *unit) {
+    uint32_t h = 0xD5E5u;
+    for (uint32_t i = 0; i < l->n; ++i) {
+        h = hash_combine(h, l->v[i].module | (uint32_t)l->v[i].part << 16 | (uint32_t)unit[i] << 24);
+        for (int k = 0; k < 12; ++k) h = hash_combine(h, (uint32_t)lrintf(l->v[i].xf[k] * 1000.0f));
+    }
+    return h;
+}
+
+static void no_face(void *ctx, const HShellFace *f) { (void)ctx; (void)f; }
+
+/* A row dressed (sx -1: as a mirrored row is), into a list of instances; D's unit tags kept. */
+static void dress_row(const HGraph *g, const float *dy, float sx, PmInstances *inst, HDress *D, FaceList *faces, BLog *log) {
+    Pm pm;
+    inst->n = 0;
+    pm_begin(&pm, NULL, inst, PM_LOD1);
+    uint8_t *keep = D->unit;
+    const uint32_t cap = D->capUnit;
+    memset(D, 0, sizeof(*D));
+    D->unit = keep; D->capUnit = cap;
+    D->pm = &pm; D->sx = sx; D->log = log;
+    if (faces) faces->n = 0;
+    home_shell_kit(g, dy, faces ? collect_face : no_face, faces, NULL, D);
+}
+
+/* Coverage (HM5): for each style, how many of its units got at least one of each module, over every archetype. */
+static long g_covUnits[HS_COUNT], g_cov[HS_COUNT][PMK_COUNT];
+static int  g_coverage;   /* home_lab ... --coverage: print the table */
+
+static void cover(const HGraph *g, const PmInstances *I, const uint8_t *unit) {
+    static uint8_t has[HG_MAX_UNITS][PMK_COUNT];
+    memset(has, 0, sizeof(has));
+    for (uint32_t i = 0; i < I->n; ++i)
+        if (I->v[i].module < PMK_COUNT && unit[i] < HG_MAX_UNITS) has[unit[i]][I->v[i].module] = 1;
+    for (int u = 0; u < g->nunit; ++u) {
+        g_covUnits[g->style]++;
+        for (int m = 0; m < PMK_COUNT; ++m) g_cov[g->style][m] += has[u][m];
+    }
+}
+
+static int dress_check(int a, int seeds, const char *out, HGraph *g, HomePlot *P, char *buf) {
+    int failures = 0, shown = 0, houses = 0, units = 0, maxUnit = 0, over = 0, improper = 0, nondet = 0, bad = 0, zf = 0;
+    long inst = 0;
+    int repairs[HDR_COUNT] = { 0 };
+    static long modCount[PMK_COUNT];
+    memset(modCount, 0, sizeof(modCount));
+    long windows = 0, doors = 0, gutters = 0, pipes = 0, dormers = 0, stacks = 0;
+    double ms = 0.0;
+    PmInstances I1 = { 0 }, I2 = { 0 };
+    HDress D1, D2;
+    memset(&D1, 0, sizeof(D1)); memset(&D2, 0, sizeof(D2));
+    FaceList L = { 0 };
+    float dy[HG_MAX_UNITS];
+    for (int s = 0; s < seeds; ++s) {
+        const int style = s % HS_COUNT;
+        const uint32_t seed = hash_combine(0xD2E55u + (uint32_t)a * 7919u, (uint32_t)s);
+        const int n = make_row(a, style, seed, P);
+        home_build(P, n, hash_float(hash_combine(seed, 0xAFFu)), g, NULL);
+        if (g->empty) continue;
+        for (int k = 0; k < g->nunit; ++k) dy[k] = s % 3 == 0 ? 0.15f * (float)k * (float)(s % 7) / 6.0f : 0.0f;
+        const float sx = s & 1 ? -1.0f : 1.0f;
+        BLog log = { buf, 1 << 16, 0 };
+        buf[0] = 0;
+        const clock_t t0 = clock();
+        dress_row(g, dy, sx, &I1, &D1, s % 8 == 0 ? &L : NULL, &log);
+        ms += 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC;
+        houses++;
+        units += g->nunit;
+        inst += D1.st.instances;
+        if (D1.st.maxUnit > maxUnit) maxUnit = D1.st.maxUnit;
+        for (int r = 0; r < HDR_COUNT; ++r) repairs[r] += D1.st.repairs[r];
+        windows += D1.st.windows; doors += D1.st.doors; gutters += D1.st.gutters; pipes += D1.st.pipes; dormers += D1.st.dormers; stacks += D1.st.stacks;
+        if (D1.st.repairs[HDR_BUDGET] && over++ < 6) printf("  over budget: %s seed %d (%s), %d on a unit\n", ARCH[a], s, home_style_name(style), D1.st.maxUnit);
+        for (uint32_t i = 0; i < I1.n; ++i) if (I1.v[i].module < PMK_COUNT) modCount[I1.v[i].module]++;
+        cover(g, &I1, D1.unit);
+        /* every instance a house module, finite, a proper rotation (never mirrored: the city culls back faces) */
+        for (uint32_t i = 0; i < I1.n; ++i) {
+            const float *x = I1.v[i].xf;
+            int ok = pm_module_is_house(I1.v[i].module);
+            for (int k = 0; k < 12 && ok; ++k) ok = isfinite(x[k]);
+            const double det = (double)x[0] * (x[5] * x[10] - x[6] * x[9]) - (double)x[1] * (x[4] * x[10] - x[6] * x[8]) + (double)x[2] * (x[4] * x[9] - x[5] * x[8]);
+            if (!ok || det <= 0.0) {
+                if (shown++ < 4) printf("FAIL: %s seed %d (%s): instance %u (module %d) %s\n", ARCH[a], s, home_style_name(style), i, I1.v[i].module, ok ? "mirrored" : "bad");
+                improper++;
+                failures++;
+                break;
+            }
+        }
+        /* the dressed shell's faces as good as the bare one's (one row in eight) */
+        if (s % 8 == 0) {
+            const float top = home_top(g) + dy[g->nunit - 1] + 1.5f;
+            for (int i = 0; i < L.n; ++i) {
+                const char *why = "";
+                if (!face_bad(g, &L.f[i], top, &why)) continue;
+                if (shown++ < 4) printf("FAIL: %s seed %d (%s) dressed shell face %d (surface %d): %s\n", ARCH[a], s, home_style_name(style), i, L.f[i].surf, why);
+                bad++;
+                failures++;
+                break;
+            }
+            for (int i = 0; i < L.n; ++i)
+                for (int j = i + 1; j < L.n; ++j) {
+                    if (coplanar_overlap(&L.f[i], &L.f[j]) < 2e-3) continue;
+                    if (shown++ < 4) printf("FAIL: %s seed %d (%s) dressed shell: surfaces %d and %d share a plane\n", ARCH[a], s, home_style_name(style), L.f[i].surf, L.f[j].surf);
+                    for (int w = 0; w < 2; ++w) {
+                        const HShellFace *f = &L.f[w ? j : i];
+                        float mn[3] = { 1e9f, 1e9f, 1e9f }, mx[3] = { -1e9f, -1e9f, -1e9f };
+                        for (int q = 0; q < f->n; ++q)
+                            for (int k = 0; k < 3; ++k) { mn[k] = fminf(mn[k], f->p[q][k]); mx[k] = fmaxf(mx[k], f->p[q][k]); }
+                        printf("    surface %d unit %d: x %.3f..%.3f y %.3f..%.3f z %.3f..%.3f\n", f->surf, f->unit, mn[0], mx[0], mn[1], mx[1], mn[2], mx[2]);
+                    }
+                    for (int v = 0; v < g->nvol; ++v)
+                        if (g->vol[v].role == HV_PORCH)
+                            printf("    porch unit %d kind %d: x %.2f..%.2f z %.2f..%.2f y0 %.2f eaves %.2f\n", g->vol[v].unit, g->vol[v].kind, g->vol[v].x0,
+                                   g->vol[v].x1, g->vol[v].z0, g->vol[v].z1, g->vol[v].y0, g->vol[v].eaves);
+                    zf++;
+                    failures++;
+                    i = L.n;
+                    break;
+                }
+        }
+        if (s % 16 == 0) {
+            dress_row(g, dy, sx, &I2, &D2, NULL, NULL);
+            if (I1.n != I2.n || inst_hash(&I1, D1.unit) != inst_hash(&I2, D2.unit)) {
+                if (shown++ < 4) printf("FAIL: %s seed %d (%s): its dressing differs when built twice\n", ARCH[a], s, home_style_name(style));
+                nondet++;
+                failures++;
+            }
+        }
+    }
+    const int per = a == HOME_DETACHED ? houses : units;
+    printf("  dressed: %.1f kit instances a %s (most on a unit %d, budget %d), %.3f ms a unit for the dressed shell; a unit: windows %.2f, "
+           "doors %.2f, gutters %.2f, downpipes %.2f, dormers %.3f, stacks topped %.2f\n",
+           (double)inst / (per ? per : 1), a == HOME_DETACHED ? "house" : "unit", maxUnit, 150, ms / (units ? units : 1),
+           (double)windows / units, (double)doors / units, (double)gutters / units, (double)pipes / units, (double)dormers / units, (double)stacks / units);
+    {   /* the modules most placed */
+        int top[10] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+        for (int m = 0; m < PMK_COUNT; ++m)
+            for (int k = 0; k < 10; ++k)
+                if (top[k] < 0 || modCount[m] > modCount[top[k]]) { for (int j = 9; j > k; --j) top[j] = top[j - 1]; top[k] = m; break; }
+        printf("  most placed (a %s):", a == HOME_DETACHED ? "house" : "unit");
+        for (int k = 0; k < 10 && top[k] >= 0 && modCount[top[k]]; ++k) printf(" %s %.1f,", pm_module(top[k])->name, (double)modCount[top[k]] / (per ? per : 1));
+        printf("\n");
+        /* every house module's share of the houses that got one (a coverage check on the kit) */
+        printf("  every module (a %s):", a == HOME_DETACHED ? "house" : "unit");
+        for (int m = 0; m < PMK_COUNT; ++m)
+            if (pm_module_is_house(m)) printf(" %s %.3f,", pm_module(m)->name, (double)modCount[m] / (per ? per : 1));
+        printf("\n");
+    }
+    printf("  the dressing's repairs:");
+    for (int r = 0; r < HDR_COUNT; ++r) if (repairs[r]) printf(" %s %d (%.3f a unit),", home_dress_rule(r), repairs[r], (double)repairs[r] / units);
+    printf("\n  %d mirrored or bad, %d not deterministic, %d bad faces, %d z-fighting, %d rows with a unit over budget\n", improper, nondet, bad, zf, over);
+    if (over * 100 > houses) { printf("FAIL: %s: over 1%% of rows have a unit over the 150 instance budget\n", ARCH[a]); failures++; }
+    if (out) {
+        /* the kit drawn on the shells: one row of each style */
+        const int cols = 4, cw = 480, chh = 340, rows = (HS_COUNT + cols - 1) / cols;
+        Image im = { cols * cw, rows * chh, NULL };
+        im.p = (unsigned char *)malloc((size_t)im.w * im.h * 3);
+        for (int i = 0; i < im.w * im.h; ++i) { im.p[i * 3] = 30; im.p[i * 3 + 1] = 34; im.p[i * 3 + 2] = 40; }
+        for (int style = 0; style < HS_COUNT; ++style) {
+            const uint32_t seed = hash_combine(0x40A1Bu + (uint32_t)a * 7919u, (uint32_t)style);
+            const int n = make_row(a, style, seed, P);
+            home_build(P, n, 0.5f, g, NULL);
+            const int x0 = (style % cols) * cw, y0 = (style / cols) * chh;
+            char label[64];
+            snprintf(label, sizeof(label), "%s %s", home_style_name(style), plan_region_code(home_style_region(style)));
+            text(&im, x0 + 6, y0 + 4, label, 0xF0E8D0);
+            if (g->empty) continue;
+            for (int k = 0; k < g->nunit; ++k) dy[k] = 0.0f;
+            PmMesh M = { 0 };
+            Pm pm;
+            pm_begin(&pm, &M, NULL, PM_LOD1);
+            HDress D;
+            memset(&D, 0, sizeof(D));
+            D.pm = &pm; D.sx = 1.0f;
+            L.n = 0;
+            home_shell_kit(g, dy, collect_face, &L, NULL, &D);
+            kit_faces(&M, &L);
+            draw_shell(&im, x0, y0, cw, chh, &L, 28.0f, 24.0f);
+            pm_mesh_free(&M);
+            free(D.unit);
+        }
+        char path[512];
+        snprintf(path, sizeof(path), "%s/dressed_%s.png", out, ARCH[a]);
+        if (stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3)) printf("  wrote %s\n", path);
+        free(im.p);
+    }
+    pm_inst_free(&I1); pm_inst_free(&I2);
+    free(D1.unit); free(D2.unit); free(L.f);
+    return failures;
+}
+
 int main(int argc, char **argv) {
-    if (argc > 6 && strcmp(argv[1], "--view") == 0) {   /* --view ARCH STYLE SEED OUT.png YAW [PITCH]: one row's near shell, large */
+    if (argc > 6 && strcmp(argv[1], "--view") == 0) {   /* --view ARCH STYLE SEED OUT.png YAW [PITCH [LOD|kit]]: one row's near shell, large */
         int a = 0, style = home_style_find(-1, argv[3]);
         for (int k = 0; k < HOME_ARCH_COUNT; ++k) if (strcmp(argv[2], ARCH[k]) == 0) a = k;
         HomePlot P[HG_MAX_UNITS];
@@ -629,7 +862,22 @@ int main(int argc, char **argv) {
         home_build(P, n, 0.5f, g, NULL);
         FaceList L = { 0 };
         float dy[HG_MAX_UNITS] = { 0 };
-        home_shell(g, argc > 8 ? atoi(argv[8]) : HSH_NEAR, dy, collect_face, &L, NULL);
+        if (argc > 8 && strcmp(argv[8], "kit") == 0) {   /* HM5: dressed, the kit built in */
+            PmMesh M = { 0 };
+            Pm pm;
+            pm_begin(&pm, &M, NULL, PM_LOD0);
+            HDress D;
+            memset(&D, 0, sizeof(D));
+            D.pm = &pm; D.sx = 1.0f;
+            char *lb = (char *)malloc(1 << 16);
+            BLog log = { lb, 1 << 16, 0 };
+            lb[0] = 0;
+            D.log = &log;
+            home_shell_kit(g, dy, collect_face, &L, NULL, &D);
+            kit_faces(&M, &L);
+            printf("%s", lb);
+            free(lb);
+        } else home_shell(g, argc > 8 ? atoi(argv[8]) : HSH_NEAR, dy, collect_face, &L, NULL);
         Image im = { 1600, 1200, NULL };
         im.p = (unsigned char *)malloc((size_t)im.w * im.h * 3);
         for (int i = 0; i < im.w * im.h; ++i) { im.p[i * 3] = 30; im.p[i * 3 + 1] = 34; im.p[i * 3 + 2] = 40; }
@@ -646,6 +894,7 @@ int main(int argc, char **argv) {
         }
         return 0;
     }
+    if (argc > 1 && strcmp(argv[argc - 1], "--coverage") == 0) { g_coverage = 1; argc--; }
     const int seeds = argc > 1 ? atoi(argv[1]) : 10000;
     const char *out = argc > 2 ? argv[2] : NULL;
     const int verbose = argc > 3 ? atoi(argv[3]) : -1;
@@ -778,6 +1027,56 @@ int main(int argc, char **argv) {
         }
         /* HM3a: the shells */
         failures += shell_check(a, seeds < 2600 ? seeds : 2600, out, g, P);
+        /* HM5: the shells dressed */
+        failures += dress_check(a, seeds < 2600 ? seeds : 2600, out, g, P, buf);
+    }
+    {   /* the kit used, not just built (HM5, after the user asked why so few of its pieces showed): each North American
+         * and British style's signature pieces on at least this share of its units. A gable piece's share is bounded by
+         * the roofs: inter-war mains are 60% hipped (no gables), so its bargeboards and half-timbering ask less */
+        static const struct { const char *style, *module; float min; } WANT[] = {
+            { "victorian", "h_win_sash", 0.5f }, { "victorian", "h_hood_mould", 0.8f }, { "victorian", "h_bay_post", 0.5f },
+            { "victorian", "h_barge_gothic", 0.3f }, { "victorian", "h_finial", 0.3f }, { "victorian", "h_fanlight", 0.35f },
+            { "victorian", "h_hopper", 0.5f }, { "victorian", "h_eaves_bracket", 0.4f }, { "victorian", "h_string_course", 0.5f },
+            { "victorian", "h_ridge_crest", 0.2f },
+            { "georgian", "h_win_georgian", 0.75f }, { "georgian", "h_keystone", 0.8f }, { "georgian", "h_doorcase", 0.3f },
+            { "georgian", "h_doorcase_ped", 0.2f }, { "georgian", "h_string_course", 0.8f }, { "georgian", "h_quoin", 0.15f },
+            { "interwar", "h_win_casement", 0.6f }, { "interwar", "h_barge_scallop", 0.25f }, { "interwar", "h_timber", 0.12f },
+            { "interwar", "h_hung_tiles", 0.3f }, { "interwar", "h_bay_post", 0.5f }, { "interwar", "h_soldier", 0.3f },
+            { "postwar", "h_lintel_concrete", 0.8f }, { "postwar", "h_win_casement", 0.35f }, { "postwar", "h_canopy_flat", 0.3f },
+            { "craftsman", "h_rafter_tail", 0.9f }, { "craftsman", "h_knee_brace", 0.5f }, { "craftsman", "h_post_craft", 0.8f },
+            { "craftsman", "h_win_grid", 0.75f }, { "craftsman", "h_casing", 0.9f }, { "craftsman", "h_door_craft", 0.6f },
+            { "tract", "h_shutter_louvre", 0.15f }, { "tract", "h_door_6p", 0.8f }, { "tract", "h_casing", 0.3f },
+            { "ranch", "h_win_picture", 0.8f },
+            { "rowhouse", "h_eaves_bracket", 0.8f }, { "rowhouse", "h_fanlight", 0.45f }, { "rowhouse", "h_arch_brick", 0.5f },
+            { "rowhouse", "h_plinth", 0.8f },
+            { "tripledecker", "h_bay_post", 0.5f }, { "tripledecker", "h_post_turned", 0.2f },
+            { "spanish", "h_grille", 0.4f }, { "spanish", "h_win_casement", 0.6f },
+        };
+        int short_ = 0;
+        for (size_t k = 0; k < sizeof(WANT) / sizeof(WANT[0]); ++k) {
+            const int st = home_style_find(-1, WANT[k].style);
+            int m = -1;
+            for (int j = 0; j < PMK_COUNT; ++j) if (pm_module_is_house(j) && strcmp(pm_module(j)->name, WANT[k].module) == 0) m = j;
+            if (st < 0 || m < 0) { printf("FAIL: the coverage table names %s %s, which don't exist\n", WANT[k].style, WANT[k].module); failures++; continue; }
+            if (g_covUnits[st] < 200) continue;   /* too few rows to judge */
+            const double share = (double)g_cov[st][m] / g_covUnits[st];
+            if (share < WANT[k].min) {
+                printf("FAIL: %s: %s on %.0f%% of its units (wanted %.0f%%)\n", WANT[k].style, WANT[k].module + 2, 100.0 * share, 100.0 * WANT[k].min);
+                short_++;
+                failures++;
+            }
+        }
+        printf("the kit's coverage: %d of %d signature pieces short\n", short_, (int)(sizeof(WANT) / sizeof(WANT[0])));
+    }
+    if (g_coverage) {
+        printf("\nthe kit's coverage by style: the share of a style's units with at least one of each module (over every archetype)\n");
+        for (int st = 0; st < HS_COUNT; ++st) {
+            if (!g_covUnits[st]) continue;
+            printf("%-12s %6ld units:", home_style_name(st), g_covUnits[st]);
+            for (int m = 0; m < PMK_COUNT; ++m)
+                if (pm_module_is_house(m) && g_cov[st][m]) printf(" %s %.2f", pm_module(m)->name + 2, (double)g_cov[st][m] / g_covUnits[st]);
+            printf("\n");
+        }
     }
     free(g); free(g2); free(buf);
     if (failures) { printf("%d failure(s)\n", failures); return 1; }

@@ -876,6 +876,7 @@ static void init_graph(HCtx *c, const HomePlot *row, int n) {
     memset(g, 0, sizeof(*g));
     g->seed = row[0].seed;
     g->arch = row[0].arch; g->style = row[0].style; g->region = row[0].region;
+    g->affluence = c->aff;
     g->u0 = row[0].u0;
     g->ox = row[0].ox; g->oz = row[0].oz; g->tx = row[0].tx; g->tz = row[0].tz; g->nx = row[0].nx; g->nz = row[0].nz;
     /* section 13.5: a row at most 48 m long (HM1 cuts none longer): drop units until it fits */
@@ -997,7 +998,7 @@ void home_build_at(const HomePlot *row, int n, float affluence, int first, HGrap
     const int nu = g->nunit;
     memset(g, 0, sizeof(*g));
     g->seed = row[0].seed; g->arch = row[0].arch; g->style = row[0].style; g->region = row[0].region;
-    g->nunit = nu; g->empty = 1; g->attempts = 4; g->level = 3;
+    g->nunit = nu; g->empty = 1; g->attempts = 4; g->level = 3; g->affluence = c.aff;
 }
 
 void home_to_world(const HGraph *g, float x, float z, double *wx, double *wz) {

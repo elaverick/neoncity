@@ -467,7 +467,7 @@ blurred in, lit by the homes' hours. A prism takes a box's slot in the proxies' 
 and is drawn by its own list and pipeline (`shaders/proxy/proxy.vert` built with `HOUSE_PRISM`: 42 vertices). The far shell's walls
 cast no ray-traced shadows (they would stand over the near shell's set-back windows). Collision takes the
 houses' bodies, enclosed porches and porches' posts; the grass keeps clear of them. `NeonCity --homes
-off|far|near` leaves them out, or the near layer, to measure them. `home_lab` builds both shells of 2,600 rows an
+off|far|near|bare` leaves them out, or the near layer, or the kit, to measure them. `home_lab` builds both shells of 2,600 rows an
 archetype: none with a bad face (not finite, off its plots, wound wrong), none different twice, no two faces
 z-fighting over 20 cm2, within the budgets (docs/residential-target.md, "Budgets").
 
@@ -494,6 +494,30 @@ cement take the shells' palettes and sets mapped in the world (a stretched run k
 the unit's, carried in the instance (`HOUSE_KIT_*` in `house_surf.h`), so one module serves every house.
 `pmodel_lab out --only house` draws the modules' sheets and seven vignettes (a style's street side dressed over
 stand-in walls and roofs), counting their instances against the target's 150 a house.
+
+**Their character layer** (`src/gen/home_character.c`, HM5). A second grammar sets the kit down on each near shell.
+A row's set (`home_char_set`, `HCharSet` in `home_shell.h`) comes from its style and affluence: frames, sills and
+heads for the street's windows and the rest, the door and its surround, the gutters and their colour, hoppers or
+swan necks, the eaves (brackets, rafter tails, knee braces), the street's gables (bargeboards, finials,
+half-timbering), ridge tiles plain or crested, the front's reliefs (plinth, string course, cornice, quoins, a band of
+hung tiles), shutters, window boxes, grilles, porch posts, spandrels, balustrades, door canopies. A row was built as
+one, so its units share that set; then each unit's upkeep (mostly kept, some tired, a few run-down) and its owner
+vary it: plastic or vinyl replacement windows (front and back, or the back first), a door of their own, plastic
+gutters where the row's were iron, shutters taken down, a loft conversion's dormer at the back, rooflights, a soil
+vent. The shell is built for it (`home_shell_kit`): it records where every window, door, porch post, stack and
+roof edge ended up; its bay lights reach the bay's corner posts; its stacks leave their caps to the kit's
+corbelled ones; its posts and door canopies are the kit's; its glass paints the glazing bars (those of the frame
+chosen) only past the kit's reach (`HOUSE_AUX_FRAMED`). The dressing (`hs_dress`) then reads the shell's own
+solids: a gutter, a ridge, a course or rafter tails run only where nothing stands in their way (sampled along
+them: a party wall's upstand, a stack, a wing's roof running in, a bay); downpipes go at a corner or a party wall
+clear of windows, doors, bays and porches; dormers only where their whole footprint lies on their own slope under
+the ridge with nothing over it; doorcases and fanlights only where the wall has room; shutters only with their
+width free on each side; quoins only on free corners. Each such call is logged as a repair (`repair char-<rule>:`).
+A unit over the budget (150 instances) is dressed again leaner. The instances ride in the houses' near layer
+(`Mesh.kit`, drawn by `kit_gpu.c` with the vendors'), placed in the mesh's frame so a mirrored row never mirrors a
+module. `NeonCity --homes bare` draws the near shells without the kit (HM3's look); `home_lab` dresses 2,600 rows
+an archetype (instances, repairs, every instance a proper rotation, the same twice, the dressed shell's faces, and each North American and British style's signature pieces on a set share of its units: `--coverage` prints every style's share of every module) and
+writes `dressed_<archetype>.png`; `home_lab --view ARCH STYLE SEED out.png YAW PITCH kit` draws one row dressed.
 
 ### Office lobbies (`src/gen/interior.c`)
 The ground floors of office buildings with a lobby are real interiors, planned by the method in

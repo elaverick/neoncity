@@ -1,5 +1,4 @@
-#include "home_shell.h"
-#include "home_internal.h"
+#include "home_shell_internal.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,10 +43,10 @@ static const FinishDef FIN[HS_COUNT] = {
     [HS_SPANISH]      = { { 0, 1, 0, 0, 0 }, { "", "01285", "", "", "" }, { [HRM_BARREL] = 0.9f, [HRM_CLAY] = 0.1f }, "503", HG_CASEMENT, HST_TILE, 1.0f, 1.3f },
     [HS_RANCH]        = { { 0.40f, 0.25f, 0.35f, 0, 0 }, { "0143", "01235", "05961", "", "" }, { [HRM_SHINGLE] = 0.6f, [HRM_CONCRETE] = 0.25f, [HRM_METAL] = 0.15f }, "015", HG_PLAIN, HST_CONCRETE, 1.5f, 1.1f },
     [HS_TRACT]        = { { 0.20f, 0.30f, 0.50f, 0, 0 }, { "043", "1235", "015689", "", "" }, { [HRM_SHINGLE] = 0.8f, [HRM_CONCRETE] = 0.2f }, "01", HG_PLAIN, HST_CONCRETE, 1.2f, 1.3f },
-    [HS_ROWHOUSE]     = { { 0.70f, 0, 0, 0.30f, 0 }, { "0124", "", "", "220", "" }, { [HRM_SLATE] = 0.6f, [HRM_SHINGLE] = 0.4f }, "4023", HG_SASH, HST_STONE, 0.95f, 1.7f },
+    [HS_ROWHOUSE]     = { { 0.70f, 0, 0, 0.30f, 0 }, { "0124", "", "", "220", "" }, { [HRM_SLATE] = 0.6f, [HRM_SHINGLE] = 0.4f }, "00014", HG_SASH, HST_STONE, 0.95f, 1.7f },
     [HS_TRIPLEDECKER] = { { 0, 0, 1, 0, 0 }, { "", "", "01234589", "", "" }, { [HRM_SHINGLE] = 1.0f }, "01", HG_SASH, HST_TIMBER, 0.9f, 1.5f },
-    [HS_VICTORIAN]    = { { 0.75f, 0.25f, 0, 0, 0 }, { "01342", "013", "", "", "" }, { [HRM_SLATE] = 0.65f, [HRM_CONCRETE] = 0.25f, [HRM_CLAY] = 0.1f }, "0123", HG_SASH, HST_STONE, 0.95f, 1.6f },
-    [HS_GEORGIAN]     = { { 0.60f, 0.40f, 0, 0, 0 }, { "1403", "012", "", "", "" }, { [HRM_SLATE] = 0.8f, [HRM_CONCRETE] = 0.2f }, "02", HG_GEORGIAN, HST_STONE, 0.95f, 1.6f },
+    [HS_VICTORIAN]    = { { 0.75f, 0.25f, 0, 0, 0 }, { "01342", "013", "", "", "" }, { [HRM_SLATE] = 0.65f, [HRM_CONCRETE] = 0.25f, [HRM_CLAY] = 0.1f }, "00011", HG_SASH, HST_STONE, 0.95f, 1.6f },
+    [HS_GEORGIAN]     = { { 0.60f, 0.40f, 0, 0, 0 }, { "1403", "012", "", "", "" }, { [HRM_SLATE] = 0.8f, [HRM_CONCRETE] = 0.2f }, "0001", HG_GEORGIAN, HST_STONE, 0.95f, 1.6f },
     [HS_INTERWAR]     = { { 0.45f, 0.55f, 0, 0, 0 }, { "024", "012f3", "", "", "" }, { [HRM_CLAY] = 0.8f, [HRM_CONCRETE] = 0.2f }, "031", HG_CASEMENT, HST_CONCRETE, 1.5f, 1.2f },
     [HS_POSTWAR]      = { { 0.70f, 0.30f, 0, 0, 0 }, { "0432", "01f3", "", "", "" }, { [HRM_CONCRETE] = 0.8f, [HRM_CLAY] = 0.2f }, "045", HG_CASEMENT, HST_CONCRETE, 1.4f, 1.2f },
     [HS_MODERN]       = { { 0.50f, 0.30f, 0.20f, 0, 0 }, { "3074", "034", "6b59", "", "" }, { [HRM_CONCRETE] = 0.7f, [HRM_SLATE] = 0.3f }, "240", HG_PLAIN, HST_CONCRETE, 1.6f, 1.3f },
@@ -128,52 +127,12 @@ void home_finish(const HGraph *g, int unit, HFinish *f) {
  * Solids
  * ------------------------------------------------------------------------- */
 
-#define MAXP    24
-#define PV      40
-#define NOFACE  255
 #define EPS_S   0.002     /* a face runs this far into a solid it meets, so no crack shows where they join */
 #define EPS_N   0.008     /* coplanar: how near a face must lie to another solid's plane to count as on it */
 #define ON_TOL  1e-3
 #define BIG     400.0
-#define SLAB_T  0.2f      /* a pitched roof's depth at its eaves: the fascia (m) */
 #define PARAPET_W 0.25f
 #define UPSTAND   0.25f   /* a party wall's rise over the roof */
-
-enum { SK_OTHER = 0, SK_BODY, SK_SLAB };
-typedef struct SPlane { double n[3], d; } SPlane;
-typedef struct SPoly { int n; double p[PV][3]; } SPoly;
-
-typedef struct Solid {
-    int      np;
-    SPlane    pl[MAXP];
-    uint8_t  surf[MAXP];      /* the face on each plane: HF_*, or NOFACE */
-    uint8_t  noWin[MAXP];     /* far: a wall face with no windows painted (a party or cut face) */
-    uint8_t  neg;             /* an opening: carves the others; its faces turned in */
-    uint8_t  kind;            /* SK_*: what a window may stand behind (box_blocked) */
-    uint8_t  wallFin, wallCol, roofFin, roofCol, trimCol, stepFin;
-    int8_t   unit, vol;
-    int      host;            /* an opening's: the solid its faces lie in */
-    uint32_t aux;             /* an opening's size and pattern; a far body's window rhythm */
-    double   o[3], t[3];      /* an opening's lower left corner and the way across it */
-    double   mn[3], mx[3];
-    int      live;            /* it has faces */
-} Solid;
-
-typedef struct Ctx {
-    const HGraph *g;
-    int     lod;
-    const float *dy;
-    Solid  *s;
-    int     ns, cap;
-    HFinish fin[HG_MAX_UNITS];
-    int     body[HG_MAX_VOL][HG_MAX_UNITS];   /* each volume's body solid (a row's main's per unit slice), -1 */
-    int     firstSlab[HG_MAX_VOL], lastSlab[HG_MAX_VOL];
-    SPoly   *pool, *piece, *next;
-    int     maxPieces;
-    HShellFn fn;
-    void   *ctx;
-    HShellStats st;
-} Ctx;
 
 static double dot3(const double *a, const double *b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 static void cross3(const double *a, const double *b, double *o) {
@@ -309,6 +268,25 @@ static int boxes_meet(const double *amn, const double *amx, const double *bmn, c
         if (amx[k] < bmn[k] - pad || amn[k] > bmx[k] + pad) return 0;
     return 1;
 }
+
+int hs_in_solid(const Solid *s, const double p[3], double in) {
+    for (int j = 0; j < s->np; ++j)
+        if (dot3(s->pl[j].n, p) > s->pl[j].d - in) return 0;
+    return 1;
+}
+
+int hs_inside(const Ctx *C, const double p[3], int skip, double in) {
+    for (int i = 0; i < C->ns; ++i) {
+        const Solid *s = &C->s[i];
+        if (i == skip || s->neg || !s->live) continue;
+        if (p[0] < s->mn[0] || p[0] > s->mx[0] || p[1] < s->mn[1] || p[1] > s->mx[1] || p[2] < s->mn[2] || p[2] > s->mx[2]) continue;
+        if (hs_in_solid(s, p, in)) return i;
+    }
+    return -1;
+}
+
+/* The dressing's records, grown as the shell is built (kit only). */
+#define GROW(arr, n, cap) do { if ((n) == (cap)) { (cap) = (cap) ? (cap) * 2 : 32; (arr) = realloc((arr), sizeof(*(arr)) * (size_t)(cap)); if (!(arr)) abort(); } } while (0)
 
 /* The parts of piece P (normal nf) outside solid T, into out (at most max); returns how many. tie: T was made
  * first, so where P lies on one of T's faces looking the same way, P gives way. Openings (T->neg) shrink by
@@ -469,9 +447,6 @@ static void emit_all(Ctx *C) {
  * The house
  * ------------------------------------------------------------------------- */
 
-/* A volume's footprint: its corners (hvol_outline: a canted bay's trapezoid), each edge's outward normal. */
-typedef struct Foot { int n; double p[6][2], m[6][2]; } Foot;
-
 static void foot_of(const float (*q)[2], int n, Foot *F) {
     double cx = 0.0, cz = 0.0;
     F->n = n;
@@ -487,21 +462,9 @@ static void foot_of(const float (*q)[2], int n, Foot *F) {
     }
 }
 
-/* Roof roles of a footprint's edges. */
-enum { ER_EAVES = 0, ER_VERGE, ER_HIGH, ER_EXT };
-
-typedef struct Roof {
-    Foot    F;              /* the roof's footprint (a row's whole main, or one run on into its parent) */
-    Foot    W;              /* the walls' (a slice of a row's main: a unit's) */
-    uint8_t role[6];        /* the roof's edges (F's; W's edges are in the same order) */
-    uint8_t cut[6];         /* W's edges that cut a row's main at a party wall */
-    double  cx0, cx1;       /* the slice: the roof's slabs are cut to x0 .. x1 */
-    double  ext[6];         /* how far past the edge: overhang, verge, into the parent */
-    double  E, t, ov;       /* the eaves (wall plate) height, tan(pitch), the eaves' overhang */
-    int     kind;           /* HR_* */
-} Roof;
-
 /* The roof plane over eaves edge e: y <= E + t * (distance in from the edge). */
+static void eaves_plane(const Roof *R, int e, double off, double out[4]);
+void hs_eaves_plane(const Roof *R, int e, double off, double out[4]) { eaves_plane(R, e, off, out); }
 static void eaves_plane(const Roof *R, int e, double off, double out[4]) {
     const double mx = R->F.m[e][0], mz = R->F.m[e][1], a = mx * R->F.p[e][0] + mz * R->F.p[e][1];
     double n[3] = { R->t * mx, 1.0, R->t * mz };
@@ -666,7 +629,9 @@ static void roof_of(const HGraph *g, const HVol *v, const Foot *W, const Foot *F
     R->E = v->eaves;
     R->t = tan(v->pitch * 0.017453292519943295);
     R->ov = fmax(v->overhang, v->role == HV_PORCH ? 0.12 : 0.04);
-    const double ovg = fmin(0.3, fmax(0.05, 0.5 * v->overhang));
+    /* the verges: half the eaves' overhang, to 0.3 m; a craftsman's gables reach as far as its eaves (deep verges on
+     * knee braces, HM5) */
+    const double ovg = g->style == HS_CRAFTSMAN && v->roof == HR_GABLE ? fmin(0.75, fmax(0.3, v->overhang)) : fmin(0.3, fmax(0.05, 0.5 * v->overhang));
     const HVol *par = v->parent >= 0 ? &g->vol[v->parent] : NULL;
     for (int e = 0; e < F->n; ++e) {
         const int side = side_of(F, e);
@@ -728,10 +693,17 @@ static void add_volume(Ctx *C, int vi, int unit, double sx0, double sx1, int cut
     roof_of(g, v, &W, &F, cutW, cutE, &R);
     const int first = C->ns;
     const double dy = C->dy ? C->dy[unit] : 0.0;
+    if (C->kit && C->lod == HSH_NEAR && !(v->role == HV_PORCH && (v->kind == HP_RECESSED || v->kind == HP_CANOPY))) {
+        GROW(C->roof, C->nroof, C->caproof);
+        HsRoof *hr = &C->roof[C->nroof++];
+        hr->vol = (int8_t)vi; hr->unit = (int8_t)unit; hr->dy = dy; hr->R = R;
+    }
     if (v->role == HV_PORCH) {
         if (v->kind == HP_RECESSED) return;   /* an opening (add_openings) */
+        if (v->kind == HP_CANOPY && C->kit) return;   /* the kit's canopy on its brackets (home_character.c) */
         if (C->lod == HSH_FAR && v->kind != HP_ENCLOSED) return;
-        if (v->kind == HP_OPEN) C->body[vi][unit] = add_body(C, v, vi, unit, &R, R.E, 1);   /* its attic: a pediment and a ceiling */
+        /* its attic: a pediment and a ceiling (a flat-roofed one has none: its slab's soffit is its ceiling) */
+        if (v->kind == HP_OPEN && R.kind != HR_FLAT) C->body[vi][unit] = add_body(C, v, vi, unit, &R, R.E, 1);
         else if (v->kind == HP_ENCLOSED) C->body[vi][unit] = add_body(C, v, vi, unit, &R, 0.0, 0);
         add_slabs(C, v, vi, unit, &R);
     } else {
@@ -787,6 +759,16 @@ static void add_stack(Ctx *C, const HChimney *k) {
     Solid *s = solid_new(C, unit, k->vol, 0);
     s->wallFin = C->fin[unit].stack; s->wallCol = C->fin[unit].stackCol;
     if (C->lod == HSH_FAR) { box_planes(s, x0, yb, z0, x1, top, z1, HF_CHIMNEY, HF_COPING, NOFACE); solid_lift(s, dy); return; }
+    if (C->kit) {
+        /* the kit's corbelled cap and its pots (hk_chimney_top) stand over the stack's top */
+        box_planes(s, x0, yb, z0, x1, top, z1, HF_CHIMNEY, HF_COPING, NOFACE);
+        solid_lift(s, dy);
+        GROW(C->stack, C->nstack, C->capstack);
+        HsStack *hs = &C->stack[C->nstack++];
+        hs->unit = (int8_t)unit; hs->chim = (int8_t)(k - g->chim);
+        hs->x = k->x; hs->z = k->z; hs->w = k->w; hs->d = k->d; hs->top = top + dy;
+        return;
+    }
     box_planes(s, x0, yb, z0, x1, top - 0.12, z1, HF_CHIMNEY, NOFACE, NOFACE);
     solid_lift(s, dy);
     Solid *c = solid_new(C, unit, k->vol, 0);
@@ -885,7 +867,8 @@ static void add_windows(Ctx *C, int vi, int unit) {
         for (int k = 0; k < v->storeys; ++k) {
             const double floorY = g->plinth + k * g->storeyH;
             double sill = floorY + (k == 0 ? 0.75 : 0.85), head = fmin(floorY + 2.15, v->eaves - 0.25);
-            double ww = bay ? fmax(0.3, L - 0.3) : fmin(fin->winW, bw - 0.6);
+            /* a bay's lights reach its corner posts when the kit dresses it (hk_bay's: the face less 0.13 m) */
+            double ww = bay ? fmax(0.3, L - (C->kit ? 0.13 : 0.3)) : fmin(fin->winW, bw - 0.6);
             if (!bay && k == g->vol[0].storeys - 1 && g->style == HS_GEORGIAN && v->storeys == 3) head = fmin(head, sill + 1.0);
             if (head - sill < 0.8 || ww < 0.3) continue;
             if (head - sill > fin->winH && !bay) sill = head - fin->winH;
@@ -905,7 +888,8 @@ static void add_windows(Ctx *C, int vi, int unit) {
                 double lo[3], hi[3];
                 const double ax = m[0] * at + e[0] * a0, az = m[1] * at + e[1] * a0;
                 for (int q = 0; q < 2; ++q) {
-                    const double s = q ? ww + 0.12 : -0.12;
+                    const double mg = bay && C->kit ? -0.02 : 0.12;
+                    const double s = q ? ww + mg : -mg;
                     const double px = ax + e[0] * s, pz = az + e[1] * s;
                     for (int r = 0; r < 2; ++r) {
                         const double o = r ? 0.35 : 0.01, x = px + m[0] * o, z = pz + m[1] * o;
@@ -915,8 +899,24 @@ static void add_windows(Ctx *C, int vi, int unit) {
                 }
                 lo[1] = sill - 0.12 + dy; hi[1] = head + 0.12 + dy;
                 if (box_blocked(C, vi, unit, lo, hi)) continue;
-                const double depth = g->style == HS_GEORGIAN || g->style == HS_VICTORIAN || g->style == HS_ROWHOUSE ? 0.14 : 0.1;
-                add_opening(C, host, unit, m, e, ax, az, ww, sill, head, depth, HF_GLASS, opening_aux(ww, head - sill, fin->glazing));
+                double depth = g->style == HS_GEORGIAN || g->style == HS_VICTORIAN || g->style == HS_ROWHOUSE ? 0.14 : 0.1;
+                uint32_t aux = opening_aux(ww, head - sill, fin->glazing);
+                if (C->kit) {
+                    /* the kit's frame stands in it: the shader paints the glazing bars only past the kit's reach,
+                     * and they are the frame's (a replacement's plain glass) */
+                    if (bay) depth = 0.08;   /* a bay's thin walls (hk_bay's frames) */
+                    const int fr = home_char_frame(&C->cs[unit], m[1] < -0.7, k, ww);
+                    static const uint8_t PAT[] = { HG_PLAIN, HG_SASH, HG_GEORGIAN, HG_CASEMENT, HG_GRID, HG_PLAIN, HG_PLAIN };
+                    aux = opening_aux(ww, head - sill, PAT[fr <= HK_FRAME_UPVC ? fr : 0]) | HOUSE_AUX_FRAMED;
+                }
+                if (add_opening(C, host, unit, m, e, ax, az, ww, sill, head, depth, HF_GLASS, aux) >= 0 && C->kit) {
+                    GROW(C->win, C->nwin, C->capwin);
+                    HsWin *w = &C->win[C->nwin++];
+                    w->unit = (int8_t)unit; w->vol = (int8_t)vi; w->storey = (uint8_t)k; w->bay = (uint8_t)bay; w->host = host;
+                    w->m[0] = m[0]; w->m[1] = m[1]; w->e[0] = e[0]; w->e[1] = e[1]; w->at = at;
+                    w->a0 = a0; w->w = ww; w->s0 = s0; w->s1 = s1;
+                    w->y0 = sill + dy; w->y1 = head + dy; w->depth = depth; w->floorY = floorY + dy;
+                }
                 C->st.windows++;
             }
         }
@@ -980,7 +980,12 @@ static void add_front(Ctx *C, int u) {
         const int nposts = kind == HP_VERANDA ? (int)fmax(2.0, ceil((p->x1 - p->x0) / 2.4) + 1.0) : 2;
         for (int k = 0; k < nposts; ++k) {
             const double x = p->x0 + inset + (p->x1 - p->x0 - 2.0 * inset) * k / (nposts - 1);
-            add_post(C, u, pi, x, p->z0 + inset, y0, y1);
+            if (C->kit) {   /* the kit's posts (turned, a craftsman's column, square) */
+                const double dyu = C->dy ? C->dy[u] : 0.0;
+                GROW(C->post, C->npost, C->cappost);
+                HsPost *hp = &C->post[C->npost++];
+                hp->unit = (int8_t)u; hp->vol = (int8_t)pi; hp->x = x; hp->z = p->z0 + inset; hp->y0 = y0 + dyu; hp->y1 = y1 + dyu;
+            } else add_post(C, u, pi, x, p->z0 + inset, y0, y1);
         }
     } else if (kind == HP_ENCLOSED && p) {
         zf = p->z0;
@@ -991,6 +996,13 @@ static void add_front(Ctx *C, int u) {
             const double dx = fmax(p->x0 + 0.15, fmin(p->x1 - 0.15 - d->width, d->x - 0.5 * d->width));
             add_opening(C, ph, u, mm, e, dx, p->z0, d->width, P, P + d->height, 0.06, HF_DOOR,
                         opening_aux(d->width, d->height, 1));
+            if (C->kit) {
+                const double dyu = C->dy ? C->dy[u] : 0.0;
+                GROW(C->door, C->ndoor, C->capdoor);
+                HsDoor *hd = &C->door[C->ndoor++];
+                hd->unit = (int8_t)u; hd->vol = (int8_t)pi; hd->porch = 1;
+                hd->x = dx + 0.5 * d->width; hd->z = p->z0; hd->w = d->width; hd->y0 = P + dyu; hd->y1 = P + d->height + dyu; hd->recess = 0.06;
+            }
         }
     } else if (P > 0.05) {
         /* a stoop at the door */
@@ -1020,6 +1032,13 @@ static void add_front(Ctx *C, int u) {
         add_opening(C, host, u, mm, e, d->x - 0.5 * d->width, d->z, d->width, P, P + d->height, 0.12, HF_DOOR,
                     opening_aux(d->width, d->height, (int)(hash_combine(un->seed, 0xD00Bu) & 3u)));
         C->st.doors++;
+        if (C->kit) {
+            const double dyu = C->dy ? C->dy[u] : 0.0;
+            GROW(C->door, C->ndoor, C->capdoor);
+            HsDoor *hd = &C->door[C->ndoor++];
+            hd->unit = (int8_t)u; hd->vol = (int8_t)mi; hd->porch = 0;
+            hd->x = d->x; hd->z = d->z; hd->w = d->width; hd->y0 = P + dyu; hd->y1 = P + d->height + dyu; hd->recess = 0.12;
+        }
     }
 }
 
@@ -1047,12 +1066,15 @@ float home_top(const HGraph *g) {
     return top;
 }
 
-void home_shell(const HGraph *g, int lod, const float *dy, HShellFn fn, void *ctx, HShellStats *st) {
+static void shell_build(const HGraph *g, int lod, const float *dy, HShellFn fn, void *ctx, HShellStats *st, HDress *D) {
     Ctx C;
     memset(&C, 0, sizeof(C));
     C.g = g; C.lod = lod; C.dy = dy; C.fn = fn; C.ctx = ctx;
+    C.kit = D != NULL && lod == HSH_NEAR;
     if (g->empty || !g->nvol) { if (st) memset(st, 0, sizeof(*st)); return; }
     for (int u = 0; u < g->nunit && u < HG_MAX_UNITS; ++u) home_finish(g, u, &C.fin[u]);
+    if (C.kit)
+        for (int u = 0; u < g->nunit && u < HG_MAX_UNITS; ++u) home_char_set(g, u, &C.cs[u]);
     for (int i = 0; i < HG_MAX_VOL; ++i)
         for (int u = 0; u < HG_MAX_UNITS; ++u) C.body[i][u] = -1;
     C.maxPieces = 256;
@@ -1091,8 +1113,15 @@ void home_shell(const HGraph *g, int lod, const float *dy, HShellFn fn, void *ct
         if (C.s[i].neg) C.st.openings++;
         else C.st.solids++;
     }
+    if (C.kit) hs_dress(&C, D);
     emit_all(&C);
     if (st) *st = C.st;
     free(C.pool);
     free(C.s);
+    free(C.win); free(C.door); free(C.post); free(C.stack); free(C.roof);
+}
+
+void home_shell(const HGraph *g, int lod, const float *dy, HShellFn fn, void *ctx, HShellStats *st) { shell_build(g, lod, dy, fn, ctx, st, NULL); }
+void home_shell_kit(const HGraph *g, const float *dy, HShellFn fn, void *ctx, HShellStats *st, HDress *D) {
+    shell_build(g, HSH_NEAR, dy, fn, ctx, st, D);
 }

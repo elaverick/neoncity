@@ -1,5 +1,7 @@
 #include "city_internal.h"
 #include "home_shell.h"
+#include "pmodel_house.h"
+#include "noodle_bar.h"
 
 /* ===========================================================================
  * The houses (residential roadmap HM3a, ~/.claude/plans/residential-buildings.md)
@@ -216,7 +218,50 @@ static void emit_face(void *ctx, const HShellFace *f) {
     }
 }
 
-/* Row r's shell at level lod (HSH_*) into m, in its frame. */
+static int g_homes = HOMES_NEAR;
+void city_set_homes(int mode) { g_homes = mode; }
+int  city_homes_mode(void) { return g_homes; }
+
+/* The kit's instances of a dressed row (HM5: home_shell_kit, in the mesh's frame: the row's with x scaled by sx)
+ * into the chunk: turned and moved as the shell's faces are (mesh_push), each with its unit's flags, its ground
+ * and a seed of its own. */
+static void push_kit(Mesh *m, const HGraph *G, const HomeRow *r, const PmInstances *L, const uint8_t *unitOf) {
+    if (!L->n) return;
+    uint16_t flags[HG_MAX_UNITS];
+    for (int u = 0; u < G->nunit && u < HG_MAX_UNITS; ++u) flags[u] = home_kit_flags(G, u, NULL);
+    if (m->nkit + L->n > m->capkit) {
+        m->capkit = (m->nkit + L->n) * 2;
+        m->kit = (KitInst *)realloc(m->kit, sizeof(KitInst) * m->capkit);
+        if (!m->kit) fatal("out of memory setting down the houses' kit");
+    }
+    const float R[3][3] = { { m->xc, 0.0f, -m->xs }, { 0.0f, 1.0f, 0.0f }, { m->xs, 0.0f, m->xc } };
+    const float t[3] = { m->xx, r->base + SIDEWALK_HEIGHT, m->xz };
+    for (uint32_t i = 0; i < L->n; ++i) {
+        const PmInstance *pi = &L->v[i];
+        const int u = unitOf[i] < G->nunit ? unitOf[i] : 0;
+        KitInst *k = &m->kit[m->nkit++];
+        memset(k, 0, sizeof(*k));   /* its padding too: chunks compare and hash kit records byte for byte */
+        for (int a = 0; a < 3; ++a) {
+            for (int c = 0; c < 4; ++c)
+                k->xf[a * 4 + c] = R[a][0] * pi->xf[c] + R[a][1] * pi->xf[4 + c] + R[a][2] * pi->xf[8 + c];
+            k->xf[a * 4 + 3] += t[a];
+        }
+        k->module = pi->module;
+        k->part = pi->part;
+        k->flags = flags[u];
+        k->seed = hash_combine(G->unit[u].seed, i + 0x484Bu);
+        k->base = r->base + r->dy[u];
+        k->hours = NB_HOURS_ALWAYS;
+        k->show = NB_SHOW_ALWAYS;
+        for (int a = 0; a < 3; ++a) {
+            const float p = k->xf[a * 4 + 3];
+            m->mn[a] = minf(m->mn[a], p - KIT_PAD);
+            m->mx[a] = maxf(m->mx[a], p + KIT_PAD);
+        }
+    }
+}
+
+/* Row r's shell at level lod (HSH_*) into m, in its frame; a near shell dressed in the kit unless --homes bare. */
 static void emit_row(Mesh *m, ChunkGen *g, int ri, int lod) {
     const HGraph *G = chunk_gen_home(g, ri);
     if (G->empty) return;
@@ -230,21 +275,29 @@ static void emit_row(Mesh *m, ChunkGen *g, int ri, int lod) {
     m->xx = (float)(ox - g->ox); m->xz = (float)(oz - g->oz);
     m->footing = 1;
     HEmit E = { m, r, G, sx };
-    home_shell(G, lod, r->dy, emit_face, &E, NULL);
+    if (lod == HSH_NEAR && g_homes == HOMES_NEAR) {
+        PmInstances inst = { 0 };
+        Pm pm;
+        pm_begin(&pm, NULL, &inst, PM_LOD1);
+        HDress D;
+        memset(&D, 0, sizeof(D));
+        D.pm = &pm;
+        D.sx = sx;
+        home_shell_kit(G, r->dy, emit_face, &E, NULL, &D);
+        push_kit(m, G, r, &inst, D.unit);
+        free(D.unit);
+        pm_inst_free(&inst);
+    } else home_shell(G, lod, r->dy, emit_face, &E, NULL);
     m->footing = 0;
     m->xf = 0;
 }
-
-static int g_homes = HOMES_NEAR;
-void city_set_homes(int mode) { g_homes = mode; }
-int  city_homes_mode(void) { return g_homes; }
 
 void build_homes(Mesh *m, ChunkGen *g, int lod) {
     if (g_homes == HOMES_OFF) return;
     chunk_gen_homes(g);
     for (int ri = 0; ri < g->nhrow; ++ri) {
         if (!chunk_gen_owns_home(g, ri)) continue;
-        if (lod == HSH_FAR && g_homes == HOMES_NEAR) m->nhome += (uint32_t)g->hrow[ri].n;
+        if (lod == HSH_FAR && (g_homes == HOMES_NEAR || g_homes == HOMES_BARE)) m->nhome += (uint32_t)g->hrow[ri].n;
         emit_row(m, g, ri, lod);
     }
 }

@@ -1240,8 +1240,16 @@ void hk_window(Pm *pm, const HkWindow *w) {
     static const float FH[] = { 1, HK_SASH_H, HK_SASH_H, HK_CASE_H, HK_GRID_H, HK_PICT_H, HK_UPVC_H };
     const float hw = 0.5f * w->w;
     if (w->frame > 0 && w->frame <= HK_FRAME_UPVC) {
-        pm_push(pm); pm_translate(pm, 0.0f, 0.0f, -w->reveal); pm_scale(pm, w->w / FW[w->frame], w->h / FH[w->frame], 1.0f);
-        pm_place(pm, FRAME[w->frame]); pm_pop(pm);
+        /* an opening much wider than the frame's usual size takes several lights side by side (HM5: a square bay's
+         * front, a wide casement), so bars stay bars; a picture window is one wide light by design */
+        int n = 1;
+        if (w->frame != HK_FRAME_PICTURE && w->w > 1.35f * FW[w->frame]) n = (int)floorf(w->w / FW[w->frame] + 0.5f);
+        if (n < 1) n = 1;
+        const float lw = w->w / (float)n;
+        for (int k = 0; k < n; ++k) {
+            pm_push(pm); pm_translate(pm, -hw + lw * ((float)k + 0.5f), 0.0f, -w->reveal); pm_scale(pm, lw / FW[w->frame], w->h / FH[w->frame], 1.0f);
+            pm_place(pm, FRAME[w->frame]); pm_pop(pm);
+        }
     }
     const int sill = w->sill == HK_SILL_STONE ? PMK_H_SILL_STONE : w->sill == HK_SILL_TIMBER ? PMK_H_SILL_TIMBER : w->sill == HK_SILL_CONCRETE ? PMK_H_SILL_CONCRETE : -1;
     if (sill >= 0) { pm_push(pm); pm_translate(pm, -hw - 0.08f, 0.0f, 0.0f); hk_run(pm, sill, w->w + 0.16f, 0.0f); pm_pop(pm); }

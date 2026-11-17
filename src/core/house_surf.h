@@ -74,6 +74,8 @@
 #define HOUSE_AUX_W         0             /* 10 bits */
 #define HOUSE_AUX_H         10            /* 10 bits */
 #define HOUSE_AUX_PATTERN   20            /* 4 bits */
+#define HOUSE_AUX_FRAMED    0x01000000u   /* HM5: the character kit's frame stands in the window (its bars painted only
+                                             past the kit's reach) */
 
 /* Glazing (HOUSE_AUX_PATTERN of HF_GLASS) */
 #define HG_PLAIN     0    /* one pane */

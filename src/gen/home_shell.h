@@ -56,3 +56,66 @@ void home_shell(const HGraph *g, int lod, const float *dy, HShellFn fn, void *ct
 
 /* A unit's reach: the highest point of anything of the house (its ridge, a stack's top), y in the graph's frame. */
 float home_top(const HGraph *g);
+
+/* ---------------------------------------------------------------------------
+ * The character layer (residential roadmap HM5; src/gen/home_character.c): the HM4 kit (pmodel_house.h) set
+ * down on a near shell by a second grammar. Style, affluence and upkeep choose a set a unit (HCharSet); a row
+ * or a pair is built as one, so its units share the row's set, and owners vary it (a replaced window or door,
+ * their own gutters, shutters taken down, a loft conversion's dormer). The placement rules are checks with
+ * logged repairs ("repair char-<rule>: ..."): downpipes at a corner or a party wall and clear of openings, bays
+ * and porches; dormers clear of stacks, hips, valleys, party walls and the ridge; shutters, doorcases and
+ * fanlights where the wall has room; quoins on free corners; a porch, canopy or doorcase over every front door.
+ * ------------------------------------------------------------------------- */
+
+/* upkeep (docs/residential-target.md "Upkeep": mostly kept, some tired, a few run-down, never derelict) */
+enum { HK_KEPT = 0, HK_TIRED, HK_RUNDOWN };
+enum { HCE_PLAIN = 0, HCE_BRACKETS, HCE_RAFTERS };   /* eaves */
+enum { HCC_NONE = 0, HCC_FLAT, HCC_GABLE };          /* a door canopy (the porch HP_CANOPY's) */
+typedef struct HCharSet {
+    uint8_t upkeep;                                  /* HK_KEPT .. HK_RUNDOWN */
+    uint8_t frame, frameBack, sill, head, headBack;  /* the street's and the rest's windows: HK_FRAME_*, HK_SILL_*, HK_HEAD_* */
+    uint8_t door, surround;                          /* HK_DOOR_*, HK_CASE_* */
+    uint8_t gutter, rain, hopper;                    /* HK_GUTTER_* (255: none), HKR_*, a hopper head (else a swan neck) */
+    uint8_t eaves, knees;                            /* HCE_*; knee braces under the gables' verges */
+    uint8_t barge, finial, tudor, hung;              /* the street's gables: bargeboards (0, or 1 + HK_BARGE_*), a finial,
+                                                        half-timbering; a band of hung tiles between the storeys */
+    uint8_t ridge;                                   /* 0 none, 1 rolls, 2 crested */
+    uint8_t quoins, string, plinth, cornice;         /* the front's reliefs */
+    uint8_t shutters, boxes, grilles;                /* HK_SHUT_* on the street's windows; window boxes; grilles (1 the
+                                                        ground floor's street windows, 2 every ground floor window) */
+    uint8_t post, spandrels, balustrade, canopy;     /* porch posts (HK_POST_*), spandrels, a balustrade; HCC_* */
+    uint8_t dormer, dormerBack;                      /* 0 none, or 1 + HK_DORMER_*: the street's slope, the back's */
+    uint8_t rooflight, vent;                         /* on the back slope */
+    uint8_t lean;                                    /* dressed again leaner: it came out over the budget (hs_dress) */
+} HCharSet;
+enum { HK_POST_SQUARE = 0, HK_POST_TURNED, HK_POST_CRAFT };
+/* Unit u's set (pure: the shell and the city read the same). */
+void home_char_set(const HGraph *g, int unit, HCharSet *s);
+/* A unit's kit instances' flags (house_surf.h HOUSE_KIT_*) and part byte (its roof). */
+uint16_t home_kit_flags(const HGraph *g, int unit, uint8_t *part);
+
+/* the rules the dressing checks, for its repairs' counts */
+enum { HDR_DOWNPIPE = 0, HDR_DORMER, HDR_SHUTTERS, HDR_DOORCASE, HDR_QUOINS, HDR_CANOPY, HDR_PORCH, HDR_BARGE, HDR_BUDGET, HDR_COUNT };
+const char *home_dress_rule(int r);
+typedef struct HDressStats {
+    int instances;                 /* placed */
+    int maxUnit;                   /* the most on one unit */
+    int repairs[HDR_COUNT];
+    int windows, doors, gutters, pipes, dormers, stacks;
+} HDressStats;
+/* Where a dressing goes: a modelling builder (its instance list, or its mesh with the modules built in), the
+ * row's frame to the mesh's (x scaled by sx: -1 for a mirrored row; the kit itself is never mirrored), each
+ * instance's unit (grown alongside pm->inst), the log for its repairs. */
+typedef struct HDress {
+    struct Pm *pm;
+    float      sx;
+    uint8_t   *unit;
+    uint32_t   capUnit;
+    BLog      *log;
+    HDressStats st;
+} HDress;
+
+/* The near shell dressed (HM5): as home_shell(HSH_NEAR) with the shell made ready for the kit (openings sized to
+ * its frames, glass painted bars only past the kit's reach, stack caps, porch posts and door canopies left to
+ * it), then the kit set down through D. */
+void home_shell_kit(const HGraph *g, const float *dy, HShellFn fn, void *ctx, HShellStats *st, HDress *D);
