@@ -266,6 +266,15 @@ int city_block_plots(const Block *bk, HomePlot *out, int max) {
     return P.n;
 }
 
-/* Until HM3 builds them: two storeys of 2.85 m over a 0.3 m plinth, and a
- * roof over a 9 m deep house at 35 degrees. */
+/* A rough figure: storeys of 2.85 m over a 0.3 m plinth, and a roof over a 9 m deep house at 35 degrees. */
 float city_home_height(const HomePlot *p) { return 0.3f + 2.85f * p->storeys + 3.2f; }
+
+void city_home_row(const HomePlot *row, int n, HGraph *g) {
+    double x = row[0].ox, z = row[0].oz;
+    if (n > 0) {
+        const double u = 0.5 * (row[0].u0 + row[n - 1].u1), v = 0.5 * row[0].depth;
+        x += u * row[0].tx + v * row[0].nx;
+        z += u * row[0].tz + v * row[0].nz;
+    }
+    home_build(row, n, plan_affluence(x, z), g, NULL);
+}

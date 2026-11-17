@@ -101,6 +101,7 @@ float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + 
 #include "city/industry.glsl"
 #include "city/props.glsl"
 #include "city/kit.glsl"
+#include "city/house.glsl"
 
 /* ====================================================================== */
 
@@ -156,6 +157,7 @@ void shadePixel() {
     else if (mat == MAT_INDUSTRY)  col = shadeIndustry(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_PROP)      col = shadeProp(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_KIT)       col = shadeKit(vLocal, vRel, n, vUV, vSeed, vParams, vLitter.x, vLitter.y, vLitter.z);
+    else if (mat == MAT_HOUSE)     col = shadeHouse(vLocal, vRel, n, vUV, vSeed, vParams, vAux);
     else {
         // LED strip: steady or chasing
         float chase = vParams.z == 1u ? 0.25 + 0.75 * step(0.5, fract(vUV.x / 6.0 - gTime * 0.7)) : 1.0;

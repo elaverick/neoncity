@@ -1151,9 +1151,25 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **The suburbs are lawns until HM3** (HM1, 2026-11-16). `ZONE_SUBURB` blocks build no buildings and their plots
-  (`city_block_plots`) are grass; the skyline check counts the houses' planned heights (`city_home_height`). The ring
-  reads as parkland from the air until the houses arrive.
+- **HM3b: the houses' materials and proxies** (HM3 split 2026-11-17; HM3a, the shells, done). Fetch and pack the
+  ambientCG sets the styles want (slate, concrete tile, asphalt shingle, house brick in Flemish and stretcher bond,
+  roughcast and pebbledash render, clapboard siding, brownstone) NB3's way, and draw slate, shingles, siding and
+  corrugated sheet from them instead of `shaders/city/house.glsl`'s courses; the proxies: one roof prism a row
+  (`src/city/proxy.c`: beyond the 1.9 km view distance the suburbs stand as nothing today, as they did as lawns);
+  the budgets at the worst views; the board against the references.
+- **The skyline check counts the houses' rough heights** (`city_home_height`: 2.85 m storeys and a 3.2 m roof).
+  The shells' own (`home_top`) differ by a metre or so; switch the check to them if it matters.
+- **Steps, stoops and porch floors are not in the collision** (HM3a): the walker passes through them (they are
+  0.2-1.5 m high). They want floors (`BlockLayout.floor`, as a lobby's entrance steps), at most `MAX_FLOORS` a chunk.
+- **Lit windows are an interim** (HM3a): a share of the houses' windows by the homes' hours (`cityHours`), a flat
+  warm glow behind a blind, also by day under the deck. HM6 gives them rooms and the doc's share.
+- **The gardens are still lawns** (HM2b decided none in a city): the yards' surfaces are in the graph (`HSite`) and
+  HM7 draws them; the grass keeps clear of the houses meanwhile (`city_grass_collect`).
+- **Far walls cast no ray-traced shadows** (HM3a): they stand flush over the near shell's set-back windows, which
+  they would keep dark. Past the near layer (220 m) a house's walls cast nothing (its roof and stacks do). Fine for
+  lamps' and the sky's shadows that far; revisit if a street 250-450 m off looks too open.
+- **Soffit corners can share up to 20 cm2 in one plane** (HM3a): where two slabs of the same pitch meet at a corner,
+  their soffits' slivers overlap; `home_lab` lets those pass. Under the eaves, rarely seen.
 - **The edge's tallest is the industry's, not two storeys.** The ring's industrial estates keep the plants' 45-70 m
   limit (stacks and flares), so the outermost 600 m band's tallest is ~70 m (`check_skyline`). Lower the units there
   (not the stacks) if the edge should read as houses only.

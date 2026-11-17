@@ -42,6 +42,9 @@
 /* The vendors' kit (the modelling kit's modules, src/gen/pmodel.h, drawn instanced: src/render/kit_gpu.c)
  * is a fifth, the near vendor layer, streamed this close: its modules' coarsest level reaches this far. */
 #define KIT_DISTANCE      120.0f
+/* The houses' near shells (src/city/homes.c, residential roadmap HM3a): the eaves' depth, real openings,
+ * steps and posts, a layer of their own streamed this close; the base layer's far shells stand in beyond. */
+#define HOME_NEAR_DISTANCE 220.0f
 
 /* GPU geometry pool: chunk meshes live in fixed-size pages of non-indexed
  * triangles so a chunk may occupy any set of free pages (no fragmentation). */
@@ -122,7 +125,8 @@ enum {
     MAT_FACADE, MAT_ROOF, MAT_NEON, MAT_METAL,
     MAT_EMISSIVE, MAT_SCREEN, MAT_LEDSTRIP, MAT_DOOR,
     MAT_INTERIOR, MAT_LITTER, MAT_ARCOLOGY, MAT_INDUSTRY,
-    MAT_PROP, MAT_TRIM, MAT_VENDOR, MAT_KIT
+    MAT_PROP, MAT_TRIM, MAT_VENDOR, MAT_KIT,
+    MAT_HOUSE   /* the houses' shells (src/core/house_surf.h) */
 };
 
 /* MAT_VENDOR: retired in SF6 (the street vendors' SV2 shells and SV3 painted rooms); the id stays so the
@@ -142,7 +146,8 @@ enum {
 #define KIT_AUX_FAR (1u << 16)
 #define KIT_AUX_BODY_SHIFT 25
 #define KIT_AUX_HOURS_SHIFT 25
-#define VENDOR_BODIES_MAX  128        /* a chunk's vendors with bodies of their own (ChunkGPU.bodies' bits) */
+#define VENDOR_BODIES_MAX  127        /* a chunk's vendors with bodies of their own (ChunkGPU.bodies' bits; the last
+                                       * is CHUNK_HOMES_NEAR_BIT, the houses': house_surf.h) */
 #define VENDOR_SEEN_FAR   400.0f      /* SF4: a vendor this near and in the frustum keeps its hours' look (no change in view) */
 #define VENDOR_BODY_DISTANCE 28.0f    /* SF2: a vendor's near body is streamed within this of the camera */
 
@@ -162,6 +167,7 @@ enum {
  * shared with the shaders. Surfaces opt in per material in the shader; the
  * rest stay procedural. */
 #include "pbr.h"
+#include "house_surf.h"
 
 typedef struct Vertex {
     float    pos[3];     /* chunk-local position, metres */

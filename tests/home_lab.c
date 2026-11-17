@@ -13,6 +13,7 @@
  * archetype (one row of each style) as home_<archetype>.png. verbose_seed
  * prints that seed's decision log for each archetype. */
 #include "home.h"
+#include "home_shell.h"
 #include "hash.h"
 #include "mathlib.h"
 #include <time.h>
@@ -333,7 +334,318 @@ static int bite(HGraph *g, int k) {
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Shells (HM3a; src/gen/home_shell.c): their triangles near and far, their time,
+ * their sanity, and a contact sheet of each style seen from the street
+ * ------------------------------------------------------------------------- */
+
+typedef struct FaceList { HShellFace *f; int n, cap; } FaceList;
+static void collect_face(void *ctx, const HShellFace *f) {
+    FaceList *L = (FaceList *)ctx;
+    if (L->n == L->cap) {
+        L->cap = L->cap ? L->cap * 2 : 1024;
+        L->f = (HShellFace *)realloc(L->f, sizeof(HShellFace) * (size_t)L->cap);
+    }
+    L->f[L->n++] = *f;
+}
+
+/* A face's problems: corners not finite or far outside the row's plots, a normal not of unit length, or
+ * corners not anticlockwise about it. */
+static int face_bad(const HGraph *g, const HShellFace *f, float top, const char **why) {
+    const float X0 = g->unit[0].x0 - 3.0f, X1 = g->unit[g->nunit - 1].x1 + 3.0f, Z1 = g->unit[0].depth + 3.0f;
+    const float nl = sqrtf(f->nrm[0] * f->nrm[0] + f->nrm[1] * f->nrm[1] + f->nrm[2] * f->nrm[2]);
+    if (fabsf(nl - 1.0f) > 1e-3f) { *why = "normal"; return 1; }
+    if (f->n < 3) { *why = "corners"; return 1; }
+    double area = 0.0;
+    for (int q = 0; q < f->n; ++q) {
+        const float *p = f->p[q];
+        if (!isfinite(p[0]) || !isfinite(p[1]) || !isfinite(p[2])) { *why = "not finite"; return 1; }
+        if (p[0] < X0 || p[0] > X1 || p[2] < -3.0f || p[2] > Z1 || p[1] < -0.5f || p[1] > top + 4.0f) { *why = "off its plots"; return 1; }
+        if (q >= 1 && q + 1 < f->n) {
+            const float *a = f->p[0], *b = f->p[q], *c = f->p[q + 1];
+            const double e1[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] }, e2[3] = { c[0] - a[0], c[1] - a[1], c[2] - a[2] };
+            area += (e1[1] * e2[2] - e1[2] * e2[1]) * f->nrm[0] + (e1[2] * e2[0] - e1[0] * e2[2]) * f->nrm[1] + (e1[0] * e2[1] - e1[1] * e2[0]) * f->nrm[2];
+        }
+    }
+    if (area <= 0.0) { *why = "winding"; return 1; }
+    return 0;
+}
+
+/* The area two faces share where they lie in one plane looking the same way (they would z-fight): face a
+ * clipped by the planes square to b through b's edges. */
+static double coplanar_overlap(const HShellFace *a, const HShellFace *b) {
+    const float c = a->nrm[0] * b->nrm[0] + a->nrm[1] * b->nrm[1] + a->nrm[2] * b->nrm[2];
+    if (c < 0.999f) return 0.0;
+    const double da = a->nrm[0] * a->p[0][0] + a->nrm[1] * a->p[0][1] + a->nrm[2] * a->p[0][2];
+    const double db = a->nrm[0] * b->p[0][0] + a->nrm[1] * b->p[0][1] + a->nrm[2] * b->p[0][2];
+    if (fabs(da - db) > 1e-3) return 0.0;
+    double P[64][3], Q[64][3];
+    int n = a->n;
+    for (int i = 0; i < n; ++i)
+        for (int k = 0; k < 3; ++k) P[i][k] = a->p[i][k];
+    for (int e = 0; e < b->n && n >= 3; ++e) {
+        const float *p0 = b->p[e], *p1 = b->p[(e + 1) % b->n];
+        const double ed[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
+        /* inward: n x edge (b anticlockwise about n) */
+        const double in[3] = { b->nrm[1] * ed[2] - b->nrm[2] * ed[1], b->nrm[2] * ed[0] - b->nrm[0] * ed[2], b->nrm[0] * ed[1] - b->nrm[1] * ed[0] };
+        const double d0 = in[0] * p0[0] + in[1] * p0[1] + in[2] * p0[2];
+        int m = 0;
+        for (int i = 0; i < n && m < 62; ++i) {
+            const double *x = P[i], *y = P[(i + 1) % n];
+            const double sx = in[0] * x[0] + in[1] * x[1] + in[2] * x[2] - d0, sy = in[0] * y[0] + in[1] * y[1] + in[2] * y[2] - d0;
+            if (sx >= 0.0) { memcpy(Q[m++], x, sizeof(Q[0])); }
+            if ((sx >= 0.0) != (sy >= 0.0)) {
+                const double t = sx / (sx - sy);
+                for (int k = 0; k < 3; ++k) Q[m][k] = x[k] + t * (y[k] - x[k]);
+                m++;
+            }
+        }
+        n = m;
+        memcpy(P, Q, sizeof(double) * 3 * (size_t)m);
+    }
+    double area = 0.0;
+    for (int i = 1; i + 1 < n; ++i) {
+        const double e1[3] = { P[i][0] - P[0][0], P[i][1] - P[0][1], P[i][2] - P[0][2] }, e2[3] = { P[i + 1][0] - P[0][0], P[i + 1][1] - P[0][1], P[i + 1][2] - P[0][2] };
+        area += 0.5 * ((e1[1] * e2[2] - e1[2] * e2[1]) * a->nrm[0] + (e1[2] * e2[0] - e1[0] * e2[2]) * a->nrm[1] + (e1[0] * e2[1] - e1[1] * e2[0]) * a->nrm[2]);
+    }
+    return area;
+}
+
+static uint32_t faces_hash(const FaceList *L) {
+    uint32_t h = 0x5E11u;
+    for (int i = 0; i < L->n; ++i) {
+        const HShellFace *f = &L->f[i];
+        h = hash_combine(h, (uint32_t)f->n | (uint32_t)f->surf << 8 | (uint32_t)f->finish << 16 | (uint32_t)f->colour << 24);
+        h = hash_combine(h, f->aux);
+        for (int q = 0; q < f->n; ++q)
+            for (int k = 0; k < 3; ++k) h = hash_combine(h, (uint32_t)lrintf(f->p[q][k] * 1000.0f));
+    }
+    return h;
+}
+
+/* Rough colours for the contact sheet: the surface, its finish. */
+static void face_colour(const HShellFace *f, float c[3]) {
+    static const float WALL[HW_COUNT][3] = { { 0.62f, 0.30f, 0.22f }, { 0.86f, 0.82f, 0.72f }, { 0.68f, 0.76f, 0.80f }, { 0.78f, 0.70f, 0.56f }, { 0.60f, 0.60f, 0.58f } };
+    static const float ROOF[HRM_COUNT][3] = { { 0.62f, 0.26f, 0.16f }, { 0.26f, 0.28f, 0.32f }, { 0.42f, 0.34f, 0.30f }, { 0.30f, 0.30f, 0.30f }, { 0.55f, 0.58f, 0.60f },
+                                              { 0.75f, 0.36f, 0.20f }, { 0.22f, 0.26f, 0.32f }, { 0.20f, 0.20f, 0.20f }, { 0.50f, 0.50f, 0.48f } };
+    const float *s;
+    static const float FASCIA[3] = { 0.92f, 0.92f, 0.90f }, SOFFIT[3] = { 0.70f, 0.70f, 0.68f }, GLASS[3] = { 0.12f, 0.18f, 0.28f },
+                       DOOR[3] = { 0.55f, 0.12f, 0.10f }, GARAGE[3] = { 0.75f, 0.75f, 0.74f }, STEP[3] = { 0.66f, 0.64f, 0.60f },
+                       COPING[3] = { 0.78f, 0.76f, 0.72f }, CEIL[3] = { 0.85f, 0.85f, 0.82f }, REVEAL[3] = { 0.2f, 0.75f, 0.3f };
+    switch (f->surf) {
+    case HF_ROOF: case HF_FLAT: s = ROOF[f->finish % HRM_COUNT]; break;
+    case HF_SOFFIT: s = SOFFIT; break;
+    case HF_FASCIA: case HF_TRIM: s = FASCIA; break;
+    case HF_COPING: s = COPING; break;
+    case HF_GLASS: s = GLASS; break;
+    case HF_DOOR: s = DOOR; break;
+    case HF_GARAGE: s = GARAGE; break;
+    case HF_STEP: s = STEP; break;
+    case HF_CEILING: s = CEIL; break;
+    case HF_REVEAL: s = REVEAL; break;
+    case HF_CHIMNEY: default: s = WALL[f->finish % HW_COUNT]; break;
+    }
+    memcpy(c, s, sizeof(float) * 3);
+}
+
+typedef struct Raster { Image *im; float *z; int x0, y0, w, h; float s, ox, oy; float d[3], r[3], u[3]; } Raster;
+
+static void raster_face(Raster *R, const HShellFace *f) {
+    const float facing = f->nrm[0] * R->d[0] + f->nrm[1] * R->d[1] + f->nrm[2] * R->d[2];
+    if (facing >= 0.0f) return;   /* turned away: culled, as the renderer does */
+    float c[3];
+    face_colour(f, c);
+    const float L[3] = { -0.45f, 0.8f, -0.4f };
+    const float ll = 1.0f / sqrtf(L[0] * L[0] + L[1] * L[1] + L[2] * L[2]);
+    const float ndl = fmaxf(0.0f, (f->nrm[0] * L[0] + f->nrm[1] * L[1] + f->nrm[2] * L[2]) * ll);
+    const float k = 0.35f + 0.65f * ndl;
+    const uint32_t col = (uint32_t)fminf(255.0f, c[0] * k * 255.0f) << 16 | (uint32_t)fminf(255.0f, c[1] * k * 255.0f) << 8 | (uint32_t)fminf(255.0f, c[2] * k * 255.0f);
+    float sx[HSH_MAXV], sy[HSH_MAXV], sz[HSH_MAXV];
+    for (int q = 0; q < f->n; ++q) {
+        const float *p = f->p[q];
+        sx[q] = R->ox + R->s * (p[0] * R->r[0] + p[1] * R->r[1] + p[2] * R->r[2]);
+        sy[q] = R->oy - R->s * (p[0] * R->u[0] + p[1] * R->u[1] + p[2] * R->u[2]);
+        sz[q] = p[0] * R->d[0] + p[1] * R->d[1] + p[2] * R->d[2];
+    }
+    for (int t = 1; t + 1 < f->n; ++t) {
+        const int a = 0, b = t, cc = t + 1;
+        const float minx = fminf(sx[a], fminf(sx[b], sx[cc])), maxx = fmaxf(sx[a], fmaxf(sx[b], sx[cc]));
+        const float miny = fminf(sy[a], fminf(sy[b], sy[cc])), maxy = fmaxf(sy[a], fmaxf(sy[b], sy[cc]));
+        const float den = (sx[b] - sx[a]) * (sy[cc] - sy[a]) - (sx[cc] - sx[a]) * (sy[b] - sy[a]);
+        if (fabsf(den) < 1e-6f) continue;
+        for (int y = (int)floorf(fmaxf(miny, 0.0f)); y <= (int)ceilf(fminf(maxy, (float)R->h - 1)); ++y)
+            for (int x = (int)floorf(fmaxf(minx, 0.0f)); x <= (int)ceilf(fminf(maxx, (float)R->w - 1)); ++x) {
+                const float px = x + 0.5f, py = y + 0.5f;
+                const float w1 = ((px - sx[a]) * (sy[cc] - sy[a]) - (sx[cc] - sx[a]) * (py - sy[a])) / den;
+                const float w2 = ((sx[b] - sx[a]) * (py - sy[a]) - (px - sx[a]) * (sy[b] - sy[a])) / den;
+                if (w1 < 0.0f || w2 < 0.0f || w1 + w2 > 1.0f) continue;
+                const float z = sz[a] + w1 * (sz[b] - sz[a]) + w2 * (sz[cc] - sz[a]);
+                float *zb = &R->z[y * R->w + x];
+                if (z >= *zb) continue;
+                *zb = z;
+                put(R->im, R->x0 + x, R->y0 + y, col);
+            }
+    }
+}
+
+/* One cell: the row seen from the street, front left and above, fitted to the cell. */
+static void draw_shell(Image *im, int cx, int cy, int cw, int ch, const FaceList *L, float yawDeg, float pitchDeg) {
+    Raster R;
+    memset(&R, 0, sizeof(R));
+    R.im = im; R.x0 = cx; R.y0 = cy + 14; R.w = cw; R.h = ch - 14;
+    const float yaw = yawDeg * 0.0174533f, pit = pitchDeg * 0.0174533f;
+    R.d[0] = sinf(yaw) * cosf(pit); R.d[1] = -sinf(pit); R.d[2] = cosf(yaw) * cosf(pit);
+    R.r[0] = cosf(yaw); R.r[1] = 0.0f; R.r[2] = -sinf(yaw);   /* cross(up, d), normalised */
+    R.u[0] = R.d[1] * R.r[2] - R.d[2] * R.r[1]; R.u[1] = R.d[2] * R.r[0] - R.d[0] * R.r[2]; R.u[2] = R.d[0] * R.r[1] - R.d[1] * R.r[0];
+    float mnx = 1e30f, mxx = -1e30f, mny = 1e30f, mxy = -1e30f;
+    for (int i = 0; i < L->n; ++i)
+        for (int q = 0; q < L->f[i].n; ++q) {
+            const float *p = L->f[i].p[q];
+            const float x = p[0] * R.r[0] + p[1] * R.r[1] + p[2] * R.r[2], y = p[0] * R.u[0] + p[1] * R.u[1] + p[2] * R.u[2];
+            mnx = fminf(mnx, x); mxx = fmaxf(mxx, x); mny = fminf(mny, y); mxy = fmaxf(mxy, y);
+        }
+    if (mnx > mxx) return;
+    R.s = fminf((R.w - 12) / (mxx - mnx), (R.h - 12) / (mxy - mny));
+    R.ox = 6.0f - mnx * R.s + 0.5f * ((R.w - 12) - (mxx - mnx) * R.s);
+    R.oy = 6.0f + mxy * R.s + 0.5f * ((R.h - 12) - (mxy - mny) * R.s);
+    R.z = (float *)malloc(sizeof(float) * (size_t)R.w * R.h);
+    for (int i = 0; i < R.w * R.h; ++i) R.z[i] = 1e30f;
+    for (int i = 0; i < L->n; ++i) raster_face(&R, &L->f[i]);
+    free(R.z);
+}
+
+typedef struct ShellStats { double nearTris, farTris, ms; int nearMax, farMax, units, houses, bad, nondet, windows, zfight; } ShellStats;
+
+/* Builds shells for `seeds` rows of archetype a; checks them; with out, writes shell_<arch>.png. */
+static int shell_check(int a, int seeds, const char *out, HGraph *g, HomePlot *P) {
+    int failures = 0, shown = 0;
+    ShellStats S;
+    memset(&S, 0, sizeof(S));
+    FaceList L = { 0 }, L2 = { 0 };
+    float dy[HG_MAX_UNITS];
+    for (int s = 0; s < seeds; ++s) {
+        const int style = s % HS_COUNT;
+        const uint32_t seed = hash_combine(0x40A1Bu + (uint32_t)a * 7919u, (uint32_t)s);
+        const int n = make_row(a, style, seed, P);
+        home_build(P, n, hash_float(hash_combine(seed, 0xAFFu)), g, NULL);
+        if (g->empty) continue;
+        /* a slope along the row on one row in three: its units step (dy) */
+        for (int k = 0; k < g->nunit; ++k) dy[k] = s % 3 == 0 ? 0.15f * (float)k * (float)(s % 7) / 6.0f : 0.0f;
+        const float top = home_top(g) + dy[g->nunit - 1];
+        for (int lod = 0; lod < 2; ++lod) {
+            L.n = 0;
+            HShellStats hs;
+            const clock_t t0 = clock();
+            home_shell(g, lod, dy, collect_face, &L, &hs);
+            S.ms += 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC;
+            const int per = hs.tris / (a == HOME_DETACHED ? 1 : g->nunit);
+            if (lod == HSH_NEAR) { S.nearTris += hs.tris; S.nearMax = per > S.nearMax ? per : S.nearMax; S.windows += hs.windows; }
+            else { S.farTris += hs.tris; S.farMax = per > S.farMax ? per : S.farMax; }
+            for (int i = 0; i < L.n; ++i) {
+                const char *why = "";
+                if (!face_bad(g, &L.f[i], top, &why)) continue;
+                if (shown++ < 4) printf("FAIL: %s seed %d (%s) %s face %d (surface %d): %s\n", ARCH[a], s, home_style_name(style), lod ? "far" : "near", i, L.f[i].surf, why);
+                S.bad++;
+                failures++;
+                break;
+            }
+            /* no two faces z-fight (one row in eight: it is quadratic) */
+            for (int i = 0; i < L.n && s % 8 == 0; ++i)
+                for (int j = i + 1; j < L.n; ++j) {
+                    const double ov = coplanar_overlap(&L.f[i], &L.f[j]);
+                    if (ov < 2e-3) continue;   /* slivers under 20 cm2 (soffits meeting at a corner) are not seen */
+                    if (shown++ < 6) printf("FAIL: %s seed %d (%s) %s: surfaces %d and %d share %.4f m2 in one plane\n", ARCH[a], s, home_style_name(style),
+                                            lod ? "far" : "near", L.f[i].surf, L.f[j].surf, ov);
+                    for (int w = 0; w < 2 && shown <= 2; ++w) {
+                        const HShellFace *f = &L.f[w ? j : i];
+                        float mn[3] = { 1e9f, 1e9f, 1e9f }, mx[3] = { -1e9f, -1e9f, -1e9f };
+                        for (int q = 0; q < f->n; ++q)
+                            for (int k = 0; k < 3; ++k) { mn[k] = fminf(mn[k], f->p[q][k]); mx[k] = fmaxf(mx[k], f->p[q][k]); }
+                        printf("    surface %d: x %.3f..%.3f y %.3f..%.3f z %.3f..%.3f\n", f->surf, mn[0], mx[0], mn[1], mx[1], mn[2], mx[2]);
+                    }
+                    S.zfight++;
+                    failures++;
+                    i = L.n;
+                    break;
+                }
+            if (s % 16 == 0) {
+                L2.n = 0;
+                home_shell(g, lod, dy, collect_face, &L2, NULL);
+                if (L2.n != L.n || faces_hash(&L) != faces_hash(&L2)) {
+                    if (shown++ < 4) printf("FAIL: %s seed %d (%s): its %s shell differs when built twice\n", ARCH[a], s, home_style_name(style), lod ? "far" : "near");
+                    S.nondet++;
+                    failures++;
+                }
+            }
+        }
+        S.units += g->nunit;
+        S.houses++;
+    }
+    const int per = a == HOME_DETACHED ? S.houses : S.units;
+    printf("  shells: near %.0f triangles a %s (most %d), far %.0f (most %d); %.2f windows a unit; %.3f ms a unit (both levels); %d bad, %d not deterministic, %d z-fighting\n",
+           S.nearTris / (per ? per : 1), a == HOME_DETACHED ? "house" : "unit", S.nearMax, S.farTris / (per ? per : 1), S.farMax,
+           (double)S.windows / (S.units ? S.units : 1), S.ms / (S.units ? S.units : 1), S.bad, S.nondet, S.zfight);
+    /* the budgets (docs/residential-target.md): near 1,000 a detached house, 700 a unit; far 60 a house */
+    const float nearBudget = a == HOME_DETACHED ? 1000.0f : 700.0f;
+    if (S.nearTris / (per ? per : 1) > nearBudget) { printf("FAIL: %s: near shells over budget\n", ARCH[a]); failures++; }
+    if (S.farTris / (per ? per : 1) > 60.0f) { printf("FAIL: %s: far shells over budget\n", ARCH[a]); failures++; }
+    if (out) {
+        const int cols = 4, cw = 480, chh = 340, rows = (HS_COUNT + cols - 1) / cols;
+        for (int lod = 0; lod < 2; ++lod) {
+            Image im = { cols * cw, rows * chh, NULL };
+            im.p = (unsigned char *)malloc((size_t)im.w * im.h * 3);
+            for (int i = 0; i < im.w * im.h; ++i) { im.p[i * 3] = 30; im.p[i * 3 + 1] = 34; im.p[i * 3 + 2] = 40; }
+            for (int style = 0; style < HS_COUNT; ++style) {
+                const uint32_t seed = hash_combine(0x40A1Bu + (uint32_t)a * 7919u, (uint32_t)style);
+                const int n = make_row(a, style, seed, P);
+                home_build(P, n, 0.5f, g, NULL);
+                const int x0 = (style % cols) * cw, y0 = (style / cols) * chh;
+                char label[64];
+                snprintf(label, sizeof(label), "%s %s", home_style_name(style), plan_region_code(home_style_region(style)));
+                text(&im, x0 + 6, y0 + 4, label, 0xF0E8D0);
+                if (g->empty) continue;
+                L.n = 0;
+                for (int k = 0; k < g->nunit; ++k) dy[k] = 0.0f;
+                home_shell(g, lod, dy, collect_face, &L, NULL);
+                draw_shell(&im, x0, y0, cw, chh, &L, 28.0f, 24.0f);
+            }
+            char path[512];
+            snprintf(path, sizeof(path), "%s/shell_%s_%s.png", out, ARCH[a], lod ? "far" : "near");
+            if (stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3)) printf("  wrote %s\n", path);
+            free(im.p);
+        }
+    }
+    free(L.f); free(L2.f);
+    return failures;
+}
+
 int main(int argc, char **argv) {
+    if (argc > 6 && strcmp(argv[1], "--view") == 0) {   /* --view ARCH STYLE SEED OUT.png YAW [PITCH]: one row's near shell, large */
+        int a = 0, style = home_style_find(-1, argv[3]);
+        for (int k = 0; k < HOME_ARCH_COUNT; ++k) if (strcmp(argv[2], ARCH[k]) == 0) a = k;
+        HomePlot P[HG_MAX_UNITS];
+        HGraph *g = (HGraph *)malloc(sizeof(HGraph));
+        const int n = make_row(a, style < 0 ? 0 : style, hash_combine(0x40A1Bu + (uint32_t)a * 7919u, (uint32_t)atoi(argv[4])), P);
+        home_build(P, n, 0.5f, g, NULL);
+        FaceList L = { 0 };
+        float dy[HG_MAX_UNITS] = { 0 };
+        home_shell(g, argc > 8 ? atoi(argv[8]) : HSH_NEAR, dy, collect_face, &L, NULL);
+        Image im = { 1600, 1200, NULL };
+        im.p = (unsigned char *)malloc((size_t)im.w * im.h * 3);
+        for (int i = 0; i < im.w * im.h; ++i) { im.p[i * 3] = 30; im.p[i * 3 + 1] = 34; im.p[i * 3 + 2] = 40; }
+        draw_shell(&im, 0, 0, im.w, im.h, &L, (float)atof(argv[6]), argc > 7 ? (float)atof(argv[7]) : 15.0f);
+        stbi_write_png(argv[5], im.w, im.h, 3, im.p, im.w * 3);
+        printf("%d faces\n", L.n);
+        for (int i = 0; i < L.n; ++i) {
+            const HShellFace *f = &L.f[i];
+            if (f->surf != HF_GLASS && f->surf != HF_DOOR) continue;
+            float u0 = 1e9f, u1 = -1e9f, v0 = 1e9f, v1 = -1e9f;
+            for (int q = 0; q < f->n; ++q) { u0 = fminf(u0, f->uv[q][0]); u1 = fmaxf(u1, f->uv[q][0]); v0 = fminf(v0, f->uv[q][1]); v1 = fmaxf(v1, f->uv[q][1]); }
+            printf("  %s: uv %.2f..%.2f x %.2f..%.2f, size %.2f x %.2f, normal %.2f %.2f %.2f\n", f->surf == HF_GLASS ? "glass" : "door", u0, u1, v0, v1,
+                   (f->aux & 1023u) * 0.01f, ((f->aux >> 10) & 1023u) * 0.01f, f->nrm[0], f->nrm[1], f->nrm[2]);
+        }
+        return 0;
+    }
     const int seeds = argc > 1 ? atoi(argv[1]) : 10000;
     const char *out = argc > 2 ? argv[2] : NULL;
     const int verbose = argc > 3 ? atoi(argv[3]) : -1;
@@ -464,6 +776,8 @@ int main(int argc, char **argv) {
             else { printf("FAIL: could not write %s\n", path); failures++; }
             free(im.p);
         }
+        /* HM3a: the shells */
+        failures += shell_check(a, seeds < 2600 ? seeds : 2600, out, g, P);
     }
     free(g); free(g2); free(buf);
     if (failures) { printf("%d failure(s)\n", failures); return 1; }

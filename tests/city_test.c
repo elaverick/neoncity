@@ -147,6 +147,7 @@ static void check_city_grass(double x, double z, int rad, double *area, int *pie
                     double reach = 0.5 * CHUNK_SIZE + CITY_OVERHANG;   /* might stand on the chunk's ground */
                     if (fabs(b->ox - (ox + 0.5 * CHUNK_SIZE)) < reach && fabs(b->oz - (oz + 0.5 * CHUNK_SIZE)) < reach) sites++;
                 }
+            sites += (int)m.nhome;   /* HM3a: the houses stand on the suburbs' lots, which the grass keeps clear of */
             for (uint32_t i = 0; i < m.ngrass; ++i) {
                 const CityGrassTri *g = &m.grass[i];
                 const float (*p)[3] = g->v;
@@ -876,6 +877,7 @@ static void zf_gather(const Mesh *m, double X, double Z, double R, ZfTri **tris,
     for (uint32_t i = 0; i + 2 < m->count; i += 3) {
         ZfTri t;
         const Vertex *v = &m->v[i];
+        if (v[0].params[0] == MAT_HOUSE && (v[0].aux & HOUSE_AUX_FAR)) continue;   /* a house's far shell: never drawn with its near one */
         for (int k = 0; k < 3; ++k) {
             t.p[k][0] = (float)(m->ox + v[k].pos[0] - X); t.p[k][1] = v[k].pos[1]; t.p[k][2] = (float)(m->oz + v[k].pos[2] - Z);
         }
@@ -903,7 +905,8 @@ static void zf_gather(const Mesh *m, double X, double Z, double R, ZfTri **tris,
 
 static int g_zfNoKit;   /* --zfight ... nokit: leave out pairs of kit triangles (the bodies' many benign seams) */
 static int zfight_scan(double X, double Z, double R) {
-    static void (*const LAYERS[])(int, int, Mesh *) = { city_build_mesh, city_build_interiors, city_build_props, city_build_plants, city_build_litter };
+    static void (*const LAYERS[])(int, int, Mesh *) = { city_build_mesh, city_build_interiors, city_build_props, city_build_plants, city_build_litter,
+                                                         city_build_homes };
     ZfTri *tris = NULL;
     int n = 0, cap = 0;
     for (int cz = (int)floor((Z - R) / CHUNK_SIZE); cz <= (int)floor((Z + R) / CHUNK_SIZE); ++cz)

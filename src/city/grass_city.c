@@ -143,8 +143,36 @@ static int cmp_patch(const void *pa, const void *pb) {
     return a->i < b->i ? -1 : a->i > b->i ? 1 : 0;   /* in the order they were cut */
 }
 
-void city_grass_collect(Mesh *m, const ChunkGen *g, uint32_t first, uint32_t end) {
+void city_grass_collect(Mesh *m, ChunkGen *g, uint32_t first, uint32_t end) {
     Collect c = { NULL, 0, 0 };
+    /* the houses standing on the suburbs' lots (HM3a): what of them stands on the ground, grown by GRASS_CLEAR,
+     * chunk-local, and each one's bounds */
+    chunk_gen_homes(g);
+    int nh = 0, caph = 0;
+    double (*hq)[4][2] = NULL, (*hb)[4] = NULL, tmp[96][4][2];
+    for (int ri = 0; ri < g->nhrow; ++ri) {
+        if (!chunk_gen_near(g, g->hrow[ri].x0, g->hrow[ri].z0, g->hrow[ri].x1, g->hrow[ri].z1, 1.0)) continue;
+        const int n = city_home_outlines(g, ri, tmp, 96);
+        for (int k = 0; k < n; ++k) {
+            if (nh == caph) {
+                caph = caph ? caph * 2 : 128;
+                hq = realloc(hq, sizeof(*hq) * (size_t)caph);
+                hb = realloc(hb, sizeof(*hb) * (size_t)caph);
+                if (!hq || !hb) fatal("out of memory collecting the city's grass");
+            }
+            double cx = 0.0, cz = 0.0;
+            for (int q = 0; q < 4; ++q) { cx += 0.25 * tmp[k][q][0]; cz += 0.25 * tmp[k][q][1]; }
+            hb[nh][0] = hb[nh][1] = 1e300; hb[nh][2] = hb[nh][3] = -1e300;
+            for (int q = 0; q < 4; ++q) {
+                const double dx = tmp[k][q][0] - cx, dz = tmp[k][q][1] - cz, l = sqrt(dx * dx + dz * dz);
+                const double s = l > 1e-6 ? (l + GRASS_CLEAR * 1.41) / l : 1.0;
+                hq[nh][q][0] = cx + dx * s - g->ox; hq[nh][q][1] = cz + dz * s - g->oz;
+                hb[nh][0] = fmin(hb[nh][0], hq[nh][q][0] + g->ox); hb[nh][2] = fmax(hb[nh][2], hq[nh][q][0] + g->ox);
+                hb[nh][1] = fmin(hb[nh][1], hq[nh][q][1] + g->oz); hb[nh][3] = fmax(hb[nh][3], hq[nh][q][1] + g->oz);
+            }
+            nh++;
+        }
+    }
     Piece *base = (Piece *)malloc(sizeof(Piece) * GP_PIECES * 2);
     if (!base) fatal("out of memory collecting the city's grass");
     Piece *pa = base, *pb = base + GP_PIECES;
@@ -178,10 +206,16 @@ void city_grass_collect(Mesh *m, const ChunkGen *g, uint32_t first, uint32_t end
             n = piece_minus_quad(pa, n, (const double (*)[2])q, pb, GP_PIECES);
             Piece *sw = pa; pa = pb; pb = sw;
         }
+        for (int h = 0; h < nh && n; ++h) {
+            if (hb[h][2] <= tx0 || hb[h][0] >= tx1 || hb[h][3] <= tz0 || hb[h][1] >= tz1) continue;
+            n = piece_minus_quad(pa, n, (const double (*)[2])hq[h], pb, GP_PIECES);
+            Piece *sw = pa; pa = pb; pb = sw;
+        }
         float kept = city_grass_maintained(v[0].params[3]);
         for (int k = 0; k < n; ++k) piece_emit(&c, g, &pa[k], x0, z0, y0, gx, gz, kept);
     }
     free(base);
+    free(hq); free(hb);
     /* by patch, so the renderer hands the GPU each patch's run in one go */
     if (c.n) {
         SortKey *order = (SortKey *)malloc(sizeof(SortKey) * c.n);

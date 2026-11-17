@@ -62,6 +62,9 @@ int city_casts_shadow(const Vertex *v) {
     case MAT_KIT:      /* a noodle bar's body, not its glass or what glows (its lamps' light passes); its far
                         * shell never (the near body casts), nor a shell's shutters (there only while shut: city.vert) */
         return !(v->aux & KIT_AUX_FAR) && p[1] != PMAT_SHUTTER && p[1] != PMAT_GLASS && p[1] != PMAT_GLAZING && !pm_mat_glows(p[1]);
+    case MAT_HOUSE:    /* a house's shell, not its glass; of its far shell, the roofs and stacks only: its walls stand flush
+                        * over the near shell's set-back windows and doors, which they would keep in shadow (HM3a) */
+        return (v->aux & HOUSE_AUX_FAR) ? p[1] != HF_WALL : p[1] != HF_GLASS;
     default:
         return 1;
     }

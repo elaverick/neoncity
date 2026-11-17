@@ -54,6 +54,9 @@ typedef struct ChunkGen {
     int       nvl, capvl;
     VendorSpot *stall;      /* SF3: the shop bays' stalls of the blocks round it (chunk_gen_stalls) */
     int       nstall, stallDone;
+    struct HomeRow *hrow;   /* HM3a: the houses' rows near it (chunk_gen_homes) */
+    HomePlot *hplot;        /* ...and their plots */
+    int       nhrow, caphrow, nhplot, caphplot, homesDone;
 } ChunkGen;
 /* SF3: the stalls taking over shop bays in the blocks reaching within 16 m of g's chunk (planned once). */
 const VendorSpot *chunk_gen_stalls(ChunkGen *g, int *n);
@@ -74,11 +77,32 @@ int           chunk_gen_owns(const ChunkGen *g, double x, double z);
 /* Whether a world rectangle comes within pad of the chunk. */
 int           chunk_gen_near(const ChunkGen *g, double x0, double z0, double x1, double z1, double pad);
 
+/* homes.c (residential roadmap HM3a): the rows of the suburbs' plots whose plots come within a couple of
+ * metres of the chunk (gathered once), each with its house graph (built when first asked for) and the ground
+ * each unit stands on: the row's lowest unit's base (world Y) and every unit's height over it. A row belongs to
+ * the chunk holding its middle. */
+typedef struct HomeRow {
+    int           first, n;          /* its plots in ChunkGen.hplot */
+    double        mx, mz;            /* its middle (world) */
+    double        x0, z0, x1, z1;    /* its plots' bounds (world) */
+    struct HGraph *graph;
+    float         base, dy[12];      /* HG_MAX_UNITS */
+} HomeRow;
+void                 chunk_gen_homes(ChunkGen *g);
+const struct HGraph *chunk_gen_home(ChunkGen *g, int ri);
+int                  chunk_gen_owns_home(const ChunkGen *g, int ri);
+/* The houses owned by g's chunk, their shells at level lod (HSH_NEAR, HSH_FAR: src/gen/home_shell.h) into m;
+ * the far level counts them in m->nhome. */
+void                 build_homes(Mesh *m, ChunkGen *g, int lod);
+/* What of row ri stands on the ground, as world quadrilaterals (bodies, enclosed porches, open porches'
+ * posts): returns how many (at most max). */
+int                  city_home_outlines(ChunkGen *g, int ri, double (*v)[4][2], int max);
+
 /* grass_city.c: the grass the blades grow on (Mesh.grass), from the green
  * lots' triangles among m's vertices first .. end (the streets', draped),
  * less the sites of g's buildings standing on them, cut along the grass's
  * patches. */
-void          city_grass_collect(Mesh *m, const ChunkGen *g, uint32_t first, uint32_t end);
+void          city_grass_collect(Mesh *m, ChunkGen *g, uint32_t first, uint32_t end);
 
 /* A building's plot frame. */
 static inline DVec2 to_world(const Building *b, double lx, double lz) {

@@ -18,7 +18,8 @@ cmake --build build
 ctest --test-dir build         # determinism, layout and building-rule tests
 build/city_map map.bmp         # top-down map of the plan (6 km around the spawn)
 build/building_lab 3000 5      # building archetypes, retries and rejections; 5 decision logs
-build/home_lab 10000 out        # houses (residential HM2): every style, levels, repairs and rejects by tag, the rules broken on purpose; plan sheets
+build/home_lab 10000 out        # houses (residential HM2, HM3a): every style, levels, repairs and rejects by tag, the rules broken on purpose; plan sheets; shells (triangles, z-fights) and contact sheets
+build/home_lab --view terrace victorian 6 out.png 200 35   # one row's near shell drawn large (yaw, pitch; a 9th argument 1: the far shell)
 build/interior_lab 3000 12 out # office lobbies: pass rate, attempts, rejections; 12 plan renders and cameras
 build/interior_lab arcology 12000 6 out  # arcologies: plan and section renders, cameras
 build/interior_lab office 400 out        # baked office floors: the generator's catalogue and a sweep; plans
@@ -108,9 +109,9 @@ generated as a pure function of world position:
   - park: more likely along the boulevards, as green buffers between towns
   - rural: open land with the odd farmstead, towards the city's edge
   - suburb: houses (detached, semi-detached, terraced) on plots cut along the streets
-    (`src/city/plots.c`): the ring round the city's edge, and the odd pocket inside it. Until
-    the residential roadmap's HM3 builds the houses, their plots are lawns (HM2 generates them:
-    `src/gen/building_residential.c`, "Houses" below)
+    (`src/city/plots.c`): the ring round the city's edge, and the odd pocket inside it. The houses
+    stand on them since the residential roadmap's HM3a ("Houses" below); their gardens are lawns
+    until HM7
 - **The city's edge.** The city is finite. Its footprint is a warped disc (`plan_city_edge`),
   cut at the coast and the mountains (below), whose outer 1.5 km belt gives way to the land.
   Los Angeles's disc is 155 km across, its edge 20 km from its core at the nearest (the Pacific)
@@ -424,8 +425,31 @@ porch made a canopy), validates every rule of section 13.5 on the volumes' own o
 falls back to the simplest valid house. `home_lab` builds 10,000 rows an archetype over every style (none
 empty, invalid or different twice; every fallback level valid on its own), breaks each rule on purpose to
 see it caught, and draws a plan sheet per archetype; `city_test` builds the houses on every suburb plot it
-checks and measures across rows (no overlaps, detached houses 4 m apart). Nothing is drawn from them until
-HM3: the plots are lawns.
+checks and measures across rows (no overlaps, detached houses 4 m apart).
+
+**Their shells** (`src/gen/home_shell.c`, HM3a). A graph's volumes become convex solids, each a set of
+half-spaces with a face on each plane: a volume's body (its walls up to its roof's planes), a slab for each plane
+of its roof (the covering on top, the soffit under, the fascia and the verges' boards round the overhang),
+parapets, party walls standing up through a row's roof, chimney stacks with their caps, porches' floors and
+posts, stoops and steps; and openings carved out of a body: windows with their glass set back 0.10-0.14 m in
+reveals (a 2.7 m rhythm a storey, none where something stands in front or a door is), front doors, garage doors,
+a recessed porch. Every face is clipped against every other solid it meets (constructive solid geometry: the
+faces of the union, less the openings), so an outrigger's or a porch's gable runs into the main roof in valleys,
+a lean-to meets its wall, a stack comes up through the tiles and nothing shows inside anything else; coplanar
+faces are settled by their normals (a face looking into another solid is inside it; of two looking the same
+way, the earlier solid's stays). A row's main is cut a unit at a time from the whole main's roof, so its units
+step with the ground (`src/city/homes.c`: units whose ground differs by under 0.25 m stand at one height) and
+party walls rise through the roof where they step or the style shows them. The near shell (about 340-480
+triangles a unit) is a layer of its own (`city_build_homes`, within `HOME_NEAR_DISTANCE`, 220 m); the base layer
+holds the far shell (about 25: walls and roof planes, stacks; the windows painted by the shader), which gives
+way while its chunk's near layer is drawn (`CHUNK_HOMES_NEAR_BIT`, `city.vert`). Both draw with `MAT_HOUSE`
+(`shaders/city/house.glsl`; what a vertex carries: `src/core/house_surf.h`), each surface its finish's colour
+from the style's palette (`home_finish`) under an authored grain; past 170 m without it. The far shell's walls
+cast no ray-traced shadows (they would stand over the near shell's set-back windows). Collision takes the
+houses' bodies, enclosed porches and porches' posts; the grass keeps clear of them. `NeonCity --homes
+off|far|near` leaves them out, or the near layer, to measure them. `home_lab` builds both shells of 2,600 rows an
+archetype: none with a bad face (not finite, off its plots, wound wrong), none different twice, no two faces
+z-fighting over 20 cm2, within the budgets (docs/residential-target.md, "Budgets").
 
 ### Office lobbies (`src/gen/interior.c`)
 The ground floors of office buildings with a lobby are real interiors, planned by the method in

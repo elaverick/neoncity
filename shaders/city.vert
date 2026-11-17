@@ -231,6 +231,9 @@ void main() {
         if ((c.bodies[b >> 5] & (1u << (b & 31u))) != 0u) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     }
     if (kitShutOpen) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    // HM3a: a house's far shell where the chunk's near shells are drawn (src/core/house_surf.h CHUNK_HOMES_NEAR_BIT)
+    if (inParams.x == MAT_HOUSE && (inAux & HOUSE_AUX_FAR) != 0u && (c.bodies[CHUNK_HOMES_NEAR_BIT >> 5] & (1u << (CHUNK_HOMES_NEAR_BIT & 31))) != 0u)
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 #ifdef PREPASS
     if (partialCoverage()) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // all three corners outside: the triangle is clipped away
 #endif

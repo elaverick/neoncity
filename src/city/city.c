@@ -1,4 +1,5 @@
 #include "city_internal.h"
+#include "home_shell.h"
 #include "terrain.h"
 
 /* The city generator's entry points (see city.h): a chunk's mesh, its office
@@ -161,12 +162,15 @@ void city_build_mesh(int cx, int cz, Mesh *m) {
     chunk_gen_init(&g, cx, cz, 130.0, 90.0, 105.0);
     mesh_begin(m, cx, cz);
 
+    /* HM3a: the houses' far shells first, so the lawns they stand on go unshaded under them (early depth) */
+    build_homes(m, &g, HSH_FAR);
+    const uint32_t streets = m->count;
     m->drape = 1;   /* the streets' surfaces lie on the ground, vertex by vertex */
     build_roads(m, &g);
     build_channels(m, &g);
     build_blocks(m, &g);
     m->drape = 0;
-    city_grass_collect(m, &g, 0, m->count);   /* the grass the blades grow on, from the streets' own triangles */
+    city_grass_collect(m, &g, streets, m->count);   /* the grass the blades grow on, from the streets' own triangles */
     build_road_bridges(m, &g);
     build_vents(m, &g);
     for (int i = 0; i < g.nl; ++i)

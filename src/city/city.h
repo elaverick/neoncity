@@ -217,6 +217,7 @@ typedef struct Mesh {
     uint32_t  nkit, capkit;
     VendorBodySpot *vbody; /* SF2: the base layer's vendors with near bodies, in order (their far shells' index) */
     uint32_t  nvbody, capvbody;
+    uint32_t  nhome;     /* HM3a: the houses whose far shells the base layer holds (the streamer wants their near layer) */
     int       xf;        /* emission transform: local frame -> chunk-local */
     float     xc, xs, xx, xz;
     float     xy;        /* ...raised this far: a building's or a lamp's base on the ground (city_ground_y),
@@ -335,8 +336,21 @@ typedef struct HomePlot {
     uint8_t  pad;          /* the row parks in its front yard (front is a car's depth): HM2b */
 } HomePlot;
 int      city_block_plots(const Block *bk, HomePlot *out, int max);
-/* A plot's house's planned height to its ridge (m), for the skyline until HM3 builds it. */
+/* A plot's house's planned height to its ridge (m): a rough figure (the houses' own: home_top). */
 float    city_home_height(const HomePlot *p);
+/* A row's house graph (src/gen/home.h): home_build over its n plots, at the affluence of the row's middle. The
+ * one way the game and the tests build a row. */
+struct HGraph;
+void     city_home_row(const HomePlot *row, int n, struct HGraph *g);
+/* The houses' near layer (residential roadmap HM3a, src/city/homes.c): the near shells of the houses whose rows'
+ * middles lie in the chunk, streamed within HOME_NEAR_DISTANCE; their far shells, in the base layer, give way
+ * while it is drawn (CHUNK_HOMES_NEAR_BIT, src/core/house_surf.h). */
+void     city_build_homes(int cx, int cz, Mesh *m);
+/* The houses drawn (NeonCity --homes): none, their far shells alone, or near shells too (the default). For
+ * measuring their cost; before any chunk. */
+enum { HOMES_OFF = 0, HOMES_FAR, HOMES_NEAR };
+void     city_set_homes(int mode);
+int      city_homes_mode(void);
 /* Forces every suburb street's archetype (HOME_*) and every row's style (HS_*), -1 for neither: the
  * residential slice's harness (`city_test --home ARCHETYPE --style STYLE`). Not for the game's own use. */
 void     city_home_force(int arch, int style);

@@ -90,6 +90,15 @@ void city_layout(int cx, int cz, BlockLayout *L) {
         L->build[L->nbuild++] = *b;
         collide_building(L, b, chunk_gen_graph(&g, i));
     }
+    /* HM3a: the houses whose rows' middles lie in the chunk: their walls, enclosed porches and porches' posts */
+    chunk_gen_homes(&g);
+    for (int ri = 0; ri < g.nhrow; ++ri) {
+        if (!chunk_gen_owns_home(&g, ri)) continue;
+        double hv[96][4][2];
+        const int n = city_home_outlines(&g, ri, hv, 96);
+        for (int k = 0; k < n && coll_begin(L, 4); ++k)
+            for (int c = 0; c < 4; ++c) { L->collv[L->ncollv][0] = hv[k][c][0]; L->collv[L->ncollv][1] = hv[k][c][1]; L->ncollv++; }
+    }
     for (int i = 0; i < g.nl && L->nlamps < MAX_LAMPS; ++i)
         if (chunk_gen_owns(&g, g.lamp[i].x, g.lamp[i].z)) L->lamp[L->nlamps++] = g.lamp[i];
     /* the street furniture standing in the chunk: bins, bollards, post boxes, signal poles, dumpsters */

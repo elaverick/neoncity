@@ -220,6 +220,39 @@ The plan sheets draw a row of each style top-down, the street along the bottom: 
 their ridges and hips (a lean-to's high side, a parapet's line), bays blue, porches yellow, party walls black, stacks
 dark red, doors red, paths and drives, walls, hedges and fences, sheds, cars and the trees' places as rings.
 
+## The shells (HM3a)
+
+HM3 was split before it started (the roadmap's rule for a milestone past its size): **HM3a** the shells, **HM3b**
+the materials (ambientCG sets per style: slate, concrete tile, shingle, house brick, render, siding) and the
+proxies' roof prisms. `src/gen/home_shell.c` builds a graph's shell, `src/city/homes.c` sets it down, and
+`shaders/city/house.glsl` shades it (`src/core/house_surf.h`: what a vertex carries).
+
+| Part | How |
+|---|---|
+| Solids | each volume's **body** (its walls up to its roof's planes, from the ground; an open porch's from its eaves: a pediment and a ceiling), a **slab** for each roof plane (0.2 m deep at the eaves: covering, soffit, fascia, the verges' boards), **parapets** round a flat roof's deck and along a Georgian front, **party walls** through a row's roof, **stacks** and their caps, porch floors, posts, stoops and steps; all convex, as half-spaces |
+| Joining | every face clipped against every solid it meets (CSG): a gabled outrigger's or porch's roof runs on into the main's to its ridge and meets it in valleys; a lean-to stops 0.15 m inside its parent's wall; a stack comes up through the tiles; faces looking into another solid go, and of two coplanar faces looking the same way the earlier solid's stays (a face-less plane never wins) |
+| Rows | a pair's or row's main is cut into a slice a unit, each from the whole main's roof (a hipped row's hips at its ends); units stand on their own ground (the highest under what they cover), neighbours within 0.25 m at one height, so a row steps where the ground does; party walls rise 0.25 m through the roof where it steps or the style shows them (Victorian, Georgian, rowhouse, townhouse, shophouse, China), as dividing parapets on flat rows |
+| Openings | carved out of a body: windows (glass set back 0.10 m, 0.14 m on Victorian, Georgian and rowhouse fronts; reveals the wall's finish), front doors (0.12 m back, panelled by the unit), garage doors, recessed porches (tiled floor, a ceiling); an opening's faces stay inside its host |
+| Windows | each wall facing out, each storey: a window in each bay of about 2.7 m (section 13.7), the style's size (a Georgian sash 0.95 x 1.6 m, an inter-war casement 1.5 x 1.2, a ranch's picture window 1.5 x 1.1), sill 0.75-0.85 m over the floor, head at most 2.15 m and 0.25 m under the eaves; none where a porch, bay, wing, stack or post stands within 0.35 m of it or a door is; side walls (square to the street) wider bays and four in ten left blank |
+| Finishes | `home_finish`: the row's walls and roof by its style (brick, render, siding, stone, block; clay, slate, concrete tile, shingle, metal, barrel, glazed), owners repainting render and siding (three in ten), a brick front painted over (one in twelve), the trim their own (one in five), the door always; stacks brick in Britain and North America |
+| Near / far | the near shell (a layer of its own within 220 m, `HOME_NEAR_DISTANCE`), the far shell in the base layer (bodies with their roof planes, stacks; windows painted in the walls' rhythm), dropped while the near layer is drawn; the far walls cast no ray-traced shadows (they stand over the near shell's set-back windows), the far roofs and stacks do |
+| Shading | each finish's palette colour under an authored grain (brick, plaster, stone, concrete; roof tiles; gravel and concrete decks; the kit's paint on trim); slate, shingles, siding's boards and corrugated sheet drawn here until HM3b; past 170 m the palette colour and the lights alone; glass reflects the sky, and by the homes' hours (`cityHours`) a share is lit behind a blind (HM6 gives them rooms) |
+| Collision | bodies, enclosed porches, porches' posts; steps and stoops not yet (TODO) |
+
+Measured (2026-11-17): `home_lab` builds both shells of 2,600 rows an archetype: **near 479 triangles a detached
+house (most 1,003), 397 a semi half, 340 a terrace unit; far 26, 25, 24 (most 96)**; 16, 12 and 8 windows a unit;
+0.16, 0.13, 0.12 ms a unit for both levels (60 houses a chunk: about 8 ms); none with a bad face, none different
+twice, no coplanar faces sharing over 20 cm2 (a few soffit corners do, under that). In the game, the slice's
+views, two runs each with `--homes off`, `far` and `near` (noon):
+
+| View | No houses | Far shells | Near too | Pool (off / near) |
+|---|---|---|---|---|
+| From the air (150 m out, 90 m up) | 6.6 ms | 7.1-7.5 ms | 7.5 ms (**+0.9**, budget +1.0) | 22% / 29% |
+| Down the street, 30 m | 5.6 ms | 2.9 ms | 3.2 ms (**-2.4**: the houses hide the city behind) | 21% / 29% |
+
+With a flat shader the far shells cost nothing and the near layer 0.3 ms: the rest is shading (lighting about
+half), which is why the far path drops the grain past 170 m (the air view was +1.5 ms before it).
+
 ## Massing and parts
 
 | Part | Size | Notes |
@@ -290,8 +323,9 @@ view is proxies.
 ## Captures and the comparison board
 
 `city_test --home` prints the views (`view NAME --cam X Z YAW PITCH EYE_Y`): the slice's frontage from the street at
-3, 10, 30 and 100 m (looking in at a house front 6 m back, turned off the front if a line of sight needs it) and one
-from the air (150 m out, 90 m up).
+3 and 10 m (looking in at a house front 6 m back, turned off the front if a line of sight needs it), 30 and 100 m down
+the street (at the pavement in front of the slice: since HM3a the houses across the street stand where those views
+were) and one from the air (150 m out, 90 m up).
 
 ```
 python tools/home_capture.py LABEL [--only noon|dusk|night] [--home ARCHETYPE --style STYLE]

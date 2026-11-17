@@ -300,7 +300,13 @@ static int home_cams(int argc, char **argv) {
     for (int k = 0; k < 4; ++k) {
         char name[32];
         snprintf(name, sizeof(name), "home_%03dm", DIST[k]);
-        views += sl_view(name, tx, gy + 3.0, tz, nx, nz, DIST[k] + 6.0, gy, 0.0, 0);
+        /* near, square on to a house front 6 m back; from 30 m on (HM3a: the houses stand), down the street, at the
+         * pavement in front of the slice: across the street stand its other houses */
+        if (DIST[k] < 30) views += sl_view(name, tx, gy + 3.0, tz, nx, nz, DIST[k] + 6.0, gy, 0.0, 0);
+        else {
+            const double px = mid.x + nx * 1.0, pz = mid.z + nz * 1.0;
+            views += sl_view(name, px, city_ground_y(px, pz) + 3.5, pz, nx, nz, (double)DIST[k], gy, 0.0, 0);
+        }
     }
     {   /* from the air: 150 m out over the street, 90 m up, looking down at the block */
         const double px = c.x + nx * 150.0, pz = c.z + nz * 150.0, eye = city_ground_y(c.x, c.z) + 90.0;

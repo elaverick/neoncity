@@ -29,10 +29,13 @@ enum { CS_QUEUED = 1, CS_READY, CS_RESIDENT };
  * kit_gpu.c (no longer wanted: city_test builds it); and from LAYER_VBODY up (SF2), each vendor's own
  * near body (city_build_vendor_body; LAYER_VBODY + its index in the base layer's Mesh.vbody), wanted
  * within VENDOR_BODY_DISTANCE of the camera; while one is resident its far shell in the base layer
- * gives way (the base chunk record's bodies mask: city.vert). */
+ * gives way (the base chunk record's bodies mask: city.vert); 6 the houses' near shells (city_build_homes,
+ * HM3a), wanted within HOME_NEAR_DISTANCE where the base layer holds houses, their far shells in the base
+ * layer giving way while it is drawn (the bodies mask's CHUNK_HOMES_NEAR_BIT). */
 #define LAYER_PLANTS 3
 #define LAYER_PROPS  4
 #define LAYER_VENDOR 5
+#define LAYER_HOMES  6
 #define LAYER_VBODY  16
 static int is_vendor_layer(int layer) { return layer == LAYER_VENDOR || layer >= LAYER_VBODY; }
 
@@ -86,6 +89,7 @@ typedef struct Entry {
     uint32_t  nkit;
     VendorBodySpot *vbody;  /* a base layer's vendors with bodies of their own, kept while RESIDENT (SF2) */
     uint32_t  nvbody;
+    uint32_t  nhome;        /* a base layer's houses (HM3a: its homes layer is wanted near) */
     int       drawRec;     /* its chunk record in the view's draws, when drawRecFrame is this frame's + 1 */
     uint64_t  drawRecFrame;
     /* ray-traced shadows (src/render/rt.c): the casting triangles of each page, as
@@ -228,6 +232,7 @@ static void table_remove(ChunkSystem *cs, int idx) {
     free(e->vbody);
     e->vbody = NULL;
     e->nvbody = 0;
+    e->nhome = 0;
     e->rtIdx = NULL;
     e->grass = NULL;
     e->ngrass = 0;
@@ -261,6 +266,7 @@ static int worker_main(void *arg) {
         else if (job.layer == 2) city_build_litter(job.cx, job.cz, &r.mesh);
         else if (job.layer == LAYER_PLANTS) city_build_plants(job.cx, job.cz, &r.mesh);
         else if (job.layer == LAYER_PROPS) city_build_props(job.cx, job.cz, &r.mesh);
+        else if (job.layer == LAYER_HOMES) city_build_homes(job.cx, job.cz, &r.mesh);
         else if (is_vendor_layer(job.layer)) {
             double t0 = glfwGetTime();
             if (job.layer >= LAYER_VBODY) city_build_vendor_body(job.cx, job.cz, job.layer - LAYER_VBODY, &r.mesh);
@@ -532,7 +538,9 @@ static void caster_indices(Entry *e, const Vertex *v, uint32_t vc) {
     e->rtTotal = n;
 }
 
-static uint32_t rt_mask(int layer) { return layer == 0 || layer == LAYER_PROPS || is_vendor_layer(layer) ? RT_MASK_CITY : layer == 1 ? RT_MASK_INTERIOR : RT_MASK_LITTER; }
+static uint32_t rt_mask(int layer) {
+    return layer == 0 || layer == LAYER_PROPS || layer == LAYER_HOMES || is_vendor_layer(layer) ? RT_MASK_CITY : layer == 1 ? RT_MASK_INTERIOR : RT_MASK_LITTER;
+}
 
 /* Distance from the camera to the chunk's square, horizontally. */
 static float chunk_dist(const Entry *e, const double cam[3]) {
@@ -733,6 +741,13 @@ static void want_chunks(ChunkSystem *cs, const Frustum *frp, const double cam[3]
             if (d < INTERIOR_DISTANCE) push_want(cs, cx, cz, LAYER_PLANTS, kp, kp * f, inView);
             if (d < LITTER_DISTANCE) push_want(cs, cx, cz, 2, kt, kt * f, inView);
             if (d < PROPS_DISTANCE) push_want(cs, cx, cz, LAYER_PROPS, kf, kf * f, inView);
+            /* HM3a: the houses' near shells, where the base layer holds houses */
+            if (d < HOME_NEAR_DISTANCE && idx >= 0 && cs->entries[idx].state == CS_RESIDENT && cs->entries[idx].nhome) {
+                /* drawn just before its chunk's base layer (its key a hair under the chunk's), so the lawns under the
+                 * houses go unshaded; queued after it */
+                const float kh = d - 0.01f + (inView ? 0.0f : d * 2.0f), ph = d + 20.0f + (inView ? 0.0f : d * 2.0f);
+                push_want(cs, cx, cz, LAYER_HOMES, kh, ph * f, inView);
+            }
             /* SF2: each vendor's near body within VENDOR_BODY_DISTANCE (the base layer lists them), nearest first */
             if (d < VENDOR_BODY_DISTANCE + CHUNK_SIZE && city_kit_mode() != KIT_OFF && idx >= 0 && cs->entries[idx].state == CS_RESIDENT) {
                 const Entry *eb = &cs->entries[idx];
@@ -882,6 +897,7 @@ static int upload_ready(ChunkSystem *cs, VkCommandBuffer cmd, int slot, uint64_t
         e->vbody = e->mesh.vbody;
         e->nvbody = e->mesh.nvbody;
         e->mesh.vbody = NULL;
+        e->nhome = e->mesh.nhome;
         mesh_free(&e->mesh);
         e->state = CS_RESIDENT;
         uploads++;
@@ -954,6 +970,12 @@ static uint32_t build_draw_list(ChunkSystem *cs, int slot, const Frustum *frp, c
                 int vi = table_find(cs, e->cx, e->cz, LAYER_VBODY + (int)b);
                 if (vi >= 0 && cs->entries[vi].state == CS_RESIDENT && cs->entries[vi].npages && cs->entries[vi].lastSeen == cs->frame)
                     g->bodies[b >> 5] |= 1u << (b & 31u);
+            }
+            /* HM3a: the houses' far shells give way where their near layer is resident and still wanted */
+            if (e->nhome) {
+                int hi = table_find(cs, e->cx, e->cz, LAYER_HOMES);
+                if (hi >= 0 && cs->entries[hi].state == CS_RESIDENT && cs->entries[hi].npages && cs->entries[hi].lastSeen == cs->frame)
+                    g->bodies[CHUNK_HOMES_NEAR_BIT >> 5] |= 1u << (CHUNK_HOMES_NEAR_BIT & 31u);
             }
         }
         g->info[0] = e->cx; g->info[1] = e->cz;

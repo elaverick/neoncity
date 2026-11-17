@@ -86,7 +86,7 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--bars all] [--vendor-debug] [--hours open|shut|clock] [--nbform straight|corner] [--trade noodles|soup|dumplings|skewers|kebab|burgers|fried|curry|tacos|crepes|roast|drinks] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--homes off|far|near] [--bars all] [--vendor-debug] [--hours open|shut|clock] [--nbform straight|corner] [--trade noodles|soup|dumplings|skewers|kebab|burgers|fried|curry|tacos|crepes|roast|drinks] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --daylightdebug  start in the daylight debug view (F10 twice): only the city's daylight, on white\n"
@@ -187,6 +187,13 @@ static bool parse_args(int argc, char **argv, Options *o) {
             nb_force_upper(k);
         }
         else if (strcmp(argv[i], "--kit-lod") == 0 && i + 1 < argc) city_set_kit_lod(atoi(argv[++i]));   /* SF2: 0 or 1 */
+        else if (strcmp(argv[i], "--homes") == 0 && i + 1 < argc) {   /* HM3a: the houses off, far shells only, or all */
+            const char *v = argv[++i];
+            if (strcmp(v, "off") == 0) city_set_homes(HOMES_OFF);
+            else if (strcmp(v, "far") == 0) city_set_homes(HOMES_FAR);
+            else if (strcmp(v, "near") == 0) city_set_homes(HOMES_NEAR);
+            else return false;
+        }
         else if (strcmp(argv[i], "--bars") == 0 && i + 1 < argc) {
             if (strcmp(argv[++i], "all") != 0) return false;
             city_force_bars(1);   /* NB8's gate: every site a canopy bar fits */
