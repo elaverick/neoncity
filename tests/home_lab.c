@@ -61,16 +61,17 @@ static void print_tags(const char *what, Tag *tags, int n, int houses) {
 static int make_row(int arch, int style, uint32_t seed, HomePlot *P) {
     Rng r = rng_make(seed ^ 0x1AB5u);
     const int region = home_style_region(style);
-    const float lo = arch == HOME_TERRACE ? 4.2f : arch == HOME_SEMI ? 7.0f : region == PLAN_REGION_NA ? 13.0f : 10.0f;
-    const float hi = arch == HOME_TERRACE ? 6.0f : arch == HOME_SEMI ? 10.0f : 18.0f;
-    const float w = rng_range(&r, lo, hi);
+    const HomeYard *Y = home_yard(region);   /* HM2b: the region's tight plots */
+    const float w = rng_range(&r, Y->width[arch][0], Y->width[arch][1]);
     int n = arch == HOME_TERRACE ? rng_int(&r, 3, 12) : arch == HOME_SEMI ? 2 : 1;
     while (arch == HOME_TERRACE && n > 3 && n * w > 48.0f) n--;
-    float depth = arch == HOME_TERRACE ? rng_range(&r, 24.0f, 32.0f) : arch == HOME_SEMI ? rng_range(&r, 28.0f, 38.0f) : rng_range(&r, 30.0f, 42.0f);
-    if (region == PLAN_REGION_NA) depth = fminf(depth + 4.0f, 45.0f);
-    if (rng_float(&r) < 0.15f) depth = rng_range(&r, 20.0f, 24.0f);   /* back to back on a shallow block */
-    const float fg = region == PLAN_REGION_NA && arch != HOME_TERRACE ? rng_range(&r, 6.0f, 9.0f) : arch == HOME_TERRACE ? rng_range(&r, 3.0f, 4.5f) : rng_range(&r, 4.0f, 7.0f);
-    const float front = fmaxf(3.0f, fminf(fg, depth - 17.0f));
+    const float least = Y->frontMin + HOME_HOUSE_MIN + Y->rearMin;
+    float depth = rng_range(&r, Y->depth[arch][0], Y->depth[arch][1]);
+    if (rng_float(&r) < 0.15f) depth = rng_range(&r, least, least + 2.0f);   /* the shallowest strip a block leaves */
+    const float room = depth - HOME_HOUSE_MIN - Y->rearMin;
+    const int pad = rng_float(&r) < Y->pad[arch] && room >= HOME_PAD0;
+    const float fg = pad ? rng_range(&r, HOME_PAD0, HOME_PAD1) : rng_range(&r, Y->front0, Y->front1);
+    const float front = fmaxf(Y->frontMin, fminf(fg, room));
     const int storeys = home_style_storeys(style, arch, hash_combine(seed, 0x5701u));
     for (int k = 0; k < n; ++k) {
         HomePlot *p = &P[k];
@@ -81,6 +82,7 @@ static int make_row(int arch, int style, uint32_t seed, HomePlot *P) {
         p->seed = hash_combine(seed, (uint32_t)k + 1u);
         p->arch = (uint8_t)arch; p->unit = (uint8_t)k; p->units = (uint8_t)n;
         p->storeys = (uint8_t)storeys; p->region = (uint8_t)region; p->style = (uint8_t)style;
+        p->pad = (uint8_t)pad;
     }
     return n;
 }
@@ -190,6 +192,8 @@ static void draw_house(Image *im, const View *V, const HGraph *g) {
     for (int k = 0; k < g->nunit; ++k) fill_rect(im, V, g->unit[k].x0, 0.0f, g->unit[k].x1, D, k & 1 ? 0x5E8A4A : 0x649050);
     for (int i = 0; i < g->nsite; ++i) {
         const HSite *s = &g->site[i];
+        static const uint32_t YARD[HY_COUNT] = { 0x9C9A92, 0xC4BCA8, 0x6E9458, 0x8A6A48 };   /* paved, gravel, planted, soil (HM2b) */
+        if ((s->kind == HE_FRONT || s->kind == HE_REAR) && s->surface < HY_COUNT) fill_rect(im, V, s->x0, s->z0, s->x1, s->z1, YARD[s->surface]);
         uint32_t c = s->kind == HE_PATH ? 0xC8B490 : s->kind == HE_DRIVE ? 0xA8A8A4 : s->kind == HE_SHED ? 0x7A5A3A : s->kind == HE_CAR ? 0x3050A0 : 0;
         if (c) fill_rect(im, V, s->x0, s->z0, s->x1, s->z1, c);
         if (s->kind == HE_TREE) {
@@ -308,14 +312,14 @@ static int bite(HGraph *g, int k) {
     case 0: if (!g->nchim || !pitched) return 0;
             g->chim[0].on = HC_RIDGE; if (m->ridgeX) g->chim[0].z = m->z0 + 0.25f * (m->z1 - m->z0); else g->chim[0].x = m->x0 + 0.25f * (m->x1 - m->x0);
             return 1;
-    case 1: m->z0 = 2.5f; return 1;
-    case 2: m->z1 = g->unit[0].depth - 5.0f; return 1;
+    case 1: m->z0 = home_yard(g->region)->frontMin - 0.5f; return 1;
+    case 2: m->z1 = g->unit[0].depth - (home_yard(g->region)->rearMin - 1.0f); return 1;
     case 3: if (!pitched || fabsf((m->x1 - m->x0) - (m->z1 - m->z0)) < 0.5f) return 0; m->ridgeX = !m->ridgeX; return 1;
     case 4: for (int i = 0; i < g->nvol && g->nvol < HG_MAX_VOL; ++i)
                 if (g->vol[i].role == HV_BAY || g->vol[i].role == HV_EXTENSION || g->vol[i].role == HV_WING) { g->vol[g->nvol] = g->vol[i]; g->vol[g->nvol].x0 += 0.3f; g->vol[g->nvol++].x1 += 0.3f; return 1; }
             return 0;
     case 5: if (!g->ndoor || g->door[0].path < 0) return 0; g->site[g->door[0].path].z1 = m->z0 + 1.0f; return 1;
-    case 6: if (g->arch != HOME_DETACHED) return 0; m->x0 = g->unit[0].x0 + 1.0f; return 1;
+    case 6: if (g->arch != HOME_DETACHED) return 0; m->x0 = g->unit[0].x0 + 0.5f * home_yard(g->region)->side; return 1;
     case 7: if (!g->ndoor) return 0; g->door[0].width = 0.8f; return 1;
     case 8: if (!pitched) return 0; m->pitch = 15.0f; return 1;
     case 9: if (!g->nparty) return 0; g->party[0].x += 0.5f; return 1;

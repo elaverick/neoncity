@@ -11,15 +11,18 @@
  * garden (section 13.5's order). Each street side of the block is a strip as deep
  * as a plot, laid with one archetype (a street's houses are built together):
  * terraces in rows of 4.2-6 m units at most 48 m long with a passage between
- * rows, semi-detached pairs of 7-10 m halves, or detached houses on 10-18 m
- * frontages. The archetype comes from the city's region (plan_settlement_region).
+ * rows, semi-detached pairs, or detached houses. The archetype comes from the
+ * city's region (plan_settlement_region), and so since HM2b do the plots'
+ * frontages, depths and yards (home_yard): a megacity's are tight, small and
+ * mostly paved, some rows parking in their front yards.
  * The local streets are laid first, then the busier ones, the longest first;
  * a later strip keeps clear of the earlier ones, so a corner plot fronts one
- * street and the side street's first plot starts behind its rear garden. A
- * block deeper than two plots keeps its middle as backland (gardens, HM7).
+ * street and the side street's first plot starts behind its rear garden. The
+ * plan cuts a suburb into blocks about two plots deep (plan.c, split_suburb),
+ * so they meet back to back; what a block leaves between them is backland
+ * (yards, HM7).
  * ========================================================================= */
 
-#define STRIP_MIN_DEPTH 20.0    /* front garden 3 + house 8 + rear garden 8, and a little over */
 #define STRIP_MIN_LEN   10.0
 #define PROBE           0.5     /* m: the step the free stretches of a strip are found at */
 #define MAX_STRIPS      PLAN_MAX_PV
@@ -80,26 +83,27 @@ static void region_weights(int region, double lat, double lon, float w[HOME_ARCH
     if (region == PLAN_REGION_NA && lon > -82.0 && lat > 37.0) { w[0] = 0.45f; w[2] = 0.55f; }   /* the north-east's rowhouses */
 }
 
-/* Frontage of a plot (m), per unit of a terrace, a half of a pair or a detached house. */
+/* Frontage of a plot (m), per unit of a terrace, a half of a pair or a detached house: the region's (HM2b). */
 static void frontage(int arch, int region, double *lo, double *hi) {
-    switch (arch) {
-    case HOME_TERRACE: *lo = 4.2; *hi = 6.0; break;
-    case HOME_SEMI:    *lo = 7.0; *hi = 10.0; break;
-    default:           *lo = region == PLAN_REGION_NA ? 13.0 : 10.0; *hi = 18.0; break;
-    }
+    const HomeYard *Y = home_yard(region);
+    *lo = Y->width[arch][0]; *hi = Y->width[arch][1];
 }
 
-/* A plot's depth by archetype: terraces shallower, North America's lots deeper. */
+/* A plot's depth by archetype, the region's (HM2b: tight, between Tokyo's and a British terraced street's). */
 static double plot_depth(int arch, int region, Rng *r) {
-    double d = arch == HOME_TERRACE ? rng_range(r, 24.0f, 32.0f) : arch == HOME_SEMI ? rng_range(r, 28.0f, 38.0f) : rng_range(r, 30.0f, 42.0f);
-    return region == PLAN_REGION_NA ? fmin(d + 4.0, 45.0) : d;
+    const HomeYard *Y = home_yard(region);
+    return rng_range(r, Y->depth[arch][0], Y->depth[arch][1]);
 }
 
-/* The front garden: 3 m at least (section 13.5); open lawns in North America, tight in the old rows. */
-static float front_garden(int arch, int region, uint32_t h) {
-    float x = hash_float(h);
-    if (region == PLAN_REGION_NA) return arch == HOME_TERRACE ? 3.0f + 1.5f * x : 6.0f + 3.0f * x;
-    return arch == HOME_TERRACE ? 3.0f + 1.5f * x : 4.0f + 3.0f * x;
+/* The front yard (HM2b): the region's small one, or a car's depth where the row parks in it (and the plot
+ * leaves a house and the rear yard behind). Returns its depth; *pad says which. */
+static float front_yard(int arch, int region, float depth, uint32_t h, uint8_t *pad) {
+    const HomeYard *Y = home_yard(region);
+    const float room = depth - HOME_HOUSE_MIN - Y->rearMin;
+    *pad = hash_float(hash_combine(h, 0x9AD0u)) < Y->pad[arch] && room >= HOME_PAD0;
+    float f = *pad ? HOME_PAD0 + (HOME_PAD1 - HOME_PAD0) * hash_float(h) : Y->front0 + (Y->front1 - Y->front0) * hash_float(h);
+    if (*pad && f > room) f = room;
+    return fmaxf(Y->frontMin, fminf(f, room));
 }
 
 typedef struct PlotCtx {
@@ -136,8 +140,8 @@ static void add_plot(PlotCtx *P, const Strip *s, uint32_t road, double u0, doubl
     uint32_t built = hash_float(hash_combine(rowSeed, 0x5702u)) < 0.75f ? hash_combine(road, (uint32_t)arch) : rowSeed;
     p->style = (uint8_t)(g_forceStyle >= 0 ? g_forceStyle : home_style_pick(P->region, arch, P->lat, P->lon, hash_combine(built, 0x57E1u)));
     p->storeys = (uint8_t)home_style_storeys(p->style, arch, hash_combine(built, 0x5701u));
-    /* and room behind it for the house (9 m) and the rear garden (8 m) */
-    p->front = fmaxf(3.0f, fminf(front_garden(arch, P->region, hash_combine(rowSeed, 0xF407u)), p->depth - 17.0f));
+    /* the row's front yard, with room behind it for the house and the rear yard */
+    p->front = front_yard(arch, P->region, p->depth, hash_combine(rowSeed, 0xF407u), &p->pad);
     P->n++;
 }
 
@@ -185,6 +189,9 @@ int city_block_plots(const Block *bk, HomePlot *out, int max) {
     P.lat = lat; P.lon = lon;
     float w[HOME_ARCH_COUNT];
     region_weights(P.region, lat, lon, w);
+    /* the shallowest strip: the region's least front yard, a house and its least rear yard (HM2b) */
+    const HomeYard *Y = home_yard(P.region);
+    const double minDepth = Y->frontMin + HOME_HOUSE_MIN + Y->rearMin;
     Rng r = rng_make(bk->seed ^ 0x9107u);
 
     /* the street edges: the local streets first, then by length */
@@ -223,8 +230,8 @@ int city_block_plots(const Block *bk, HomePlot *out, int max) {
         for (int v = 0; v < lot->n; ++v) vmax = fmax(vmax, ddot(dsub(lot->v[v], s.o), s.n));
         double want = plot_depth(arch, P.region, &r);
         s.depth = vmax < 2.0 * want ? 0.5 * vmax - 0.05 : want;
-        if (s.depth < STRIP_MIN_DEPTH) s.depth = fmin(want, vmax - 0.5);
-        if (s.depth < STRIP_MIN_DEPTH) continue;
+        if (s.depth < minDepth) s.depth = fmin(want, vmax - 0.5);
+        if (s.depth < minDepth) continue;
         double l0, h0, l1, h1;
         if (!slice(lot, s.o, s.t, s.n, 0.02, &l0, &h0) || !slice(lot, s.o, s.t, s.n, s.depth, &l1, &h1)) continue;
         double ul = fmax(l0, l1) + 0.3, ur = fmin(h0, h1) - 0.3;
@@ -248,7 +255,7 @@ int city_block_plots(const Block *bk, HomePlot *out, int max) {
                     int before = P.n;
                     double end = lay_rows(&P, &s, road, arch, a, b, &r);
                     /* what a terrace or pair leaves at the end takes a detached house, if it fits */
-                    if (arch != HOME_DETACHED && b - end >= 10.0) end = lay_rows(&P, &s, road, HOME_DETACHED, end, b, &r);
+                    if (arch != HOME_DETACHED && b - end >= Y->width[HOME_DETACHED][0]) end = lay_rows(&P, &s, road, HOME_DETACHED, end, b, &r);
                     if (P.n > before) { first = fmin(first, P.out[before].u0); last = fmax(last, end); }
                 }
             }

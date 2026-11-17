@@ -143,6 +143,47 @@ static const HStyleDef STYLES[HS_COUNT] = {
 };
 
 const HStyleDef *home_style_def(int s) { return &STYLES[s >= 0 && s < HS_COUNT ? s : HS_TRACT]; }
+
+/* The yards by region (HM2b): see HomeYard. Britain the largest (a terraced street's 6-10 m back yards),
+ * Southern Europe next, North America's small lots, then the Middle East and Africa; East and South Asia
+ * nearest Tokyo's half-metre sides and two-metre backs. Pads: Malaysia's link houses park in their car
+ * porches, North America on its driveway aprons; Britain's semis have paved over their front gardens. */
+static const HomeYard YARDS[PLAN_REGION_COUNT] = {
+    [PLAN_REGION_NA]   = { .frontMin = 1.5f, .rearMin = 4.0f, .front0 = 2.0f, .front1 = 3.5f, .side = 1.0f, .semiOpen = 1.0f, .gap = 2.0f, .proj = 0.5f,
+                           .width = { { 9.0f, 12.5f }, { 6.0f, 8.0f }, { 4.2f, 6.0f } }, .depth = { { 20.0f, 26.0f }, { 20.0f, 25.0f }, { 17.0f, 23.0f } },
+                           .pad = { 0.75f, 0.5f, 0.0f }, .surface = { 0.45f, 0.20f, 0.35f, 0.0f } },
+    [PLAN_REGION_UK]   = { .frontMin = 1.5f, .rearMin = 6.0f, .front0 = 1.5f, .front1 = 3.0f, .side = 1.0f, .semiOpen = 1.0f, .gap = 2.0f, .proj = 0.5f,
+                           .width = { { 9.0f, 13.0f }, { 6.0f, 8.5f }, { 4.2f, 6.0f } }, .depth = { { 22.0f, 28.0f }, { 21.0f, 27.0f }, { 19.0f, 25.0f } },
+                           .pad = { 0.55f, 0.45f, 0.1f }, .surface = { 0.50f, 0.15f, 0.35f, 0.0f } },
+    [PLAN_REGION_SEU]  = { .frontMin = 1.0f, .rearMin = 4.5f, .front0 = 1.0f, .front1 = 2.5f, .side = 1.0f, .semiOpen = 1.0f, .gap = 2.0f, .proj = 0.4f,
+                           .width = { { 9.0f, 13.0f }, { 6.0f, 8.5f }, { 4.5f, 6.5f } }, .depth = { { 20.0f, 26.0f }, { 20.0f, 25.0f }, { 16.0f, 22.0f } },
+                           .pad = { 0.5f, 0.4f, 0.1f }, .surface = { 0.55f, 0.15f, 0.30f, 0.0f } },
+    [PLAN_REGION_EAS]  = { .frontMin = 1.0f, .rearMin = 2.0f, .front0 = 1.0f, .front1 = 2.0f, .side = 0.5f, .semiOpen = 0.5f, .gap = 1.0f, .proj = 0.4f,
+                           .width = { { 7.0f, 10.0f }, { 5.5f, 7.0f }, { 4.2f, 6.0f } }, .depth = { { 14.0f, 18.0f }, { 14.0f, 18.0f }, { 13.0f, 17.0f } },
+                           .pad = { 0.5f, 0.3f, 0.15f }, .surface = { 0.45f, 0.25f, 0.30f, 0.0f } },
+    [PLAN_REGION_SEA]  = { .frontMin = 1.5f, .rearMin = 2.5f, .front0 = 1.5f, .front1 = 3.0f, .side = 0.75f, .semiOpen = 0.75f, .gap = 1.5f, .proj = 0.5f,
+                           .width = { { 8.0f, 11.0f }, { 6.0f, 8.0f }, { 4.5f, 6.5f } }, .depth = { { 17.0f, 22.0f }, { 18.0f, 22.0f }, { 17.0f, 22.0f } },
+                           .pad = { 0.6f, 0.6f, 0.55f }, .surface = { 0.65f, 0.05f, 0.25f, 0.05f } },
+    [PLAN_REGION_SAS]  = { .frontMin = 1.0f, .rearMin = 2.0f, .front0 = 1.0f, .front1 = 2.5f, .side = 0.75f, .semiOpen = 0.75f, .gap = 1.5f, .proj = 0.4f,
+                           .width = { { 7.0f, 10.0f }, { 6.0f, 8.0f }, { 4.2f, 6.0f } }, .depth = { { 15.0f, 20.0f }, { 15.0f, 20.0f }, { 14.0f, 18.0f } },
+                           .pad = { 0.3f, 0.2f, 0.1f }, .surface = { 0.55f, 0.05f, 0.15f, 0.25f } },
+    [PLAN_REGION_MENA] = { .frontMin = 1.5f, .rearMin = 3.0f, .front0 = 2.0f, .front1 = 3.5f, .side = 1.0f, .semiOpen = 1.0f, .gap = 2.0f, .proj = 0.5f,
+                           .width = { { 9.0f, 13.0f }, { 6.0f, 8.5f }, { 4.5f, 6.5f } }, .depth = { { 18.0f, 24.0f }, { 18.0f, 23.0f }, { 15.0f, 20.0f } },
+                           .pad = { 0.5f, 0.4f, 0.1f }, .surface = { 0.60f, 0.15f, 0.15f, 0.10f } },
+    [PLAN_REGION_SSA]  = { .frontMin = 1.5f, .rearMin = 3.0f, .front0 = 2.0f, .front1 = 4.0f, .side = 1.0f, .semiOpen = 1.0f, .gap = 2.0f, .proj = 0.5f,
+                           .width = { { 9.0f, 13.0f }, { 6.0f, 8.5f }, { 4.5f, 6.5f } }, .depth = { { 18.0f, 24.0f }, { 18.0f, 23.0f }, { 15.0f, 20.0f } },
+                           .pad = { 0.45f, 0.3f, 0.05f }, .surface = { 0.40f, 0.10f, 0.10f, 0.40f } },
+    [PLAN_REGION_LAT]  = { .frontMin = 1.0f, .rearMin = 2.5f, .front0 = 1.0f, .front1 = 2.5f, .side = 0.75f, .semiOpen = 0.75f, .gap = 1.5f, .proj = 0.4f,
+                           .width = { { 7.0f, 10.0f }, { 6.0f, 8.0f }, { 4.2f, 6.5f } }, .depth = { { 15.0f, 21.0f }, { 15.0f, 20.0f }, { 14.0f, 20.0f } },
+                           .pad = { 0.4f, 0.3f, 0.3f }, .surface = { 0.60f, 0.05f, 0.15f, 0.20f } },
+};
+
+const HomeYard *home_yard(int region) { return &YARDS[region >= 0 && region < PLAN_REGION_COUNT ? region : PLAN_REGION_NA]; }
+
+const char *home_surface_name(int s) {
+    static const char *const N[HY_COUNT] = { "paved", "gravel", "planted", "soil" };
+    return s >= 0 && s < HY_COUNT ? N[s] : "?";
+}
 const char *home_style_name(int s) { return s >= 0 && s < HS_COUNT ? STYLES[s].name : "?"; }
 int home_style_region(int s) { return s >= 0 && s < HS_COUNT ? STYLES[s].region : -1; }
 float home_style_min_pitch(int s) { return home_style_def(s)->minPitch; }
@@ -209,11 +250,12 @@ typedef struct HCtx {
     BLog            *log;
     const HomePlot  *P;
     const HStyleDef *S;
+    const HomeYard  *Y;      /* the region's yards (HM2b) */
     float            aff;
     int              level;
     Rng              r;
     /* the row's choices, shared by its units */
-    int              roof, porch, bay, bay2, canted, outrig, outrigGable, garage, front;
+    int              roof, porch, bay, bay2, canted, outrig, outrigGable, garage, front, pad;
     float            pitch, eave, depth, wallH, frontH;
 } HCtx;
 
@@ -318,6 +360,14 @@ static void front_features(HCtx *c, int ui, int mi, Front f) {
     case HP_ENCLOSED: pw = dw + rng_range(&c->r, 0.8f, 1.4f); pd = rng_range(&c->r, 1.2f, 1.8f); break;
     default:          pw = dw + rng_range(&c->r, 0.8f, 1.6f); pd = rng_range(&c->r, 1.2f, 2.0f); break;
     }
+    /* a small front yard (HM2b): the porch the yard has room for, else a canopy over the door */
+    const float room = front - c->Y->proj;
+    if (kind != HP_RECESSED && kind != HP_CANOPY && pd > room) {
+        const float least = kind == HP_VERANDA ? 1.5f : 1.2f;
+        if (room >= least) pd = room;
+        else { kind = HP_CANOPY; pw = dw + rng_range(&c->r, 0.4f, 0.8f); pd = rng_range(&c->r, 0.8f, 1.1f); }
+    }
+    if (kind == HP_CANOPY && pd > room) pd = fmaxf(0.6f, room);
     if (pw > W) pw = W;
     float px0 = kind == HP_VERANDA ? 0.5f * (f.ux0 + f.ux1) - 0.5f * pw : dx - 0.5f * pw;
     if (px0 < f.ux0) px0 = f.ux0;
@@ -354,7 +404,8 @@ static void front_features(HCtx *c, int ui, int mi, Front f) {
     float bw = rng_range(&c->r, 1.8f, 2.7f);
     if (b1 - b0 < 1.8f) { home_repair(g, c->log, "bay", "unit %d: no room beside its door (%.1f m), no bay", ui, b1 - b0); return; }
     if (bw > b1 - b0) bw = b1 - b0;
-    const float bc = 0.5f * (b0 + b1), proj = rng_range(&c->r, 0.6f, 0.9f);
+    const float bc = 0.5f * (b0 + b1), proj = fminf(rng_range(&c->r, 0.6f, 0.9f), front - c->Y->proj);
+    if (proj < 0.45f) { home_repair(g, c->log, "bay", "unit %d: a %.1f m front yard, no bay", ui, front); return; }
     const int bi = add_vol(g, HV_BAY, ui, mi, bc - 0.5f * bw, front - proj, bc + 0.5f * bw, front, 1, HR_LEAN);
     if (bi < 0) return;
     HVol *b = &g->vol[bi];
@@ -371,8 +422,9 @@ static void front_features(HCtx *c, int ui, int mi, Front f) {
 static void add_extension(HCtx *c, int ui, int mi, float x0, float x1) {
     HGraph *g = c->g;
     const HVol *m = &g->vol[mi];
-    const float d = rng_range(&c->r, 2.5f, 5.0f);
+    const float d = fminf(rng_range(&c->r, 2.5f, 5.0f), g->unit[ui].depth - c->Y->rearMin - m->z1);   /* what the rear yard spares */
     const int flat = chance(&c->r, 0.5f);
+    if (d < 2.0f) return;
     const int ei = add_vol(g, HV_EXTENSION, ui, mi, x0, m->z1, x1, m->z1 + d, 1, HR_LEAN);
     if (ei < 0) return;
     HVol *e = &g->vol[ei];
@@ -385,10 +437,10 @@ static void add_outrigger(HCtx *c, int ui, int mi, Front f) {
     HGraph *g = c->g;
     const HVol *m = &g->vol[mi];
     float w = rng_range(&c->r, 2.4f, 3.4f);
-    const float d = rng_range(&c->r, 3.0f, 7.0f);
+    const float d = fminf(rng_range(&c->r, 3.0f, 7.0f), g->unit[ui].depth - c->Y->rearMin - m->z1);   /* what the rear yard spares */
     const int lower = chance(&c->r, 0.5f);
     if (w > f.ux1 - f.ux0 - 1.0f) w = f.ux1 - f.ux0 - 1.0f;   /* a side return of a metre at least */
-    if (w < 2.0f) return;
+    if (w < 2.0f || d < 2.0f) return;
     /* against the party wall on the door's side: a pair of units' outriggers back to back */
     const float x0 = f.side > 0 ? f.ux1 - w : f.ux0;
     const int oi = add_vol(g, HV_OUTRIGGER, ui, mi, x0, m->z1, x0 + w, m->z1 + d, m->storeys > 1 && lower ? m->storeys - 1 : m->storeys, HR_GABLE);
@@ -474,26 +526,27 @@ static void chimneys_detached(HCtx *c, int mi) {
 
 /* --- the archetypes --------------------------------------------------------- */
 
-static float clear_draw(HCtx *c, float min) { return min + rng_range(&c->r, 0.0f, 1.2f); }
+/* A clearance: the region's least and up to 60% over it. */
+static float clear_draw(HCtx *c, float min) { return min + rng_range(&c->r, 0.0f, 0.6f * min); }
 
 static int build_detached(HCtx *c) {
     HGraph *g = c->g;
     HUnit *u = &g->unit[0];
-    const float W = u->x1 - u->x0;
+    const float W = u->x1 - u->x0, SIDE = c->Y->side;
     int garage = c->garage, gside = chance(&c->r, 0.5f);
-    float cl = clear_draw(c, SIDE_DETACHED), cr = clear_draw(c, SIDE_DETACHED);
+    float cl = clear_draw(c, SIDE), cr = clear_draw(c, SIDE);
     float gw = rng_range(&c->r, 3.0f, 3.6f);
-    const float gclr = GARAGE_CLEAR + rng_range(&c->r, 0.0f, 0.6f);
+    const float gclr = home_garage_clear(c->Y) + rng_range(&c->r, 0.0f, 0.6f);
     if (chance(&c->r, 0.4f * c->aff)) gw = rng_range(&c->r, 5.4f, 6.0f);   /* a double garage */
     float maxW = c->g->style == HS_RANCH ? 16.0f : 13.0f;
     if (garage) { if (gside) cr = gclr + gw; else cl = gclr + gw; }
     if (garage && W - cl - cr < MIN_MAIN_W + 1.0f) {
         home_repair(g, c->log, "garage", "plot %.1f m wide: no room for a %.1f m garage", W, gw);
         garage = 0;
-        cl = clear_draw(c, SIDE_DETACHED); cr = clear_draw(c, SIDE_DETACHED);
+        cl = clear_draw(c, SIDE); cr = clear_draw(c, SIDE);
     }
     float mw = W - cl - cr;
-    if (mw < MIN_MAIN_W) { cl = cr = SIDE_DETACHED; mw = W - cl - cr; }
+    if (mw < MIN_MAIN_W) { cl = cr = SIDE; mw = W - cl - cr; }
     float x0 = u->x0 + cl, x1 = u->x1 - cr;
     if (fminf(x1 - x0, maxW) > SPAN_MAX && c->depth > SPAN_MAX) c->depth = SPAN_MAX;
     if (mw > maxW) {   /* a smaller house on a wide plot: set where the slack falls */
@@ -527,7 +580,7 @@ static int build_semi(HCtx *c) {
     if (g->nunit != 2) return 0;
     const float party = g->unit[0].x1;
     int garage = c->garage;
-    const float open = clear_draw(c, SIDE_SEMI), gclr = GARAGE_CLEAR + rng_range(&c->r, 0.0f, 0.5f), gw = rng_range(&c->r, 2.8f, 3.4f);
+    const float open = clear_draw(c, c->Y->semiOpen), gclr = home_garage_clear(c->Y) + rng_range(&c->r, 0.0f, 0.5f), gw = rng_range(&c->r, 2.8f, 3.4f);
     float cl = garage ? gclr + gw : open;
     const float half = fminf(party - g->unit[0].x0, g->unit[1].x1 - party);
     if (garage && half - cl < MIN_MAIN_W) {
@@ -535,7 +588,7 @@ static int build_semi(HCtx *c) {
         garage = 0;
         cl = open;
     }
-    if (half - cl < MIN_MAIN_W) cl = SIDE_SEMI;
+    if (half - cl < MIN_MAIN_W) cl = c->Y->semiOpen;
     const float x0 = party - fminf(half - cl, 7.5f), x1 = party + (party - x0);   /* mirrored: the pair is symmetric about its party wall */
     const int mi = add_vol(g, HV_PAIR, HG_ROW_WIDE, -1, x0, g->unit[0].front, x1, g->unit[0].front + c->depth, c->P[0].storeys, c->roof);
     if (mi < 0) return 0;
@@ -674,8 +727,17 @@ static void lay_site(HCtx *c) {
     for (int k = 0; k < g->nunit; ++k) {
         HUnit *u = &g->unit[k];
         const float rear = home_unit_rear(g, k);
-        add_site(g, HE_FRONT, k, u->x0, 0.0f, u->x1, m->z0);
-        add_site(g, HE_REAR, k, u->x0, rear, u->x1, u->depth);
+        /* the yards' surfaces (HM2b): no lawns in a city; bare earth where poor, beds and pots where better off;
+         * the back mostly as the front */
+        float sw[HY_COUNT];
+        for (int s = 0; s < HY_COUNT; ++s) sw[s] = c->Y->surface[s];
+        sw[HY_SOIL] *= 1.6f - 1.2f * c->aff;
+        sw[HY_PLANTED] *= 0.6f + 0.8f * c->aff;
+        const int sf = wpick(&c->r, sw, HY_COUNT), sr = chance(&c->r, 0.7f) ? sf : wpick(&c->r, sw, HY_COUNT);
+        int yi = add_site(g, HE_FRONT, k, u->x0, 0.0f, u->x1, m->z0);
+        if (yi >= 0) g->site[yi].surface = (uint8_t)sf;
+        yi = add_site(g, HE_REAR, k, u->x0, rear, u->x1, u->depth);
+        if (yi >= 0) g->site[yi].surface = (uint8_t)sr;
         int kind = c->front;
         if (c->level < 2 && chance(&c->r, 0.12f)) kind = wpick(&c->r, c->S->bound, HB_COUNT);   /* an owner's own */
         const float h = kind == HB_WALL ? c->wallH : kind == HB_HEDGE ? rng_range(&c->r, 0.8f, 1.8f) : kind == HB_FENCE ? rng_range(&c->r, 0.9f, 1.6f) : 0.0f;
@@ -716,6 +778,27 @@ static void lay_site(HCtx *c) {
                 HGate *gt = &g->gate[g->ngate++];
                 gt->unit = (int8_t)k; gt->drive = 1; gt->x = 0.5f * (w->x0 + w->x1); gt->w = w->x1 - w->x0;
                 gap0[ng] = w->x0; gap1[ng++] = w->x1;
+            }
+        }
+        /* a car pad (HM2b): the row parks in its front yard, a paved strip beside the path, clear of porches and bays */
+        if (c->pad && m->z0 >= HOME_PAD0 - HEPS && ng < 3) {
+            const float pw = rng_range(&c->r, 2.6f, 3.0f);
+            const int first = chance(&c->r, 0.5f);
+            for (int t = 0; t < 2; ++t) {
+                const int right = (t == 0) == first;
+                const float x0 = right ? u->x1 - pw : u->x0, x1 = x0 + pw;
+                if (x0 < u->x0 - HEPS || x1 > u->x1 + HEPS || !rect_clear(g, x0, 0.0f, x1, m->z0 - HEPS, 0.0f)) continue;
+                add_site(g, HE_DRIVE, k, x0, 0.0f, x1, m->z0);
+                if (chance(&c->r, 0.7f)) {
+                    const float cx = 0.5f * (x0 + x1), cz = 0.5f * m->z0;
+                    add_site(g, HE_CAR, k, cx - 0.95f, cz - 2.3f, cx + 0.95f, cz + 2.3f);
+                }
+                if (kind != HB_NONE && g->ngate < HG_MAX_GATE) {
+                    HGate *gt = &g->gate[g->ngate++];
+                    gt->unit = (int8_t)k; gt->drive = 1; gt->x = 0.5f * (x0 + x1); gt->w = pw;
+                    gap0[ng] = x0; gap1[ng++] = x1;
+                }
+                break;
             }
         }
         /* the front boundary with its gaps (sorted), and the side lines */
@@ -813,6 +896,12 @@ static void choose_row(HCtx *c) {
     c->garage = g->arch != HOME_TERRACE && chance(&c->r, S->garage + 0.3f * (c->aff - 0.5f));
     c->front = wpick(&c->r, S->bound, HB_COUNT);
     c->wallH = S->wallH0 > 0.0f ? rng_range(&c->r, S->wallH0, S->wallH1) : rng_range(&c->r, 0.6f, 1.2f);
+    /* a row that parks in its front yard has no garage wing (HM2b) */
+    c->pad = c->P[0].pad;
+    if (c->pad) c->garage = 0;
+    /* the main no deeper than the plot leaves between the front yard and the rear (HM2b: tight plots) */
+    const float room = g->unit[0].depth - g->unit[0].front - c->Y->rearMin;
+    if (c->depth > room) c->depth = fmaxf(MIN_DEPTH, room);
     /* level 1 drops the optional parts, level 2 is the plain form (section 13.10) */
     if (c->level >= 1) { c->garage = 0; c->outrig = 0; }
     /* the span (the shorter side) stays within 12 m: a main wider than that is no deeper (section 13.5) */
@@ -839,8 +928,9 @@ static void build_simplest(HCtx *c) {
     c->bay = c->garage = c->outrig = 0;
     c->front = HB_NONE;
     const HUnit *u = &g->unit[0];
-    for (int k = 0; k < g->nunit; ++k) g->unit[k].front = fmaxf(FRONT_MIN, fminf(g->unit[k].front, g->unit[k].depth - REAR_MIN - MIN_DEPTH));
-    c->depth = fminf(9.0f, u->depth - g->unit[0].front - REAR_MIN);
+    c->pad = 0;
+    for (int k = 0; k < g->nunit; ++k) g->unit[k].front = fmaxf(c->Y->frontMin, fminf(g->unit[k].front, g->unit[k].depth - c->Y->rearMin - MIN_DEPTH));
+    c->depth = fminf(9.0f, u->depth - g->unit[0].front - c->Y->rearMin);
     if (g->arch == HOME_TERRACE) build_terrace(c);
     else if (g->arch == HOME_SEMI && g->nunit == 2) build_semi(c);
     else build_detached(c);
@@ -855,6 +945,7 @@ void home_build_at(const HomePlot *row, int n, float affluence, int first, HGrap
     memset(&c, 0, sizeof(c));
     c.g = g; c.log = log; c.P = row; c.aff = affluence;
     c.S = home_style_def(row[0].style);
+    c.Y = home_yard(row[0].region);
     blog_printf(log, "home %08x: %s, %s (%s), %d plot%s, %.1f m by %.1f, front garden %.1f, %d storeys\n", row[0].seed,
                 n > 0 && row[0].arch == HOME_TERRACE ? "terrace" : row[0].arch == HOME_SEMI ? "semi" : "detached",
                 home_style_name(row[0].style), plan_region_code(row[0].region), n, n == 1 ? "" : "s",

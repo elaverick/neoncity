@@ -92,7 +92,30 @@ typedef struct HParty { int8_t a, b, vol; float x, z0, z1, top; } HParty;       
 typedef struct HChimney { int8_t vol, unit; uint8_t on, pots; float x, z, w, d, top; } HChimney;
 typedef struct HBound { uint8_t kind, role; int8_t unit; float x0, z0, x1, z1, h; } HBound;
 typedef struct HGate { int8_t unit; uint8_t drive; float x, w; } HGate;                               /* a gap in the front boundary (z = 0) */
-typedef struct HSite { uint8_t kind; int8_t unit, door; float x0, z0, x1, z1; } HSite;              /* a rectangle; a tree's is its canopy's square */
+typedef struct HSite { uint8_t kind, surface; int8_t unit, door; float x0, z0, x1, z1; } HSite;     /* a rectangle; a tree's is its canopy's square; a yard's surface HY_* */
+
+/* The yards by region (residential roadmap HM2b; the user, 2026-11-16): a megacity's houses have small,
+ * mostly paved yards, somewhere between Tokyo-tight and British terraced, Europe on the larger side, and
+ * no lawns anywhere in a city. Section 13.5's garden and clearance figures are loosened to these, a stated
+ * megacity departure (docs/residential-target.md, "Plots"); the rules check each row against its region's.
+ * Frontages and depths are by archetype (HOME_DETACHED a plot, HOME_SEMI a half, HOME_TERRACE a unit). */
+enum { HY_PAVED = 0, HY_GRAVEL, HY_PLANTED, HY_SOIL, HY_COUNT };   /* a yard: slabs or concrete, gravel, paving with beds and pots, swept earth */
+typedef struct HomeYard {
+    float frontMin, rearMin;               /* the rules: the front yard (bays and porches stand in it), the rear yard */
+    float front0, front1;                  /* a front yard's planned depth, without a car */
+    float side, semiOpen, gap;             /* a detached house's clearance each side, a semi's on its open side, between two detached houses */
+    float proj;                            /* how near the street a bay or porch may come (the boundary, its gate, the path's start);
+                                              frontMin - proj leaves a door canopy's 0.6 m at least */
+    float width[HOME_ARCH_COUNT][2];       /* frontage */
+    float depth[HOME_ARCH_COUNT][2];       /* plot depth, the street's boundary to the back fence */
+    float pad[HOME_ARCH_COUNT];            /* the chance a row parks its cars in the front yard, a paved pad HOME_PAD0-1 deep */
+    float surface[HY_COUNT];               /* the yards' surfaces' weights at middling affluence */
+} HomeYard;
+#define HOME_PAD0      5.2f   /* a car's 4.6 m and a margin */
+#define HOME_PAD1      6.0f
+#define HOME_HOUSE_MIN 7.0f   /* the plots leave a main this deep at least */
+const HomeYard *home_yard(int region);
+const char     *home_surface_name(int s);
 
 typedef struct HGraph {
     uint32_t seed;

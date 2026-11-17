@@ -29,9 +29,10 @@
 /* The slice block: a suburb block in the home city's ring of houses (HM1).
  * If a change to the zoning moves it out of the suburbs, the check fails:
  * pick another with `city_test --home find` and update these and the table
- * in docs/residential-target.md. */
-#define HOME_SLICE_X 8196.7
-#define HOME_SLICE_Z 7477.6
+ * in docs/residential-target.md. HM2b cut HM1's block (8196.7, 7477.6) in
+ * two along a lane; this is its half on the same street. */
+#define HOME_SLICE_X 8220.6
+#define HOME_SLICE_Z 7473.5
 
 /* The regions (docs/residential-target.md, "Regions"; plan_region_of): each
  * settlement's houses take the palette of the region its centre lies in. */
@@ -320,6 +321,7 @@ static int home_cams(int argc, char **argv) {
 typedef struct PlotStats {
     int    blocks, plots, rows, arch[HOME_ARCH_COUNT], semisNA;
     int    houses, levels[4], repairs, closeDetached;   /* HM2: the houses built on them */
+    int    pads, cars, yards, surface[HY_COUNT];        /* HM2b: rows parking in their front yards, cars, the yards' surfaces */
     double lotArea, plotArea, ms;
 } PlotStats;
 
@@ -403,6 +405,11 @@ static void check_block_houses(const Block *b, const HomePlot *P, int n, PlotSta
         st->houses += j - i;
         st->levels[g.level & 3]++;
         st->repairs += g.repairs;
+        for (int s = 0; s < g.nsite; ++s) {
+            const HSite *e = &g.site[s];
+            if (e->kind == HE_CAR) st->cars++;
+            if ((e->kind == HE_FRONT || e->kind == HE_REAR) && e->surface < HY_COUNT) { st->yards++; st->surface[e->surface]++; }
+        }
         CHECK(!g.empty, "block %08x row %d (%s, %s): no house on its %d plots", b->seed, P[i].row, HM_ARCH[P[i].arch % 3], home_style_name(P[i].style), j - i);
         if (!g.empty && !home_validate(&g, NULL)) {
             static char buf[1 << 14];
@@ -427,17 +434,19 @@ static void check_block_houses(const Block *b, const HomePlot *P, int n, PlotSta
         }
         i = j;
     }
+    /* between two detached houses: section 13.5's 4 m, the region's since HM2b (home_yard) */
+    const double gap = n > 0 ? home_yard(P[0].region)->gap : 4.0;
     for (int i = 0; i < ns; ++i)
         for (int j = i + 1; j < ns; ++j) {
             const HouseShape *a = &S[i], *q = &S[j];
             if (a->row == q->row || a->x1 + 4.0 < q->x0 || q->x1 + 4.0 < a->x0 || a->z1 + 4.0 < q->z0 || q->z1 + 4.0 < a->z0) continue;
             const double d = hs_gap(a, q);
             CHECK(d > -0.02, "block %08x: rows %d and %d's houses overlap by %.2f m", b->seed, a->row, q->row, -d);
-            /* a garage wing keeps its own metre to the boundary (section 13.5's access rule), so the 4 m is between the houses */
-            if (a->arch == HOME_DETACHED && q->arch == HOME_DETACHED && a->role != HV_WING && q->role != HV_WING && d < 4.0 - 0.02) {
+            /* a garage wing keeps its own clearance to the boundary (section 13.5's access rule), so the gap is between the houses */
+            if (a->arch == HOME_DETACHED && q->arch == HOME_DETACHED && a->role != HV_WING && q->role != HV_WING && d < gap - 0.02) {
                 st->closeDetached++;
-                CHECK(0, "block %08x: detached houses of rows %d and %d stand %.2f m apart (4 m at least: their %s and %s)", b->seed, a->row, q->row, d,
-                      home_role_name(a->role), home_role_name(q->role));
+                CHECK(0, "block %08x: detached houses of rows %d and %d stand %.2f m apart (%.1f m at least: their %s and %s)", b->seed, a->row, q->row, d,
+                      gap, home_role_name(a->role), home_role_name(q->role));
             }
         }
 }
@@ -463,11 +472,18 @@ static void check_block_plots(const Block *b, PlotStats *st) {
             CHECK(poly_contains(&b->lot, x, z, 0.05), "block %08x plot %d corner %d (%.1f, %.1f) is off its lot", b->seed, i, k, x, z);
         }
         for (int j = i + 1; j < n; ++j) CHECK(!plots_overlap(p, &P[j]), "block %08x plots %d and %d overlap", b->seed, i, j);
-        static const double LO[HOME_ARCH_COUNT] = { 10.0, 7.0, 4.2 }, HI[HOME_ARCH_COUNT] = { 18.0, 10.0, 6.0 };
-        CHECK(p->arch < HOME_ARCH_COUNT && w >= LO[p->arch % 3] - 1e-3 && w <= HI[p->arch % 3] + 1e-3, "block %08x plot %d (%s) is %.2f m wide",
+        /* the region's yards (HM2b): frontage and depth in its ranges, the front yard between its least and what
+         * leaves a house and the least rear yard; a car pad a car's depth */
+        const HomeYard *Y = home_yard(p->region);
+        float dmax = 0.0f;
+        for (int a = 0; a < HOME_ARCH_COUNT; ++a) dmax = fmaxf(dmax, Y->depth[a][1]);
+        const float room = p->depth - HOME_HOUSE_MIN - Y->rearMin;
+        CHECK(p->arch < HOME_ARCH_COUNT && w >= Y->width[p->arch % 3][0] - 1e-3 && w <= Y->width[p->arch % 3][1] + 1e-3, "block %08x plot %d (%s) is %.2f m wide",
               b->seed, i, HM_ARCH[p->arch % 3], w);
-        CHECK(p->depth >= 20.0f && p->depth <= 45.0f, "block %08x plot %d is %.1f m deep", b->seed, i, p->depth);
-        CHECK(p->front >= 3.0f && p->front <= p->depth - 17.0f + 1e-3f, "block %08x plot %d's front garden is %.1f m of %.1f", b->seed, i, p->front, p->depth);
+        CHECK(p->depth >= Y->frontMin + HOME_HOUSE_MIN + Y->rearMin - 1e-3f && p->depth <= dmax + 1e-3f, "block %08x plot %d is %.1f m deep", b->seed, i, p->depth);
+        CHECK(p->front >= Y->frontMin - 1e-3f && p->front <= room + 1e-3f, "block %08x plot %d's front yard is %.1f m of %.1f", b->seed, i, p->front, p->depth);
+        CHECK(!p->pad || p->front >= HOME_PAD0 - 1e-3f, "block %08x plot %d parks in a %.1f m front yard", b->seed, i, p->front);
+        if (p->unit == 0) st->pads += p->pad;
         CHECK(p->storeys >= 1 && p->storeys <= 3, "block %08x plot %d has %d storeys", b->seed, i, p->storeys);
         CHECK(p->unit < p->units, "block %08x plot %d is unit %d of %d", b->seed, i, p->unit, p->units);
         if (p->arch == HOME_TERRACE) CHECK(p->units >= 3 && p->units <= 12, "block %08x plot %d's terrace has %d units", b->seed, i, p->units);
@@ -488,24 +504,29 @@ static void print_plot_stats(const char *what, const PlotStats *st) {
     printf("  %s: %d suburb blocks, %d plots in %d rows (%d detached, %d semi, %d terrace), %.0f%% of the lots' land; %.1f plots a block\n",
            what, st->blocks, st->plots, st->rows, st->arch[HOME_DETACHED], st->arch[HOME_SEMI], st->arch[HOME_TERRACE],
            st->lotArea > 0.0 ? 100.0 * st->plotArea / st->lotArea : 0.0, st->blocks ? (double)st->plots / st->blocks : 0.0);
+    /* HM2b: how tight (houses a hectare of the blocks' lots, the plots' mean area), who parks in front, the yards' surfaces */
+    printf("    %.1f houses a hectare of lot, plots %.0f m2 on average; %d of %d rows park in the front yard, %d cars; yards %.0f%% paved, %.0f%% gravel, %.0f%% planted, %.0f%% soil\n",
+           st->lotArea > 0.0 ? 1e4 * st->plots / st->lotArea : 0.0, st->plots ? st->plotArea / st->plots : 0.0, st->pads, st->rows, st->cars,
+           st->yards ? 100.0 * st->surface[HY_PAVED] / st->yards : 0.0, st->yards ? 100.0 * st->surface[HY_GRAVEL] / st->yards : 0.0,
+           st->yards ? 100.0 * st->surface[HY_PLANTED] / st->yards : 0.0, st->yards ? 100.0 * st->surface[HY_SOIL] / st->yards : 0.0);
     const int rows = st->levels[0] + st->levels[1] + st->levels[2] + st->levels[3];
     printf("    houses: %d in %d rows, accepted at level 0 %d, 1 %d, 2 %d, the simplest %d; %.2f repairs a row; %.3f ms a house\n",
            st->houses, rows, st->levels[0], st->levels[1], st->levels[2], st->levels[3], rows ? (double)st->repairs / rows : 0.0,
            st->houses ? st->ms / st->houses : 0.0);
 }
 
-/* Where the suburbs go (the user's answers, 2026-11-16, in the roadmap): a ring of houses 2-4 km deep
- * round the edge (varied), houses most of its land, the estates inside; inner suburbs only as pockets of
+/* Where the suburbs go (the user's answers, 2026-11-16, in the roadmap): a ring of houses round the edge,
+ * 1-2.5 km deep (varied) since HM2b tightened the plots (2-4 km before), houses most of its land, the estates inside; inner suburbs only as pockets of
  * a few streets, a few per cent of the inner residential land; every suburb block's plots valid. */
 static void check_suburbs(void) {
     double share[RING_BANDS][ZONE_COUNT], mean, lo, hi;
     ring_survey(24, share, &mean, &lo, &hi);
     double ring = 0.0, inner = 0.0;
-    for (int k = 1; k <= 4; ++k) ring += share[k][ZONE_SUBURB] / 4.0;
+    for (int k = 1; k <= 3; ++k) ring += share[k][ZONE_SUBURB] / 3.0;
     for (int k = 12; k < RING_BANDS; ++k) inner += share[k][ZONE_SUBURB] / (RING_BANDS - 12);
-    printf("suburbs: houses reach %.1f km in from the edge (%.1f to %.1f over 24 rays); %.0f%% of the land 0.5-2.5 km in, %.0f%% 6-8 km in\n",
+    printf("suburbs: houses reach %.1f km in from the edge (%.1f to %.1f over 24 rays); %.0f%% of the land 0.5-2 km in, %.0f%% 6-8 km in\n",
            mean / 1000.0, lo / 1000.0, hi / 1000.0, 100.0 * ring, 100.0 * inner);
-    CHECK(mean >= 2000.0 && mean <= 4500.0, "the houses reach %.1f km in, not 2-4", mean / 1000.0);
+    CHECK(mean >= 1000.0 && mean <= 2500.0, "the houses reach %.1f km in, not 1-2.5", mean / 1000.0);
     CHECK(ring >= 0.4, "houses are only %.0f%% of the ring's land", 100.0 * ring);
     CHECK(inner <= 0.1, "houses are %.0f%% of the land 6-8 km in", 100.0 * inner);
 
@@ -567,7 +588,9 @@ static void check_suburbs(void) {
     printf("  inner suburbs within %.0f km of the centre: %d pockets of %d blocks (the largest %d blocks, %.0f m2), %.1f%% of the inner residential land\n",
            H / 1000.0, pockets, np, biggest, biggestArea, 100.0 * pshare);
     CHECK(pockets > 0, "no inner suburbs within %.0f km of the centre", H / 1000.0);
-    CHECK(biggest <= 10 && biggestArea <= 200000.0, "an inner suburb of %d blocks (%.0f m2) is a district, not a few streets", biggest, biggestArea);
+    /* the land is the measure; since HM2b cuts suburbs into blocks two plots deep, a few streets hold ~2.5 times
+     * as many blocks as HM1's (10 then) */
+    CHECK(biggest <= 25 && biggestArea <= 200000.0, "an inner suburb of %d blocks (%.0f m2) is a district, not a few streets", biggest, biggestArea);
     CHECK(pshare <= 0.1, "inner suburbs are %.1f%% of the inner residential land", 100.0 * pshare);
     print_plot_stats("the pockets' plots", &st);
 

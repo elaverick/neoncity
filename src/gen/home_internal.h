@@ -10,23 +10,20 @@
  *   building_residential.c        the styles, the grammar of the three house archetypes, the garden, the driver
  *   building_residential_rules.c  the repairs and the rules (section 13.5, 13.4, 13.8) */
 
-/* Section 13.5's bounded quantities, each with its reason there. */
+/* Section 13.5's bounded quantities, each with its reason there. Its garden and clearance figures (front
+ * 3 m, rear 8 m, 2 m each side of a detached house, 1.2 m on a semi's open side, 4 m between two detached
+ * houses, a garage's metre) are the region's yard's since HM2b (home_yard, HomeYard): a megacity's yards
+ * are tighter, the departure written in docs/residential-target.md. A garage keeps the side clearance,
+ * at most a metre. */
 #define SPAN_MAX        12.0f   /* rafters between two walls */
 #define ROW_MAX         48.0f   /* fire spread and drainage */
 #define UNIT_MIN        4.2f
-#define SIDE_DETACHED   2.0f    /* light, access and fire, each side */
-#define GAP_DETACHED    4.0f    /* between two detached houses (checked across rows: tests/city_test_home.c) */
-#define SIDE_SEMI       1.2f    /* the open side */
-#define FRONT_MIN       3.0f    /* privacy and the path */
-#define REAR_MIN        8.0f    /* light and amenity */
-#define GARAGE_CLEAR    1.0f    /* access */
 #define DOOR_MIN        1.0f
-/* The grammar's own: the narrowest main a detached house or a semi's half keeps, the shallowest, and
- * how near the street a porch or bay may come (the boundary, its gate and the path's start). */
+/* The grammar's own: the narrowest main a detached house or a semi's half keeps, and the shallowest. */
 #define MIN_MAIN_W      5.0f
 #define MIN_DEPTH       6.5f
-#define PROJ_MIN        1.0f
 #define HEPS            0.02f
+static inline float home_garage_clear(const HomeYard *Y) { return Y->side < 1.0f ? Y->side : 1.0f; }
 
 typedef struct HStyleDef {
     const char *name;

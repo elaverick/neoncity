@@ -462,11 +462,23 @@ float plan_fringe(double x, double z);
  * blocks stand about 1 km of it in (0.7-1.3), and in from there it runs at
  * about 0.85 of a metre a metre. Through the outermost plan_open_depth
  * (1.0-1.6 km) the land is mostly open, with houses thinning out into it;
- * then, to plan_suburb_depth (2.6-4.6 km: 2-4 km of houses in from the last
- * blocks, varied round the edge so it isn't a band; city_test --home ring
- * measures it), the suburbs; inside them the estates. Both vary slowly. */
-#define PLAN_SUBURB_MIN 2600.0
-#define PLAN_SUBURB_MAX 4600.0
+ * then, to plan_suburb_depth (2.0-3.2 km: about 1-2.5 km of houses in from
+ * the last blocks, varied round the edge so it isn't a band; city_test --home
+ * ring measures it), the suburbs; inside them the estates. Both vary slowly.
+ * The ring was 2.6-4.6 km until HM2b tightened the houses' plots (the user,
+ * 2026-11-16): more houses to the hectare, so a shallower ring keeps their
+ * share of the people small. */
+#define PLAN_SUBURB_MIN 2000.0
+#define PLAN_SUBURB_MAX 3200.0
+/* No core within this much of the edge measure inside the ring: the skyline
+ * steps down from the towers through the estates to the houses, as it did
+ * when the ring was deeper (HM2b). */
+#define PLAN_RING_ESTATES 1000.0
+/* A suburb's blocks are cut about two plots deep (plan.c, split_suburb) by
+ * lanes: a 7-8 m carriageway (half 3.5-4) and 2-2.5 m pavements, a terraced
+ * street's, narrower than the town's local streets (half 5-6, pavements 3.5-4). */
+#define PLAN_LANE_HALF  3.5
+#define PLAN_LANE_WALK  2.0
 double plan_edge_depth(double x, double z);
 double plan_suburb_depth(double x, double z);
 double plan_open_depth(double x, double z);

@@ -308,6 +308,7 @@ typedef struct PlanCtx {
     TownPlan  plan;
     PlanArea *out;
     double    A[4];      /* query rectangle */
+    int       region;    /* the frame's city's PLAN_REGION_*: its suburbs' block depth (split_suburb) */
 } PlanCtx;
 
 /* The town's cell: a square cut by the bisector with each neighbour, moved
@@ -633,7 +634,7 @@ static int zone_for(const SplitCtx *sc, const Block *b, DVec2 cen, float d) {
     double s = plan_edge_depth(cen.x, cen.z), ring = plan_suburb_depth(cen.x, cen.z);
     int inRing = s < ring;
     double town = dlen(dsub(cen, sc->tp->t.p));
-    if (d > 0.62f && !inRing) return ZONE_CORE;
+    if (d > 0.62f && s >= ring + PLAN_RING_ESTATES) return ZONE_CORE;   /* estates between the houses and the towers */
     if (town < 170.0) return ZONE_CENTRE;
     if (dlen(dsub(cen, sc->pc->nb.p)) < 110.0 && (!inRing || hf(sc->pc->nb.h, 7u) < PLAN_RING_PARADES)) return ZONE_CENTRE;
     float r = hf(b->seed, 3u);
@@ -655,7 +656,15 @@ static int zone_for(const SplitCtx *sc, const Block *b, DVec2 cen, float d) {
     return in_pocket(sc, cen, d) ? ZONE_SUBURB : ZONE_RESIDENTIAL;
 }
 
-static void emit_block(SplitCtx *sc, const Poly *leaf, uint32_t path) {
+/* A suburb's blocks are cut about two plots deep (residential roadmap HM2b: the user's tight plots,
+ * 2026-11-16), so their houses meet back to back rather than round a wide backland: the lot depth by
+ * region, two of home_yard's plots (src/gen/home.h), and the lanes between them (PLAN_LANE_*). */
+static const double SUBURB_LOT[PLAN_REGION_COUNT] = { 46.0, 50.0, 46.0, 32.0, 40.0, 34.0, 42.0, 42.0, 36.0 };
+
+static void split_suburb(SplitCtx *sc, const Poly *p, uint32_t path, int depth);
+
+/* forced: the zone the block takes (a suburb's cut, split_suburb), or -1 to zone it here. */
+static void emit_zoned(SplitCtx *sc, const Poly *leaf, uint32_t path, int forced) {
     PlanArea *out = sc->c->out;
     double x0, z0, x1, z1;
     poly_bounds(leaf, &x0, &z0, &x1, &z1);
@@ -669,8 +678,66 @@ static void emit_block(SplitCtx *sc, const Poly *leaf, uint32_t path) {
     DVec2 cen = poly_centroid(&b->curb);
     b->density = plan_density(cen.x, cen.z);
     b->gc = (float)sc->gu.x; b->gs = (float)sc->gu.z;
+    if (forced >= 0) { b->zone = (uint8_t)forced; out->nblocks++; return; }
     b->zone = zone_for(sc, b, cen, b->density);
+    /* the zone is the leaf's, whatever area asks, so its cut is too */
+    if (b->zone == ZONE_SUBURB) { split_suburb(sc, leaf, path, 0); return; }
     out->nblocks++;
+}
+
+static void emit_block(SplitCtx *sc, const Poly *leaf, uint32_t path) { emit_zoned(sc, leaf, path, -1); }
+
+/* Cuts a suburb leaf across its shorter extent (in the grain frame) into strips about two plots deep
+ * plus a lane, each strip a suburb block; a leaf already that shallow, or one the cut can't cross
+ * cleanly, is a block as it stands. */
+static void split_suburb(SplitCtx *sc, const Poly *p, uint32_t path, int depth) {
+    DVec2 cen = poly_centroid(p);
+    DVec2 eu = frame_extent(p, cen, sc->gu), ev = frame_extent(p, cen, sc->gv);
+    const double su = eu.z - eu.x, sv = ev.z - ev.x;
+    Rng r = rng_make(hash_combine(sc->seed, path ^ 0x5B5B0000u));
+    const int reg = sc->c->region >= 0 && sc->c->region < PLAN_REGION_COUNT ? sc->c->region : 0;
+    /* centreline to centreline: the lot and a lane's carriageway and pavement each side */
+    const double T = SUBURB_LOT[reg] * rng_range(&r, 0.95f, 1.1f) + 2.0 * (PLAN_LANE_HALF + PLAN_LANE_WALK);
+    const int acrossU = su < sv;
+    const double s = acrossU ? su : sv;
+    const int n = (int)floor(s / T + 0.35);
+    if (n < 2 || depth >= 8) { emit_zoned(sc, p, path, ZONE_SUBURB); return; }
+    const DVec2 axis = acrossU ? sc->gu : sc->gv, ext = acrossU ? eu : ev;
+    const double cut = ext.x + s / n;
+    const DVec2 q = dv(cen.x + axis.x * cut, cen.z + axis.z * cut);
+    DVec2 hit[2];
+    int edge[2], nh = 0;
+    for (int i = 0; i < p->n && nh < 2; ++i) {
+        DVec2 a = p->v[i], b = p->v[(i + 1) % p->n];
+        double da = ddot(dsub(a, q), axis), db = ddot(dsub(b, q), axis);
+        if ((da <= 0.0) != (db <= 0.0)) {
+            double t = da / (da - db);
+            hit[nh] = dv(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t);
+            edge[nh++] = i;
+        }
+    }
+    const double chord = nh == 2 ? dlen(dsub(hit[1], hit[0])) : 0.0;
+    if (nh != 2 || chord < 25.0) { emit_zoned(sc, p, path, ZONE_SUBURB); return; }
+    const uint32_t h = hash_combine(sc->seed, path * 7919u + 0x5B5Bu);
+    RoadAttr at = no_road();
+    at.id = h | 1u;
+    at.cls = ROAD_LOCAL;
+    at.half = ((h >> 3) & 1u) ? (float)PLAN_LANE_HALF + 0.5f : (float)PLAN_LANE_HALF;
+    at.walk = ((h >> 4) & 1u) ? (float)PLAN_LANE_WALK + 0.5f : (float)PLAN_LANE_WALK;
+    at.lamp = sc->lamp;
+    at.own = 1;
+    Poly lo, hi;
+    poly_clip(p, q, axis, at, &lo);
+    poly_clip(p, q, dv(-axis.x, -axis.z), at, &hi);
+    const double A = poly_area(p);
+    if (!lo.n || !hi.n || poly_area(&lo) < 0.12 * A || poly_area(&hi) < 0.12 * A) { emit_zoned(sc, p, path, ZONE_SUBURB); return; }
+    const DVec2 dir = dnorm(dsub(hit[1], hit[0]));
+    const RoadAttr e0 = p->e[edge[0]], e1 = p->e[edge[1]];
+    const double ta = t_trim(dir, at.half, dsub(p->v[(edge[0] + 1) % p->n], p->v[edge[0]]), e0.half);
+    const double tb = t_trim(dir, at.half, dsub(p->v[(edge[1] + 1) % p->n], p->v[edge[1]]), e1.half);
+    add_road(sc->c, hit[0], hit[1], ta, tb, at);
+    split_suburb(sc, &lo, hash_combine(path, 0x5B50u), depth + 1);
+    split_suburb(sc, &hi, hash_combine(path, 0x5B51u), depth + 1);
 }
 
 static void split_rec(SplitCtx *sc, const Poly *p, uint32_t path, int depth) {
@@ -875,6 +942,7 @@ void plan_area(double x0, double z0, double x1, double z1, PlanArea *out) {
     if (!c) fatal("out of memory in plan_area");
     c->out = out;
     c->A[0] = x0; c->A[1] = z0; c->A[2] = x1; c->A[3] = z1;
+    c->region = plan_settlement_region(terrain_frame() ? terrain_frame()->settlement : 0);
     const double m = 1.2 * TOWN_SIZE;
     int ti0 = (int)floor((x0 - m) / TOWN_SIZE), ti1 = (int)floor((x1 + m) / TOWN_SIZE);
     int tj0 = (int)floor((z0 - m) / TOWN_SIZE), tj1 = (int)floor((z1 + m) / TOWN_SIZE);

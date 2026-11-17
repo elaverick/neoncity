@@ -1174,5 +1174,22 @@ The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the targe
   repairs a house. Fine for Britain (few semis have them); widen the semis' plots where a region wants them.
 - **No tree is planted yet.** The graph keeps the places a tree may stand (`HE_TREE`); whether trees come in HM7 or
   a roadmap of their own is the user's call.
+- **Plots are tight in cities (HM2b, done 2026-11-17); towns outside cities are an open question.** City houses
+  have small, mostly paved yards, between Tokyo-tight and British terraced (Europe a little larger), and no lawns
+  anywhere in a city (`home_yard`); the ring of suburbs is shallower to match. Whether towns *outside* the megacities may
+  have larger gardens is to be revisited when there are any: today every settlement is a megacity (`plan.h`), its
+  "towns" are its own districts, and beyond the edge there is only open land with the odd farmstead. The suburb
+  patches in the open-land band (`zone_for`, `plan_open_depth`) are inside the city and take the tight plots. Small
+  towns and villages between the cities, with their own zoning, would be the place for larger plots.
+- **The ring holds ~1.5 times HM1's houses on half its land** (HM2b): plots three times as dense, houses reaching
+  1.4 km in from the edge on average (3.1 before). Still a few per cent of the people; if that reads as too many, a
+  shallower `PLAN_SUBURB_MIN/MAX` (2.0-3.2 km of the measure) is the lever. The estates took the land the houses
+  gave up, so the skyline 1.8-3 km in is taller than HM1's (174 and 241 m against 147 and 183, tallest per 600 m);
+  `PLAN_RING_ESTATES` keeps the cores a kilometre further in.
+- **The suburbs' lanes are narrower than any street before** (`PLAN_LANE_*`: a 7-8 m carriageway, 2-2.5 m
+  pavements). Nothing in the tests assumes a width, but look at the street furniture, parked cars, kerbs and lamps on
+  them in HM3's captures.
+- **The yards' surfaces and the car pads are in the graph only** (`HSite.surface`, the pads' drives and cars):
+  HM7 draws them (paving, gravel, beds and pots, swept earth).
 - **The inner pockets' look** is the user's call at HM8: pockets of a few streets among the estates (54 within 5 km
   of LA's centre, the largest 6 blocks).

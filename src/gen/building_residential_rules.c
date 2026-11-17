@@ -1,4 +1,7 @@
 #include "home_internal.h"
+
+/* The row's region's yards (HM2b): the garden and clearance figures every rule below checks. */
+#define YARD (home_yard(g->region))
 #include <math.h>
 #include <string.h>
 
@@ -227,14 +230,14 @@ static void drop_chimneys(HGraph *g, int vi, BLog *log, const char *why) {
 
 static void repair_rear(HGraph *g, int mi, BLog *log) {
     for (int k = 0; k < g->nunit; ++k) {
-        float lack = REAR_MIN - (g->unit[k].depth - home_unit_rear(g, k));
+        float lack = YARD->rearMin - (g->unit[k].depth - home_unit_rear(g, k));
         if (lack <= 1e-4f) continue;
         /* the unit's own parts behind first: shorter, then gone */
         for (int i = g->nvol - 1; i >= 0 && lack > 1e-4f; --i) {
             HVol *v = &g->vol[i];
             if (v->unit != k || (v->role != HV_EXTENSION && v->role != HV_OUTRIGGER && v->role != HV_WING)) continue;
             const float least = v->role == HV_WING ? 5.0f : 2.0f;
-            const float over = v->z1 - (g->unit[k].depth - REAR_MIN);
+            const float over = v->z1 - (g->unit[k].depth - YARD->rearMin);
             if (over <= 0.0f) continue;
             if (v->z1 - over - v->z0 >= least) {
                 home_repair(g, log, "rear garden", "%s %d shortened %.1f m", home_role_name(v->role), i, over);
@@ -245,7 +248,7 @@ static void repair_rear(HGraph *g, int mi, BLog *log) {
                 home_repair(g, log, "rear garden", "unit %d: %s %d removed", k, home_role_name(v->role), i);
                 remove_vol(g, i);
             }
-            lack = REAR_MIN - (g->unit[k].depth - home_unit_rear(g, k));
+            lack = YARD->rearMin - (g->unit[k].depth - home_unit_rear(g, k));
         }
         if (lack <= 1e-4f) continue;
         /* then the main shallower, with what is behind it */
@@ -275,9 +278,9 @@ static void repair_rear(HGraph *g, int mi, BLog *log) {
         }
         if (lack <= 1e-4f) continue;
         /* last, the house nearer the street, if the front garden and the projections allow */
-        float room = m->z0 - FRONT_MIN;
+        float room = m->z0 - YARD->frontMin;
         for (int i = 0; i < g->nvol; ++i)
-            if (g->vol[i].z0 < m->z0) room = fminf(room, g->vol[i].z0 - PROJ_MIN);
+            if (g->vol[i].z0 < m->z0) room = fminf(room, g->vol[i].z0 - YARD->proj);
         if (room >= lack) {
             home_repair(g, log, "rear garden", "the house %.1f m nearer the street", lack);
             shift_house(g, -lack);
@@ -289,8 +292,8 @@ static void repair_rear(HGraph *g, int mi, BLog *log) {
 static void repair_projection(HGraph *g, int mi, BLog *log) {
     for (int i = g->nvol - 1; i >= 0; --i) {
         HVol *v = &g->vol[i];
-        if ((v->role != HV_PORCH && v->role != HV_BAY) || v->z0 >= PROJ_MIN - 1e-4f || (v->role == HV_PORCH && v->kind == HP_RECESSED)) continue;
-        const float deep = v->z1 - PROJ_MIN, least = v->role == HV_BAY ? 0.45f : v->kind == HP_CANOPY ? 0.6f : v->kind == HP_VERANDA ? 1.5f : 1.2f;
+        if ((v->role != HV_PORCH && v->role != HV_BAY) || v->z0 >= YARD->proj - 1e-4f || (v->role == HV_PORCH && v->kind == HP_RECESSED)) continue;
+        const float deep = v->z1 - YARD->proj, least = v->role == HV_BAY ? 0.45f : v->kind == HP_CANOPY ? 0.6f : v->kind == HP_VERANDA ? 1.5f : 1.2f;
         if (deep >= least) {
             home_repair(g, log, "projection", "%s %d: %.1f -> %.1f m deep", home_role_name(v->role), i, v->z1 - v->z0, deep);
             v->z0 = v->z1 - deep;
@@ -324,7 +327,7 @@ static void repair_chimneys(HGraph *g, int mi, BLog *log) {
         if (c->top < m->top + 0.9f) c->top = m->top + 0.9f;
         if (c->on == HC_PARTY) continue;   /* it straddles its party wall */
         const HUnit *u = &g->unit[c->unit >= 0 && c->unit < g->nunit ? c->unit : 0];
-        const float side = g->arch == HOME_DETACHED ? SIDE_DETACHED : g->arch == HOME_SEMI ? SIDE_SEMI : 0.0f;
+        const float side = g->arch == HOME_DETACHED ? YARD->side : g->arch == HOME_SEMI ? YARD->semiOpen : 0.0f;
         const float lo = (g->arch == HOME_SEMI && c->unit == 1) || g->arch == HOME_TERRACE ? u->x0 : u->x0 + side;
         const float hi = (g->arch == HOME_SEMI && c->unit == 0) || g->arch == HOME_TERRACE ? u->x1 : u->x1 - side;
         if (c->x - 0.5f * c->w < lo - 1e-4f) {
@@ -423,11 +426,11 @@ static int check_volumes(const HGraph *g, int mi, BLog *log) {
             const HVol *p = &g->vol[v->parent];
             if (v->roof != HR_LEAN && v->roof != HR_FLAT) REJECT("garage", "garage %d has a %s roof", i, home_roof_name(v->roof));
             if (v->z0 < p->z0 + 0.3f) REJECT("garage", "garage %d is not set back from the front wall", i);
-            if (v->x0 < ux0 + GARAGE_CLEAR - HEPS || v->x1 > ux1 - GARAGE_CLEAR + HEPS) REJECT("garage clearance", "garage %d is under %.0f m from the plot's side", i, GARAGE_CLEAR);
+            if (v->x0 < ux0 + home_garage_clear(YARD) - HEPS || v->x1 > ux1 - home_garage_clear(YARD) + HEPS) REJECT("garage clearance", "garage %d is under %.2f m from the plot's side", i, home_garage_clear(YARD));
         }
         /* bays and porches on the front, short of the street */
         if ((v->role == HV_BAY || v->role == HV_PORCH) && !(v->role == HV_PORCH && v->kind == HP_RECESSED)) {
-            if (v->z0 < PROJ_MIN - HEPS) REJECT("projection", "%s %d comes within %.2f m of the street", nm, i, v->z0);
+            if (v->z0 < YARD->proj - HEPS) REJECT("projection", "%s %d comes within %.2f m of the street", nm, i, v->z0);
             if (v->parent >= 0 && fabsf(v->z1 - g->vol[v->parent].z0) > HEPS) REJECT("projection", "%s %d is not on the front wall", nm, i);
         }
     }
@@ -445,10 +448,10 @@ static int check_volumes(const HGraph *g, int mi, BLog *log) {
 static int check_plot(const HGraph *g, int mi, BLog *log) {
     int ok = 1;
     const HVol *m = &g->vol[mi];
-    if (m->z0 < FRONT_MIN - HEPS) REJECT("front garden", "%.2f m deep", m->z0);
+    if (m->z0 < YARD->frontMin - HEPS) REJECT("front garden", "%.2f m deep", m->z0);
     for (int k = 0; k < g->nunit; ++k) {
         const float rear = g->unit[k].depth - home_unit_rear(g, k);
-        if (rear < REAR_MIN - HEPS) REJECT("rear garden", "unit %d's is %.2f m deep", k, rear);
+        if (rear < YARD->rearMin - HEPS) REJECT("rear garden", "unit %d's is %.2f m deep", k, rear);
     }
     /* the row: one shared roof over its units, party walls between them */
     const int wantRole = g->arch == HOME_TERRACE ? HV_ROW : g->arch == HOME_SEMI ? HV_PAIR : HV_MAIN;
@@ -471,8 +474,8 @@ static int check_plot(const HGraph *g, int mi, BLog *log) {
                 REJECT("party wall", "wall %d does not run through the main to its roof", i);
         }
     }
-    /* clearances to the plot's sides: a detached house's 2 m each side, a semi's 1.2 on its open side
-     * (a garage wing keeps its own metre); a stack counts with the walls */
+    /* clearances to the plot's sides: a detached house's each side, a semi's on its open side, the region's
+     * (section 13.5's 2 m and 1.2 m loosened by HM2b; a garage wing keeps its own); a stack counts with the walls */
     if (g->arch != HOME_TERRACE) {
         for (int i = 0; i < g->nvol + g->nchim; ++i) {
             float x0, x1;
@@ -487,11 +490,11 @@ static int check_plot(const HGraph *g, int mi, BLog *log) {
             }
             if (g->arch == HOME_DETACHED) {
                 const float l = x0 - g->unit[0].x0, r = g->unit[0].x1 - x1;
-                if (fminf(l, r) < SIDE_DETACHED - HEPS) REJECT("side clearance", "%s %d is %.2f m from the plot's side", i < g->nvol ? home_role_name(g->vol[i].role) : "chimney", i, fminf(l, r));
+                if (fminf(l, r) < YARD->side - HEPS) REJECT("side clearance", "%s %d is %.2f m from the plot's side", i < g->nvol ? home_role_name(g->vol[i].role) : "chimney", i, fminf(l, r));
             } else {
                 const float l = x0 - g->unit[0].x0, r = g->unit[1].x1 - x1;
                 (void)unit;
-                if (fminf(l, r) < SIDE_SEMI - HEPS) REJECT("open side", "%s %d is %.2f m from the pair's open side", i < g->nvol ? home_role_name(g->vol[i].role) : "chimney", i, fminf(l, r));
+                if (fminf(l, r) < YARD->semiOpen - HEPS) REJECT("open side", "%s %d is %.2f m from the pair's open side", i < g->nvol ? home_role_name(g->vol[i].role) : "chimney", i, fminf(l, r));
             }
         }
     }

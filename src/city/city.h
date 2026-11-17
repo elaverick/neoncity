@@ -332,6 +332,7 @@ typedef struct HomePlot {
     uint8_t  storeys;      /* planned */
     uint8_t  region;       /* PLAN_REGION_* of the city */
     uint8_t  style;        /* HS_* (src/gen/home.h): the row's, from its region's palette */
+    uint8_t  pad;          /* the row parks in its front yard (front is a car's depth): HM2b */
 } HomePlot;
 int      city_block_plots(const Block *bk, HomePlot *out, int max);
 /* A plot's house's planned height to its ridge (m), for the skyline until HM3 builds it. */
