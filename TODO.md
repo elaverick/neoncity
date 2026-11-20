@@ -1151,10 +1151,11 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM6, lived-in and lit** (dishes, aerials, air-con, solar, cables between houses, roller shutters, numbers,
-  bins, patched roofs, graffiti; porch lamps in the light table; lit windows with a cheap room behind the glass). The
-  character layer (HM5) gives it each unit's upkeep (`HCharSet.upkeep`) and the shell's records (`HsWin`, `HsDoor`,
-  `HsRoof`: where to hang a dish, a lamp, a number).
+- **Next: HM5c1, the shared retrofit kit** (the user's concept sheets, `docs/reference/international-residential`,
+  2026-11-20): rooftop solar canopies, water tanks and stands, pipe risers, breeze-block screens, planters and vines,
+  LED strips, lanterns, meter boxes, gates and razor wire, on every house. Then HM5c2 (retrofit insertions, 3 units
+  in 5), HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing styles to their sheets), HM6 (the
+  rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
 - **The character layer's leftovers** (HM5):
   - Doorcases' fanlights stand on the wall's face over the door (opaque glass in the doorcase's frame), not in the
     opening. Cut the opening to the fanlight's head if a close view shows it.
