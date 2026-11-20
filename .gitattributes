@@ -6,3 +6,4 @@ assets_src/**/*.png filter=lfs diff=lfs merge=lfs -text
 assets_src/**/*.jpg filter=lfs diff=lfs merge=lfs -text
 assets_src/**/*.exr filter=lfs diff=lfs merge=lfs -text
 tests/data/*.pfm binary
+docs/reference/international-residential/** filter=lfs diff=lfs merge=lfs -text
