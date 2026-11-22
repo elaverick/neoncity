@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define PI_D 3.14159265358979323846
+
 /* ===========================================================================
  * Houses' shells (residential roadmap HM3a): see home_shell.h.
  *
@@ -43,28 +45,28 @@ static const FinishDef FIN[HS_COUNT] = {
     [HS_SPANISH]      = { { 0, 1, 0, 0, 0 }, { "", "01285", "", "", "" }, { [HRM_BARREL] = 0.9f, [HRM_CLAY] = 0.1f }, "503", HG_CASEMENT, HST_TILE, 1.0f, 1.3f },
     [HS_RANCH]        = { { 0.40f, 0.25f, 0.35f, 0, 0 }, { "0143", "01235", "05961", "", "" }, { [HRM_SHINGLE] = 0.6f, [HRM_CONCRETE] = 0.25f, [HRM_METAL] = 0.15f }, "015", HG_PLAIN, HST_CONCRETE, 1.5f, 1.1f },
     [HS_TRACT]        = { { 0.20f, 0.30f, 0.50f, 0, 0 }, { "043", "1235", "015689", "", "" }, { [HRM_SHINGLE] = 0.8f, [HRM_CONCRETE] = 0.2f }, "01", HG_PLAIN, HST_CONCRETE, 1.2f, 1.3f },
-    [HS_ROWHOUSE]     = { { 0.70f, 0, 0, 0.30f, 0 }, { "0124", "", "", "220", "" }, { [HRM_SLATE] = 0.6f, [HRM_SHINGLE] = 0.4f }, "00014", HG_SASH, HST_STONE, 0.95f, 1.7f },
+    [HS_ROWHOUSE]     = { { 0.70f, 0, 0, 0.30f, 0 }, { "0124", "", "", "220", "" }, { [HRM_SLATE] = 0.6f, [HRM_SHINGLE] = 0.4f }, "22536", HG_SASH, HST_STONE, 0.95f, 1.7f },
     [HS_TRIPLEDECKER] = { { 0, 0, 1, 0, 0 }, { "", "", "01234589", "", "" }, { [HRM_SHINGLE] = 1.0f }, "01", HG_SASH, HST_TIMBER, 0.9f, 1.5f },
     [HS_VICTORIAN]    = { { 0.75f, 0.25f, 0, 0, 0 }, { "01342", "013", "", "", "" }, { [HRM_SLATE] = 0.65f, [HRM_CONCRETE] = 0.25f, [HRM_CLAY] = 0.1f }, "00011", HG_SASH, HST_STONE, 0.95f, 1.6f },
     [HS_GEORGIAN]     = { { 0.60f, 0.40f, 0, 0, 0 }, { "1403", "012", "", "", "" }, { [HRM_SLATE] = 0.8f, [HRM_CONCRETE] = 0.2f }, "0001", HG_GEORGIAN, HST_STONE, 0.95f, 1.6f },
     [HS_INTERWAR]     = { { 0.45f, 0.55f, 0, 0, 0 }, { "024", "012f3", "", "", "" }, { [HRM_CLAY] = 0.8f, [HRM_CONCRETE] = 0.2f }, "031", HG_CASEMENT, HST_CONCRETE, 1.5f, 1.2f },
     [HS_POSTWAR]      = { { 0.70f, 0.30f, 0, 0, 0 }, { "0432", "01f3", "", "", "" }, { [HRM_CONCRETE] = 0.8f, [HRM_CLAY] = 0.2f }, "045", HG_CASEMENT, HST_CONCRETE, 1.4f, 1.2f },
     [HS_MODERN]       = { { 0.50f, 0.30f, 0.20f, 0, 0 }, { "3074", "034", "6b59", "", "" }, { [HRM_CONCRETE] = 0.7f, [HRM_SLATE] = 0.3f }, "240", HG_PLAIN, HST_CONCRETE, 1.6f, 1.3f },
-    [HS_SEU_VILLA]    = { { 0, 0.85f, 0, 0.15f, 0 }, { "", "1567802", "", "01", "" }, { [HRM_CLAY] = 1.0f }, "0351", HG_CASEMENT, HST_TILE, 1.0f, 1.3f },
-    [HS_TOWNHOUSE]    = { { 0, 0.85f, 0, 0.15f, 0 }, { "", "56789abc1", "", "01", "" }, { [HRM_CLAY] = 1.0f }, "0365", HG_CASEMENT, HST_TILE, 0.9f, 1.5f },
+    [HS_SEU_VILLA]    = { { 0, 0.85f, 0, 0.15f, 0 }, { "", "1567802", "", "01", "" }, { [HRM_CLAY] = 1.0f }, "0351", HG_CASEMENT, HST_STONE, 1.0f, 1.3f },
+    [HS_TOWNHOUSE]    = { { 0, 0.85f, 0, 0.15f, 0 }, { "", "56789abc1", "", "01", "" }, { [HRM_CLAY] = 1.0f }, "0365", HG_CASEMENT, HST_STONE, 0.9f, 1.6f },
     [HS_JAPAN]        = { { 0, 0.30f, 0.70f, 0, 0 }, { "", "0342", "01596", "", "" }, { [HRM_GLAZED] = 0.6f, [HRM_METAL] = 0.2f, [HRM_SLATE] = 0.2f }, "240", HG_GRID, HST_CONCRETE, 1.6f, 1.0f },
-    [HS_CHINA]        = { { 0.55f, 0.45f, 0, 0, 0 }, { "667", "034", "", "", "" }, { [HRM_GLAZED] = 0.7f, [HRM_CLAY] = 0.3f }, "247", HG_GRID, HST_TILE, 1.2f, 1.3f },
-    [HS_KOREA]        = { { 0.60f, 0.40f, 0, 0, 0 }, { "0142", "031", "", "", "" }, { [HRM_GLAZED] = 0.4f, [HRM_METAL] = 0.3f, [HRM_CLAY] = 0.3f }, "04", HG_PLAIN, HST_TILE, 1.4f, 1.2f },
+    [HS_CHINA]        = { { 0.55f, 0.45f, 0, 0, 0 }, { "667", "034", "", "", "" }, { [HRM_GLAZED] = 0.7f, [HRM_CLAY] = 0.3f }, "247", HG_GRID, HST_STONE, 1.2f, 1.3f },
+    [HS_KOREA]        = { { 0.60f, 0.40f, 0, 0, 0 }, { "0142", "031", "", "", "" }, { [HRM_GLAZED] = 0.4f, [HRM_METAL] = 0.3f, [HRM_CLAY] = 0.3f }, "04", HG_PLAIN, HST_CONCRETE, 1.4f, 1.2f },
     [HS_SHOPHOUSE]    = { { 0, 1, 0, 0, 0 }, { "", "1289abcd6", "", "", "" }, { [HRM_CLAY] = 1.0f }, "0136", HG_CASEMENT, HST_TILE, 1.0f, 1.6f },
-    [HS_LINKHOUSE]    = { { 0, 1, 0, 0, 0 }, { "", "013abc", "", "", "" }, { [HRM_CONCRETE] = 0.6f, [HRM_CLAY] = 0.4f }, "04", HG_CASEMENT, HST_TILE, 1.4f, 1.3f },
-    [HS_RCC]          = { { 0, 0.80f, 0, 0, 0.20f }, { "", "9abcde605", "", "", "01" }, { [HRM_METAL] = 0.5f, [HRM_CLAY] = 0.5f }, "0367", HG_PLAIN, HST_TILE, 1.2f, 1.3f },
+    [HS_LINKHOUSE]    = { { 0, 1, 0, 0, 0 }, { "", "013abc", "", "", "" }, { [HRM_CONCRETE] = 0.6f, [HRM_CLAY] = 0.4f }, "04", HG_CASEMENT, HST_CONCRETE, 1.4f, 1.3f },
+    [HS_RCC]          = { { 0, 0.80f, 0, 0, 0.20f }, { "", "9abcde605", "", "", "01" }, { [HRM_METAL] = 0.5f, [HRM_CLAY] = 0.5f }, "0367", HG_PLAIN, HST_CONCRETE, 1.2f, 1.3f },
     [HS_BUNGALOW]     = { { 0.20f, 0.80f, 0, 0, 0 }, { "02", "015bca", "", "", "" }, { [HRM_CLAY] = 0.6f, [HRM_CONCRETE] = 0.4f }, "03", HG_CASEMENT, HST_TILE, 1.2f, 1.3f },
     [HS_MENA_VILLA]   = { { 0, 0.85f, 0, 0.15f, 0 }, { "", "01523", "", "01", "" }, { [HRM_CLAY] = 1.0f }, "150", HG_PLAIN, HST_STONE, 1.1f, 1.3f },
-    [HS_COURTYARD]    = { { 0, 0.70f, 0, 0, 0.30f }, { "", "561f", "", "", "05" }, { [HRM_CLAY] = 1.0f }, "51", HG_PLAIN, HST_TILE, 0.9f, 1.2f },
-    [HS_BLOCK]        = { { 0, 0.50f, 0, 0, 0.50f }, { "", "015bcda", "", "", "012345" }, { [HRM_METAL] = 0.6f, [HRM_CONCRETE] = 0.4f }, "0367", HG_PLAIN, HST_CONCRETE, 1.0f, 1.2f },
+    [HS_COURTYARD]    = { { 0, 0.70f, 0, 0, 0.30f }, { "", "561f", "", "", "05" }, { [HRM_CLAY] = 1.0f }, "51", HG_PLAIN, HST_STONE, 0.6f, 0.8f },
+    [HS_BLOCK]        = { { 0, 0.50f, 0, 0, 0.50f }, { "", "015bcda", "", "", "012345" }, { [HRM_METAL] = 0.85f, [HRM_CONCRETE] = 0.15f }, "0367", HG_PLAIN, HST_CONCRETE, 1.0f, 1.2f },
     [HS_WALLED]       = { { 0, 0.70f, 0, 0, 0.30f }, { "", "015ca", "", "", "02" }, { [HRM_METAL] = 0.5f, [HRM_CONCRETE] = 0.3f, [HRM_CLAY] = 0.2f }, "03", HG_PLAIN, HST_CONCRETE, 1.1f, 1.2f },
-    [HS_SELFBUILT]    = { { 0.40f, 0.45f, 0, 0, 0.15f }, { "202", "9abcde60", "", "", "01" }, { [HRM_METAL] = 0.5f, [HRM_CLAY] = 0.5f }, "037", HG_PLAIN, HST_TILE, 1.0f, 1.2f },
-    [HS_COLONIAL]     = { { 0, 1, 0, 0, 0 }, { "", "c9ad6807", "", "", "" }, { [HRM_CLAY] = 1.0f }, "015", HG_CASEMENT, HST_TILE, 1.0f, 1.6f },
+    [HS_SELFBUILT]    = { { 0.40f, 0.45f, 0, 0, 0.15f }, { "202", "9abcde60", "", "", "01" }, { [HRM_METAL] = 0.5f, [HRM_CLAY] = 0.5f }, "037", HG_PLAIN, HST_CONCRETE, 1.0f, 1.2f },
+    [HS_COLONIAL]     = { { 0, 1, 0, 0, 0 }, { "", "c9ad6807", "", "", "" }, { [HRM_CLAY] = 1.0f }, "015", HG_CASEMENT, HST_STONE, 1.0f, 1.8f },
 };
 
 static int hexval(char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : 0; }
@@ -108,6 +110,10 @@ void home_finish(const HGraph *g, int unit, HFinish *f) {
         f->wallCol = (uint8_t)pick_hex(D->col[f->wall], hash_combine(own, 4u));
     if (hash_float(hash_combine(own, 5u)) < 0.2f) f->trimCol = (uint8_t)pick_hex(D->trim, hash_combine(own, 6u));
     f->doorCol = (uint8_t)(hash_combine(own, 7u) % 12u);
+    /* HM5e1: the sheets' doors: China's red (a dark timber one in six), the Middle East's and Latin America's timber */
+    if (g->style == HS_CHINA) f->doorCol = hash_float(hash_combine(own, 9u)) < 0.84f ? 0 : 9;
+    else if (g->style == HS_COURTYARD || g->style == HS_MENA_VILLA) f->doorCol = (uint8_t)pick_hex("8899", hash_combine(own, 9u));
+    else if (g->style == HS_COLONIAL) f->doorCol = (uint8_t)pick_hex("889935", hash_combine(own, 9u));
     /* stacks: brick where the walls are, or in Britain and North America whatever the walls; else rendered */
     if (f->wall == HW_BRICK) { f->stack = HW_BRICK; f->stackCol = f->wallCol; }
     else if (g->region == PLAN_REGION_UK || g->region == PLAN_REGION_NA) { f->stack = HW_BRICK; f->stackCol = (uint8_t)pick_hex("014", hash_combine(row, 8u)); }
@@ -512,7 +518,7 @@ static uint32_t window_rhythm(const HGraph *g, const HVol *v) {
     if (!habitable(v) || (v->role == HV_WING && v->kind == HWING_GARAGE)) return 0;
     const uint32_t sh = (uint32_t)fmax(0.0, fmin(127.0, (g->storeyH - 2.0f) * 100.0f + 0.5f));
     const uint32_t pl = (uint32_t)fmax(0.0, fmin(255.0, g->plinth * 100.0f + 0.5f));
-    return sh << HOUSE_AUX_STOREYH | pl << HOUSE_AUX_PLINTH | (uint32_t)(v->storeys & 3) << HOUSE_AUX_STOREYS;
+    return sh << HOUSE_AUX_STOREYH | pl << HOUSE_AUX_PLINTH | (uint32_t)((v->storeys > 0 ? v->storeys - 1 : 0) & 3) << HOUSE_AUX_STOREYS;
 }
 
 /* The volume's body: its walls up to its roof's planes, from yb (ground, or a porch's eaves: its attic). */
@@ -579,7 +585,7 @@ static void add_slabs(Ctx *C, const HVol *v, int vi, int unit, const Roof *R) {
         eaves_plane(R, e, -SLAB_T, p4);
         p4[0] = -p4[0]; p4[1] = -p4[1]; p4[2] = -p4[2]; p4[3] = -p4[3];
         add_plane4(s, p4, HF_SOFFIT);
-        edge_plane(s, &R->F, e, R->ov, HF_FASCIA);
+        edge_plane(s, &R->F, e, R->ext[e], HF_FASCIA);   /* R->ov, but none over a neighbour's (roof_of) */
         for (int f = 0; f < R->F.n; ++f) {
             if (f == e) continue;
             if (R->role[f] == ER_EAVES) { under_plane(R, e, f, p4); add_plane4(s, p4, NOFACE); }
@@ -589,13 +595,53 @@ static void add_slabs(Ctx *C, const HVol *v, int vi, int unit, const Roof *R) {
     }
 }
 
-/* Parapets round a flat roof's deck (and a georgian front's), their copings on top. */
-static void add_parapets(Ctx *C, const HVol *v, int vi, int unit, const Roof *R) {
+/* Whether the unit across a row's party wall (the slice's cut edge e) stands lower: the deck's edge there wants a
+ * parapet of its own (an unevenly built flat row, HM5e1). */
+static int cut_over_lower(const Ctx *C, int vi, int unit, const Roof *R, int e) {
+    const HGraph *g = C->g;
+    const int side = side_of(&R->W, e), nb = side == HSIDE_W ? unit - 1 : side == HSIDE_E ? unit + 1 : -1;
+    if (nb < 0 || nb >= g->nunit) return 0;
+    HVol a, b;
+    const HVol *va = home_unit_vol(g, vi, unit, &a), *vb = home_unit_vol(g, vi, nb, &b);
+    const double da = C->dy ? C->dy[unit] : 0.0, db = C->dy ? C->dy[nb] : 0.0;
+    return vb->top + db < va->eaves + da - 0.05;
+}
+
+/* The sheets' crenellations (HM5e1: the courtyard house's and the Middle East's villa's parapets): merlons along the
+ * coping of parapet edge e, 0.4 m square in section, a crenel of the same between, the street's front and its ends. */
+static void add_merlons(Ctx *C, int vi, int unit, const Roof *R, int e, double top) {
+    const double mx = R->W.m[e][0], mz = R->W.m[e][1], ex = -mz, ez = mx;
+    const double *a = R->W.p[e], *b = R->W.p[(e + 1) % R->W.n];
+    const double sa = ex * a[0] + ez * a[1], sb = ex * b[0] + ez * b[1], at = mx * a[0] + mz * a[1];
+    const double s0 = fmin(sa, sb), s1 = fmax(sa, sb), L = s1 - s0;
+    const int n = (int)floor((L + 0.4) / 0.8);
+    if (n < 2) return;
+    const double pitch = (L - 0.4) / (n - 1);
+    for (int k = 0; k < n; ++k) {
+        const double c = s0 + 0.2 + pitch * k;
+        Solid *s = solid_new(C, unit, vi, 0);
+        plane_at(s, mx, 0, mz, mx * at, 0, mz * at, HF_WALL);
+        s->noWin[s->np - 1] = 1;
+        plane_at(s, -mx, 0, -mz, mx * (at - PARAPET_W), 0, mz * (at - PARAPET_W), HF_WALL);
+        s->noWin[s->np - 1] = 1;
+        plane_at(s, ex, 0, ez, ex * (c + 0.2), 0, ez * (c + 0.2), HF_WALL);
+        s->noWin[s->np - 1] = 1;
+        plane_at(s, -ex, 0, -ez, ex * (c - 0.2), 0, ez * (c - 0.2), HF_WALL);
+        s->noWin[s->np - 1] = 1;
+        plane_at(s, 0, 1, 0, 0, top + 0.4, 0, HF_COPING);
+        plane_at(s, 0, -1, 0, 0, top - 0.02, 0, NOFACE);
+    }
+}
+static int style_crenellated(int style) { return style == HS_COURTYARD || style == HS_MENA_VILLA; }
+
+/* Parapets round a flat roof's deck (and a georgian front's), their copings on top. sliced: a row's main cut to a
+ * unit (its cut edges over a lower neighbour take a parapet too). */
+static void add_parapets(Ctx *C, const HVol *v, int vi, int unit, const Roof *R, int sliced) {
     if (C->lod == HSH_FAR) return;
     for (int e = 0; e < R->W.n; ++e) {
         if (v->parapet == 1 && side_of(&R->W, e) != HSIDE_S) continue;
         if (v->parapet != 1 && (v->roof != HR_FLAT || v->parapet != 2)) return;
-        if (R->cut[e] || R->role[e] == ER_HIGH || R->role[e] == ER_EXT) continue;
+        if ((R->cut[e] && !(sliced && v->parapet == 2 && cut_over_lower(C, vi, unit, R, e))) || R->role[e] == ER_HIGH || R->role[e] == ER_EXT) continue;
         Solid *s = solid_new(C, unit, vi, 0);
         edge_plane(s, &R->W, e, 0.0, HF_WALL);
         s->noWin[s->np - 1] = 1;
@@ -610,6 +656,9 @@ static void add_parapets(Ctx *C, const HVol *v, int vi, int unit, const Roof *R)
         const double top = v->parapet == 1 ? R->E + 0.8 : v->top;
         plane_at(s, 0, 1, 0, 0, top, 0, HF_COPING);
         plane_at(s, 0, -1, 0, 0, v->parapet == 1 ? R->E - 0.3 : R->E, 0, NOFACE);
+        /* the street's front and its returns crenellated; the back plain */
+        if (v->parapet == 2 && style_crenellated(C->g->style) && (v->role <= HV_ROW) && side_of(&R->W, e) != HSIDE_N && !R->cut[e])
+            add_merlons(C, vi, unit, R, e, top);
     }
 }
 
@@ -648,6 +697,13 @@ static void roof_of(const HGraph *g, const HVol *v, const Foot *W, const Foot *F
         default: role = ER_VERGE; break;
         }
         R->ext[e] = role == ER_VERGE ? ovg : role == ER_EAVES ? R->ov : 0.15;
+        /* a unit's own part against a party wall (an outrigger back to back with its neighbour's): its verge or eaves
+         * stops at the wall, never over the neighbour's (HM5e1: the townhouses' tall outriggers met there) */
+        if ((role == ER_VERGE || role == ER_EAVES) && v->unit != HG_ROW_WIDE && v->unit < g->nunit) {
+            const int u = v->unit;
+            if ((side == HSIDE_W && u > 0 && fabs(v->x0 - g->unit[u].x0) < 0.02) || (side == HSIDE_E && u + 1 < g->nunit && fabs(v->x1 - g->unit[u].x1) < 0.02))
+                R->ext[e] = 0.0;
+        }
         /* the edge against its parent: a gabled outrigger's or porch's roof runs on into the parent's, to its
          * ridge, where that is pitched across it; anything else stops just inside the parent's wall */
         if (par && role != ER_EAVES) {
@@ -682,7 +738,8 @@ static void foot_rect(double x0, double z0, double x1, double z1, Foot *F) {
 /* One volume (or a slice of a row's main): body, roof, parapets. */
 static void add_volume(Ctx *C, int vi, int unit, double sx0, double sx1, int cutW, int cutE) {
     const HGraph *g = C->g;
-    const HVol *v = &g->vol[vi];
+    HVol own;
+    const HVol *v = home_unit_vol(g, vi, unit, &own);   /* a unevenly built row's unit at its own storeys (HM5e1) */
     Foot W, F;
     float q[6][2];
     const int n = hvol_outline(v, q);
@@ -693,13 +750,13 @@ static void add_volume(Ctx *C, int vi, int unit, double sx0, double sx1, int cut
     roof_of(g, v, &W, &F, cutW, cutE, &R);
     const int first = C->ns;
     const double dy = C->dy ? C->dy[unit] : 0.0;
-    if (C->kit && C->lod == HSH_NEAR && !(v->role == HV_PORCH && (v->kind == HP_RECESSED || v->kind == HP_CANOPY))) {
+    if (C->kit && C->lod == HSH_NEAR && !(v->role == HV_PORCH && (home_porch_recessed(v->kind) || v->kind == HP_CANOPY))) {
         GROW(C->roof, C->nroof, C->caproof);
         HsRoof *hr = &C->roof[C->nroof++];
         hr->vol = (int8_t)vi; hr->unit = (int8_t)unit; hr->dy = dy; hr->R = R;
     }
     if (v->role == HV_PORCH) {
-        if (v->kind == HP_RECESSED) return;   /* an opening (add_openings) */
+        if (home_porch_recessed(v->kind)) return;   /* an opening (add_front) */
         if (v->kind == HP_CANOPY && C->kit) return;   /* the kit's canopy on its brackets (home_character.c) */
         if (C->lod == HSH_FAR && v->kind != HP_ENCLOSED) return;
         /* its attic: a pediment and a ceiling (a flat-roofed one has none: its slab's soffit is its ceiling) */
@@ -709,7 +766,7 @@ static void add_volume(Ctx *C, int vi, int unit, double sx0, double sx1, int cut
     } else {
         C->body[vi][unit] = add_body(C, v, vi, unit, &R, v->y0, 0);
         add_slabs(C, v, vi, unit, &R);
-        add_parapets(C, v, vi, unit, &R);
+        add_parapets(C, v, vi, unit, &R, sx0 < sx1);
     }
     for (int i = first; i < C->ns; ++i) solid_lift(&C->s[i], dy);
 }
@@ -723,6 +780,23 @@ static void add_upstand(Ctx *C, const HParty *p) {
                    g->style == HS_CHINA || g->style == HS_ROWHOUSE;
     if (C->lod == HSH_FAR || (v->roof != HR_FLAT && fabs(da - db) < 1e-3 && !st)) return;
     const int hi = da >= db ? p->a : p->b;
+    /* an unevenly built flat row: the dividing parapet stands to the lower unit's top (the taller one's deck has its
+     * own parapet over it: add_parapets) */
+    HVol ua, ub;
+    const HVol *va = home_unit_vol(g, p->vol, p->a, &ua), *vb = home_unit_vol(g, p->vol, p->b, &ub);
+    if (v->roof == HR_FLAT && va->storeys != vb->storeys) {
+        const int lo = va->top + da <= vb->top + db ? p->a : p->b;
+        const HVol *vl = lo == p->a ? va : vb;
+        Solid *s = solid_new(C, lo, p->vol, 0);
+        plane_at(s, -1, 0, 0, p->x - 0.12, 0, 0, HF_WALL); s->noWin[s->np - 1] = 1;
+        plane_at(s, 1, 0, 0, p->x + 0.12, 0, 0, HF_WALL);  s->noWin[s->np - 1] = 1;
+        plane_at(s, 0, 0, -1, 0, 0, v->z0, HF_WALL);       s->noWin[s->np - 1] = 1;
+        plane_at(s, 0, 0, 1, 0, 0, v->z1, HF_WALL);        s->noWin[s->np - 1] = 1;
+        plane_at(s, 0, -1, 0, 0, vl->eaves - 0.5, 0, NOFACE);
+        plane_at(s, 0, 1, 0, 0, vl->top, 0, HF_COPING);
+        solid_lift(s, lo == p->a ? da : db);
+        return;
+    }
     Solid *s = solid_new(C, hi, p->vol, 0);
     const double half = v->roof == HR_FLAT ? 0.12 : 0.15;
     plane_at(s, -1, 0, 0, p->x - half, 0, 0, HF_WALL); s->noWin[s->np - 1] = 1;
@@ -784,8 +858,16 @@ static void add_stack(Ctx *C, const HChimney *k) {
 /* An opening in host's wall: along the wall (its outward normal m, the way across it e) from a, across w,
  * from y0 to y1, set back `depth` behind the wall's face (at `wall`, its offset along m). Its faces: the
  * back's `back`, the rest reveals. */
+static int add_opening_arch(Ctx *C, int host, int unit, const double m[2], const double e[2], double ax, double az, double w,
+                            double y0, double y1, double depth, int back, uint32_t aux, double rise);
 static int add_opening(Ctx *C, int host, int unit, const double m[2], const double e[2], double ax, double az, double w,
                        double y0, double y1, double depth, int back, uint32_t aux) {
+    return add_opening_arch(C, host, unit, m, e, ax, az, w, y0, y1, depth, back, aux, 0.0);
+}
+/* ...with an arched head (HM5e1): y1 its springing, rise its arch's over that (a half circle at most, w / 2), the head
+ * a polygon of tangent planes round the arc (convex, as every solid here). */
+static int add_opening_arch(Ctx *C, int host, int unit, const double m[2], const double e[2], double ax, double az, double w,
+                            double y0, double y1, double depth, int back, uint32_t aux, double rise) {
     if (host < 0) return -1;
     Solid *s = solid_new(C, unit, C->s[host].vol, 1);
     s->host = host;
@@ -796,8 +878,23 @@ static int add_opening(Ctx *C, int host, int unit, const double m[2], const doub
     plane_at(s, -m[0], 0, -m[1], ax - m[0] * depth, 0, az - m[1] * depth, back);
     plane_at(s, -e[0], 0, -e[1], ax, 0, az, HF_REVEAL);
     plane_at(s, e[0], 0, e[1], ax + e[0] * w, 0, az + e[1] * w, HF_REVEAL);
-    plane_at(s, 0, 1, 0, 0, y1, 0, HF_REVEAL);
+    plane_at(s, 0, 1, 0, 0, y1 + rise, 0, HF_REVEAL);
     plane_at(s, 0, -1, 0, 0, y0, 0, back == HF_GARAGE ? NOFACE : HF_REVEAL);
+    if (rise > 0.02) {
+        /* the arc through both springings and the crown: radius R, its centre under the crown */
+        const double half = 0.5 * w, r = fmin(rise, half), R = (half * half + r * r) / (2.0 * r);
+        const double cs = 0.5 * w, cy = y1 + r - R;                       /* centre: along the opening, up */
+        const double t0 = asin(fmax(-1.0, fmin(1.0, (y1 - cy) / R)));    /* the springing's angle over the horizontal */
+        const int K = r > 0.45 * w ? 8 : 5;
+        for (int k = 0; k <= K; ++k) {
+            const double t = t0 + (PI_D - 2.0 * t0) * k / K;
+            const double ce = cos(t), su = sin(t);
+            if (su > 0.9995 || fabs(ce) > 0.9995) continue;               /* the crown's and the jambs' planes are there */
+            /* the tangent at angle t: n = (cos t) e + (sin t) up, through the arc's point */
+            const double px = ax + e[0] * (cs + R * ce), pz = az + e[1] * (cs + R * ce), py = cy + R * su;
+            plane_at(s, e[0] * ce, su, e[1] * ce, px, py, pz, HF_REVEAL);
+        }
+    }
     s->o[0] = ax - m[0] * depth; s->o[1] = y0; s->o[2] = az - m[1] * depth;
     s->t[0] = e[0]; s->t[1] = 0.0; s->t[2] = e[1];
     solid_lift(s, C->dy ? C->dy[unit] : 0.0);
@@ -830,9 +927,49 @@ static int box_blocked(const Ctx *C, int vi, int unit, const double *lo, const d
 
 /* The windows of volume vi's body (a row's main's slice for unit): each wall that faces out, each storey, a
  * window in each bay of about 2.7 m (section 13.7) where nothing stands in front of it and no door is. */
+/* Whether a ground-storey window centred at (x, z) on its wall stands where its unit's ground floor is carved out (a five-
+ * foot way, pilotis, a reveal) or its shop front is (HM5e1). */
+static int ground_taken(const HGraph *g, int unit, double x, double z, double hw, int front) {
+    for (int i = 0; i < g->nvol; ++i) {
+        const HVol *p = &g->vol[i];
+        if (p->role != HV_PORCH || p->unit != unit || !home_porch_recessed(p->kind)) continue;
+        const double pad = p->kind == HP_PILOTIS ? PILOTIS_COL + 0.5 : 0.3;
+        if (x + hw > p->x0 - pad && x - hw < p->x1 + pad && z > p->z0 - 0.6 && z < p->z1 + (p->kind == HP_PILOTIS ? 0.2 : -0.05)) return 1;
+    }
+    const HUnit *u = &g->unit[unit];
+    if (front && u->shopX1 > u->shopX0 && z < g->vol[0].z0 + 2.5 && x + hw > u->shopX0 - 0.3 && x - hw < u->shopX1 + 0.3) return 1;
+    return 0;
+}
+
+/* An RCC window's chajja (HM5e1, the South Asian sheet): a thin concrete sunshade slab over its head, 0.5 m out. */
+static void add_chajja(Ctx *C, int vi, int unit, const double m[2], const double e[2], double at, double a0, double w, double head) {
+    const double dy = C->dy ? C->dy[unit] : 0.0, out = 0.5, y0 = head + 0.1, y1 = head + 0.2;
+    const double s0 = a0 - 0.18, s1 = a0 + w + 0.18;
+    double lo[3] = { 1e30, y0 + dy, 1e30 }, hi[3] = { -1e30, y1 + dy, -1e30 };
+    for (int a = 0; a < 2; ++a)
+        for (int b = 0; b < 2; ++b) {
+            const double ss = a ? s1 : s0, o = b ? out : 0.02;
+            const double x = m[0] * (at + o) + e[0] * ss, z = m[1] * (at + o) + e[1] * ss;
+            lo[0] = fmin(lo[0], x); hi[0] = fmax(hi[0], x); lo[2] = fmin(lo[2], z); hi[2] = fmax(hi[2], z);
+        }
+    if (box_blocked(C, vi, unit, lo, hi)) return;
+    Solid *s = solid_new(C, unit, vi, 0);
+    plane_at(s, m[0], 0, m[1], m[0] * (at + out), 0, m[1] * (at + out), HF_WALL);
+    s->noWin[s->np - 1] = 1;
+    plane_at(s, -m[0], 0, -m[1], m[0] * (at - 0.03), 0, m[1] * (at - 0.03), NOFACE);
+    plane_at(s, e[0], 0, e[1], e[0] * s1, 0, e[1] * s1, HF_WALL);
+    s->noWin[s->np - 1] = 1;
+    plane_at(s, -e[0], 0, -e[1], e[0] * s0, 0, e[1] * s0, HF_WALL);
+    s->noWin[s->np - 1] = 1;
+    plane_at(s, 0, 1, 0, 0, y1, 0, HF_COPING);
+    plane_at(s, 0, -1, 0, 0, y0, 0, HF_WALL);
+    solid_lift(s, dy);
+}
+
 static void add_windows(Ctx *C, int vi, int unit) {
     const HGraph *g = C->g;
-    const HVol *v = &g->vol[vi];
+    HVol own;
+    const HVol *v = home_unit_vol(g, vi, unit, &own);
     const int host = C->body[vi][unit];
     if (host < 0 || !habitable(v) || (v->role == HV_WING && v->kind == HWING_GARAGE)) return;
     const Solid Hc = C->s[host], *H = &Hc;   /* a copy: adding openings may move the array */
@@ -864,16 +1001,23 @@ static void add_windows(Ctx *C, int vi, int unit) {
         const int side = !bay && fabs(m[0]) > 0.7;
         const int nb = bay ? 1 : (int)fmax(1.0, floor(L / (side ? 4.0 : 2.7) + 0.5));
         const double bw = L / nb;
+        /* the courtyard house's street walls (HM5e1): blank but for a few small windows, the ground floor's set high */
+        const int blank = g->style == HS_COURTYARD && !bay;
         for (int k = 0; k < v->storeys; ++k) {
             const double floorY = g->plinth + k * g->storeyH;
             double sill = floorY + (k == 0 ? 0.75 : 0.85), head = fmin(floorY + 2.15, v->eaves - 0.25);
             /* a bay's lights reach its corner posts when the kit dresses it (hk_bay's: the face less 0.13 m) */
             double ww = bay ? fmax(0.3, L - (C->kit ? 0.13 : 0.3)) : fmin(fin->winW, bw - 0.6);
-            if (!bay && k == g->vol[0].storeys - 1 && g->style == HS_GEORGIAN && v->storeys == 3) head = fmin(head, sill + 1.0);
-            if (head - sill < 0.8 || ww < 0.3) continue;
+            /* a Georgian front's attic storey: short windows (its top storey of three or four) */
+            if (!bay && k == g->vol[0].storeys - 1 && g->style == HS_GEORGIAN && v->storeys >= 3) head = fmin(head, sill + 1.0);
+            if (blank && k == 0) { sill = floorY + 1.6; head = fmin(head, sill + 0.7); }
+            if (head - sill < (blank ? 0.5 : 0.8) || ww < 0.3) continue;
             if (head - sill > fin->winH && !bay) sill = head - fin->winH;
             for (int b = 0; b < nb; ++b) {
                 const double c = s0 + (b + 0.5) * bw, a0 = c - 0.5 * ww;
+                if (blank && hash_float(hash3i(g->unit[unit].seed ^ 0xB1A4u, vi * 8 + i, k, b)) < (k == 0 ? 0.6f : 0.35f)) continue;
+                /* the ground floor carved out under it, or a shop front there (HM5e1) */
+                if (k == 0 && ground_taken(g, unit, m[0] * at + e[0] * c, m[1] * at + e[1] * c, 0.5 * ww, m[1] < -0.7)) continue;
                 /* no window over a door */
                 int clash = 0;
                 for (int d = 0; d < g->ndoor && !clash; ++d) {
@@ -909,7 +1053,9 @@ static void add_windows(Ctx *C, int vi, int unit) {
                     static const uint8_t PAT[] = { HG_PLAIN, HG_SASH, HG_GEORGIAN, HG_CASEMENT, HG_GRID, HG_PLAIN, HG_PLAIN };
                     aux = opening_aux(ww, head - sill, PAT[fr <= HK_FRAME_UPVC ? fr : 0]) | HOUSE_AUX_FRAMED;
                 }
-                if (add_opening(C, host, unit, m, e, ax, az, ww, sill, head, depth, HF_GLASS, aux) >= 0 && C->kit) {
+                const int opened = add_opening(C, host, unit, m, e, ax, az, ww, sill, head, depth, HF_GLASS, aux);
+                if (opened >= 0 && g->style == HS_RCC && !bay) add_chajja(C, vi, unit, m, e, at, a0, ww, head);
+                if (opened >= 0 && C->kit) {
                     GROW(C->win, C->nwin, C->capwin);
                     HsWin *w = &C->win[C->nwin++];
                     w->unit = (int8_t)unit; w->vol = (int8_t)vi; w->storey = (uint8_t)k; w->bay = (uint8_t)bay; w->host = host;
@@ -952,6 +1098,40 @@ static void add_steps(Ctx *C, int unit, int vi, double x0, double x1, double zf,
     }
 }
 
+/* A box carved out of a body (HM5e1: pilotis' and a five-foot way's spaces): its top a ceiling, its floor a step's
+ * finish, its sides walls (the columns' and piers' faces, the core's front). */
+static int add_carve(Ctx *C, int host, int unit, double x0, double z0, double x1, double z1, double y0, double y1, int fin) {
+    if (host < 0 || x1 - x0 < 0.05 || z1 - z0 < 0.05) return -1;
+    Solid *s = solid_new(C, unit, C->s[host].vol, 1);
+    s->host = host;
+    box_planes(s, x0, y0, z0, x1, y1, z1, HF_WALL, HF_CEILING, HF_STEP);
+    s->stepFin = (uint8_t)fin;
+    s->o[0] = x0; s->o[1] = y0; s->o[2] = z0;
+    s->t[0] = 1.0; s->t[1] = 0.0; s->t[2] = 0.0;
+    solid_lift(s, C->dy ? C->dy[unit] : 0.0);
+    return (int)(s - C->s);
+}
+
+/* Pilotis (HM5e1, the Korean villa): the ground storey of the unit's slice carved open from the front back to the core,
+ * columns at its free corners and along a long front; where the slice ends at a party wall that wall comes down as a fin. */
+static void add_pilotis(Ctx *C, int u, const HVol *m, const HVol *p, int host, int fin) {
+    const double c = PILOTIS_COL, out = 0.3, y1 = p->eaves;
+    const int freeW = p->x0 <= m->x0 + 0.05, freeE = p->x1 >= m->x1 - 0.05;
+    const double fx0 = freeW ? p->x0 + c : p->x0 + 0.12, fx1 = freeE ? p->x1 - c : p->x1 - 0.12;
+    /* the front between its columns: a middle column where the span runs past PILOTIS_SPAN */
+    const int nbay = (int)fmax(1.0, ceil((fx1 - fx0) / PILOTIS_SPAN));
+    const double bw = (fx1 - fx0 - (nbay - 1) * c) / nbay;
+    for (int k = 0; k < nbay; ++k) {
+        const double a = fx0 + k * (bw + c);
+        add_carve(C, host, u, a, p->z0 - out, a + bw, p->z1, 0.0, y1, fin);
+        /* under the middle columns' line, behind them, open too */
+        if (k + 1 < nbay) add_carve(C, host, u, a + bw - 0.01, p->z0 + c, a + bw + c + 0.01, p->z1, 0.0, y1, fin);
+    }
+    /* the free sides open between a column at the front corner and one at the core */
+    if (freeW) add_carve(C, host, u, p->x0 - out, p->z0 + c, fx0 + 0.01, p->z1 - c, 0.0, y1, fin);
+    if (freeE) add_carve(C, host, u, fx1 - 0.01, p->z0 + c, p->x1 + out, p->z1 - c, 0.0, y1, fin);
+}
+
 static void add_front(Ctx *C, int u) {
     const HGraph *g = C->g;
     const HUnit *un = &g->unit[u];
@@ -962,6 +1142,7 @@ static void add_front(Ctx *C, int u) {
     const HFinish *fin = &C->fin[u];
     const double P = g->plinth;
     const int host = C->body[mi][u];
+    const int street = home_style_street(g->style);
     /* the porch */
     int pi = -1;
     for (int i = 0; i < g->nvol; ++i)
@@ -970,6 +1151,9 @@ static void add_front(Ctx *C, int u) {
     const int kind = p ? p->kind : HP_CANOPY;
     double zf = m->z0;   /* where the steps start down */
     const double sw = fmin(1.6, d->width + 0.5);
+    /* a front on the street line, or a five-foot way or pilotis: no stoop or steps out over the pavement or the yard;
+     * a step up at the door inside its reveal at most (HM5e1) */
+    const int stoop = !street && kind != HP_ARCADE && kind != HP_PILOTIS;
     if (p && (kind == HP_OPEN || kind == HP_LEAN || kind == HP_VERANDA)) {
         /* the porch's floor, its posts */
         const int deckFin = fin->step == HST_TIMBER || kind == HP_VERANDA ? HST_TIMBER : fin->step;
@@ -1000,45 +1184,62 @@ static void add_front(Ctx *C, int u) {
                 const double dyu = C->dy ? C->dy[u] : 0.0;
                 GROW(C->door, C->ndoor, C->capdoor);
                 HsDoor *hd = &C->door[C->ndoor++];
+                memset(hd, 0, sizeof(*hd));
                 hd->unit = (int8_t)u; hd->vol = (int8_t)pi; hd->porch = 1;
                 hd->x = dx + 0.5 * d->width; hd->z = p->z0; hd->w = d->width; hd->y0 = P + dyu; hd->y1 = P + d->height + dyu; hd->recess = 0.06;
             }
         }
-    } else if (P > 0.05) {
+    } else if (P > 0.05 && stoop) {
         /* a stoop at the door */
         const double depth = fmin(1.0, fmax(0.3, m->z0 - 0.4));
         add_step_box(C, u, mi, d->x - 0.5 * sw, m->z0 - depth, d->x + 0.5 * sw, m->z0, P, fin->step);
         zf = m->z0 - depth;
     }
-    add_steps(C, u, mi, d->x - 0.5 * sw, d->x + 0.5 * sw, zf, P, fin->step);
-    /* a recessed porch: carved out of the front, the door at its back */
-    if (p && kind == HP_RECESSED && host >= 0) {
+    if (stoop) add_steps(C, u, mi, d->x - 0.5 * sw, d->x + 0.5 * sw, zf, P, fin->step);
+    /* a recessed porch: carved out of the front, the door at its back; a street-line front's reveal from the pavement,
+     * a five-foot way at the ground floor's level behind its piers (HM5e1) */
+    if (p && (kind == HP_RECESSED || kind == HP_ARCADE) && host >= 0) {
         const double mm[2] = { 0.0, -1.0 }, e[2] = { 1.0, 0.0 };
-        const int r = add_opening(C, host, u, mm, e, p->x0, m->z0, p->x1 - p->x0, P, p->eaves, p->z1 - m->z0, HF_WALL, 0);
+        const double rise = 0.01 * p->arch;
+        const double y0 = street && kind == HP_RECESSED ? 0.0 : P;
+        const double y1 = rise > 0.0 ? p->eaves - rise : p->eaves;
+        const int r = add_opening_arch(C, host, u, mm, e, p->x0, m->z0, p->x1 - p->x0, y0, y1, p->z1 - m->z0, HF_WALL, 0, rise);
         if (r >= 0) {
             Solid *s = &C->s[r];
-            /* its ceiling and floor (not reveals) */
+            /* its ceiling and floor (not reveals); an arch's soffit is its wall's */
             for (int i = 0; i < s->np; ++i) {
-                if (s->pl[i].n[1] > 0.5) s->surf[i] = HF_CEILING;
+                if (s->pl[i].n[1] > 0.5 && rise <= 0.0) s->surf[i] = HF_CEILING;
                 else if (s->pl[i].n[1] < -0.5) s->surf[i] = HF_STEP;
                 else if (s->surf[i] == HF_REVEAL) s->surf[i] = HF_WALL;
             }
-            s->stepFin = HST_TILE;
+            s->stepFin = street || kind == HP_ARCADE || rise > 0.0 ? fin->step : HST_TILE;
         }
     }
-    /* the door itself */
+    if (p && kind == HP_PILOTIS && host >= 0) add_pilotis(C, u, m, p, host, fin->step);
+    /* the door itself: its leaves a pattern of their own under an arch or in China's red gate (HM5e1) */
     if (host >= 0) {
         const double mm[2] = { 0.0, -1.0 }, e[2] = { 1.0, 0.0 };
-        add_opening(C, host, u, mm, e, d->x - 0.5 * d->width, d->z, d->width, P, P + d->height, 0.12, HF_DOOR,
-                    opening_aux(d->width, d->height, (int)(hash_combine(un->seed, 0xD00Bu) & 3u)));
+        const double rise = 0.01 * d->arch;
+        const int plank = d->arch || g->style == HS_CHINA;
+        add_opening_arch(C, host, u, mm, e, d->x - 0.5 * d->width, d->z, d->width, P, P + d->height, 0.12, HF_DOOR,
+                         opening_aux(d->width, d->height + rise, plank ? 4 : (int)(hash_combine(un->seed, 0xD00Bu) & 3u)), rise);
         C->st.doors++;
         if (C->kit) {
             const double dyu = C->dy ? C->dy[u] : 0.0;
             GROW(C->door, C->ndoor, C->capdoor);
             HsDoor *hd = &C->door[C->ndoor++];
-            hd->unit = (int8_t)u; hd->vol = (int8_t)mi; hd->porch = 0;
+            memset(hd, 0, sizeof(*hd));
+            hd->unit = (int8_t)u; hd->vol = (int8_t)mi; hd->porch = 0; hd->arch = (uint8_t)(plank != 0);
             hd->x = d->x; hd->z = d->z; hd->w = d->width; hd->y0 = P + dyu; hd->y1 = P + d->height + dyu; hd->recess = 0.12;
         }
+    }
+    /* a shop front (HM5e1): a roller-shuttered opening in the ground storey, at the back of a five-foot way or in the front */
+    if (un->shopX1 > un->shopX0 && host >= 0) {
+        const double mm[2] = { 0.0, -1.0 }, e[2] = { 1.0, 0.0 };
+        const double z = p && kind == HP_ARCADE ? p->z1 : m->z0;
+        const double top = p && kind == HP_ARCADE ? p->eaves - 0.25 : P + fmin(2.7, g->storeyH - 0.45);
+        const double w = un->shopX1 - un->shopX0, h = top - P;
+        if (h > 1.9) add_opening(C, host, u, mm, e, un->shopX0, z, w, P, top, 0.22, HF_GARAGE, opening_aux(w, h, 1));
     }
 }
 

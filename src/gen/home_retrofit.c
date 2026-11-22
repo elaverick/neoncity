@@ -223,7 +223,8 @@ static void push_on(DC *d, const Wall *w, double s, double y, double out) {
 /* The walls of a unit's main (its slice of a row's): not a party wall's cut, not where a roof runs on into its parent. */
 static int unit_walls(const DC *d, const HsRoof *hr, Wall *out, int max) {
     const Roof *R = &hr->R;
-    const HVol *v = &d->g->vol[hr->vol];
+    HVol own;
+    const HVol *v = home_unit_vol(d->g, hr->vol, hr->unit, &own);   /* a unit at its own storeys (HM5e1) */
     int n = 0;
     double top;
     if (R->kind == HR_FLAT) top = (v->parapet == 2 ? v->top : R->E) + hr->dy;
@@ -257,7 +258,8 @@ typedef struct RU {
     RProf        P;
     const HCharSet *cs;
     const HsRoof *hr;        /* its main's roof (its slice) */
-    const HVol   *v;
+    const HVol   *v;         /* its main as its slice stands (its own storeys: home_unit_vol) */
+    HVol          vOwn;
     Wall         w[6];
     int          nw;
     const HsDoor *dr;        /* its front door */
@@ -272,6 +274,18 @@ static const Wall *front_wall(const RU *r) {
 /* the wall the front door is in (its face at -dr->z): the main's front, or an enclosed porch's */
 static int door_wall(const RU *r, Wall *w) {
     if (!r->dr) return 0;
+    /* at the back of a five-foot way or under pilotis (HM5e1): the wall the door stands in, the width of the space */
+    for (int i = 0; i < r->d->g->nvol; ++i) {
+        const HVol *p = &r->d->g->vol[i];
+        if (p->role != HV_PORCH || p->unit != r->u || (p->kind != HP_ARCADE && p->kind != HP_PILOTIS)) continue;
+        memset(w, 0, sizeof(*w));
+        w->m[0] = 0.0; w->m[1] = -1.0; w->e[0] = 1.0; w->e[1] = 0.0;
+        w->at = -r->dr->z;
+        w->s0 = p->x0 + (p->kind == HP_PILOTIS ? PILOTIS_COL : 0.0); w->s1 = p->x1 - (p->kind == HP_PILOTIS ? PILOTIS_COL : 0.0);
+        w->y0 = r->hr->dy; w->y1 = p->eaves + r->hr->dy;
+        w->front = 1;
+        return 1;
+    }
     const Wall *f = front_wall(r);
     /* the door in the main's front, or set back in a recess in it (its lights and meter then beside the recess) */
     if (f && (fabs(f->at + r->dr->z) < 0.05 || (-r->dr->z < f->at && f->at + r->dr->z < 2.0 &&
@@ -292,7 +306,7 @@ static double door_half(const RU *r) {
     double half = fmax(d->doorHalf[r->u], 0.5 * r->dr->w + 0.05);
     for (int i = 0; i < d->g->nvol; ++i) {
         const HVol *p = &d->g->vol[i];
-        if (p->role == HV_PORCH && p->unit == r->u && p->x0 - 0.05 < r->dr->x && p->x1 + 0.05 > r->dr->x)
+        if (p->role == HV_PORCH && p->unit == r->u && p->x0 - 0.05 < r->dr->x && p->x1 + 0.05 > r->dr->x && p->kind != HP_ARCADE && p->kind != HP_PILOTIS)
             half = fmax(half, fmax(r->dr->x - p->x0, p->x1 - r->dr->x) + 0.05);
     }
     return half;
@@ -1324,7 +1338,7 @@ void hs_retrofit(DC *d) {
             if (hr->unit == u && hc_is_house_body(g->vol[hr->vol].role) && hr->R.W.n == 4) r.hr = hr;
         }
         if (!r.hr) continue;
-        r.v = &g->vol[r.hr->vol];
+        r.v = home_unit_vol(g, r.hr->vol, u, &r.vOwn);
         r.nw = unit_walls(d, r.hr, r.w, 6);
         for (int i = 0; i < d->C->ndoor; ++i) if (d->C->door[i].unit == u && !r.dr) r.dr = &d->C->door[i];
         for (int i = 0; i < d->C->ndoor; ++i) if (d->C->door[i].unit == u && !d->C->door[i].porch) r.dr = &d->C->door[i];

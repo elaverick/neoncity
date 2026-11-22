@@ -96,7 +96,9 @@ int                  chunk_gen_owns_home(const ChunkGen *g, int ri);
 void                 build_homes(Mesh *m, ChunkGen *g, int lod);
 /* What of row ri stands on the ground, as world quadrilaterals (bodies, enclosed porches, open porches'
  * posts): returns how many (at most max). */
-int                  city_home_outlines(ChunkGen *g, int ri, double (*v)[4][2], int max);
+/* walk: what the walker meets (HM5e1: a five-foot way and pilotis open between their piers and columns), else the
+ * footprints the grass keeps off */
+int                  city_home_outlines(ChunkGen *g, int ri, double (*v)[4][2], int max, int walk);
 
 /* grass_city.c: the grass the blades grow on (Mesh.grass), from the green
  * lots' triangles among m's vertices first .. end (the streets', draped),

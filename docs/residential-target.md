@@ -482,11 +482,74 @@ house: about 20 more instances a unit on average (the six styles without a sheet
 canopy and terrace 40-60 at most. A unit over it is dressed lean (HM5's), which also drops the retrofit's second vine,
 LED strips, trailing plants, screens and deck pots.
 
+## Each style's body to its sheet (HM5e1)
+
+HM5c1's board put the sheets beside the game, and the user's verdict (2026-11-22) was that the bodies under the kit
+missed their sheets: Britain's two-storey pitched terrace, with its porches, surrounds and stoops, stood in for every
+other region. HM5e1 builds each style's **body** to its sheet's panel 1 (the checklist in the plan's "HM5e" section);
+balconies (HM5e2) and the front walls and gates (HM5e3) follow, then the insertions (HM5c2). The user's calls: three
+steps, a board each; the styles to their sheets' 3-4 storeys; shop fronts on rcc 0.3, self-built 0.4, shophouse 1.0.
+
+| Style (sheet) | Body now | How |
+|---|---|---|
+| rowhouse (Brownstone) | 3-4 storeys, flat behind its cornice, a 1.1-1.5 m stoop; canted bays the main's full height on six rows in ten, masonry (no timber posts or aprons), dark trim | `bayFull`; the bay a flat-topped volume under the cornice |
+| georgian | 3-4 storeys (the attic storey's short windows on the top one) | storeys |
+| postwar (Council Estate) | no bays; flat door canopies | bay 0, canopy 0.7 |
+| villa (Southern Europe) | mostly hipped | unchanged massing (its balconies: HM5e2) |
+| townhouse | 3-4 storeys on the street line, half flat with a roof terrace, half a low pitch; doors in a reveal, two in five arched | `street`, `arched` |
+| china | one-storey hutong rows under grey tile (a quarter of rows), else 3-4-storey flat concrete blocks; red double doors | the row's roof by its storeys; plank leaves (door pattern 4) |
+| korea (walk-up villa) | 3-4 storeys over **pilotis** on four rows in five: the ground storey open on columns (a middle one past 6 m) for parking, the door and stair in a core at the back; flat or hipped (the mansard's stand-in) | `HP_PILOTIS` |
+| shophouse | 2-3 storeys, tile pitch behind a parapet front, on the street line over a **five-foot way** (1.6-2.1 m deep behind 0.44 m piers), a shop beside every door at its back | `HP_ARCADE`, shop 1.0 |
+| rcc | 2-4 storeys, flat, a **chajja** (a 0.5 m concrete sunshade slab) over every window, units built up unevenly (a storey or two short of the row's tallest on a quarter), shop fronts on three units in ten | chajjas in the shell; `HUnit.storeys`; shop 0.3 |
+| bungalow | hipped tile, a deep veranda on most | weights |
+| villa (Middle East) | 2-3 cubic storeys, flat, **crenellated** parapets on the street's front and returns, a big arched door (1.2-1.5 m) in an arched reveal, tall rooms (3.0-3.3 m) | merlons on the coping; arched openings |
+| courtyard | 1-2 storeys on the street line, crenellated, blank walls but for a few small windows set high, one big arched door (1.4-1.8 m), tall rooms (3.2-3.6 m) | `street`, `arched` |
+| block (Africa) | one storey mostly, hipped corrugated sheet at 22-28 degrees, a front veranda on columns | weights, sheet roofs 0.85 |
+| walled | two storeys mostly, hipped | weights (the upper veranda: HM5e2; the compound wall: HM5e3) |
+| selfbuilt | 1-4 storeys on the street line, flat, built up unevenly (two units in five a storey or two short), shop fronts on two in five | `street`, `HUnit.storeys`, shop 0.4 |
+| colonial | one storey on the street line under a deep tile eave (0.6-0.9 m), tall rooms (3.3-3.8 m), an arched door on seven rows in ten | `street`, `arched` |
+
+**Bays** stand only where a sheet shows them: Victorian, inter-war and the brownstone. Every other style's are gone
+(home_lab fails a style with any).
+
+**The ground floors.** A five-foot way and pilotis are porches (`HP_ARCADE`, `HP_PILOTIS`) of the recessed family
+(`home_porch_recessed`): carved out of the main as a recessed porch is (its ceiling the floor above's soffit, its floor
+paved or tiled), the door at their back, no stoop or steps. Pilotis carve the free sides too, leaving columns at the
+corners. The walker walks into both (`city_home_outlines` with `walk`: piers, columns and the core); the grass keeps off
+their footprints. **A shop front** (`HUnit.shopX0-1`) is an opening 1.8 m wide at least beside the door, in the front
+wall or at the back of a five-foot way: `HF_GARAGE` with pattern 1, which `house.glsl` (`houseShop`) draws as a roller
+shutter out of hours, else rolled up into its box over the shop lit by its own strip light (shelves of packs, a counter);
+most shops keep 7-22, a few all night, a few never open. The ground storey's windows keep off all three.
+
+**A street-line front** (`street`: townhouse, shophouse, courtyard, colonial, self-built) has no front yard (the plots'
+front 0, no car pad, no front boundary): its door stands in a reveal 0.3-0.7 m deep carved from the pavement's level, with
+no stoop out over the pavement. The rules ask for no front garden of these styles.
+
+**Arched doors** (`arched`: the courtyard house, the Middle East's villa, colonial, two in five townhouses): the door
+springs at 1.95-2.2 m, a half circle over it where the storey has room, else a segment (a fifth of its span at least,
+else square), its reveal's arch over it; both are convex openings whose heads are tangent planes round the arc. Their
+leaves, and China's red gates, are the shell's: a pair of plank leaves, iron-studded, ring handles (door pattern 4); the
+kit sets no leaf, surround or canopy at them (its doors are square: HM5b1's carved surrounds).
+
+**Unevenly built rows** (`HStyleDef.uneven`, flat rows only): a unit's own storeys (`HUnit.storeys`, never over the row's
+main, which keeps the tallest); `home_unit_vol` gives a slice as it stands, and the shell, its far shell, the dressing and
+the retrofit's walls and decks all build from it. Where a unit stands over a lower neighbour its party wall shows blank
+above the neighbour's roof and its deck takes a parapet on that side; the dividing parapet stands to the lower one's top.
+
+**Also:** door widths and storey heights by style (`doorW0-1`, `storeyH0-1`); steps' finishes to the sheets (stone and
+concrete for the orange tile on most); a part against a party wall (an outrigger back to back with its neighbour's)
+stops its verge or eaves at the wall; styles that build no chimneys build none on their terraces' party walls either.
+
+`home_lab` surveys each style's body (storeys, the share 3+, flat roofs, bays, on the street line, five-foot ways,
+pilotis, shop fronts, arched doors, built up unevenly) and fails a style short of its sheet; its new rules (`recess`:
+carved out of the front of its main, under its first floor, a five-foot way's piers left standing; `shop`: in its unit,
+clear of its door) are broken on purpose and caught.
+
 ## Massing and parts
 
 | Part | Size | Notes |
 |---|---|---|
-| Storey | 2.7-3.0 m floor to floor | ground floor 0.15-0.45 m above the garden (a step or a stoop; rowhouse stoops to 1.5 m) |
+| Storey | 2.7-3.0 m floor to floor (old houses' tall rooms more: courtyard 3.2-3.6, colonial 3.3-3.8, shophouse 3.1-3.5, Middle East villa 3.0-3.3); 1-4 storeys (HM5e1) | ground floor 0.15-0.45 m above the garden (a step or a stoop; rowhouse stoops to 1.5 m; on the street line 0.05-0.15) |
 | Storeys | 1 (ranch, bungalows) to 3 (rowhouses, Georgian); 2 most | |
 | Main volume | a rectangle, depth 7-10 m (terraces 8-11, ranch 9-12) | |
 | Roof | gable, hip or lean-to spanning the short side; pitch 25-50° (§13.5's 25° floor); span at most 12 m | ranch 18-25°, a departure: real ranches are shallower than §13's floor; they are hips over short spans so they drain |

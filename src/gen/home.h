@@ -53,8 +53,18 @@ enum { HR_GABLE = 0, HR_HIP, HR_LEAN, HR_FLAT, HR_COUNT };
 /* A volume's sides: -x, +x, -z (the street's), +z (the back). */
 enum { HSIDE_W = 0, HSIDE_E, HSIDE_S, HSIDE_N };
 /* Porches (HVol.kind of an HV_PORCH): open and gabled on posts, a lean-to, enclosed and glazed,
- * recessed into the front wall (a tiled step), a canopy on brackets, a veranda (most of the front). */
-enum { HP_OPEN = 0, HP_LEAN, HP_ENCLOSED, HP_RECESSED, HP_CANOPY, HP_VERANDA, HP_COUNT };
+ * recessed into the front wall (a tiled step), a canopy on brackets, a veranda (most of the front); and the
+ * ground floors HM5e1 added, carved out of the main as a recessed porch is, the door at their back: a five-foot
+ * way (HP_ARCADE: the upper storeys over a colonnade on the street, the ground wall set back behind piers; the
+ * shophouse) and pilotis (HP_PILOTIS: the ground storey open on columns, parking under it, the door and the stair
+ * in a core at the back; a Korean villa). home_porch_recessed: the kinds carved out of the main. */
+enum { HP_OPEN = 0, HP_LEAN, HP_ENCLOSED, HP_RECESSED, HP_CANOPY, HP_VERANDA, HP_ARCADE, HP_PILOTIS, HP_COUNT };
+static inline int home_porch_recessed(int kind) { return kind == HP_RECESSED || kind == HP_ARCADE || kind == HP_PILOTIS; }
+/* A pilotis' columns (m square) and the most a span runs between two along the front before a middle one stands */
+#define PILOTIS_COL  0.35f
+#define PILOTIS_SPAN 6.0f
+/* An arcade's piers at its unit's sides (m: each side's half of a pier shared at a party wall) */
+#define ARCADE_PIER  0.22f
 /* HVol.kind of an HV_BAY and an HV_WING. */
 enum { HBAY_SQUARE = 0, HBAY_CANTED };
 /* A canted bay's front light (m): drawn from CANT_FACE0-1, never under CANT_FACE_MIN (narrower, it is built square) */
@@ -78,6 +88,7 @@ typedef struct HVol {
     uint8_t high;                        /* lean: the side that rises (HSIDE_*), against its parent's wall */
     uint8_t kind;                        /* HP_* of a porch, HBAY_* of a bay, HWING_* of a wing */
     uint8_t parapet;                     /* 1 a parapet along the front hides the roof (georgian), 2 all round (flat) */
+    uint8_t arch;                        /* a recessed porch's: its head an arch (and its door's) */
     float   x0, z0, x1, z1;
     float   y0, eaves, top;              /* the ground, the wall plate, the ridge (a flat roof's parapet) */
     float   pitch, overhang;             /* degrees; the eaves' overhang (m) */
@@ -89,9 +100,16 @@ typedef struct HUnit {
     uint32_t seed;
     uint8_t  mirrored;           /* handed: its door towards +x */
     int8_t   door;               /* its front door */
+    /* a shop front (HM5e1: the RCC, self-built and shophouse sheets' shop under the house): a roller-shuttered
+     * opening shopX0..shopX1 in the ground storey of the wall its door is in (shopX1 > shopX0) */
+    float    shopX0, shopX1;
+    uint8_t  storeys;            /* its own storeys where a flat row's owners built up unevenly (the self-built and RCC
+                                    sheets); 0: the main's. Never more than the main's (home_unit_vol) */
 } HUnit;
 
-typedef struct HDoor { int8_t unit, vol, path; uint8_t side; float x, z, width, height; } HDoor;   /* centred at x, in the wall at z */
+/* A front door: centred at x, in the wall at z; height to its head, or an arched one's springing (its head a half
+ * circle of half its width over that) */
+typedef struct HDoor { int8_t unit, vol, path; uint8_t side, arch; float x, z, width, height; } HDoor;
 typedef struct HParty { int8_t a, b, vol; float x, z0, z1, top; } HParty;                           /* units a and b share the wall at x */
 typedef struct HChimney { int8_t vol, unit; uint8_t on, pots; float x, z, w, d, top; } HChimney;
 typedef struct HBound { uint8_t kind, role; int8_t unit; float x0, z0, x1, z1, h; } HBound;
@@ -152,6 +170,9 @@ void        home_build_at(const HomePlot *row, int n, float affluence, int first
 /* Every rule of section 13.5 (and 13.4, 13.8) on a built graph; logs "rejected <tag>: ..." lines. */
 int         home_validate(const HGraph *g, BLog *log);
 
+/* Volume vi as unit u's slice of it stands: a row's or a pair's main at the unit's own storeys (HUnit.storeys, its
+ * eaves and top with them), else the volume itself. tmp: working space. */
+const HVol *home_unit_vol(const HGraph *g, int vi, int u, HVol *tmp);
 /* A volume's outline in the row's frame (a canted bay's is its trapezoid); returns its corner count. */
 int         hvol_outline(const HVol *v, float (*p)[2]);
 /* The row's frame to the world. */
@@ -163,7 +184,11 @@ const char *home_style_name(int s);
 int         home_style_region(int s);
 int         home_style_find(int region, const char *name);   /* region -1: any; -1 if none */
 int         home_style_pick(int region, int arch, double lat, double lon, uint32_t h);
-int         home_style_storeys(int style, int arch, uint32_t h);
+int         home_style_storeys(int style, int arch, uint32_t h);   /* 1-4 (HOME_STOREYS_MAX) */
+#define HOME_STOREYS_MAX 4
+/* The styles whose fronts stand on the street line (no front yard: the townhouse, shophouse, courtyard house,
+ * colonial and self-built sheets), the plots' front 0 for them. */
+int         home_style_street(int s);
 /* The least pitch a style's roofs take (degrees): section 13.5's 25, a ranch's 18 (docs/residential-target.md). */
 float       home_style_min_pitch(int s);
 const char *home_role_name(int role);

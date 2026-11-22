@@ -64,6 +64,7 @@ typedef struct HsWin {
 typedef struct HsDoor {
     int8_t  unit, vol;
     uint8_t porch;          /* the porch's own door, in an enclosed porch's front */
+    uint8_t arch;           /* an arched door (HM5e1): its leaves are the shell's (y1 its springing), no kit leaf */
     double  x, z, w, y0, y1, recess;   /* centred at x in the wall at z (facing the street) */
 } HsDoor;
 typedef struct HsPost { int8_t unit, vol; double x, z, y0, y1; } HsPost;

@@ -6,7 +6,7 @@ view with NeonCity.exe --shot in three lights: noon, dusk, night in rain.
 The shots land in build/home/<label>/<light>_<view>.png, then
 tools/home_board.py lays them out beside the references.
 
-    python tools/home_capture.py [LABEL] [--only noon|dusk|night] [--home ARGS...]
+    python tools/home_capture.py [LABEL] [--only noon|dusk|night] [--views V1,V2] [--home ARGS...]
 
 LABEL (default "now") names the set, so a milestone's captures sit beside the
 last ones (build/home/hm0, build/home/hm3, ...). Everything after --home is
@@ -82,16 +82,20 @@ def shoot(label, light, name, cam):
 
 def main():
     args = sys.argv[1:]
-    label, only, home_args = "now", None, []
+    label, only, home_args, pick = "now", None, [], None
     while args:
         a = args.pop(0)
         if a == "--only":
             only = args.pop(0)
+        elif a == "--views":
+            pick = args.pop(0).split(",")
         elif a == "--home":
             home_args, args = args, []
         else:
             label = a
     v = views(home_args)
+    if pick:   # only these views (e.g. home_010m,home_030m,home_roofs for a board)
+        v = {k: c for k, c in v.items() if k in pick}
     GAME_ARGS[:] = game_args(home_args)
     print(f"{len(v)} views: {', '.join(v)}")
     for light in LIGHTS:

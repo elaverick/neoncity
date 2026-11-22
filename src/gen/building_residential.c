@@ -37,10 +37,10 @@ static const HStyleDef STYLES[HS_COUNT] = {
         .roof = { 0.6f, 0.4f, 0, 0 }, .pitch0 = 25, .pitch1 = 35, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.5f, .depth0 = 8.0f, .depth1 = 11.0f,
         .bay = 0.1f, .canted = 0.4f, .garage = 0.8f, .extension = 0.25f,
         .porch = { 0.3f, 0.2f, 0, 0.2f, 0.3f, 0 }, .chimney = 0.3f, .bound = { 0.9f, 0, 0, 0.1f }, .plinth0 = 0.15f, .plinth1 = 0.3f },
-    [HS_ROWHOUSE] = { .name = "rowhouse", .region = PLAN_REGION_NA, .arch = { 0.0f, 0.0f, 1.0f }, .storeys = { 0.0f, 0.4f, 0.6f },
-        .roof = { 0.2f, 0, 0, 0.8f }, .pitch0 = 30, .pitch1 = 40, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.5f, .depth0 = 9.0f, .depth1 = 11.5f,
-        .bay = 0.4f, .bay2 = 0.7f, .canted = 0.5f, .outrigger = 0.4f, .extension = 0.3f,
-        .porch = { 0, 0, 0, 0.3f, 0.7f, 0 }, .chimney = 1.0f, .bound = { 0.4f, 0.3f, 0, 0.3f }, .plinth0 = 0.9f, .plinth1 = 1.5f, .handed = 1 },
+    [HS_ROWHOUSE] = { .name = "rowhouse", .region = PLAN_REGION_NA, .arch = { 0.0f, 0.0f, 1.0f }, .storeys = { 0.0f, 0.0f, 0.4f, 0.6f },
+        .roof = { 0, 0, 0, 1.0f }, .pitch0 = 30, .pitch1 = 40, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.5f, .depth0 = 9.0f, .depth1 = 11.5f,
+        .bay = 0.6f, .canted = 0.7f, .bayFull = 1, .outrigger = 0.4f, .extension = 0.3f,
+        .porch = { 0, 0, 0, 0.3f, 0.7f, 0 }, .chimney = 1.0f, .bound = { 0.4f, 0.3f, 0, 0.3f }, .plinth0 = 1.1f, .plinth1 = 1.5f, .handed = 1 },
     [HS_TRIPLEDECKER] = { .name = "tripledecker", .region = PLAN_REGION_NA, .arch = { 0.15f, 0.0f, 0.0f }, .storeys = { 0.0f, 0.0f, 1.0f },
         .roof = { 0.5f, 0, 0, 0.5f }, .pitch0 = 30, .pitch1 = 40, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.5f, .depth0 = 10.0f, .depth1 = 13.0f,
         .bay = 0.7f, .bay2 = 1.0f, .canted = 0.6f, .extension = 0.1f,
@@ -51,7 +51,7 @@ static const HStyleDef STYLES[HS_COUNT] = {
         .roof = { 0.7f, 0.3f, 0, 0 }, .pitch0 = 35, .pitch1 = 45, .minPitch = 25, .eave0 = 0.2f, .eave1 = 0.4f, .depth0 = 8.0f, .depth1 = 10.0f,
         .bay = 0.8f, .bay2 = 0.4f, .canted = 0.7f, .outrigger = 0.8f, .extension = 0.3f,
         .porch = { 0.1f, 0, 0.1f, 0.6f, 0.2f, 0 }, .chimney = 2.0f, .bound = { 0, 0.7f, 0.3f, 0 }, .plinth0 = 0.3f, .plinth1 = 0.6f, .handed = 1 },
-    [HS_GEORGIAN] = { .name = "georgian", .region = PLAN_REGION_UK, .arch = { 0.10f, 0.05f, 0.15f }, .storeys = { 0.0f, 0.3f, 0.7f },
+    [HS_GEORGIAN] = { .name = "georgian", .region = PLAN_REGION_UK, .arch = { 0.10f, 0.05f, 0.15f }, .storeys = { 0.0f, 0.1f, 0.5f, 0.4f },
         .roof = { 1.0f, 0, 0, 0 }, .pitch0 = 30, .pitch1 = 40, .minPitch = 25, .eave0 = 0.0f, .eave1 = 0.0f, .depth0 = 8.0f, .depth1 = 10.0f,
         .outrigger = 0.4f, .extension = 0.2f,
         .porch = { 0, 0, 0, 0, 1.0f, 0 }, .chimney = 2.0f, .bound = { 0, 0.9f, 0.1f, 0 }, .plinth0 = 0.4f, .plinth1 = 0.9f, .parapet = 1, .handed = 1 },
@@ -61,88 +61,94 @@ static const HStyleDef STYLES[HS_COUNT] = {
         .porch = { 0.2f, 0.1f, 0.3f, 0.3f, 0.1f, 0 }, .chimney = 1.0f, .bound = { 0, 0.5f, 0.4f, 0.1f }, .plinth0 = 0.2f, .plinth1 = 0.4f },
     [HS_POSTWAR] = { .name = "postwar", .region = PLAN_REGION_UK, .arch = { 0.20f, 0.25f, 0.20f }, .storeys = { 0.1f, 0.9f, 0.0f },
         .roof = { 0.7f, 0.3f, 0, 0 }, .pitch0 = 30, .pitch1 = 40, .minPitch = 25, .eave0 = 0.2f, .eave1 = 0.3f, .depth0 = 7.0f, .depth1 = 9.0f,
-        .bay = 0.1f, .garage = 0.3f, .extension = 0.3f,
-        .porch = { 0, 0.3f, 0.2f, 0, 0.5f, 0 }, .chimney = 0.6f, .bound = { 0.2f, 0.3f, 0.2f, 0.3f }, .plinth0 = 0.15f, .plinth1 = 0.3f },
+        .garage = 0.3f, .extension = 0.3f,
+        .porch = { 0, 0.2f, 0.1f, 0, 0.7f, 0 }, .chimney = 0.6f, .bound = { 0.2f, 0.3f, 0.2f, 0.3f }, .plinth0 = 0.15f, .plinth1 = 0.3f },
     [HS_MODERN] = { .name = "modern", .region = PLAN_REGION_UK, .arch = { 0.20f, 0.10f, 0.15f }, .storeys = { 0.0f, 0.85f, 0.15f },
         .roof = { 0.6f, 0.1f, 0, 0.3f }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.2f, .eave1 = 0.4f, .depth0 = 8.0f, .depth1 = 10.0f,
         .garage = 0.5f, .extension = 0.2f,
         .porch = { 0, 0.2f, 0, 0.3f, 0.5f, 0 }, .chimney = 0.0f, .bound = { 0.4f, 0.3f, 0.1f, 0.2f }, .plinth0 = 0.15f, .plinth1 = 0.3f },
     /* Southern Europe */
-    [HS_SEU_VILLA] = { .name = "villa", .region = PLAN_REGION_SEU, .arch = { 1.0f, 0.5f, 0.0f }, .storeys = { 0.1f, 0.6f, 0.3f },
-        .roof = { 0.3f, 0.7f, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.6f, .depth0 = 9.0f, .depth1 = 12.0f,
+    [HS_SEU_VILLA] = { .name = "villa", .region = PLAN_REGION_SEU, .arch = { 1.0f, 0.5f, 0.0f }, .storeys = { 0.05f, 0.6f, 0.35f },
+        .roof = { 0.25f, 0.75f, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.6f, .depth0 = 9.0f, .depth1 = 12.0f,
         .garage = 0.3f, .extension = 0.2f,
         .porch = { 0.3f, 0.2f, 0, 0.3f, 0.2f, 0 }, .chimney = 0.5f, .bound = { 0, 0.8f, 0.1f, 0.1f }, .plinth0 = 0.2f, .plinth1 = 0.5f,
         .wallH0 = 1.2f, .wallH1 = 1.8f },
-    [HS_TOWNHOUSE] = { .name = "townhouse", .region = PLAN_REGION_SEU, .arch = { 0.0f, 0.5f, 1.0f }, .storeys = { 0.0f, 0.3f, 0.7f },
-        .roof = { 0.7f, 0, 0, 0.3f }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.5f, .depth0 = 9.0f, .depth1 = 12.0f,
+    [HS_TOWNHOUSE] = { .name = "townhouse", .region = PLAN_REGION_SEU, .arch = { 0.0f, 0.3f, 1.0f }, .storeys = { 0.0f, 0.0f, 0.6f, 0.4f },
+        .roof = { 0.5f, 0, 0, 0.5f }, .pitch0 = 25, .pitch1 = 28, .minPitch = 25, .eave0 = 0.25f, .eave1 = 0.4f, .depth0 = 9.0f, .depth1 = 12.0f,
         .outrigger = 0.3f, .extension = 0.2f,
-        .porch = { 0, 0, 0, 0.4f, 0.6f, 0 }, .chimney = 0.5f, .bound = { 0.5f, 0.5f, 0, 0 }, .plinth0 = 0.1f, .plinth1 = 0.3f },
+        .porch = { 0, 0, 0, 1.0f, 0, 0 }, .chimney = 0.3f, .bound = { 1.0f, 0, 0, 0 }, .plinth0 = 0.05f, .plinth1 = 0.15f,
+        .street = 1, .arched = 0.4f, .doorW0 = 1.0f, .doorW1 = 1.25f },
     /* East Asia */
     [HS_JAPAN] = { .name = "japan", .region = PLAN_REGION_EAS, .arch = { 1.0f, 0.5f, 0.3f }, .storeys = { 0.1f, 0.9f, 0.0f },
-        .roof = { 0.5f, 0.5f, 0, 0 }, .pitch0 = 25, .pitch1 = 35, .minPitch = 25, .eave0 = 0.4f, .eave1 = 0.7f, .depth0 = 7.0f, .depth1 = 10.0f,
+        .roof = { 0.5f, 0.5f, 0, 0 }, .pitch0 = 25, .pitch1 = 32, .minPitch = 25, .eave0 = 0.4f, .eave1 = 0.7f, .depth0 = 7.0f, .depth1 = 10.0f,
         .garage = 0.3f, .extension = 0.1f,
         .porch = { 0, 0.3f, 0, 0.3f, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0.3f, 0.5f, 0.1f, 0.1f }, .plinth0 = 0.3f, .plinth1 = 0.5f },
-    [HS_CHINA] = { .name = "china", .region = PLAN_REGION_EAS, .arch = { 0.4f, 0.2f, 1.0f }, .storeys = { 0.0f, 0.5f, 0.5f },
-        .roof = { 0.6f, 0, 0, 0.4f }, .pitch0 = 25, .pitch1 = 35, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.6f, .depth0 = 8.0f, .depth1 = 11.0f,
-        .outrigger = 0.2f, .garage = 0.1f, .extension = 0.3f,
-        .porch = { 0, 0, 0, 0.5f, 0.5f, 0 }, .chimney = 0.0f, .bound = { 0, 0.9f, 0, 0.1f }, .plinth0 = 0.15f, .plinth1 = 0.4f,
-        .wallH0 = 1.8f, .wallH1 = 2.4f },
-    [HS_KOREA] = { .name = "korea", .region = PLAN_REGION_EAS, .arch = { 1.0f, 0.5f, 0.5f }, .storeys = { 0.0f, 0.2f, 0.8f },
-        .roof = { 0.3f, 0, 0, 0.7f }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.2f, .eave1 = 0.4f, .depth0 = 9.0f, .depth1 = 12.0f,
-        .garage = 0.2f, .extension = 0.1f,
-        .porch = { 0, 0, 0, 0.5f, 0.5f, 0 }, .chimney = 0.0f, .bound = { 0, 0.8f, 0, 0.2f }, .plinth0 = 0.3f, .plinth1 = 0.8f },
+    [HS_CHINA] = { .name = "china", .region = PLAN_REGION_EAS, .arch = { 0.4f, 0.2f, 1.0f }, .storeys = { 0.25f, 0.05f, 0.55f, 0.15f },
+        .roof = { 0.25f, 0, 0, 0.75f }, .pitch0 = 25, .pitch1 = 32, .minPitch = 25, .eave0 = 0.4f, .eave1 = 0.6f, .depth0 = 8.0f, .depth1 = 11.0f,
+        .outrigger = 0.1f, .garage = 0.05f, .extension = 0.3f,
+        .porch = { 0, 0, 0, 0.6f, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0, 0.9f, 0, 0.1f }, .plinth0 = 0.15f, .plinth1 = 0.3f,
+        .wallH0 = 1.8f, .wallH1 = 2.4f, .doorW0 = 1.1f, .doorW1 = 1.4f },
+    [HS_KOREA] = { .name = "korea", .region = PLAN_REGION_EAS, .arch = { 1.0f, 0.5f, 0.5f }, .storeys = { 0.0f, 0.0f, 0.45f, 0.55f },
+        .roof = { 0, 0.35f, 0, 0.65f }, .pitch0 = 28, .pitch1 = 38, .minPitch = 25, .eave0 = 0.2f, .eave1 = 0.35f, .depth0 = 10.0f, .depth1 = 12.0f,
+        .garage = 0.0f, .extension = 0.1f,
+        .porch = { 0, 0, 0, 0.5f, 0.5f, 0 }, .chimney = 0.0f, .bound = { 0, 0.8f, 0, 0.2f }, .plinth0 = 0.05f, .plinth1 = 0.15f,
+        .pilotis = 0.8f },
     /* South-East Asia: shophouses behind their five-foot way (a veranda here), link houses with car porches */
-    [HS_SHOPHOUSE] = { .name = "shophouse", .region = PLAN_REGION_SEA, .arch = { 0.0f, 0.0f, 1.0f }, .storeys = { 0.0f, 0.5f, 0.5f },
-        .roof = { 1.0f, 0, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.5f, .eave1 = 0.8f, .depth0 = 10.0f, .depth1 = 12.0f,
+    [HS_SHOPHOUSE] = { .name = "shophouse", .region = PLAN_REGION_SEA, .arch = { 0.0f, 0.0f, 1.0f }, .storeys = { 0.0f, 0.55f, 0.45f },
+        .roof = { 1.0f, 0, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.5f, .depth0 = 10.0f, .depth1 = 12.0f,
         .outrigger = 0.2f, .extension = 0.4f,
-        .porch = { 0, 0, 0, 0, 0.5f, 0.5f }, .chimney = 0.0f, .bound = { 0.6f, 0.2f, 0, 0.2f }, .plinth0 = 0.2f, .plinth1 = 0.5f },
-    [HS_LINKHOUSE] = { .name = "linkhouse", .region = PLAN_REGION_SEA, .arch = { 1.0f, 0.5f, 0.8f }, .storeys = { 0.2f, 0.8f, 0.0f },
-        .roof = { 0.5f, 0.5f, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.5f, .eave1 = 0.8f, .depth0 = 9.0f, .depth1 = 12.0f,
+        .porch = { 0, 0, 0, 1.0f, 0, 0 }, .chimney = 0.0f, .bound = { 1.0f, 0, 0, 0 }, .plinth0 = 0.15f, .plinth1 = 0.25f, .parapet = 1,
+        .street = 1, .arcade = 1.0f, .shop = 1.0f, .storeyH0 = 3.1f, .storeyH1 = 3.5f },
+    [HS_LINKHOUSE] = { .name = "linkhouse", .region = PLAN_REGION_SEA, .arch = { 1.0f, 0.5f, 0.8f }, .storeys = { 0.1f, 0.9f, 0.0f },
+        .roof = { 0.6f, 0.4f, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.5f, .eave1 = 0.8f, .depth0 = 9.0f, .depth1 = 12.0f,
         .garage = 0.4f, .extension = 0.4f,
-        .porch = { 0.3f, 0.3f, 0, 0, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0, 0.3f, 0, 0.7f }, .plinth0 = 0.2f, .plinth1 = 0.4f },
+        .porch = { 0.3f, 0.3f, 0, 0, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0, 0.3f, 0, 0.7f }, .plinth0 = 0.1f, .plinth1 = 0.25f },
     /* South Asia */
-    [HS_RCC] = { .name = "rcc", .region = PLAN_REGION_SAS, .arch = { 0.5f, 0.2f, 1.0f }, .storeys = { 0.0f, 0.4f, 0.6f },
+    [HS_RCC] = { .name = "rcc", .region = PLAN_REGION_SAS, .arch = { 0.5f, 0.2f, 1.0f }, .storeys = { 0.0f, 0.2f, 0.5f, 0.3f },
         .roof = { 0, 0, 0, 1.0f }, .pitch0 = 25, .pitch1 = 25, .minPitch = 25, .depth0 = 9.0f, .depth1 = 12.0f,
-        .bay = 0.2f, .bay2 = 0.5f, .garage = 0.1f, .extension = 0.3f,
-        .porch = { 0, 0, 0, 0.3f, 0.7f, 0 }, .chimney = 0.0f, .bound = { 0, 0.9f, 0, 0.1f }, .plinth0 = 0.3f, .plinth1 = 0.6f },
+        .garage = 0.05f, .extension = 0.3f,
+        .porch = { 0, 0, 0, 0.3f, 0.7f, 0 }, .chimney = 0.0f, .bound = { 0, 0.9f, 0, 0.1f }, .plinth0 = 0.1f, .plinth1 = 0.25f,
+        .shop = 0.3f, .uneven = 0.25f },
     [HS_BUNGALOW] = { .name = "bungalow", .region = PLAN_REGION_SAS, .arch = { 1.0f, 0.5f, 0.2f }, .storeys = { 0.8f, 0.2f, 0.0f },
-        .roof = { 0, 0.5f, 0, 0.5f }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.4f, .eave1 = 0.6f, .depth0 = 9.0f, .depth1 = 12.0f,
+        .roof = { 0, 0.85f, 0, 0.15f }, .pitch0 = 25, .pitch1 = 32, .minPitch = 25, .eave0 = 0.5f, .eave1 = 0.8f, .depth0 = 9.0f, .depth1 = 12.0f,
         .garage = 0.2f, .extension = 0.3f,
-        .porch = { 0.4f, 0.3f, 0, 0, 0, 0.3f }, .chimney = 0.0f, .bound = { 0, 0.9f, 0.1f, 0 }, .plinth0 = 0.4f, .plinth1 = 0.8f },
+        .porch = { 0.2f, 0.1f, 0, 0, 0, 0.7f }, .chimney = 0.0f, .bound = { 0, 0.9f, 0.1f, 0 }, .plinth0 = 0.4f, .plinth1 = 0.8f },
     /* Middle East and North Africa: walled villas, courtyard rows */
-    [HS_MENA_VILLA] = { .name = "villa", .region = PLAN_REGION_MENA, .arch = { 1.0f, 0.5f, 0.3f }, .storeys = { 0.1f, 0.8f, 0.1f },
+    [HS_MENA_VILLA] = { .name = "villa", .region = PLAN_REGION_MENA, .arch = { 1.0f, 0.5f, 0.3f }, .storeys = { 0.0f, 0.6f, 0.4f },
         .roof = { 0, 0, 0, 1.0f }, .pitch0 = 25, .pitch1 = 25, .minPitch = 25, .depth0 = 9.0f, .depth1 = 12.0f,
-        .garage = 0.4f, .extension = 0.2f,
-        .porch = { 0, 0, 0, 0.5f, 0.5f, 0 }, .chimney = 0.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.2f, .plinth1 = 0.5f,
-        .wallH0 = 1.8f, .wallH1 = 2.6f },
-    [HS_COURTYARD] = { .name = "courtyard", .region = PLAN_REGION_MENA, .arch = { 0.3f, 0.0f, 1.0f }, .storeys = { 0.4f, 0.6f, 0.0f },
+        .garage = 0.3f, .extension = 0.2f,
+        .porch = { 0, 0, 0, 1.0f, 0, 0 }, .chimney = 0.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.2f, .plinth1 = 0.5f,
+        .wallH0 = 1.8f, .wallH1 = 2.6f, .arched = 1.0f, .doorW0 = 1.2f, .doorW1 = 1.5f, .storeyH0 = 3.0f, .storeyH1 = 3.3f },
+    [HS_COURTYARD] = { .name = "courtyard", .region = PLAN_REGION_MENA, .arch = { 0.3f, 0.0f, 1.0f }, .storeys = { 0.45f, 0.55f, 0.0f },
         .roof = { 0, 0, 0, 1.0f }, .pitch0 = 25, .pitch1 = 25, .minPitch = 25, .depth0 = 9.0f, .depth1 = 12.0f,
         .outrigger = 0.5f, .extension = 0.2f,
-        .porch = { 0, 0, 0, 0.6f, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.1f, .plinth1 = 0.3f,
-        .wallH0 = 1.8f, .wallH1 = 2.4f },
+        .porch = { 0, 0, 0, 1.0f, 0, 0 }, .chimney = 0.0f, .bound = { 1.0f, 0, 0, 0 }, .plinth0 = 0.05f, .plinth1 = 0.15f,
+        .street = 1, .arched = 1.0f, .doorW0 = 1.4f, .doorW1 = 1.8f, .storeyH0 = 3.2f, .storeyH1 = 3.6f },
     /* Sub-Saharan Africa */
-    [HS_BLOCK] = { .name = "block", .region = PLAN_REGION_SSA, .arch = { 1.0f, 0.5f, 0.5f }, .storeys = { 0.8f, 0.2f, 0.0f },
-        .roof = { 0.3f, 0.4f, 0, 0.3f }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.6f, .depth0 = 8.0f, .depth1 = 11.0f,
-        .garage = 0.1f, .extension = 0.3f,
-        .porch = { 0.3f, 0.4f, 0, 0, 0.3f, 0 }, .chimney = 0.0f, .bound = { 0.2f, 0.6f, 0, 0.2f }, .plinth0 = 0.2f, .plinth1 = 0.5f },
-    [HS_WALLED] = { .name = "walled", .region = PLAN_REGION_SSA, .arch = { 1.0f, 0.5f, 0.3f }, .storeys = { 0.5f, 0.5f, 0.0f },
-        .roof = { 0, 0.5f, 0, 0.5f }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.6f, .depth0 = 9.0f, .depth1 = 12.0f,
+    [HS_BLOCK] = { .name = "block", .region = PLAN_REGION_SSA, .arch = { 1.0f, 0.5f, 0.5f }, .storeys = { 0.75f, 0.25f, 0.0f },
+        .roof = { 0.25f, 0.75f, 0, 0 }, .pitch0 = 22, .pitch1 = 28, .minPitch = 20, .eave0 = 0.4f, .eave1 = 0.7f, .depth0 = 8.0f, .depth1 = 11.0f,
+        .garage = 0.05f, .extension = 0.3f,
+        .porch = { 0.2f, 0.2f, 0, 0, 0, 0.6f }, .chimney = 0.0f, .bound = { 0.2f, 0.6f, 0, 0.2f }, .plinth0 = 0.3f, .plinth1 = 0.6f },
+    [HS_WALLED] = { .name = "walled", .region = PLAN_REGION_SSA, .arch = { 1.0f, 0.5f, 0.3f }, .storeys = { 0.3f, 0.7f, 0.0f },
+        .roof = { 0, 0.8f, 0, 0.2f }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.4f, .eave1 = 0.7f, .depth0 = 9.0f, .depth1 = 12.0f,
         .garage = 0.3f, .extension = 0.2f,
-        .porch = { 0.3f, 0.2f, 0, 0.2f, 0, 0.3f }, .chimney = 0.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.2f, .plinth1 = 0.5f,
+        .porch = { 0.3f, 0, 0, 0.2f, 0, 0.5f }, .chimney = 0.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.2f, .plinth1 = 0.5f,
         .wallH0 = 2.0f, .wallH1 = 2.6f },
     /* Latin America */
-    [HS_SELFBUILT] = { .name = "selfbuilt", .region = PLAN_REGION_LAT, .arch = { 0.5f, 0.3f, 1.0f }, .storeys = { 0.2f, 0.5f, 0.3f },
+    [HS_SELFBUILT] = { .name = "selfbuilt", .region = PLAN_REGION_LAT, .arch = { 0.5f, 0.3f, 1.0f }, .storeys = { 0.1f, 0.4f, 0.4f, 0.1f },
         .roof = { 0, 0, 0, 1.0f }, .pitch0 = 25, .pitch1 = 25, .minPitch = 25, .depth0 = 8.0f, .depth1 = 12.0f,
-        .outrigger = 0.3f, .extension = 0.4f,
-        .porch = { 0, 0, 0, 0.3f, 0.7f, 0 }, .chimney = 0.0f, .bound = { 0, 0.7f, 0, 0.3f }, .plinth0 = 0.1f, .plinth1 = 0.3f,
-        .wallH0 = 1.6f, .wallH1 = 2.4f },
+        .extension = 0.4f,
+        .porch = { 0, 0, 0, 1.0f, 0, 0 }, .chimney = 0.0f, .bound = { 1.0f, 0, 0, 0 }, .plinth0 = 0.05f, .plinth1 = 0.15f,
+        .street = 1, .shop = 0.4f, .uneven = 0.4f },
     [HS_COLONIAL] = { .name = "colonial", .region = PLAN_REGION_LAT, .arch = { 0.3f, 0.3f, 0.8f }, .storeys = { 1.0f, 0.0f, 0.0f },
-        .roof = { 0.7f, 0.3f, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.4f, .eave1 = 0.7f, .depth0 = 9.0f, .depth1 = 12.0f,
+        .roof = { 0.8f, 0.2f, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.6f, .eave1 = 0.9f, .depth0 = 9.0f, .depth1 = 12.0f,
         .outrigger = 0.5f, .extension = 0.2f,
-        .porch = { 0, 0, 0, 0.5f, 0.5f, 0 }, .chimney = 0.0f, .bound = { 0.6f, 0.4f, 0, 0 }, .plinth0 = 0.2f, .plinth1 = 0.5f },
+        .porch = { 0, 0, 0, 1.0f, 0, 0 }, .chimney = 0.0f, .bound = { 1.0f, 0, 0, 0 }, .plinth0 = 0.05f, .plinth1 = 0.15f,
+        .street = 1, .arched = 0.7f, .doorW0 = 1.2f, .doorW1 = 1.5f, .storeyH0 = 3.3f, .storeyH1 = 3.8f },
 };
 
 const HStyleDef *home_style_def(int s) { return &STYLES[s >= 0 && s < HS_COUNT ? s : HS_TRACT]; }
+int home_style_street(int s) { return home_style_def(s)->street; }
 
 /* The yards by region (HM2b): see HomeYard. Britain the largest (a terraced street's 6-10 m back yards),
  * Southern Europe next, North America's small lots, then the Middle East and Africa; East and South Asia
@@ -189,6 +195,17 @@ int home_style_region(int s) { return s >= 0 && s < HS_COUNT ? STYLES[s].region 
 float home_style_min_pitch(int s) { return home_style_def(s)->minPitch; }
 
 int home_style_find(int region, const char *name) {
+    /* "villa:mena": a name qualified by its region's code (two styles share "villa") */
+    const char *colon = strchr(name, ':');
+    if (colon) {
+        char base[32];
+        const size_t n = (size_t)(colon - name) < sizeof(base) - 1 ? (size_t)(colon - name) : sizeof(base) - 1;
+        memcpy(base, name, n);
+        base[n] = 0;
+        for (int r = 0; r < PLAN_REGION_COUNT; ++r)
+            if (strcmp(plan_region_code(r), colon + 1) == 0) return home_style_find(r, base);
+        return -1;
+    }
     for (int s = 0; s < HS_COUNT; ++s)
         if ((region < 0 || STYLES[s].region == region) && strcmp(STYLES[s].name, name) == 0) return s;
     return -1;
@@ -196,7 +213,7 @@ int home_style_find(int region, const char *name) {
 
 static const char *const ROLE_NAMES[HV_ROLE_COUNT] = { "main", "pair", "row", "wing", "extension", "bay", "outrigger", "porch" };
 static const char *const ROOF_NAMES[HR_COUNT] = { "gable", "hip", "lean", "flat" };
-static const char *const PORCH_NAMES[HP_COUNT] = { "open", "lean-to", "enclosed", "recessed", "canopy", "veranda" };
+static const char *const PORCH_NAMES[HP_COUNT] = { "open", "lean-to", "enclosed", "recessed", "canopy", "veranda", "arcade", "pilotis" };
 const char *home_role_name(int r) { return r >= 0 && r < HV_ROLE_COUNT ? ROLE_NAMES[r] : "?"; }
 const char *home_roof_name(int r) { return r >= 0 && r < HR_COUNT ? ROOF_NAMES[r] : "?"; }
 const char *home_porch_name(int k) { return k >= 0 && k < HP_COUNT ? PORCH_NAMES[k] : "?"; }
@@ -235,10 +252,29 @@ int home_style_pick(int region, int arch, double lat, double lon, uint32_t h) {
 
 int home_style_storeys(int style, int arch, uint32_t h) {
     const HStyleDef *S = home_style_def(style);
-    float x = hash_float(h) * (S->storeys[0] + S->storeys[1] + S->storeys[2]);
-    int n = x < S->storeys[0] ? 1 : x < S->storeys[0] + S->storeys[1] ? 2 : 3;
+    float sum = 0.0f;
+    for (int k = 0; k < HOME_STOREYS_MAX; ++k) sum += S->storeys[k];
+    float x = hash_float(h) * sum;
+    int n = 0;
+    for (int k = 0; k < HOME_STOREYS_MAX && !n; ++k) {
+        if (x < S->storeys[k]) n = k + 1;
+        x -= S->storeys[k];
+    }
+    for (int k = HOME_STOREYS_MAX - 1; k >= 0 && !n; --k)
+        if (S->storeys[k] > 0.0f) n = k + 1;
+    if (!n) n = 2;
     if (arch == HOME_SEMI && n == 1) n = 2;   /* a semi-detached bungalow pair reads as a terrace stub; the pairs are two storeys */
     return n;
+}
+
+const HVol *home_unit_vol(const HGraph *g, int vi, int u, HVol *tmp) {
+    const HVol *v = &g->vol[vi];
+    if (v->unit != HG_ROW_WIDE || u < 0 || u >= g->nunit || !g->unit[u].storeys || g->unit[u].storeys >= v->storeys) return v;
+    *tmp = *v;
+    tmp->storeys = g->unit[u].storeys;
+    tmp->eaves = g->plinth + tmp->storeys * g->storeyH;
+    home_vol_top(tmp);
+    return tmp;
 }
 
 /* ---------------------------------------------------------------------------
@@ -257,6 +293,11 @@ typedef struct HCtx {
     /* the row's choices, shared by its units */
     int              roof, porch, bay, bay2, canted, outrig, outrigGable, garage, front, pad;
     float            pitch, eave, depth, wallH, frontH;
+    /* HM5e1's, drawn from a stream of their own (r5) so the styles it left alone keep their houses */
+    Rng              r5;
+    int              ground;      /* the row's ground floor: HP_ARCADE, HP_PILOTIS, or -1 a house's */
+    int              arched;      /* its doors under arches */
+    float            groundD;     /* the arcade's or the pilotis' depth */
 } HCtx;
 
 static int wpick(Rng *r, const float *w, int n) {
@@ -340,29 +381,46 @@ static void lean_against(HVol *v, const HVol *p, float pitch) {
 
 typedef struct Front { float ux0, ux1; int side; } Front;   /* the unit's span of the main's front wall; door side -1 left, 0 centre, 1 right */
 
+/* An arch's rise over a door or recess w wide springing at `spring` over the floor, under a head at `head`: a half
+ * circle where there is room, else a segment as tall as there is (at least a fifth of its span), in cm; 0 no arch. */
+static uint8_t arch_rise(float w, float spring, float head) {
+    const float rise = fminf(0.5f * w, head - spring);
+    return rise < 0.2f * w ? 0 : (uint8_t)fminf(250.0f, rise * 100.0f + 0.5f);
+}
+
 static void front_features(HCtx *c, int ui, int mi, Front f) {
     HGraph *g = c->g;
     HUnit *u = &g->unit[ui];
     const HVol *m = &g->vol[mi];
     const float front = m->z0, W = f.ux1 - f.ux0;
-    const float dw = c->S->parapet ? 1.1f : rng_range(&c->r, 1.0f, 1.1f);
+    float dw = c->S->parapet ? 1.1f : rng_range(&c->r, 1.0f, 1.1f);
+    if (c->S->doorW0 > 0.0f) dw = fminf(rng_range(&c->r5, c->S->doorW0, c->S->doorW1), W - 1.0f);   /* a style's wide doors (double leaves) */
+    if (dw < 1.0f) dw = 1.0f;
     const float margin = rng_range(&c->r, 0.35f, 0.65f);
     float dx = f.side < 0 ? f.ux0 + margin + 0.5f * dw : f.side > 0 ? f.ux1 - margin - 0.5f * dw : 0.5f * (f.ux0 + f.ux1);
     /* the porch: the row's kind, an owner's own one time in seven */
     int kind = c->porch;
     if (c->level < 2 && chance(&c->r, 0.14f)) kind = wpick(&c->r, c->S->porch, HP_COUNT);
     if (c->level >= 2) kind = HP_CANOPY;
+    /* a front on the street line has no yard for a porch: its door stands in a reveal (HM5e1) */
+    if (c->S->street) kind = HP_RECESSED;
+    /* the row's ground floor (HM5e1): a five-foot way or pilotis, the door at its back */
+    const int ground = c->level < 2 ? c->ground : -1;
+    if (ground >= 0) kind = ground;
     float pw, pd;
     switch (kind) {
     case HP_CANOPY:   pw = dw + rng_range(&c->r, 0.4f, 0.8f); pd = rng_range(&c->r, 0.8f, 1.1f); break;
     case HP_RECESSED: pw = dw + rng_range(&c->r, 0.2f, 0.5f); pd = rng_range(&c->r, 0.9f, 1.5f); break;
     case HP_VERANDA:  pw = W * rng_range(&c->r, 0.7f, 0.95f); pd = rng_range(&c->r, 1.8f, 2.5f); break;
     case HP_ENCLOSED: pw = dw + rng_range(&c->r, 0.8f, 1.4f); pd = rng_range(&c->r, 1.2f, 1.8f); break;
+    case HP_ARCADE: case HP_PILOTIS: pw = W; pd = c->groundD; break;
     default:          pw = dw + rng_range(&c->r, 0.8f, 1.6f); pd = rng_range(&c->r, 1.2f, 2.0f); break;
     }
+    /* a street-line front's door reveal: shallower (0.3-0.7 m) */
+    if (c->S->street && kind == HP_RECESSED) { pd = rng_range(&c->r5, 0.3f, 0.7f); pw = dw + rng_range(&c->r5, 0.25f, 0.5f); }
     /* a small front yard (HM2b): the porch the yard has room for, else a canopy over the door */
     const float room = front - c->Y->proj;
-    if (kind != HP_RECESSED && kind != HP_CANOPY && pd > room) {
+    if (!home_porch_recessed(kind) && kind != HP_CANOPY && pd > room) {
         const float least = kind == HP_VERANDA ? 1.5f : 1.2f;
         if (room >= least) pd = room;
         else { kind = HP_CANOPY; pw = dw + rng_range(&c->r, 0.4f, 0.8f); pd = rng_range(&c->r, 0.8f, 1.1f); }
@@ -370,16 +428,36 @@ static void front_features(HCtx *c, int ui, int mi, Front f) {
     if (kind == HP_CANOPY && pd > room) pd = fmaxf(0.6f, room);
     if (pw > W) pw = W;
     float px0 = kind == HP_VERANDA ? 0.5f * (f.ux0 + f.ux1) - 0.5f * pw : dx - 0.5f * pw;
+    if (kind == HP_ARCADE) {
+        /* the colonnade's piers: half a shared one at each party wall, a whole one at a row's end */
+        const float pl = f.ux0 > m->x0 + 0.05f ? ARCADE_PIER : 2.0f * ARCADE_PIER, pr = f.ux1 < m->x1 - 0.05f ? ARCADE_PIER : 2.0f * ARCADE_PIER;
+        px0 = f.ux0 + pl; pw = W - pl - pr;
+    } else if (kind == HP_PILOTIS) px0 = f.ux0;
     if (px0 < f.ux0) px0 = f.ux0;
     if (px0 + pw > f.ux1) px0 = f.ux1 - pw;
     if (kind == HP_VERANDA && (dx - 0.5f * dw < px0 || dx + 0.5f * dw > px0 + pw)) dx = px0 + 0.5f * pw;   /* the door under its veranda */
-    const int recessed = kind == HP_RECESSED;
+    if (home_porch_recessed(kind) && (dx - 0.5f * dw < px0 + 0.1f || dx + 0.5f * dw > px0 + pw - 0.1f)) dx = px0 + 0.5f * pw;   /* within its reveal */
+    const int recessed = home_porch_recessed(kind);
     const float pz0 = recessed ? front : front - pd, pz1 = recessed ? front + pd : front;
     const int pi = add_vol(g, HV_PORCH, ui, mi, px0, pz0, px0 + pw, pz1, 1, HR_LEAN);
     if (pi < 0) return;
     HVol *p = &g->vol[pi];
     p->kind = (uint8_t)kind;
-    if (recessed) { set_flat(p); p->eaves = g->plinth + g->storeyH - 0.3f; }
+    /* an arched door (HM5e1: the courtyard house's, the villa's, the colonial's): it springs at about 2 m, its reveal's
+     * arch over it, both under the storey's head */
+    float spring = 2.1f;
+    uint8_t doorArch = 0;
+    if (c->arched && kind == HP_RECESSED) {
+        spring = rng_range(&c->r5, 1.95f, 2.2f);
+        const float head = g->storeyH - 0.3f;
+        p->arch = arch_rise(pw, spring, head);
+        doorArch = p->arch ? arch_rise(dw, spring, head - 0.08f) : 0;
+        if (!doorArch) p->arch = 0;
+        if (!p->arch) spring = 2.1f;
+    }
+    if (kind == HP_ARCADE) { set_flat(p); p->eaves = g->plinth + g->storeyH - 0.35f; }
+    else if (kind == HP_PILOTIS) { set_flat(p); p->eaves = g->plinth + g->storeyH - 0.25f; }
+    else if (recessed) { set_flat(p); p->eaves = p->arch ? g->plinth + spring + 0.01f * p->arch : g->plinth + g->storeyH - 0.3f; }
     else if (kind == HP_OPEN) { p->roof = HR_GABLE; p->ridgeX = 0; p->pitch = fmaxf(c->pitch, c->S->minPitch); p->eaves = g->plinth + rng_range(&c->r, 2.3f, 2.6f); }
     else {
         lean_against(p, &g->vol[mi], fmaxf(c->S->minPitch, c->pitch - 5.0f));
@@ -392,11 +470,22 @@ static void front_features(HCtx *c, int ui, int mi, Front f) {
         HDoor *d = &g->door[g->ndoor];
         memset(d, 0, sizeof(*d));
         d->unit = (int8_t)ui; d->vol = (int8_t)mi; d->path = -1; d->side = HSIDE_S;
-        d->x = dx; d->z = pz1; d->width = dw; d->height = 2.1f;
+        d->x = dx; d->z = pz1; d->width = dw; d->height = doorArch ? spring : 2.1f; d->arch = doorArch;
         u->door = (int8_t)g->ndoor++;
     }
+    /* a shop front (HM5e1): in the ground storey beside the door, at the back of a five-foot way, or in the front wall
+     * clear of the door's reveal */
+    if (c->level < 2 && kind != HP_PILOTIS && chance(&c->r5, c->S->shop)) {
+        const int arcade = kind == HP_ARCADE;
+        const float a0 = arcade ? px0 + 0.3f : f.ux0 + 0.35f, a1 = arcade ? px0 + pw - 0.3f : f.ux1 - 0.35f;
+        const float dl = arcade ? dx - 0.5f * dw - 0.3f : fminf(dx - 0.5f * dw, px0) - 0.3f;    /* the door's (or its reveal's) edges */
+        const float dr = arcade ? dx + 0.5f * dw + 0.3f : fmaxf(dx + 0.5f * dw, px0 + pw) + 0.3f;
+        const float s0 = a1 - dr >= dl - a0 ? dr : a0, s1 = a1 - dr >= dl - a0 ? a1 : dl;
+        if (s1 - s0 >= 1.8f) { u->shopX0 = s0; u->shopX1 = s1; }
+        else home_repair(g, c->log, "shop", "unit %d: %.1f m beside its door, no shop front", ui, s1 - s0);
+    }
     /* the bay, on the other side of the door */
-    if (!c->bay || c->level >= 2 || kind == HP_VERANDA) return;
+    if (!c->bay || c->level >= 2 || kind == HP_VERANDA || ground >= 0 || u->shopX1 > u->shopX0) return;
     float b0, b1;
     const int left = f.side > 0 || (f.side == 0 && chance(&c->r, 0.5f));
     if (left) { b0 = f.ux0 + 0.35f; b1 = px0 - 0.4f; }
@@ -426,6 +515,14 @@ static void front_features(HCtx *c, int ui, int mi, Front f) {
     if (bi < 0) return;
     HVol *b = &g->vol[bi];
     b->kind = (uint8_t)(canted ? HBAY_CANTED : HBAY_SQUARE);
+    if (c->S->bayFull && m->storeys >= 2) {
+        /* the brownstone's (HM5e1): every storey, its flat top under the main's cornice */
+        b->storeys = m->storeys;
+        set_flat(b);
+        b->eaves = m->eaves - 0.35f;
+        home_vol_top(b);
+        return;
+    }
     b->storeys = (uint8_t)(c->bay2 && m->storeys >= 2 ? 2 : 1);
     lean_against(b, m, fmaxf(c->S->minPitch, c->pitch));
     /* its roof tucked under the main's eaves */
@@ -591,6 +688,20 @@ static int build_detached(HCtx *c) {
     return 1;
 }
 
+/* A flat row whose owners built up unevenly (HM5e1: the self-built and RCC sheets): a unit a storey (or two) short of
+ * the row's tallest, never under one. The main keeps the tallest; home_unit_vol gives each unit's own. */
+static void uneven_storeys(HCtx *c, int mi) {
+    HGraph *g = c->g;
+    const HVol *m = &g->vol[mi];
+    if (c->S->uneven <= 0.0f || m->roof != HR_FLAT || m->storeys < 2 || c->level >= 2) return;
+    for (int k = 0; k < g->nunit; ++k) {
+        int st = m->storeys;
+        if (chance(&c->r5, c->S->uneven)) st--;
+        if (st > 1 && chance(&c->r5, 0.3f * c->S->uneven)) st--;
+        g->unit[k].storeys = (uint8_t)(st < m->storeys ? st : 0);
+    }
+}
+
 static int build_semi(HCtx *c) {
     HGraph *g = c->g;
     if (g->nunit != 2) return 0;
@@ -610,6 +721,7 @@ static int build_semi(HCtx *c) {
     if (mi < 0) return 0;
     roof_main(c, &g->vol[mi]);
     home_vol_top(&g->vol[mi]);
+    uneven_storeys(c, mi);
     /* doors by the party wall (handed) or at the outer sides, the pair's choice */
     const int byParty = chance(&c->r, 0.5f);
     for (int k = 0; k < 2; ++k) {
@@ -651,6 +763,7 @@ static int build_terrace(HCtx *c) {
     if (mi < 0) return 0;
     roof_main(c, &g->vol[mi]);
     home_vol_top(&g->vol[mi]);
+    uneven_storeys(c, mi);
     for (int k = 0; k < n; ++k) {
         HUnit *u = &g->unit[k];
         /* handed rows pair their doors (and outriggers) on alternate party walls */
@@ -669,7 +782,7 @@ static int build_terrace(HCtx *c) {
         p->a = (int8_t)k; p->b = (int8_t)(k + 1); p->vol = (int8_t)mi; p->x = g->unit[k].x1; p->z0 = m->z0; p->z1 = m->z1; p->top = m->top;
     }
     /* stacks on the party walls at the ridge, each serving the two units beside it; at the gable ends inside the wall */
-    if (m->roof != HR_FLAT && c->level < 2) {
+    if (m->roof != HR_FLAT && c->level < 2 && c->S->chimney > 0.0f) {   /* none where the style builds none (HM5e1) */
         const float rate = fminf(1.0f, c->S->chimney * 0.5f + 0.25f);
         for (int k = 0; k + 1 < n; ++k)
             if (chance(&c->r, rate)) add_chimney(c, mi, k, HC_PARTY, g->unit[k].x1, ridge_line(m), 4, 1);
@@ -767,7 +880,7 @@ static void lay_site(HCtx *c) {
             for (int i = 0; i < g->nvol; ++i) {
                 const HVol *p = &g->vol[i];
                 if (p->role != HV_PORCH || p->unit != k) continue;
-                zEnd = p->kind == HP_CANOPY || p->kind == HP_RECESSED ? m->z0 : p->z0;
+                zEnd = p->kind == HP_CANOPY || home_porch_recessed(p->kind) ? m->z0 : p->z0;
             }
             const float pw = rng_range(&c->r, 0.9f, 1.2f);
             float px0 = d->x - 0.5f * pw, px1 = d->x + 0.5f * pw;
@@ -893,6 +1006,27 @@ static void init_graph(HCtx *c, const HomePlot *row, int n) {
     }
 }
 
+/* HM5e1's choices for the row, each style's body to its sheet's panel 1, from their own stream: tall rooms, the
+ * ground floor (a five-foot way, pilotis), arched doors; China's one-storey rows are hutong courtyards under grey
+ * tile, its taller ones flat concrete blocks. */
+static void choose_row_hm5e(HCtx *c) {
+    const HStyleDef *S = c->S;
+    HGraph *g = c->g;
+    if (S->storeyH0 > 0.0f) g->storeyH = rng_range(&c->r5, S->storeyH0, S->storeyH1);
+    c->arched = chance(&c->r5, S->arched);
+    c->ground = -1;
+    c->groundD = 0.0f;
+    const float x = rng_float(&c->r5);
+    if (x < S->arcade) { c->ground = HP_ARCADE; c->groundD = rng_range(&c->r5, 1.6f, 2.1f); }
+    else if (x < S->arcade + S->pilotis && c->depth >= 8.0f) {
+        /* the pilotis deep enough for a car (4.6 m and a margin), a core of 2.8 m at least behind for the stair and door */
+        c->ground = HP_PILOTIS;
+        c->groundD = fminf(6.2f, c->depth - rng_range(&c->r5, 2.8f, 3.6f));
+        if (c->groundD < 5.0f) { c->ground = -1; c->groundD = 0.0f; }
+    }
+    if (g->style == HS_CHINA && c->level < 2) c->roof = c->P[0].storeys <= 1 ? HR_GABLE : HR_FLAT;
+}
+
 static void choose_row(HCtx *c) {
     const HStyleDef *S = c->S;
     HGraph *g = c->g;
@@ -929,6 +1063,7 @@ static void choose_row(HCtx *c) {
         c->depth = fminf(c->depth, 9.0f);
         c->porch = HP_CANOPY;
     }
+    choose_row_hm5e(c);
 }
 
 /* The simplest valid house (after level 2): the plain main at the least clearances, a canopy and a path. */
@@ -936,7 +1071,10 @@ static void build_simplest(HCtx *c) {
     HGraph *g = c->g;
     c->level = 3;
     c->r = rng_make(hash_combine(g->seed, 0x5133u));
-    g->storeyH = 2.85f;
+    c->r5 = rng_make(hash_combine(g->seed, 0x5134u));
+    c->ground = -1;
+    c->arched = 0;
+    g->storeyH = c->S->storeyH0 > 0.0f ? 0.5f * (c->S->storeyH0 + c->S->storeyH1) : 2.85f;
     g->plinth = 0.3f;
     c->roof = c->S->roof[HR_GABLE] + c->S->roof[HR_HIP] > 0.0f ? HR_GABLE : HR_FLAT;
     c->pitch = fmaxf(30.0f, c->S->minPitch);
@@ -971,6 +1109,7 @@ void home_build_at(const HomePlot *row, int n, float affluence, int first, HGrap
     for (int level = first; level < 3; ++level) {
         c.level = level;
         c.r = rng_make(hash_combine(hash_combine(row[0].seed, 0x40E5u), (uint32_t)level));   /* stream(seed, "home", level) */
+        c.r5 = rng_make(hash_combine(hash_combine(row[0].seed, 0x45E1u), (uint32_t)level));  /* HM5e1's choices */
         init_graph(&c, row, n);
         choose_row(&c);
         blog_printf(log, " level %d: %s roof at %.0f deg, main %.1f m deep%s%s%s\n", level, home_roof_name(c.roof), c.pitch, c.depth,

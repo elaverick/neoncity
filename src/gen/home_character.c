@@ -144,7 +144,7 @@ static void row_set(const HGraph *g, HCharSet *s) {
         s->frame = s->frameBack = HK_FRAME_UPVC; s->door = HK_DOOR_UPVC; s->grilles = 2;
         break;
     case HS_RCC:
-        s->frame = s->frameBack = ch(h, 1, 0.5f) ? HK_FRAME_UPVC : HK_FRAME_CASEMENT; s->head = s->headBack = HK_HEAD_CONCRETE;
+        s->frame = s->frameBack = ch(h, 1, 0.5f) ? HK_FRAME_UPVC : HK_FRAME_CASEMENT; s->head = s->headBack = HK_HEAD_NONE;   /* its chajjas (HM5e1) */
         s->grilles = 2; s->gutter = 255;
         break;
     case HS_BUNGALOW:
@@ -477,6 +477,7 @@ static void dress_bay(DC *d, int vi) {
     const int n = hvol_outline(v, ol);
     if (n != 4) return;
     const double dyu = C->dy ? C->dy[u] : 0.0;
+    const int masonry = g->style == HS_ROWHOUSE;
     begin(d, u);
     for (int k = 0; k < v->storeys; ++k) {
         const double floorY = g->plinth + k * g->storeyH + dyu;
@@ -497,7 +498,7 @@ static void dress_bay(DC *d, int vi) {
             push_wall(d, p, w->m[0], w->m[1]);
             hk_window(d->pm, &hw);
             const double sillH = w->y0 - floorY;
-            if (sillH > 0.5) {
+            if (sillH > 0.5 && !masonry) {
                 pm_push(d->pm);
                 pm_translate(d->pm, 0.0f, (float)(0.12 - sillH), 0.0f);
                 pm_scale(d->pm, (float)w->w, (float)((sillH - 0.22) / 0.7), 1.0f);
@@ -527,7 +528,7 @@ static void dress_bay(DC *d, int vi) {
             pop(d);
         }
         /* posts at its corners: square to the main wall where they meet it, bisecting the rest */
-        for (int c = 0; c < 4; ++c) {
+        for (int c = 0; c < 4 && !masonry; ++c) {
             const double px = ol[c][0], pz = ol[c][1];
             double mx = 0.0, mz = -1.0;
             if (fabs(pz - v->z1) > 0.01) {
@@ -640,7 +641,15 @@ static void dress_door(DC *d, const HsDoor *dr) {
     double fanH = 0.5;      /* a fanlight's height: the module's 0.5 m, less under a low porch's head */
     double canopyY = p ? p->y0 + dyu : 0.0;
     if (dr->porch) kind = HK_DOOR_HALF;   /* an enclosed porch's own door: half glazed */
-    else {
+    else if (dr->arch) {
+        /* an arched door's or China's gate's leaves are the shell's (HM5e1): the kit sets down nothing, the door's room
+         * on the wall is its reveal's */
+        d->doorX[u] = dr->x;
+        d->doorHalf[u] = p ? fmax(0.5 * dr->w + 0.05, 0.5 * (p->x1 - p->x0) + 0.05) : 0.5 * dr->w + 0.05;
+        d->doorTop[u] = p && home_porch_recessed(pk) ? p->eaves + dyu : dr->y1 + 0.5 * dr->w;
+        d->D->st.doors++;
+        return;
+    } else {
         sur = cs->surround;
         /* doorcases stand on a bare front (or where a canopy would); a fanlight over any door but an enclosed porch's
          * inner one, shrunk to the head of a recess or the ceiling of a porch over it */
@@ -652,12 +661,12 @@ static void dress_door(DC *d, const HsDoor *dr) {
             int ok;
             if (sur == HK_CASE_FANLIGHT) {
                 double head = 1e9;   /* what stands over the door: a recess's head, a porch's ceiling */
-                if (pk == HP_RECESSED) head = p->eaves + dyu;
+                if (home_porch_recessed(pk)) head = p->eaves + dyu;
                 else if (pk == HP_OPEN || pk == HP_LEAN || pk == HP_VERANDA) head = p->eaves + dyu - SLAB_T;
                 fanH = fmin(0.5, head - dr->y1 - 0.06);
                 half = 0.5 * (dr->w + 0.1);
                 top = dr->y1 + 0.02 + fanH;
-                ok = fanH >= 0.3 && surround_fits(d, dr, half, top, pk == HP_RECESSED);
+                ok = fanH >= 0.3 && surround_fits(d, dr, half, top, home_porch_recessed(pk));
                 /* under a canopy: the canopy goes up over the fanlight, if one still fits there */
                 if (ok && pk == HP_CANOPY) {
                     canopyY = fmax(canopyY, top + 0.04);
@@ -666,7 +675,7 @@ static void dress_door(DC *d, const HsDoor *dr) {
             } else {
                 half = 0.9 * (dr->w + 0.1);
                 top = dr->y0 + (sur == HK_CASE_PEDIMENT ? 3.5 : 3.0) * (h + 0.05) / 2.1;
-                ok = pk != HP_RECESSED && surround_fits(d, dr, half, top, 0);
+                ok = !home_porch_recessed(pk) && surround_fits(d, dr, half, top, 0);
             }
             if (ok) { d->doorHalf[u] = half; d->doorTop[u] = top; break; }
             const int was = sur;
@@ -1224,6 +1233,25 @@ static int front_runs(const DC *d, const Roof *R, int e, double y, double out, d
     if (door >= 0 && fabs(dir[0]) > 0.5) {
         const double c0 = (d->doorX[door] - d->doorHalf[door] - 0.05 - a[0]) / dir[0], c1 = (d->doorX[door] + d->doorHalf[door] + 0.05 - a[0]) / dir[0];
         n = cut_runs(r, n, fmin(c0, c1), fmax(c0, c1), 0.3, max);
+    }
+    if (fabs(dir[0]) > 0.5) {
+        const HGraph *g = d->g;
+        for (int i = 0; i < g->nvol; ++i) {
+            const HVol *p = &g->vol[i];
+            if (p->role != HV_PORCH || !home_porch_recessed(p->kind)) continue;
+            const double dyu = d->C->dy ? d->C->dy[p->unit] : 0.0;
+            if (y > p->eaves + dyu + 0.05) continue;
+            const double pad = p->kind == HP_PILOTIS ? 0.05 : 0.08;
+            const double c0 = (p->x0 - pad - a[0]) / dir[0], c1 = (p->x1 + pad - a[0]) / dir[0];
+            n = cut_runs(r, n, fmin(c0, c1), fmax(c0, c1), 0.3, max);
+        }
+        for (int u = 0; u < g->nunit; ++u) {
+            const HUnit *un = &g->unit[u];
+            const double dyu = d->C->dy ? d->C->dy[u] : 0.0;
+            if (un->shopX1 <= un->shopX0 || y > g->plinth + dyu + 2.8) continue;
+            const double c0 = (un->shopX0 - 0.1 - a[0]) / dir[0], c1 = (un->shopX1 + 0.1 - a[0]) / dir[0];
+            n = cut_runs(r, n, fmin(c0, c1), fmax(c0, c1), 0.3, max);
+        }
     }
     /* back to s along e for push_run_wall */
     const double e2[2] = { -m[1], m[0] };

@@ -1151,13 +1151,27 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM5e, each style's body to its sheet** (the user, 2026-11-22, on HM5c1's board: the houses miss their
-  sheets' balconies and walls, and bays stand where the sheets have none): massing and roofs by the sheets, a
-  balcony family on houses, the boundary walls and gates the graph already plans (`HBound`, `HGate`, drawn by
-  nothing until now), bays only where a sheet shows them, regional porches and surrounds for HM5's British ones.
-  Then HM5c2 (retrofit insertions, 3 units in 5), HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the
-  existing styles to their sheets), HM6 (the rest of the lived-in layer and the lights). Every step checked against
-  its sheets' panels.
+- **Next: the vines (HMv)**, before HM5e2: the retrofit kit's leaf-blob vines (`hr_vine`, PMK_R_VINE) replaced by
+  wall-hugging alpha-cut cards with steep parallax and self-shadowing, on 4-6 albedos the user generates (ivy,
+  bougainvillea, creeper, jasmine...); alpha, height and normal derived from them by a tool, files in assets/. Board.
+- **Then HM5e2, balconies** (HM5e1, the bodies, done 2026-11-22): a balcony family in the graph (balconette, slab,
+  glazed, loggia, upper veranda), the window behind made a French window, by the sheets' panel 1. Then HM5e3 (the
+  boundary walls and gates the graph already plans: `HBound`, `HGate`, drawn by nothing until now), HM5c2 (retrofit
+  insertions, 3 units in 5), HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing styles to their
+  sheets), HM6 (the rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **The bodies' leftovers** (HM5e1):
+  - The far shell (past 220 m) carves nothing: a five-foot way's, pilotis' and a shop's ground storey are walls with
+    painted windows there. A dark band in the far wall's rhythm would do if a rise shows it.
+  - Shops' lights are their own glow, not in the light table: the five-foot way's ceiling and the pavement get nothing
+    from them at night. HM6, with the porch lamps.
+  - Arched doors have no kit: the shell's plank leaves, no surround, fanlight or carved frame. HM5b1's carved surrounds
+    (the courtyard house's, the villa's) and the colonial's rejas.
+  - Korea's mansard is a hip (the sheet's dormered mansard roof is a shape the roofs don't make). A mansard roof kind if
+    the board asks for it.
+  - Five-foot ways are flat-headed between square piers; the shophouse sheet's arches, pilasters and capitals are
+    HM5b1's ornament.
+  - Units built up unevenly are flat rows only (self-built, RCC): a pitched row's units share one roof line.
+  - China's one-storey rows are its hutong houses facing the street; their courtyard wall and gatehouse are HM5e3's.
 - **The retrofit kit's leftovers** (HM5c1):
   - Its lights (downlights, LED strips, lanterns, bulkheads) are emissive only: no light table entries, no RT
     shadows. HM6 puts the porch and entrance lamps in the light table; take these with them.

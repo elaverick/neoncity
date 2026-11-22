@@ -316,13 +316,56 @@ void city_build_homes(int cx, int cz, Mesh *m) {
  * What stands on the ground (collision, the grass)
  * ------------------------------------------------------------------------- */
 
-int city_home_outlines(ChunkGen *g, int ri, double (*v)[4][2], int max) {
+/* A rectangle of the row's frame into the outlines. */
+static int outline_rect(const HGraph *G, float x0, float z0, float x1, float z1, double (*v)[4][2], int n, int max) {
+    if (n >= max || x1 - x0 < 0.02f || z1 - z0 < 0.02f) return n;
+    const float q[4][2] = { { x0, z0 }, { x1, z0 }, { x1, z1 }, { x0, z1 } };
+    for (int c = 0; c < 4; ++c) home_to_world(G, q[c][0], q[c][1], &v[n][c][0], &v[n][c][1]);
+    return n + 1;
+}
+
+/* A main's ground storey as the walker meets it, unit by unit: a five-foot way's piers and the shop behind, pilotis'
+ * columns, the party walls' fins and the core (HM5e1); a unit with neither, its slice whole. */
+static int outline_main_walk(const HGraph *G, const HVol *m, double (*v)[4][2], int n, int max) {
+    for (int u = 0; u < G->nunit; ++u) {
+        const float sx0 = fmaxf(m->x0, G->unit[u].x0), sx1 = fminf(m->x1, G->unit[u].x1);
+        if (sx1 - sx0 < 0.05f) continue;
+        const HVol *p = NULL;
+        for (int i = 0; i < G->nvol; ++i)
+            if (G->vol[i].role == HV_PORCH && G->vol[i].unit == u && (G->vol[i].kind == HP_ARCADE || G->vol[i].kind == HP_PILOTIS)) p = &G->vol[i];
+        if (!p) { n = outline_rect(G, sx0, m->z0, sx1, m->z1, v, n, max); continue; }
+        n = outline_rect(G, sx0, p->z1, sx1, m->z1, v, n, max);
+        if (p->kind == HP_ARCADE) {
+            n = outline_rect(G, sx0, m->z0, p->x0, p->z1, v, n, max);
+            n = outline_rect(G, p->x1, m->z0, sx1, p->z1, v, n, max);
+            continue;
+        }
+        /* pilotis: the columns at the free corners and along the front, a fin down each party wall */
+        const float c = PILOTIS_COL;
+        const int freeW = p->x0 <= m->x0 + 0.05f, freeE = p->x1 >= m->x1 - 0.05f;
+        const float fx0 = freeW ? p->x0 + c : p->x0 + 0.12f, fx1 = freeE ? p->x1 - c : p->x1 - 0.12f;
+        if (freeW) { n = outline_rect(G, p->x0, p->z0, p->x0 + c, p->z0 + c, v, n, max); n = outline_rect(G, p->x0, p->z1 - c, p->x0 + c, p->z1, v, n, max); }
+        else n = outline_rect(G, p->x0, p->z0, fx0, p->z1, v, n, max);
+        if (freeE) { n = outline_rect(G, p->x1 - c, p->z0, p->x1, p->z0 + c, v, n, max); n = outline_rect(G, p->x1 - c, p->z1 - c, p->x1, p->z1, v, n, max); }
+        else n = outline_rect(G, fx1, p->z0, p->x1, p->z1, v, n, max);
+        const int nbay = (int)fmaxf(1.0f, ceilf((fx1 - fx0) / PILOTIS_SPAN));
+        const float bw = (fx1 - fx0 - (float)(nbay - 1) * c) / (float)nbay;
+        for (int k = 0; k + 1 < nbay; ++k) {
+            const float a = fx0 + (float)(k + 1) * bw + (float)k * c;
+            n = outline_rect(G, a, p->z0, a + c, p->z0 + c, v, n, max);
+        }
+    }
+    return n;
+}
+
+int city_home_outlines(ChunkGen *g, int ri, double (*v)[4][2], int max, int walk) {
     const HGraph *G = chunk_gen_home(g, ri);
     if (G->empty) return 0;
     int n = 0;
     for (int i = 0; i < G->nvol && n < max; ++i) {
         const HVol *vo = &G->vol[i];
         if (vo->y0 > 0.01f || (vo->role == HV_PORCH && vo->kind != HP_ENCLOSED)) continue;   /* canopies hang; open porches stand on posts */
+        if (walk && vo->role <= HV_ROW) { n = outline_main_walk(G, vo, v, n, max); continue; }
         float q[6][2];
         if (hvol_outline(vo, q) != 4) continue;
         for (int c = 0; c < 4; ++c) home_to_world(G, q[c][0], q[c][1], &v[n][c][0], &v[n][c][1]);

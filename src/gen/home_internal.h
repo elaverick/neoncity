@@ -29,7 +29,7 @@ typedef struct HStyleDef {
     const char *name;
     uint8_t     region;
     float       arch[HOME_ARCH_COUNT];   /* the style's weight among its region's, by archetype */
-    float       storeys[3];              /* 1, 2, 3 */
+    float       storeys[HOME_STOREYS_MAX];   /* 1, 2, 3, 4 */
     float       roof[HR_COUNT];          /* the main's: gable, hip, (lean: never), flat */
     float       pitch0, pitch1, minPitch;
     float       eave0, eave1;            /* the eaves' overhang (m) */
@@ -42,6 +42,15 @@ typedef struct HStyleDef {
     float       plinth0, plinth1;        /* the ground floor over the garden (a stoop's to 1.5 m) */
     float       wallH0, wallH1;          /* a front wall's height where the style walls its plots (0: 0.6-1.2 m) */
     uint8_t     parapet, handed;         /* a front parapet (georgian); a terrace's doors in pairs */
+    /* HM5e1: each style's body to its sheet's panel 1 */
+    uint8_t     street;                  /* the front on the street line: no front yard, the door in a reveal */
+    float       arched;                  /* a row's doors under an arch, in an arched reveal (courtyard, MENA villa, colonial, townhouse) */
+    uint8_t     bayFull;                 /* bays run the main's full height under its cornice (the brownstone) */
+    float       arcade, pilotis;         /* a row's ground floor: a five-foot way; pilotis */
+    float       shop;                    /* a unit's chance of a shop front in its ground storey */
+    float       doorW0, doorW1;          /* the front door's width (0: the usual 1.0-1.1 m) */
+    float       storeyH0, storeyH1;      /* floor to floor (0: the usual 2.7-3.0 m; old houses' tall rooms more) */
+    float       uneven;                  /* a flat row's owners built up unevenly: a unit's chance of a storey fewer */
 } HStyleDef;
 
 const HStyleDef *home_style_def(int s);

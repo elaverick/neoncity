@@ -306,8 +306,9 @@ static int home_cams(int argc, char **argv) {
             /* a terrace's or a pair's front stands nearer the street than 6 m (HM2b's tight yards): the point looked at
              * steps out into its front yard until there is a line of sight to it (HM5: the forced styles' close views) */
             int got = 0;
-            static const double IN[4] = { 6.0, 3.0, 1.5, 0.4 };
-            for (int q = 0; q < 4 && !got; ++q) {
+            /* ...and a street-line front (HM5e1), on the boundary itself: the point just in front of it */
+            static const double IN[5] = { 6.0, 3.0, 1.5, 0.4, -0.25 };
+            for (int q = 0; q < 5 && !got; ++q) {
                 const double qx = mid.x - nx * IN[q], qz = mid.z - nz * IN[q];
                 got = sl_view(name, qx, gy + 3.0, qz, nx, nz, DIST[k] + IN[q], gy, 0.0, q < 3);
             }
@@ -502,10 +503,13 @@ static void check_block_plots(const Block *b, PlotStats *st) {
         CHECK(p->arch < HOME_ARCH_COUNT && w >= Y->width[p->arch % 3][0] - 1e-3 && w <= Y->width[p->arch % 3][1] + 1e-3, "block %08x plot %d (%s) is %.2f m wide",
               b->seed, i, HM_ARCH[p->arch % 3], w);
         CHECK(p->depth >= Y->frontMin + HOME_HOUSE_MIN + Y->rearMin - 1e-3f && p->depth <= dmax + 1e-3f, "block %08x plot %d is %.1f m deep", b->seed, i, p->depth);
-        CHECK(p->front >= Y->frontMin - 1e-3f && p->front <= room + 1e-3f, "block %08x plot %d's front yard is %.1f m of %.1f", b->seed, i, p->front, p->depth);
+        /* a street-line style's front stands on the boundary (HM5e1) */
+        const float fmin = home_style_street(p->style) ? 0.0f : Y->frontMin;
+        CHECK(p->front >= fmin - 1e-3f && p->front <= room + 1e-3f, "block %08x plot %d's front yard is %.1f m of %.1f", b->seed, i, p->front, p->depth);
+        CHECK(!home_style_street(p->style) || (p->front == 0.0f && !p->pad), "block %08x plot %d (%s) is off the street line", b->seed, i, home_style_name(p->style));
         CHECK(!p->pad || p->front >= HOME_PAD0 - 1e-3f, "block %08x plot %d parks in a %.1f m front yard", b->seed, i, p->front);
         if (p->unit == 0) st->pads += p->pad;
-        CHECK(p->storeys >= 1 && p->storeys <= 3, "block %08x plot %d has %d storeys", b->seed, i, p->storeys);
+        CHECK(p->storeys >= 1 && p->storeys <= HOME_STOREYS_MAX, "block %08x plot %d has %d storeys", b->seed, i, p->storeys);
         CHECK(p->unit < p->units, "block %08x plot %d is unit %d of %d", b->seed, i, p->unit, p->units);
         if (p->arch == HOME_TERRACE) CHECK(p->units >= 3 && p->units <= 12, "block %08x plot %d's terrace has %d units", b->seed, i, p->units);
         if (p->arch == HOME_SEMI) CHECK(p->units == 2, "block %08x plot %d's pair has %d halves", b->seed, i, p->units);

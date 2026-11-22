@@ -80,7 +80,8 @@ static int make_row(int arch, int style, uint32_t seed, HomePlot *P) {
     const float room = depth - HOME_HOUSE_MIN - Y->rearMin;
     const int pad = rng_float(&r) < Y->pad[arch] && room >= HOME_PAD0;
     const float fg = pad ? rng_range(&r, HOME_PAD0, HOME_PAD1) : rng_range(&r, Y->front0, Y->front1);
-    const float front = fmaxf(Y->frontMin, fminf(fg, room));
+    const int street = home_style_street(style);   /* HM5e1: a street-line front has no yard (src/city/plots.c) */
+    const float front = street ? 0.0f : fmaxf(Y->frontMin, fminf(fg, room));
     const int storeys = home_style_storeys(style, arch, hash_combine(seed, 0x5701u));
     for (int k = 0; k < n; ++k) {
         HomePlot *p = &P[k];
@@ -91,7 +92,7 @@ static int make_row(int arch, int style, uint32_t seed, HomePlot *P) {
         p->seed = hash_combine(seed, (uint32_t)k + 1u);
         p->arch = (uint8_t)arch; p->unit = (uint8_t)k; p->units = (uint8_t)n;
         p->storeys = (uint8_t)storeys; p->region = (uint8_t)region; p->style = (uint8_t)style;
-        p->pad = (uint8_t)pad;
+        p->pad = (uint8_t)(pad && !street);
     }
     return n;
 }
@@ -273,7 +274,7 @@ static void draw_house(Image *im, const View *V, const HGraph *g) {
 typedef struct Stats {
     int houses, units, levels[4], empty, invalid, nondet, repairs, fallback;
     int roofs[HR_COUNT], porch[HP_COUNT], bays, canted, bay2, garages, extensions, outriggers, chimneys, sheds, cars, trees;
-    int bound[HB_COUNT], storeys[4];
+    int bound[HB_COUNT], storeys[HOME_STOREYS_MAX + 1];
     double ms;
 } Stats;
 
@@ -285,7 +286,7 @@ static void survey(const HGraph *g, Stats *st) {
     if (g->empty) { st->empty++; return; }
     for (int i = 0; i < g->nvol; ++i) {
         const HVol *v = &g->vol[i];
-        if (v->role <= HV_ROW) { st->roofs[v->roof]++; st->storeys[v->storeys & 3]++; }
+        if (v->role <= HV_ROW) { st->roofs[v->roof]++; st->storeys[v->storeys <= HOME_STOREYS_MAX ? v->storeys : 0]++; }
         if (v->role == HV_PORCH) st->porch[v->kind % HP_COUNT]++;
         if (v->role == HV_BAY) { st->bays++; st->canted += v->kind == HBAY_CANTED; st->bay2 += v->storeys == 2; }
         if (v->role == HV_WING && v->kind == HWING_GARAGE) st->garages++;
@@ -303,9 +304,9 @@ static void survey(const HGraph *g, Stats *st) {
 }
 
 /* The rules bite: a valid house broken one rule at a time must be rejected with that rule's tag. */
-enum { BITE_COUNT = 12 };
+enum { BITE_COUNT = 14 };
 static const char *const BITE_TAG[BITE_COUNT] = { "chimney mid-slope", "front garden", "rear garden", "span side", "overlap", "path crosses",
-                                                  "side clearance", "door width", "pitch", "party wall", "boundary", "porch" };
+                                                  "side clearance", "door width", "pitch", "party wall", "boundary", "porch", "recess", "shop" };
 static int find_main(const HGraph *g) {
     for (int i = 0; i < g->nvol; ++i)
         if (g->vol[i].role <= HV_ROW) return i;
@@ -321,7 +322,7 @@ static int bite(HGraph *g, int k) {
     case 0: if (!g->nchim || !pitched) return 0;
             g->chim[0].on = HC_RIDGE; if (m->ridgeX) g->chim[0].z = m->z0 + 0.25f * (m->z1 - m->z0); else g->chim[0].x = m->x0 + 0.25f * (m->x1 - m->x0);
             return 1;
-    case 1: m->z0 = home_yard(g->region)->frontMin - 0.5f; return 1;
+    case 1: m->z0 = home_style_street(g->style) ? -0.5f : home_yard(g->region)->frontMin - 0.5f; return 1;
     case 2: m->z1 = g->unit[0].depth - (home_yard(g->region)->rearMin - 1.0f); return 1;
     case 3: if (!pitched || fabsf((m->x1 - m->x0) - (m->z1 - m->z0)) < 0.5f) return 0; m->ridgeX = !m->ridgeX; return 1;
     case 4: for (int i = 0; i < g->nvol && g->nvol < HG_MAX_VOL; ++i)
@@ -336,10 +337,122 @@ static int bite(HGraph *g, int k) {
              { HBound *b = &g->bound[g->nbound++]; memset(b, 0, sizeof(*b)); b->kind = HB_FENCE; b->role = HBR_SIDE;
                b->x0 = b->x1 = 0.5f * (m->x0 + m->x1); b->z0 = 0.0f; b->z1 = g->unit[0].depth; b->h = 1.5f; }
              return 1;
+    case 12: for (int i = 0; i < g->nvol; ++i)   /* a recess run through to the back of its main (HM5e1) */
+                 if (g->vol[i].role == HV_PORCH && home_porch_recessed(g->vol[i].kind)) { g->vol[i].z1 = m->z1 - 1.0f; return 1; }
+             return 0;
+    case 13: for (int k = 0; k < g->nunit; ++k)   /* a shop front over its door (HM5e1) */
+                 if (g->unit[k].door >= 0) { const HDoor *d = &g->door[g->unit[k].door]; g->unit[k].shopX0 = d->x - 1.0f; g->unit[k].shopX1 = d->x + 1.0f; return 1; }
+             return 0;
     default: for (int i = 0; i < g->nvol; ++i)
                  if (g->vol[i].role == HV_PORCH && g->vol[i].unit == 0) { g->vol[i].x0 = g->vol[i].x1 - 0.3f; return 1; }
              return 0;
     }
+}
+
+/* ---------------------------------------------------------------------------
+ * The bodies against their sheets' panel 1 (HM5e1; ~/.claude/plans/residential-buildings.md "HM5e"): per style, over
+ * every archetype, the share of units with each body feature, and the checks the sheets ask for
+ * ------------------------------------------------------------------------- */
+
+typedef struct Body {
+    long units, storeys, tall, flat, bays, bayFull, street, arcade, pilotis, shop, arched, uneven;
+} Body;
+static Body g_body[HS_COUNT];
+
+static void survey_body(const HGraph *g) {
+    if (g->empty) return;
+    Body *b = &g_body[g->style];
+    const int mi = find_main(g);
+    if (mi < 0) return;
+    const HVol *m = &g->vol[mi];
+    for (int u = 0; u < g->nunit; ++u) {
+        HVol tmp;
+        const HVol *uv = home_unit_vol(g, mi, u, &tmp);
+        b->units++;
+        b->storeys += uv->storeys;
+        b->tall += uv->storeys >= 3;
+        b->flat += m->roof == HR_FLAT;
+        b->street += m->z0 < 0.05f;
+        b->shop += g->unit[u].shopX1 > g->unit[u].shopX0;
+        b->uneven += g->unit[u].storeys != 0;
+        if (g->unit[u].door >= 0) b->arched += g->door[g->unit[u].door].arch != 0;
+    }
+    for (int i = 0; i < g->nvol; ++i) {
+        const HVol *v = &g->vol[i];
+        if (v->role == HV_BAY) { b->bays++; b->bayFull += v->storeys >= m->storeys; }
+        if (v->role == HV_PORCH && v->kind == HP_ARCADE) b->arcade++;
+        if (v->role == HV_PORCH && v->kind == HP_PILOTIS) b->pilotis++;
+    }
+}
+
+/* The checklist (the plan's "Panel 1, style by style"): what each sheet's original house must show, as shares of a style's
+ * units (bays a unit). Styles without a sheet are not asked. */
+static int body_check(void) {
+    static const struct { const char *style; float bays0, bays1, storeys0, flat0, street0, arcade0, pilotis0, shop0, shop1, arched0, uneven0; } WANT[] = {
+        /* style        bays        storeys flat  street arcade pilotis shop        arched uneven */
+        { "victorian",  0.3f, 9.0f, 2.0f,   0.0f, 0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "interwar",   0.3f, 9.0f, 2.0f,   0.0f, 0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "rowhouse",   0.3f, 9.0f, 3.2f,   0.95f,0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "georgian",   0.0f, 0.0f, 3.1f,   0.0f, 0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "postwar",    0.0f, 0.0f, 1.8f,   0.0f, 0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "townhouse",  0.0f, 0.0f, 3.2f,   0.3f, 0.95f, 0.0f,  0.0f,   0.0f, 1.0f, 0.2f,  0.0f },
+        { "japan",      0.0f, 0.0f, 1.8f,   0.0f, 0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "china",      0.0f, 0.0f, 2.4f,   0.55f,0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "korea",      0.0f, 0.0f, 3.3f,   0.5f, 0.0f,  0.0f,  0.5f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "shophouse",  0.0f, 0.0f, 2.3f,   0.0f, 0.95f, 0.85f, 0.0f,   0.75f,1.0f, 0.0f,  0.0f },
+        { "linkhouse",  0.0f, 0.0f, 1.8f,   0.0f, 0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "rcc",        0.0f, 0.0f, 2.6f,   0.95f,0.0f,  0.0f,  0.0f,   0.15f,0.45f,0.0f,  0.1f },
+        { "bungalow",   0.0f, 0.0f, 1.0f,   0.0f, 0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "courtyard",  0.0f, 0.0f, 1.4f,   0.95f,0.95f, 0.0f,  0.0f,   0.0f, 1.0f, 0.75f, 0.0f },
+        { "block",      0.0f, 0.0f, 1.0f,   0.0f, 0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "walled",     0.0f, 0.0f, 1.5f,   0.0f, 0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "selfbuilt",  0.0f, 0.0f, 2.1f,   0.95f,0.95f, 0.0f,  0.0f,   0.2f, 0.55f,0.0f,  0.15f },
+        { "colonial",   0.0f, 0.0f, 1.0f,   0.0f, 0.95f, 0.0f,  0.0f,   0.0f, 1.0f, 0.35f, 0.0f },
+    };
+    int failures = 0;
+    printf("\nthe bodies by style (HM5e1, against the sheets' panel 1): a unit's share of each\n");
+    printf("  %-11s %6s %7s %5s %5s %6s %6s %6s %7s %5s %6s %6s\n", "style", "units", "storeys", "3+", "flat", "bays", "street", "arcade", "pilotis", "shop", "arched", "uneven");
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Body *b = &g_body[st];
+        if (!b->units) continue;
+        const double U = (double)b->units;
+        printf("  %-11s %6ld %7.2f %5.2f %5.2f %6.2f %6.2f %6.2f %7.2f %5.2f %6.2f %6.2f\n", home_style_name(st), b->units, b->storeys / U, b->tall / U,
+               b->flat / U, b->bays / U, b->street / U, b->arcade / U, b->pilotis / U, b->shop / U, b->arched / U, b->uneven / U);
+    }
+    for (size_t k = 0; k < sizeof(WANT) / sizeof(WANT[0]); ++k) {
+        /* two styles are named villa: Southern Europe's and the Middle East's; neither is in this table by name */
+        const int st = home_style_find(-1, WANT[k].style);
+        if (st < 0) { printf("FAIL: the body table names %s, which doesn't exist\n", WANT[k].style); failures++; continue; }
+        const Body *b = &g_body[st];
+        if (b->units < 200) continue;
+        const double U = (double)b->units;
+        char why[160] = "";
+        if (b->bays / U < WANT[k].bays0 || b->bays / U > WANT[k].bays1 + 1e-9) snprintf(why, sizeof(why), "bays %.2f a unit", b->bays / U);
+        else if (WANT[k].bays0 > 0.0f && st == home_style_find(-1, "rowhouse") && b->bayFull < 0.9 * b->bays) snprintf(why, sizeof(why), "bays full height on %.0f%%", 100.0 * b->bayFull / (b->bays ? b->bays : 1));
+        else if (b->storeys / U < WANT[k].storeys0) snprintf(why, sizeof(why), "%.2f storeys on average", b->storeys / U);
+        else if (b->flat / U < WANT[k].flat0) snprintf(why, sizeof(why), "flat roofs on %.0f%%", 100.0 * b->flat / U);
+        else if (b->street / U < WANT[k].street0) snprintf(why, sizeof(why), "on the street line %.0f%%", 100.0 * b->street / U);
+        else if (b->arcade / U < WANT[k].arcade0) snprintf(why, sizeof(why), "five-foot ways on %.0f%%", 100.0 * b->arcade / U);
+        else if (b->pilotis / U < WANT[k].pilotis0) snprintf(why, sizeof(why), "pilotis on %.0f%%", 100.0 * b->pilotis / U);
+        else if (b->shop / U < WANT[k].shop0 || b->shop / U > WANT[k].shop1) snprintf(why, sizeof(why), "shop fronts on %.0f%%", 100.0 * b->shop / U);
+        else if (b->arched / U < WANT[k].arched0) snprintf(why, sizeof(why), "arched doors on %.0f%%", 100.0 * b->arched / U);
+        else if (b->uneven / U < WANT[k].uneven0) snprintf(why, sizeof(why), "built up unevenly on %.0f%%", 100.0 * b->uneven / U);
+        if (why[0]) { printf("FAIL: %s's body misses its sheet: %s\n", WANT[k].style, why); failures++; }
+    }
+    /* the two villas, by region */
+    for (int st = 0; st < HS_COUNT; ++st) {
+        if (strcmp(home_style_name(st), "villa") || g_body[st].units < 200) continue;
+        const Body *b = &g_body[st];
+        const double U = (double)b->units;
+        const int mena = home_style_region(st) == PLAN_REGION_MENA;
+        if (b->bays) { printf("FAIL: villa (%s) has bays\n", mena ? "mena" : "seu"); failures++; }
+        if (mena && (b->flat / U < 0.95 || b->arched / U < 0.75 || b->storeys / U < 2.2)) {
+            printf("FAIL: villa (mena)'s body misses its sheet: flat %.2f, arched %.2f, storeys %.2f\n", b->flat / U, b->arched / U, b->storeys / U);
+            failures++;
+        }
+    }
+    printf("the bodies: %d short of their sheets\n", failures);
+    return failures;
 }
 
 /* ---------------------------------------------------------------------------
@@ -948,6 +1061,7 @@ int main(int argc, char **argv) {
             count_tags(buf, "  repair ", g_rep, &g_nrep, s);
             count_tags(buf, "  rejected ", g_rej, &g_nrej, s);
             survey(g, &st);
+            survey_body(g);
             if (s == verbose) printf("--- %s seed %d ---\n%s", ARCH[a], s, buf);
             if (g->empty) {
                 if (shown++ < 3) printf("FAIL: %s seed %d (%s) left no house\n%s", ARCH[a], s, home_style_name(style), buf);
@@ -986,8 +1100,8 @@ int main(int argc, char **argv) {
                ARCH[a], st.houses, st.units, 100.0 * st.levels[0] / H, 100.0 * st.levels[1] / H, 100.0 * st.levels[2] / H, 100.0 * st.levels[3] / H,
                st.empty, st.invalid, st.nondet, st.fallback);
         printf("  %.3f ms a row, %.3f ms a house\n", st.ms / H, st.ms / U);
-        printf("  roofs: gable %d, hip %d, flat %d; storeys 1 %d, 2 %d, 3 %d\n", st.roofs[HR_GABLE], st.roofs[HR_HIP], st.roofs[HR_FLAT],
-               st.storeys[1], st.storeys[2], st.storeys[3]);
+        printf("  roofs: gable %d, hip %d, flat %d; storeys 1 %d, 2 %d, 3 %d, 4 %d\n", st.roofs[HR_GABLE], st.roofs[HR_HIP], st.roofs[HR_FLAT],
+               st.storeys[1], st.storeys[2], st.storeys[3], st.storeys[4]);
         printf("  a house: porches");
         for (int k = 0; k < HP_COUNT; ++k) printf(" %s %.2f", home_porch_name(k), (double)st.porch[k] / U);
         printf("\n  a house: bays %.2f (canted %.0f%%, two storeys %.0f%%), garages %.2f, extensions %.2f, outriggers %.2f, chimneys %.2f\n",
@@ -1095,6 +1209,7 @@ int main(int argc, char **argv) {
         }
         printf("the kit's coverage: %d of %d signature pieces short\n", short_, (int)(sizeof(WANT) / sizeof(WANT[0])));
     }
+    failures += body_check();
     if (g_coverage) {
         printf("\nthe kit's coverage by style: the share of a style's units with at least one of each module (over every archetype)\n");
         for (int st = 0; st < HS_COUNT; ++st) {

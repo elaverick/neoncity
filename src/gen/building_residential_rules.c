@@ -132,7 +132,7 @@ static void repair_height(HGraph *g, int i, float minPitch, BLog *log) {
     HVol *v = &g->vol[i];
     if (v->parent < 0) return;
     const HVol *p = &g->vol[v->parent];
-    if (v->role == HV_PORCH && v->kind == HP_RECESSED) return;
+    if (v->role == HV_PORCH && home_porch_recessed(v->kind)) return;
     if (v->roof == HR_LEAN || (v->roof == HR_FLAT && v->role != HV_OUTRIGGER)) {
         const float cap = p->eaves - 0.05f;
         if (v->top <= cap + 1e-4f) return;
@@ -293,7 +293,7 @@ static void repair_rear(HGraph *g, int mi, BLog *log) {
 static void repair_projection(HGraph *g, int mi, BLog *log) {
     for (int i = g->nvol - 1; i >= 0; --i) {
         HVol *v = &g->vol[i];
-        if ((v->role != HV_PORCH && v->role != HV_BAY) || v->z0 >= YARD->proj - 1e-4f || (v->role == HV_PORCH && v->kind == HP_RECESSED)) continue;
+        if ((v->role != HV_PORCH && v->role != HV_BAY) || v->z0 >= YARD->proj - 1e-4f || (v->role == HV_PORCH && home_porch_recessed(v->kind))) continue;
         const float deep = v->z1 - YARD->proj, least = v->role == HV_BAY ? 0.45f : v->kind == HP_CANOPY ? 0.6f : v->kind == HP_VERANDA ? 1.5f : 1.2f;
         if (deep >= least) {
             home_repair(g, log, "projection", "%s %d: %.1f -> %.1f m deep", home_role_name(v->role), i, v->z1 - v->z0, deep);
@@ -380,7 +380,7 @@ static int check_volumes(const HGraph *g, int mi, BLog *log) {
     for (int i = 0; i < g->nvol; ++i) {
         const HVol *v = &g->vol[i];
         const char *nm = home_role_name(v->role);
-        if (v->storeys < 1 || v->storeys > 3) REJECT("storeys", "%s %d has %d storeys", nm, i, v->storeys);
+        if (v->storeys < 1 || v->storeys > HOME_STOREYS_MAX) REJECT("storeys", "%s %d has %d storeys", nm, i, v->storeys);
         if (v->x1 - v->x0 < 0.3f || v->z1 - v->z0 < 0.3f) REJECT("shape", "%s %d is %.2f x %.2f m", nm, i, v->x1 - v->x0, v->z1 - v->z0);
         /* supported_by: the ground, but for a canopy on its brackets */
         if (grounded(v) ? fabsf(v->y0) > 1e-4f : (v->parent < 0 || v->y0 <= 0.0f)) REJECT("support", "%s %d stands at %.2f m", nm, i, v->y0);
@@ -414,7 +414,7 @@ static int check_volumes(const HGraph *g, int mi, BLog *log) {
         } else if (habitable(v) && v->parapet != 2) REJECT("parapet", "%s %d has a flat roof without a parapet", nm, i);
         if (v->top < v->eaves - 1e-4f || v->eaves <= v->y0) REJECT("height", "%s %d: eaves %.2f, top %.2f", nm, i, v->eaves, v->top);
         /* heights against the parent: lower; a lean-to or flat part under its eaves; a ridge running in under its ridge */
-        if (v->parent >= 0 && v->parent < g->nvol && !(v->role == HV_PORCH && v->kind == HP_RECESSED)) {
+        if (v->parent >= 0 && v->parent < g->nvol && !(v->role == HV_PORCH && home_porch_recessed(v->kind))) {
             const HVol *p = &g->vol[v->parent];
             if (v->top > p->top - 0.05f) REJECT("height", "%s %d (%.2f m) reaches its main's top (%.2f)", nm, i, v->top, p->top);
             if ((v->roof == HR_LEAN || (v->roof == HR_FLAT && v->role != HV_OUTRIGGER)) && v->top > p->eaves - 0.05f + 1e-3f)
@@ -430,10 +430,22 @@ static int check_volumes(const HGraph *g, int mi, BLog *log) {
             if (v->x0 < ux0 + home_garage_clear(YARD) - HEPS || v->x1 > ux1 - home_garage_clear(YARD) + HEPS) REJECT("garage clearance", "garage %d is under %.2f m from the plot's side", i, home_garage_clear(YARD));
         }
         /* bays and porches on the front, short of the street */
-        if ((v->role == HV_BAY || v->role == HV_PORCH) && !(v->role == HV_PORCH && v->kind == HP_RECESSED)) {
+        if ((v->role == HV_BAY || v->role == HV_PORCH) && !(v->role == HV_PORCH && home_porch_recessed(v->kind))) {
             if (v->z0 < YARD->proj - HEPS) REJECT("projection", "%s %d comes within %.2f m of the street", nm, i, v->z0);
             if (v->parent >= 0 && fabsf(v->z1 - g->vol[v->parent].z0) > HEPS) REJECT("projection", "%s %d is not on the front wall", nm, i);
         }
+    }
+    /* HM5e1: what is carved out of a main stays inside it, under its first floor: a reveal, a five-foot way behind its
+     * piers, pilotis with a core behind for the stair and the door */
+    for (int i = 0; i < g->nvol; ++i) {
+        const HVol *v = &g->vol[i];
+        if (v->role != HV_PORCH || !home_porch_recessed(v->kind) || v->parent < 0) continue;
+        const HVol *p = &g->vol[v->parent];
+        if (v->x0 < p->x0 - HEPS || v->x1 > p->x1 + HEPS || fabsf(v->z0 - p->z0) > HEPS || v->z1 > p->z1 - 2.5f + HEPS)
+            REJECT("recess", "%s %d (%.1f..%.1f, %.1f..%.1f) is not cut into the front of its main", home_porch_name(v->kind), i, v->x0, v->x1, v->z0, v->z1);
+        if (v->eaves > g->plinth + g->storeyH - 0.2f + HEPS) REJECT("recess", "%s %d reaches the first floor (%.2f m)", home_porch_name(v->kind), i, v->eaves);
+        if (v->kind == HP_ARCADE && (v->x0 < g->unit[v->unit].x0 + ARCADE_PIER - HEPS || v->x1 > g->unit[v->unit].x1 - ARCADE_PIER + HEPS))
+            REJECT("recess", "arcade %d leaves no piers", i);
     }
     /* no volume overlaps another unless attached to it */
     for (int i = 0; i < g->nvol; ++i)
@@ -449,7 +461,21 @@ static int check_volumes(const HGraph *g, int mi, BLog *log) {
 static int check_plot(const HGraph *g, int mi, BLog *log) {
     int ok = 1;
     const HVol *m = &g->vol[mi];
-    if (m->z0 < YARD->frontMin - HEPS) REJECT("front garden", "%.2f m deep", m->z0);
+    /* a street-line front (HM5e1) stands on the boundary: no yard to keep */
+    if (m->z0 < (home_style_street(g->style) ? 0.0f : YARD->frontMin) - HEPS) REJECT("front garden", "%.2f m deep", m->z0);
+    /* a unit's own storeys (an unevenly built flat row) never over the row's */
+    for (int k = 0; k < g->nunit; ++k)
+        if (g->unit[k].storeys > m->storeys || (g->unit[k].storeys && m->roof != HR_FLAT)) REJECT("storeys", "unit %d has %d storeys in a %d-storey row", k, g->unit[k].storeys, m->storeys);
+    /* a shop front in its unit's ground storey, clear of its door */
+    for (int k = 0; k < g->nunit; ++k) {
+        const HUnit *u = &g->unit[k];
+        if (u->shopX1 <= u->shopX0) continue;
+        if (u->shopX0 < u->x0 - HEPS || u->shopX1 > u->x1 + HEPS || u->shopX1 - u->shopX0 < 1.8f - HEPS) REJECT("shop", "unit %d's shop front (%.1f..%.1f) leaves its unit", k, u->shopX0, u->shopX1);
+        if (u->door >= 0 && u->door < g->ndoor) {
+            const HDoor *d = &g->door[u->door];
+            if (u->shopX1 > d->x - 0.5f * d->width - 0.2f && u->shopX0 < d->x + 0.5f * d->width + 0.2f) REJECT("shop", "unit %d's shop front meets its door", k);
+        }
+    }
     for (int k = 0; k < g->nunit; ++k) {
         const float rear = g->unit[k].depth - home_unit_rear(g, k);
         if (rear < YARD->rearMin - HEPS) REJECT("rear garden", "unit %d's is %.2f m deep", k, rear);
@@ -520,7 +546,7 @@ static int check_doors(const HGraph *g, int mi, BLog *log) {
             if (p->role == HV_PORCH && p->unit == k && p->x0 <= d0 + HEPS && p->x1 >= d1 - HEPS && fabsf(p->z1 - d->z) < HEPS) porch = i;
         }
         if (porch < 0) REJECT("porch", "unit %d's door has no porch or canopy over it", k);
-        const int recessed = porch >= 0 && g->vol[porch].kind == HP_RECESSED;
+        const int recessed = porch >= 0 && home_porch_recessed(g->vol[porch].kind);
         if (!recessed && fabsf(d->z - m->z0) > HEPS) REJECT("door wall", "unit %d's door is not in the front wall", k);
         /* opens_on: a path to the street that crosses no building (the volumes' own outlines) */
         if (d->path < 0 || d->path >= g->nsite || g->site[d->path].kind != HE_PATH) { REJECT("path", "unit %d's door has no path", k); continue; }

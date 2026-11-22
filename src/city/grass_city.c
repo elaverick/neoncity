@@ -152,7 +152,7 @@ void city_grass_collect(Mesh *m, ChunkGen *g, uint32_t first, uint32_t end) {
     double (*hq)[4][2] = NULL, (*hb)[4] = NULL, tmp[96][4][2];
     for (int ri = 0; ri < g->nhrow; ++ri) {
         if (!chunk_gen_near(g, g->hrow[ri].x0, g->hrow[ri].z0, g->hrow[ri].x1, g->hrow[ri].z1, 1.0)) continue;
-        const int n = city_home_outlines(g, ri, tmp, 96);
+        const int n = city_home_outlines(g, ri, tmp, 96, 0);
         for (int k = 0; k < n; ++k) {
             if (nh == caph) {
                 caph = caph ? caph * 2 : 128;

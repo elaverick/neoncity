@@ -142,6 +142,9 @@ static void add_plot(PlotCtx *P, const Strip *s, uint32_t road, double u0, doubl
     p->storeys = (uint8_t)home_style_storeys(p->style, arch, hash_combine(built, 0x5701u));
     /* the row's front yard, with room behind it for the house and the rear yard */
     p->front = front_yard(arch, P->region, p->depth, hash_combine(rowSeed, 0xF407u), &p->pad);
+    /* a style built on the street line (HM5e1: townhouses, shophouses, courtyard houses, colonial and self-built rows)
+     * has no front yard, and parks in the street */
+    if (home_style_street(p->style)) { p->front = 0.0f; p->pad = 0; }
     P->n++;
 }
 

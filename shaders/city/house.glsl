@@ -97,7 +97,7 @@ vec3 houseGlass(vec3 n, vec3 V, uint key, vec2 uv, vec2 s) {
 vec3 houseFarWindows(vec3 c, vec3 n, vec3 V, vec2 uv, vec2 fw, uint seed, uint aux) {
     float storeyH = 2.0 + float((aux >> HOUSE_AUX_STOREYH) & 127u) * 0.01;
     float plinth = float((aux >> HOUSE_AUX_PLINTH) & 255u) * 0.01;
-    float storeys = float((aux >> HOUSE_AUX_STOREYS) & 3u);
+    float storeys = float(((aux >> HOUSE_AUX_STOREYS) & 3u) + 1u);   // storeys less one (1-4, HM5e1)
     float L = float((aux >> HOUSE_AUX_LENGTH) & 1023u) * 0.1;
     float nb = max(1.0, floor(L / 2.7 + 0.5)), bw = L / nb, ww = min(1.2, bw - 0.6);
     float k = floor((uv.y - plinth) / storeyH);
@@ -113,6 +113,74 @@ vec3 houseFarWindows(vec3 c, vec3 n, vec3 V, vec2 uv, vec2 fw, uint seed, uint a
     vec3 g = houseGlass(n, V, key, vec2(bx + 0.5 * ww, fy - sill), vec2(ww, head - sill));
     gRefl.w *= win;
     return mix(c, g, win);
+}
+
+// A shop front under a house (HM5e1; house_surf.h: HF_GARAGE, pattern 1): its roller shutter down out of its hours, else
+// rolled up into its box over the shop behind, lit by its own strip light: shelves of goods in bays over a counter. Shops
+// keep their own hours (most 7-22, a few all night, a few never up); key: the shop's own, from its lower left corner.
+vec3 houseShop(vec3 p, vec3 n, vec3 V, vec2 uv, vec2 s, uint seed, uint col, float aa, float h, float wet) {
+    vec3 c0 = gWorld - uv.x * vec3(-n.z, 0.0, n.x) - vec3(0.0, uv.y, 0.0);
+    uint key = hash3i(seed ^ 0x5409u, int(round(c0.x * 4.0)), int(round(c0.y * 4.0)), int(round(c0.z * 4.0)));
+    float hr = mod(frame.clock.x, 24.0);
+    float hours = smoothstep(6.5, 8.0, hr) * (1.0 - smoothstep(21.0, 23.0, hr));
+    bool open = hf(key, 1u) < 0.08 + 0.74 * hours;
+    const float boxH = 0.34;
+    vec3 spec;
+    if (open && uv.y < s.y - boxH) {
+        // the shop: shelves every 0.42 m, packs on them 4-12 cm wide, each its own height and colour (mostly card, tins
+        // and grey, a few printed), the back wall dark behind and over them, each shelf's shadow under the next; a
+        // counter's dark front below 0.9 m at one side
+        float fy = fract(uv.y / 0.42), row = floor(uv.y / 0.42);
+        float pw = mix(0.05, 0.12, hf(hash3i(key, int(row), 0, 9), 1u));
+        float px = uv.x / pw;
+        uint pk = hash3i(key, int(floor(px)), int(row), 5);
+        float tallP = mix(0.3, 0.82, hf(pk, 1u));
+        vec3 card = mix(vec3(0.36, 0.28, 0.19), vec3(0.46, 0.45, 0.42), hf(pk, 2u));
+        vec3 accent = vec3(hf(pk, 3u), hf(pk, 4u), hf(pk, 5u));
+        accent = mix(vec3(dot(accent, vec3(0.333))), accent, 0.6) * 0.55 + 0.06;
+        vec3 goods = mix(card, accent, step(0.72, hf(pk, 6u)));
+        float edge = aa / pw * 2.0;
+        float inPack = (1.0 - smoothstep(tallP - 0.02, tallP, fy)) * smoothstep(0.06, 0.06 + edge, fract(px)) * step(0.06, fy);
+        inPack *= step(0.12, hf(pk, 7u));                                                  // a gap where a pack has gone
+        vec3 inside = mix(vec3(0.07, 0.065, 0.06), goods * mix(0.7, 1.0, fy / max(tallP, 0.1)), inPack);
+        inside *= 1.0 - 0.45 * smoothstep(0.7, 1.0, fy);                                     // under the shelf over it
+        inside = mix(inside, vec3(0.42, 0.41, 0.39), 1.0 - smoothstep(0.0, 0.05 + aa * 3.0, fy));   // the shelf's edge
+        float counter = step(uv.y, 0.9) * step(hf(key, 6u) < 0.5 ? uv.x : s.x - uv.x, 0.45 * s.x);
+        inside = mix(inside, vec3(0.04, 0.035, 0.03), counter * 0.85);
+        vec3 light = mix(vec3(1.0, 0.84, 0.62), vec3(0.86, 0.95, 1.0), step(0.55, hf(key, 2u))) * mix(0.55, 1.1, hf(key, 3u));
+        float fall = mix(0.5, 1.0, smoothstep(0.0, s.y - boxH, uv.y));
+        gRefl.w *= 0.0;
+        return inside * light * fall * 0.85;
+    }
+    // the shutter down, or its box over the open shop: galvanised slats, sooted and streaked; a few painted
+    vec3 alb = mix(vec3(0.30, 0.31, 0.32), H_GARAGE[col % 6u] * 0.8, step(0.75, hf(key, 5u)));
+    float grime = 0.55 + 0.6 * fbm(vec2(uv.x * 0.9, uv.y * 0.9) + vec2(float(key & 255u)), 0x5417u);
+    vec3 nn = n;
+    vec2 q = vec2(uv.x, -uv.y);
+    vec3 T = normalize(vec3(n.z, 0.0, -n.x)), B = vec3(0.0, 1.0, 0.0);
+    if (pbrLoaded(PBR_SHUTTER)) { Grain g = pbrGrain(PBR_SHUTTER, q, dFdx(q), dFdy(q), T, B, n); alb *= g.tint * g.ao; nn = g.n; }
+    else alb *= 0.65 + 0.35 * smoothstep(0.3, 0.5, abs(fract(uv.y / 0.08) - 0.5) * 2.0);
+    float rail = step(uv.y, 0.06);   // the bottom rail
+    alb *= grime * mix(1.0, 0.6, rail) * mix(1.0, 0.75, wet);
+    vec3 diff = wallLighting(p, nn, V, mix(20.0, 60.0, wet), mix(0.12, 0.35, wet), h, spec);
+    return alb * diff + spec;
+}
+
+// A door's leaves (house_surf.h HF_DOOR): pattern 4 a pair of plank leaves, iron-studded, ring handles (HM5e1: an arched
+// door's, China's gate's), else panels.
+float houseDoorPlanks(vec2 uv, vec2 s, float aa, inout vec3 alb) {
+    float leaf = abs(uv.x - 0.5 * s.x);
+    float board = 1.0 - 0.4 * (1.0 - hStripe(fract(uv.x / 0.15), 0.05, 0.95, aa / 0.15));
+    float split = smoothstep(0.012, 0.012 + aa, leaf);
+    vec2 st = vec2((fract(uv.x / 0.3) - 0.5) * 0.3, (fract(uv.y / 0.35) - 0.5) * 0.35);
+    float stud = (1.0 - smoothstep(0.016, 0.016 + aa, length(st))) * step(0.15, uv.y);
+    float ring = 0.0;
+    for (int k = 0; k < 2; ++k) {
+        vec2 rc = vec2(0.5 * s.x + (k == 0 ? -0.16 : 0.16), 1.15);
+        ring = max(ring, 1.0 - smoothstep(0.008, 0.008 + aa, abs(length(uv - rc) - 0.055)));
+    }
+    alb = mix(alb, vec3(0.06, 0.055, 0.05), max(stud * 0.85, ring));
+    return board * mix(0.3, 1.0, split);
 }
 
 vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint aux) {
@@ -213,7 +281,10 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
         float aa = max(fw.x, fw.y);
         alb = surf == HF_DOOR ? H_DOOR[col % 12u] : H_GARAGE[col % 6u];
         float shade = 1.0;
-        if (surf == HF_GARAGE) {
+        uint dpat = (aux >> HOUSE_AUX_PATTERN) & 15u;
+        if (surf == HF_GARAGE && dpat == 1u) return houseShop(p, n, V, uv, s, seed, col, aa, h, wet);
+        if (surf == HF_DOOR && dpat == 4u) shade = houseDoorPlanks(uv, s, aa, alb);
+        else if (surf == HF_GARAGE) {
             shade = 1.0 - 0.35 * (1.0 - hStripe(uv.y / 0.53, 0.04, 1.0, aa / 0.53));   // the sections' joints
         } else {
             uint pat = (aux >> HOUSE_AUX_PATTERN) & 15u;
