@@ -104,6 +104,15 @@ enum {
     PMAT_HUPVC,        /* white plastic: replacement windows and doors */
     PMAT_HROOF,        /* the unit's roof covering (a dormer's or a canopy's roof and cheeks): the shell's roof sets */
     PMAT_HCEMENT,      /* cement and concrete: flaunching, post-war sills and lintels */
+    /* HM5c1: the shared retrofit kit (pmodel_retrofit.c), shaded there too */
+    PMAT_HGALV,        /* galvanised and grey-painted steel: frames, stands, posts, rails, conduit, masts, razor wire */
+    PMAT_HCOPPER,      /* copper pipes, tarnished, a little verdigris */
+    PMAT_HPOLY,        /* rotomoulded tank plastic: black, a few blue or green */
+    PMAT_HSOLAR,       /* a solar panel's cells under glass (its uv the panel's metres: the cell grid) */
+    PMAT_HBREEZE,      /* breeze blocks and pierced concrete, pale, some painted */
+    PMAT_HBLOOM,       /* flowers on vines and in pots: bougainvillea's magenta, some orange, white */
+    PMAT_HLED,         /* an LED strip's or a downlight's diffuser: warm white by night (it glows) */
+    PMAT_HLAMP,        /* a lantern's or a bulkhead's glass: a warm lamp by night (it glows) */
     PMAT_COUNT
 };
 
@@ -329,6 +338,14 @@ enum {
     PMK_H_BAY_POST, PMK_H_BAY_CORNICE, PMK_H_BAY_APRON,
     PMK_H_DORMER_GABLE, PMK_H_DORMER_HIP, PMK_H_DORMER_FLAT,
     PMK_H_POT_PLAIN, PMK_H_POT_CANNON, PMK_H_POT_CROWN, PMK_H_POT_COWL, PMK_H_STACK_CAP, PMK_H_VENT_PIPE, PMK_H_ROOFLIGHT,
+    /* HM5c1, the houses' shared retrofit kit (pmodel_retrofit.c; frames in pmodel_retrofit.h). Houses' modules too. */
+    PMK_R_SOLAR_PANEL, PMK_R_SOLAR_ROW, PMK_R_FRAME_POST, PMK_R_FRAME_BEAM, PMK_R_DOWNLIGHT, PMK_R_LED_STRIP,
+    PMK_R_TANK_POLY, PMK_R_TANK_STEEL, PMK_R_STAND_BAY, PMK_R_STAND_TOP,
+    PMK_R_PIPE_CU, PMK_R_PIPE_FE, PMK_R_ELBOW_CU, PMK_R_ELBOW_FE, PMK_R_VALVE, PMK_R_PIPE_CLIP,
+    PMK_R_BREEZE_DIAMOND, PMK_R_BREEZE_RING, PMK_R_RAIL,
+    PMK_R_METER, PMK_R_LANTERN, PMK_R_BULKHEAD, PMK_R_GATE_BARS, PMK_R_GATE_SHEET, PMK_R_RAZOR,
+    PMK_R_POT, PMK_R_POT_PALM, PMK_R_TROUGH, PMK_R_VINE, PMK_R_VINE_BLOOM, PMK_R_TRAIL,
+    PMK_R_AERIAL_YAGI, PMK_R_AERIAL_CROSS,
     PMK_COUNT
 };
 typedef struct PmModuleDef {
@@ -344,11 +361,15 @@ void pm_place(Pm *pm, int id);
 /* Whether module id casts shadows (the city's ray-traced ones): not the lights' own glass and flames. */
 int  pm_module_casts(int id);
 /* Whether a material glows (the lights' own surfaces: they cast nothing). */
-static inline int pm_mat_glows(int mat) { return (mat >= PMAT_TUBE && mat <= PMAT_SIGN_FAR) || mat == PMAT_EMBER || mat == PMAT_RADIANT || mat == PMAT_WINDOW_FAR; }
+static inline int pm_mat_glows(int mat) { return (mat >= PMAT_TUBE && mat <= PMAT_SIGN_FAR) || mat == PMAT_EMBER || mat == PMAT_RADIANT || mat == PMAT_WINDOW_FAR || mat == PMAT_HLED || mat == PMAT_HLAMP; }
 /* Whether a module is a neon icon (its instance carries its icon's colour and flicker). */
 int  pm_module_is_icon(int id);
 /* Whether a module is the houses' (HM4: its materials PMAT_HTRIM on, its instance's flags house_surf.h HOUSE_KIT_*). */
 static inline int pm_module_is_house(int id) { return id >= PMK_H_RAFTER_TAIL && id < PMK_COUNT; }
+/* Whether a module is the retrofit kit's (HM5c1: pmodel_retrofit.c). */
+static inline int pm_module_is_retrofit(int id) { return id >= PMK_R_SOLAR_PANEL && id < PMK_COUNT; }
+/* Whether a house module carries a light (HM5c1: its glow shares the unit's seed, so a house's lights go on together). */
+static inline int home_kit_light(int id) { return id == PMK_R_DOWNLIGHT || id == PMK_R_LED_STRIP || id == PMK_R_LANTERN || id == PMK_R_BULKHEAD; }
 static inline int pm_mat_is_house(int mat) { return mat >= PMAT_HTRIM && mat < PMAT_COUNT; }
 #define PM_ICON_SIZE 0.36f   /* the icons' square, which instances scale to their housing */
 /* Builds module id at a level into out (cleared first) and bakes its occlusion and wear. */

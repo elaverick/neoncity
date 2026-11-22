@@ -95,13 +95,17 @@ void home_char_set(const HGraph *g, int unit, HCharSet *s);
 uint16_t home_kit_flags(const HGraph *g, int unit, uint8_t *part);
 
 /* the rules the dressing checks, for its repairs' counts */
-enum { HDR_DOWNPIPE = 0, HDR_DORMER, HDR_SHUTTERS, HDR_DOORCASE, HDR_QUOINS, HDR_CANOPY, HDR_PORCH, HDR_BARGE, HDR_BUDGET, HDR_COUNT };
+/* ...and HM5c1's retrofit kit: panels and canopies, tanks, risers, what goes on a wall (meters, lights, gates, vines),
+ * a flat roof's terrace (railings, screens, trailing plants, razor wire) */
+enum { HDR_DOWNPIPE = 0, HDR_DORMER, HDR_SHUTTERS, HDR_DOORCASE, HDR_QUOINS, HDR_CANOPY, HDR_PORCH, HDR_BARGE, HDR_BUDGET,
+       HDR_SOLAR, HDR_TANK, HDR_RISER, HDR_WALLKIT, HDR_TERRACE, HDR_COUNT };
 const char *home_dress_rule(int r);
 typedef struct HDressStats {
     int instances;                 /* placed */
     int maxUnit;                   /* the most on one unit */
     int repairs[HDR_COUNT];
     int windows, doors, gutters, pipes, dormers, stacks;
+    int retrofit;                  /* HM5c1: the retrofit kit's instances (of instances) */
 } HDressStats;
 /* Where a dressing goes: a modelling builder (its instance list, or its mesh with the modules built in), the
  * row's frame to the mesh's (x scaled by sx: -1 for a mirrored row; the kit itself is never mirrored), each

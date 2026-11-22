@@ -249,7 +249,9 @@ static void push_kit(Mesh *m, const HGraph *G, const HomeRow *r, const PmInstanc
         k->module = pi->module;
         k->part = pi->part;
         k->flags = flags[u];
-        k->seed = hash_combine(G->unit[u].seed, i + 0x484Bu);
+        /* HM5c1: a house's lights (its LEDs, downlights, lantern) share their unit's seed, so they are on or off together
+         * (house.glsl houseLightOn) */
+        k->seed = home_kit_light(pi->module) ? hash_combine(G->unit[u].seed, 0x11D7u) : hash_combine(G->unit[u].seed, i + 0x484Bu);
         k->base = r->base + r->dy[u];
         k->hours = NB_HOURS_ALWAYS;
         k->show = NB_SHOW_ALWAYS;

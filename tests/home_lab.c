@@ -701,13 +701,37 @@ static void cover(const HGraph *g, const PmInstances *I, const uint8_t *unit) {
     }
 }
 
+/* a unit's kit instances (src/gen/home_character.c UNIT_BUDGET: HM5's 150 and HM5c1's retrofit kit) */
+#define KIT_BUDGET 230
+/* the dressing's repairs by what they say ("repair char-<rule>: unit N: <why> (...)"), so a rule's refusals can be told apart */
+static void count_dress_whys(const char *log, Tag *tags, int *n, int seed) {
+    for (const char *p = strstr(log, "repair char-"); p; p = strstr(p + 1, "repair char-")) {
+        const char *s = p + 12, *u = strstr(s, ": unit ");
+        if (!u) break;
+        char t[40];
+        int k = 0;
+        while (s < u && k < 10) t[k++] = *s++;
+        t[k++] = ':';
+        s = u + 7;
+        while (*s && *s != ':') s++;
+        if (*s == ':') s += 2;
+        while (*s && *s != '(' && *s != '\n' && k < 39) t[k++] = *s++;
+        t[k] = 0;
+        int i = 0;
+        while (i < *n && strcmp(tags[i].text, t)) i++;
+        if (i == *n && *n < MAX_TAGS) { strcpy(tags[i].text, t); tags[i].first = seed; tags[i].count = 0; (*n)++; }
+        if (i < *n) tags[i].count++;
+    }
+}
 static int dress_check(int a, int seeds, const char *out, HGraph *g, HomePlot *P, char *buf) {
     int failures = 0, shown = 0, houses = 0, units = 0, maxUnit = 0, over = 0, improper = 0, nondet = 0, bad = 0, zf = 0;
     long inst = 0;
     int repairs[HDR_COUNT] = { 0 };
+    static Tag whys[MAX_TAGS];
+    int nwhy = 0;
     static long modCount[PMK_COUNT];
     memset(modCount, 0, sizeof(modCount));
-    long windows = 0, doors = 0, gutters = 0, pipes = 0, dormers = 0, stacks = 0;
+    long windows = 0, doors = 0, gutters = 0, pipes = 0, dormers = 0, stacks = 0, retro = 0;
     double ms = 0.0;
     PmInstances I1 = { 0 }, I2 = { 0 };
     HDress D1, D2;
@@ -727,12 +751,13 @@ static int dress_check(int a, int seeds, const char *out, HGraph *g, HomePlot *P
         const clock_t t0 = clock();
         dress_row(g, dy, sx, &I1, &D1, s % 8 == 0 ? &L : NULL, &log);
         ms += 1000.0 * (double)(clock() - t0) / CLOCKS_PER_SEC;
+        count_dress_whys(buf, whys, &nwhy, s);
         houses++;
         units += g->nunit;
         inst += D1.st.instances;
         if (D1.st.maxUnit > maxUnit) maxUnit = D1.st.maxUnit;
         for (int r = 0; r < HDR_COUNT; ++r) repairs[r] += D1.st.repairs[r];
-        windows += D1.st.windows; doors += D1.st.doors; gutters += D1.st.gutters; pipes += D1.st.pipes; dormers += D1.st.dormers; stacks += D1.st.stacks;
+        retro += D1.st.retrofit; windows += D1.st.windows; doors += D1.st.doors; gutters += D1.st.gutters; pipes += D1.st.pipes; dormers += D1.st.dormers; stacks += D1.st.stacks;
         if (D1.st.repairs[HDR_BUDGET] && over++ < 6) printf("  over budget: %s seed %d (%s), %d on a unit\n", ARCH[a], s, home_style_name(style), D1.st.maxUnit);
         for (uint32_t i = 0; i < I1.n; ++i) if (I1.v[i].module < PMK_COUNT) modCount[I1.v[i].module]++;
         cover(g, &I1, D1.unit);
@@ -793,7 +818,7 @@ static int dress_check(int a, int seeds, const char *out, HGraph *g, HomePlot *P
     const int per = a == HOME_DETACHED ? houses : units;
     printf("  dressed: %.1f kit instances a %s (most on a unit %d, budget %d), %.3f ms a unit for the dressed shell; a unit: windows %.2f, "
            "doors %.2f, gutters %.2f, downpipes %.2f, dormers %.3f, stacks topped %.2f\n",
-           (double)inst / (per ? per : 1), a == HOME_DETACHED ? "house" : "unit", maxUnit, 150, ms / (units ? units : 1),
+           (double)inst / (per ? per : 1), a == HOME_DETACHED ? "house" : "unit", maxUnit, KIT_BUDGET, ms / (units ? units : 1),
            (double)windows / units, (double)doors / units, (double)gutters / units, (double)pipes / units, (double)dormers / units, (double)stacks / units);
     {   /* the modules most placed */
         int top[10] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
@@ -809,10 +834,12 @@ static int dress_check(int a, int seeds, const char *out, HGraph *g, HomePlot *P
             if (pm_module_is_house(m)) printf(" %s %.3f,", pm_module(m)->name, (double)modCount[m] / (per ? per : 1));
         printf("\n");
     }
+    printf("  the retrofit kit (HM5c1): %.1f instances a %s\n", (double)retro / (per ? per : 1), a == HOME_DETACHED ? "house" : "unit");
+    print_tags("the dressing's repairs by reason", whys, nwhy, units);
     printf("  the dressing's repairs:");
     for (int r = 0; r < HDR_COUNT; ++r) if (repairs[r]) printf(" %s %d (%.3f a unit),", home_dress_rule(r), repairs[r], (double)repairs[r] / units);
     printf("\n  %d mirrored or bad, %d not deterministic, %d bad faces, %d z-fighting, %d rows with a unit over budget\n", improper, nondet, bad, zf, over);
-    if (over * 100 > houses) { printf("FAIL: %s: over 1%% of rows have a unit over the 150 instance budget\n", ARCH[a]); failures++; }
+    if (over * 100 > houses) { printf("FAIL: %s: over 1%% of rows have a unit over the %d instance budget\n", ARCH[a], KIT_BUDGET); failures++; }
     if (out) {
         /* the kit drawn on the shells: one row of each style */
         const int cols = 4, cw = 480, chh = 340, rows = (HS_COUNT + cols - 1) / cols;

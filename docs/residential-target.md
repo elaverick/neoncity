@@ -412,6 +412,76 @@ Most placed a house: plastic frames 8, ridge rolls 8, pipe clips 6, sills 6-9, g
 Within the budgets (+0.5 ms on the ground, +1.0 from the air). The pool fell a point (the shell lost its stack
 caps and posts to the kit).
 
+## The shared retrofit kit (HM5c1)
+
+The user's concept sheets (`docs/reference/international-residential`, 2026-11-20: one sheet a style, panel 1 the
+house as built, panels 2-6 its Neon City retrofits) put the same things on every house of every region, panel 1
+included: black tanks and steel ones on the roof or on tall stands, solar panels on the slopes and on canopies with
+downlights under them, copper and steel pipes up the walls, meter boxes, a lantern or a bulkhead by the door,
+aerials, railings round flat roofs, breeze-block screens, pots, vines and plants trailing over parapets, gates
+over doors and razor wire. HM5c1 is that kit, on **every house of a style with a sheet, retrofitted or not** (the
+user); the six North American and British styles without one (craftsman, Spanish, ranch, tract, triple-decker,
+modern) keep HM5's look. The insertions of panels 2-6 (box bays, cantilevers, struts, stair towers) are HM5c2's.
+
+**The modules** (`src/gen/pmodel_retrofit.c`, `PMK_R_*`, 33 at three levels, frames in `pmodel_retrofit.h`; houses'
+modules, so shaded by `shadeHouseKit`):
+
+| Group | Modules | Sheets' panels |
+|---|---|---|
+| Roof | solar panel and a row of three (framed cells on clamps), canopy post (80 mm SHS on a base plate) and beam (140 x 60 RHS), downlight, LED strip; a black 1000 litre tank (ribbed, its lid, outlet and overflow; scaled for 500-2000 litres), a steel tank on legs, a braced stand bay (1.5 m, stacked) and its platform; a Yagi aerial and the old cross aerial on a mast | every panel 1-6's roofs; Victorian 1 (panels on the slope, a steel tank), inter-war 1-6 (canopies over the roof, black tanks, cross aerials), Africa block 1, 3-5 (tanks on tall stands) |
+| Services | copper and steel pipes, their elbows (collared sockets), a gate valve, saddle clips, a meter cabinet with a conduit | RCC 1-6, shophouse 2-6, self-built 1-6, Georgian 1-6 (pipes and meters up the fronts) |
+| Screens | breeze-block panels (diamonds, rings: three blocks of 0.4 m by three), a roof railing, a security gate (bars and a lattice, padlocked), a sheet gate, razor wire | Africa block 1-6, MENA villa 2-6, RCC 2-3, inter-war 3, 5 (boundaries, HM7's); RCC, self-built and shophouse roofs (railings) |
+| Lights | a coach lantern on its bracket, a bulkhead | Georgian 1-6, Victorian 1, MENA 1-6 (lanterns), Africa and Japan (bulkheads) |
+| Plants | a pot with a shrub and flowers, a palm or banana in a concrete pot, a trough, vine tiles (plain and flowering), trailing plants | every sheet: bougainvillea (MENA, Southern Europe, South Asia), vines up the fronts (inter-war 2, Georgian 2, 4, 5), plants over the parapets (shophouse 2, 4, 6) |
+
+New materials (`PMAT_HGALV` on): galvanised or grey-painted steel with rust weeping from it, copper going brown
+with some verdigris, tank plastic (black; a few blue, green or cream), solar cells under glass (a grid of 0.16 m cells,
+the city's grime on the glass), breeze concrete (bare or limewashed), flowers (magenta, orange, red, white), and two
+that glow: an LED's diffuser and a lantern's glass. A house's lights share their unit's seed (`homes.c`), so they
+go on together, by the lamps' photocells (on all day under the cities' deck) and a share of houses by the hour
+(`houseLightOn`). They are emissive only: lighting the walls round them (the light table, ray-traced shadows) is
+HM6's. Downlights and LED strips cast no shadow. 23,018 triangles over the three levels (the library 404,400; its
+budget raised to 430,000); every module watertight; budgets their measure plus a tenth.
+
+**The grammar** (`src/gen/home_retrofit.c`, after the character layer on the same near shell). Each unit's owner
+chooses (no row-wide set: neighbours differ), from its style's region's profile (the chances below), the row's
+affluence (solar, canopies, LEDs, lanterns, steel tanks and plants rise with it; gates, razor wire, tanks on stands and
+the old aerials with poverty) and its upkeep (tired and run-down thin the plants and lights, add gates and wire):
+
+| Region (sheets) | Tanks | Solar | On a flat roof | Walls and door |
+|---|---|---|---|---|
+| Britain (Victorian, Georgian, inter-war, council) | 0.55: a cradle by the ridge, a flat extension's roof | 0.6: panels on a slope, a frame over the ridge (0.3) | railings 0.4 | copper risers, a meter, a lantern (Georgian pairs), cross aerials on the stacks, vines |
+| North America (brownstone) | 0.6, steel | 0.55, canopies | railings 0.6 | lanterns at the stoop, pots up it |
+| Southern Europe | 0.6 | 0.6 | railings 0.5, plants over the parapet | bougainvillea, pots, palms |
+| East Asia | Japan 0.1, China and Korea 0.7 | 0.45 | railings 0.6 | meters (a bank in Japan), bulkheads |
+| South-East Asia | 0.8 | 0.6, canopies | railings 0.7, trailing plants 0.6, breeze 0.4 | copper risers, plants, gates 0.35 |
+| South Asia | 0.95, black; stands 0.35 | 0.5 | railings 0.8, breeze 0.5 | banks of meters, steel risers, gates 0.55 |
+| Middle East | 0.9, low stands | 0.6, canopies | breeze 0.6 | lanterns (pairs), bougainvillea, palms |
+| Sub-Saharan Africa | 0.9, on tall stands (2.5-4.5 m) in the yard | 0.4 | razor wire 0.4 | bulkheads, gates 0.6 |
+| Latin America | 0.95, black | 0.6, canopies | railings 0.8, breeze 0.5 | meters, gates 0.5 |
+
+Where things go: a flat roof's deck takes its tanks along the back, then a canopy over its front (2.3-2.6 m, the
+lights along its street side), then its edges railings, a breeze screen on the street's parapet or razor wire on the
+others, plants trailing over the street's parapet (stopping short of the windows under it), pots and an aerial. A
+pitched roof takes its tank on a stand in the yard (where that is the custom), on a flat extension's roof or on a
+cradle by the ridge (its legs down to the tiles), panels on a slope (the back mostly, the street's one in three)
+or a level frame over the ridge, and an aerial lashed to a stack or on the ridge. On the walls: a light by the door
+(a bulkhead over it where nothing stands there), a meter or a bank of them with a conduit up to the eaves, a
+security gate over the door, risers (one to three, the street's wall mostly) up to the eaves and into the wall or
+over a parapet and down onto the deck, a vine where a wall is clear to a window or the eaves (a trough at its foot),
+an LED strip under the street's eaves, a breeze-block wall along a veranda, pots by the door.
+
+**The rules**, as HM5's: every piece keeps out of the shell's solids (sampled), out of the windows and doors with a
+margin, off a recess's opening, on its own wall, roof slab or deck, and out of what the character layer set down
+there (downpipes, dormers, rooflights, vents, shutters, window boxes, porch posts: the occupancy, `hc_occupy`) and of
+its own earlier pieces. A piece that finds no place is a logged repair (`repair char-solar`, `-tank`, `-riser`,
+`-wall`, `-terrace`); `home_lab` counts them by reason.
+
+**The budget.** HM5's 150 instances a house is raised to **230** (`UNIT_BUDGET`) for the kit the sheets put on every
+house: about 20 more instances a unit on average (the six styles without a sheet included at none), a flat roof's
+canopy and terrace 40-60 at most. A unit over it is dressed lean (HM5's), which also drops the retrofit's second vine,
+LED strips, trailing plants, screens and deck pots.
+
 ## Massing and parts
 
 | Part | Size | Notes |

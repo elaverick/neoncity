@@ -232,13 +232,13 @@ set(GEN_SOURCES src/city/city.c src/city/chunk_gen.c src/city/lots.c src/city/pl
                 src/city/mesh_arcology.c src/city/mesh_industry.c src/city/collision.c src/city/streets.c src/city/channels.c src/city/road_bridges.c src/city/light_tiles.c src/city/cables.c
                 src/city/litter.c src/city/props.c src/city/vendor_sites.c src/city/mesh_vendor.c src/city/vendor_kit.c src/city/models.c src/city/proxy.c src/city/grass_city.c src/city/homes.c src/plan/plan.c src/plan/plan_world.c src/plan/plan_roads.c src/plan/plan_water.c
                 src/terrain/terrain_height.c src/terrain/terrain_land.c src/terrain/terrain_erosion.c src/terrain/terrain_cave.c src/terrain/terrain_cave_mesh.c src/terrain/terrain_cave_light.c src/terrain/terrain_cave_walk.c src/terrain/terrain_world.c src/terrain/terrain_cube.c src/terrain/terrain_earth.c src/core/thread.c src/core/assets.c
-                src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c src/gen/building_residential.c src/gen/building_residential_rules.c src/gen/home_shell.c src/gen/home_character.c
+                src/gen/gen_common.c src/gen/building.c src/gen/building_poly.c src/gen/building_archetypes.c src/gen/building_industry.c src/gen/building_residential.c src/gen/building_residential_rules.c src/gen/home_shell.c src/gen/home_character.c src/gen/home_retrofit.c
                 src/gen/plant.c src/gen/plant_species.c src/gen/plant_grow.c src/gen/plant_mesh.c
                 src/gen/interior.c src/gen/interior_grid.c src/gen/interior_anchors.c src/gen/interior_rooms.c
                 src/gen/interior_fixtures.c src/gen/interior_validate.c src/gen/interior_lights.c src/gen/interior_doors.c
                 src/gen/arcology.c src/gen/arcology_anchors.c src/gen/arcology_subdivide.c src/gen/arcology_style.c
                 src/gen/vendor.c src/gen/vendor_structure.c src/gen/vendor_tables.c src/gen/vendor_mesh.c src/gen/vendor_validate.c
-                src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_food.c src/gen/pmodel_house.c src/gen/pmodel_bake.c src/gen/noodle_bar.c src/gen/vault.c)
+                src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_food.c src/gen/pmodel_house.c src/gen/pmodel_retrofit.c src/gen/pmodel_bake.c src/gen/noodle_bar.c src/gen/vault.c)
 # Terrain (src/terrain): the ground everywhere, a pure function of position over the planet the world's
 # X/Z is a chart of (terrain_height.c, terrain_land.c, terrain_world.c, terrain_cube.c and terrain_earth.c, in GEN_SOURCES:
 # the city builds on them), the clipmap that samples it round the camera (drawn by src/render/terrain_gpu.c)
@@ -274,11 +274,11 @@ target_include_directories(plant_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # the mix by affluence; contact sheets (vendor_lab [seeds] [out_dir] [verbose_seed]).
 add_executable(vendor_lab tests/vendor_lab.c src/gen/vendor.c src/gen/vendor_structure.c src/gen/vendor_tables.c
                src/gen/vendor_mesh.c src/gen/vendor_validate.c src/gen/gen_common.c
-               src/gen/noodle_bar.c src/gen/vault.c src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_food.c src/gen/pmodel_house.c src/gen/pmodel_bake.c)
+               src/gen/noodle_bar.c src/gen/vault.c src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_food.c src/gen/pmodel_house.c src/gen/pmodel_retrofit.c src/gen/pmodel_bake.c)
 target_include_directories(vendor_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # The procedural modelling kit (src/gen/pmodel*.c; the noodle bar slice, NB1): determinism, closure, normals,
 # budgets per level; contact sheets lit with ray-traced shadows (pmodel_lab [out_dir] [--only NAME]).
-add_executable(pmodel_lab tests/pmodel_lab.c src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_food.c src/gen/pmodel_house.c src/gen/pmodel_bake.c src/gen/noodle_bar.c src/gen/vault.c)
+add_executable(pmodel_lab tests/pmodel_lab.c src/gen/pmodel.c src/gen/pmodel_parts.c src/gen/pmodel_kit.c src/gen/pmodel_food.c src/gen/pmodel_house.c src/gen/pmodel_retrofit.c src/gen/pmodel_bake.c src/gen/noodle_bar.c src/gen/vault.c)
 target_include_directories(pmodel_lab PRIVATE ${SRC_DIRS} ${stb_SOURCE_DIR})
 # Terrain determinism, bounds, slopes, the city footprint, levels of detail and the clipmap
 # (terrain_test [--earth <test bake>] [--fingerprint]).

@@ -1151,11 +1151,21 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM5c1, the shared retrofit kit** (the user's concept sheets, `docs/reference/international-residential`,
-  2026-11-20): rooftop solar canopies, water tanks and stands, pipe risers, breeze-block screens, planters and vines,
-  LED strips, lanterns, meter boxes, gates and razor wire, on every house. Then HM5c2 (retrofit insertions, 3 units
-  in 5), HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing styles to their sheets), HM6 (the
-  rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **Next: HM5e, each style's body to its sheet** (the user, 2026-11-22, on HM5c1's board: the houses miss their
+  sheets' balconies and walls, and bays stand where the sheets have none): massing and roofs by the sheets, a
+  balcony family on houses, the boundary walls and gates the graph already plans (`HBound`, `HGate`, drawn by
+  nothing until now), bays only where a sheet shows them, regional porches and surrounds for HM5's British ones.
+  Then HM5c2 (retrofit insertions, 3 units in 5), HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the
+  existing styles to their sheets), HM6 (the rest of the lived-in layer and the lights). Every step checked against
+  its sheets' panels.
+- **The retrofit kit's leftovers** (HM5c1):
+  - Its lights (downlights, LED strips, lanterns, bulkheads) are emissive only: no light table entries, no RT
+    shadows. HM6 puts the porch and entrance lamps in the light table; take these with them.
+  - Sheet-steel gates and breeze-block boundary screens wait for the boundaries (HM5e draws them now).
+  - Terrace fronts are crowded (door, bay, downpipe, porch): their units mostly get a meter, a light and now and
+    then a riser. Denser fronts want the bodies of HM5e first.
+  - The bungalow's 3 m noon capture once died mid-load (the log stops after the sky line, no message); three reruns
+    were clean. Watch for it in later captures.
 - **The character layer's leftovers** (HM5):
   - Doorcases' fanlights stand on the wall's face over the door (opaque glass in the doorcase's frame), not in the
     opening. Cut the opening to the fanlight's head if a close view shows it.

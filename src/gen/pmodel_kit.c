@@ -1,6 +1,7 @@
 #include "pmodel.h"
 #include "pmodel_food.h"
 #include "pmodel_house.h"
+#include "pmodel_retrofit.h"
 #include "mathlib.h"
 #include <math.h>
 #include <stdlib.h>
@@ -1528,6 +1529,8 @@ const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_HTRIM] = "h_trim", [PMAT_HDOOR] = "h_door", [PMAT_HSTONE] = "h_stone", [PMAT_HBRICK] = "h_brick", [PMAT_HCLAY] = "h_clay",
     [PMAT_HTILE] = "h_tile", [PMAT_HRAIN] = "h_rain", [PMAT_HLEAD] = "h_lead", [PMAT_HIRON] = "h_iron", [PMAT_HPLANT] = "h_plant",
     [PMAT_HGLASS] = "h_glass", [PMAT_HTIMBER] = "h_timber", [PMAT_HUPVC] = "h_upvc", [PMAT_HROOF] = "h_roof", [PMAT_HCEMENT] = "h_cement",
+    [PMAT_HGALV] = "h_galv", [PMAT_HCOPPER] = "h_copper", [PMAT_HPOLY] = "h_poly", [PMAT_HSOLAR] = "h_solar", [PMAT_HBREEZE] = "h_breeze",
+    [PMAT_HBLOOM] = "h_bloom", [PMAT_HLED] = "h_led", [PMAT_HLAMP] = "h_lamp",
 };
 /* Mirrored by kitSet in shaders/city/kit.glsl. Sets may serve two materials in different colours (the
  * rubber's grain under black plastic, the white paint's under red): the share check counts them together. */
@@ -1543,6 +1546,8 @@ const char *const PM_MAT_SET[PMAT_COUNT] = {
      * steps' concrete); the roof's covering is the unit's (house.glsl houseRoofSet); the rest painted there */
     [PMAT_HTRIM] = "kit_paint", [PMAT_HDOOR] = "kit_paint", [PMAT_HSTONE] = "facade_stone", [PMAT_HBRICK] = "house_roughcast",
     [PMAT_HTILE] = "house_clay", [PMAT_HTIMBER] = "vendor_planks", [PMAT_HCEMENT] = "concrete",
+    /* HM5c1, the retrofit kit: the vendors' galvanised sheet and copper, concrete under the breeze blocks */
+    [PMAT_HGALV] = "kit_galv", [PMAT_HCOPPER] = "kit_copper", [PMAT_HBREEZE] = "concrete",
 };
 
 /* --------------------------------------------------------------- table --- */
@@ -1726,13 +1731,47 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_H_STACK_CAP] = { "h_stack_cap", m_h_stack_cap, { 180, 60, 60 }, 1 },
     [PMK_H_VENT_PIPE] = { "h_vent_pipe", m_h_vent_pipe, { 220, 130, 100 }, 1 },
     [PMK_H_ROOFLIGHT] = { "h_rooflight", m_h_rooflight, { 240, 240, 80 }, 1 },
+    /* HM5c1: the houses' shared retrofit kit (pmodel_retrofit.c) */
+    [PMK_R_SOLAR_PANEL] = { "r_solar_panel", m_r_solar_panel, { 280, 120, 20 }, 1 },
+    [PMK_R_SOLAR_ROW] = { "r_solar_row", m_r_solar_row, { 860, 390, 40 }, 1 },
+    [PMK_R_FRAME_POST] = { "r_frame_post", m_r_frame_post, { 180, 70, 20 }, 1 },
+    [PMK_R_FRAME_BEAM] = { "r_frame_beam", m_r_frame_beam, { 60, 60, 20 }, 1 },
+    [PMK_R_DOWNLIGHT] = { "r_downlight", m_r_downlight, { 160, 100, 70 }, 1 },
+    [PMK_R_LED_STRIP] = { "r_led_strip", m_r_led_strip, { 30, 30, 30 }, 1 },
+    [PMK_R_TANK_POLY] = { "r_tank_poly", m_r_tank_poly, { 1060, 470, 60 }, 1 },
+    [PMK_R_TANK_STEEL] = { "r_tank_steel", m_r_tank_steel, { 730, 480, 170 }, 1 },
+    [PMK_R_STAND_BAY] = { "r_stand_bay", m_r_stand_bay, { 270, 270, 110 }, 1 },
+    [PMK_R_STAND_TOP] = { "r_stand_top", m_r_stand_top, { 80, 80, 20 }, 1 },
+    [PMK_R_PIPE_CU] = { "r_pipe_cu", m_r_pipe_cu, { 50, 20, 20 }, 1 },
+    [PMK_R_PIPE_FE] = { "r_pipe_fe", m_r_pipe_fe, { 60, 30, 20 }, 1 },
+    [PMK_R_ELBOW_CU] = { "r_elbow_cu", m_r_elbow_cu, { 290, 90, 40 }, 1 },
+    [PMK_R_ELBOW_FE] = { "r_elbow_fe", m_r_elbow_fe, { 290, 90, 40 }, 1 },
+    [PMK_R_VALVE] = { "r_valve", m_r_valve, { 350, 170, 110 }, 1 },
+    [PMK_R_PIPE_CLIP] = { "r_pipe_clip", m_r_pipe_clip, { 140, 100, 80 }, 1 },
+    [PMK_R_BREEZE_DIAMOND] = { "r_breeze_diamond", m_r_breeze_diamond, { 810, 690, 220 }, 1 },
+    [PMK_R_BREEZE_RING] = { "r_breeze_ring", m_r_breeze_ring, { 1640, 690, 220 }, 1 },
+    [PMK_R_RAIL] = { "r_rail", m_r_rail, { 210, 100, 50 }, 1 },
+    [PMK_R_METER] = { "r_meter", m_r_meter, { 210, 160, 20 }, 1 },
+    [PMK_R_LANTERN] = { "r_lantern", m_r_lantern, { 250, 210, 80 }, 1 },
+    [PMK_R_BULKHEAD] = { "r_bulkhead", m_r_bulkhead, { 260, 130, 130 }, 1 },
+    [PMK_R_GATE_BARS] = { "r_gate_bars", m_r_gate_bars, { 760, 530, 140 }, 1 },
+    [PMK_R_GATE_SHEET] = { "r_gate_sheet", m_r_gate_sheet, { 220, 220, 120 }, 1 },
+    [PMK_R_RAZOR] = { "r_razor", m_r_razor, { 800, 480, 150 }, 1 },
+    [PMK_R_POT] = { "r_pot", m_r_pot, { 590, 250, 120 }, 1 },
+    [PMK_R_POT_PALM] = { "r_pot_palm", m_r_pot_palm, { 630, 440, 150 }, 1 },
+    [PMK_R_TROUGH] = { "r_trough", m_r_trough, { 460, 180, 70 }, 1 },
+    [PMK_R_VINE] = { "r_vine", m_r_vine, { 860, 330, 110 }, 1 },
+    [PMK_R_VINE_BLOOM] = { "r_vine_bloom", m_r_vine_bloom, { 860, 330, 110 }, 1 },
+    [PMK_R_TRAIL] = { "r_trail", m_r_trail, { 1110, 290, 80 }, 1 },
+    [PMK_R_AERIAL_YAGI] = { "r_aerial_yagi", m_r_aerial_yagi, { 320, 190, 50 }, 1 },
+    [PMK_R_AERIAL_CROSS] = { "r_aerial_cross", m_r_aerial_cross, { 220, 160, 70 }, 1 },
 };
 
 int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CUP) || (id >= PMK_ICON_SKEWER && id <= PMK_ICON_FLAME); }
 /* everything but the lights' own glass, flames and neon (SF1's stations cast, their coals included) */
 int pm_module_casts(int id) {
     return id >= 0 && id < PMK_COUNT && !pm_module_is_icon(id) && id != PMK_FLAME_RING && id != PMK_FLAME_JET && id != PMK_LAMP &&
-           id != PMK_BATTEN_TUBE;
+           id != PMK_BATTEN_TUBE && id != PMK_R_DOWNLIGHT && id != PMK_R_LED_STRIP;
 }
 
 int pm_module_count(void) { return PMK_COUNT; }

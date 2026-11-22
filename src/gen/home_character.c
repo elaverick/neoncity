@@ -1,4 +1,4 @@
-#include "home_shell_internal.h"
+#include "home_char_internal.h"
 #include "pmodel_house.h"
 #include <math.h>
 #include <stdlib.h>
@@ -260,7 +260,8 @@ uint16_t home_kit_flags(const HGraph *g, int unit, uint8_t *part) {
 }
 
 const char *home_dress_rule(int r) {
-    static const char *N[HDR_COUNT] = { "downpipe", "dormer", "shutters", "doorcase", "quoins", "canopy", "porch", "bargeboards", "budget" };
+    static const char *N[HDR_COUNT] = { "downpipe", "dormer", "shutters", "doorcase", "quoins", "canopy", "porch", "bargeboards", "budget",
+                                            "solar", "tank", "riser", "wall", "terrace" };
     return r >= 0 && r < HDR_COUNT ? N[r] : "?";
 }
 
@@ -270,21 +271,9 @@ const char *home_dress_rule(int r) {
 
 static int region_boxes_ground(const HGraph *g);
 
-#define UNIT_BUDGET 150   /* instances a house (docs/residential-target.md "Budgets") */
-
-typedef struct DC {
-    Ctx     *C;
-    HDress  *D;
-    const HGraph *g;
-    Pm      *pm;
-    double   sx;
-    int      unit;
-    uint32_t tagged;
-    uint8_t  part[HG_MAX_UNITS];
-    int      count[HG_MAX_UNITS];
-    /* per unit: its door's surround and canopy as placed (the reliefs keep clear of them) */
-    double   doorX[HG_MAX_UNITS], doorHalf[HG_MAX_UNITS], doorTop[HG_MAX_UNITS];
-} DC;
+/* instances a house (docs/residential-target.md "Budgets"): HM5's 150, and HM5c1's retrofit kit on top of it (the
+ * user's sheets put tanks, solar, risers, meters, lights and plants on every house) */
+#define UNIT_BUDGET 230
 
 static void repair(DC *d, int rule, const char *fmt, int unit, double a) {
     d->D->st.repairs[rule]++;
@@ -352,8 +341,6 @@ static double push_run_wall(DC *d, const double m[2], const double e[2], double 
     push_wall(d, p, m[0], m[1]);
     return sb - sa;
 }
-
-typedef struct Ival { double a, b; } Ival;
 
 /* The stretches of [a, b] along p0 + dir * t where the test point (offset by off) is clear of every solid,
  * sampled every `step`; those shorter than minLen dropped. */
@@ -427,6 +414,18 @@ static int front_blocked(const DC *d, const HsWin *w, double s, double y, double
     return hs_inside(d->C, p, -1, 0.003) >= 0;
 }
 
+/* A box on a window's wall: s0..s1 along it, y0..y1, out to `out` from its face. */
+static void occupy_wall(DC *d, const HsWin *w, double s0, double s1, double y0, double y1, double out) {
+    double lo[3] = { 1e30, y0, 1e30 }, hi[3] = { -1e30, y1, -1e30 };
+    for (int a = 0; a < 2; ++a)
+        for (int b = 0; b < 2; ++b) {
+            const double s = a ? s1 : s0, o = b ? out : -0.02;
+            const double x = w->m[0] * (w->at + o) + w->e[0] * s, z = w->m[1] * (w->at + o) + w->e[1] * s;
+            lo[0] = fmin(lo[0], x); hi[0] = fmax(hi[0], x); lo[2] = fmin(lo[2], z); hi[2] = fmax(hi[2], z);
+        }
+    hc_occupy(d, lo, hi);
+}
+
 static void dress_window(DC *d, const HsWin *w) {
     const int u = w->unit;
     const HCharSet *cs = &d->C->cs[u];
@@ -461,6 +460,9 @@ static void dress_window(DC *d, const HsWin *w) {
     pop(d);
     done(d);
     d->D->st.windows++;
+    /* what stands proud of the wall round it: its shutters, its box */
+    if (k.shutters) occupy_wall(d, w, w->a0 - 0.8 * w->w - 0.05, w->a0 + 1.8 * w->w + 0.05, w->y0 - 0.05, w->y1 + 0.05, 0.12);
+    if (k.box) occupy_wall(d, w, w->a0 - 0.1, w->a0 + w->w + 0.1, w->y0 - 0.45, w->y0 + 0.4, 0.32);
 }
 
 /* A bay's dressing from its windows (hk_bay's parts, set by the shell's own lights): a frame, sill and apron in
@@ -928,6 +930,11 @@ static void dress_eaves(DC *d, const HsRoof *hr) {
             hk_downpipe(d->pm, (float)(yTop - 0.1 - hr->dy), (float)(R->ov + HK_GUTTER_Z), cs->hopper);
             pop(d);
             done(d);
+            {   /* the pipe's run up the wall, kept clear by what comes after (the retrofit's risers and meters) */
+                const double cx = px + m[0] * 0.07, cz = pz + m[1] * 0.07;
+                const double lo[3] = { cx - 0.13, hr->dy, cz - 0.13 }, hi[3] = { cx + 0.13, yTop + 0.1, cz + 0.13 };
+                hc_occupy(d, lo, hi);
+            }
             d->D->st.pipes++;
             placed = 1;
         }
@@ -1066,6 +1073,19 @@ static void dress_ridges(DC *d, const HsRoof *hr) {
 
 /* Whether a dormer (or a rooflight) of width w, its front foot `in` metres in from eaves edge e at s along it, fits
  * the slope: its footprint on this roof's own slabs, nothing standing over it, under the ridge. */
+/* What a dormer, a rooflight or a vent takes of a slope (its front foot q on the roof plane over eaves of outward
+ * normal m, w across along dd, deep up the slope in plan, tall over it): a box kept clear by the retrofit's panels. */
+static void occupy_slope(DC *d, const double q[3], const double *m, const double dd[2], double w, double deep, double tall) {
+    double lo[3] = { 1e30, q[1] - 0.05, 1e30 }, hi[3] = { -1e30, q[1] + tall + 0.15, -1e30 };
+    for (int a = -1; a <= 1; a += 2)
+        for (int b = 0; b < 2; ++b) {
+            const double x = q[0] + dd[0] * a * (0.5 * w + 0.15) - m[0] * (b ? deep + 0.15 : -0.15);
+            const double z = q[2] + dd[1] * a * (0.5 * w + 0.15) - m[1] * (b ? deep + 0.15 : -0.15);
+            lo[0] = fmin(lo[0], x); hi[0] = fmax(hi[0], x); lo[2] = fmin(lo[2], z); hi[2] = fmax(hi[2], z);
+        }
+    hc_occupy(d, lo, hi);
+}
+
 static int slope_fits(const DC *d, const HsRoof *hr, int e, double tc, double w, double in, double deep, double tall) {
     const Roof *R = &hr->R;
     const double *m = R->F.m[e];
@@ -1138,6 +1158,7 @@ static void dress_slopes(DC *d, const HsRoof *hr) {
                     pop(d);
                     d->D->st.dormers++;
                     placed = 1;
+                    occupy_slope(d, q, m, dd, w, deep, tall);
                 }
             }
             if (!placed) repair(d, HDR_DORMER, "no clear place on a %.1f m slope for its dormer: none", u, b - a);
@@ -1150,6 +1171,7 @@ static void dress_slopes(DC *d, const HsRoof *hr) {
                 pm_rotate_x(d->pm, (float)(pitch * PI_D / 180.0));
                 pm_place(d->pm, PMK_H_ROOFLIGHT);
                 pop(d);
+                occupy_slope(d, q, m, dd, 0.8, 1.0, 0.25);
             }
         }
         if (back && cs->vent && !cs->lean) {
@@ -1159,6 +1181,7 @@ static void dress_slopes(DC *d, const HsRoof *hr) {
                 push_wall(d, q, m[0], m[1]);
                 pm_place(d->pm, PMK_H_VENT_PIPE);
                 pop(d);
+                occupy_slope(d, q, m, dd, 0.3, 0.3, 0.7);
             }
         }
         done(d);
@@ -1312,6 +1335,44 @@ static void dress_front(DC *d, const HsRoof *hr) {
 }
 
 /* ---------------------------------------------------------------------------
+ * Shared with the retrofit layer (home_char_internal.h)
+ * ------------------------------------------------------------------------- */
+
+void hc_repair(DC *d, int rule, const char *fmt, int unit, double a) { repair(d, rule, fmt, unit, a); }
+void hc_begin(DC *d, int u) { begin(d, u); }
+void hc_done(DC *d) { done(d); }
+void hc_push_wall(DC *d, const double p[3], double mx, double mz) { push_wall(d, p, mx, mz); }
+void hc_pop(DC *d) { pop(d); }
+void hc_push_yz(DC *d, const double p[3], const double ey[3], const double ez[3]) {
+    float o[3], y[3] = { (float)(d->sx * ey[0]), (float)ey[1], (float)ey[2] }, z[3] = { (float)(d->sx * ez[0]), (float)ez[1], (float)ez[2] };
+    const float x[3] = { y[1] * z[2] - y[2] * z[1], y[2] * z[0] - y[0] * z[2], y[0] * z[1] - y[1] * z[0] };
+    mesh_pt(d, p, o);
+    pm_push(d->pm);
+    pm_frame(d->pm, o, x, y, z);
+}
+int hc_clear_runs(const Ctx *C, const double p0[3], const double dir[3], const double off[3], double a, double b,
+                  double step, double minLen, Ival *out, int max) {
+    return clear_runs(C, p0, dir, off, a, b, step, minLen, out, max);
+}
+int hc_window_near(const DC *d, const double m[2], double at, double s, double y0, double y1, double margin) {
+    return window_near(d, m, at, s, y0, y1, margin);
+}
+void hc_eaves_line(const Roof *R, int e, double d[2], double *len, double *t0, double *t1) { eaves_line(R, e, d, len, t0, t1); }
+int hc_is_house_body(int role) { return is_house_body(role); }
+void hc_occupy(DC *d, const double lo[3], const double hi[3]) {
+    if (d->nocc >= HC_MAX_OCC) return;
+    HcBox *b = &d->occ[d->nocc++];
+    for (int k = 0; k < 3; ++k) { b->lo[k] = fmin(lo[k], hi[k]); b->hi[k] = fmax(lo[k], hi[k]); }
+}
+int hc_free(const DC *d, const double lo[3], const double hi[3]) {
+    for (int i = 0; i < d->nocc; ++i) {
+        const HcBox *b = &d->occ[i];
+        if (lo[0] < b->hi[0] && hi[0] > b->lo[0] && lo[1] < b->hi[1] && hi[1] > b->lo[1] && lo[2] < b->hi[2] && hi[2] > b->lo[2]) return 0;
+    }
+    return 1;
+}
+
+/* ---------------------------------------------------------------------------
  * The driver
  * ------------------------------------------------------------------------- */
 
@@ -1362,6 +1423,8 @@ static void dress_pass(Ctx *C, HDress *D, int *count) {
         dress_front(&d, &C->roof[i]);
     }
     dress_stacks(&d);
+    /* HM5c1: the shared retrofit kit over it all, keeping clear of what the character layer set down */
+    hs_retrofit(&d);
     int total = 0;
     for (int u = 0; u < g->nunit && u < HG_MAX_UNITS; ++u) {
         total += d.count[u];

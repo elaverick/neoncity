@@ -299,8 +299,20 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
  * ==================================================================== */
 const uint PMAT_HTRIM = 49u, PMAT_HDOOR = 50u, PMAT_HSTONE = 51u, PMAT_HBRICK = 52u, PMAT_HCLAY = 53u, PMAT_HTILE = 54u,
            PMAT_HRAIN = 55u, PMAT_HLEAD = 56u, PMAT_HIRON = 57u, PMAT_HPLANT = 58u, PMAT_HGLASS = 59u, PMAT_HTIMBER = 60u,
-           PMAT_HUPVC = 61u, PMAT_HROOF = 62u, PMAT_HCEMENT = 63u;   // src/gen/pmodel.h
-bool kitIsHouse(uint m) { return m >= PMAT_HTRIM && m <= PMAT_HCEMENT; }
+           PMAT_HUPVC = 61u, PMAT_HROOF = 62u, PMAT_HCEMENT = 63u,   // src/gen/pmodel.h
+           // HM5c1: the shared retrofit kit (src/gen/pmodel_retrofit.c)
+           PMAT_HGALV = 64u, PMAT_HCOPPER = 65u, PMAT_HPOLY = 66u, PMAT_HSOLAR = 67u, PMAT_HBREEZE = 68u, PMAT_HBLOOM = 69u,
+           PMAT_HLED = 70u, PMAT_HLAMP = 71u;
+bool kitIsHouse(uint m) { return m >= PMAT_HTRIM && m <= PMAT_HLAMP; }
+
+/* HM5c1: whether a house's outside lights are on (its LEDs, downlights, lantern: one seed a unit, src/city/homes.c).
+ * By the lamps' photocells (DN7: on under the cities' deck all day, out in daylight past its edge) and by the hour: most
+ * houses keep a light on through the evening, fewer in the small hours. */
+float houseLightOn(uint seed) {
+    float day = 1.0 - smoothstep(0.25, 0.6, gLampDay);
+    float share = clamp(0.35 + 0.5 * cityHours(true), 0.0, 0.9);
+    return hfloat(hash_combine(seed, 0x11D8u)) < share ? day : 0.0;
+}
 vec3 shadeHouseKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, float occ, uint aux) {
     uint m = prm.y & 255u, fl = prm.w, part = prm.z;
     uint trim = (fl >> HOUSE_KIT_TRIM) & 7u, door = (fl >> HOUSE_KIT_DOOR) & 15u, brick = (fl >> HOUSE_KIT_BRICK) & 7u;
@@ -323,6 +335,15 @@ vec3 shadeHouseKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, floa
     if (m == PMAT_HGLASS) {   // the kit's own glass (dormers, fanlights, a door's lights): the shells' glass
         vec3 g = houseGlass(dot(n, V) < 0.0 ? -n : n, V, key, uv, vec2(1.0));
         return g;
+    }
+    if (m == PMAT_HLED || m == PMAT_HLAMP) {   // HM5c1: a strip's or a downlight's opal diffuser, a lantern's glass
+        float on = houseLightOn(seed);
+        float facing = abs(dot(n, V));
+        vec3 warm = m == PMAT_HLED ? vec3(1.0, 0.80, 0.56) : vec3(1.0, 0.66, 0.36);
+        vec3 glow = warm * (m == PMAT_HLED ? 5.0 + 2.0 * facing : 3.0 + 2.5 * facing);
+        vec3 nv = dot(n, V) < 0.0 ? -n : n, spec;
+        vec3 dark = vec3(0.30, 0.30, 0.28) * wallLighting(p, nv, V, 40.0, 0.06, h, spec) + spec;
+        return mix(dark, glow, on);
     }
     vec3 T, B, nn = n, spec;
     vec2 q;
@@ -348,6 +369,47 @@ vec3 shadeHouseKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, floa
     else if (m == PMAT_HPLANT)  { alb = mix(vec3(0.03, 0.08, 0.02), vec3(0.09, 0.14, 0.04), hf(key, 0x4B07u)) * mix(0.6, 1.1, vnoise(gWorld.xz * 9.0 + gWorld.y * 7.0, 0x4B08u)); specK = 0.03; }
     else if (m == PMAT_HTIMBER) { alb = vec3(0.04, 0.028, 0.02); set = PBR_VENDOR_PLANKS; grainK = 0.5; }
     else if (m == PMAT_HUPVC)   { alb = vec3(0.60, 0.60, 0.57) * mix(0.9, 1.0, hf(seed, 0x4B09u)); shin = 40.0; specK = 0.06; }
+    // HM5c1, the retrofit kit: galvanised or grey-painted steel (rust weeping from its joints), copper going brown with a
+    // little verdigris, tank plastic (black, a few blue, green or cream), solar cells under glass, breeze blocks (bare
+    // or limewashed), flowers
+    else if (m == PMAT_HGALV) {
+        float k = hf(key, 0x4C01u);
+        alb = k < 0.55 ? vec3(0.30, 0.31, 0.31) : k < 0.85 ? vec3(0.07, 0.075, 0.08) : vec3(0.16, 0.17, 0.16);
+        float rust = smoothstep(0.62, 0.9, vnoise(vec2(dot(gWorld.xz, vec2(0.8, 0.6)) * 3.0, gWorld.y * 1.2), 0x4C02u));
+        alb = mix(alb, vec3(0.16, 0.07, 0.03), rust * 0.6);
+        set = PBR_KIT_GALV; grainK = 0.5; shin = 35.0; specK = mix(0.12, 0.05, rust);
+    }
+    else if (m == PMAT_HCOPPER) {
+        alb = mix(vec3(0.36, 0.17, 0.08), vec3(0.20, 0.09, 0.05), vnoise(gWorld.xz * 2.0 + gWorld.y * 1.5, 0x4C03u));
+        alb = mix(alb, vec3(0.12, 0.26, 0.21), smoothstep(0.7, 0.92, vnoise(vec2(dot(gWorld.xz, vec2(0.6, 0.8)) * 4.0, gWorld.y * 3.0), 0x4C04u)) * 0.7);
+        set = PBR_KIT_COPPER; grainK = 0.4; shin = 45.0; specK = 0.18;
+    }
+    else if (m == PMAT_HPOLY) {
+        float k = hf(seed, 0x4C05u);
+        alb = k < 0.84 ? vec3(0.018, 0.018, 0.02) : k < 0.92 ? vec3(0.02, 0.05, 0.13) : k < 0.97 ? vec3(0.03, 0.08, 0.04) : vec3(0.38, 0.36, 0.30);
+        alb = mix(alb, vec3(0.16, 0.15, 0.13), smoothstep(0.4, 0.9, n.y) * 0.35 * vnoise(gWorld.xz * 5.0, 0x4C06u));   // dust on its shoulder
+        shin = 30.0; specK = 0.08;
+    }
+    else if (m == PMAT_HSOLAR) {
+        // cells about 0.16 m square in the panel's metres, silver lines between them; the glass reflects like glass
+        vec2 c = abs(fract(uv / 0.163) - 0.5);
+        float line = 1.0 - smoothstep(0.44, 0.47, max(c.x, c.y));
+        alb = mix(vec3(0.012, 0.018, 0.04), vec3(0.012, 0.018, 0.04) * 0.8, vnoise(uv * 3.0, 0x4C07u));
+        alb = mix(vec3(0.2, 0.2, 0.21), alb, line);
+        alb = mix(alb, vec3(0.09, 0.085, 0.08), 0.35 * vnoise(gWorld.xz * 1.3, 0x4C08u));   // the city's grime on the glass
+        shin = 220.0; specK = 0.45;
+    }
+    else if (m == PMAT_HBREEZE) {
+        float k = hf(key, 0x4C09u);
+        alb = k < 0.5 ? vec3(0.40, 0.38, 0.34) : k < 0.8 ? vec3(0.55, 0.52, 0.45) : vec3(0.48, 0.40, 0.30);
+        set = PBR_CONCRETE; grainK = 0.8;
+    }
+    else if (m == PMAT_HBLOOM) {
+        float k = hf(key, 0x4C0Au);
+        alb = k < 0.55 ? vec3(0.42, 0.02, 0.18) : k < 0.72 ? vec3(0.55, 0.20, 0.02) : k < 0.86 ? vec3(0.45, 0.03, 0.04) : vec3(0.55, 0.52, 0.48);
+        alb *= mix(0.55, 1.1, vnoise(gWorld.xz * 11.0 + gWorld.y * 9.0, 0x4C0Bu));
+        specK = 0.03;
+    }
     else                        { alb = H_DOOR[door % 12u]; set = PBR_KIT_PAINT; grainK = 0.5; shin = 30.0; specK = 0.1; }   // PMAT_HDOOR
     alb *= vary;
     if (set >= 0 && pbrLoaded(set)) {

@@ -27,6 +27,7 @@
 #include "pmodel.h"
 #include "noodle_bar.h"
 #include "pmodel_house.h"
+#include "pmodel_retrofit.h"
 #include "hash.h"
 #include "mathlib.h"
 #include <stdio.h>
@@ -196,7 +197,9 @@ static const uint32_t MAT_RGB[PMAT_COUNT] = {
     /* HM4, the houses' kit: trim, door, stone, brick, clay, hung tile, rainwater, lead, iron, plant, glass, timber,
      * plastic, the roof (slate here), cement */
     0xD6D0C2, 0x1F4A33, 0xB5A88C, 0x8C4A32, 0xA4542F, 0x9A4A30, 0x1E1F20, 0x6B7275, 0x1A1A1C, 0x3E6B2C, 0x2B3A40,
-    0x2E241D, 0xEEEEEA, 0x464C55, 0x9A978F };
+    0x2E241D, 0xEEEEEA, 0x464C55, 0x9A978F,
+    /* HM5c1, the retrofit kit: galvanised steel, copper, tank plastic, solar cells, breeze blocks, flowers, LED, lamp glass */
+    0x8E9496, 0xA8582C, 0x1C1C1E, 0x1A2440, 0xB8B2A2, 0xC0287A, 0xFFE2B0, 0xFFC27A };
 /* The house vignettes' stand-ins for the shells' surfaces (a part number from LAB_STANDIN: drawn flat in these) */
 #define LAB_STANDIN 250
 static const uint32_t STANDIN_RGB[6] = { 0xC9BFA6, 0x7D8A80, 0x40454C, 0x8E3F2A, 0x7A4030, 0x5A5550 };   /* render, siding, slate, clay roof, brick, dark */
@@ -1011,11 +1014,131 @@ static void vig_shutters(Pm *pm) {
     pm_push(pm); pm_translate(pm, 0.0f, pl + sh - 0.15f, 0.0f); hk_run(pm, PMK_H_STRING_COURSE, W, 0.0f); pm_pop(pm);
 }
 
+/* HM5c1, the shared retrofit kit (pmodel_retrofit.h) on stand-ins after the concept sheets
+ * (docs/reference/international-residential): 8. a flat-roofed house (the RCC, self-built and shophouse sheets' panel
+ * 1): a black tank on a stand and one on the deck, a solar canopy with its downlights over the front of the roof,
+ * railings on the parapet, plants trailing over it, steel risers up the front and over onto the deck, a bank of
+ * meters, a security gate over the door, a bulkhead, a vine, pots and an aerial. */
+static void vig_retrofit_flat(Pm *pm) {
+    const float W = 7.0f, D = 8.0f, pl = 0.15f, sh = 3.0f, deck = 6.0f, top = 6.9f;
+    const float o[5][4] = { { 0.5f, pl + 0.8f, 1.9f, pl + 2.0f }, { 3.7f, pl, 4.7f, pl + 2.2f },
+                            { 0.5f, pl + sh + 0.8f, 1.9f, pl + sh + 2.0f }, { 3.7f, pl + sh + 0.8f, 5.1f, pl + sh + 2.0f }, { 0, 0, 0, 0 } };
+    si_wall(pm, SI_RENDER, 0.0f, 0.0f, W, top, 0.3f, o, 4, 0.1f);
+    si_box(pm, SI_DARK, 0.25f, deck - 0.1f, -D + 0.25f, W - 0.25f, deck, -0.3f);
+    si_box(pm, SI_RENDER, 0.0f, 0.0f, -D, 0.25f, top, -0.3f);
+    si_box(pm, SI_RENDER, W - 0.25f, 0.0f, -D, W, top, -0.3f);
+    si_box(pm, SI_RENDER, 0.25f, deck, -D, W - 0.25f, top, -D + 0.25f);
+    for (int k = 0; k < 4; ++k) {
+        if (k == 1) continue;
+        HkWindow w = { HK_FRAME_CASEMENT, HK_SILL_NONE, HK_HEAD_CONCRETE, 0, k == 0, 0, o[k][2] - o[k][0], 1.2f, 0.1f };
+        pm_push(pm); pm_translate(pm, 0.5f * (o[k][0] + o[k][2]), o[k][1], 0.0f); hk_window(pm, &w); pm_pop(pm);
+    }
+    pm_push(pm); pm_translate(pm, 4.2f, pl, 0.0f); hk_door(pm, HK_DOOR_4P, HK_CASE_NONE, 1.0f, 2.2f, 0.1f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 4.2f, pl, 0.004f); pm_scale(pm, 1.14f / HR_GATE_W, 2.26f / HR_GATE_H, 1.0f); pm_place(pm, PMK_R_GATE_BARS); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 4.2f, pl + 2.4f, 0.0f); pm_place(pm, PMK_R_BULKHEAD); pm_pop(pm);
+    for (int k = 0; k < 3; ++k) { pm_push(pm); pm_translate(pm, 2.3f + 0.42f * (float)k, 1.3f, 0.0f); pm_place(pm, PMK_R_METER); pm_pop(pm); }
+    pm_push(pm); pm_translate(pm, 2.72f, 2.05f, 0.05f); pm_scale(pm, 0.35f, top - 0.15f - 2.05f, 0.35f); pm_place(pm, PMK_R_PIPE_FE); pm_pop(pm);
+    /* risers up the front's corner, over the parapet, down onto the deck */
+    for (int k = 0; k < 2; ++k) {
+        const float x = 6.55f + 0.12f * (float)k, H = top + 0.18f + 0.06f * (float)k;
+        const float P[4][3] = { { x, 0.0f, HR_PIPE_Z }, { x, H, HR_PIPE_Z }, { x, H, HR_PIPE_Z - 0.55f }, { x, deck + 0.08f, HR_PIPE_Z - 0.55f } };
+        hr_pipe_path(pm, 1, P, 4);
+        if (!k) { const float a[3] = { x, 0.0f, HR_PIPE_Z }, b[3] = { x, H - 0.2f, HR_PIPE_Z }; hr_pipe_clips(pm, 1, a, b); }
+    }
+    pm_push(pm); pm_translate(pm, 6.55f, 1.1f, HR_PIPE_Z); pm_place(pm, PMK_R_VALVE); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 5.65f, 0.0f, 0.0f); hr_vine(pm, 0.9f, 2.7f, 0.4f, 11u); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 3.2f, 0.0f, 0.4f); pm_place(pm, PMK_R_POT_PALM); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 5.0f, 0.0f, 0.35f); pm_place(pm, PMK_R_POT); pm_pop(pm);
+    /* the roof: tanks along the back, the canopy over the front, railings round the parapet, plants over its front */
+    pm_push(pm); pm_translate(pm, W - 1.1f, deck, -D + 1.1f); hr_tank(pm, 0, 1.0f, 1.2f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, W - 2.7f, deck, -D + 0.9f); hr_tank(pm, 0, 0.8f, 0.0f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 3.2f, deck, -2.4f); pm_rotate_y(pm, PI_F); hr_solar_canopy(pm, 5.2f, 3.4f, 2.4f, 0.25f, 1, NULL); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.2f, top, -0.125f); hr_rail(pm, W - 0.4f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, W - 0.125f, top, -0.3f); pm_rotate_y(pm, 0.5f * PI_F); hr_rail(pm, D - 0.6f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.6f, top, 0.0f); hr_trail(pm, 2.6f, 0.95f, 5u); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.5f, deck, -D + 0.5f); pm_place(pm, PMK_R_AERIAL_YAGI); pm_pop(pm);
+}
+/* 9. A pitched roof (the Victorian and inter-war sheets' panel 1): panels on the street's slope, a black tank on a
+ * cradle by the ridge, a cross aerial on the stack, copper risers up the corner into the eaves, an LED strip under the
+ * soffit, a lantern and a low meter by the door, a vine, a trough, pots. */
+static void vig_retrofit_pitched(Pm *pm) {
+    const float W = 6.0f, pl = 0.15f, sh = 2.8f, eaves = 5.6f, pitch = 40.0f, depth = 8.0f, t = 0.12f;
+    const float o[5][4] = { { 0.9f, pl + 0.8f, 2.4f, pl + 2.0f }, { 3.3f, pl, 4.2f, pl + 2.1f },
+                            { 0.9f, pl + sh + 0.8f, 2.4f, pl + sh + 2.0f }, { 3.6f, pl + sh + 0.8f, 4.8f, pl + sh + 2.0f }, { 0, 0, 0, 0 } };
+    si_wall(pm, SI_BRICK, 0.0f, 0.0f, W, eaves, 0.3f, o, 4, 0.1f);
+    for (int k = 0; k < 4; ++k) {
+        if (k == 1) continue;
+        HkWindow w = { HK_FRAME_CASEMENT, HK_SILL_CONCRETE, HK_HEAD_SOLDIER, 0, 0, 0, o[k][2] - o[k][0], 1.2f, 0.1f };
+        pm_push(pm); pm_translate(pm, 0.5f * (o[k][0] + o[k][2]), o[k][1], 0.0f); hk_window(pm, &w); pm_pop(pm);
+    }
+    pm_push(pm); pm_translate(pm, 3.75f, pl, 0.0f); hk_door(pm, HK_DOOR_HALF, HK_CASE_NONE, 0.9f, 2.1f, 0.1f); pm_pop(pm);
+    si_box(pm, SI_DARK, 0.0f, eaves - 0.02f, 0.0f, W, eaves, 0.35f);
+    pm_mat(pm, PMAT_HTRIM); pm_box(pm, 0.0f, eaves - 0.18f, 0.33f, W, eaves + 0.05f, 0.36f);
+    pm_push(pm); pm_translate(pm, 0.0f, eaves - 0.02f, 0.36f); hk_gutter(pm, HK_GUTTER_HALF, W, 3); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.3f, eaves - 0.022f, 0.17f); hr_led(pm, W - 0.6f); pm_pop(pm);
+    float ry, rz;
+    si_roof(pm, SI_CLAY, -0.2f, W + 0.2f, eaves + 0.05f, 0.38f, depth, pitch, t, &ry, &rz);
+    pm_push(pm); pm_translate(pm, -0.2f, ry, rz); hk_ridge(pm, 0, W + 0.4f); pm_pop(pm);
+    /* panels on the street's slope */
+    {
+        const float a = pitch * PI_F / 180.0f;
+        float py, pz;
+        slope_pt(eaves + 0.05f, 0.38f, pitch, t, 0.9f, &py, &pz);
+        const float org[3] = { 2.4f, py + 0.004f, pz }, ey[3] = { 0.0f, cosf(a), sinf(a) }, ez[3] = { 0.0f, sinf(a), -cosf(a) }, ex[3] = { -1.0f, 0.0f, 0.0f };
+        pm_push(pm); pm_frame(pm, org, ex, ey, ez); hr_solar_flush(pm, 3, 2); pm_pop(pm);
+    }
+    /* the stack and its cross aerial */
+    si_box(pm, SI_BRICK, W - 0.55f, ry - 1.5f, rz - 0.3f, W + 0.45f, ry + 1.2f, rz + 0.3f);
+    pm_push(pm); pm_translate(pm, W - 0.05f, ry + 1.2f, rz); hk_chimney_top(pm, 1.0f, 0.6f, 2, 9u); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, W + 0.35f, ry + 1.23f, rz + 0.23f); pm_rotate_y(pm, 0.4f); pm_place(pm, PMK_R_AERIAL_CROSS); pm_pop(pm);
+    /* a tank on a cradle behind the ridge: legs down to the back slope */
+    {
+        const float a = pitch * PI_F / 180.0f, top = ry - 0.25f, zc = rz - 0.95f, hp = 0.5f * (HR_STAND_W + 0.16f);
+        pm_push(pm); pm_translate(pm, 1.6f, top, zc);
+        for (int k = 0; k < 4; ++k) {
+            const float lx = k & 1 ? hp - 0.06f : -hp + 0.06f, lz = k & 2 ? hp - 0.06f : -hp + 0.06f;
+            const float foot = ry - (rz - (zc + lz)) * tanf(a) - t;
+            pm_push(pm); pm_translate(pm, lx, foot - top, lz); pm_scale(pm, 0.75f, top - foot, 0.75f); pm_place(pm, PMK_R_FRAME_POST); pm_pop(pm);
+        }
+        pm_place(pm, PMK_R_STAND_TOP);
+        pm_push(pm); pm_translate(pm, 0.0f, HR_STAND_TOP, 0.0f); hr_tank(pm, 0, 0.9f, 0.0f); pm_pop(pm);
+        pm_pop(pm);
+    }
+    /* copper risers up the left corner into the wall under the soffit */
+    for (int k = 0; k < 2; ++k) {
+        const float x = 0.25f + 0.085f * (float)k, H = eaves - 0.35f;
+        const float P[3][3] = { { x, 0.0f, HR_PIPE_Z }, { x, H, HR_PIPE_Z }, { x, H, -0.08f } };
+        hr_pipe_path(pm, 0, P, 3);
+        if (!k) { const float a[3] = { x, 0.0f, HR_PIPE_Z }, b[3] = { x, H - 0.2f, HR_PIPE_Z }; hr_pipe_clips(pm, 0, a, b); }
+    }
+    pm_push(pm); pm_translate(pm, 4.45f, pl + 1.95f, 0.0f); pm_place(pm, PMK_R_LANTERN); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 2.85f, 0.45f, 0.0f); pm_place(pm, PMK_R_METER); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 5.35f, 0.0f, 0.0f); hr_vine(pm, 1.0f, 4.6f, 0.2f, 21u); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.9f, 0.0f, 0.25f); pm_scale(pm, 1.5f, 1.0f, 1.0f); pm_place(pm, PMK_R_TROUGH); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 2.95f, 0.0f, 0.4f); pm_place(pm, PMK_R_POT); pm_pop(pm);
+}
+/* 10. The yard's pieces (the block, compound and inter-war sheets' boundaries, which HM7 sets down): breeze-block
+ * screens of both patterns on a low wall, razor wire along a wall's top, a sheet gate, a black tank on a tall stand
+ * (the African sheets), a steel tank, a palm in its pot. */
+static void vig_retrofit_yard(Pm *pm) {
+    si_box(pm, SI_RENDER, 0.0f, 0.0f, -0.2f, 5.6f, 0.6f, 0.0f);
+    pm_push(pm); pm_translate(pm, 0.2f, 0.6f, -0.1f); hr_breeze(pm, 0, 2.4f, HR_BREEZE); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 3.0f, 0.6f, -0.1f); hr_breeze(pm, 1, 2.4f, HR_BREEZE); pm_pop(pm);
+    si_box(pm, SI_RENDER, 5.6f, 0.0f, -0.2f, 8.2f, 1.9f, 0.0f);
+    pm_push(pm); pm_translate(pm, 5.6f, 1.9f, -0.1f); hr_razor(pm, 2.6f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 9.2f, 0.0f, -0.1f); pm_scale(pm, 1.6f, 1.0f, 1.0f); pm_place(pm, PMK_R_GATE_SHEET); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 11.6f, 0.0f, -1.2f); hr_tank(pm, 0, 1.0f, 3.5f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 13.6f, 0.0f, -0.9f); hr_tank(pm, 1, 1.0f, 0.0f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 8.0f, 0.0f, 1.0f); pm_place(pm, PMK_R_POT_PALM); pm_pop(pm);
+}
+
 typedef void (*VigFn)(Pm *pm);
 static const struct { const char *name; VigFn fn; float az, el; } VIG[] = {
     { "victorian", vig_victorian, 0.42f, 0.16f }, { "georgian", vig_georgian, 0.38f, 0.10f }, { "craftsman", vig_craftsman, 0.75f, 0.02f },
     { "interwar", vig_interwar, 0.45f, 0.15f }, { "roofscape", vig_roofscape, 0.55f, 0.42f }, { "postwar", vig_postwar, 0.4f, 0.12f },
     { "shutters", vig_shutters, 0.35f, 0.1f },
+    { "retrofit_flat", vig_retrofit_flat, 0.5f, 0.32f }, { "retrofit_pitched", vig_retrofit_pitched, 0.45f, 0.3f },
+    { "retrofit_yard", vig_retrofit_yard, 0.3f, 0.22f },
 };
 #define NVIG ((int)(sizeof(VIG) / sizeof(VIG[0])))
 
@@ -1128,8 +1251,8 @@ int main(int argc, char **argv) {
         stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
         free(im.p); im.p = NULL;
     }
-    printf("library: %ld triangles over its levels (budget 400000: NB0's 300000 raised for SF1's trades, then HM4's house kit)\n", total);
-    if (!only) CHECK(total <= 400000, "the library holds %ld triangles over its levels, over 400000", total);
+    printf("library: %ld triangles over its levels (budget 430000: NB0's 300000 raised for SF1's trades, HM4's house kit, HM5c1's retrofit kit)\n", total);
+    if (!only) CHECK(total <= 430000, "the library holds %ld triangles over its levels, over 430000", total);
     if (house_only) {
         house_section(out, NULL);
         printf("\n%s (%d failures)\n", g_fail ? "FAILED" : "ok", g_fail);
