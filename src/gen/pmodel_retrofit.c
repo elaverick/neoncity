@@ -683,25 +683,6 @@ void m_r_vine(Pm *pm) {
     const uint32_t c = pm_vert(pm, p2, n, 1.0f, 1.0f), d = pm_vert(pm, p3, n, 0.0f, 1.0f);
     pm_quad(pm, a, b, c, d);
 }
-/* Plants trailing over an edge: a mass on top, strands hanging down its face, thinning as they fall. */
-void m_r_trail(Pm *pm) {
-    quiet(pm);
-    uint32_t h = 0x7A11u;
-    pm_mat(pm, PMAT_HPLANT);
-    const int top = L2 ? 2 : L1 ? 4 : 6;
-    for (int k = 0; k < top; ++k) { pm->part = (uint8_t)k; clump(pm, (0.5f + (float)k) / (float)top, -0.02f, -0.06f, 0.13f, 0.17f, 0.8f); }
-    const int strands = L2 ? 2 : L1 ? 4 : 6, per = L2 ? 1 : L1 ? 3 : 5;
-    for (int s = 0; s < strands; ++s) {
-        const float x = (0.5f + (float)s + 0.4f * (rnd(&h) - 0.5f)) / (float)strands, len = 0.55f + 0.45f * rnd(&h);
-        for (int k = 0; k < per; ++k) {
-            const float t = ((float)k + 0.5f) / (float)per, y = -len * t - 0.1f, r = 0.09f * (1.0f - 0.5f * t);
-            pm_mat(pm, !L2 && rnd(&h) < 0.25f ? PMAT_HBLOOM : PMAT_HPLANT);
-            pm->part = (uint8_t)(16 + s * 8 + k);
-            clump(pm, x + 0.04f * (rnd(&h) - 0.5f), y - 0.5f * r, 0.07f, r, r * 2.4f, 0.6f);
-        }
-    }
-    pm->part = 0;
-}
 
 /* ------------------------------------------------------------- assemblies --- */
 static void place_at(Pm *pm, int module, float x, float y, float z, float sx, float sy, float sz) {
@@ -884,13 +865,25 @@ void hr_vine(Pm *pm, float w, float h, int species) {
     pm->part = part;
 }
 
-void hr_trail(Pm *pm, float len, float drop, uint32_t seed) {
-    if (len < 0.4f) return;
-    int n = (int)floorf(len + 0.5f);
-    if (n < 1) n = 1;
-    const float seg = len / (float)n;
-    uint32_t r = seed | 1u;
-    for (int k = 0; k < n; ++k) place_at(pm, PMK_R_TRAIL, seg * (float)k, 0.0f, 0.0f, seg, drop * (0.6f + 0.5f * rnd(&r)), 1.0f);
+/* Plants trailing over an edge, from the vines' art (the leaf-blob strands read as rows of bells close to): a vine's
+ * card hung upside down in front of the edge's face, its thinning top become the strands' tips, and a low card of the
+ * same plant standing on the edge behind it, its top thinning to tufts; both cards' cut edges at the edge's line. */
+void hr_trail(Pm *pm, float len, float drop, int species) {
+    if (len < 0.4f || drop < 0.15f) return;
+    const uint8_t part = pm->part;
+    pm->part = (uint8_t)species;   /* house.glsl shadeVine's atlas column */
+    pm_push(pm);                   /* hanging: the card's foot at the edge (a little over it), its top the tips */
+    pm_translate(pm, 0.5f * len, 0.04f, 0.0f);
+    pm_rotate_z(pm, PI_F);
+    pm_scale(pm, len, drop + 0.04f, 1.0f);
+    pm_place(pm, PMK_R_VINE);
+    pm_pop(pm);
+    pm_push(pm);                   /* on the edge: standing just in front of the face's plane, set back by its depth */
+    pm_translate(pm, 0.5f * len, 0.0f, -HR_VINE_DEPTH);
+    pm_scale(pm, 0.92f * len, 0.32f, 1.0f);
+    pm_place(pm, PMK_R_VINE);
+    pm_pop(pm);
+    pm->part = part;
 }
 
 void hr_led(Pm *pm, float len) { if (len > 0.2f) place_at(pm, PMK_R_LED_STRIP, 0.0f, 0.0f, 0.0f, len, 1.0f, 1.0f); }

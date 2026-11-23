@@ -1055,7 +1055,7 @@ static void vig_retrofit_flat(Pm *pm) {
     pm_push(pm); pm_translate(pm, 3.2f, deck, -2.4f); pm_rotate_y(pm, PI_F); hr_solar_canopy(pm, 5.2f, 3.4f, 2.4f, 0.25f, 1, NULL); pm_pop(pm);
     pm_push(pm); pm_translate(pm, 0.2f, top, -0.125f); hr_rail(pm, W - 0.4f); pm_pop(pm);
     pm_push(pm); pm_translate(pm, W - 0.125f, top, -0.3f); pm_rotate_y(pm, 0.5f * PI_F); hr_rail(pm, D - 0.6f); pm_pop(pm);
-    pm_push(pm); pm_translate(pm, 0.6f, top, 0.0f); hr_trail(pm, 2.6f, 0.95f, 5u); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.6f, top, 0.0f); hr_trail(pm, 2.6f, 0.95f, HR_VINE_BOUGAINVILLEA); pm_pop(pm);
     pm_push(pm); pm_translate(pm, 0.5f, deck, -D + 0.5f); pm_place(pm, PMK_R_AERIAL_YAGI); pm_pop(pm);
 }
 /* 9. A pitched roof (the Victorian and inter-war sheets' panel 1): panels on the street's slope, a black tank on a

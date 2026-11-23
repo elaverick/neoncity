@@ -1484,7 +1484,7 @@ static void dress_members(DC *d, const HInsert *in, int idx) {
             const double x = d->sx > 0.0 ? x1 - 0.25 : x0 + 0.25;
             const double p[3] = { x, yb + dy, in->z - d1 + 0.02 };
             hc_push_wall(d, p, 0.0, -1.0);
-            hr_trail(d->pm, (float)len, 0.4f + 0.7f * hf(h, 70u + (uint32_t)k), h + (uint32_t)k);
+            hr_trail(d->pm, (float)len, 0.4f + 0.7f * hf(h, 70u + (uint32_t)k), home_trail_species(g->style, h + (uint32_t)k));
             hc_pop(d);
         }
         /* a screen in one storey's cell of a portal or a lean-to frame, at its plane */
@@ -1530,7 +1530,7 @@ static void dress_members(DC *d, const HInsert *in, int idx) {
             const double x = d->sx > 0.0 ? 0.5 * (x0 + x1) + 0.5 * len : 0.5 * (x0 + x1) - 0.5 * len;
             const double p[3] = { x, ya + dy, in->z - D + 0.03 };
             hc_push_wall(d, p, 0.0, -1.0);
-            hr_trail(d->pm, (float)len, 0.3f + 0.5f * hf(h, 50u + (uint32_t)k), h ^ (uint32_t)k);
+            hr_trail(d->pm, (float)len, 0.3f + 0.5f * hf(h, 50u + (uint32_t)k), home_trail_species(g->style, h ^ (uint32_t)k));
             hc_pop(d);
         }
     }
@@ -1606,7 +1606,7 @@ void hs_inserts(DC *d) {
             const double x = d->sx > 0.0 ? in->x1 - 0.15 : in->x0 + 0.15;
             const double p[3] = { x, y1, zf + 0.02 };
             hc_push_wall(d, p, 0.0, -1.0);
-            hr_trail(d->pm, (float)len, 0.5f + 0.6f * hf(h, 5u), h);
+            hr_trail(d->pm, (float)len, 0.5f + 0.6f * hf(h, 5u), home_trail_species(g->style, h));
             hc_pop(d);
         }
         hc_done(d);

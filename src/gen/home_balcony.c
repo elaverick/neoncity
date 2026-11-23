@@ -436,7 +436,7 @@ void hs_balconies(DC *d) {
                 const double x = d->sx > 0.0 ? b->x1 - 0.15 : b->x0 + 0.15;
                 const double p[3] = { x, y + HK_RAIL_H, zf + 0.02 };
                 hc_push_wall(d, p, 0.0, -1.0);
-                hr_trail(d->pm, (float)len, 0.5f + 0.5f * hash_float(hash_combine(h, 7u)), h);
+                hr_trail(d->pm, (float)len, 0.5f + 0.5f * hash_float(hash_combine(h, 7u)), home_trail_species(g->style, h));
                 hc_pop(d);
             }
             if (!home_balcony_carved(b->kind) && ch(h, 8u, led * (0.5f + g->affluence))) {

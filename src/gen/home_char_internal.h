@@ -27,6 +27,9 @@ typedef struct DC {
 
 typedef struct Ival { double a, b; } Ival;
 
+/* home_retrofit.c: the plant trailing over a ledge, rail or parapet (HR_VINE_*, for hr_trail), by region */
+int    home_trail_species(int style, uint32_t h);
+
 /* home_character.c */
 void   hc_repair(DC *d, int rule, const char *fmt, int unit, double a);
 /* the unit the next instances are tagged with; done tags them */

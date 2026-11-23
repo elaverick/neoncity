@@ -449,7 +449,9 @@ float vineHeight(VineCard c, vec2 xy, vec2 gx, vec2 gy, out vec2 st, out bool mi
         if (u <= 0.0 || u >= 1.0 || xy.y < 0.0 || xy.y > top + 0.05) continue;
         vec2 s = vec2((c.species + (mir ? 1.0 - u : u)) / VINE_CELLS, voff - xy.y / c.tileH);
         float h = textureGrad(pbrMaps[oi], s, gx, gy).b;
-        if (h <= smoothstep(top - 0.7, top + 0.05, xy.y)) continue;   // the top: only its highest leaves
+        // the top: only its highest leaves (over 0.7 m, or the top third of a short card: a trailing plant's, hr_trail,
+        // where 0.7 m would leave only its flowers' petals)
+        if (h <= smoothstep(top - min(0.7, 0.35 * c.H), top + 0.05, xy.y)) continue;
         if (h > best) { best = h; st = s; mirOut = mir; }
     }
     return best;
@@ -470,13 +472,15 @@ vec3 shadeVine(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, vec3 lit
         c.x0 = 0.0;
         c.pitch = (c.W - c.cw) / float(c.n - 1);
     }
-    // the card's frame: up the wall, across it (the way uv.x runs, mirrored rows or not)
-    vec3 Bn = vec3(0.0, 1.0, 0.0);
-    vec3 Tn = normalize(cross(Bn, n) + vec3(1e-6, 0.0, 0.0));
+    // the card's frame: the way uv.y runs (up the wall, or down it for a trailing plant's card hung upside down:
+    // hr_trail), across it the way uv.x runs (mirrored rows or not)
     vec3 dp1 = dFdx(rel), dp2 = dFdy(rel);
     vec2 du1 = dFdx(uv), du2 = dFdy(uv);
     float det = du1.x * du2.y - du1.y * du2.x;
-    vec3 dpdu = (dp1 * du2.y - dp2 * du1.y) / (abs(det) > 1e-14 ? det : 1e-14);
+    float idet = 1.0 / (abs(det) > 1e-14 ? det : 1e-14);
+    vec3 dpdu = (dp1 * du2.y - dp2 * du1.y) * idet, dpdv = (dp2 * du1.x - dp1 * du2.x) * idet;
+    vec3 Bn = dot(dpdv, vec3(0.0, 1.0, 0.0)) < 0.0 ? vec3(0.0, -1.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    vec3 Tn = normalize(cross(Bn, n) + vec3(1e-6, 0.0, 0.0));
     if (dot(dpdu, Tn) < 0.0) Tn = -Tn;
     vec2 xy = uv * vec2(c.W, c.H);
     vec2 xyx = dFdx(xy), xyy = dFdy(xy);

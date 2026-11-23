@@ -1773,7 +1773,6 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_R_POT_PALM] = { "r_pot_palm", m_r_pot_palm, { 630, 440, 150 }, 1 },
     [PMK_R_TROUGH] = { "r_trough", m_r_trough, { 460, 180, 70 }, 1 },
     [PMK_R_VINE] = { "r_vine", m_r_vine, { 2, 2, 2 }, 0 },
-    [PMK_R_TRAIL] = { "r_trail", m_r_trail, { 1110, 290, 80 }, 1 },
     [PMK_R_AERIAL_YAGI] = { "r_aerial_yagi", m_r_aerial_yagi, { 320, 190, 50 }, 1 },
     [PMK_R_AERIAL_CROSS] = { "r_aerial_cross", m_r_aerial_cross, { 220, 160, 70 }, 1 },
     /* HM5e3: boundaries */

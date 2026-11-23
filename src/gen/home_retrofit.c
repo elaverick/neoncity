@@ -574,6 +574,20 @@ static int vine_species(const RU *r) {
     }
 }
 
+/* Which plant trails over a ledge, a rail or a parapet (hr_trail: a vine's card hung upside down), by region as the
+ * climbers: never the wisteria, whose flowers hang (upside down they would stand up). */
+int home_trail_species(int style, uint32_t h) {
+    const float k = hash_float(hash_combine(h, 0x7A5u));
+    switch (home_style_region(style)) {
+    case PLAN_REGION_UK: case PLAN_REGION_NA: return k < 0.35f ? HR_VINE_CLEMATIS : HR_VINE_IVY;
+    case PLAN_REGION_EAS:  return k < 0.3f ? HR_VINE_CLEMATIS : HR_VINE_IVY;
+    case PLAN_REGION_SEU: case PLAN_REGION_MENA:
+        return k < 0.6f ? HR_VINE_BOUGAINVILLEA : k < 0.8f ? HR_VINE_PASSION : HR_VINE_IVY;
+    case PLAN_REGION_LAT:  return k < 0.55f ? HR_VINE_BOUGAINVILLEA : HR_VINE_PASSION;
+    default:               return k < 0.5f ? HR_VINE_BOUGAINVILLEA : HR_VINE_THUNBERGIA;   /* SAS, SEA, SSA */
+    }
+}
+
 static void vines(RU *r) {
     DC *d = r->d;
     if (!ch(r->o, 0x61u, r->P.vine)) return;
@@ -916,7 +930,7 @@ static void deck_terrace(RU *r, const Deck *k) {
                 Edge f = *x;
                 f.a[0] += x->m[0] * 0.125; f.a[2] += x->m[1] * 0.125; f.b[0] += x->m[0] * 0.125; f.b[2] += x->m[1] * 0.125;
                 push_edge(d, &f, &run[j], k->top);
-                hr_trail(d->pm, (float)(run[j].b - run[j].a), (float)drop, hash_combine(r->o, 0xE5u + (uint32_t)j));
+                hr_trail(d->pm, (float)(run[j].b - run[j].a), (float)drop, home_trail_species(d->g->style, hash_combine(r->o, 0xE5u + (uint32_t)j)));
                 hc_pop(d);
                 any = 1;
             }

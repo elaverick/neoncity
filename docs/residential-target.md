@@ -514,6 +514,13 @@ and the leaves are the card's steep parallax down to the wall (`shadeVine` in `s
   kit's culling sphere now takes an instance's largest stretch (a card is far taller than it is wide).
 - **Captures:** `city_test --home [--style S]` also prints up to three `home_vineN` views (each vine's plant and size),
   which `tools/home_capture.py --views home_vine0,home_vine1,home_vine2` takes.
+- **Trailing plants** (over parapets, balcony rails, box tops, frame shelves and hexagons' sills) were still the old
+  leaf blobs, which close to read as rows of bells (the user's snag, 2026-11-23). `hr_trail` now hangs the same card
+  upside down in front of the edge's face (its thinning top become the strands' tips; `shadeVine` takes the card's up
+  from its uv, so a hung card's parallax runs the right way) and stands a 0.32 m card of the same plant on the edge
+  behind it, both cut edges at the edge's line: 4 triangles a run against ~1,100. The plant by region as the climbers'
+  (`home_trail_species`) but never the wisteria, whose flowers would stand up. A short card thins over its top third
+  (not 0.7 m), else only its petals were left.
 
 ## Each style's body to its sheet (HM5e1)
 

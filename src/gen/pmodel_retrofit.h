@@ -61,7 +61,7 @@ void m_r_rail(Pm *pm);
 void m_r_meter(Pm *pm);        void m_r_lantern(Pm *pm);     void m_r_bulkhead(Pm *pm);
 void m_r_gate_bars(Pm *pm);    void m_r_gate_sheet(Pm *pm);  void m_r_razor(Pm *pm);
 void m_r_pot(Pm *pm);          void m_r_pot_palm(Pm *pm);    void m_r_trough(Pm *pm);
-void m_r_vine(Pm *pm);         void m_r_trail(Pm *pm);
+void m_r_vine(Pm *pm);
 void m_r_aerial_yagi(Pm *pm);  void m_r_aerial_cross(Pm *pm);
 /* HM5e3: boundaries (x 0..1 and y 0..1 stretched, centred on z 0: a run's piece or a gate's leaf) */
 void m_r_fence_steel(Pm *pm);  void m_r_fence_mesh(Pm *pm);  void m_r_gate_pierced(Pm *pm);
@@ -127,6 +127,6 @@ void hr_razor(Pm *pm, float len);
  * (HR_VINE_*); the shader grows it as overlapping columns of the atlas, the outer ones stopping short. */
 void hr_vine(Pm *pm, float w, float h, int species);
 /* Plants trailing over an edge along x from 0 to len, hanging `drop` metres (varied piece to piece). */
-void hr_trail(Pm *pm, float len, float drop, uint32_t seed);
+void hr_trail(Pm *pm, float len, float drop, int species);   /* species HR_VINE_* (home_trail_species) */
 /* An LED strip along x from 0 to len (one stretched piece). */
 void hr_led(Pm *pm, float len);
