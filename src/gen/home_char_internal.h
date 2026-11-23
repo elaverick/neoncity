@@ -58,3 +58,6 @@ int    home_retrofit_style(int style);
 /* home_balcony.c (HM5e2): the balconies' rails, glazing, consoles and what owners put on them (before the retrofit layer,
  * which keeps out of them) */
 void   hs_balconies(DC *d);
+/* home_bound.c (HM5e3): the boundaries' tops, the gates' leaves, gate lanterns, razor wire, stoop rails (after the
+ * balconies, before the retrofit layer, which keeps off them) */
+void   hs_bounds(DC *d);

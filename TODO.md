@@ -1151,10 +1151,19 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM5e3, boundaries and gates** (HM5e1 bodies, HMv vines, HM5e2 balconies done by 2026-11-23): the boundary
-  walls and gates the graph already plans (`HBound`, `HGate`, drawn by nothing until now), by the sheets' panel 1. Then
-  HM5c2 (retrofit insertions, 3 units in 5), HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing
-  styles to their sheets), HM6 (the rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **Next: HM5c2, the retrofit insertions** (3 units in 5; HM5e1 bodies, HMv vines, HM5e2 balconies, HM5e3 boundaries done
+  by 2026-11-23). Then HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing styles to their sheets), HM6
+  (the rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **The boundaries' leftovers** (HM5e3, `docs/residential-target.md` "Boundaries and gates"):
+  - China's gatehouse piers are the wall's own grey brick: they barely read as piers. The sheet's has a plinth, red
+    couplet boards and lanterns either side of the doors (HM5b1's ornament), and upturned ridge ends.
+  - Hedges (the council estate's and inter-war sheets show them behind the low walls) are HM7's; bins by the gates too.
+  - A compound's side and rear walls are built plain (no piers, breeze band or razor wire): the street never sees them.
+  - Gates are shut and the walker can't pass them: front yards behind a gate are out of reach.
+  - Railings' spearheads squash on a dwarf wall's shorter railing (the module is stretched in height).
+  - Bottle glass on a wall's coping (the plan offered it beside razor wire) is not built.
+  - The far shell (past 220 m) keeps only walls 1.5 m and taller, without copings or piers.
+  - The gate lanterns are emissive only, as the retrofit kit's are (HM6's light table).
 - **The balconies' leftovers** (HM5e2, `docs/residential-target.md` "Balconies"):
   - China's balconies stand only on its flat blocks; the capture's slice street is one-storey courtyard rows, so few show.
     HM5e3's courtyard wall and gatehouse put the blocks behind the rows, as the sheet has them.
@@ -1190,7 +1199,6 @@ The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the targe
 - **The retrofit kit's leftovers** (HM5c1):
   - Its lights (downlights, LED strips, lanterns, bulkheads) are emissive only: no light table entries, no RT
     shadows. HM6 puts the porch and entrance lamps in the light table; take these with them.
-  - Sheet-steel gates and breeze-block boundary screens wait for the boundaries (HM5e draws them now).
   - Terrace fronts are crowded (door, bay, downpipe, porch): their units mostly get a meter, a light and now and
     then a riser. Denser fronts want the bodies of HM5e first.
   - The bungalow's 3 m noon capture once died mid-load (the log stops after the sky line, no message); three reruns

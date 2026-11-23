@@ -63,6 +63,8 @@ void m_r_gate_bars(Pm *pm);    void m_r_gate_sheet(Pm *pm);  void m_r_razor(Pm *
 void m_r_pot(Pm *pm);          void m_r_pot_palm(Pm *pm);    void m_r_trough(Pm *pm);
 void m_r_vine(Pm *pm);         void m_r_trail(Pm *pm);
 void m_r_aerial_yagi(Pm *pm);  void m_r_aerial_cross(Pm *pm);
+/* HM5e3: boundaries (x 0..1 and y 0..1 stretched, centred on z 0: a run's piece or a gate's leaf) */
+void m_r_fence_steel(Pm *pm);  void m_r_fence_mesh(Pm *pm);  void m_r_gate_pierced(Pm *pm);
 
 /* Module frames:
  *   solar panel   HR_PANEL_W (x) by HR_PANEL_L (z), centred; its feet on y 0, its glass HR_PANEL_H up, facing +y

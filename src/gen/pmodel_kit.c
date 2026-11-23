@@ -1739,6 +1739,10 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_H_RAIL_POST] = { "h_rail_post", m_h_rail_post, { 60, 60, 20 }, 1 },
     [PMK_H_GLAZING] = { "h_glazing", m_h_glazing, { 130, 130, 80 }, 1 },
     [PMK_H_CONSOLE] = { "h_console", m_h_console, { 80, 80, 40 }, 1 },
+    /* HM5e3: boundaries */
+    [PMK_H_RAIL_SPEAR] = { "h_rail_spear", m_h_rail_spear, { 360, 360, 140 }, 1 },
+    [PMK_H_GATE_IRON] = { "h_gate_iron", m_h_gate_iron, { 420, 400, 150 }, 1 },
+    [PMK_H_BAR_IRON] = { "h_bar_iron", m_h_bar_iron, { 60, 20, 20 }, 1 },
     /* HM5c1: the houses' shared retrofit kit (pmodel_retrofit.c) */
     [PMK_R_SOLAR_PANEL] = { "r_solar_panel", m_r_solar_panel, { 280, 120, 20 }, 1 },
     [PMK_R_SOLAR_ROW] = { "r_solar_row", m_r_solar_row, { 860, 390, 40 }, 1 },
@@ -1772,6 +1776,10 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_R_TRAIL] = { "r_trail", m_r_trail, { 1110, 290, 80 }, 1 },
     [PMK_R_AERIAL_YAGI] = { "r_aerial_yagi", m_r_aerial_yagi, { 320, 190, 50 }, 1 },
     [PMK_R_AERIAL_CROSS] = { "r_aerial_cross", m_r_aerial_cross, { 220, 160, 70 }, 1 },
+    /* HM5e3: boundaries */
+    [PMK_R_FENCE_STEEL] = { "r_fence_steel", m_r_fence_steel, { 220, 200, 90 }, 1 },
+    [PMK_R_FENCE_MESH] = { "r_fence_mesh", m_r_fence_mesh, { 240, 180, 80 }, 1 },
+    [PMK_R_GATE_PIERCED] = { "r_gate_pierced", m_r_gate_pierced, { 840, 580, 150 }, 1 },
 };
 
 int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CUP) || (id >= PMK_ICON_SKEWER && id <= PMK_ICON_FLAME); }

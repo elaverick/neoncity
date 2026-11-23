@@ -90,6 +90,9 @@ void m_h_stack_cap(Pm *pm);     void m_h_vent_pipe(Pm *pm);     void m_h_rooflig
  * wall, its top on y 0) */
 void m_h_win_french(Pm *pm);    void m_h_rail_iron(Pm *pm);     void m_h_rail_ornate(Pm *pm);  void m_h_rail_post(Pm *pm);
 void m_h_glazing(Pm *pm);       void m_h_console(Pm *pm);
+/* HM5e3: boundaries (the spear railing x 0..1 and y 0..1 stretched, centred on z 0; the gate leaf likewise; the bar x 0..1,
+ * centred on y and z) */
+void m_h_rail_spear(Pm *pm);    void m_h_gate_iron(Pm *pm);     void m_h_bar_iron(Pm *pm);
 
 /* ------------------------------------------------------------- assemblies --- */
 /* Each places modules (pm_place: instances, or built in) with the builder's current transform as its frame. */

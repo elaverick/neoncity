@@ -630,6 +630,70 @@ Southern European slabs; and the owners': pots and palms (by region, fewer where
 rail, an LED strip under the slab's edge (most in East Asia). Kit `h_win_french`, `h_rail_iron`, `h_rail_ornate`,
 `h_rail_post`, `h_glazing`, `h_console` (`pmodel_lab`).
 
+## Boundaries and gates (HM5e3)
+
+The third step of HM5e: the front walls, railings, fences and gates each sheet's panel 1 shows (the plan's boundary
+column). HM2's garden always planned them (`HBound` lines along the street, between the front yards and round the back,
+`HGate` gaps for the path and the drive) but nothing drew them. `src/gen/home_bound.c` gives them their style's heights,
+tops and gates from a stream of its own (`home_bounds`, after the garden is laid), so the rest of every house is as it
+was; the shell builds the solid parts, the kit what stands on them.
+
+| Style (sheet) | Front | Gates | Also |
+|---|---|---|---|
+| rowhouse (Brownstone) | spear-topped area railings 0.9-1.1 m on a stone kerb | iron, on iron posts | iron rails up both sides of the stoop |
+| victorian | a dwarf brick wall 0.45-0.7 m under spear railings (six rows in ten), or railings on a kerb | iron | |
+| georgian | spear-topped area railings 1.0-1.2 m on a stone kerb | iron | stoop rails |
+| interwar | a low brick wall 0.6-0.9 m, piers every 2.4 m, short iron railings on half | iron | |
+| postwar (Council Estate) | a low brick wall 0.5-0.8 m, piers at its ends and gates, railings on half | iron | |
+| villa (Southern Europe) | a rendered wall 0.7-1.0 m under iron railings, piers every 2.6 m | iron; a pair across a drive | lanterns on the gate piers (seven in ten) |
+| japan | galvanised welded mesh over a block plinth (eight in ten), or a block wall | mesh | |
+| china | the courtyard wall, grey brick 2.0-2.5 m under a tile cap | the gatehouse: deep piers, a lintel wall and a tile roof over red plank doors | |
+| korea | a low wall 0.9-1.2 m; the pilotis' parking open to the street | steel bars | |
+| linkhouse | painted steel railings over a rendered plinth, piers at ends and gates | steel; sliding across the car porch | lanterns (four in ten) |
+| rcc | a rendered wall 1.0-1.4 m, a breeze band on a quarter | steel bars; sheet steel across a drive | |
+| bungalow | a rendered wall 0.55-0.75 m under pierced ring blocks, piers every 2.5 m | iron | lanterns (eight in ten) |
+| villa (Middle East) | a rendered wall 1.9-2.6 m, capped piers every 3 m | pierced steel, a pair across the drive | lanterns (nine in ten) |
+| block | breeze blocks 0.9-1.2 m on a solid plinth (no wall on 15%) | sheet steel | |
+| walled | a rendered wall 2.0-2.3 m, a breeze band under the coping on half, piers every 3 m | sheet steel, a pair across the drive | razor wire on the copings, the gate kiosk (beside a gate, its front in the wall's line), lanterns |
+
+The street-line styles (townhouse, shophouse, courtyard, self-built, colonial) have none; North America's styles without a
+sheet keep theirs planned and undrawn (`HBoundSet.drawn`). Hedges, and the timber fences behind the houses, are HM7's;
+so are a compound's side and rear walls' detail (they are built plain).
+
+**The geometry.** A drawn boundary (`home_bound_drawn`: walls, railings, and fences with a top) stands inside its plot:
+the street's line from z 0 back by its thickness (`BOUND_T` 0.22 m, a railing's kerb 0.3), an outer side line in from the
+plot's edge, a party line straddling it (`home_bound_rect`). The wall, kerb or plinth is a shell solid (`add_bounds`) with
+a coping (a slab 4 cm proud each side, or China's tile cap: a ridge of the house's covering); a breeze band's coping
+sits over the band. **Piers** (`home_piers`) stand at a front's ends (a party line's straddling it, a row end's set in),
+at every gate (set back into the wall so the opening keeps its width), and along the wall every `pier` metres; a stub of
+wall between two gaps is one pier. A party line's pier stands on the lower unit's ground and reaches the higher one's
+top. Piers take a cap 4 cm proud. Far off (past 220 m) only walls 1.5 m and taller are built (their solid part, no
+copings or piers): the compounds' and China's.
+
+**The kit** (`hs_bounds`, after the balconies): the tops run between the piers (iron and spear railings, painted steel,
+mesh in 1.8 m panels with a post at the end, breeze-block or ring panels stretched to whole blocks); gates' leaves
+between the piers (one leaf, a pair, or a sliding one with its track; the retrofit kit's bar and sheet leaves, and the
+new iron, pierced, mesh and steel ones); a railing's gate hangs on iron posts; lanterns on the gate piers' street faces;
+razor wire along a compound's front copings; a stoop's rails (a newel, the sloped handrail, balusters on each tread, the
+level rail to the door). The retrofit layer keeps off the walls' tops and the gates' swing. New modules: `h_rail_spear`,
+`h_gate_iron`, `h_bar_iron`, `r_fence_steel`, `r_fence_mesh`, `r_gate_pierced` (`pmodel_lab`).
+
+**China's gatehouse** and **the kiosk** are shell solids: the gatehouse's piers (0.5 m, deeper than the wall), its lintel
+wall, a gabled tile roof along the wall and the plank leaves (door pattern 4, the house's red) both faces; the kiosk
+(1.8-2.2 m square, `HE_KIOSK`, six compound rows in ten where the yard has room) a rendered room with a window to the
+street and a door to the yard under a hipped roof of the house's covering. The wall is cut where the kiosk stands.
+
+**The rules** (`home_check_bounds`, called by `home_validate`; `home_lab` breaks two on purpose, `gate` and `kiosk`): a
+gate stands in a gap of its unit's front (no boundary across it); a pair's leaves 0.45 m at least; a sliding leaf has a
+wall at least its width beside it to run behind (else it is a pair); gates and walls at most 3 m; a kiosk on its plot,
+its front in the street's line, 0.3 m clear of the house, on no path, drive or car, the wall cut there. Owners in poorer
+rows of South Asia, Africa and Latin America swap an iron gate for a steel security gate. `home_lab` surveys each style's
+fronts (built, kinds, tops, mean height, gates, gatehouses, kiosks, razor wire, lamps, stoop rails) and fails a style short
+of its sheet, or one without a sheet or on the street line that builds any.
+
+**The walker** collides with the walls, piers, shut gates, gatehouse piers and kiosks (`city_home_outlines`, now up to
+256 outlines a row), and the grass keeps off them.
+
 ## Massing and parts
 
 | Part | Size | Notes |
@@ -646,7 +710,7 @@ rail, an LED strip under the slab's edge (most in East Asia). Kit `h_win_french`
 | Window bay | 2.7 m (§13.7) | near: real reveals, glass set back 0.08-0.15 m, sills, frames, glazing bars |
 | Door | 0.9-1.0 m wide (§13.5's 1 m clear with its frame), 2.0-2.1 m high | |
 | Dormers | 1.2-2.4 m wide, gabled, hipped or flat | |
-| Boundaries | walls 0.6-1.2 m, hedges 0.8-1.8 m, fences 1.2-1.8 m, gates 0.9-1.2 m (drive gates 3 m) | na: mostly no front boundary (open, paved or gravelled fronts and driveway aprons; no lawns in a city since HM2b) |
+| Boundaries | walls 0.45-1.4 m, compounds' and China's 1.9-2.6 m, railings 0.9-1.2 m on a kerb, hedges 0.8-1.8 m, fences 1.2-1.8 m, gates 0.9-2.6 m (each sheet's: "Boundaries and gates") | na: mostly no front boundary (open, paved or gravelled fronts and driveway aprons; no lawns in a city since HM2b) |
 
 ## Materials
 

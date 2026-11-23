@@ -447,6 +447,68 @@ void m_r_gate_sheet(Pm *pm) {
         bx(pm, x - 0.01f, s + 0.02f, 0.015f, x + 0.01f, H - f, 0.035f, 0.0f);
     }
 }
+/* HM5e3: a painted steel fence (the link house's), x 0..1 and y 0..1 stretched, centred on z 0: a post at x 0, flat bars
+ * between a bottom, a middle and a top rail. Its paint is the unit's trim. */
+void m_r_fence_steel(Pm *pm) {
+    quiet(pm);
+    pm_mat(pm, PMAT_HTRIM);
+    bx(pm, 0.0f, 0.0f, -0.025f, 0.05f, 1.0f, 0.025f, 0.003f);
+    bx(pm, 0.0f, 0.04f, -0.02f, 1.0f, 0.09f, 0.02f, 0.0f);
+    bx(pm, 0.0f, 0.93f, -0.02f, 1.0f, 0.98f, 0.02f, 0.0f);
+    if (!L2) bx(pm, 0.05f, 0.70f, -0.015f, 1.0f, 0.73f, 0.015f, 0.0f);
+    const int n = L2 ? 4 : 9;
+    for (int k = 0; k < n; ++k) {
+        const float x = 0.05f + 0.95f * ((float)k + 0.5f) / (float)n;
+        bx(pm, x - 0.012f, 0.09f, -0.006f, x + 0.012f, 0.93f, 0.006f, 0.0f);
+    }
+}
+/* A galvanised welded-mesh fence (Japan's), x 0..1 and y 0..1 stretched, centred on z 0: a post at x 0, a frame, wires
+ * every 0.1 m up and 0.2 m across. */
+void m_r_fence_mesh(Pm *pm) {
+    quiet(pm);
+    pm_mat(pm, PMAT_HGALV);
+    bx(pm, 0.0f, 0.0f, -0.02f, 0.04f, 1.0f, 0.02f, 0.0f);
+    bx(pm, 0.04f, 0.0f, -0.015f, 1.0f, 0.035f, 0.015f, 0.0f);
+    bx(pm, 0.04f, 0.965f, -0.015f, 1.0f, 1.0f, 0.015f, 0.0f);
+    const int nv = L0 ? 10 : L1 ? 6 : 3, nh = L2 ? 1 : 4;
+    for (int k = 1; k < nv; ++k) { const float x = 0.04f + 0.96f * (float)k / (float)nv; bx(pm, x - 0.003f, 0.035f, -0.003f, x + 0.003f, 0.965f, 0.003f, 0.0f); }
+    for (int k = 1; k <= nh; ++k) { const float y = 0.035f + 0.93f * (float)k / (float)(nh + 1); bx(pm, 0.04f, y - 0.003f, 0.003f, 1.0f, y + 0.003f, 0.009f, 0.0f); }
+}
+/* A pierced steel gate's leaf (the Middle East's villa), x 0..1 and y 0..1 stretched, centred on z 0: a frame, a solid
+ * panel low down, a lattice of diamonds over it with a boss at each crossing, a band of bars under the top rail. */
+void m_r_gate_pierced(Pm *pm) {
+    quiet(pm);
+    pm_mat(pm, PMAT_HIRON);
+    const float f = 0.045f, y0 = 0.32f, y1 = 0.86f;
+    bx(pm, 0.0f, 0.0f, -0.02f, f, 1.0f, 0.02f, 0.0f);
+    bx(pm, 1.0f - f, 0.0f, -0.02f, 1.0f, 1.0f, 0.02f, 0.0f);
+    bx(pm, f, 0.0f, -0.02f, 1.0f - f, f, 0.02f, 0.0f);
+    bx(pm, f, 1.0f - f, -0.02f, 1.0f - f, 1.0f, 0.02f, 0.0f);
+    bx(pm, f, y0 - 0.03f, -0.02f, 1.0f - f, y0, 0.02f, 0.0f);
+    bx(pm, f, y1, -0.02f, 1.0f - f, y1 + 0.03f, 0.02f, 0.0f);
+    bx(pm, f, f, -0.006f, 1.0f - f, y0 - 0.03f, 0.006f, 0.0f);   /* the low panel */
+    if (L2) {   /* far off: bars over the panel */
+        for (int k = 1; k < 6; ++k) { const float x = f + (1.0f - 2.0f * f) * (float)k / 6.0f; bx(pm, x - 0.01f, y0, -0.008f, x + 0.01f, 1.0f - f, 0.008f, 0.0f); }
+        return;
+    }
+    const float up[3] = { 0.0f, 0.0f, 1.0f };
+    const int nc = 4, nr = 2;
+    const float cw = (1.0f - 2.0f * f) / (float)nc, rh = (y1 - y0) / (float)nr;
+    for (int i = 0; i < nc; ++i)
+        for (int j = 0; j < nr; ++j) {
+            const float xa = f + cw * (float)i, xb = xa + cw, ya = y0 + rh * (float)j, yb = ya + rh, xm = 0.5f * (xa + xb), ym = 0.5f * (ya + yb);
+            /* a diamond in each cell, its points on the cell's sides */
+            beam(pm, xa, ym, 0.0f, xm, yb, 0.0f, 0.018f, 0.025f, up);
+            beam(pm, xm, yb, 0.0f, xb, ym, 0.0f, 0.018f, 0.025f, up);
+            beam(pm, xb, ym, 0.0f, xm, ya, 0.0f, 0.018f, 0.025f, up);
+            beam(pm, xm, ya, 0.0f, xa, ym, 0.0f, 0.018f, 0.025f, up);
+            if (L0) { pm_push(pm); pm_translate(pm, xm, ym, 0.0f); pm_rotate_x(pm, HALF_PI); pm_cyl(pm, -0.016f, 0.016f, 0.035f, 8); pm_pop(pm); }
+        }
+    if (!L2) {   /* the band of bars under the top rail */
+        for (int k = 1; k < 8; ++k) { const float x = f + (1.0f - 2.0f * f) * (float)k / 8.0f; bx(pm, x - 0.008f, y1 + 0.03f, -0.008f, x + 0.008f, 1.0f - f, 0.008f, 0.0f); }
+    }
+}
+
 /* Razor wire: a helical coil along x, sitting on y 0. */
 void m_r_razor(Pm *pm) {
     quiet(pm);

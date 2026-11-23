@@ -94,8 +94,8 @@ void city_layout(int cx, int cz, BlockLayout *L) {
     chunk_gen_homes(&g);
     for (int ri = 0; ri < g.nhrow; ++ri) {
         if (!chunk_gen_owns_home(&g, ri)) continue;
-        double hv[96][4][2];
-        const int n = city_home_outlines(&g, ri, hv, 96, 1);
+        double hv[256][4][2];
+        const int n = city_home_outlines(&g, ri, hv, 256, 1);
         for (int k = 0; k < n && coll_begin(L, 4); ++k)
             for (int c = 0; c < 4; ++c) { L->collv[L->ncollv][0] = hv[k][c][0]; L->collv[L->ncollv][1] = hv[k][c][1]; L->ncollv++; }
     }

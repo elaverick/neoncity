@@ -40,7 +40,7 @@ static const HStyleDef STYLES[HS_COUNT] = {
     [HS_ROWHOUSE] = { .name = "rowhouse", .region = PLAN_REGION_NA, .arch = { 0.0f, 0.0f, 1.0f }, .storeys = { 0.0f, 0.0f, 0.4f, 0.6f },
         .roof = { 0, 0, 0, 1.0f }, .pitch0 = 30, .pitch1 = 40, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.5f, .depth0 = 9.0f, .depth1 = 11.5f,
         .bay = 0.6f, .canted = 0.7f, .bayFull = 1, .outrigger = 0.4f, .extension = 0.3f,
-        .porch = { 0, 0, 0, 0.3f, 0.7f, 0 }, .chimney = 1.0f, .bound = { 0.4f, 0.3f, 0, 0.3f }, .plinth0 = 1.1f, .plinth1 = 1.5f, .handed = 1 },
+        .porch = { 0, 0, 0, 0.3f, 0.7f, 0 }, .chimney = 1.0f, .bound = { 0, 0, 0, 0, 1.0f }, .plinth0 = 1.1f, .plinth1 = 1.5f, .handed = 1 },
     [HS_TRIPLEDECKER] = { .name = "tripledecker", .region = PLAN_REGION_NA, .arch = { 0.15f, 0.0f, 0.0f }, .storeys = { 0.0f, 0.0f, 1.0f },
         .roof = { 0.5f, 0, 0, 0.5f }, .pitch0 = 30, .pitch1 = 40, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.5f, .depth0 = 10.0f, .depth1 = 13.0f,
         .bay = 0.7f, .bay2 = 1.0f, .canted = 0.6f, .extension = 0.1f,
@@ -50,19 +50,19 @@ static const HStyleDef STYLES[HS_COUNT] = {
     [HS_VICTORIAN] = { .name = "victorian", .region = PLAN_REGION_UK, .arch = { 0.20f, 0.20f, 0.50f }, .storeys = { 0.0f, 0.75f, 0.25f },
         .roof = { 0.7f, 0.3f, 0, 0 }, .pitch0 = 35, .pitch1 = 45, .minPitch = 25, .eave0 = 0.2f, .eave1 = 0.4f, .depth0 = 8.0f, .depth1 = 10.0f,
         .bay = 0.8f, .bay2 = 0.4f, .canted = 0.7f, .outrigger = 0.8f, .extension = 0.3f,
-        .porch = { 0.1f, 0, 0.1f, 0.6f, 0.2f, 0 }, .chimney = 2.0f, .bound = { 0, 0.7f, 0.3f, 0 }, .plinth0 = 0.3f, .plinth1 = 0.6f, .handed = 1 },
+        .porch = { 0.1f, 0, 0.1f, 0.6f, 0.2f, 0 }, .chimney = 2.0f, .bound = { 0, 0.6f, 0, 0, 0.4f }, .plinth0 = 0.3f, .plinth1 = 0.6f, .handed = 1 },
     [HS_GEORGIAN] = { .name = "georgian", .region = PLAN_REGION_UK, .arch = { 0.10f, 0.05f, 0.15f }, .storeys = { 0.0f, 0.1f, 0.5f, 0.4f },
         .roof = { 1.0f, 0, 0, 0 }, .pitch0 = 30, .pitch1 = 40, .minPitch = 25, .eave0 = 0.0f, .eave1 = 0.0f, .depth0 = 8.0f, .depth1 = 10.0f,
         .outrigger = 0.4f, .extension = 0.2f,
-        .porch = { 0, 0, 0, 0, 1.0f, 0 }, .chimney = 2.0f, .bound = { 0, 0.9f, 0.1f, 0 }, .plinth0 = 0.4f, .plinth1 = 0.9f, .parapet = 1, .handed = 1 },
+        .porch = { 0, 0, 0, 0, 1.0f, 0 }, .chimney = 2.0f, .bound = { 0, 0, 0, 0, 1.0f }, .plinth0 = 0.4f, .plinth1 = 0.9f, .parapet = 1, .handed = 1 },
     [HS_INTERWAR] = { .name = "interwar", .region = PLAN_REGION_UK, .arch = { 0.30f, 0.45f, 0.05f }, .storeys = { 0.0f, 1.0f, 0.0f },
         .roof = { 0.4f, 0.6f, 0, 0 }, .pitch0 = 35, .pitch1 = 45, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.5f, .depth0 = 7.5f, .depth1 = 9.5f,
         .bay = 0.9f, .bay2 = 0.8f, .canted = 0.5f, .garage = 0.3f, .extension = 0.3f,
-        .porch = { 0.2f, 0.1f, 0.3f, 0.3f, 0.1f, 0 }, .chimney = 1.0f, .bound = { 0, 0.5f, 0.4f, 0.1f }, .plinth0 = 0.2f, .plinth1 = 0.4f },
+        .porch = { 0.2f, 0.1f, 0.3f, 0.3f, 0.1f, 0 }, .chimney = 1.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.2f, .plinth1 = 0.4f },
     [HS_POSTWAR] = { .name = "postwar", .region = PLAN_REGION_UK, .arch = { 0.20f, 0.25f, 0.20f }, .storeys = { 0.1f, 0.9f, 0.0f },
         .roof = { 0.7f, 0.3f, 0, 0 }, .pitch0 = 30, .pitch1 = 40, .minPitch = 25, .eave0 = 0.2f, .eave1 = 0.3f, .depth0 = 7.0f, .depth1 = 9.0f,
         .garage = 0.3f, .extension = 0.3f,
-        .porch = { 0, 0.2f, 0.1f, 0, 0.7f, 0 }, .chimney = 0.6f, .bound = { 0.2f, 0.3f, 0.2f, 0.3f }, .plinth0 = 0.15f, .plinth1 = 0.3f },
+        .porch = { 0, 0.2f, 0.1f, 0, 0.7f, 0 }, .chimney = 0.6f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.15f, .plinth1 = 0.3f },
     [HS_MODERN] = { .name = "modern", .region = PLAN_REGION_UK, .arch = { 0.20f, 0.10f, 0.15f }, .storeys = { 0.0f, 0.85f, 0.15f },
         .roof = { 0.6f, 0.1f, 0, 0.3f }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.2f, .eave1 = 0.4f, .depth0 = 8.0f, .depth1 = 10.0f,
         .garage = 0.5f, .extension = 0.2f,
@@ -71,7 +71,7 @@ static const HStyleDef STYLES[HS_COUNT] = {
     [HS_SEU_VILLA] = { .name = "villa", .region = PLAN_REGION_SEU, .arch = { 1.0f, 0.5f, 0.0f }, .storeys = { 0.05f, 0.6f, 0.35f },
         .roof = { 0.25f, 0.75f, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.6f, .depth0 = 9.0f, .depth1 = 12.0f,
         .garage = 0.3f, .extension = 0.2f,
-        .porch = { 0.3f, 0.2f, 0, 0.3f, 0.2f, 0 }, .chimney = 0.5f, .bound = { 0, 0.8f, 0.1f, 0.1f }, .plinth0 = 0.2f, .plinth1 = 0.5f,
+        .porch = { 0.3f, 0.2f, 0, 0.3f, 0.2f, 0 }, .chimney = 0.5f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.2f, .plinth1 = 0.5f,
         .wallH0 = 1.2f, .wallH1 = 1.8f },
     [HS_TOWNHOUSE] = { .name = "townhouse", .region = PLAN_REGION_SEU, .arch = { 0.0f, 0.3f, 1.0f }, .storeys = { 0.0f, 0.0f, 0.6f, 0.4f },
         .roof = { 0.5f, 0, 0, 0.5f }, .pitch0 = 25, .pitch1 = 28, .minPitch = 25, .eave0 = 0.25f, .eave1 = 0.4f, .depth0 = 9.0f, .depth1 = 12.0f,
@@ -82,16 +82,16 @@ static const HStyleDef STYLES[HS_COUNT] = {
     [HS_JAPAN] = { .name = "japan", .region = PLAN_REGION_EAS, .arch = { 1.0f, 0.5f, 0.3f }, .storeys = { 0.1f, 0.9f, 0.0f },
         .roof = { 0.5f, 0.5f, 0, 0 }, .pitch0 = 25, .pitch1 = 32, .minPitch = 25, .eave0 = 0.4f, .eave1 = 0.7f, .depth0 = 7.0f, .depth1 = 10.0f,
         .garage = 0.3f, .extension = 0.1f,
-        .porch = { 0, 0.3f, 0, 0.3f, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0.3f, 0.5f, 0.1f, 0.1f }, .plinth0 = 0.3f, .plinth1 = 0.5f },
+        .porch = { 0, 0.3f, 0, 0.3f, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0, 0.2f, 0, 0.8f }, .plinth0 = 0.3f, .plinth1 = 0.5f },
     [HS_CHINA] = { .name = "china", .region = PLAN_REGION_EAS, .arch = { 0.4f, 0.2f, 1.0f }, .storeys = { 0.25f, 0.05f, 0.55f, 0.15f },
         .roof = { 0.25f, 0, 0, 0.75f }, .pitch0 = 25, .pitch1 = 32, .minPitch = 25, .eave0 = 0.4f, .eave1 = 0.6f, .depth0 = 8.0f, .depth1 = 11.0f,
         .outrigger = 0.1f, .garage = 0.05f, .extension = 0.3f,
-        .porch = { 0, 0, 0, 0.6f, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0, 0.9f, 0, 0.1f }, .plinth0 = 0.15f, .plinth1 = 0.3f,
+        .porch = { 0, 0, 0, 0.6f, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.15f, .plinth1 = 0.3f,
         .wallH0 = 1.8f, .wallH1 = 2.4f, .doorW0 = 1.1f, .doorW1 = 1.4f },
     [HS_KOREA] = { .name = "korea", .region = PLAN_REGION_EAS, .arch = { 1.0f, 0.5f, 0.5f }, .storeys = { 0.0f, 0.0f, 0.45f, 0.55f },
         .roof = { 0, 0.35f, 0, 0.65f }, .pitch0 = 28, .pitch1 = 38, .minPitch = 25, .eave0 = 0.2f, .eave1 = 0.35f, .depth0 = 10.0f, .depth1 = 12.0f,
         .garage = 0.0f, .extension = 0.1f,
-        .porch = { 0, 0, 0, 0.5f, 0.5f, 0 }, .chimney = 0.0f, .bound = { 0, 0.8f, 0, 0.2f }, .plinth0 = 0.05f, .plinth1 = 0.15f,
+        .porch = { 0, 0, 0, 0.5f, 0.5f, 0 }, .chimney = 0.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.05f, .plinth1 = 0.15f,
         .pilotis = 0.8f },
     /* South-East Asia: shophouses behind their five-foot way (a veranda here), link houses with car porches */
     [HS_SHOPHOUSE] = { .name = "shophouse", .region = PLAN_REGION_SEA, .arch = { 0.0f, 0.0f, 1.0f }, .storeys = { 0.0f, 0.55f, 0.45f },
@@ -102,17 +102,17 @@ static const HStyleDef STYLES[HS_COUNT] = {
     [HS_LINKHOUSE] = { .name = "linkhouse", .region = PLAN_REGION_SEA, .arch = { 1.0f, 0.5f, 0.8f }, .storeys = { 0.1f, 0.9f, 0.0f },
         .roof = { 0.6f, 0.4f, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.5f, .eave1 = 0.8f, .depth0 = 9.0f, .depth1 = 12.0f,
         .garage = 0.4f, .extension = 0.4f,
-        .porch = { 0.3f, 0.3f, 0, 0, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0, 0.3f, 0, 0.7f }, .plinth0 = 0.1f, .plinth1 = 0.25f },
+        .porch = { 0.3f, 0.3f, 0, 0, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0, 0, 0, 1.0f }, .plinth0 = 0.1f, .plinth1 = 0.25f },
     /* South Asia */
     [HS_RCC] = { .name = "rcc", .region = PLAN_REGION_SAS, .arch = { 0.5f, 0.2f, 1.0f }, .storeys = { 0.0f, 0.2f, 0.5f, 0.3f },
         .roof = { 0, 0, 0, 1.0f }, .pitch0 = 25, .pitch1 = 25, .minPitch = 25, .depth0 = 9.0f, .depth1 = 12.0f,
         .garage = 0.05f, .extension = 0.3f,
-        .porch = { 0, 0, 0, 0.3f, 0.7f, 0 }, .chimney = 0.0f, .bound = { 0, 0.9f, 0, 0.1f }, .plinth0 = 0.1f, .plinth1 = 0.25f,
+        .porch = { 0, 0, 0, 0.3f, 0.7f, 0 }, .chimney = 0.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.1f, .plinth1 = 0.25f,
         .shop = 0.3f, .uneven = 0.25f },
     [HS_BUNGALOW] = { .name = "bungalow", .region = PLAN_REGION_SAS, .arch = { 1.0f, 0.5f, 0.2f }, .storeys = { 0.8f, 0.2f, 0.0f },
         .roof = { 0, 0.85f, 0, 0.15f }, .pitch0 = 25, .pitch1 = 32, .minPitch = 25, .eave0 = 0.5f, .eave1 = 0.8f, .depth0 = 9.0f, .depth1 = 12.0f,
         .garage = 0.2f, .extension = 0.3f,
-        .porch = { 0.2f, 0.1f, 0, 0, 0, 0.7f }, .chimney = 0.0f, .bound = { 0, 0.9f, 0.1f, 0 }, .plinth0 = 0.4f, .plinth1 = 0.8f },
+        .porch = { 0.2f, 0.1f, 0, 0, 0, 0.7f }, .chimney = 0.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.4f, .plinth1 = 0.8f },
     /* Middle East and North Africa: walled villas, courtyard rows */
     [HS_MENA_VILLA] = { .name = "villa", .region = PLAN_REGION_MENA, .arch = { 1.0f, 0.5f, 0.3f }, .storeys = { 0.0f, 0.6f, 0.4f },
         .roof = { 0, 0, 0, 1.0f }, .pitch0 = 25, .pitch1 = 25, .minPitch = 25, .depth0 = 9.0f, .depth1 = 12.0f,
@@ -128,7 +128,7 @@ static const HStyleDef STYLES[HS_COUNT] = {
     [HS_BLOCK] = { .name = "block", .region = PLAN_REGION_SSA, .arch = { 1.0f, 0.5f, 0.5f }, .storeys = { 0.75f, 0.25f, 0.0f },
         .roof = { 0.25f, 0.75f, 0, 0 }, .pitch0 = 22, .pitch1 = 28, .minPitch = 20, .eave0 = 0.4f, .eave1 = 0.7f, .depth0 = 8.0f, .depth1 = 11.0f,
         .garage = 0.05f, .extension = 0.3f,
-        .porch = { 0.2f, 0.2f, 0, 0, 0, 0.6f }, .chimney = 0.0f, .bound = { 0.2f, 0.6f, 0, 0.2f }, .plinth0 = 0.3f, .plinth1 = 0.6f },
+        .porch = { 0.2f, 0.2f, 0, 0, 0, 0.6f }, .chimney = 0.0f, .bound = { 0.15f, 0.85f, 0, 0 }, .plinth0 = 0.3f, .plinth1 = 0.6f },
     [HS_WALLED] = { .name = "walled", .region = PLAN_REGION_SSA, .arch = { 1.0f, 0.5f, 0.3f }, .storeys = { 0.3f, 0.7f, 0.0f },
         .roof = { 0, 0.8f, 0, 0.2f }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.4f, .eave1 = 0.7f, .depth0 = 9.0f, .depth1 = 12.0f,
         .garage = 0.3f, .extension = 0.2f,
@@ -1135,6 +1135,7 @@ void home_build_at(const HomePlot *row, int n, float affluence, int first, HGrap
         home_repair_all(g, level, log);
         home_balconies(g, level, log);
         lay_site(&c);
+        home_bounds(g, level, log);   /* HM5e3 */
         if (home_validate(g, log)) {
             g->level = (uint8_t)level;
             g->attempts = level + 1;
@@ -1147,6 +1148,7 @@ void home_build_at(const HomePlot *row, int n, float affluence, int first, HGrap
     build_simplest(&c);
     home_repair_all(g, 3, log);
     lay_site(&c);
+    home_bounds(g, 3, log);
     g->attempts = 4;
     g->level = 3;
     if (home_validate(g, log)) { blog_printf(log, " accepted the simplest: %d volumes\n", g->nvol); return; }

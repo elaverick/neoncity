@@ -566,7 +566,7 @@ static int check_doors(const HGraph *g, int mi, BLog *log) {
         int bounded = 0, gated = 0;
         for (int i = 0; i < g->nbound; ++i) {
             const HBound *b = &g->bound[i];
-            if (b->role != HBR_FRONT || b->unit != k) continue;
+            if (b->role != HBR_FRONT || b->unit != k || b->kind == HB_NONE) continue;   /* HB_NONE: cut away (HM5e3) */
             bounded = 1;
             if (fminf(b->x0, b->x1) < p->x1 - HEPS && fmaxf(b->x0, b->x1) > p->x0 + HEPS) REJECT("gate", "unit %d's front boundary closes its path", k);
         }
@@ -626,7 +626,7 @@ static int check_garden(const HGraph *g, BLog *log) {
             const float gap = rect_vol_gap(s->x0, s->z0, s->x1, s->z1, w);
             if (gap < -HEPS) REJECT(s->kind == HE_DRIVE ? "drive" : "garden clear", "element %d (kind %d) crosses %s %d", i, s->kind, home_role_name(w->role), v);
         }
-        if (s->kind == HE_SHED || s->kind == HE_TREE)
+        if (s->kind == HE_SHED || s->kind == HE_TREE || s->kind == HE_KIOSK)
             for (int j = 0; j < g->nsite; ++j) {
                 const HSite *t = &g->site[j];
                 if (j == i || t->kind == HE_FRONT || t->kind == HE_REAR) continue;
@@ -657,6 +657,7 @@ int home_validate(const HGraph *g, BLog *log) {
     ok &= check_chimneys(g, log);
     ok &= check_garden(g, log);
     ok &= home_check_balconies(g, log);
+    ok &= home_check_bounds(g, log);
     return ok;
 }
 #undef REJECT

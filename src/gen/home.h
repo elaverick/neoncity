@@ -72,14 +72,38 @@ enum { HBAY_SQUARE = 0, HBAY_CANTED };
 #define CANT_FACE1    1.5f
 #define CANT_FACE_MIN 1.0f
 enum { HWING_ROOM = 0, HWING_GARAGE };
-/* Boundaries: kinds, and where they run. */
-enum { HB_NONE = 0, HB_WALL, HB_HEDGE, HB_FENCE, HB_COUNT };
+/* Boundaries: kinds, and where they run. A railing (HM5e3) is iron or steel bars on a kerb or a dwarf wall: Georgian and
+ * brownstone area railings, the Victorian front's. */
+enum { HB_NONE = 0, HB_WALL, HB_HEDGE, HB_FENCE, HB_RAILING, HB_COUNT };
 enum { HBR_FRONT = 0, HBR_SIDE, HBR_PARTY, HBR_REAR };
+/* What stands on a boundary's solid part (HM5e3, HBound.top): plain iron bars, spear-topped iron railings, painted steel
+ * bars (the link house's), a galvanised mesh (Japan's), a band of breeze blocks under the coping, pierced blocks of rings
+ * (the bungalow's balustrade wall); nothing. */
+enum { HBT_NONE = 0, HBT_IRON, HBT_SPEAR, HBT_STEEL, HBT_MESH, HBT_BREEZE, HBT_RINGS, HBT_COUNT };
+/* Gates (HM5e3, HGate.kind): none (an open gap), an iron leaf with spear tops, steel bars (a security gate's), painted
+ * sheet steel, pierced steel (the Middle East's), a mesh leaf, painted steel bars (the link house's), plank leaves under
+ * China's gatehouse. HGate.leaves: 1 a single leaf, 2 a pair, 3 one leaf sliding behind the wall. */
+enum { HGK_OPEN = 0, HGK_IRON, HGK_BARS, HGK_SHEET, HGK_PIERCED, HGK_MESH, HGK_STEEL, HGK_PLANK, HGK_COUNT };
+enum { HGL_SINGLE = 1, HGL_DOUBLE, HGL_SLIDING };
+/* A row's boundaries are built as one (HM5e3; HGraph.bset, from the style's sheet): their finish and colour (HW_*), the
+ * coping (a slab, bricks on edge, China's tile cap), piers along them every `pier` metres (0: at their ends and gates
+ * only), `pierW` square; razor wire along the walls' tops; lanterns on the gate piers; iron rails up a stoop's steps. */
+enum { HBC_SLAB = 0, HBC_BRICK, HBC_TILE };
+typedef struct HBoundSet {
+    uint8_t drawn;               /* built at all: the styles with a concept sheet (the rest's are planned, never drawn) */
+    uint8_t fin, col, coping;
+    uint8_t razor, lamps, stoopRail;
+    float   pier, pierW;
+} HBoundSet;
+#define BOUND_T     0.22f   /* a wall's thickness (a railing's kerb's 0.3) */
+#define BOUND_KERB  0.30f
+#define BOUND_COPE  0.04f   /* a coping's overhang each side */
 /* Chimney stacks: on a ridge, at a gable end (on or outside its wall), on a party wall (section 13.4). */
 enum { HC_RIDGE = 0, HC_GABLE, HC_PARTY };
 /* Site elements (section 13.2): gardens, paths, drives, sheds, parked cars and the places a tree may
  * stand (whether one does is HM7's call). */
-enum { HE_FRONT = 0, HE_REAR, HE_PATH, HE_DRIVE, HE_SHED, HE_CAR, HE_TREE, HE_COUNT };
+enum { HE_FRONT = 0, HE_REAR, HE_PATH, HE_DRIVE, HE_SHED, HE_CAR, HE_TREE, HE_KIOSK, HE_COUNT };   /* HE_KIOSK: a walled
+                                                    compound's gate kiosk (HM5e3), its front in the front wall's line */
 
 typedef struct HVol {
     uint8_t role, roof, storeys, unit;   /* HV_*, HR_*, storeys, its unit (HG_ROW_WIDE for a pair's or row's main) */
@@ -112,8 +136,12 @@ typedef struct HUnit {
 typedef struct HDoor { int8_t unit, vol, path; uint8_t side, arch; float x, z, width, height; } HDoor;
 typedef struct HParty { int8_t a, b, vol; float x, z0, z1, top; } HParty;                           /* units a and b share the wall at x */
 typedef struct HChimney { int8_t vol, unit; uint8_t on, pots; float x, z, w, d, top; } HChimney;
-typedef struct HBound { uint8_t kind, role; int8_t unit; float x0, z0, x1, z1, h; } HBound;
-typedef struct HGate { int8_t unit; uint8_t drive; float x, w; } HGate;                               /* a gap in the front boundary (z = 0) */
+/* A boundary along a line of its unit's plot: its solid part h high (a wall, a railing's kerb or dwarf wall, a fence's
+ * plinth), and `top` (HBT_*) th high over that (HM5e3) */
+typedef struct HBound { uint8_t kind, role, top; int8_t unit; float x0, z0, x1, z1, h, th; } HBound;
+/* a gap in the front boundary (z = 0), x its middle, w wide; its gate (HM5e3): HGK_*, HGL_* leaves, h high, under a
+ * gatehouse's roof (China's) */
+typedef struct HGate { int8_t unit; uint8_t drive, kind, leaves, house; float x, w, h; } HGate;
 typedef struct HSite { uint8_t kind, surface; int8_t unit, door; float x0, z0, x1, z1; } HSite;     /* a rectangle; a tree's is its canopy's square; a yard's surface HY_* */
 
 /* Balconies (HM5e2, the sheets' panel 1; docs/residential-target.md "Balconies"): on a unit's slice of the main's front
@@ -186,7 +214,24 @@ typedef struct HGraph {
     HGate    gate[HG_MAX_GATE];
     HSite    site[HG_MAX_SITE];
     HBalcony balc[HG_MAX_BALC];
+    HBoundSet bset;                    /* HM5e3: the row's boundaries' set */
 } HGraph;
+
+/* HM5e3: names (home_lab), and whether a boundary is built (its row's set drawn; walls, railings, and fences with a top:
+ * the rest, hedges and the timber fences behind the houses, are HM7's) */
+const char *home_bound_name(int kind);
+const char *home_top_name(int top);
+const char *home_gate_name(int kind);
+static inline int home_bound_drawn(const HGraph *g, const HBound *b) {
+    return g->bset.drawn && (b->kind == HB_WALL || b->kind == HB_RAILING || (b->kind == HB_FENCE && b->top != HBT_NONE));
+}
+/* A drawn boundary's thickness, and the piers' centres along it: where it starts and ends, at its gates, every bset.pier
+ * metres (home_bound.c; the shell, the dressing and the walker's outlines read the same) */
+float home_bound_thick(const HBound *b);
+typedef struct HPier { float x, z, top; int8_t unit; uint8_t gate; } HPier;
+int   home_piers(const HGraph *g, HPier *out, int max);
+/* a drawn boundary's footprint: its line offset into its plot by its thickness (a party line's straddles it) */
+void  home_bound_rect(const HGraph *g, const HBound *b, float *x0, float *z0, float *x1, float *z1);
 
 /* Builds the houses of one row: `row` holds its n plots in order (a row's units, as city_block_plots
  * gives them), affluence its plan_affluence. log may be NULL. */

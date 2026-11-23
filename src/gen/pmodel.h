@@ -343,6 +343,8 @@ enum {
     PMK_H_POT_PLAIN, PMK_H_POT_CANNON, PMK_H_POT_CROWN, PMK_H_POT_COWL, PMK_H_STACK_CAP, PMK_H_VENT_PIPE, PMK_H_ROOFLIGHT,
     /* HM5e2: balconies (pmodel_house.c) */
     PMK_H_WIN_FRENCH, PMK_H_RAIL_IRON, PMK_H_RAIL_ORNATE, PMK_H_RAIL_POST, PMK_H_GLAZING, PMK_H_CONSOLE,
+    /* HM5e3: boundaries (pmodel_house.c) */
+    PMK_H_RAIL_SPEAR, PMK_H_GATE_IRON, PMK_H_BAR_IRON,
     /* HM5c1, the houses' shared retrofit kit (pmodel_retrofit.c; frames in pmodel_retrofit.h). Houses' modules too. */
     PMK_R_SOLAR_PANEL, PMK_R_SOLAR_ROW, PMK_R_FRAME_POST, PMK_R_FRAME_BEAM, PMK_R_DOWNLIGHT, PMK_R_LED_STRIP,
     PMK_R_TANK_POLY, PMK_R_TANK_STEEL, PMK_R_STAND_BAY, PMK_R_STAND_TOP,
@@ -351,6 +353,8 @@ enum {
     PMK_R_METER, PMK_R_LANTERN, PMK_R_BULKHEAD, PMK_R_GATE_BARS, PMK_R_GATE_SHEET, PMK_R_RAZOR,
     PMK_R_POT, PMK_R_POT_PALM, PMK_R_TROUGH, PMK_R_VINE, PMK_R_TRAIL,
     PMK_R_AERIAL_YAGI, PMK_R_AERIAL_CROSS,
+    /* HM5e3: boundaries (pmodel_retrofit.c) */
+    PMK_R_FENCE_STEEL, PMK_R_FENCE_MESH, PMK_R_GATE_PIERCED,
     PMK_COUNT
 };
 typedef struct PmModuleDef {

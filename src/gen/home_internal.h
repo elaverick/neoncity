@@ -64,3 +64,6 @@ void  home_repair_all(HGraph *g, int level, BLog *log);
 void  home_balconies(HGraph *g, int level, BLog *log);
 int   home_check_balconies(const HGraph *g, BLog *log);
 int   home_door_balcony(const HGraph *g, int unit);   /* the balcony over a unit's front door serving as its canopy, or -1 */
+/* home_bound.c (HM5e3): a row's boundaries and gates to its style's sheet, after the garden is laid; and their rules */
+void  home_bounds(HGraph *g, int level, BLog *log);
+int   home_check_bounds(const HGraph *g, BLog *log);

@@ -1454,6 +1454,7 @@ static void dress_pass(Ctx *C, HDress *D, int *count) {
     for (int vi = 0; vi < g->nvol; ++vi) if (g->vol[vi].role == HV_BAY) dress_bay(&d, vi);
     dress_posts(&d);
     hs_balconies(&d);   /* HM5e2 */
+    hs_bounds(&d);      /* HM5e3 */
     for (int i = 0; i < C->nroof; ++i) {
         dress_eaves(&d, &C->roof[i]);
         dress_verges(&d, &C->roof[i]);

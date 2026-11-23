@@ -1043,6 +1043,167 @@ static void add_balcony_solids(Ctx *C) {
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Boundaries and gates (HM5e3; the graph's HBound, HGate and kiosk, set by home_bound.c)
+ * ------------------------------------------------------------------------- */
+
+static Solid *bound_box(Ctx *C, int unit, double dy, double x0, double y0, double z0, double x1, double y1, double z1, int side, int top,
+                        int fin, int col) {
+    Solid *s = solid_new(C, unit, -1, 0);
+    s->wallFin = (uint8_t)fin; s->wallCol = (uint8_t)col;
+    box_planes(s, x0, y0, z0, x1, y1, z1, side, top, NOFACE);
+    for (int i = 0; i < s->np; ++i) s->noWin[i] = 1;
+    solid_lift(s, dy);
+    return s;
+}
+
+/* A gabled roof as one solid: its ridge along x (alongX) or z, over a0..a1 along it and c0..c1 across, its eaves at y0
+ * rising `rise` to the ridge, `thick` deep at its eaves (its soffit flat under it). Its slopes the house's roof covering,
+ * its gable ends `ends`. China's tile cap on a wall, its gatehouse's roof. */
+static void roof_prism(Ctx *C, int unit, double dy, int alongX, double a0, double a1, double c0, double c1, double y0, double rise,
+                       double thick, int ends) {
+    Solid *s = solid_new(C, unit, -1, 0);
+    if (C->g->style == HS_CHINA) { s->roofFin = HRM_GLAZED; s->roofCol = 0; }   /* the sheet's dark grey tile, whatever the house's roof */
+    const double half = 0.5 * (c1 - c0);
+    if (alongX) {
+        plane_at(s, 0, half, rise, 0, y0, c1, HF_ROOF);
+        plane_at(s, 0, half, -rise, 0, y0, c0, HF_ROOF);
+        plane_at(s, -1, 0, 0, a0, 0, 0, ends);
+        plane_at(s, 1, 0, 0, a1, 0, 0, ends);
+        plane_at(s, 0, 0, 1, 0, 0, c1, HF_FASCIA);
+        plane_at(s, 0, 0, -1, 0, 0, c0, HF_FASCIA);
+    } else {
+        plane_at(s, rise, half, 0, c1, y0, 0, HF_ROOF);
+        plane_at(s, -rise, half, 0, c0, y0, 0, HF_ROOF);
+        plane_at(s, 0, 0, -1, 0, 0, a0, ends);
+        plane_at(s, 0, 0, 1, 0, 0, a1, ends);
+        plane_at(s, 1, 0, 0, c1, 0, 0, HF_FASCIA);
+        plane_at(s, -1, 0, 0, c0, 0, 0, HF_FASCIA);
+    }
+    plane_at(s, 0, -1, 0, 0, y0 - thick, 0, HF_SOFFIT);
+    for (int i = 0; i < s->np; ++i) s->noWin[i] = 1;
+    solid_lift(s, dy);
+}
+
+/* The gate kiosk (the walled compound's): a small rendered room beside the gate, its front in the wall's line with a
+ * window to the street, its door to the yard, under a hipped roof of the house's covering. */
+static void add_kiosk(Ctx *C, const HSite *k) {
+    const HGraph *g = C->g;
+    const int u = k->unit;
+    const double dy = C->dy ? C->dy[u] : 0.0;
+    double wallTop = 0.0;
+    for (int i = 0; i < g->nbound; ++i)
+        if (g->bound[i].unit == u && home_bound_drawn(g, &g->bound[i])) wallTop = fmax(wallTop, g->bound[i].h + g->bound[i].th);
+    const double Ye = fmax(2.5, wallTop + 0.25), ov = 0.35, tp = tan(25.0 * PI_D / 180.0);
+    const int host = (int)C->ns;
+    Solid *b = solid_new(C, u, -1, 0);
+    box_planes(b, k->x0, 0.0, k->z0, k->x1, Ye, k->z1, HF_WALL, NOFACE, NOFACE);
+    for (int i = 0; i < b->np; ++i) b->noWin[i] = 1;
+    solid_lift(b, dy);
+    /* the roof: four slopes through the wall plates, the overhang's fascias, a flat soffit */
+    Solid *r = solid_new(C, u, -1, 0);
+    const double ct = cos(atan(tp)), st = sin(atan(tp));
+    plane_at(r, 0, ct, -st, 0, Ye, k->z0, HF_ROOF);
+    plane_at(r, 0, ct, st, 0, Ye, k->z1, HF_ROOF);
+    plane_at(r, -st, ct, 0, k->x0, Ye, 0, HF_ROOF);
+    plane_at(r, st, ct, 0, k->x1, Ye, 0, HF_ROOF);
+    plane_at(r, 0, 0, -1, 0, 0, k->z0 - ov, HF_FASCIA);
+    plane_at(r, 0, 0, 1, 0, 0, k->z1 + ov, HF_FASCIA);
+    plane_at(r, -1, 0, 0, k->x0 - ov, 0, 0, HF_FASCIA);
+    plane_at(r, 1, 0, 0, k->x1 + ov, 0, 0, HF_FASCIA);
+    plane_at(r, 0, -1, 0, 0, Ye - ov * tp - 0.12, 0, HF_SOFFIT);
+    for (int i = 0; i < r->np; ++i) r->noWin[i] = 1;
+    solid_lift(r, dy);
+    if (C->lod != HSH_NEAR) return;
+    const double ms[2] = { 0.0, -1.0 }, es[2] = { 1.0, 0.0 }, mb[2] = { 0.0, 1.0 }, eb[2] = { -1.0, 0.0 };
+    const double kw = k->x1 - k->x0, ww = fmin(0.9, kw - 0.8);
+    if (ww > 0.4) add_opening(C, host, u, ms, es, k->x0 + 0.5 * (kw - ww), k->z0, ww, 1.15, 1.95, 0.12, HF_GLASS, opening_aux(ww, 0.8, C->fin[u].glazing));
+    add_opening(C, host, u, mb, eb, k->x1 - 0.3, k->z1, 0.85, 0.0, 2.05, 0.1, HF_DOOR, opening_aux(0.85, 2.05, 1));
+}
+
+/* China's gatehouse over its gate: deep brick piers, a lintel wall over the red plank doors, a tile roof along the wall. */
+static void add_gatehouse(Ctx *C, const HGate *gt, double t, int fin, int col) {
+    const int u = gt->unit;
+    const double dy = C->dy ? C->dy[u] : 0.0, gx0 = gt->x - 0.5 * gt->w, gx1 = gt->x + 0.5 * gt->w, pw = 0.5;
+    const double hp = gt->h + 0.55, zf = -0.12, zb = t + 0.3;
+    bound_box(C, u, dy, gx0 - pw, 0.0, zf, gx0, hp, zb, HF_WALL, NOFACE, fin, col);
+    bound_box(C, u, dy, gx1, 0.0, zf, gx1 + pw, hp, zb, HF_WALL, NOFACE, fin, col);
+    bound_box(C, u, dy, gx0 - 0.01, gt->h, zf + 0.06, gx1 + 0.01, hp, zb - 0.06, HF_WALL, NOFACE, fin, col);
+    roof_prism(C, u, dy, 1, gx0 - pw - 0.4, gx1 + pw + 0.4, zf - 0.5, zb + 0.5, hp - 0.02, 0.62, 0.16, HF_WALL);
+    /* the doors: a pair of plank leaves (house.glsl's door pattern 4) in the wall's middle, both faces */
+    Solid *s = solid_new(C, u, -1, 0);
+    const double zc = 0.5 * t;
+    box_planes(s, gx0, 0.0, zc - 0.04, gx1, gt->h, zc + 0.04, NOFACE, NOFACE, NOFACE);
+    for (int i = 0; i < s->np; ++i) if (fabs(s->pl[i].n[2]) > 0.5) s->surf[i] = HF_DOOR;
+    s->aux = opening_aux(gt->w, gt->h, 4);
+    s->o[0] = gx0; s->o[1] = 0.0; s->o[2] = zc - 0.04;
+    s->t[0] = 1.0; s->t[1] = 0.0; s->t[2] = 0.0;
+    solid_lift(s, dy);
+}
+
+static void add_bounds(Ctx *C) {
+    const HGraph *g = C->g;
+    const HBoundSet *S = &g->bset;
+    if (!S->drawn) return;
+    const int far = C->lod == HSH_FAR;
+    for (int i = 0; i < g->nbound; ++i) {
+        const HBound *b = &g->bound[i];
+        if (!home_bound_drawn(g, b)) continue;
+        const int u = b->unit >= 0 && b->unit < g->nunit ? b->unit : 0;
+        const double dy = C->dy ? C->dy[u] : 0.0;
+        const double total = b->h + b->th;
+        const int band = b->top == HBT_BREEZE || b->top == HBT_RINGS;
+        /* far off, only a wall tall enough to hide a garden (a compound's, China's): its solid part, a breeze band as solid */
+        if (far && b->h + (band ? b->th : 0.0f) < 1.5f) continue;
+        float x0, z0, x1, z1;
+        home_bound_rect(g, b, &x0, &z0, &x1, &z1);
+        /* a railing's kerb is stone; the rest the row's finish */
+        const int fin = b->kind == HB_RAILING ? HW_STONE : S->fin, col = b->kind == HB_RAILING && S->fin != HW_STONE ? 0 : S->col;
+        const int capped = b->kind == HB_WALL && (b->top == HBT_NONE || band || b->top == HBT_IRON || b->top == HBT_SPEAR);
+        if (far) { bound_box(C, u, dy, x0, 0.0, z0, x1, band ? total : b->h, z1, HF_WALL, HF_COPING, fin, col); continue; }
+        bound_box(C, u, dy, x0, 0.0, z0, x1, b->h, z1, HF_WALL, HF_COPING, fin, col);
+        if (!capped) continue;
+        const double y = band ? total : b->h;
+        const int alongX = fabsf(b->z1 - b->z0) < 0.01f;
+        if (S->coping == HBC_TILE) {
+            if (alongX) roof_prism(C, u, dy, 1, x0, x1, z0 - 0.12, z1 + 0.12, y, 0.16, 0.05, HF_COPING);
+            else roof_prism(C, u, dy, 0, z0, z1, x0 - 0.12, x1 + 0.12, y, 0.16, 0.05, HF_COPING);
+        } else {
+            const double c = BOUND_COPE;
+            if (alongX) bound_box(C, u, dy, x0, y, z0 - c, x1, y + 0.07, z1 + c, HF_COPING, HF_COPING, fin, col);
+            else bound_box(C, u, dy, x0 - c, y, z0, x1 + c, y + 0.07, z1, HF_COPING, HF_COPING, fin, col);
+        }
+    }
+    /* the piers: a party line's stands on the lower of its two units' grounds, reaching up to the higher's */
+    HPier P[160];
+    const int np = home_piers(g, P, 160);
+    const double pw = S->pierW;
+    for (int k = 0; k < np; ++k) {
+        int u = P[k].unit >= 0 && P[k].unit < g->nunit ? P[k].unit : 0;
+        double lo = C->dy ? C->dy[u] : 0.0, hi = lo;
+        for (int n = 0; n < g->nunit && C->dy; ++n)
+            if (P[k].x > g->unit[n].x0 - 0.5 * pw && P[k].x < g->unit[n].x1 + 0.5 * pw) {
+                if (C->dy[n] < lo) { lo = C->dy[n]; u = n; }
+                hi = fmax(hi, C->dy[n]);
+            }
+        const double top = P[k].top + (hi - lo);
+        if (far) break;   /* past the near layer's 220 m a pier doesn't read: the far shell keeps the walls alone */
+        bound_box(C, u, lo, P[k].x - 0.5 * pw, 0.0, P[k].z - 0.5 * pw, P[k].x + 0.5 * pw, top, P[k].z + 0.5 * pw, HF_WALL, HF_COPING, S->fin, S->col);
+        if (!far) {
+            const double c = 0.04;
+            bound_box(C, u, lo, P[k].x - 0.5 * pw - c, top, P[k].z - 0.5 * pw - c, P[k].x + 0.5 * pw + c, top + 0.08, P[k].z + 0.5 * pw + c,
+                      HF_COPING, HF_COPING, S->fin, S->col);
+        }
+    }
+    /* China's gatehouses, the compound's kiosk */
+    for (int i = 0; i < g->ngate; ++i) {
+        const HGate *gt = &g->gate[i];
+        if (gt->house && gt->unit >= 0 && gt->unit < g->nunit) add_gatehouse(C, gt, BOUND_T, S->fin, S->col);
+    }
+    for (int i = 0; i < g->nsite; ++i)
+        if (g->site[i].kind == HE_KIOSK && g->site[i].unit >= 0 && g->site[i].unit < g->nunit) add_kiosk(C, &g->site[i]);
+}
+
 /* A French window out onto balcony bi: centred at c in the front wall (its face at zface, facing the street), its sill a
  * threshold over the storey's floor. */
 static void add_french(Ctx *C, int host, int vi, int unit, int storey, int bi, double c, double w, double floorY, double head,
@@ -1471,6 +1632,7 @@ static void shell_build(const HGraph *g, int lod, const float *dy, HShellFn fn, 
     for (int i = 0; i < g->nparty; ++i) add_upstand(&C, &g->party[i]);
     for (int i = 0; i < g->nchim; ++i) add_stack(&C, &g->chim[i]);
     add_balcony_solids(&C);
+    add_bounds(&C);   /* HM5e3 */
     SPoly f, tmp;
     if (lod == HSH_NEAR) {
         for (int u = 0; u < g->nunit; ++u) add_front(&C, u);

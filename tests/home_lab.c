@@ -262,7 +262,8 @@ static void draw_house(Image *im, const View *V, const HGraph *g) {
     }
     for (int i = 0; i < g->nbound; ++i) {
         const HBound *b = &g->bound[i];
-        const uint32_t c = b->kind == HB_WALL ? 0xE0D8C0 : b->kind == HB_HEDGE ? 0x1C4018 : 0x8A6030;
+        if (b->kind == HB_NONE) continue;
+        const uint32_t c = b->kind == HB_WALL ? 0xE0D8C0 : b->kind == HB_HEDGE ? 0x1C4018 : b->kind == HB_RAILING ? 0x303040 : 0x8A6030;
         line(im, V, b->x0, b->z0, b->x1, b->z1, c, b->kind == HB_HEDGE ? 4 : 2);
     }
 }
@@ -304,10 +305,10 @@ static void survey(const HGraph *g, Stats *st) {
 }
 
 /* The rules bite: a valid house broken one rule at a time must be rejected with that rule's tag. */
-enum { BITE_COUNT = 15 };
+enum { BITE_COUNT = 17 };
 static const char *const BITE_TAG[BITE_COUNT] = { "chimney mid-slope", "front garden", "rear garden", "span side", "overlap", "path crosses",
                                                   "side clearance", "door width", "pitch", "party wall", "boundary", "porch", "recess", "shop",
-                                                  "balcony" };
+                                                  "balcony", "gate", "kiosk" };
 static int find_main(const HGraph *g) {
     for (int i = 0; i < g->nvol; ++i)
         if (g->vol[i].role <= HV_ROW) return i;
@@ -345,6 +346,17 @@ static int bite(HGraph *g, int k) {
              { float s0, bw; const int nb = home_front_bays(g, g->balc[0].vol, g->balc[0].unit, &s0, &bw); if (nb <= 0) return 0;
                g->balc[0].x1 = s0 + bw * (float)nb; }
              return 1;
+    case 15: for (int i = 0; i < g->ngate; ++i)   /* a gate moved into its front wall (HM5e3) */
+                 for (int j = 0; j < g->nbound; ++j) {
+                     const HBound *b = &g->bound[j];
+                     if (b->unit != g->gate[i].unit || b->role != HBR_FRONT || b->kind == HB_NONE || fabsf(b->x1 - b->x0) < 0.6f) continue;
+                     g->gate[i].x = 0.5f * (b->x0 + b->x1);
+                     return 1;
+                 }
+             return 0;
+    case 16: for (int i = 0; i < g->nsite; ++i)   /* a gate kiosk run back into the house (HM5e3) */
+                 if (g->site[i].kind == HE_KIOSK) { g->site[i].z1 = m->z0 + 0.5f; return 1; }
+             return 0;
     case 13: for (int k = 0; k < g->nunit; ++k)   /* a shop front over its door (HM5e1) */
                  if (g->unit[k].door >= 0) { const HDoor *d = &g->door[g->unit[k].door]; g->unit[k].shopX0 = d->x - 1.0f; g->unit[k].shopX1 = d->x + 1.0f; return 1; }
              return 0;
@@ -436,6 +448,108 @@ static int balc_check(void) {
         else if (b->kind[WANT[want].kind] * 2 < b->n) { printf("FAIL: %s: its sheet's %s on only %ld of %ld\n", WANT[want].style, home_balcony_name(WANT[want].kind), b->kind[WANT[want].kind], b->n); failures++; }
     }
     printf("the balconies: %d short of their sheets\n", failures);
+    return failures;
+}
+
+/* The boundaries by style (HM5e3): a unit's share with a front boundary built, by kind and top; the gates' kinds; the
+ * walls' mean height; gatehouses, kiosks, razor wire, lamps, stoop rails. Checked against the sheets' panel 1 (the
+ * plan's boundary column). */
+typedef struct Bnd {
+    long units, drawn, kind[HB_COUNT], top[HBT_COUNT], gates, gate[HGK_COUNT], gatehouse, pathGates, kiosks, rows, razor, lamps, stoop, any;
+    double height; long nh;
+} Bnd;
+static Bnd g_bnd[HS_COUNT];
+static void survey_bound(const HGraph *g) {
+    if (g->empty) return;
+    Bnd *b = &g_bnd[g->style];
+    b->rows++;
+    b->units += g->nunit;
+    b->any += g->bset.drawn;
+    b->razor += g->bset.razor;
+    b->lamps += g->bset.lamps;
+    b->stoop += g->bset.stoopRail;
+    for (int u = 0; u < g->nunit; ++u) {
+        int kind = -1, top = 0;
+        for (int i = 0; i < g->nbound; ++i) {
+            const HBound *bd = &g->bound[i];
+            if (bd->unit != u || bd->role != HBR_FRONT || !home_bound_drawn(g, bd)) continue;
+            kind = bd->kind; top = bd->top;
+            b->height += bd->h + bd->th; b->nh++;
+        }
+        if (kind < 0) continue;
+        b->drawn++; b->kind[kind]++; b->top[top]++;
+    }
+    for (int i = 0; i < g->ngate; ++i) {
+        const HGate *gt = &g->gate[i];
+        if (!gt->drive) b->pathGates++;
+        if (gt->kind == HGK_OPEN) continue;
+        b->gates++; b->gate[gt->kind % HGK_COUNT]++;
+        b->gatehouse += gt->house != 0;
+    }
+    for (int i = 0; i < g->nsite; ++i) b->kiosks += g->site[i].kind == HE_KIOSK;
+}
+static int bound_check(void) {
+    /* style, the share of units with a front built at least, its kind (-1 any) on 60% of those and its top (-1 any) on
+     * top0 of them, the gate kind half the gates should be (-1 any), the walls' mean height at least */
+    static const struct { const char *style; float drawn0; int kind, top; float top0; int gate; float h0; } WANT[] = {
+        { "rowhouse",   0.85f, HB_RAILING, HBT_SPEAR,  0.8f, HGK_IRON,    0.0f },
+        { "victorian",  0.85f, -1,         HBT_SPEAR,  0.6f, HGK_IRON,    0.0f },
+        { "georgian",   0.85f, HB_RAILING, HBT_SPEAR,  0.8f, HGK_IRON,    0.0f },
+        { "interwar",   0.85f, HB_WALL,    -1,         0.0f, HGK_IRON,    0.0f },
+        { "postwar",    0.85f, HB_WALL,    -1,         0.0f, HGK_IRON,    0.0f },
+        { "villa:seu",  0.85f, HB_WALL,    HBT_IRON,   0.5f, HGK_IRON,    0.0f },
+        { "japan",      0.85f, HB_FENCE,   HBT_MESH,   0.6f, HGK_MESH,    0.0f },
+        { "china",      0.85f, HB_WALL,    -1,         0.0f, HGK_PLANK,   1.9f },
+        { "korea",      0.6f,  HB_WALL,    -1,         0.0f, -1,          0.0f },
+        { "linkhouse",  0.85f, HB_FENCE,   HBT_STEEL,  0.8f, HGK_STEEL,   0.0f },
+        { "rcc",        0.85f, HB_WALL,    -1,         0.0f, -1,          0.0f },
+        { "bungalow",   0.85f, HB_WALL,    HBT_RINGS,  0.6f, HGK_IRON,    0.0f },
+        { "villa:mena", 0.85f, HB_WALL,    -1,         0.0f, HGK_PIERCED, 1.8f },
+        { "block",      0.6f,  HB_WALL,    HBT_BREEZE, 0.6f, HGK_SHEET,   0.0f },
+        { "walled",     0.85f, HB_WALL,    -1,         0.0f, HGK_SHEET,   2.0f },
+    };
+    int failures = 0;
+    printf("\nthe boundaries by style (HM5e3, against the sheets' panel 1): units with a front built, its kinds and tops, gates\n");
+    printf("  %-11s %6s %5s %5s %5s %5s %5s %5s %5s %5s %5s %5s %5s %5s %6s %5s %5s %5s %5s\n", "style", "units", "built", "wall", "fence", "rail",
+           "iron", "spear", "steel", "mesh", "brze", "rings", "high", "gates", "ghouse", "kiosk", "razor", "lamps", "stoop");
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Bnd *b = &g_bnd[st];
+        if (!b->units) continue;
+        const double U = (double)b->units, D = b->drawn ? (double)b->drawn : 1.0, R = (double)b->rows;
+        printf("  %-11s %6ld %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %6.2f %5.2f %5.2f %5.2f %5.2f\n", home_style_name(st), b->units,
+               b->drawn / U, b->kind[HB_WALL] / D, b->kind[HB_FENCE] / D, b->kind[HB_RAILING] / D, b->top[HBT_IRON] / D, b->top[HBT_SPEAR] / D,
+               b->top[HBT_STEEL] / D, b->top[HBT_MESH] / D, b->top[HBT_BREEZE] / D, b->top[HBT_RINGS] / D, b->nh ? b->height / b->nh : 0.0,
+               b->gates / U, b->pathGates ? (double)b->gatehouse / b->pathGates : 0.0, b->kiosks / R, b->razor / R, b->lamps / R, b->stoop / R);
+    }
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Bnd *b = &g_bnd[st];
+        if (b->units < 200) continue;
+        int want = -1;
+        for (size_t k = 0; k < sizeof(WANT) / sizeof(WANT[0]); ++k)
+            if (home_style_find(-1, WANT[k].style) == st) want = (int)k;
+        if (want < 0) {
+            if (b->drawn) { printf("FAIL: %s builds front boundaries its sheet doesn't show (or has no sheet)\n", home_style_name(st)); failures++; }
+            continue;
+        }
+        const double U = (double)b->units, D = b->drawn ? (double)b->drawn : 1.0;
+        char why[160] = "";
+        if (b->drawn / U < WANT[want].drawn0) snprintf(why, sizeof(why), "a front built on %.0f%% of units", 100.0 * b->drawn / U);
+        else if (WANT[want].kind >= 0 && b->kind[WANT[want].kind] / D < 0.6) snprintf(why, sizeof(why), "%s on %.0f%% of fronts", home_bound_name(WANT[want].kind), 100.0 * b->kind[WANT[want].kind] / D);
+        else if (WANT[want].top >= 0 && b->top[WANT[want].top] / D < WANT[want].top0) snprintf(why, sizeof(why), "%s on %.0f%% of fronts", home_top_name(WANT[want].top), 100.0 * b->top[WANT[want].top] / D);
+        else if (WANT[want].gate >= 0 && b->gate[WANT[want].gate] * 2 < b->gates) snprintf(why, sizeof(why), "%s gates %ld of %ld", home_gate_name(WANT[want].gate), b->gate[WANT[want].gate], b->gates);
+        else if (b->nh && b->height / b->nh < WANT[want].h0) snprintf(why, sizeof(why), "walls %.2f m high on average", b->height / b->nh);
+        if (why[0]) { printf("FAIL: %s's boundaries miss its sheet: %s\n", WANT[want].style, why); failures++; }
+    }
+    {   /* the compound's razor wire and kiosk, China's gatehouse */
+        const int w = home_style_find(-1, "walled"), c = home_style_find(-1, "china");
+        if (g_bnd[w].rows >= 60 && (g_bnd[w].razor < 0.4 * g_bnd[w].rows || g_bnd[w].kiosks < 0.12 * g_bnd[w].rows)) {
+            printf("FAIL: walled: razor wire on %ld of %ld rows, kiosks %ld\n", g_bnd[w].razor, g_bnd[w].rows, g_bnd[w].kiosks); failures++;
+        }
+        if (g_bnd[c].pathGates >= 60 && g_bnd[c].gatehouse < 0.4 * g_bnd[c].pathGates) {
+            printf("FAIL: china: gatehouses over %ld of %ld path gates\n", g_bnd[c].gatehouse, g_bnd[c].pathGates); failures++;
+        }
+    }
+    printf("the boundaries: %d short of their sheets\n", failures);
     return failures;
 }
 
@@ -1124,6 +1238,7 @@ int main(int argc, char **argv) {
             survey(g, &st);
             survey_body(g);
             survey_balc(g);
+            survey_bound(g);
             if (s == verbose) printf("--- %s seed %d ---\n%s", ARCH[a], s, buf);
             if (g->empty) {
                 if (shown++ < 3) printf("FAIL: %s seed %d (%s) left no house\n%s", ARCH[a], s, home_style_name(style), buf);
@@ -1169,8 +1284,8 @@ int main(int argc, char **argv) {
         printf("\n  a house: bays %.2f (canted %.0f%%, two storeys %.0f%%), garages %.2f, extensions %.2f, outriggers %.2f, chimneys %.2f\n",
                (double)st.bays / U, st.bays ? 100.0 * st.canted / st.bays : 0.0, st.bays ? 100.0 * st.bay2 / st.bays : 0.0,
                (double)st.garages / U, (double)st.extensions / U, (double)st.outriggers / U, (double)st.chimneys / U);
-        printf("  gardens: sheds %.2f, cars %.2f, trees' places %.2f a house; front boundary pieces: wall %d, hedge %d, fence %d\n",
-               (double)st.sheds / U, (double)st.cars / U, (double)st.trees / U, st.bound[HB_WALL], st.bound[HB_HEDGE], st.bound[HB_FENCE]);
+        printf("  gardens: sheds %.2f, cars %.2f, trees' places %.2f a house; front boundary pieces: wall %d, hedge %d, fence %d, railing %d\n",
+               (double)st.sheds / U, (double)st.cars / U, (double)st.trees / U, st.bound[HB_WALL], st.bound[HB_HEDGE], st.bound[HB_FENCE], st.bound[HB_RAILING]);
         print_tags("repairs", g_rep, g_nrep, U);
         print_tags("rejects", g_rej, g_nrej, U);
         /* the rules bite */
@@ -1254,6 +1369,11 @@ int main(int argc, char **argv) {
             { "rowhouse", "h_plinth", 0.8f },
             { "tripledecker", "h_bay_post", 0.5f }, { "tripledecker", "h_post_turned", 0.2f },
             { "spanish", "h_grille", 0.4f }, { "spanish", "h_win_casement", 0.6f },
+            /* HM5e3: each sheet's boundary and its gate */
+            { "georgian", "h_rail_spear", 0.7f }, { "rowhouse", "h_rail_spear", 0.7f }, { "rowhouse", "h_bar_iron", 0.4f },
+            { "victorian", "h_gate_iron", 0.4f }, { "japan", "r_fence_mesh", 0.6f }, { "linkhouse", "r_fence_steel", 0.7f },
+            { "villa:mena", "r_gate_pierced", 0.4f }, { "walled", "r_razor", 0.4f }, { "bungalow", "r_breeze_ring", 0.5f },
+            { "block", "r_breeze_diamond", 0.4f }, { "villa:seu", "r_lantern", 0.4f },
         };
         int short_ = 0;
         for (size_t k = 0; k < sizeof(WANT) / sizeof(WANT[0]); ++k) {
@@ -1273,6 +1393,7 @@ int main(int argc, char **argv) {
     }
     failures += body_check();
     failures += balc_check();
+    failures += bound_check();
     if (g_coverage) {
         printf("\nthe kit's coverage by style: the share of a style's units with at least one of each module (over every archetype)\n");
         for (int st = 0; st < HS_COUNT; ++st) {

@@ -383,5 +383,32 @@ int city_home_outlines(ChunkGen *g, int ri, double (*v)[4][2], int max, int walk
             n++;
         }
     }
+    /* HM5e3: the boundaries built (walls, kerbs and plinths), their piers, the gates' leaves (shut), China's gatehouses'
+     * piers, the gate kiosk */
+    if (G->bset.drawn) {
+        for (int i = 0; i < G->nbound && n < max; ++i) {
+            const HBound *b = &G->bound[i];
+            if (!home_bound_drawn(G, b)) continue;
+            float x0, z0, x1, z1;
+            home_bound_rect(G, b, &x0, &z0, &x1, &z1);
+            n = outline_rect(G, x0, z0, x1, z1, v, n, max);
+        }
+        HPier P[160];
+        const int np = home_piers(G, P, 160);
+        const float pw = 0.5f * G->bset.pierW;
+        for (int k = 0; k < np; ++k) n = outline_rect(G, P[k].x - pw, P[k].z - pw, P[k].x + pw, P[k].z + pw, v, n, max);
+        for (int i = 0; i < G->ngate; ++i) {
+            const HGate *gt = &G->gate[i];
+            if (gt->kind == HGK_OPEN) continue;
+            const float a = gt->x - 0.5f * gt->w, b = gt->x + 0.5f * gt->w;
+            n = outline_rect(G, a, 0.0f, b, BOUND_T, v, n, max);
+            if (gt->house) {
+                n = outline_rect(G, a - 0.5f, -0.12f, a, BOUND_T + 0.3f, v, n, max);
+                n = outline_rect(G, b, -0.12f, b + 0.5f, BOUND_T + 0.3f, v, n, max);
+            }
+        }
+        for (int i = 0; i < G->nsite; ++i)
+            if (G->site[i].kind == HE_KIOSK) n = outline_rect(G, G->site[i].x0, G->site[i].z0, G->site[i].x1, G->site[i].z1, v, n, max);
+    }
     return n;
 }

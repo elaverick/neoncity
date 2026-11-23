@@ -1315,6 +1315,57 @@ void m_h_console(Pm *pm) { quiet(pm);
     run_x(pm, (const float (*)[2])s, n, -0.06f, 0.06f);
 }
 
+/* --- HM5e3: boundaries and gates -------------------------------------------------------------------------------- */
+
+/* a spearhead on a bar at (x, y): a flat leaf in the railing's plane, a collar under it */
+static void spear(Pm *pm, float x, float y) {
+    pm_push(pm);
+    pm_translate(pm, x, 0.0f, 0.0f);
+    if (L2) frustum(pm, y, y + 0.08f, 0.012f, 0.008f, 0.002f, 0.002f);
+    else {
+        frustum(pm, y, y + 0.03f, 0.008f, 0.008f, 0.021f, 0.008f);
+        frustum(pm, y + 0.03f, y + 0.1f, 0.021f, 0.008f, 0.001f, 0.002f);
+    }
+    pm_pop(pm);
+}
+/* Spear-topped iron railings (x 0..1 and y 0..1, both stretched: area railings, a Victorian front's), centred on z 0:
+ * square bars every 0.125 m through a bottom rail and a top rail, their spearheads over it. */
+void m_h_rail_spear(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HIRON);
+    bx(pm, 0.0f, 0.05f, -0.013f, 1.0f, 0.09f, 0.013f, 0.0f);
+    bx(pm, 0.0f, 0.78f, -0.015f, 1.0f, 0.82f, 0.015f, 0.0f);
+    const int n = L2 ? 4 : 8;
+    for (int k = 0; k < n; ++k) {
+        const float x = ((float)k + 0.5f) / (float)n;
+        bx(pm, x - 0.008f, 0.0f, -0.008f, x + 0.008f, 0.9f, 0.008f, 0.0f);
+        spear(pm, x, 0.9f);
+    }
+}
+/* An iron gate's leaf (x 0..1 and y 0..1, both stretched to the leaf), centred on z 0: stiles and rails, spear-topped
+ * bars, a dog bar low down, a latch. */
+void m_h_gate_iron(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HIRON);
+    const float f = 0.035f;
+    bx(pm, 0.0f, 0.0f, -0.015f, f, 0.88f, 0.015f, 0.0f);
+    bx(pm, 1.0f - f, 0.0f, -0.015f, 1.0f, 0.88f, 0.015f, 0.0f);
+    bx(pm, f, 0.03f, -0.012f, 1.0f - f, 0.07f, 0.012f, 0.0f);
+    bx(pm, f, 0.74f, -0.012f, 1.0f - f, 0.78f, 0.012f, 0.0f);
+    if (!L2) bx(pm, f, 0.17f, -0.01f, 1.0f - f, 0.2f, 0.01f, 0.0f);
+    const int n = L2 ? 3 : 7;
+    for (int k = 1; k <= n; ++k) {
+        const float x = f + (1.0f - 2.0f * f) * (float)k / (float)(n + 1);
+        bx(pm, x - 0.008f, 0.07f, -0.008f, x + 0.008f, 0.9f, 0.008f, 0.0f);
+        spear(pm, x, 0.9f);
+    }
+    if (!L2) { spear(pm, 0.5f * f, 0.88f); spear(pm, 1.0f - 0.5f * f, 0.88f); }
+    if (L0) bx(pm, 1.0f - f - 0.07f, 0.5f, 0.012f, 1.0f - f, 0.54f, 0.03f, 0.0f);   /* the latch */
+}
+/* An iron bar x 0..1 (stretched), 40 mm square, centred on y and z: a stoop's handrail, a sliding gate's track. */
+void m_h_bar_iron(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HIRON);
+    bx(pm, 0.0f, -0.02f, -0.02f, 1.0f, 0.02f, 0.02f, L0 ? 0.005f : 0.0f);
+}
+
 /* ------------------------------------------------------------- assemblies --- */
 void hk_run(Pm *pm, int module, float len, float piece) {
     if (len <= 0.01f) return;
