@@ -1151,14 +1151,20 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: the vines (HMv)**, before HM5e2: the retrofit kit's leaf-blob vines (`hr_vine`, PMK_R_VINE) replaced by
-  wall-hugging alpha-cut cards with steep parallax and self-shadowing, on 4-6 albedos the user generates (ivy,
-  bougainvillea, creeper, jasmine...); alpha, height and normal derived from them by a tool, files in assets/. Board.
-- **Then HM5e2, balconies** (HM5e1, the bodies, done 2026-11-22): a balcony family in the graph (balconette, slab,
-  glazed, loggia, upper veranda), the window behind made a French window, by the sheets' panel 1. Then HM5e3 (the
+- **Next: HM5e2, balconies** (HM5e1, the bodies, and HMv, the vines, done 2026-11-22): a balcony family in the
+  graph (balconette, slab, glazed, loggia, upper veranda), the window behind made a French window, by the sheets'
+  panel 1. Then HM5e3 (the
   boundary walls and gates the graph already plans: `HBound`, `HGate`, drawn by nothing until now), HM5c2 (retrofit
   insertions, 3 units in 5), HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing styles to their
   sheets), HM6 (the rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **The vines' leftovers** (HMv: the cards with steep parallax, `docs/residential-target.md` "The vines"):
+  - The pots', troughs' and trailing plants' leaves are still HM5c1's clumps, crude beside the vines. The atlas's
+    columns could dress them too (a trough's plant as a short card; trailing plants as the columns hung upside down).
+  - A tall vine (8-12 m up a three- or four-storey front) shows its 2.5 m tile repeating: each column starts at its own
+    height, but one plant's flowers come round again. A second sheet per plant, or a tile twice as tall, would answer it.
+  - The wall seen through a vine's gaps takes no shadow from its leaves (the cards cast none, and the wall is shaded
+    before them). A dark band round the leaves' edge, from the height field, would stand in for it.
+  - The far shell (past 220 m) has no vines, and the near kit's shrink-away at 90-120 m takes them out whole.
 - **The bodies' leftovers** (HM5e1):
   - The far shell (past 220 m) carves nothing: a five-foot way's, pilotis' and a shop's ground storey are walls with
     painted windows there. A dark band in the far wall's rhythm would do if a rise shows it.

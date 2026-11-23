@@ -1531,6 +1531,7 @@ const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_HGLASS] = "h_glass", [PMAT_HTIMBER] = "h_timber", [PMAT_HUPVC] = "h_upvc", [PMAT_HROOF] = "h_roof", [PMAT_HCEMENT] = "h_cement",
     [PMAT_HGALV] = "h_galv", [PMAT_HCOPPER] = "h_copper", [PMAT_HPOLY] = "h_poly", [PMAT_HSOLAR] = "h_solar", [PMAT_HBREEZE] = "h_breeze",
     [PMAT_HBLOOM] = "h_bloom", [PMAT_HLED] = "h_led", [PMAT_HLAMP] = "h_lamp",
+    [PMAT_HVINE] = "h_vine",
 };
 /* Mirrored by kitSet in shaders/city/kit.glsl. Sets may serve two materials in different colours (the
  * rubber's grain under black plastic, the white paint's under red): the share check counts them together. */
@@ -1760,8 +1761,7 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_R_POT] = { "r_pot", m_r_pot, { 590, 250, 120 }, 1 },
     [PMK_R_POT_PALM] = { "r_pot_palm", m_r_pot_palm, { 630, 440, 150 }, 1 },
     [PMK_R_TROUGH] = { "r_trough", m_r_trough, { 460, 180, 70 }, 1 },
-    [PMK_R_VINE] = { "r_vine", m_r_vine, { 860, 330, 110 }, 1 },
-    [PMK_R_VINE_BLOOM] = { "r_vine_bloom", m_r_vine_bloom, { 860, 330, 110 }, 1 },
+    [PMK_R_VINE] = { "r_vine", m_r_vine, { 2, 2, 2 }, 0 },
     [PMK_R_TRAIL] = { "r_trail", m_r_trail, { 1110, 290, 80 }, 1 },
     [PMK_R_AERIAL_YAGI] = { "r_aerial_yagi", m_r_aerial_yagi, { 320, 190, 50 }, 1 },
     [PMK_R_AERIAL_CROSS] = { "r_aerial_cross", m_r_aerial_cross, { 220, 160, 70 }, 1 },
@@ -1771,7 +1771,8 @@ int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CU
 /* everything but the lights' own glass, flames and neon (SF1's stations cast, their coals included) */
 int pm_module_casts(int id) {
     return id >= 0 && id < PMK_COUNT && !pm_module_is_icon(id) && id != PMK_FLAME_RING && id != PMK_FLAME_JET && id != PMK_LAMP &&
-           id != PMK_BATTEN_TUBE && id != PMK_R_DOWNLIGHT && id != PMK_R_LED_STRIP;
+           id != PMK_BATTEN_TUBE && id != PMK_R_DOWNLIGHT && id != PMK_R_LED_STRIP &&
+           !pm_module_cut(id);   /* a vine's card would cast its whole rectangle: its leaves shadow themselves (shadeVine) */
 }
 
 int pm_module_count(void) { return PMK_COUNT; }

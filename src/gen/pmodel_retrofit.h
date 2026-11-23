@@ -45,6 +45,9 @@
 #define HR_AERIAL_H    2.40f   /* a mast */
 #define HR_POST        0.08f   /* a canopy's square post */
 #define HR_BEAM_H      0.14f   /* a canopy's beams */
+#define HR_VINE_DEPTH  0.10f   /* HMv: a vine's card off its wall: the depth of its leaves (vine.json's params[0] must match) */
+/* HMv: the vine atlas's plants, in its order (tools/vine_pack.py; house.glsl shadeVine) */
+enum { HR_VINE_CLEMATIS, HR_VINE_IVY, HR_VINE_WISTERIA, HR_VINE_PASSION, HR_VINE_BOUGAINVILLEA, HR_VINE_THUNBERGIA, HR_VINE_SPECIES };
 
 /* the builders (pmodel_kit.c's table holds them) */
 void m_r_solar_panel(Pm *pm);  void m_r_solar_row(Pm *pm);
@@ -58,7 +61,7 @@ void m_r_rail(Pm *pm);
 void m_r_meter(Pm *pm);        void m_r_lantern(Pm *pm);     void m_r_bulkhead(Pm *pm);
 void m_r_gate_bars(Pm *pm);    void m_r_gate_sheet(Pm *pm);  void m_r_razor(Pm *pm);
 void m_r_pot(Pm *pm);          void m_r_pot_palm(Pm *pm);    void m_r_trough(Pm *pm);
-void m_r_vine(Pm *pm);         void m_r_vine_bloom(Pm *pm);  void m_r_trail(Pm *pm);
+void m_r_vine(Pm *pm);         void m_r_trail(Pm *pm);
 void m_r_aerial_yagi(Pm *pm);  void m_r_aerial_cross(Pm *pm);
 
 /* Module frames:
@@ -86,7 +89,7 @@ void m_r_aerial_yagi(Pm *pm);  void m_r_aerial_cross(Pm *pm);
  *   razor         a coil x 0..1 (stretched), sitting on y 0 centred on z 0
  *   pot, palm     standing on y 0 centred
  *   trough        x 0..1 (stretched), standing on y 0, z -0.17..0.17
- *   vine          a tile of climbing plant on a wall, x -0.5..0.5, y 0..1 (stretched), z 0..0.2
+ *   vine          a climbing plant's card (HMv), x -0.5..0.5, y 0..1 (both stretched), at z HR_VINE_DEPTH, facing +z
  *   trail         plants hanging from an edge: x 0..1, from y 0 down to -1 (stretched), out z 0..0.25
  *   aerial        a mast standing on y 0 (its bracket's foot), HR_AERIAL_H tall */
 
@@ -118,9 +121,9 @@ void hr_breeze(Pm *pm, int kind, float w, float h);
 void hr_rail(Pm *pm, float len);
 /* Razor wire along x from 0 to len, in coils of about a metre. */
 void hr_razor(Pm *pm, float len);
-/* A climbing plant up a wall: a column w wide and h tall from the origin (its foot's middle), tiles of about a
- * metre square, a share of them flowering. */
-void hr_vine(Pm *pm, float w, float h, float bloom, uint32_t seed);
+/* A climbing plant up a wall (HMv): one card w wide and h tall from the origin (its foot's middle), of `species`
+ * (HR_VINE_*); the shader grows it as overlapping columns of the atlas, the outer ones stopping short. */
+void hr_vine(Pm *pm, float w, float h, int species);
 /* Plants trailing over an edge along x from 0 to len, hanging `drop` metres (varied piece to piece). */
 void hr_trail(Pm *pm, float len, float drop, uint32_t seed);
 /* An LED strip along x from 0 to len (one stretched piece). */

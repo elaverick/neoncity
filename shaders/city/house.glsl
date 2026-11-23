@@ -373,8 +373,155 @@ const uint PMAT_HTRIM = 49u, PMAT_HDOOR = 50u, PMAT_HSTONE = 51u, PMAT_HBRICK = 
            PMAT_HUPVC = 61u, PMAT_HROOF = 62u, PMAT_HCEMENT = 63u,   // src/gen/pmodel.h
            // HM5c1: the shared retrofit kit (src/gen/pmodel_retrofit.c)
            PMAT_HGALV = 64u, PMAT_HCOPPER = 65u, PMAT_HPOLY = 66u, PMAT_HSOLAR = 67u, PMAT_HBREEZE = 68u, PMAT_HBLOOM = 69u,
-           PMAT_HLED = 70u, PMAT_HLAMP = 71u;
-bool kitIsHouse(uint m) { return m >= PMAT_HTRIM && m <= PMAT_HLAMP; }
+           PMAT_HLED = 70u, PMAT_HLAMP = 71u,
+           PMAT_HVINE = 72u;   // HMv: the vines' cards (shadeVine)
+bool kitIsHouse(uint m) { return m >= PMAT_HTRIM && m <= PMAT_HVINE; }
+
+/* ======================================================================
+ * HMv: the vines. A climbing plant is one card (src/gen/pmodel_retrofit.c m_r_vine) standing the leaves' depth
+ * (vine.json params x: pmodel_retrofit.h HR_VINE_DEPTH) off its wall, W x H metres (kit.vert hands them over from
+ * the instance), its uv the card's unit square. Over it the plant grows as columns of its atlas cell (vine.json:
+ * the instance's part the plant, HR_VINE_*), each params z metres across and repeating every params y of its
+ * widths up the wall, overlapping where the card is wider than one: each its own way round, from its own height in
+ * the tile, the outer ones stopping short of the top, every top thinning to its highest leaves. The leaves are a
+ * height field from the card (1) down to the wall (0): the eye's ray steps down through it (steep parallax, the
+ * highest column's height at each step) and where it reaches the wall with nothing met, the wall shows: the pixel
+ * is cut, and its coverage of a pixel's samples follows the atlas's alpha (so far off, where the mips have blurred
+ * the leaves, they thin by their coverage). What the ray met shadows itself from each light (pbr.glsl
+ * reliefShadow). The cards are drawn after the rest of the kit (pm_module_cut) and kept out of the depth prepass
+ * (prepass.frag): the wall's shadows are theirs.
+ * ==================================================================== */
+const float VINE_CELLS = 6.0;   // plants in the atlas
+struct VineCard { float W, H, cw, tileH, x0, pitch, species; int n; uint seed; };
+
+// Column i of a card: its left edge (card metres), mirrored or not, where in its tile it starts, how high it climbs.
+void vineColumn(VineCard c, int i, out float left, out bool mir, out float voff, out float top) {
+    uint h = hash_combine(c.seed, uint(i) * 0x9E37u + 0x5100u);
+    left = c.x0 + c.pitch * float(i);
+    mir = (h & 1u) != 0u;
+    voff = hfloat(hash_combine(h, 1u));
+    float r = hfloat(hash_combine(h, 2u));
+    top = c.H - (c.n > 1 && (i == 0 || i == c.n - 1) ? 0.3 + 1.3 * r : 0.35 * r);
+}
+// The leaves' height at card point xy (0 where nothing grows): the highest of the columns over it; the atlas point
+// it came from, and whether its column is mirrored.
+float vineHeight(VineCard c, vec2 xy, vec2 gx, vec2 gy, out vec2 st, out bool mirOut) {
+    int oi = PBR_VINE * PBR_MAPS_PER_MATERIAL + PBR_ORM;
+    float best = 0.0;
+    st = vec2(0.0);
+    mirOut = false;
+    int i0 = 0, i1 = 0;
+    if (c.n > 1) {
+        i0 = max(0, int(ceil((xy.x - c.cw - c.x0) / c.pitch)));
+        i1 = min(min(c.n - 1, int(floor((xy.x - c.x0) / c.pitch))), i0 + 3);   // at most four over a point
+    }
+    for (int i = i0; i <= i1; ++i) {
+        float left, voff, top;
+        bool mir;
+        vineColumn(c, i, left, mir, voff, top);
+        float u = (xy.x - left) / c.cw;
+        if (u <= 0.0 || u >= 1.0 || xy.y < 0.0 || xy.y > top + 0.05) continue;
+        vec2 s = vec2((c.species + (mir ? 1.0 - u : u)) / VINE_CELLS, voff - xy.y / c.tileH);
+        float h = textureGrad(pbrMaps[oi], s, gx, gy).b;
+        if (h <= smoothstep(top - 0.7, top + 0.05, xy.y)) continue;   // the top: only its highest leaves
+        if (h > best) { best = h; st = s; mirOut = mir; }
+    }
+    return best;
+}
+
+vec3 shadeVine(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, vec3 lit) {
+    if (!pbrLoaded(PBR_VINE)) discard;
+    vec4 k = pbrParams(PBR_VINE);
+    VineCard c;
+    c.W = max(lit.y, 0.05); c.H = max(lit.z, 0.05);
+    c.seed = seed;
+    c.species = float(min(prm.z & 255u, 5u));
+    c.tileH = k.z * k.y;
+    if (c.W < 1.3 * k.z) { c.n = 1; c.cw = c.W; c.x0 = 0.0; c.pitch = 1.0; }   // one column, stretched to the card
+    else {
+        c.cw = k.z;
+        c.n = int(ceil((c.W - c.cw) / (0.5 * c.cw))) + 1;   // close enough that the columns read as one plant, not stripes
+        c.x0 = 0.0;
+        c.pitch = (c.W - c.cw) / float(c.n - 1);
+    }
+    // the card's frame: up the wall, across it (the way uv.x runs, mirrored rows or not)
+    vec3 Bn = vec3(0.0, 1.0, 0.0);
+    vec3 Tn = normalize(cross(Bn, n) + vec3(1e-6, 0.0, 0.0));
+    vec3 dp1 = dFdx(rel), dp2 = dFdy(rel);
+    vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+    float det = du1.x * du2.y - du1.y * du2.x;
+    vec3 dpdu = (dp1 * du2.y - dp2 * du1.y) / (abs(det) > 1e-14 ? det : 1e-14);
+    if (dot(dpdu, Tn) < 0.0) Tn = -Tn;
+    vec2 xy = uv * vec2(c.W, c.H);
+    vec2 xyx = dFdx(xy), xyy = dFdy(xy);
+    vec2 g = vec2(1.0 / (c.cw * VINE_CELLS), -1.0 / c.tileH);
+    vec2 gx = xyx * g, gy = xyy * g;
+    float px = max(min(length(xyx), length(xyy)), 1e-5);   // metres a pixel spans, the finer way
+
+    // the eye's ray down through the leaves to the wall
+    vec3 V = -normalize(rel);
+    float vn = max(dot(V, n), 0.0);
+    vec2 dir = -vec2(dot(V, Tn), dot(V, Bn)) / max(vn, 0.17) * k.x;   // card metres per unit of depth
+    float shiftPx = length(dir) / px;
+    vec2 st;
+    bool mir;
+    float h = vineHeight(c, xy, gx, gy, st, mir);
+    if (shiftPx > 1.0) {
+        int layers = int(clamp(shiftPx * 0.5, 4.0, 16.0));
+        float inc = 1.0 / float(layers), d = 0.0, gap = h - 1.0, prev = gap;
+        vec2 q = xy;
+        bool hit = gap >= 0.0;
+        for (int s = 0; s < 16 && !hit && s < layers; ++s) {
+            prev = gap;
+            q += dir * inc; d += inc;
+            h = vineHeight(c, q, gx, gy, st, mir);
+            gap = h - (1.0 - d);
+            hit = gap >= 0.0 && h > 0.02;
+        }
+        if (!hit) discard;   // down to the wall, nothing met
+        if (d > 0.0) {       // back to where it crossed, if the leaves are there too
+            vec2 st2;
+            bool mir2;
+            vec2 q2 = q - dir * inc * clamp(gap / max(gap - prev, 1e-5), 0.0, 1.0);
+            float h2 = vineHeight(c, q2, gx, gy, st2, mir2);
+            if (h2 > 0.02) { h = h2; st = st2; mir = mir2; }
+        }
+    } else if (h <= 0.02) discard;
+
+    int base = PBR_VINE * PBR_MAPS_PER_MATERIAL;
+    vec4 alb4 = textureGrad(pbrMaps[base + PBR_ALBEDO], st, gx, gy);
+    // its share of the pixel's samples, dithered (as a plant's fence: industry.glsl shadeFence)
+    const float BAYER[4] = float[4](0.0, 2.0, 3.0, 1.0);
+    ivec2 f = ivec2(gl_FragCoord.xy) & 1;
+    int kc = min(int(alb4.a * 4.0 + (BAYER[f.y * 2 + f.x] + 0.5) * 0.25), 4);
+    if (kc == 0) discard;
+    gl_SampleMask[0] = (1 << kc) - 1;
+
+    vec3 T = mir ? -Tn : Tn;   // the column's image right
+    vec3 tn = textureGrad(pbrMaps[base + PBR_NORMAL], st, gx, gy).xyz * 2.0 - 1.0;
+    vec3 nn = normalize(n + (T * tn.x + Bn * tn.y) / max(tn.z, 0.2));
+    vec3 orm = textureGrad(pbrMaps[base + PBR_ORM], st, gx, gy).rgb;
+    // its own shadows: from where the ray met the leaves towards each light
+    gRelFade = 1.0 - smoothstep(k.x, 2.0 * k.x, px);
+    gReliefReady = gRelFade > 0.0 && h < 0.98;
+    gRelM = PBR_VINE; gRelSt = st; gRelSx = gx; gRelSy = gy;
+    gRelScale = k.x * vec2(1.0 / (c.cw * VINE_CELLS), 1.0 / c.tileH);
+    gRelT = T; gRelB = Bn; gRelN = n; gRelH = h;
+
+    // the photograph's colours under the city's soot, grimier near the ground; darker and glossier wet
+    float y = p.y - gBase;
+    vec3 alb = alb4.rgb * k.w;
+    alb = mix(vec3(dot(alb, vec3(0.2126, 0.7152, 0.0722))), alb, 0.85) * mix(0.75, 1.0, smoothstep(0.0, 1.5, y));
+    float wet = WETNESS > 0.0 ? WETNESS * (1.0 - shelterAt(rel)) : 0.0;
+    alb *= mix(1.0, 0.8, wet);
+    float shin = mix(mix(24.0, 8.0, orm.g), 60.0, wet), specK = mix(mix(0.07, 0.02, orm.g), 0.25, wet);
+    vec3 spec;
+    reliefLightsOn();
+    vec3 diff = wallLighting(p, nn, V, shin, specK, y, spec);
+    reliefLightsOff();
+    float ao = orm.r * mix(0.4, 1.0, lit.x);
+    return alb * diff * ao + spec * ao;
+}
 
 /* HM5c1: whether a house's outside lights are on (its LEDs, downlights, lantern: one seed a unit, src/city/homes.c).
  * By the lamps' photocells (DN7: on under the cities' deck all day, out in daylight past its edge) and by the hour: most

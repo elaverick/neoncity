@@ -7,8 +7,9 @@
 #endif
 #include "common.glsl"
 #ifdef KIT_FRAG
-/* The vendors' kit (kit.vert; src/render/kit_gpu.c) neither discards nor covers only some samples, and its
- * depth is in the prepass: whatever of it stands behind something nearer is thrown away before it is shaded. */
+/* The vendors' kit (kit.vert; src/render/kit_gpu.c) has its depth in the prepass: whatever of it stands behind
+ * something nearer is thrown away before it is shaded. Only the vines' cards (house.glsl shadeVine) discard and cover
+ * some samples: they are out of the prepass and drawn last, so the depth their cut pixels still write hides nothing. */
 layout(early_fragment_tests) in;
 #endif
 
@@ -118,6 +119,8 @@ void shadePixel() {
     uint mat = vParams.x;
     vec3 V = -normalize(vRel);
 
+    // the debug views see the wall behind a vine's card, as the shadows do (shadeVine)
+    if (mat == MAT_KIT && (vParams.y & 255u) == PMAT_HVINE && (uint(frame.shadow.y) & (SHADOWS_DEBUG | DAYLIGHT_DEBUG)) != 0u) discard;
     if ((uint(frame.shadow.y) & SHADOWS_DEBUG) != 0u) {
         // shadow debug view (F10): only the light the lamps, shopfronts and lobbies throw on each surface
         vec3 d = vec3(0.0), sp = vec3(0.0);
@@ -156,7 +159,8 @@ void shadePixel() {
     else if (mat == MAT_ARCOLOGY)  col = shadeArcology(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_INDUSTRY)  col = shadeIndustry(vLocal, vRel, n, vUV, vSeed, vParams);
     else if (mat == MAT_PROP)      col = shadeProp(vLocal, vRel, n, vUV, vSeed, vParams);
-    else if (mat == MAT_KIT)       col = kitIsHouse(vParams.y & 255u) ? shadeHouseKit(vLocal, vRel, n, vUV, vSeed, vParams, vLitter.x, vAux)   // HM4
+    else if (mat == MAT_KIT)       col = (vParams.y & 255u) == PMAT_HVINE ? shadeVine(vLocal, vRel, n, vUV, vSeed, vParams, vLitter)   // HMv
+                                         : kitIsHouse(vParams.y & 255u) ? shadeHouseKit(vLocal, vRel, n, vUV, vSeed, vParams, vLitter.x, vAux)   // HM4
                                          : shadeKit(vLocal, vRel, n, vUV, vSeed, vParams, vLitter.x, vLitter.y, vLitter.z);
     else if (mat == MAT_HOUSE)     col = shadeHouse(vLocal, vRel, n, vUV, vSeed, vParams, vAux);
     else {

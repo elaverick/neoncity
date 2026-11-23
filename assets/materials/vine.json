@@ -1,0 +1,19 @@
+// The houses' climbing plants (residential roadmap HMv): six plants side by side in one atlas, each a
+// column 256 px across that repeats up the wall (tools/vine_pack.py, from the user's sheet
+// assets_src/vines/vines_six.png): clematis, ivy, wisteria, passionflower, bougainvillea, black-eyed
+// Susan, in that order (src/gen/pmodel_retrofit.h HR_VINE_*). Its alpha is where anything grows; its
+// height (orm.b) 0 there and up to the leaves' tops, which the card stands at (shadeVine in
+// shaders/city/house.glsl: steep parallax down to the wall, self-shadowed).
+{
+  "maps": {
+    "albedo": "../textures/vine/albedo.png",
+    "normal": "../textures/vine/normal.png",
+    "orm":    "../textures/vine/orm.png"
+  },
+  "params": [
+    0.10,                  // metres from the leaves' tops to the wall (pmodel_retrofit.h HR_VINE_DEPTH: the card stands there)
+    3.5,                   // a column's tile, in its own widths up the wall (896 rows of 256 as cut)
+    0.72,                  // metres across a column (the plant's own spread; a narrow vine takes one column stretched)
+    0.8                    // the photograph's colours to the city's: a little darker under its soot
+  ]
+}

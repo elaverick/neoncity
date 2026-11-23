@@ -1046,7 +1046,7 @@ static void vig_retrofit_flat(Pm *pm) {
         if (!k) { const float a[3] = { x, 0.0f, HR_PIPE_Z }, b[3] = { x, H - 0.2f, HR_PIPE_Z }; hr_pipe_clips(pm, 1, a, b); }
     }
     pm_push(pm); pm_translate(pm, 6.55f, 1.1f, HR_PIPE_Z); pm_place(pm, PMK_R_VALVE); pm_pop(pm);
-    pm_push(pm); pm_translate(pm, 5.65f, 0.0f, 0.0f); hr_vine(pm, 0.9f, 2.7f, 0.4f, 11u); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 5.65f, 0.0f, 0.0f); hr_vine(pm, 0.9f, 2.7f, HR_VINE_IVY); pm_pop(pm);
     pm_push(pm); pm_translate(pm, 3.2f, 0.0f, 0.4f); pm_place(pm, PMK_R_POT_PALM); pm_pop(pm);
     pm_push(pm); pm_translate(pm, 5.0f, 0.0f, 0.35f); pm_place(pm, PMK_R_POT); pm_pop(pm);
     /* the roof: tanks along the back, the canopy over the front, railings round the parapet, plants over its front */
@@ -1113,7 +1113,7 @@ static void vig_retrofit_pitched(Pm *pm) {
     }
     pm_push(pm); pm_translate(pm, 4.45f, pl + 1.95f, 0.0f); pm_place(pm, PMK_R_LANTERN); pm_pop(pm);
     pm_push(pm); pm_translate(pm, 2.85f, 0.45f, 0.0f); pm_place(pm, PMK_R_METER); pm_pop(pm);
-    pm_push(pm); pm_translate(pm, 5.35f, 0.0f, 0.0f); hr_vine(pm, 1.0f, 4.6f, 0.2f, 21u); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 5.35f, 0.0f, 0.0f); hr_vine(pm, 1.0f, 4.6f, HR_VINE_BOUGAINVILLEA); pm_pop(pm);
     pm_push(pm); pm_translate(pm, 0.9f, 0.0f, 0.25f); pm_scale(pm, 1.5f, 1.0f, 1.0f); pm_place(pm, PMK_R_TROUGH); pm_pop(pm);
     pm_push(pm); pm_translate(pm, 2.95f, 0.0f, 0.4f); pm_place(pm, PMK_R_POT); pm_pop(pm);
 }

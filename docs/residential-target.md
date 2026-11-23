@@ -432,7 +432,7 @@ modules, so shaded by `shadeHouseKit`):
 | Services | copper and steel pipes, their elbows (collared sockets), a gate valve, saddle clips, a meter cabinet with a conduit | RCC 1-6, shophouse 2-6, self-built 1-6, Georgian 1-6 (pipes and meters up the fronts) |
 | Screens | breeze-block panels (diamonds, rings: three blocks of 0.4 m by three), a roof railing, a security gate (bars and a lattice, padlocked), a sheet gate, razor wire | Africa block 1-6, MENA villa 2-6, RCC 2-3, inter-war 3, 5 (boundaries, HM7's); RCC, self-built and shophouse roofs (railings) |
 | Lights | a coach lantern on its bracket, a bulkhead | Georgian 1-6, Victorian 1, MENA 1-6 (lanterns), Africa and Japan (bulkheads) |
-| Plants | a pot with a shrub and flowers, a palm or banana in a concrete pot, a trough, vine tiles (plain and flowering), trailing plants | every sheet: bougainvillea (MENA, Southern Europe, South Asia), vines up the fronts (inter-war 2, Georgian 2, 4, 5), plants over the parapets (shophouse 2, 4, 6) |
+| Plants | a pot with a shrub and flowers, a palm or banana in a concrete pot, a trough, a climbing plant's card (HMv, below), trailing plants | every sheet: bougainvillea (MENA, Southern Europe, South Asia), vines up the fronts (inter-war 2, Georgian 2, 4, 5), plants over the parapets (shophouse 2, 4, 6) |
 
 New materials (`PMAT_HGALV` on): galvanised or grey-painted steel with rust weeping from it, copper going brown
 with some verdigris, tank plastic (black; a few blue, green or cream), solar cells under glass (a grid of 0.16 m cells,
@@ -481,6 +481,39 @@ its own earlier pieces. A piece that finds no place is a logged repair (`repair 
 house: about 20 more instances a unit on average (the six styles without a sheet included at none), a flat roof's
 canopy and terrace 40-60 at most. A unit over it is dressed lean (HM5's), which also drops the retrofit's second vine,
 LED strips, trailing plants, screens and deck pots.
+
+### The vines (HMv)
+
+The kit's first vines (tiles of leaf clumps on stems) read as green blobs. A climbing plant is now one card
+(`m_r_vine`: two triangles at every level) standing 0.10 m off its wall (`HR_VINE_DEPTH`), stretched over the plant,
+and the leaves are the card's steep parallax down to the wall (`shadeVine` in `shaders/city/house.glsl`).
+
+- **The art** is the user's: one sheet of six plants side by side, generated with their image tool
+  (`assets_src/vines/vines_six.png`, clean alpha). `tools/vine_pack.py` cuts each plant into a 256 px cell of one atlas
+  (`assets/textures/vine`, `assets/materials/vine.json`), joins its top to its foot along the cheapest seam so the column
+  repeats up a wall, fills the colour under alpha 0 from the nearest leaf, and derives the height (0 where nothing
+  grows; the column's bulge, the photograph's lit leaves over the dark gaps, flowers over leaves), a normal from the
+  softened height, occlusion and roughness (glossy leaves, matt petals). In order: clematis, ivy, wisteria,
+  passionflower, bougainvillea, black-eyed Susan (`HR_VINE_*`).
+- **The plant by region** (`vine_species`, the profile's bloom share choosing a flowering one): Britain and North
+  America ivy or clematis; East Asia ivy or wisteria; Southern Europe and MENA bougainvillea, else passionflower or ivy;
+  Latin America passionflower or bougainvillea; South and South-East Asia and Africa black-eyed Susan or bougainvillea.
+  One plant a house (its owner's seed). It spreads as wide as the wall lets it, 1.1-2.6 m narrowing by 0.45 m to
+  0.9 m, as tall as it can climb (to the eaves or under the first window).
+- **The shader** grows the card as columns of the plant's cell, 0.72 m across and a 2.5 m tile, half a column apart
+  (a card under 0.94 m takes one column stretched): each mirrored or not and started at its own height in the tile,
+  the outer two stopping 0.3-1.6 m short, every top thinning to its highest leaves. The eye's ray steps down through
+  the highest column's height (4-16 steps by how many pixels the depth spans; none far off or square on); where it
+  reaches the wall with nothing met the pixel is cut. The atlas's alpha sets how many of the pixel's four samples it
+  covers (dithered), so far off the leaves thin by their coverage rather than vanish. What the ray met shadows itself
+  from the sun and each lamp (`reliefShadow`). The photograph's colour is taken a fifth darker and a little greyer,
+  grimier near the ground, darker and glossier in rain.
+- **Drawing.** A cut pixel still writes its depth (the kit's shader keeps its early depth tests), so the cards
+  (`pm_module_cut`) are drawn after the rest of the kit and left out of the depth prepass: the wall behind takes the
+  prepass, and its ray-traced shadows are the vine's. They cast none (a card would cast its whole rectangle). The
+  kit's culling sphere now takes an instance's largest stretch (a card is far taller than it is wide).
+- **Captures:** `city_test --home [--style S]` also prints up to three `home_vineN` views (each vine's plant and size),
+  which `tools/home_capture.py --views home_vine0,home_vine1,home_vine2` takes.
 
 ## Each style's body to its sheet (HM5e1)
 

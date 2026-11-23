@@ -330,6 +330,35 @@ static int home_cams(int argc, char **argv) {
         printf("view home_roofs --cam %.2f %.2f %.1f %.1f %.2f   (40 m out, 22 m up)\n", px, pz, yaw, pitch, eye);
         views++;
     }
+    {   /* HMv: up to three vines near the slice, each from 3.5 m off its card's middle (home_vine0..2: not counted) */
+        static const char *const SPECIES[HR_VINE_SPECIES] = { "clematis", "ivy", "wisteria", "passionflower", "bougainvillea", "black-eyed Susan" };
+        const int kx0 = (int)floor(tx / CHUNK_SIZE), kz0 = (int)floor(tz / CHUNK_SIZE);
+        int shown = 0;
+        for (int j = -1; j <= 1 && shown < 3; ++j)
+            for (int i = -1; i <= 1 && shown < 3; ++i) {
+                Mesh hm;
+                memset(&hm, 0, sizeof(hm));
+                city_build_homes(kx0 + i, kz0 + j, &hm);
+                for (uint32_t q = 0; q < hm.nkit && shown < 3; ++q) {
+                    const KitInst *k = &hm.kit[q];
+                    if (k->module != PMK_R_VINE) continue;
+                    const float *x = k->xf;   /* rows; the card's middle is (0, 0.5, HR_VINE_DEPTH), its normal +z */
+                    const double vx = x[1] * 0.5 + x[2] * HR_VINE_DEPTH + x[3] + (kx0 + i) * (double)CHUNK_SIZE;
+                    const double vy = x[5] * 0.5 + x[6] * HR_VINE_DEPTH + x[7];
+                    const double vz = x[9] * 0.5 + x[10] * HR_VINE_DEPTH + x[11] + (kz0 + j) * (double)CHUNK_SIZE;
+                    const double wn = hypot(x[2], x[10]), vw = sqrt(x[0] * x[0] + x[4] * x[4] + x[8] * x[8]);
+                    if (wn < 1e-6) continue;
+                    char name[32];
+                    snprintf(name, sizeof(name), "home_vine%d", shown);
+                    if (sl_view(name, vx, vy, vz, x[2] / wn, x[10] / wn, 3.5, city_ground_y(vx, vz), 0.0, 1)) {
+                        printf("  (%s, %.1f x %.1f m)\n", SPECIES[k->part < HR_VINE_SPECIES ? k->part : 0], vw, 2.0 * (vy - x[7]));
+                        shown++;
+                    }
+                }
+                mesh_free(&hm);
+            }
+        if (!shown) printf("view home_vine: no vine with a line of sight near the slice\n");
+    }
     CHECK(views == 6, "only %d of the 6 views have a line of sight", views);
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("ok\n");

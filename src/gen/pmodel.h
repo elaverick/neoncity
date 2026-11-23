@@ -113,6 +113,9 @@ enum {
     PMAT_HBLOOM,       /* flowers on vines and in pots: bougainvillea's magenta, some orange, white */
     PMAT_HLED,         /* an LED strip's or a downlight's diffuser: warm white by night (it glows) */
     PMAT_HLAMP,        /* a lantern's or a bulkhead's glass: a warm lamp by night (it glows) */
+    /* HMv: the vines */
+    PMAT_HVINE,        /* a climbing plant's card: the vine atlas (vine.json) in steep parallax down to its wall, cut where nothing
+                          grows (house.glsl shadeVine); its species in the instance's part (HR_VINE_*). Drawn last (pm_module_cut) */
     PMAT_COUNT
 };
 
@@ -344,7 +347,7 @@ enum {
     PMK_R_PIPE_CU, PMK_R_PIPE_FE, PMK_R_ELBOW_CU, PMK_R_ELBOW_FE, PMK_R_VALVE, PMK_R_PIPE_CLIP,
     PMK_R_BREEZE_DIAMOND, PMK_R_BREEZE_RING, PMK_R_RAIL,
     PMK_R_METER, PMK_R_LANTERN, PMK_R_BULKHEAD, PMK_R_GATE_BARS, PMK_R_GATE_SHEET, PMK_R_RAZOR,
-    PMK_R_POT, PMK_R_POT_PALM, PMK_R_TROUGH, PMK_R_VINE, PMK_R_VINE_BLOOM, PMK_R_TRAIL,
+    PMK_R_POT, PMK_R_POT_PALM, PMK_R_TROUGH, PMK_R_VINE, PMK_R_TRAIL,
     PMK_R_AERIAL_YAGI, PMK_R_AERIAL_CROSS,
     PMK_COUNT
 };
@@ -362,6 +365,9 @@ void pm_place(Pm *pm, int id);
 int  pm_module_casts(int id);
 /* Whether a material glows (the lights' own surfaces: they cast nothing). */
 static inline int pm_mat_glows(int mat) { return (mat >= PMAT_TUBE && mat <= PMAT_SIGN_FAR) || mat == PMAT_EMBER || mat == PMAT_RADIANT || mat == PMAT_WINDOW_FAR || mat == PMAT_HLED || mat == PMAT_HLAMP; }
+/* Whether a module's material is cut by its texture's alpha (HMv: the vines' cards): drawn after the rest of the kit,
+ * since a cut pixel still writes its depth (kit.frag's early depth tests), and left out of the depth prepass. */
+static inline int pm_module_cut(int id) { return id == PMK_R_VINE; }
 /* Whether a module is a neon icon (its instance carries its icon's colour and flicker). */
 int  pm_module_is_icon(int id);
 /* Whether a module is the houses' (HM4: its materials PMAT_HTRIM on, its instance's flags house_surf.h HOUSE_KIT_*). */

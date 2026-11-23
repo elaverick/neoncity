@@ -556,6 +556,24 @@ static void risers(RU *r) {
     hc_repair(d, HDR_RISER, "no clear run up any wall for %.0f risers", r->u, (double)n);
 }
 
+/* HMv: which plant climbs a house, by its style's region (what grows up walls there, and what the sheets show) and
+ * whether it is one that flowers (the profile's bloom): Britain's and North America's ivy, or a clematis; East Asia's
+ * ivy, or a wisteria; the Mediterranean's and the Middle East's bougainvillea, or a passionflower or ivy; Latin
+ * America's passionflower and bougainvillea; South and South-East Asia's and Africa's black-eyed Susan and
+ * bougainvillea. */
+static int vine_species(const RU *r) {
+    const int bloom = ch(r->o, 0x65u, r->P.bloom);
+    const float k = fr(r->o, 0x66u);
+    switch (home_style_region(r->d->g->style)) {
+    case PLAN_REGION_UK: case PLAN_REGION_NA: return bloom ? HR_VINE_CLEMATIS : HR_VINE_IVY;
+    case PLAN_REGION_EAS:  return bloom ? HR_VINE_WISTERIA : HR_VINE_IVY;
+    case PLAN_REGION_SEU: case PLAN_REGION_MENA:
+        return bloom ? HR_VINE_BOUGAINVILLEA : k < 0.5f ? HR_VINE_PASSION : HR_VINE_IVY;
+    case PLAN_REGION_LAT:  return bloom && k < 0.6f ? HR_VINE_BOUGAINVILLEA : HR_VINE_PASSION;
+    default:               return bloom && k < 0.5f ? HR_VINE_BOUGAINVILLEA : HR_VINE_THUNBERGIA;   /* SAS, SEA, SSA */
+    }
+}
+
 static void vines(RU *r) {
     DC *d = r->d;
     if (!ch(r->o, 0x61u, r->P.vine)) return;
@@ -565,7 +583,10 @@ static void vines(RU *r) {
     for (int t = 0; t < r->nw * 2 && got < want; ++t) {
         const Wall *w = &r->w[(start + t) % r->nw];
         if (!w->front && t < r->nw && got == 0 && ch(r->o, 0x64u + (uint32_t)t, 0.6f)) continue;   /* the street's side first */
-        const double width = 0.9 + 0.8 * fr(r->o, 0x70u + (uint32_t)t), top = w->y1 - 0.25;
+        const double top = w->y1 - 0.25;
+        int placed = 0;
+        /* HMv: spreading as wide as the wall lets it (two or three of the atlas's columns), else narrower */
+        for (double width = 1.1 + 1.5 * fr(r->o, 0x70u + (uint32_t)t); width >= 0.85 && !placed; width -= 0.45)
         for (int k = 0; k < 7; ++k) {
             const double s = k == 0 ? w->s0 + 0.1 + 0.5 * width : k == 1 ? w->s1 - 0.1 - 0.5 * width : w->s0 + (w->s1 - w->s0) * (k - 1) / 6.0;
             /* as tall as it can climb: to the eaves, or to under the first window in its way */
@@ -579,7 +600,7 @@ static void vines(RU *r) {
             const int foot = h > 1.6 && ch(r->o, 0x80u + (uint32_t)k, 0.5f);
             hc_begin(d, r->u);
             push_on(d, w, s, w->y0, 0.0);
-            hr_vine(d->pm, (float)width, (float)h, r->P.bloom, hash_combine(r->o, 0x90u + (uint32_t)k));
+            hr_vine(d->pm, (float)width, (float)h, vine_species(r));
             hc_pop(d);
             /* a trough at its foot, if the ground in front is clear */
             if (foot) {
@@ -597,6 +618,7 @@ static void vines(RU *r) {
             hc_done(d);
             wall_occupy(d, w, s - 0.5 * width, s + 0.5 * width, w->y0, w->y0 + h, 0.4);
             got++;
+            placed = 1;
             break;
         }
     }

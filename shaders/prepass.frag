@@ -24,6 +24,8 @@ float hf(uint h, uint k) { return hfloat(hash_combine(h, k)); }   // as city.fra
 
 void main() {
     uint m = vParams.x;
+    // the vines' cards: cut by their leaves in the scene pass, drawn last there (house.glsl shadeVine); the wall behind gets the prepass
+    if (m == MAT_KIT && (vParams.y & 255u) == 72u) discard;   // PMAT_HVINE (src/gen/pmodel.h)
     // An open-plan floor's glass that can see out (impostorSeesOut): what stands behind it gets the prepass.
     if (m == MAT_FACADE && impostorSeesOut(vSeed, vParams, vAux, vFacePack, vRel, normalize(vNrm), vUV.x, vLocal.y - vBase, 0.0)) discard;
     // The panes of a lobby's glazed ground floor, near enough to cover only part

@@ -576,32 +576,18 @@ void m_r_trough(Pm *pm) {
     }
     pm->part = 0;
 }
-/* A tile of climbing plant: two or three stems wandering up the wall, clumps of leaves along them, pressed flat. */
-static void vine(Pm *pm, uint32_t h, float bloom) {
-    const int stems = 3;
-    const int per = L2 ? 2 : L1 ? 4 : 8;
-    for (int s = 0; s < stems; ++s) {
-        float x = -0.35f + 0.7f * ((float)s + 0.5f * rnd(&h)) / (float)stems;
-        if (!L2) {
-            pm_mat(pm, PMAT_HTIMBER);
-            PmPath pa;
-            pm_path_init(&pa, 6);
-            for (int k = 0; k <= 4; ++k) pm_path_add(&pa, x + 0.08f * (rnd(&h) - 0.5f), 0.25f * (float)k, 0.03f, 0);
-            pm_tube(pm, &pa, 0.008f, 4, 3);
-            pm_path_free(&pa);
-        }
-        for (int k = 0; k < per; ++k) {
-            const float y = ((float)k + rnd(&h)) / (float)per - 0.06f, cx = x + 0.22f * (rnd(&h) - 0.5f);
-            pm_mat(pm, rnd(&h) < bloom ? PMAT_HBLOOM : PMAT_HPLANT);
-            pm->part = (uint8_t)(s * 16 + k);
-            const float r = L2 ? 0.2f : L1 ? 0.15f : 0.11f;
-            clump(pm, cx, y, 0.06f, r * (0.8f + 0.4f * rnd(&h)), r * (1.2f + 0.8f * rnd(&h)), 0.55f);
-        }
-    }
-    pm->part = 0;
+/* HMv: a climbing plant is one card standing HR_VINE_DEPTH off its wall, a unit across (x -0.5..0.5) and up (y 0..1),
+ * stretched over the plant by its instance; its uv the card's own unit square. Its leaves are the card's steep
+ * parallax down to the wall (shaders/city/house.glsl shadeVine), so it is the same two triangles at every level. */
+void m_r_vine(Pm *pm) {
+    quiet(pm);
+    pm_mat(pm, PMAT_HVINE);
+    const float n[3] = { 0.0f, 0.0f, 1.0f }, z = HR_VINE_DEPTH;
+    const float p0[3] = { -0.5f, 0.0f, z }, p1[3] = { 0.5f, 0.0f, z }, p2[3] = { 0.5f, 1.0f, z }, p3[3] = { -0.5f, 1.0f, z };
+    const uint32_t a = pm_vert(pm, p0, n, 0.0f, 0.0f), b = pm_vert(pm, p1, n, 1.0f, 0.0f);
+    const uint32_t c = pm_vert(pm, p2, n, 1.0f, 1.0f), d = pm_vert(pm, p3, n, 0.0f, 1.0f);
+    pm_quad(pm, a, b, c, d);
 }
-void m_r_vine(Pm *pm) { quiet(pm); vine(pm, 0x5A11u, 0.0f); }
-void m_r_vine_bloom(Pm *pm) { quiet(pm); vine(pm, 0x5B22u, 0.35f); }
 /* Plants trailing over an edge: a mass on top, strands hanging down its face, thinning as they fall. */
 void m_r_trail(Pm *pm) {
     quiet(pm);
@@ -792,26 +778,15 @@ void hr_razor(Pm *pm, float len) {
     for (int k = 0; k < n; ++k) place_at(pm, PMK_R_RAZOR, seg * (float)k, 0.0f, 0.0f, seg, 1.0f, 1.0f);
 }
 
-void hr_vine(Pm *pm, float w, float h, float bloom, uint32_t seed) {
-    int nc = (int)floorf(w / 0.9f + 0.5f), nr = (int)floorf(h + 0.5f);
-    if (nc < 1) nc = 1;
-    if (nr < 1) nr = 1;
-    const float tw = w / (float)nc, th = h / (float)nr;
-    uint32_t r = seed | 1u;
-    for (int i = 0; i < nc; ++i) {
-        /* the columns at the edges stop short: the plant thins out as it climbs */
-        const int rows = (nc > 1 && (i == 0 || i == nc - 1)) ? nr - (int)(rnd(&r) * 1.6f) : nr;
-        for (int j = 0; j < rows; ++j) {
-            const int m = rnd(&r) < bloom ? PMK_R_VINE_BLOOM : PMK_R_VINE;
-            const float x = -0.5f * w + tw * ((float)i + 0.5f), y = th * (float)j;
-            pm_push(pm);
-            if (rnd(&r) < 0.5f) { pm_translate(pm, x, y + th, 0.0f); pm_rotate_z(pm, 3.1415927f); }   /* turned, not mirrored */
-            else pm_translate(pm, x, y, 0.0f);
-            pm_scale(pm, tw / 0.9f, th, 1.0f);
-            pm_place(pm, m);
-            pm_pop(pm);
-        }
-    }
+void hr_vine(Pm *pm, float w, float h, int species) {
+    if (w < 0.2f || h < 0.5f) return;
+    const uint8_t part = pm->part;
+    pm->part = (uint8_t)species;   /* the instance's part: house.glsl shadeVine's atlas column */
+    pm_push(pm);
+    pm_scale(pm, w, h, 1.0f);
+    pm_place(pm, PMK_R_VINE);
+    pm_pop(pm);
+    pm->part = part;
 }
 
 void hr_trail(Pm *pm, float len, float drop, uint32_t seed) {

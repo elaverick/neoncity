@@ -222,6 +222,8 @@ void kit_add(KitGpu *k, int slot, const KitInst *inst, uint32_t n, const float o
         k->st.offered++;
         const float *x = ki->xf, *ce = k->centre[m];
         float sc = sqrtf(x[0] * x[0] + x[4] * x[4] + x[8] * x[8]);
+        /* its sphere for culling: stretched the most any way (a vine's card is stretched up a wall far more than across it) */
+        float sMax = maxf(sc, maxf(sqrtf(x[1] * x[1] + x[5] * x[5] + x[9] * x[9]), sqrtf(x[2] * x[2] + x[6] * x[6] + x[10] * x[10])));
         /* its module's frame to camera-relative; its sphere's centre there */
         float row[3][4], c[3];
         for (int r = 0; r < 3; ++r) {
@@ -239,7 +241,8 @@ void kit_add(KitGpu *k, int slot, const KitInst *inst, uint32_t n, const float o
         if (d > fade) continue;
         float px = rad / maxf(d, 0.05f) * k->pixScale;
         if (px < KIT_PX_GONE) continue;
-        if (!frustum_test_aabb(&k->fr, v3(c[0] - rad, c[1] - rad, c[2] - rad), v3(c[0] + rad, c[1] + rad, c[2] + rad))) continue;
+        const float rc = k->radius[m] * sMax;
+        if (!frustum_test_aabb(&k->fr, v3(c[0] - rc, c[1] - rc, c[2] - rc), v3(c[0] + rc, c[1] + rc, c[2] + rc))) continue;
         /* the finest level its distance allows, made coarser while it would put more than KIT_TRI_PX
          * triangles on each pixel the module covers and a coarser level has anything in it (a level left
          * empty, as rivets' past L0 and bolts' past L1, is not drawn) */
@@ -282,8 +285,11 @@ void kit_end(KitGpu *k, int slot) {
     for (uint32_t i = 0; i < k->ncand; ++i) dst[fill[k->key[i]]++] = k->cand[i];
     VkDrawIndexedIndirectCommand *c = (VkDrawIndexedIndirectCommand *)k->cmds[slot].mapped;
     uint32_t nc = 0;
+    /* the modules cut by their alpha (pm_module_cut: the vines' cards) last: a cut pixel still writes its depth, so
+     * nothing of the kit behind it may come after */
+    for (int pass = 0; pass < 2; ++pass)
     for (int g = 0; g < KIT_GROUPS; ++g) {
-        if (!count[g]) continue;
+        if (!count[g] || pm_module_cut(g / PM_LODS) != pass) continue;
         const KitGroup *gr = &k->group[g / PM_LODS][g % PM_LODS];
         c[nc].indexCount = gr->indexCount;
         c[nc].instanceCount = count[g];

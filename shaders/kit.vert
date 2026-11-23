@@ -53,6 +53,8 @@ void main() {
     vFacePack = 0u;
     vAux = inAux;
     vLitter = vec3(vec2(float(inParams.z), float(inParams.w)) / 255.0, float(int(inInst.z) >> 24) / 127.0);   // grime: the instance's (kit_gpu.c)
+    if ((inParams.y & 255u) == 72u)   // HMv, a vine's card (PMAT_HVINE): its width and height, the module's unit square stretched (house.glsl shadeVine)
+        vLitter.yz = vec2(length(vec3(inRow0.x, inRow1.x, inRow2.x)), length(vec3(inRow0.y, inRow1.y, inRow2.y)));
     vBase = uintBitsToFloat(inInst.w);
     gl_Position = frame.viewProj * vec4(rel, 1.0);
 }
