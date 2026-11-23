@@ -1224,6 +1224,97 @@ void m_h_rooflight(Pm *pm) { quiet(pm);
     bx(pm, -hx + f, 0.05f, -hz + f, hx - f, 0.07f, hz - f, 0.0f);
 }
 
+/* --- HM5e2: balconies ------------------------------------------------------------------------------------------ */
+
+/* A French window HK_FRENCH_W x HK_FRENCH_H (in an opening, as the frames): a frame, a top light over a transom, two
+ * glazed leaves meeting in the middle, each on a solid kick panel, its glass in three panes. */
+void m_h_win_french(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HTRIM);
+    const float W = HK_FRENCH_W, H = HK_FRENCH_H, x0 = -0.5f * W, x1 = 0.5f * W, fw = 0.06f, yt = H - 0.42f;
+    rect_frame(pm, x0, 0.0f, x1, H, fw, 0.04f, fw, 0.0f, 0.06f, 0.004f);
+    bx(pm, x0 + fw, yt - 0.035f, 0.0f, x1 - fw, yt + 0.035f, 0.065f, 0.004f);
+    if (!L2) bx(pm, -0.012f, yt + 0.035f, 0.02f, 0.012f, H - fw, 0.05f, 0.0f);   /* the top light's bar */
+    for (int s = 0; s < 2; ++s) {
+        const float lx0 = s ? 0.0f : x0 + fw, lx1 = s ? x1 - fw : 0.0f, ly0 = 0.04f, ly1 = yt - 0.035f;
+        if (L2) { bx(pm, lx0 + 0.01f, ly0, 0.0f, lx1 - 0.01f, ly0 + 0.42f, 0.05f, 0.0f); continue; }
+        rect_frame(pm, lx0, ly0, lx1, ly1, 0.05f, 0.14f, 0.05f, 0.04f, 0.085f, 0.003f);
+        bx(pm, lx0 + 0.05f, ly0 + 0.14f, 0.042f, lx1 - 0.05f, ly0 + 0.42f, 0.07f, 0.0f);   /* the kick panel */
+        if (L0) bx(pm, lx0 + 0.09f, ly0 + 0.19f, 0.065f, lx1 - 0.09f, ly0 + 0.37f, 0.078f, 0.006f);
+        const float gy0 = ly0 + 0.42f, gy1 = ly1 - 0.05f;
+        for (int k = 1; k <= 2; ++k) { const float y = gy0 + (gy1 - gy0) * (float)k / 3.0f; bx(pm, lx0 + 0.05f, y - 0.012f, 0.045f, lx1 - 0.05f, y + 0.012f, 0.075f, 0.0f); }
+    }
+    if (L0) {   /* the handles */
+        pm_mat(pm, PMAT_HIRON);
+        for (int s = 0; s < 2; ++s) { const float x = s ? 0.07f : -0.07f; bx(pm, x - 0.01f, 1.0f, 0.085f, x + 0.01f, 1.14f, 0.105f, 0.0f); }
+    }
+}
+
+/* a rosette in an ornate railing's band: a disc in the railing's plane */
+static void rosette(Pm *pm, float x, float y) {
+    pm_push(pm); pm_translate(pm, x, y, 0.0f); pm_rotate_x(pm, HALF_PI); pm_cyl(pm, -0.008f, 0.008f, 0.04f, segs(pm, 8, 6)); pm_pop(pm);
+}
+/* Iron railings (x 0..1, stretched little: hk_rail lays whole metres), centred on z 0, HK_RAIL_H high: a post at x 0, a
+ * flat handrail, a bottom rail, square bars every 0.11 m; the ornate (Georgian) one adds a band of rosettes under its
+ * handrail between a second rail and it. */
+static void iron_rail(Pm *pm, int ornate) {
+    pm_mat(pm, PMAT_HIRON);
+    const float H = HK_RAIL_H;
+    bx(pm, -0.016f, 0.0f, -0.016f, 0.016f, H - 0.03f, 0.016f, 0.0f);
+    const float hr[6][2] = { { -0.03f, H - 0.03f }, { 0.03f, H - 0.03f }, { 0.03f, H - 0.012f }, { 0.018f, H }, { -0.018f, H }, { -0.03f, H - 0.012f } };
+    run_x(pm, hr, 6, 0.0f, 1.0f);
+    bx(pm, 0.0f, 0.06f, -0.012f, 1.0f, 0.09f, 0.012f, 0.0f);
+    const float band = ornate ? H - 0.22f : H - 0.03f, cy = band + 0.5f * (H - 0.03f - band);
+    if (ornate) bx(pm, 0.0f, band - 0.02f, -0.01f, 1.0f, band, 0.01f, 0.0f);
+    const int n = L2 ? 4 : 9;
+    for (int k = 1; k < n; ++k) {
+        const float x = (float)k / (float)n;
+        bx(pm, x - 0.007f, 0.09f, -0.007f, x + 0.007f, H - 0.03f, 0.007f, 0.0f);
+        if (ornate && !L2) rosette(pm, x - 0.5f / (float)n, cy);   /* between this bar and the last */
+    }
+    if (ornate && !L2) rosette(pm, 1.0f - 0.5f / (float)n, cy);   /* the last, by the next piece's post */
+}
+void m_h_rail_iron(Pm *pm) { quiet(pm); iron_rail(pm, 0); }
+void m_h_rail_ornate(Pm *pm) { quiet(pm); iron_rail(pm, 1); }
+/* A railing's end post, standing on y 0 centred, a cap on it. */
+void m_h_rail_post(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HIRON);
+    bx(pm, -0.02f, 0.0f, -0.02f, 0.02f, HK_RAIL_H, 0.02f, 0.0f);
+    if (!L2) bx(pm, -0.03f, HK_RAIL_H, -0.03f, 0.03f, HK_RAIL_H + 0.03f, 0.03f, L0 ? 0.008f : 0.0f);
+}
+/* An enclosed balcony's glazing (x 0..1 and y 0..1, both stretched: hk_glazing), centred on z 0: aluminium (galvanised
+ * steel's material) round two sliding panes, a post at x 0. */
+void m_h_glazing(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HGALV);
+    bx(pm, 0.0f, 0.0f, -0.03f, 1.0f, 0.05f, 0.03f, 0.0f);
+    bx(pm, 0.0f, 0.95f, -0.03f, 1.0f, 1.0f, 0.03f, 0.0f);
+    bx(pm, 0.0f, 0.05f, -0.03f, 0.05f, 0.95f, 0.03f, 0.0f);
+    if (!L2) {   /* the panes' meeting stiles, one in front of the other */
+        bx(pm, 0.47f, 0.05f, -0.025f, 0.53f, 0.95f, -0.001f, 0.0f);
+        bx(pm, 0.47f, 0.05f, 0.001f, 0.53f, 0.95f, 0.025f, 0.0f);
+    }
+    pm_mat(pm, PMAT_HGLASS);
+    bx(pm, 0.05f, 0.05f, -0.016f, 0.47f, 0.95f, -0.008f, 0.0f);
+    bx(pm, 0.53f, 0.05f, 0.008f, 1.0f, 0.95f, 0.016f, 0.0f);
+}
+/* A stone console under a balcony's slab: on the wall (z 0), its top on y 0, reaching 0.45 m out and curving down to
+ * the wall 0.32 m under, 0.12 m wide (x -0.06..0.06). */
+void m_h_console(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HSTONE);
+    float s[16][2];
+    int n = 0;
+    s[n][0] = 0.0f; s[n][1] = 0.0f; n++;
+    s[n][0] = 0.45f; s[n][1] = 0.0f; n++;
+    s[n][0] = 0.45f; s[n][1] = -0.05f; n++;
+    const int k1 = L2 ? 2 : 6;
+    for (int k = 0; k <= k1; ++k) {   /* a cyma from (0.40, -0.06) down to (0.03, -0.32) */
+        const float t = (float)k / (float)k1;
+        s[n][0] = 0.40f - 0.37f * t; s[n][1] = -0.06f - 0.26f * t - 0.04f * sinf(t * PI_F);
+        n++;
+    }
+    s[n][0] = 0.0f; s[n][1] = -0.32f; n++;
+    run_x(pm, (const float (*)[2])s, n, -0.06f, 0.06f);
+}
+
 /* ------------------------------------------------------------- assemblies --- */
 void hk_run(Pm *pm, int module, float len, float piece) {
     if (len <= 0.01f) return;
@@ -1235,11 +1326,11 @@ void hk_run(Pm *pm, int module, float len, float piece) {
 }
 
 void hk_window(Pm *pm, const HkWindow *w) {
-    static const int FRAME[] = { -1, PMK_H_WIN_SASH, PMK_H_WIN_GEORGIAN, PMK_H_WIN_CASEMENT, PMK_H_WIN_GRID, PMK_H_WIN_PICTURE, PMK_H_WIN_UPVC };
-    static const float FW[] = { 1, HK_SASH_W, HK_SASH_W, HK_CASE_W, HK_GRID_W, HK_PICT_W, HK_UPVC_W };
-    static const float FH[] = { 1, HK_SASH_H, HK_SASH_H, HK_CASE_H, HK_GRID_H, HK_PICT_H, HK_UPVC_H };
+    static const int FRAME[] = { -1, PMK_H_WIN_SASH, PMK_H_WIN_GEORGIAN, PMK_H_WIN_CASEMENT, PMK_H_WIN_GRID, PMK_H_WIN_PICTURE, PMK_H_WIN_UPVC, PMK_H_WIN_FRENCH };
+    static const float FW[] = { 1, HK_SASH_W, HK_SASH_W, HK_CASE_W, HK_GRID_W, HK_PICT_W, HK_UPVC_W, HK_FRENCH_W };
+    static const float FH[] = { 1, HK_SASH_H, HK_SASH_H, HK_CASE_H, HK_GRID_H, HK_PICT_H, HK_UPVC_H, HK_FRENCH_H };
     const float hw = 0.5f * w->w;
-    if (w->frame > 0 && w->frame <= HK_FRAME_UPVC) {
+    if (w->frame > 0 && w->frame <= HK_FRAME_FRENCH) {
         /* an opening much wider than the frame's usual size takes several lights side by side (HM5: a square bay's
          * front, a wide casement), so bars stay bars; a picture window is one wide light by design */
         int n = 1;
@@ -1467,3 +1558,17 @@ void hk_chimney_top(Pm *pm, float w, float d, int pots, uint32_t seed) {
 }
 
 void hk_balustrade(Pm *pm, float len) { hk_run(pm, PMK_H_BALUSTRADE, len, 1.0f); }
+
+void hk_rail(Pm *pm, int ornate, float len, int endPost) {
+    if (len < 0.15f) return;
+    hk_run(pm, ornate ? PMK_H_RAIL_ORNATE : PMK_H_RAIL_IRON, len, 1.0f);
+    if (endPost) { pm_push(pm); pm_translate(pm, len - 0.02f, 0.0f, 0.0f); pm_place(pm, PMK_H_RAIL_POST); pm_pop(pm); }
+}
+
+void hk_glazing(Pm *pm, float len, float h) {
+    if (len < 0.15f || h < 0.2f) return;
+    int n = (int)floorf(len / 1.2f + 0.5f);
+    if (n < 1) n = 1;
+    const float seg = len / (float)n;
+    for (int k = 0; k < n; ++k) { pm_push(pm); pm_translate(pm, seg * (float)k, 0.0f, 0.0f); pm_scale(pm, seg, h, 1.0f); pm_place(pm, PMK_H_GLAZING); pm_pop(pm); }
+}

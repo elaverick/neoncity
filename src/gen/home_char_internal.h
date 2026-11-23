@@ -36,6 +36,7 @@ void   hc_done(DC *d);
  * frame (x made right-handed in the mesh's frame, so nothing is ever mirrored) */
 void   hc_push_wall(DC *d, const double p[3], double mx, double mz);
 void   hc_push_yz(DC *d, const double p[3], const double ey[3], const double ez[3]);
+void   hc_push_along(DC *d, const double p[3], const double dir[3]);   /* x along dir, y as near up as that allows */
 void   hc_pop(DC *d);
 /* the stretches of [a, b] along p0 + dir t where the point (offset by off) is clear of every solid */
 int    hc_clear_runs(const Ctx *C, const double p0[3], const double dir[3], const double off[3], double a, double b,
@@ -53,3 +54,7 @@ int    hc_free(const DC *d, const double lo[3], const double hi[3]);
 void   hs_retrofit(DC *d);
 /* Whether a style takes the retrofit kit (the styles with a concept sheet: the user, 2026-11-20). */
 int    home_retrofit_style(int style);
+
+/* home_balcony.c (HM5e2): the balconies' rails, glazing, consoles and what owners put on them (before the retrofit layer,
+ * which keeps out of them) */
+void   hs_balconies(DC *d);

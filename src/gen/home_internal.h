@@ -60,3 +60,7 @@ void  home_vol_top(HVol *v);
 float home_unit_rear(const HGraph *g, int ui);
 /* building_residential_rules.c: the repairs after a proposal, before its garden is laid */
 void  home_repair_all(HGraph *g, int level, BLog *log);
+/* home_balcony.c (HM5e2): a row's balconies by its style, after the repairs (the volumes are final); and their rules */
+void  home_balconies(HGraph *g, int level, BLog *log);
+int   home_check_balconies(const HGraph *g, BLog *log);
+int   home_door_balcony(const HGraph *g, int unit);   /* the balcony over a unit's front door serving as its canopy, or -1 */

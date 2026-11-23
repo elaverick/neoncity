@@ -1732,6 +1732,13 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_H_STACK_CAP] = { "h_stack_cap", m_h_stack_cap, { 180, 60, 60 }, 1 },
     [PMK_H_VENT_PIPE] = { "h_vent_pipe", m_h_vent_pipe, { 220, 130, 100 }, 1 },
     [PMK_H_ROOFLIGHT] = { "h_rooflight", m_h_rooflight, { 240, 240, 80 }, 1 },
+    /* HM5e2: balconies */
+    [PMK_H_WIN_FRENCH] = { "h_win_french", m_h_win_french, { 900, 700, 120 }, 1 },
+    [PMK_H_RAIL_IRON] = { "h_rail_iron", m_h_rail_iron, { 200, 200, 120 }, 1 },
+    [PMK_H_RAIL_ORNATE] = { "h_rail_ornate", m_h_rail_ornate, { 900, 700, 140 }, 1 },
+    [PMK_H_RAIL_POST] = { "h_rail_post", m_h_rail_post, { 60, 60, 20 }, 1 },
+    [PMK_H_GLAZING] = { "h_glazing", m_h_glazing, { 130, 130, 80 }, 1 },
+    [PMK_H_CONSOLE] = { "h_console", m_h_console, { 80, 80, 40 }, 1 },
     /* HM5c1: the houses' shared retrofit kit (pmodel_retrofit.c) */
     [PMK_R_SOLAR_PANEL] = { "r_solar_panel", m_r_solar_panel, { 280, 120, 20 }, 1 },
     [PMK_R_SOLAR_ROW] = { "r_solar_row", m_r_solar_row, { 860, 390, 40 }, 1 },

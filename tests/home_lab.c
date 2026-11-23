@@ -304,9 +304,10 @@ static void survey(const HGraph *g, Stats *st) {
 }
 
 /* The rules bite: a valid house broken one rule at a time must be rejected with that rule's tag. */
-enum { BITE_COUNT = 14 };
+enum { BITE_COUNT = 15 };
 static const char *const BITE_TAG[BITE_COUNT] = { "chimney mid-slope", "front garden", "rear garden", "span side", "overlap", "path crosses",
-                                                  "side clearance", "door width", "pitch", "party wall", "boundary", "porch", "recess", "shop" };
+                                                  "side clearance", "door width", "pitch", "party wall", "boundary", "porch", "recess", "shop",
+                                                  "balcony" };
 static int find_main(const HGraph *g) {
     for (int i = 0; i < g->nvol; ++i)
         if (g->vol[i].role <= HV_ROW) return i;
@@ -340,6 +341,10 @@ static int bite(HGraph *g, int k) {
     case 12: for (int i = 0; i < g->nvol; ++i)   /* a recess run through to the back of its main (HM5e1) */
                  if (g->vol[i].role == HV_PORCH && home_porch_recessed(g->vol[i].kind)) { g->vol[i].z1 = m->z1 - 1.0f; return 1; }
              return 0;
+    case 14: if (!g->nbalc) return 0;   /* a balcony run up to its party wall (HM5e2) */
+             { float s0, bw; const int nb = home_front_bays(g, g->balc[0].vol, g->balc[0].unit, &s0, &bw); if (nb <= 0) return 0;
+               g->balc[0].x1 = s0 + bw * (float)nb; }
+             return 1;
     case 13: for (int k = 0; k < g->nunit; ++k)   /* a shop front over its door (HM5e1) */
                  if (g->unit[k].door >= 0) { const HDoor *d = &g->door[g->unit[k].door]; g->unit[k].shopX0 = d->x - 1.0f; g->unit[k].shopX1 = d->x + 1.0f; return 1; }
              return 0;
@@ -383,6 +388,55 @@ static void survey_body(const HGraph *g) {
         if (v->role == HV_PORCH && v->kind == HP_ARCADE) b->arcade++;
         if (v->role == HV_PORCH && v->kind == HP_PILOTIS) b->pilotis++;
     }
+}
+
+/* The balconies by style (HM5e2): a unit's share with any, balconies a unit, and the kinds; checked against the sheets'
+ * panel 1 (the styles whose sheets show none must have none) */
+typedef struct Balc { long units, with, n, kind[HBK_COUNT], storeys; } Balc;
+static Balc g_balc[HS_COUNT];
+static void survey_balc(const HGraph *g) {
+    if (g->empty) return;
+    Balc *b = &g_balc[g->style];
+    b->units += g->nunit;
+    for (int u = 0; u < g->nunit; ++u) {
+        int any = 0;
+        for (int i = 0; i < g->nbalc; ++i) any |= g->balc[i].unit == u;
+        b->with += any;
+    }
+    for (int i = 0; i < g->nbalc; ++i) { b->n++; b->kind[g->balc[i].kind % HBK_COUNT]++; b->storeys += g->balc[i].storey; }
+}
+static int balc_check(void) {
+    static const struct { const char *style; float with0; int kind; } WANT[] = {
+        { "georgian", 0.5f, HBK_BALCONETTE }, { "townhouse", 0.6f, HBK_SLAB }, { "villa:seu", 0.45f, HBK_SLAB }, { "china", 0.2f, HBK_SLAB },
+        { "korea", 0.6f, HBK_GLAZED }, { "linkhouse", 0.3f, HBK_SLAB }, { "rcc", 0.5f, HBK_SLAB }, { "selfbuilt", 0.4f, HBK_SLAB },
+        { "villa:mena", 0.5f, HBK_LOGGIA }, { "walled", 0.25f, HBK_VERANDA },
+    };
+    int failures = 0;
+    printf("\nthe balconies by style (HM5e2, against the sheets' panel 1): units with any, balconies a unit, kinds\n");
+    printf("  %-11s %6s %5s %6s %10s %5s %6s %6s %7s %8s\n", "style", "units", "with", "a unit", "balconette", "slab", "glazed", "loggia", "veranda", "storey");
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Balc *b = &g_balc[st];
+        if (!b->units) continue;
+        const double U = (double)b->units, N = b->n ? (double)b->n : 1.0;
+        printf("  %-11s %6ld %5.2f %6.2f %10.2f %5.2f %6.2f %6.2f %7.2f %8.2f\n", home_style_name(st), b->units, b->with / U, b->n / U,
+               b->kind[0] / N, b->kind[1] / N, b->kind[2] / N, b->kind[3] / N, b->kind[4] / N, b->storeys / N);
+    }
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Balc *b = &g_balc[st];
+        if (b->units < 200) continue;
+        int want = -1;
+        for (size_t k = 0; k < sizeof(WANT) / sizeof(WANT[0]); ++k)
+            if (home_style_find(-1, WANT[k].style) == st) want = (int)k;
+        const double with = b->with / (double)b->units;
+        if (want < 0) {
+            if (b->n) { printf("FAIL: %s has balconies its sheet doesn't show\n", home_style_name(st)); failures++; }
+            continue;
+        }
+        if (with < WANT[want].with0) { printf("FAIL: %s: balconies on %.0f%% of units (its sheet: %.0f%% at least)\n", WANT[want].style, 100.0 * with, 100.0 * WANT[want].with0); failures++; }
+        else if (b->kind[WANT[want].kind] * 2 < b->n) { printf("FAIL: %s: its sheet's %s on only %ld of %ld\n", WANT[want].style, home_balcony_name(WANT[want].kind), b->kind[WANT[want].kind], b->n); failures++; }
+    }
+    printf("the balconies: %d short of their sheets\n", failures);
+    return failures;
 }
 
 /* The checklist (the plan's "Panel 1, style by style"): what each sheet's original house must show, as shares of a style's
@@ -999,7 +1053,14 @@ int main(int argc, char **argv) {
         HomePlot P[HG_MAX_UNITS];
         HGraph *g = (HGraph *)malloc(sizeof(HGraph));
         const int n = make_row(a, style < 0 ? 0 : style, hash_combine(0x40A1Bu + (uint32_t)a * 7919u, (uint32_t)atoi(argv[4])), P);
-        home_build(P, n, 0.5f, g, NULL);
+        {   /* the row's decision log (its repairs: why a part was left off) */
+            char *gb = (char *)malloc(1 << 16);
+            BLog glog = { gb, 1 << 16, 0 };
+            gb[0] = 0;
+            home_build(P, n, 0.5f, g, &glog);
+            printf("%s", gb);
+            free(gb);
+        }
         FaceList L = { 0 };
         float dy[HG_MAX_UNITS] = { 0 };
         if (argc > 8 && strcmp(argv[8], "kit") == 0) {   /* HM5: dressed, the kit built in */
@@ -1062,6 +1123,7 @@ int main(int argc, char **argv) {
             count_tags(buf, "  rejected ", g_rej, &g_nrej, s);
             survey(g, &st);
             survey_body(g);
+            survey_balc(g);
             if (s == verbose) printf("--- %s seed %d ---\n%s", ARCH[a], s, buf);
             if (g->empty) {
                 if (shown++ < 3) printf("FAIL: %s seed %d (%s) left no house\n%s", ARCH[a], s, home_style_name(style), buf);
@@ -1210,6 +1272,7 @@ int main(int argc, char **argv) {
         printf("the kit's coverage: %d of %d signature pieces short\n", short_, (int)(sizeof(WANT) / sizeof(WANT[0])));
     }
     failures += body_check();
+    failures += balc_check();
     if (g_coverage) {
         printf("\nthe kit's coverage by style: the share of a style's units with at least one of each module (over every archetype)\n");
         for (int st = 0; st < HS_COUNT; ++st) {

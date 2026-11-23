@@ -1151,12 +1151,21 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM5e2, balconies** (HM5e1, the bodies, and HMv, the vines, done 2026-11-22): a balcony family in the
-  graph (balconette, slab, glazed, loggia, upper veranda), the window behind made a French window, by the sheets'
-  panel 1. Then HM5e3 (the
-  boundary walls and gates the graph already plans: `HBound`, `HGate`, drawn by nothing until now), HM5c2 (retrofit
-  insertions, 3 units in 5), HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing styles to their
-  sheets), HM6 (the rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **Next: HM5e3, boundaries and gates** (HM5e1 bodies, HMv vines, HM5e2 balconies done by 2026-11-23): the boundary
+  walls and gates the graph already plans (`HBound`, `HGate`, drawn by nothing until now), by the sheets' panel 1. Then
+  HM5c2 (retrofit insertions, 3 units in 5), HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing
+  styles to their sheets), HM6 (the rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **The balconies' leftovers** (HM5e2, `docs/residential-target.md` "Balconies"):
+  - China's balconies stand only on its flat blocks; the capture's slice street is one-storey courtyard rows, so few show.
+    HM5e3's courtyard wall and gatehouse put the blocks behind the rows, as the sheet has them.
+  - The walled compound's veranda piers are square (the body left between carves); the sheet's columns are round. Kit
+    columns over the piers if the board asks for them.
+  - Georgian balconettes are one a window; many real ones run continuous across the first floor.
+  - The ornate rail's rosettes are dark iron on dark iron: they barely read past 10 m.
+  - The far shell (past 220 m) carves nothing: loggias and verandas are flat walls with painted windows there (the slabs do
+    show).
+  - Laundry on balconies (HM6), and trees under them (HM7's trees must keep clear of the slabs over a front yard).
+  - The upper veranda flattens the ground porch's roof under it; a double veranda sharing its columns would be truer.
 - **The vines' leftovers** (HMv: the cards with steep parallax, `docs/residential-target.md` "The vines"):
   - The pots', troughs' and trailing plants' leaves are still HM5c1's clumps, crude beside the vines. The atlas's
     columns could dress them too (a trough's plant as a short card; trailing plants as the columns hung upside down).

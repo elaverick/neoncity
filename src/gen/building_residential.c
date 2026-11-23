@@ -277,6 +277,22 @@ const HVol *home_unit_vol(const HGraph *g, int vi, int u, HVol *tmp) {
     return tmp;
 }
 
+int home_front_bays(const HGraph *g, int mi, int u, float *s0, float *bw) {
+    if (mi < 0 || mi >= g->nvol || u < 0 || u >= g->nunit) return 0;
+    const HVol *v = &g->vol[mi];
+    float a = v->x0, b = v->x1;
+    if (v->unit == HG_ROW_WIDE) { a = fmaxf(a, g->unit[u].x0); b = fminf(b, g->unit[u].x1); }
+    else if (v->unit != u) return 0;
+    const float L = b - a;
+    if (L < 1.4f) return 0;
+    const int nb = (int)fmaxf(1.0f, floorf(L / 2.7f + 0.5f));
+    *s0 = a;
+    *bw = L / (float)nb;
+    return nb;
+}
+
+float home_balcony_floor(const HGraph *g, const HBalcony *b) { return g->plinth + (float)b->storey * g->storeyH - BALC_DROP; }
+
 /* ---------------------------------------------------------------------------
  * The grammar
  * ------------------------------------------------------------------------- */
@@ -1117,6 +1133,7 @@ void home_build_at(const HomePlot *row, int n, float affluence, int first, HGrap
         int built = g->arch == HOME_TERRACE ? build_terrace(&c) : g->arch == HOME_SEMI ? build_semi(&c) : build_detached(&c);
         if (!built) { blog_printf(log, "  rejected fit: the proposal does not fit its plots\n"); continue; }
         home_repair_all(g, level, log);
+        home_balconies(g, level, log);
         lay_site(&c);
         if (home_validate(g, log)) {
             g->level = (uint8_t)level;

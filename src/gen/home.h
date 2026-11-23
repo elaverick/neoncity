@@ -116,6 +116,32 @@ typedef struct HBound { uint8_t kind, role; int8_t unit; float x0, z0, x1, z1, h
 typedef struct HGate { int8_t unit; uint8_t drive; float x, w; } HGate;                               /* a gap in the front boundary (z = 0) */
 typedef struct HSite { uint8_t kind, surface; int8_t unit, door; float x0, z0, x1, z1; } HSite;     /* a rectangle; a tree's is its canopy's square; a yard's surface HY_* */
 
+/* Balconies (HM5e2, the sheets' panel 1; docs/residential-target.md "Balconies"): on a unit's slice of the main's front
+ * wall (its face at z, facing the street), at a storey over the ground, across x0..x1 (whole bays of the front's window
+ * rhythm, home_front_bays), the windows behind made French windows. A balconette is a rail on a stone ledge `depth`
+ * deep (the Georgian first floor's); a slab a cantilevered one with a rail; a glazed one a slab with a solid upstand and
+ * glass to a slab over it (the Korean villa's); a loggia is carved `depth` into the body under a flat or arched head
+ * (the MENA villa's); a veranda the front of an upper storey carved between piers (the walled compound's). */
+enum { HBK_BALCONETTE = 0, HBK_SLAB, HBK_GLAZED, HBK_LOGGIA, HBK_VERANDA, HBK_COUNT };
+/* what guards it: plain iron bars, Georgian ironwork, a painted steel tube rail, a turned balustrade, nothing */
+enum { HBL_IRON = 0, HBL_ORNATE, HBL_STEEL, HBL_BALUSTRADE, HBL_NONE };
+typedef struct HBalcony {
+    int8_t  unit, vol;              /* its unit, the main it stands on */
+    uint8_t storey, kind, rail;     /* 1..: the storey whose floor it is at; HBK_*; HBL_* */
+    uint8_t arch;                   /* a loggia's arched head: its rise, cm (0 flat) */
+    uint8_t consoles;               /* stone consoles under a slab (Southern Europe's) */
+    float   x0, x1, z, depth;
+} HBalcony;
+#define HG_MAX_BALC   48
+#define BALC_SLAB     0.18f   /* a slab's depth */
+#define BALC_DROP     0.04f   /* its top under its storey's floor (a step down out of the French window) */
+#define BALC_PARTY    0.30f   /* kept off a party wall, or a corner */
+#define BALC_STREET   0.80f   /* how far an upper floor's balcony may reach over a street-line front's pavement */
+#define BALC_PIER     0.30f   /* a veranda's piers */
+#define BALC_VBAY     3.20f   /* ...and the most a veranda's opening spans between two */
+static inline int home_balcony_carved(int kind) { return kind == HBK_LOGGIA || kind == HBK_VERANDA; }
+const char *home_balcony_name(int kind);
+
 /* The yards by region (residential roadmap HM2b; the user, 2026-11-16): a megacity's houses have small,
  * mostly paved yards, somewhere between Tokyo-tight and British terraced, Europe on the larger side, and
  * no lawns anywhere in a city. Section 13.5's garden and clearance figures are loosened to these, a stated
@@ -150,7 +176,7 @@ typedef struct HGraph {
     float    u0;                       /* the row's first plot's u0: x = u - u0 */
     double   ox, oz;                   /* the row's frame (its plots') */
     float    tx, tz, nx, nz;
-    int      nunit, nvol, ndoor, nparty, nchim, nbound, ngate, nsite;
+    int      nunit, nvol, ndoor, nparty, nchim, nbound, ngate, nsite, nbalc;
     HUnit    unit[HG_MAX_UNITS];
     HVol     vol[HG_MAX_VOL];
     HDoor    door[HG_MAX_DOOR];
@@ -159,6 +185,7 @@ typedef struct HGraph {
     HBound   bound[HG_MAX_BOUND];
     HGate    gate[HG_MAX_GATE];
     HSite    site[HG_MAX_SITE];
+    HBalcony balc[HG_MAX_BALC];
 } HGraph;
 
 /* Builds the houses of one row: `row` holds its n plots in order (a row's units, as city_block_plots
@@ -173,6 +200,21 @@ int         home_validate(const HGraph *g, BLog *log);
 /* Volume vi as unit u's slice of it stands: a row's or a pair's main at the unit's own storeys (HUnit.storeys, its
  * eaves and top with them), else the volume itself. tmp: working space. */
 const HVol *home_unit_vol(const HGraph *g, int vi, int u, HVol *tmp);
+/* The window rhythm of unit u's slice of main mi's front wall (section 13.7, a window a bay of about 2.7 m, as the
+ * shell's add_windows lays them): its run starts at *s0, *bw a bay; returns the bays (0: no slice). */
+int         home_front_bays(const HGraph *g, int mi, int u, float *s0, float *bw);
+/* Balcony b's floor (its slab's top), y in the graph's frame. */
+float       home_balcony_floor(const HGraph *g, const HBalcony *b);
+/* A French window's width in a bay bw wide, from the unit's usual window width ww. */
+static inline float home_french_width(float ww, float bw) { const float w = ww < 0.9f ? 0.9f : ww > 1.5f ? 1.5f : ww; return w > bw - 0.5f ? bw - 0.5f : w; }
+/* A veranda's (HBK_VERANDA) openings between its piers: n openings, each w wide, the first from x0 + BALC_PIER. */
+static inline int home_veranda_bays(const HBalcony *b, float *w) {
+    const float L = b->x1 - b->x0 - BALC_PIER;
+    int n = (int)(L / (BALC_VBAY + BALC_PIER)) + 1;
+    if (n < 1) n = 1;
+    *w = L / (float)n - BALC_PIER;
+    return n;
+}
 /* A volume's outline in the row's frame (a canted bay's is its trapezoid); returns its corner count. */
 int         hvol_outline(const HVol *v, float (*p)[2]);
 /* The row's frame to the world. */

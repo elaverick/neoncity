@@ -57,6 +57,9 @@
 #define HK_POST_H     2.40f   /* porch posts (stretched to the porch's eaves) */
 #define HK_PIPE_Z     0.055f  /* a downpipe's axis off the wall */
 #define HK_GUTTER_Z   0.065f  /* a gutter's middle off the fascia */
+#define HK_FRENCH_W   1.20f   /* HM5e2: a French window out onto a balcony */
+#define HK_FRENCH_H   2.15f
+#define HK_RAIL_H     1.00f   /* a balcony's railing */
 
 /* the builders (pmodel_kit.c's table holds them) */
 void m_h_rafter_tail(Pm *pm);   void m_h_knee_brace(Pm *pm);   void m_h_eaves_bracket(Pm *pm);
@@ -83,6 +86,10 @@ void m_h_bay_post(Pm *pm);      void m_h_bay_cornice(Pm *pm);   void m_h_bay_apr
 void m_h_dormer_gable(Pm *pm);  void m_h_dormer_hip(Pm *pm);    void m_h_dormer_flat(Pm *pm);
 void m_h_pot_plain(Pm *pm);     void m_h_pot_cannon(Pm *pm);    void m_h_pot_crown(Pm *pm);    void m_h_pot_cowl(Pm *pm);
 void m_h_stack_cap(Pm *pm);     void m_h_vent_pipe(Pm *pm);     void m_h_rooflight(Pm *pm);
+/* HM5e2: balconies (the French window framed as the windows; rails and glazing runs centred on z 0; the console on a
+ * wall, its top on y 0) */
+void m_h_win_french(Pm *pm);    void m_h_rail_iron(Pm *pm);     void m_h_rail_ornate(Pm *pm);  void m_h_rail_post(Pm *pm);
+void m_h_glazing(Pm *pm);       void m_h_console(Pm *pm);
 
 /* ------------------------------------------------------------- assemblies --- */
 /* Each places modules (pm_place: instances, or built in) with the builder's current transform as its frame. */
@@ -91,7 +98,8 @@ void m_h_stack_cap(Pm *pm);     void m_h_vent_pipe(Pm *pm);     void m_h_rooflig
  * the repeats keep their size), or as one stretched piece where piece is 0 (a plain section). */
 void hk_run(Pm *pm, int module, float len, float piece);
 
-enum { HK_FRAME_NONE = 0, HK_FRAME_SASH, HK_FRAME_GEORGIAN, HK_FRAME_CASEMENT, HK_FRAME_GRID, HK_FRAME_PICTURE, HK_FRAME_UPVC };
+enum { HK_FRAME_NONE = 0, HK_FRAME_SASH, HK_FRAME_GEORGIAN, HK_FRAME_CASEMENT, HK_FRAME_GRID, HK_FRAME_PICTURE, HK_FRAME_UPVC,
+       HK_FRAME_FRENCH };   /* HM5e2: out onto a balcony (never a set's: the shell's French windows take it) */
 enum { HK_SILL_NONE = 0, HK_SILL_STONE, HK_SILL_TIMBER, HK_SILL_CONCRETE };
 /* heads: a stone lintel (and a keystone), a brick arch, a soldier course, a Victorian hood mould, a concrete
  * lintel, a craftsman's casing (boards round the opening on the wall, a capped head) */
@@ -162,3 +170,7 @@ void hk_chimney_top(Pm *pm, float w, float d, int pots, uint32_t seed);
 
 /* A porch balustrade from x 0 to len (balusters every ~0.11 m, rails), centred on z 0. */
 void hk_balustrade(Pm *pm, float len);
+/* HM5e2: an iron railing along x from 0 to len (whole metres), its end post at len if endPost; an enclosed balcony's
+ * glazing, len along x by h up from the origin (panes of about 1.2 m). */
+void hk_rail(Pm *pm, int ornate, float len, int endPost);
+void hk_glazing(Pm *pm, float len, float h);

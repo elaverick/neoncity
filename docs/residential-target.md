@@ -578,6 +578,58 @@ pilotis, shop fronts, arched doors, built up unevenly) and fails a style short o
 carved out of the front of its main, under its first floor, a five-foot way's piers left standing; `shop`: in its unit,
 clear of its door) are broken on purpose and caught.
 
+## Balconies (HM5e2)
+
+The second step of HM5e: the balconies each sheet's panel 1 shows (the plan's checklist), as a family in the graph
+(`HBalcony`, `src/gen/home_balcony.c`), placed after the repairs (the volumes are final) from a stream of their own, so
+every style without balconies keeps its houses exactly.
+
+| Style (sheet) | Kind | Where | Units with any (home_lab) |
+|---|---|---|---|
+| georgian | **balconette**: an ornate iron rail (a band of rosettes under the handrail) on a 0.26-0.32 m stone ledge | every first-floor window, the row as one (an owner leaves it off one time in ten) | 0.73 |
+| townhouse | **slab**, small (0.45-0.7 m), plain iron rail, stone consoles on four in five | every upper window its own (four in five) | 0.86 |
+| villa (Southern Europe) | **slab** 0.8-1.2 m, iron rail, consoles on three in five | over the first floor's middle bay or two | 0.62 |
+| china | **slab** with a steel rail, a third **glazed** | the flat blocks only, stacked, a bay or two | 0.53 |
+| korea | **glazed** (a solid upstand, sliding glass to the slab over it) or **slab** with a steel rail, half each | over the pilotis on every storey, broad (two bays to wall to wall) | 0.86 |
+| linkhouse | **slab** 0.9-1.2 m, steel rail | one first-floor bay | 0.49 |
+| rcc | **slab** 0.9-1.3 m, steel rail | a bay or two, stacked on most storeys; chajjas shade the other windows (none under a balcony) | 0.74 |
+| selfbuilt | **slab** 0.6-0.8 m, out over the pavement, one in seven never railed | a bay to wall to wall, stacked on some | 0.51 |
+| villa (Middle East) | **loggia** carved 1.2-1.6 m in, under an arch on seven in ten, iron rail across its mouth | over the door, a bay or two | 0.80 |
+| walled | **veranda**: the upper storey's front carved 1.8-2.4 m deep between 0.3 m piers (openings at most 3.2 m), a balustrade in each | the first floor's whole front | 0.41 (two-storey houses only) |
+
+Victorian, inter-war, post-war, brownstone, Japan, shophouse (its louvred French windows are HM5b's), bungalow,
+courtyard, block and colonial have none, and home_lab fails any that grows one. The chajja (an RCC window's sunshade
+slab) was HM5e1's.
+
+**The geometry.** A balcony stands on its unit's slice of the main's front, across whole bays of the window rhythm
+(`home_front_bays`: a window a bay of about 2.7 m, as the shell lays them), so the window behind it becomes a **French
+window** (`home_french_width`: 0.9-1.5 m, its sill a 3 cm threshold over the floor, its head 2.2 m up; the kit's
+`h_win_french`, two glazed leaves on kick panels under a top light, no sill or window box). Its slab is a shell solid at
+both levels (`SK_BALC`, 0.18 m deep, its top 4 cm under the floor: a step down out of the window), so it joins the wall
+by the CSG and casts the shell's shadows (the walker's collision is the plan's outlines: every balcony is overhead);
+a balconette's ledge is 0.12 m of stone; a glazed one adds a 0.12 m upstand (the unit's wall)
+and the slab over it (the next storey's balcony where one covers it). A loggia is an opening carved into the body (its
+ceiling, its tiled floor, an arched head as the doors' are), a veranda one carve an opening plus the space behind each
+pier; their French windows stand at the back, one in each opening.
+
+**The rules** (`home_check_balconies`, called by `home_validate`; `home_lab` breaks one on purpose, `balcony`): an upper
+storey its unit has (an unevenly built unit's short top has none); within its unit's slice, 0.3 m off a party wall or a
+corner, 0.9 m wide at least; a projecting one over its own plot, 0.3 m inside the boundary, or at most **0.8 m over the
+pavement** from a street-line front (the townhouse's and self-built's, as such balconies are); a carved one leaves 3 m
+of body behind it; nothing rising under it in front of the wall (a porch, a bay, a canopy) within reach of its slab; its
+French window under the eaves; two on one storey of a unit 0.2 m apart at least. Where the chosen bays fail, the nearest
+that fit are taken. Two repairs make room instead: **a balcony over a door canopy** (0.6 m deep at least, the door's
+whole width under it) takes the canopy's place, its slab sheltering the door (the door rule accepts a porch, a canopy
+or such a balcony); and **a veranda or loggia over a ground-floor porch** has the porch roofed flat under its floor (a
+double veranda).
+
+**The dressing** (`hs_balconies`, before the retrofit layer, which keeps out of the balconies' boxes): rails along the
+front and back to the wall at both ends (plain or ornate iron with an end post, the retrofit kit's steel tube rail, or
+HM4's turned balustrade on a veranda), the glazing along an enclosed one's front and ends, stone consoles under the
+Southern European slabs; and the owners': pots and palms (by region, fewer where run down), plants trailing over the
+rail, an LED strip under the slab's edge (most in East Asia). Kit `h_win_french`, `h_rail_iron`, `h_rail_ornate`,
+`h_rail_post`, `h_glazing`, `h_console` (`pmodel_lab`).
+
 ## Massing and parts
 
 | Part | Size | Notes |

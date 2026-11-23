@@ -440,6 +440,9 @@ static void dress_window(DC *d, const HsWin *w) {
     if (head == HK_HEAD_KEYSTONE && w->storey >= 2) head = HK_HEAD_LINTEL;   /* a Georgian top floor's plain lintels */
     k.head = (uint8_t)head;
     k.w = (float)w->w; k.h = (float)(w->y1 - w->y0); k.reveal = (float)w->depth;
+    /* a French window out onto a balcony (HM5e2): its own frame, no sill or box (the balcony's floor is under it) */
+    const int french = w->balc >= 0;
+    if (french) { k.frame = HK_FRAME_FRENCH; k.sill = HK_SILL_NONE; }
     if (front && cs->shutters) {
         double l, r;
         window_room(d, w, &l, &r);
@@ -450,7 +453,7 @@ static void dress_window(DC *d, const HsWin *w) {
         else repair(d, HDR_SHUTTERS, "no room beside a window %.1f m wide: no shutters", u, w->w);
     }
     k.grille = (uint8_t)(w->storey == 0 && (cs->grilles == 2 || (cs->grilles == 1 && front)));
-    k.box = (uint8_t)(front && cs->boxes && !cs->lean && !k.grille && (w->storey >= 1 || region_boxes_ground(d->g)) &&
+    k.box = (uint8_t)(!french && front && cs->boxes && !cs->lean && !k.grille && (w->storey >= 1 || region_boxes_ground(d->g)) &&
                       ch(d->g->unit[u].seed, 0xB0u + (uint32_t)(w->a0 * 10.0) + w->storey * 97u, 0.6f));
     const double c = w->a0 + 0.5 * w->w;
     const double p[3] = { w->m[0] * w->at + w->e[0] * c, w->y0, w->m[1] * w->at + w->e[1] * c };
@@ -582,6 +585,12 @@ static int surround_fits(const DC *d, const HsDoor *dr, double half, double top,
     const HVol *m = &d->g->vol[dr->vol];
     const double dyu = d->C->dy ? d->C->dy[dr->unit] : 0.0;
     if (top > m->eaves + dyu - 0.25) return 0;
+    /* nor up into a balcony's slab over it (HM5e2) */
+    for (int i = 0; i < d->g->nbalc; ++i) {
+        const HBalcony *b = &d->g->balc[i];
+        if (b->unit != dr->unit || home_balcony_carved(b->kind) || b->x1 < dr->x - half - 0.05 || b->x0 > dr->x + half + 0.05) continue;
+        if (top > home_balcony_floor(d->g, b) - (b->kind == HBK_BALCONETTE ? 0.12 : BALC_SLAB) + dyu - 0.05) return 0;
+    }
     /* nothing standing in front of it (a bay beside the door, a porch's posts); not asked at the back of a recess,
      * whose space the house's body still holds (the recess is cut out of it as an opening) */
     for (int k = -1; k <= 1 && !recessed; ++k) {
@@ -1371,6 +1380,7 @@ void hc_begin(DC *d, int u) { begin(d, u); }
 void hc_done(DC *d) { done(d); }
 void hc_push_wall(DC *d, const double p[3], double mx, double mz) { push_wall(d, p, mx, mz); }
 void hc_pop(DC *d) { pop(d); }
+void hc_push_along(DC *d, const double p[3], const double dir[3]) { push_along(d, p, dir); }
 void hc_push_yz(DC *d, const double p[3], const double ey[3], const double ez[3]) {
     float o[3], y[3] = { (float)(d->sx * ey[0]), (float)ey[1], (float)ey[2] }, z[3] = { (float)(d->sx * ez[0]), (float)ez[1], (float)ez[2] };
     const float x[3] = { y[1] * z[2] - y[2] * z[1], y[2] * z[0] - y[0] * z[2], y[0] * z[1] - y[1] * z[0] };
@@ -1443,6 +1453,7 @@ static void dress_pass(Ctx *C, HDress *D, int *count) {
     for (int i = 0; i < C->nwin; ++i) if (!C->win[i].bay) dress_window(&d, &C->win[i]);
     for (int vi = 0; vi < g->nvol; ++vi) if (g->vol[vi].role == HV_BAY) dress_bay(&d, vi);
     dress_posts(&d);
+    hs_balconies(&d);   /* HM5e2 */
     for (int i = 0; i < C->nroof; ++i) {
         dress_eaves(&d, &C->roof[i]);
         dress_verges(&d, &C->roof[i]);

@@ -12,7 +12,7 @@
 #define NOFACE  255
 #define SLAB_T  0.2f      /* a pitched roof's depth at its eaves: the fascia (m) */
 
-enum { SK_OTHER = 0, SK_BODY, SK_SLAB };
+enum { SK_OTHER = 0, SK_BODY, SK_SLAB, SK_BALC };   /* SK_BALC: a balcony's slab, upstand or cap (HM5e2) */
 typedef struct SPlane { double n[3], d; } SPlane;
 typedef struct SPoly { int n; double p[PV][3]; } SPoly;
 
@@ -53,6 +53,7 @@ typedef struct Roof {
 typedef struct HsWin {
     int8_t  unit, vol;
     uint8_t storey, bay;
+    int8_t  balc;           /* HM5e2: a French window, out onto this balcony (HGraph.balc), else -1 */
     int     host;           /* the body solid it is cut in */
     double  m[2], e[2];     /* its wall's outward normal, and the way along it (e = (-m.z, m.x)) */
     double  at;             /* the wall's face: m.(x, z) = at */

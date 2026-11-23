@@ -906,11 +906,12 @@ static uint32_t opening_aux(double w, double h, int pattern) {
     return cw << HOUSE_AUX_W | ch << HOUSE_AUX_H | (uint32_t)(pattern & 15) << HOUSE_AUX_PATTERN;
 }
 
-/* Whether a box (corners lo, hi) meets any solid (other than the volume's own) */
-static int box_blocked(const Ctx *C, int vi, int unit, const double *lo, const double *hi) {
+/* Whether a box (corners lo, hi) meets any solid (other than the volume's own; a window's ignores the balconies, HM5e2,
+ * whose rules keep them off the windows they don't open from) */
+static int box_blocked_by(const Ctx *C, int vi, int unit, const double *lo, const double *hi, int balc) {
     for (int i = 0; i < C->ns; ++i) {
         const Solid *s = &C->s[i];
-        if (s->neg || !s->live || (s->vol == vi && s->unit == unit && s->kind != SK_OTHER)) continue;
+        if (s->neg || !s->live || (s->vol == vi && s->unit == unit && s->kind != SK_OTHER) || (!balc && s->kind == SK_BALC)) continue;
         if (!boxes_meet(lo, hi, s->mn, s->mx, 0.0)) continue;
         int sep = 0;
         for (int j = 0; j < s->np && !sep; ++j) {
@@ -924,6 +925,7 @@ static int box_blocked(const Ctx *C, int vi, int unit, const double *lo, const d
     }
     return 0;
 }
+static int box_blocked(const Ctx *C, int vi, int unit, const double *lo, const double *hi) { return box_blocked_by(C, vi, unit, lo, hi, 0); }
 
 /* The windows of volume vi's body (a row's main's slice for unit): each wall that faces out, each storey, a
  * window in each bay of about 2.7 m (section 13.7) where nothing stands in front of it and no door is. */
@@ -964,6 +966,164 @@ static void add_chajja(Ctx *C, int vi, int unit, const double m[2], const double
     plane_at(s, 0, 1, 0, 0, y1, 0, HF_COPING);
     plane_at(s, 0, -1, 0, 0, y0, 0, HF_WALL);
     solid_lift(s, dy);
+}
+
+/* ---------------------------------------------------------------------------
+ * Balconies (HM5e2; the graph's HBalcony, placed by home_balcony.c)
+ * ------------------------------------------------------------------------- */
+
+/* The balcony of a unit's storey whose span holds x (along its main's front), or -1. */
+static int balc_at(const HGraph *g, int unit, int storey, double x) {
+    for (int i = 0; i < g->nbalc; ++i) {
+        const HBalcony *b = &g->balc[i];
+        if (b->unit == unit && b->storey == storey && x > b->x0 && x < b->x1) return i;
+    }
+    return -1;
+}
+
+/* A balcony slab's top: stone in Britain and Southern Europe, tiles in the Middle East, Africa and the link house's,
+ * else the concrete's own. */
+static int balc_step(int style) {
+    switch (style) {
+    case HS_GEORGIAN: case HS_TOWNHOUSE: case HS_SEU_VILLA: return HST_STONE;
+    case HS_MENA_VILLA: case HS_WALLED: case HS_LINKHOUSE: return HST_TILE;
+    default: return HST_CONCRETE;
+    }
+}
+
+/* A box standing out of the front wall (its face at z, facing -z): x0..x1, from zf (its front) back into the wall to
+ * zb, y0..y1 over the unit's floor; its front and ends `edge`, its top and underside. */
+static Solid *balc_box(Ctx *C, int unit, int vi, double x0, double x1, double zf, double zb, double y0, double y1, int edge, int top, int bot) {
+    Solid *s = solid_new(C, unit, vi, 0);
+    s->kind = SK_BALC;
+    plane_at(s, -1, 0, 0, x0, 0, 0, edge); s->noWin[s->np - 1] = 1;
+    plane_at(s, 1, 0, 0, x1, 0, 0, edge);  s->noWin[s->np - 1] = 1;
+    plane_at(s, 0, 0, -1, 0, 0, zf, edge); s->noWin[s->np - 1] = 1;
+    plane_at(s, 0, 0, 1, 0, 0, zb, NOFACE);
+    plane_at(s, 0, 1, 0, 0, y1, 0, top);
+    plane_at(s, 0, -1, 0, 0, y0, 0, bot);
+    solid_lift(s, C->dy ? C->dy[unit] : 0.0);
+    return s;
+}
+
+/* What of the balconies stands out of the walls, at both levels: slabs (a balconette's ledge), a glazed one's upstand and
+ * the slab over it where no balcony over it serves. Carved ones are the near shell's (add_balcony_carves). */
+static void add_balcony_solids(Ctx *C) {
+    const HGraph *g = C->g;
+    for (int i = 0; i < g->nbalc; ++i) {
+        const HBalcony *b = &g->balc[i];
+        if (home_balcony_carved(b->kind) || b->unit < 0 || b->unit >= g->nunit) continue;
+        const int u = b->unit, vi = b->vol;
+        const double y = home_balcony_floor(g, b), zf = b->z - b->depth, zb = b->z + 0.03;
+        if (b->kind == HBK_BALCONETTE) {
+            Solid *s = balc_box(C, u, vi, b->x0, b->x1, zf, zb, y - 0.12, y, HF_COPING, HF_STEP, HF_COPING);
+            s->stepFin = HST_STONE;
+            continue;
+        }
+        Solid *s = balc_box(C, u, vi, b->x0, b->x1, zf, zb, y - BALC_SLAB, y, HF_COPING, HF_STEP, HF_SOFFIT);
+        s->stepFin = (uint8_t)balc_step(g->style);
+        if (b->kind != HBK_GLAZED) continue;
+        /* the glazed one's upstand (its front and ends, the unit's wall), the glass over it the kit's */
+        const double t = 0.12, h = 0.95;
+        balc_box(C, u, vi, b->x0, b->x1, zf, zf + t, y, y + h, HF_WALL, HF_COPING, NOFACE);
+        balc_box(C, u, vi, b->x0, b->x0 + t, zf + t - 0.01, zb, y, y + h, HF_WALL, HF_COPING, NOFACE);
+        balc_box(C, u, vi, b->x1 - t, b->x1, zf + t - 0.01, zb, y, y + h, HF_WALL, HF_COPING, NOFACE);
+        /* the slab over it: the next storey's balcony where one covers it, else its own under the next floor or the eaves */
+        int over = 0;
+        for (int j = 0; j < g->nbalc && !over; ++j) {
+            const HBalcony *o = &g->balc[j];
+            over = o->unit == b->unit && o->storey == b->storey + 1 && !home_balcony_carved(o->kind) &&
+                   o->x0 <= b->x0 + 0.01 && o->x1 >= b->x1 - 0.01 && o->depth >= b->depth - 0.01;
+        }
+        if (over) continue;
+        HVol own;
+        const HVol *m = home_unit_vol(g, vi, u, &own);
+        const double top = fmin(y + BALC_DROP + g->storeyH - BALC_DROP, m->eaves - 0.02);
+        balc_box(C, u, vi, b->x0, b->x1, zf, zb, top - BALC_SLAB, top, HF_COPING, HF_COPING, HF_SOFFIT);
+    }
+}
+
+/* A French window out onto balcony bi: centred at c in the front wall (its face at zface, facing the street), its sill a
+ * threshold over the storey's floor. */
+static void add_french(Ctx *C, int host, int vi, int unit, int storey, int bi, double c, double w, double floorY, double head,
+                       double zface, double s0, double s1) {
+    const double m[2] = { 0.0, -1.0 }, e[2] = { 1.0, 0.0 }, sill = floorY + 0.03, depth = 0.1;
+    const double a0 = c - 0.5 * w, dy = C->dy ? C->dy[unit] : 0.0;
+    if (head - sill < 1.8 || w < 0.6) return;
+    uint32_t aux = opening_aux(w, head - sill, HG_CASEMENT);
+    if (C->kit) aux |= HOUSE_AUX_FRAMED;
+    const int opened = add_opening(C, host, unit, m, e, a0, zface, w, sill, head, depth, HF_GLASS, aux);
+    if (opened < 0) return;
+    C->st.windows++;
+    if (!C->kit) return;
+    GROW(C->win, C->nwin, C->capwin);
+    HsWin *hw = &C->win[C->nwin++];
+    memset(hw, 0, sizeof(*hw));
+    hw->unit = (int8_t)unit; hw->vol = (int8_t)vi; hw->storey = (uint8_t)storey; hw->bay = 0; hw->balc = (int8_t)bi; hw->host = host;
+    hw->m[0] = m[0]; hw->m[1] = m[1]; hw->e[0] = e[0]; hw->e[1] = e[1]; hw->at = -zface;
+    hw->a0 = a0; hw->w = w; hw->s0 = s0; hw->s1 = s1;
+    hw->y0 = sill + dy; hw->y1 = head + dy; hw->depth = depth; hw->floorY = floorY + dy;
+}
+
+/* The French windows at the back of a carved balcony: one in each bay of the front's rhythm whose middle falls in an
+ * opening a0..a1 (else one in its middle). */
+static void french_at_back(Ctx *C, int host, const HBalcony *b, int bi, double a0, double a1, double ceiling) {
+    const HGraph *g = C->g;
+    float s0, bw;
+    const int nb = home_front_bays(g, b->vol, b->unit, &s0, &bw);
+    if (nb <= 0) return;
+    const double floorY = home_balcony_floor(g, b) + BALC_DROP, head = fmin(floorY + 2.2, ceiling - 0.15);
+    const double w = fmin(home_french_width(C->fin[b->unit].winW, bw), a1 - a0 - 0.6);
+    int n = 0;
+    for (int k = 0; k < nb; ++k) {
+        const double c = s0 + (k + 0.5) * bw;
+        if (c - 0.5 * w < a0 + 0.3 || c + 0.5 * w > a1 - 0.3) continue;
+        add_french(C, host, b->vol, b->unit, b->storey, bi, c, w, floorY, head, b->z + b->depth, a0, a1);
+        n++;
+    }
+    if (!n) add_french(C, host, b->vol, b->unit, b->storey, bi, 0.5 * (a0 + a1), w, floorY, head, b->z + b->depth, a0, a1);
+}
+
+static int add_carve(Ctx *C, int host, int unit, double x0, double z0, double x1, double z1, double y0, double y1, int fin);
+
+/* The carved balconies (near): a loggia cut into the front under a flat or arched head, a veranda's openings between its
+ * piers (open behind the piers), and the French windows at their backs. */
+static void add_balcony_carves(Ctx *C) {
+    const HGraph *g = C->g;
+    for (int i = 0; i < g->nbalc; ++i) {
+        const HBalcony *b = &g->balc[i];
+        if (!home_balcony_carved(b->kind) || b->unit < 0 || b->unit >= g->nunit) continue;
+        const int u = b->unit, host = C->body[b->vol][u];
+        if (host < 0) continue;
+        HVol own;
+        const HVol *m = home_unit_vol(g, b->vol, u, &own);
+        const double y = home_balcony_floor(g, b), floorY = y + BALC_DROP;
+        const int fin = balc_step(g->style);
+        if (b->kind == HBK_LOGGIA) {
+            const double mm[2] = { 0.0, -1.0 }, e[2] = { 1.0, 0.0 };
+            const double head = fmin(floorY + 2.6, m->eaves - 0.3), rise = 0.01 * b->arch;
+            const int r = add_opening_arch(C, host, u, mm, e, b->x0, b->z, b->x1 - b->x0, y, head - rise, b->depth, HF_WALL, 0, rise);
+            if (r < 0) continue;
+            Solid *s = &C->s[r];
+            for (int k = 0; k < s->np; ++k) {
+                if (s->pl[k].n[1] > 0.5 && rise <= 0.0) s->surf[k] = HF_CEILING;
+                else if (s->pl[k].n[1] < -0.5) s->surf[k] = HF_STEP;
+                else if (s->surf[k] == HF_REVEAL) s->surf[k] = HF_WALL;
+            }
+            s->stepFin = (uint8_t)fin;
+            french_at_back(C, host, b, i, b->x0, b->x1, head - rise);
+        } else {
+            float w;
+            const int n = home_veranda_bays(b, &w);
+            const double top = fmin(floorY + g->storeyH - 0.3, m->eaves - 0.3);
+            for (int k = 0; k < n; ++k) {
+                const double a = b->x0 + BALC_PIER + k * (w + BALC_PIER);
+                add_carve(C, host, u, a, b->z - 0.3, a + w, b->z + b->depth, y, top, fin);
+                if (k + 1 < n) add_carve(C, host, u, a + w - 0.01, b->z + BALC_PIER, a + w + BALC_PIER + 0.01, b->z + b->depth, y, top, fin);
+                french_at_back(C, host, b, i, a, a + w, top);   /* each opening its French window */
+            }
+        }
+    }
 }
 
 static void add_windows(Ctx *C, int vi, int unit) {
@@ -1007,14 +1167,25 @@ static void add_windows(Ctx *C, int vi, int unit) {
             const double floorY = g->plinth + k * g->storeyH;
             double sill = floorY + (k == 0 ? 0.75 : 0.85), head = fmin(floorY + 2.15, v->eaves - 0.25);
             /* a bay's lights reach its corner posts when the kit dresses it (hk_bay's: the face less 0.13 m) */
-            double ww = bay ? fmax(0.3, L - (C->kit ? 0.13 : 0.3)) : fmin(fin->winW, bw - 0.6);
+            double ww0 = bay ? fmax(0.3, L - (C->kit ? 0.13 : 0.3)) : fmin(fin->winW, bw - 0.6);
             /* a Georgian front's attic storey: short windows (its top storey of three or four) */
             if (!bay && k == g->vol[0].storeys - 1 && g->style == HS_GEORGIAN && v->storeys >= 3) head = fmin(head, sill + 1.0);
             if (blank && k == 0) { sill = floorY + 1.6; head = fmin(head, sill + 0.7); }
-            if (head - sill < (blank ? 0.5 : 0.8) || ww < 0.3) continue;
+            if (head - sill < (blank ? 0.5 : 0.8) || ww0 < 0.3) continue;
             if (head - sill > fin->winH && !bay) sill = head - fin->winH;
+            const double sill0 = sill, head0 = head;
             for (int b = 0; b < nb; ++b) {
-                const double c = s0 + (b + 0.5) * bw, a0 = c - 0.5 * ww;
+                const double c = s0 + (b + 0.5) * bw;
+                double ww = ww0, sill = sill0, head = head0;
+                /* a balcony in front of it (HM5e2): a carved one's windows are at its back; else a French window */
+                const int fb = k > 0 && v->role <= HV_ROW && m[1] < -0.7 ? balc_at(g, unit, k, c) : -1;
+                if (fb >= 0 && home_balcony_carved(g->balc[fb].kind)) continue;
+                if (fb >= 0) {
+                    ww = home_french_width((float)ww0, (float)bw);
+                    sill = floorY + 0.03;
+                    head = fmin(floorY + 2.2, v->eaves - 0.2);
+                }
+                const double a0 = c - 0.5 * ww;
                 if (blank && hash_float(hash3i(g->unit[unit].seed ^ 0xB1A4u, vi * 8 + i, k, b)) < (k == 0 ? 0.6f : 0.35f)) continue;
                 /* the ground floor carved out under it, or a shop front there (HM5e1) */
                 if (k == 0 && ground_taken(g, unit, m[0] * at + e[0] * c, m[1] * at + e[1] * c, 0.5 * ww, m[1] < -0.7)) continue;
@@ -1049,16 +1220,19 @@ static void add_windows(Ctx *C, int vi, int unit) {
                     /* the kit's frame stands in it: the shader paints the glazing bars only past the kit's reach,
                      * and they are the frame's (a replacement's plain glass) */
                     if (bay) depth = 0.08;   /* a bay's thin walls (hk_bay's frames) */
-                    const int fr = home_char_frame(&C->cs[unit], m[1] < -0.7, k, ww);
+                    const int fr = fb >= 0 ? HK_FRAME_CASEMENT : home_char_frame(&C->cs[unit], m[1] < -0.7, k, ww);
                     static const uint8_t PAT[] = { HG_PLAIN, HG_SASH, HG_GEORGIAN, HG_CASEMENT, HG_GRID, HG_PLAIN, HG_PLAIN };
                     aux = opening_aux(ww, head - sill, PAT[fr <= HK_FRAME_UPVC ? fr : 0]) | HOUSE_AUX_FRAMED;
-                }
+                } else if (fb >= 0) aux = opening_aux(ww, head - sill, HG_CASEMENT);
                 const int opened = add_opening(C, host, unit, m, e, ax, az, ww, sill, head, depth, HF_GLASS, aux);
-                if (opened >= 0 && g->style == HS_RCC && !bay) add_chajja(C, vi, unit, m, e, at, a0, ww, head);
+                /* an RCC window's chajja, but where a balcony over it shades it (HM5e2) */
+                if (opened >= 0 && g->style == HS_RCC && !bay && (m[1] > -0.7 || balc_at(g, unit, k + 1, c) < 0))
+                    add_chajja(C, vi, unit, m, e, at, a0, ww, head);
                 if (opened >= 0 && C->kit) {
                     GROW(C->win, C->nwin, C->capwin);
                     HsWin *w = &C->win[C->nwin++];
                     w->unit = (int8_t)unit; w->vol = (int8_t)vi; w->storey = (uint8_t)k; w->bay = (uint8_t)bay; w->host = host;
+                    w->balc = (int8_t)fb;
                     w->m[0] = m[0]; w->m[1] = m[1]; w->e[0] = e[0]; w->e[1] = e[1]; w->at = at;
                     w->a0 = a0; w->w = ww; w->s0 = s0; w->s1 = s1;
                     w->y0 = sill + dy; w->y1 = head + dy; w->depth = depth; w->floorY = floorY + dy;
@@ -1296,9 +1470,11 @@ static void shell_build(const HGraph *g, int lod, const float *dy, HShellFn fn, 
     }
     for (int i = 0; i < g->nparty; ++i) add_upstand(&C, &g->party[i]);
     for (int i = 0; i < g->nchim; ++i) add_stack(&C, &g->chim[i]);
+    add_balcony_solids(&C);
     SPoly f, tmp;
     if (lod == HSH_NEAR) {
         for (int u = 0; u < g->nunit; ++u) add_front(&C, u);
+        add_balcony_carves(&C);
         for (int i = 0; i < C.ns; ++i) solid_bounds(&C.s[i], &f, &tmp);
         const int positives = C.ns;
         for (int vi = 0; vi < g->nvol; ++vi) {
