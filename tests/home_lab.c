@@ -358,10 +358,17 @@ static int bite(HGraph *g, int k) {
     case 16: for (int i = 0; i < g->nsite; ++i)   /* a gate kiosk run back into the house (HM5e3) */
                  if (g->site[i].kind == HE_KIOSK) { g->site[i].z1 = m->z0 + 0.5f; return 1; }
              return 0;
-    case 17: if (!g->nins) return 0;   /* an insertion run up to its party wall (HM5c2) */
-             { float s0, bw; const int nb = home_front_bays(g, g->ins[0].vol, g->ins[0].unit, &s0, &bw); if (nb <= 0) return 0;
-               g->ins[0].x1 = s0 + bw * (float)nb; }
-             return 1;
+    case 17: for (int i = 0; i < g->nins; ++i) {   /* an insertion run up to its party wall (HM5c2): a box, a rounded bay, a frame
+                                                       or a strip (fins and hexagons are laid out from the bays, not its ends) */
+                 HInsert *in = &g->ins[i];
+                 if (in->kind == HI_FINS || (in->kind == HI_HEX && in->shape == HIS_HONEYCOMB)) continue;
+                 float s0, bw;
+                 const int nb = home_front_bays(g, in->vol, in->unit, &s0, &bw);
+                 if (nb <= 0) return 0;
+                 in->x1 = s0 + bw * (float)nb;
+                 return 1;
+             }
+             return 0;
     case 13: for (int k = 0; k < g->nunit; ++k)   /* a shop front over its door (HM5e1) */
                  if (g->unit[k].door >= 0) { const HDoor *d = &g->door[g->unit[k].door]; g->unit[k].shopX0 = d->x - 1.0f; g->unit[k].shopX1 = d->x + 1.0f; return 1; }
              return 0;
@@ -564,7 +571,7 @@ static int bound_check(void) {
  * the kinds drawn; the boxes and rounded bays built (HM5c2a) and their makes, those on the ground in a bay's place, storeys
  * a one spans. Checked: three in five retrofitted on every style with a sheet, none on the rest; most of the boxes and
  * rounded bays drawn find a place; a style's boxes mostly of its table's heaviest make. */
-typedef struct Ins { long units, planned, kind[HI_COUNT], wantA, gotA, built[HI_COUNT], face[HIF_COUNT], ground, storeys, n; } Ins;
+typedef struct Ins { long units, planned, kind[HI_COUNT], wantA, gotA, want[HI_COUNT], got[HI_COUNT], built[HI_COUNT], face[HIF_COUNT], shape[HIS_COUNT], ground, storeys, n, members, mUnits; } Ins;
 static Ins g_ins[HS_COUNT];
 static void survey_ins(const HGraph *g) {
     if (g->empty) return;
@@ -574,6 +581,13 @@ static void survey_ins(const HGraph *g) {
         const unsigned p = g->insPlan[u];
         b->planned += p != 0;
         for (int k = 0; k < HI_COUNT; ++k) b->kind[k] += p >> k & 1u;
+        for (int k = 0; k < HI_COUNT; ++k) {
+            if (!(p >> k & 1u)) continue;
+            b->want[k]++;
+            int got = 0;
+            for (int i = 0; i < g->nins; ++i) got |= g->ins[i].unit == u && g->ins[i].kind == k;
+            b->got[k] += got;
+        }
         if (!(p & (1u << HI_BOX | 1u << HI_ROUND))) continue;
         b->wantA++;
         int got = 0;
@@ -587,6 +601,12 @@ static void survey_ins(const HGraph *g) {
         if (in->kind == HI_BOX) b->face[in->face % HIF_COUNT]++;
         b->ground += in->s0 == 0;
         b->storeys += in->s1 - in->s0 + 1;
+        if (in->kind >= HI_FRAME && in->kind <= HI_SCREEN) b->shape[in->shape % HIS_COUNT]++;
+        if (home_insert_membered(in)) {
+            HMember M[HG_MAX_MEMBERS];
+            b->members += home_insert_members(g, in, M, HG_MAX_MEMBERS);
+            b->mUnits++;
+        }
     }
 }
 static int ins_check(void) {
@@ -605,10 +625,33 @@ static int ins_check(void) {
         printf(" | %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f\n", b->wantA ? (double)b->gotA / b->wantA : 0.0, b->built[HI_BOX] / U, b->built[HI_ROUND] / U,
                b->face[HIF_CONCRETE] / B, b->face[HIF_GLASS] / B, b->face[HIF_SCREEN] / B, b->face[HIF_CONTAINER] / B, b->ground / N, b->storeys / N);
     }
+    /* HM5c2b: frames, hexagons, fins and screen strips: of the units drawing each, the share that found a place; their forms */
+    printf("\nHM5c2b's kinds: found a place (of the units drawing it) and built a unit; forms built; members an insertion\n");
+    printf("  %-11s %11s %11s %11s %11s | forms\n", "style", "frame", "hex", "fins", "screen");
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Ins *b = &g_ins[st];
+        if (!b->units || !home_retrofit_style(st)) continue;
+        printf("  %-11s", home_style_name(st));
+        for (int k = HI_FRAME; k <= HI_SCREEN; ++k) {
+            if (b->want[k]) printf("  %4.2f %4.2f", (double)b->got[k] / b->want[k], b->built[k] / (double)b->units);
+            else printf("  %9s", "-");
+        }
+        printf(" |");
+        for (int s = 0; s < HIS_COUNT; ++s) if (b->shape[s]) printf(" %s %ld", home_insert_shape_name(s), b->shape[s]);
+        if (b->mUnits) printf(" (%.0f members)", (double)b->members / b->mUnits);
+        printf("\n");
+    }
     for (int st = 0; st < HS_COUNT; ++st) {
         const Ins *b = &g_ins[st];
         if (b->units < 200) continue;
         const double U = (double)b->units;
+        for (int k = HI_FRAME; k <= HI_SCREEN && home_retrofit_style(st); ++k)
+            /* half at least: a bungalow's veranda or an inter-war semi's two-storey bay fills most of its front, and a South
+             * Asian yard (1-2.5 m) is too shallow to stand a frame or strip in front of either */
+            if (b->want[k] >= 50 && b->got[k] < 0.5 * b->want[k]) {
+                printf("FAIL: %s: %ld of %ld units drawing a %s got one\n", home_style_name(st), b->got[k], b->want[k], home_insert_name(k));
+                failures++;
+            }
         if (!home_retrofit_style(st)) {
             if (b->planned || b->n) { printf("FAIL: %s has insertions without a sheet\n", home_style_name(st)); failures++; }
             continue;

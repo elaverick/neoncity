@@ -56,7 +56,7 @@ void m_r_downlight(Pm *pm);    void m_r_led_strip(Pm *pm);
 void m_r_tank_poly(Pm *pm);    void m_r_tank_steel(Pm *pm);  void m_r_stand_bay(Pm *pm);  void m_r_stand_top(Pm *pm);
 void m_r_pipe_cu(Pm *pm);      void m_r_pipe_fe(Pm *pm);     void m_r_elbow_cu(Pm *pm);   void m_r_elbow_fe(Pm *pm);
 void m_r_valve(Pm *pm);        void m_r_pipe_clip(Pm *pm);
-void m_r_breeze_diamond(Pm *pm); void m_r_breeze_ring(Pm *pm);
+void m_r_breeze_diamond(Pm *pm); void m_r_breeze_ring(Pm *pm); void m_r_breeze_star(Pm *pm);
 void m_r_rail(Pm *pm);
 void m_r_meter(Pm *pm);        void m_r_lantern(Pm *pm);     void m_r_bulkhead(Pm *pm);
 void m_r_gate_bars(Pm *pm);    void m_r_gate_sheet(Pm *pm);  void m_r_razor(Pm *pm);
@@ -117,7 +117,7 @@ void hr_pipe_path(Pm *pm, int fe, const float (*p)[3], int n);
 void hr_pipe_clips(Pm *pm, int fe, const float a[3], const float b[3]);
 
 /* Breeze-block panels over w x h from the origin (its lower left, centred on the frame's z 0), whole panels
- * stretched to fit; kind 0 diamonds, 1 rings. */
+ * stretched to fit; kind 0 diamonds, 1 rings, 2 the star lattice (HM5c2b: a mashrabiya's). */
 void hr_breeze(Pm *pm, int kind, float w, float h);
 /* A roof railing along x from 0 to len, its end post at len. */
 void hr_rail(Pm *pm, float len);

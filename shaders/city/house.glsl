@@ -344,8 +344,21 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
         // cast concrete's panels (HM5c2): a joint every 1.2 m along and 0.6 m up (on a level face, in the world's x and z)
         vec2 pq = abs(n.y) > 0.9 ? gWorld.xz : uv;
         vec2 pf = abs(n.y) > 0.9 ? vec2(fw.x) : fw;
-        float joint = min(hStripe(pq.x / 1.2, 0.012, 0.988, pf.x / 1.2), hStripe(pq.y / 0.6, 0.02, 0.98, pf.y / 0.6));
-        alb *= mix(0.72, 1.0, joint) * mix(0.9, 1.06, hf(hash2i(seed ^ 0xC0C0u, int(floor(pq.x / 1.2)), int(floor(pq.y / 0.6))), 1u));
+        if ((col & 0x10u) != 0u) {
+            // HM5c2b: Japan's box clad in hexagonal panels (its sheet's panel 4), 0.55 m across their flats
+            const float S = 0.55;
+            vec2 hp = pq / S, R = vec2(1.0, 1.7320508), Hh = 0.5 * R;
+            vec2 a = mod(hp, R) - Hh, b = mod(hp - Hh, R) - Hh;
+            vec2 gv = dot(a, a) < dot(b, b) ? a : b;
+            vec2 q = abs(gv);
+            float e = 0.5 - max(dot(q, vec2(0.5, 0.8660254)), q.x);
+            float joint = smoothstep(0.012, 0.03 + max(pf.x, pf.y) / S, e);
+            vec2 id = floor((hp - gv) * 2.0 + 0.5);
+            alb *= mix(0.62, 1.0, joint) * mix(0.86, 1.08, hf(hash2i(seed ^ 0xC0C1u, int(id.x), int(id.y)), 1u));
+        } else {
+            float joint = min(hStripe(pq.x / 1.2, 0.012, 0.988, pf.x / 1.2), hStripe(pq.y / 0.6, 0.02, 0.98, pf.y / 0.6));
+            alb *= mix(0.72, 1.0, joint) * mix(0.9, 1.06, hf(hash2i(seed ^ 0xC0C0u, int(floor(pq.x / 1.2)), int(floor(pq.y / 0.6))), 1u));
+        }
     } else if (fin == HW_BLOCK) {
         float bx = (uv.x + 0.2 * mod(floor(uv.y / 0.2), 2.0)) / 0.4, by = uv.y / 0.2;
         float joint = min(hStripe(bx, 0.03, 0.97, fw.x / 0.4), hStripe(by, 0.06, 0.94, fw.y / 0.2));

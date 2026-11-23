@@ -190,9 +190,42 @@ typedef struct HInsert {
                                    a container's (the metal palette) */
     uint8_t cage, screen;       /* bars over a glass box; a screen box's blocks (0 diamonds, 1 rings) */
     uint8_t took;               /* the balconies it took in (the house as built had them: home_lab's panel-1 survey) */
-    float   x0, x1, z, depth;   /* along the front; the wall's face; how far out */
-    float   r;                  /* a rounded bay's corners' radius */
+    uint8_t shape, cells;       /* HM5c2b: a frame's, fins', hexagons' or strip's form (HIS_*); a honeycomb's hexagons */
+    uint8_t raised;             /* ...and a one-storey house's (s0 0) standing on corbels 0.4 m over its floor, not the ground */
+    float   x0, x1, z, depth;   /* along the front; the wall's face; how far out (a member kind's: its front's) */
+    float   r;                  /* a rounded bay's corners' radius; a honeycomb's hexagons' (corner to centre) */
+    float   w, t, lean;         /* HM5c2b: its members' width and thickness (front to back), a raked one's lean */
 } HInsert;
+/* HM5c2b's forms. Frames: two legs and a head (corners chamfered or not), one leg raked, a diagonal a storey, two raked legs
+ * meeting over the middle. Fins: blades on the bay lines (raked in plan), a brise-soleil of thin upright fins standing off
+ * the wall in front of the windows (HIS_BLADE_SQ), an egg-crate grid, a louvred crown over the top storey. Hexagons: a honeycomb of hexagonal frames, a box clad in hexagonal panels. Screen strips: a lattice of
+ * breeze blocks or a star lattice (mashrabiya). */
+enum {
+    HIS_PORTAL = 0, HIS_CHAMFER, HIS_LEAN, HIS_ZIGZAG, HIS_APEX,
+    HIS_BLADE, HIS_BLADE_SQ, HIS_GRID, HIS_LOUVRE,
+    HIS_HONEYCOMB, HIS_HEXCLAD,
+    HIS_STRIP, HIS_STRIP_STAR,
+    HIS_COUNT
+};
+const char *home_insert_shape_name(int shape);
+/* An insertion's members (HM5c2b): convex prisms of concrete. HMB_ELEV: a polygon p in the front's elevation (x along it,
+ * y up) pushed out from the wall a0..a1 (out: towards the street, from the wall's face; a negative a0 runs into the wall);
+ * HMB_PLAN: a polygon in plan (x, out) pushed up a0..a1. A hexagon's glass (HMR_GLASS) is the window it frames. The rules,
+ * the shell, the dressing and the walker all read home_insert_members. */
+enum { HMB_ELEV = 0, HMB_PLAN };
+enum { HMR_LEG = 0, HMR_BEAM, HMR_SHELF, HMR_FIN, HMR_SLAT, HMR_RING, HMR_GLASS, HMR_POST, HMR_TIE };
+typedef struct HMember {
+    uint8_t axis, role, n;
+    float   p[8][2];
+    float   a0, a1;
+} HMember;
+#define HG_MAX_MEMBERS 64
+#define INS_OFF        0.40f   /* a member crossing windows stands this far off the wall at least (the shell's 0.35 m
+                                  "something in front" test: the window behind is still cut) */
+/* the kinds built of members */
+static inline int home_insert_membered(const HInsert *in) {
+    return in->kind == HI_FRAME || in->kind == HI_FINS || in->kind == HI_SCREEN || (in->kind == HI_HEX && in->shape != HIS_HEXCLAD);
+}
 #define HG_MAX_INS  24
 #define INS_PARTY   0.30f   /* kept off a party wall or a corner (the balconies' figure) */
 #define INS_STREET  0.80f   /* how far a hung one may reach over a street-line front's pavement */
@@ -200,7 +233,7 @@ typedef struct HInsert {
 const char *home_insert_name(int kind);
 const char *home_insert_face_name(int face);
 /* the kinds the steps so far build */
-static inline int home_insert_built(int kind) { return kind == HI_BOX || kind == HI_ROUND; }
+static inline int home_insert_built(int kind) { return kind <= HI_SCREEN; }   /* HM5c2a boxes, rounded bays; HM5c2b frames, hexagons, fins, strips */
 
 /* The yards by region (residential roadmap HM2b; the user, 2026-11-16): a megacity's houses have small,
  * mostly paved yards, somewhere between Tokyo-tight and British terraced, Europe on the larger side, and
@@ -257,6 +290,11 @@ void        home_insert_span(const HGraph *g, const HInsert *in, float *y0, floa
 int         home_insert_window(const HGraph *g, const HInsert *in, int k, float *sill, float *head);
 /* the hung insertion over unit u's front door, sheltering it as a canopy would, or -1 */
 int         home_door_insert(const HGraph *g, int u);
+/* HM5c2b: insertion in's members (in the row's frame: x along the front, y over the unit's floor's datum, out from in->z) */
+int         home_insert_members(const HGraph *g, const HInsert *in, HMember *out, int max);
+/* The front windows of unit u's slice of main mi as the shell cuts them (add_windows: a window a bay, sills and heads, a
+ * French window where a balcony is), each widened by the shell's 0.12 m margin: x0, x1, y0, y1. Returns the count. */
+int         home_front_windows(const HGraph *g, int mi, int u, float (*out)[4], int max);
 
 /* HM5e3: names (home_lab), and whether a boundary is built (its row's set drawn; walls, railings, and fences with a top:
  * the rest, hedges and the timber fences behind the houses, are HM7's) */

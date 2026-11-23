@@ -349,6 +349,39 @@ void m_r_breeze_diamond(Pm *pm) {
             if (L0) bx(pm, cx - 0.025f, cy - 0.025f, -t * 0.9f, cx + 0.025f, cy + 0.025f, t * 0.9f, 0.0f);   /* the boss */
         }
 }
+/* The star lattice (HM5c2b; the Georgian, Victorian and Middle Eastern sheets' mashrabiya): in each block an eight-pointed
+ * star of two squares, one turned 45 degrees, its corners tied to the block's, so the stars interlock across the panel. */
+void m_r_breeze_star(Pm *pm) {
+    quiet(pm);
+    pm_mat(pm, PMAT_HBREEZE);
+    const float B = HR_BREEZE, b = B / 3.0f, t = 0.5f * HR_BREEZE_T, w = 0.0175f;
+    for (int k = 0; k <= 3; ++k) {
+        const float y0 = k == 0 ? 0.0f : k == 3 ? B - 2.0f * w : b * (float)k - w, y1 = k == 0 ? 2.0f * w : k == 3 ? B : b * (float)k + w;
+        bx(pm, 0.0f, y0, -t, B, y1, t, 0.0f);
+    }
+    for (int k = 0; k <= 3; ++k) {
+        const float x0 = k == 0 ? 0.0f : k == 3 ? B - 2.0f * w : b * (float)k - w, x1 = k == 0 ? 2.0f * w : k == 3 ? B : b * (float)k + w;
+        for (int j = 0; j < 3; ++j) bx(pm, x0, b * (float)j + w, -t, x1, b * (float)(j + 1) - w, t, 0.0f);
+    }
+    if (L2) return;
+    const float up[3] = { 0.0f, 0.0f, 1.0f }, d = 2.0f * t * 0.9f;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            const float cx = b * ((float)i + 0.5f), cy = b * ((float)j + 0.5f), r = 0.5f * b - w, s = 0.62f * r;
+            const float D[4][2] = { { cx - r, cy }, { cx, cy + r }, { cx + r, cy }, { cx, cy - r } };
+            const float S[4][2] = { { cx - s, cy - s }, { cx - s, cy + s }, { cx + s, cy + s }, { cx + s, cy - s } };
+            for (int k = 0; k < 4; ++k) {
+                beam(pm, D[k][0], D[k][1], 0.0f, D[(k + 1) & 3][0], D[(k + 1) & 3][1], 0.0f, 0.022f, d, up);
+                if (!L0) continue;   /* past the near level the turned square alone (the diamond block's budget) */
+                beam(pm, S[k][0], S[k][1], 0.0f, S[(k + 1) & 3][0], S[(k + 1) & 3][1], 0.0f, 0.022f, d, up);
+                {
+                    /* the square's corners out to the block's */
+                    const float qx = S[k][0] + (S[k][0] > cx ? 1.0f : -1.0f) * (r - s), qy = S[k][1] + (S[k][1] > cy ? 1.0f : -1.0f) * (r - s);
+                    beam(pm, S[k][0], S[k][1], 0.0f, qx, qy, 0.0f, 0.02f, d, up);
+                }
+            }
+        }
+}
 void m_r_breeze_ring(Pm *pm) {
     quiet(pm);
     pm_mat(pm, PMAT_HBREEZE);
@@ -820,7 +853,7 @@ void hr_breeze(Pm *pm, int kind, float w, float h) {
     const float sx = w / ((float)nx * HR_BREEZE), sy = h / ((float)ny * HR_BREEZE);
     for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i)
-            place_at(pm, kind ? PMK_R_BREEZE_RING : PMK_R_BREEZE_DIAMOND, HR_BREEZE * sx * (float)i, HR_BREEZE * sy * (float)j, 0.0f, sx, sy, 1.0f);
+            place_at(pm, kind == 2 ? PMK_R_BREEZE_STAR : kind ? PMK_R_BREEZE_RING : PMK_R_BREEZE_DIAMOND, HR_BREEZE * sx * (float)i, HR_BREEZE * sy * (float)j, 0.0f, sx, sy, 1.0f);
 }
 
 void hr_rail(Pm *pm, float len) {

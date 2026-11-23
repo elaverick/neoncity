@@ -1151,10 +1151,20 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM5c2b** (angled frames and struts, hexagons, fins and grids, screen strips), then HM5c2c (stairs, stair towers,
-  unfinished storeys, roof rooms); HM5c2a (boxes, rounded bays, the join) built 2026-11-23. Then HM5b1 and HM5b2 (the other
-  regions' kit and grammar), HM5d (the existing styles to their sheets), HM6 (the rest of the lived-in layer and the lights).
-  Every step checked against its sheets' panels.
+- **Next: HM5c2c** (stairs, stair towers, unfinished storeys, roof rooms); HM5c2a (boxes, rounded bays, the join) pushed
+  2026-11-23 (6e73b64), HM5c2b (frames, hexagons, fins and grids, screen strips) built 2026-11-23. Then HM5b1 and HM5b2 (the
+  other regions' kit and grammar), HM5d (the existing styles to their sheets), HM6 (the rest of the lived-in layer and the
+  lights). Every step checked against its sheets' panels.
+- **HM5c2b's leftovers** (`docs/residential-target.md` "Frames, hexagons, fins and screen strips"):
+  - A bungalow's veranda or an inter-war semi's two-storey bay fills most of its front, and a South Asian yard (1-2.5 m) is
+    too shallow to stand a frame or strip in front of either: about half the units drawing them get one (home_lab's floor
+    for this step's kinds is 0.5, HM5c2a's 0.6). The bungalow sheet's car porch frame stands over the side drive, beside the
+    house: frames only stand on the front.
+  - A frame's raked legs are cut level at their ends, so they are a little thinner square to their run than its upright ones.
+  - The louvred crown's slats are flat planks, not tilted louvres.
+  - Frames, fins and strips are left off past 220 m (the honeycomb keeps its glass).
+  - The rules can't be broken on purpose for the window rule: the generator lays members on piers and floor lines, so no
+    `HInsert` edit puts one in front of a window; it is checked on every row built instead.
 - **The insertions' leftovers** (HM5c2a, `docs/residential-target.md` "Retrofit insertions"):
   - The Middle East's and the courtyard's screens are breeze blocks: their sheets' are timber mashrabiya (HM5b1's ornament,
     then swap the screen box's kit), and the courtyard's oriel sits on carved brackets.

@@ -789,6 +789,56 @@ are the densest; three runs each, the same build with insertions off): at an ins
 `build/home/hm5c2a/board_noon_a.jpg`, `board_noon_b.jpg`, `board_night_a.jpg`, `board_night_b.jpg` (17 styles: bungalow, block
 and colonial have no box or rounded bay to show until HM5c2b/c).
 
+### Frames, hexagons, fins and screen strips (HM5c2b)
+
+The second step's four kinds are all **members**: convex prisms of the insertion's cast concrete, either a polygon in the
+front's elevation pushed out from the wall (a frame's legs and beams, a hexagon's sides, a shelf, a strip's posts) or a
+polygon in plan pushed up (a fin). `home_insert_members` derives them from the `HInsert` (its kind, a form `HIS_*`, the
+members' width `w` and thickness `t`, a `lean`), and the rules, the shell, the dressing and the walker all read that one list.
+
+**The windows stay.** A member touching the wall stands only on the piers between windows or on the floor lines between a
+head and the next sill (`home_front_windows` lays the front's windows out as the shell cuts them, French windows where
+balconies are, with the shell's 0.12 m margin). A member crossing windows stands at least 0.4 m off the wall (`INS_OFF`, past
+the shell's 0.35 m "something stands in front" test), so the window behind is still cut, lit and seen through the gap; a
+porch's or bay's windows the same, from its face. Only the hexagons replace the windows they cover: their glass is the new
+window.
+
+| Kind | Forms (the sheets' panels) | Built |
+|---|---|---|
+| frame | **portal** (two legs, a head), **chamfer** (its top corners cut: the council estate's 5), **lean** (one leg raked, a trapezoid: link house 3, Middle East villa 6, Southern European villa 5), **zigzag** (a diagonal a storey, turn about: the brownstone's 3), **apex** (two raked legs meeting over the middle: the compound's 5) | its plane 0.85-1.2 m out, members 0.32-0.45 wide and 0.3-0.38 thick; tied back by shelves at its floor lines (ledges, planters trailing over them) and a slab at its head where they clear the windows; on the ground in the front yard, in front of a porch, veranda or bay in its way (the bungalow's car porch frame), or hung from the first floor on a shelf; a breeze screen in one storey's cell a time in three, downlights under its head |
+| fins | **blade** (raked in plan, a sawtooth: Georgian 3, townhouse 5): square on its pier out to 0.37 m, then raked 0.45-0.85 m in front of the windows to a tip 0.75-1.05 m out; with no pier (a narrow front) panels standing off the wall in front of the windows; **brise-soleil** (bungalow 6, Japan, the compound): thin upright fins a 0.4 m pitch standing off the wall between two cheeks; **grid** (Japan 2): blades and a shelf at each floor line, an egg-crate; **louvre** (Japan 5): slats over the top storey between two cheeks | over the whole front, half of it or a bay; blades may come within 0.05 m of a party wall (`FIN_PARTY`: thin, they pair up where both neighbours have them) |
+| hexagons | **honeycomb** (Georgian 6): one, two, three or five flat-topped hexagons over two or three storeys, each a ring of six members round a hexagonal pane (a side two share is one member), plants over some sills; **hex-clad** box (Japan 4): a concrete box whose panels' joints are hexagons (`HW_CONCRETE`'s colour bit 0x10 in `house.glsl`), placed as a box | hung from the first floor (the second on a tall house), 0.5-0.7 m deep |
+| screen strip | **strip**: a lattice one bay wide or 1.0-1.5 m, two to four storeys, between two posts and a head 0.62-0.75 m out, brackets back to the wall at the floor lines; the kit's breeze blocks, or the new **star lattice** (`PMK_R_BREEZE_STAR`: two squares a block, interlocking; the Georgian, Victorian, Middle Eastern and compound sheets' mashrabiya) | on the ground in the yard (in front of what is in its way) or hung from the first floor; the windows behind glow through it at night |
+
+A one-storey house with no yard to stand in (a street-line front, or a South Asian bungalow's veranda filling its front)
+takes its frame, brise-soleil or strip **raised**: on corbels 0.4 m over its floor (`HInsert.raised`), as a hung one. A hung
+one's foot clears a canopy or porch roof just under it (it is lifted 0.18 m over it).
+
+**The rules** (`member_fault`, in `home_check_inserts`): every member within the slice (0.3 m off a party wall, fins 0.05 m)
+and its reach (0.8 m over a street-line front's pavement); under the eaves; one on the ground in the front yard's margin, off
+the door's approach, the garden's paths, cars and tree places, and the boundaries; nothing in front of the wall under one (a
+porch, a bay, a canopy) and none within 0.4 m in front of a porch's or bay's face; no balcony in its way (those it meets are
+given up first: its shelves are the ledges now); none touching the wall in front of a window (but the hexagons); a hung
+frame, strip or fins tied back to the wall; 0.05 m from the unit's other insertion (the sheets set strips hard by boxes:
+Georgian 2, brownstone 5). The rule broken on purpose (`insert`) runs a box, a frame or a strip up to its party wall.
+
+**The shell** (`home_shell_ins.c`, `add_members`): a solid a member (`SK_INS`), its faces in the wall none, its upper faces
+copings; a hexagon's glass a pane on its front only (the rings bury its sides), lit as one room with its insertion. Past
+220 m only the honeycomb's glass: frames, fins and strips are under a pixel there. The walker keeps off members' feet.
+
+**Measured** (`home_lab`, 10,000 rows; 2026-11-23): 0 invalid, 0 not deterministic, 0 z-fighting in every archetype; the
+rule broken on purpose caught every time. Of the units drawing one of this step's kinds, the share that found a place:
+frames 0.57 (inter-war: bays, porches and stoops fill its fronts) to 1.00, hexagons 0.68 (Japan) and 0.76 (Georgian), fins
+0.54 (Victorian: its bays leave few piers) to 1.00 (townhouse), screen strips 0.50 (the South Asian bungalow, its veranda
+across the front) to 1.00; 4-12 members an insertion (the Georgian honeycomb most). Every form the table names was built.
+Against HM5c2a: the near shell +29 to +33 triangles (838 a detached house, budget 1,000; 680 a semi half and 591 a terrace
+unit, budget 700), the far shell unchanged (57, 54, 50; budget 60). In the game (Georgian, whose hexagons, fins and strips
+carry the most members; night, three runs each, the same build with members off): at an insertion 4.89 ms against 4.92,
+down the street at 30 m 4.23 against 4.17, over the roofs 5.15 against 5.06, from the air 8.48 against 8.46: **under
+0.1 ms** everywhere (budget +0.5 on the ground, +1.0 from the air). Boards `build/home/hm5c2b/board_noon_a.jpg`,
+`board_noon_b.jpg`, `board_night_a.jpg`, `board_night_b.jpg` (all 20 styles with a sheet; the villa (Southern Europe) and
+RCC found two views, not three).
+
 ## Massing and parts
 
 | Part | Size | Notes |

@@ -241,11 +241,55 @@ static void add_round(Ctx *C, const HInsert *in, int idx, double y0, double y1) 
     plan_solid(C, in, &P, CORNICE, top, y1, HF_COPING, HF_COPING, HF_WALL);
 }
 
+/* HM5c2b: a member kind's members (home_insert_members), each a convex solid of the insertion's concrete: its faces in the
+ * wall none, its upper faces copings; a hexagon's glass a pane on its front only (the rings bury its sides). Far, only the
+ * honeycomb's glass: the frames', fins' and strips' members are under a pixel there. */
+static void add_members(Ctx *C, const HInsert *in, int idx) {
+    const HGraph *g = C->g;
+    HMember M[HG_MAX_MEMBERS];
+    const int n = home_insert_members(g, in, M, HG_MAX_MEMBERS);
+    const double dy = C->dy ? C->dy[in->unit] : 0.0;
+    for (int k = 0; k < n; ++k) {
+        const HMember *e = &M[k];
+        const int glass = e->role == HMR_GLASS;
+        if (C->lod == HSH_FAR && !glass) continue;
+        Solid *s = hs_solid_new(C, in->unit, -1, 0);
+        s->kind = SK_INS;
+        s->wallFin = in->fin; s->wallCol = in->col; s->trimCol = (uint8_t)(hash_combine((uint32_t)in->unit, 0x7C0Eu + (uint32_t)idx) % 3u == 0u ? 0 : 4);
+        for (int i = 0; i < e->n; ++i) {
+            const int j = (i + 1) % e->n;
+            const double ex = e->p[j][0] - e->p[i][0], ey = e->p[j][1] - e->p[i][1], L = sqrt(ex * ex + ey * ey);
+            if (L < 1e-6) continue;
+            const double nx = ey / L, ny = -ex / L;   /* outward of an anticlockwise outline */
+            if (e->axis == HMB_ELEV) {
+                const int sunk = ny < -0.7 && e->p[i][1] <= 0.01f;   /* a leg's foot on the ground */
+                const int surf = glass || sunk ? NOFACE : ny > 0.7 ? HF_COPING : HF_WALL;
+                hs_plane(s, nx, ny, 0.0, e->p[i][0], e->p[i][1], in->z, surf);
+            } else {
+                /* plan: (x, out) to (x, z = in->z - out): the out axis turned over */
+                const int inwall = e->p[i][1] <= 0.0f && e->p[j][1] <= 0.0f;
+                hs_plane(s, nx, 0.0, -ny, e->p[i][0], 0.0, in->z - e->p[i][1], inwall ? NOFACE : HF_WALL);
+            }
+        }
+        if (e->axis == HMB_ELEV) {
+            hs_plane(s, 0.0, 0.0, -1.0, 0.0, 0.0, in->z - e->a1, glass ? HF_GLASS : HF_WALL);
+            hs_plane(s, 0.0, 0.0, 1.0, 0.0, 0.0, in->z - e->a0, e->a0 <= 0.0f ? NOFACE : HF_WALL);
+        } else {
+            hs_plane(s, 0.0, 1.0, 0.0, 0.0, e->a1, 0.0, HF_COPING);
+            hs_plane(s, 0.0, -1.0, 0.0, 0.0, e->a0, 0.0, e->a0 < 0.05f ? NOFACE : HF_WALL);
+        }
+        for (int i = 0; i < s->np; ++i) s->noWin[i] = 1;
+        if (glass) s->aux = shared_aux(idx, HG_PLAIN);
+        hs_lift(s, dy);
+    }
+}
+
 void hs_add_inserts(Ctx *C) {
     const HGraph *g = C->g;
     for (int i = 0; i < g->nins; ++i) {
         const HInsert *in = &g->ins[i];
         if (in->unit < 0 || in->unit >= g->nunit || !home_insert_built(in->kind)) continue;
+        if (home_insert_membered(in)) { add_members(C, in, i); continue; }
         float y0, y1;
         home_insert_span(g, in, &y0, &y1);
         if (C->lod == HSH_FAR) { add_far(C, in, i, y0, y1); continue; }

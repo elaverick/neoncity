@@ -411,7 +411,30 @@ int city_home_outlines(ChunkGen *g, int ri, double (*v)[4][2], int max, int walk
     /* HM5c2: insertions standing on the ground (in a bay's place) */
     for (int i = 0; i < G->nins && n < max; ++i) {
         const HInsert *in = &G->ins[i];
-        if (in->s0 == 0) n = outline_rect(G, in->x0, in->z - in->depth, in->x1, in->z, v, n, max);
+        if (!home_insert_membered(in)) {
+            if (in->s0 == 0) n = outline_rect(G, in->x0, in->z - in->depth, in->x1, in->z, v, n, max);
+            continue;
+        }
+        /* HM5c2b: a frame's legs, a fin's or a strip's posts where they meet the ground (their footprints' boxes) */
+        HMember M[HG_MAX_MEMBERS];
+        const int nm = home_insert_members(G, in, M, HG_MAX_MEMBERS);
+        for (int k = 0; k < nm && n < max; ++k) {
+            const HMember *e = &M[k];
+            float x0 = 1e9f, x1 = -1e9f, c0 = 1e9f, c1 = -1e9f;
+            for (int q = 0; q < e->n; ++q) {
+                x0 = fminf(x0, e->p[q][0]); x1 = fmaxf(x1, e->p[q][0]);
+                c0 = fminf(c0, e->p[q][1]); c1 = fmaxf(c1, e->p[q][1]);
+            }
+            const float ya = e->axis == HMB_ELEV ? c0 : e->a0, d0 = e->axis == HMB_ELEV ? e->a0 : c0, d1 = e->axis == HMB_ELEV ? e->a1 : c1;
+            if (ya > 0.3f) continue;
+            if (e->axis == HMB_ELEV && c1 - c0 > 0.6f) {
+                /* a raked leg: its foot only */
+                float fx0 = 1e9f, fx1 = -1e9f;
+                for (int q = 0; q < e->n; ++q) if (e->p[q][1] < c0 + 0.05f) { fx0 = fminf(fx0, e->p[q][0]); fx1 = fmaxf(fx1, e->p[q][0]); }
+                x0 = fx0; x1 = fx1;
+            }
+            n = outline_rect(G, x0, in->z - d1, x1, in->z - fmaxf(d0, 0.0f), v, n, max);
+        }
     }
     /* HM5e3: the boundaries built (walls, kerbs and plinths), their piers, the gates' leaves (shut), China's gatehouses'
      * piers, the gate kiosk */

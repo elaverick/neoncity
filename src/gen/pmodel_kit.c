@@ -1780,6 +1780,8 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_R_FENCE_STEEL] = { "r_fence_steel", m_r_fence_steel, { 220, 200, 90 }, 1 },
     [PMK_R_FENCE_MESH] = { "r_fence_mesh", m_r_fence_mesh, { 240, 180, 80 }, 1 },
     [PMK_R_GATE_PIERCED] = { "r_gate_pierced", m_r_gate_pierced, { 840, 580, 150 }, 1 },
+    /* HM5c2b */
+    [PMK_R_BREEZE_STAR] = { "r_breeze_star", m_r_breeze_star, { 1800, 700, 220 }, 1 },
 };
 
 int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CUP) || (id >= PMK_ICON_SKEWER && id <= PMK_ICON_FLAME); }

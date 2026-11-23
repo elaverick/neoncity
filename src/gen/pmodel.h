@@ -355,6 +355,8 @@ enum {
     PMK_R_AERIAL_YAGI, PMK_R_AERIAL_CROSS,
     /* HM5e3: boundaries (pmodel_retrofit.c) */
     PMK_R_FENCE_STEEL, PMK_R_FENCE_MESH, PMK_R_GATE_PIERCED,
+    /* HM5c2b: the screen strips' star lattice (pmodel_retrofit.c) */
+    PMK_R_BREEZE_STAR,
     PMK_COUNT
 };
 typedef struct PmModuleDef {

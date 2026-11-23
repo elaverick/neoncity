@@ -372,6 +372,9 @@ static int home_cams(int argc, char **argv) {
                     const int n = city_home_inserts(kx0 + i, kz0 + j, iv, 256);
                     for (int q = 0; q < n && shown < 3; ++q) {
                         const HomeInsertView *v = &iv[q];
+                        /* NC_INS_KINDS: a mask of the kinds (bits of HI_*) a milestone's captures look for (HM5c2b: 60) */
+                        const char *mk = getenv("NC_INS_KINDS");
+                        if (mk && !((unsigned)strtoul(mk, NULL, 0) >> v->kind & 1u)) continue;
                         const int key = v->kind * HIF_COUNT + v->face;
                         if (!pass && seen[key]) continue;
                         int dup = 0;
