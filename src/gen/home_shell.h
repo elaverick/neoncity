@@ -107,6 +107,7 @@ typedef struct HDressStats {
     int windows, doors, gutters, pipes, dormers, stacks;
     int retrofit;                  /* HM5c1: the retrofit kit's instances (of instances) */
     int balconies;                 /* HM5e2: balconies dressed */
+    int inserts;                   /* HM5c2: insertions dressed */
 } HDressStats;
 /* Where a dressing goes: a modelling builder (its instance list, or its mesh with the modules built in), the
  * row's frame to the mesh's (x scaled by sx: -1 for a mirrored row; the kit itself is never mirrored), each

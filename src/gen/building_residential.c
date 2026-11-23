@@ -1136,6 +1136,7 @@ void home_build_at(const HomePlot *row, int n, float affluence, int first, HGrap
         home_balconies(g, level, log);
         lay_site(&c);
         home_bounds(g, level, log);   /* HM5e3 */
+        home_inserts(g, level, log);  /* HM5c2 */
         if (home_validate(g, log)) {
             g->level = (uint8_t)level;
             g->attempts = level + 1;
@@ -1149,6 +1150,7 @@ void home_build_at(const HomePlot *row, int n, float affluence, int first, HGrap
     home_repair_all(g, 3, log);
     lay_site(&c);
     home_bounds(g, 3, log);
+    home_inserts(g, 3, log);
     g->attempts = 4;
     g->level = 3;
     if (home_validate(g, log)) { blog_printf(log, " accepted the simplest: %d volumes\n", g->nvol); return; }

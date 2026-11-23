@@ -170,6 +170,38 @@ typedef struct HBalcony {
 static inline int home_balcony_carved(int kind) { return kind == HBK_LOGGIA || kind == HBK_VERANDA; }
 const char *home_balcony_name(int kind);
 
+/* Retrofit insertions (HM5c2; the sheets' panels 2-6, docs/residential-target.md "Retrofit insertions"): what a unit's
+ * owner has added to the house since it was built, joined to it by the shell's CSG. Three units in five are retrofitted
+ * (the user, 2026-11-20), one kind or two, each owner drawing from the style's final table (HGraph.insPlan); the steps
+ * build their kinds in turn (HM5c2a boxes and rounded bays; HM5c2b frames, hexagons, fins and screen strips; HM5c2c
+ * stairs, stair towers, unfinished storeys and roof rooms), and a unit whose kind is not built yet stays plain (the user's
+ * choice, 2026-11-23). An insertion stands on its unit's slice of the main's street front, across whole bays of its
+ * window rhythm: hung from the first floor up (s0 >= 1), or on the ground in the place of the unit's bay (s0 0). */
+enum { HI_BOX = 0, HI_ROUND, HI_FRAME, HI_HEX, HI_FINS, HI_SCREEN, HI_STAIRS, HI_TOWER, HI_UNFINISHED, HI_ROOFROOM, HI_COUNT };
+/* a box's make: cast concrete with windows, steel and glass (barred over as a cage in South and South-East Asia and
+ * China), a breeze-block screen in front of glass, a shipping container's corrugated steel; a rounded bay is concrete or
+ * render with ribbon glass between its bands */
+enum { HIF_CONCRETE = 0, HIF_GLASS, HIF_SCREEN, HIF_CONTAINER, HIF_COUNT };
+typedef struct HInsert {
+    int8_t  unit, vol;          /* its unit; the main whose front it stands on */
+    uint8_t kind, face;         /* HI_*, HIF_* */
+    uint8_t s0, s1;             /* the storeys it spans (s0 0: on the ground, where the unit's bay stood) */
+    uint8_t fin, col;           /* its walls' finish (house_surf.h HW_*) and colour; a glass box's steel (a trim colour),
+                                   a container's (the metal palette) */
+    uint8_t cage, screen;       /* bars over a glass box; a screen box's blocks (0 diamonds, 1 rings) */
+    uint8_t took;               /* the balconies it took in (the house as built had them: home_lab's panel-1 survey) */
+    float   x0, x1, z, depth;   /* along the front; the wall's face; how far out */
+    float   r;                  /* a rounded bay's corners' radius */
+} HInsert;
+#define HG_MAX_INS  24
+#define INS_PARTY   0.30f   /* kept off a party wall or a corner (the balconies' figure) */
+#define INS_STREET  0.80f   /* how far a hung one may reach over a street-line front's pavement */
+#define INS_SLAB    0.22f   /* a hung one's floor slab under its lowest storey's floor (over every recess's ceiling, 0.25-0.35 m under it) */
+const char *home_insert_name(int kind);
+const char *home_insert_face_name(int face);
+/* the kinds the steps so far build */
+static inline int home_insert_built(int kind) { return kind == HI_BOX || kind == HI_ROUND; }
+
 /* The yards by region (residential roadmap HM2b; the user, 2026-11-16): a megacity's houses have small,
  * mostly paved yards, somewhere between Tokyo-tight and British terraced, Europe on the larger side, and
  * no lawns anywhere in a city. Section 13.5's garden and clearance figures are loosened to these, a stated
@@ -204,7 +236,7 @@ typedef struct HGraph {
     float    u0;                       /* the row's first plot's u0: x = u - u0 */
     double   ox, oz;                   /* the row's frame (its plots') */
     float    tx, tz, nx, nz;
-    int      nunit, nvol, ndoor, nparty, nchim, nbound, ngate, nsite, nbalc;
+    int      nunit, nvol, ndoor, nparty, nchim, nbound, ngate, nsite, nbalc, nins;
     HUnit    unit[HG_MAX_UNITS];
     HVol     vol[HG_MAX_VOL];
     HDoor    door[HG_MAX_DOOR];
@@ -215,7 +247,16 @@ typedef struct HGraph {
     HSite    site[HG_MAX_SITE];
     HBalcony balc[HG_MAX_BALC];
     HBoundSet bset;                    /* HM5e3: the row's boundaries' set */
+    HInsert  ins[HG_MAX_INS];          /* HM5c2: the insertions built */
+    uint16_t insPlan[HG_MAX_UNITS];    /* ...and every unit's owner's draw, built or not (bits of HI_*) */
 } HGraph;
+
+/* HM5c2: insertion in's underside and top (y in the graph's frame, the unit's floor at the plinth); a storey's sill and head
+ * in it at storey k (0: no room for a window there) */
+void        home_insert_span(const HGraph *g, const HInsert *in, float *y0, float *y1);
+int         home_insert_window(const HGraph *g, const HInsert *in, int k, float *sill, float *head);
+/* the hung insertion over unit u's front door, sheltering it as a canopy would, or -1 */
+int         home_door_insert(const HGraph *g, int u);
 
 /* HM5e3: names (home_lab), and whether a boundary is built (its row's set drawn; walls, railings, and fences with a top:
  * the rest, hedges and the timber fences behind the houses, are HM7's) */

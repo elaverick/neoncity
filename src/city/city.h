@@ -346,6 +346,10 @@ void     city_home_row(const HomePlot *row, int n, struct HGraph *g);
  * middles lie in the chunk, streamed within HOME_NEAR_DISTANCE; their far shells, in the base layer, give way
  * while it is drawn (CHUNK_HOMES_NEAR_BIT, src/core/house_surf.h). */
 void     city_build_homes(int cx, int cz, Mesh *m);
+/* HM5c2: the retrofit insertions of the houses whose rows lie in the chunk (city_test's capture views): each one's front's
+ * middle (world), the way it faces, its kind, make, size and style. Returns how many (at most max). */
+typedef struct HomeInsertView { double x, y, z, nx, nz; float w, h; uint8_t kind, face, style, ground; } HomeInsertView;
+int      city_home_inserts(int cx, int cz, HomeInsertView *out, int max);
 /* The houses drawn (NeonCity --homes): none, their far shells alone, near shells too dressed in the character
  * kit (the default; HM5: the kit's instances ride in the near layer's Mesh.kit), or near shells bare (HM3's look,
  * for comparing). For measuring their cost; before any chunk. */

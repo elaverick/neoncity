@@ -15,6 +15,10 @@ const vec3 H_SIDING[12] = vec3[](vec3(0.66, 0.66, 0.63), vec3(0.62, 0.57, 0.45),
 const vec3 H_STONE[4] = vec3[](vec3(0.52, 0.47, 0.37), vec3(0.48, 0.36, 0.24), vec3(0.24, 0.15, 0.10), vec3(0.34, 0.34, 0.33));
 const vec3 H_BLOCK[6] = vec3[](vec3(0.36, 0.35, 0.33), vec3(0.24, 0.24, 0.23), vec3(0.56, 0.55, 0.51), vec3(0.58, 0.44, 0.42),
                                vec3(0.42, 0.50, 0.56), vec3(0.55, 0.46, 0.34));
+// HM5c2: the retrofits' cast concrete (boxes, rounded bays): pale cream, warm and cool greys, buff, a dark grey, and the
+// painted ones the South Asian and Latin American sheets show (a faded pink, mint, ochre)
+const vec3 H_CONCRETE[8] = vec3[](vec3(0.60, 0.58, 0.53), vec3(0.52, 0.50, 0.46), vec3(0.47, 0.48, 0.48), vec3(0.60, 0.54, 0.44),
+                                  vec3(0.34, 0.34, 0.33), vec3(0.60, 0.42, 0.40), vec3(0.46, 0.56, 0.48), vec3(0.62, 0.49, 0.28));
 const vec3 H_CLAY[4] = vec3[](vec3(0.30, 0.10, 0.05), vec3(0.40, 0.17, 0.08), vec3(0.22, 0.11, 0.07), vec3(0.16, 0.09, 0.07));
 const vec3 H_SLATE[3] = vec3[](vec3(0.065, 0.075, 0.085), vec3(0.055, 0.055, 0.06), vec3(0.085, 0.075, 0.085));
 const vec3 H_CONC[4] = vec3[](vec3(0.18, 0.12, 0.09), vec3(0.18, 0.18, 0.18), vec3(0.09, 0.09, 0.09), vec3(0.25, 0.11, 0.07));
@@ -40,6 +44,7 @@ vec3 houseWallColour(uint fin, uint c) {
     if (fin == HW_RENDER) return houseSoot(H_RENDER[c & 15u]);
     if (fin == HW_SIDING) return houseSoot(H_SIDING[c % 12u]);
     if (fin == HW_STONE)  return H_STONE[c & 3u];
+    if (fin == HW_CONCRETE) return houseSoot(H_CONCRETE[c & 7u]);
     return houseSoot(H_BLOCK[c % 6u]);
 }
 vec3 houseRoofColour(uint fin, uint c) {

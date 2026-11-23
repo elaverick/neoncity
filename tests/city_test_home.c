@@ -359,6 +359,40 @@ static int home_cams(int argc, char **argv) {
             }
         if (!shown) printf("view home_vine: no vine with a line of sight near the slice\n");
     }
+    {   /* HM5c2: up to three insertions near the slice, each kind and make once if it can (home_ins0..2: not counted), from
+         * far enough off to take in the whole of it and the house round it */
+        const int kx0 = (int)floor(tx / CHUNK_SIZE), kz0 = (int)floor(tz / CHUNK_SIZE);
+        static HomeInsertView iv[256];
+        int seen[HI_COUNT * HIF_COUNT] = { 0 }, shown = 0;
+        double at[3][2];
+        /* pass 0 a kind and make once from across the front; pass 1 any not shown yet; pass 2 any from 7 m (a narrow street) */
+        for (int pass = 0; pass < 3 && shown < 3; ++pass)
+            for (int j = -1; j <= 1 && shown < 3; ++j)
+                for (int i = -1; i <= 1 && shown < 3; ++i) {
+                    const int n = city_home_inserts(kx0 + i, kz0 + j, iv, 256);
+                    for (int q = 0; q < n && shown < 3; ++q) {
+                        const HomeInsertView *v = &iv[q];
+                        const int key = v->kind * HIF_COUNT + v->face;
+                        if (!pass && seen[key]) continue;
+                        int dup = 0;
+                        for (int k = 0; k < shown; ++k) dup |= hypot(at[k][0] - v->x, at[k][1] - v->z) < 1.0;
+                        if (dup) continue;
+                        char name[32];
+                        snprintf(name, sizeof(name), "home_ins%d", shown);
+                        /* from across the front, the eye raised towards its middle (at most 4.5 m), so a hung one is seen whole */
+                        const double gy = city_ground_y(v->x, v->z);
+                        const double d = pass < 2 ? fmax(10.0, 2.2 * fmax(v->w, v->h)) : 7.0;
+                        const double lift = fmax(0.0, fmin(pass < 2 ? 4.5 : 2.5, v->y - (gy + SIDEWALK_HEIGHT + 1.68) - 1.0));
+                        if (sl_view(name, v->x, v->y, v->z, v->nx, v->nz, d, gy, lift, 1)) {
+                            printf("  (%s %s, %.1f x %.1f m%s)\n", home_insert_face_name(v->face), home_insert_name(v->kind), v->w, v->h, v->ground ? ", on the ground" : "");
+                            seen[key]++;
+                            at[shown][0] = v->x; at[shown][1] = v->z;
+                            shown++;
+                        }
+                    }
+                }
+        if (!shown) printf("view home_ins: no insertion with a line of sight near the slice\n");
+    }
     CHECK(views == 6, "only %d of the 6 views have a line of sight", views);
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }
     printf("ok\n");

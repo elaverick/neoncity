@@ -39,7 +39,8 @@
 #define HW_SIDING    2    /* painted timber or fibre-cement boards */
 #define HW_STONE     3    /* ashlar, brownstone */
 #define HW_BLOCK     4    /* concrete block, bare or painted */
-#define HW_COUNT     5
+#define HW_CONCRETE  5    /* HM5c2: cast and precast concrete, its panels' joints (the retrofits' boxes and bays) */
+#define HW_COUNT     6
 
 /* params w of a brick wall, reveal, stack or coping: old stock brick, sooted (assets/materials/house_brick.json),
  * the styles built before the war; without it, facade_brick's wire-cut. The palette entry is the low three bits. */
@@ -76,6 +77,10 @@
 #define HOUSE_AUX_PATTERN   20            /* 4 bits */
 #define HOUSE_AUX_FRAMED    0x01000000u   /* HM5: the character kit's frame stands in the window (its bars painted only
                                              past the kit's reach) */
+#define HOUSE_AUX_SHARED    0x02000000u   /* HM5c2: glass on an insertion's faces (a rounded bay's facets, a glass box's
+                                             sides): every pane of one insertion's storey shares its key (lit, its blind),
+                                             from its foot's height and the insertion (4 bits): */
+#define HOUSE_AUX_INS       26
 
 /* Glazing (HOUSE_AUX_PATTERN of HF_GLASS) */
 #define HG_PLAIN     0    /* one pane */
@@ -83,6 +88,7 @@
 #define HG_GEORGIAN  2    /* six over six */
 #define HG_CASEMENT  3    /* two casements and a top light */
 #define HG_GRID      4    /* a grid of small panes (craftsman, Japanese) */
+#define HG_CURTAIN   5    /* HM5c2: a steel-framed glazed wall's panes, mullions about a metre apart */
 
 /* The character kit (HM4: src/gen/pmodel_house.c, materials PMAT_HTRIM on; shaders/city/house.glsl shadeHouseKit):
  * what a house kit instance carries of its unit's finishes, so its parts take the shell's colours. In the

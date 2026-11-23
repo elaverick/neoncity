@@ -22,6 +22,7 @@
 #include "home.h"
 #include "home_shell.h"
 #include "pmodel_house.h"
+int home_retrofit_style(int style);   /* home_retrofit.c: the styles with a concept sheet */
 #include "hash.h"
 #include "mathlib.h"
 #include <time.h>
@@ -305,10 +306,10 @@ static void survey(const HGraph *g, Stats *st) {
 }
 
 /* The rules bite: a valid house broken one rule at a time must be rejected with that rule's tag. */
-enum { BITE_COUNT = 17 };
+enum { BITE_COUNT = 18 };
 static const char *const BITE_TAG[BITE_COUNT] = { "chimney mid-slope", "front garden", "rear garden", "span side", "overlap", "path crosses",
                                                   "side clearance", "door width", "pitch", "party wall", "boundary", "porch", "recess", "shop",
-                                                  "balcony", "gate", "kiosk" };
+                                                  "balcony", "gate", "kiosk", "insert" };
 static int find_main(const HGraph *g) {
     for (int i = 0; i < g->nvol; ++i)
         if (g->vol[i].role <= HV_ROW) return i;
@@ -357,10 +358,15 @@ static int bite(HGraph *g, int k) {
     case 16: for (int i = 0; i < g->nsite; ++i)   /* a gate kiosk run back into the house (HM5e3) */
                  if (g->site[i].kind == HE_KIOSK) { g->site[i].z1 = m->z0 + 0.5f; return 1; }
              return 0;
+    case 17: if (!g->nins) return 0;   /* an insertion run up to its party wall (HM5c2) */
+             { float s0, bw; const int nb = home_front_bays(g, g->ins[0].vol, g->ins[0].unit, &s0, &bw); if (nb <= 0) return 0;
+               g->ins[0].x1 = s0 + bw * (float)nb; }
+             return 1;
     case 13: for (int k = 0; k < g->nunit; ++k)   /* a shop front over its door (HM5e1) */
                  if (g->unit[k].door >= 0) { const HDoor *d = &g->door[g->unit[k].door]; g->unit[k].shopX0 = d->x - 1.0f; g->unit[k].shopX1 = d->x + 1.0f; return 1; }
              return 0;
-    default: for (int i = 0; i < g->nvol; ++i)
+    default: if (home_door_insert(g, 0) >= 0) return 0;   /* a box over the door shelters it too (HM5c2) */
+             for (int i = 0; i < g->nvol; ++i)
                  if (g->vol[i].role == HV_PORCH && g->vol[i].unit == 0) { g->vol[i].x0 = g->vol[i].x1 - 0.3f; return 1; }
              return 0;
     }
@@ -413,6 +419,7 @@ static void survey_balc(const HGraph *g) {
     for (int u = 0; u < g->nunit; ++u) {
         int any = 0;
         for (int i = 0; i < g->nbalc; ++i) any |= g->balc[i].unit == u;
+        for (int i = 0; i < g->nins; ++i) any |= g->ins[i].unit == u && g->ins[i].took;   /* HM5c2: built with them, taken in since */
         b->with += any;
     }
     for (int i = 0; i < g->nbalc; ++i) { b->n++; b->kind[g->balc[i].kind % HBK_COUNT]++; b->storeys += g->balc[i].storey; }
@@ -550,6 +557,66 @@ static int bound_check(void) {
         }
     }
     printf("the boundaries: %d short of their sheets\n", failures);
+    return failures;
+}
+
+/* The insertions by style (HM5c2; the plan's "HM5c2" survey of panels 2-6): the units retrofitted (drawn, built or not) and
+ * the kinds drawn; the boxes and rounded bays built (HM5c2a) and their makes, those on the ground in a bay's place, storeys
+ * a one spans. Checked: three in five retrofitted on every style with a sheet, none on the rest; most of the boxes and
+ * rounded bays drawn find a place; a style's boxes mostly of its table's heaviest make. */
+typedef struct Ins { long units, planned, kind[HI_COUNT], wantA, gotA, built[HI_COUNT], face[HIF_COUNT], ground, storeys, n; } Ins;
+static Ins g_ins[HS_COUNT];
+static void survey_ins(const HGraph *g) {
+    if (g->empty) return;
+    Ins *b = &g_ins[g->style];
+    b->units += g->nunit;
+    for (int u = 0; u < g->nunit; ++u) {
+        const unsigned p = g->insPlan[u];
+        b->planned += p != 0;
+        for (int k = 0; k < HI_COUNT; ++k) b->kind[k] += p >> k & 1u;
+        if (!(p & (1u << HI_BOX | 1u << HI_ROUND))) continue;
+        b->wantA++;
+        int got = 0;
+        for (int i = 0; i < g->nins; ++i) got |= g->ins[i].unit == u;
+        b->gotA += got;
+    }
+    for (int i = 0; i < g->nins; ++i) {
+        const HInsert *in = &g->ins[i];
+        b->n++;
+        b->built[in->kind % HI_COUNT]++;
+        if (in->kind == HI_BOX) b->face[in->face % HIF_COUNT]++;
+        b->ground += in->s0 == 0;
+        b->storeys += in->s1 - in->s0 + 1;
+    }
+}
+static int ins_check(void) {
+    int failures = 0;
+    printf("\nthe insertions by style (HM5c2, against the sheets' panels 2-6): retrofitted (drawn), kinds drawn a retrofitted unit;\n"
+           "boxes and rounded bays (HM5c2a) found a place, built a unit, boxes' makes, on the ground, storeys\n");
+    printf("  %-11s %6s %5s %5s %5s %5s %5s %5s %5s %5s %5s %5s %5s | %5s %5s %5s %5s %5s %5s %5s %5s %5s\n", "style", "units", "retro", "box", "round", "frame",
+           "hex", "fins", "scrn", "stair", "tower", "unfin", "room", "found", "boxes", "round", "conc", "glass", "scrn", "cont", "groun", "strys");
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Ins *b = &g_ins[st];
+        if (!b->units) continue;
+        const double U = (double)b->units, R = b->planned ? (double)b->planned : 1.0, N = b->n ? (double)b->n : 1.0;
+        const double B = b->built[HI_BOX] ? (double)b->built[HI_BOX] : 1.0;
+        printf("  %-11s %6ld %5.2f", home_style_name(st), b->units, b->planned / U);
+        for (int k = 0; k < HI_COUNT; ++k) printf(" %5.2f", b->kind[k] / R);
+        printf(" | %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f\n", b->wantA ? (double)b->gotA / b->wantA : 0.0, b->built[HI_BOX] / U, b->built[HI_ROUND] / U,
+               b->face[HIF_CONCRETE] / B, b->face[HIF_GLASS] / B, b->face[HIF_SCREEN] / B, b->face[HIF_CONTAINER] / B, b->ground / N, b->storeys / N);
+    }
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Ins *b = &g_ins[st];
+        if (b->units < 200) continue;
+        const double U = (double)b->units;
+        if (!home_retrofit_style(st)) {
+            if (b->planned || b->n) { printf("FAIL: %s has insertions without a sheet\n", home_style_name(st)); failures++; }
+            continue;
+        }
+        if (b->planned / U < 0.5 || b->planned / U > 0.7) { printf("FAIL: %s: %.0f%% of units retrofitted (three in five)\n", home_style_name(st), 100.0 * b->planned / U); failures++; }
+        if (b->wantA >= 50 && b->gotA < 0.6 * b->wantA) { printf("FAIL: %s: %ld of %ld units drawing a box or rounded bay got one\n", home_style_name(st), b->gotA, b->wantA); failures++; }
+    }
+    printf("the insertions: %d short of their sheets\n", failures);
     return failures;
 }
 
@@ -724,7 +791,8 @@ static void face_colour(const HShellFace *f, float c[3]) {
         memcpy(c, k, sizeof(float) * 3);
         return;
     }
-    static const float WALL[HW_COUNT][3] = { { 0.62f, 0.30f, 0.22f }, { 0.86f, 0.82f, 0.72f }, { 0.68f, 0.76f, 0.80f }, { 0.78f, 0.70f, 0.56f }, { 0.60f, 0.60f, 0.58f } };
+    static const float WALL[HW_COUNT][3] = { { 0.62f, 0.30f, 0.22f }, { 0.86f, 0.82f, 0.72f }, { 0.68f, 0.76f, 0.80f }, { 0.78f, 0.70f, 0.56f }, { 0.60f, 0.60f, 0.58f },
+                                             { 0.74f, 0.72f, 0.66f } };
     static const float ROOF[HRM_COUNT][3] = { { 0.62f, 0.26f, 0.16f }, { 0.26f, 0.28f, 0.32f }, { 0.42f, 0.34f, 0.30f }, { 0.30f, 0.30f, 0.30f }, { 0.55f, 0.58f, 0.60f },
                                               { 0.75f, 0.36f, 0.20f }, { 0.22f, 0.26f, 0.32f }, { 0.20f, 0.20f, 0.20f }, { 0.50f, 0.50f, 0.48f } };
     const float *s;
@@ -1239,6 +1307,7 @@ int main(int argc, char **argv) {
             survey_body(g);
             survey_balc(g);
             survey_bound(g);
+            survey_ins(g);
             if (s == verbose) printf("--- %s seed %d ---\n%s", ARCH[a], s, buf);
             if (g->empty) {
                 if (shown++ < 3) printf("FAIL: %s seed %d (%s) left no house\n%s", ARCH[a], s, home_style_name(style), buf);
@@ -1359,7 +1428,8 @@ int main(int argc, char **argv) {
             { "georgian", "h_win_georgian", 0.75f }, { "georgian", "h_keystone", 0.8f }, { "georgian", "h_doorcase", 0.3f },
             { "georgian", "h_doorcase_ped", 0.2f }, { "georgian", "h_string_course", 0.8f }, { "georgian", "h_quoin", 0.15f },
             { "interwar", "h_win_casement", 0.6f }, { "interwar", "h_barge_scallop", 0.25f }, { "interwar", "h_timber", 0.12f },
-            { "interwar", "h_hung_tiles", 0.3f }, { "interwar", "h_bay_post", 0.5f }, { "interwar", "h_soldier", 0.3f },
+            /* (HM5c2: panels 2, 4 and 6 rebuild the inter-war bays, about a quarter of the units' since, so fewer keep the posts) */
+            { "interwar", "h_hung_tiles", 0.3f }, { "interwar", "h_bay_post", 0.4f }, { "interwar", "h_soldier", 0.3f },
             { "postwar", "h_lintel_concrete", 0.8f }, { "postwar", "h_win_casement", 0.35f }, { "postwar", "h_canopy_flat", 0.3f },
             { "craftsman", "h_rafter_tail", 0.9f }, { "craftsman", "h_knee_brace", 0.5f }, { "craftsman", "h_post_craft", 0.8f },
             { "craftsman", "h_win_grid", 0.75f }, { "craftsman", "h_casing", 0.9f }, { "craftsman", "h_door_craft", 0.6f },
@@ -1394,6 +1464,7 @@ int main(int argc, char **argv) {
     failures += body_check();
     failures += balc_check();
     failures += bound_check();
+    failures += ins_check();
     if (g_coverage) {
         printf("\nthe kit's coverage by style: the share of a style's units with at least one of each module (over every archetype)\n");
         for (int st = 0; st < HS_COUNT; ++st) {

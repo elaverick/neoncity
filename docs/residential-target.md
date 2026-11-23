@@ -694,6 +694,101 @@ of its sheet, or one without a sheet or on the street line that builds any.
 **The walker** collides with the walls, piers, shut gates, gatehouse piers and kiosks (`city_home_outlines`, now up to
 256 outlines a row), and the grass keeps off them.
 
+## Retrofit insertions (HM5c2)
+
+Panels 2-6 of every sheet are the same house since its owners rebuilt bits of it: boxes cantilevered off the front, bays
+rebuilt rounded, angled frames, hexagons, fins, screens, stairs, towers, unfinished storeys, rooms on the roof. HM5c2 builds
+them in three steps (the user's split, 2026-11-23): **HM5c2a** boxes and rounded bays and how an insertion joins its house;
+HM5c2b frames, hexagons, fins and grids, tall screen strips; HM5c2c stairs, stair towers, unfinished storeys, roof rooms. The
+plan's "HM5c2" section holds the survey of each sheet's panels and the table below comes from it.
+
+**The draw** (`src/gen/home_insert.c`, `home_inserts`, after the boundaries: everything else of the house is final). Three
+units in five are retrofitted (the user, 2026-11-20), each owner drawing one kind (seven in ten) or two from the style's
+table, among the kinds the unit's body can take at all (a box needs an upper storey or a bay to replace, an unfinished storey
+or a roof room a flat roof, a stair tower a front yard). Every draw is kept in `HGraph.insPlan`, built or not: the user chose
+the final table from the start, so a unit whose kind is a later step's stays plain until then, and each board shows its
+kinds at their final density. The draws are hashes of each unit's own seed, so no other part of a house moved, and HM5c2b/c
+add builders without moving HM5c2a's boxes. The styles without a sheet have none.
+
+| Style | Kinds drawn (weights) | Boxes' makes |
+|---|---|---|
+| victorian | box 0.45, round 0.25, screen 0.25, fins 0.05 | glass 0.6, concrete 0.25, screen 0.15 |
+| georgian | box 0.25, fins 0.2, hex, tower, roof room 0.15, screen 0.1 | glass 0.85 |
+| interwar | round 0.4, box 0.25, screen 0.2, frame 0.15 | glass 0.7 |
+| postwar | box 0.5, frame 0.35, screen 0.15 | concrete 0.6 |
+| rowhouse | box 0.35, round 0.2, frame 0.2, tower 0.15, screen 0.1 | glass 0.75 |
+| villa (SEU) | box 0.3, round 0.25, roof room 0.2, frame 0.15, stairs 0.1 | screen 0.5, concrete 0.4 |
+| townhouse | box 0.6, round 0.15, fins 0.15, screen 0.1 | concrete, screen 0.45 each |
+| japan | box 0.45, fins 0.35, hex 0.2 | concrete 0.5, container 0.4 |
+| china | box 0.7, screen 0.2, frame 0.1 | concrete 0.4, glass (caged) 0.3, screen 0.3 |
+| korea | box 0.35, round 0.25, stairs 0.2, roof room, screen 0.1 | concrete 0.5, screen 0.4 |
+| shophouse | box 0.45, round, screen 0.2, stairs 0.15 | screen 0.4, concrete, glass (caged) 0.3 |
+| linkhouse | box 0.55, frame 0.25, round 0.2 | screen 0.6, glass (caged) 0.25 |
+| rcc | box 0.4, stairs 0.2, round, unfinished 0.15, screen 0.1 | screen 0.45, glass (caged) 0.35 |
+| bungalow | frame 0.3, screen, roof room 0.25, fins 0.2 | (one storey: no boxes) |
+| villa (MENA) | box 0.45, frame 0.25, round, screen 0.15 | screen 0.7 |
+| courtyard | box 0.6, frame 0.25, roof room 0.15 | screen 0.8 |
+| block | unfinished 0.8, screen 0.2 | |
+| walled | box 0.35, round 0.25, frame 0.2, fins, screen 0.1 | screen 0.6 |
+| selfbuilt | box 0.3, frame 0.25, stairs 0.2, round, roof room 0.1, unfinished 0.05 | concrete 0.4, screen 0.35, container 0.25 |
+| colonial | box, frame 0.25, screen 0.2, stairs, roof room 0.15 | concrete, screen 0.5 |
+
+**Where a box or a rounded bay goes** (HM5c2a). On its unit's slice of the main's street front, across one or two whole bays of
+the front's window rhythm (`home_front_bays`, as the balconies), so the windows beside it keep their places. Where the unit
+has a bay (Victorian, inter-war, brownstone), a rounded bay most times (a glass or concrete box often) is built **in the bay's
+place**, on the ground: the bay is gone, the new front up to 0.7 m wider each side (never over the door) and 0.2-0.5 m deeper,
+within the front yard's margin, rising a storey over the old bay a time in three. Otherwise it hangs from the first floor (the
+second, a time in four, on a taller house), one storey or two (a glass box three), 0.8-1.6 m out; a container one storey. Bays
+without a balcony are tried first, the nearest to the drawn ones, then fewer storeys; a balcony is taken in only where no free
+bay will do.
+
+**The rules** (`home_check_inserts`, in `home_validate`; `home_lab` breaks one on purpose, `insert`): on its unit's slice,
+0.3 m off a party wall or a corner (`INS_PARTY`); out over its plot to 0.3 m of the boundary, or at most 0.8 m over a
+street-line front's pavement (`INS_STREET`, the balconies' figure); hung from a storey its unit has, its top under the eaves'
+overhang, slab and gutter on a pitched roof, at the deck of a flat one, under a balcony over it (and that balcony's consoles);
+its top storey with room for a window; nothing rising under it in front of the wall (a porch, a bay, a canopy) but a flat porch
+roof it rests on (the walled compound's double veranda); on the ground only in its yard's projection margin and off the door,
+the path, the drive, cars and the boundaries; no balcony of its unit on its storeys, no glazed balcony's cap under it; the unit's
+door still sheltered; a unit's two insertions apart. **What it displaces**, each logged (`repair insert:`): the bay it replaces;
+a door canopy under a box at the first floor that covers the door (its soffit is the door's shelter: the door rule accepts a box
+as it accepts a balcony, `home_door_insert`); the balconies on its storeys (taken in: `HInsert.took`); a tree's place under a
+grounded one.
+
+**How it joins the house** (`src/gen/home_shell_ins.c`). Every insertion is convex solids (`SK_INS`) added to the shell before
+its windows are cut, so `add_windows`' "something stands in front" test sees them and **no window is cut behind one**; its back
+runs 0.05 m into the wall, and the CSG removes the wall behind it, as a balcony's slab joins. Its own windows are openings carved
+into it, their reveals its finish, their frames modern dark paint. A hung one's floor slab is 0.22 m under its storey's floor
+(`INS_SLAB`: over every recess's ceiling, which sits 0.25-0.35 m under it; at 0.3 a box's underside lay in a recessed porch's
+ceiling's plane, home_lab's z-fight check found it).
+
+| Make | Near | Far |
+|---|---|---|
+| concrete box | one solid of cast concrete (`HW_CONCRETE`: the PBR concrete set under panel joints every 1.2 x 0.6 m; pale cream, greys, buff, and the faded pink, mint and ochre the South Asian and Latin American sheets paint them), a window a storey across its front, on a deep one a narrow window in its sides | one solid, the house's windows painted on it at its storeys |
+| screen box | the same, with a recess a storey across its front, glass at its back; the kit's breeze blocks (diamonds or rings) stand in its mouth, so a lit room glows through the lattice at night | as the concrete box |
+| steel-and-glass box | painted steel bands at its foot, its floors and its top, posts at its corners, glass between them 0.05 m in (glass on a solid's faces, each face a pane: `emit_all` gives it its uv and size), mullions painted about a metre apart (`HG_CURTAIN`); black, grey or bronze steel; in South and South-East Asia and China mostly a cage, the kit's grilles over every pane | one solid of glass |
+| container | one solid of corrugated sheet (the roofs' metal set on its walls, ribs upright; grey, rust, red, green, blue), a window or two | the same |
+| rounded bay | bands of one convex plan whose front corners are rounded (3-6 chords a quarter by its radius): a plinth or spandrel, ribbon glass 0.08 m in, the head, a cornice slab 0.1 m out over its top; concrete, or the house's own render repainted | its plan at two chords a quarter, plain |
+
+Every pane of one insertion's storey shares its key (`HOUSE_AUX_SHARED`, house.glsl), so a ribbon window is lit, and its blind
+drawn, as one room. **The dressing** (`hs_inserts`, after the boundaries, before the retrofit layer, which keeps clear of it):
+an LED strip along a hung box's soffit or downlights under it (most in Asia, the Middle East and Latin America; by affluence and
+upkeep), a screen box's breeze blocks, a cage's grilles, plants trailing over a box's top. **The walker and the grass** keep off
+one standing on the ground (`city_home_outlines`).
+
+**Measured** (`home_lab`, 10,000 rows an archetype): every row accepted at level 0, none invalid or different twice, the rule
+broken on purpose caught every time; shells (2,600 rows) with no bad face, none different twice, no z-fight. Retrofitted 0.59-0.62
+of units in every style with a sheet, none in the rest; of the units drawing a box or rounded bay, 0.74-1.00 found a place (the
+Victorian's and inter-war's tightest, 0.77 and 0.74: bays, porches and stoops fill their fronts). Built a unit: boxes 0.13-0.41,
+rounded bays 0.06-0.22; on the ground in a bay's place 0.43 (brownstone) to 0.76 (inter-war) of those styles' insertions.
+Against the same code with insertions off: the near shell +13 to +15 triangles a unit (805 a detached house, budget 1,000; 649
+a semi half and 562 a terrace unit, budget 700), the far shell +3 (57, 55, 51; budget 60), the kit's instances a little fewer
+(covered windows lose their frames). In the game (noon, Korea forced over Los Angeles' slice: its boxes and rounded fronts
+are the densest; three runs each, the same build with insertions off): at an insertion from 10 m 3.99 ms against 4.09 (the kit
+0.20 against 0.25), down the street at 30 m 4.22 against 4.30, over the roofs 5.19 against 5.20, from the air 8.63 against 8.60:
+**no cost** past the runs' spread (the windows and their frames the insertions cover pay for them). Board
+`build/home/hm5c2a/board_noon_a.jpg`, `board_noon_b.jpg`, `board_night_a.jpg`, `board_night_b.jpg` (17 styles: bungalow, block
+and colonial have no box or rounded bay to show until HM5c2b/c).
+
 ## Massing and parts
 
 | Part | Size | Notes |

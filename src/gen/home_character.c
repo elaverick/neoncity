@@ -1455,6 +1455,7 @@ static void dress_pass(Ctx *C, HDress *D, int *count) {
     dress_posts(&d);
     hs_balconies(&d);   /* HM5e2 */
     hs_bounds(&d);      /* HM5e3 */
+    hs_inserts(&d);     /* HM5c2 */
     for (int i = 0; i < C->nroof; ++i) {
         dress_eaves(&d, &C->roof[i]);
         dress_verges(&d, &C->roof[i]);

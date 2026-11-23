@@ -545,7 +545,7 @@ static int check_doors(const HGraph *g, int mi, BLog *log) {
             const HVol *p = &g->vol[i];
             if (p->role == HV_PORCH && p->unit == k && p->x0 <= d0 + HEPS && p->x1 >= d1 - HEPS && fabsf(p->z1 - d->z) < HEPS) porch = i;
         }
-        if (porch < 0 && home_door_balcony(g, k) < 0) REJECT("porch", "unit %d's door has no porch, canopy or balcony over it", k);
+        if (porch < 0 && home_door_balcony(g, k) < 0 && home_door_insert(g, k) < 0) REJECT("porch", "unit %d's door has no porch, canopy, balcony or box over it", k);
         const int recessed = porch >= 0 && home_porch_recessed(g->vol[porch].kind);
         if (!recessed && fabsf(d->z - m->z0) > HEPS) REJECT("door wall", "unit %d's door is not in the front wall", k);
         /* opens_on: a path to the street that crosses no building (the volumes' own outlines) */
@@ -658,6 +658,7 @@ int home_validate(const HGraph *g, BLog *log) {
     ok &= check_garden(g, log);
     ok &= home_check_balconies(g, log);
     ok &= home_check_bounds(g, log);
+    ok &= home_check_inserts(g, log);
     return ok;
 }
 #undef REJECT

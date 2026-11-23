@@ -67,3 +67,8 @@ int   home_door_balcony(const HGraph *g, int unit);   /* the balcony over a unit
 /* home_bound.c (HM5e3): a row's boundaries and gates to its style's sheet, after the garden is laid; and their rules */
 void  home_bounds(HGraph *g, int level, BLog *log);
 int   home_check_bounds(const HGraph *g, BLog *log);
+/* home_insert.c (HM5c2): every unit's owner's retrofit draw and the insertions the steps so far build, after the
+ * boundaries (everything else final); their rules. Removing volume i keeps every reference to the volumes after it. */
+void  home_inserts(HGraph *g, int level, BLog *log);
+int   home_check_inserts(const HGraph *g, BLog *log);
+void  home_drop_vol(HGraph *g, int i);

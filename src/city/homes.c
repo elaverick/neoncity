@@ -312,6 +312,31 @@ void city_build_homes(int cx, int cz, Mesh *m) {
     chunk_gen_free(&g);
 }
 
+int city_home_inserts(int cx, int cz, HomeInsertView *out, int max) {
+    ChunkGen g;
+    chunk_gen_init(&g, cx, cz, 25.0, 0.0, 0.0);
+    chunk_gen_homes(&g);
+    int n = 0;
+    for (int ri = 0; ri < g.nhrow && n < max; ++ri) {
+        if (!chunk_gen_owns_home(&g, ri)) continue;
+        const HGraph *G = chunk_gen_home(&g, ri);
+        const HomeRow *r = &g.hrow[ri];
+        for (int i = 0; i < G->nins && n < max; ++i) {
+            const HInsert *in = &G->ins[i];
+            float y0, y1;
+            home_insert_span(G, in, &y0, &y1);
+            HomeInsertView *v = &out[n++];
+            home_to_world(G, 0.5f * (in->x0 + in->x1), in->z - in->depth, &v->x, &v->z);
+            v->y = r->base + r->dy[in->unit] + SIDEWALK_HEIGHT + 0.5 * (y0 + y1);
+            v->nx = -G->nx; v->nz = -G->nz;
+            v->w = in->x1 - in->x0; v->h = y1 - y0;
+            v->kind = in->kind; v->face = in->face; v->style = G->style; v->ground = in->s0 == 0;
+        }
+    }
+    chunk_gen_free(&g);
+    return n;
+}
+
 /* ---------------------------------------------------------------------------
  * What stands on the ground (collision, the grass)
  * ------------------------------------------------------------------------- */
@@ -382,6 +407,11 @@ int city_home_outlines(ChunkGen *g, int ri, double (*v)[4][2], int max, int walk
             for (int c = 0; c < 4; ++c) home_to_world(G, x + C[c][0], z + C[c][1], &v[n][c][0], &v[n][c][1]);
             n++;
         }
+    }
+    /* HM5c2: insertions standing on the ground (in a bay's place) */
+    for (int i = 0; i < G->nins && n < max; ++i) {
+        const HInsert *in = &G->ins[i];
+        if (in->s0 == 0) n = outline_rect(G, in->x0, in->z - in->depth, in->x1, in->z, v, n, max);
     }
     /* HM5e3: the boundaries built (walls, kerbs and plinths), their piers, the gates' leaves (shut), China's gatehouses'
      * piers, the gate kiosk */

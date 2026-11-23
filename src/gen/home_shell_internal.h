@@ -12,7 +12,8 @@
 #define NOFACE  255
 #define SLAB_T  0.2f      /* a pitched roof's depth at its eaves: the fascia (m) */
 
-enum { SK_OTHER = 0, SK_BODY, SK_SLAB, SK_BALC };   /* SK_BALC: a balcony's slab, upstand or cap (HM5e2) */
+enum { SK_OTHER = 0, SK_BODY, SK_SLAB, SK_BALC, SK_INS };   /* SK_BALC: a balcony's slab, upstand or cap (HM5e2); SK_INS an
+                                                               insertion's solids (HM5c2) */
 typedef struct SPlane { double n[3], d; } SPlane;
 typedef struct SPoly { int n; double p[PV][3]; } SPoly;
 
@@ -103,6 +104,20 @@ int  hs_inside(const Ctx *C, const double p[3], int skip, double in);
 int  hs_in_solid(const Solid *s, const double p[3], double in);
 /* The roof plane over eaves edge e, raised off: y <= E + off + t * (distance in from the edge), as (n, d). */
 void hs_eaves_plane(const Roof *R, int e, double off, double out[4]);
+
+/* The solids' makings, for the files that add their own (home_shell_ins.c): a new solid (an opening if neg) of a unit's
+ * finishes; a half-space n.p <= n.q with its face's surface; a solid lifted by its unit's dy; an opening carved into host
+ * (home_shell.c's add_opening) and an opening's size and pattern. */
+Solid   *hs_solid_new(Ctx *C, int unit, int vol, int neg);
+void     hs_plane(Solid *s, double nx, double ny, double nz, double qx, double qy, double qz, int surf);
+void     hs_lift(Solid *s, double dy);
+int      hs_opening(Ctx *C, int host, int unit, const double m[2], const double e[2], double ax, double az, double w,
+                    double y0, double y1, double depth, int back, uint32_t aux);
+uint32_t hs_opening_aux(double w, double h, int pattern);
+
+/* home_shell_ins.c (HM5c2): the insertions' solids (both levels, before the windows are cut, so none is cut behind one) and
+ * their own openings (near) */
+void hs_add_inserts(Ctx *C);
 
 /* home_character.c: sets the kit down on a near shell's solids and records (before its faces are emitted) */
 void hs_dress(Ctx *C, HDress *D);

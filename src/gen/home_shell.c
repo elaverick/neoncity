@@ -291,6 +291,8 @@ int hs_inside(const Ctx *C, const double p[3], int skip, double in) {
     return -1;
 }
 
+static uint32_t opening_aux(double w, double h, int pattern);
+
 /* The dressing's records, grown as the shell is built (kit only). */
 #define GROW(arr, n, cap) do { if ((n) == (cap)) { (cap) = (cap) ? (cap) * 2 : 32; (arr) = realloc((arr), sizeof(*(arr)) * (size_t)(cap)); if (!(arr)) abort(); } } while (0)
 
@@ -413,6 +415,19 @@ static void emit_all(Ctx *C) {
             for (int q = 0; q < face.n; ++q) { const double u = dot3(face.p[q], h); u0 = fmin(u0, u); u1 = fmax(u1, u); }
             Solid sw = *s;
             if (s->noWin[i]) sw.aux = 0;
+            if (!s->neg && s->surf[i] == HF_GLASS && fabs(n[1]) < 0.05) {
+                /* glass on a solid's face (HM5c2: an insertion's): a pane the whole face, its uv from its lower left corner
+                 * across (-n.z, n.x) as an opening's are, its size in its aux */
+                const double t[3] = { -n[2], 0.0, n[0] };
+                double a0 = 1e30, a1 = -1e30, y0 = 1e30, y1 = -1e30;
+                for (int q = 0; q < face.n; ++q) {
+                    const double a = dot3(face.p[q], t);
+                    a0 = fmin(a0, a); a1 = fmax(a1, a); y0 = fmin(y0, face.p[q][1]); y1 = fmax(y1, face.p[q][1]);
+                }
+                sw.o[0] = a0 * t[0]; sw.o[1] = y0; sw.o[2] = a0 * t[2];
+                memcpy(sw.t, t, sizeof(t));
+                sw.aux = (s->aux & ~(1023u << HOUSE_AUX_W | 1023u << HOUSE_AUX_H)) | (opening_aux(a1 - a0, y1 - y0, 0) & (1023u << HOUSE_AUX_W | 1023u << HOUSE_AUX_H));
+            }
             if (s->neg) {
                 /* an opening's face, turned in, inside its host */
                 for (int q = 0; q < face.n / 2; ++q) {
@@ -905,6 +920,14 @@ static uint32_t opening_aux(double w, double h, int pattern) {
     const uint32_t cw = (uint32_t)fmin(1023.0, w * 100.0 + 0.5), ch = (uint32_t)fmin(1023.0, h * 100.0 + 0.5);
     return cw << HOUSE_AUX_W | ch << HOUSE_AUX_H | (uint32_t)(pattern & 15) << HOUSE_AUX_PATTERN;
 }
+
+/* home_shell_internal.h's makings, for home_shell_ins.c */
+Solid   *hs_solid_new(Ctx *C, int unit, int vol, int neg) { return solid_new(C, unit, vol, neg); }
+void     hs_plane(Solid *s, double nx, double ny, double nz, double qx, double qy, double qz, int surf) { plane_at(s, nx, ny, nz, qx, qy, qz, surf); }
+void     hs_lift(Solid *s, double dy) { solid_lift(s, dy); }
+int      hs_opening(Ctx *C, int host, int unit, const double m[2], const double e[2], double ax, double az, double w,
+                    double y0, double y1, double depth, int back, uint32_t aux) { return add_opening(C, host, unit, m, e, ax, az, w, y0, y1, depth, back, aux); }
+uint32_t hs_opening_aux(double w, double h, int pattern) { return opening_aux(w, h, pattern); }
 
 /* Whether a box (corners lo, hi) meets any solid (other than the volume's own; a window's ignores the balconies, HM5e2,
  * whose rules keep them off the windows they don't open from) */
@@ -1633,6 +1656,7 @@ static void shell_build(const HGraph *g, int lod, const float *dy, HShellFn fn, 
     for (int i = 0; i < g->nchim; ++i) add_stack(&C, &g->chim[i]);
     add_balcony_solids(&C);
     add_bounds(&C);   /* HM5e3 */
+    hs_add_inserts(&C);   /* HM5c2: before the windows, so none is cut behind one */
     SPoly f, tmp;
     if (lod == HSH_NEAR) {
         for (int u = 0; u < g->nunit; ++u) add_front(&C, u);

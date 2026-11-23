@@ -32,6 +32,7 @@ int houseWallSet(uint fin, uint col) {
     if (fin == HW_RENDER) return (col & 15u) == 15u ? PBR_HOUSE_ROUGHCAST : PBR_HOUSE_RENDER;
     if (fin == HW_SIDING) return PBR_HOUSE_SIDING;
     if (fin == HW_STONE)  return PBR_FACADE_STONE;
+    if (fin == HW_CONCRETE) return PBR_CONCRETE;
     return PBR_HOUSE_ROUGHCAST;
 }
 
@@ -69,6 +70,10 @@ float houseBars(vec2 uv, vec2 s, uint pattern, float aa) {
     } else if (pattern == HG_CASEMENT) {
         m = max(m, 1.0 - smoothstep(0.03, 0.03 + aa, abs(uv.x - 0.5 * s.x)));
         m = max(m, 1.0 - smoothstep(0.03, 0.03 + aa, abs(uv.y - 0.72 * s.y)));
+    } else if (pattern == HG_CURTAIN) {
+        // a glazed wall's mullions about a metre apart (a pane under 1.4 m keeps its frame alone)
+        float n = max(1.0, floor(s.x / 1.0 + 0.5)), cx = s.x / n;
+        if (n > 1.0) m = max(m, 1.0 - smoothstep(0.022, 0.022 + aa, abs(fract(uv.x / cx + 0.5) - 0.5) * cx));
     } else if (pattern == HG_GRID) {
         float cx = s.x / max(2.0, floor(s.x / 0.4)), y0 = 0.6 * s.y;
         if (uv.y > y0) m = max(m, 1.0 - smoothstep(bar * 0.5, bar * 0.5 + aa, abs(fract(uv.x / cx + 0.5) - 0.5) * cx));
@@ -223,6 +228,8 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
         // the window's own key, from its lower left corner (an opening's u runs along (-n.z, n.x): src/city/homes.c)
         vec3 c = gWorld - uv.x * vec3(-n.z, 0.0, n.x) - vec3(0.0, uv.y, 0.0);
         uint key = hash3i(seed ^ 0x6A55u, int(round(c.x * 4.0)), int(round(c.y * 4.0)), int(round(c.z * 4.0)));
+        // HM5c2: an insertion's panes share their storey's key (a ribbon window lit as one room)
+        if ((aux & HOUSE_AUX_SHARED) != 0u) key = hash3i(seed ^ 0x6A57u, int(round(c.y * 4.0)), int((aux >> HOUSE_AUX_INS) & 15u), 0);
         vec3 glass = houseGlass(n, V, key, uv, s);
         vec3 diff = wallLighting(p, n, V, 30.0, 0.15, h, spec);
         vec3 frame = H_TRIM[col & 7u] * 0.9 * diff + spec;
@@ -333,6 +340,12 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
         float f = fract(uv.y / 0.18);
         alb *= mix(0.62, 1.0, smoothstep(0.0, 0.12, f)) * (0.95 + 0.1 * hf(hash_combine(seed, uint(floor(uv.y / 0.18)) + 0x5D00u), 1u));
         nn = normalize(n - vec3(0.0, 1.0, 0.0) * 0.25 * (1.0 - f));
+    } else if (fin == HW_CONCRETE && surf != HF_COPING) {
+        // cast concrete's panels (HM5c2): a joint every 1.2 m along and 0.6 m up (on a level face, in the world's x and z)
+        vec2 pq = abs(n.y) > 0.9 ? gWorld.xz : uv;
+        vec2 pf = abs(n.y) > 0.9 ? vec2(fw.x) : fw;
+        float joint = min(hStripe(pq.x / 1.2, 0.012, 0.988, pf.x / 1.2), hStripe(pq.y / 0.6, 0.02, 0.98, pf.y / 0.6));
+        alb *= mix(0.72, 1.0, joint) * mix(0.9, 1.06, hf(hash2i(seed ^ 0xC0C0u, int(floor(pq.x / 1.2)), int(floor(pq.y / 0.6))), 1u));
     } else if (fin == HW_BLOCK) {
         float bx = (uv.x + 0.2 * mod(floor(uv.y / 0.2), 2.0)) / 0.4, by = uv.y / 0.2;
         float joint = min(hStripe(bx, 0.03, 0.97, fw.x / 0.4), hStripe(by, 0.06, 0.94, fw.y / 0.2));

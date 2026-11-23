@@ -1151,9 +1151,23 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM5c2, the retrofit insertions** (3 units in 5; HM5e1 bodies, HMv vines, HM5e2 balconies, HM5e3 boundaries done
-  by 2026-11-23). Then HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing styles to their sheets), HM6
-  (the rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **Next: HM5c2b** (angled frames and struts, hexagons, fins and grids, screen strips), then HM5c2c (stairs, stair towers,
+  unfinished storeys, roof rooms); HM5c2a (boxes, rounded bays, the join) built 2026-11-23. Then HM5b1 and HM5b2 (the other
+  regions' kit and grammar), HM5d (the existing styles to their sheets), HM6 (the rest of the lived-in layer and the lights).
+  Every step checked against its sheets' panels.
+- **The insertions' leftovers** (HM5c2a, `docs/residential-target.md` "Retrofit insertions"):
+  - The Middle East's and the courtyard's screens are breeze blocks: their sheets' are timber mashrabiya (HM5b1's ornament,
+    then swap the screen box's kit), and the courtyard's oriel sits on carved brackets.
+  - A box's windows have painted frames, not the kit's (no sills, grilles or boxes on them); South Asia's boxes often wear
+    grilles.
+  - Rounded bays are plain in the far shell (no ribbon glass past 220 m); a round tower's conical roof (the Southern European
+    villa's, panel 6) is not built: rounded bays stop under the eaves.
+  - The downlights and LED strips under the boxes are emissive only, as the retrofit kit's are (HM6's light table).
+  - A balcony's LED strip over a box (its top fitted under the slab) may meet the box's top where the box is deeper.
+  - `home_balcony.c`'s `drop_vol` shifts the volumes without fixing what refers to them (a canopy dropped before a chimney's
+    volume would leave the chimney's index stale); `home_drop_vol` (home_insert.c) fixes them: switch the balconies to it and
+    check the fingerprint.
+  - `city_test --home`'s insertion views pick the first insertions near the slice with a line of sight; one may repeat.
 - **The boundaries' leftovers** (HM5e3, `docs/residential-target.md` "Boundaries and gates"):
   - China's gatehouse piers are the wall's own grey brick: they barely read as piers. The sheet's has a plinth, red
     couplet boards and lanterns either side of the doors (HM5b1's ornament), and upturned ridge ends.

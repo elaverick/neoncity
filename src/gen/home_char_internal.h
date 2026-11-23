@@ -61,3 +61,6 @@ void   hs_balconies(DC *d);
 /* home_bound.c (HM5e3): the boundaries' tops, the gates' leaves, gate lanterns, razor wire, stoop rails (after the
  * balconies, before the retrofit layer, which keeps off them) */
 void   hs_bounds(DC *d);
+/* home_insert.c (HM5c2): the insertions' lights, screens, cages and plants (after the boundaries, before the retrofit layer,
+ * which keeps clear of them) */
+void   hs_inserts(DC *d);
