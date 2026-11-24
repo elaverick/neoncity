@@ -1152,7 +1152,7 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
 - **Now: HM5b2** (the other regions' grammar: placing HM5b1's three kits by style, finishes from asset files, pointed
-  openings), split in four (the plan's section "HM5b2"): **HM5b2a** East and South-East Asia (signed off and pushed
+  openings), split in four (the plan's section "HM5b2"): **HM5b2a** East and South-East Asia (signed off and pushed, 9786f38,
   2026-11-24), next **HM5b2b** South Asia, the Middle East and Africa with pointed openings and the bungalow's Art Deco
   variant (xhigh), **HM5b2c** Southern Europe and Latin America with the colonial's second storey (high), **HM5b2d** the wall
   finishes (high; waits on the user's tile albedos: two azulejo, two Peranakan, one or two zellige). HM5b1 is done: HM5b1a (East and South-East Asia) pushed 2026-11-24 (0f306ff), HM5b1b (South Asia, the
