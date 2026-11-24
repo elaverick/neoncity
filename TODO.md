@@ -1152,7 +1152,7 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
 - **Next: HM5c2c2** (unfinished storeys with starter bars, roof rooms; the user's calls on pitched roofs first: the plan's
-  "HM5c2c"); HM5c2a (6e73b64), HM5c2b (8bfedeb) pushed 2026-11-23, HM5c2c split in two, HM5c2c1 (stairs, stair towers) built
+  "HM5c2c"); HM5c2a (6e73b64), HM5c2b (8bfedeb) pushed 2026-11-23, HM5c2c split in two, HM5c2c1 (stairs, stair towers) pushed
   2026-11-23. Then HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing styles to their sheets), HM6 (the
   rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
 - **HM5c2c1's leftovers** (`docs/residential-target.md` "Stairs and stair towers"):
