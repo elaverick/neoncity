@@ -149,6 +149,7 @@ struct Renderer {
      * alternate between frames: the denoiser blends in the previous frame's. */
     Rt          *rt;
     bool         shadowsOn, vendorDebug, historyValid, shadowTargetsFresh, havePrev;
+    int          relief;   /* PD0: NeonCity --relief: 0 on, 1 off (every parallax flat), 2 its debug view */
     bool         dirShadowsOff;   /* NEONCITY_MOON_SHADOWS=0: the moon casts no shadows (terrain/dir_shadow.glsl) */
     int          shadowDebug;    /* the F10 debug view (DEBUG_VIEW_*) */
     int          grassDebug;     /* the --grass-debug view (GRASS_DEBUG_*) */

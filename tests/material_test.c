@@ -131,6 +131,11 @@ static void test_files(const char *assets) {
         }
         CHECK(d.albedoScale > 0.0f && d.albedoScale < 4.0f, "%s: albedo_scale %g", name, d.albedoScale);
         CHECK(d.relief[0] >= 0.0f && d.relief[0] <= 1.0f, "%s: the relief's median %g lies outside the height map's range", name, d.relief[0]);
+        if (d.depth > 0.0f) {   /* PD0: a parallax depth reads its height from the normal map's alpha (tools/relief_pack.py) */
+            int w, h, c;
+            CHECK(stbi_info(d.maps[PBR_NORMAL], &w, &h, &c) && c == 4, "%s: a depth, but its normal map %s has no height in its alpha (tools/relief_pack.py)",
+                  name, d.maps[PBR_NORMAL]);
+        }
         for (int i = 0; i < 3; ++i) CHECK(d.albedoMean[i] <= 1.0f, "%s: albedo_mean %g", name, d.albedoMean[i]);
     }
     /* The shaders' world coordinates wrap every 64 chunks (ground.glsl): what is mapped in world x and z

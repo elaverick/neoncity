@@ -13,6 +13,7 @@ bool renderer_shadows(Renderer *r) { return r->shadowsOn; }
 void renderer_set_shadow_debug(Renderer *r, int view) { r->shadowDebug = view; }
 int renderer_shadow_debug(Renderer *r) { return r->shadowDebug; }
 void renderer_set_vendor_debug(Renderer *r, bool on) { r->vendorDebug = on; }
+void renderer_set_relief(Renderer *r, int mode) { r->relief = mode; }
 bool renderer_vendor_debug(Renderer *r) { return r->vendorDebug; }
 void renderer_set_grass_debug(Renderer *r, int view) { r->grassDebug = view; }
 void renderer_set_cave_debug(Renderer *r, int view) { r->caveDebug = view; cave_gpu_set_debug(r, view); }
@@ -378,10 +379,12 @@ static void frame_uniforms(Renderer *r, int slot, const FrameUBO *uboIn, const d
      * locations); the denoiser reprojects this frame's camera-relative
      * positions into the last frame's view. */
     ubo->shadow[0] = (float)(r->frameIndex & 1023u);
-    /* SHADOWS_ON | SHADOWS_DEBUG | VENDOR_DEBUG | VENDORS_OPEN | VENDORS_SHUT | DAYLIGHT_DEBUG (common.glsl; SF4: NeonCity --hours) */
+    /* SHADOWS_ON | SHADOWS_DEBUG | VENDOR_DEBUG | VENDORS_OPEN | VENDORS_SHUT | DAYLIGHT_DEBUG | RELIEF_OFF | RELIEF_DEBUG
+     * (common.glsl; SF4: NeonCity --hours; PD0: --relief) */
     const int hoursForce = nb_hours_forced();
     ubo->shadow[1] = (float)((shadows ? 1 : 0) | (r->shadowDebug == DEBUG_VIEW_LIGHTS ? 2 : 0) | (r->vendorDebug ? 4 : 0) |
-                             (hoursForce == 1 ? 8 : hoursForce == 0 ? 16 : 0) | (r->shadowDebug == DEBUG_VIEW_DAYLIGHT ? 32 : 0));
+                             (hoursForce == 1 ? 8 : hoursForce == 0 ? 16 : 0) | (r->shadowDebug == DEBUG_VIEW_DAYLIGHT ? 32 : 0) |
+                             (r->relief == 1 ? 64 : r->relief == 2 ? 128 : 0));   /* RELIEF_OFF, RELIEF_DEBUG (PD0) */
     ubo->shadow[2] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.375f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
     ubo->shadow[3] = vk->msaa == VK_SAMPLE_COUNT_4_BIT ? 0.125f : vk->msaa == VK_SAMPLE_COUNT_2_BIT ? 0.75f : 0.5f;
     /* The directional light (src/app/main.c: sky_ubo) is the sun while it

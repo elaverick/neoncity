@@ -176,7 +176,7 @@ Materials *materials_create(VkCore *vk) {
         g->tile[0] = def.tile[0]; g->tile[1] = def.tile[1];
         memcpy(g->albedo, def.albedoMean, sizeof(def.albedoMean));
         g->albedo[3] = def.albedoScale;
-        g->relief[0] = def.relief[0]; g->relief[1] = def.relief[1];
+        g->relief[0] = def.relief[0]; g->relief[1] = def.relief[1]; g->relief[2] = def.depth;
         memcpy(g->params, def.params, sizeof(def.params));
         memcpy(g->wet, def.wet, sizeof(def.wet));
         g->snow[0] = def.snow[0]; g->snow[1] = def.snow[1];

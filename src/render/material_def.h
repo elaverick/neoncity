@@ -18,6 +18,8 @@
  *     "albedo_scale": 1.0,          // what the albedo is multiplied by in the city's palette
  *     "albedo_mean":  [r, g, b],    // the albedo map's mean, linear (or one number): to normalise it
  *     "relief":       [0.8, 0.13],  // the height map's median and spread
+ *     "depth":        0.02,         // parallax occlusion: metres from the relief's tops to its hollows (its height
+ *                                   //   in the normal map's alpha, tools/relief_pack.py); 0 or absent: flat
  *     "wet":          [0.35, 0.5, 1], // in the rain: how much darker it goes, how readily water stands on it, how its film shines (0 .. 1)
  *     "snow":         [1.4, 0.0],   // snow on it: how soon it lies (1 as the cover's weight), where (0 hollows .. 1 tops)
  *     "params":       [ ... ]       // up to four numbers of the material's own, read by its shader
@@ -34,6 +36,8 @@ typedef struct MaterialDef {
     float albedoScale;
     float albedoMean[3];
     float relief[2];
+    float depth;     /* PD0: its relief's depth in metres (parallax occlusion: pbrGrainRelief), its height in the normal
+                        map's alpha (tools/relief_pack.py); 0 flat */
     float wet[3];
     float snow[2];
     float params[4];

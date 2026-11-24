@@ -87,8 +87,10 @@ static void on_click(GLFWwindow *w, int button, int action, int mods) {
 }
 
 static void usage(void) {
-    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--homes off|far|near|bare] [--bars all] [--vendor-debug] [--hours open|shut|clock] [--nbform straight|corner] [--trade noodles|soup|dumplings|skewers|kebab|burgers|fried|curry|tacos|crepes|roast|drinks] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--shot FILE.bmp]\n"
+    printf("NeonCity [--validation] [--noshadows] [--city NAME] [--cam X Z YAW_DEG PITCH_DEG [HEIGHT]] [--walk SECONDS [--turn DEG_PER_S] [--walk-shot]] [--rain 0..1] [--time SECONDS] [--utc YYYY-MM-DDTHH:MM] [--ev EV100] [--preexpose STOPS] [--hdr [PAPER_NITS [PEAK_NITS]]] [--impostors [SHARE]] [--lockdoors] [--kit off|slice|all] [--homes off|far|near|bare] [--bars all] [--vendor-debug] [--hours open|shut|clock] [--nbform straight|corner] [--trade noodles|soup|dumplings|skewers|kebab|burgers|fried|curry|tacos|crepes|roast|drinks] [--nograss] [--nowake] [--grass-cap N] [--grass-debug suit|density|species|clump|lod|cull|wind|wake|albedo] [--cave-debug normals|lit|lod] [--relief on|off|debug] [--shot FILE.bmp]\n"
            "  --noshadows  no ray-traced shadows (nor the ray-query device features they need)\n"
+           "  --relief  parallax occlusion (the materials with a depth): on, off (every relief flat, for A/B timing), or\n"
+           "            debug (the layers a pixel stepped: blue few .. red the cap of 32)\n"
            "  --shadowdebug  start in the shadow debug view (F10): only the city's lights on each surface\n"
            "  --daylightdebug  start in the daylight debug view (F10 twice): only the city's daylight, on white\n"
            "  --city  start in this city (the first whose name begins so, any case; or its number), in its frame\n"
@@ -134,6 +136,7 @@ static void usage(void) {
 /* Command-line options. */
 typedef struct Options {
     bool        validation, shadows, vendorDebug, lockDoors, noGrass;
+    int         relief;          /* --relief: renderer_set_relief's mode (PD0) */
     int         shadowDebug;     /* --shadowdebug / --daylightdebug: the F10 view to start in (DEBUG_VIEW_*) */
     uint32_t    grassCap;        /* --grass-cap: each level of detail's room (0: its own) */
     const char *shotPath;
@@ -169,6 +172,11 @@ static bool parse_args(int argc, char **argv, Options *o) {
         else if (strcmp(argv[i], "--shadowdebug") == 0) o->shadowDebug = DEBUG_VIEW_LIGHTS;
         else if (strcmp(argv[i], "--daylightdebug") == 0) o->shadowDebug = DEBUG_VIEW_DAYLIGHT;
         else if (strcmp(argv[i], "--vendor-debug") == 0) o->vendorDebug = true;
+        else if (strcmp(argv[i], "--relief") == 0 && i + 1 < argc) {
+            const char *v = argv[++i];
+            o->relief = strcmp(v, "on") == 0 ? 0 : strcmp(v, "off") == 0 ? 1 : strcmp(v, "debug") == 0 ? 2 : -1;
+            if (o->relief < 0) return false;
+        }
         else if (strcmp(argv[i], "--hours") == 0 && i + 1 < argc) {
             const char *h = argv[++i];
             nb_hours_force(strcmp(h, "open") == 0 ? 1 : strcmp(h, "shut") == 0 ? 0 : -1);
@@ -734,6 +742,7 @@ int main(int argc, char **argv) {
     vk_pipeline_cache_save(&vk);   /* the pipelines it made, for the next run */
     renderer_set_shadow_debug(renderer, opt.shadowDebug);
     renderer_set_vendor_debug(renderer, opt.vendorDebug);
+    renderer_set_relief(renderer, opt.relief);
     chunks_set_vendor_log(opt.vendorDebug);
     renderer_set_grass_debug(renderer, opt.grassDebug);
     renderer_set_cave_debug(renderer, opt.caveDebug);

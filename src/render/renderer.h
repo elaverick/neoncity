@@ -117,6 +117,7 @@ void      renderer_set_shadow_debug(Renderer *r, int view);
 int       renderer_shadow_debug(Renderer *r);
 /* --vendor-debug / F7: noodle bars' far shells drawn magenta (their near bodies not resident: still baking, or far). */
 void      renderer_set_vendor_debug(Renderer *r, bool on);
+void      renderer_set_relief(Renderer *r, int mode);   /* PD0: 0 on, 1 off, 2 the layers' debug view */
 bool      renderer_vendor_debug(Renderer *r);
 /* The --grass-debug view painted on the land (GRASS_DEBUG_*: src/grass/grass_rules.h; 0 off). */
 void      renderer_set_grass_debug(Renderer *r, int view);

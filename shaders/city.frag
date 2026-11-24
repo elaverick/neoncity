@@ -114,6 +114,7 @@ void shadePixel() {
     gBase = vBase;
     gSkyCover = skyCover(vRel);
     gLampDay = lampDaylight(gSkyCover);   // the lamps' photocells (DN7)
+    gReliefOff = (uint(frame.shadow.y) & RELIEF_OFF) != 0u;
     shadowsBegin();
     vec3 n = normalize(vNrm);
     uint mat = vParams.x;
@@ -172,6 +173,15 @@ void shadePixel() {
     if (mat == MAT_KIT && (vAux & KIT_AUX_FAR) != 0u && (uint(frame.shadow.y) & VENDOR_DEBUG) != 0u) {
         // --vendor-debug: a bar's far shell, drawn while its near body isn't resident (still baking, or past KIT_DISTANCE)
         outColor = vec4(vec3(1.5, 0.0, 1.5) * frame.exposure.y, 1.0);
+        outRefl = vec4(0.0);
+        return;
+    }
+    if ((uint(frame.shadow.y) & RELIEF_DEBUG) != 0u) {
+        // --relief debug (PD0): the parallax's layers a pixel stepped, blue few .. red the 32 cap, over the scene in grey
+        float k = gRelLayers / 32.0;
+        vec3 heat = gRelLayers > 0.0 ? clamp(vec3(1.5 * k - 0.2, 1.0 - 2.0 * abs(k - 0.5), 1.2 - 1.8 * k), 0.0, 1.0) : vec3(0.0);
+        float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        outColor = vec4(gRelLayers > 0.0 ? heat * frame.exposure.y * 0.6 + vec3(l * 0.3) : vec3(l * 0.5), 1.0);
         outRefl = vec4(0.0);
         return;
     }

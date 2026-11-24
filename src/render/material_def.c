@@ -88,6 +88,7 @@ bool material_def_load(const char *path, MaterialDef *def, char *err, size_t err
         else if (strcmp(m->key, "albedo_scale") == 0) ok = numbers(m, &def->albedoScale, 1, 1, m->key, err, errSize);
         else if (strcmp(m->key, "albedo_mean") == 0)  ok = numbers(m, def->albedoMean, 3, 3, m->key, err, errSize);
         else if (strcmp(m->key, "relief") == 0)       ok = numbers(m, def->relief, 2, 2, m->key, err, errSize);
+        else if (strcmp(m->key, "depth") == 0)        ok = numbers(m, &def->depth, 1, 1, m->key, err, errSize);
         else if (strcmp(m->key, "wet") == 0)          ok = numbers(m, def->wet, 3, 3, m->key, err, errSize);
         else if (strcmp(m->key, "snow") == 0)         ok = numbers(m, def->snow, 2, 2, m->key, err, errSize);
         else if (strcmp(m->key, "params") == 0)       ok = m->type == JSON_ARRAY ? numbers(m, def->params, 1, 4, m->key, err, errSize)
@@ -98,6 +99,7 @@ bool material_def_load(const char *path, MaterialDef *def, char *err, size_t err
         if (material_map_required(k) && !def->maps[k][0]) { snprintf(err, errSize, "no \"%s\" map", PBR_MAP_KEYS[k]); ok = false; }
     if (ok && (def->tile[0] <= 0.0f || def->tile[1] <= 0.0f)) { snprintf(err, errSize, "\"tile\" must be positive"); ok = false; }
     if (ok && def->relief[1] <= 0.0f) { snprintf(err, errSize, "\"relief\" spread must be positive"); ok = false; }
+    if (ok && (def->depth < 0.0f || def->depth > 0.25f)) { snprintf(err, errSize, "\"depth\" must lie in 0 .. 0.25 m"); ok = false; }
     for (int i = 0; i < 3 && ok; ++i)
         if (def->wet[i] < 0.0f || def->wet[i] > 1.0f) { snprintf(err, errSize, "\"wet\" must lie in 0 .. 1"); ok = false; }
     if (ok && (def->snow[0] <= 0.0f || def->snow[1] < 0.0f || def->snow[1] > 1.0f)) { snprintf(err, errSize, "\"snow\" must be positive, then in 0 .. 1"); ok = false; }

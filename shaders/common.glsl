@@ -236,6 +236,7 @@ const uint  SHADOWS_ON = 1u, SHADOWS_DEBUG = 2u;         // frame.shadow.y (rend
 const uint  VENDOR_DEBUG = 4u;                           // frame.shadow.y: --vendor-debug / F7, far shells drawn magenta
 const uint  VENDORS_OPEN = 8u, VENDORS_SHUT = 16u;       // frame.shadow.y: NeonCity --hours open|shut (SF4)
 const uint  DAYLIGHT_DEBUG = 32u;                        // frame.shadow.y: --daylightdebug / F10 twice (cityDaylightDebug)
+const uint  RELIEF_OFF = 64u, RELIEF_DEBUG = 128u;       // frame.shadow.y: NeonCity --relief off|debug (PD0: pbrGrainRelief)
 const uint  KIT_SHUT = 256u;                             // MAT_KIT's material word (vParams.y): its vendor shut (SF4)
 bool shadowsOn() { return (uint(frame.shadow.y) & SHADOWS_ON) != 0u; }
 const int   SHADOW_SLOTS = 8;                            // lights a pixel keeps soft shadows for
