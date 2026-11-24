@@ -52,7 +52,13 @@ void mesh_push_w(Mesh *m, vec3 p, vec3 n, int8_t w, float u, float v, uint32_t s
         n.z = m->xs * x + m->xc * z;
         p.y += m->xy;
     }
-    if (foot) p.y = minf(p.y, city_ground_y(m->ox + p.x, m->oz + p.z) + (SIDEWALK_HEIGHT - m->sink));
+    if (foot) {
+        const float y = minf(p.y, city_ground_y(m->ox + p.x, m->oz + p.z) + (SIDEWALK_HEIGHT - m->sink));
+        /* a house's v is metres up its wall (house_surf.h): it reaches down with the foot, so the boards and courses
+         * run on into it rather than each triangle on the ground stretching them its own way */
+        if (prm[0] == MAT_HOUSE) v -= p.y - y;
+        p.y = y;
+    }
     float base = m->xf ? m->xy : m->grounded ? m->ground : city_ground_y(m->ox + p.x, m->oz + p.z);
     if (m->drape) {
         p.y += base;
