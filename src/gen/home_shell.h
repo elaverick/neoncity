@@ -70,7 +70,10 @@ float home_top(const HGraph *g);
 /* upkeep (docs/residential-target.md "Upkeep": mostly kept, some tired, a few run-down, never derelict) */
 enum { HK_KEPT = 0, HK_TIRED, HK_RUNDOWN };
 enum { HCE_PLAIN = 0, HCE_BRACKETS, HCE_RAFTERS };   /* eaves */
-enum { HCC_NONE = 0, HCC_FLAT, HCC_GABLE };          /* a door canopy (the porch HP_CANOPY's) */
+enum { HCC_NONE = 0, HCC_FLAT, HCC_GABLE,            /* a door canopy (the porch HP_CANOPY's) */
+       HCC_HISASHI, HCC_HOOD };                      /* HM5b2: Japan's thin hood, the link house's aluminium one */
+/* HM5b2: Chinese and Korean ridge ends (HCharSet.ridgeEnd) */
+enum { HRE_NONE = 0, HRE_CHINA, HRE_KOREA };
 typedef struct HCharSet {
     uint8_t upkeep;                                  /* HK_KEPT .. HK_RUNDOWN */
     uint8_t frame, frameBack, sill, head, headBack;  /* the street's and the rest's windows: HK_FRAME_*, HK_SILL_*, HK_HEAD_* */
@@ -87,8 +90,18 @@ typedef struct HCharSet {
     uint8_t dormer, dormerBack;                      /* 0 none, or 1 + HK_DORMER_*: the street's slope, the back's */
     uint8_t rooflight, vent;                         /* on the back slope */
     uint8_t lean;                                    /* dressed again leaner: it came out over the budget (hs_dress) */
+    /* HM5b2, the other regions' (docs/residential-target.md "The other regions' grammar"): */
+    uint8_t grille;                                  /* HK_GRILLE_* the grilles take (grilles says which windows) */
+    uint8_t cages;                                   /* China's blocks: upper windows caged (1 some, 2 most) */
+    uint8_t frost;                                   /* Japan: frosted sliding windows at the back and in small openings */
+    uint8_t headLow;                                 /* a head over the ground floor's street windows alone (HK_HEAD_*) */
+    uint8_t ridgeEnd, eaveTiles;                     /* HRE_*: ridge ends; eave-end tiles along the eaves */
+    uint8_t ornate;                                  /* the richer set (by affluence): a shophouse's Peranakan front */
+    uint8_t pagar, lanterns, couplets, drums;        /* swing half doors; paper lanterns; couplets and the fu; drum stones */
+    uint8_t slats, hazard, mailbox, carport, gableVent, crest, columns;
+    uint8_t region;                                  /* the style's PLAN_REGION_* */
 } HCharSet;
-enum { HK_POST_SQUARE = 0, HK_POST_TURNED, HK_POST_CRAFT };
+enum { HK_POST_SQUARE = 0, HK_POST_TURNED, HK_POST_CRAFT, HK_POST_ROUND };
 /* Unit u's set (pure: the shell and the city read the same). */
 void home_char_set(const HGraph *g, int unit, HCharSet *s);
 /* A unit's kit instances' flags (house_surf.h HOUSE_KIT_*) and part byte (its roof). */
@@ -98,7 +111,9 @@ uint16_t home_kit_flags(const HGraph *g, int unit, uint8_t *part);
 /* ...and HM5c1's retrofit kit: panels and canopies, tanks, risers, what goes on a wall (meters, lights, gates, vines),
  * a flat roof's terrace (railings, screens, trailing plants, razor wire) */
 enum { HDR_DOWNPIPE = 0, HDR_DORMER, HDR_SHUTTERS, HDR_DOORCASE, HDR_QUOINS, HDR_CANOPY, HDR_PORCH, HDR_BARGE, HDR_BUDGET,
-       HDR_SOLAR, HDR_TANK, HDR_RISER, HDR_WALLKIT, HDR_TERRACE, HDR_COUNT };
+       HDR_SOLAR, HDR_TANK, HDR_RISER, HDR_WALLKIT, HDR_TERRACE,
+       HDR_REGION,   /* HM5b2: a region's piece with no room (a car porch, an amado, a slat screen) */
+       HDR_COUNT };
 const char *home_dress_rule(int r);
 typedef struct HDressStats {
     int instances;                 /* placed */

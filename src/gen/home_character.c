@@ -1,5 +1,6 @@
 #include "home_char_internal.h"
 #include "pmodel_house.h"
+#include "pmodel_region.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -124,24 +125,59 @@ static void row_set(const HGraph *g, HCharSet *s) {
         s->shutters = ch(h, 2, 0.6f) ? HK_SHUT_LOUVRE : 0; s->boxes = ch(h, 3, 0.4f); s->string = 1; s->plinth = ch(h, 4, 0.5f);
         s->cornice = 1;
         break;
+    /* HM5b2a, East and South-East Asia (the plan's "HM5b2" table; the sheets' panel 1 first) */
     case HS_JAPAN:
-        s->frame = s->frameBack = ch(h, 1, 0.6f) ? HK_FRAME_UPVC : HK_FRAME_GRID; s->sill = HK_SILL_NONE;
+        /* aluminium sliding windows everywhere, frosted at the back and in small openings; storm-shutter boxes beside the
+         * street's; a thin hood over the door and some ground windows; a slat screen by the door on some */
+        s->frame = s->frameBack = HK_FRAME_SLIDING; s->frost = 1; s->sill = HK_SILL_NONE;
         s->door = ch(h, 2, 0.5f) ? HK_DOOR_UPVC : HK_DOOR_HALF; s->rain = ch(h, 3, 0.5f) ? HKR_GREY : HKR_BROWN;
-        s->grilles = ch(h, 4, 0.4f) ? 1 : 0;
+        s->grilles = ch(h, 4, 0.35f) ? 1 : 0;
+        s->shutters = ch(h, 5, 0.45f + 0.3f * aff) ? HK_SHUT_AMADO : 0;
+        s->headLow = ch(h, 6, 0.35f) ? HK_HEAD_HISASHI : 0;
+        s->canopy = HCC_HISASHI;
+        s->slats = ch(h, 7, 0.15f + 0.2f * aff);
         break;
     case HS_CHINA:
-        s->frame = s->frameBack = HK_FRAME_GRID; s->sill = HK_SILL_CONCRETE; s->door = HK_DOOR_4P; s->grilles = ch(h, 1, 0.6f) ? 2 : 1;
+        if (home_main_pitched(g)) {
+            /* the hutong courtyard rows: lattice windows, grey tile with its ridge ends and eave tiles, no gutters; red
+             * lanterns, couplets and the fu at the door (the gatehouse in the wall before them takes the same) */
+            s->frame = s->frameBack = HK_FRAME_LATTICE; s->sill = HK_SILL_NONE; s->gutter = 255;
+            s->ridgeEnd = HRE_CHINA; s->eaveTiles = 1;
+        } else {
+            /* the blocks behind: steel windows, cages out from the upper ones, bars on the ground floor's */
+            s->frame = s->frameBack = HK_FRAME_GRID; s->sill = HK_SILL_CONCRETE; s->grilles = 2;
+            s->cages = aff < 0.55f ? 2 : 1;
+        }
+        s->door = HK_DOOR_4P;
+        s->lanterns = ch(h, 1, 0.45f + 0.35f * aff); s->couplets = ch(h, 2, 0.8f); s->drums = ch(h, 3, 0.3f + 0.5f * aff);
         break;
     case HS_KOREA:
-        s->frame = s->frameBack = HK_FRAME_UPVC; s->door = HK_DOOR_UPVC; s->grilles = ch(h, 1, 0.4f) ? 1 : 0;
+        if (home_hanok(g)) {
+            /* the hanok (panel 4): fine-grid lattice windows, Korea's ridge ends and eave tiles, no gutters */
+            s->frame = s->frameBack = HK_FRAME_LATTICE_KR; s->sill = HK_SILL_NONE; s->gutter = 255;
+            s->ridgeEnd = HRE_KOREA; s->eaveTiles = 1;
+        } else {
+            /* the walk-up villa: hazard sleeves on its pilotis' columns, the mailboxes by the stair */
+            s->frame = s->frameBack = HK_FRAME_UPVC; s->grilles = ch(h, 1, 0.4f) ? 1 : 0;
+            s->hazard = ch(h, 2, 0.85f); s->mailbox = 1;
+        }
+        s->door = HK_DOOR_UPVC;
         break;
     case HS_SHOPHOUSE:
-        s->frame = s->frameBack = ch(h, 1, 0.5f) ? HK_FRAME_SASH : HK_FRAME_CASEMENT; s->sill = HK_SILL_STONE;
-        s->shutters = ch(h, 2, 0.5f) ? HK_SHUT_LOUVRE : 0; s->grilles = ch(h, 3, 0.5f) ? 1 : 0; s->string = 1; s->plinth = 1;
-        s->post = HK_POST_SQUARE;
+        /* the Peranakan front on the richer rows (louvred French windows under vent panels, the parapet's crest), louvred
+         * shutters on plainer ones; pilasters, the five-foot way's columns and the transom door on all */
+        s->ornate = (uint8_t)home_ornate(g);
+        s->frame = s->ornate ? HK_FRAME_LOUVRE : HK_FRAME_CASEMENT; s->frameBack = HK_FRAME_CASEMENT; s->sill = HK_SILL_STONE;
+        s->head = s->ornate ? HK_HEAD_VENT : HK_HEAD_NONE;
+        s->shutters = s->ornate ? 0 : HK_SHUT_LOUVRE; s->grilles = ch(h, 3, 0.5f) ? 1 : 0; s->string = 1; s->cornice = 1;
+        s->door = HK_DOOR_TRANSOM; s->pagar = ch(h, 4, 0.3f + 0.4f * aff); s->lanterns = ch(h, 5, 0.55f);
+        s->crest = s->ornate && ch(h, 6, 0.85f); s->columns = 1; s->post = HK_POST_ROUND; s->gutter = 255;
         break;
     case HS_LINKHOUSE:
-        s->frame = s->frameBack = HK_FRAME_UPVC; s->door = HK_DOOR_UPVC; s->grilles = 2;
+        /* gridded steel windows under aluminium hoods, the curved car porch over the pad, a gable's roundel, scalloped fascia */
+        s->frame = HK_FRAME_GRID; s->frameBack = HK_FRAME_UPVC; s->sill = HK_SILL_CONCRETE; s->door = HK_DOOR_4P; s->grilles = 2;
+        s->head = ch(h, 1, 0.75f) ? HK_HEAD_HOOD_AL : HK_HEAD_NONE; s->canopy = HCC_HOOD;
+        s->carport = ch(h, 2, 0.85f); s->gableVent = ch(h, 3, 0.75f); s->barge = 1 + HK_BARGE_SCALLOP;
         break;
     case HS_RCC:
         s->frame = s->frameBack = ch(h, 1, 0.5f) ? HK_FRAME_UPVC : HK_FRAME_CASEMENT; s->head = s->headBack = HK_HEAD_NONE;   /* its chajjas (HM5e1) */
@@ -172,6 +208,8 @@ static void row_set(const HGraph *g, HCharSet *s) {
         break;
     default: break;
     }
+    s->region = (uint8_t)g->region;
+    if (!s->grille && s->grilles) s->grille = HK_GRILLE_BARS;
     /* ridges: rolls on tiles and slates (crested for some Victorian rows), none on shingles or sheet */
     if (f.roof == HRM_SHINGLE || f.roof == HRM_METAL) s->ridge = 0;
     /* poorer rows bar their ground floors in the regions where that is the custom; elsewhere only the run-down do */
@@ -202,12 +240,17 @@ void home_char_set(const HGraph *g, int unit, HCharSet *s) {
     case HS_SEU_VILLA: case HS_TOWNHOUSE: case HS_COLONIAL: rep = 0.12f; break;
     default: rep = 0.1f; break;
     }
-    if (ch(o, 2u, fminf(0.9f, rep * worn))) {
+    /* (HM5b2: where the region's own window stands, owners replace it in kind: no plastic casements in Japan) */
+    const int regional = s->frame >= HK_FRAME_SLIDING || s->frameBack >= HK_FRAME_SLIDING || g->region == PLAN_REGION_EAS ||
+                         g->region == PLAN_REGION_SEA;
+    if (regional) { /* none */ }
+    else if (ch(o, 2u, fminf(0.9f, rep * worn))) {
         if (s->frame != HK_FRAME_PICTURE) s->frame = HK_FRAME_UPVC;
         s->frameBack = HK_FRAME_UPVC;
     } else if (s->frameBack != HK_FRAME_UPVC && ch(o, 3u, 0.12f * worn)) s->frameBack = HK_FRAME_UPVC;   /* the back done first */
-    /* the door their own: a plastic one in Britain, a steel six-panel in North America */
-    if (ch(o, 4u, 0.18f * worn)) s->door = uk ? HK_DOOR_UPVC : na ? HK_DOOR_6P : pick(o, 5u, 2) ? HK_DOOR_UPVC : HK_DOOR_HALF;
+    /* the door their own: a plastic one in Britain, a steel six-panel in North America (a transom door kept) */
+    if (s->door != HK_DOOR_TRANSOM && ch(o, 4u, 0.18f * worn))
+        s->door = uk ? HK_DOOR_UPVC : na ? HK_DOOR_6P : pick(o, 5u, 2) ? HK_DOOR_UPVC : HK_DOOR_HALF;
     /* their own gutters: plastic replacing iron, a colour of their own */
     if (s->rain == HKR_IRON && ch(o, 6u, 0.3f * worn)) s->rain = ch(o, 7u, 0.6f) ? HKR_GREY : HKR_WHITE;
     else if (ch(o, 8u, 0.12f)) s->rain = (uint8_t)pick(o, 9u, 4);
@@ -215,14 +258,22 @@ void home_char_set(const HGraph *g, int unit, HCharSet *s) {
     /* shutters taken down, window boxes their own */
     if (s->shutters && ch(o, 11u, 0.2f * worn)) s->shutters = 0;
     s->boxes = ((s->boxes && ch(o, 12u, 0.6f)) || ((uk || na) && s->upkeep == HK_KEPT && ch(o, 21u, 0.12f))) && s->upkeep != HK_RUNDOWN;
-    /* porch posts their own: a turned post for a plain one or the other way (not a craftsman's columns) */
-    if (s->post != HK_POST_CRAFT && ch(o, 22u, 0.15f)) s->post = s->post == HK_POST_TURNED ? HK_POST_SQUARE : HK_POST_TURNED;
+    /* porch posts their own: a turned post for a plain one or the other way (not a craftsman's columns, nor round ones) */
+    if (s->post != HK_POST_CRAFT && s->post != HK_POST_ROUND && !regional && ch(o, 22u, 0.15f))
+        s->post = s->post == HK_POST_TURNED ? HK_POST_SQUARE : HK_POST_TURNED;
     if (s->post == HK_POST_TURNED && (uk || na) && g->style != HS_CRAFTSMAN) s->spandrels = s->spandrels || ch(o, 23u, 0.5f);
     /* grilles: the run-down bar their ground floor windows anywhere; elsewhere the region's custom stands */
     if (!s->grilles && s->upkeep == HK_RUNDOWN && ch(o, 13u, 0.4f)) s->grilles = 1;
     if (s->grilles == 1 && aff < 0.35f && ch(o, 14u, 0.3f)) s->grilles = 2;
-    /* a canopy their own */
-    if (ch(o, 15u, 0.12f)) s->canopy = s->canopy == HCC_GABLE ? HCC_FLAT : HCC_GABLE;
+    /* a canopy their own (Britain's and North America's kinds; a region's hood stays) */
+    if ((s->canopy == HCC_GABLE || s->canopy == HCC_FLAT) && !regional && ch(o, 15u, 0.12f)) s->canopy = s->canopy == HCC_GABLE ? HCC_FLAT : HCC_GABLE;
+    /* HM5b2a: the owners' own (Japan's storm shutters taken off, a Korean sleeve worn away, lanterns and couplets) */
+    if (s->shutters == HK_SHUT_AMADO && ch(o, 25u, 0.15f * worn)) s->shutters = 0;
+    if (s->hazard && s->upkeep == HK_RUNDOWN && ch(o, 26u, 0.6f)) s->hazard = 0;
+    if (g->style == HS_CHINA) { s->lanterns = s->lanterns ? !ch(o, 27u, 0.2f) : ch(o, 27u, 0.25f); s->couplets = s->couplets && !ch(o, 28u, 0.1f * worn); }
+    if (s->cages == 1 && ch(o, 29u, 0.3f)) s->cages = 2;   /* this owner caged them all */
+    if (s->pagar && ch(o, 30u, 0.25f)) s->pagar = 0;
+    if (s->carport && ch(o, 31u, 0.1f)) s->carport = 0;
     /* the roof: a dormer on the street's slope by the row's own pattern (craftsman), loft conversions at the back,
      * rooflights and a soil vent */
     if (uk && ch(o, 16u, 0.2f + 0.15f * aff)) s->dormerBack = 1 + HK_DORMER_FLAT;
@@ -237,6 +288,7 @@ void home_char_set(const HGraph *g, int unit, HCharSet *s) {
 int home_char_frame(const HCharSet *cs, int front, int storey, double w) {
     int f = front ? cs->frame : cs->frameBack;
     if (f == HK_FRAME_PICTURE && !(front && storey == 0 && w >= 1.2)) f = cs->frameBack == HK_FRAME_PICTURE ? HK_FRAME_UPVC : cs->frameBack;
+    if (f == HK_FRAME_LOUVRE && storey == 0) f = HK_FRAME_CASEMENT;   /* the shophouse's louvred French windows are its upper storeys' */
     return f;
 }
 
@@ -261,7 +313,7 @@ uint16_t home_kit_flags(const HGraph *g, int unit, uint8_t *part) {
 
 const char *home_dress_rule(int r) {
     static const char *N[HDR_COUNT] = { "downpipe", "dormer", "shutters", "doorcase", "quoins", "canopy", "porch", "bargeboards", "budget",
-                                            "solar", "tank", "riser", "wall", "terrace" };
+                                            "solar", "tank", "riser", "wall", "terrace", "region" };
     return r >= 0 && r < HDR_COUNT ? N[r] : "?";
 }
 
@@ -432,10 +484,18 @@ static void dress_window(DC *d, const HsWin *w) {
     const int front = w->m[1] < -0.7;
     HkWindow k;
     memset(&k, 0, sizeof(k));
+    const uint32_t ws = hash_combine(d->g->unit[u].seed, 0xB0u + (uint32_t)(w->a0 * 10.0) + w->storey * 97u + (uint32_t)(w->m[0] * 3.0 + 3.0) * 7u);
     k.frame = (uint8_t)home_char_frame(cs, front, w->storey, w->w);
+    /* HM5b2a: Japan's frosted lights: the small openings, and at the back and sides (bathrooms, stairs) */
+    if (k.frame == HK_FRAME_SLIDING && cs->frost && (w->w < 0.95 || (!front && ch(ws, 1u, 0.45f)))) k.frame = HK_FRAME_SLIDING_FROST;
     k.sill = cs->sill;
     if (d->C->fin[u].wall == HW_SIDING && k.sill != HK_SILL_NONE) k.sill = HK_SILL_TIMBER;
     int head = front ? cs->head : cs->lean ? HK_HEAD_NONE : cs->headBack;
+    /* HM5b2a: a head over the ground floor's street windows alone (Japan's hisashi); the shophouse's vent panels over its
+     * louvred windows; no hood where the car porch covers the ground floor */
+    if (front && w->storey == 0 && cs->headLow && ch(ws, 2u, 0.7f)) head = cs->headLow;
+    if (head == HK_HEAD_VENT && k.frame != HK_FRAME_LOUVRE) head = HK_HEAD_NONE;
+    if (head == HK_HEAD_HOOD_AL && front && w->storey == 0 && cs->carport) head = HK_HEAD_NONE;
     if ((head == HK_HEAD_SOLDIER || head == HK_HEAD_ARCH) && !wall_is_brick(d, u)) head = HK_HEAD_NONE;
     if (head == HK_HEAD_KEYSTONE && w->storey >= 2) head = HK_HEAD_LINTEL;   /* a Georgian top floor's plain lintels */
     k.head = (uint8_t)head;
@@ -443,7 +503,16 @@ static void dress_window(DC *d, const HsWin *w) {
     /* a French window out onto a balcony (HM5e2): its own frame, no sill or box (the balcony's floor is under it) */
     const int french = w->balc >= 0;
     if (french) { k.frame = HK_FRAME_FRENCH; k.sill = HK_SILL_NONE; }
-    if (front && cs->shutters) {
+    if (front && cs->shutters == HK_SHUT_AMADO) {
+        /* HM5b2a: the storm shutters' box on whichever side has room (the kit's +x runs along kit_dir_along) */
+        double l, r;
+        window_room(d, w, &l, &r);
+        const double need = HK_AMADO_W + 0.06, yc = 0.5 * (w->y0 + w->y1);
+        const int plusE = kit_dir_along(d) > 0.0;
+        if (!french && k.frame == HK_FRAME_SLIDING && r >= need && !front_blocked(d, w, w->a0 + w->w + 0.5 * HK_AMADO_W, yc, 0.08)) { k.shutters = HK_SHUT_AMADO; k.side = (uint8_t)!plusE; }
+        else if (!french && k.frame == HK_FRAME_SLIDING && l >= need && !front_blocked(d, w, w->a0 - 0.5 * HK_AMADO_W, yc, 0.08)) { k.shutters = HK_SHUT_AMADO; k.side = (uint8_t)plusE; }
+        else if (k.frame == HK_FRAME_SLIDING && !french) repair(d, HDR_REGION, "no room beside a window %.1f m wide for its storm shutters", u, w->w);
+    } else if (front && cs->shutters) {
         double l, r;
         window_room(d, w, &l, &r);
         const double need = 0.5 * w->w + 0.08;
@@ -452,7 +521,12 @@ static void dress_window(DC *d, const HsWin *w) {
             k.shutters = cs->shutters;
         else repair(d, HDR_SHUTTERS, "no room beside a window %.1f m wide: no shutters", u, w->w);
     }
-    k.grille = (uint8_t)(w->storey == 0 && (cs->grilles == 2 || (cs->grilles == 1 && front)));
+    k.grille = (uint8_t)(w->storey == 0 && (cs->grilles == 2 || (cs->grilles == 1 && front)) ? (cs->grille ? cs->grille : HK_GRILLE_BARS) : 0);
+    /* HM5b2a: China's blocks cage their upper windows, out from the wall (not one over a balcony, nor where something stands) */
+    if (!k.grille && cs->cages && w->storey >= 1 && !french && ch(ws, 3u, cs->cages == 2 ? 0.8f : 0.35f) &&
+        !front_blocked(d, w, w->a0 + 0.5 * w->w, 0.5 * (w->y0 + w->y1), HK_CAGE_D + 0.05) &&
+        !front_blocked(d, w, w->a0 - 0.1, w->y1 + 0.1, HK_CAGE_D) && !front_blocked(d, w, w->a0 + w->w + 0.1, w->y0 - 0.1, HK_CAGE_D))
+        k.grille = HK_GRILLE_CAGE;
     k.box = (uint8_t)(!french && front && cs->boxes && !cs->lean && !k.grille && (w->storey >= 1 || region_boxes_ground(d->g)) &&
                       ch(d->g->unit[u].seed, 0xB0u + (uint32_t)(w->a0 * 10.0) + w->storey * 97u, 0.6f));
     const double c = w->a0 + 0.5 * w->w;
@@ -464,7 +538,10 @@ static void dress_window(DC *d, const HsWin *w) {
     done(d);
     d->D->st.windows++;
     /* what stands proud of the wall round it: its shutters, its box */
-    if (k.shutters) occupy_wall(d, w, w->a0 - 0.8 * w->w - 0.05, w->a0 + 1.8 * w->w + 0.05, w->y0 - 0.05, w->y1 + 0.05, 0.12);
+    if (k.shutters == HK_SHUT_AMADO) occupy_wall(d, w, w->a0 - HK_AMADO_W - 0.05, w->a0 + w->w + HK_AMADO_W + 0.05, w->y0 - 0.1, w->y1 + 0.1, 0.16);
+    else if (k.shutters) occupy_wall(d, w, w->a0 - 0.8 * w->w - 0.05, w->a0 + 1.8 * w->w + 0.05, w->y0 - 0.05, w->y1 + 0.05, 0.12);
+    if (k.grille == HK_GRILLE_CAGE) occupy_wall(d, w, w->a0 - 0.2, w->a0 + w->w + 0.2, w->y0 - 0.2, w->y1 + 0.2, HK_CAGE_D + 0.08);
+    if (head == HK_HEAD_HISASHI || head == HK_HEAD_HOOD_AL) occupy_wall(d, w, w->a0 - 0.25, w->a0 + w->w + 0.25, w->y1, w->y1 + 0.45, 0.55);
     if (k.box) occupy_wall(d, w, w->a0 - 0.1, w->a0 + w->w + 0.1, w->y0 - 0.45, w->y0 + 0.4, 0.32);
 }
 
@@ -606,6 +683,33 @@ static int canopy_at(DC *d, int u, const HVol *p, double y0, int dry, double *ha
     const HCharSet *cs = &d->C->cs[u];
     int ck = cs->canopy == HCC_NONE ? HCC_FLAT : cs->canopy;
     const double pw = p->x1 - p->x0, pd = p->z1 - p->z0, cx = 0.5 * (p->x0 + p->x1);
+    if (ck == HCC_HISASHI || ck == HCC_HOOD) {
+        /* HM5b2a: a thin hood on the wall over the door (Japan's hisashi, the link house's aluminium one); the car porch
+         * covers a link house's door where it stands over the front */
+        if (ck == HCC_HOOD && cs->carport && home_unit_pad(d->g, u, NULL, NULL, NULL)) return ck;
+        const double half = fmin(0.5 * pw + 0.1, 1.0), reach = ck == HCC_HISASHI ? HK_HISASHI_D : HK_HOOD_D, top = y0 + 0.12;
+        for (int i = 0; i < d->C->nwin; ++i) {
+            const HsWin *w = &d->C->win[i];
+            if (w->m[1] > -0.7 || fabs(w->at + p->z1) > 0.05) continue;
+            const double s0 = fmin(w->a0 * w->e[0], (w->a0 + w->w) * w->e[0]), s1 = fmax(w->a0 * w->e[0], (w->a0 + w->w) * w->e[0]);
+            if (s1 > cx - half && s0 < cx + half && w->y0 < top + 0.1 && w->y1 > top - 0.45) return HCC_NONE;
+        }
+        for (int a = -1; a <= 1; a += 2) {
+            const double q[3] = { cx + a * (half - 0.05), top - 0.05, p->z1 - reach + 0.05 };
+            if (hs_inside(d->C, q, -1, 0.003) >= 0) return HCC_NONE;
+        }
+        if (!dry) {
+            const double mm[2] = { 0.0, -1.0 }, ee[2] = { 1.0, 0.0 };
+            begin(d, u);
+            const double L = push_run_wall(d, mm, ee, -p->z1, cx - half, cx + half, top, 0.0);
+            hk_run(d->pm, ck == HCC_HISASHI ? PMK_H_HISASHI : PMK_H_WIN_HOOD, (float)L, 0.0f);
+            pop(d);
+            done(d);
+        }
+        if (halfOut) *halfOut = half;
+        if (riseOut) *riseOut = 0.15;
+        return ck;
+    }
     for (; ck != HCC_NONE; ck = ck == HCC_GABLE ? HCC_FLAT : HCC_NONE) {
         const double W0 = ck == HCC_GABLE ? 1.5 : 1.4, D0 = ck == HCC_GABLE ? 0.8 : 0.65;
         const double sxw = fmin(1.3, fmax(0.85, pw / W0)), szd = fmin(1.35, fmax(0.9, pd / D0));
@@ -706,6 +810,14 @@ static void dress_door(DC *d, const HsDoor *dr) {
         pm_place(d->pm, PMK_H_FANLIGHT);
         pm_pop(d->pm);
     } else hk_door(d->pm, kind, sur, (float)dr->w, (float)(dr->y1 - dr->y0), (float)dr->recess);
+    /* HM5b2a: the shophouse's swing half doors in the opening, before the leaves */
+    if (cs->pagar && !dr->porch && dr->y1 - dr->y0 > 2.0) {
+        pm_push(d->pm);
+        pm_translate(d->pm, 0.0f, 0.0f, (float)(-0.5 * dr->recess - 0.025));
+        pm_scale(d->pm, (float)((dr->w - 0.04) / HK_PAGAR_W), 1.0f, 1.0f);
+        pm_place(d->pm, PMK_H_PINTU_PAGAR);
+        pm_pop(d->pm);
+    }
     pop(d);
     done(d);
     d->D->st.doors++;
@@ -726,7 +838,7 @@ static void dress_door(DC *d, const HsDoor *dr) {
 static void dress_posts(DC *d) {
     const Ctx *C = d->C;
     const HGraph *g = d->g;
-    static const int POST[3] = { PMK_H_POST_SQUARE, PMK_H_POST_TURNED, PMK_H_POST_CRAFT };
+    static const int POST[4] = { PMK_H_POST_SQUARE, PMK_H_POST_TURNED, PMK_H_POST_CRAFT, PMK_H_COLUMN };
     for (int i = 0; i < C->npost; ++i) {
         const HsPost *hp = &C->post[i];
         const int u = hp->unit;
@@ -735,8 +847,8 @@ static void dress_posts(DC *d) {
         begin(d, u);
         const double q[3] = { hp->x, hp->y0, hp->z };
         push_wall(d, q, 0.0, -1.0);
-        pm_scale(d->pm, 1.0f, (float)((hp->y1 - hp->y0) / HK_POST_H), 1.0f);
-        pm_place(d->pm, POST[cs->post < 3 ? cs->post : 0]);
+        pm_scale(d->pm, 1.0f, (float)((hp->y1 - hp->y0) / (cs->post == HK_POST_ROUND ? HK_COL_H : HK_POST_H)), 1.0f);
+        pm_place(d->pm, POST[cs->post < 4 ? cs->post : 0]);
         pop(d);
         /* the beam's underside over the post: an open porch's pediment's foot, a lean-to's soffit */
         const double tp = tan(p->pitch * PI_D / 180.0);
@@ -870,6 +982,12 @@ static void dress_eaves(DC *d, const HsRoof *hr) {
                 hk_gutter(d->pm, cs->gutter, (float)L, stops);
                 pop(d);
                 d->D->st.gutters++;
+            }
+            /* HM5b2a: China's and Korea's eave-end tiles along the covering's edge */
+            if (cs->eaveTiles && !flat && v->role != HV_PORCH && !(cs->lean && !front)) {
+                const double L = push_run_wall(d, m, e2, at, sa, sb, yTop, R->ov);
+                hk_run(d->pm, PMK_H_EAVE_TILES, (float)L, 1.0f);
+                pop(d);
             }
             /* brackets under the eaves (a flat slab's or a shallow-ish soffit), rafter tails */
             if (cs->eaves == HCE_BRACKETS && front && is_house_body(v->role) && R->ov > 0.15) {
@@ -1044,6 +1162,25 @@ static void ridge_run(DC *d, const HsRoof *hr, const double a[3], const double b
     }
 }
 
+/* HM5b2a: a Chinese or Korean ridge's ends (the hutong rows', the hanok's), each in the unit whose slice holds it */
+static void ridge_ends(DC *d, const HsRoof *hr, const double a[3], const double b[3]) {
+    const Roof *R = &hr->R;
+    const HCharSet *cs = &d->C->cs[hr->unit];
+    if (!cs->ridgeEnd || d->g->vol[hr->vol].role == HV_PORCH) return;
+    double dir[3] = { b[0] - a[0], 0.0, b[2] - a[2] };
+    const double len = sqrt(dir[0] * dir[0] + dir[2] * dir[2]);
+    if (len < 1.2) return;
+    dir[0] /= len; dir[2] /= len;
+    for (int s = 0; s < 2; ++s) {
+        const double *p = s ? b : a;
+        if (p[0] < R->cx0 - 0.02 || p[0] > R->cx1 + 0.02) continue;
+        const double dd[3] = { s ? -dir[0] : dir[0], 0.0, s ? -dir[2] : dir[2] };
+        push_along(d, p, dd);
+        pm_place(d->pm, cs->ridgeEnd == HRE_KOREA ? PMK_H_RIDGE_END_KR : PMK_H_RIDGE_END);
+        pop(d);
+    }
+}
+
 static void dress_ridges(DC *d, const HsRoof *hr) {
     const Roof *R = &hr->R;
     const HVol *v = &d->g->vol[hr->vol];
@@ -1063,6 +1200,7 @@ static void dress_ridges(DC *d, const HsRoof *hr) {
         const double a[3] = { 0.5 * (a0[0] + a1[0]) + R->F.m[v1][0] * ea, y, 0.5 * (a0[1] + a1[1]) + R->F.m[v1][1] * ea };
         const double b[3] = { 0.5 * (b0[0] + b1[0]) + R->F.m[v2][0] * eb, y, 0.5 * (b0[1] + b1[1]) + R->F.m[v2][1] * eb };
         ridge_run(d, hr, a, b, crest);
+        ridge_ends(d, hr, a, b);
     } else {
         const double *p = R->F.p[0];
         const double l0 = sqrt((R->F.p[1][0] - p[0]) * (R->F.p[1][0] - p[0]) + (R->F.p[1][1] - p[1]) * (R->F.p[1][1] - p[1]));
@@ -1076,7 +1214,7 @@ static void dress_ridges(DC *d, const HsRoof *hr) {
         ax /= al; az /= al;
         const double y = R->E + R->t * half + hr->dy, r = lng - half;
         const double ra[3] = { cx - ax * r, y, cz - az * r }, rb[3] = { cx + ax * r, y, cz + az * r };
-        if (r > 0.15) ridge_run(d, hr, ra, rb, crest);
+        if (r > 0.15) { ridge_run(d, hr, ra, rb, crest); ridge_ends(d, hr, ra, rb); }
         /* the hips: from each fascia's corner (ov out on both sides, E - t ov) up to the ridge's nearer end */
         for (int c = 0; c < 4; ++c) {
             const int pe = (c + 3) % 4;
@@ -1340,6 +1478,19 @@ static void dress_front(DC *d, const HsRoof *hr) {
             }
         }
     }
+    /* HM5b2a: the shophouse's crest on its parapet, over the front's middle */
+    if (cs->crest && v->parapet == 1 && !cs->lean) {
+        const double *pa = R->W.p[e], *pb = R->W.p[(e + 1) % 4];
+        const double wl = sqrt((pb[0] - pa[0]) * (pb[0] - pa[0]) + (pb[1] - pa[1]) * (pb[1] - pa[1]));
+        if (wl > 2.4) {
+            const double q[3] = { 0.5 * (pa[0] + pb[0]), dy + R->E + 0.8, 0.5 * (pa[1] + pb[1]) };
+            const double sc = fmin(1.0, (wl - 0.8) / HK_CREST_W);
+            push_wall(d, q, m[0], m[1]);
+            pm_scale(d->pm, (float)sc, (float)fmax(0.75, sc), 1.0f);
+            pm_place(d->pm, PMK_H_CREST);
+            pop(d);
+        }
+    }
     if (cs->quoins && !cs->lean && d->C->fin[u].wall != HW_STONE && d->C->fin[u].wall != HW_SIDING) {
         /* the front's free corners: not at a party wall, not where a wing or a neighbour stands against them */
         for (int c = 0; c < 2; ++c) {
@@ -1380,6 +1531,9 @@ void hc_begin(DC *d, int u) { begin(d, u); }
 void hc_done(DC *d) { done(d); }
 void hc_push_wall(DC *d, const double p[3], double mx, double mz) { push_wall(d, p, mx, mz); }
 void hc_pop(DC *d) { pop(d); }
+double hc_push_run_wall(DC *d, const double m[2], const double e[2], double at, double sa, double sb, double y, double out) {
+    return push_run_wall(d, m, e, at, sa, sb, y, out);
+}
 void hc_push_along(DC *d, const double p[3], const double dir[3]) { push_along(d, p, dir); }
 void hc_push_yz(DC *d, const double p[3], const double ey[3], const double ez[3]) {
     float o[3], y[3] = { (float)(d->sx * ey[0]), (float)ey[1], (float)ey[2] }, z[3] = { (float)(d->sx * ez[0]), (float)ez[1], (float)ez[2] };
@@ -1453,6 +1607,7 @@ static void dress_pass(Ctx *C, HDress *D, int *count) {
     for (int i = 0; i < C->nwin; ++i) if (!C->win[i].bay) dress_window(&d, &C->win[i]);
     for (int vi = 0; vi < g->nvol; ++vi) if (g->vol[vi].role == HV_BAY) dress_bay(&d, vi);
     dress_posts(&d);
+    hs_region(&d);      /* HM5b2 */
     hs_balconies(&d);   /* HM5e2 */
     hs_bounds(&d);      /* HM5e3 */
     hs_inserts(&d);     /* HM5c2 */

@@ -209,6 +209,7 @@ static bool parse_args(int argc, char **argv, Options *o) {
             } else if ((style = home_style_find(-1, v)) < 0) return false;
             city_home_force(arch, style);
         }
+        else if (strcmp(argv[i], "--home-storeys") == 0 && i + 1 < argc) city_home_force_storeys(atoi(argv[++i]));   /* HM5b2 */
         else if (strcmp(argv[i], "--bars") == 0 && i + 1 < argc) {
             if (strcmp(argv[++i], "all") != 0) return false;
             city_force_bars(1);   /* NB8's gate: every site a canopy bar fits */

@@ -114,11 +114,13 @@ typedef struct PlotCtx {
 } PlotCtx;
 
 /* The harness's forcing (city_home_force): an archetype for every street, a style for every row. */
-static int g_forceArch = -1, g_forceStyle = -1;
+static int g_forceArch = -1, g_forceStyle = -1, g_forceStoreys = 0;
 void city_home_force(int arch, int style) {
     g_forceArch = arch >= 0 && arch < HOME_ARCH_COUNT ? arch : -1;
     g_forceStyle = style >= 0 && style < HS_COUNT ? style : -1;
 }
+/* HM5b2: every row's storeys forced too (a style's rarer body for the captures: Korea's one-storey hanok); 0 lets them be */
+void city_home_force_storeys(int n) { g_forceStoreys = n >= 1 && n <= HOME_STOREYS_MAX ? n : 0; }
 
 static void add_plot(PlotCtx *P, const Strip *s, uint32_t road, double u0, double u1, int arch, int unit, int units, uint32_t rowSeed) {
     if (P->n >= P->max) return;
@@ -139,7 +141,7 @@ static void add_plot(PlotCtx *P, const Strip *s, uint32_t road, double u0, doubl
      * were mostly built together, so three rows in four take the street's style and storeys */
     uint32_t built = hash_float(hash_combine(rowSeed, 0x5702u)) < 0.75f ? hash_combine(road, (uint32_t)arch) : rowSeed;
     p->style = (uint8_t)(g_forceStyle >= 0 ? g_forceStyle : home_style_pick(P->region, arch, P->lat, P->lon, hash_combine(built, 0x57E1u)));
-    p->storeys = (uint8_t)home_style_storeys(p->style, arch, hash_combine(built, 0x5701u));
+    p->storeys = (uint8_t)(g_forceStoreys ? g_forceStoreys : home_style_storeys(p->style, arch, hash_combine(built, 0x5701u)));
     /* the row's front yard, with room behind it for the house and the rear yard */
     p->front = front_yard(arch, P->region, p->depth, hash_combine(rowSeed, 0xF407u), &p->pad);
     /* a style built on the street line (HM5e1: townhouses, shophouses, courtyard houses, colonial and self-built rows)
@@ -189,6 +191,9 @@ int city_block_plots(const Block *bk, HomePlot *out, int max) {
     PlotCtx P;
     P.bk = bk; P.out = out; P.n = 0; P.max = max; P.rows = 0;
     P.region = plan_region_of(lat, lon);
+    /* a style the harness forces into another region's city lays its plots as its own region does (its frontages, depths,
+     * yards and pads), and its rows are its region's (owners, flat roofs, yards' rules): as in a city of its own (HM5b2a) */
+    if (g_forceStyle >= 0) P.region = home_style_region(g_forceStyle);
     P.lat = lat; P.lon = lon;
     float w[HOME_ARCH_COUNT];
     region_weights(P.region, lat, lon, w);

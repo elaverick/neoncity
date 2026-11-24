@@ -1,4 +1,5 @@
 #include "pmodel_house.h"
+#include "pmodel_region.h"
 #include "mathlib.h"
 #include <math.h>
 #include <string.h>
@@ -1377,11 +1378,15 @@ void hk_run(Pm *pm, int module, float len, float piece) {
 }
 
 void hk_window(Pm *pm, const HkWindow *w) {
-    static const int FRAME[] = { -1, PMK_H_WIN_SASH, PMK_H_WIN_GEORGIAN, PMK_H_WIN_CASEMENT, PMK_H_WIN_GRID, PMK_H_WIN_PICTURE, PMK_H_WIN_UPVC, PMK_H_WIN_FRENCH };
-    static const float FW[] = { 1, HK_SASH_W, HK_SASH_W, HK_CASE_W, HK_GRID_W, HK_PICT_W, HK_UPVC_W, HK_FRENCH_W };
-    static const float FH[] = { 1, HK_SASH_H, HK_SASH_H, HK_CASE_H, HK_GRID_H, HK_PICT_H, HK_UPVC_H, HK_FRENCH_H };
+    static const int FRAME[HK_FRAME_COUNT] = { -1, PMK_H_WIN_SASH, PMK_H_WIN_GEORGIAN, PMK_H_WIN_CASEMENT, PMK_H_WIN_GRID, PMK_H_WIN_PICTURE,
+                                               PMK_H_WIN_UPVC, PMK_H_WIN_FRENCH, PMK_H_WIN_SLIDING, PMK_H_WIN_SLIDING_FROST, PMK_H_WIN_LOUVRE,
+                                               PMK_H_LATTICE, PMK_H_LATTICE_KR, PMK_H_WIN_JALOUSIE };
+    static const float FW[HK_FRAME_COUNT] = { 1, HK_SASH_W, HK_SASH_W, HK_CASE_W, HK_GRID_W, HK_PICT_W, HK_UPVC_W, HK_FRENCH_W,
+                                              HK_SLIDE_W, HK_SLIDE_W, HK_LOUVRE_W, HK_LAT_W, HK_LAT_W, HK_JAL_W };
+    static const float FH[HK_FRAME_COUNT] = { 1, HK_SASH_H, HK_SASH_H, HK_CASE_H, HK_GRID_H, HK_PICT_H, HK_UPVC_H, HK_FRENCH_H,
+                                              HK_SLIDE_H, HK_SLIDE_H, HK_LOUVRE_H, HK_LAT_H, HK_LAT_H, HK_JAL_H };
     const float hw = 0.5f * w->w;
-    if (w->frame > 0 && w->frame <= HK_FRAME_FRENCH) {
+    if (w->frame > 0 && w->frame < HK_FRAME_COUNT) {
         /* an opening much wider than the frame's usual size takes several lights side by side (HM5: a square bay's
          * front, a wide casement), so bars stay bars; a picture window is one wide light by design */
         int n = 1;
@@ -1406,24 +1411,47 @@ void hk_window(Pm *pm, const HkWindow *w) {
     case HK_HEAD_SOLDIER: pm_push(pm); pm_translate(pm, -hw - 0.05f, 0.0f, 0.0f); hk_run(pm, PMK_H_SOLDIER, w->w + 0.1f, 0.0f); pm_pop(pm); break;
     case HK_HEAD_HOOD: pm_push(pm); pm_translate(pm, -hw, 0.0f, 0.0f); pm_scale(pm, w->w, 1.0f, 1.0f); pm_place(pm, PMK_H_HOOD_MOULD); pm_pop(pm); break;
     case HK_HEAD_CONCRETE: pm_push(pm); pm_translate(pm, -hw - 0.15f, 0.0f, 0.0f); hk_run(pm, PMK_H_LINTEL_CONCRETE, w->w + 0.3f, 0.0f); pm_pop(pm); break;
+    /* HM5b2: a thin hood a little over the head, an aluminium one, a pierced vent panel over it */
+    case HK_HEAD_HISASHI: pm_push(pm); pm_translate(pm, -hw - 0.2f, 0.22f, 0.0f); pm_scale(pm, w->w + 0.4f, 1.0f, 0.8f); pm_place(pm, PMK_H_HISASHI); pm_pop(pm); break;
+    case HK_HEAD_HOOD_AL: pm_push(pm); pm_translate(pm, -hw - 0.1f, 0.3f, 0.0f); pm_scale(pm, w->w + 0.2f, 1.0f, 1.0f); pm_place(pm, PMK_H_WIN_HOOD); pm_pop(pm); break;
+    case HK_HEAD_VENT: pm_push(pm); pm_translate(pm, 0.0f, 0.1f, 0.0f); pm_scale(pm, (w->w + 0.05f) / HK_VENT_W, 1.0f, 1.0f); pm_place(pm, PMK_H_VENT_PANEL); pm_pop(pm); break;
     default: break;
     }
     pm_pop(pm);
     if (w->head == HK_HEAD_CASING) { pm_push(pm); pm_scale(pm, w->w / HK_GRID_W, w->h / HK_GRID_H, 1.0f); pm_place(pm, PMK_H_CASING); pm_pop(pm); }
-    if (w->shutters) {
+    if (w->shutters == HK_SHUT_AMADO) {
+        /* the storm shutters' box beside the window, from under its foot to over its head; their rail over the head across
+         * the window and the box */
+        const float x0 = w->side ? -hw - HK_AMADO_W : -hw, bx0 = w->side ? -hw - HK_AMADO_W : hw;
+        pm_push(pm); pm_translate(pm, bx0, 0.0f, 0.0f); pm_scale(pm, 1.0f, (w->h + 0.2f) / HK_AMADO_H, 1.0f); pm_place(pm, PMK_H_AMADO); pm_pop(pm);
+        pm_push(pm); pm_translate(pm, x0, w->h, 0.0f); pm_scale(pm, w->w + HK_AMADO_W, 1.0f, 1.0f); pm_place(pm, PMK_H_AMADO_RAIL); pm_pop(pm);
+    } else if (w->shutters) {
         const int m = w->shutters == HK_SHUT_PANEL ? PMK_H_SHUTTER_PANEL : PMK_H_SHUTTER_LOUVRE;
         for (int s = 0; s < 2; ++s) {
             pm_push(pm); pm_translate(pm, (s ? 1.0f : -1.0f) * (hw + 0.25f * w->w + 0.03f), 0.0f, 0.0f); pm_scale(pm, w->w, w->h / 1.6f, 1.0f);
             pm_place(pm, m); pm_pop(pm);
         }
     }
-    if (w->grille) { pm_push(pm); pm_translate(pm, 0.0f, -0.04f, 0.0f); pm_scale(pm, w->w + 0.08f, w->h + 0.08f, 1.0f); pm_place(pm, PMK_H_GRILLE); pm_pop(pm); }
+    switch (w->grille) {
+    case HK_GRILLE_NONE: break;
+    /* HM5b2: China's cage out from the wall round the opening and a margin; a reja built round its usual opening */
+    case HK_GRILLE_CAGE: pm_push(pm); pm_translate(pm, 0.0f, -0.15f, 0.0f); pm_scale(pm, w->w + 0.3f, w->h + 0.3f, 1.0f); pm_place(pm, PMK_H_CAGE); pm_pop(pm); break;
+    case HK_GRILLE_REJA: pm_push(pm); pm_scale(pm, w->w / HK_REJA_W, w->h / HK_REJA_H, 1.0f); pm_place(pm, PMK_H_REJA); pm_pop(pm); break;
+    default: {
+        const int m = w->grille == HK_GRILLE_ORN ? PMK_H_GRILLE_ORN : w->grille == HK_GRILLE_LATTICE ? PMK_H_GRILLE_LATTICE : PMK_H_GRILLE;
+        pm_push(pm); pm_translate(pm, 0.0f, -0.04f, 0.0f); pm_scale(pm, w->w + 0.08f, w->h + 0.08f, 1.0f); pm_place(pm, m); pm_pop(pm);
+        break;
+    }
+    }
     if (w->box) { pm_push(pm); pm_translate(pm, -hw - 0.05f, -0.1f, 0.0f); pm_scale(pm, w->w + 0.1f, 1.0f, 1.0f); pm_place(pm, PMK_H_WINDOW_BOX); pm_pop(pm); }
 }
 
 void hk_door(Pm *pm, int kind, int surround, float w, float h, float recess) {
     static const int LEAF[] = { PMK_H_DOOR_4P, PMK_H_DOOR_6P, PMK_H_DOOR_CRAFT, PMK_H_DOOR_HALF, PMK_H_DOOR_UPVC };
-    if (kind >= 0 && kind <= HK_DOOR_UPVC) {
+    if (kind == HK_DOOR_TRANSOM) {
+        pm_push(pm); pm_translate(pm, 0.0f, 0.0f, -recess); pm_scale(pm, w / HK_DDOOR_W, h / HK_DDOOR_H, 1.0f);
+        pm_place(pm, PMK_H_DOOR_TRANSOM); pm_pop(pm);
+    } else if (kind >= 0 && kind <= HK_DOOR_UPVC) {
         pm_push(pm); pm_translate(pm, 0.0f, 0.0f, -recess); pm_scale(pm, w / HK_DOOR_W, h / HK_DOOR_H, 1.0f);
         pm_place(pm, LEAF[kind]); pm_pop(pm);
     }

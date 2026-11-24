@@ -752,7 +752,7 @@ static int body_check(void) {
         { "townhouse",  0.0f, 0.0f, 3.2f,   0.3f, 0.95f, 0.0f,  0.0f,   0.0f, 1.0f, 0.2f,  0.0f },
         { "japan",      0.0f, 0.0f, 1.8f,   0.0f, 0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
         { "china",      0.0f, 0.0f, 2.4f,   0.55f,0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
-        { "korea",      0.0f, 0.0f, 3.3f,   0.5f, 0.0f,  0.0f,  0.5f,   0.0f, 1.0f, 0.0f,  0.0f },
+        { "korea",      0.0f, 0.0f, 3.0f,   0.5f, 0.0f,  0.0f,  0.5f,   0.0f, 1.0f, 0.0f,  0.0f },
         { "shophouse",  0.0f, 0.0f, 2.3f,   0.0f, 0.95f, 0.85f, 0.0f,   0.75f,1.0f, 0.0f,  0.0f },
         { "linkhouse",  0.0f, 0.0f, 1.8f,   0.0f, 0.0f,  0.0f,  0.0f,   0.0f, 1.0f, 0.0f,  0.0f },
         { "rcc",        0.0f, 0.0f, 2.6f,   0.95f,0.0f,  0.0f,  0.0f,   0.15f,0.45f,0.0f,  0.1f },
@@ -1587,6 +1587,17 @@ int main(int argc, char **argv) {
             { "victorian", "h_gate_iron", 0.4f }, { "japan", "r_fence_mesh", 0.6f }, { "linkhouse", "r_fence_steel", 0.7f },
             { "villa:mena", "r_gate_pierced", 0.4f }, { "walled", "r_razor", 0.4f }, { "bungalow", "r_breeze_ring", 0.5f },
             { "block", "r_breeze_diamond", 0.4f }, { "villa:seu", "r_lantern", 0.4f },
+            /* HM5b2a: East and South-East Asia's own (the plan's "HM5b2" table), at about four fifths of what they place */
+            { "japan", "h_win_sliding", 0.8f }, { "japan", "h_win_sliding_frost", 0.7f }, { "japan", "h_amado", 0.33f },
+            { "japan", "h_hisashi", 0.45f }, { "japan", "h_slats", 0.07f },
+            { "china", "h_ridge_end", 0.8f }, { "china", "h_eave_tiles", 0.8f }, { "china", "h_knocker", 0.8f }, { "china", "h_couplet", 0.55f },
+            { "china", "h_lantern_paper", 0.42f }, { "china", "h_cage", 0.62f }, { "china", "h_drum_stone", 0.42f }, { "china", "h_lattice", 0.12f },
+            { "korea", "h_mailbox", 0.4f }, { "korea", "h_hazard", 0.3f }, { "korea", "h_lattice_kr", 0.06f }, { "korea", "h_ridge_end_kr", 0.06f },
+            { "shophouse", "h_pilaster", 0.9f }, { "shophouse", "h_column", 0.54f }, { "shophouse", "h_win_louvre", 0.44f },
+            { "shophouse", "h_vent_panel", 0.44f }, { "shophouse", "h_crest", 0.37f }, { "shophouse", "h_door_transom", 0.9f },
+            { "shophouse", "h_pintu_pagar", 0.26f }, { "shophouse", "h_lantern_paper", 0.37f },
+            { "linkhouse", "h_win_hood", 0.65f }, { "linkhouse", "h_carport", 0.36f }, { "linkhouse", "h_gable_vent", 0.16f },
+            { "linkhouse", "h_win_grid", 0.8f },
         };
         int short_ = 0;
         for (size_t k = 0; k < sizeof(WANT) / sizeof(WANT[0]); ++k) {
@@ -1603,6 +1614,36 @@ int main(int argc, char **argv) {
             }
         }
         printf("the kit's coverage: %d of %d signature pieces short\n", short_, (int)(sizeof(WANT) / sizeof(WANT[0])));
+    }
+    {   /* HM5b2: the British pieces a region's sheet never shows (the first drafts' leftovers), on none of its units */
+        static const char *const BRIT[] = { "h_canopy_gable", "h_fanlight", "h_doorcase", "h_doorcase_ped", "h_hood_mould", "h_barge_gothic",
+                                            "h_win_sash", "h_win_georgian", "h_door_6p", "h_post_turned", "h_spandrel" };
+        static const struct { const char *style; const char *more[10]; } FORBID[] = {
+            { "japan",     { "h_canopy_flat", "h_win_casement", "h_win_upvc", "h_win_grid", "h_door_4p", "h_string_course", "h_quoin" } },
+            { "china",     { "h_barge_scallop", "h_win_upvc", "h_quoin" } },
+            { "korea",     { "h_quoin" } },
+            { "shophouse", { "h_canopy_flat", "h_door_4p" } },
+            { "linkhouse", { "h_canopy_flat" } },
+        };
+        int left = 0;
+        for (size_t k = 0; k < sizeof(FORBID) / sizeof(FORBID[0]); ++k) {
+            const int st = home_style_find(-1, FORBID[k].style);
+            if (st < 0 || g_covUnits[st] < 200) continue;
+            for (int j = 0; j < (int)(sizeof(BRIT) / sizeof(BRIT[0])) + 10; ++j) {
+                const char *name = j < (int)(sizeof(BRIT) / sizeof(BRIT[0])) ? BRIT[j] : FORBID[k].more[j - (int)(sizeof(BRIT) / sizeof(BRIT[0]))];
+                if (!name) continue;
+                int m = -1;
+                for (int i = 0; i < PMK_COUNT; ++i) if (pm_module_is_house(i) && strcmp(pm_module(i)->name, name) == 0) m = i;
+                if (m < 0) { printf("FAIL: the leftovers' table names %s, which doesn't exist\n", name); failures++; continue; }
+                if (g_cov[st][m]) {
+                    printf("FAIL: %s places %s (on %.1f%% of its units), which its sheet never shows\n", FORBID[k].style, name + 2,
+                           100.0 * g_cov[st][m] / g_covUnits[st]);
+                    left++;
+                    failures++;
+                }
+            }
+        }
+        printf("the leftovers: %d British pieces on styles whose sheets never show them\n", left);
     }
     failures += body_check();
     failures += balc_check();

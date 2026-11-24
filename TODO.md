@@ -1151,12 +1151,29 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM5b2** (the other regions' grammar: placing HM5b1's three kits by style, finishes from asset files, pointed
-  openings). HM5b1 is done: HM5b1a (East and South-East Asia) pushed 2026-11-24 (0f306ff), HM5b1b (South Asia, the
+- **Now: HM5b2** (the other regions' grammar: placing HM5b1's three kits by style, finishes from asset files, pointed
+  openings), split in four (the plan's section "HM5b2"): **HM5b2a** East and South-East Asia (signed off and pushed
+  2026-11-24), next **HM5b2b** South Asia, the Middle East and Africa with pointed openings and the bungalow's Art Deco
+  variant (xhigh), **HM5b2c** Southern Europe and Latin America with the colonial's second storey (high), **HM5b2d** the wall
+  finishes (high; waits on the user's tile albedos: two azulejo, two Peranakan, one or two zellige). HM5b1 is done: HM5b1a (East and South-East Asia) pushed 2026-11-24 (0f306ff), HM5b1b (South Asia, the
   Middle East, Africa) (e78a847), HM5b1c (Southern Europe, Latin America) (7b1d519). HM5c2 is done:
   HM5c2a (6e73b64), HM5c2b (8bfedeb) pushed 2026-11-23, HM5c2c1 (stairs, stair towers) 2026-11-23, HM5c2c2 (unfinished
   storeys, stubs, roof rooms) 2026-11-24. Then HM5d (the existing styles to their
   sheets), HM6 (the rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **HM5b2a's leftovers** (`docs/residential-target.md` "The other regions' grammar"):
+  - The link house's front gable (the sheet's) is not a body the roofs make: its roundel goes in the gables a street or a
+    side sees (0.21 of units). A cross gable over each unit's front if the board asks for it.
+  - No canvas awnings on shophouses: the sheet's hang over the walk's mouth on the neighbours, where no wall takes their arms.
+    The self-built's shops (HM5b2c) use them.
+  - The five-foot way closes at a row's ends (its end piers stay walls, a pilaster on their fronts); the walk's arches
+    (panels 2, 5) are not built: it is flat-headed between the columns.
+  - The richer shophouses' louvred French windows have no low rail inside them.
+  - The hanok's walls are plain white (panel 4's timber posts and beams on them are not drawn) and its eaves straight (no
+    upswept corners); its gate roof is China's gatehouse at a hanok's size.
+  - Japan's storm shutters are always open (the box alone); hisashi over ground windows only where nothing hangs over them.
+  - China's lanterns hang from a door's recess or canopy (every Chinese unit has one); none under a hutong's own eaves.
+  - Korea's hazard bands stand round the pilotis' columns and the party walls' fins; a fin with a yard wall run up to it
+    takes its band through the wall's end.
 - **HM5c2c2's leftovers** (`docs/residential-target.md` "Unfinished storeys and roof rooms"):
   - Block's cast deck and unfinished storey (its detached one-storey houses, 0.04 of block's units) barely show in the
     board's street and air views: find seeds where it reads, or let it draw more often.
@@ -1199,8 +1216,8 @@ The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the targe
     check the fingerprint.
   - `city_test --home`'s insertion views pick the first insertions near the slice with a line of sight; one may repeat.
 - **The boundaries' leftovers** (HM5e3, `docs/residential-target.md` "Boundaries and gates"):
-  - China's gatehouse piers are the wall's own grey brick: they barely read as piers. The sheet's has a plinth, red
-    couplet boards and lanterns either side of the doors (HM5b1's ornament), and upturned ridge ends.
+  - China's gatehouse piers are the wall's own grey brick: they barely read as piers. The sheet's has a plinth (its
+    couplets, lanterns, drum stones and ridge ends are HM5b2a's).
   - Hedges (the council estate's and inter-war sheets show them behind the low walls) are HM7's; bins by the gates too.
   - A compound's side and rear walls are built plain (no piers, breeze band or razor wire): the street never sees them.
   - Gates are shut and the walker can't pass them: front yards behind a gate are out of reach.
@@ -1236,8 +1253,7 @@ The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the targe
     (the courtyard house's, the villa's) and the colonial's rejas.
   - Korea's mansard is a hip (the sheet's dormered mansard roof is a shape the roofs don't make). A mansard roof kind if
     the board asks for it.
-  - Five-foot ways are flat-headed between square piers; the shophouse sheet's arches, pilasters and capitals are
-    HM5b1's ornament.
+  - Five-foot ways are flat-headed (HM5b2a put round columns and pilasters on them; the arches are not built).
   - Units built up unevenly are flat rows only (self-built, RCC): a pitched row's units share one roof line.
   - China's one-storey rows are its hutong houses facing the street; their courtyard wall and gatehouse are HM5e3's.
 - **The retrofit kit's leftovers** (HM5c1):

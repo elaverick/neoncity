@@ -57,7 +57,7 @@ static const FinishDef FIN[HS_COUNT] = {
     [HS_JAPAN]        = { { 0, 0.30f, 0.70f, 0, 0 }, { "", "0342", "01596", "", "" }, { [HRM_GLAZED] = 0.6f, [HRM_METAL] = 0.2f, [HRM_SLATE] = 0.2f }, "240", HG_GRID, HST_CONCRETE, 1.6f, 1.0f },
     [HS_CHINA]        = { { 0.55f, 0.45f, 0, 0, 0 }, { "667", "034", "", "", "" }, { [HRM_GLAZED] = 0.7f, [HRM_CLAY] = 0.3f }, "247", HG_GRID, HST_STONE, 1.2f, 1.3f },
     [HS_KOREA]        = { { 0.60f, 0.40f, 0, 0, 0 }, { "0142", "031", "", "", "" }, { [HRM_GLAZED] = 0.4f, [HRM_METAL] = 0.3f, [HRM_CLAY] = 0.3f }, "04", HG_PLAIN, HST_CONCRETE, 1.4f, 1.2f },
-    [HS_SHOPHOUSE]    = { { 0, 1, 0, 0, 0 }, { "", "1289abcd6", "", "", "" }, { [HRM_CLAY] = 1.0f }, "0136", HG_CASEMENT, HST_TILE, 1.0f, 1.6f },
+    [HS_SHOPHOUSE]    = { { 0, 1, 0, 0, 0 }, { "", "1289abcd6", "", "", "" }, { [HRM_CLAY] = 1.0f }, "0001", HG_CASEMENT, HST_TILE, 1.0f, 1.6f },
     [HS_LINKHOUSE]    = { { 0, 1, 0, 0, 0 }, { "", "013abc", "", "", "" }, { [HRM_CONCRETE] = 0.6f, [HRM_CLAY] = 0.4f }, "04", HG_CASEMENT, HST_CONCRETE, 1.4f, 1.3f },
     [HS_RCC]          = { { 0, 0.80f, 0, 0, 0.20f }, { "", "9abcde605", "", "", "01" }, { [HRM_METAL] = 0.5f, [HRM_CLAY] = 0.5f }, "0367", HG_PLAIN, HST_CONCRETE, 1.2f, 1.3f },
     [HS_BUNGALOW]     = { { 0.20f, 0.80f, 0, 0, 0 }, { "02", "015bca", "", "", "" }, { [HRM_CLAY] = 0.6f, [HRM_CONCRETE] = 0.4f }, "03", HG_CASEMENT, HST_TILE, 1.2f, 1.3f },
@@ -127,6 +127,15 @@ void home_finish(const HGraph *g, int unit, HFinish *f) {
     f->step = D->step;
     f->winW = D->winW;
     f->winH = D->winH;
+    /* HM5b2a: Korea's hanok (panel 4): white lime walls under the grey glazed tile, stone steps */
+    if (home_hanok(g)) {
+        f->wall = HW_RENDER; f->wallCol = 0;
+        f->roof = HRM_GLAZED; f->roofCol = 0;
+        f->stack = HW_RENDER; f->stackCol = 0;
+        f->step = HST_STONE;
+        f->winW = 1.0f; f->winH = 1.2f;
+        f->doorCol = (uint8_t)pick_hex("889", hash_combine(own, 9u));   /* bare timber leaves */
+    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -1086,7 +1095,7 @@ static Solid *bound_box(Ctx *C, int unit, double dy, double x0, double y0, doubl
 static void roof_prism(Ctx *C, int unit, double dy, int alongX, double a0, double a1, double c0, double c1, double y0, double rise,
                        double thick, int ends) {
     Solid *s = solid_new(C, unit, -1, 0);
-    if (C->g->style == HS_CHINA) { s->roofFin = HRM_GLAZED; s->roofCol = 0; }   /* the sheet's dark grey tile, whatever the house's roof */
+    if (C->g->style == HS_CHINA || home_hanok(C->g)) { s->roofFin = HRM_GLAZED; s->roofCol = 0; }   /* the sheet's dark grey tile, whatever the house's roof */
     const double half = 0.5 * (c1 - c0);
     if (alongX) {
         plane_at(s, 0, half, rise, 0, y0, c1, HF_ROOF);
@@ -1343,7 +1352,7 @@ static void add_windows(Ctx *C, int vi, int unit) {
         if (L < (bay ? 0.5 : 1.4)) continue;
         /* a side wall (square to the street) has fewer: wider bays, and some left blank */
         const int side = !bay && fabs(m[0]) > 0.7;
-        const int nb = bay ? 1 : (int)fmax(1.0, floor(L / (side ? 4.0 : 2.7) + 0.5));
+        const int nb = bay ? 1 : home_bay_count(g->style, L, side);
         const double bw = L / nb;
         /* the courtyard house's street walls (HM5e1): blank but for a few small windows, the ground floor's set high */
         const int blank = g->style == HS_COURTYARD && !bay;
@@ -1357,6 +1366,10 @@ static void add_windows(Ctx *C, int vi, int unit) {
             if (blank && k == 0) { sill = floorY + 1.6; head = fmin(head, sill + 0.7); }
             if (head - sill < (blank ? 0.5 : 0.8) || ww0 < 0.3) continue;
             if (head - sill > fin->winH && !bay) sill = head - fin->winH;
+            /* HM5b2a: a richer shophouse's upper storeys: louvred French windows near the floor's height (their front) */
+            float tSill, tHead;
+            const int tall = !bay && m[1] < -0.7 && home_tall_front(g, k, (float)floorY, v->eaves, &tSill, &tHead);
+            if (tall) { sill = tSill; head = tHead; ww0 = fmin(1.15, bw - 0.5); }
             const double sill0 = sill, head0 = head;
             for (int b = 0; b < nb; ++b) {
                 const double c = s0 + (b + 0.5) * bw;
@@ -1473,6 +1486,7 @@ static int add_carve(Ctx *C, int host, int unit, double x0, double z0, double x1
     return (int)(s - C->s);
 }
 
+static int add_carve(Ctx *C, int host, int unit, double x0, double z0, double x1, double z1, double y0, double y1, int fin);
 /* Pilotis (HM5e1, the Korean villa): the ground storey of the unit's slice carved open from the front back to the core,
  * columns at its free corners and along a long front; where the slice ends at a party wall that wall comes down as a fin. */
 static void add_pilotis(Ctx *C, int u, const HVol *m, const HVol *p, int host, int fin) {
@@ -1491,6 +1505,27 @@ static void add_pilotis(Ctx *C, int u, const HVol *m, const HVol *p, int host, i
     /* the free sides open between a column at the front corner and one at the core */
     if (freeW) add_carve(C, host, u, p->x0 - out, p->z0 + c, fx0 + 0.01, p->z1 - c, 0.0, y1, fin);
     if (freeE) add_carve(C, host, u, fx1 - 0.01, p->z0 + c, p->x1 + out, p->z1 - c, 0.0, y1, fin);
+}
+
+/* HM5b2a: a five-foot way runs on through its party lines (the shophouse sheet's panels 1-6: a covered walk along the
+ * row), the shared pier between two units cut back to a core inside the kit's round column (home_arcade_core); a row's
+ * end keeps its pier as the walk's end wall. Each unit carves its own side of the line and a little past it. */
+static void add_arcade_through(Ctx *C, int u, const HVol *m, const HVol *p, int host, int fin) {
+    const HGraph *g = C->g;
+    const double y0 = g->plinth, y1 = p->eaves, zf = m->z0, zb = p->z1;
+    for (int side = 0; side < 2; ++side) {
+        double cx, cz0, cz1, half;
+        if (!home_arcade_core(g, u, side, &cx, &cz0, &cz1, &half)) continue;
+        if (side == 0) {   /* the line at the unit's x0 */
+            add_carve(C, host, u, cx + half, zf - 0.3, p->x0 + 0.01, zb, y0, y1, fin);
+            add_carve(C, host, u, cx - 0.3, cz1, cx + half + 0.01, zb, y0, y1, fin);
+            add_carve(C, host, u, cx - 0.3, zf - 0.3, cx + half + 0.01, cz0, y0, y1, fin);
+        } else {           /* the line at its x1 */
+            add_carve(C, host, u, p->x1 - 0.01, zf - 0.3, cx - half, zb, y0, y1, fin);
+            add_carve(C, host, u, cx - half - 0.01, cz1, cx + 0.3, zb, y0, y1, fin);
+            add_carve(C, host, u, cx - half - 0.01, zf - 0.3, cx + 0.3, cz0, y0, y1, fin);
+        }
+    }
 }
 
 static void add_front(Ctx *C, int u) {
@@ -1576,12 +1611,13 @@ static void add_front(Ctx *C, int u) {
             s->stepFin = street || kind == HP_ARCADE || rise > 0.0 ? fin->step : HST_TILE;
         }
     }
+    if (p && kind == HP_ARCADE && host >= 0) add_arcade_through(C, u, m, p, host, fin->step);
     if (p && kind == HP_PILOTIS && host >= 0) add_pilotis(C, u, m, p, host, fin->step);
     /* the door itself: its leaves a pattern of their own under an arch or in China's red gate (HM5e1) */
     if (host >= 0) {
         const double mm[2] = { 0.0, -1.0 }, e[2] = { 1.0, 0.0 };
         const double rise = 0.01 * d->arch;
-        const int plank = d->arch || g->style == HS_CHINA;
+        const int plank = d->arch || g->style == HS_CHINA || home_hanok(g);
         add_opening_arch(C, host, u, mm, e, d->x - 0.5 * d->width, d->z, d->width, P, P + d->height, 0.12, HF_DOOR,
                          opening_aux(d->width, d->height + rise, plank ? 4 : (int)(hash_combine(un->seed, 0xD00Bu) & 3u)), rise);
         C->st.doors++;

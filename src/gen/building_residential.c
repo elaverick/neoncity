@@ -88,7 +88,7 @@ static const HStyleDef STYLES[HS_COUNT] = {
         .outrigger = 0.1f, .garage = 0.05f, .extension = 0.3f,
         .porch = { 0, 0, 0, 0.6f, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.15f, .plinth1 = 0.3f,
         .wallH0 = 1.8f, .wallH1 = 2.4f, .doorW0 = 1.1f, .doorW1 = 1.4f },
-    [HS_KOREA] = { .name = "korea", .region = PLAN_REGION_EAS, .arch = { 1.0f, 0.5f, 0.5f }, .storeys = { 0.0f, 0.0f, 0.45f, 0.55f },
+    [HS_KOREA] = { .name = "korea", .region = PLAN_REGION_EAS, .arch = { 1.0f, 0.5f, 0.5f }, .storeys = { 0.12f, 0.0f, 0.4f, 0.48f },
         .roof = { 0, 0.35f, 0, 0.65f }, .pitch0 = 28, .pitch1 = 38, .minPitch = 25, .eave0 = 0.2f, .eave1 = 0.35f, .depth0 = 10.0f, .depth1 = 12.0f,
         .garage = 0.0f, .extension = 0.1f,
         .porch = { 0, 0, 0, 0.5f, 0.5f, 0 }, .chimney = 0.0f, .bound = { 0, 1.0f, 0, 0 }, .plinth0 = 0.05f, .plinth1 = 0.15f,
@@ -98,11 +98,11 @@ static const HStyleDef STYLES[HS_COUNT] = {
         .roof = { 1.0f, 0, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.3f, .eave1 = 0.5f, .depth0 = 10.0f, .depth1 = 12.0f,
         .outrigger = 0.2f, .extension = 0.4f,
         .porch = { 0, 0, 0, 1.0f, 0, 0 }, .chimney = 0.0f, .bound = { 1.0f, 0, 0, 0 }, .plinth0 = 0.15f, .plinth1 = 0.25f, .parapet = 1,
-        .street = 1, .arcade = 1.0f, .shop = 1.0f, .storeyH0 = 3.1f, .storeyH1 = 3.5f },
+        .street = 1, .arcade = 1.0f, .shop = 1.0f, .storeyH0 = 3.1f, .storeyH1 = 3.5f, .doorW0 = 1.2f, .doorW1 = 1.45f, .doorH = 2.6f },
     [HS_LINKHOUSE] = { .name = "linkhouse", .region = PLAN_REGION_SEA, .arch = { 1.0f, 0.5f, 0.8f }, .storeys = { 0.1f, 0.9f, 0.0f },
         .roof = { 0.6f, 0.4f, 0, 0 }, .pitch0 = 25, .pitch1 = 30, .minPitch = 25, .eave0 = 0.5f, .eave1 = 0.8f, .depth0 = 9.0f, .depth1 = 12.0f,
         .garage = 0.4f, .extension = 0.4f,
-        .porch = { 0.3f, 0.3f, 0, 0, 0.4f, 0 }, .chimney = 0.0f, .bound = { 0, 0, 0, 1.0f }, .plinth0 = 0.1f, .plinth1 = 0.25f },
+        .porch = { 0, 0, 0, 0, 1.0f, 0 }, .chimney = 0.0f, .bound = { 0, 0, 0, 1.0f }, .plinth0 = 0.1f, .plinth1 = 0.25f },
     /* South Asia */
     [HS_RCC] = { .name = "rcc", .region = PLAN_REGION_SAS, .arch = { 0.5f, 0.2f, 1.0f }, .storeys = { 0.0f, 0.2f, 0.5f, 0.3f },
         .roof = { 0, 0, 0, 1.0f }, .pitch0 = 25, .pitch1 = 25, .minPitch = 25, .depth0 = 9.0f, .depth1 = 12.0f,
@@ -169,7 +169,7 @@ static const HomeYard YARDS[PLAN_REGION_COUNT] = {
                            .pad = { 0.5f, 0.3f, 0.15f }, .surface = { 0.45f, 0.25f, 0.30f, 0.0f } },
     [PLAN_REGION_SEA]  = { .frontMin = 1.5f, .rearMin = 2.5f, .front0 = 1.5f, .front1 = 3.0f, .side = 0.75f, .semiOpen = 0.75f, .gap = 1.5f, .proj = 0.5f,
                            .width = { { 8.0f, 11.0f }, { 6.0f, 8.0f }, { 4.5f, 6.5f } }, .depth = { { 17.0f, 22.0f }, { 18.0f, 22.0f }, { 17.0f, 22.0f } },
-                           .pad = { 0.6f, 0.6f, 0.55f }, .surface = { 0.65f, 0.05f, 0.25f, 0.05f } },
+                           .pad = { 0.85f, 0.85f, 0.8f }, .surface = { 0.65f, 0.05f, 0.25f, 0.05f } },
     [PLAN_REGION_SAS]  = { .frontMin = 1.0f, .rearMin = 2.0f, .front0 = 1.0f, .front1 = 2.5f, .side = 0.75f, .semiOpen = 0.75f, .gap = 1.5f, .proj = 0.4f,
                            .width = { { 7.0f, 10.0f }, { 6.0f, 8.0f }, { 4.2f, 6.0f } }, .depth = { { 15.0f, 20.0f }, { 15.0f, 20.0f }, { 14.0f, 18.0f } },
                            .pad = { 0.3f, 0.2f, 0.1f }, .surface = { 0.55f, 0.05f, 0.15f, 0.25f } },
@@ -285,10 +285,75 @@ int home_front_bays(const HGraph *g, int mi, int u, float *s0, float *bw) {
     else if (v->unit != u) return 0;
     const float L = b - a;
     if (L < 1.4f) return 0;
-    const int nb = (int)fmaxf(1.0f, floorf(L / 2.7f + 0.5f));
+    const int nb = home_bay_count(g->style, L, 0);
     *s0 = a;
     *bw = L / (float)nb;
     return nb;
+}
+
+int home_bay_count(int style, double L, int side) {
+    if (!side && style == HS_SHOPHOUSE) return (int)fmax(1.0, floor(L / 1.65 + 0.3));   /* HM5b2: three lights in a 5 m front */
+    return (int)fmax(1.0, floor(L / (side ? 4.0 : 2.7) + 0.5));
+}
+
+static const HVol *unit_arcade(const HGraph *g, int u) {
+    for (int i = 0; i < g->nvol; ++i)
+        if (g->vol[i].role == HV_PORCH && g->vol[i].unit == u && g->vol[i].kind == HP_ARCADE) return &g->vol[i];
+    return NULL;
+}
+int home_arcade_core(const HGraph *g, int u, int side, double *cx, double *cz0, double *cz1, double *half) {
+    const int n = side ? u + 1 : u - 1;
+    if (u < 0 || u >= g->nunit || n < 0 || n >= g->nunit) return 0;
+    const HVol *p = unit_arcade(g, u), *q = unit_arcade(g, n);
+    const int mi = home_main(g);
+    if (!p || !q || mi < 0) return 0;
+    *cx = side ? g->unit[u].x1 : g->unit[u].x0;
+    const double zf = g->vol[mi].z0;
+    *cz0 = zf + ARCADE_COL_Z - ARCADE_CORE;
+    *cz1 = zf + ARCADE_COL_Z + ARCADE_CORE;
+    *half = ARCADE_CORE;
+    return 1;
+}
+
+int home_unit_pad(const HGraph *g, int u, float *x0, float *x1, float *z1) {
+    for (int i = 0; i < g->nsite; ++i) {
+        const HSite *s = &g->site[i];
+        if (s->kind != HE_DRIVE || s->unit != u) continue;
+        int garage = 0;
+        for (int j = 0; j < g->nvol && !garage; ++j) {
+            const HVol *w = &g->vol[j];
+            garage = w->role == HV_WING && w->kind == HWING_GARAGE && w->unit == u && w->x1 > s->x0 + 0.1f && w->x0 < s->x1 - 0.1f;
+        }
+        if (garage) continue;
+        if (x0) *x0 = s->x0;
+        if (x1) *x1 = s->x1;
+        if (z1) *z1 = s->z1;
+        return 1;
+    }
+    return 0;
+}
+
+int home_main(const HGraph *g) {
+    for (int i = 0; i < g->nvol; ++i)
+        if (g->vol[i].role <= HV_ROW) return i;
+    return -1;
+}
+int home_main_pitched(const HGraph *g) {
+    const int mi = home_main(g);
+    return mi >= 0 && g->vol[mi].roof != HR_FLAT;
+}
+int home_hanok(const HGraph *g) {
+    const int mi = home_main(g);
+    return g->style == HS_KOREA && mi >= 0 && g->vol[mi].storeys <= 1 && g->vol[mi].roof != HR_FLAT;
+}
+int home_ornate(const HGraph *g) {
+    return hash_float(hash_combine(g->seed, 0x0A7Eu)) < 0.25f + 0.6f * g->affluence;
+}
+int home_tall_front(const HGraph *g, int k, float floorY, float eaves, float *sill, float *head) {
+    if (g->style != HS_SHOPHOUSE || k < 1 || !home_ornate(g)) return 0;
+    *sill = floorY + 0.12f;
+    *head = fminf(floorY + 2.45f, eaves - 0.3f);
+    return *head - *sill > 1.9f;
 }
 
 float home_balcony_floor(const HGraph *g, const HBalcony *b) { return g->plinth + (float)b->storey * g->storeyH - BALC_DROP; }
@@ -486,7 +551,7 @@ static void front_features(HCtx *c, int ui, int mi, Front f) {
         HDoor *d = &g->door[g->ndoor];
         memset(d, 0, sizeof(*d));
         d->unit = (int8_t)ui; d->vol = (int8_t)mi; d->path = -1; d->side = HSIDE_S;
-        d->x = dx; d->z = pz1; d->width = dw; d->height = doorArch ? spring : 2.1f; d->arch = doorArch;
+        d->x = dx; d->z = pz1; d->width = dw; d->height = doorArch ? spring : c->S->doorH > 0.0f ? c->S->doorH : 2.1f; d->arch = doorArch;
         u->door = (int8_t)g->ndoor++;
     }
     /* a shop front (HM5e1): in the ground storey beside the door, at the back of a five-foot way, or in the front wall
@@ -1041,6 +1106,14 @@ static void choose_row_hm5e(HCtx *c) {
         if (c->groundD < 5.0f) { c->ground = -1; c->groundD = 0.0f; }
     }
     if (g->style == HS_CHINA && c->level < 2) c->roof = c->P[0].storeys <= 1 ? HR_GABLE : HR_FLAT;
+    /* HM5b2a: Korea's one-storey rows are hanok (the sheet's panel 4): tiled, hipped or gabled, deep eaves, no pilotis */
+    if (g->style == HS_KOREA && c->P[0].storeys <= 1) {
+        c->roof = chance(&c->r5, 0.6f) ? HR_HIP : HR_GABLE;
+        c->pitch = rng_range(&c->r5, 28.0f, 34.0f);
+        c->eave = rng_range(&c->r5, 0.6f, 0.9f);
+        c->ground = -1;
+        c->groundD = 0.0f;
+    }
 }
 
 static void choose_row(HCtx *c) {

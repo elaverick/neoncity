@@ -1100,6 +1100,54 @@ sheet's panel 1 (villa_seu, townhouse, selfbuilt, colonial) and the Colonial she
 instances (the villa's 93, its rafter tails and quoins the most), within a house's 150. Boards
 `build/home/hm5b1c/board_vignettes.jpg` and `board_modules.jpg`. Not yet seen in the game: nothing places them until HM5b2.
 
+## The other regions' grammar (HM5b2)
+
+HM5b1's kit placed on the real houses by style, affluence, upkeep and owner, the British pieces of HM5's first drafts taken
+off, and the shell given what the kit needs. Planned style by style against the sheets in the plan's section "HM5b2" and
+split in four (the user, 2026-11-24): **a** East and South-East Asia with the shared machinery, **b** South Asia, the Middle
+East and Africa with pointed openings, **c** Southern Europe and Latin America, **d** the wall finishes (the painted tiles
+from the user's own albedos, charred timber and clay block from ambientCG). Ornament goes by affluence: the richer rows take
+a sheet's panel 1 whole, poorer ones a plainer set, never none. Three bodies the sheets show are added: Korea's hanok rows
+(a), the bungalow's flat Art Deco variant (b), the colonial's second storey with timber balconies (c).
+
+**The machinery (HM5b2a).** The regional windows are frames of `hk_window` (`HK_FRAME_SLIDING`, `_SLIDING_FROST`,
+`_LOUVRE`, `_LATTICE`, `_LATTICE_KR`, `_JALOUSIE`), so sills, heads and grilles still compose round them; heads gain Japan's
+hisashi, the link house's aluminium hood and the shophouse's vent panel (`HK_HEAD_HISASHI`, `_HOOD_AL`, `_VENT`); shutters
+the amado (`HK_SHUT_AMADO`, its box on whichever side has room); grilles a kind of their own (`HK_GRILLE_*`: bars, China's
+cage, ornamental, lattice, reja); doors the transom double door (`HK_DOOR_TRANSOM`); posts the round column
+(`HK_POST_ROUND`); door canopies the two hoods (`HCC_HISASHI`, `HCC_HOOD`). The rest (a gatehouse's ornament, couplets and
+lanterns, the five-foot way's columns and pilasters, a car porch, a gable's roundel, a slat screen, hazard sleeves and
+mailboxes) is `src/gen/home_region.c` (`hs_region`), run after the porch posts and before the balconies, boundaries,
+insertions and retrofit layer, which keep clear of what it takes. Its own test for open space counts the openings carved
+out of a body (a recess, the five-foot way, the pilotis: `hs_inside` counts a body whole). Owners replace a region's
+windows in kind (no plastic casements in Japan) and keep its hoods and posts; Britain's and North America's swaps stay
+theirs. `home_lab` fails a style that places a piece its sheet never shows (the leftovers' table: gabled canopies,
+fanlights, doorcases, hood moulds, Gothic bargeboards, sashes, six-panel doors, turned posts and spandrels on all five
+of a's styles, and each style's own besides) and checks every style's signature pieces (the coverage table).
+
+| Style | What it places (share of units, `home_lab --coverage`, 10,000 rows) | Shell and body |
+|---|---|---|
+| japan | sliding windows (1.00), frosted at the back and in small openings (0.92); amado boxes and rails beside the street's windows (0.43); hisashi over the door and some ground windows (0.56); a slat screen beside the door (0.10) | |
+| china | hutong rows: lattice windows, ridge ends, eave tiles, no gutters; blocks: cages out from the upper windows (0.81); the gatehouse's ridge and ends, eave tiles front and back, knockers (1.00), drum stones (0.54), couplets on its piers and lintel (0.70), lanterns under its eaves; a door's knockers, couplets, fu and lanterns from its recess or canopy (lanterns 0.55) | |
+| korea | the walk-up villa: hazard sleeves on the pilotis' columns and round the party walls' fins (0.39), the mailbox bank by the stair door (0.51); the hanok: Korea's lattices, ridge ends and eave tiles, plank leaves with knockers, its gate's roof with Korea's ends (0.09) | **hanok rows**, one Korean row in eight: one storey, hipped or gabled at 28-34 degrees, deep eaves, grey glazed tile, white walls, timber leaves, no pilotis; a chest-high white wall under a tile cap with a plank gate under its own small tiled roof |
+| shophouse | the five-foot way's round columns at its party lines (0.68), pilasters up the upper storeys and on a row end's piers (1.00), the transom door (1.00), swing half doors (0.33), lanterns from the walk's ceiling (0.47); the richer rows (0.25 + 0.6 affluence) louvred French windows under vent panels (0.55) and the parapet's crest (0.47), the plainer casements with louvred shutters | the walk carried on through its party lines (each pier cut back to a 0.2 m core inside the column: `home_arcade_core`, the walker's outline too); three windows in a 5 m front (`home_bay_count`), the richer rows' upper ones near the floor (`home_tall_front`); a 2.6 m door, 1.2-1.45 m wide; trim in whites and creams |
+| linkhouse | the curved car porch from the front wall over the pad, on two posts (0.46), the gable's roundel (0.21: the gables a street or a side sees), aluminium hoods over the windows (0.82), gridded steel windows, scalloped fascia | its door under a hood (the car porch covers it where there is one), no open or lean-to porches; South-East Asia parks in its front yards more (pads 0.85/0.85/0.8) |
+
+**Harness.** `city_test --home ... --storeys N` and the game's `--home-storeys N` force every row's storeys (a rarer body,
+Korea's hanok, for the captures). A style forced into another region's city (the captures' slice is Los Angeles) now lays
+its plots as its own region does and its rows are that region's (`plots.c`: frontages, depths, yards and car pads; the rows'
+owners, flat roofs and yard rules), as home_lab always built them; a real city is unchanged (its styles are its region's).
+Before, a forced row took the host city's owners, yards and rules (a Japanese row North America's, its door swaps among
+them).
+
+**Measured** (`home_lab 10000`, 2026-11-24): every row clean; near shells 860 triangles a detached house, 699 a semi's
+unit (budget 700), 608 a terrace's; far 60, 57, 54 (budget 60); kit instances 112 a detached house, 89 a semi's unit,
+67 a terrace's (the most on one unit 266, dressed leaner); 0 of 83 signature pieces short; no leftovers. The frame, HM5b2a's
+pieces on and off at the densest 10 m views (noon, two runs each, the same): the kit pass 0.09 -> 0.17 ms for China (its
+eave tiles, a run of 1 m pieces, and the gatehouses), 0.05 -> 0.12 ms for the hanok rows, 0.22 -> 0.31 ms for the
+shophouse; the whole frame +0.09-0.11 ms. ctest 25/25. Boards `build/home/hm5b2a/board_noon.jpg`, `board_night.jpg`,
+`board_closeups.jpg` (each style beside its sheet; the hanok beside Korea's, whose panel 4 it answers).
+
 ## Massing and parts
 
 | Part | Size | Notes |

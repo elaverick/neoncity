@@ -245,6 +245,7 @@ static int home_cams(int argc, char **argv) {
     const char *arch = NULL, *style = NULL;
     for (int i = 2; i < argc; ++i) {
         if (strcmp(argv[i], "--style") == 0 && i + 1 < argc) style = argv[++i];
+        else if (strcmp(argv[i], "--storeys") == 0 && i + 1 < argc) city_home_force_storeys(atoi(argv[++i]));   /* HM5b2 */
         else arch = argv[i];
     }
     const int region = plan_settlement_region(0);

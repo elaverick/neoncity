@@ -370,8 +370,14 @@ static int outline_main_walk(const HGraph *G, const HVol *m, double (*v)[4][2], 
         if (!p) { n = outline_rect(G, sx0, m->z0, sx1, m->z1, v, n, max); continue; }
         n = outline_rect(G, sx0, p->z1, sx1, m->z1, v, n, max);
         if (p->kind == HP_ARCADE) {
-            n = outline_rect(G, sx0, m->z0, p->x0, p->z1, v, n, max);
-            n = outline_rect(G, p->x1, m->z0, sx1, p->z1, v, n, max);
+            /* a row's end keeps its pier; a party line's is a column's core, the walk running on past it (HM5b2a) */
+            for (int side = 0; side < 2; ++side) {
+                double cx, cz0, cz1, half;
+                if (home_arcade_core(G, u, side, &cx, &cz0, &cz1, &half))
+                    n = side ? outline_rect(G, (float)(cx - half), (float)cz0, (float)cx, (float)cz1, v, n, max)
+                             : outline_rect(G, (float)cx, (float)cz0, (float)(cx + half), (float)cz1, v, n, max);
+                else n = side ? outline_rect(G, p->x1, m->z0, sx1, p->z1, v, n, max) : outline_rect(G, sx0, m->z0, p->x0, p->z1, v, n, max);
+            }
             continue;
         }
         /* pilotis: the columns at the free corners and along the front, a fin down each party wall */

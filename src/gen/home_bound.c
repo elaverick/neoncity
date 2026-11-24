@@ -58,6 +58,12 @@ typedef struct BDef {
     uint8_t stoop;           /* iron rails up a stoop's steps */
 } BDef;
 
+/* HM5b2a: Korea's hanok rows (the sheet's panel 4): a chest-high white wall under a tile cap (under the far shell's 1.5 m), a pair of plank leaves under the gate's
+ * own small tiled roof (China's gatehouse, smaller in its ornament: home_region.c) */
+static const BDef HANOK = { .k[HB_WALL] = { 1.25f, 1.45f, HBT_NONE, 0.0f, 0.0f, 0.0f }, .fin = HW_RENDER, .col = "0", .coping = HBC_TILE,
+                            .gate = HGK_PLANK, .drive = HGK_SHEET, .leaves = HGL_DOUBLE, .gh0 = 1.9f, .gh1 = 2.1f, .dh0 = 1.9f, .dh1 = 2.1f,
+                            .gatehouse = 1.0f };
+
 static const BDef BDEFS[HS_COUNT] = {
     /* the brownstone: spear-topped area railings on a stone kerb along the street, iron rails up the stoop */
     [HS_ROWHOUSE]   = { .k[HB_RAILING] = { 0.25f, 0.4f, HBT_SPEAR, 1.0f, 0.9f, 1.1f }, .fin = HW_STONE, .col = "2",
@@ -251,7 +257,7 @@ static int front_beside(const HGraph *g, int u, float x, int s) {
 void home_bounds(HGraph *g, int level, BLog *log) {
     memset(&g->bset, 0, sizeof(g->bset));
     if (g->empty || !home_retrofit_style(g->style)) return;
-    const BDef *D = &BDEFS[g->style];
+    const BDef *D = home_hanok(g) ? &HANOK : &BDEFS[g->style];
     HBoundSet *S = &g->bset;
     Rng r = rng_make(hash_combine(g->seed, 0xB0D5E3u));   /* their own stream: the rest of the house is as it was */
     S->drawn = 1;
@@ -327,7 +333,7 @@ void home_bounds(HGraph *g, int level, BLog *log) {
             gt->h = D->gh1 > 0.0f ? rng_range(&r, D->gh0, D->gh1) : fmaxf(0.9f, wallTop);
             if (gt->kind == HGK_PLANK) {
                 gt->leaves = HGL_DOUBLE;
-                gt->house = rng_float(&r) < D->gatehouse && bd->kind == HB_WALL && bd->h >= 1.6f && level < 2;
+                gt->house = rng_float(&r) < D->gatehouse && bd->kind == HB_WALL && bd->h >= (D == &HANOK ? 1.2f : 1.6f) && level < 2;
                 if (!gt->house) { gt->kind = HGK_SHEET; gt->h = fminf(gt->h, bd->h); }   /* no gatehouse: a plain steel door in the wall */
             }
         }

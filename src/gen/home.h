@@ -65,6 +65,10 @@ static inline int home_porch_recessed(int kind) { return kind == HP_RECESSED || 
 #define PILOTIS_SPAN 6.0f
 /* An arcade's piers at its unit's sides (m: each side's half of a pier shared at a party wall) */
 #define ARCADE_PIER  0.22f
+/* HM5b2a: a party line's pier cut back to a core inside the kit's round column, the walk carried on through it: the core's
+ * half side, and its middle back from the front (the column's plinth flush with the front) */
+#define ARCADE_CORE  0.1f
+#define ARCADE_COL_Z 0.25f
 /* HVol.kind of an HV_BAY and an HV_WING. */
 enum { HBAY_SQUARE = 0, HBAY_CANTED };
 /* A canted bay's front light (m): drawn from CANT_FACE0-1, never under CANT_FACE_MIN (narrower, it is built square) */
@@ -420,6 +424,22 @@ const HVol *home_unit_vol(const HGraph *g, int vi, int u, HVol *tmp);
 /* The window rhythm of unit u's slice of main mi's front wall (section 13.7, a window a bay of about 2.7 m, as the
  * shell's add_windows lays them): its run starts at *s0, *bw a bay; returns the bays (0: no slice). */
 int         home_front_bays(const HGraph *g, int mi, int u, float *s0, float *bw);
+/* HM5b2: a front's window rhythm (the shophouse's narrow bays, else 2.7 m; a side wall's 4 m), its bays over a run of L */
+int         home_bay_count(int style, double L, int side);
+/* HM5b2: whether storey k of a front takes the tall louvred French windows (a richer shophouse row's upper storeys): their
+ * sill over the floor and their head */
+int         home_tall_front(const HGraph *g, int k, float floorY, float eaves, float *sill, float *head);
+/* HM5b2: the row's main's index (-1); whether it is pitched; Korea's hanok rows (one storey, tiled: the sheet's panel 4);
+ * the richer set of a row (the sheets' panel 1, by affluence: a shophouse's Peranakan front) */
+int         home_main(const HGraph *g);
+/* HM5b2a: unit u's car pad (a drive in its front yard, not a garage's): x0..x1 from the street to its main's front z1 */
+int         home_unit_pad(const HGraph *g, int u, float *x0, float *x1, float *z1);
+/* HM5b2a: unit u's five-foot way meets a neighbour's at its x0 (side 0) or x1 (side 1): the column's core there (its middle
+ * at cx, z cz0..cz1, half its side across); 0 at a row's end or where the neighbour has no five-foot way */
+int         home_arcade_core(const HGraph *g, int u, int side, double *cx, double *cz0, double *cz1, double *half);
+int         home_main_pitched(const HGraph *g);
+int         home_hanok(const HGraph *g);
+int         home_ornate(const HGraph *g);
 /* Balcony b's floor (its slab's top), y in the graph's frame. */
 float       home_balcony_floor(const HGraph *g, const HBalcony *b);
 /* A French window's width in a bay bw wide, from the unit's usual window width ww. */

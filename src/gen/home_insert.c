@@ -214,9 +214,12 @@ int home_front_windows(const HGraph *g, int mi, int u, float (*out)[4], int max)
         if (g->style == HS_COURTYARD && k == 0) { sill = fl + 1.6f; head = fminf(head, sill + 0.7f); }
         if (head - sill < 0.5f) continue;
         if (head - sill > fin.winH) sill = head - fin.winH;
+        float tS, tH;   /* HM5b2a: a richer shophouse's louvred French windows */
+        const int tall = home_tall_front(g, k, fl, v->eaves, &tS, &tH);
+        if (tall) { sill = tS; head = tH; }
         for (int b = 0; b < nb && n < max; ++b) {
             const float c = s0 + ((float)b + 0.5f) * bw;
-            float ww = ww0, sl = sill, hd = head;
+            float ww = tall ? fminf(1.15f, bw - 0.5f) : ww0, sl = sill, hd = head;
             int fb = -1;
             for (int i = 0; i < g->nbalc && k > 0; ++i) {
                 const HBalcony *bc = &g->balc[i];
@@ -282,9 +285,9 @@ int home_wall_windows(const HGraph *g, int mi, int u, int wall, float (*out)[4],
     HFinish fin;
     home_finish(g, u, &fin);
     /* the shell's add_windows: a window a bay of about 2.7 m (4 m on a side, some of them left blank there: all counted) */
-    const float L = a1 - a0, bwant = home_wall_side(wall) ? 4.0f : 2.7f;
+    const float L = a1 - a0;
     if (L < 1.4f) return 0;
-    const int nb = (int)fmaxf(1.0f, floorf(L / bwant + 0.5f));
+    const int nb = home_bay_count(g->style, L, home_wall_side(wall));
     const float bw = L / (float)nb, ww = fminf(fin.winW, bw - 0.6f);
     if (ww < 0.3f) return 0;
     const float mx = wall == HIW_WEST ? -1.0f : wall == HIW_EAST ? 1.0f : 0.0f, mz = wall == HIW_BACK ? 1.0f : 0.0f;

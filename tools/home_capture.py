@@ -56,6 +56,8 @@ def game_args(home_args):
         x = a.pop(0)
         if x == "--style" and a:
             out += ["--home-style", a.pop(0)]
+        elif x == "--storeys" and a:
+            out += ["--home-storeys", a.pop(0)]
         else:
             out += ["--home-arch", x]
     return out

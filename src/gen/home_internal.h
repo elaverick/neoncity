@@ -49,6 +49,7 @@ typedef struct HStyleDef {
     float       arcade, pilotis;         /* a row's ground floor: a five-foot way; pilotis */
     float       shop;                    /* a unit's chance of a shop front in its ground storey */
     float       doorW0, doorW1;          /* the front door's width (0: the usual 1.0-1.1 m) */
+    float       doorH;                   /* HM5b2: a square door's height (0: 2.1 m; the shophouse's tall door under its transom) */
     float       storeyH0, storeyH1;      /* floor to floor (0: the usual 2.7-3.0 m; old houses' tall rooms more) */
     float       uneven;                  /* a flat row's owners built up unevenly: a unit's chance of a storey fewer */
 } HStyleDef;

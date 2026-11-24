@@ -374,6 +374,7 @@ int      city_home_prisms(const Block *bk, double x0, double z0, double x1, doub
 /* Forces every suburb street's archetype (HOME_*) and every row's style (HS_*), -1 for neither: the
  * residential slice's harness (`city_test --home ARCHETYPE --style STYLE`). Not for the game's own use. */
 void     city_home_force(int arch, int style);
+void     city_home_force_storeys(int n);   /* HM5b2: the harness's storeys for every row (0: the styles' own) */
 /* The open spaces the lot filler (src/city/lots.c) leaves in a block for the
  * street vendors (src/city/vendor_sites.c, docs/street-vendor-generation.md):
  *   SPACE_APRON  a shophouse row set back 4-7 m behind a paved hawker frontage;

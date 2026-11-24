@@ -102,21 +102,32 @@ void m_h_rail_spear(Pm *pm);    void m_h_gate_iron(Pm *pm);     void m_h_bar_iro
 void hk_run(Pm *pm, int module, float len, float piece);
 
 enum { HK_FRAME_NONE = 0, HK_FRAME_SASH, HK_FRAME_GEORGIAN, HK_FRAME_CASEMENT, HK_FRAME_GRID, HK_FRAME_PICTURE, HK_FRAME_UPVC,
-       HK_FRAME_FRENCH };   /* HM5e2: out onto a balcony (never a set's: the shell's French windows take it) */
+       HK_FRAME_FRENCH,     /* HM5e2: out onto a balcony (never a set's: the shell's French windows take it) */
+       /* HM5b2: the other regions' (pmodel_region.h): Japan's aluminium sliding window, clear and frosted; the shophouse's
+        * louvred French window; China's and Korea's lattices; the block's glass louvres */
+       HK_FRAME_SLIDING, HK_FRAME_SLIDING_FROST, HK_FRAME_LOUVRE, HK_FRAME_LATTICE, HK_FRAME_LATTICE_KR, HK_FRAME_JALOUSIE,
+       HK_FRAME_COUNT };
 enum { HK_SILL_NONE = 0, HK_SILL_STONE, HK_SILL_TIMBER, HK_SILL_CONCRETE };
 /* heads: a stone lintel (and a keystone), a brick arch, a soldier course, a Victorian hood mould, a concrete
  * lintel, a craftsman's casing (boards round the opening on the wall, a capped head) */
-enum { HK_HEAD_NONE = 0, HK_HEAD_LINTEL, HK_HEAD_KEYSTONE, HK_HEAD_ARCH, HK_HEAD_SOLDIER, HK_HEAD_HOOD, HK_HEAD_CONCRETE, HK_HEAD_CASING };
-enum { HK_SHUT_NONE = 0, HK_SHUT_LOUVRE, HK_SHUT_PANEL };
+enum { HK_HEAD_NONE = 0, HK_HEAD_LINTEL, HK_HEAD_KEYSTONE, HK_HEAD_ARCH, HK_HEAD_SOLDIER, HK_HEAD_HOOD, HK_HEAD_CONCRETE, HK_HEAD_CASING,
+       /* HM5b2: Japan's thin hood (hisashi), the link house's aluminium hood, the shophouse's vent panel */
+       HK_HEAD_HISASHI, HK_HEAD_HOOD_AL, HK_HEAD_VENT };
+/* shutters: HM5b2's amado is a storm-shutter box beside the window (HkWindow.side: 0 its right, 1 its left) and its rail */
+enum { HK_SHUT_NONE = 0, HK_SHUT_LOUVRE, HK_SHUT_PANEL, HK_SHUT_AMADO };
+/* grilles (HM5b2): straight bars, China's projecting cage, an ornamental grille, a timber lattice, a reja */
+enum { HK_GRILLE_NONE = 0, HK_GRILLE_BARS, HK_GRILLE_CAGE, HK_GRILLE_ORN, HK_GRILLE_LATTICE, HK_GRILLE_REJA };
 typedef struct HkWindow {
     uint8_t frame, sill, head, shutters, grille, box;
     float   w, h;        /* the opening */
     float   reveal;      /* the glass's depth behind the wall's face */
+    uint8_t side;        /* an amado's side (HK_SHUT_AMADO) */
 } HkWindow;
 /* A window: its origin the opening's foot at the middle, on the wall's face. */
 void hk_window(Pm *pm, const HkWindow *w);
 
-enum { HK_DOOR_4P = 0, HK_DOOR_6P, HK_DOOR_CRAFT, HK_DOOR_HALF, HK_DOOR_UPVC };
+enum { HK_DOOR_4P = 0, HK_DOOR_6P, HK_DOOR_CRAFT, HK_DOOR_HALF, HK_DOOR_UPVC,
+       HK_DOOR_TRANSOM };   /* HM5b2: a tall double door under its transom light (the shophouse's, the townhouse's) */
 enum { HK_CASE_NONE = 0, HK_CASE_FLAT, HK_CASE_PEDIMENT, HK_CASE_FANLIGHT };
 /* A front door in its opening (w x h, the leaf's plane `recess` behind the wall's face), and its surround on the
  * wall: a doorcase (pilasters, an entablature or a pediment, a fanlight over the door) or a fanlight alone. */

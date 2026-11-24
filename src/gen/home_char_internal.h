@@ -41,6 +41,9 @@ void   hc_push_wall(DC *d, const double p[3], double mx, double mz);
 void   hc_push_yz(DC *d, const double p[3], const double ey[3], const double ez[3]);
 void   hc_push_along(DC *d, const double p[3], const double dir[3]);   /* x along dir, y as near up as that allows */
 void   hc_pop(DC *d);
+/* a run on a wall (its face m.(x, z) = at, along e from sa to sb, at height y, `out` proud): the frame at the end the kit's x
+ * runs from; returns the run's length */
+double hc_push_run_wall(DC *d, const double m[2], const double e[2], double at, double sa, double sb, double y, double out);
 /* the stretches of [a, b] along p0 + dir t where the point (offset by off) is clear of every solid */
 int    hc_clear_runs(const Ctx *C, const double p0[3], const double dir[3], const double off[3], double a, double b,
                      double step, double minLen, Ival *out, int max);
@@ -52,6 +55,11 @@ int    hc_is_house_body(int role);
 /* the occupancy: a box taken, and whether a box is free of every taken one */
 void   hc_occupy(DC *d, const double lo[3], const double hi[3]);
 int    hc_free(const DC *d, const double lo[3], const double hi[3]);
+
+/* home_region.c (HM5b2): the other regions' pieces that are not a window, a door, a post or a roof's edge (a gatehouse's
+ * ornament, couplets and lanterns, the five-foot way's columns and pilasters, a car porch, a gable's roundel, a slat screen,
+ * hazard sleeves and mailboxes), after the posts and before the balconies */
+void   hs_region(DC *d);
 
 /* home_retrofit.c: the shared retrofit kit set down on a unit's house (after the character layer) */
 void   hs_retrofit(DC *d);
