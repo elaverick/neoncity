@@ -1535,6 +1535,7 @@ const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_HVINE] = "h_vine",
     [PMAT_HALU] = "h_alu", [PMAT_HPAPER] = "h_paper", [PMAT_HLANTERN] = "h_lantern", [PMAT_HHAZARD] = "h_hazard",
     [PMAT_HCANVAS] = "h_canvas", [PMAT_HFROST] = "h_frost",
+    [PMAT_HTIN] = "h_tin",
 };
 /* Mirrored by kitSet in shaders/city/kit.glsl. Sets may serve two materials in different colours (the
  * rubber's grain under black plastic, the white paint's under red): the share check counts them together. */
@@ -1552,6 +1553,8 @@ const char *const PM_MAT_SET[PMAT_COUNT] = {
     [PMAT_HTILE] = "house_clay", [PMAT_HTIMBER] = "vendor_planks", [PMAT_HCEMENT] = "concrete",
     /* HM5c1, the retrofit kit: the vendors' galvanised sheet and copper, concrete under the breeze blocks */
     [PMAT_HGALV] = "kit_galv", [PMAT_HCOPPER] = "kit_copper", [PMAT_HBREEZE] = "concrete",
+    /* HM5b1b: tin awnings, the vendors' rusted sheet */
+    [PMAT_HTIN] = "kit_rust_sheet",
 };
 
 /* --------------------------------------------------------------- table --- */
@@ -1817,6 +1820,23 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_H_CARPORT] = { "h_carport", m_h_carport, { 460, 250, 150 }, 1 },
     [PMK_H_GABLE_VENT] = { "h_gable_vent", m_h_gable_vent, { 550, 280, 110 }, 1 },
     [PMK_H_WIN_HOOD] = { "h_win_hood", m_h_win_hood, { 120, 80, 60 }, 1 },
+    /* HM5b1b: South Asia, the Middle East and Africa (pmodel_region.c) */
+    [PMK_H_GRILLE_ORN] = { "h_grille_orn", m_h_grille_orn, { 1250, 610, 110 }, 1 },
+    [PMK_H_BALUSTRADE_PC] = { "h_balustrade_pc", m_h_balustrade_pc, { 780, 620, 220 }, 1 },
+    [PMK_H_AWNING_TIN] = { "h_awning_tin", m_h_awning_tin, { 220, 150, 60 }, 1 },
+    [PMK_H_FRIEZE] = { "h_frieze", m_h_frieze, { 1200, 660, 120 }, 1 },
+    [PMK_H_DECO_ROUNDEL] = { "h_deco_roundel", m_h_deco_roundel, { 1100, 550, 170 }, 1 },
+    [PMK_H_ARCH_SURROUND] = { "h_arch_surround", m_h_arch_surround, { 1140, 800, 280 }, 1 },
+    [PMK_H_GIRIH] = { "h_girih", m_h_girih, { 2100, 1160, 110 }, 1 },
+    [PMK_H_MASHRABIYA] = { "h_mashrabiya", m_h_mashrabiya, { 2330, 1180, 360 }, 1 },
+    [PMK_H_WIND_TOWER] = { "h_wind_tower", m_h_wind_tower, { 530, 320, 240 }, 1 },
+    [PMK_H_DOOR_STUDDED] = { "h_door_studded", m_h_door_studded, { 1320, 680, 170 }, 1 },
+    [PMK_H_DOOR_STUDDED_ARCH] = { "h_door_studded_arch", m_h_door_studded_arch, { 1390, 720, 200 }, 1 },
+    [PMK_H_GRILLE_LATTICE] = { "h_grille_lattice", m_h_grille_lattice, { 590, 400, 160 }, 1 },
+    [PMK_H_WATERSPOUT] = { "h_waterspout", m_h_waterspout, { 40, 40, 32 }, 1 },
+    [PMK_H_WIN_JALOUSIE] = { "h_win_jalousie", m_h_win_jalousie, { 440, 410, 100 }, 1 },
+    [PMK_H_DOOR_SECURITY] = { "h_door_security", m_h_door_security, { 730, 480, 150 }, 1 },
+    [PMK_H_CCTV] = { "h_cctv", m_h_cctv, { 310, 220, 100 }, 1 },
 };
 
 int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CUP) || (id >= PMK_ICON_SKEWER && id <= PMK_ICON_FLAME); }

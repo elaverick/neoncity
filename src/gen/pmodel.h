@@ -123,6 +123,8 @@ enum {
     PMAT_HHAZARD,      /* yellow and black hazard stripes, scuffed (pilotis columns' sleeves) */
     PMAT_HCANVAS,      /* striped awning canvas, faded and grimed (two colours by the house) */
     PMAT_HFROST,       /* milky frosted glass, polycarbonate, paper behind a lattice; the vertex's piece 1: a window's, lit by night */
+    /* HM5b1b: South Asia, the Middle East and Africa */
+    PMAT_HTIN,         /* corrugated tin: galvanised going to rust, some painted and faded (awnings) */
     PMAT_COUNT
 };
 
@@ -377,6 +379,13 @@ enum {
     PMK_H_LANTERN_PAPER, PMK_H_LATTICE, PMK_H_LATTICE_KR, PMK_H_CAGE, PMK_H_HAZARD, PMK_H_MAILBOX,
     PMK_H_PILASTER, PMK_H_COLUMN, PMK_H_WIN_LOUVRE, PMK_H_VENT_PANEL, PMK_H_CREST, PMK_H_PINTU_PAGAR, PMK_H_AWNING,
     PMK_H_CARPORT, PMK_H_GABLE_VENT, PMK_H_WIN_HOOD,
+    /* HM5b1b: South Asia, the Middle East and Africa (pmodel_region.c). RCC: an ornamental grille, a precast pierced
+     * balustrade, a tin awning. The bungalow: a fretwork frieze, the deco parapet's roundel. The Middle East: a pointed
+     * arch's surround, a girih screen, a mashrabiya oriel, a wind tower, studded doors (square, arched), a lattice
+     * grille, a waterspout. Africa: a glass louvre window, a security door, a CCTV camera. */
+    PMK_H_GRILLE_ORN, PMK_H_BALUSTRADE_PC, PMK_H_AWNING_TIN, PMK_H_FRIEZE, PMK_H_DECO_ROUNDEL,
+    PMK_H_ARCH_SURROUND, PMK_H_GIRIH, PMK_H_MASHRABIYA, PMK_H_WIND_TOWER, PMK_H_DOOR_STUDDED, PMK_H_DOOR_STUDDED_ARCH,
+    PMK_H_GRILLE_LATTICE, PMK_H_WATERSPOUT, PMK_H_WIN_JALOUSIE, PMK_H_DOOR_SECURITY, PMK_H_CCTV,
     PMK_COUNT
 };
 typedef struct PmModuleDef {
@@ -405,7 +414,7 @@ static inline int pm_module_is_retrofit(int id) { return id >= PMK_R_SOLAR_PANEL
 /* Whether a house module carries a light (HM5c1: its glow shares the unit's seed, so a house's lights go on together). */
 static inline int home_kit_light(int id) { return id == PMK_R_DOWNLIGHT || id == PMK_R_LED_STRIP || id == PMK_R_LANTERN || id == PMK_R_BULKHEAD ||
                                                   id == PMK_H_LANTERN_PAPER || id == PMK_H_WIN_SLIDING_FROST || id == PMK_H_LATTICE ||
-                                                  id == PMK_H_LATTICE_KR; }
+                                                  id == PMK_H_LATTICE_KR || id == PMK_H_MASHRABIYA; }
 static inline int pm_mat_is_house(int mat) { return mat >= PMAT_HTRIM && mat < PMAT_COUNT; }
 #define PM_ICON_SIZE 0.36f   /* the icons' square, which instances scale to their housing */
 /* Builds module id at a level into out (cleared first) and bakes its occlusion and wear. */

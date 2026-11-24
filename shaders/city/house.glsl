@@ -449,8 +449,9 @@ const uint PMAT_HTRIM = 49u, PMAT_HDOOR = 50u, PMAT_HSTONE = 51u, PMAT_HBRICK = 
            PMAT_HLED = 70u, PMAT_HLAMP = 71u,
            PMAT_HVINE = 72u,   // HMv: the vines' cards (shadeVine)
            // HM5b1a: the other regions' kit (src/gen/pmodel_region.c)
-           PMAT_HALU = 73u, PMAT_HPAPER = 74u, PMAT_HLANTERN = 75u, PMAT_HHAZARD = 76u, PMAT_HCANVAS = 77u, PMAT_HFROST = 78u;
-bool kitIsHouse(uint m) { return m >= PMAT_HTRIM && m <= PMAT_HFROST; }
+           PMAT_HALU = 73u, PMAT_HPAPER = 74u, PMAT_HLANTERN = 75u, PMAT_HHAZARD = 76u, PMAT_HCANVAS = 77u, PMAT_HFROST = 78u,
+           PMAT_HTIN = 79u;   // HM5b1b: corrugated tin
+bool kitIsHouse(uint m) { return m >= PMAT_HTRIM && m <= PMAT_HTIN; }
 
 /* HM5b1a: a character brushed on a couplet (c in 0..1 over its cell): four strokes, each across or down a span of the
  * character's box, from its own hash; blocky at a street's distance, which is all a couplet is seen from. */
@@ -779,6 +780,17 @@ vec3 shadeHouseKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, floa
         alb = vec3(0.46, 0.49, 0.47) * mix(0.75, 1.05, vnoise(gWorld.xz * 1.5, 0x4D07u));
         alb *= 1.0 - 0.06 * step(0.5, fract(q.x / 0.02));   // the twin wall's ribs
         shin = 60.0; specK = 0.12;
+    }
+    else if (m == PMAT_HTIN) {
+        // HM5b1b: corrugated tin. Bare zinc, or painted (faded red, green, blue) by the house; rust in blotches and in
+        // runs down the fall from the laps and fixings, more on a run-down house's (its door's colour picks the paint)
+        uint k = door % 6u;
+        alb = k < 3u ? vec3(0.30, 0.31, 0.30) : k == 3u ? vec3(0.30, 0.07, 0.05) : k == 4u ? vec3(0.08, 0.20, 0.12) : vec3(0.07, 0.13, 0.24);
+        alb *= 1.0 - 0.12 * step(0.5, fract(q.x / 0.076));   // the corrugations' shading where the geometry has none
+        float rust = smoothstep(0.45, 0.85, vnoise(vec2(q.x * 3.0, q.y * 0.7), 0x4D11u))
+                   + 0.5 * smoothstep(0.6, 0.95, vnoise(vec2(q.x * 14.0, q.y * 1.2), 0x4D12u));
+        alb = mix(alb, mix(vec3(0.20, 0.08, 0.03), vec3(0.11, 0.05, 0.02), vnoise(q * 6.0, 0x4D13u)), clamp(rust, 0.0, 1.0) * 0.8);
+        set = PBR_KIT_RUST_SHEET; grainK = 0.5; shin = mix(30.0, 8.0, clamp(rust, 0.0, 1.0)); specK = mix(0.12, 0.03, clamp(rust, 0.0, 1.0));
     }
     else                        { alb = H_DOOR[door % 12u]; set = PBR_KIT_PAINT; grainK = 0.5; shin = 30.0; specK = 0.1; }   // PMAT_HDOOR
     alb *= vary;

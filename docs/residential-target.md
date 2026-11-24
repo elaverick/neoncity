@@ -1054,6 +1054,30 @@ over the three levels together. The library's budget rose from 430,000 to 480,00
 within a house's 150. Boards `build/home/hm5b1a/board_vignettes.jpg` (sheet beside vignette) and `board_modules.jpg`
 (the new modules at their levels). Not yet seen in the game: nothing places them until HM5b2.
 
+**HM5b1b, South Asia, the Middle East and Africa** (16 modules, `PMK_H_GRILLE_ORN` to `PMK_H_CCTV`):
+
+| Style (sheet, panels) | Modules |
+|---|---|
+| RCC (1, 3, 4, 5) | ornamental window grille (lozenges, rings, a sunburst); precast pierced balustrade; corrugated tin awning |
+| Bungalow (1, 2, 5) | fretwork frieze (scalloped arches, drops, rings); the deco parapet's pediment and roundel (the round column and the pierced balustrade shared) |
+| Middle Eastern villa (1, 4, 5) | pointed arch surround (jambs, moulding, carved spandrels, alfiz); girih screen; mashrabiya oriel; wind tower |
+| Courtyard (1, 2, 4) | studded door, square and arched; small timber lattice grille; waterspout (the surround and the mashrabiya shared) |
+| Block (1, 4) | glass louvre (jalousie) window; barred security door |
+| Walled compound (3) | CCTV camera on its bracket (the round column and balustrade shared) |
+
+The pointed arch is two-centred (`HK_ARCH_*`: 1.6 m between the jambs, springing at 2.1 m, apex 3.16 m) and shared through
+`hk_arch_y`/`hk_arch_apex`, so HM5b2's openings, the surround and the arched door agree. Until the shell cuts pointed
+openings (HM5b2), the surround fills the corners of a square opening up to the apex back 0.35 m into the wall, so a square
+opening reads as arched. The mashrabiya carries frosted paper behind its lattice (piece 1, lit by night with the unit's
+lights: `home_kit_light`). One material more, `PMAT_HTIN` (79): corrugated tin, bare zinc or faded red, green or blue paint
+by the unit, rusting in blotches and in runs down the fall (the vendors' `kit_rust_sheet` grain).
+
+**Measured** (`pmodel_lab --only house`, 2026-11-24): every module closed, deterministic, no bad normals; L0 36-2,112
+triangles (the mashrabiya the most, then the girih's 1,920), L1 36-1,068, L2 28-324; about 24,400 over the three levels
+together; the library at 455,918 of its 480,000 (HM5b1c's kit has the rest). Vignettes on stand-ins of each sheet's panel 1 (rcc, bungalow, villa_mena, courtyard, block, walled): 12-39
+instances, within a house's 150. Boards `build/home/hm5b1b/board_vignettes.jpg` and `board_modules.jpg`. Not yet seen in
+the game: nothing places them until HM5b2.
+
 ## Massing and parts
 
 | Part | Size | Notes |
