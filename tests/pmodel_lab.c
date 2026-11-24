@@ -1472,6 +1472,217 @@ static void vig_walled(Pm *pm) {
     pm_push(pm); pm_translate(pm, 12.6f, 0.0f, -9.0f); hr_tank(pm, 0, 1.0f, 3.5f); pm_pop(pm);
 }
 
+/* HM5b1c, Southern Europe and Latin America. */
+/* the corners between a square opening (cx -+R, up to S + R over y0) and its round arch, filled with the wall's stand-in */
+static void si_arch_fill(Pm *pm, int part, float cx, float y0, float R, float S, float t) {
+    si(pm, part);
+    for (int s = 0; s < 2; ++s) {
+        float p[12][2], q[12][2];
+        int n = 0;
+        for (int k = 0; k <= 8; ++k) { const float a = PI_F - 0.5f * PI_F * (float)k / 8.0f; p[n][0] = R * cosf(a); p[n][1] = S + R * sinf(a); n++; }
+        p[n][0] = -R; p[n][1] = S + R; n++;
+        for (int i = 0; i < n; ++i) { const int j = s ? n - 1 - i : i; q[i][0] = (s ? -1.0f : 1.0f) * p[j][0]; q[i][1] = p[j][1]; }
+        pm_push(pm); pm_translate(pm, cx, y0, 0.0f); pm_extrude(pm, (const float (*)[2])q, n, -t, 0.0f); pm_pop(pm);
+    }
+    si_end(pm);
+}
+/* a window dressed the Southern European way: its frame, an architrave stretched to it, a cornice head on top if asked */
+static void seu_window(Pm *pm, float cx, float y, float w, float h, int frame, int shutters, int cornice) {
+    HkWindow hw = { (uint8_t)frame, HK_SILL_STONE, HK_HEAD_NONE, (uint8_t)shutters, 0, 0, w, h, 0.12f };
+    pm_push(pm); pm_translate(pm, cx, y, 0.0f); hk_window(pm, &hw); pm_pop(pm);
+    const float sx = w / HK_ARCHI_W, sy = h / HK_ARCHI_H;
+    put(pm, PMK_H_ARCHITRAVE, cx, y, 0.0f, sx, sy);
+    if (!cornice) return;
+    const float half = (0.5f * HK_ARCHI_W + HK_ARCHI_B + 0.07f) * sx + 0.06f;
+    pm_push(pm); pm_translate(pm, cx - half, y + (HK_ARCHI_H + HK_ARCHI_B) * sy, 0.0f); hk_run(pm, PMK_H_CORNICE_HEAD, 2.0f * half, 0.0f); pm_pop(pm);
+}
+/* a balcony slab out from a wall over x0..x1 at y (its top), d deep, on consoles, an iron rail round it */
+static void seu_balcony(Pm *pm, float x0, float x1, float y, float d, int ornate) {
+    si_box(pm, SI_RENDER, x0, y - 0.14f, 0.0f, x1, y, d);
+    for (int k = 0; k < 2; ++k) put(pm, PMK_H_CONSOLE, k ? x1 - 0.15f : x0 + 0.15f, y - 0.14f, 0.0f, 1.0f, 1.0f);
+    pm_push(pm); pm_translate(pm, x0 + 0.04f, y, d - 0.04f); hk_rail(pm, ornate, x1 - x0 - 0.08f, 1); pm_pop(pm);
+    run_out(pm, ornate ? PMK_H_RAIL_ORNATE : PMK_H_RAIL_IRON, x0 + 0.04f, y, 0.05f, d - 0.09f);
+    run_out(pm, ornate ? PMK_H_RAIL_ORNATE : PMK_H_RAIL_IRON, x1 - 0.04f, y, 0.05f, d - 0.09f);
+}
+/* 22. The Southern European villa (its sheet's panel 1, with panel 4's pergola): two storeys of render on quoins under a
+ * clay roof on rafter tails; the door in a round-arched stone surround, urns either side; windows in eared architraves
+ * with cornice heads and louvred shutters; the middle one onto an iron balcony on consoles; a pergola over the terrace. */
+static void vig_villa_seu(Pm *pm) {
+    const float W = 9.0f, pl = 0.3f, sh = 3.2f, eaves = pl + 2.0f * sh + 0.2f, cx = 4.5f, R = 0.5f * HK_RARCH_W, S = HK_RARCH_SPRING;
+    const float o[6][4] = { { cx - R, pl, cx + R, pl + S + R }, { 1.3f, pl + 0.9f, 2.3f, pl + 2.5f }, { 6.7f, pl + 0.9f, 7.7f, pl + 2.5f },
+                            { 1.3f, pl + sh + 0.7f, 2.3f, pl + sh + 2.3f }, { cx - 0.55f, pl + sh + 0.05f, cx + 0.55f, pl + sh + 2.35f },
+                            { 6.7f, pl + sh + 0.7f, 7.7f, pl + sh + 2.3f } };
+    si_wall(pm, SI_RENDER, 0.0f, 0.0f, W, eaves, 0.3f, o, 6, 0.12f);
+    si_arch_fill(pm, SI_RENDER, cx, pl, R, S, 0.3f);
+    si_box(pm, SI_DARK, cx - R - 0.3f, 0.0f, 0.0f, cx + R + 0.3f, pl, 0.6f);   /* the step */
+    put(pm, PMK_H_ARCH_STONE, cx, pl, 0.0f, 1.0f, 1.0f);
+    pm_push(pm); pm_translate(pm, cx, pl, 0.0f); hk_door(pm, HK_DOOR_6P, HK_CASE_NONE, 2.0f * R, S, 0.15f); pm_pop(pm);
+    for (int k = 0; k < 2; ++k) put(pm, PMK_H_URN, k ? cx + R + 0.55f : cx - R - 0.55f, 0.0f, 0.45f, 1.0f, 1.0f);
+    for (int k = 1; k < 6; ++k) {
+        if (k == 4) continue;
+        seu_window(pm, 0.5f * (o[k][0] + o[k][2]), o[k][1], o[k][2] - o[k][0], o[k][3] - o[k][1], HK_FRAME_CASEMENT, HK_SHUT_LOUVRE, k >= 3);
+    }
+    seu_window(pm, cx, o[4][1], o[4][2] - o[4][0], o[4][3] - o[4][1], HK_FRAME_FRENCH, HK_SHUT_LOUVRE, 1);
+    seu_balcony(pm, cx - 1.1f, cx + 1.1f, pl + sh + 0.05f, 0.75f, 0);
+    pm_push(pm); pm_translate(pm, W, 0.0f, 0.0f); hk_quoins(pm, eaves); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.0f, 0.0f, 0.0f); pm_rotate_y(pm, -0.5f * PI_F); hk_quoins(pm, eaves); pm_pop(pm);
+    /* the pergola over the terrace in front of the left-hand room */
+    const float py = pl + 2.95f;
+    pm_push(pm); pm_translate(pm, 0.0f, py, 0.0f); hk_run(pm, PMK_H_PERGOLA, 3.0f, 1.0f); pm_pop(pm);
+    for (int k = 0; k < 2; ++k) put(pm, PMK_H_PERGOLA_POST, k ? 2.85f : 0.15f, 0.0f, HK_PERGOLA_D - 0.39f, 1.0f, py - 0.4f);
+    float ry, rz;
+    si_roof(pm, SI_CLAY, -0.5f, W + 0.5f, eaves, 0.55f, 10.0f, 25.0f, 0.1f, &ry, &rz);
+    pm_push(pm); pm_translate(pm, -0.5f, ry, rz); hk_ridge(pm, 0, W + 1.0f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.0f, eaves, 0.0f); hk_rafter_tails(pm, W, 0.6f, 25.0f, 0.5f); pm_pop(pm);
+}
+/* 23. The townhouse (its sheet's panel 1, with panel 3's blind): a tall narrow front of three storeys over the ground
+ * between its neighbours; the double door under its transom in an architrave; French windows in architraves onto iron
+ * balconettes on consoles; a roller blind half down from its box; an urn by the door. */
+static void vig_townhouse(Pm *pm) {
+    const float W = 6.0f, pl = 0.15f, gh = 3.7f, sh = 3.3f, top = gh + 3.0f * sh;
+    float o[8][4];
+    int n = 0;
+    o[n][0] = 1.0f; o[n][1] = pl; o[n][2] = 1.0f + HK_DDOOR_W; o[n][3] = pl + HK_DDOOR_H; n++;
+    o[n][0] = 3.7f; o[n][1] = 1.0f; o[n][2] = 4.9f; o[n][3] = 2.9f; n++;
+    for (int s = 0; s < 3; ++s)
+        for (int k = 0; k < 2; ++k) { const float x0 = k ? 3.75f : 1.1f, y0 = gh + sh * (float)s + 0.05f; o[n][0] = x0; o[n][1] = y0; o[n][2] = x0 + 1.1f; o[n][3] = y0 + 2.3f; n++; }
+    si_wall(pm, SI_RENDER, 0.0f, 0.0f, W, top, 0.3f, (const float (*)[4])o, n, 0.12f);
+    const float dx = 1.0f + 0.5f * HK_DDOOR_W;
+    put(pm, PMK_H_DOOR_TRANSOM, dx, pl, -0.15f, 1.0f, 1.0f);
+    {
+        const float sx = HK_DDOOR_W / HK_ARCHI_W, sy = HK_DDOOR_H / HK_ARCHI_H, half = (0.5f * HK_ARCHI_W + HK_ARCHI_B + 0.07f) * sx + 0.06f;
+        put(pm, PMK_H_ARCHITRAVE, dx, pl, 0.0f, sx, sy);
+        pm_push(pm); pm_translate(pm, dx - half, pl + (HK_ARCHI_H + HK_ARCHI_B) * sy, 0.0f); hk_run(pm, PMK_H_CORNICE_HEAD, 2.0f * half, 0.0f); pm_pop(pm);
+    }
+    seu_window(pm, 4.3f, o[1][1], 1.2f, 1.9f, HK_FRAME_CASEMENT, 0, 0);
+    put(pm, PMK_H_GRILLE, 4.3f, o[1][1] - 0.05f, 0.0f, 1.3f, 2.0f);
+    put(pm, PMK_H_URN, 0.45f, 0.0f, 0.35f, 1.0f, 1.0f);
+    for (int k = 2; k < n; ++k) {
+        const float cx = 0.5f * (o[k][0] + o[k][2]), w = o[k][2] - o[k][0], h = o[k][3] - o[k][1];
+        seu_window(pm, cx, o[k][1], w, h, HK_FRAME_FRENCH, 0, k < 4);
+        seu_balcony(pm, o[k][0] - 0.2f, o[k][2] + 0.2f, o[k][1], 0.45f, 1);
+    }
+    /* the blind half down over the second floor's right-hand window, in its box over the head */
+    {
+        const float x0 = o[5][0] - 0.03f, w = o[5][2] - o[5][0] + 0.06f, y = o[5][3] + 0.01f;
+        pm_push(pm); pm_translate(pm, x0, y, 0.0f); pm_scale(pm, w, 1.0f, 1.0f); pm_place(pm, PMK_H_BLIND_BOX); pm_pop(pm);
+        pm_push(pm); pm_translate(pm, x0, y, 0.0f); pm_scale(pm, w, 1.25f, 1.0f); pm_place(pm, PMK_H_BLIND); pm_pop(pm);
+    }
+    pm_push(pm); pm_translate(pm, 0.0f, gh - 0.1f, 0.0f); hk_run(pm, PMK_H_STRING_COURSE, W, 0.0f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.0f, top - 0.3f, 0.0f); hk_run(pm, PMK_H_BAY_CORNICE, W, 1.0f); pm_pop(pm);
+    float ry, rz;
+    si_roof(pm, SI_CLAY, -0.05f, W + 0.05f, top, 0.35f, 10.0f, 26.0f, 0.1f, &ry, &rz);
+    /* the neighbours */
+    si_box(pm, SI_SIDING, -4.0f, 0.0f, -0.3f, 0.0f, top - 1.5f, 0.0f);
+    si_box(pm, SI_BRICK, W, 0.0f, -0.3f, W + 4.0f, top + 0.8f, 0.0f);
+}
+/* a frame member from (x0, y0) along x for len (a beam), or up y (a column: x its middle) */
+static void frame_beam(Pm *pm, float x0, float y0, float len) {
+    pm_push(pm); pm_translate(pm, x0, y0, 0.0f); pm_scale(pm, len, 1.0f, 1.0f); pm_place(pm, PMK_H_FRAME_STRIP); pm_pop(pm);
+}
+static void frame_col(Pm *pm, float x, float y0, float len) {
+    pm_push(pm); pm_translate(pm, x + 0.5f * HK_FRAME_W, y0, 0.0f); pm_rotate_z(pm, 0.5f * PI_F); pm_scale(pm, len, 1.0f, 1.0f); pm_place(pm, PMK_H_FRAME_STRIP); pm_pop(pm);
+}
+/* 24. The self-built house (its sheet's panel 1): four storeys of hollow brick in an exposed concrete frame, columns
+ * and beams proud of it; the corner shop under a canvas awning; steel-framed windows behind grilles; a balcony; on the
+ * roof the columns' starter bars and a tank. */
+static void vig_selfbuilt(Pm *pm) {
+    const float W = 6.6f, gh = 3.1f, sh = 2.9f, top = gh + 3.0f * sh;
+    float o[10][4];
+    int n = 0;
+    o[n][0] = 0.4f; o[n][1] = 0.1f; o[n][2] = 3.9f; o[n][3] = 2.6f; n++;   /* the shop */
+    o[n][0] = 4.6f; o[n][1] = 0.1f; o[n][2] = 5.6f; o[n][3] = 2.3f; n++;   /* the stair's door */
+    for (int s = 0; s < 3; ++s)
+        for (int k = 0; k < 2; ++k) { const float x0 = k ? 3.8f : 0.6f, y0 = gh + sh * (float)s + 0.9f; o[n][0] = x0; o[n][1] = y0; o[n][2] = x0 + 2.0f; o[n][3] = y0 + 1.3f; n++; }
+    si_wall(pm, SI_BRICK, 0.0f, 0.0f, W, top, 0.25f, (const float (*)[4])o, n, 0.1f);
+    for (int k = 2; k < n; ++k) {
+        const float w = o[k][2] - o[k][0], h = o[k][3] - o[k][1], cx = 0.5f * (o[k][0] + o[k][2]);
+        HkWindow hw = { HK_FRAME_GRID, HK_SILL_CONCRETE, HK_HEAD_NONE, 0, 0, 0, w, h, 0.1f };
+        pm_push(pm); pm_translate(pm, cx, o[k][1], 0.0f); hk_window(pm, &hw); pm_pop(pm);
+        put(pm, PMK_H_GRILLE, cx, o[k][1] - 0.05f, 0.0f, w + 0.1f, h + 0.1f);
+    }
+    pm_push(pm); pm_translate(pm, 5.1f, 0.1f, 0.0f); hk_door(pm, HK_DOOR_4P, HK_CASE_NONE, 0.9f, 2.2f, 0.1f); pm_pop(pm);
+    /* the frame: columns at the ends and the middle, a beam at each floor and the roof */
+    const float cols[3] = { 0.0f, 3.3f - 0.5f * HK_FRAME_W, W - HK_FRAME_W };
+    for (int k = 0; k < 3; ++k) frame_col(pm, cols[k] + 0.5f * HK_FRAME_W, 0.0f, top + 0.15f);
+    for (int s = 1; s <= 3; ++s) frame_beam(pm, 0.0f, gh + sh * (float)(s - 1) - HK_FRAME_W, W);
+    frame_beam(pm, 0.0f, top - HK_FRAME_W + 0.15f, W);
+    /* the shop's awning; the second floor's balcony */
+    pm_push(pm); pm_translate(pm, 0.3f, 2.75f, 0.0f); hk_run(pm, PMK_H_AWNING, 3.7f, 1.0f); pm_pop(pm);
+    const float by = gh + sh;
+    si_box(pm, SI_RENDER, 0.4f, by - 0.15f, 0.0f, 3.0f, by, 0.9f);
+    pm_push(pm); pm_translate(pm, 0.45f, by, 0.85f); hr_rail(pm, 2.5f); pm_pop(pm);
+    /* the roof: the columns' stubs with their bars, a tank on a stand */
+    for (int k = 0; k < 3; ++k) {
+        const float x = cols[k];
+        si_box(pm, SI_RENDER, x, top + 0.15f, -0.25f, x + HK_FRAME_W, top + 0.9f, 0.0f);
+        put(pm, PMK_R_REBAR, x + 0.5f * HK_FRAME_W, top + 0.9f, -0.12f, 1.0f, 0.9f);
+    }
+    pm_push(pm); pm_translate(pm, 4.6f, top + 0.15f, -1.5f); hr_tank(pm, 0, 1.0f, 1.0f); pm_pop(pm);
+    si_box(pm, SI_RENDER, 0.0f, top - 0.1f, -6.0f, W, top + 0.15f, 0.0f);
+}
+/* 25. The colonial house (its sheet's panel 1): one tall storey of render, a deep tile eave on carved corbels; the
+ * studded door in a round-arched stone surround with a crest over it; iron rejas with their crests over the windows. */
+static void vig_colonial(Pm *pm) {
+    const float W = 11.0f, eaves = 4.4f, cx = 5.5f, R = 0.5f * HK_RARCH_W, S = HK_RARCH_SPRING, ov = 1.0f;
+    const float o[3][4] = { { cx - R, 0.0f, cx + R, S + R }, { 1.6f, 0.8f, 2.8f, 2.4f }, { 8.2f, 0.8f, 9.4f, 2.4f } };
+    si_wall(pm, SI_RENDER, 0.0f, 0.0f, W, eaves, 0.4f, o, 3, 0.15f);
+    si_arch_fill(pm, SI_RENDER, cx, 0.0f, R, S, 0.4f);
+    put(pm, PMK_H_ARCH_STONE, cx, 0.0f, 0.0f, 1.0f, 1.0f);
+    put(pm, PMK_H_DOOR_STUDDED, cx, 0.0f, -0.15f, HK_RARCH_W / HK_ARCH_W, S / HK_STUD_H);
+    put(pm, PMK_H_WIN_CREST, cx, S + R + 0.32f, 0.0f, 1.0f, 1.0f);
+    for (int k = 1; k < 3; ++k) {
+        const float wx = 0.5f * (o[k][0] + o[k][2]);
+        HkWindow hw = { HK_FRAME_CASEMENT, HK_SILL_STONE, HK_HEAD_NONE, 0, 0, 0, 1.2f, 1.6f, 0.15f };
+        pm_push(pm); pm_translate(pm, wx, o[k][1], 0.0f); hk_window(pm, &hw); pm_pop(pm);
+        put(pm, PMK_H_REJA, wx, o[k][1] - 0.1f, 0.0f, 1.1f, 1.1f);
+        put(pm, PMK_R_POT, wx - 0.3f, o[k][1] - 0.088f, 0.12f, 1.0f, 1.0f);
+    }
+    si_box(pm, SI_BRICK, 0.0f, 0.0f, 0.0f, W, 0.6f, 0.04f);   /* the painted plinth band */
+    for (int k = 0; k < 16; ++k) put(pm, PMK_H_CORBEL_CARVED, 0.3f + 0.69f * (float)k, eaves, 0.0f, 1.0f, 1.0f);
+    float ry, rz;
+    si_roof(pm, SI_CLAY, -0.4f, W + 0.4f, eaves, ov, 10.0f, 22.0f, 0.12f, &ry, &rz);
+    pm_push(pm); pm_translate(pm, -0.4f, ry, rz); hk_ridge(pm, 0, W + 0.8f); pm_pop(pm);
+}
+/* 26. The colonial house of two storeys (its sheet's panels 2 and 5): a long timber balcony on carved brackets, turned
+ * balusters, French windows onto it; the transom door in an architrave under a stucco crest, crests over the ground's
+ * windows behind their rejas. */
+static void vig_colonial2(Pm *pm) {
+    const float W = 10.0f, gh = 3.8f, sh = 3.4f, eaves = gh + sh + 0.3f, cx = 5.0f, bd = 1.15f, dh = 2.7f;
+    const float o[6][4] = { { cx - 0.5f * HK_DDOOR_W, 0.0f, cx + 0.5f * HK_DDOOR_W, dh }, { 1.4f, 0.8f, 2.6f, 2.3f }, { 7.4f, 0.8f, 8.6f, 2.3f },
+                            { 1.5f, gh + 0.05f, 2.6f, gh + 2.45f }, { cx - 0.55f, gh + 0.05f, cx + 0.55f, gh + 2.45f }, { 7.4f, gh + 0.05f, 8.5f, gh + 2.45f } };
+    si_wall(pm, SI_RENDER, 0.0f, 0.0f, W, eaves, 0.35f, o, 6, 0.15f);
+    put(pm, PMK_H_DOOR_TRANSOM, cx, 0.0f, -0.15f, 1.0f, dh / HK_DDOOR_H);
+    const float sx = HK_DDOOR_W / HK_ARCHI_W, sy = dh / HK_ARCHI_H;
+    put(pm, PMK_H_ARCHITRAVE, cx, 0.0f, 0.0f, sx, sy);
+    put(pm, PMK_H_WIN_CREST, cx, (HK_ARCHI_H + HK_ARCHI_B) * sy, 0.0f, 1.0f, 1.0f);
+    for (int k = 1; k < 3; ++k) {
+        const float wx = 0.5f * (o[k][0] + o[k][2]);
+        HkWindow hw = { HK_FRAME_CASEMENT, HK_SILL_STONE, HK_HEAD_NONE, 0, 0, 0, 1.2f, 1.5f, 0.15f };
+        pm_push(pm); pm_translate(pm, wx, o[k][1], 0.0f); hk_window(pm, &hw); pm_pop(pm);
+        put(pm, PMK_H_REJA, wx, o[k][1] - 0.1f, 0.0f, 1.1f, 1.7f / HK_REJA_H);
+        put(pm, PMK_H_WIN_CREST, wx, o[k][3] + 0.1f, 0.0f, 0.9f, 0.9f);
+    }
+    for (int k = 3; k < 6; ++k) {
+        const float wx = 0.5f * (o[k][0] + o[k][2]);
+        HkWindow hw = { HK_FRAME_FRENCH, HK_SILL_NONE, HK_HEAD_NONE, 0, 0, 0, o[k][2] - o[k][0], o[k][3] - o[k][1], 0.15f };
+        pm_push(pm); pm_translate(pm, wx, o[k][1], 0.0f); hk_window(pm, &hw); pm_pop(pm);
+    }
+    /* the balcony: its floor on brackets, the rail round it */
+    const float bx0 = 0.6f, bx1 = W - 0.6f;
+    si_box(pm, SI_DARK, bx0, gh - 0.12f, 0.0f, bx1, gh, bd);
+    const float bxs[4] = { bx0 + 0.25f, 3.45f, 6.55f, bx1 - 0.25f };   /* between the crests under it */
+    for (int k = 0; k < 4; ++k) put(pm, PMK_H_BRACKET_TIMBER, bxs[k], gh - 0.12f, 0.0f, 1.0f, 1.0f);
+    pm_push(pm); pm_translate(pm, bx0, gh, bd - 0.06f); hk_run(pm, PMK_H_BALUSTER_TIMBER, bx1 - bx0 - 0.1f, 1.0f); pm_pop(pm);
+    put(pm, PMK_H_PERGOLA_POST, bx1 - 0.05f, gh, bd - 0.06f, 0.8f, HK_TBAL_H + 0.06f);
+    run_out(pm, PMK_H_BALUSTER_TIMBER, bx0 + 0.05f, gh, 0.05f, bd - 0.16f);
+    run_out(pm, PMK_H_BALUSTER_TIMBER, bx1 - 0.05f, gh, 0.05f, bd - 0.16f);
+    for (int k = 0; k < 14; ++k) put(pm, PMK_H_CORBEL_CARVED, 0.3f + 0.72f * (float)k, eaves, 0.0f, 1.0f, 1.0f);
+    float ry, rz;
+    si_roof(pm, SI_CLAY, -0.4f, W + 0.4f, eaves, 1.3f, 10.0f, 22.0f, 0.12f, &ry, &rz);
+    pm_push(pm); pm_translate(pm, -0.4f, ry, rz); hk_ridge(pm, 0, W + 0.8f); pm_pop(pm);
+}
+
 typedef void (*VigFn)(Pm *pm);
 static const struct { const char *name; VigFn fn; float az, el; } VIG[] = {
     { "victorian", vig_victorian, 0.42f, 0.16f }, { "georgian", vig_georgian, 0.38f, 0.10f }, { "craftsman", vig_craftsman, 0.75f, 0.02f },
@@ -1483,6 +1694,8 @@ static const struct { const char *name; VigFn fn; float az, el; } VIG[] = {
     { "shophouse", vig_shophouse, 0.42f, 0.12f }, { "linkhouse", vig_linkhouse, 0.55f, 0.2f },
     { "rcc", vig_rcc, 0.42f, 0.12f }, { "bungalow", vig_bungalow, 0.45f, 0.14f }, { "villa_mena", vig_mena, 0.4f, 0.12f },
     { "courtyard", vig_courtyard, 0.35f, 0.1f }, { "block", vig_block, 0.45f, 0.14f }, { "walled", vig_walled, 0.42f, 0.16f },
+    { "villa_seu", vig_villa_seu, 0.42f, 0.12f }, { "townhouse", vig_townhouse, 0.4f, 0.1f }, { "selfbuilt", vig_selfbuilt, 0.42f, 0.12f },
+    { "colonial", vig_colonial, 0.38f, 0.1f }, { "colonial2", vig_colonial2, 0.42f, 0.1f },
 };
 #define NVIG ((int)(sizeof(VIG) / sizeof(VIG[0])))
 

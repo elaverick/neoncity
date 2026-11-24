@@ -386,6 +386,13 @@ enum {
     PMK_H_GRILLE_ORN, PMK_H_BALUSTRADE_PC, PMK_H_AWNING_TIN, PMK_H_FRIEZE, PMK_H_DECO_ROUNDEL,
     PMK_H_ARCH_SURROUND, PMK_H_GIRIH, PMK_H_MASHRABIYA, PMK_H_WIND_TOWER, PMK_H_DOOR_STUDDED, PMK_H_DOOR_STUDDED_ARCH,
     PMK_H_GRILLE_LATTICE, PMK_H_WATERSPOUT, PMK_H_WIN_JALOUSIE, PMK_H_DOOR_SECURITY, PMK_H_CCTV,
+    /* HM5b1c: Southern Europe and Latin America (pmodel_region.c). The villa and townhouse: a stone architrave and its
+     * cornice head, a round-arched stone surround, a pergola and its post, a terracotta urn, a double door under a
+     * transom, a roller blind's box and blind. The self-built house: an exposed frame member. The colonial house: a
+     * carved eave corbel, an iron reja, a stucco window crest, a timber balcony's balusters and its carved bracket. */
+    PMK_H_ARCHITRAVE, PMK_H_CORNICE_HEAD, PMK_H_ARCH_STONE, PMK_H_PERGOLA, PMK_H_PERGOLA_POST, PMK_H_URN,
+    PMK_H_DOOR_TRANSOM, PMK_H_BLIND_BOX, PMK_H_BLIND, PMK_H_FRAME_STRIP,
+    PMK_H_CORBEL_CARVED, PMK_H_REJA, PMK_H_WIN_CREST, PMK_H_BALUSTER_TIMBER, PMK_H_BRACKET_TIMBER,
     PMK_COUNT
 };
 typedef struct PmModuleDef {

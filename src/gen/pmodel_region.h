@@ -37,7 +37,19 @@
  *   Block        glass louvre (jalousie) windows (panel 4); a barred steel security door over the front door
  *   Walled       a CCTV camera on its bracket (panel 3)
  *
- * One material more: corrugated tin, galvanised going to rust, some painted (PMAT_HTIN). */
+ * One material more: corrugated tin, galvanised going to rust, some painted (PMAT_HTIN).
+ *
+ * HM5b1c, Southern Europe and Latin America (no new materials: stone, trim, door paint, timber, iron, clay, cement):
+ *
+ *   Villa        a stone architrave (eared) with a cornice head over the windows; a round-arched stone surround with a
+ *                keystone for the door; a timber pergola and its posts (panel 4); a terracotta urn (panels 2, 5)
+ *   Townhouse    the architrave and cornice head shared; a tall double door under a transom light; a roller blind's
+ *                box and the blind let down from it (panel 3); the urn by the door
+ *   Self-built   an exposed concrete frame member, proud of the hollow brick, its shuttering's marks on it (panels 1-6);
+ *                the shophouse's canvas awning shared
+ *   Colonial     a carved timber corbel under the deep eave (panel 1); an iron reja with its scrolled crest (1, 4, 6);
+ *                a stucco crest over windows and doors (2, 4, 6); a timber balcony's turned balusters and its carved
+ *                brackets (2, 5); the arched surround, the transom door and the lattice grille shared */
 
 /* usual sizes (m) */
 #define HK_SLIDE_W     1.60f   /* a Japanese sliding window: two sashes */
@@ -100,6 +112,30 @@
 #define HK_SEC_W       0.95f   /* a security door over a front door */
 #define HK_SEC_H       2.10f
 #define HK_CCTV_L      0.30f   /* a camera's bracket out from its wall */
+/* HM5b1c */
+#define HK_ARCHI_W     1.00f   /* the window an architrave is built round */
+#define HK_ARCHI_H     1.60f
+#define HK_ARCHI_B     0.16f   /* its band (the cornice head's foot on the head's top, HK_ARCHI_H + HK_ARCHI_B) */
+#define HK_RARCH_W     1.50f   /* a round arch's opening, jamb to jamb */
+#define HK_RARCH_SPRING 2.10f  /* its springing over the opening's foot */
+#define HK_PERGOLA_D   2.60f   /* a pergola's rafters out from the wall */
+#define HK_URN_H       0.75f   /* a terracotta urn's height to its lip */
+#define HK_DDOOR_W     1.30f   /* a double door with its transom: the opening */
+#define HK_DDOOR_H     3.00f
+#define HK_TRANSOM_H   0.60f   /* ...the transom light's share of it */
+#define HK_FRAME_W     0.25f   /* an exposed frame member's face across */
+#define HK_FRAME_P     0.06f   /* ...proud of the infill */
+#define HK_CORBEL_L    0.75f   /* a carved eave corbel's reach */
+#define HK_CORBEL_H    0.38f   /* ...and its drop down the wall */
+#define HK_REJA_W      1.20f   /* a reja: the window it cages */
+#define HK_REJA_H      1.60f
+#define HK_REJA_D      0.22f   /* its reach from the wall */
+#define HK_REJA_CREST  0.42f   /* its crest over the head */
+#define HK_WCREST_W    1.50f   /* a stucco crest over a window */
+#define HK_WCREST_H    0.55f
+#define HK_TBAL_H      1.00f   /* a timber balcony's handrail */
+#define HK_TBRACKET_L  0.85f   /* a balcony's carved bracket: out from the wall, down it */
+#define HK_TBRACKET_D  0.90f
 
 /* the builders (pmodel_kit.c's table holds them) */
 void m_h_win_sliding(Pm *pm);  void m_h_win_sliding_frost(Pm *pm);
@@ -118,6 +154,13 @@ void m_h_frieze(Pm *pm);       void m_h_deco_roundel(Pm *pm);
 void m_h_arch_surround(Pm *pm); void m_h_girih(Pm *pm);        void m_h_mashrabiya(Pm *pm); void m_h_wind_tower(Pm *pm);
 void m_h_door_studded(Pm *pm); void m_h_door_studded_arch(Pm *pm); void m_h_grille_lattice(Pm *pm); void m_h_waterspout(Pm *pm);
 void m_h_win_jalousie(Pm *pm); void m_h_door_security(Pm *pm); void m_h_cctv(Pm *pm);
+/* HM5b1c */
+void m_h_architrave(Pm *pm);   void m_h_cornice_head(Pm *pm);  void m_h_arch_stone(Pm *pm);
+void m_h_pergola(Pm *pm);      void m_h_pergola_post(Pm *pm);  void m_h_urn(Pm *pm);
+void m_h_door_transom(Pm *pm); void m_h_blind_box(Pm *pm);     void m_h_blind(Pm *pm);
+void m_h_frame_strip(Pm *pm);
+void m_h_corbel_carved(Pm *pm); void m_h_reja(Pm *pm);         void m_h_win_crest(Pm *pm);
+void m_h_baluster_timber(Pm *pm); void m_h_bracket_timber(Pm *pm);
 /* A pointed arch's intrados (HK_ARCH_*, its jambs at x -HK_ARCH_W/2 and +HK_ARCH_W/2) grown by `grow` (a moulding's
  * outer line): its height over the opening's foot at x, where |x| is within its half span; and its apex. The
  * surround, the arched door and HM5b2's openings share it. */
@@ -183,4 +226,30 @@ float hk_arch_apex(float grow);
  *   win_jalousie         in an opening HK_JAL_W x HK_JAL_H: a frame, two banks of glass blades in their clips
  *   door_security        over a door's opening HK_SEC_W x HK_SEC_H, its foot's middle at the origin, z 0..0.05
  *   cctv                 on a wall: the bracket's plate centred on the origin, the camera HK_CCTV_L out, looking down
- *                        along +z */
+ *                        along +z
+ *
+ * HM5b1c:
+ *   architrave           on a wall round an opening HK_ARCHI_W x HK_ARCHI_H (its foot at y 0, centred; stretched to the
+ *                        opening): jambs, the head, ears at its corners, a bead, blocks under the jambs; 0.05-0.08 proud
+ *   cornice_head         a run x 0..1 (stretched along x alone): frieze, corona and cyma, its foot at y 0 on the
+ *                        architrave's top, out 0.16 at most
+ *   arch_stone           on a wall round a door opening HK_RARCH_W wide, a half circle springing at HK_RARCH_SPRING (its
+ *                        foot at y 0, centred; stretched to the shell's arch): plinths, jambs, imposts, voussoirs, a
+ *                        keystone 0.11 proud
+ *   pergola              a run x 0..1 (whole metres): rafters from the wall (z 0) out HK_PERGOLA_D, their top at y 0; the
+ *                        beam under them centred HK_PERGOLA_D - 0.39 out, its underside at y -0.40
+ *   pergola_post         standing, y 0..1 stretched (to the beam's underside), 0.13 square
+ *   urn                  standing on y 0 centred, HK_URN_H to its lip, 0.26 m round its belly
+ *   door_transom         in an opening HK_DDOOR_W x HK_DDOOR_H: frame, two panelled leaves, the transom's glass and fan
+ *                        over HK_TRANSOM_H; the leaves' faces z 0..0.07
+ *   blind_box            a run x 0..1 over an opening's head (y 0..0.22), out 0.2
+ *   blind                x 0..1, y -1..0, both stretched (the box's run; how far the blind is down), z 0.06..0.18
+ *   frame_strip          a run x 0..1 (stretched along the member; turned upright for a column): y 0..HK_FRAME_W,
+ *                        z 0..HK_FRAME_P
+ *   corbel_carved        on a wall, its top at y 0, out HK_CORBEL_L, down HK_CORBEL_H; 0.13 across (x centred)
+ *   reja                 over an opening HK_REJA_W x HK_REJA_H (foot at y 0, centred; stretched within a quarter): out
+ *                        HK_REJA_D, its crest HK_REJA_CREST over the head
+ *   win_crest            on a wall from y 0 (over a head) centred, HK_WCREST_W x HK_WCREST_H, 0.09 proud
+ *   baluster_timber      a run x 0..1 (whole metres), standing on y 0 centred on z 0: a post at x 0..0.1, balusters, a
+ *                        handrail to HK_TBAL_H (end a run with one post more)
+ *   bracket_timber       on a wall, its top at y 0, out HK_TBRACKET_L, down HK_TBRACKET_D; 0.14 across (x centred) */

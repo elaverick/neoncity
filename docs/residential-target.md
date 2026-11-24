@@ -1078,6 +1078,28 @@ together; the library at 455,918 of its 480,000 (HM5b1c's kit has the rest). Vig
 instances, within a house's 150. Boards `build/home/hm5b1b/board_vignettes.jpg` and `board_modules.jpg`. Not yet seen in
 the game: nothing places them until HM5b2.
 
+**HM5b1c, Southern Europe and Latin America** (15 modules, `PMK_H_ARCHITRAVE` to `PMK_H_BRACKET_TIMBER`; no new materials):
+
+| Style (sheet, panels) | Modules |
+|---|---|
+| Southern European villa (1, 2, 4, 5) | eared stone architrave; cornice head; round-arched stone surround (plinths, imposts, voussoirs, keystone); timber pergola and its post; terracotta urn |
+| Townhouse (1, 2, 3) | double door under a transom light with an iron fan; roller blind's box and the blind let down from it (the architrave, cornice head and urn shared) |
+| Self-built (1-6) | exposed concrete frame member, proud of the hollow brick, two shuttering boards out of line, leaked grout (the canvas awning shared) |
+| Colonial (1, 2, 4, 5, 6) | carved eave corbel; iron reja with its scrolled crest and finial; stucco window crest (ogees, cartouche, volutes); timber balcony rail with turned balusters; carved balcony bracket (the arched surround, transom door, studded door and lattice grille shared) |
+
+The architrave is built round a 1.0 x 1.6 m window and stretched to the opening; its cornice head is a separate run
+stretched along the head alone, so a tall door's architrave does not thicken the cornice. The round arch (`HK_RARCH_*`:
+1.5 m, springing 2.1 m) matches the shell's arched door reveals (HM5e1: a half circle over the reveal), stretched to
+them. The blind's slats are one folded section, so letting it down further stretches it rather than adding slats. The
+baluster rail carries one post at each metre's start: a run ends on one post more.
+
+**Measured** (`pmodel_lab --only house`, 2026-11-24): every module closed, deterministic, no bad normals; L0 40-1,128
+triangles (the transom door the most, then the reja's 1,008 and the baluster rail's 968), L1 28-600, L2 12-180; about
+10,800 over the three levels together; the library at about 466,700 of its 480,000. Vignettes on stand-ins of each
+sheet's panel 1 (villa_seu, townhouse, selfbuilt, colonial) and the Colonial sheet's panels 2 and 5 (colonial2): 39-93
+instances (the villa's 93, its rafter tails and quoins the most), within a house's 150. Boards
+`build/home/hm5b1c/board_vignettes.jpg` and `board_modules.jpg`. Not yet seen in the game: nothing places them until HM5b2.
+
 ## Massing and parts
 
 | Part | Size | Notes |

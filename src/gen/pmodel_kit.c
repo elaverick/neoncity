@@ -1837,6 +1837,22 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     [PMK_H_WIN_JALOUSIE] = { "h_win_jalousie", m_h_win_jalousie, { 440, 410, 100 }, 1 },
     [PMK_H_DOOR_SECURITY] = { "h_door_security", m_h_door_security, { 730, 480, 150 }, 1 },
     [PMK_H_CCTV] = { "h_cctv", m_h_cctv, { 310, 220, 100 }, 1 },
+    /* HM5b1c: Southern Europe and Latin America (pmodel_region.c) */
+    [PMK_H_ARCHITRAVE] = { "h_architrave", m_h_architrave, { 460, 400, 70 }, 1 },
+    [PMK_H_CORNICE_HEAD] = { "h_cornice_head", m_h_cornice_head, { 44, 44, 16 }, 1 },
+    [PMK_H_ARCH_STONE] = { "h_arch_stone", m_h_arch_stone, { 600, 420, 120 }, 1 },
+    [PMK_H_PERGOLA] = { "h_pergola", m_h_pergola, { 210, 170, 70 }, 1 },
+    [PMK_H_PERGOLA_POST] = { "h_pergola_post", m_h_pergola_post, { 90, 90, 30 }, 1 },
+    [PMK_H_URN] = { "h_urn", m_h_urn, { 480, 300, 56 }, 1 },
+    [PMK_H_DOOR_TRANSOM] = { "h_door_transom", m_h_door_transom, { 1200, 640, 140 }, 1 },
+    [PMK_H_BLIND_BOX] = { "h_blind_box", m_h_blind_box, { 80, 70, 16 }, 1 },
+    [PMK_H_BLIND] = { "h_blind", m_h_blind, { 220, 140, 56 }, 1 },
+    [PMK_H_FRAME_STRIP] = { "h_frame_strip", m_h_frame_strip, { 110, 36, 16 }, 1 },
+    [PMK_H_CORBEL_CARVED] = { "h_corbel_carved", m_h_corbel_carved, { 210, 84, 32 }, 1 },
+    [PMK_H_REJA] = { "h_reja", m_h_reja, { 1080, 620, 200 }, 1 },
+    [PMK_H_WIN_CREST] = { "h_win_crest", m_h_win_crest, { 700, 190, 60 }, 1 },
+    [PMK_H_BALUSTER_TIMBER] = { "h_baluster_timber", m_h_baluster_timber, { 1040, 540, 140 }, 1 },
+    [PMK_H_BRACKET_TIMBER] = { "h_bracket_timber", m_h_bracket_timber, { 210, 112, 40 }, 1 },
 };
 
 int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CUP) || (id >= PMK_ICON_SKEWER && id <= PMK_ICON_FLAME); }

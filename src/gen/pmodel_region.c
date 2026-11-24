@@ -1054,3 +1054,382 @@ void m_h_cctv(Pm *pm) { quiet(pm);
     pm_mat(pm, PMAT_HUPVC);
     bx(pm, -0.025f, -0.05f, L - 0.025f, 0.025f, 0.0f, L + 0.025f, 0.0f);   /* the knuckle */
 }
+
+/* ============================== HM5b1c: Southern Europe and Latin America ============================== */
+/* a spiral (a C-scroll) in the plane z0..z1 round (cx, cy) from radius r0 at angle a0, turning `turns` times (signed:
+ * + counter-clockwise) as it closes to r1, of bars w wide in n pieces */
+static void scroll_xy(Pm *pm, float cx, float cy, float r0, float r1, float a0, float turns, int n, float w, float z0, float z1) {
+    float px = cx + r0 * cosf(a0), py = cy + r0 * sinf(a0);
+    for (int k = 1; k <= n; ++k) {
+        const float t = (float)k / (float)n, a = a0 + 2.0f * PI_F * turns * t, r = r0 + (r1 - r0) * t;
+        const float qx = cx + r * cosf(a), qy = cy + r * sinf(a);
+        bar_xy(pm, px, py, qx, qy, w, z0, z1);
+        px = qx; py = qy;
+    }
+}
+
+/* ======================================================= Southern Europe (HM5b1c) === */
+/* A stone architrave round a window (the Villa sheet's panel 1, the Townhouse's 1-6; x -HK_ARCHI_W/2..+, y 0..HK_ARCHI_H
+ * the opening, stretched to it): a flat band up each jamb and over the head, eared at the head's corners (crossettes),
+ * a bead round its inner edge, blocks under the jambs' feet. The cornice head (below) sits on its top. */
+void m_h_architrave(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HSTONE);
+    const float hw = 0.5f * HK_ARCHI_W, H = HK_ARCHI_H, B = HK_ARCHI_B, ear = 0.07f, P = 0.05f, bv = L2 ? 0.0f : 0.006f;
+    for (int s = 0; s < 2; ++s) {
+        const float sg = s ? 1.0f : -1.0f, a = sg * hw, b = sg * (hw + B), e = sg * (hw + B + ear);
+        bx(pm, fminf(a, b), -0.05f, 0.0f, fmaxf(a, b), H, P, bv);                    /* the jamb */
+        bx(pm, fminf(b, e), H - 0.13f, 0.0f, fmaxf(b, e), H + B, P, bv);             /* the ear */
+        if (!L2) bx(pm, fminf(a, b) - 0.01f, -0.09f, 0.0f, fmaxf(a, b) + 0.01f, -0.03f, P + 0.01f, bv);   /* the foot's block */
+    }
+    bx(pm, -hw - B, H, 0.0f, hw + B, H + B, P, bv);                                   /* the head */
+    if (L2) return;
+    /* the bead round the opening's edge */
+    bx(pm, -hw - 0.035f, -0.03f, P, -hw, H + 0.035f, P + 0.015f, 0.0f);
+    bx(pm, hw, -0.03f, P, hw + 0.035f, H + 0.035f, P + 0.015f, 0.0f);
+    bx(pm, -hw, H, P, hw, H + 0.035f, P + 0.015f, 0.0f);
+    if (!L0) return;
+    /* a step along the head's top edge, a small keyblock in the head */
+    bx(pm, -hw - B - ear, H + B - 0.03f, P, hw + B + ear, H + B, P + 0.012f, 0.0f);
+    bx(pm, -0.07f, H - 0.02f, P, 0.07f, H + B, P + 0.025f, 0.004f);
+}
+/* A cornice head over a window or door (the Villa's panel 1, the Townhouse's, the Colonial's 2-6; x 0..1 stretched
+ * along the head only): a frieze, a bed moulding, the corona and a cyma, its foot on the architrave's top at y 0. */
+void m_h_cornice_head(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HSTONE);
+    if (L2) { const float s[4][2] = { { 0.0f, 0.0f }, { 0.14f, 0.2f }, { 0.14f, 0.3f }, { 0.0f, 0.3f } }; run_x(pm, s, 4, 0.0f, 1.0f); return; }
+    const float s[11][2] = { { 0.0f, 0.0f }, { 0.04f, 0.0f }, { 0.04f, 0.16f }, { 0.06f, 0.17f }, { 0.08f, 0.2f }, { 0.15f, 0.215f },
+                             { 0.16f, 0.225f }, { 0.16f, 0.265f }, { 0.12f, 0.28f }, { 0.05f, 0.31f }, { 0.0f, 0.31f } };
+    run_x(pm, s, 11, 0.0f, 1.0f);
+}
+/* A round-arched stone surround for a door (the Villa's panels 1, 4; the Colonial's 1, 3; the Townhouse's 1; a half
+ * circle over an opening HK_RARCH_W wide springing at HK_RARCH_SPRING, stretched to the shell's arch): plinth blocks,
+ * jambs, impost blocks at the springing, voussoirs and a proud keystone. */
+void m_h_arch_stone(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HSTONE);
+    const float R = 0.5f * HK_RARCH_W, S = HK_RARCH_SPRING, B = 0.2f, P = 0.06f, bv = L2 ? 0.0f : 0.008f;
+    for (int s = 0; s < 2; ++s) {
+        const float sg = s ? 1.0f : -1.0f, a = sg * R, b = sg * (R + B);
+        bx(pm, fminf(a, b), 0.0f, 0.0f, fmaxf(a, b), S - 0.14f, P, bv);
+        bx(pm, fminf(a, b) - 0.03f, S - 0.14f, 0.0f, fmaxf(a, b) + 0.03f, S, P + 0.03f, bv);   /* the impost */
+        if (!L2) bx(pm, fminf(a, b) - 0.03f, 0.0f, 0.0f, fmaxf(a, b) + 0.03f, 0.32f, P + 0.02f, bv);   /* the plinth block */
+        if (L0) for (int k = 1; k < 4; ++k) { const float y = (S - 0.14f) * (float)k / 4.0f; bx(pm, fminf(a, b), y - 0.008f, P, fmaxf(a, b), y + 0.008f, P + 0.004f, 0.0f); }   /* the jambs' courses */
+    }
+    const int nv = L0 ? 13 : L1 ? 9 : 5;   /* voussoirs (odd: the keystone the middle one) */
+    const float gap = L2 ? 0.0f : 0.006f;
+    for (int k = 0; k < nv; ++k) {
+        if (k == nv / 2) continue;
+        const float t0 = PI_F * (1.0f - (float)k / (float)nv) - gap, t1 = PI_F * (1.0f - (float)(k + 1) / (float)nv) + gap;
+        const float q[4][2] = { { R * cosf(t0), S + R * sinf(t0) }, { R * cosf(t1), S + R * sinf(t1) },
+                                { (R + B) * cosf(t1), S + (R + B) * sinf(t1) }, { (R + B) * cosf(t0), S + (R + B) * sinf(t0) } };
+        run_z(pm, q, 4, 0.0f, P);
+    }
+    /* the keystone: wider at its top, standing proud and past the arch's back */
+    const float kh = 0.5f * PI_F / (float)nv;
+    const float kq[4][2] = { { -R * sinf(kh) - 0.01f, S + R - 0.04f }, { R * sinf(kh) + 0.01f, S + R - 0.04f },
+                             { 0.14f, S + R + B + 0.1f }, { -0.14f, S + R + B + 0.1f } };
+    run_z(pm, kq, 4, 0.0f, P + 0.05f);
+    if (L0) bx(pm, -0.15f, S + R + B + 0.08f, 0.0f, 0.15f, S + R + B + 0.12f, P + 0.07f, 0.004f);
+}
+/* A timber pergola over a terrace (the Villa's panel 4, the Townhouse's 4; x 0..1, whole metres): a wall plate, three
+ * rafters a metre out to HK_PERGOLA_D with shaped ends, the beam under them near the front (its posts, PMK_H_PERGOLA_POST,
+ * stand under it HK_PERGOLA_D - 0.39 out), slats across the rafters' tops. Its rafters' top at y 0. */
+void m_h_pergola(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HTIMBER);
+    const float D = HK_PERGOLA_D, zb = D - 0.39f;
+    bx(pm, 0.0f, -0.2f, 0.0f, 1.0f, -0.04f, 0.09f, 0.0f);   /* the wall plate */
+    for (int k = 0; k < 3; ++k) {
+        const float x = ((float)k + 0.5f) / 3.0f;
+        if (L2) { bx(pm, x - 0.03f, -0.18f, 0.0f, x + 0.03f, 0.0f, D, 0.0f); continue; }
+        const float s[6][2] = { { 0.0f, -0.18f }, { D - 0.22f, -0.18f }, { D - 0.1f, -0.14f }, { D, -0.07f }, { D, 0.0f }, { 0.0f, 0.0f } };
+        run_x(pm, s, 6, x - 0.03f, x + 0.03f);
+    }
+    bx(pm, 0.0f, -0.4f, zb - 0.06f, 1.0f, -0.18f, zb + 0.06f, L2 ? 0.0f : 0.006f);   /* the beam */
+    if (L2) return;
+    const int ns = L0 ? 6 : 3;
+    for (int k = 0; k < ns; ++k) { const float z = 0.35f + (D - 0.5f) * (float)k / (float)(ns - 1); bx(pm, 0.0f, 0.0f, z - 0.025f, 1.0f, 0.03f, z + 0.025f, 0.0f); }
+}
+/* A pergola's post (y 0..1 stretched to the beam's underside): a squared timber post on a steel shoe. */
+void m_h_pergola_post(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HTIMBER);
+    bx(pm, -0.065f, 0.012f, -0.065f, 0.065f, 1.0f, 0.065f, L2 ? 0.0f : 0.006f);
+    pm_mat(pm, PMAT_HGALV);
+    bx(pm, -0.08f, 0.0f, -0.08f, 0.08f, 0.012f, 0.08f, 0.0f);
+    if (!L2) for (int s = 0; s < 2; ++s) { const float x = s ? 0.065f : -0.071f; bx(pm, x, 0.012f, -0.04f, x + 0.006f, 0.12f, 0.04f, 0.0f); }
+}
+/* A terracotta urn (the Villa's panels 2, 5; the Townhouse's by the doors): a foot, a swelling belly, a narrow neck and a
+ * rolled lip, standing on y 0 centred, HK_URN_H tall; earth and a low plant in its mouth. */
+void m_h_urn(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HCLAY);
+    const float H = HK_URN_H;
+    const PmProf p[13] = { { 0.0f, 0.0f, 1 }, { 0.11f, 0.0f, 1 }, { 0.12f, 0.04f, 1 }, { 0.1f, 0.06f, 1 }, { 0.2f, 0.2f * H, 0 },
+                           { 0.26f, 0.5f * H, 0 }, { 0.22f, 0.75f * H, 0 }, { 0.14f, 0.88f * H, 0 }, { 0.15f, 0.94f * H, 1 },
+                           { 0.17f, H, 1 }, { 0.13f, H, 1 }, { 0.12f, H - 0.04f, 1 }, { 0.0f, H - 0.04f, 1 } };
+    const int sg = segs(pm, 16, 6);
+    if (L2) { const PmProf q[6] = { p[0], p[1], p[5], p[7], p[9], { 0.0f, H, 1 } }; pm_lathe(pm, q, 6, sg, 0.0f, 0.0f); return; }
+    pm_lathe(pm, p, 13, sg, 0.0f, 0.0f);
+    pm_mat(pm, PMAT_HPLANT);
+    const PmProf e[5] = { { 0.0f, H - 0.03f, 1 }, { 0.115f, H - 0.03f, 1 }, { 0.11f, H + 0.05f, 0 }, { 0.06f, H + 0.11f, 0 }, { 0.0f, H + 0.12f, 1 } };
+    pm_lathe(pm, e, 5, sg, 0.0f, 0.0f);
+}
+/* A tall timber double door under a transom light (the Townhouse's panels 1-6, the Colonial's 2, 4, 6; in an opening
+ * HK_DDOOR_W x HK_DDOOR_H): a frame and transom bar; two leaves of fielded panels (a short one low, a tall one, a short
+ * one high); the transom's glass behind an iron fan; knobs and a knocker. */
+void m_h_door_transom(Pm *pm) { quiet(pm);
+    const float hw = 0.5f * HK_DDOOR_W, H = HK_DDOOR_H, T = HK_TRANSOM_H, yl = H - T, f = 0.07f;
+    pm_mat(pm, PMAT_HTRIM);
+    rect_frame(pm, -hw, 0.0f, hw, H, f, 0.02f, f, 0.0f, 0.08f, L2 ? 0.0f : 0.004f);
+    bx(pm, -hw + f, yl, 0.0f, hw - f, yl + 0.09f, 0.09f, L2 ? 0.0f : 0.004f);   /* the transom bar */
+    pm_mat(pm, PMAT_HGLASS);
+    bx(pm, -hw + f, yl + 0.09f, 0.01f, hw - f, H - f, 0.016f, 0.0f);
+    if (!L2) {   /* the fan: rays from the bar's middle, an arc across them */
+        pm_mat(pm, PMAT_HIRON);
+        const float fy = yl + 0.09f, top = T - 0.09f - f, fr = 0.6f * fminf(hw - f, top);
+        const int nr = L0 ? 7 : 5;
+        for (int k = 0; k < nr; ++k) {
+            const float a = PI_F * ((float)k + 0.5f) / (float)nr, c = cosf(a), s = sinf(a);
+            const float t = fminf((hw - f) / fmaxf(fabsf(c), 1e-3f), top / fmaxf(s, 1e-3f));   /* to the frame */
+            bar_xy(pm, 0.08f * c, fy + 0.08f * s, t * c, fy + t * s, 0.014f, 0.02f, 0.034f);
+        }
+        const int na = L0 ? 10 : 6;
+        for (int k = 0; k < na; ++k) {
+            const float a0 = PI_F * (float)k / (float)na, a1 = PI_F * (float)(k + 1) / (float)na;
+            bar_xy(pm, fr * cosf(a0), fy + fr * sinf(a0), fr * cosf(a1), fy + fr * sinf(a1), 0.014f, 0.02f, 0.034f);
+        }
+    }
+    pm_mat(pm, PMAT_HDOOR);
+    for (int s = 0; s < 2; ++s) {
+        const float x0 = s ? 0.004f : -hw + f, x1 = s ? hw - f : -0.004f;
+        bx(pm, x0, 0.02f, 0.0f, x1, yl, 0.05f, 0.0f);
+        if (L2) continue;
+        /* the stiles and rails proud of the panels, the panels fielded (L0) */
+        const float st = 0.11f, ys[4] = { 0.02f, 0.62f, yl - 0.55f, yl };
+        bx(pm, x0, 0.02f, 0.05f, x0 + st, yl, 0.07f, 0.0f);
+        bx(pm, x1 - st, 0.02f, 0.05f, x1, yl, 0.07f, 0.0f);
+        for (int r = 0; r < 4; ++r) {
+            const float y0 = r == 0 ? ys[0] : ys[r] - 0.07f, y1 = r == 0 ? ys[0] + 0.18f : r == 3 ? ys[3] : ys[r] + 0.07f;
+            bx(pm, x0 + st, y0, 0.05f, x1 - st, y1, 0.07f, 0.0f);
+        }
+        if (!L0) continue;
+        for (int r = 0; r < 3; ++r) {
+            const float y0 = (r == 0 ? ys[0] + 0.18f : ys[r] + 0.07f) + 0.04f, y1 = ys[r + 1] - 0.07f - 0.04f;
+            bx(pm, x0 + st + 0.04f, y0, 0.05f, x1 - st - 0.04f, y1, 0.062f, 0.01f);
+        }
+    }
+    pm_mat(pm, PMAT_HIRON);
+    for (int s = 0; s < 2; ++s) cyl_z(pm, 0.07f, 0.1f, s ? 0.08f : -0.08f, 1.05f, 0.025f, 10);
+    if (L0) { cyl_z(pm, 0.07f, 0.08f, 0.25f, 1.55f, 0.04f, 10); ring_xy(pm, 0.25f, 1.49f, 0.09f, 0.055f, 0.009f, 12, 4); }
+}
+/* A roller blind's box over a window (the Townhouse's panel 3; x 0..1 stretched to the opening and its guides): a
+ * painted timber box on the wall over the head (y 0..0.22, out 0.2), a lip under its front. */
+void m_h_blind_box(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HTRIM);
+    bx(pm, 0.0f, 0.0f, 0.0f, 1.0f, 0.22f, 0.2f, L2 ? 0.0f : 0.008f);
+    if (!L2) bx(pm, 0.0f, -0.015f, 0.17f, 1.0f, 0.0f, 0.2f, 0.0f);
+    if (L0) bx(pm, -0.01f, 0.2f, 0.0f, 1.01f, 0.235f, 0.215f, 0.0f);
+}
+/* The blind let down from its box (x 0..1, y -1..0, both stretched: the opening's width, how far it is down): timber
+ * slats in one folded run, a heavier bottom bar, a guide channel each side; out from the wall (z 0.1..0.15, under the
+ * box's middle). */
+void m_h_blind(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HDOOR);
+    const int n = L0 ? 20 : L1 ? 10 : 0;
+    if (n) {
+        float s[64][2];
+        int m = 0;
+        for (int k = 0; k < n; ++k) {
+            const float y = -(float)k / (float)n;
+            s[m][0] = 0.13f; s[m][1] = y; m++;
+            s[m][0] = 0.15f; s[m][1] = y - 0.6f / (float)n; m++;
+        }
+        s[m][0] = 0.13f; s[m][1] = -1.0f; m++;
+        s[m][0] = 0.1f; s[m][1] = -1.0f; m++;
+        s[m][0] = 0.1f; s[m][1] = 0.0f; m++;
+        run_x(pm, (const float (*)[2])s, m, 0.02f, 0.98f);
+    } else bx(pm, 0.02f, -1.0f, 0.1f, 0.98f, 0.0f, 0.15f, 0.0f);
+    bx(pm, 0.02f, -1.0f, 0.095f, 0.98f, -0.97f, 0.165f, 0.0f);   /* the bottom bar */
+    pm_mat(pm, PMAT_HTRIM);
+    for (int s = 0; s < 2; ++s) { const float x = s ? 0.98f : 0.0f; bx(pm, x, -1.0f, 0.06f, x + 0.02f, 0.0f, 0.18f, 0.0f); }
+}
+
+/* ========================================================= Latin America (HM5b1c) === */
+/* An exposed concrete frame member (the Self-built sheet's panels 1-6: columns and beams proud of the hollow brick
+ * infill; x 0..1 stretched along the member, turned upright for a column): HK_FRAME_W across (y 0..), HK_FRAME_P proud;
+ * two shuttering boards' faces a few millimetres out of line, chipped arrises, grout that leaked from the forms' joints. */
+void m_h_frame_strip(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HCEMENT);
+    const float W = HK_FRAME_W, P = HK_FRAME_P;
+    if (L2) { bx(pm, 0.0f, 0.0f, 0.0f, 1.0f, W, P, 0.0f); return; }
+    const float s[8][2] = { { 0.0f, 0.0f }, { P - 0.012f, 0.0f }, { P, 0.014f }, { P, 0.5f * W }, { P + 0.004f, 0.5f * W },
+                            { P + 0.004f, W - 0.01f }, { P - 0.006f, W }, { 0.0f, W } };
+    run_x(pm, s, 8, 0.0f, 1.0f);
+    if (!L0) return;
+    /* grout fins along the boards' joint and an arris, broken (fixed positions: the module is shared) */
+    const float fx[6][2] = { { 0.04f, 0.17f }, { 0.31f, 0.38f }, { 0.52f, 0.71f }, { 0.83f, 0.9f }, { 0.12f, 0.2f }, { 0.6f, 0.66f } };
+    for (int k = 0; k < 4; ++k) bx(pm, fx[k][0], 0.5f * W - 0.004f, P, fx[k][1], 0.5f * W + 0.004f, P + 0.01f, 0.0f);
+    for (int k = 4; k < 6; ++k) bx(pm, fx[k][0], W - 0.004f, P - 0.012f, fx[k][1], W + 0.008f, P - 0.002f, 0.0f);
+}
+/* A carved timber corbel under a deep tile eave (the Colonial sheet's panel 1, the eave's row; on a wall, its top at
+ * y 0 under the eave, reaching HK_CORBEL_L out): a beam end with a rolled scroll at its tip, an ogee underside back to
+ * the wall HK_CORBEL_H down, a smaller roll there; carved bands on its sides. */
+void m_h_corbel_carved(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HTIMBER);
+    const float L = HK_CORBEL_L, Hc = HK_CORBEL_H, hw = 0.065f;
+    float s[24][2];
+    int n = 0;
+    s[n][0] = 0.0f; s[n][1] = 0.0f; n++;
+    s[n][0] = L; s[n][1] = 0.0f; n++;
+    s[n][0] = L; s[n][1] = -0.13f; n++;
+    const int k1 = L0 ? 10 : L1 ? 6 : 3;
+    for (int k = 0; k <= k1; ++k) {   /* an ogee from under the tip back to the wall's foot */
+        const float t = (float)k / (float)k1;
+        s[n][0] = (L - 0.06f) * (1.0f - t) + 0.04f * t;
+        s[n][1] = -0.13f - (Hc - 0.13f) * (0.5f - 0.5f * cosf(PI_F * t)) + 0.04f * sinf(2.0f * PI_F * t);
+        n++;
+    }
+    s[n][0] = 0.0f; s[n][1] = -Hc; n++;
+    run_x(pm, (const float (*)[2])s, n, -hw, hw);
+    if (L2) return;
+    cyl_x(pm, -hw - 0.01f, hw + 0.01f, -0.075f, L - 0.06f, 0.07f, segs(pm, 12, 6));   /* the scroll at the tip */
+    cyl_x(pm, -hw - 0.006f, hw + 0.006f, -Hc + 0.06f, 0.07f, 0.045f, segs(pm, 10, 6));   /* the roll at the foot */
+    if (!L0) return;
+    for (int sd = 0; sd < 2; ++sd) {   /* the carved bands on its sides */
+        const float x0 = sd ? hw : -hw - 0.008f, x1 = x0 + 0.008f;
+        bx(pm, x0, -0.06f, 0.04f, x1, -0.03f, L - 0.16f, 0.0f);
+        bx(pm, x0, -0.12f, 0.04f, x1, -0.1f, 0.5f * L, 0.0f);
+    }
+}
+/* An iron reja (the Colonial sheet's panels 1, 4, 6): a cage projecting HK_REJA_D over a window HK_REJA_W x HK_REJA_H (its
+ * foot at y 0, centred; stretched to the opening within about a quarter): ledges at the foot and head, uprights on its
+ * front and sides, flats across with collars; a crest of C-scrolls over its head, a finial at the middle. */
+void m_h_reja(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HIRON);
+    const float hw = 0.5f * HK_REJA_W, H = HK_REJA_H, D = HK_REJA_D, w = 0.016f;
+    for (int e = 0; e < 2; ++e) {   /* the ledges: a flat frame at the foot and the head, back to the wall */
+        const float y = e ? H : 0.0f;
+        bx(pm, -hw, y - 0.012f, D - 0.03f, hw, y + 0.012f, D, 0.0f);
+        bx(pm, -hw, y - 0.012f, 0.0f, -hw + 0.03f, y + 0.012f, D - 0.03f, 0.0f);
+        bx(pm, hw - 0.03f, y - 0.012f, 0.0f, hw, y + 0.012f, D - 0.03f, 0.0f);
+    }
+    const int nu = L0 ? 9 : L1 ? 7 : 5;
+    for (int k = 0; k < nu; ++k) { const float x = -hw + 0.02f + (2.0f * hw - 0.04f) * (float)k / (float)(nu - 1); bx(pm, x - 0.5f * w, 0.012f, D - 0.024f, x + 0.5f * w, H - 0.012f, D - 0.008f, 0.0f); }
+    const int ns = L2 ? 1 : 2;
+    for (int sd = 0; sd < 2; ++sd)
+        for (int k = 1; k <= ns; ++k) { const float x = sd ? hw - 0.015f : -hw + 0.015f, z = (D - 0.03f) * (float)k / (float)(ns + 1); bx(pm, x - 0.5f * w, 0.012f, z - 0.5f * w, x + 0.5f * w, H - 0.012f, z + 0.5f * w, 0.0f); }
+    if (!L2) {
+        for (int r = 1; r < 3; ++r) {   /* flats across, round the sides too */
+            const float y = H * (float)r / 3.0f;
+            bx(pm, -hw, y - 0.018f, D - 0.03f, hw, y + 0.018f, D - 0.022f, 0.0f);
+            for (int sd = 0; sd < 2; ++sd) { const float x = sd ? hw - 0.008f : -hw; bx(pm, x, y - 0.018f, 0.0f, x + 0.008f, y + 0.018f, D - 0.03f, 0.0f); }
+            if (L0) for (int k = 0; k < nu; ++k) { const float x = -hw + 0.02f + (2.0f * hw - 0.04f) * (float)k / (float)(nu - 1); bx(pm, x - 0.016f, y - 0.03f, D - 0.03f, x + 0.016f, y + 0.03f, D - 0.002f, 0.0f); }
+        }
+    }
+    /* the crest: C-scrolls either side of a finial on a stem */
+    const float cz0 = D - 0.024f, cz1 = D - 0.008f, cy = H + 0.012f, CH = HK_REJA_CREST;
+    if (L2) { bar_xy(pm, -0.6f * hw, cy, 0.0f, cy + CH, 0.03f, cz0, cz1); bar_xy(pm, 0.0f, cy + CH, 0.6f * hw, cy, 0.03f, cz0, cz1); return; }
+    const int np = L0 ? 10 : 6;
+    for (int sd = 0; sd < 2; ++sd) {
+        const float sg = sd ? 1.0f : -1.0f;
+        /* a big scroll off the head curling in towards the middle, a smaller one at the outside, a bar to the stem */
+        scroll_xy(pm, sg * 0.42f * hw, cy + 0.17f, 0.16f, 0.05f, sd ? 1.25f * PI_F : -0.25f * PI_F, sd ? -0.9f : 0.9f, np, w, cz0, cz1);
+        scroll_xy(pm, sg * 0.82f * hw, cy + 0.08f, 0.08f, 0.025f, sd ? PI_F : 0.0f, sd ? -0.85f : 0.85f, L0 ? 7 : 4, w, cz0, cz1);
+        bar_xy(pm, sg * 0.42f * hw, cy + 0.33f, sg * 0.04f, cy + CH - 0.08f, w, cz0, cz1);
+    }
+    bx(pm, -0.5f * w, cy, cz0, 0.5f * w, cy + CH - 0.04f, cz1, 0.0f);
+    pm_push(pm); pm_translate(pm, 0.0f, cy + CH - 0.05f, 0.5f * (cz0 + cz1));
+    const PmProf fin[5] = { { 0.0f, 0.0f, 1 }, { 0.02f, 0.01f, 0 }, { 0.035f, 0.05f, 0 }, { 0.012f, 0.09f, 0 }, { 0.0f, 0.12f, 1 } };
+    pm_lathe(pm, fin, 5, segs(pm, 8, 4), 0.0f, 0.0f);
+    pm_pop(pm);
+}
+/* A stucco crest over a window or door (the Colonial sheet's panels 2, 4, 6; on a wall from y 0 over its head, centred,
+ * HK_WCREST_W x HK_WCREST_H): a plain band, a field rising in ogees to an oval cartouche at the middle; volutes at the
+ * ogees' feet; at L0 a raised edge along the ogees, the volutes' spirals, a boss in the cartouche. In the unit's stone. */
+void m_h_win_crest(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HSTONE);
+    const float W = 0.5f * HK_WCREST_W, H = HK_WCREST_H, yb = 0.08f;
+    bx(pm, -W, 0.0f, 0.0f, W, yb, 0.05f, L2 ? 0.0f : 0.006f);
+    const int no = L0 ? 8 : L1 ? 5 : 2;
+    float half[16][2];
+    int n = 0;
+    for (int k = 0; k <= no; ++k) {   /* the ogee from the band's end up to the cartouche's side */
+        const float t = (float)k / (float)no;
+        half[n][0] = 0.82f * W - (0.82f * W - 0.15f) * t;
+        half[n][1] = yb + (0.7f * H - yb) * (0.5f - 0.5f * cosf(PI_F * t));
+        n++;
+    }
+    float p[40][2];
+    int m = 0;
+    for (int i = n - 1; i >= 0; --i) { p[m][0] = -half[i][0]; p[m][1] = half[i][1]; m++; }
+    for (int i = 0; i < n; ++i) { p[m][0] = half[i][0]; p[m][1] = half[i][1]; m++; }
+    run_z(pm, (const float (*)[2])p, m, 0.0f, 0.035f);
+    /* the cartouche: an oval plaque over the middle */
+    const int nc = L0 ? 14 : L1 ? 10 : 6;
+    float c[16][2];
+    for (int k = 0; k < nc; ++k) { const float a = 2.0f * PI_F * (float)k / (float)nc; c[k][0] = 0.17f * cosf(a); c[k][1] = 0.62f * H + 0.36f * H * sinf(a); }
+    run_z(pm, (const float (*)[2])c, nc, 0.0f, 0.06f);
+    if (L2) return;
+    for (int sd = 0; sd < 2; ++sd) {
+        const float sg = sd ? 1.0f : -1.0f;
+        cyl_z(pm, 0.0f, 0.06f, sg * 0.82f * W, yb + 0.05f, 0.07f, segs(pm, 12, 6));   /* the volute's eye */
+        if (!L0) continue;
+        for (int i = 0; i + 1 < n; ++i) bar_xy(pm, sg * half[i][0], half[i][1] + 0.02f, sg * half[i + 1][0], half[i + 1][1] + 0.02f, 0.04f, 0.035f, 0.055f);
+        scroll_xy(pm, sg * 0.82f * W, yb + 0.05f, 0.09f, 0.03f, 0.5f * PI_F, sd ? -0.8f : 0.8f, 6, 0.025f, 0.06f, 0.075f);
+    }
+    if (L0) cyl_z(pm, 0.06f, 0.09f, 0.0f, 0.62f * H, 0.06f, 12);
+}
+/* A timber balcony's rail (the Colonial sheet's panels 2, 5; x 0..1, whole metres, standing on y 0 centred on z 0): a
+ * post at the metre's start, a bottom rail, turned balusters, a moulded handrail to HK_TBAL_H. */
+void m_h_baluster_timber(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HTIMBER);
+    const float H = HK_TBAL_H;
+    bx(pm, 0.0f, 0.0f, -0.05f, 0.1f, H + 0.06f, 0.05f, L2 ? 0.0f : 0.006f);   /* the post */
+    if (!L2) bx(pm, -0.01f, H + 0.06f, -0.06f, 0.11f, H + 0.09f, 0.06f, 0.004f);
+    bx(pm, 0.1f, 0.03f, -0.04f, 1.0f, 0.11f, 0.04f, 0.0f);                    /* the bottom rail */
+    const float hr[6][2] = { { -0.05f, H - 0.08f }, { 0.05f, H - 0.08f }, { 0.05f, H - 0.03f }, { 0.035f, H }, { -0.035f, H }, { -0.05f, H - 0.03f } };
+    run_x(pm, hr, 6, 0.1f, 1.0f);
+    const int nb = 7;
+    for (int k = 0; k < nb; ++k) {
+        const float x = 0.1f + 0.9f * ((float)k + 0.5f) / (float)nb;
+        if (L2) { bx(pm, x - 0.022f, 0.11f, -0.022f, x + 0.022f, H - 0.08f, 0.022f, 0.0f); continue; }
+        bx(pm, x - 0.026f, 0.11f, -0.026f, x + 0.026f, 0.2f, 0.026f, 0.0f);
+        bx(pm, x - 0.026f, H - 0.16f, -0.026f, x + 0.026f, H - 0.08f, 0.026f, 0.0f);
+        pm_push(pm); pm_translate(pm, x, 0.0f, 0.0f);
+        if (L0) {
+            const PmProf v[8] = { { 0.0f, 0.2f, 1 }, { 0.024f, 0.2f, 1 }, { 0.018f, 0.25f, 0 }, { 0.033f, 0.38f, 0 }, { 0.016f, 0.6f, 0 },
+                                  { 0.014f, H - 0.2f, 0 }, { 0.024f, H - 0.16f, 1 }, { 0.0f, H - 0.16f, 1 } };
+            pm_lathe(pm, v, 8, 8, 0.0f, 0.0f);
+        } else {
+            const PmProf v[5] = { { 0.0f, 0.2f, 1 }, { 0.024f, 0.2f, 1 }, { 0.032f, 0.38f, 0 }, { 0.016f, H - 0.16f, 1 }, { 0.0f, H - 0.16f, 1 } };
+            pm_lathe(pm, v, 5, 5, 0.0f, 0.0f);
+        }
+        pm_pop(pm);
+    }
+}
+/* A carved timber bracket under a balcony (the Colonial sheet's panels 2, 5; on a wall, its top at y 0 under the
+ * balcony's floor, reaching HK_TBRACKET_L out and HK_TBRACKET_D down the wall): a scrolled S-curve from the wall's foot
+ * to the tip, a turned pendant under the tip, a roll at the foot, carved bands on its sides. */
+void m_h_bracket_timber(Pm *pm) { quiet(pm);
+    pm_mat(pm, PMAT_HTIMBER);
+    const float L = HK_TBRACKET_L, D = HK_TBRACKET_D, hw = 0.06f;
+    float s[32][2];
+    int n = 0;
+    s[n][0] = 0.0f; s[n][1] = 0.0f; n++;
+    s[n][0] = L; s[n][1] = 0.0f; n++;
+    s[n][0] = L; s[n][1] = -0.1f; n++;
+    const int k1 = L0 ? 12 : L1 ? 7 : 3;
+    for (int k = 0; k <= k1; ++k) {   /* the S: under the arm in, then down the wall, swelling once */
+        const float t = (float)k / (float)k1;
+        s[n][0] = (L - 0.08f) * (1.0f - t) + 0.12f * t + 0.08f * sinf(PI_F * t);
+        s[n][1] = -0.1f - (D - 0.18f) * t * t;
+        n++;
+    }
+    s[n][0] = 0.12f; s[n][1] = -D; n++;
+    s[n][0] = 0.0f; s[n][1] = -D; n++;
+    run_x(pm, (const float (*)[2])s, n, -hw, hw);
+    if (L2) return;
+    pm_push(pm); pm_translate(pm, 0.0f, 0.0f, L - 0.06f);
+    const PmProf p[6] = { { 0.0f, -0.32f, 1 }, { 0.02f, -0.3f, 0 }, { 0.04f, -0.24f, 0 }, { 0.025f, -0.17f, 0 }, { 0.035f, -0.1f, 1 }, { 0.0f, -0.1f, 1 } };
+    pm_lathe(pm, p, 6, segs(pm, 8, 5), 0.0f, 0.0f);
+    pm_pop(pm);
+    cyl_x(pm, -hw - 0.008f, hw + 0.008f, -D + 0.07f, 0.1f, 0.06f, segs(pm, 10, 6));
+    if (L0) for (int sd = 0; sd < 2; ++sd) { const float x0 = sd ? hw : -hw - 0.008f; bx(pm, x0, -0.07f, 0.05f, x0 + 0.008f, -0.04f, L - 0.14f, 0.0f); }
+}
