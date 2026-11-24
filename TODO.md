@@ -1154,12 +1154,20 @@ The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the targe
 - **Now: HM5b2** (the other regions' grammar: placing HM5b1's three kits by style, finishes from asset files, pointed
   openings), split in four (the plan's section "HM5b2"): **HM5b2a** East and South-East Asia (signed off and pushed, 9786f38,
   2026-11-24), next **HM5b2b** South Asia, the Middle East and Africa with pointed openings and the bungalow's Art Deco
-  variant (xhigh), **HM5b2c** Southern Europe and Latin America with the colonial's second storey (high), **HM5b2d** the wall
-  finishes (high; waits on the user's tile albedos: two azulejo, two Peranakan, one or two zellige). HM5b1 is done: HM5b1a (East and South-East Asia) pushed 2026-11-24 (0f306ff), HM5b1b (South Asia, the
+  variant (xhigh), **HM5b2c** Southern Europe and Latin America with the colonial's second storey (high). **HM5b2d** the wall
+  finishes signed off and pushed 2026-11-24 (465ceb7) with stand-in tiles. HM5b1 is done: HM5b1a (East and South-East Asia) pushed 2026-11-24 (0f306ff), HM5b1b (South Asia, the
   Middle East, Africa) (e78a847), HM5b1c (Southern Europe, Latin America) (7b1d519). HM5c2 is done:
   HM5c2a (6e73b64), HM5c2b (8bfedeb) pushed 2026-11-23, HM5c2c1 (stairs, stair towers) 2026-11-23, HM5c2c2 (unfinished
   storeys, stubs, roof rooms) 2026-11-24. Then HM5d (the existing styles to their
   sheets), HM6 (the rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **HM5b2d's leftovers** (`docs/residential-target.md` "Finishes (HM5b2d)"):
+  - The tiles are a stand-in (`houseTile`) until the user's albedos arrive (two azulejo, two Peranakan, one or two zellige,
+    square and tiling, in `assets_src/tiles/`): then write `tools/tile_pack.py` (the atlas `house_tile`, three cells by
+    two) and test the shader's `#ifdef PBR_HOUSE_TILE` path, which has never run.
+  - Tiles wrap no reveals (a door through a tiled dado shows render at its sides); a dado runs the whole front, not panels
+    either side of the door (townhouse panel 4).
+  - RCC's plinths mostly stand behind its 1.3 m front walls (left as they are, the user 2026-11-24).
+  - The zellige's spandrels round pointed arches wait for HM5b2b's arches.
 - **HM5b2a's leftovers** (`docs/residential-target.md` "The other regions' grammar"):
   - The link house's front gable (the sheet's) is not a body the roofs make: its roundel goes in the gables a street or a
     side sees (0.21 of units). A cross gable over each unit's front if the board asks for it.
