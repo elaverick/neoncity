@@ -116,6 +116,13 @@ enum {
     /* HMv: the vines */
     PMAT_HVINE,        /* a climbing plant's card: the vine atlas (vine.json) in steep parallax down to its wall, cut where nothing
                           grows (house.glsl shadeVine); its species in the instance's part (HR_VINE_*). Drawn last (pm_module_cut) */
+    /* HM5b1a: the other regions' kit (pmodel_region.c), East and South-East Asia */
+    PMAT_HALU,         /* anodised aluminium: silver, bronze or black by the house (Japanese sashes, hoods, mailboxes) */
+    PMAT_HPAPER,       /* red paper with gold or black characters, faded (couplets; the vertex's piece 1: one big character) */
+    PMAT_HLANTERN,     /* a red paper lantern's body: lit from inside by night (it glows), red paper by day */
+    PMAT_HHAZARD,      /* yellow and black hazard stripes, scuffed (pilotis columns' sleeves) */
+    PMAT_HCANVAS,      /* striped awning canvas, faded and grimed (two colours by the house) */
+    PMAT_HFROST,       /* milky frosted glass, polycarbonate, paper behind a lattice; the vertex's piece 1: a window's, lit by night */
     PMAT_COUNT
 };
 
@@ -359,6 +366,17 @@ enum {
     PMK_R_BREEZE_STAR,
     /* HM5c2c2: starter bars out of a column cast for a storey not yet built; a builder's ladder (pmodel_retrofit.c) */
     PMK_R_REBAR, PMK_R_LADDER,
+    /* HM5b1a: the other regions' kit, East and South-East Asia (pmodel_region.c; frames in pmodel_region.h). Japan: an
+     * aluminium sliding window (clear, frosted), a storm-shutter box and its rail, a door hood, a slat screen. China and
+     * Korea: ridge ends, eave-end tiles, ring knockers, drum stones, couplets, the fu diamond, a paper lantern, lattice
+     * windows, a projecting window cage, hazard sleeves, a mailbox bank. The shophouse: a pilaster, a round column, a
+     * louvred French window, a vent panel, a parapet crest, swing half doors, a canvas awning. The link house: a
+     * car-porch canopy, a gable vent, a window hood. */
+    PMK_H_WIN_SLIDING, PMK_H_WIN_SLIDING_FROST, PMK_H_AMADO, PMK_H_AMADO_RAIL, PMK_H_HISASHI, PMK_H_SLATS,
+    PMK_H_RIDGE_END, PMK_H_RIDGE_END_KR, PMK_H_EAVE_TILES, PMK_H_KNOCKER, PMK_H_DRUM_STONE, PMK_H_COUPLET, PMK_H_FU,
+    PMK_H_LANTERN_PAPER, PMK_H_LATTICE, PMK_H_LATTICE_KR, PMK_H_CAGE, PMK_H_HAZARD, PMK_H_MAILBOX,
+    PMK_H_PILASTER, PMK_H_COLUMN, PMK_H_WIN_LOUVRE, PMK_H_VENT_PANEL, PMK_H_CREST, PMK_H_PINTU_PAGAR, PMK_H_AWNING,
+    PMK_H_CARPORT, PMK_H_GABLE_VENT, PMK_H_WIN_HOOD,
     PMK_COUNT
 };
 typedef struct PmModuleDef {
@@ -374,7 +392,7 @@ void pm_place(Pm *pm, int id);
 /* Whether module id casts shadows (the city's ray-traced ones): not the lights' own glass and flames. */
 int  pm_module_casts(int id);
 /* Whether a material glows (the lights' own surfaces: they cast nothing). */
-static inline int pm_mat_glows(int mat) { return (mat >= PMAT_TUBE && mat <= PMAT_SIGN_FAR) || mat == PMAT_EMBER || mat == PMAT_RADIANT || mat == PMAT_WINDOW_FAR || mat == PMAT_HLED || mat == PMAT_HLAMP; }
+static inline int pm_mat_glows(int mat) { return (mat >= PMAT_TUBE && mat <= PMAT_SIGN_FAR) || mat == PMAT_EMBER || mat == PMAT_RADIANT || mat == PMAT_WINDOW_FAR || mat == PMAT_HLED || mat == PMAT_HLAMP || mat == PMAT_HLANTERN; }
 /* Whether a module's material is cut by its texture's alpha (HMv: the vines' cards): drawn after the rest of the kit,
  * since a cut pixel still writes its depth (kit.frag's early depth tests), and left out of the depth prepass. */
 static inline int pm_module_cut(int id) { return id == PMK_R_VINE; }
@@ -385,7 +403,9 @@ static inline int pm_module_is_house(int id) { return id >= PMK_H_RAFTER_TAIL &&
 /* Whether a module is the retrofit kit's (HM5c1: pmodel_retrofit.c). */
 static inline int pm_module_is_retrofit(int id) { return id >= PMK_R_SOLAR_PANEL && id < PMK_COUNT; }
 /* Whether a house module carries a light (HM5c1: its glow shares the unit's seed, so a house's lights go on together). */
-static inline int home_kit_light(int id) { return id == PMK_R_DOWNLIGHT || id == PMK_R_LED_STRIP || id == PMK_R_LANTERN || id == PMK_R_BULKHEAD; }
+static inline int home_kit_light(int id) { return id == PMK_R_DOWNLIGHT || id == PMK_R_LED_STRIP || id == PMK_R_LANTERN || id == PMK_R_BULKHEAD ||
+                                                  id == PMK_H_LANTERN_PAPER || id == PMK_H_WIN_SLIDING_FROST || id == PMK_H_LATTICE ||
+                                                  id == PMK_H_LATTICE_KR; }
 static inline int pm_mat_is_house(int mat) { return mat >= PMAT_HTRIM && mat < PMAT_COUNT; }
 #define PM_ICON_SIZE 0.36f   /* the icons' square, which instances scale to their housing */
 /* Builds module id at a level into out (cleared first) and bakes its occlusion and wear. */

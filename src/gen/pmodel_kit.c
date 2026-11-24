@@ -2,6 +2,7 @@
 #include "pmodel_food.h"
 #include "pmodel_house.h"
 #include "pmodel_retrofit.h"
+#include "pmodel_region.h"
 #include "mathlib.h"
 #include <math.h>
 #include <stdlib.h>
@@ -1532,6 +1533,8 @@ const char *const PM_MAT_NAME[PMAT_COUNT] = {
     [PMAT_HGALV] = "h_galv", [PMAT_HCOPPER] = "h_copper", [PMAT_HPOLY] = "h_poly", [PMAT_HSOLAR] = "h_solar", [PMAT_HBREEZE] = "h_breeze",
     [PMAT_HBLOOM] = "h_bloom", [PMAT_HLED] = "h_led", [PMAT_HLAMP] = "h_lamp",
     [PMAT_HVINE] = "h_vine",
+    [PMAT_HALU] = "h_alu", [PMAT_HPAPER] = "h_paper", [PMAT_HLANTERN] = "h_lantern", [PMAT_HHAZARD] = "h_hazard",
+    [PMAT_HCANVAS] = "h_canvas", [PMAT_HFROST] = "h_frost",
 };
 /* Mirrored by kitSet in shaders/city/kit.glsl. Sets may serve two materials in different colours (the
  * rubber's grain under black plastic, the white paint's under red): the share check counts them together. */
@@ -1784,6 +1787,36 @@ static const PmModuleDef DEFS[PMK_COUNT] = {
     /* HM5c2c2 */
     [PMK_R_REBAR] = { "r_rebar", m_r_rebar, { 160, 100, 100 }, 1 },
     [PMK_R_LADDER] = { "r_ladder", m_r_ladder, { 180, 180, 100 }, 1 },
+    /* HM5b1a: the other regions' kit, East and South-East Asia (pmodel_region.c) */
+    [PMK_H_WIN_SLIDING] = { "h_win_sliding", m_h_win_sliding, { 180, 160, 80 }, 1 },
+    [PMK_H_WIN_SLIDING_FROST] = { "h_win_sliding_frost", m_h_win_sliding_frost, { 200, 190, 110 }, 1 },
+    [PMK_H_AMADO] = { "h_amado", m_h_amado, { 260, 180, 30 }, 1 },
+    [PMK_H_AMADO_RAIL] = { "h_amado_rail", m_h_amado_rail, { 40, 40, 40 }, 1 },
+    [PMK_H_HISASHI] = { "h_hisashi", m_h_hisashi, { 30, 30, 30 }, 1 },
+    [PMK_H_SLATS] = { "h_slats", m_h_slats, { 660, 110, 20 }, 1 },
+    [PMK_H_RIDGE_END] = { "h_ridge_end", m_h_ridge_end, { 150, 130, 90 }, 1 },
+    [PMK_H_RIDGE_END_KR] = { "h_ridge_end_kr", m_h_ridge_end_kr, { 90, 70, 50 }, 1 },
+    [PMK_H_EAVE_TILES] = { "h_eave_tiles", m_h_eave_tiles, { 430, 220, 80 }, 1 },
+    [PMK_H_KNOCKER] = { "h_knocker", m_h_knocker, { 340, 170, 80 }, 1 },
+    [PMK_H_DRUM_STONE] = { "h_drum_stone", m_h_drum_stone, { 850, 460, 70 }, 1 },
+    [PMK_H_COUPLET] = { "h_couplet", m_h_couplet, { 20, 20, 20 }, 1 },
+    [PMK_H_FU] = { "h_fu", m_h_fu, { 20, 20, 20 }, 1 },
+    [PMK_H_LANTERN_PAPER] = { "h_lantern_paper", m_h_lantern_paper, { 430, 280, 180 }, 1 },
+    [PMK_H_LATTICE] = { "h_lattice", m_h_lattice, { 1910, 1380, 160 }, 1 },
+    [PMK_H_LATTICE_KR] = { "h_lattice_kr", m_h_lattice_kr, { 470, 410, 140 }, 1 },
+    [PMK_H_CAGE] = { "h_cage", m_h_cage, { 310, 260, 150 }, 1 },
+    [PMK_H_HAZARD] = { "h_hazard", m_h_hazard, { 60, 60, 60 }, 1 },
+    [PMK_H_MAILBOX] = { "h_mailbox", m_h_mailbox, { 350, 190, 30 }, 1 },
+    [PMK_H_PILASTER] = { "h_pilaster", m_h_pilaster, { 530, 340, 80 }, 1 },
+    [PMK_H_COLUMN] = { "h_column", m_h_column, { 650, 470, 240 }, 1 },
+    [PMK_H_WIN_LOUVRE] = { "h_win_louvre", m_h_win_louvre, { 1660, 860, 100 }, 1 },
+    [PMK_H_VENT_PANEL] = { "h_vent_panel", m_h_vent_panel, { 740, 450, 70 }, 1 },
+    [PMK_H_CREST] = { "h_crest", m_h_crest, { 500, 220, 80 }, 1 },
+    [PMK_H_PINTU_PAGAR] = { "h_pintu_pagar", m_h_pintu_pagar, { 890, 330, 200 }, 1 },
+    [PMK_H_AWNING] = { "h_awning", m_h_awning, { 120, 80, 50 }, 1 },
+    [PMK_H_CARPORT] = { "h_carport", m_h_carport, { 460, 250, 150 }, 1 },
+    [PMK_H_GABLE_VENT] = { "h_gable_vent", m_h_gable_vent, { 550, 280, 110 }, 1 },
+    [PMK_H_WIN_HOOD] = { "h_win_hood", m_h_win_hood, { 120, 80, 60 }, 1 },
 };
 
 int pm_module_is_icon(int id) { return (id >= PMK_ICON_BOWL && id <= PMK_ICON_CUP) || (id >= PMK_ICON_SKEWER && id <= PMK_ICON_FLAME); }

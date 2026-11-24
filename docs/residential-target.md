@@ -1022,6 +1022,38 @@ Boards `build/home/hm5c2c2/board_noon_a.jpg`, `board_night_a.jpg` (RCC, block, s
 two views from across the street (a roof room's from a neighbour's upper window, its eye 2.5 m over the deck) and one from the
 air (`city_test --home` with `NC_INS_KINDS=0x300`: `home_ins0..1`, `home_air0`); `board_closeups.jpg` (home_lab's renders).
 
+## The other regions' kit (HM5b1)
+
+What the sheets of the regions beyond Britain and North America show that HM4's and HM5c1's kits lack, built as modules
+(`src/gen/pmodel_region.c`, frames in `pmodel_region.h`) at three levels; placing them by style is HM5b2's. The style
+paragraphs they answer are in the plan's section "HM5b1: the other regions' kit, style by style" (signed off
+2026-11-24, with the split by region and the wall finishes and pointed openings left to HM5b2).
+
+**HM5b1a, East and South-East Asia** (29 modules, `PMK_H_WIN_SLIDING` to `PMK_H_WIN_HOOD`):
+
+| Style (sheet, panels) | Modules |
+|---|---|
+| Japan (1, 4, 5) | aluminium sliding window, clear and frosted; storm-shutter (amado) box and its rail; door hood (hisashi); slat screen |
+| China (1, 2) | ridge end; eave-end tiles; ring knocker; drum stone; couplet; fu diamond; paper lantern; lattice window; projecting window cage |
+| Korea (1-5) | hazard sleeve; mailbox bank; Korea's ridge end and fine-grid lattice (the eave tiles shared) |
+| Shophouse (1, 5) | pilaster; round column; louvred French window; vent panel; parapet crest; swing half doors (pintu pagar); canvas awning |
+| Link house (1, 5) | curved car-porch canopy; gable vent; window hood |
+
+Six materials (`PMAT_HALU` to `PMAT_HFROST`, shaded in `shaders/city/house.glsl` shadeHouseKit): anodised aluminium
+(silver, bronze or black, picked by the unit's trim colour so a house's metal matches), red paper with brushed
+characters (four strokes a character, gold or black by the unit; a couplet's every 0.2 m, the fu one big one, a
+tassel plain), the paper lantern (red, lit by the unit's lights like HM5c1's lanterns), hazard stripes (0.4 m diagonals
+in the world's metres, scuffed low down), striped canvas (five pairs by the unit, 0.15 m stripes along the wall), and
+frosted sheet (milky polycarbonate; a window's pane or a lattice's paper, piece 1, glows warm when the unit's lights
+are on). The lantern, the frosted window and the lattices share the unit's light seed (`home_kit_light`).
+
+**Measured** (`pmodel_lab --only house`, 2026-11-24): every module closed, deterministic, no bad normals; L0 12-1,728
+triangles (the Chinese lattice the most, then the louvred French window's 1,500), L1 12-1,248, L2 12-212; about 21,000
+over the three levels together. The library's budget rose from 430,000 to 480,000 for HM5b1's three kits (it stood at
+410,710; 431,498 with HM5b1a). Vignettes on stand-ins of each sheet's panel 1 (japan, china, korea, shophouse, linkhouse): 25-44 instances,
+within a house's 150. Boards `build/home/hm5b1a/board_vignettes.jpg` (sheet beside vignette) and `board_modules.jpg`
+(the new modules at their levels). Not yet seen in the game: nothing places them until HM5b2.
+
 ## Massing and parts
 
 | Part | Size | Notes |

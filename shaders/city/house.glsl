@@ -447,8 +447,27 @@ const uint PMAT_HTRIM = 49u, PMAT_HDOOR = 50u, PMAT_HSTONE = 51u, PMAT_HBRICK = 
            // HM5c1: the shared retrofit kit (src/gen/pmodel_retrofit.c)
            PMAT_HGALV = 64u, PMAT_HCOPPER = 65u, PMAT_HPOLY = 66u, PMAT_HSOLAR = 67u, PMAT_HBREEZE = 68u, PMAT_HBLOOM = 69u,
            PMAT_HLED = 70u, PMAT_HLAMP = 71u,
-           PMAT_HVINE = 72u;   // HMv: the vines' cards (shadeVine)
-bool kitIsHouse(uint m) { return m >= PMAT_HTRIM && m <= PMAT_HVINE; }
+           PMAT_HVINE = 72u,   // HMv: the vines' cards (shadeVine)
+           // HM5b1a: the other regions' kit (src/gen/pmodel_region.c)
+           PMAT_HALU = 73u, PMAT_HPAPER = 74u, PMAT_HLANTERN = 75u, PMAT_HHAZARD = 76u, PMAT_HCANVAS = 77u, PMAT_HFROST = 78u;
+bool kitIsHouse(uint m) { return m >= PMAT_HTRIM && m <= PMAT_HFROST; }
+
+/* HM5b1a: a character brushed on a couplet (c in 0..1 over its cell): four strokes, each across or down a span of the
+ * character's box, from its own hash; blocky at a street's distance, which is all a couplet is seen from. */
+float paperGlyph(vec2 c, uint h) {
+    vec2 a = (c - 0.15) / 0.7;
+    if (a.x < 0.0 || a.y < 0.0 || a.x > 1.0 || a.y > 1.0) return 0.0;
+    float ink = 0.0;
+    for (int k = 0; k < 4; ++k) {
+        uint s = hash_combine(h, uint(k) * 0x9E37u + 1u);
+        bool across = (s & 1u) != 0u;
+        float pos = 0.1 + 0.8 * hfloat(hash_combine(s, 2u));
+        float a0 = 0.05 + 0.4 * hfloat(hash_combine(s, 3u)), a1 = min(a0 + 0.3 + 0.5 * hfloat(hash_combine(s, 4u)), 0.95);
+        vec2 q = across ? a : a.yx;
+        ink = max(ink, (1.0 - smoothstep(0.05, 0.075, abs(q.y - pos))) * step(a0, q.x) * step(q.x, a1));
+    }
+    return ink;
+}
 
 /* ======================================================================
  * HMv: the vines. A climbing plant is one card (src/gen/pmodel_retrofit.c m_r_vine) standing the leaves' depth
@@ -631,14 +650,23 @@ vec3 shadeHouseKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, floa
         vec3 g = houseGlass(dot(n, V) < 0.0 ? -n : n, V, key, uv, vec2(1.0));
         return g;
     }
-    if (m == PMAT_HLED || m == PMAT_HLAMP) {   // HM5c1: a strip's or a downlight's opal diffuser, a lantern's glass
+    if (m == PMAT_HLED || m == PMAT_HLAMP || m == PMAT_HLANTERN) {   // HM5c1: a strip's or a downlight's opal diffuser, a lantern's glass
         float on = houseLightOn(seed);
         float facing = abs(dot(n, V));
-        vec3 warm = m == PMAT_HLED ? vec3(1.0, 0.80, 0.56) : vec3(1.0, 0.66, 0.36);
+        // HM5b1a: a red paper lantern, its paper by day
+        vec3 warm = m == PMAT_HLED ? vec3(1.0, 0.80, 0.56) : m == PMAT_HLAMP ? vec3(1.0, 0.66, 0.36) : vec3(1.0, 0.16, 0.06);
         vec3 glow = warm * (m == PMAT_HLED ? 5.0 + 2.0 * facing : 3.0 + 2.5 * facing);
         vec3 nv = dot(n, V) < 0.0 ? -n : n, spec;
-        vec3 dark = vec3(0.30, 0.30, 0.28) * wallLighting(p, nv, V, 40.0, 0.06, h, spec) + spec;
+        vec3 paper = m == PMAT_HLANTERN ? vec3(0.36, 0.035, 0.02) : vec3(0.30, 0.30, 0.28);
+        vec3 dark = paper * wallLighting(p, nv, V, m == PMAT_HLANTERN ? 10.0 : 40.0, m == PMAT_HLANTERN ? 0.03 : 0.06, h, spec) + spec;
         return mix(dark, glow, on);
+    }
+    if (m == PMAT_HFROST && aux == 1u) {   // HM5b1a: a frosted pane or a lattice's paper: the room's light through it by night
+        float on = houseLightOn(seed);
+        vec3 nv = dot(n, V) < 0.0 ? -n : n, spec;
+        vec3 day = vec3(0.50, 0.52, 0.51) * mix(0.9, 1.05, vnoise(gWorld.xz * 2.0 + gWorld.y * 3.0, 0x4D10u));
+        vec3 lit = day * wallLighting(p, nv, V, 80.0, 0.12, h, spec) + spec;
+        return lit + vec3(1.0, 0.74, 0.46) * 1.4 * on;
     }
     vec3 T, B, nn = n, spec;
     vec2 q;
@@ -704,6 +732,53 @@ vec3 shadeHouseKit(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, floa
         alb = k < 0.55 ? vec3(0.42, 0.02, 0.18) : k < 0.72 ? vec3(0.55, 0.20, 0.02) : k < 0.86 ? vec3(0.45, 0.03, 0.04) : vec3(0.55, 0.52, 0.48);
         alb *= mix(0.55, 1.1, vnoise(gWorld.xz * 11.0 + gWorld.y * 9.0, 0x4C0Bu));
         specK = 0.03;
+    }
+    // HM5b1a, the other regions' kit: anodised aluminium (silver, bronze or black by the house: its trim's colour picks),
+    // red paper with characters, hazard stripes, striped canvas, frosted sheet
+    else if (m == PMAT_HALU) {
+        uint f = trim % 4u;
+        alb = f < 2u ? vec3(0.42, 0.43, 0.44) : f == 2u ? vec3(0.10, 0.07, 0.045) : vec3(0.025, 0.025, 0.027);
+        set = PBR_KIT_GALV; grainK = 0.25; shin = 50.0; specK = 0.15;
+    }
+    else if (m == PMAT_HPAPER) {
+        // red, faded to pink in blotches where the sun and rain have had it; the characters gold or black by the house
+        float fade = smoothstep(0.5, 0.9, vnoise(gWorld.xz * 1.7 + gWorld.y * 1.3, 0x4D01u));
+        alb = mix(vec3(0.38, 0.025, 0.02), vec3(0.42, 0.15, 0.12), fade);
+        if (aux != 2u) {
+            float ink;
+            if (aux == 1u) {   // the fu diamond: one character, upright in the diamond
+                vec2 q = vec2(0.7071 * (uv.x + uv.y), 0.7071 * (uv.y - uv.x));
+                ink = paperGlyph(q / 0.32 + 0.5, hash_combine(seed, 0x4D03u));
+            } else {           // a couplet: a character every 0.2 m down the strip
+                float cell = floor(uv.y / 0.2);
+                ink = paperGlyph(vec2(uv.x / 0.24 + 0.5, fract(uv.y / 0.2)), hash_combine(seed, uint(cell) * 0x2F1u + 0x4D04u));
+            }
+            vec3 inkCol = (door & 1u) == 0u ? vec3(0.40, 0.28, 0.07) : vec3(0.015, 0.012, 0.01);
+            alb = mix(alb, inkCol, ink * mix(0.6, 1.0, 1.0 - fade));
+        } else alb = vec3(0.42, 0.06, 0.03);   // a lantern's tassel
+        specK = 0.02; shin = 8.0;
+    }
+    else if (m == PMAT_HHAZARD) {
+        float s = step(0.5, fract((q.x + q.y) * 2.5));
+        alb = mix(vec3(0.020, 0.020, 0.018), vec3(0.58, 0.40, 0.02), s);
+        // scuffed by bumpers low down, grimed
+        float scuff = smoothstep(0.55, 0.85, vnoise(vec2(q.x * 6.0, h * 3.0), 0x4D05u)) * (1.0 - smoothstep(0.2, 0.9, h));
+        alb = mix(alb, vec3(0.20, 0.19, 0.18), scuff * 0.8);
+        set = PBR_KIT_PAINT; grainK = 0.4; shin = 25.0; specK = 0.06;
+    }
+    else if (m == PMAT_HCANVAS) {
+        // stripes along the wall, 0.15 m, in one of five pairs by the house; faded, the sun's side paler, grimed in folds
+        const vec3 CA[5] = vec3[5](vec3(0.40, 0.04, 0.03), vec3(0.05, 0.22, 0.10), vec3(0.04, 0.10, 0.30), vec3(0.45, 0.30, 0.02), vec3(0.42, 0.16, 0.02));
+        const vec3 CB[5] = vec3[5](vec3(0.55, 0.53, 0.48), vec3(0.55, 0.53, 0.48), vec3(0.55, 0.53, 0.48), vec3(0.06, 0.20, 0.08), vec3(0.55, 0.53, 0.48));
+        uint k = door % 5u;
+        alb = mix(CA[k], CB[k], step(0.5, fract(q.x / 0.3)));
+        alb = mix(alb, vec3(0.36, 0.34, 0.31), 0.25 * vnoise(gWorld.xz * 2.5 + gWorld.y, 0x4D06u));
+        specK = 0.02; shin = 6.0;
+    }
+    else if (m == PMAT_HFROST) {   // polycarbonate or frosted sheet: milky, a little green, dirt and leaves on it
+        alb = vec3(0.46, 0.49, 0.47) * mix(0.75, 1.05, vnoise(gWorld.xz * 1.5, 0x4D07u));
+        alb *= 1.0 - 0.06 * step(0.5, fract(q.x / 0.02));   // the twin wall's ribs
+        shin = 60.0; specK = 0.12;
     }
     else                        { alb = H_DOOR[door % 12u]; set = PBR_KIT_PAINT; grainK = 0.5; shin = 30.0; specK = 0.1; }   // PMAT_HDOOR
     alb *= vary;

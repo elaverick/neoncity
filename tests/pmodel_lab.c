@@ -28,6 +28,7 @@
 #include "noodle_bar.h"
 #include "pmodel_house.h"
 #include "pmodel_retrofit.h"
+#include "pmodel_region.h"
 #include "hash.h"
 #include "mathlib.h"
 #include <stdio.h>
@@ -199,7 +200,10 @@ static const uint32_t MAT_RGB[PMAT_COUNT] = {
     0xD6D0C2, 0x1F4A33, 0xB5A88C, 0x8C4A32, 0xA4542F, 0x9A4A30, 0x1E1F20, 0x6B7275, 0x1A1A1C, 0x3E6B2C, 0x2B3A40,
     0x2E241D, 0xEEEEEA, 0x464C55, 0x9A978F,
     /* HM5c1, the retrofit kit: galvanised steel, copper, tank plastic, solar cells, breeze blocks, flowers, LED, lamp glass */
-    0x8E9496, 0xA8582C, 0x1C1C1E, 0x1A2440, 0xB8B2A2, 0xC0287A, 0xFFE2B0, 0xFFC27A };
+    0x8E9496, 0xA8582C, 0x1C1C1E, 0x1A2440, 0xB8B2A2, 0xC0287A, 0xFFE2B0, 0xFFC27A,
+    0x3E6B2C,               /* HMv: a vine's card */
+    /* HM5b1a: aluminium, red paper, a lit lantern, hazard yellow, canvas (green here), frosted glass */
+    0xA8ACB0, 0xB0201A, 0xFF4A28, 0xE0B020, 0x2E7A4A, 0xD8DCD8 };
 /* The house vignettes' stand-ins for the shells' surfaces (a part number from LAB_STANDIN: drawn flat in these) */
 #define LAB_STANDIN 250
 static const uint32_t STANDIN_RGB[6] = { 0xC9BFA6, 0x7D8A80, 0x40454C, 0x8E3F2A, 0x7A4030, 0x5A5550 };   /* render, siding, slate, clay roof, brick, dark */
@@ -1132,6 +1136,175 @@ static void vig_retrofit_yard(Pm *pm) {
     pm_push(pm); pm_translate(pm, 8.0f, 0.0f, 1.0f); pm_place(pm, PMK_R_POT_PALM); pm_pop(pm);
 }
 
+/* HM5b1a, the other regions' kit (pmodel_region.h), each on its sheet's panel 1 (docs/reference/international-residential). */
+/* a module at (x, y, z) stretched sx by sy (an opening's piece: built at its usual size) */
+static void put(Pm *pm, int id, float x, float y, float z, float sx, float sy) {
+    pm_push(pm); pm_translate(pm, x, y, z); pm_scale(pm, sx, sy, 1.0f); pm_place(pm, id); pm_pop(pm);
+}
+/* a triangular gable wall stand-in over (x0..x1) at y, rising h, its face at z 0 */
+static void si_gable(Pm *pm, int part, float x0, float x1, float y, float h, float t) {
+    const float tri[3][2] = { { x0, y }, { x1, y }, { 0.5f * (x0 + x1), y + h } };
+    si(pm, part); pm_extrude(pm, tri, 3, -t, 0.0f); si_end(pm);
+}
+/* 11. Japan (the Japan sheet's panel 1): a narrow two-storey house, a low metal roof; aluminium sliding windows, the
+ * ground one frosted, storm-shutter boxes and their rails; a hood over the door; a slat band under the eaves (panel 5). */
+static void vig_japan(Pm *pm) {
+    const float W = 6.0f, pl = 0.1f, sh = 2.8f, eaves = 5.9f;
+    const float o[4][4] = { { 0.6f, pl, 1.5f, pl + 2.1f }, { 2.6f, pl + 0.9f, 4.2f, pl + 2.0f },
+                            { 0.6f, pl + sh + 0.8f, 2.2f, pl + sh + 1.9f }, { 3.4f, pl + sh + 0.8f, 5.0f, pl + sh + 1.9f } };
+    si_wall(pm, SI_SIDING, 0.0f, 0.0f, W, eaves, 0.25f, o, 4, 0.1f);
+    pm_push(pm); pm_translate(pm, 1.05f, pl, 0.0f); hk_door(pm, HK_DOOR_UPVC, HK_CASE_NONE, 0.9f, 2.1f, 0.1f); pm_pop(pm);
+    put(pm, PMK_H_HISASHI, 0.35f, pl + 2.35f, 0.0f, 1.4f, 1.0f);
+    for (int k = 1; k < 4; ++k) {
+        const float cx = 0.5f * (o[k][0] + o[k][2]);
+        put(pm, k == 1 ? PMK_H_WIN_SLIDING_FROST : PMK_H_WIN_SLIDING, cx, o[k][1], -0.1f, 1.0f, 1.0f);
+        put(pm, PMK_H_AMADO, o[k][2], o[k][1], 0.0f, 1.0f, 1.0f);
+        put(pm, PMK_H_AMADO_RAIL, o[k][0], o[k][3], 0.0f, o[k][2] - o[k][0] + HK_AMADO_W, 1.0f);
+        put(pm, PMK_H_SILL_CONCRETE, cx, o[k][1], 0.0f, 1.0f, 1.0f);
+    }
+    put(pm, PMK_H_SLATS, 0.0f, eaves - 0.75f, 0.0f, W, 0.7f);
+    si_box(pm, SI_DARK, -0.3f, eaves - 0.02f, 0.0f, W + 0.3f, eaves, 0.5f);
+    float ry, rz;
+    si_roof(pm, SI_SLATE, -0.3f, W + 0.3f, eaves, 0.5f, 8.0f, 12.0f, 0.08f, &ry, &rz);
+    pm_push(pm); pm_translate(pm, -0.3f, eaves - 0.02f, 0.52f); hk_gutter(pm, HK_GUTTER_HALF, W + 0.6f, 3); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, W - 0.2f, 0.0f, 0.0f); hk_downpipe(pm, eaves - 0.1f, 0.52f + HK_GUTTER_Z, 0); pm_pop(pm);
+}
+/* 12. China (the China sheet's panel 1): the courtyard's gatehouse in a grey brick wall: its tiled roof with ridge ends
+ * and eave tiles, a red double door with ring knockers between drum stones, couplets and the fu, lanterns from the eaves,
+ * a lattice window; behind, a white-tiled block with steel cages out from its windows (panel 2). */
+static void vig_china(Pm *pm) {
+    const float W = 8.0f, H = 3.2f, x0 = 2.6f, x1 = 5.4f, dx0 = 3.2f, dx1 = 4.8f, dh = 2.6f;
+    const float o[3][4] = { { dx0, 0.0f, dx1, dh }, { 0.7f, 1.1f, 0.7f + HK_LAT_W, 1.1f + HK_LAT_H }, { 6.3f, 1.1f, 7.3f, 2.3f } };
+    si_wall(pm, SI_BRICK, 0.0f, 0.0f, W, H, 0.4f, o, 3, 0.2f);
+    for (int s = 0; s < 2; ++s) {
+        const float cx = s ? 4.4f : 3.6f;
+        pm_push(pm); pm_translate(pm, cx, 0.12f, 0.0f); hk_door(pm, HK_DOOR_4P, HK_CASE_NONE, 0.8f, dh - 0.12f, 0.25f); pm_pop(pm);
+        put(pm, PMK_H_KNOCKER, s ? 4.1f : 3.9f, 1.25f, -0.2f, 1.0f, 1.0f);
+        put(pm, PMK_H_DRUM_STONE, s ? dx1 + 0.3f : dx0 - 0.3f, 0.0f, 0.3f, 1.0f, 1.0f);
+        put(pm, PMK_H_COUPLET, s ? dx1 + 0.3f : dx0 - 0.3f, 0.95f, 0.0f, 1.0f, 1.0f);
+        put(pm, PMK_H_LANTERN_PAPER, s ? x1 - 0.25f : x0 + 0.25f, H + 0.05f, 0.45f, 1.0f, 1.0f);
+    }
+    si_box(pm, SI_DARK, dx0, 0.0f, -0.2f, dx1, 0.12f, 0.25f);   /* the threshold */
+    pm_push(pm); pm_translate(pm, 0.5f * (dx0 + dx1) - 0.75f, dh + 0.25f, 0.0f); pm_rotate_z(pm, -0.5f * PI_F); pm_place(pm, PMK_H_COUPLET); pm_pop(pm);
+    put(pm, PMK_H_FU, 6.8f, 2.75f, 0.0f, 1.0f, 1.0f);
+    put(pm, PMK_H_LATTICE, 0.7f + 0.5f * HK_LAT_W, 1.1f, -0.2f, 1.0f, 1.0f);
+    put(pm, PMK_H_GRILLE, 6.8f, 1.05f, 0.0f, 1.1f, 1.3f);
+    /* the gatehouse roof: tiles to the front's eaves, ridge ends, eave tiles */
+    si_box(pm, SI_BRICK, x0, H, -0.4f, x1, H + 0.3f, 0.0f);
+    float ry, rz;
+    si_roof(pm, SI_SLATE, x0 - 0.3f, x1 + 0.3f, H + 0.25f, 0.7f, 3.0f, 30.0f, 0.1f, &ry, &rz);
+    pm_push(pm); pm_translate(pm, x0 - 0.3f, ry, rz); hk_ridge(pm, 0, x1 - x0 + 0.6f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, x0 - 0.3f, ry, rz); pm_place(pm, PMK_H_RIDGE_END); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, x1 + 0.3f, ry, rz); pm_rotate_y(pm, PI_F); pm_place(pm, PMK_H_RIDGE_END); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, x0 - 0.3f, H + 0.25f, 0.7f); hk_run(pm, PMK_H_EAVE_TILES, x1 - x0 + 0.6f, 1.0f); pm_pop(pm);
+    /* the wall's coping: a tiled ridge along it */
+    pm_push(pm); pm_translate(pm, 0.0f, H, -0.2f); hk_ridge(pm, 0, x0); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, x1, H, -0.2f); hk_ridge(pm, 0, W - x1); pm_pop(pm);
+    /* the block behind: white tile, windows with cages */
+    const float bz = -6.0f, bo[4][4] = { { 1.0f, 4.0f, 2.6f, 5.4f }, { 4.4f, 4.0f, 6.0f, 5.4f }, { 1.0f, 7.0f, 2.6f, 8.4f }, { 4.4f, 7.0f, 6.0f, 8.4f } };
+    pm_push(pm); pm_translate(pm, 0.0f, 0.0f, bz);
+    si_wall(pm, SI_RENDER, 0.0f, 0.0f, 7.0f, 9.6f, 0.3f, bo, 4, 0.1f);
+    for (int k = 0; k < 4; ++k) {
+        HkWindow w = { HK_FRAME_GRID, HK_SILL_CONCRETE, HK_HEAD_NONE, 0, 0, 0, bo[k][2] - bo[k][0], bo[k][3] - bo[k][1], 0.1f };
+        pm_push(pm); pm_translate(pm, 0.5f * (bo[k][0] + bo[k][2]), bo[k][1], 0.0f); hk_window(pm, &w); pm_pop(pm);
+        put(pm, PMK_H_CAGE, 0.5f * (bo[k][0] + bo[k][2]), bo[k][1] - 0.15f, 0.0f, bo[k][2] - bo[k][0] + 0.3f, bo[k][3] - bo[k][1] + 0.3f);
+    }
+    pm_pop(pm);
+}
+/* 13. Korea (the Korea sheet's panel 1): a brick walk-up villa over pilotis, the columns in hazard sleeves, a bank of
+ * mailboxes by the entry; beside it a hanok's wall (panel 4): a fine-grid lattice window under its little tiled roof,
+ * Korea's ridge ends and eave tiles. */
+static void vig_korea(Pm *pm) {
+    const float W = 7.0f, gh = 2.7f, sh = 2.8f, top = gh + 3.0f * sh;
+    const float o[6][4] = { { 0.6f, gh + 0.9f, 2.2f, gh + 2.2f }, { 4.4f, gh + 0.9f, 6.0f, gh + 2.2f }, { 0.6f, gh + sh + 0.9f, 2.2f, gh + sh + 2.2f },
+                            { 4.4f, gh + sh + 0.9f, 6.0f, gh + sh + 2.2f }, { 0.6f, gh + 2 * sh + 0.9f, 2.2f, gh + 2 * sh + 2.2f }, { 4.4f, gh + 2 * sh + 0.9f, 6.0f, gh + 2 * sh + 2.2f } };
+    si_wall(pm, SI_BRICK, 0.0f, gh, W, top - gh, 0.3f, o, 6, 0.1f);
+    si_box(pm, SI_DARK, 0.0f, gh - 0.25f, -9.0f, W, gh, 0.0f);   /* the deck over the parking */
+    si_box(pm, SI_RENDER, 0.0f, 0.0f, -9.0f, W, gh, -8.7f);
+    for (int k = 0; k < 6; ++k) {
+        HkWindow w = { HK_FRAME_UPVC, HK_SILL_CONCRETE, HK_HEAD_NONE, 0, 0, 0, o[k][2] - o[k][0], o[k][3] - o[k][1], 0.1f };
+        pm_push(pm); pm_translate(pm, 0.5f * (o[k][0] + o[k][2]), o[k][1], 0.0f); hk_window(pm, &w); pm_pop(pm);
+    }
+    for (int k = 0; k < 3; ++k) {
+        const float x = k == 0 ? 0.3f : k == 1 ? 3.5f : W - 0.3f;
+        si_box(pm, SI_RENDER, x - 0.2f, 0.0f, -0.5f, x + 0.2f, gh - 0.25f, -0.1f);
+        pm_push(pm); pm_translate(pm, x, 0.0f, -0.3f); pm_scale(pm, 0.4f, 1.0f, 0.4f); pm_place(pm, PMK_H_HAZARD); pm_pop(pm);
+    }
+    si_box(pm, SI_RENDER, 4.6f, 0.0f, -3.2f, 6.4f, gh - 0.25f, -3.0f);   /* the entry's wall, the mailboxes on it */
+    put(pm, PMK_H_MAILBOX, 5.5f, 1.0f, -3.0f, 1.0f, 1.0f);
+    si_box(pm, SI_DARK, -0.1f, top, -0.3f, W + 0.1f, top + 0.9f, 0.0f);   /* the parapet */
+    /* the hanok's wall to the left */
+    const float hx0 = -6.0f, hx1 = -0.5f, hw = 2.4f;
+    const float ho[2][4] = { { hx0 + 1.0f, 0.9f, hx0 + 1.0f + HK_LAT_W, 0.9f + HK_LAT_H }, { hx0 + 3.2f, 0.9f, hx0 + 3.2f + HK_LAT_W, 0.9f + HK_LAT_H } };
+    si_wall(pm, SI_SIDING, hx0, 0.0f, hx1 - hx0, hw, 0.25f, ho, 2, 0.15f);
+    for (int k = 0; k < 2; ++k) put(pm, PMK_H_LATTICE_KR, 0.5f * (ho[k][0] + ho[k][2]), ho[k][1], -0.15f, 1.0f, 1.0f);
+    float ry, rz;
+    si_roof(pm, SI_SLATE, hx0 - 0.4f, hx1 + 0.4f, hw, 0.9f, 4.0f, 28.0f, 0.1f, &ry, &rz);
+    pm_push(pm); pm_translate(pm, hx0 - 0.4f, ry, rz); hk_ridge(pm, 0, hx1 - hx0 + 0.8f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, hx0 - 0.4f, ry, rz); pm_place(pm, PMK_H_RIDGE_END_KR); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, hx1 + 0.4f, ry, rz); pm_rotate_y(pm, PI_F); pm_place(pm, PMK_H_RIDGE_END_KR); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, hx0 - 0.4f, hw, 0.9f); hk_run(pm, PMK_H_EAVE_TILES, hx1 - hx0 + 0.8f, 1.0f); pm_pop(pm);
+}
+/* 14. The shophouse (its sheet's panel 1): the upper storey on round columns over the five-foot way, pilasters between
+ * louvred French windows with vent panels over them, the parapet's crest; under it the shop's front with swing half
+ * doors before its doors, lanterns; the neighbour's canvas awning. */
+static void vig_shophouse(Pm *pm) {
+    const float W = 5.0f, fd = 1.9f, gh = 3.0f, uh = 3.3f, pt = gh + uh;
+    const float o[3][4] = { { 0.55f, gh + 0.35f, 1.55f, gh + 2.45f }, { 2.0f, gh + 0.35f, 3.0f, gh + 2.45f }, { 3.45f, gh + 0.35f, 4.45f, gh + 2.45f } };
+    si_wall(pm, SI_RENDER, 0.0f, gh, W, uh + 0.7f, 0.3f, o, 3, 0.12f);
+    si_box(pm, SI_DARK, 0.0f, gh - 0.2f, -fd, W, gh, 0.0f);   /* the five-foot way's ceiling */
+    for (int k = 0; k < 3; ++k) {
+        const float cx = 0.5f * (o[k][0] + o[k][2]);
+        put(pm, PMK_H_WIN_LOUVRE, cx, o[k][1], -0.12f, 1.0f / HK_LOUVRE_W, (o[k][3] - o[k][1]) / HK_LOUVRE_H);
+        put(pm, PMK_H_VENT_PANEL, cx, o[k][3] + 0.12f, 0.0f, 1.05f, 1.0f);
+        put(pm, PMK_H_SILL_STONE, cx, o[k][1], 0.0f, 1.0f, 1.0f);
+    }
+    for (int k = 0; k < 4; ++k) put(pm, PMK_H_PILASTER, k == 0 ? 0.2f : k == 3 ? W - 0.2f : 1.775f + 1.45f * (float)(k - 1), gh, 0.0f, 0.8f, uh / HK_COL_H);
+    for (int k = 0; k < 2; ++k) put(pm, PMK_H_COLUMN, k ? W - 0.3f : 0.3f, 0.0f, -0.22f, 1.0f, (gh - 0.2f) / HK_COL_H);
+    pm_push(pm); pm_translate(pm, 0.0f, gh - 0.05f, 0.0f); hk_run(pm, PMK_H_STRING_COURSE, W, 0.0f); pm_pop(pm);
+    pm_push(pm); pm_translate(pm, 0.0f, pt + 0.5f, 0.0f); hk_run(pm, PMK_H_BAY_CORNICE, W, 1.0f); pm_pop(pm);
+    put(pm, PMK_H_CREST, 0.5f * W, pt + 0.7f, -0.15f, 1.0f, 1.0f);
+    /* the shop's front, set back over the five-foot way */
+    const float so[3][4] = { { 1.8f, 0.15f, 3.2f, 2.75f }, { 0.4f, 0.9f, 1.4f, 2.2f }, { 3.6f, 0.9f, 4.6f, 2.2f } };
+    pm_push(pm); pm_translate(pm, 0.0f, 0.0f, -fd);
+    si_wall(pm, SI_RENDER, 0.0f, 0.0f, W, gh - 0.2f, 0.3f, so, 3, 0.15f);
+    for (int s = 0; s < 2; ++s) { pm_push(pm); pm_translate(pm, s ? 2.85f : 2.15f, 0.15f, 0.0f); hk_door(pm, HK_DOOR_4P, HK_CASE_NONE, 0.7f, 2.6f, 0.15f); pm_pop(pm); }
+    put(pm, PMK_H_PINTU_PAGAR, 2.5f, 0.15f, 0.0f, 1.0f, 1.0f);
+    for (int k = 1; k < 3; ++k) {
+        HkWindow w = { HK_FRAME_CASEMENT, HK_SILL_STONE, HK_HEAD_NONE, 0, 1, 0, 1.0f, 1.3f, 0.15f };
+        pm_push(pm); pm_translate(pm, 0.5f * (so[k][0] + so[k][2]), so[k][1], 0.0f); hk_window(pm, &w); pm_pop(pm);
+    }
+    pm_pop(pm);
+    for (int k = 0; k < 2; ++k) put(pm, PMK_H_LANTERN_PAPER, k ? 3.6f : 1.4f, gh - 0.2f, -0.9f, 1.0f, 1.0f);
+    /* the neighbour: a plain shop front under a canvas awning */
+    si_box(pm, SI_SIDING, W, 0.0f, -0.3f, W + 4.0f, gh + uh, 0.0f);
+    pm_push(pm); pm_translate(pm, W + 0.5f, 2.6f, 0.0f); hk_run(pm, PMK_H_AWNING, 3.0f, 1.0f); pm_pop(pm);
+}
+/* 15. The link house (its sheet's panel 1): a terrace house with a front gable and its vent, gridded windows under hoods,
+ * the curved car-porch canopy on two posts over the yard. */
+static void vig_linkhouse(Pm *pm) {
+    const float W = 6.5f, pl = 0.15f, sh = 3.0f, eaves = 6.2f;
+    const float o[4][4] = { { 0.6f, pl, 1.5f, pl + 2.2f }, { 2.4f, pl + 0.9f, 5.6f, pl + 2.3f },
+                            { 0.7f, pl + sh + 0.9f, 2.9f, pl + sh + 2.3f }, { 3.6f, pl + sh + 0.9f, 5.8f, pl + sh + 2.3f } };
+    si_wall(pm, SI_RENDER, 0.0f, 0.0f, W, eaves, 0.25f, o, 4, 0.1f);
+    pm_push(pm); pm_translate(pm, 1.05f, pl, 0.0f); hk_door(pm, HK_DOOR_4P, HK_CASE_NONE, 0.9f, 2.2f, 0.1f); pm_pop(pm);
+    for (int k = 1; k < 4; ++k) {
+        const float cx = 0.5f * (o[k][0] + o[k][2]), w = o[k][2] - o[k][0];
+        HkWindow hw = { HK_FRAME_GRID, HK_SILL_CONCRETE, HK_HEAD_NONE, 0, k == 1 ? 1 : 0, 0, w, o[k][3] - o[k][1], 0.1f };
+        pm_push(pm); pm_translate(pm, cx, o[k][1], 0.0f); hk_window(pm, &hw); pm_pop(pm);
+        if (k > 1) put(pm, PMK_H_WIN_HOOD, o[k][0] - 0.1f, o[k][3] + 0.25f, 0.0f, w + 0.2f, 1.0f);
+    }
+    si_gable(pm, SI_RENDER, 1.2f, 5.3f, eaves, 1.9f, 0.25f);
+    put(pm, PMK_H_GABLE_VENT, 3.25f, eaves + 0.75f, 0.0f, 1.0f, 1.0f);
+    float ry, rz;
+    si_box(pm, SI_DARK, -0.3f, eaves - 0.02f, 0.0f, W + 0.3f, eaves, 0.5f);
+    si_roof(pm, SI_CLAY, -0.3f, W + 0.3f, eaves, 0.5f, 9.0f, 30.0f, 0.1f, &ry, &rz);
+    pm_push(pm); pm_translate(pm, -0.3f, ry, rz); hk_ridge(pm, 0, W + 0.6f); pm_pop(pm);
+    /* the car porch: its canopy from the wall over the yard, two posts at its front */
+    pm_push(pm); pm_translate(pm, 0.0f, 2.75f, 0.0f); hk_run(pm, PMK_H_CARPORT, W, 1.6f); pm_pop(pm);
+    for (int k = 0; k < 2; ++k) put(pm, PMK_H_POST_SQUARE, k ? W - 0.15f : 0.15f, 0.0f, HK_CARPORT_D - 0.1f, 1.0f, (2.75f + HK_CARPORT_RISE * sinf(0.8f * PI_F) - 0.14f) / HK_POST_H);
+}
+
 typedef void (*VigFn)(Pm *pm);
 static const struct { const char *name; VigFn fn; float az, el; } VIG[] = {
     { "victorian", vig_victorian, 0.42f, 0.16f }, { "georgian", vig_georgian, 0.38f, 0.10f }, { "craftsman", vig_craftsman, 0.75f, 0.02f },
@@ -1139,6 +1312,8 @@ static const struct { const char *name; VigFn fn; float az, el; } VIG[] = {
     { "shutters", vig_shutters, 0.35f, 0.1f },
     { "retrofit_flat", vig_retrofit_flat, 0.5f, 0.32f }, { "retrofit_pitched", vig_retrofit_pitched, 0.45f, 0.3f },
     { "retrofit_yard", vig_retrofit_yard, 0.3f, 0.22f },
+    { "japan", vig_japan, 0.45f, 0.12f }, { "china", vig_china, 0.35f, 0.18f }, { "korea", vig_korea, 0.5f, 0.12f },
+    { "shophouse", vig_shophouse, 0.42f, 0.12f }, { "linkhouse", vig_linkhouse, 0.55f, 0.2f },
 };
 #define NVIG ((int)(sizeof(VIG) / sizeof(VIG[0])))
 
@@ -1251,8 +1426,8 @@ int main(int argc, char **argv) {
         stbi_write_png(path, im.w, im.h, 3, im.p, im.w * 3);
         free(im.p); im.p = NULL;
     }
-    printf("library: %ld triangles over its levels (budget 430000: NB0's 300000 raised for SF1's trades, HM4's house kit, HM5c1's retrofit kit)\n", total);
-    if (!only) CHECK(total <= 430000, "the library holds %ld triangles over its levels, over 430000", total);
+    printf("library: %ld triangles over its levels (budget 480000: NB0's 300000 raised for SF1's trades, HM4's house kit, HM5c1's retrofit kit, HM5b1's regional kits)\n", total);
+    if (!only) CHECK(total <= 480000, "the library holds %ld triangles over its levels, over 480000", total);
     if (house_only) {
         house_section(out, NULL);
         printf("\n%s (%d failures)\n", g_fail ? "FAILED" : "ok", g_fail);
