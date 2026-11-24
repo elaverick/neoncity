@@ -363,7 +363,7 @@ static int home_cams(int argc, char **argv) {
          * far enough off to take in the whole of it and the house round it */
         const int kx0 = (int)floor(tx / CHUNK_SIZE), kz0 = (int)floor(tz / CHUNK_SIZE);
         static HomeInsertView iv[256];
-        int seen[HI_COUNT * HIF_COUNT] = { 0 }, shown = 0;
+        int seen[HI_COUNT * HIF_COUNT * 4] = { 0 }, shown = 0;   /* a kind, its make and its wall (HM5c2c1: a stair's front, side, back) */
         double at[3][2];
         /* pass 0 a kind and make once from across the front; pass 1 any not shown yet; pass 2 any from 7 m (a narrow street) */
         for (int pass = 0; pass < 3 && shown < 3; ++pass)
@@ -375,7 +375,7 @@ static int home_cams(int argc, char **argv) {
                         /* NC_INS_KINDS: a mask of the kinds (bits of HI_*) a milestone's captures look for (HM5c2b: 60) */
                         const char *mk = getenv("NC_INS_KINDS");
                         if (mk && !((unsigned)strtoul(mk, NULL, 0) >> v->kind & 1u)) continue;
-                        const int key = v->kind * HIF_COUNT + v->face;
+                        const int key = (v->kind * HIF_COUNT + v->face) * 4 + (v->wall == HIW_EAST ? HIW_WEST : v->wall);
                         if (!pass && seen[key]) continue;
                         int dup = 0;
                         for (int k = 0; k < shown; ++k) dup |= hypot(at[k][0] - v->x, at[k][1] - v->z) < 1.0;
@@ -384,10 +384,23 @@ static int home_cams(int argc, char **argv) {
                         snprintf(name, sizeof(name), "home_ins%d", shown);
                         /* from across the front, the eye raised towards its middle (at most 4.5 m), so a hung one is seen whole */
                         const double gy = city_ground_y(v->x, v->z);
-                        const double d = pass < 2 ? fmax(10.0, 2.2 * fmax(v->w, v->h)) : 7.0;
-                        const double lift = fmax(0.0, fmin(pass < 2 ? 4.5 : 2.5, v->y - (gy + SIDEWALK_HEIGHT + 1.68) - 1.0));
-                        if (sl_view(name, v->x, v->y, v->z, v->nx, v->nz, d, gy, lift, 1)) {
-                            printf("  (%s %s, %.1f x %.1f m%s)\n", home_insert_face_name(v->face), home_insert_name(v->kind), v->w, v->h, v->ground ? ", on the ground" : "");
+                        /* (a stair tower, the house's height, framed by its width from across the street, looked up at) */
+                        const int tall = v->kind == HI_TOWER;
+                        const double vy = tall ? v->y - 0.2 * v->h : v->y;
+                        const double d = pass < 2 ? fmax(10.0, 2.2 * (tall ? 3.0 * v->w : fmax(v->w, v->h))) : 7.0;
+                        const double lift = fmax(0.0, fmin(pass < 2 ? 4.5 : 2.5, vy - (gy + SIDEWALK_HEIGHT + 1.68) - 1.0));
+                        /* (seen past its front boundary: the line of sight is a plan's, and an area's railings would stop it) */
+                        /* (a stair against a side is seen from the street, past the front boundary, looking diagonally into its
+                         * side gap: from 40 degrees off the front towards the side it faces) */
+                        const int sideways = v->wall == HIW_WEST || v->wall == HIW_EAST;
+                        const double dl = hypot(v->fnx + 0.84 * v->nx, v->fnz + 0.84 * v->nz);
+                        const double vnx = sideways ? (v->fnx + 0.84 * v->nx) / dl : v->nx, vnz = sideways ? (v->fnz + 0.84 * v->nz) / dl : v->nz;
+                        const double past = sideways ? v->street + 0.6 : (tall || v->kind == HI_STAIRS) && v->ground ? v->yard + 0.6 : 0.0;
+                        const double tx = sideways ? v->x + v->fnx * past : v->x + vnx * past, tz = sideways ? v->z + v->fnz * past : v->z + vnz * past;
+                        if (sl_view(name, tx, vy, tz, vnx, vnz, v->wall == HIW_BACK ? fmax(6.0, d - past) : d, gy, lift, 1)) {
+                            static const char *const WALLS[4] = { "", ", against the back", ", against a side", ", against a side" };
+                            printf("  (%s %s, %.1f x %.1f m%s%s)\n", home_insert_face_name(v->face), home_insert_name(v->kind), v->w, v->h,
+                                   v->ground ? ", on the ground" : "", WALLS[v->wall & 3]);
                             seen[key]++;
                             at[shown][0] = v->x; at[shown][1] = v->z;
                             shown++;
@@ -395,6 +408,17 @@ static int home_cams(int argc, char **argv) {
                     }
                 }
         if (!shown) printf("view home_ins: no insertion with a line of sight near the slice\n");
+        {   /* what the chunks round the slice hold, by kind (HM5c2c1: the rare ones, stair towers, may have none in sight) */
+            int count[HI_COUNT] = { 0 };
+            for (int j = -1; j <= 1; ++j)
+                for (int i = -1; i <= 1; ++i) {
+                    const int n = city_home_inserts(kx0 + i, kz0 + j, iv, 256);
+                    for (int q = 0; q < n; ++q) count[iv[q].kind % HI_COUNT]++;
+                }
+            printf("  insertions round the slice:");
+            for (int k = 0; k < HI_COUNT; ++k) if (count[k]) printf(" %s %d", home_insert_name(k), count[k]);
+            printf("\n");
+        }
     }
     CHECK(views == 6, "only %d of the 6 views have a line of sight", views);
     if (g_failures) { printf("%d failure(s)\n", g_failures); return 1; }

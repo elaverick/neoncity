@@ -70,10 +70,17 @@ float houseBars(vec2 uv, vec2 s, uint pattern, float aa) {
     } else if (pattern == HG_CASEMENT) {
         m = max(m, 1.0 - smoothstep(0.03, 0.03 + aa, abs(uv.x - 0.5 * s.x)));
         m = max(m, 1.0 - smoothstep(0.03, 0.03 + aa, abs(uv.y - 0.72 * s.y)));
-    } else if (pattern == HG_CURTAIN) {
+    } else if (pattern == HG_CURTAIN || pattern == HG_STAIR || pattern == HG_STAIR_DOOR) {
         // a glazed wall's mullions about a metre apart (a pane under 1.4 m keeps its frame alone)
         float n = max(1.0, floor(s.x / 1.0 + 0.5)), cx = s.x / n;
-        if (n > 1.0) m = max(m, 1.0 - smoothstep(0.022, 0.022 + aa, abs(fract(uv.x / cx + 0.5) - 0.5) * cx));
+        if (n > 1.0 && pattern != HG_STAIR_DOOR) m = max(m, 1.0 - smoothstep(0.022, 0.022 + aa, abs(fract(uv.x / cx + 0.5) - 0.5) * cx));
+        // HM5c2c1: a stair tower's door in the middle of its ground storey's front: its jambs and its head
+        if (pattern == HG_STAIR_DOOR) {
+            float dx = abs(uv.x - 0.5 * s.x), head = min(2.1, s.y - 0.1);
+            m = max(m, (1.0 - smoothstep(0.035, 0.035 + aa, abs(dx - 0.45))) * step(uv.y, head));
+            m = max(m, (1.0 - smoothstep(0.035, 0.035 + aa, abs(uv.y - head))) * step(dx, 0.48));
+            m = max(m, (1.0 - smoothstep(0.02, 0.02 + aa, abs(uv.y - 1.0))) * step(dx, 0.42) * step(0.3, dx));   // a push bar's line
+        }
     } else if (pattern == HG_GRID) {
         float cx = s.x / max(2.0, floor(s.x / 0.4)), y0 = 0.6 * s.y;
         if (uv.y > y0) m = max(m, 1.0 - smoothstep(bar * 0.5, bar * 0.5 + aa, abs(fract(uv.x / cx + 0.5) - 0.5) * cx));
@@ -93,6 +100,45 @@ vec3 houseGlass(vec3 n, vec3 V, uint key, vec2 uv, vec2 s) {
     vec3 room = vec3(0.012, 0.012, 0.014) + lit * warm * mix(0.42, 0.14, drop);   // a lamp behind a curtain, not a light box
     vec3 col = room * (1.0 - F) + envReflection(reflect(-V, n)) * F;
     if (gHouseDist < 150.0) col += paneSheen(gLocalHouse, n, V);   // its lamps' blooms: near only (a far wall's painted panes)
+    glassRefl(n, F);
+    return col;
+}
+
+// HM5c2c1: a glass stair tower's pane (HG_STAIR): behind it a dog-leg stair, one flight rising across the pane to a half
+// landing, the next back up behind it, seen with parallax (the first 0.6 m in, the second 1.3 m, the back wall 1.9 m), its
+// stringers and steps dark against a lit wall at night (a stairwell's lights, on most of the night whatever the homes' hours)
+// and dim by day. uv metres across and up from the pane's lower left; s its size; key the storey's.
+float stairFlight(vec2 q, float u0, float u1, float v0, float v1, float aa) {
+    float t = clamp((q.x - u0) / (u1 - u0), 0.0, 1.0);
+    float line = v0 + (v1 - v0) * t;                               // the line of the steps' inner corners
+    float n = max(4.0, floor(abs(v1 - v0) / 0.18 + 0.5)), h = (v1 - v0) / n;
+    float k = floor(t * n), tooth = v0 + (k + 1.0) * h;            // each step's top across its tread
+    float inside = step(min(u0, u1), q.x) * step(q.x, max(u0, u1));
+    float solid = (smoothstep(line - 0.3 - aa, line - 0.3 + aa, q.y) - smoothstep(tooth - aa, tooth + aa, q.y)) * inside;
+    float rail = (1.0 - smoothstep(0.02, 0.02 + aa, abs(q.y - line - 0.95))) * inside;
+    return max(clamp(solid, 0.0, 1.0), rail);
+}
+vec3 houseStairwell(vec3 n, vec3 V, uint key, vec2 uv, vec2 s) {
+    float F = glassFresnel(n, V);
+    float lit = hf(key, 3u) < 0.8 * (1.0 - smoothstep(0.1, 0.6, gLampDay)) ? 1.0 : 0.0;
+    vec3 T = vec3(-n.z, 0.0, n.x);
+    vec3 d = -V;
+    float dn = max(dot(V, n), 0.2);
+    vec2 slide = vec2(dot(d, T), d.y) / dn;                        // the pane's uv shift a metre in
+    float aa = 0.02 + gHouseDist * 0.0015;
+    vec2 q1 = uv + slide * 0.6, q2 = uv + slide * 1.3, q3 = uv + slide * 1.9;
+    float H = s.y + 0.3, mid = 0.5 * H;                            // a storey: the pane and the floor band over it
+    float f1 = stairFlight(q1, 0.1 * s.x, 0.82 * s.x, -0.05, mid, aa);
+    float f2 = stairFlight(q2, 0.82 * s.x, 0.1 * s.x, mid, H - 0.05, aa);
+    float landing = (smoothstep(mid - 0.22 - aa, mid - 0.22 + aa, q2.y) - smoothstep(mid - aa, mid + aa, q2.y)) * step(0.78 * s.x, q2.x);
+    vec3 warm = mix(vec3(0.95, 0.92, 0.84), vec3(1.0, 0.82, 0.6), hf(key, 5u));
+    // a lamp on each landing's ceiling: brightest up under it, a room's glow (houseGlass's 0.14-0.42), never a light box
+    float lamp = 1.0 - smoothstep(0.0, 0.9 * H, abs(q3.y - (H - 0.3)));
+    vec3 wall = vec3(0.02, 0.02, 0.022) + lit * warm * (0.06 + 0.12 * lamp);
+    vec3 room = mix(wall, wall * 0.5 + 0.01, max(f2, landing));   // the far flight half lit
+    room = mix(room, vec3(0.012, 0.012, 0.013) + lit * vec3(0.05), f1);
+    vec3 col = room * (1.0 - F) + envReflection(reflect(-V, n)) * F;
+    if (gHouseDist < 150.0) col += paneSheen(gLocalHouse, n, V);
     glassRefl(n, F);
     return col;
 }
@@ -230,7 +276,8 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
         uint key = hash3i(seed ^ 0x6A55u, int(round(c.x * 4.0)), int(round(c.y * 4.0)), int(round(c.z * 4.0)));
         // HM5c2: an insertion's panes share their storey's key (a ribbon window lit as one room)
         if ((aux & HOUSE_AUX_SHARED) != 0u) key = hash3i(seed ^ 0x6A57u, int(round(c.y * 4.0)), int((aux >> HOUSE_AUX_INS) & 15u), 0);
-        vec3 glass = houseGlass(n, V, key, uv, s);
+        uint gpat = (aux >> HOUSE_AUX_PATTERN) & 15u;
+        vec3 glass = gpat == HG_STAIR || gpat == HG_STAIR_DOOR ? houseStairwell(n, V, key, uv, s) : houseGlass(n, V, key, uv, s);
         vec3 diff = wallLighting(p, n, V, 30.0, 0.15, h, spec);
         vec3 frame = H_TRIM[col & 7u] * 0.9 * diff + spec;
         gRefl.w *= 1.0 - bars;

@@ -365,6 +365,9 @@ static int bite(HGraph *g, int k) {
                  float s0, bw;
                  const int nb = home_front_bays(g, in->vol, in->unit, &s0, &bw);
                  if (nb <= 0) return 0;
+                 /* a stair is laid out from its door: moved along until it passes the slice's end (HM5c2c1) */
+                 /* (whichever wall it stands against: pushed off the end of its run) */
+                 if (in->kind == HI_STAIRS) { const float by = in->x1 - in->x0 + 30.0f; in->door += by; in->x0 += by; in->x1 += by; return 1; }
                  in->x1 = s0 + bw * (float)nb;
                  return 1;
              }
@@ -571,7 +574,9 @@ static int bound_check(void) {
  * the kinds drawn; the boxes and rounded bays built (HM5c2a) and their makes, those on the ground in a bay's place, storeys
  * a one spans. Checked: three in five retrofitted on every style with a sheet, none on the rest; most of the boxes and
  * rounded bays drawn find a place; a style's boxes mostly of its table's heaviest make. */
-typedef struct Ins { long units, planned, kind[HI_COUNT], wantA, gotA, want[HI_COUNT], got[HI_COUNT], built[HI_COUNT], face[HIF_COUNT], shape[HIS_COUNT], ground, storeys, n, members, mUnits; } Ins;
+typedef struct Ins { long units, planned, kind[HI_COUNT], wantA, gotA, want[HI_COUNT], got[HI_COUNT], built[HI_COUNT], face[HIF_COUNT], shape[HIS_COUNT], ground, storeys, n, members, mUnits;
+                     /* HM5c2c1: stairs steel, with solid upstands, hung, two storeys, members, windows lost; towers with a head */
+                     long stSteel, stSolid, stSide, stBack, stTwo, stMembers, stLost, stMost, twHead; } Ins;
 static Ins g_ins[HS_COUNT];
 static void survey_ins(const HGraph *g) {
     if (g->empty) return;
@@ -601,7 +606,15 @@ static void survey_ins(const HGraph *g) {
         if (in->kind == HI_BOX) b->face[in->face % HIF_COUNT]++;
         b->ground += in->s0 == 0;
         b->storeys += in->s1 - in->s0 + 1;
-        if (in->kind >= HI_FRAME && in->kind <= HI_SCREEN) b->shape[in->shape % HIS_COUNT]++;
+        if (in->kind >= HI_FRAME && in->kind <= HI_STAIRS) b->shape[in->shape % HIS_COUNT]++;
+        if (in->kind == HI_STAIRS) {
+            HMember M[HG_MAX_MEMBERS];
+            const int nm = home_insert_members(g, in, M, HG_MAX_MEMBERS), lost = home_insert_windows_lost(g, in);
+            b->stSteel += in->cage; b->stSolid += in->screen && !in->cage; b->stSide += home_wall_side(in->wall); b->stBack += in->wall == HIW_BACK; b->stTwo += in->s1 - in->s0 >= 2;
+            b->stMembers += nm; b->stLost += lost;
+            if (lost > b->stMost) b->stMost = lost;
+        }
+        if (in->kind == HI_TOWER) b->twHead += home_tower_back(g, in) > 0.0f;
         if (home_insert_membered(in)) {
             HMember M[HG_MAX_MEMBERS];
             b->members += home_insert_members(g, in, M, HG_MAX_MEMBERS);
@@ -641,13 +654,31 @@ static int ins_check(void) {
         if (b->mUnits) printf(" (%.0f members)", (double)b->members / b->mUnits);
         printf("\n");
     }
+    /* HM5c2c1: stairs and stair towers */
+    printf("\nHM5c2c1's kinds: found a place (of the units drawing it) and built a unit; stairs: dog-legs, steel, solid upstands, against\n"
+           "a side, the back, two storeys, members a stair, windows a stair costs on its wall (and the most); towers: with a head\n");
+    printf("  %-11s %11s %6s %6s %6s %6s %6s %6s %6s %5s %10s | %11s %5s\n", "style", "stairs", "dog", "steel", "solid", "side", "back", "two", "membs", "lost",
+           "(most)", "towers", "head");
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Ins *b = &g_ins[st];
+        if (!b->units || !home_retrofit_style(st) || (!b->want[HI_STAIRS] && !b->want[HI_TOWER])) continue;
+        const double S = b->built[HI_STAIRS] ? (double)b->built[HI_STAIRS] : 1.0, T = b->built[HI_TOWER] ? (double)b->built[HI_TOWER] : 1.0;
+        printf("  %-11s", home_style_name(st));
+        if (b->want[HI_STAIRS]) printf("  %4.2f %4.2f %6.2f %6.2f %6.2f %6.2f %6.2f %6.2f %6.1f %5.2f %10ld", (double)b->got[HI_STAIRS] / b->want[HI_STAIRS],
+                                       b->built[HI_STAIRS] / (double)b->units, b->shape[HIS_DOGLEG] / S, b->stSteel / S, b->stSolid / S, b->stSide / S, b->stBack / S,
+                                       b->stTwo / S, b->stMembers / S, b->stLost / S, b->stMost);
+        else printf("  %9s %6s %6s %6s %6s %6s %6s %6s %5s %10s", "-", "", "", "", "", "", "", "", "", "");
+        if (b->want[HI_TOWER]) printf(" | %4.2f %4.2f %5.2f\n", (double)b->got[HI_TOWER] / b->want[HI_TOWER], b->built[HI_TOWER] / (double)b->units, b->twHead / T);
+        else printf(" | %11s\n", "-");
+    }
     for (int st = 0; st < HS_COUNT; ++st) {
         const Ins *b = &g_ins[st];
         if (b->units < 200) continue;
         const double U = (double)b->units;
-        for (int k = HI_FRAME; k <= HI_SCREEN && home_retrofit_style(st); ++k)
+        for (int k = HI_FRAME; k <= HI_TOWER && home_retrofit_style(st); ++k)
             /* half at least: a bungalow's veranda or an inter-war semi's two-storey bay fills most of its front, and a South
-             * Asian yard (1-2.5 m) is too shallow to stand a frame or strip in front of either */
+             * Asian yard (1-2.5 m) is too shallow to stand a frame or strip in front of either. (HM5c2c1's stairs too: against
+             * the front, a side or the back, where a front alone had held a quarter to three fifths of them) */
             if (b->want[k] >= 50 && b->got[k] < 0.5 * b->want[k]) {
                 printf("FAIL: %s: %ld of %ld units drawing a %s got one\n", home_style_name(st), b->got[k], b->want[k], home_insert_name(k));
                 failures++;
@@ -1272,6 +1303,27 @@ static int dress_check(int a, int seeds, const char *out, HGraph *g, HomePlot *P
 }
 
 int main(int argc, char **argv) {
+    if (argc > 5 && strcmp(argv[1], "--find") == 0) {   /* --find ARCH STYLE KIND N: the --view seeds under N whose row has an insertion of KIND */
+        int a = 0, style = home_style_find(-1, argv[3]), kind = -1, found = 0;
+        for (int k = 0; k < HOME_ARCH_COUNT; ++k) if (strcmp(argv[2], ARCH[k]) == 0) a = k;
+        for (int k = 0; k < HI_COUNT; ++k) if (strcmp(argv[4], home_insert_name(k)) == 0) kind = k;
+        HomePlot P[HG_MAX_UNITS];
+        HGraph *g = (HGraph *)malloc(sizeof(HGraph));
+        for (int s = 0; s < atoi(argv[5]) && found < 12; ++s) {
+            const int n = make_row(a, style < 0 ? 0 : style, hash_combine(0x40A1Bu + (uint32_t)a * 7919u, (uint32_t)s), P);
+            home_build(P, n, 0.5f, g, NULL);
+            for (int i = 0; i < g->nins; ++i) {
+                const HInsert *in = &g->ins[i];
+                if (in->kind != kind) continue;
+                static const char *const WALLS[4] = { "front", "back", "west side", "east side" };
+                printf("seed %d: unit %d, %s, %s, storeys %d-%d, %.1f..%.1f, out %.2f%s%s\n", s, in->unit, home_insert_shape_name(in->shape),
+                       WALLS[in->wall & 3], in->s0, in->s1, in->x0, in->x1, in->depth, in->cage ? ", steel" : "", in->screen ? ", screen" : "");
+                found++;
+                break;
+            }
+        }
+        return 0;
+    }
     if (argc > 6 && strcmp(argv[1], "--view") == 0) {   /* --view ARCH STYLE SEED OUT.png YAW [PITCH [LOD|kit]]: one row's near shell, large */
         int a = 0, style = home_style_find(-1, argv[3]);
         for (int k = 0; k < HOME_ARCH_COUNT; ++k) if (strcmp(argv[2], ARCH[k]) == 0) a = k;

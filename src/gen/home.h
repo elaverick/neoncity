@@ -188,14 +188,40 @@ typedef struct HInsert {
     uint8_t s0, s1;             /* the storeys it spans (s0 0: on the ground, where the unit's bay stood) */
     uint8_t fin, col;           /* its walls' finish (house_surf.h HW_*) and colour; a glass box's steel (a trim colour),
                                    a container's (the metal palette) */
-    uint8_t cage, screen;       /* bars over a glass box; a screen box's blocks (0 diamonds, 1 rings) */
+    uint8_t cage, screen;       /* bars over a glass box; a screen box's blocks (0 diamonds, 1 rings); HM5c2c1: a stair of
+                                   steel (cage), a concrete one's solid upstands (screen); a stair tower's riser (screen) */
     uint8_t took;               /* the balconies it took in (the house as built had them: home_lab's panel-1 survey) */
     uint8_t shape, cells;       /* HM5c2b: a frame's, fins', hexagons' or strip's form (HIS_*); a honeycomb's hexagons */
     uint8_t raised;             /* ...and a one-storey house's (s0 0) standing on corbels 0.4 m over its floor, not the ground */
     float   x0, x1, z, depth;   /* along the front; the wall's face; how far out (a member kind's: its front's) */
-    float   r;                  /* a rounded bay's corners' radius; a honeycomb's hexagons' (corner to centre) */
+    float   r;                  /* a rounded bay's corners' radius; a honeycomb's hexagons' (corner to centre); a stair's
+                                   landings' length where its landing stands over the front door (0: STAIR_LAND) */
     float   w, t, lean;         /* HM5c2b: its members' width and thickness (front to back), a raked one's lean */
+                                /* HM5c2c1 stairs: a flight's width, a tread, the way it rises along the front (+1 to +x) */
+    float   door;               /* HM5c2c1 stairs: the upper doors' middle (along its wall), one at each landing on a floor */
+    uint8_t wall;               /* HM5c2c1: the wall it stands against (HIW_*); every kind but a stair's the street front */
 } HInsert;
+/* HM5c2c1: an insertion's wall. A stair may stand against the street front (a front yard's), the back (into the rear yard,
+ * towards the lane) or a free side (the side gap of a detached house, a semi's open side, a terrace's end unit). in->z is
+ * that wall's face: its z (front, back) or its x (a side); along it, a member's "x" (a) runs along x (front, back) or z (a
+ * side), and "out" leaves the wall. */
+enum { HIW_FRONT = 0, HIW_BACK, HIW_WEST, HIW_EAST };
+static inline int home_wall_side(int wall) { return wall == HIW_WEST || wall == HIW_EAST; }
+/* the way along the wall (ex, ez) and out of it (nx, nz), in the row's frame */
+static inline void home_ins_axes(const HInsert *in, float *ex, float *ez, float *nx, float *nz) {
+    const int side = home_wall_side(in->wall);
+    *ex = side ? 0.0f : 1.0f; *ez = side ? 1.0f : 0.0f;
+    *nx = in->wall == HIW_WEST ? -1.0f : in->wall == HIW_EAST ? 1.0f : 0.0f;
+    *nz = in->wall == HIW_FRONT ? -1.0f : in->wall == HIW_BACK ? 1.0f : 0.0f;
+}
+/* the point a along the wall, `out` out of it, in the row's frame */
+static inline void home_ins_point(const HInsert *in, float a, float out, float *x, float *z) {
+    float ex, ez, nx, nz;
+    home_ins_axes(in, &ex, &ez, &nx, &nz);
+    const int side = home_wall_side(in->wall);
+    *x = (side ? in->z : 0.0f) + a * ex + out * nx;
+    *z = (side ? 0.0f : in->z) + a * ez + out * nz;
+}
 /* HM5c2b's forms. Frames: two legs and a head (corners chamfered or not), one leg raked, a diagonal a storey, two raked legs
  * meeting over the middle. Fins: blades on the bay lines (raked in plan), a brise-soleil of thin upright fins standing off
  * the wall in front of the windows (HIS_BLADE_SQ), an egg-crate grid, a louvred crown over the top storey. Hexagons: a honeycomb of hexagonal frames, a box clad in hexagonal panels. Screen strips: a lattice of
@@ -205,26 +231,36 @@ enum {
     HIS_BLADE, HIS_BLADE_SQ, HIS_GRID, HIS_LOUVRE,
     HIS_HONEYCOMB, HIS_HEXCLAD,
     HIS_STRIP, HIS_STRIP_STAR,
+    HIS_STAIR, HIS_DOGLEG,      /* HM5c2c1: a straight flight a storey along the front; two a storey, out and back */
     HIS_COUNT
 };
+/* HM5c2c1: stairs. A stair (HI_STAIRS) rises along its unit's front to a landing at an upper door on each floor it reaches:
+ * from the ground (s0 0) to the floors s0 + 1..s1, or hung from a landing at a door on floor s0 to s1 (a street-line front's).
+ * Concrete (solid upstands if `screen`, else a kerb and the kit's rails) or steel (`cage`). The doors: INS_DOOR_W wide, at
+ * in->door on each landing's floor (home_insert_door_at). */
+#define INS_DOOR_W   0.90f
+#define INS_DOOR_H   2.05f
+#define STAIR_GAP    0.12f   /* a dog-leg's spine between its lanes */
+static inline int home_stair_door_floor(const HInsert *in, int k) { return k >= (in->s0 ? in->s0 : 1) && k <= in->s1; }
 const char *home_insert_shape_name(int shape);
 /* An insertion's members (HM5c2b): convex prisms of concrete. HMB_ELEV: a polygon p in the front's elevation (x along it,
  * y up) pushed out from the wall a0..a1 (out: towards the street, from the wall's face; a negative a0 runs into the wall);
  * HMB_PLAN: a polygon in plan (x, out) pushed up a0..a1. A hexagon's glass (HMR_GLASS) is the window it frames. The rules,
  * the shell, the dressing and the walker all read home_insert_members. */
 enum { HMB_ELEV = 0, HMB_PLAN };
-enum { HMR_LEG = 0, HMR_BEAM, HMR_SHELF, HMR_FIN, HMR_SLAT, HMR_RING, HMR_GLASS, HMR_POST, HMR_TIE };
+enum { HMR_LEG = 0, HMR_BEAM, HMR_SHELF, HMR_FIN, HMR_SLAT, HMR_RING, HMR_GLASS, HMR_POST, HMR_TIE,
+       HMR_FLIGHT, HMR_STEP, HMR_LANDING, HMR_UPSTAND, HMR_STRINGER, HMR_TREAD };   /* HM5c2c1: a stair's */
 typedef struct HMember {
     uint8_t axis, role, n;
     float   p[8][2];
     float   a0, a1;
 } HMember;
-#define HG_MAX_MEMBERS 64
+#define HG_MAX_MEMBERS 80
 #define INS_OFF        0.40f   /* a member crossing windows stands this far off the wall at least (the shell's 0.35 m
                                   "something in front" test: the window behind is still cut) */
 /* the kinds built of members */
 static inline int home_insert_membered(const HInsert *in) {
-    return in->kind == HI_FRAME || in->kind == HI_FINS || in->kind == HI_SCREEN || (in->kind == HI_HEX && in->shape != HIS_HEXCLAD);
+    return in->kind == HI_FRAME || in->kind == HI_FINS || in->kind == HI_SCREEN || in->kind == HI_STAIRS || (in->kind == HI_HEX && in->shape != HIS_HEXCLAD);
 }
 #define HG_MAX_INS  24
 #define INS_PARTY   0.30f   /* kept off a party wall or a corner (the balconies' figure) */
@@ -233,7 +269,8 @@ static inline int home_insert_membered(const HInsert *in) {
 const char *home_insert_name(int kind);
 const char *home_insert_face_name(int face);
 /* the kinds the steps so far build */
-static inline int home_insert_built(int kind) { return kind <= HI_SCREEN; }   /* HM5c2a boxes, rounded bays; HM5c2b frames, hexagons, fins, strips */
+static inline int home_insert_built(int kind) { return kind <= HI_TOWER; }   /* HM5c2a boxes, rounded bays; HM5c2b frames, hexagons, fins,
+                                                                                strips; HM5c2c1 stairs and stair towers */
 
 /* The yards by region (residential roadmap HM2b; the user, 2026-11-16): a megacity's houses have small,
  * mostly paved yards, somewhere between Tokyo-tight and British terraced, Europe on the larger side, and
@@ -288,10 +325,28 @@ typedef struct HGraph {
  * in it at storey k (0: no room for a window there) */
 void        home_insert_span(const HGraph *g, const HInsert *in, float *y0, float *y1);
 int         home_insert_window(const HGraph *g, const HInsert *in, int k, float *sill, float *head);
-/* the hung insertion over unit u's front door, sheltering it as a canopy would, or -1 */
+/* the hung insertion over unit u's front door, sheltering it as a canopy would (HM5c2c1: or a stair's landing), or -1 */
 int         home_door_insert(const HGraph *g, int u);
 /* HM5c2b: insertion in's members (in the row's frame: x along the front, y over the unit's floor's datum, out from in->z) */
 int         home_insert_members(const HGraph *g, const HInsert *in, HMember *out, int max);
+/* HM5c2c1: whether a stair's door on floor k of unit u stands where a window centred at (x, z) on a wall facing (mx, mz), hw
+ * either side of its middle, would be (the window there is the door) */
+int         home_insert_door_at(const HGraph *g, int u, int k, float x, float z, float hw, float mx, float mz);
+/* ...and stair in's doors: their floors and middles (along its wall); returns the count */
+int         home_insert_doors(const HGraph *g, const HInsert *in, int *k, float *x, int max);
+/* ...and a stair's flights and landings (the dressing's rails, home_lab): each flight's foot riser x, its foot's height, its
+ * risers, a riser's height, the way it rises, its lane (out o0..o1) and whether that lane is the outer one; each landing's
+ * x0..x1, floor, out to; a stair tower's head: how far back over the roof it runs (0: none) */
+typedef struct HFlight { float xa, ya, h, s, o0, o1; int n, outer; } HFlight;
+typedef struct HLanding { float x0, x1, y, d, xFree; } HLanding;
+int         home_stair_parts(const HGraph *g, const HInsert *in, HFlight *fl, int *nfl, HLanding *la, int *nla, float *tread);
+/* the windows of the wall a member insertion stands against (home_front_windows on the front) that it stands in front of,
+ * within the shell's 0.35 m */
+int         home_insert_windows_lost(const HGraph *g, const HInsert *in);
+/* the windows of unit u's slice of main mi's wall `wall` (HIW_*) as the shell lays them out, in the wall's frame (along it,
+ * up: x0, x1, y0, y1, the shell's 0.12 m margin round each); the front's are home_front_windows. Returns the count. */
+int         home_wall_windows(const HGraph *g, int mi, int u, int wall, float (*out)[4], int max);
+float       home_tower_back(const HGraph *g, const HInsert *in);
 /* The front windows of unit u's slice of main mi as the shell cuts them (add_windows: a window a bay, sills and heads, a
  * French window where a balcony is), each widened by the shell's 0.12 m margin: x0, x1, y0, y1. Returns the count. */
 int         home_front_windows(const HGraph *g, int mi, int u, float (*out)[4], int max);

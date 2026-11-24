@@ -846,6 +846,94 @@ down the street at 30 m 4.23 against 4.17, over the roofs 5.15 against 5.06, fro
 `board_noon_b.jpg`, `board_night_a.jpg`, `board_night_b.jpg` (all 20 styles with a sheet; the villa (Southern Europe) and
 RCC found two views, not three).
 
+### Stairs and stair towers (HM5c2c1)
+
+HM5c2c was split in two before starting (2026-11-23): the circulation on the front here, the roof's additions (unfinished
+storeys, roof rooms) in HM5c2c2. The sheets: Korea 2 (a concrete dog-leg with solid upstands) and 6 (a straight flight), RCC
+3 (a dog-leg across the front, steel rails), the self-built sheets' 1 and 3 (a straight flight, a dog-leg) and 5 (an open
+steel stair), shophouse 6 (a flight from the first floor to the second), the Southern European villa's 3; Georgian 5 (a
+glass stair tower past the parapet) and the brownstone's 6 (a glass service tower where the bay was).
+
+**A stair** (`HI_STAIRS`, a member kind) rises from the ground along a wall of its unit to a **landing at an upper door** on
+each floor it reaches: the owners split the house, the upper floor with its own way in from outside. **Which wall** (the user,
+2026-11-23, after the first board: stairs must reach the ground, and stand "on the side of the property rather than the
+front", mid-terrace ones at the back, where they are seen from the lanes HM2b cut between the plots): against the **front**
+of a house with a front yard, or a **free side** (the side gap of a detached house, a semi's open side, a terrace's end unit);
+where neither takes it, against the **back**, into the rear yard. **Never on a pavement**: a street-line house's stair is on
+its side or its back. (The first build hung street-line ones from a first-floor door up to the next: dropped.) Each stair keeps
+its wall (`HInsert.wall`, `HIW_*`; `home_ins_point` maps along it and out of it to the row's frame, and the rules, the shell,
+the dressing, the walker and the views all read it). The door (0.9 by 2.05 m, the unit's door colour, panelled or glazed over)
+is cut in the main's body where a window was (`add_stair_doors`; `add_windows` and `home_wall_windows` leave that window
+out: `home_insert_door_at`). `home_stair_parts` lays it out from its door (`HInsert.door`), the way it rises (`lean`), its
+flights' width (`w`) and tread (`t`):
+
+| Form | Built |
+|---|---|
+| **straight** (`HIS_STAIR`) | one flight a storey against the wall from the ground to a landing 1.05 m long round the door (longer over the front door, below); on a side, rising away from the street (its foot by the pavement or the front yard) |
+| **dog-leg** (`HIS_DOGLEG`) | two flights a storey: the first in the outer lane away from the landing, a half landing over both lanes, the second in the lane against the wall back to the landing; a second storey's climb stacked over the first (the same risers a flight, so its half landing stands over the first's); columns under the half landings' far corner and the landing's free corner; two lanes need 1.6-2.0 m (a rear yard mostly) |
+
+Concrete: an inclined slab a flight (0.2 m plumb, its foot cut level on the ground) with a triangle a step on it, treads and
+landings as steps (`HF_STEP`, tiled on some Southern European and colonial ones), and either **solid upstands** along the open
+sides with a spine between a dog-leg's lanes (Korea 2: `screen`) or a kerb and the **kit's steel rails** (posts a metre or so
+apart on the treads, a top and a middle rail along the slope, the roof railing round the landings). **Steel** (`cage`; Self
+Built 5): two stringers a flight, plate treads, plate landings, posts under a grounded one's landings, all painted steel
+(`HF_TRIM`). Risers at most 0.2 m (0.22 hung), treads 0.21-0.25 m, flights 0.72-1.1 m wide (narrowed to a shallow yard). A
+bulkhead over each upper door, a pot on some concrete landings.
+
+**Where:** the front and the free sides first, the back only where none of them takes it. On each wall (`stair_wall`: its run,
+the slice at the front and back, the main's depth on a side; its reach, to the front yard's margin, the rear boundary less
+0.3 m, the side boundary less 0.1 m) the placing tries every door (the wall's window places on the first floor, then every
+quarter metre) both ways, in the drawn form first, and keeps the one that **costs the fewest windows** (those its doors take
+and those its flights stand in front of: the shell leaves them uncut, a blank wall behind the flight; `home_wall_windows` lays
+a back's or a side's out as the shell does), a window's place, the drawn way, the front over a side and the side its owner would rather (so a street's side stairs are not all one way) on a tie. On the front it
+tries the landing **over the unit's front door** first (Korea 6): the landing is then the door's shelter and the canopy there
+goes, as under HM5c2a's boxes (`home_door_insert`). A unit with no wall a storey's flight fits against at its steepest, or none
+with room out of it for a flight, draws its next kind instead (`stair_room` in `feasible`: the plan's "a kind a unit's body
+can't take is skipped"). That changed the draw of those units only; their other kinds are HM5c2a's and HM5c2b's placing.
+
+**The rules** (`stair_fault`, in the row's frame): its wall one a stair may stand against; every member and door within the
+wall's run (0.2 m off a party wall or a corner), its reach, within its own plot; nothing standing in its way (a porch, a bay,
+a wing, an outrigger, an extension, a neighbour's too, a stack); on the front, balconies in its way given up and its doors
+never onto a carved one; apart from the unit's other insertion, which is checked again with the stair in (its door moves the
+windows other members are laid out by). Not the members' window rule (flights may stand in front of windows) nor the tie.
+What is **under 2.2 m** of it keeps off the paths, drives, cars, sheds and boundaries (a flight rises over a path);
+**nothing under the door's head and 0.15 m** stands in the front door's way, and a door set back in a recess (a pilotis'
+core, a five-foot way's shop) keeps a way in 1.2 m wide through the recess's mouth; nor under 2.6 m in front of a shop front.
+The rule broken on purpose (`insert`) pushes a stair off the end of its wall's run.
+
+**A stair tower** (`HI_TOWER`, a glass box on the ground): a bay wide (1.9-2.5 m; over the whole of a bay it takes the place
+of, the brownstone's 6: 3.0-3.2 m), 1.7-2.4 m deep in the yard, from the ground the house's full height. Over a flat roof or a
+parapet it rises **2.6 m past the wall plate by a head** that runs back over the roof (`home_tower_back`: 1.0 m over a flat
+roof's deck with a steel door out onto it at its back, 0.3 m over a Georgian parapet's coping); else under the gutter. Painted
+steel posts at its corners and bands at its foot, its floors, the head's floor and its top, a cap proud all round; glass between
+the bands with a **stairwell painted behind it** (`HG_STAIR`, `house.glsl` `houseStairwell`): a dog-leg's flights with their
+rails seen with parallax (the near flight 0.6 m in, the far one 1.3 m, the back wall 1.9 m), dark against a lit wall at night
+(a stairwell's lights, on most of the night whatever the homes' hours), dim by day; the ground storey's front its glazed door
+(`HG_STAIR_DOOR`). A steel riser up one side half the time (the brownstone's), plants trailing over its cap. Far: its glass,
+head and cap. The windows behind it are inside it (not cut).
+
+**Measured** (`home_lab`, 10,000 rows; 2026-11-23, with stairs on the sides and backs): 0 invalid, 0 not deterministic, 0
+bad faces, 0 z-fighting in every archetype; the rule broken on purpose caught every time. Of the units drawing a stair, the
+share that found a place: Korea's 0.99, RCC's 0.95, the Southern European villa's 0.94, colonial's 0.89, the self-built's 0.76,
+the shophouse's 0.67 (against the front alone they had been 0.24-0.60); home_lab's floor for stairs is 0.5, as the other kinds'.
+Their walls: the street-line styles' on a side a sixth to two fifths of the time (the self-built's 0.36, the shophouse's 0.40,
+colonial's 0.73), the rest at the back; the yard styles' at the front a quarter to a third of the time, on a side (RCC 0.28, the
+villa's 0.19; Korea's 0.5 m side gaps take none) or the back for the rest (0.58-0.66). Dog-legs: two fifths to a half (most
+at the back, where the yards are deep); steel: a third of the self-built's; solid upstands: over half of Korea's. 20-25
+members a stair; 0.5 to 1.6 windows a stair costs on its wall (4 at most). Forced into Los Angeles for the captures, a style
+takes LA's yards and side gaps (Korea's side stairs on the board are LA's). Towers: the brownstone's 0.60 (in the bay's place), Georgian's 0.52 (its doors and area
+steps take the rest), every one with a head. Against HM5c2b: the near shell +6 to +8 triangles (846 a detached house, 686 a
+semi half, 597 a terrace unit), the far +1 (58, 55, 51; budget 60). In the game (night, three runs each, the same build with
+stairs and towers off): at a Korean stair 4.69 ms against 4.74, down the street at 30 m 3.81 against 3.81, at a Georgian
+tower 4.66 against 4.67, from the air over a Georgian suburb 8.60 against 8.49: nothing on the ground, **+0.11 ms from the
+air** (budget +0.5 on the ground, +1.0 from the air). Boards `build/home/hm5c2c1/board_noon_a.jpg`, `board_noon_b.jpg`,
+`board_night_a.jpg`, `board_night_b.jpg` (Korea, RCC, self-built, shophouse; the Southern European villa, Georgian, the
+brownstone). The near shell's triangles with the stairs on sides and backs: 850 a detached house, 693 a semi half, 602 a
+terrace unit; the far 58, 57, 53 (budget 60). The frame again with them (self-built, night, three runs each, with and without
+stairs and towers): down the street at 30 m 3.30 ms against 3.29, from the air 8.17 against 8.16. Board
+`build/home/hm5c2c1/board_closeups.jpg` shows stairs close to (home_lab's renders) on each wall: a side's in a narrow gap is
+seen only glancingly from the street, as a passer-by would.
+
 ## Massing and parts
 
 | Part | Size | Notes |

@@ -326,11 +326,20 @@ int city_home_inserts(int cx, int cz, HomeInsertView *out, int max) {
             float y0, y1;
             home_insert_span(G, in, &y0, &y1);
             HomeInsertView *v = &out[n++];
-            home_to_world(G, 0.5f * (in->x0 + in->x1), in->z - in->depth, &v->x, &v->z);
+            /* its outer face's middle and the way it faces (a stair's wall may be the back or a side: HM5c2c1), and how far
+             * its plot runs on past it that way */
+            float ex, ez, nx, nz, px, pz;
+            home_ins_axes(in, &ex, &ez, &nx, &nz);
+            home_ins_point(in, 0.5f * (in->x0 + in->x1), in->depth, &px, &pz);
+            home_to_world(G, px, pz, &v->x, &v->z);
             v->y = r->base + r->dy[in->unit] + SIDEWALK_HEIGHT + 0.5 * (y0 + y1);
-            v->nx = -G->nx; v->nz = -G->nz;
+            v->nx = nx * G->tx + nz * G->nx; v->nz = nx * G->tz + nz * G->nz;
             v->w = in->x1 - in->x0; v->h = y1 - y0;
             v->kind = in->kind; v->face = in->face; v->style = G->style; v->ground = in->s0 == 0;
+            const HUnit *un = &G->unit[in->unit];
+            v->yard = in->wall == HIW_BACK ? un->depth - pz : in->wall == HIW_WEST ? px - un->x0 : in->wall == HIW_EAST ? un->x1 - px : pz;
+            v->wall = in->wall;
+            v->fnx = -G->nx; v->fnz = -G->nz; v->street = pz;
         }
     }
     chunk_gen_free(&g);
@@ -433,7 +442,11 @@ int city_home_outlines(ChunkGen *g, int ri, double (*v)[4][2], int max, int walk
                 for (int q = 0; q < e->n; ++q) if (e->p[q][1] < c0 + 0.05f) { fx0 = fminf(fx0, e->p[q][0]); fx1 = fmaxf(fx1, e->p[q][0]); }
                 x0 = fx0; x1 = fx1;
             }
-            n = outline_rect(G, x0, in->z - d1, x1, in->z - fmaxf(d0, 0.0f), v, n, max);
+            /* (along its wall: HM5c2c1's stairs stand against the back or a side too) */
+            float px, pz, qx, qz;
+            home_ins_point(in, x0, fmaxf(d0, 0.0f), &px, &pz);
+            home_ins_point(in, x1, d1, &qx, &qz);
+            n = outline_rect(G, fminf(px, qx), fminf(pz, qz), fmaxf(px, qx), fmaxf(pz, qz), v, n, max);
         }
     }
     /* HM5e3: the boundaries built (walls, kerbs and plinths), their piers, the gates' leaves (shut), China's gatehouses'

@@ -17,6 +17,8 @@
  *   the graph     the insertions this step builds (HM5c2a: boxes and rounded bays), each across whole bays of its unit's
  *                 front (home_front_bays) so the windows beside it keep their places; what stands in the way is taken in
  *                 or tried elsewhere; home_check_inserts: their rules
+ *                 (HM5c2b: frames, hexagons, fins and screen strips as members; HM5c2c1: stairs as members, laid out from their
+ *                 upper doors, and glass stair towers on the ground)
  *   the shell     home_shell_ins.c: their solids and their own openings, joined to the house by its CSG
  *   the dressing  hs_inserts: lights under a hung one, a screen box's breeze blocks, a cage's bars, plants on top
  *
@@ -95,6 +97,18 @@ static const IStyle IST[HS_COUNT] = {
 };
 #undef KINDS
 
+/* HM5c2c1: stairs (the layout's section below) and stair towers */
+#define STAIR_LAND 1.05f   /* a landing at a door, along the front (INS_DOOR_W and its frame) */
+#define STAIR_V    0.20f   /* a concrete flight's slab, plumb */
+#define STAIR_LT   0.20f   /* a landing's slab (a steel one's plate 0.08) */
+#define STAIR_UP   0.95f   /* an upstand's or a rail's top over the nosings */
+#define STAIR_UT   0.12f   /* an upstand's thickness */
+#define STAIR_COL  0.25f   /* a concrete dog-leg's columns (a steel stair's posts 0.08) */
+#define STAIR_HMAX 0.20f   /* the steepest riser */
+#define STAIR_HMAX_HUNG 0.22f   /* ...a hung one's on a street-line front */
+#define STAIR_PARTY 0.20f  /* a stair's ends off a party wall or a corner */
+#define TOWER_HEAD 2.60f   /* a stair tower's head over a flat roof's deck or a parapet's wall plate (a door out onto the roof) */
+
 /* ---------------------------------------------------------------------------
  * Heights
  * ------------------------------------------------------------------------- */
@@ -112,10 +126,24 @@ static float ins_ceiling(const HVol *m) {
     return m->eaves - (m->overhang * tanf(m->pitch * 0.017453293f) + 0.2f + 0.3f);
 }
 
+/* HM5c2c1: a stair tower rises past a flat roof or a parapet by a stair head onto the roof (Georgian 5) */
+static int tower_rises(const HVol *m) { return m->roof == HR_FLAT || m->parapet == 1; }
+
 void home_insert_span(const HGraph *g, const HInsert *in, float *y0, float *y1) {
     HVol own;
     const HVol *m = home_unit_vol(g, in->vol, in->unit, &own);
     const float P = g->plinth, H = g->storeyH;
+    if (in->kind == HI_STAIRS) {
+        /* from the ground, or a hung one's bottom landing's slab; to its top landing's upstands */
+        *y0 = in->s0 == 0 ? 0.0f : P + (float)in->s0 * H - STAIR_LT - 0.05f;
+        *y1 = P + (float)in->s1 * H + STAIR_UP + 0.05f;
+        return;
+    }
+    if (in->kind == HI_TOWER) {
+        *y0 = 0.0f;
+        *y1 = tower_rises(m) ? m->eaves + TOWER_HEAD : ins_ceiling(m);
+        return;
+    }
     *y0 = in->s0 == 0 ? 0.0f : P + (float)in->s0 * H - INS_SLAB;
     *y1 = fminf(P + (float)(in->s1 + 1) * H - 0.1f, ins_ceiling(m));
     const int memb = home_insert_membered(in);
@@ -162,7 +190,7 @@ int home_insert_window(const HGraph *g, const HInsert *in, int k, float *sill, f
 
 const char *home_insert_shape_name(int s) {
     static const char *const N[HIS_COUNT] = { "portal", "chamfer", "lean", "zigzag", "apex", "blade", "brise-soleil", "grid", "louvre",
-                                              "honeycomb", "hex-clad", "strip", "star strip" };
+                                              "honeycomb", "hex-clad", "strip", "star strip", "straight", "dog-leg" };
     return s >= 0 && s < HIS_COUNT ? N[s] : "?";
 }
 
@@ -194,8 +222,92 @@ int home_front_windows(const HGraph *g, int mi, int u, float (*out)[4], int max)
             }
             if (fb >= 0 && home_balcony_carved(g->balc[fb].kind)) continue;
             if (fb >= 0) { ww = home_french_width(ww0, bw); sl = fl + 0.03f; hd = fminf(fl + 2.2f, v->eaves - 0.2f); }
+            /* HM5c2c1: a stair's door in its place */
+            if (k > 0 && home_insert_door_at(g, u, k, c, v->z0, 0.5f * ww, 0.0f, -1.0f)) continue;
             out[n][0] = c - 0.5f * ww - 0.12f; out[n][1] = c + 0.5f * ww + 0.12f;
             out[n][2] = sl - 0.12f;            out[n][3] = hd + 0.12f;
+            n++;
+        }
+    }
+    return n;
+}
+
+/* HM5c2c1: a wall of unit u's slice of main mi: its face (z, or x on a side), its run along it (a0..a1: the slice at the front
+ * and the back, the main's depth on a side), how far out of it a stair may reach (to the yard's margin, the rear boundary,
+ * the side boundary), and whether a stair may stand there at all (a side only where the slice ends at the main's own end: no
+ * party wall; the front only of a house with a front yard: never on a pavement). */
+static int stair_wall(const HGraph *g, int mi, int u, int wall, float *face, float *a0, float *a1, float *reach) {
+    HVol own;
+    const HVol *m = home_unit_vol(g, mi, u, &own);
+    const HUnit *un = &g->unit[u];
+    const float sx0 = fmaxf(m->x0, un->x0), sx1 = fminf(m->x1, un->x1);
+    if (sx1 - sx0 < 1.0f) return 0;
+    switch (wall) {
+    case HIW_FRONT: {
+        if (home_style_street(g->style)) return 0;
+        float s0, bw;
+        const int nb = home_front_bays(g, mi, u, &s0, &bw);
+        if (nb <= 0) return 0;
+        *face = m->z0; *a0 = s0; *a1 = s0 + bw * (float)nb;
+        *reach = m->z0 - home_yard(g->region)->proj;
+        return 1;
+    }
+    case HIW_BACK:
+        *face = m->z1; *a0 = sx0; *a1 = sx1; *reach = un->depth - m->z1 - 0.3f;
+        return 1;
+    case HIW_WEST:
+        if (sx0 > m->x0 + 0.01f) return 0;
+        *face = m->x0; *a0 = m->z0; *a1 = m->z1; *reach = m->x0 - un->x0 - 0.1f;
+        return 1;
+    case HIW_EAST:
+        if (sx1 < m->x1 - 0.01f) return 0;
+        *face = m->x1; *a0 = m->z0; *a1 = m->z1; *reach = un->x1 - m->x1 - 0.1f;
+        return 1;
+    default: return 0;
+    }
+}
+
+int home_wall_windows(const HGraph *g, int mi, int u, int wall, float (*out)[4], int max) {
+    if (wall == HIW_FRONT) return home_front_windows(g, mi, u, out, max);
+    float face, a0, a1, reach;
+    HVol own;
+    const HVol *v = home_unit_vol(g, mi, u, &own);
+    /* (the front's test of a free wall, without its pavement rule: the back and a side whatever the style) */
+    const HUnit *un = &g->unit[u];
+    const float sx0 = fmaxf(v->x0, un->x0), sx1 = fminf(v->x1, un->x1);
+    if (wall == HIW_BACK) { face = v->z1; a0 = sx0; a1 = sx1; }
+    else if (!stair_wall(g, mi, u, wall, &face, &a0, &a1, &reach)) return 0;
+    HFinish fin;
+    home_finish(g, u, &fin);
+    /* the shell's add_windows: a window a bay of about 2.7 m (4 m on a side, some of them left blank there: all counted) */
+    const float L = a1 - a0, bwant = home_wall_side(wall) ? 4.0f : 2.7f;
+    if (L < 1.4f) return 0;
+    const int nb = (int)fmaxf(1.0f, floorf(L / bwant + 0.5f));
+    const float bw = L / (float)nb, ww = fminf(fin.winW, bw - 0.6f);
+    if (ww < 0.3f) return 0;
+    const float mx = wall == HIW_WEST ? -1.0f : wall == HIW_EAST ? 1.0f : 0.0f, mz = wall == HIW_BACK ? 1.0f : 0.0f;
+    int n = 0;
+    for (int k = 0; k < v->storeys; ++k) {
+        const float fl = g->plinth + (float)k * g->storeyH;
+        float sill = fl + (k == 0 ? 0.75f : 0.85f);
+        const float head = fminf(fl + 2.15f, v->eaves - 0.25f);
+        if (head - sill < 0.8f) continue;
+        if (head - sill > fin.winH) sill = head - fin.winH;
+        for (int b = 0; b < nb && n < max; ++b) {
+            const float c = a0 + ((float)b + 0.5f) * bw;
+            const float x = home_wall_side(wall) ? face : c, z = home_wall_side(wall) ? c : face;
+            if (k > 0 && home_insert_door_at(g, u, k, x, z, 0.5f * ww, mx, mz)) continue;
+            /* behind a volume standing against the wall (an outrigger, an extension, a wing): the shell cuts none */
+            int behind = 0;
+            for (int i = 0; i < g->nvol && !behind; ++i) {
+                const HVol *o = &g->vol[i];
+                if (o->role <= HV_ROW || head < o->y0 || sill > o->top) continue;
+                const float px = x + mx * 0.2f, pz = z + mz * 0.2f;
+                behind = px > o->x0 - 0.5f * ww && px < o->x1 + 0.5f * ww && pz > o->z0 - 0.5f * ww && pz < o->z1 + 0.5f * ww;
+            }
+            if (behind) continue;
+            out[n][0] = c - 0.5f * ww - 0.12f; out[n][1] = c + 0.5f * ww + 0.12f;
+            out[n][2] = sill - 0.12f;          out[n][3] = head + 0.12f;
             n++;
         }
     }
@@ -562,9 +674,251 @@ static void strip_members(MB *b, const HGraph *g, const HInsert *in, float y0, f
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * HM5c2c1: stairs. The layout along the front (the plan's "HM5c2c1"): a stair rises the way in->lean points, to a landing
+ * STAIR_LAND long round its door at in->door on each floor it reaches.
+ *   straight  one climb: its flight against the wall (out 0..w) from the foot up to the landing; hung, a landing at a door
+ *             on the floor below beyond its foot
+ *   dog-leg   a climb a storey: the first flight in the outer lane (out w + STAIR_GAP .. D) from beside the landing away
+ *             from it, a half landing, the second in the lane against the wall back to the landing; a second storey's
+ *             climb stacked over the first (the same risers a flight, so the half landings stand over each other)
+ * Concrete: an inclined slab a flight (STAIR_V plumb) with a triangle a step on it, landings STAIR_LT thick, upstands
+ * (in->screen) on the open sides and a spine between a dog-leg's lanes; columns under a grounded dog-leg's half landings and
+ * its landing's free corner. Steel (in->cage): two stringers a flight, plate treads, plate landings on posts.
+ * ------------------------------------------------------------------------- */
+
+typedef struct StairPlan {
+    int   nclimb, n;       /* climbs (a storey each); risers a climb's flight (straight) or each flight (dog-leg) */
+    int   dog, hung;
+    float s, t, w, D, Lh;  /* the way it rises; a tread; a flight's width; out; half a landing */
+    float yA[3], h[3];     /* each climb's foot and its risers */
+    float xf;              /* the foot riser's x (straight); a dog-leg's first flight's (beside the landing) */
+    float xh0, xh1;        /* a dog-leg's half landings, from the near edge to the far */
+    float xb0, xb1;        /* a hung straight stair's bottom landing */
+} StairPlan;
+
+static float floor_y(const HGraph *g, int k);
+
+static int stair_plan(const HGraph *g, const HInsert *in, StairPlan *P) {
+    memset(P, 0, sizeof(*P));
+    P->dog = in->shape == HIS_DOGLEG; P->hung = in->s0 > 0;
+    P->s = in->lean >= 0.0f ? 1.0f : -1.0f; P->t = in->t; P->w = in->w; P->D = in->depth; P->Lh = 0.5f * (in->r > STAIR_LAND ? in->r : STAIR_LAND);
+    P->nclimb = in->s1 - in->s0;
+    if (P->nclimb < 1 || P->nclimb > 2 || (!P->dog && P->nclimb != 1) || P->t < 0.15f) return 0;
+    for (int c = 0; c < P->nclimb; ++c) P->yA[c] = in->s0 + c == 0 ? 0.0f : floor_y(g, in->s0 + c);
+    const float rise0 = floor_y(g, in->s0 + 1) - P->yA[0];
+    if (P->dog) {
+        P->n = (int)ceilf(rise0 / (2.0f * STAIR_HMAX) - 1e-4f);   /* risers a flight, the same every climb */
+        for (int c = 0; c < P->nclimb; ++c) P->h[c] = (floor_y(g, in->s0 + c + 1) - P->yA[c]) / (float)(2 * P->n);
+        P->xf = in->door + P->s * P->Lh;
+        P->xh0 = P->xf + P->s * (float)(P->n - 1) * P->t;
+        P->xh1 = P->xh0 + P->s * (P->w + 0.1f);
+    } else {
+        /* the steepest the risers allow: a terrace unit's front is short (a hung one's, a self-built favela's, steeper still) */
+        P->n = (int)ceilf(rise0 / (P->hung ? STAIR_HMAX_HUNG : STAIR_HMAX) - 1e-4f);
+        P->h[0] = rise0 / (float)P->n;
+        P->xf = in->door - P->s * P->Lh - P->s * (float)(P->n - 1) * P->t;
+        if (P->hung) { P->xb1 = P->xf; P->xb0 = P->xf - P->s * STAIR_LAND; }
+    }
+    return 1;
+}
+
+/* the stair's extent along the front, from its plan */
+static void stair_extent(const StairPlan *P, float door, float *x0, float *x1) {
+    float a = door - P->Lh, b = door + P->Lh;
+    const float e[3] = { P->xf, P->dog ? P->xh1 : P->xf, P->hung ? P->xb0 : P->xf };
+    for (int i = 0; i < 3; ++i) { a = fminf(a, e[i]); b = fmaxf(b, e[i]); }
+    *x0 = a; *x1 = b;
+}
+
+/* A stair's doors: their floors and middles. */
+static int stair_doors(const HGraph *g, const HInsert *in, int *k, float *x, int max) {
+    StairPlan P;
+    if (!stair_plan(g, in, &P)) return 0;
+    int n = 0;
+    if (P.hung && n < max) { k[n] = in->s0; x[n] = P.dog ? in->door : 0.5f * (P.xb0 + P.xb1); n++; }
+    for (int f = in->s0 + 1; f <= in->s1 && n < max; ++f) { k[n] = f; x[n] = in->door; n++; }
+    return n;
+}
+
+int home_insert_door_at(const HGraph *g, int u, int k, float x, float z, float hw, float mx, float mz) {
+    for (int i = 0; i < g->nins; ++i) {
+        const HInsert *in = &g->ins[i];
+        if (in->kind != HI_STAIRS || in->unit != u || k < in->s0 || k > in->s1) continue;
+        float ex, ez, nx, nz, fx0, fz0;
+        home_ins_axes(in, &ex, &ez, &nx, &nz);
+        home_ins_point(in, 0.0f, 0.0f, &fx0, &fz0);
+        /* a window on the stair's own wall: facing its way, in its face */
+        if (nx * mx + nz * mz < 0.9f || fabsf((x - fx0) * nx + (z - fz0) * nz) > 0.3f) continue;
+        const float a = (x - fx0) * ex + (z - fz0) * ez;
+        int fk[4];
+        float fa[4];
+        const int n = stair_doors(g, in, fk, fa, 4);
+        for (int j = 0; j < n; ++j)
+            if (fk[j] == k && fabsf(a - fa[j]) < hw + 0.5f * INS_DOOR_W + 0.1f) return 1;
+    }
+    return 0;
+}
+
+/* One flight: n risers of h from the foot riser at xa (height ya) the way s points, treads t, in the lane o0..o1. */
+static void flight_members(MB *b, const HInsert *in, float xa, float ya, int n, float h, float s, float t, float o0, float o1, int outer) {
+    const float xe = xa + s * (float)(n - 1) * t;   /* the last riser: the landing's edge */
+    const float top = ya + (float)n * h;
+    if (in->cage) {
+        /* stringers at the lane's sides, plate treads between */
+        const float V = 0.22f;
+        for (int q = 0; q < 2; ++q) {
+            const float a0 = q ? o1 - 0.03f : o0, a1 = q ? o1 : o0 + 0.03f;
+            /* along the nosings, V deep plumb; its foot cut level at the flight's foot */
+            float p[5][2];
+            int np = 0;
+            const float yb0 = ya + h - V;
+            p[np][0] = xa; p[np][1] = ya + h; np++;
+            p[np][0] = xe; p[np][1] = top; np++;
+            p[np][0] = xe; p[np][1] = top - V; np++;
+            if (yb0 < ya) {
+                p[np][0] = xa + s * (ya - yb0) * t / h; p[np][1] = ya; np++;
+                p[np][0] = xa; p[np][1] = ya; np++;
+            } else { p[np][0] = xa; p[np][1] = yb0; np++; }
+            mb_poly(b, HMB_ELEV, HMR_STRINGER, (const float (*)[2])p, np, a0, a1);
+        }
+        for (int i = 1; i < n; ++i) {
+            const float xi = xa + s * (float)(i - 1) * t, y = ya + (float)i * h;
+            mb_rect(b, HMB_ELEV, HMR_TREAD, fminf(xi, xi + s * t), y - 0.04f, fmaxf(xi, xi + s * t), y, o0 + 0.03f, o1 - 0.03f);
+        }
+        return;
+    }
+    /* the slab: under the line of the steps' inner corners, STAIR_V plumb; on the ground its foot cut level */
+    const float x1i = xe, y1i = top - h;
+    if (ya < 0.01f) {
+        const float cut = xa + s * STAIR_V * t / h;
+        const float p[4][2] = { { xa, 0.0f }, { cut, 0.0f }, { x1i, y1i - STAIR_V }, { x1i, y1i } };
+        mb_poly(b, HMB_ELEV, HMR_FLIGHT, p, 4, o0, o1);
+    } else {
+        const float p[4][2] = { { xa, ya }, { xa, ya - STAIR_V }, { x1i, y1i - STAIR_V }, { x1i, y1i } };
+        mb_poly(b, HMB_ELEV, HMR_FLIGHT, p, 4, o0, o1);
+    }
+    for (int i = 1; i < n; ++i) {
+        const float xi = xa + s * (float)(i - 1) * t, y = ya + (float)i * h;
+        const float p[3][2] = { { xi, y - h }, { xi, y }, { xi + s * t, y } };
+        mb_poly(b, HMB_ELEV, HMR_STEP, p, 3, o0, o1);
+    }
+    /* its upstand on the open side (an outer lane's), from the slab's soffit to STAIR_UP over the nosings */
+    if (in->screen && outer) {
+        const float base = ya < 0.01f ? 0.0f : ya - STAIR_V;
+        const float p[5][2] = { { xa, base }, { xa, ya + h + STAIR_UP }, { xe, top + STAIR_UP }, { xe, y1i - STAIR_V },
+                                { ya < 0.01f ? xa + s * STAIR_V * t / h : xa, ya < 0.01f ? 0.0f : ya - STAIR_V } };
+        float hp[5][2], c[8][2];
+        memcpy(hp, p, sizeof(hp));
+        const int nh = hull(hp, 5, c);
+        mb_poly(b, HMB_ELEV, HMR_UPSTAND, (const float (*)[2])c, nh, o1 - STAIR_UT, o1);
+    }
+}
+
+/* A landing xa..xb (either order) at floor y, out to D; its upstands on its outer edge and its free end (at xe, if set). */
+static void landing_members(MB *b, const HInsert *in, float xa, float xb, float y, float D, float xe, int freeEnd) {
+    const float x0 = fminf(xa, xb), x1 = fmaxf(xa, xb);
+    const float T = in->cage ? 0.08f : STAIR_LT;
+    mb_rect(b, HMB_ELEV, HMR_LANDING, x0, y - T, x1, y, -INTO_WALL_M, D);
+    if (!in->screen || in->cage) return;
+    mb_rect(b, HMB_ELEV, HMR_UPSTAND, x0, y - T, x1, y + STAIR_UP, D - STAIR_UT, D);
+    if (freeEnd) {
+        const float e0 = xe < 0.5f * (x0 + x1) ? x0 : x1 - STAIR_UT;
+        mb_rect(b, HMB_ELEV, HMR_UPSTAND, e0, y - T, e0 + STAIR_UT, y + STAIR_UP, -INTO_WALL_M, D - STAIR_UT);
+    }
+}
+
+/* a column (a concrete dog-leg's) or a post (a steel stair's) from the ground (or y0) to y1 at x, out d */
+static void stair_post(MB *b, const HInsert *in, float x, float d, float y0, float y1) {
+    const float c = in->cage ? 0.08f : STAIR_COL, hc = 0.5f * c;
+    mb_rect(b, HMB_ELEV, HMR_LEG, x - hc, y0, x + hc, y1, d - c, d);
+}
+
+int home_stair_parts(const HGraph *g, const HInsert *in, HFlight *fl, int *nfl, HLanding *la, int *nla, float *tread) {
+    StairPlan P;
+    *nfl = *nla = 0;
+    if (in->kind != HI_STAIRS || !stair_plan(g, in, &P)) return 0;
+    *tread = P.t;
+    const float s = P.s, w = P.w, D = P.D, ins = -INTO_WALL_M;
+#define FL(XA, YA, H, S, O0, O1, OUT) do { HFlight *f_ = &fl[(*nfl)++]; f_->xa = (XA); f_->ya = (YA); f_->h = (H); f_->s = (S); \
+                                          f_->o0 = (O0); f_->o1 = (O1); f_->n = P.n; f_->outer = (OUT); } while (0)
+#define LA(A, B, Y, XF) do { HLanding *l_ = &la[(*nla)++]; l_->x0 = fminf((A), (B)); l_->x1 = fmaxf((A), (B)); l_->y = (Y); \
+                             l_->d = D; l_->xFree = (XF); } while (0)
+    if (!P.dog) {
+        FL(P.xf, P.yA[0], P.h[0], s, ins, w, 1);
+        /* the landing at the door, its free end away from the flight; a hung one's bottom landing beyond its foot */
+        LA(in->door - P.Lh, in->door + P.Lh, floor_y(g, in->s1), in->door + s * P.Lh);
+        if (P.hung) LA(P.xb0, P.xb1, P.yA[0], P.xb0);
+    } else
+        for (int c = 0; c < P.nclimb; ++c) {
+            const float ya = P.yA[c], h = P.h[c], half = ya + (float)P.n * h, top = ya + 2.0f * (float)P.n * h;
+            /* out in the outer lane, the half landing over both lanes, back in the lane against the wall to the landing */
+            FL(P.xf, ya, h, s, w + STAIR_GAP, D, 1);
+            LA(P.xh0, P.xh1, half, P.xh1);
+            FL(P.xh0, half, h, -s, ins, w, 0);
+            LA(in->door - P.Lh, in->door + P.Lh, top, in->door - s * P.Lh);
+        }
+#undef FL
+#undef LA
+    return 1;
+}
+
+int home_insert_doors(const HGraph *g, const HInsert *in, int *k, float *x, int max) {
+    return in->kind == HI_STAIRS ? stair_doors(g, in, k, x, max) : 0;
+}
+
+static void stair_members(MB *b, const HGraph *g, const HInsert *in) {
+    StairPlan P;
+    HFlight fl[6];
+    HLanding la[6];
+    int nf, nl;
+    float t;
+    if (!stair_plan(g, in, &P) || !home_stair_parts(g, in, fl, &nf, la, &nl, &t)) return;
+    const float s = P.s, w = P.w, D = P.D, T = in->cage ? 0.08f : STAIR_LT;
+    for (int i = 0; i < nf; ++i) flight_members(b, in, fl[i].xa, fl[i].ya, fl[i].n, fl[i].h, fl[i].s, t, fl[i].o0, fl[i].o1, fl[i].outer);
+    for (int i = 0; i < nl; ++i) landing_members(b, in, la[i].x0, la[i].x1, la[i].y, la[i].d, la[i].xFree, 1);
+    if (!P.dog) {
+        /* a grounded steel landing on two posts at its outer corners (a concrete one cantilevers from the wall) */
+        if (!P.hung && in->cage) {
+            const float top = floor_y(g, in->s1);
+            stair_post(b, in, in->door - P.Lh + 0.06f, D, 0.0f, top - T);
+            stair_post(b, in, in->door + P.Lh - 0.06f, D, 0.0f, top - T);
+        }
+        return;
+    }
+    /* the spine between a dog-leg's lanes (solid upstands): under the first flight's soffit, up to the second's upstand */
+    for (int c = 0; c < P.nclimb && !in->cage && in->screen; ++c) {
+        const float ya = P.yA[c], h = P.h[c], half = ya + (float)P.n * h, top = ya + 2.0f * (float)P.n * h;
+        const float p[4][2] = { { P.xf, ya < 0.01f ? 0.0f : ya - STAIR_V }, { P.xh0, half - h - STAIR_V },
+                                { P.xh0, half + h + STAIR_UP }, { P.xf, top + STAIR_UP } };
+        float hp[4][2], q[8][2];
+        memcpy(hp, p, sizeof(hp));
+        const int nh = hull(hp, 4, q);
+        mb_poly(b, HMB_ELEV, HMR_UPSTAND, (const float (*)[2])q, nh, w, w + STAIR_GAP);
+    }
+    /* columns: under the half landings' far outer corner (to the top one), and the landing's free outer corner */
+    if (!P.hung) {
+        const float c = in->cage ? 0.08f : STAIR_COL;
+        const float topHalf = P.yA[P.nclimb - 1] + (float)P.n * P.h[P.nclimb - 1] - T;
+        stair_post(b, in, P.xh1 - s * 0.5f * c, D, 0.0f, topHalf);
+        const float topLand = P.yA[P.nclimb - 1] + 2.0f * (float)P.n * P.h[P.nclimb - 1] - T;
+        stair_post(b, in, in->door - s * (P.Lh - 0.5f * c), D, 0.0f, topLand);
+    }
+}
+
+/* HM5c2c1: a stair tower's head over a flat roof runs back over the deck (its door out onto the roof), over a parapet's
+ * coping only on a pitched roof behind one; 0 where it stops under the eaves */
+float home_tower_back(const HGraph *g, const HInsert *in) {
+    if (in->kind != HI_TOWER) return 0.0f;
+    HVol own;
+    const HVol *m = home_unit_vol(g, in->vol, in->unit, &own);
+    return !tower_rises(m) ? 0.0f : m->roof == HR_FLAT ? 1.0f : 0.3f;
+}
+
 int home_insert_members(const HGraph *g, const HInsert *in, HMember *out, int max) {
     if (!home_insert_membered(in) || in->vol < 0 || in->unit < 0 || in->unit >= g->nunit) return 0;
     MB b = { out, 0, max, g, in };
+    if (in->kind == HI_STAIRS) { stair_members(&b, g, in); return b.n; }
     float y0, y1;
     home_insert_span(g, in, &y0, &y1);
     float win[64][4];
@@ -609,6 +963,28 @@ static int member_meets(const HMember *m, float x0, float x1, float y0, float y1
     return m->a1 > y0 + HEPS && m->a0 < y1 - HEPS && poly_meets_rect(m, x0, x1, d0, d1);
 }
 
+/* HM5c2c1: the stretch along x of a member's part under height H (what a path, a car or a door's head meets under a flight
+ * rising over it); 0 if none of it is that low. */
+static int member_low(const HMember *m, float H, float *x0, float *x1) {
+    float a = 1e9f, b = -1e9f;
+    if (m->axis == HMB_PLAN) {
+        if (m->a0 >= H) return 0;
+        for (int i = 0; i < m->n; ++i) { a = fminf(a, m->p[i][0]); b = fmaxf(b, m->p[i][0]); }
+    } else
+        for (int i = 0; i < m->n; ++i) {
+            const int j = (i + 1) % m->n;
+            const float *p = m->p[i], *q = m->p[j];
+            if (p[1] < H) { a = fminf(a, p[0]); b = fmaxf(b, p[0]); }
+            if ((p[1] < H) != (q[1] < H)) {
+                const float x = p[0] + (q[0] - p[0]) * (H - p[1]) / (q[1] - p[1]);
+                a = fminf(a, x); b = fmaxf(b, x);
+            }
+        }
+    if (b < a) return 0;
+    *x0 = a; *x1 = b;
+    return 1;
+}
+
 /* ---------------------------------------------------------------------------
  * The rules
  * ------------------------------------------------------------------------- */
@@ -626,11 +1002,19 @@ static float reach_min(const HGraph *g) { return home_style_street(g->style) ? -
 
 
 /* The door's shelter: a porch over it, the balcony over it, or a hung insertion (the unit's door rule, home_validate's) */
+/* HM5c2c1: whether a grounded stair's landing on its first floor stands over the door (its soffit the door's shelter) */
+static int stair_over_door(const HInsert *in, const HDoor *d) {
+    if (in->kind != HI_STAIRS || in->wall != HIW_FRONT || in->s0 != 0 || in->depth < 0.6f - HEPS || fabsf(d->z - in->z) > HEPS) return 0;
+    const float Lh = 0.5f * (in->r > STAIR_LAND ? in->r : STAIR_LAND);
+    return d->x - 0.5f * d->width >= in->door - Lh + 0.05f - HEPS && d->x + 0.5f * d->width <= in->door + Lh - 0.05f + HEPS;
+}
+
 int home_door_insert(const HGraph *g, int u) {
     if (u < 0 || u >= g->nunit || g->unit[u].door < 0) return -1;
     const HDoor *d = &g->door[g->unit[u].door];
     for (int i = 0; i < g->nins; ++i) {
         const HInsert *in = &g->ins[i];
+        if (in->unit == u && stair_over_door(in, d)) return i;
         if (home_insert_membered(in) || in->unit != u || in->s0 != 1 || in->depth < 0.6f - HEPS || fabsf(d->z - in->z) > HEPS) continue;
         if (d->x - 0.5f * d->width >= in->x0 + 0.05f - HEPS && d->x + 0.5f * d->width <= in->x1 - 0.05f + HEPS) return i;
     }
@@ -647,19 +1031,32 @@ static int door_sheltered(const HGraph *g, int u) {
     return home_door_balcony(g, u) >= 0 || home_door_insert(g, u) >= 0;
 }
 
-/* An insertion's boxes (x0, x1, y0, y1, out d0, d1): a box's or a rounded bay's whole volume, a member kind's members'. */
+/* HM5c2c1: a box along an insertion's wall (a0..a1 along it, d0..d1 out of it) in the row's frame (x, z) */
+static void ins_box(const HInsert *in, float a0, float a1, float d0, float d1, float *x0, float *x1, float *z0, float *z1) {
+    float px, pz, qx, qz;
+    home_ins_point(in, a0, d0, &px, &pz);
+    home_ins_point(in, a1, d1, &qx, &qz);
+    *x0 = fminf(px, qx); *x1 = fmaxf(px, qx); *z0 = fminf(pz, qz); *z1 = fmaxf(pz, qz);
+}
+
+/* An insertion's boxes in the row's frame (x0, x1, y0, y1, z0, z1): a box's or a rounded bay's whole volume, a member kind's
+ * members'. */
 static int ins_boxes(const HGraph *g, const HInsert *in, float (*bx)[6], int max) {
     if (!home_insert_membered(in)) {
         float y0, y1;
         home_insert_span(g, in, &y0, &y1);
-        const float q[6] = { in->x0, in->x1, y0, y1, 0.0f, in->depth };
+        const float q[6] = { in->x0, in->x1, y0, y1, in->z - in->depth, in->z };
         memcpy(bx[0], q, sizeof(q));
         return 1;
     }
     HMember M[HG_MAX_MEMBERS];
     const int n = home_insert_members(g, in, M, HG_MAX_MEMBERS);
     int k = 0;
-    for (int i = 0; i < n && k < max; ++i, ++k) member_bounds(&M[i], &bx[k][0], &bx[k][1], &bx[k][2], &bx[k][3], &bx[k][4], &bx[k][5]);
+    for (int i = 0; i < n && k < max; ++i, ++k) {
+        float a0, a1, d0, d1;
+        member_bounds(&M[i], &a0, &a1, &bx[k][2], &bx[k][3], &d0, &d1);
+        ins_box(in, a0, a1, d0, d1, &bx[k][0], &bx[k][1], &bx[k][4], &bx[k][5]);
+    }
     return k;
 }
 
@@ -754,6 +1151,120 @@ static const char *member_fault(const HGraph *g, const HInsert *in, const HVol *
     }
     /* a frame or strip hung from the wall is tied back to it (on the ground it stands on its legs) */
     if ((in->kind == HI_FRAME || in->kind == HI_SCREEN || in->kind == HI_FINS) && !onGround && !ties) return "tie";
+    (void)onGround;
+    return NULL;
+}
+
+/* HM5c2c1: a stair's rules, in the row's frame (it may stand against the front, the back or a free side): its layout from the
+ * ground; its wall one a stair may stand against (stair_wall), its doors and members within its run (0.2 m off a party wall
+ * or a corner) and its reach (the yard's margin, the rear boundary, the side boundary), within its own plot; nothing standing
+ * in its way (a porch, a bay, a wing, an outrigger, an extension, a stack); on the front, no balcony in its way (those it
+ * meets were given up) and its doors never onto a carved one. What is under 2.2 m of it keeps off the paths, drives, cars,
+ * sheds and boundaries (a flight rises over a path); nothing under the door's head and 0.15 m stands in the front door's way
+ * (a door set back in a recess, a pilotis' core or a five-foot way's, keeps a way in 1.2 m wide through the recess's mouth),
+ * nor under 2.6 m in front of a shop front. Not the members' window rule: a flight may stand in front of windows (the shell
+ * leaves them uncut; the placing picks the run that costs fewest). */
+static const char *stair_fault(const HGraph *g, const HInsert *in) {
+    const int mi = in->vol, u = in->unit, front = in->wall == HIW_FRONT;
+    HMember M[HG_MAX_MEMBERS];
+    const int n = home_insert_members(g, in, M, HG_MAX_MEMBERS);
+    StairPlan P;
+    if (n < 2 || in->s0 != 0 || !stair_plan(g, in, &P)) return "stair";
+    float face, r0, r1, reach;
+    if (!stair_wall(g, mi, u, in->wall, &face, &r0, &r1, &reach) || fabsf(in->z - face) > 0.01f) return "wall";
+    HVol own;
+    const HVol *m = home_unit_vol(g, mi, u, &own);
+    const HUnit *un = &g->unit[u];
+    float y0, y1;
+    home_insert_span(g, in, &y0, &y1);
+    int fk[4];
+    float fa[4];
+    const int nd = stair_doors(g, in, fk, fa, 4);
+    for (int k = 0; k < nd; ++k) {
+        if (fa[k] - 0.5f * INS_DOOR_W < r0 + STAIR_PARTY - HEPS || fa[k] + 0.5f * INS_DOOR_W > r1 - STAIR_PARTY + HEPS) return "party";
+        for (int i = 0; i < g->nbalc && front; ++i) {
+            const HBalcony *bc = &g->balc[i];
+            if (bc->unit == u && bc->storey == fk[k] && home_balcony_carved(bc->kind) && overlap(bc->x0, bc->x1, fa[k] - 0.5f, fa[k] + 0.5f, 0.1f)) return "balcony";
+        }
+    }
+    const HDoor *dr = un->door >= 0 ? &g->door[un->door] : NULL;
+    const int recessed = dr && dr->z >= m->z0 + 0.5f;
+    int nlow = 0;
+    float low[HG_MAX_MEMBERS][2];   /* its low parts in front of a recessed door's mouth (x) */
+    for (int i = 0; i < n; ++i) {
+        const HMember *e = &M[i];
+        float a0, a1, ya, yb, d0, d1;
+        member_bounds(e, &a0, &a1, &ya, &yb, &d0, &d1);
+        if (a0 < r0 + STAIR_PARTY - HEPS || a1 > r1 - STAIR_PARTY + HEPS) return "party";
+        if (yb > y1 + HEPS) return "eaves";
+        if (d1 > reach + HEPS) return "reach";
+        float x0, x1, z0, z1;
+        ins_box(in, a0, a1, fmaxf(d0, 0.0f), d1, &x0, &x1, &z0, &z1);
+        if (x0 < un->x0 + 0.05f - HEPS || x1 > un->x1 - 0.05f + HEPS || z0 < 0.05f - HEPS || z1 > un->depth - 0.05f + HEPS) return "plot";
+        /* nothing standing in its way: a porch, a bay, a wing, an outrigger, an extension (a neighbour's too), a stack */
+        for (int k = 0; k < g->nvol; ++k) {
+            const HVol *v = &g->vol[k];
+            if (v->role <= HV_ROW || (v->role == HV_PORCH && home_porch_recessed(v->kind))) continue;
+            if (yb < v->y0 - 0.05f || ya > v->top + 0.15f) continue;
+            if (overlap(v->x0, v->x1, x0, x1, 0.1f) && overlap(v->z0, v->z1, z0, z1, 0.1f)) return "overlap";
+        }
+        for (int k = 0; k < g->nchim; ++k) {
+            const HChimney *c = &g->chim[k];
+            if (ya < c->top && overlap(c->x - 0.5f * c->w, c->x + 0.5f * c->w, x0, x1, 0.1f) && overlap(c->z - 0.5f * c->d, c->z + 0.5f * c->d, z0, z1, 0.1f)) return "chimney";
+        }
+        for (int k = 0; k < g->nbalc && front; ++k) {
+            const HBalcony *bc = &g->balc[k];
+            if (bc->unit != u || home_balcony_carved(bc->kind)) continue;
+            const float fl = home_balcony_floor(g, bc);
+            if (member_meets(e, bc->x0 - 0.05f, bc->x1 + 0.05f, fl - BALC_SLAB - 0.05f, fl + 1.15f, -0.01f, bc->depth + 0.05f)) return "balcony";
+        }
+        /* what is low of it */
+        float la0, la1, lx0, lx1, lz0, lz1;
+        if (dr && !recessed && member_low(e, g->plinth + dr->height + 0.15f, &la0, &la1)) {
+            ins_box(in, la0, la1, fmaxf(d0, 0.0f), d1, &lx0, &lx1, &lz0, &lz1);
+            if (overlap(dr->x - 0.5f * dr->width, dr->x + 0.5f * dr->width, lx0, lx1, 0.15f) && overlap(dr->z - 1.6f, dr->z, lz0, lz1, 0.0f)) return "door";
+        }
+        if (dr && recessed && front && d0 < 1.6f && nlow < HG_MAX_MEMBERS && member_low(e, 2.2f, &la0, &la1)) { low[nlow][0] = la0; low[nlow][1] = la1; nlow++; }
+        if (un->shopX1 > un->shopX0 && member_low(e, g->plinth + 2.6f, &la0, &la1)) {
+            ins_box(in, la0, la1, fmaxf(d0, 0.0f), d1, &lx0, &lx1, &lz0, &lz1);
+            if (overlap(un->shopX0, un->shopX1, lx0, lx1, 0.1f) && overlap(m->z0 - 1.6f, m->z0, lz0, lz1, 0.0f)) return "shop";
+        }
+        if (!member_low(e, 2.2f, &la0, &la1)) continue;
+        ins_box(in, la0, la1, fmaxf(d0, 0.0f), d1, &lx0, &lx1, &lz0, &lz1);
+        for (int k = 0; k < g->nsite; ++k) {
+            const HSite *st = &g->site[k];
+            if (st->kind == HE_FRONT || st->kind == HE_REAR) continue;
+            if (overlap(st->x0, st->x1, lx0, lx1, -HEPS) && overlap(st->z0, st->z1, lz0, lz1, -HEPS)) return "garden clear";
+        }
+        for (int k = 0; k < g->nbound; ++k) {
+            const HBound *bd = &g->bound[k];
+            if (!home_bound_drawn(g, bd)) continue;
+            float bx0, bz0, bx1, bz1;
+            home_bound_rect(g, bd, &bx0, &bz0, &bx1, &bz1);
+            if (overlap(bx0, bx1, lx0, lx1, -HEPS) && overlap(bz0, bz1, lz0, lz1, -HEPS)) return "boundary";
+        }
+    }
+    if (nlow) {
+        /* the recess's mouth: a way in 1.2 m wide past the stair's low parts */
+        float m0 = dr->x - 0.6f, m1 = dr->x + 0.6f;
+        for (int i = 0; i < g->nvol; ++i) {
+            const HVol *p = &g->vol[i];
+            if (p->role == HV_PORCH && p->unit == u && home_porch_recessed(p->kind)) { m0 = fminf(m0, p->x0); m1 = fmaxf(m1, p->x1); }
+        }
+        float x = m0, gap = 0.0f;
+        for (int pass = 0; pass < 2 * nlow + 1 && x < m1; ++pass) {
+            float next = m1;
+            int pushed = 0;
+            for (int i = 0; i < nlow; ++i) {
+                if (low[i][0] <= x + HEPS && low[i][1] > x) { x = low[i][1]; pushed = 1; }
+                else if (low[i][0] > x) next = fminf(next, low[i][0]);
+            }
+            if (pushed) continue;
+            gap = fmaxf(gap, fminf(next, m1) - x);
+            x = next;
+        }
+        if (gap < 1.2f - HEPS) return "door";
+    }
     return NULL;
 }
 
@@ -766,7 +1277,11 @@ static const char *ins_fault(const HGraph *g, const HInsert *in, int n) {
     HVol own;
     const HVol *m = home_unit_vol(g, mi, u, &own);
     if (in->s1 < in->s0 || in->s1 >= m->storeys) return "storey";
-    if (fabsf(in->z - m->z0) > 0.01f) return "wall";
+    if (in->kind == HI_STAIRS) {
+        const char *f = stair_fault(g, in);
+        return f ? f : apart_fault(g, in, n);
+    }
+    if (in->wall != HIW_FRONT || fabsf(in->z - m->z0) > 0.01f) return "wall";
     float a, b;
     if (!unit_slice(g, mi, u, &a, &b)) return "slice";
     if (home_insert_membered(in)) {
@@ -775,7 +1290,8 @@ static const char *ins_fault(const HGraph *g, const HInsert *in, int n) {
         return apart_fault(g, in, n);
     }
     if (in->x0 < a + INS_PARTY - HEPS || in->x1 > b - INS_PARTY + HEPS || in->x1 - in->x0 < 1.2f - HEPS) return "party";
-    if (in->depth < 0.5f - HEPS) return "shallow";
+    if (in->depth < (in->kind == HI_TOWER ? 1.4f : 0.5f) - HEPS) return "shallow";
+    if (in->kind == HI_TOWER && in->s0 != 0) return "storey";
     const float zf = in->z - in->depth;
     const int ground = in->s0 == 0;
     if (ground ? home_style_street(g->style) || zf < home_yard(g->region)->proj - HEPS : zf < reach_min(g) - HEPS) return "reach";
@@ -858,13 +1374,32 @@ static int unit_bay(const HGraph *g, int u, const HVol *m) {
     return -1;
 }
 
+/* HM5c2c1: whether unit u's front can hold a stair at all: a front a storey's straight flight and its landing long at its
+ * steepest (a hung one's two landings), or, in a yard two lanes deep, a dog-leg's; a grounded one's yard a flight wide */
+static int stair_room(const HGraph *g, int mi, int u, const HVol *m) {
+    const float rise = g->plinth + g->storeyH;
+    const int n = (int)ceilf(rise / STAIR_HMAX - 1e-4f), n2 = (int)ceilf(rise / (2.0f * STAIR_HMAX) - 1e-4f);
+    (void)m;
+    for (int wall = HIW_FRONT; wall <= HIW_EAST; ++wall) {
+        float face, a0, a1, reach;
+        if (!stair_wall(g, mi, u, wall, &face, &a0, &a1, &reach) || reach < 0.72f) continue;
+        const float L = a1 - a0 - 2.0f * STAIR_PARTY;
+        if (L >= STAIR_LAND + (float)(n - 1) * 0.22f) return 1;
+        if (reach >= 2.0f * 0.72f + STAIR_GAP && L >= STAIR_LAND + (float)(n2 - 1) * 0.22f + 0.82f) return 1;
+    }
+    return 0;
+}
+
 /* Whether a unit's body can take a kind at all (fixed for every kind at HM5c2a, so the draw is the final table's: a later
- * step only builds what was drawn). */
-static int feasible(const HGraph *g, int kind, const HVol *m, int bay, float yard) {
+ * step only builds what was drawn; HM5c2c1 gave stairs the room they need, so a unit too narrow or too shallow for one
+ * draws its next kind). */
+static int feasible(const HGraph *g, int kind, const HVol *m, int bay, float yard, int mi, int u) {
     const int st = m->storeys;
     switch (kind) {
     case HI_BOX: case HI_ROUND: return st >= 2 || bay >= 0;
-    case HI_HEX: case HI_STAIRS: return st >= 2;
+    case HI_HEX: return st >= 2;
+    /* HM5c2c1: from the ground to the first floor against a wall with room for it (never on a pavement) */
+    case HI_STAIRS: return st >= 2 && stair_room(g, mi, u, m);
     case HI_FRAME: case HI_FINS: case HI_SCREEN: return 1;
     case HI_TOWER: return st >= 2 && yard >= 1.8f && !home_style_street(g->style);
     case HI_UNFINISHED: return m->roof == HR_FLAT && st < HOME_STOREYS_MAX;
@@ -899,7 +1434,7 @@ static void draw_plans(HGraph *g, int mi) {
         const HVol *m = home_unit_vol(g, mi, u, &own);
         const int bay = unit_bay(g, u, m);
         float w[HI_COUNT];
-        for (int k = 0; k < HI_COUNT; ++k) w[k] = feasible(g, k, m, bay, m->z0) ? S->kind[k] : 0.0f;
+        for (int k = 0; k < HI_COUNT; ++k) w[k] = feasible(g, k, m, bay, m->z0, mi, u) ? S->kind[k] : 0.0f;
         const int k1 = pick_w(w, HI_COUNT, hf(h, 2u));
         if (k1 < 0) continue;
         uint16_t plan = (uint16_t)(1u << k1);
@@ -917,10 +1452,20 @@ static void draw_plans(HGraph *g, int mi) {
 static int clear_members(HGraph *g, const HInsert *in, BLog *log) {
     int took = 0;
     HMember M[HG_MAX_MEMBERS];
+    /* HM5c2c1: a stair's landing over the door shelters it: the canopy there goes (HM5c2a's boxes' way) */
+    const int du = in->unit >= 0 && in->unit < g->nunit ? g->unit[in->unit].door : -1;
+    if (du >= 0 && stair_over_door(in, &g->door[du]))
+        for (int i = g->nvol - 1; i >= 0; --i) {
+            const HVol *v = &g->vol[i];
+            if (v->role != HV_PORCH || v->kind != HP_CANOPY || v->unit != in->unit) continue;
+            if (!overlap(v->x0, v->x1, g->door[du].x - 0.5f * g->door[du].width, g->door[du].x + 0.5f * g->door[du].width, 0.0f)) continue;
+            home_repair(g, log, "insert", "unit %d: the stair's landing over its door is its canopy", in->unit);
+            home_drop_vol(g, i);
+        }
     for (int pass = 0; pass < 2; ++pass) {
         /* (the windows move when a balcony goes: French ones become a storey's own, so the members are drawn again) */
         const int n = home_insert_members(g, in, M, HG_MAX_MEMBERS);
-        for (int i = g->nbalc - 1; i >= 0; --i) {
+        for (int i = g->nbalc - 1; i >= 0 && in->wall == HIW_FRONT; --i) {
             const HBalcony *bc = &g->balc[i];
             if (bc->unit != in->unit || home_balcony_carved(bc->kind)) continue;
             const float fl = home_balcony_floor(g, bc);
@@ -939,9 +1484,10 @@ static int clear_members(HGraph *g, const HInsert *in, BLog *log) {
         if (t->kind != HE_TREE) continue;
         int hit = 0;
         for (int k = 0; k < n && !hit; ++k) {
-            float x0, x1, y0, y1, d0, d1;
-            member_bounds(&M[k], &x0, &x1, &y0, &y1, &d0, &d1);
-            hit = y0 < 0.05f && overlap(t->x0, t->x1, x0, x1, 0.0f) && overlap(t->z0, t->z1, in->z - d1, in->z - d0, 0.0f);
+            float a0, a1, y0, y1, d0, d1, x0, x1, z0, z1;
+            member_bounds(&M[k], &a0, &a1, &y0, &y1, &d0, &d1);
+            ins_box(in, a0, a1, d0, d1, &x0, &x1, &z0, &z1);
+            hit = y0 < 0.05f && overlap(t->x0, t->x1, x0, x1, 0.0f) && overlap(t->z0, t->z1, z0, z1, 0.0f);
         }
         if (!hit) continue;
         home_repair(g, log, "insert", "unit %d: a tree's place under its %s given up", in->unit, home_insert_name(in->kind));
@@ -1003,6 +1549,9 @@ static int try_add(HGraph *g, HInsert in, int bay, BLog *log, const char **why) 
     in.vol = (int8_t)main_vol(t);
     t->ins[t->nins++] = in;
     const char *f = ins_fault(t, &t->ins[t->nins - 1], t->nins - 1);
+    /* HM5c2c1: a stair's door takes a window, so the unit's insertions laid out by its windows are checked again */
+    for (int i = 0; i + 1 < t->nins && !f && in.kind == HI_STAIRS; ++i)
+        if (t->ins[i].unit == in.unit) f = ins_fault(t, &t->ins[i], i);
     free(t);
     if (f) {
         if (!*why) *why = f;
@@ -1394,6 +1943,191 @@ static void place_m(HGraph *g, int mi, int u, int kind, BLog *log) {
     home_repair(g, log, "insert", "unit %d: no room on its front for a %s (%s), left off", u, home_insert_name(kind), why ? why : "?");
 }
 
+/* ---------------------------------------------------------------------------
+ * HM5c2c1: placing stairs and stair towers
+ * ------------------------------------------------------------------------- */
+
+int home_insert_windows_lost(const HGraph *g, const HInsert *in) {
+    HMember M[HG_MAX_MEMBERS];
+    const int nm = home_insert_members(g, in, M, HG_MAX_MEMBERS);
+    float win[64][4];
+    const int nw = home_wall_windows(g, in->vol, in->unit, in->wall, win, 64);
+    int lost = 0;
+    for (int w = 0; w < nw; ++w) {
+        int hit = 0;
+        for (int k = 0; k < nm && !hit; ++k) hit = member_meets(&M[k], win[w][0], win[w][1], win[w][2], win[w][3], -1.0f, 0.36f);
+        lost += hit;
+    }
+    return lost;
+}
+
+
+/* Whether stair in keeps every rule with what stands in its way cleared (its unit's other insertions too: its door takes a
+ * window), and the front windows it costs: those its doors take and those its flights stand in front of (the shell leaves
+ * them uncut). */
+static const char *stair_try(const HGraph *g, const HInsert *in, int *lost) {
+    if (g->nins >= HG_MAX_INS) return "full";
+    HGraph *t = (HGraph *)malloc(sizeof(HGraph));
+    if (!t) abort();
+    *t = *g;
+    clear_for(t, in, -1, NULL);
+    float win[64][4];
+    const int before = home_wall_windows(t, main_vol(t), in->unit, in->wall, win, 64);
+    HInsert c = *in;
+    c.vol = (int8_t)main_vol(t);
+    t->ins[t->nins++] = c;
+    const char *f = ins_fault(t, &t->ins[t->nins - 1], t->nins - 1);
+    for (int i = 0; i + 1 < t->nins && !f; ++i)
+        if (t->ins[i].unit == c.unit) f = ins_fault(t, &t->ins[i], i);
+    if (!f) *lost = before - home_wall_windows(t, c.vol, c.unit, c.wall, win, 64) + home_insert_windows_lost(t, &c);
+    free(t);
+    return f;
+}
+
+/* A unit's stair (the sheets: Korea 2 and 6, RCC 3, self-built 1, 3 and 5, shophouse 6, the Southern European villa's 3),
+ * from the ground to the first floor (the second a time in three on a dog-leg). Against the front of a house with a front
+ * yard or a free side (the side gap of a detached house, a semi's open side, a terrace's end unit: the user, 2026-11-23, "on
+ * the side of the property rather than the front"), never on a pavement; where neither takes it, against the back (into the
+ * rear yard, towards the lane: a mid-terrace unit's). The drawn shape and make first; of the walls, doors (the wall's window
+ * places on the first floor, then every quarter metre) and ways that keep the rules, the one that costs fewest windows; a
+ * side's flight rises away from the street (its foot by the pavement). */
+static void place_stairs(HGraph *g, int mi, int u, BLog *log) {
+    Rng r = rng_make(hash_combine(g->unit[u].seed, 0x1C2C0u + (uint32_t)HI_STAIRS));
+    HVol own;
+    const HVol *m = home_unit_vol(g, mi, u, &own);
+    HFinish fin;
+    home_finish(g, u, &fin);
+    const int top = m->storeys - 1, st = g->style;
+    if (top < 1) return;
+    HInsert in;
+    memset(&in, 0, sizeof(in));
+    in.unit = (int8_t)u; in.vol = (int8_t)mi; in.kind = HI_STAIRS; in.face = HIF_CONCRETE;
+    /* the make: steel in the self-built sheets (Self Built 5) and a few South and South-East Asian owners'; solid upstands
+     * in Korea's (2) and the colonial and villa sheets' */
+    const float steelP = st == HS_SELFBUILT ? 0.35f : st == HS_RCC || st == HS_SHOPHOUSE ? 0.15f : 0.05f;
+    const float solidP = st == HS_KOREA ? 0.6f : st == HS_COLONIAL ? 0.5f : st == HS_SEU_VILLA ? 0.4f : 0.25f;
+    in.cage = (uint8_t)(rng_float(&r) < steelP);
+    const float solidR = rng_float(&r), colR = rng_float(&r), colR2 = rng_float(&r);
+    in.screen = (uint8_t)(!in.cage && solidR < solidP);
+    /* a steel stair black, in red oxide primer or dark green (H_TRIM): grey steel is lost against a grey wall */
+    static const uint8_t STEEL[4] = { 2, 7, 2, 3 };
+    const int warm = g->region == PLAN_REGION_SAS || g->region == PLAN_REGION_SEA || g->region == PLAN_REGION_LAT || g->region == PLAN_REGION_SEU;
+    if (in.cage) { in.fin = HW_CONCRETE; in.col = STEEL[(int)(colR2 * 4.0f) & 3]; }
+    else if (fin.wall == HW_RENDER && warm && colR < 0.5f) { in.fin = HW_RENDER; in.col = fin.wallCol; }   /* painted with the house */
+    else { in.fin = HW_CONCRETE; in.col = member_colour(st, colR2); }
+    in.w = rng_range(&r, 0.85f, 1.1f);
+    in.t = in.cage || st == HS_SELFBUILT ? rng_range(&r, 0.21f, 0.23f) : rng_range(&r, 0.22f, 0.25f);
+    const float sdir = rng_float(&r) < 0.5f ? 1.0f : -1.0f;
+    const float dogP = st == HS_KOREA || st == HS_RCC || st == HS_SELFBUILT || in.cage ? 0.55f : 0.3f;
+    const int dogFirst = rng_float(&r) < dogP, twoUp = rng_float(&r) < 0.4f;
+    const int sidePref = rng_float(&r) < 0.5f ? HIW_WEST : HIW_EAST;   /* the side its owner would rather (a street's not all one way) */
+    /* the front door: a front stair's landing over it is its shelter (Korea 6), a landing its width and a margin */
+    const HDoor *fd = g->unit[u].door >= 0 && fabsf(g->door[g->unit[u].door].z - m->z0) < HEPS ? &g->door[g->unit[u].door] : NULL;
+    static const int GROUP[2][3] = { { HIW_FRONT, HIW_WEST, HIW_EAST }, { HIW_BACK, -1, -1 } };
+    const char *why = NULL;
+    for (int grp = 0; grp < 2; ++grp)
+        for (int pass = 0; pass < 2; ++pass) {
+            const int dog = pass == 0 ? dogFirst : !dogFirst;
+            for (int climbs = dog && twoUp && top >= 2 ? 2 : 1; climbs >= 1; --climbs) {
+                HInsert best = in;
+                int bestCost = 1 << 20;
+                for (int wi = 0; wi < 3; ++wi) {
+                    const int wall = GROUP[grp][wi];
+                    float face, r0, r1, reach;
+                    if (wall < 0 || !stair_wall(g, mi, u, wall, &face, &r0, &r1, &reach)) continue;
+                    HInsert t = in;
+                    t.wall = (uint8_t)wall; t.z = face;
+                    t.shape = (uint8_t)(dog ? HIS_DOGLEG : HIS_STAIR);
+                    t.s0 = 0; t.s1 = (uint8_t)climbs;
+                    if (t.w > reach) t.w = fmaxf(0.72f, reach);   /* a narrower flight in a shallow yard or side gap */
+                    if (dog) t.w = fmaxf(0.72f, fminf(fminf(t.w, 0.95f), 0.5f * (reach - STAIR_GAP)));
+                    t.depth = dog ? 2.0f * t.w + STAIR_GAP : t.w;
+                    if (t.depth > reach + HEPS) { if (!why) why = "reach"; continue; }
+                    const int side = home_wall_side(wall);
+                    /* the doors to try: over the front door (two margins), the wall's windows on the first floor, then every
+                     * quarter metre along it */
+                    float doors[96];
+                    int nd = 0, over = 0;
+                    if (wall == HIW_FRONT && fd) { doors[nd++] = fd->x; doors[nd++] = fd->x; over = 2; }
+                    float win[64][4];
+                    const int nw = home_wall_windows(g, mi, u, wall, win, 64);
+                    const float f1 = floor_y(g, 1);
+                    for (int w = 0; w < nw && nd < 96; ++w)
+                        if (win[w][2] > f1 && win[w][2] < f1 + 1.5f) doors[nd++] = 0.5f * (win[w][0] + win[w][1]);
+                    const int pref = nd;
+                    for (float x = r0 + STAIR_PARTY + 0.5f * STAIR_LAND; x <= r1 - STAIR_PARTY - 0.5f * STAIR_LAND + HEPS && nd < 96; x += 0.25f) {
+                        int near = 0;
+                        for (int k = 0; k < pref; ++k) near |= fabsf(x - doors[k]) < 0.12f;
+                        if (!near) doors[nd++] = x;
+                    }
+                    for (int d = 0; d < 2; ++d)
+                        for (int o = 0; o < nd; ++o) {
+                            HInsert c = t;
+                            /* a side's flight rises from by the street to the back first */
+                            c.lean = side ? (d ? -1.0f : 1.0f) : d ? -sdir : sdir;
+                            c.door = doors[o];
+                            c.r = o < over ? fmaxf(STAIR_LAND, fd->width + (o ? 0.3f : 0.6f)) : 0.0f;   /* the flight's low end off it */
+                            StairPlan P;
+                            if (!stair_plan(g, &c, &P)) continue;
+                            stair_extent(&P, c.door, &c.x0, &c.x1);
+                            if (c.x0 < r0 + STAIR_PARTY - HEPS || c.x1 > r1 - STAIR_PARTY + HEPS) { if (!why) why = "party"; continue; }
+                            int lost = 0;
+                            const char *f = stair_try(g, &c, &lost);
+                            if (f) { if (!why) why = f; continue; }
+                            /* the fewest windows; on a tie a window's place, the drawn way, the front over a side */
+                            const int cost = lost * 6 + (o >= pref) * 3 + d * 2 + side * (1 + (wall != sidePref));
+                            if (cost < bestCost) { bestCost = cost; best = c; }
+                        }
+                }
+                if (bestCost < (1 << 20) && try_add(g, best, -1, log, &why)) return;
+            }
+        }
+    home_repair(g, log, "insert", "unit %d: no room on a wall for a stair (%s), left off", u, why ? why : "?");
+}
+
+/* A unit's glass stair tower (Georgian 5, brownstone 6): a bay wide on the ground in the yard, the full height of the house
+ * (past a flat roof or a parapet by its head); the bays nearest the drawn one first. */
+static void place_tower(HGraph *g, int mi, int u, BLog *log) {
+    Rng r = rng_make(hash_combine(g->unit[u].seed, 0x1C2C0u + (uint32_t)HI_TOWER));
+    HVol own;
+    const HVol *m = home_unit_vol(g, mi, u, &own);
+    float s0, bw;
+    const int nb = home_front_bays(g, mi, u, &s0, &bw);
+    if (nb <= 0) return;
+    const float a = s0, b = s0 + bw * (float)nb;
+    static const uint8_t STEEL[4] = { 2, 4, 4, 5 };
+    HInsert in;
+    memset(&in, 0, sizeof(in));
+    in.unit = (int8_t)u; in.vol = (int8_t)mi; in.kind = HI_TOWER; in.z = m->z0; in.face = HIF_GLASS;
+    in.fin = HW_CONCRETE; in.col = STEEL[(int)(rng_float(&r) * 4.0f) & 3];
+    in.s0 = 0; in.s1 = (uint8_t)(m->storeys - 1);
+    in.screen = (uint8_t)(rng_float(&r) < 0.5f);   /* a riser pipe up its side (the brownstone's panel 6) */
+    const float yard = m->z0 - home_yard(g->region)->proj;
+    in.depth = fminf(rng_range(&r, 1.7f, 2.4f), yard);
+    const float W = rng_range(&r, 1.9f, 2.5f);
+    int first = (int)(rng_float(&r) * (float)nb);
+    if (first >= nb) first = nb - 1;
+    const char *why = in.depth < 1.4f ? "reach" : NULL;
+    int order[16];
+    const int no = in.depth >= 1.4f ? bay_order(nb, first, 1, order) : 0;
+    /* a bay in its way is taken down for it (the brownstone's panel 6: the tower where the bay was) */
+    const int bay = unit_bay(g, u, m);
+    for (int o = 0; o < no; ++o) {
+        HInsert t = in;
+        const float c = s0 + bw * ((float)order[o] + 0.5f);
+        t.x0 = fmaxf(a + INS_PARTY, c - 0.5f * W); t.x1 = fminf(b - INS_PARTY, c + 0.5f * W);
+        if (t.x1 - t.x0 < 1.6f) continue;
+        const int takes = bay >= 0 && overlap(g->vol[bay].x0, g->vol[bay].x1, t.x0, t.x1, 0.05f) ? bay : -1;
+        if (takes >= 0) {
+            /* over the bay's whole width (its stump never left beside it) */
+            t.x0 = fmaxf(a + INS_PARTY, fminf(t.x0, g->vol[bay].x0 - 0.05f)); t.x1 = fminf(b - INS_PARTY, fmaxf(t.x1, g->vol[bay].x1 + 0.05f));
+            if (t.x0 > g->vol[bay].x0 + HEPS || t.x1 < g->vol[bay].x1 - HEPS) continue;
+        }
+        if (try_add(g, t, takes, log, &why)) return;
+    }
+    home_repair(g, log, "insert", "unit %d: no room in its yard for a stair tower (%s), left off", u, why ? why : "?");
+}
+
 void home_inserts(HGraph *g, int level, BLog *log) {
     g->nins = 0;
     memset(g->insPlan, 0, sizeof(g->insPlan));
@@ -1406,6 +2140,8 @@ void home_inserts(HGraph *g, int level, BLog *log) {
             /* Japan's hexagons are a clad box six times in ten (its panel 4), placed as a box */
             const int clad = k == HI_HEX && g->style == HS_JAPAN && hf(hash_combine(g->unit[u].seed, 0x1C2E0u), 1u) < 0.6f;
             if (k == HI_BOX || k == HI_ROUND || clad) place(g, main_vol(g), u, k, log);
+            else if (k == HI_STAIRS) place_stairs(g, main_vol(g), u, log);
+            else if (k == HI_TOWER) place_tower(g, main_vol(g), u, log);
             else place_m(g, main_vol(g), u, k, log);
         }
     if (g->nins) blog_printf(log, "  inserts: %d (%s %s)\n", g->nins, home_insert_face_name(g->ins[0].face), home_insert_name(g->ins[0].kind));
@@ -1444,6 +2180,101 @@ static void region_dress(int region, float *light, float *trail) {
     }
 }
 
+/* HM5c2c1: a steel rail up a flight's open edge `out` from the wall: posts every metre or so on the treads, a top rail and a
+ * middle one along the slope */
+/* a point a along a stair's wall, `out` out of it, in the row's frame */
+static void wall_pt(const HInsert *in, double a, double out, double *x, double *z) {
+    float fx, fz;
+    home_ins_point(in, (float)a, (float)out, &fx, &fz);
+    *x = fx; *z = fz;
+}
+
+static void flight_rail(DC *d, const HInsert *in, const HFlight *f, float t, double out, double dy) {
+    float ex, ez, nx, nz;
+    home_ins_axes(in, &ex, &ez, &nx, &nz);
+    const int step = (int)fmax(1.0, floor(1.15 / t + 0.5));
+    int at[32], np = 0;
+    for (int i = 1; i <= f->n && np < 31; i += step) at[np++] = i;
+    if (at[np - 1] != f->n) at[np++] = f->n;
+    for (int k = 0; k < np; ++k) {
+        const double a = f->xa + f->s * ((at[k] - 1) * t + 0.06), y = f->ya + at[k] * f->h;
+        double x, z;
+        wall_pt(in, a, out, &x, &z);
+        push_at(d, x, y + dy, z, ex, ez);
+        pm_scale(d->pm, 0.5f, STAIR_UP, 0.5f);
+        pm_place(d->pm, PMK_R_FRAME_POST);
+        hc_pop(d);
+    }
+    const double xa = f->xa + f->s * 0.06, ya = f->ya + f->h, xb = f->xa + f->s * ((f->n - 1) * t + 0.06), yb = f->ya + f->n * f->h;
+    const double L = hypot(xb - xa, yb - ya);
+    if (L < 0.3) return;
+    double px, pz;
+    wall_pt(in, xa, out, &px, &pz);
+    for (int q = 0; q < 2; ++q) {
+        const double up = q ? 0.48 : STAIR_UP;
+        const double p[3] = { px, ya + up + dy, pz }, ey[3] = { (xb - xa) / L * ex, (yb - ya) / L, (xb - xa) / L * ez }, ez3[3] = { nx, 0.0, nz };
+        hc_push_yz(d, p, ey, ez3);
+        pm_scale(d->pm, 0.6f, (float)L, 0.6f);
+        pm_place(d->pm, PMK_R_PIPE_FE);
+        hc_pop(d);
+    }
+}
+
+/* HM5c2c1: a stair's dressing: rails where it has no upstands (a steel stair's, a concrete one's on a kerb) up its flights'
+ * open edges and round its landings; a bulkhead over each door; a pot or two on a concrete one's landings */
+static void dress_stair(DC *d, const HInsert *in, int idx) {
+    const HGraph *g = d->g;
+    const int u = in->unit;
+    const double dy = d->C->dy ? d->C->dy[u] : 0.0;
+    HFlight fl[6];
+    HLanding la[6];
+    int nf, nl;
+    float t;
+    if (!home_stair_parts(g, in, fl, &nf, la, &nl, &t)) return;
+    const uint32_t h = hash_combine(g->unit[u].seed, 0x1C3A0u + (uint32_t)idx * 7919u);
+    const HCharSet *cs = &d->C->cs[u];
+    const int rails = in->cage || !in->screen;
+    float ex, ez, nx, nz;
+    home_ins_axes(in, &ex, &ez, &nx, &nz);
+    double x, z;
+    for (int i = 0; i < nf && rails; ++i) {
+        const HFlight *f = &fl[i];
+        /* the open edge: a straight flight's or an outer lane's outside, the lane against the wall's spine side */
+        flight_rail(d, in, f, t, f->o1 - 0.04, dy);
+    }
+    for (int i = 0; i < nl && rails; ++i) {
+        const HLanding *l = &la[i];
+        wall_pt(in, l->x0, l->d - 0.04, &x, &z);
+        push_at(d, x, l->y + dy, z, ex, ez);
+        hr_rail(d->pm, l->x1 - l->x0);
+        hc_pop(d);
+        const double xe = l->xFree < 0.5 * (l->x0 + l->x1) ? l->x0 + 0.04 : l->x1 - 0.04;
+        wall_pt(in, xe, 0.0, &x, &z);
+        push_at(d, x, l->y + dy, z, nx, nz);
+        hr_rail(d->pm, l->d - 0.08f);
+        hc_pop(d);
+    }
+    int fk[4];
+    float fx[4];
+    const int nd = home_insert_doors(g, in, fk, fx, 4);
+    for (int k = 0; k < nd; ++k) {
+        wall_pt(in, fx[k], 0.0, &x, &z);
+        const double p[3] = { x, g->plinth + fk[k] * g->storeyH + INS_DOOR_H + 0.22 + dy, z };
+        hc_push_wall(d, p, nx, nz);
+        pm_place(d->pm, PMK_R_BULKHEAD);
+        hc_pop(d);
+    }
+    for (int i = 0; i < nl && !in->cage && !cs->lean; ++i) {
+        const HLanding *l = &la[i];
+        if (hf(h, 30u + (uint32_t)i) >= 0.4f) continue;
+        const double xe = l->xFree < 0.5 * (l->x0 + l->x1) ? l->x0 + 0.3 : l->x1 - 0.3;
+        wall_pt(in, xe, 0.35, &x, &z);
+        push_at(d, x, l->y + dy, z, ex, ez);
+        pm_place(d->pm, hf(h, 40u + (uint32_t)i) < 0.3f ? PMK_R_POT_PALM : PMK_R_POT);
+        hc_pop(d);
+    }
+}
+
 /* The members' dressing (HM5c2b): a strip's lattice; a frame's planters trailing over its shelves, a screen in one of its
  * cells, lights under its head; plants over a hexagon's sill. Every member's box is kept clear by the retrofit layer. */
 static void dress_members(DC *d, const HInsert *in, int idx) {
@@ -1462,6 +2293,7 @@ static void dress_members(DC *d, const HInsert *in, int idx) {
     region_dress(g->region, &light, &trail);
     const double D = in->depth, dc = in->depth - 0.5 * in->t;
     hc_begin(d, u);
+    if (in->kind == HI_STAIRS) dress_stair(d, in, idx);
     if (in->kind == HI_SCREEN) {
         /* the lattice between the posts, in their plane */
         const double xa = in->x0 + in->w, xb = in->x1 - in->w;
@@ -1538,9 +2370,10 @@ static void dress_members(DC *d, const HInsert *in, int idx) {
     d->D->st.inserts++;
     /* the retrofit layer keeps clear of every member */
     for (int k = 0; k < n; ++k) {
-        float x0, x1, ya, yb, d0, d1;
-        member_bounds(&M[k], &x0, &x1, &ya, &yb, &d0, &d1);
-        const double lo[3] = { x0 - 0.08, ya + dy - 0.1, in->z - d1 - 0.1 }, hi[3] = { x1 + 0.08, yb + dy + 0.1, in->z - d0 + 0.05 };
+        float a0, a1, ya, yb, d0, d1, x0, x1, z0, z1;
+        member_bounds(&M[k], &a0, &a1, &ya, &yb, &d0, &d1);
+        ins_box(in, a0, a1, d0, d1, &x0, &x1, &z0, &z1);
+        const double lo[3] = { x0 - 0.08, ya + dy - 0.1, z0 - 0.1 }, hi[3] = { x1 + 0.08, yb + dy + 0.1, z1 + 0.05 };   /* (the front's pads as HM5c2b had them) */
         hc_occupy(d, lo, hi);
     }
 }
@@ -1609,10 +2442,29 @@ void hs_inserts(DC *d) {
             hr_trail(d->pm, (float)len, 0.5f + 0.6f * hf(h, 5u), home_trail_species(g->style, h));
             hc_pop(d);
         }
+        /* HM5c2c1: a stair tower's riser up its side (the brownstone's panel 6) and plants trailing over its cap (Georgian 5) */
+        if (in->kind == HI_TOWER) {
+            if (in->screen) {
+                const double x = d->sx > 0.0 ? in->x1 + 0.12 : in->x0 - 0.12;
+                push_at(d, x, 0.15 + dy, zf + 0.3, 1.0, 0.0);
+                pm_scale(d->pm, 1.8f, (float)(y1 - dy - 0.45), 1.8f);
+                pm_place(d->pm, PMK_R_PIPE_FE);
+                hc_pop(d);
+            }
+            if (!cs->lean && hf(h, 6u) < trail * keep * 1.2f) {
+                const double len = fmin(W - 0.2, 0.7 + 1.2 * hf(h, 7u));
+                const double x = d->sx > 0.0 ? in->x1 - 0.05 : in->x0 + 0.05;   /* (the wall's frame runs to -x: box tops' as) */
+                const double p[3] = { x, y1 + 0.14, zf - 0.08 };
+                hc_push_wall(d, p, 0.0, -1.0);
+                hr_trail(d->pm, (float)len, 0.8f + 1.4f * hf(h, 8u), home_trail_species(g->style, h + 7u));
+                hc_pop(d);
+            }
+        }
         hc_done(d);
         d->D->st.inserts++;
-        /* the retrofit layer keeps clear of it */
-        const double lo[3] = { in->x0 - 0.1, y0 - 0.3, zf - 0.35 }, hi[3] = { in->x1 + 0.1, y1 + 0.3, in->z + 0.05 };
+        /* the retrofit layer keeps clear of it (a tower's head over the roof too) */
+        const double zb = in->kind == HI_TOWER ? in->z + home_tower_back(g, in) + 0.1 : in->z + 0.05;
+        const double lo[3] = { in->x0 - 0.1, y0 - 0.3, zf - 0.35 }, hi[3] = { in->x1 + 0.1, y1 + 0.3, zb };
         hc_occupy(d, lo, hi);
     }
 }

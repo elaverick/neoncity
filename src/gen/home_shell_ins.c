@@ -249,13 +249,25 @@ static void add_members(Ctx *C, const HInsert *in, int idx) {
     HMember M[HG_MAX_MEMBERS];
     const int n = home_insert_members(g, in, M, HG_MAX_MEMBERS);
     const double dy = C->dy ? C->dy[in->unit] : 0.0;
+    /* HM5c2c1: a stair's treads and landings are steps (tiled on some of the Southern European and colonial ones), a steel
+     * stair painted steel all over; far, its flights' slabs, stringers, landings, upstands and columns (not its steps) */
+    const int stair = in->kind == HI_STAIRS, steel = stair && in->cage;
+    const uint32_t sh = hash_combine((uint32_t)in->unit, 0x7C0Eu + (uint32_t)idx);
+    const int side = steel ? HF_TRIM : HF_WALL;
+    float wex, wez, wnx, wnz, fx0, fz0;   /* its wall's frame: along, out, the face at 0 along it */
+    home_ins_axes(in, &wex, &wez, &wnx, &wnz);
+    home_ins_point(in, 0.0f, 0.0f, &fx0, &fz0);
     for (int k = 0; k < n; ++k) {
         const HMember *e = &M[k];
         const int glass = e->role == HMR_GLASS;
-        if (C->lod == HSH_FAR && !glass) continue;
+        const int big = e->role == HMR_FLIGHT || e->role == HMR_LANDING || e->role == HMR_UPSTAND || e->role == HMR_LEG || e->role == HMR_STRINGER;
+        if (C->lod == HSH_FAR && !glass && !(stair && big)) continue;
+        const int stepTop = stair && !steel && (e->role == HMR_STEP || e->role == HMR_LANDING || e->role == HMR_FLIGHT);
+        const int top = steel ? HF_TRIM : stepTop ? HF_STEP : HF_COPING;
         Solid *s = hs_solid_new(C, in->unit, -1, 0);
         s->kind = SK_INS;
-        s->wallFin = in->fin; s->wallCol = in->col; s->trimCol = (uint8_t)(hash_combine((uint32_t)in->unit, 0x7C0Eu + (uint32_t)idx) % 3u == 0u ? 0 : 4);
+        s->wallFin = in->fin; s->wallCol = in->col; s->trimCol = (uint8_t)(steel ? in->col : sh % 3u == 0u ? 0 : 4);
+        s->stepFin = (uint8_t)((g->style == HS_SEU_VILLA || g->style == HS_COLONIAL) && (sh >> 4 & 1u) ? HST_TILE : HST_CONCRETE);
         for (int i = 0; i < e->n; ++i) {
             const int j = (i + 1) % e->n;
             const double ex = e->p[j][0] - e->p[i][0], ey = e->p[j][1] - e->p[i][1], L = sqrt(ex * ex + ey * ey);
@@ -263,8 +275,9 @@ static void add_members(Ctx *C, const HInsert *in, int idx) {
             const double nx = ey / L, ny = -ex / L;   /* outward of an anticlockwise outline */
             if (e->axis == HMB_ELEV) {
                 const int sunk = ny < -0.7 && e->p[i][1] <= 0.01f;   /* a leg's foot on the ground */
-                const int surf = glass || sunk ? NOFACE : ny > 0.7 ? HF_COPING : HF_WALL;
-                hs_plane(s, nx, ny, 0.0, e->p[i][0], e->p[i][1], in->z, surf);
+                const int surf = glass || sunk ? NOFACE : ny > 0.7 ? top : side;
+                /* (along its wall: HM5c2c1's stairs stand against any wall; the rest the front, e (1, 0)) */
+                hs_plane(s, nx * wex, ny, nx * wez, fx0 + e->p[i][0] * wex, e->p[i][1], fz0 + e->p[i][0] * wez, surf);
             } else {
                 /* plan: (x, out) to (x, z = in->z - out): the out axis turned over */
                 const int inwall = e->p[i][1] <= 0.0f && e->p[j][1] <= 0.0f;
@@ -272,8 +285,8 @@ static void add_members(Ctx *C, const HInsert *in, int idx) {
             }
         }
         if (e->axis == HMB_ELEV) {
-            hs_plane(s, 0.0, 0.0, -1.0, 0.0, 0.0, in->z - e->a1, glass ? HF_GLASS : HF_WALL);
-            hs_plane(s, 0.0, 0.0, 1.0, 0.0, 0.0, in->z - e->a0, e->a0 <= 0.0f ? NOFACE : HF_WALL);
+            hs_plane(s, wnx, 0.0, wnz, fx0 + e->a1 * wnx, 0.0, fz0 + e->a1 * wnz, glass ? HF_GLASS : side);
+            hs_plane(s, -wnx, 0.0, -wnz, fx0 + e->a0 * wnx, 0.0, fz0 + e->a0 * wnz, e->a0 <= 0.0f ? NOFACE : side);
         } else {
             hs_plane(s, 0.0, 1.0, 0.0, 0.0, e->a1, 0.0, HF_COPING);
             hs_plane(s, 0.0, -1.0, 0.0, 0.0, e->a0, 0.0, e->a0 < 0.05f ? NOFACE : HF_WALL);
@@ -284,14 +297,129 @@ static void add_members(Ctx *C, const HInsert *in, int idx) {
     }
 }
 
+/* HM5c2c1: a stair's doors, cut in the main's body at its landings (near): the unit's door colour, panelled or glazed over */
+static void add_stair_doors(Ctx *C, const HInsert *in, int idx) {
+    const HGraph *g = C->g;
+    const int host = C->body[in->vol][in->unit];
+    if (host < 0) return;
+    int fk[4];
+    float fx[4];
+    const int n = home_insert_doors(g, in, fk, fx, 4);
+    /* its wall's outward normal m and the way along it an opening runs, e = (-m.z, m.x) (add_windows' convention) */
+    float ex, ez, nx, nz;
+    home_ins_axes(in, &ex, &ez, &nx, &nz);
+    const double m[2] = { nx, nz }, e[2] = { -nz, nx };
+    const int pat = (int)(hash_combine((uint32_t)in->unit, 0xD00Cu + (uint32_t)idx) & 1u);
+    for (int k = 0; k < n; ++k) {
+        const double f = g->plinth + fk[k] * g->storeyH;
+        float cx, cz;
+        home_ins_point(in, fx[k], 0.0f, &cx, &cz);
+        hs_opening(C, host, in->unit, m, e, cx - e[0] * 0.5 * INS_DOOR_W, cz - e[1] * 0.5 * INS_DOOR_W, INS_DOOR_W, f, f + INS_DOOR_H, 0.12, HF_DOOR,
+                   hs_opening_aux(INS_DOOR_W, INS_DOOR_H, pat));
+        C->st.doors++;
+    }
+}
+
+/* A box of the tower's x0..x1, z0..z1, ya..yb, every side a face (surf), its top `top` and bottom `bot` */
+static int tower_box(Ctx *C, const HInsert *in, double x0, double z0, double x1, double z1, double ya, double yb, int surf, int top, int bot, int back) {
+    Solid *s = hs_solid_new(C, in->unit, -1, 0);
+    s->kind = SK_INS;
+    s->wallFin = in->fin; s->wallCol = in->col; s->trimCol = in->col;
+    hs_plane(s, -1, 0, 0, x0, 0, 0, surf);
+    hs_plane(s, 1, 0, 0, x1, 0, 0, surf);
+    hs_plane(s, 0, 0, -1, 0, 0, z0, surf);
+    hs_plane(s, 0, 0, 1, 0, 0, z1, back);
+    hs_plane(s, 0, 1, 0, 0, yb, 0, top);
+    hs_plane(s, 0, -1, 0, 0, ya, 0, bot);
+    for (int i = 0; i < s->np; ++i) s->noWin[i] = 1;
+    hs_lift(s, C->dy ? C->dy[in->unit] : 0.0);
+    return (int)(s - C->s);
+}
+
+/* A glass stair tower (HM5c2c1; Georgian 5, brownstone 6): painted steel posts at its corners and bands at its foot, its
+ * floors and its top, glass between with a stairwell behind it (HG_STAIR; the ground storey's front its door, HG_STAIR_DOOR);
+ * over a flat roof or a parapet a head runs back over the roof (home_tower_back), its back steel with a door out onto a deck;
+ * a cap over it all. Far: its glass, its head and its cap. */
+static void add_tower(Ctx *C, const HInsert *in, int idx, double y0, double y1) {
+    const HGraph *g = C->g;
+    HVol own;
+    const HVol *m = home_unit_vol(g, in->vol, in->unit, &own);
+    const double back = home_tower_back(g, in), zf = in->z - in->depth, zw = in->z + INTO_WALL;
+    const double zb = back > 0.0 ? in->z + back : zw;   /* the head's back */
+    const double eav = back > 0.0 ? m->eaves : y1;      /* the shaft against the wall; the head over it */
+    const double x0 = in->x0, x1 = in->x1, G = BOX_GLASS, top = y1 - 0.25;
+    const int far = C->lod == HSH_FAR;
+    const uint32_t aux = shared_aux(idx, HG_STAIR), auxDoor = shared_aux(idx, HG_STAIR_DOOR);
+    /* the cap, proud of it all round */
+    tower_box(C, in, x0 - 0.08, zf - 0.08, x1 + 0.08, back > 0.0 ? zb + 0.08 : zw, y1, y1 + 0.14, HF_TRIM, HF_COPING, HF_TRIM, back > 0.0 ? HF_TRIM : NOFACE);
+    if (far) {
+        const int s = tower_box(C, in, x0, zf, x1, zw, 0.0, eav, HF_GLASS, HF_TRIM, NOFACE, NOFACE);
+        C->s[s].aux = aux;
+        if (back > 0.0) tower_box(C, in, x0, zf, x1, zb, eav, y1, HF_TRIM, HF_TRIM, HF_TRIM, HF_TRIM);
+        return;
+    }
+    /* the bands: its foot, each floor, the head's floor, its top */
+    const double foot = 0.3;
+    tower_box(C, in, x0, zf, x1, zw, 0.0, foot, HF_TRIM, HF_TRIM, NOFACE, NOFACE);
+    for (int k = 1; k <= in->s1; ++k) {
+        const double f = g->plinth + k * g->storeyH;
+        if (f + 0.08 < eav - 0.3) tower_box(C, in, x0, zf, x1, zw, f - 0.22, f + 0.08, HF_TRIM, HF_TRIM, HF_TRIM, NOFACE);
+    }
+    if (back > 0.0) tower_box(C, in, x0, zf, x1, zb, eav - 0.2, eav + 0.08, HF_TRIM, HF_TRIM, HF_TRIM, HF_TRIM);
+    tower_box(C, in, x0, zf, x1, back > 0.0 ? zb : zw, top, y1, HF_TRIM, HF_TRIM, HF_TRIM, back > 0.0 ? HF_TRIM : NOFACE);
+    /* the glass a storey at a time; the ground storey's front a pane of its own (its door) */
+    const double shaftTop = back > 0.0 ? eav - 0.2 : top;
+    for (int k = 0; k <= in->s1; ++k) {
+        const double lo = k == 0 ? foot : g->plinth + k * g->storeyH + 0.08;
+        const double hi = k == in->s1 ? shaftTop : g->plinth + (k + 1) * g->storeyH - 0.22;
+        if (hi - lo < 0.5) continue;
+        if (k == 0) {
+            const int d = tower_box(C, in, x0 + G, zf + G, x1 - G, zf + 0.15, lo, hi, HF_GLASS, NOFACE, NOFACE, NOFACE);
+            C->s[d].aux = auxDoor;
+            const int s = tower_box(C, in, x0 + G, zf + 0.15, x1 - G, zw, lo, hi, HF_GLASS, NOFACE, NOFACE, NOFACE);
+            C->s[s].aux = aux;
+            /* (its front, at zf + 0.15, lies inside the door's pane: no face shows there) */
+            continue;
+        }
+        const int s = tower_box(C, in, x0 + G, zf + G, x1 - G, zw, lo, hi, HF_GLASS, NOFACE, NOFACE, NOFACE);
+        C->s[s].aux = aux;
+    }
+    if (back > 0.0) {
+        /* the head: glass at its front and sides, steel at its back with the door out onto a flat roof's deck */
+        const int s = tower_box(C, in, x0 + G, zf + G, x1 - G, zb - G, eav + 0.08, top, HF_GLASS, NOFACE, NOFACE, HF_TRIM);
+        C->s[s].aux = aux;
+        if (m->roof == HR_FLAT && x1 - x0 > 1.3) {
+            const double mb[2] = { 0.0, 1.0 }, eb[2] = { -1.0, 0.0 }, dw = 0.85;
+            const double c = 0.5 * (x0 + x1);
+            hs_opening(C, s, in->unit, mb, eb, c + 0.5 * dw, zb - G, dw, eav + 0.08, fmin(eav + 2.1, top - 0.05), 0.06, HF_DOOR,
+                       hs_opening_aux(dw, fmin(2.02, top - 0.05 - eav - 0.08), 1));
+        }
+    }
+    /* the posts at its corners: the front ones its full height, the back ones in the wall, the head's at its back */
+    const double P = POST;
+    box_at(C, in, x0, zf, x0 + P, zf + P, 0.0, y1, HF_TRIM, NOFACE, 0);
+    box_at(C, in, x1 - P, zf, x1, zf + P, 0.0, y1, HF_TRIM, NOFACE, 0);
+    box_at(C, in, x0, in->z - P, x0 + P, zw, 0.0, eav, HF_TRIM, NOFACE, 1);
+    box_at(C, in, x1 - P, in->z - P, x1, zw, 0.0, eav, HF_TRIM, NOFACE, 1);
+    if (back > 0.0) {
+        tower_box(C, in, x0, zb - P, x0 + P, zb, eav - 0.2, y1, HF_TRIM, HF_TRIM, NOFACE, HF_TRIM);
+        tower_box(C, in, x1 - P, zb - P, x1, zb, eav - 0.2, y1, HF_TRIM, HF_TRIM, NOFACE, HF_TRIM);
+    }
+}
+
 void hs_add_inserts(Ctx *C) {
     const HGraph *g = C->g;
     for (int i = 0; i < g->nins; ++i) {
         const HInsert *in = &g->ins[i];
         if (in->unit < 0 || in->unit >= g->nunit || !home_insert_built(in->kind)) continue;
-        if (home_insert_membered(in)) { add_members(C, in, i); continue; }
+        if (home_insert_membered(in)) {
+            add_members(C, in, i);
+            if (in->kind == HI_STAIRS && C->lod == HSH_NEAR) add_stair_doors(C, in, i);
+            continue;
+        }
         float y0, y1;
         home_insert_span(g, in, &y0, &y1);
+        if (in->kind == HI_TOWER) { add_tower(C, in, i, y0, y1); continue; }
         if (C->lod == HSH_FAR) { add_far(C, in, i, y0, y1); continue; }
         if (in->kind == HI_ROUND) add_round(C, in, i, y0, y1);
         else if (in->face == HIF_GLASS) add_glass(C, in, i, y0, y1);

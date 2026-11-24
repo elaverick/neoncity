@@ -89,6 +89,8 @@
 #define HG_CASEMENT  3    /* two casements and a top light */
 #define HG_GRID      4    /* a grid of small panes (craftsman, Japanese) */
 #define HG_CURTAIN   5    /* HM5c2: a steel-framed glazed wall's panes, mullions about a metre apart */
+#define HG_STAIR     6    /* HM5c2c1: a glass stair tower's panes: a dog-leg stair behind them (house.glsl houseStairwell) */
+#define HG_STAIR_DOOR 7   /* ...its ground storey's front: the same, its glazed door in it */
 
 /* The character kit (HM4: src/gen/pmodel_house.c, materials PMAT_HTRIM on; shaders/city/house.glsl shadeHouseKit):
  * what a house kit instance carries of its unit's finishes, so its parts take the shell's colours. In the

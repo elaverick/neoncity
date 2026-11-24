@@ -1151,10 +1151,22 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM5c2c** (stairs, stair towers, unfinished storeys, roof rooms); HM5c2a (boxes, rounded bays, the join) pushed
-  2026-11-23 (6e73b64), HM5c2b (frames, hexagons, fins and grids, screen strips) built 2026-11-23. Then HM5b1 and HM5b2 (the
-  other regions' kit and grammar), HM5d (the existing styles to their sheets), HM6 (the rest of the lived-in layer and the
-  lights). Every step checked against its sheets' panels.
+- **Next: HM5c2c2** (unfinished storeys with starter bars, roof rooms; the user's calls on pitched roofs first: the plan's
+  "HM5c2c"); HM5c2a (6e73b64), HM5c2b (8bfedeb) pushed 2026-11-23, HM5c2c split in two, HM5c2c1 (stairs, stair towers) built
+  2026-11-23. Then HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing styles to their sheets), HM6 (the
+  rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **HM5c2c1's leftovers** (`docs/residential-target.md` "Stairs and stair towers"):
+  - Stairs stand against the front (a yard style's), a free side or the back; a back stair lands in the rear yard with no
+    gate drawn to the lane behind (rear boundaries and their gates are HM7's: give a back stair's yard its gate then). A stair
+    up to the roof (RCC 3, self-built 3) is not built; nor a flight square to its wall or a quarter turn.
+  - Korea's side gaps (0.5 m, East Asia's) take no side stair: two thirds of its stairs are at the back, seen only from the
+    lanes (the board's Korean side stairs are Los Angeles' wider gaps, the style forced there).
+  - The windows behind a flight are not cut (a blank wall), where the sheets show some through the rails.
+  - A stair tower's stairwell is painted on its glass (no stair inside); its head's door onto a flat roof leads to a deck
+    the retrofit layer may have filled (it keeps off the head, not off the way out).
+  - Stair members are left in the far shell (flights, landings, upstands, columns; not the steps).
+  - `city_test --home`'s insertion views look past a grounded stair's or tower's front boundary (the line of sight is a
+    plan's): a tall wall in front of it may still hide it in the shot.
 - **HM5c2b's leftovers** (`docs/residential-target.md` "Frames, hexagons, fins and screen strips"):
   - A bungalow's veranda or an inter-war semi's two-storey bay fills most of its front, and a South Asian yard (1-2.5 m) is
     too shallow to stand a frame or strip in front of either: about half the units drawing them get one (home_lab's floor

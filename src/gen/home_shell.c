@@ -1364,6 +1364,9 @@ static void add_windows(Ctx *C, int vi, int unit) {
                 /* a balcony in front of it (HM5e2): a carved one's windows are at its back; else a French window */
                 const int fb = k > 0 && v->role <= HV_ROW && m[1] < -0.7 ? balc_at(g, unit, k, c) : -1;
                 if (fb >= 0 && home_balcony_carved(g->balc[fb].kind)) continue;
+                /* a stair's door in its place (HM5c2c1: hs_add_inserts cut it) */
+                if (k > 0 && v->role <= HV_ROW && home_insert_door_at(g, unit, k, (float)(m[0] * at + e[0] * c), (float)(m[1] * at + e[1] * c), (float)(0.5 * ww),
+                                                                      (float)m[0], (float)m[1])) continue;
                 if (fb >= 0) {
                     ww = home_french_width((float)ww0, (float)bw);
                     sill = floorY + 0.03;
