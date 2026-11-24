@@ -407,11 +407,205 @@ static void add_tower(Ctx *C, const HInsert *in, int idx, double y0, double y1) 
     }
 }
 
+/* ===========================================================================
+ * HM5c2c2: the roof's kinds (home_insert_roof.c places them)
+ *
+ *   unfinished storey  its columns first (their faces show where the walls run flush past them), cast concrete, to the
+ *                      next floor's slab; its walls of bare block or brick on the deck's edge (on the parapets), each to its
+ *                      own height, holes through them where its windows will go (a notch where a wall stops under their
+ *                      heads). Far: its walls.
+ *   roof room          concrete and screen rooms: a body and a roof slab proud of it (out over the door on a flat deck), a
+ *                      door and windows (a screen room's front a recess the blocks stand in); a container: corrugated steel
+ *                      all round, its door and windows cut; glass: a foot band, a roof band, glass between and posts at
+ *                      its square corners (a drum's front rounded). A loft room's box runs down into the roof, which
+ *                      hides its foot. Far: one solid of its make.
+ *   stubs              0.3 m columns of cast concrete standing on the deck (near).
+ * ========================================================================= */
+
+#define ROOM_SLAB_S 0.20   /* home_insert_roof.c's ROOM_SLAB and ROOM_HOOD */
+#define ROOM_HOOD_S 0.60
+#define UNF_CONC    2      /* the unfinished storeys' columns and the stubs: the cast concrete's cool grey (H_CONCRETE) */
+
+/* A box x0..x1, y0..y1, z0..z1 of the given finish: its sides `side`, its top `top`, its foot `bot`. */
+static int ubox(Ctx *C, int unit, double x0, double y0, double z0, double x1, double y1, double z1, int side, int top, int bot, int fin, int col) {
+    Solid *s = hs_solid_new(C, unit, -1, 0);
+    s->kind = SK_INS;
+    s->wallFin = (uint8_t)fin; s->wallCol = (uint8_t)col; s->trimCol = (uint8_t)col;
+    hs_plane(s, -1, 0, 0, x0, 0, 0, side);
+    hs_plane(s, 1, 0, 0, x1, 0, 0, side);
+    hs_plane(s, 0, 0, -1, 0, 0, z0, side);
+    hs_plane(s, 0, 0, 1, 0, 0, z1, side);
+    hs_plane(s, 0, 1, 0, 0, y1, 0, top);
+    hs_plane(s, 0, -1, 0, 0, y0, 0, bot);
+    for (int i = 0; i < s->np; ++i) s->noWin[i] = 1;
+    hs_lift(s, C->dy ? C->dy[unit] : 0.0);
+    return (int)(s - C->s);
+}
+
+static void add_unfinished(Ctx *C, const HInsert *in) {
+    const HGraph *g = C->g;
+    const int u = in->unit, far = C->lod == HSH_FAR;
+    float y0, y1;
+    home_insert_span(g, in, &y0, &y1);
+    const double base = y0 - 0.05, c = 0.5 * UNF_COL, T = UNF_WALL;
+    if (!far) {
+        float col[48][2];
+        const int nc = home_unf_columns(g, in, col, 48);
+        for (int k = 0; k < nc; ++k)
+            ubox(C, u, col[k][0] - c, base, col[k][1] - c, col[k][0] + c, y1, col[k][1] + c, HF_WALL, HF_COPING, NOFACE, HW_CONCRETE, UNF_CONC);
+    }
+    HUnfWall W[4];
+    const int nw = home_unf_walls(g, in, W);
+    for (int i = 0; i < nw; ++i) {
+        const HUnfWall *w = &W[i];
+        double x0, x1, z0, z1;
+        switch (w->wall) {
+        case HIW_FRONT: x0 = w->a0; x1 = w->a1; z0 = w->face; z1 = w->face + T; break;
+        case HIW_BACK:  x0 = w->a0; x1 = w->a1; z0 = w->face - T; z1 = w->face; break;
+        case HIW_WEST:  x0 = w->face; x1 = w->face + T; z0 = w->a0; z1 = w->a1; break;
+        default:        x0 = w->face - T; x1 = w->face; z0 = w->a0; z1 = w->a1; break;
+        }
+        const double wt = y0 + w->h;
+        const int s = ubox(C, u, x0, base, z0, x1, wt, z1, HF_WALL, HF_COPING, NOFACE, in->fin, in->col);
+        if (far) continue;
+        /* the holes its windows will fill, through it; a notch to its top where it stops near their heads */
+        float mid[16], wid[16];
+        const int nh = home_unf_holes(g, in, w, mid, wid, 16);
+        const double m[2] = { w->wall == HIW_WEST ? -1.0 : w->wall == HIW_EAST ? 1.0 : 0.0, w->wall == HIW_FRONT ? -1.0 : w->wall == HIW_BACK ? 1.0 : 0.0 };
+        const double e[2] = { -m[1], m[0] };
+        const double sill = y0 + 0.87, head = wt < y0 + 2.4 ? wt + 0.1 : y0 + 2.16;   /* (off the 5 cm steps: home_insert_roof.c) */
+        for (int k = 0; k < nh; ++k) {
+            const double px = home_wall_side(w->wall) ? w->face : mid[k], pz = home_wall_side(w->wall) ? mid[k] : w->face;
+            const int o = hs_opening(C, s, u, m, e, px - e[0] * 0.5 * wid[k], pz - e[1] * 0.5 * wid[k], wid[k], sill, head, T + 0.04, NOFACE, 0);
+            if (o >= 0) { C->s[o].wallFin = in->fin; C->s[o].wallCol = in->col; }
+        }
+    }
+}
+
+/* A roof room's plan: square, or its front corners rounded by in->r (K chords a quarter); every side a face. */
+static void plan_room(const HInsert *in, int K, Plan *P) {
+    const double zf = in->z - in->depth;
+    P->n = 0;
+    edge(P, -1.0, 0.0, -in->x0, 0);
+    if (K > 0 && in->r > 0.05f) {
+        const double r = in->r, half = 0.5 * PI_D / K;
+        for (int q = 0; q < 2; ++q) {
+            const double cx = q ? in->x1 - r : in->x0 + r, cz = zf + r, a0 = q ? 1.5 * PI_D : PI_D;
+            for (int k = 0; k < K; ++k) {
+                const double am = a0 + (2 * k + 1) * half, mx = cos(am), mz = sin(am);
+                edge(P, mx, mz, mx * cx + mz * cz + r * cos(half), 0);
+            }
+            if (!q) edge(P, 0.0, -1.0, -zf, 0);
+        }
+    } else edge(P, 0.0, -1.0, -zf, 0);
+    edge(P, 1.0, 0.0, in->x1, 0);
+    edge(P, 0.0, 1.0, in->z, 0);
+}
+
+/* A glass room: its foot (a band on the deck; a loft room's up to just over the roof's covering at its front), a roof band,
+ * glass between, painted steel posts at its square corners; a room on a deck's door a glazed pair in its front. */
+static void add_room_glass(Ctx *C, const HInsert *in, int idx, const Plan *P, double y0, double y1, double cov) {
+    const HGraph *g = C->g;
+    const int u = in->unit, flat = !in->raised;
+    const double zf = in->z - in->depth, foot = flat ? y0 + 0.15 : cov + 0.12, band = y1 - 0.22;
+    plan_solid(C, in, P, 0.0, y0, foot, HF_TRIM, HF_TRIM, NOFACE);
+    plan_solid(C, in, P, 0.0, band, y1, HF_TRIM, HF_TRIM, HF_TRIM);
+    const int s = plan_solid(C, in, P, -BOX_GLASS, foot, band, HF_GLASS, NOFACE, NOFACE);
+    C->s[s].aux = shared_aux(idx, HG_CURTAIN);
+    const double q = POST;
+    for (int k = 0; k < 4; ++k) {
+        const int right = k & 1, back = k >> 1;
+        if (!back && in->r > 0.05f) continue;   /* a drum's front is its glass */
+        const double x0 = right ? in->x1 - q : in->x0, z0 = back ? in->z - q : zf;
+        ubox(C, u, x0, y0, z0, x0 + q, band, z0 + q, HF_TRIM, NOFACE, NOFACE, HW_CONCRETE, in->col);
+    }
+    float dx;
+    if (home_room_door(g, in, &dx)) {
+        const double m[2] = { 0.0, -1.0 }, e[2] = { 1.0, 0.0 }, h = fmin(2.05, band - foot - 0.05);
+        const int o = hs_opening(C, s, u, m, e, dx - 0.5 * INS_DOOR_W, zf + BOX_GLASS, INS_DOOR_W, foot, foot + h, 0.06, HF_GLASS,
+                                 hs_opening_aux(INS_DOOR_W, h, HG_CASEMENT));
+        opening_finish(C, o, in, HW_CONCRETE, in->col);
+        C->st.doors++;
+    }
+}
+
+static void add_room(Ctx *C, const HInsert *in, int idx) {
+    const HGraph *g = C->g;
+    const int u = in->unit, far = C->lod == HSH_FAR, flat = !in->raised;
+    float y0, y1;
+    home_insert_span(g, in, &y0, &y1);
+    const double zf = in->z - in->depth, cov = home_room_sill(g, in);
+    int K = 0;
+    if (in->r > 0.05f) { K = (int)floor(in->r / 0.3 + 0.5); K = K < 3 ? 3 : K > 6 ? 6 : K; }
+    Plan P;
+    plan_room(in, far && K ? 2 : K, &P);
+    const int glass = in->face == HIF_GLASS, cont = in->face == HIF_CONTAINER, screen = in->face == HIF_SCREEN;
+    if (far) {
+        if (glass) { const int s = plan_solid(C, in, &P, 0.0, y0, y1, HF_GLASS, HF_TRIM, NOFACE); C->s[s].aux = shared_aux(idx, HG_CURTAIN); }
+        else if (cont) { const int s = plan_solid(C, in, &P, 0.0, y0, y1, HF_ROOF, HF_ROOF, NOFACE); C->s[s].roofFin = HRM_METAL; C->s[s].roofCol = in->col; }
+        else plan_solid(C, in, &P, 0.0, y0, y1, HF_WALL, HF_FLAT, NOFACE);
+        return;
+    }
+    if (glass) { add_room_glass(C, in, idx, &P, y0, y1, cov); return; }
+    const double top = cont ? y1 : y1 - ROOM_SLAB_S;
+    const int b = cont ? plan_solid(C, in, &P, 0.0, y0, y1, HF_ROOF, HF_ROOF, NOFACE) : plan_solid(C, in, &P, 0.0, y0, top, HF_WALL, NOFACE, NOFACE);
+    const int rFin = cont ? HW_BLOCK : in->fin, rCol = cont ? 1 : in->col;
+    const uint32_t h = hash_combine(g->unit[u].seed, 0x7C10u + (uint32_t)idx);
+    if (cont) { C->s[b].roofFin = HRM_METAL; C->s[b].roofCol = in->col; C->s[b].wallFin = HW_BLOCK; C->s[b].wallCol = 1; }
+    else {
+        /* its roof slab, proud of it all round, out over the door of a room on a deck (a loft room's runs back into the roof) */
+        const int s = ubox(C, u, in->x0 - 0.1, top, zf - (flat ? ROOM_HOOD_S : 0.12), in->x1 + 0.1, y1, in->z + 0.1, HF_COPING, HF_FLAT, HF_SOFFIT, in->fin, in->col);
+        C->s[s].trimCol = (uint8_t)(h & 1u ? 0 : 4);   /* its soffit white or grey */
+    }
+    const double m[2] = { 0.0, -1.0 }, e[2] = { 1.0, 0.0 };
+    float dx;
+    if (home_room_door(g, in, &dx)) {
+        const int o = hs_opening(C, b, u, m, e, dx - 0.5 * INS_DOOR_W, zf, INS_DOOR_W, y0 + 0.02, y0 + INS_DOOR_H, 0.12, HF_DOOR,
+                                 hs_opening_aux(INS_DOOR_W, INS_DOOR_H - 0.02, (int)(h >> 1 & 1u)));
+        opening_finish(C, o, in, rFin, rCol);
+        C->st.doors++;
+    }
+    float win[4][4];
+    const int nw = home_room_windows(g, in, win, 4);
+    for (int k = 0; k < nw; ++k) {
+        const double w = win[k][1] - win[k][0], ht = win[k][3] - win[k][2];
+        /* a screen room's recess, glass at its back (hs_roof_insert stands the blocks in its mouth) */
+        const uint32_t aux = screen ? shared_aux(idx, HG_CURTAIN) | (hs_opening_aux(w, ht, 0) & 0xFFFFFu) : hs_opening_aux(w, ht, w > 1.3 ? HG_CURTAIN : HG_CASEMENT);
+        const int o = hs_opening(C, b, u, m, e, win[k][0], zf, w, win[k][2], win[k][3], screen ? fmin(0.4, in->depth - 0.3) : cont ? 0.08 : 0.1, HF_GLASS, aux);
+        opening_finish(C, o, in, rFin, rCol);
+    }
+    /* a concrete room on a deck: a narrow window in a side a time in two */
+    if (flat && in->face == HIF_CONCRETE && in->depth >= 2.2f && (h >> 2 & 1u)) {
+        const double sw = 0.6, zm = zf + 0.5 * in->depth, sl = y0 + 0.9, hd = top - 0.3;
+        const int right = (int)(h >> 3 & 1u);
+        const double ms[2] = { right ? 1.0 : -1.0, 0.0 }, es[2] = { 0.0, right ? 1.0 : -1.0 };
+        const int o = hs_opening(C, b, u, ms, es, right ? in->x1 : in->x0, right ? zm - 0.5 * sw : zm + 0.5 * sw, sw, sl, hd, 0.1, HF_GLASS, hs_opening_aux(sw, hd - sl, HG_PLAIN));
+        opening_finish(C, o, in, rFin, rCol);
+    }
+}
+
+/* The starter-bar stubs on RCC and self-built roofs (near; hs_stubs sets their bars on them): on the parapets' copings, a
+ * millimetre over them so neither cuts the other's faces (the stubs cost their own ten triangles) */
+static void add_stubs(Ctx *C) {
+    if (C->lod == HSH_FAR) return;
+    const HGraph *g = C->g;
+    const double c = 0.5 * STUB_W;
+    for (int u = 0; u < g->nunit; ++u) {
+        float st[24][3], deck, base;
+        const int n = home_stubs(g, u, st, 24, &deck, &base);
+        for (int k = 0; k < n; ++k)
+            ubox(C, u, st[k][0] - c, base + 0.001, st[k][1] - c, st[k][0] + c, deck + st[k][2], st[k][1] + c, HF_WALL, HF_COPING, NOFACE, HW_CONCRETE, UNF_CONC);
+    }
+}
+
 void hs_add_inserts(Ctx *C) {
     const HGraph *g = C->g;
+    add_stubs(C);   /* HM5c2c2 */
     for (int i = 0; i < g->nins; ++i) {
         const HInsert *in = &g->ins[i];
         if (in->unit < 0 || in->unit >= g->nunit || !home_insert_built(in->kind)) continue;
+        if (in->kind == HI_UNFINISHED) { add_unfinished(C, in); continue; }   /* HM5c2c2 */
+        if (in->kind == HI_ROOFROOM) { add_room(C, in, i); continue; }
         if (home_insert_membered(in)) {
             add_members(C, in, i);
             if (in->kind == HI_STAIRS && C->lod == HSH_NEAR) add_stair_doors(C, in, i);

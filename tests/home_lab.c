@@ -368,6 +368,8 @@ static int bite(HGraph *g, int k) {
                  /* a stair is laid out from its door: moved along until it passes the slice's end (HM5c2c1) */
                  /* (whichever wall it stands against: pushed off the end of its run) */
                  if (in->kind == HI_STAIRS) { const float by = in->x1 - in->x0 + 30.0f; in->door += by; in->x0 += by; in->x1 += by; return 1; }
+                 /* (an unfinished storey stands on its whole slice already: run past it) */
+                 if (in->kind == HI_UNFINISHED) { in->x1 += 0.6f; return 1; }
                  in->x1 = s0 + bw * (float)nb;
                  return 1;
              }
@@ -576,7 +578,10 @@ static int bound_check(void) {
  * rounded bays drawn find a place; a style's boxes mostly of its table's heaviest make. */
 typedef struct Ins { long units, planned, kind[HI_COUNT], wantA, gotA, want[HI_COUNT], got[HI_COUNT], built[HI_COUNT], face[HIF_COUNT], shape[HIS_COUNT], ground, storeys, n, members, mUnits;
                      /* HM5c2c1: stairs steel, with solid upstands, hung, two storeys, members, windows lost; towers with a head */
-                     long stSteel, stSolid, stSide, stBack, stTwo, stMembers, stLost, stMost, twHead; } Ins;
+                     long stSteel, stSolid, stSide, stBack, stTwo, stMembers, stLost, stMost, twHead;
+                     /* HM5c2c2: unfinished storeys on a cast deck, with every wall full, with a ladder; roof rooms as dormers, by make,
+                      * rounded; the flat roofs' units (no unfinished storey) and those with stubs, and the stubs */
+                     long unCast, unFull, unLadder, rmDormer, rmFace[HIF_COUNT], rmRound, flatUnits, stubUnits, stubs; } Ins;
 static Ins g_ins[HS_COUNT];
 static void survey_ins(const HGraph *g) {
     if (g->empty) return;
@@ -615,11 +620,27 @@ static void survey_ins(const HGraph *g) {
             if (lost > b->stMost) b->stMost = lost;
         }
         if (in->kind == HI_TOWER) b->twHead += home_tower_back(g, in) > 0.0f;
+        if (in->kind == HI_UNFINISHED) { b->unCast += in->cage; b->unFull += in->cells == 0xFF; b->unLadder += in->screen; }
+        if (in->kind == HI_ROOFROOM) { b->rmDormer += in->raised; b->rmFace[in->face % HIF_COUNT]++; b->rmRound += in->r > 0.05f; }
         if (home_insert_membered(in)) {
             HMember M[HG_MAX_MEMBERS];
             b->members += home_insert_members(g, in, M, HG_MAX_MEMBERS);
             b->mUnits++;
         }
+    }
+    /* HM5c2c2: the stubs on the flat roofs without an unfinished storey */
+    int mi = -1;
+    for (int i = 0; i < g->nvol && mi < 0; ++i) if (g->vol[i].role <= HV_ROW) mi = i;
+    for (int u = 0; u < g->nunit && mi >= 0; ++u) {
+        HVol own;
+        const HVol *m = home_unit_vol(g, mi, u, &own);
+        int unf = 0;
+        for (int i = 0; i < g->nins; ++i) unf |= g->ins[i].unit == u && g->ins[i].kind == HI_UNFINISHED;
+        if (m->roof != HR_FLAT || m->parapet != 2 || unf) continue;
+        b->flatUnits++;
+        float st[24][3], deck, base;
+        const int n = home_stubs(g, u, st, 24, &deck, &base);
+        b->stubUnits += n > 0; b->stubs += n;
     }
 }
 static int ins_check(void) {
@@ -671,11 +692,31 @@ static int ins_check(void) {
         if (b->want[HI_TOWER]) printf(" | %4.2f %4.2f %5.2f\n", (double)b->got[HI_TOWER] / b->want[HI_TOWER], b->built[HI_TOWER] / (double)b->units, b->twHead / T);
         else printf(" | %11s\n", "-");
     }
+    /* HM5c2c2: unfinished storeys and roof rooms; the stubs on the flat roofs (RCC and self-built panel 1) */
+    printf("\nHM5c2c2's kinds: found a place (of the units drawing it) and built a unit; unfinished: on a cast deck, every wall full,\n"
+           "a ladder; rooms: dormers, makes, rounded; stubs: the flat roofs' units with them, stubs a unit with them\n");
+    printf("  %-11s %11s %5s %5s %5s | %11s %5s %5s %5s %5s %5s %5s | %11s\n", "style", "unfinished", "cast", "full", "ladr", "rooms", "dorm",
+           "conc", "glass", "scrn", "cont", "round", "stubs");
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Ins *b = &g_ins[st];
+        if (!b->units || !home_retrofit_style(st) || (!b->want[HI_UNFINISHED] && !b->want[HI_ROOFROOM] && !b->stubUnits)) continue;
+        const double Un = b->built[HI_UNFINISHED] ? (double)b->built[HI_UNFINISHED] : 1.0, Rm = b->built[HI_ROOFROOM] ? (double)b->built[HI_ROOFROOM] : 1.0;
+        printf("  %-11s", home_style_name(st));
+        if (b->want[HI_UNFINISHED]) printf("  %4.2f %4.2f %5.2f %5.2f %5.2f", (double)b->got[HI_UNFINISHED] / b->want[HI_UNFINISHED], b->built[HI_UNFINISHED] / (double)b->units,
+                                           b->unCast / Un, b->unFull / Un, b->unLadder / Un);
+        else printf("  %9s %5s %5s %5s", "-", "", "", "");
+        if (b->want[HI_ROOFROOM]) printf(" |  %4.2f %4.2f %5.2f %5.2f %5.2f %5.2f %5.2f %5.2f", (double)b->got[HI_ROOFROOM] / b->want[HI_ROOFROOM],
+                                         b->built[HI_ROOFROOM] / (double)b->units, b->rmDormer / Rm, b->rmFace[HIF_CONCRETE] / Rm, b->rmFace[HIF_GLASS] / Rm,
+                                         b->rmFace[HIF_SCREEN] / Rm, b->rmFace[HIF_CONTAINER] / Rm, b->rmRound / Rm);
+        else printf(" |  %9s %5s %5s %5s %5s %5s %5s", "-", "", "", "", "", "", "");
+        if (b->stubUnits) printf(" |  %4.2f %4.1f\n", b->stubUnits / (double)b->flatUnits, b->stubs / (double)b->stubUnits);
+        else printf(" |  %9s\n", "-");
+    }
     for (int st = 0; st < HS_COUNT; ++st) {
         const Ins *b = &g_ins[st];
         if (b->units < 200) continue;
         const double U = (double)b->units;
-        for (int k = HI_FRAME; k <= HI_TOWER && home_retrofit_style(st); ++k)
+        for (int k = HI_FRAME; k <= HI_ROOFROOM && home_retrofit_style(st); ++k)
             /* half at least: a bungalow's veranda or an inter-war semi's two-storey bay fills most of its front, and a South
              * Asian yard (1-2.5 m) is too shallow to stand a frame or strip in front of either. (HM5c2c1's stairs too: against
              * the front, a side or the back, where a front alone had held a quarter to three fifths of them) */
@@ -689,6 +730,10 @@ static int ins_check(void) {
         }
         if (b->planned / U < 0.5 || b->planned / U > 0.7) { printf("FAIL: %s: %.0f%% of units retrofitted (three in five)\n", home_style_name(st), 100.0 * b->planned / U); failures++; }
         if (b->wantA >= 50 && b->gotA < 0.6 * b->wantA) { printf("FAIL: %s: %ld of %ld units drawing a box or rounded bay got one\n", home_style_name(st), b->gotA, b->wantA); failures++; }
+        /* HM5c2c2: the RCC and self-built sheets' panel 1: stubs on most of their flat roofs */
+        if ((st == HS_RCC || st == HS_SELFBUILT) && b->flatUnits >= 200 && (b->stubUnits < 0.55 * b->flatUnits || b->stubUnits > 0.85 * b->flatUnits)) {
+            printf("FAIL: %s: stubs on %ld of %ld flat roofs (most of them)\n", home_style_name(st), b->stubUnits, b->flatUnits); failures++;
+        }
     }
     printf("the insertions: %d short of their sheets\n", failures);
     return failures;
@@ -1316,8 +1361,11 @@ int main(int argc, char **argv) {
                 const HInsert *in = &g->ins[i];
                 if (in->kind != kind) continue;
                 static const char *const WALLS[4] = { "front", "back", "west side", "east side" };
-                printf("seed %d: unit %d, %s, %s, storeys %d-%d, %.1f..%.1f, out %.2f%s%s\n", s, in->unit, home_insert_shape_name(in->shape),
-                       WALLS[in->wall & 3], in->s0, in->s1, in->x0, in->x1, in->depth, in->cage ? ", steel" : "", in->screen ? ", screen" : "");
+                /* (HM5c2c2: a roof kind's make, and a room's a dormer) */
+                printf("seed %d: unit %d, %s, %s, storeys %d-%d, %.1f..%.1f, out %.2f%s%s%s%s\n", s, in->unit,
+                       home_insert_roof(in->kind) ? home_insert_face_name(in->face) : home_insert_shape_name(in->shape),
+                       WALLS[in->wall & 3], in->s0, in->s1, in->x0, in->x1, in->depth, in->cage ? ", steel" : "", in->screen ? ", screen" : "",
+                       in->raised ? ", raised" : "", in->r > 0.05f && home_insert_roof(in->kind) ? ", rounded" : "");
                 found++;
                 break;
             }

@@ -67,3 +67,9 @@ void   hs_bounds(DC *d);
 /* home_insert.c (HM5c2): the insertions' lights, screens, cages and plants (after the boundaries, before the retrofit layer,
  * which keeps clear of them) */
 void   hs_inserts(DC *d);
+/* home_insert_roof.c (HM5c2c2): an unfinished storey's starter bars and ladder, a roof room's lights, pots and plants (called by
+ * hs_inserts for insertion idx); the stubs' bars on every unit's roof */
+void   hs_roof_insert(DC *d, const HInsert *in, int idx);
+void   hs_stubs(DC *d);
+/* home_insert.c: what a region's owners hang under and put on top of their insertions (lights, trailing plants' chances) */
+void   hc_region_dress(int region, float *light, float *trail);

@@ -1625,6 +1625,12 @@ float home_top(const HGraph *g) {
     float top = 0.0f;
     for (int i = 0; i < g->nvol; ++i) top = fmaxf(top, g->vol[i].top);
     for (int i = 0; i < g->nchim; ++i) top = fmaxf(top, g->chim[i].top);
+    for (int i = 0; i < g->nins; ++i) {   /* HM5c2c2: a storey begun on the roof, a room on it */
+        float y0, y1;
+        if (!home_insert_roof(g->ins[i].kind)) continue;
+        home_insert_span(g, &g->ins[i], &y0, &y1);
+        top = fmaxf(top, y1);
+    }
     return top;
 }
 

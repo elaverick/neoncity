@@ -72,3 +72,12 @@ int   home_check_bounds(const HGraph *g, BLog *log);
 void  home_inserts(HGraph *g, int level, BLog *log);
 int   home_check_inserts(const HGraph *g, BLog *log);
 void  home_drop_vol(HGraph *g, int i);
+/* ...between home_insert.c and home_insert_roof.c (HM5c2c2): an insertion's fault against the graph and the n insertions
+ * before it (NULL: none), and its boxes (x0, x1, y0, y1, z0, z1); the roof kinds' draw (whether unit u's body can take
+ * one), span, placing and rules */
+const char *home_ins_fault(const HGraph *g, const HInsert *in, int n);
+int   home_ins_boxes(const HGraph *g, const HInsert *in, float (*bx)[6], int max);
+int   home_roof_feasible(const HGraph *g, int kind, const HVol *m, int mi, int u);
+void  home_roof_span(const HGraph *g, const HInsert *in, float *y0, float *y1);
+void  home_roof_place(HGraph *g, int mi, int u, int kind, BLog *log);
+const char *home_roof_fault(const HGraph *g, const HInsert *in, int n);

@@ -934,6 +934,94 @@ stairs and towers): down the street at 30 m 3.30 ms against 3.29, from the air 8
 `build/home/hm5c2c1/board_closeups.jpg` shows stairs close to (home_lab's renders) on each wall: a side's in a narrow gap is
 seen only glancingly from the street, as a passer-by would.
 
+### Unfinished storeys and roof rooms (HM5c2c2)
+
+The roof's additions (`src/gen/home_insert_roof.c`; shells in `home_shell_ins.c`). The sheets: block 2 (an unfinished upper
+storey on starter bars over a one-storey house), RCC 1 and the self-built sheets' 1 (column stubs with their bars on the roof
+as built), RCC's and the self-built's storeys going up; Korea 4, courtyard 5 and self-built 5 (rooms on a flat roof, a
+container among them); Georgian 3, 4 and 6 (glass pavilions behind the parapet, 4's a drum), the Southern European villa's 4
+and 6, bungalow 4 (a container through the hipped roof), colonial 4 (a screen room on the roof). The user's calls
+(2026-11-24): (1) on a pitched roof a room is a **box dormer** through the front slope; (2) **block's deck**: the owner takes
+the pitched roof off a one-storey house and casts a flat deck to build up on; (3) the **stubs** stand on most RCC and
+self-built roofs as part of the house as built. Each kind's use and the way up to it:
+
+| Kind | What it is for | How it is reached |
+|---|---|---|
+| **unfinished storey** (`HI_UNFINISHED`) | the next storey, built as money comes: walls each to its own height, holes where its windows will go, columns cast to the next floor with their bars out, no roof | the house's own stair carries on up; a one-storey house has a builder's ladder against it |
+| **stubs** (not an insertion: `home_stubs`) | the columns cast for a storey not built yet, their bars out | none: they stand on the roof terrace's parapets |
+| **roof room on a flat roof** (`HI_ROOFROOM`) | a room on the terrace: glass, a container, a screen room, a concrete room; a door onto the terrace and a window | the house's stair to the roof |
+| **roof room as a box dormer** (`raised`) | a loft room rising through the front slope from the top storey's ceiling, behind the gutter or the parapet, its top under the ridge | from inside (a loft conversion) |
+
+**An unfinished storey** stands on its unit's whole slice of a flat main's deck (under `HOME_STOREYS_MAX`), its storey the
+unit's next (`s0 = s1`). Its **walls** stand on the deck's edge, on the parapets (`UNF_WALL`, the parapet's thickness, so the
+house's finish runs up the parapet's 0.7 m and the new work above it), each to its own height (`cells`: not yet, to the sills
+0.93 m, to the windows' heads 2.21 m, or full, the storey less 0.45 m under a ring beam to come): block's all round most times
+(its panel 2), the rest a wall at a time with the front first (RCC's every wall full one time in fifty). Bare grey block
+(block's; dark grey a time in five), hollow clay brick (the self-built's panel 1) or either (RCC's). **Holes** through them where
+the storey's windows will go (`home_unf_holes`: the front's and back's at the window rhythm's bays, a free side's in some of its
+spans; none in a wall only to the sills, none on a party line, where the neighbour may build up against it), a notch to the
+wall's top where it stops near their heads. **Columns** (`UNF_COL`, cast concrete) at its corners, on the bay lines front and
+back and every 3.6 m along its free sides, to the next floor's slab, starter bars (`PMK_R_REBAR`) out of each. A side on a
+party line where the neighbour already has the storey is the neighbour's wall (no wall, no columns there). A one-storey house's
+storey has a builder's timber ladder (`PMK_R_LADDER`) leaning against a free side, else the front, clear of its windows.
+Far: its walls, no holes or columns.
+
+**Block's deck** (`cage`): a block house drawing an unfinished storey that stands on its own (detached), one storey under a
+pitched roof, has its roof taken off and a flat deck cast (`cast_deck`: the main made flat, no parapet, its slab's edge 0.12 m
+proud), logged as a repair; the deck is kept only if the whole house still keeps every rule with it (`home_validate` on a
+copy), and the rules let that deck go without a parapet (`home_vol_cast`). Block's semis and terraces share one pitched roof
+and draw a screen instead.
+
+**The stubs** (`home_stubs`): seven RCC and self-built flat roofs in ten (none under an unfinished storey), a stub on each bay
+line front and back (the corners among them), `STUB_W` square and 1.0-1.6 m over the deck (0.3-0.9 m past the parapet), bars
+out of each. They stand **on the parapets' copings**, a millimetre over them, so neither cuts the other's faces (embedded,
+they cut the parapets into fragments: 7 triangles a unit on the archetypes' average). A party corner: one stub on the line
+where the neighbour has as many storeys (the west unit's, or the east one's where the west has none), none where the
+neighbour stands taller, in on its own parapet over a lower one. None where a room or a stair tower's head (and the way out of
+its door) stands.
+
+**A roof room** on a **flat deck** stands at its back (0.4 m off the back wall, its front 1 m or more behind the front wall),
+at an end of the slice or its middle, 0.3 m off a party wall, 2.4-4.4 m wide, 2.4-3.6 m deep, its top 2.5-2.8 m over the deck;
+as a **box dormer** on a gable with its ridge along the street or a hip (the ridge 2.2 m over the wall plate at least), its front
+0.5 m behind the wall's face (behind the gutter) or 0.6 m (behind a Georgian parapet), its top 0.3 m under the ridge (on a hip
+lowered until a 2 m room fits inside the hips at its top), its back where its top meets the slope. Its box runs down 0.3 m
+under the wall plate, so the roof's slab and the body hide its foot and the CSG joins them; its front's window stands over the
+roof's covering there (`home_room_sill`). **The makes** by style (`ROOM_FACE`): Georgian's glass (a rounded front, the drum, a
+time in three), the Southern European villa's glass, concrete or screen, Korea's concrete, glass or a container, the bungalow's
+container or concrete, the courtyard house's concrete or screen, the self-built's container or concrete, colonial's screen or
+concrete. A **concrete** room: its body and a roof slab proud all round, 0.6 m out over the door on a flat deck (a hood, a
+downlight under it), a door (the unit's door colour) and a window or two, a narrow side window a time in two. A **screen** room:
+its front a recess 0.4 m deep, glass at its back, breeze blocks in its mouth beside the door. A **container**: corrugated steel
+all round (2.44 m by 2.59 m, 2.99 or 6.06 m long along the street), a door and windows cut, its windows barred half the time,
+a bulkhead over the door; a container set through a slope (bungalow 4) may stand over the hips and its top up to 0.3 m past
+the ridge (a box set on the roof, as the sheet's), else the room is built of concrete. **Glass**:
+a foot band (a dormer's up to just over the covering), a roof band, glass between (`HG_CURTAIN`), painted steel posts at the
+square corners, a glazed pair for its door on a flat deck. Pots by the door, plants trailing over a flat room's roof edge.
+Far: one solid of its make.
+
+**The rules** (`home_roof_fault`): an unfinished storey on its unit's whole slice of a flat roof with parapets (or the deck
+cast for it); a room within its slice 0.3 m off a party wall, on a flat roof within its deck's rectangle, as a dormer behind
+the gutter or the parapet, under the ridge, inside the hips at its top (a container: over them, 0.3 m past the ridge at
+most), clear of any roof run up into the front slope (a bay's, a porch's); clear of the stacks; apart from the unit's other insertions (their boxes may touch, never cross; a stair tower's
+head with a metre behind it, its door's way out onto the roof). The roof room's draw (`home_roof_feasible`) now admits a
+pitched roof's slope, so the Georgian, Southern European villa, bungalow, colonial and Korean units' draws changed (which
+units get which kind; the kinds' table is the plan's). The rule broken on purpose (`insert`) runs an unfinished storey past its
+slice or a room up to its party wall.
+
+**Measured** (`home_lab`, 10,000 rows, 2026-11-24): 0 invalid, 0 not deterministic, 0 bad faces, 0 z-fighting; the rule broken
+on purpose caught every time. Of the units drawing an unfinished storey, those that built one: RCC 1.00, the self-built's 1.00,
+block's 0.92 (its deck kept; 0.04 of block's units in the lab's even mix of archetypes, its detached one-storey houses); a
+roof room: 0.82 (bungalow) to 1.00. Rooms as dormers: Georgian's, the villa's and colonial's all, the bungalow's two in three,
+Korea's one in five; Georgian's glass 0.87 (a third rounded), the bungalow's containers 0.66, the self-built's 0.59. Stubs on
+0.70 of RCC's flat roofs and 0.69 of the self-built's, about five a roof. The near shell: 861 triangles a detached house, 699
+a semi half (budget 700), 607 a terrace unit, against 849, 691 and 600 with the roof's kinds off; the far 60, 57, 54 (budget
+60). In the game (night, three runs each, the same build with the roof's kinds and stubs off): an RCC street 3.60 ms against
+3.59, from the air over it 8.28 against 8.31, from the air over a Georgian suburb 7.31 against 7.28: **+0.03 ms at most**.
+Boards `build/home/hm5c2c2/board_noon_a.jpg`, `board_night_a.jpg` (RCC, block, self-built, Georgian, bungalow),
+`board_noon_b.jpg`, `board_night_b.jpg` (colonial, the Southern European villa, Korea, the courtyard house): the sheet, then
+two views from across the street (a roof room's from a neighbour's upper window, its eye 2.5 m over the deck) and one from the
+air (`city_test --home` with `NC_INS_KINDS=0x300`: `home_ins0..1`, `home_air0`); `board_closeups.jpg` (home_lab's renders).
+
 ## Massing and parts
 
 | Part | Size | Notes |

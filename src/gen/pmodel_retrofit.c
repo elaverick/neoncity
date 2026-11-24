@@ -349,6 +349,39 @@ void m_r_breeze_diamond(Pm *pm) {
             if (L0) bx(pm, cx - 0.025f, cy - 0.025f, -t * 0.9f, cx + 0.025f, cy + 0.025f, t * 0.9f, 0.0f);   /* the boss */
         }
 }
+/* ------------------------------------------------------------- starter bars --- */
+void m_r_rebar(Pm *pm) {
+    quiet(pm);
+    pm_mat(pm, PMAT_HCOPPER);
+    const float h = 0.1f;   /* the cage's half width */
+    for (int k = 0; k < 4; ++k) {
+        const float sx = k & 1 ? 1.0f : -1.0f, sz = k & 2 ? 1.0f : -1.0f;
+        const float lean = 0.03f + 0.02f * (float)(k & 1) + 0.015f * (float)(k >> 1);
+        PmPath pa;
+        pm_path_init(&pa, 4);
+        pm_path_add(&pa, sx * h, 0.0f, sz * h, 0);
+        pm_path_add(&pa, sx * h, 0.86f + 0.04f * (float)k, sz * h, 1);
+        pm_path_add(&pa, sx * (h + lean), 1.0f, sz * (h + lean * 0.7f), 0);
+        pm_tube(pm, &pa, 0.009f, L0 ? 6 : 4, 3);
+        pm_path_free(&pa);
+    }
+}
+
+/* A builder's ladder (HM5c2c2): two timber stiles and rungs, 1 m long (stretched to its length: the rungs' thickness is
+ * authored for one of about 3.5 m) */
+void m_r_ladder(Pm *pm) {
+    quiet(pm);
+    pm_mat(pm, PMAT_HTIMBER);
+    const float W = 0.22f, S = 0.035f, D = 0.065f;
+    bx(pm, -W - S, 0.0f, 0.0f, -W, 1.0f, D, 0.0f);
+    bx(pm, W, 0.0f, 0.0f, W + S, 1.0f, D, 0.0f);
+    const int n = L2 ? 6 : 12;
+    for (int k = 0; k < n; ++k) {
+        const float y = ((float)k + 0.6f) / (float)n, t = 0.016f;
+        bx(pm, -W, y - 0.5f * t, 0.015f, W, y + 0.5f * t, 0.05f, 0.0f);
+    }
+}
+
 /* The star lattice (HM5c2b; the Georgian, Victorian and Middle Eastern sheets' mashrabiya): in each block an eight-pointed
  * star of two squares, one turned 45 degrees, its corners tied to the block's, so the stars interlock across the panel. */
 void m_r_breeze_star(Pm *pm) {

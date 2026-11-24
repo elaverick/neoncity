@@ -1151,10 +1151,16 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM5c2c2** (unfinished storeys with starter bars, roof rooms; the user's calls on pitched roofs first: the plan's
-  "HM5c2c"); HM5c2a (6e73b64), HM5c2b (8bfedeb) pushed 2026-11-23, HM5c2c split in two, HM5c2c1 (stairs, stair towers) pushed
-  2026-11-23. Then HM5b1 and HM5b2 (the other regions' kit and grammar), HM5d (the existing styles to their sheets), HM6 (the
-  rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **Next: HM5b1** (the other regions' kit; describe each missing style in a paragraph for the user first). HM5c2 is done:
+  HM5c2a (6e73b64), HM5c2b (8bfedeb) pushed 2026-11-23, HM5c2c1 (stairs, stair towers) 2026-11-23, HM5c2c2 (unfinished
+  storeys, stubs, roof rooms) 2026-11-24. Then HM5b2 (the other regions' grammar), HM5d (the existing styles to their
+  sheets), HM6 (the rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
+- **HM5c2c2's leftovers** (`docs/residential-target.md` "Unfinished storeys and roof rooms"):
+  - Block's cast deck and unfinished storey (its detached one-storey houses, 0.04 of block's units) barely show in the
+    board's street and air views: find seeds where it reads, or let it draw more often.
+  - Georgian's glass drums read in home_lab's close-ups but hardly in the game's noon views.
+  - The stubs stand on the parapets' copings, not in them (embedded, they blew the semi's 700-triangle budget).
+  - A container through a hipped roof (bungalow 4) may cross the hips and stand 0.3 m past the ridge, on purpose.
 - **HM5c2c1's leftovers** (`docs/residential-target.md` "Stairs and stair towers"):
   - Stairs stand against the front (a yard style's), a free side or the back; a back stair lands in the rear yard with no
     gate drawn to the lane behind (rear boundaries and their gates are HM7's: give a back stair's yard its gate then). A stair

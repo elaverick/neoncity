@@ -18,7 +18,8 @@
  *                 front (home_front_bays) so the windows beside it keep their places; what stands in the way is taken in
  *                 or tried elsewhere; home_check_inserts: their rules
  *                 (HM5c2b: frames, hexagons, fins and screen strips as members; HM5c2c1: stairs as members, laid out from their
- *                 upper doors, and glass stair towers on the ground)
+ *                 upper doors, and glass stair towers on the ground; HM5c2c2: the roof's kinds, unfinished storeys and roof
+ *                 rooms, and the stubs on RCC and self-built roofs, in home_insert_roof.c)
  *   the shell     home_shell_ins.c: their solids and their own openings, joined to the house by its CSG
  *   the dressing  hs_inserts: lights under a hung one, a screen box's breeze blocks, a cage's bars, plants on top
  *
@@ -130,6 +131,7 @@ static float ins_ceiling(const HVol *m) {
 static int tower_rises(const HVol *m) { return m->roof == HR_FLAT || m->parapet == 1; }
 
 void home_insert_span(const HGraph *g, const HInsert *in, float *y0, float *y1) {
+    if (home_insert_roof(in->kind)) { home_roof_span(g, in, y0, y1); return; }   /* HM5c2c2: home_insert_roof.c */
     HVol own;
     const HVol *m = home_unit_vol(g, in->vol, in->unit, &own);
     const float P = g->plinth, H = g->storeyH;
@@ -1015,7 +1017,7 @@ int home_door_insert(const HGraph *g, int u) {
     for (int i = 0; i < g->nins; ++i) {
         const HInsert *in = &g->ins[i];
         if (in->unit == u && stair_over_door(in, d)) return i;
-        if (home_insert_membered(in) || in->unit != u || in->s0 != 1 || in->depth < 0.6f - HEPS || fabsf(d->z - in->z) > HEPS) continue;
+        if (home_insert_membered(in) || home_insert_roof(in->kind) || in->unit != u || in->s0 != 1 || in->depth < 0.6f - HEPS || fabsf(d->z - in->z) > HEPS) continue;
         if (d->x - 0.5f * d->width >= in->x0 + 0.05f - HEPS && d->x + 0.5f * d->width <= in->x1 - 0.05f + HEPS) return i;
     }
     return -1;
@@ -1274,6 +1276,7 @@ static const char *ins_fault(const HGraph *g, const HInsert *in, int n) {
     if (u < 0 || u >= g->nunit) return "unit";
     if (mi < 0 || mi >= g->nvol || g->vol[mi].role > HV_ROW) return "main";
     if (!home_insert_built(in->kind)) return "kind";
+    if (home_insert_roof(in->kind)) return home_roof_fault(g, in, n);   /* HM5c2c2: home_insert_roof.c */
     HVol own;
     const HVol *m = home_unit_vol(g, mi, u, &own);
     if (in->s1 < in->s0 || in->s1 >= m->storeys) return "storey";
@@ -1334,6 +1337,9 @@ static const char *ins_fault(const HGraph *g, const HInsert *in, int n) {
     }
     return apart_fault(g, in, n);
 }
+
+const char *home_ins_fault(const HGraph *g, const HInsert *in, int n) { return ins_fault(g, in, n); }
+int home_ins_boxes(const HGraph *g, const HInsert *in, float (*bx)[6], int max) { return ins_boxes(g, in, bx, max); }
 
 int home_check_inserts(const HGraph *g, BLog *log) {
     int ok = 1;
@@ -1402,8 +1408,8 @@ static int feasible(const HGraph *g, int kind, const HVol *m, int bay, float yar
     case HI_STAIRS: return st >= 2 && stair_room(g, mi, u, m);
     case HI_FRAME: case HI_FINS: case HI_SCREEN: return 1;
     case HI_TOWER: return st >= 2 && yard >= 1.8f && !home_style_street(g->style);
-    case HI_UNFINISHED: return m->roof == HR_FLAT && st < HOME_STOREYS_MAX;
-    case HI_ROOFROOM: return m->roof == HR_FLAT;
+    /* HM5c2c2: a flat main under four storeys or block's one-storey house (its deck cast); a room's deck or front slope */
+    case HI_UNFINISHED: case HI_ROOFROOM: return home_roof_feasible(g, kind, m, mi, u);
     default: return 0;
     }
 }
@@ -2142,6 +2148,7 @@ void home_inserts(HGraph *g, int level, BLog *log) {
             if (k == HI_BOX || k == HI_ROUND || clad) place(g, main_vol(g), u, k, log);
             else if (k == HI_STAIRS) place_stairs(g, main_vol(g), u, log);
             else if (k == HI_TOWER) place_tower(g, main_vol(g), u, log);
+            else if (home_insert_roof(k)) home_roof_place(g, main_vol(g), u, k, log);   /* HM5c2c2 */
             else place_m(g, main_vol(g), u, k, log);
         }
     if (g->nins) blog_printf(log, "  inserts: %d (%s %s)\n", g->nins, home_insert_face_name(g->ins[0].face), home_insert_name(g->ins[0].kind));
@@ -2179,6 +2186,7 @@ static void region_dress(int region, float *light, float *trail) {
     default: *light = 0.5f; *trail = 0.25f; break;
     }
 }
+void hc_region_dress(int region, float *light, float *trail) { region_dress(region, light, trail); }
 
 /* HM5c2c1: a steel rail up a flight's open edge `out` from the wall: posts every metre or so on the treads, a top rail and a
  * middle one along the slope */
@@ -2386,6 +2394,7 @@ void hs_inserts(DC *d) {
     for (int i = 0; i < g->nins; ++i) {
         const HInsert *in = &g->ins[i];
         if (home_insert_membered(in)) { dress_members(d, in, i); continue; }
+        if (home_insert_roof(in->kind)) { hs_roof_insert(d, in, i); continue; }   /* HM5c2c2: home_insert_roof.c */
         const int u = in->unit;
         const double dy = C->dy ? C->dy[u] : 0.0, zf = in->z - in->depth, W = in->x1 - in->x0;
         float fy0, fy1;
@@ -2467,4 +2476,5 @@ void hs_inserts(DC *d) {
         const double lo[3] = { in->x0 - 0.1, y0 - 0.3, zf - 0.35 }, hi[3] = { in->x1 + 0.1, y1 + 0.3, zb };
         hc_occupy(d, lo, hi);
     }
+    hs_stubs(d);   /* HM5c2c2: the starter bars on RCC and self-built roofs */
 }

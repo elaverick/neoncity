@@ -411,7 +411,8 @@ static int check_volumes(const HGraph *g, int mi, BLog *log) {
                 if (!faces) REJECT("lean", "%s %d rises away from its parent's wall", nm, i);
             }
             if (v->pitch < minPitch - 0.01f || v->pitch > 60.0f) REJECT("pitch", "%s %d leans at %.1f deg", nm, i, v->pitch);
-        } else if (habitable(v) && v->parapet != 2) REJECT("parapet", "%s %d has a flat roof without a parapet", nm, i);
+        } else if (habitable(v) && v->parapet != 2 && !home_vol_cast(g, i))   /* (HM5c2c2: a deck cast for a new storey's walls) */
+            REJECT("parapet", "%s %d has a flat roof without a parapet", nm, i);
         if (v->top < v->eaves - 1e-4f || v->eaves <= v->y0) REJECT("height", "%s %d: eaves %.2f, top %.2f", nm, i, v->eaves, v->top);
         /* heights against the parent: lower; a lean-to or flat part under its eaves; a ridge running in under its ridge */
         if (v->parent >= 0 && v->parent < g->nvol && !(v->role == HV_PORCH && home_porch_recessed(v->kind))) {

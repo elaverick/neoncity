@@ -387,20 +387,35 @@ static int home_cams(int argc, char **argv) {
                         /* (a stair tower, the house's height, framed by its width from across the street, looked up at) */
                         const int tall = v->kind == HI_TOWER;
                         const double vy = tall ? v->y - 0.2 * v->h : v->y;
-                        const double d = pass < 2 ? fmax(10.0, 2.2 * (tall ? 3.0 * v->w : fmax(v->w, v->h))) : 7.0;
-                        const double lift = fmax(0.0, fmin(pass < 2 ? 4.5 : 2.5, vy - (gy + SIDEWALK_HEIGHT + 1.68) - 1.0));
+                        /* HM5c2c2: the roof's kinds; a roof room from a neighbour's upper window across the street (the eye 6 m
+                         * out from the street's boundary, aimed past it below: its front yard and set-back put the room 10-15 m
+                         * off; the eye 2.5 m over its deck, looking a little down onto it: from the pavement a parapet hides a room
+                         * set back on it); an unfinished storey's front stands on the front wall, looked up at as the rest */
+                        const int roof = home_insert_roof(v->kind);
+                        const double deck = v->y - 0.5 * v->h, eye0 = gy + SIDEWALK_HEIGHT + 1.68;
+                        const double d = v->kind == HI_ROOFROOM ? (pass < 2 ? 6.0 : 5.0) : roof ? (pass < 2 ? fmax(14.0, 2.0 * v->w) : 9.0)
+                                                                : pass < 2 ? fmax(10.0, 2.2 * (tall ? 3.0 * v->w : fmax(v->w, v->h))) : 7.0;
+                        const double lift = v->kind == HI_ROOFROOM ? fmax(0.0, fmin(14.0, deck + 2.5 - eye0))
+                                                                   : fmax(0.0, fmin(pass < 2 ? 4.5 : 2.5, vy - eye0 - 1.0));
                         /* (seen past its front boundary: the line of sight is a plan's, and an area's railings would stop it) */
                         /* (a stair against a side is seen from the street, past the front boundary, looking diagonally into its
                          * side gap: from 40 degrees off the front towards the side it faces) */
                         const int sideways = v->wall == HIW_WEST || v->wall == HIW_EAST;
                         const double dl = hypot(v->fnx + 0.84 * v->nx, v->fnz + 0.84 * v->nz);
                         const double vnx = sideways ? (v->fnx + 0.84 * v->nx) / dl : v->nx, vnz = sideways ? (v->fnz + 0.84 * v->nz) / dl : v->nz;
-                        const double past = sideways ? v->street + 0.6 : (tall || v->kind == HI_STAIRS) && v->ground ? v->yard + 0.6 : 0.0;
+                        /* (HM5c2c2: a roof kind's middle stands over the house in plan: aimed at from past its front boundary) */
+                        const double past = sideways ? v->street + 0.6 : roof ? v->street + 0.6 : (tall || v->kind == HI_STAIRS) && v->ground ? v->yard + 0.6 : 0.0;
                         const double tx = sideways ? v->x + v->fnx * past : v->x + vnx * past, tz = sideways ? v->z + v->fnz * past : v->z + vnz * past;
                         if (sl_view(name, tx, vy, tz, vnx, vnz, v->wall == HIW_BACK ? fmax(6.0, d - past) : d, gy, lift, 1)) {
                             static const char *const WALLS[4] = { "", ", against the back", ", against a side", ", against a side" };
                             printf("  (%s %s, %.1f x %.1f m%s%s)\n", home_insert_face_name(v->face), home_insert_name(v->kind), v->w, v->h,
                                    v->ground ? ", on the ground" : "", WALLS[v->wall & 3]);
+                            /* ...and from the air: 22 m off, the eye 12 m over its deck (home_air0..2) */
+                            if (roof) {
+                                char air[32];
+                                snprintf(air, sizeof(air), "home_air%d", shown);
+                                sl_view(air, tx, deck + 1.0, tz, vnx, vnz, 22.0, gy, fmax(0.0, deck + 12.0 - eye0), 1);
+                            }
                             seen[key]++;
                             at[shown][0] = v->x; at[shown][1] = v->z;
                             shown++;

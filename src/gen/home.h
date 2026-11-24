@@ -269,8 +269,22 @@ static inline int home_insert_membered(const HInsert *in) {
 const char *home_insert_name(int kind);
 const char *home_insert_face_name(int face);
 /* the kinds the steps so far build */
-static inline int home_insert_built(int kind) { return kind <= HI_TOWER; }   /* HM5c2a boxes, rounded bays; HM5c2b frames, hexagons, fins,
-                                                                                strips; HM5c2c1 stairs and stair towers */
+static inline int home_insert_built(int kind) { return kind <= HI_ROOFROOM; }   /* HM5c2a boxes, rounded bays; HM5c2b frames, hexagons,
+                                                                                   fins, strips; HM5c2c1 stairs and stair towers; HM5c2c2
+                                                                                   unfinished storeys and roof rooms */
+/* HM5c2c2: the roof's kinds. An unfinished storey (HI_UNFINISHED) stands on its unit's slice of a flat main's deck (x0..x1, the
+ * main's depth: z its back, depth the main's): s0 = s1 = the storey being built; its walls' heights in `cells` (two bits a wall
+ * in HIW_* order, front, back, west, east: 0 not yet, 1 to the sills, 2 to the windows' heads, 3 full); fin, col its walls'
+ * (bare block or brick); `cage` its deck cast for it (block's: the pitched roof taken off); `screen` a builder's ladder up to
+ * it (a one-storey house has no stair to its roof). A roof room (HI_ROOFROOM) stands on a flat deck or, as a box dormer
+ * (`raised`), rises through a pitched main's front slope from its top storey's ceiling: x0..x1, z its back, depth its depth,
+ * `t` its top over the deck or the wall plate, `r` a rounded front's corners; its make in `face` (a screen room's blocks in
+ * `screen`, a container's window barred in `cage`). Both span s0 = s1 = the main's storeys (the level they add). */
+static inline int home_insert_roof(int kind) { return kind == HI_UNFINISHED || kind == HI_ROOFROOM; }
+#define UNF_WALL   0.25f   /* an unfinished storey's block walls (a flat main's parapet's thickness: they stand on it) */
+#define UNF_COL    0.30f   /* its columns, square */
+/* a flat main's deck: the parapets' foot, or a slab's top where it has none (a deck cast for an unfinished storey) */
+static inline float home_deck_y(const HVol *m) { return m->parapet == 2 ? m->eaves : m->top; }
 
 /* The yards by region (residential roadmap HM2b; the user, 2026-11-16): a megacity's houses have small,
  * mostly paved yards, somewhere between Tokyo-tight and British terraced, Europe on the larger side, and
@@ -350,6 +364,30 @@ float       home_tower_back(const HGraph *g, const HInsert *in);
 /* The front windows of unit u's slice of main mi as the shell cuts them (add_windows: a window a bay, sills and heads, a
  * French window where a balcony is), each widened by the shell's 0.12 m margin: x0, x1, y0, y1. Returns the count. */
 int         home_front_windows(const HGraph *g, int mi, int u, float (*out)[4], int max);
+
+/* HM5c2c2 (home_insert_roof.c): an unfinished storey's walls (each to its own height, h over the deck, along its wall a0..a1
+ * from its outer face `face`; a side on a party line is the neighbour's where it already has the storey) and columns (their
+ * middles, at its corners and along its walls; its columns' top is home_insert_span's y1); the full walls' height over the
+ * deck; a holes' layout of a wall: their middles along it and the width (the storey's windows to come, between the columns) */
+typedef struct HUnfWall { uint8_t wall, level; float a0, a1, face, h; } HUnfWall;
+int         home_unf_walls(const HGraph *g, const HInsert *in, HUnfWall *out);
+int         home_unf_columns(const HGraph *g, const HInsert *in, float (*out)[2], int max);
+float       home_unf_full(const HGraph *g);
+int         home_unf_holes(const HGraph *g, const HInsert *in, const HUnfWall *w, float *mid, float *width, int max);
+/* a roof room's door onto its deck (a flat roof's: its middle along the front; 0 for a dormer, reached from inside), and the
+ * roof covering's height at a dormer's front (a flat room's: its deck) over which its front shows */
+int         home_room_door(const HGraph *g, const HInsert *in, float *x);
+float       home_room_sill(const HGraph *g, const HInsert *in);
+/* ...its front's windows (x0, x1, sill, head; a screen room's: the recess its blocks stand in; a glass room's: none, it is
+ * glass), clear of its door */
+int         home_room_windows(const HGraph *g, const HInsert *in, float (*out)[4], int max);
+/* whether main vi's roof was cast as a deck for an unfinished storey (a flat roof without parapets: block's) */
+int         home_vol_cast(const HGraph *g, int vi);
+/* the starter-bar stubs on unit u's flat roof (RCC and self-built panel 1: the columns cast for a storey not yet built, with
+ * their bars): their middles (x, z) and tops over the deck at *deck, standing STUB_W square on the parapets' copings at *base;
+ * returns the count (0 for most units) */
+#define STUB_W 0.25f
+int         home_stubs(const HGraph *g, int u, float (*out)[3], int max, float *deck, float *base);
 
 /* HM5e3: names (home_lab), and whether a boundary is built (its row's set drawn; walls, railings, and fences with a top:
  * the rest, hedges and the timber fences behind the houses, are HM7's) */

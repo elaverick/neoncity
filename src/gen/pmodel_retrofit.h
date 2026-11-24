@@ -65,6 +65,11 @@ void m_r_vine(Pm *pm);
 void m_r_aerial_yagi(Pm *pm);  void m_r_aerial_cross(Pm *pm);
 /* HM5e3: boundaries (x 0..1 and y 0..1 stretched, centred on z 0: a run's piece or a gate's leaf) */
 void m_r_fence_steel(Pm *pm);  void m_r_fence_mesh(Pm *pm);  void m_r_gate_pierced(Pm *pm);
+/* HM5c2c2: starter bars: four bars at the corners of a column's cage (0.2 m square, centred, standing on y 0), 1 m tall
+ * (stretched), kinked and splayed over their top tenth as a column's always are; rust (the copper's browns) */
+void m_r_rebar(Pm *pm);
+/* HM5c2c2: a builder's ladder, its stiles' feet on y 0 at x -0.22 and 0.22 (stretched in y to its length), its back on z 0 */
+void m_r_ladder(Pm *pm);
 
 /* Module frames:
  *   solar panel   HR_PANEL_W (x) by HR_PANEL_L (z), centred; its feet on y 0, its glass HR_PANEL_H up, facing +y

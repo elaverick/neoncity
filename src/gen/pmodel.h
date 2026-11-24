@@ -357,6 +357,8 @@ enum {
     PMK_R_FENCE_STEEL, PMK_R_FENCE_MESH, PMK_R_GATE_PIERCED,
     /* HM5c2b: the screen strips' star lattice (pmodel_retrofit.c) */
     PMK_R_BREEZE_STAR,
+    /* HM5c2c2: starter bars out of a column cast for a storey not yet built; a builder's ladder (pmodel_retrofit.c) */
+    PMK_R_REBAR, PMK_R_LADDER,
     PMK_COUNT
 };
 typedef struct PmModuleDef {
