@@ -1151,11 +1151,11 @@ The sky reflection (`envReflection`) now includes the lit cloud deck.
 
 The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the target `docs/residential-target.md`.
 
-- **Next: HM5b1c** (Southern Europe and Latin America's kit; the style paragraphs are in the plan's "HM5b1" section,
-  signed off 2026-11-24, split a/b/c by region). HM5b1a (East and South-East Asia) pushed 2026-11-24 (0f306ff), HM5b1b
-  (South Asia, the Middle East, Africa) pushed 2026-11-24 (e78a847). HM5c2 is done:
+- **Next: HM5b2** (the other regions' grammar: placing HM5b1's three kits by style, finishes from asset files, pointed
+  openings). HM5b1 is done: HM5b1a (East and South-East Asia) pushed 2026-11-24 (0f306ff), HM5b1b (South Asia, the
+  Middle East, Africa) (e78a847), HM5b1c (Southern Europe, Latin America) (7b1d519). HM5c2 is done:
   HM5c2a (6e73b64), HM5c2b (8bfedeb) pushed 2026-11-23, HM5c2c1 (stairs, stair towers) 2026-11-23, HM5c2c2 (unfinished
-  storeys, stubs, roof rooms) 2026-11-24. Then HM5b2 (the other regions' grammar), HM5d (the existing styles to their
+  storeys, stubs, roof rooms) 2026-11-24. Then HM5d (the existing styles to their
   sheets), HM6 (the rest of the lived-in layer and the lights). Every step checked against its sheets' panels.
 - **HM5c2c2's leftovers** (`docs/residential-target.md` "Unfinished storeys and roof rooms"):
   - Block's cast deck and unfinished storey (its detached one-storey houses, 0.04 of block's units) barely show in the
