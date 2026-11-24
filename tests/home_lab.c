@@ -643,6 +643,68 @@ static void survey_ins(const HGraph *g) {
         b->stubUnits += n > 0; b->stubs += n;
     }
 }
+/* HM5b2d: the finishes by style (docs/residential-target.md "Finishes (HM5b2d)"): a unit's tiled front, its lower zone's
+ * kind (a tile dado, a painted band, a rendered ground storey under timber), charred timber and clay walls, spalling */
+typedef struct Fin { long units, front, dado, band, under, timber, clay, spalled, spall; } Fin;
+static Fin g_fin[HS_COUNT];
+static void survey_fin(const HGraph *g) {
+    if (g->empty) return;
+    Fin *b = &g_fin[g->style];
+    for (int u = 0; u < g->nunit; ++u) {
+        HFinish f;
+        home_finish(g, u, &f);
+        b->units++;
+        b->front += f.frontFin == HW_TILE;
+        b->dado += f.zoneFin == HW_TILE;
+        b->band += f.zoneFin == HW_RENDER && f.wall != HW_TIMBER;
+        b->under += f.zoneFin == HW_RENDER && f.wall == HW_TIMBER;
+        b->timber += f.wall == HW_TIMBER;
+        b->clay += f.wall == HW_CLAY;
+        b->spalled += f.spall > 0;
+        b->spall += f.spall;
+    }
+}
+static int fin_check(void) {
+    /* the shares the plan sets (about 0.8 of each), on the styles that take them */
+    static const struct { int style; const char *what; double min, max; } WANT[] = {
+        { HS_TOWNHOUSE, "front", 0.18, 0.40 }, { HS_TOWNHOUSE, "dado", 0.15, 0.35 }, { HS_SHOPHOUSE, "dado", 0.45, 0.85 },
+        { HS_MENA_VILLA, "dado", 0.2, 0.4 }, { HS_COURTYARD, "dado", 0.2, 0.4 }, { HS_JAPAN, "timber", 0.22, 0.38 },
+        { HS_SELFBUILT, "clay", 0.28, 0.45 }, { HS_SELFBUILT, "spalled", 0.4, 0.62 }, { HS_COLONIAL, "band", 0.65, 0.9 },
+        { HS_COLONIAL, "spalled", 0.99, 1.0 }, { HS_BLOCK, "band", 0.35, 0.6 }, { HS_RCC, "band", 0.25, 0.5 },
+    };
+    int failures = 0;
+    printf("\nthe finishes by style (HM5b2d): a unit's share with a tiled front, a tile dado, a painted band, a rendered ground storey\n"
+           "under timber, charred timber walls, clay walls, spalled render (and its mean, 0-7, where spalled)\n");
+    printf("  %-11s %6s %6s %6s %6s %6s %6s %6s %6s %5s\n", "style", "units", "front", "dado", "band", "under", "timber", "clay", "spall", "mean");
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Fin *b = &g_fin[st];
+        if (!b->units) continue;
+        const double U = (double)b->units;
+        printf("  %-11s %6ld %6.2f %6.2f %6.2f %6.2f %6.2f %6.2f %6.2f %5.1f\n", home_style_name(st), b->units, b->front / U, b->dado / U, b->band / U,
+               b->under / U, b->timber / U, b->clay / U, b->spalled / U, b->spalled ? (double)b->spall / b->spalled : 0.0);
+    }
+    for (size_t k = 0; k < sizeof(WANT) / sizeof(WANT[0]); ++k) {
+        const Fin *b = &g_fin[WANT[k].style];
+        const double U = b->units ? (double)b->units : 1.0;
+        const char *w = WANT[k].what;
+        const double v = (strcmp(w, "front") == 0 ? b->front : strcmp(w, "dado") == 0 ? b->dado : strcmp(w, "band") == 0 ? b->band :
+                          strcmp(w, "timber") == 0 ? b->timber : strcmp(w, "clay") == 0 ? b->clay : b->spalled) / U;
+        if (v < WANT[k].min || v > WANT[k].max) {
+            printf("FAIL: %s's %s on %.2f of its units, not %.2f-%.2f\n", home_style_name(WANT[k].style), w, v, WANT[k].min, WANT[k].max);
+            failures++;
+        }
+    }
+    /* none where no sheet shows one */
+    for (int st = 0; st < HS_COUNT; ++st) {
+        const Fin *b = &g_fin[st];
+        const int tiles = st == HS_TOWNHOUSE || st == HS_SHOPHOUSE || st == HS_MENA_VILLA || st == HS_COURTYARD;
+        if (!tiles && (b->front || b->dado)) { printf("FAIL: %s wears tiles its sheet never shows\n", home_style_name(st)); failures++; }
+        if (st != HS_JAPAN && b->timber) { printf("FAIL: %s wears charred timber\n", home_style_name(st)); failures++; }
+        if (st != HS_SELFBUILT && b->clay) { printf("FAIL: %s wears bare clay\n", home_style_name(st)); failures++; }
+    }
+    return failures;
+}
+
 static int ins_check(void) {
     int failures = 0;
     printf("\nthe insertions by style (HM5c2, against the sheets' panels 2-6): retrofitted (drawn), kinds drawn a retrofitted unit;\n"
@@ -1451,6 +1513,7 @@ int main(int argc, char **argv) {
             survey_balc(g);
             survey_bound(g);
             survey_ins(g);
+            survey_fin(g);
             if (s == verbose) printf("--- %s seed %d ---\n%s", ARCH[a], s, buf);
             if (g->empty) {
                 if (shown++ < 3) printf("FAIL: %s seed %d (%s) left no house\n%s", ARCH[a], s, home_style_name(style), buf);
@@ -1649,6 +1712,7 @@ int main(int argc, char **argv) {
     failures += balc_check();
     failures += bound_check();
     failures += ins_check();
+    failures += fin_check();
     if (g_coverage) {
         printf("\nthe kit's coverage by style: the share of a style's units with at least one of each module (over every archetype)\n");
         for (int st = 0; st < HS_COUNT; ++st) {

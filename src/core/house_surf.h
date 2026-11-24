@@ -40,7 +40,20 @@
 #define HW_STONE     3    /* ashlar, brownstone */
 #define HW_BLOCK     4    /* concrete block, bare or painted */
 #define HW_CONCRETE  5    /* HM5c2: cast and precast concrete, its panels' joints (the retrofits' boxes and bays) */
-#define HW_COUNT     6
+#define HW_TILE      6    /* HM5b2d: glazed tile facing (house_tile): the colour's low 3 bits the set (HWT_*), the next 4 the
+                             render's palette entry beside it (a whole tiled front's margins) */
+#define HW_CLAY      7    /* HM5b2d: bare clay brick and block, the self-built infill (house_clay_block) */
+#define HW_TIMBER    8    /* HM5b2d: charred timber boards, upright (house_charred) */
+#define HW_COUNT     9
+
+/* Tile sets (HW_TILE's colour, low 3 bits): the atlas house_tile's cells (tools/tile_pack.py) */
+#define HWT_AZULEJO_A   0   /* blue and white */
+#define HWT_AZULEJO_B   1   /* polychrome */
+#define HWT_PERANAKAN_A 2
+#define HWT_PERANAKAN_B 3
+#define HWT_ZELLIGE_A   4   /* a star pattern */
+#define HWT_ZELLIGE_B   5   /* a plain field */
+#define HWT_COUNT       6
 
 /* params w of a brick wall, reveal, stack or coping: old stock brick, sooted (assets/materials/house_brick.json),
  * the styles built before the war; without it, facade_brick's wire-cut. The palette entry is the low three bits. */
@@ -81,6 +94,16 @@
                                              sides): every pane of one insertion's storey shares its key (lit, its blind),
                                              from its foot's height and the insertion (4 bits): */
 #define HOUSE_AUX_INS       26
+
+/* HM5b2d: a near wall's or reveal's (HF_WALL, HF_REVEAL without HOUSE_AUX_FAR, which never used aux): its unit's lower
+ * zone, a second finish below a height (a painted plinth band, a tile dado, the rendered ground storey under charred
+ * timber); its render's spalling; a whole tiled front's length (its margins) */
+#define HOUSE_AUX_ZONE      0             /* 4 bits: the zone's finish + 1 (0: none) */
+#define HOUSE_AUX_ZCOL      4             /* 5 bits: its colour */
+#define HOUSE_AUX_ZTOP      9             /* 9 bits: its top, 2 cm units over the unit's garden (uv.y) */
+#define HOUSE_AUX_SPALL     18            /* 3 bits: render spalled, 0 none .. 7 the most (by upkeep) */
+#define HOUSE_AUX_UNDER     21            /* 1 bit: under the render, clay block (else old brick) */
+#define HOUSE_AUX_FLEN      22            /* 7 bits: a tiled front's length, 0.25 m units (its render margins) */
 
 /* Glazing (HOUSE_AUX_PATTERN of HF_GLASS) */
 #define HG_PLAIN     0    /* one pane */

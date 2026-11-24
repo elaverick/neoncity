@@ -30,6 +30,11 @@ enum { HSH_NEAR = 0, HSH_FAR };
 typedef struct HFinish {
     uint8_t wall, wallCol, roof, roofCol, flat, flatCol, stack, stackCol, trimCol, doorCol, garageCol, glazing, step;
     float   winW, winH;
+    /* HM5b2d: a lower zone on its own walls (zoneFin 255: none): a finish below zoneTop (y over the garden), on the
+     * street face alone if zoneFront; a street face of its own (frontFin 255: none); its render spalled (0-7), down
+     * to clay block where under, else old brick */
+    uint8_t zoneFin, zoneCol, zoneFront, frontFin, frontCol, spall, under;
+    float   zoneTop;
 } HFinish;
 void home_finish(const HGraph *g, int unit, HFinish *f);
 
@@ -102,6 +107,8 @@ typedef struct HCharSet {
     uint8_t region;                                  /* the style's PLAN_REGION_* */
 } HCharSet;
 enum { HK_POST_SQUARE = 0, HK_POST_TURNED, HK_POST_CRAFT, HK_POST_ROUND };
+/* Unit u's upkeep (HK_*; pure: its set's, and its finishes' spalling) */
+int  home_upkeep(const HGraph *g, int unit);
 /* Unit u's set (pure: the shell and the city read the same). */
 void home_char_set(const HGraph *g, int unit, HCharSet *s);
 /* A unit's kit instances' flags (house_surf.h HOUSE_KIT_*) and part byte (its roof). */

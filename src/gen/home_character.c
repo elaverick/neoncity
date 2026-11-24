@@ -217,14 +217,19 @@ static void row_set(const HGraph *g, HCharSet *s) {
     /* back slopes: loft conversions are the owners' (home_char_set) */
 }
 
+/* upkeep: mostly kept, some tired, a few run-down (never derelict); affluence tips it */
+int home_upkeep(const HGraph *g, int unit) {
+    const uint32_t o = hash_combine(unit >= 0 && unit < g->nunit ? g->unit[unit].seed : g->seed, 0xC4A3u);
+    const float kept = 0.45f + 0.35f * g->affluence, r = hash_float(hash_combine(o, 1u));
+    return r < kept ? HK_KEPT : r < kept + (1.0f - kept) * 0.72f ? HK_TIRED : HK_RUNDOWN;
+}
+
 void home_char_set(const HGraph *g, int unit, HCharSet *s) {
     row_set(g, s);
     const uint32_t o = hash_combine(unit >= 0 && unit < g->nunit ? g->unit[unit].seed : g->seed, 0xC4A3u);
     const float aff = g->affluence;
     const int uk = g->region == PLAN_REGION_UK, na = g->region == PLAN_REGION_NA;
-    /* upkeep: mostly kept, some tired, a few run-down (never derelict); affluence tips it */
-    const float kept = 0.45f + 0.35f * aff, r = hash_float(hash_combine(o, 1u));
-    s->upkeep = r < kept ? HK_KEPT : r < kept + (1.0f - kept) * 0.72f ? HK_TIRED : HK_RUNDOWN;
+    s->upkeep = (uint8_t)home_upkeep(g, unit);
     const float worn = s->upkeep == HK_KEPT ? 1.0f : s->upkeep == HK_TIRED ? 1.4f : 1.8f;
     /* replacement windows: plastic in Britain (most post-war, half the inter-war, a third of the Victorian), vinyl in
      * North America; the rest of the world fits what it fits */

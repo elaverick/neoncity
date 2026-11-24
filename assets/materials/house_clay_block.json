@@ -1,0 +1,15 @@
+// Bare clay brick, its mortar smeared over the faces: the Latin American self-built houses' infill (HW_CLAY,
+// shadeHouse) and what their render falls away to (HOUSE_AUX_UNDER), under the unit's clay (house_palette.glsl
+// H_CLAYB; pbrGrain).
+// Bricks090 (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/bricks_090/albedo.png",
+    "normal": "../textures/bricks_090/normal.png",
+    "orm":    "../textures/bricks_090/orm.png"
+  },
+  "tile": 1.6,                 // metres per image (ambientCG's 1.5, a little coarser: hand-made clay)
+  "albedo_mean": [0.467, 0.311, 0.201],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [0.9, 1.0]
+}

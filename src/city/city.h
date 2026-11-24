@@ -501,6 +501,7 @@ typedef struct ProxyBox {
 #define PXH_ROOF_SHIFT    12   /* 4: HRM_* */
 #define PXH_ROOFCOL_SHIFT 16   /* 3 */
 #define PXH_STOREYS_SHIFT 19   /* 2 */
+#define PXH_WALL_HI_SHIFT 21   /* 1: HW_*'s fourth bit (HM5b2d: HW_TIMBER) */
 
 /* Level of detail: within each chunk's run the boxes come largest first (by
  * their largest side), and lod[k][b] counts chunk k's boxes at least

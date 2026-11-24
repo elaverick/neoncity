@@ -64,7 +64,7 @@ vec3 kelvin(float k) {
 // has them, under the same lights as the boxes; its windows an eighth of a wall, a share lit by the hour.
 vec3 shadeHouseProxy(vec3 n, vec3 V) {
     uint info = vInfo;
-    uint wf = (info >> 4) & 7u, wc = (info >> 7) & 31u, rf = (info >> 12) & 15u, rc = (info >> 16) & 7u;
+    uint wf = ((info >> 4) & 7u) | ((info >> 21) & 1u) << 3, wc = (info >> 7) & 31u, rf = (info >> 12) & 15u, rc = (info >> 16) & 7u;
     float h = max(vFace.y, 0.0);
     vec3 world = frame.camPos.xyz + vRel;
     gSkyCover = skyCover(vRel);

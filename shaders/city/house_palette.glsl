@@ -19,6 +19,12 @@ const vec3 H_BLOCK[6] = vec3[](vec3(0.36, 0.35, 0.33), vec3(0.24, 0.24, 0.23), v
 // painted ones the South Asian and Latin American sheets show (a faded pink, mint, ochre)
 const vec3 H_CONCRETE[8] = vec3[](vec3(0.60, 0.58, 0.53), vec3(0.52, 0.50, 0.46), vec3(0.47, 0.48, 0.48), vec3(0.60, 0.54, 0.44),
                                   vec3(0.34, 0.34, 0.33), vec3(0.60, 0.42, 0.40), vec3(0.46, 0.56, 0.48), vec3(0.62, 0.49, 0.28));
+// HM5b2d: glazed tiles (HW_TILE: each set's mean, which the far shells and the proxies show; near, house_tile's cells),
+// bare clay brick (house_clay_block's tints) and charred timber (house_charred's)
+const vec3 H_TILE[6] = vec3[](vec3(0.40, 0.44, 0.54), vec3(0.50, 0.43, 0.24), vec3(0.46, 0.45, 0.36), vec3(0.34, 0.38, 0.40),
+                              vec3(0.22, 0.32, 0.26), vec3(0.06, 0.24, 0.24));
+const vec3 H_CLAYB[4] = vec3[](vec3(0.44, 0.21, 0.10), vec3(0.37, 0.15, 0.08), vec3(0.50, 0.32, 0.19), vec3(0.28, 0.13, 0.08));
+const vec3 H_TIMBER[4] = vec3[](vec3(0.034, 0.032, 0.030), vec3(0.048, 0.040, 0.033), vec3(0.090, 0.060, 0.040), vec3(0.13, 0.125, 0.12));
 const vec3 H_CLAY[4] = vec3[](vec3(0.30, 0.10, 0.05), vec3(0.40, 0.17, 0.08), vec3(0.22, 0.11, 0.07), vec3(0.16, 0.09, 0.07));
 const vec3 H_SLATE[3] = vec3[](vec3(0.065, 0.075, 0.085), vec3(0.055, 0.055, 0.06), vec3(0.085, 0.075, 0.085));
 const vec3 H_CONC[4] = vec3[](vec3(0.18, 0.12, 0.09), vec3(0.18, 0.18, 0.18), vec3(0.09, 0.09, 0.09), vec3(0.25, 0.11, 0.07));
@@ -45,6 +51,9 @@ vec3 houseWallColour(uint fin, uint c) {
     if (fin == HW_SIDING) return houseSoot(H_SIDING[c % 12u]);
     if (fin == HW_STONE)  return H_STONE[c & 3u];
     if (fin == HW_CONCRETE) return houseSoot(H_CONCRETE[c & 7u]);
+    if (fin == HW_TILE)   return H_TILE[min(c & 7u, 5u)];
+    if (fin == HW_CLAY)   return H_CLAYB[c & 3u];
+    if (fin == HW_TIMBER) return H_TIMBER[c & 3u];
     return houseSoot(H_BLOCK[c % 6u]);
 }
 vec3 houseRoofColour(uint fin, uint c) {

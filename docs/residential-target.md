@@ -1148,6 +1148,49 @@ eave tiles, a run of 1 m pieces, and the gatehouses), 0.05 -> 0.12 ms for the ha
 shophouse; the whole frame +0.09-0.11 ms. ctest 25/25. Boards `build/home/hm5b2a/board_noon.jpg`, `board_night.jpg`,
 `board_closeups.jpg` (each style beside its sheet; the hanok beside Korea's, whose panel 4 it answers).
 
+### Finishes (HM5b2d)
+
+The wall finishes the sheets show that no set had: glazed tiles, charred timber, bare clay, painted plinth bands and
+spalled render. Three new finishes (`house_surf.h`): **`HW_TILE`** (its colour the set, `HWT_*`, and beside it the render
+the tiles are set in), **`HW_CLAY`** (bare clay brick, the self-built infill: [Bricks090](https://ambientcg.com/view?id=Bricks090),
+`house_clay_block`) and **`HW_TIMBER`** (charred boards, upright: [Planks023A](https://ambientcg.com/view?id=Planks023A),
+`house_charred`, the set turned a quarter so its boards run up the wall, tinted to char). Their palettes
+(`house_palette.glsl` `H_TILE`, `H_CLAYB`, `H_TIMBER`) give the far shells and the proxies their colours (the proxies'
+wall finish gains a fourth bit, `PXH_WALL_HI_SHIFT`).
+
+Over the row's walls, each owner's (`home_shell.c` `finish_zones`, after `home_finish`'s picks):
+
+- **A lower zone** (`HFinish.zone*`): a second finish below a height on the unit's own walls and reveals, on its street face
+  alone where it is tile. A painted plinth band (render in a contrasting colour, its top wandering where the render
+  spalls), a tile dado (its top a plain bullnose row in the set's dark colour) or the rendered ground storey under
+  charred timber upper storeys (a dark flashing line between). It travels in the near walls' aux
+  (`HOUSE_AUX_ZONE`, `_ZCOL`, `_ZTOP` in 2 cm over the garden), which near walls never used; far off it is dropped.
+- **A street face of its own** (`HFinish.front*`): a townhouse's whole front in azulejo (panel 2), 0.3 m of render left at
+  each end of each unit's front (the face's length in `HOUSE_AUX_FLEN`). The far shells keep the tiles' mean colour.
+- **Spalled render** (`HOUSE_AUX_SPALL`, 0-7 by `home_upkeep`): the paint flaked to the pale lime coat, deeper patches
+  through to the masonry (old brick, or clay where `HOUSE_AUX_UNDER`), most in the splash zone, a shadowed lip at the
+  break. A band's top wanders and drops where it spalls (the colonial's panels 1 and 5).
+
+| Style | Finish | Share of units (`home_lab 10000`) | Sheet |
+|---|---|---|---|
+| townhouse | azulejo, the whole front / a dado 0.9-1.3 m | 0.25 / 0.21 | panels 2, 4, 6 |
+| shophouse | Peranakan majolica dado 1.0-1.3 m on the front, more on richer rows | 0.63 | panel 1 |
+| villa (Middle East), courtyard | zellige dado 1.0-1.4 m on the front | 0.30, 0.31 | (the arch's spandrels: HM5b2b) |
+| Japan | charred timber: the whole house, or the upper storeys over a rendered ground storey | 0.30 (0.18 over render) | panels 1, 4 |
+| self-built | bare clay walls (a row's, three owners in ten rendering theirs); render over clay, spalled 2-7; a plinth on some rendered ones | 0.35; 0.48, mean 3.5; 0.16 | panel 1 |
+| colonial | a painted plinth 0.7-1.1 m (terracotta, ochre, yellow, green); every unit spalled, by upkeep | 0.80; 1.00, mean 2.5 | panels 1, 5 |
+| block | a painted plinth 0.5-0.9 m | 0.49 | |
+| RCC | a painted plinth 0.5-0.9 m | 0.40 | |
+
+`home_lab` checks each share against its range and that no other style wears tiles, timber or clay.
+
+**The tiles are the user's** (2026-11-24 call: 2 azulejo, 2 Peranakan, 1-2 zellige, square and tiling, from their image
+tool as the vines were). Until they are in, `houseTile` draws a stand-in (a glazed grid of 15 cm tiles, 10 cm for
+zellige, in each set's two colours: rings and diamonds, a flower in a border, a check with star points, a plain field;
+each tile its own tone and a little out of plane, the grout sunk), which is not the art. When the art arrives,
+`tools/tile_pack.py` packs it into one atlas, `house_tile` (three cells by two, a cell a repeat), and the shader's
+`#ifdef PBR_HOUSE_TILE` path takes it.
+
 ## Massing and parts
 
 | Part | Size | Notes |
@@ -1196,6 +1239,9 @@ craftsman roofs sheet.
 | Plain clay tiles | `house_clay` ([RoofingTiles014B](https://ambientcg.com/view?id=RoofingTiles014B)) | old, dirty, lichen | uk inter-war, seu, mena, lat, sas, sea shophouses, China and Korea in part |
 | Barrel and glazed tiles | `roof_tiles` (RoofingTiles012A, the city's) | the rolled form | na spanish; China, Korea and Japan's kawara |
 | Corrugated sheet | `house_sheet` ([CorrugatedSteel003](https://ambientcg.com/view?id=CorrugatedSteel003)) | paint scuffed, dirt down its fall | sas, ssa, lat, Japan, Korea; some na |
+| Bare clay brick (HM5b2d) | `house_clay_block` ([Bricks090](https://ambientcg.com/view?id=Bricks090)) | orange, mortar smeared over the faces, half rendered | lat self-built's walls and what their render falls to |
+| Charred timber (HM5b2d) | `house_charred` ([Planks023A](https://ambientcg.com/view?id=Planks023A)) | rough boards, turned upright and tinted to char | Japan |
+| Glazed tiles (HM5b2d) | `house_tile` (the user's art; a stand-in until then) | | seu townhouse, sea shophouse, mena villa and courtyard |
 | Flat roofs | `roof_gravel`, `concrete` (the city's) | | everywhere |
 | Timber (porch posts, fences), painted metal (railings, grilles), glass | the kit's existing materials (HM4) | | everywhere |
 

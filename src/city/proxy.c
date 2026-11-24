@@ -96,7 +96,8 @@ static void house_prism(const HomePrism *q, int k, double ox, double oz, Pending
     p->b.seed = pack2(q->rise, q->inset);
     p->b.info = (uint32_t)k << PX_CHUNK_SHIFT | PX_HOUSE | (uint32_t)(q->wall & 7u) << PXH_WALL_SHIFT |
                 (uint32_t)(q->wallCol & 31u) << PXH_WALLCOL_SHIFT | (uint32_t)(q->roof & 15u) << PXH_ROOF_SHIFT |
-                (uint32_t)(q->roofCol & 7u) << PXH_ROOFCOL_SHIFT | (uint32_t)(q->storeys & 3u) << PXH_STOREYS_SHIFT;
+                (uint32_t)(q->roofCol & 7u) << PXH_ROOFCOL_SHIFT | (uint32_t)(q->storeys & 3u) << PXH_STOREYS_SHIFT |
+                (uint32_t)(q->wall >> 3 & 1u) << PXH_WALL_HI_SHIFT;
     p->size = maxf(top - q->y0, 2.0f * maxf(q->hx, q->hz));
 }
 

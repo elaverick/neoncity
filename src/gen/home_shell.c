@@ -26,6 +26,9 @@
  *   stone    0 limestone, 1 sandstone, 2 brownstone, 3 granite
  *   block    0 bare grey, 1 dark grey, 2 whitewash, 3 pale pink, 4 pale blue, 5 sand
  *   trim     0 white, 1 cream, 2 black, 3 dark green, 4 grey, 5 brown, 6 navy, 7 red
+ *   tile     the set (HWT_*), and beside it the render's entry << 3 (a tiled front's margins)
+ *   clay     0 orange, 1 red-orange, 2 pale, 3 dark
+ *   timber   0 charred black, 1 deep char, 2 brushed, 3 weathered grey
  * ------------------------------------------------------------------------- */
 
 #define NROOFP 7   /* the pitched coverings: HRM_CLAY .. HRM_GLAZED */
@@ -65,7 +68,7 @@ static const FinishDef FIN[HS_COUNT] = {
     [HS_COURTYARD]    = { { 0, 0.70f, 0, 0, 0.30f }, { "", "561f", "", "", "05" }, { [HRM_CLAY] = 1.0f }, "51", HG_PLAIN, HST_STONE, 0.6f, 0.8f },
     [HS_BLOCK]        = { { 0, 0.50f, 0, 0, 0.50f }, { "", "015bcda", "", "", "012345" }, { [HRM_METAL] = 0.85f, [HRM_CONCRETE] = 0.15f }, "0367", HG_PLAIN, HST_CONCRETE, 1.0f, 1.2f },
     [HS_WALLED]       = { { 0, 0.70f, 0, 0, 0.30f }, { "", "015ca", "", "", "02" }, { [HRM_METAL] = 0.5f, [HRM_CONCRETE] = 0.3f, [HRM_CLAY] = 0.2f }, "03", HG_PLAIN, HST_CONCRETE, 1.1f, 1.2f },
-    [HS_SELFBUILT]    = { { 0.40f, 0.45f, 0, 0, 0.15f }, { "202", "9abcde60", "", "", "01" }, { [HRM_METAL] = 0.5f, [HRM_CLAY] = 0.5f }, "037", HG_PLAIN, HST_CONCRETE, 1.0f, 1.2f },
+    [HS_SELFBUILT]    = { { 0, 0.35f, 0, 0, 0.15f, 0, 0, 0.50f }, { "", "9abcde60", "", "", "01", "", "", "00123" }, { [HRM_METAL] = 0.5f, [HRM_CLAY] = 0.5f }, "037", HG_PLAIN, HST_CONCRETE, 1.0f, 1.2f },
     [HS_COLONIAL]     = { { 0, 1, 0, 0, 0 }, { "", "c9ad6807", "", "", "" }, { [HRM_CLAY] = 1.0f }, "015", HG_CASEMENT, HST_STONE, 1.0f, 1.8f },
 };
 
@@ -84,6 +87,75 @@ static int pick_w(const float *w, int n, uint32_t h) {
         x -= w[i];
     }
     return n - 1;
+}
+
+/* HM5b2d: the finishes the sheets show over the walls (docs/residential-target.md "Finishes (HM5b2d)"): a unit's lower
+ * zone, a street face of its own, its render's spalling; the owner's (own), over the row's walls. */
+static void finish_zones(const HGraph *g, int unit, uint32_t own, HFinish *f) {
+    f->zoneFin = f->frontFin = 255; f->zoneCol = f->frontCol = 0; f->zoneFront = 0; f->spall = 0; f->under = 0;
+    f->zoneTop = 0.0f;
+    if (home_hanok(g)) return;
+    const uint32_t z = hash_combine(own, 0x20E5u);
+    const float r0 = hash_float(hash_combine(z, 1u)), r1 = hash_float(hash_combine(z, 2u)), r2 = hash_float(hash_combine(z, 3u));
+    const float aff = g->affluence;
+    const int up = home_upkeep(g, unit);
+    int zf = -1, zc = 0, front = 0;
+    float lo = 0.0f, hi = 0.0f;
+    switch (g->style) {
+    case HS_TOWNHOUSE:   /* azulejo: a whole street face (panel 2), or a dado (panels 4, 6) */
+        if (f->wall != HW_RENDER) break;
+        if (r0 < 0.3f) {
+            f->frontFin = HW_TILE;
+            f->frontCol = (uint8_t)((r1 < 0.65f ? HWT_AZULEJO_A : HWT_AZULEJO_B) | (f->wallCol & 15u) << 3);
+        } else if (r0 < 0.55f) { zf = HW_TILE; zc = r1 < 0.6f ? HWT_AZULEJO_A : HWT_AZULEJO_B; lo = 0.9f; hi = 1.3f; front = 1; }
+        break;
+    case HS_SHOPHOUSE:   /* Peranakan majolica under the five-foot way's front (panel 1): the richer rows the more */
+        if (r0 < 0.45f + 0.35f * aff) { zf = HW_TILE; zc = r1 < 0.5f ? HWT_PERANAKAN_A : HWT_PERANAKAN_B; lo = 1.0f; hi = 1.3f; front = 1; }
+        break;
+    case HS_MENA_VILLA: case HS_COURTYARD:   /* zellige by the door */
+        if (r0 < 0.3f) { zf = HW_TILE; zc = r1 < 0.6f ? HWT_ZELLIGE_A : HWT_ZELLIGE_B; lo = 1.0f; hi = 1.4f; front = 1; }
+        break;
+    case HS_JAPAN:       /* charred timber (panels 1, 4): the whole house, or its upper storeys over a rendered ground storey */
+        if (r0 < 0.3f) {
+            const uint8_t was = f->wall, wasCol = f->wallCol;
+            f->wall = HW_TIMBER; f->wallCol = (uint8_t)pick_hex("00112", hash_combine(z, 4u));
+            f->stack = HW_RENDER; f->stackCol = 3;
+            if (r1 >= 0.4f) {
+                f->zoneFin = HW_RENDER;
+                f->zoneCol = was == HW_RENDER ? wasCol : (uint8_t)pick_hex("034", hash_combine(z, 5u));
+                f->zoneTop = g->plinth + g->storeyH;   /* the first floor's level */
+            }
+        }
+        break;
+    case HS_COLONIAL:    /* a painted plinth band (panels 1, 5), ragged where the render spalls */
+        if (r0 < 0.8f) { zf = HW_RENDER; zc = pick_hex("77774b", hash_combine(z, 6u)); lo = 0.7f; hi = 1.1f; }
+        f->spall = (uint8_t)(up == HK_KEPT ? 1 + (r1 < 0.5f) : up == HK_TIRED ? 3 + (int)(r1 * 2.0f) : 5 + (int)(r1 * 2.99f));
+        break;
+    case HS_SELFBUILT:   /* render over the clay block, half finished or falling off it (panel 1); plinths on some */
+        if (f->wall == HW_CLAY && hash_float(hash_combine(z, 7u)) < 0.3f) {   /* an owner who rendered theirs, the row bare */
+            f->wall = HW_RENDER; f->wallCol = (uint8_t)pick_hex("9abcde6", hash_combine(z, 8u));
+            f->stack = HW_RENDER; f->stackCol = f->wallCol;
+        }
+        if (f->wall == HW_RENDER) {
+            f->under = 1;
+            f->spall = (uint8_t)(up == HK_KEPT ? 2 + (r1 < 0.5f) : up == HK_TIRED ? 4 + (int)(r1 * 2.0f) : 6 + (r1 < 0.5f));
+            if (r0 < 0.3f) { zf = HW_RENDER; zc = pick_hex("74b4", hash_combine(z, 6u)); lo = 0.6f; hi = 1.0f; }
+        }
+        break;
+    case HS_BLOCK:       /* a painted plinth against the splash */
+        if (r0 < 0.5f) { zf = HW_RENDER; zc = pick_hex("4477d", hash_combine(z, 6u)); lo = 0.5f; hi = 0.9f; }
+        break;
+    case HS_RCC:
+        if (r0 < 0.4f) { zf = HW_RENDER; zc = pick_hex("447be", hash_combine(z, 6u)); lo = 0.5f; hi = 0.9f; }
+        break;
+    default: break;
+    }
+    if (zf >= 0) {
+        /* a band the colour of the wall it is painted on is no band */
+        if (zf == HW_RENDER && f->wall == HW_RENDER && zc == (f->wallCol & 15)) zc = zc == 4 ? 7 : 4;
+        f->zoneFin = (uint8_t)zf; f->zoneCol = (uint8_t)zc; f->zoneFront = (uint8_t)front;
+        f->zoneTop = g->plinth + lo + (hi - lo) * r2;
+    }
 }
 
 void home_finish(const HGraph *g, int unit, HFinish *f) {
@@ -136,6 +208,7 @@ void home_finish(const HGraph *g, int unit, HFinish *f) {
         f->winW = 1.0f; f->winH = 1.2f;
         f->doorCol = (uint8_t)pick_hex("889", hash_combine(own, 9u));   /* bare timber leaves */
     }
+    finish_zones(g, unit, own, f);
 }
 
 /* ---------------------------------------------------------------------------
@@ -395,6 +468,23 @@ static void emit_piece(Ctx *C, const Solid *s, int surf, const SPoly *P, const d
         } else {
             const double pp[3] = { p[0], y, p[2] };
             f.uv[q][0] = (float)dot3(pp, h); f.uv[q][1] = (float)dot3(pp, b);
+        }
+    }
+    /* HM5b2d: the house's own walls (its volumes' and their openings': not an insertion's, a boundary's, a kiosk's,
+     * vol -1) take its street face, its lower zone and its render's spalling (house_surf.h HOUSE_AUX_ZONE on); near,
+     * aux is otherwise unused there */
+    if ((surf == HF_WALL || surf == HF_REVEAL) && s->vol >= 0 && s->wallFin == C->fin[unit].wall && s->wallCol == C->fin[unit].wallCol) {
+        const HFinish *uf = &C->fin[unit];
+        const int street = vertical && n[2] < -0.7;
+        if (uf->frontFin != 255 && street && surf == HF_WALL) {
+            f.finish = uf->frontFin; f.colour = uf->frontCol;
+            if (C->lod == HSH_NEAR) f.aux |= (uint32_t)fmin(127.0, ulen * 4.0 + 0.5) << HOUSE_AUX_FLEN;
+        }
+        if (C->lod == HSH_NEAR) {
+            if (uf->zoneFin != 255 && uf->zoneTop > 0.0f && (!uf->zoneFront || street))
+                f.aux |= (uint32_t)(uf->zoneFin + 1) << HOUSE_AUX_ZONE | (uint32_t)(uf->zoneCol & 31u) << HOUSE_AUX_ZCOL |
+                         (uint32_t)fmin(511.0, uf->zoneTop / 0.02 + 0.5) << HOUSE_AUX_ZTOP;
+            if (uf->spall) f.aux |= (uint32_t)(uf->spall & 7u) << HOUSE_AUX_SPALL | (uint32_t)(uf->under & 1u) << HOUSE_AUX_UNDER;
         }
     }
     if (C->lod == HSH_FAR) {

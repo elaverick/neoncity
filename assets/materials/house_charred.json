@@ -1,0 +1,15 @@
+// Charred timber boards (yakisugi), upright: the Japanese houses' burnt cladding (HW_TIMBER, shadeHouse), under
+// the unit's char (house_palette.glsl H_TIMBER: black, deep char, brushed, weathered grey; pbrGrain). The
+// set's boards run along the image, so the shader turns it a quarter (their length up the wall).
+// Planks023A (ambientCG, CC0), packed at 1024 by tools/pbr_pack.c.
+{
+  "maps": {
+    "albedo": "../textures/planks_023a/albedo.png",
+    "normal": "../textures/planks_023a/normal.png",
+    "orm":    "../textures/planks_023a/orm.png"
+  },
+  "tile": 2.0,                 // metres per image: boards about 15 cm wide
+  "albedo_mean": [0.102, 0.079, 0.062],   // per channel (pbr_pack): the tint divides by it
+  // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
+  "params": [1.0, 1.0]
+}
