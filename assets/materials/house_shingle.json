@@ -11,5 +11,7 @@
   "tile": 2.9,                 // metres per image (ambientCG's size): tabs about 0.36 m
   "albedo_mean": [0.097, 0.077, 0.068],   // per channel (pbr_pack): the tint divides by it
   // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
-  "params": [0.8, 1.0]
+  "params": [0.8, 1.0],
+  // the tabs' steps, metres: parallax occlusion mapped (pbrGrainRelief; the height in the normal map's alpha, tools/relief_pack.py)
+  "depth": 0.008
 }

@@ -28,6 +28,9 @@ VIEWS = {
     "house_10m": (["8187.70", "7473.94", "103.4", "6.9", "-102.94"], VIC),
     "house_roofs": (["8180.90", "7478.09", "83.4", "-21.8", "-82.72"], VIC),
     "house_air": (["8071.63", "7490.78", "83.4", "-31.0", "-14.72"], VIC),
+    # PD1: the 10 m street view's roofs in two more coverings: plain clay tiles (inter-war), glazed rolls (China)
+    "roof_clay": (["8187.70", "7473.94", "103.4", "14.0", "-102.94"], ["--home-arch", "semi", "--home-style", "interwar"]),
+    "roof_glazed": (["8187.70", "7473.94", "103.4", "14.0", "-102.94"], ["--home-arch", "terrace", "--home-style", "china"]),
     "slice_08m": (["339.93", "1176.29", "-127.1", "-4.0", "-19.50"], []),
     "slice_25m": (["358.35", "1178.04", "-97.1", "-1.3", "-19.48"], []),
 }

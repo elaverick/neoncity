@@ -10,5 +10,7 @@
   "tile": 2.2,                 // metres per image: eight slates across, 27 cm each, in courses of about the same
   "albedo_mean": [0.038, 0.041, 0.038],   // per channel (pbr_pack): the tint divides by it
   // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
-  "params": [0.9, 1.0]
+  "params": [0.9, 1.0],
+  // the slates' steps, metres: parallax occlusion mapped (pbrGrainRelief; the height in the normal map's alpha, tools/relief_pack.py)
+  "depth": 0.010
 }

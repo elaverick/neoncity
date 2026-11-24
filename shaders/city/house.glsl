@@ -362,7 +362,10 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
         vec2 q = vec2(uv.x, -uv.y);
         int m = houseRoofSet(fin);
         if (pbrLoaded(m)) {
-            Grain g = pbrGrain(m, q * (fin == HRM_GLAZED ? 0.85 : 1.0), dFdx(q), dFdy(q), T, B, n);
+            // PD1: the covering's relief, parallax occlusion mapped where its set has a depth (its laps, rolls, ribs), shadowing
+            // its own lights below
+            vec2 qs = q * (fin == HRM_GLAZED ? 0.85 : 1.0);
+            Grain g = pbrGrainRelief(m, qs, dFdx(qs), dFdy(qs), T, B, n, V);
             alb *= g.tint * g.ao;
             nn = g.n;
             specK = (fin == HRM_METAL ? 0.12 : 0.05) * grainSpec(g);
@@ -376,7 +379,9 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
         alb *= mix(0.7, 1.05, vnoise(gWorld.xz * 0.15, 0x4A12u));   // weathering in blotches
         alb *= mix(1.0, 0.7, wet);
         shin = mix(shin, 60.0, wet); specK = mix(specK, 0.35, wet);
+        reliefLightsOn();
         vec3 diff = wallLighting(p, nn, V, shin, specK, h, spec);
+        reliefLightsOff();
         return alb * diff + spec;
     }
 

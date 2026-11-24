@@ -10,5 +10,7 @@
   "tile": 2.9,                 // metres per image
   "albedo_mean": [0.380, 0.118, 0.062],   // per channel (pbr_pack): the tint divides by it
   // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
-  "params": [0.9, 1.0]
+  "params": [0.9, 1.0],
+  // the rolls, crest to trough, metres: parallax occlusion mapped (pbrGrainRelief; the height in the normal map's alpha, tools/relief_pack.py)
+  "depth": 0.050
 }

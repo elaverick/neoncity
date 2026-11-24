@@ -11,5 +11,7 @@
   "tile": 3.2,                 // metres per image (ambientCG's size)
   "albedo_mean": [0.015, 0.016, 0.016],   // per channel (pbr_pack): the tint divides by it
   // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
-  "params": [0.3, 1.0]
+  "params": [0.3, 1.0],
+  // the interlocking profile, metres: parallax occlusion mapped (pbrGrainRelief; the height in the normal map's alpha, tools/relief_pack.py)
+  "depth": 0.030
 }
