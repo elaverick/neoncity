@@ -1155,7 +1155,7 @@ The roadmap is HM0-HM11 in `~/.claude/plans/residential-buildings.md`, the targe
   openings), split in four (the plan's section "HM5b2"): **HM5b2a** East and South-East Asia (signed off and pushed, 9786f38,
   2026-11-24), next **HM5b2b** South Asia, the Middle East and Africa with pointed openings and the bungalow's Art Deco
   variant (xhigh), **HM5b2c** Southern Europe and Latin America with the colonial's second storey (high). **HM5b2d** the wall
-  finishes signed off and pushed 2026-11-24 (465ceb7); the user's tiles in 2026-11-25 (tools/tile_pack.py). HM5b1 is done: HM5b1a (East and South-East Asia) pushed 2026-11-24 (0f306ff), HM5b1b (South Asia, the
+  finishes signed off and pushed 2026-11-24 (465ceb7); the user's tiles pushed 2026-11-25 (21d14b3, tools/tile_pack.py). HM5b1 is done: HM5b1a (East and South-East Asia) pushed 2026-11-24 (0f306ff), HM5b1b (South Asia, the
   Middle East, Africa) (e78a847), HM5b1c (Southern Europe, Latin America) (7b1d519). HM5c2 is done:
   HM5c2a (6e73b64), HM5c2b (8bfedeb) pushed 2026-11-23, HM5c2c1 (stairs, stair towers) 2026-11-23, HM5c2c2 (unfinished
   storeys, stubs, roof rooms) 2026-11-24. Then HM5d (the existing styles to their
