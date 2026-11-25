@@ -405,8 +405,12 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
 
     if (surf == HF_STEP) {
         alb = fin == HST_STONE ? vec3(0.40, 0.37, 0.32) : fin == HST_TILE ? vec3(0.42, 0.20, 0.12) : fin == HST_TIMBER ? vec3(0.22, 0.15, 0.10) : vec3(0.34, 0.33, 0.31);
-        vec3 T, B; vec2 q;
-        planarFrame(n, gWorld, T, B, q);
+        // tiled square to the house: the shell's uv (the row's frame, home_shell.c), not the world's axes; image right and
+        // up the world directions uv.x and uv.y grow in (from their screen gradients: a mirrored row's uv.x runs back)
+        vec2 q = vec2(uv.x, -uv.y);
+        vec3 px = dFdx(gWorld), py = dFdy(gWorld);
+        vec3 T = px * uvy.y - py * uvx.y, B = py * uvx.x - px * uvy.x;
+        T = normalize(T - n * dot(T, n) + 1e-7); B = normalize(B - n * dot(B, n) + 1e-7);
         int m = fin == HST_TIMBER ? PBR_WOOD_LIGHT : fin == HST_TILE ? PBR_FLOOR_TILE : PBR_CONCRETE;
         if (pbrLoaded(m)) { Grain g = pbrGrain(m, q, dFdx(q), dFdy(q), T, B, n); alb *= g.tint * g.ao; nn = g.n; }
         alb *= mix(1.0, 0.7, wet);

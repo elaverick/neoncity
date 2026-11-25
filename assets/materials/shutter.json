@@ -7,10 +7,10 @@
     "normal": "../textures/corrugated_steel_009/normal.png",
     "orm":    "../textures/corrugated_steel_009/orm.png"
   },
-  "tile": [7.2, 3.6],          // metres per image (a 2:1 image): slats 8 cm apart
+  "tile": [2.4, 1.2],          // metres per image (a 2:1 image, about 15 slats down it): slats 8 cm apart
   "albedo_mean": [0.230, 0.228, 0.228],   // per channel (pbr_pack): the tint divides by it
   // how much of the albedo's variation shows (1 all); how strongly the normal map bends the surface (1 as authored)
   "params": [0.8, 1.0],
   // the slats' depth in metres, parallax occlusion mapped (pbrGrainRelief; the height in the normal map's alpha)
-  "depth": 0.03
+  "depth": 0.015
 }
