@@ -1204,7 +1204,11 @@ static void dress_ridges(DC *d, const HsRoof *hr) {
         const double ea = R->role[v1] == ER_VERGE ? R->ext[v1] : 0.0, eb = R->role[v2] == ER_VERGE ? R->ext[v2] : 0.0;
         const double a[3] = { 0.5 * (a0[0] + a1[0]) + R->F.m[v1][0] * ea, y, 0.5 * (a0[1] + a1[1]) + R->F.m[v1][1] * ea };
         const double b[3] = { 0.5 * (b0[0] + b1[0]) + R->F.m[v2][0] * eb, y, 0.5 * (b0[1] + b1[1]) + R->F.m[v2][1] * eb };
-        ridge_run(d, hr, a, b, crest);
+        /* the tiles stop a centimetre short of a verge: their bedding's end face would lie on the verge's own (a fight) */
+        const double ia = R->role[v1] == ER_VERGE ? 0.01 : 0.0, ib = R->role[v2] == ER_VERGE ? 0.01 : 0.0;
+        const double ra[3] = { a[0] - R->F.m[v1][0] * ia, y, a[2] - R->F.m[v1][1] * ia };
+        const double rb[3] = { b[0] - R->F.m[v2][0] * ib, y, b[2] - R->F.m[v2][1] * ib };
+        ridge_run(d, hr, ra, rb, crest);
         ridge_ends(d, hr, a, b);
     } else {
         const double *p = R->F.p[0];
