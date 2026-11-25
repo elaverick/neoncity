@@ -39,72 +39,36 @@ int houseWallSet(uint fin, uint col) {
     return PBR_HOUSE_ROUGHCAST;
 }
 
-/* HM5b2d: glazed tile facing (HW_TILE), set `set` (HWT_*) at q (metres along the wall and up), fw its footprint; zoneD:
- * how far under a dado's top (its cap row in the top 7 cm). The art is the user's (house_tile: tools/tile_pack.py's
- * atlas of the six sets, one cell a repeat); until it is in, a stand-in drawn here: a glazed grid in each set's
- * colours, not the art. Writes the albedo, the bent normal and the glaze. */
-const vec3 TILE_INK[12] = vec3[](vec3(0.70, 0.70, 0.66), vec3(0.04, 0.10, 0.36),    // azulejo A: white, cobalt
-                                 vec3(0.66, 0.50, 0.16), vec3(0.05, 0.12, 0.38),    // B: yellow, blue
-                                 vec3(0.62, 0.60, 0.50), vec3(0.62, 0.26, 0.32),    // Peranakan A: cream, rose
-                                 vec3(0.20, 0.36, 0.55), vec3(0.70, 0.56, 0.14),    // B: blue, yellow
-                                 vec3(0.06, 0.32, 0.18), vec3(0.66, 0.66, 0.62),    // zellige A: green, white
-                                 vec3(0.04, 0.24, 0.24), vec3(0.03, 0.15, 0.15));   // B: teal field
-void houseTile(vec2 q, uint set, vec2 fw, uint seed, float zoneD, vec3 n, vec3 T, vec3 B,
+/* HM5b2d: glazed tile facing (HW_TILE), set `set` (HWT_*): the user's art, one material a set (house_tile_<set>, laid
+ * again by tools/tile_pack.py; their ids run in HWT_* order, checked in src/core/common.h), its joints and the Peranakan's
+ * moulding parallax occlusion mapped at their true few millimetres. q: metres in the wall (image right, image down),
+ * gx, gy its screen derivatives (taken in uniform control flow); zoneD: how far under a dado's top (its cap row in the
+ * top 7 cm). Writes the albedo, the bent normal and the glaze; true where the relief's own lights' shadows are on. */
+const vec3 TILE_CAP[6] = vec3[](vec3(0.04, 0.10, 0.36), vec3(0.05, 0.12, 0.38),    // azulejo: cobalt
+                                vec3(0.10, 0.22, 0.08), vec3(0.05, 0.10, 0.35),    // Peranakan: the border's green, blue
+                                vec3(0.03, 0.12, 0.06), vec3(0.02, 0.09, 0.07));   // zellige: green, teal
+bool houseTile(vec2 q, vec2 gx, vec2 gy, uint set, float zoneD, vec3 n, vec3 T, vec3 B, vec3 V,
                inout vec3 alb, inout vec3 nn, inout float specK, inout float shin) {
     set = min(set, 5u);
-    vec3 ground = TILE_INK[set * 2u], ink = TILE_INK[set * 2u + 1u];
     if (zoneD < 0.07) {
         // a dado's cap: a plain bullnose row in the set's dark colour, rounding over at its top
         float r = clamp(zoneD / 0.07, 0.0, 1.0);
-        alb = ink * 0.8;
+        alb = TILE_CAP[set] * 0.8;
         nn = normalize(n + B * (1.0 - r) * 1.2);
         specK = 0.07; shin = 70.0;
-        return;
+        return false;
     }
-#ifdef PBR_HOUSE_TILE
-    if (pbrLoaded(PBR_HOUSE_TILE)) {
-        // the atlas: three cells across, two down; a cell one repeat, pbrTile metres of wall
-        vec2 span = pbrTile(PBR_HOUSE_TILE), st = q / span, cell = vec2(float(set % 3u), float(set / 3u));
-        vec2 a = (cell + 0.02 + 0.96 * fract(vec2(st.x, -st.y))) / vec2(3.0, 2.0);
-        vec2 gx = dFdx(q) / span * 0.96 / vec2(3.0, 2.0), gy = dFdy(q) / span * 0.96 / vec2(3.0, 2.0);
-        Grain g = pbrGrainAt(PBR_HOUSE_TILE, a, gx, gy, T, B, n);
-        alb = pbrAlbedoMean(PBR_HOUSE_TILE) * g.tint * g.ao;
-        nn = g.n;
-        specK = 0.07 * grainSpec(g); shin = 70.0;
-        return;
+    int m = PBR_HOUSE_TILE_AZULEJO_A + int(set);
+    if (!pbrLoaded(m)) {
+        alb = H_TILE[set];   // its mean, as the far shells
+        specK = 0.07; shin = 70.0;
+        return false;
     }
-#endif
-    float S = set >= 4u ? 0.10 : 0.15;
-    vec2 gq = q / S, id = floor(gq), f = fract(gq) - 0.5;
-    float joint = min(hStripe(gq.x, 0.035, 0.965, fw.x / S), hStripe(gq.y, 0.035, 0.965, fw.y / S));
-    float aa = max(fw.x, fw.y) / S + 1e-3;
-    float m = 0.0;
-    if (set <= 1u) {
-        // azulejo: rings centred on the tiles' corners (a circle every four tiles) and a diamond at each centre
-        float r = length(0.5 - abs(f));
-        m = max(1.0 - smoothstep(0.06, 0.06 + aa, abs(r - 0.36)), 1.0 - smoothstep(0.17, 0.17 + aa, abs(f.x) + abs(f.y)));
-        if (set == 1u) ground = mix(ground, vec3(0.64, 0.62, 0.56), 1.0 - smoothstep(0.2, 0.2 + aa, length(f)));
-    } else if (set <= 3u) {
-        // majolica: a flower at the centre, a border round the tile
-        float a = atan(f.y, f.x), r = length(f);
-        float petal = 0.15 + 0.07 * cos(a * 8.0);
-        m = max(1.0 - smoothstep(petal, petal + aa, r), smoothstep(0.40 - aa, 0.40, max(abs(f.x), abs(f.y))));
-    } else if (set == 4u) {
-        // zellige: green and white in a check, a black star point where four meet
-        m = mod(id.x + id.y, 2.0);
-        float star = 1.0 - smoothstep(0.2, 0.2 + aa, abs(0.5 - abs(f.x)) + abs(0.5 - abs(f.y)));
-        ground = mix(ground, vec3(0.025), star);
-        ink = mix(ink, vec3(0.025), star);
-    } else {
-        m = 0.0;   // a plain field
-    }
-    alb = mix(ground, ink, m);
-    // hand-made: each tile its own tone and a little out of plane; dark grout sunk between them
-    uint th = hash2i(seed ^ 0x711Eu, int(id.x), int(id.y));
-    alb *= mix(0.86, 1.08, hfloat(th)) * (set == 5u ? mix(0.7, 1.25, hfloat(hash_combine(th, 3u))) : 1.0);
-    alb = mix(vec3(0.20, 0.19, 0.18), alb, joint);
-    nn = normalize(n + (T * (hfloat(hash_combine(th, 1u)) - 0.5) + B * (hfloat(hash_combine(th, 2u)) - 0.5)) * 0.08);
-    specK = mix(0.01, 0.07, joint); shin = 70.0;
+    Grain g = pbrGrainRelief(m, q, gx, gy, T, B, n, V);
+    alb = pbrAlbedoMean(m) * g.tint * g.ao * pbrParams(m).z;
+    nn = g.n;
+    specK = 0.07 * grainSpec(g); shin = 70.0;
+    return true;
 }
 
 // Where a set has not loaded: the courses of a covering drawn here (slate, shingles, a sheet's ribs). q: metres along the eaves and up
@@ -454,6 +418,7 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
     vec3 T = abs(n.y) > 0.9 ? vec3(1.0, 0.0, 0.0) : normalize(vec3(n.z, 0.0, -n.x));
     vec3 B = abs(n.y) > 0.9 ? vec3(0.0, 0.0, -1.0) : vec3(0.0, 1.0, 0.0);
     vec2 q = abs(n.y) > 0.9 ? vec2(gWorld.x, gWorld.z) : vec2(uv.x, -uv.y);
+    vec2 qx = dFdx(q), qy = dFdy(q);   // here, in uniform control flow, for the tiles' parallax
     float along = dot(gWorld.xz, T.xz);
     // HM5b2d (house_surf.h HOUSE_AUX_ZONE on, near walls and reveals alone): a tiled street face's render margins; the
     // unit's lower zone (a painted plinth band, a tile dado, the rendered ground storey under charred timber) below
@@ -485,8 +450,9 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
         q = vec2(-uv.y, -uv.x);
         vec3 t0 = T; T = -B; B = t0;
     }
+    bool tileRelief = false;
     if (fin == HW_TILE && surf != HF_COPING) {
-        houseTile(vec2(uv.x, uv.y), col & 7u, fw, seed, zoneD, n, T, B, alb, nn, specK, shin);
+        tileRelief = houseTile(q, qx, qy, col & 7u, zoneD, n, T, B, V, alb, nn, specK, shin);
         m = -1;
     } else if (fin == HW_SIDING && surf != HF_COPING && !pbrLoaded(m)) {
         // boards lapped up the wall, the lower edge of each in its own shadow
@@ -558,7 +524,9 @@ vec3 shadeHouse(vec3 p, vec3 rel, vec3 n, vec2 uv, uint seed, uvec4 prm, uint au
     alb *= mix(0.8, 1.0, smoothstep(0.0, 1.2, h)) * mix(0.85, 1.05, vnoise(vec2(along * 0.8, gWorld.y * 0.15), 0x4A15u));
     alb *= 1.0 - 0.28 * grime * runs * (abs(n.y) > 0.9 ? 0.0 : 1.0);
     alb *= mix(1.0, 0.8, wet);
+    if (tileRelief) reliefLightsOn();
     vec3 diff = wallLighting(p, nn, V, shin, specK, h, spec);
+    reliefLightsOff();
     vec3 c = alb * diff + spec;
 
     if ((aux & HOUSE_AUX_WINDOWS) != 0u && surf == HF_WALL) c = houseFarWindows(c, n, V, uv, fw, seed, aux);

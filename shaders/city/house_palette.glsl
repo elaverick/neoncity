@@ -19,10 +19,10 @@ const vec3 H_BLOCK[6] = vec3[](vec3(0.36, 0.35, 0.33), vec3(0.24, 0.24, 0.23), v
 // painted ones the South Asian and Latin American sheets show (a faded pink, mint, ochre)
 const vec3 H_CONCRETE[8] = vec3[](vec3(0.60, 0.58, 0.53), vec3(0.52, 0.50, 0.46), vec3(0.47, 0.48, 0.48), vec3(0.60, 0.54, 0.44),
                                   vec3(0.34, 0.34, 0.33), vec3(0.60, 0.42, 0.40), vec3(0.46, 0.56, 0.48), vec3(0.62, 0.49, 0.28));
-// HM5b2d: glazed tiles (HW_TILE: each set's mean, which the far shells and the proxies show; near, house_tile's cells),
+// HM5b2d: glazed tiles (HW_TILE: each set's mean, which the far shells and the proxies show; near, the house_tile_* sets),
 // bare clay brick (house_clay_block's tints) and charred timber (house_charred's)
-const vec3 H_TILE[6] = vec3[](vec3(0.40, 0.44, 0.54), vec3(0.50, 0.43, 0.24), vec3(0.46, 0.45, 0.36), vec3(0.34, 0.38, 0.40),
-                              vec3(0.22, 0.32, 0.26), vec3(0.06, 0.24, 0.24));
+const vec3 H_TILE[6] = vec3[](vec3(0.34, 0.35, 0.43), vec3(0.42, 0.38, 0.34), vec3(0.39, 0.33, 0.22), vec3(0.33, 0.32, 0.29),
+                              vec3(0.32, 0.32, 0.28), vec3(0.03, 0.12, 0.08));   // tile_pack's means x its files' scale
 const vec3 H_CLAYB[4] = vec3[](vec3(0.44, 0.21, 0.10), vec3(0.37, 0.15, 0.08), vec3(0.50, 0.32, 0.19), vec3(0.28, 0.13, 0.08));
 const vec3 H_TIMBER[4] = vec3[](vec3(0.034, 0.032, 0.030), vec3(0.048, 0.040, 0.033), vec3(0.090, 0.060, 0.040), vec3(0.13, 0.125, 0.12));
 const vec3 H_CLAY[4] = vec3[](vec3(0.30, 0.10, 0.05), vec3(0.40, 0.17, 0.08), vec3(0.22, 0.11, 0.07), vec3(0.16, 0.09, 0.07));

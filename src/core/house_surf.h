@@ -40,13 +40,13 @@
 #define HW_STONE     3    /* ashlar, brownstone */
 #define HW_BLOCK     4    /* concrete block, bare or painted */
 #define HW_CONCRETE  5    /* HM5c2: cast and precast concrete, its panels' joints (the retrofits' boxes and bays) */
-#define HW_TILE      6    /* HM5b2d: glazed tile facing (house_tile): the colour's low 3 bits the set (HWT_*), the next 4 the
+#define HW_TILE      6    /* HM5b2d: glazed tile facing (house_tile_*): the colour's low 3 bits the set (HWT_*), the next 4 the
                              render's palette entry beside it (a whole tiled front's margins) */
 #define HW_CLAY      7    /* HM5b2d: bare clay brick and block, the self-built infill (house_clay_block) */
 #define HW_TIMBER    8    /* HM5b2d: charred timber boards, upright (house_charred) */
 #define HW_COUNT     9
 
-/* Tile sets (HW_TILE's colour, low 3 bits): the atlas house_tile's cells (tools/tile_pack.py) */
+/* Tile sets (HW_TILE's colour, low 3 bits): the materials house_tile_<set>, the user's art (tools/tile_pack.py), in this order */
 #define HWT_AZULEJO_A   0   /* blue and white */
 #define HWT_AZULEJO_B   1   /* polychrome */
 #define HWT_PERANAKAN_A 2

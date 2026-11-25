@@ -1184,12 +1184,20 @@ Over the row's walls, each owner's (`home_shell.c` `finish_zones`, after `home_f
 
 `home_lab` checks each share against its range and that no other style wears tiles, timber or clay.
 
-**The tiles are the user's** (2026-11-24 call: 2 azulejo, 2 Peranakan, 1-2 zellige, square and tiling, from their image
-tool as the vines were). Until they are in, `houseTile` draws a stand-in (a glazed grid of 15 cm tiles, 10 cm for
-zellige, in each set's two colours: rings and diamonds, a flower in a border, a check with star points, a plain field;
-each tile its own tone and a little out of plane, the grout sunk), which is not the art. When the art arrives,
-`tools/tile_pack.py` packs it into one atlas, `house_tile` (three cells by two, a cell a repeat), and the shader's
-`#ifdef PBR_HOUSE_TILE` path takes it.
+**The tiles are the user's** (2026-11-24 call: 2 azulejo, 2 Peranakan, 1-2 zellige, from their image tool as the
+vines were; all six arrived 2026-11-25, in `assets_src/tiles/`). As drawn they do not quite tile: each grid runs a few pixels
+past the image's edge (zellige_a most of a row and a column) and its lines wander. `tools/tile_pack.py` finds the grid
+(the lattice the grey grout fits best, each line moved to its band's centre), lifts each whole face out, and lays them
+again on an exact grid with fresh grout in the art's own grey, half a joint at each edge, so the image repeats
+seamlessly: four by four 15 cm tiles for azulejo and Peranakan (0.6 m an image; azulejo_a's rosettes span two tiles, so
+its count stays even), five by five 10 cm for zellige_a (its sixth row and column cut off), six by six for zellige_b.
+Height (the normal's alpha): the joints at 0, each face up over a 1.5 mm rounded arris and a little out of plane, the
+Peranakan's moulded flowers and border raised by how strongly they are painted, zellige uneven, azulejo flat glaze. It
+is parallax occlusion mapped at true depths (2.5 mm azulejo, 3.5 Peranakan, 4 zellige: only within a few metres) and
+shadows its own lights. Each set is its own material, `house_tile_<set>`, so they repeat by the sampler with clean mips;
+their ids run in `HWT_*` order (a `_Static_assert` in `src/core/common.h`), which `houseTile` indexes from. The art's
+clean white glaze is brought to the city's palette (params z, 0.82); the far shells and proxies take each set's mean
+(`H_TILE`). The dado's bullnose cap stays drawn, in each set's dark colour.
 
 ## Massing and parts
 
@@ -1241,7 +1249,7 @@ craftsman roofs sheet.
 | Corrugated sheet | `house_sheet` ([CorrugatedSteel003](https://ambientcg.com/view?id=CorrugatedSteel003)) | paint scuffed, dirt down its fall | sas, ssa, lat, Japan, Korea; some na |
 | Bare clay brick (HM5b2d) | `house_clay_block` ([Bricks090](https://ambientcg.com/view?id=Bricks090)) | orange, mortar smeared over the faces, half rendered | lat self-built's walls and what their render falls to |
 | Charred timber (HM5b2d) | `house_charred` ([Planks023A](https://ambientcg.com/view?id=Planks023A)) | rough boards, turned upright and tinted to char | Japan |
-| Glazed tiles (HM5b2d) | `house_tile` (the user's art; a stand-in until then) | | seu townhouse, sea shophouse, mena villa and courtyard |
+| Glazed tiles (HM5b2d) | `house_tile_*` (the user's art, `tools/tile_pack.py`) | grime, rain and spalling from the shader | seu townhouse, sea shophouse, mena villa and courtyard |
 | Flat roofs | `roof_gravel`, `concrete` (the city's) | | everywhere |
 | Timber (porch posts, fences), painted metal (railings, grilles), glass | the kit's existing materials (HM4) | | everywhere |
 

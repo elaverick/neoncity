@@ -168,6 +168,14 @@ enum {
  * rest stay procedural. */
 #include "pbr.h"
 #include "house_surf.h"
+/* The glazed tile sets' materials (assets/materials/house_tile_*.json) take ids in HWT_* order: houseTile
+ * (shaders/city/house.glsl) indexes them from the first. */
+_Static_assert(PBR_HOUSE_TILE_AZULEJO_B == PBR_HOUSE_TILE_AZULEJO_A + HWT_AZULEJO_B &&
+               PBR_HOUSE_TILE_PERANAKAN_A == PBR_HOUSE_TILE_AZULEJO_A + HWT_PERANAKAN_A &&
+               PBR_HOUSE_TILE_PERANAKAN_B == PBR_HOUSE_TILE_AZULEJO_A + HWT_PERANAKAN_B &&
+               PBR_HOUSE_TILE_ZELLIGE_A == PBR_HOUSE_TILE_AZULEJO_A + HWT_ZELLIGE_A &&
+               PBR_HOUSE_TILE_ZELLIGE_B == PBR_HOUSE_TILE_AZULEJO_A + HWT_ZELLIGE_B && HWT_AZULEJO_A == 0,
+               "the tile sets' materials must run in HWT_* order");
 
 typedef struct Vertex {
     float    pos[3];     /* chunk-local position, metres */

@@ -1,0 +1,16 @@
+// Zellige, green and white stars on black: Middle Eastern villa and courtyard dados (HWT_ZELLIGE_A)
+// The user's art (assets_src/tiles/zellige_a.png), its grid laid again by tools/tile_pack.py: 5 x 5 tiles of 10 cm.
+// Drawn by houseTile (shaders/city/house.glsl); the six sets' ids run in HWT_* order (house_surf.h).
+{
+  "maps": {
+    "albedo": "../textures/house_tile/zellige_a/albedo.png",
+    "normal": "../textures/house_tile/zellige_a/normal.png",
+    "orm":    "../textures/house_tile/zellige_a/orm.png"
+  },
+  "tile": 0.50,                 // metres per image: 5 tiles
+  "albedo_mean": [0.394, 0.385, 0.343],   // per channel (tile_pack): the tint divides by it
+  // the albedo's variation shown (1 all); the normal map's strength (1 as made); the art's clean glaze to the city's palette
+  "params": [1.0, 1.0, 0.82],
+  // metres from the faces' tops down into the joints: parallax occlusion mapped (pbrGrainRelief)
+  "depth": 0.004
+}
